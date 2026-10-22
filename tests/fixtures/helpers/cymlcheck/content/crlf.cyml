@@ -1,0 +1,6 @@
+name = "crlf"
+[[entries]]
+k = 1
+k = 2
+---
+body

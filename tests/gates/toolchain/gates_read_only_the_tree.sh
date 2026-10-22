@@ -51,14 +51,15 @@
 # scratch subshell's `../elf` run or `< ../in` redirect. The patterns above were measured on the
 # 6.7.16 tree: zero hits, with no allowlist.
 #
-# WHAT IT DOES NOT SCAN, AND WHY: the development helpers — programs/dev (cyrius since 6.7.17;
-# the scripts/dev they replaced), scripts/release and scripts/folds. They are the helpers moved
-# into the tree on 2026-10-19 (scratch from CYRIUS_SCRATCH, a fold's CI run in an isolated copy,
-# release bookkeeping) — tools a developer runs by hand, which may legitimately name a sibling
-# checkout (a fold's CI runs in the FOLD's repo). No gate runs the scripts, and axis 4 keeps it
-# that way; the one gate that runs the cyrius helpers, tests/gates/toolchain/
-# dev_helpers_match_golden.sh, runs them on fixtures with CYRIUS_REPO, CYRIUS_SCRATCH and every
-# checkout they read pointed into its own temp dir, and this scan reads it as it reads every gate.
+# WHAT IT DOES NOT SCAN, AND WHY: the development helpers — programs/dev and programs/folds
+# (cyrius since 6.7.17; the scripts/dev and scripts/folds they replaced) and scripts/release. They
+# are the helpers moved into the tree on 2026-10-19 (scratch from CYRIUS_SCRATCH, a fold's CI run
+# in an isolated copy, release bookkeeping) — tools a developer runs by hand, which may
+# legitimately name a sibling checkout (a fold's CI runs in the FOLD's repo). No gate runs the
+# scripts, and axis 4 keeps it that way; the one gate that runs the cyrius helpers,
+# tests/gates/toolchain/dev_helpers_match_golden.sh, runs them on fixtures with CYRIUS_REPO,
+# CYRIUS_SCRATCH and every checkout they read pointed into its own temp dir, and this scan reads it
+# as it reads every gate.
 #
 # AXES
 #   1  the tree is clean: every hit is named file:line: rule: the line

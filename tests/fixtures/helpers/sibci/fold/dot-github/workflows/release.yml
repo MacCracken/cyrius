@@ -1,0 +1,5 @@
+jobs:
+  publish:
+    steps:
+      - name: Release step
+        run: echo never-without-include-release

@@ -31,10 +31,18 @@
 #   envprobe           the line keys (the values are the machine's)
 #   ab                 two refs of a scratch repository, times masked: a refusal (rc 4) and a
 #                      signal death (rc -11, Python's spelling), and the usage errors
+#   run_ci             the step list (with and without --include-release), a run of every step
+#                      shape, and a run of one job (CI_JOB)
+#   sibci              an isolated run of a stand-in fold against a stand-in store slot (the summary,
+#                      the step log, the path-commented manifest, the throwaway home's links) and the
+#                      refusals (a path, no pin, a pin not in the store, a missing argument)
+#   cymlcheck          116 TOML cases in [[entries]] blocks (every tomllib error class, mutated
+#                      documents, nesting either side of Python's recursion limit), CR LF, the
+#                      `---` terminator, and the git-tracked content/**.cyml walk
 #   fixpoint           --fixpoint and --install (scripts/build-cycc-verify.sh's two modes until
 #                      6.7.17) over stand-in compilers: a fixpoint, a divergence, a failure at each
 #                      stage, an empty stage, an install that replaces and one that finds it equal
-# FLOOR: the axis count is at least 8.
+# FLOOR: the axis count is at least 11.
 #
 # MUTATION LEDGER (each measured RED, then restored):
 #   regen_issue_index's automatic label inserted after the first LATER release   -> RED regen
@@ -44,6 +52,9 @@
 #   envprobe's ulimit line keyed `ulimit-n` (a key the script never printed)       -> RED envprobe
 #   ab's "same input (<new> src)" row given the wrong pair                         -> RED ab
 #   fixpoint's c2 == c3 compare made a byte count compare                          -> RED fixpoint
+#   run_ci's step tail cut at 100 code points, not 110                             -> RED run_ci, sibci
+#   tomlcheck's "Unclosed array" raised one position early                         -> RED cymlcheck
+#   tomlcheck's frame limit 1001, not 1000                                         -> RED cymlcheck
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dev_helpers_match_golden: cannot cd to $ROOT"; exit 1; }
@@ -78,6 +89,9 @@ _build xb programs/dev/xb.cyr
 _build envprobe programs/dev/envprobe.cyr
 _build ab programs/dev/ab.cyr
 _build fixpoint programs/dev/fixpoint.cyr
+_build run_ci programs/folds/run_ci.cyr
+_build sibci programs/folds/sibci.cyr
+_build cymlcheck programs/folds/cymlcheck.cyr
 
 # _golden <golden path under $G> <actual file>: one case of the current axis.
 _golden() {
@@ -85,6 +99,17 @@ _golden() {
     if ! cmp -s "$G/$1" "$2"; then
         _fail "$1 differs from the replaced script's output:"
         diff "$G/$1" "$2" | head -12 | sed 's/^/      /'
+    fi
+}
+# _golden_as <golden path> <actual file> <old text> <new text>: as _golden, the golden read with
+# <old text> spelled <new text> — the one deliberate difference, a replaced script's own file name
+# in a message (sibci.sh: names no file once the script is gone).
+_golden_as() {
+    if [ ! -f "$G/$1" ]; then _fail "$1: no golden"; return; fi
+    sed "s|$3|$4|g" "$G/$1" > "$T/golden_as"
+    if ! cmp -s "$T/golden_as" "$2"; then
+        _fail "$1 differs from the replaced script's output (with $3 read as $4):"
+        diff "$T/golden_as" "$2" | head -12 | sed 's/^/      /'
     fi
 }
 _axis_begin() { AXIS_BAD=0; }
@@ -260,8 +285,93 @@ for c in selfrep diverge flip fail1 empty1 fail2 lag; do
 done
 _axis_end "fixpoint: --fixpoint and --install over seven stand-in compilers match build-cycc-verify.sh's modes"
 
+# ── run_ci and sibci (scripts/folds' run-ci.py and sibci.sh until 6.7.17) ─────────────────
+# A stand-in fold: every step shape the runner reads (a workflow default shell, a job default, a
+# step's own, block and one-line runs, the dash form, a skipped name, a `uses:` with a run,
+# continue-on-error, a sudo refusal, an empty failure, a timeout, CR LF output, a long Unicode
+# name, ${{ }} expressions), a .yaml workflow, a release workflow and a hidden one; a store slot
+# holding a stand-in `cyrius`.
+FOLDS="$T/folds"
+mkdir -p "$FOLDS"
+_mkfold() {  # <name> <fixture dir>: a fold checkout, committed and tagged v1
+    mkdir -p "$FOLDS/$1"
+    cp -R "$2/." "$FOLDS/$1/"
+    if [ -d "$FOLDS/$1/dot-github" ]; then mv "$FOLDS/$1/dot-github" "$FOLDS/$1/.github"; fi
+    git init -q "$FOLDS/$1"
+    git -C "$FOLDS/$1" -c user.email=gate@local -c user.name=gate add -A
+    git -C "$FOLDS/$1" -c user.email=gate@local -c user.name=gate -c commit.gpgsign=false commit -q -m v1
+    git -C "$FOLDS/$1" tag v1
+}
+_mkfold foldx "$F/sibci/fold"
+_mkfold nopin "$F/sibci/nopin"
+mkdir -p "$T/badpin_src"
+printf '[package]\ncyrius = "0.0.1"\n' > "$T/badpin_src/cyrius.cyml"
+_mkfold badpin "$T/badpin_src"
+STORE="$T/store"
+mkdir -p "$STORE"
+cp -R "$F/sibci/store/." "$STORE/"
+chmod +x "$STORE/9.9.9/bin/cyrius"
+_axis_begin
+RC="$T/rc_copy"
+mkdir -p "$RC"
+cp -R "$FOLDS/foldx/." "$RC/"
+rm -rf "$RC/.git"
+"$BIN/run_ci" "$RC" --list > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "run_ci/list" "$T/rep"
+"$BIN/run_ci" "$RC" --list --include-release > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "run_ci/list_release" "$T/rep"
+(cd "$T" && PATH="$STORE/9.9.9/bin:$PATH" HOME="$T/fh" CYRIUS_HOME="$T/fakehome" CI_TIMEOUT=3 CI_VERBOSE=1 \
+    REPO_NAME=foldx RUNNER_TEMP="$T/rc_rt" "$BIN/run_ci" "$RC" > "$T/o" 2> "$T/e"); rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "run_ci/run" "$T/rep"
+(cd "$T" && PATH="$STORE/9.9.9/bin:$PATH" HOME="$T/fh" CYRIUS_HOME="$T/fakehome" CI_JOB=other \
+    RUNNER_TEMP="$T/rc_rt" "$BIN/run_ci" "$RC" > "$T/o" 2> "$T/e"); rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "run_ci/run_one_job" "$T/rep"
+_axis_end "run_ci: the step list and a run of every step shape match run-ci.py"
+_axis_begin
+SW="$T/sibw"
+(cd "$T" && PATH="$FB:$PATH" CYRIUS_FOLDS_ROOT="$FOLDS" CYRIUS_STORE="$STORE" CI_TIMEOUT=3 \
+    "$BIN/sibci" foldx v1 "$SW" > "$T/o" 2> "$T/e"); rc=$?
+{ echo "home/bin -> $(readlink "$SW/foldx/home/bin")"; echo "home/lib -> $(readlink "$SW/foldx/home/lib")"
+  echo "home/current: $(cat "$SW/foldx/home/current")"; echo "fh/.cyrius -> $(readlink "$SW/foldx/fh/.cyrius")"
+  ls "$SW/foldx/home/versions"; ls "$SW/foldx/home/deps" | wc -l; } > "$T/layout"
+_rep "$T/rep" "$rc" "$T/o" "$T/e" ci.log "$SW/foldx/ci.log" copy/cyrius.cyml "$SW/foldx/copy/cyrius.cyml" layout "$T/layout"
+_golden "sibci/run" "$T/rep"
+for bad in "a/b" nopin badpin; do
+    (cd "$T" && CYRIUS_FOLDS_ROOT="$FOLDS" CYRIUS_STORE="$STORE" "$BIN/sibci" "$bad" v1 "$SW" > "$T/o" 2> /dev/null); rc=$?
+    : > "$T/e"   # stderr dropped: git's and tar's own complaints; the verdict is stdout and the status
+    _rep "$T/rep" "$rc" "$T/o" "$T/e"
+    _golden_as "sibci/bad_$(echo "$bad" | tr / _)" "$T/rep" "sibci.sh: " "sibci: "
+done
+(cd "$T" && "$BIN/sibci" onlyone > "$T/o" 2> /dev/null); rc=$?
+[ "$rc" = 1 ] || _fail "sibci with a missing argument exited $rc (the script: 1)"
+_axis_end "sibci: an isolated run (summary, step log, manifest, the throwaway home) and the refusals match sibci.sh"
+
+# ── cymlcheck (scripts/folds/cymlcheck.py until 6.7.17) ────────────────────────────────────
+# One hundred and sixteen TOML cases (tomllib's grammar and namespace rules, each error class and
+# a run of mutated documents), one [[entries]] block each; nesting at Python's recursion limit
+# either side; CR LF; `---` terminators with and without blanks; then the same tree tracked in git
+# (no <file> arguments: content/**.cyml).
+_axis_begin
+CM="$T/cyml"
+mkdir -p "$CM"
+cp -R "$F/cymlcheck/." "$CM/"
+"$BIN/cymlcheck" "$CM" content/cases.cyml content/sub/deep.cyml content/crlf.cyml content/valid.cyml > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "cymlcheck/named" "$T/rep"
+git init -q "$CM"
+git -C "$CM" -c user.email=gate@local -c user.name=gate add -A
+git -C "$CM" -c user.email=gate@local -c user.name=gate -c commit.gpgsign=false commit -q -m cases
+"$BIN/cymlcheck" "$CM" > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "cymlcheck/tracked" "$T/rep"
+_axis_end "cymlcheck: 116 TOML cases, the recursion limit, CR LF and the tracked-tree walk match cymlcheck.py (tomllib)"
+
 # ── verdict ──────────────────────────────────────────────────────────────────────────────
-[ "$AXES" -ge 8 ] || _fail "only $AXES axes ran (floor 8)"
+[ "$AXES" -ge 11 ] || _fail "only $AXES axes ran (floor 11)"
 if [ "$FAILS" -ne 0 ]; then
     echo "FAIL: $NAME: $FAILS case(s) differ from the replaced scripts' output"
     exit 1

@@ -1,0 +1,39 @@
+# programs/folds/run_ci.cyr — run a fold's GitHub workflow `run:` steps locally, with GitHub's shell
+# semantics. programs/folds/sibci.cyr runs the same steps inside an isolated copy; run this by hand
+# only on a throwaway copy (it runs the workflow's steps in the copy, with the caller's HOME and
+# CYRIUS_HOME).
+#
+# Usage:  cyrius run programs/folds/run_ci.cyr <repo-copy> [--include-release] [--list]
+#         (--list: print the steps and shells, run nothing)
+# Input:  <repo-copy>/.github/workflows/*.yml and *.yaml
+# Env:    REPO_NAME   substituted for ${{ github.event.repository.name }} (default: the copy's name)
+#         CI_TIMEOUT  per-step seconds (default 1500)
+#         RUNNER_TEMP (default: <copy>/../runner_tmp)
+#         CI_JOB      run only the job with this id
+#         CI_VERBOSE  set: print the last 40 output lines of each failing step
+# Output: stdout, one line per step (programs/folds/ci_steps.cyr says which); exit 1 if any gating
+#         step FAILs, else 0.
+#
+# It replaced scripts/folds/run-ci.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/folds/ci_steps.cyr"
+
+fn main(): i64 {
+    args_init();
+    if (argc() < 2) {
+        hc_errc("usage: cyrius run programs/folds/run_ci.cyr <repo-copy> [--include-release] [--list]\n");
+        return 1;
+    }
+    var repo = hc_abspath(hc_arg(1));
+    var incl = 0;
+    var list = 0;
+    var i = 2;
+    while (i < argc()) {
+        if (hc_eqc(hc_arg(i), "--include-release") == 1) { incl = 1; }
+        if (hc_eqc(hc_arg(i), "--list") == 1) { list = 1; }
+        i = i + 1;
+    }
+    if (sys_chdir(hc_cstr(repo)) != 0) { hc_errc("run_ci: cannot cd to "); hc_err(repo); hc_errc("\n"); return 1; }
+    return ci_run(repo, incl, list, hc_env_list(), 1);
+}

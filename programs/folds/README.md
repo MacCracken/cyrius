@@ -1,39 +1,40 @@
-# scripts/folds/
+# programs/folds/
 
 Release helpers for the **folded stdlibs** — the language's own stdlib repos that `lib/` vendors
 (the list is [`docs/ecosystem.md`](../../docs/ecosystem.md)). Development tools, not shipped: no
-tarball or installer copies this folder. They are Python and shell for now; their conversion to
-cyrius is filed as
-[`2026-10-19-dev-helper-scripts-converted-to-cyrius.md`](../../docs/development/issues/2026-10-19-dev-helper-scripts-converted-to-cyrius.md).
+tarball or installer copies this folder. They are cyrius programs (6.7.17: they replaced
+`scripts/folds`' shell and Python, each with the same output on the same input —
+[`tests/gates/toolchain/dev_helpers_match_golden.sh`](../../tests/gates/toolchain/dev_helpers_match_golden.sh)),
+run from the cyrius checkout with `cyrius run`, over [`../dev/helper_common.cyr`](../dev/helper_common.cyr).
 
 | File | What it does |
 |---|---|
-| `sibci.sh` | runs one fold release's full GitHub CI locally, isolated, and prints one summary line |
-| `run-ci.py` | the step runner `sibci.sh` calls: a repo's `.github/workflows/*.yml` `run:` steps with GitHub's shell semantics |
-| `cymlcheck.py` | TOML-parses each part of a `.cyml` file (a manifest, or vidya's `[[entries]]` files) and counts the errors |
+| `sibci.cyr` | runs one fold release's full GitHub CI locally, isolated, and prints one summary line |
+| `run_ci.cyr` | runs a repo copy's `.github/workflows/*.yml` `run:` steps with GitHub's shell semantics (the runner sibci uses, `ci_steps.cyr`) |
+| `cymlcheck.cyr` | TOML-checks each part of a `.cyml` file (a manifest, or vidya's `[[entries]]` files) and counts the errors — tomllib's verdicts and messages (`tomlcheck.cyr`) |
 
 ## When it is used
 
-**Every fold release, before it is handed to the user for tagging**: run `sibci.sh` on the fold at
+**Every fold release, before it is handed to the user for tagging**: run `sibci.cyr` on the fold at
 the release commit and read the summary. CLAUDE.md § *Ecosystem & stdlib*: a fold's CI runs
 isolated — a clean `git archive` copy, a throwaway `HOME` + `CYRIUS_HOME`, GitHub's shell
 semantics — never by hand-extracted steps. Folds only: a consumer's CI is never run from here.
 
-`cymlcheck.py` is used whenever a `.cyml` file is edited by hand — vidya's entry files at each
+`cymlcheck.cyr` is used whenever a `.cyml` file is edited by hand — vidya's entry files at each
 release close, a fold's or this repo's `cyrius.cyml` — to compare the error count before and after.
 
 ## Usage
 
 ```sh
-scripts/folds/sibci.sh <fold> <commit-or-tag> [workdir]
-#   e.g.  scripts/folds/sibci.sh sankoch <release-commit>
+cyrius run programs/folds/sibci.cyr <fold> <commit-or-tag> [workdir]
+#   e.g.  cyrius run programs/folds/sibci.cyr sankoch <release-commit>
 #   several at once (one "<fold> <commit>" per line in list):
-awk '{print $1, $2}' list | xargs -P4 -n2 scripts/folds/sibci.sh
+awk '{print $1, $2}' list | xargs -P4 -n2 cyrius run programs/folds/sibci.cyr
 
-python3 scripts/folds/run-ci.py <copy> --list          # the steps and shells it would run
-python3 scripts/folds/cymlcheck.py <root> [<file>...]  # <file>s relative to <root>
-#   e.g.  python3 scripts/folds/cymlcheck.py . cyrius.cyml
-#         python3 scripts/folds/cymlcheck.py ../vidya      # every tracked content/**.cyml
+cyrius run programs/folds/run_ci.cyr <copy> --list          # the steps and shells it would run
+cyrius run programs/folds/cymlcheck.cyr <root> [<file>...]  # <file>s relative to <root>
+#   e.g.  cyrius run programs/folds/cymlcheck.cyr . cyrius.cyml
+#         cyrius run programs/folds/cymlcheck.cyr ../vidya      # every tracked content/**.cyml
 ```
 
 The summary line is `<fold> @ <commit> (pin <v>): rc=N ok=N fail=N skip=N`; the step log is
@@ -49,7 +50,7 @@ status is 0 and the summary line is the verdict.
 | `CYRIUS_FOLDS_ROOT` | `$HOME/Repos` | where the fold checkouts live |
 | `CYRIUS_STORE` | `$HOME/.cyrius/versions` | the installed toolchain store; the fold's pin must be a slot in it (exit 2 otherwise) |
 | `CYRIUS_SCRATCH` | `${XDG_CACHE_HOME:-$HOME/.cache}/c6` | scratch root: the workdir is `$CYRIUS_SCRATCH/sibci`. A `[workdir]` argument beats it |
-| `CI_JOB`, `CI_TIMEOUT` | all jobs, 1500 s | passed through to `run-ci.py`: one job only, the per-step timeout |
+| `CI_JOB`, `CI_TIMEOUT` | all jobs, 1500 s | read by the step runner: one job only, the per-step timeout |
 
 ## What the isolation is
 
@@ -62,7 +63,7 @@ status is 0 and the summary line is the verdict.
 - **`PATH`** is reset to the slot's `bin/`, a per-run qemu shim and `/usr/local/bin:/usr/bin:/bin`.
   The shim links `qemu-aarch64-static` (the name CI images use) to the caller's `qemu-aarch64`,
   made at run time in a `mktemp -d` under the workdir; with no `qemu-aarch64` it is empty.
-- **The steps** run under `run-ci.py`: a step's own `shell:`, else the job's, else the
+- **The steps** run under the step runner (`ci_steps.cyr`): a step's own `shell:`, else the job's, else the
   workflow's; `bash` is `bash --noprofile --norc -eo pipefail`, unspecified is `bash -e` (no
   pipefail), `sh` is `sh -e`. `uses:` steps, and the steps whose NAME starts with the
   Cyrius-toolchain install (`Install Cyrius`, `Install cyrius`), `Checkout`, `Upload`, `Cache`,

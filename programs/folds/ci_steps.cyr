@@ -1,0 +1,478 @@
+# programs/folds/ci_steps.cyr — a fold's GitHub workflow `run:` steps, run locally with GitHub's
+# shell semantics (the step runner programs/folds/run_ci.cyr and programs/folds/sibci.cyr share).
+# Not a program: they include it and call ci_run.
+#
+# The workflows: <copy>/.github/workflows/*.yml and *.yaml, in name order (hidden files skipped),
+# read by indentation alone — no YAML library: a job is a key under `jobs:`, a step a `- ` item
+# under a job's `steps:`, and a step's `name:`, `uses:`, `shell:`, `continue-on-error:` and `run:`
+# (one line, or a `|` / `|-` / `>` block of deeper-indented lines) are read.
+#
+# Shell selection follows GitHub on ubuntu: a step's own `shell:`, else the job's
+# `defaults.run.shell`, else the workflow's; `bash` means `bash --noprofile --norc -eo pipefail`,
+# an unspecified shell means `bash -e` (NO pipefail), `sh` means `sh -e`.
+# Steps are skipped only when they cannot run here: `uses:` actions (no run:), and the steps whose
+# NAME starts with the toolchain install / checkout / upload / cache prefixes (the caller provides
+# a throwaway CYRIUS_HOME instead). Release workflows (a file name holding `release`) are skipped
+# unless include_release.
+#
+# Output (to `out_fd`): one line per step, OK / FAIL (SKIP only for a step that fails because sudo
+# needs a password — a runner package install that cannot run here; named, never counted as a
+# pass), `[workflow] [job] [shell] name | last output line`; a failing continue-on-error step is a
+# NON-GATING FAIL line. With list_only, the steps and shells and nothing run. ci_run answers 1 when
+# any gating step failed, else 0.
+#
+# The environment each step gets is `env` (the caller's) with RUNNER_TEMP set and GITHUB_ENV /
+# GITHUB_PATH / GITHUB_OUTPUT / GITHUB_STEP_SUMMARY defaulted into it; `${{ github.event.repository
+# .name }}` is REPO_NAME (default: the copy's name) and any other `${{ … }}` renders empty, as on
+# GitHub. Read from `env`: REPO_NAME, RUNNER_TEMP (default <copy>/../runner_tmp), CI_TIMEOUT (each
+# step's seconds, default 1500; the step alone is killed at it), CI_JOB (run only that job),
+# CI_VERBOSE (set: the last 40 output lines of each failing step).
+#
+# These replaced scripts/folds/run-ci.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+# Python str.lstrip(' ') length: the leading spaces of a line.
+fn _ci_indent(l): i64 {
+    var i = 0;
+    while (i < hc_n(l)) {
+        if (hc_at(l, i) != 32) { break; }
+        i = i + 1;
+    }
+    return i;
+}
+
+# Python's \w for one code point: [A-Za-z0-9_] and the Unicode letters and numbers.
+fn _ci_word(cp): i64 {
+    if (cp == 95) { return 1; }
+    if (cp >= 48 && cp <= 57) { return 1; }
+    if (cp >= 65 && cp <= 90) { return 1; }
+    if (cp >= 97 && cp <= 122) { return 1; }
+    if (cp < 128) { return 0; }
+    var c = unicode_category(cp);
+    if (c <= GC_LO) { return 1; }
+    if (c >= GC_ND && c <= GC_NO) { return 1; }
+    return 0;
+}
+
+# re.match(r'^(\s*)(-\s+)?([A-Za-z_][\w-]*):\s*(.*)$', l): 1 with the dash (0 or a Str), the key
+# and the value (stripped) at out[0..2], else 0.
+fn _ci_match(l, out): i64 {
+    var n = hc_n(l);
+    var i = 0;
+    var ln = 0;
+    while (i < n) {
+        var cp = hc_u8(l, i, &ln);
+        if (hc_py_space(cp) == 0) { break; }
+        i = i + ln;
+    }
+    var dash = 0;
+    if (i < n && hc_at(l, i) == 45) {
+        var j = i + 1;
+        while (j < n) {
+            var cp2 = hc_u8(l, j, &ln);
+            if (hc_py_space(cp2) == 0) { break; }
+            j = j + ln;
+        }
+        if (j > i + 1) { dash = hc_sub(l, i, j); i = j; }
+    }
+    if (i >= n) { return 0; }
+    var c0 = hc_at(l, i);
+    if (!((c0 >= 65 && c0 <= 90) || (c0 >= 97 && c0 <= 122) || c0 == 95)) { return 0; }
+    var ks = i;
+    i = i + 1;
+    while (i < n) {
+        var cp3 = hc_u8(l, i, &ln);
+        if (_ci_word(cp3) == 0 && cp3 != 45) { break; }
+        i = i + ln;
+    }
+    if (i >= n || hc_at(l, i) != 58) { return 0; }
+    var key = hc_sub(l, ks, i);
+    var val = hc_strip(hc_sub(l, i + 1, n));
+    store64(out, dash);
+    store64(out + 8, key);
+    store64(out + 16, val);
+    return 1;
+}
+
+# A step: [name, run (vec of Str), shell (0 or Str), uses, coe]
+fn _ci_step_new(name, uses): i64 {
+    var st = vec_new();
+    vec_push(st, name);
+    vec_push(st, vec_new());
+    vec_push(st, 0);
+    vec_push(st, uses);
+    vec_push(st, 0);
+    return st;
+}
+# A job: [name, shell (0 or Str), steps (vec)]
+fn _ci_job_new(name): i64 {
+    var j = vec_new();
+    vec_push(j, name);
+    vec_push(j, 0);
+    vec_push(j, vec_new());
+    return j;
+}
+
+fn _ci_keys_are(ctx, a, b, c, d): i64 {
+    # ctx is a vec of [indent, key]; compare its keys with the given list (0 ends it)
+    var want = vec_new();
+    if (a != 0) { vec_push(want, a); }
+    if (b != 0) { vec_push(want, b); }
+    if (c != 0) { vec_push(want, c); }
+    if (d != 0) { vec_push(want, d); }
+    if (vec_len(ctx) != vec_len(want)) { return 0; }
+    var i = 0;
+    while (i < vec_len(ctx)) {
+        if (hc_eqc(vec_get(vec_get(ctx, i), 1), vec_get(want, i)) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn _ci_keys_has(ctx, k): i64 {
+    var i = 0;
+    while (i < vec_len(ctx)) {
+        if (hc_eqc(vec_get(vec_get(ctx, i), 1), k) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _ci_pair(ind, keyc): i64 {
+    var p = vec_new();
+    vec_push(p, ind);
+    vec_push(p, hc_s(keyc));
+    return p;
+}
+
+var _ci_wf_shell = 0;
+
+# Parse one workflow file into its jobs (a vec); the workflow's shell goes to _ci_wf_shell.
+fn _ci_parse(pathc): i64 {
+    _ci_wf_shell = 0;
+    var jobs = vec_new();
+    var text = hc_read_text(pathc);
+    if (text == 0) { text = hc_s(""); }
+    var lines = hc_split(text, 10);
+    var job = 0;
+    var step = 0;
+    var in_run = 0;
+    var run_ind = 0;
+    var ctx = vec_new();
+    var mt: i64[3];
+    var li = 0;
+    while (li < vec_len(lines)) {
+        var l = vec_get(lines, li);
+        li = li + 1;
+        var s = hc_strip(l);
+        if (in_run == 1) {
+            if (hc_n(s) == 0) { vec_push(vec_get(step, 1), hc_s("")); continue; }
+            if (_ci_indent(l) >= run_ind) { vec_push(vec_get(step, 1), hc_sub(l, run_ind, hc_n(l))); continue; }
+            in_run = 0;
+        }
+        if (hc_n(s) == 0 || hc_pre(s, "#") == 1) { continue; }
+        var ind = _ci_indent(l);
+        while (vec_len(ctx) > 0) {
+            if (vec_get(vec_get(ctx, vec_len(ctx) - 1), 0) < ind) { break; }
+            vec_pop(ctx);
+        }
+        if (_ci_match(l, &mt) == 0) { continue; }
+        var dash = mt[0];
+        var key = mt[1];
+        var val = mt[2];
+        if (hc_eqc(key, "jobs") == 1 && ind == 0) { vec_push(ctx, _ci_pair(ind, "jobs")); continue; }
+        if (_ci_keys_are(ctx, "jobs", 0, 0, 0) == 1 && dash == 0) {
+            job = _ci_job_new(key);
+            vec_push(jobs, job);
+            vec_push(ctx, _ci_pair(ind, "job"));
+            continue;
+        }
+        if (hc_eqc(key, "shell") == 1 && _ci_keys_are(ctx, "defaults", "run", 0, 0) == 1) {
+            _ci_wf_shell = val;
+            continue;
+        }
+        if (hc_eqc(key, "shell") == 1 && _ci_keys_are(ctx, "jobs", "job", "defaults", "run") == 1 && job != 0) {
+            vec_set(job, 1, val);
+            continue;
+        }
+        if (job != 0 && _ci_keys_has(ctx, "steps") == 1 && dash != 0) {
+            var nm = hc_s("");
+            if (hc_eqc(key, "name") == 1) { nm = val; }
+            var uses = 0;
+            if (hc_eqc(key, "uses") == 1) { uses = 1; }
+            step = _ci_step_new(nm, uses);
+            vec_push(vec_get(job, 2), step);
+            if (hc_eqc(key, "run") == 1) {
+                # (the dash form keeps a `|-` header as the script's first line, as run-ci.py did)
+                if (hc_eqc(val, "|") == 0 && hc_eqc(val, ">") == 0) { vec_push(vec_get(step, 1), val); }
+                if (hc_eqc(val, "|") == 1 || hc_eqc(val, "|-") == 1 || hc_eqc(val, ">") == 1) {
+                    in_run = 1;
+                    run_ind = ind + hc_n(dash) + 2;
+                }
+            }
+            vec_push(ctx, _ci_pair(ind, "step"));
+            continue;
+        }
+        if (step != 0 && vec_len(ctx) > 0) {
+            if (hc_eqc(vec_get(vec_get(ctx, vec_len(ctx) - 1), 1), "step") == 1) {
+                if (hc_eqc(key, "name") == 1) { vec_set(step, 0, val); }
+                elif (hc_eqc(key, "uses") == 1) { vec_set(step, 3, 1); }
+                elif (hc_eqc(key, "shell") == 1) { vec_set(step, 2, val); }
+                elif (hc_eqc(key, "continue-on-error") == 1) {
+                    var coe = 0;
+                    if (hc_eq(_ci_lower(hc_strip(val)), hc_s("true")) == 1) { coe = 1; }
+                    vec_set(step, 4, coe);
+                }
+                elif (hc_eqc(key, "run") == 1) {
+                    if (hc_eqc(val, "|") == 1 || hc_eqc(val, "|-") == 1 || hc_eqc(val, ">") == 1) {
+                        in_run = 1;
+                        run_ind = ind + 2;
+                    } else {
+                        var rv = vec_new();
+                        vec_push(rv, val);
+                        vec_set(step, 1, rv);
+                    }
+                }
+                continue;
+            }
+        }
+        if (hc_n(val) == 0) {
+            var p = vec_new();
+            vec_push(p, ind);
+            vec_push(p, key);
+            vec_push(ctx, p);
+        }
+    }
+    return jobs;
+}
+
+# Python str.lower() for ASCII (the one compare it feeds is against "true").
+fn _ci_lower(s): i64 {
+    var sb = hc_sb();
+    var i = 0;
+    while (i < hc_n(s)) {
+        var c = hc_at(s, i);
+        if (c >= 65 && c <= 90) { c = c + 32; }
+        hc_sbb(sb, c);
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# re.sub(r'\$\{\{[^}]*\}\}', '', s)
+fn _ci_drop_exprs(s): i64 {
+    var sb = hc_sb();
+    var pos = 0;
+    var at = 0;
+    loop {
+        var k = hc_findc(s, "${{", at);
+        if (k < 0) { break; }
+        var j = k + 3;
+        while (j < hc_n(s) && hc_at(s, j) != 125) { j = j + 1; }
+        if (j + 1 < hc_n(s) && hc_at(s, j + 1) == 125) {
+            hc_sba(sb, hc_sub(s, pos, k));
+            pos = j + 2;
+            at = pos;
+        } else {
+            at = k + 1;
+        }
+    }
+    hc_sba(sb, hc_sub(s, pos, hc_n(s)));
+    return hc_sbend(sb);
+}
+
+fn _ci_put(fd, s): i64 { return hc_wr(fd, hc_d(s), hc_n(s)); }
+
+var _ci_skip = 0;
+fn _ci_skipped(name): i64 {
+    if (_ci_skip == 0) {
+        _ci_skip = vec_new();
+        vec_push(_ci_skip, "Install Cyrius toolchain");
+        vec_push(_ci_skip, "Install cyrius");
+        vec_push(_ci_skip, "Install Cyrius");
+        vec_push(_ci_skip, "Checkout");
+        vec_push(_ci_skip, "Upload");
+        vec_push(_ci_skip, "Cache");
+        vec_push(_ci_skip, "Set up");
+        vec_push(_ci_skip, "Setup ");
+    }
+    var i = 0;
+    while (i < vec_len(_ci_skip)) {
+        if (hc_pre(name, vec_get(_ci_skip, i)) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# One step line's head: `<TAG> [<wf>] [<job>] [<shell>] <name, 50 code points padded> | `.
+fn _ci_head(sb, tagc, base, jobn, shk, name): i64 {
+    hc_sbc(sb, tagc);
+    hc_sbc(sb, " [");
+    hc_sba(sb, base);
+    hc_sbc(sb, "] [");
+    hc_sba(sb, jobn);
+    hc_sbc(sb, "] [");
+    hc_sbc(sb, shk);
+    hc_sbc(sb, "] ");
+    hc_sba(sb, hc_ljust(hc_uhead(name, 50), 50));
+    hc_sbc(sb, " | ");
+    return 0;
+}
+
+# Run the steps of `repo` (an absolute path; the caller has made it the cwd). See the header.
+fn ci_run(repo, incl_release, list_only, env, out_fd): i64 {
+    var repo_name = hc_env_get(env, "REPO_NAME");
+    if (repo_name == 0) { repo_name = hc_basename(hc_rstrip_set(repo, "/")); }
+    var rt = hc_env_get(env, "RUNNER_TEMP");
+    if (rt == 0) { rt = hc_joinc(hc_dirname(repo), "runner_tmp"); }
+    hc_mkdirs(hc_cstr(rt));
+    var tmo = 1500;
+    var tv = hc_env_get(env, "CI_TIMEOUT");
+    if (tv != 0) {
+        if (hc_pyint(tv, &tmo) == 0) {
+            hc_errc("run_ci: CI_TIMEOUT: invalid int value: '");
+            hc_err(tv);
+            hc_errc("'\n");
+            return 1;
+        }
+    }
+    var ci_job = hc_env_get(env, "CI_JOB");
+    if (ci_job != 0) { if (hc_n(ci_job) == 0) { ci_job = 0; } }
+    var verbose = hc_env_get(env, "CI_VERBOSE");
+    if (verbose != 0) { if (hc_n(verbose) == 0) { verbose = 0; } }
+    var fails = 0;
+    var wfs = vec_new();
+    var a = hc_glob_names(".github/workflows", ".yml");
+    var b = hc_glob_names(".github/workflows", ".yaml");
+    var i = 0;
+    while (i < vec_len(a)) { vec_push(wfs, vec_get(a, i)); i = i + 1; }
+    i = 0;
+    while (i < vec_len(b)) { vec_push(wfs, vec_get(b, i)); i = i + 1; }
+    hc_sort(wfs);
+    var w = 0;
+    while (w < vec_len(wfs)) {
+        var base = vec_get(wfs, w);
+        w = w + 1;
+        if (hc_has(base, "release") == 1 && incl_release == 0) { continue; }
+        var jobs = _ci_parse(hc_cstr(hc_ccat(".github/workflows/", base)));
+        var wf_shell = _ci_wf_shell;
+        var j = 0;
+        while (j < vec_len(jobs)) {
+            var job = vec_get(jobs, j);
+            j = j + 1;
+            var jobn = vec_get(job, 0);
+            if (ci_job != 0) { if (hc_eq(jobn, ci_job) == 0) { continue; } }
+            var steps = vec_get(job, 2);
+            var k = 0;
+            while (k < vec_len(steps)) {
+                var st = vec_get(steps, k);
+                k = k + 1;
+                var name = vec_get(st, 0);
+                var run = vec_get(st, 1);
+                if (vec_len(run) == 0 || _ci_skipped(name) == 1) { continue; }
+                var sh = vec_get(st, 2);
+                if (sh == 0) { sh = vec_get(job, 1); }
+                if (sh != 0) { if (hc_n(sh) == 0) { sh = 0; } }
+                if (sh == 0) { sh = wf_shell; }
+                if (sh != 0) { if (hc_n(sh) == 0) { sh = 0; } }
+                var shk = "bash -e";
+                var argv = vec_new();
+                if (sh != 0 && hc_pre(sh, "bash") == 1) {
+                    shk = "bash";
+                    vec_push(argv, "bash"); vec_push(argv, "--noprofile"); vec_push(argv, "--norc");
+                    vec_push(argv, "-eo"); vec_push(argv, "pipefail"); vec_push(argv, "-c");
+                } elif (sh != 0 && hc_pre(sh, "sh") == 1) {
+                    shk = "sh";
+                    vec_push(argv, "sh"); vec_push(argv, "-e"); vec_push(argv, "-c");
+                } else {
+                    vec_push(argv, "bash"); vec_push(argv, "-e"); vec_push(argv, "-c");
+                }
+                if (list_only == 1) {
+                    var lb = hc_sb();
+                    hc_sbc(lb, "[");
+                    hc_sba(lb, base);
+                    hc_sbc(lb, "] [");
+                    hc_sba(lb, jobn);
+                    hc_sbc(lb, "] [");
+                    hc_sbc(lb, shk);
+                    hc_sbc(lb, "] ");
+                    hc_sba(lb, hc_uhead(name, 60));
+                    hc_sbc(lb, "  (");
+                    hc_sbi(lb, vec_len(run));
+                    hc_sbc(lb, " lines)\n");
+                    _ci_put(out_fd, hc_sbend(lb));
+                    continue;
+                }
+                var script = hc_join(run, "\n");
+                script = hc_replace(script, hc_s("${{ github.event.repository.name }}"), repo_name);
+                script = _ci_drop_exprs(script);
+                vec_push(argv, hc_cstr(script));
+                var senv = vec_new();
+                var e = 0;
+                while (e < vec_len(env)) { vec_push(senv, vec_get(env, e)); e = e + 1; }
+                hc_env_set(senv, "RUNNER_TEMP", rt);
+                hc_env_default(senv, "GITHUB_ENV", hc_joinc(rt, "github_env"));
+                hc_env_default(senv, "GITHUB_PATH", hc_joinc(rt, "github_path"));
+                hc_env_default(senv, "GITHUB_OUTPUT", hc_joinc(rt, "github_output"));
+                hc_env_default(senv, "GITHUB_STEP_SUMMARY", hc_joinc(rt, "github_summary"));
+                var so = hc_capture_full(argv, senv, 0, 0, 2, tmo * 1000);
+                var rc = hc_last_rc;
+                var out = hc_s("");
+                var tail = hc_s("");
+                var timed = 0;
+                if (rc == 0 - 2) {
+                    timed = 1;
+                    tail = hc_s("timeout");
+                } else {
+                    out = hc_strip(hc_univ_nl(hc_cat(so, hc_cap_err)));
+                    if (hc_n(out) > 0) {
+                        var parts = hc_split(out, 10);
+                        tail = hc_uhead(vec_get(parts, vec_len(parts) - 1), 110);
+                    }
+                }
+                var ok = 0;
+                if (timed == 0 && rc == 0) { ok = 1; }
+                var lsb = hc_sb();
+                if (ok == 0 && hc_has(out, "sudo: a password is required") == 1) {
+                    _ci_head(lsb, "SKIP", base, jobn, shk, name);
+                    hc_sbc(lsb, "needs sudo (a CI-runner package install) — cannot run here\n");
+                    _ci_put(out_fd, hc_sbend(lsb));
+                    continue;
+                }
+                if (ok == 0 && vec_get(st, 4) == 1) {
+                    _ci_head(lsb, "FAIL", base, jobn, shk, name);
+                    hc_sbc(lsb, "NON-GATING (continue-on-error: true) — ");
+                    hc_sba(lsb, tail);
+                    hc_sbc(lsb, "\n");
+                    _ci_put(out_fd, hc_sbend(lsb));
+                    continue;
+                }
+                if (ok == 0) { fails = fails + 1; }
+                if (ok == 1) { _ci_head(lsb, "OK  ", base, jobn, shk, name); }
+                else { _ci_head(lsb, "FAIL", base, jobn, shk, name); }
+                hc_sba(lsb, tail);
+                hc_sbc(lsb, "\n");
+                _ci_put(out_fd, hc_sbend(lsb));
+                if (ok == 0 && verbose != 0) {
+                    var ol = hc_split(out, 10);
+                    var from = vec_len(ol) - 40;
+                    if (from < 0) { from = 0; }
+                    var vb = hc_sb();
+                    var q = from;
+                    while (q < vec_len(ol)) {
+                        if (q > from) { hc_sbc(vb, "\n"); }
+                        hc_sbc(vb, "    ");
+                        hc_sba(vb, vec_get(ol, q));
+                        q = q + 1;
+                    }
+                    hc_sbc(vb, "\n");
+                    _ci_put(out_fd, hc_sbend(vb));
+                }
+            }
+        }
+    }
+    if (fails > 0) { return 1; }
+    return 0;
+}

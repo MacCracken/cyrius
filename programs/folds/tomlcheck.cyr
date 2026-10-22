@@ -1,0 +1,1237 @@
+# programs/folds/tomlcheck.cyr — a TOML 1.0 validator that answers what Python's tomllib (3.14)
+# answers, message for message: tc_check(text) is 0 when tomllib.loads(text) parses it, else the
+# message str(exception) — `<msg> (at line L, column C)` / `(at end of document)` for a
+# TOMLDecodeError, or a RecursionError's text — with tomllib's positions (code points, after
+# CR LF folds to LF). Not a program: programs/folds/cymlcheck.cyr includes it.
+#
+# A port of tomllib's _parser.py and _re.py, function for function: the same order of checks (so
+# the same error wins), the same namespace rules (Flags: EXPLICIT_NEST, FROZEN, pending flags; the
+# nested dict with arrays of tables), the same number / date-time / time grammar, dates checked as
+# datetime.date checks them. Python's recursion limit is part of tomllib's answer for deeply nested
+# values, so every ported function counts as the Python frame it mirrors (the cymlcheck module and
+# loads are the first two) and a call past 1000 frames is "maximum recursion depth exceeded", as
+# in Python; a key of more than 1000 parts is tomllib's own RecursionError.
+# lib/bayan.cyr's bayan_toml_v_parse accepts and refuses what tomllib does, with its own messages;
+# this exists because the cymlcheck it serves replaced a script whose output WAS tomllib's
+# messages. CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+var _tc_cp = 0;      # the document as code points (i64 each)
+var _tc_n = 0;
+var _tc_err = 0;     # 0, or the error message (a Str)
+var _tc_depth = 0;   # Python frames in use
+var _tc_rv = 0;      # a parser's second return value
+var _tc_tz = 0;      # cached_tz's lru_cache: the offsets it has seen
+
+# ── frames and errors ────────────────────────────────────────────────────────────────────
+
+fn _tc_rec_err(): i64 {
+    if (_tc_err == 0) { _tc_err = hc_s("maximum recursion depth exceeded"); }
+    return 0;
+}
+# Enter a Python frame: 1 (with the RecursionError set) when it is one too many.
+fn _tc_in(): i64 {
+    _tc_depth = _tc_depth + 1;
+    if (_tc_depth > 1000) {
+        _tc_depth = _tc_depth - 1;
+        _tc_rec_err();
+        return 1;
+    }
+    return 0;
+}
+fn _tc_out(): i64 { _tc_depth = _tc_depth - 1; return 0; }
+
+# raise TOMLDecodeError(msg, src, pos): its __init__ is a frame too.
+fn _tc_raise(msg, pos): i64 {
+    if (_tc_err != 0) { return 0; }
+    if (_tc_in() == 1) { return 0; }
+    var nl = 0;
+    var last_nl = 0 - 1;
+    var i = 0;
+    while (i < pos && i < _tc_n) {
+        if (load64(_tc_cp + i * 8) == 10) { nl = nl + 1; last_nl = i; }
+        i = i + 1;
+    }
+    var lineno = nl + 1;
+    var colno = pos + 1;
+    if (lineno != 1) { colno = pos - last_nl; }
+    var sb = hc_sb();
+    hc_sba(sb, msg);
+    if (pos >= _tc_n) { hc_sbc(sb, " (at end of document)"); }
+    else {
+        hc_sbc(sb, " (at line ");
+        hc_sbi(sb, lineno);
+        hc_sbc(sb, ", column ");
+        hc_sbi(sb, colno);
+        hc_sbc(sb, ")");
+    }
+    _tc_err = hc_sbend(sb);
+    _tc_out();
+    return 0;
+}
+fn _tc_raisec(msgc, pos): i64 { return _tc_raise(hc_s(msgc), pos); }
+
+# src[pos], or -1 past the end (Python's IndexError).
+fn _tc_ch(pos): i64 {
+    if (pos < 0 || pos >= _tc_n) { return 0 - 1; }
+    return load64(_tc_cp + pos * 8);
+}
+# src.startswith(<ascii literal>, pos)
+fn _tc_starts(pos, litc): i64 {
+    var i = 0;
+    while (load8(litc + i) != 0) {
+        if (_tc_ch(pos + i) != load8(litc + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# src[a:b] as a UTF-8 Str.
+fn _tc_slice(a, b): i64 {
+    var sb = hc_sb();
+    var i = a;
+    while (i < b && i < _tc_n) { hc_sb_cp(sb, load64(_tc_cp + i * 8)); i = i + 1; }
+    return hc_sbend(sb);
+}
+
+# ── Python repr (str and tuple-of-str) ───────────────────────────────────────────────────
+
+fn _tc_printable(cp): i64 {
+    if (cp == 32) { return 1; }
+    if (cp < 32 || cp == 127) { return 0; }
+    if (cp < 127) { return 1; }
+    var c = unicode_category(cp);
+    if (c == GC_CC || c == GC_CF || c == GC_CS || c == GC_CO || c == GC_CN) { return 0; }
+    if (c == GC_ZL || c == GC_ZP || c == GC_ZS) { return 0; }
+    return 1;
+}
+
+fn _tc_hex(sb, v, digits): i64 {
+    var hexd = "0123456789abcdef";
+    var k = digits - 1;
+    while (k >= 0) {
+        hc_sbb(sb, load8(hexd + ((v >> (k * 4)) & 15)));
+        k = k - 1;
+    }
+    return 0;
+}
+
+# repr(s) for a UTF-8 Str.
+fn tc_repr(s): i64 {
+    var has_sq = hc_findb(s, 39, 0) >= 0;
+    var has_dq = hc_findb(s, 34, 0) >= 0;
+    var q = 39;
+    if (has_sq && !has_dq) { q = 34; }
+    var sb = hc_sb();
+    hc_sbb(sb, q);
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(s)) {
+        var cp = hc_u8(s, i, &l);
+        i = i + l;
+        if (cp == q || cp == 92) { hc_sbb(sb, 92); hc_sbb(sb, cp); }
+        elif (cp == 9) { hc_sbc(sb, "\\t"); }
+        elif (cp == 10) { hc_sbc(sb, "\\n"); }
+        elif (cp == 13) { hc_sbc(sb, "\\r"); }
+        elif (cp < 32 || cp == 127) { hc_sbc(sb, "\\x"); _tc_hex(sb, cp, 2); }
+        elif (cp < 127) { hc_sbb(sb, cp); }
+        elif (_tc_printable(cp) == 1) { hc_sb_cp(sb, cp); }
+        elif (cp <= 0xFF) { hc_sbc(sb, "\\x"); _tc_hex(sb, cp, 2); }
+        elif (cp <= 0xFFFF) { hc_sbc(sb, "\\u"); _tc_hex(sb, cp, 4); }
+        else { hc_sbc(sb, "\\U"); _tc_hex(sb, cp, 8); }
+    }
+    hc_sbb(sb, q);
+    return hc_sbend(sb);
+}
+
+# repr of one code point as a 1-char str.
+fn _tc_repr_cp(cp): i64 {
+    var sb = hc_sb();
+    hc_sb_cp(sb, cp);
+    return tc_repr(hc_sbend(sb));
+}
+
+# repr(key) for a key tuple (a vec of Str): ('a',) / ('a', 'b')
+fn _tc_repr_key(k): i64 {
+    var sb = hc_sb();
+    hc_sbc(sb, "(");
+    var i = 0;
+    while (i < vec_len(k)) {
+        if (i > 0) { hc_sbc(sb, ", "); }
+        hc_sba(sb, tc_repr(vec_get(k, i)));
+        i = i + 1;
+    }
+    if (vec_len(k) == 1) { hc_sbc(sb, ","); }
+    hc_sbc(sb, ")");
+    return hc_sbend(sb);
+}
+
+# ── keys (tuples of Str) ─────────────────────────────────────────────────────────────────
+
+fn _tk_cat(a, b): i64 {
+    var v = vec_new();
+    var i = 0;
+    while (i < vec_len(a)) { vec_push(v, vec_get(a, i)); i = i + 1; }
+    i = 0;
+    while (i < vec_len(b)) { vec_push(v, vec_get(b, i)); i = i + 1; }
+    return v;
+}
+fn _tk_head(a, n): i64 {
+    var v = vec_new();
+    var i = 0;
+    while (i < n && i < vec_len(a)) { vec_push(v, vec_get(a, i)); i = i + 1; }
+    return v;
+}
+fn _tk_last(a): i64 { return vec_get(a, vec_len(a) - 1); }
+
+# ── values: a vec [kind, payload]; 1 scalar, 2 dict (vec of [key, value]), 3 list ──────────
+
+fn _tv_new(kind): i64 {
+    var v = vec_new();
+    vec_push(v, kind);
+    vec_push(v, vec_new());
+    return v;
+}
+fn _tv_kind(v): i64 { return vec_get(v, 0); }
+fn _tv_items(v): i64 { return vec_get(v, 1); }
+fn _td_find(d, key): i64 {
+    var it = _tv_items(d);
+    var i = 0;
+    while (i < vec_len(it)) {
+        if (hc_eq(vec_get(vec_get(it, i), 0), key) == 1) { return vec_get(it, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _td_get(d, key): i64 {
+    var p = _td_find(d, key);
+    if (p == 0) { return 0; }
+    return vec_get(p, 1);
+}
+fn _td_set(d, key, val): i64 {
+    var p = _td_find(d, key);
+    if (p != 0) { vec_set(p, 1, val); return 0; }
+    p = vec_new();
+    vec_push(p, key);
+    vec_push(p, val);
+    vec_push(_tv_items(d), p);
+    return 0;
+}
+
+# NestedDict.get_or_create_nest: the nest, or 0 with KeyError (the caller turns it into its own
+# message). A frame.
+fn _tn_get_or_create(root, key, access_lists): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var cont = root;
+    var i = 0;
+    while (i < vec_len(key)) {
+        var k = vec_get(key, i);
+        if (_td_get(cont, k) == 0) { _td_set(cont, k, _tv_new(2)); }
+        cont = _td_get(cont, k);
+        if (access_lists == 1 && _tv_kind(cont) == 3) {
+            var items = _tv_items(cont);
+            cont = vec_get(items, vec_len(items) - 1);
+        }
+        if (_tv_kind(cont) != 2) { _tc_out(); return 0; }
+        i = i + 1;
+    }
+    _tc_out();
+    return cont;
+}
+
+# NestedDict.append_nest_to_list: 1, or 0 with KeyError. A frame (and get_or_create_nest's).
+fn _tn_append_list(root, key): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var cont = _tn_get_or_create(root, _tk_head(key, vec_len(key) - 1), 1);
+    if (_tc_err != 0 || cont == 0) { _tc_out(); return 0; }
+    var last = _tk_last(key);
+    var l = _td_get(cont, last);
+    if (l != 0) {
+        if (_tv_kind(l) != 3) { _tc_out(); return 0; }
+        vec_push(_tv_items(l), _tv_new(2));
+    } else {
+        var nl = _tv_new(3);
+        vec_push(_tv_items(nl), _tv_new(2));
+        _td_set(cont, last, nl);
+    }
+    _tc_out();
+    return 1;
+}
+
+# ── Flags: a tree of [flags, recursive_flags, nested (vec of [key, node])] ─────────────────
+# FROZEN = bit 1, EXPLICIT_NEST = bit 2. A Flags object: [root nested vec, pending vec].
+
+fn _tf_new(): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var f = vec_new();
+    vec_push(f, vec_new());
+    vec_push(f, vec_new());
+    _tc_out();
+    return f;
+}
+fn _tf_node_new(): i64 {
+    var n = vec_new();
+    vec_push(n, 0);
+    vec_push(n, 0);
+    vec_push(n, vec_new());
+    return n;
+}
+fn _tf_find(cont, k): i64 {
+    var i = 0;
+    while (i < vec_len(cont)) {
+        if (hc_eq(vec_get(vec_get(cont, i), 0), k) == 1) { return vec_get(vec_get(cont, i), 1); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _tf_add(cont, k, node): i64 {
+    var p = vec_new();
+    vec_push(p, k);
+    vec_push(p, node);
+    vec_push(cont, p);
+    return 0;
+}
+
+fn _tf_set(f, key, flag, recursive): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var cont = vec_get(f, 0);
+    var i = 0;
+    while (i < vec_len(key) - 1) {
+        var k = vec_get(key, i);
+        var n = _tf_find(cont, k);
+        if (n == 0) { n = _tf_node_new(); _tf_add(cont, k, n); }
+        cont = vec_get(n, 2);
+        i = i + 1;
+    }
+    var stem = _tk_last(key);
+    var sn = _tf_find(cont, stem);
+    if (sn == 0) { sn = _tf_node_new(); _tf_add(cont, stem, sn); }
+    if (recursive == 1) { vec_set(sn, 1, vec_get(sn, 1) | flag); }
+    else { vec_set(sn, 0, vec_get(sn, 0) | flag); }
+    _tc_out();
+    return 0;
+}
+
+fn _tf_is(f, key, flag): i64 {
+    if (_tc_in() == 1) { return 0; }
+    if (vec_len(key) == 0) { _tc_out(); return 0; }
+    var cont = vec_get(f, 0);
+    var i = 0;
+    while (i < vec_len(key) - 1) {
+        var n = _tf_find(cont, vec_get(key, i));
+        if (n == 0) { _tc_out(); return 0; }
+        if ((vec_get(n, 1) & flag) != 0) { _tc_out(); return 1; }
+        cont = vec_get(n, 2);
+        i = i + 1;
+    }
+    var sn = _tf_find(cont, _tk_last(key));
+    var r = 0;
+    if (sn != 0) {
+        if (((vec_get(sn, 0) | vec_get(sn, 1)) & flag) != 0) { r = 1; }
+    }
+    _tc_out();
+    return r;
+}
+
+fn _tf_add_pending(f, key, flag): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var p = vec_new();
+    vec_push(p, key);
+    vec_push(p, flag);
+    vec_push(vec_get(f, 1), p);
+    _tc_out();
+    return 0;
+}
+
+fn _tf_finalize(f): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var pend = vec_get(f, 1);
+    var i = 0;
+    while (i < vec_len(pend)) {
+        var p = vec_get(pend, i);
+        _tf_set(f, vec_get(p, 0), vec_get(p, 1), 0);
+        if (_tc_err != 0) { _tc_out(); return 0; }
+        i = i + 1;
+    }
+    vec_set(f, 1, vec_new());
+    _tc_out();
+    return 0;
+}
+
+fn _tf_unset_all(f, key): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var cont = vec_get(f, 0);
+    var i = 0;
+    while (i < vec_len(key) - 1) {
+        var n = _tf_find(cont, vec_get(key, i));
+        if (n == 0) { _tc_out(); return 0; }
+        cont = vec_get(n, 2);
+        i = i + 1;
+    }
+    var stem = _tk_last(key);
+    var j = 0;
+    while (j < vec_len(cont)) {
+        if (hc_eq(vec_get(vec_get(cont, j), 0), stem) == 1) { vec_remove(cont, j); break; }
+        j = j + 1;
+    }
+    _tc_out();
+    return 0;
+}
+
+# ── character sets ───────────────────────────────────────────────────────────────────────
+# 1 TOML_WS, 2 TOML_WS_AND_NEWLINE, 3 BARE_KEY_CHARS; error sets: 5 ILLEGAL_BASIC_STR_CHARS
+# (ASCII controls but tab, and DEL), 6 ILLEGAL_MULTILINE_*_CHARS (ASCII controls but tab and LF).
+
+fn _tc_in_set(cp, set): i64 {
+    if (set == 1) { if (cp == 32 || cp == 9) { return 1; } return 0; }
+    if (set == 2) { if (cp == 32 || cp == 9 || cp == 10) { return 1; } return 0; }
+    if (set == 3) {
+        if (cp >= 97 && cp <= 122) { return 1; }
+        if (cp >= 65 && cp <= 90) { return 1; }
+        if (cp >= 48 && cp <= 57) { return 1; }
+        if (cp == 45 || cp == 95) { return 1; }
+        return 0;
+    }
+    if (set == 5) {
+        if (cp == 9) { return 0; }
+        if ((cp >= 0 && cp < 32) || cp == 127) { return 1; }
+        return 0;
+    }
+    if (set == 6) {
+        if (cp == 9 || cp == 10) { return 0; }
+        if ((cp >= 0 && cp < 32) || cp == 127) { return 1; }
+        return 0;
+    }
+    return 0;
+}
+
+fn _tc_skip_chars(pos, set): i64 {
+    if (_tc_in() == 1) { return 0; }
+    while (pos < _tc_n) {
+        if (_tc_in_set(_tc_ch(pos), set) == 0) { break; }
+        pos = pos + 1;
+    }
+    _tc_out();
+    return pos;
+}
+
+# skip_until(src, pos, expect, error_on=…, error_on_eof=…)
+fn _tc_skip_until(pos, expectc, error_on, error_on_eof): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_skip_until_b(pos, expectc, error_on, error_on_eof);
+    _tc_out();
+    return r;
+}
+fn _tc_skip_until_b(pos, expectc, error_on, error_on_eof): i64 {
+    var new_pos = 0 - 1;
+    var i = pos;
+    while (i < _tc_n) {
+        if (_tc_starts(i, expectc) == 1) { new_pos = i; break; }
+        i = i + 1;
+    }
+    if (new_pos < 0) {
+        new_pos = _tc_n;
+        if (error_on_eof == 1) {
+            _tc_raise(hc_ccat("Expected ", tc_repr(hc_s(expectc))), new_pos);
+            return 0;
+        }
+    }
+    var j = pos;
+    while (j < new_pos) {
+        if (_tc_in_set(_tc_ch(j), error_on) == 1) {
+            _tc_raise(hc_ccat("Found invalid character ", _tc_repr_cp(_tc_ch(j))), j);
+            return 0;
+        }
+        j = j + 1;
+    }
+    return new_pos;
+}
+
+fn _tc_skip_comment(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    if (_tc_ch(pos) == 35) {
+        var r = _tc_skip_until(pos + 1, "\n", 5, 0);
+        _tc_out();
+        return r;
+    }
+    _tc_out();
+    return pos;
+}
+
+fn _tc_skip_comments_ws(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    loop {
+        var before = pos;
+        pos = _tc_skip_chars(pos, 2);
+        if (_tc_err != 0) { break; }
+        pos = _tc_skip_comment(pos);
+        if (_tc_err != 0) { break; }
+        if (pos == before) { break; }
+    }
+    _tc_out();
+    return pos;
+}
+
+# ── keys ─────────────────────────────────────────────────────────────────────────────────
+
+# parse_key: the position; the key (a vec of Str) in _tc_rv.
+fn _tc_parse_key(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_key_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_key_b(pos): i64 {
+    pos = _tc_parse_key_part(pos);
+    if (_tc_err != 0) { return 0; }
+    var key = vec_new();
+    vec_push(key, _tc_rv);
+    pos = _tc_skip_chars(pos, 1);
+    if (_tc_err != 0) { return 0; }
+    loop {
+        if (_tc_ch(pos) != 46) { _tc_rv = key; return pos; }
+        pos = pos + 1;
+        pos = _tc_skip_chars(pos, 1);
+        if (_tc_err != 0) { return 0; }
+        pos = _tc_parse_key_part(pos);
+        if (_tc_err != 0) { return 0; }
+        vec_push(key, _tc_rv);
+        if (vec_len(key) > 1000) {
+            _tc_err = hc_s("TOML key has more than the allowed 1000 parts");
+            return 0;
+        }
+        pos = _tc_skip_chars(pos, 1);
+        if (_tc_err != 0) { return 0; }
+    }
+    return 0;
+}
+
+fn _tc_parse_key_part(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_key_part_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_key_part_b(pos): i64 {
+    var c = _tc_ch(pos);
+    if (c >= 0 && _tc_in_set(c, 3) == 1) {
+        var st = pos;
+        pos = _tc_skip_chars(pos, 3);
+        if (_tc_err != 0) { return 0; }
+        _tc_rv = _tc_slice(st, pos);
+        return pos;
+    }
+    if (c == 39) { return _tc_parse_literal_str(pos); }
+    if (c == 34) { return _tc_parse_one_line_basic_str(pos); }
+    _tc_raisec("Invalid initial character for a key part", pos);
+    return 0;
+}
+
+# ── strings ──────────────────────────────────────────────────────────────────────────────
+
+fn _tc_parse_one_line_basic_str(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_basic_str(pos + 1, 0);
+    _tc_out();
+    return r;
+}
+
+fn _tc_parse_literal_str(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    pos = pos + 1;
+    var st = pos;
+    pos = _tc_skip_until(pos, "'", 5, 1);
+    if (_tc_err != 0) { _tc_out(); return 0; }
+    _tc_rv = _tc_slice(st, pos);
+    _tc_out();
+    return pos + 1;
+}
+
+fn _tc_parse_multiline_str(pos, literal): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_multiline_str_b(pos, literal);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_multiline_str_b(pos, literal): i64 {
+    pos = pos + 3;
+    if (_tc_ch(pos) == 10) { pos = pos + 1; }
+    var delim = 34;
+    var result = 0;
+    if (literal == 1) {
+        delim = 39;
+        var end_pos = _tc_skip_until(pos, "'''", 6, 1);
+        if (_tc_err != 0) { return 0; }
+        result = _tc_slice(pos, end_pos);
+        pos = end_pos + 3;
+    } else {
+        pos = _tc_parse_basic_str(pos, 1);
+        if (_tc_err != 0) { return 0; }
+        result = _tc_rv;
+    }
+    if (_tc_ch(pos) != delim) { _tc_rv = result; return pos; }
+    pos = pos + 1;
+    var sb = hc_sb();
+    hc_sba(sb, result);
+    hc_sbb(sb, delim);
+    if (_tc_ch(pos) != delim) { _tc_rv = hc_sbend(sb); return pos; }
+    pos = pos + 1;
+    hc_sbb(sb, delim);
+    _tc_rv = hc_sbend(sb);
+    return pos;
+}
+
+fn _tc_parse_basic_str(pos, multiline): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_basic_str_b(pos, multiline);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_basic_str_b(pos, multiline): i64 {
+    var error_on = 5;
+    if (multiline == 1) { error_on = 6; }
+    var sb = hc_sb();
+    var st = pos;
+    loop {
+        var c = _tc_ch(pos);
+        if (c < 0) { _tc_raisec("Unterminated string", pos); return 0; }
+        if (c == 34) {
+            if (multiline == 0) {
+                hc_sba(sb, _tc_slice(st, pos));
+                _tc_rv = hc_sbend(sb);
+                return pos + 1;
+            }
+            if (_tc_starts(pos, "\"\"\"") == 1) {
+                hc_sba(sb, _tc_slice(st, pos));
+                _tc_rv = hc_sbend(sb);
+                return pos + 3;
+            }
+            pos = pos + 1;
+            continue;
+        }
+        if (c == 92) {
+            hc_sba(sb, _tc_slice(st, pos));
+            if (multiline == 1) { pos = _tc_parse_escape_ml(pos); }
+            else { pos = _tc_parse_escape(pos, 0); }
+            if (_tc_err != 0) { return 0; }
+            hc_sba(sb, _tc_rv);
+            st = pos;
+            continue;
+        }
+        if (_tc_in_set(c, error_on) == 1) {
+            _tc_raise(hc_ccat("Illegal character ", _tc_repr_cp(c)), pos);
+            return 0;
+        }
+        pos = pos + 1;
+    }
+    return 0;
+}
+
+fn _tc_parse_escape_ml(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_escape(pos, 1);
+    _tc_out();
+    return r;
+}
+
+fn _tc_parse_escape(pos, multiline): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_escape_b(pos, multiline);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_escape_b(pos, multiline): i64 {
+    var e = _tc_ch(pos + 1);   # the escape_id is src[pos:pos+2]; -1 when it is one char
+    pos = pos + 2;
+    if (multiline == 1 && (e == 32 || e == 9 || e == 10)) {
+        if (e != 10) {
+            pos = _tc_skip_chars(pos, 1);
+            if (_tc_err != 0) { return 0; }
+            var c = _tc_ch(pos);
+            if (c < 0) { _tc_rv = hc_s(""); return pos; }
+            if (c != 10) { _tc_raisec("Unescaped '\\' in a string", pos); return 0; }
+            pos = pos + 1;
+        }
+        pos = _tc_skip_chars(pos, 2);
+        if (_tc_err != 0) { return 0; }
+        _tc_rv = hc_s("");
+        return pos;
+    }
+    if (e == 117) { return _tc_parse_hex_char(pos, 4); }
+    if (e == 85) { return _tc_parse_hex_char(pos, 8); }
+    var rep = 0 - 1;
+    if (e == 98) { rep = 8; }
+    if (e == 116) { rep = 9; }
+    if (e == 110) { rep = 10; }
+    if (e == 102) { rep = 12; }
+    if (e == 114) { rep = 13; }
+    if (e == 34) { rep = 34; }
+    if (e == 92) { rep = 92; }
+    if (rep < 0) { _tc_raisec("Unescaped '\\' in a string", pos); return 0; }
+    var sb = hc_sb();
+    hc_sbb(sb, rep);
+    _tc_rv = hc_sbend(sb);
+    return pos;
+}
+
+fn _tc_is_hex(cp): i64 {
+    if (cp >= 48 && cp <= 57) { return 1; }
+    if (cp >= 97 && cp <= 102) { return 1; }
+    if (cp >= 65 && cp <= 70) { return 1; }
+    return 0;
+}
+fn _tc_hexval(cp): i64 {
+    if (cp >= 48 && cp <= 57) { return cp - 48; }
+    if (cp >= 97 && cp <= 102) { return cp - 87; }
+    return cp - 55;
+}
+
+fn _tc_parse_hex_char(pos, hex_len): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_hex_char_b(pos, hex_len);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_hex_char_b(pos, hex_len): i64 {
+    var i = 0;
+    var v = 0;
+    while (i < hex_len) {
+        var c = _tc_ch(pos + i);
+        if (c < 0 || _tc_is_hex(c) == 0) { _tc_raisec("Invalid hex value", pos); return 0; }
+        v = v * 16 + _tc_hexval(c);
+        i = i + 1;
+    }
+    pos = pos + hex_len;
+    # is_unicode_scalar_value is a Python function: a frame
+    if (_tc_in() == 1) { return 0; }
+    _tc_out();
+    var ok = 0;
+    if (v >= 0 && v <= 55295) { ok = 1; }
+    if (v >= 57344 && v <= 1114111) { ok = 1; }
+    if (ok == 0) { _tc_raisec("Escaped character is not a Unicode scalar value", pos); return 0; }
+    var sb = hc_sb();
+    hc_sb_cp(sb, v);
+    _tc_rv = hc_sbend(sb);
+    return pos;
+}
+
+# ── numbers, dates and times (_re.py) ────────────────────────────────────────────────────
+
+fn _tc_digit(pos): i64 {
+    var c = _tc_ch(pos);
+    if (c >= 48 && c <= 57) { return c - 48; }
+    return 0 - 1;
+}
+
+# (?:_?<d>)* after a first digit of class `cls` (2 bin, 8 oct, 10 dec, 16 hex): the end.
+fn _tc_digits_tail(pos, cls): i64 {
+    loop {
+        var p = pos;
+        if (_tc_ch(p) == 95) { p = p + 1; }
+        if (_tc_in_digit_class(_tc_ch(p), cls) == 0) { return pos; }
+        pos = p + 1;
+    }
+    return pos;
+}
+fn _tc_in_digit_class(c, cls): i64 {
+    if (cls == 2) { if (c == 48 || c == 49) { return 1; } return 0; }
+    if (cls == 8) { if (c >= 48 && c <= 55) { return 1; } return 0; }
+    if (cls == 10) { if (c >= 48 && c <= 57) { return 1; } return 0; }
+    return _tc_is_hex(c);
+}
+
+# RE_NUMBER.match(src, pos): the end, or -1.
+fn _tc_number_at(pos): i64 {
+    if (_tc_ch(pos) == 48) {
+        var k = _tc_ch(pos + 1);
+        var cls = 0;
+        if (k == 120) { cls = 16; }
+        if (k == 98) { cls = 2; }
+        if (k == 111) { cls = 8; }
+        if (cls != 0) {
+            if (_tc_in_digit_class(_tc_ch(pos + 2), cls) == 1) { return _tc_digits_tail(pos + 3, cls); }
+        }
+    }
+    var p = pos;
+    if (_tc_ch(p) == 43 || _tc_ch(p) == 45) { p = p + 1; }
+    var d = _tc_digit(p);
+    if (d < 0) { return 0 - 1; }
+    if (d == 0) { p = p + 1; }
+    else { p = _tc_digits_tail(p + 1, 10); }
+    if (_tc_ch(p) == 46 && _tc_digit(p + 1) >= 0) { p = _tc_digits_tail(p + 2, 10); }
+    var e = _tc_ch(p);
+    if (e == 101 || e == 69) {
+        var q = p + 1;
+        if (_tc_ch(q) == 43 || _tc_ch(q) == 45) { q = q + 1; }
+        if (_tc_digit(q) >= 0) { p = _tc_digits_tail(q + 1, 10); }
+    }
+    return p;
+}
+
+# Two digits at pos with the first in [lo1, hi1] and the second in [lo2, hi2]: the value, or -1.
+fn _tc_dd(pos, lo1, hi1, lo2, hi2): i64 {
+    var a = _tc_digit(pos);
+    var b = _tc_digit(pos + 1);
+    if (a < lo1 || a > hi1 || b < lo2 || b > hi2) { return 0 - 1; }
+    return a * 10 + b;
+}
+# ([01][0-9]|2[0-3])
+fn _tc_hour(pos): i64 {
+    var h = _tc_dd(pos, 0, 1, 0, 9);
+    if (h >= 0) { return h; }
+    return _tc_dd(pos, 2, 2, 0, 3);
+}
+
+# _TIME_RE_STR at pos: the end, or -1.
+fn _tc_time_at(pos): i64 {
+    if (_tc_hour(pos) < 0) { return 0 - 1; }
+    if (_tc_ch(pos + 2) != 58) { return 0 - 1; }
+    if (_tc_dd(pos + 3, 0, 5, 0, 9) < 0) { return 0 - 1; }
+    if (_tc_ch(pos + 5) != 58) { return 0 - 1; }
+    if (_tc_dd(pos + 6, 0, 5, 0, 9) < 0) { return 0 - 1; }
+    var p = pos + 8;
+    if (_tc_ch(p) == 46 && _tc_digit(p + 1) >= 0) {
+        p = p + 2;
+        while (_tc_digit(p) >= 0) { p = p + 1; }
+    }
+    return p;
+}
+
+var _tc_off_h = 0;
+var _tc_off_m = 0;
+var _tc_off_sign = 0;
+var _tc_has_time = 0;
+var _tc_has_off = 0;
+
+# RE_DATETIME.match(src, pos): the end (or -1); year, month and day at out[0..2]; the time and
+# offset into the _tc_* globals above.
+fn _tc_datetime_at(pos, out): i64 {
+    var i = 0;
+    var year = 0;
+    while (i < 4) {
+        var d = _tc_digit(pos + i);
+        if (d < 0) { return 0 - 1; }
+        year = year * 10 + d;
+        i = i + 1;
+    }
+    if (_tc_ch(pos + 4) != 45) { return 0 - 1; }
+    var month = _tc_dd(pos + 5, 0, 0, 1, 9);
+    if (month < 0) { month = _tc_dd(pos + 5, 1, 1, 0, 2); }
+    if (month < 0) { return 0 - 1; }
+    if (_tc_ch(pos + 7) != 45) { return 0 - 1; }
+    var day = _tc_dd(pos + 8, 0, 0, 1, 9);
+    if (day < 0) { day = _tc_dd(pos + 8, 1, 2, 0, 9); }
+    if (day < 0) { day = _tc_dd(pos + 8, 3, 3, 0, 1); }
+    if (day < 0) { return 0 - 1; }
+    store64(out, year);
+    store64(out + 8, month);
+    store64(out + 16, day);
+    var p = pos + 10;
+    _tc_has_time = 0;
+    _tc_has_off = 0;
+    var t = _tc_ch(p);
+    if (t == 84 || t == 116 || t == 32) {
+        var te = _tc_time_at(p + 1);
+        if (te >= 0) {
+            _tc_has_time = 1;
+            p = te;
+            var z = _tc_ch(p);
+            if (z == 90 || z == 122) { p = p + 1; }
+            elif (z == 43 || z == 45) {
+                var oh = _tc_hour(p + 1);
+                if (oh >= 0 && _tc_ch(p + 3) == 58) {
+                    var om = _tc_dd(p + 4, 0, 5, 0, 9);
+                    if (om >= 0) {
+                        _tc_has_off = 1;
+                        _tc_off_h = oh;
+                        _tc_off_m = om;
+                        _tc_off_sign = z;
+                        p = p + 6;
+                    }
+                }
+            }
+        }
+    }
+    return p;
+}
+
+fn _tc_leap(y): i64 {
+    if (y % 4 != 0) { return 0; }
+    if (y % 100 != 0) { return 1; }
+    if (y % 400 == 0) { return 1; }
+    return 0;
+}
+# datetime.date's check: 1 <= year (MINYEAR), day within the month.
+fn _tc_date_ok(y, m, d): i64 {
+    if (y < 1) { return 0; }
+    var dim = 31;
+    if (m == 4 || m == 6 || m == 9 || m == 11) { dim = 30; }
+    if (m == 2) { dim = 28 + _tc_leap(y); }
+    if (d > dim) { return 0; }
+    return 1;
+}
+
+# ── values ───────────────────────────────────────────────────────────────────────────────
+
+# parse_value: the position; the value in _tc_rv.
+fn _tc_parse_value(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_value_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_value_b(pos): i64 {
+    var c = _tc_ch(pos);
+    if (c == 34) {
+        if (_tc_starts(pos, "\"\"\"") == 1) {
+            pos = _tc_parse_multiline_str(pos, 0);
+        } else {
+            pos = _tc_parse_one_line_basic_str(pos);
+        }
+        if (_tc_err != 0) { return 0; }
+        _tc_rv = _tv_new(1);
+        return pos;
+    }
+    if (c == 39) {
+        if (_tc_starts(pos, "'''") == 1) {
+            pos = _tc_parse_multiline_str(pos, 1);
+        } else {
+            pos = _tc_parse_literal_str(pos);
+        }
+        if (_tc_err != 0) { return 0; }
+        _tc_rv = _tv_new(1);
+        return pos;
+    }
+    if (c == 116) { if (_tc_starts(pos, "true") == 1) { _tc_rv = _tv_new(1); return pos + 4; } }
+    if (c == 102) { if (_tc_starts(pos, "false") == 1) { _tc_rv = _tv_new(1); return pos + 5; } }
+    if (c == 91) { return _tc_parse_array(pos); }
+    if (c == 123) { return _tc_parse_inline_table(pos); }
+    var ymd: i64[3];
+    var de = _tc_datetime_at(pos, &ymd);
+    if (de >= 0) {
+        # match_to_datetime (a frame; cached_tz one more, the first time an offset is seen)
+        if (_tc_in() == 1) { return 0; }
+        if (_tc_has_time == 1 && _tc_has_off == 1) {
+            var tzk = _tc_off_sign * 10000 + _tc_off_h * 100 + _tc_off_m;
+            if (_tc_tz == 0) { _tc_tz = vec_new(); }
+            if (vec_find(_tc_tz, tzk) < 0) {
+                vec_push(_tc_tz, tzk);
+                if (_tc_in() == 1) { _tc_out(); return 0; }
+                _tc_out();
+            }
+        }
+        _tc_out();
+        if (_tc_date_ok(ymd[0], ymd[1], ymd[2]) == 0) {
+            _tc_raisec("Invalid date or datetime", pos);
+            return 0;
+        }
+        _tc_rv = _tv_new(1);
+        return de;
+    }
+    var le = _tc_time_at(pos);
+    if (le >= 0) {
+        if (_tc_in() == 1) { return 0; }   # match_to_localtime
+        _tc_out();
+        _tc_rv = _tv_new(1);
+        return le;
+    }
+    var ne = _tc_number_at(pos);
+    if (ne >= 0) {
+        if (_tc_in() == 1) { return 0; }   # match_to_number
+        _tc_out();
+        _tc_rv = _tv_new(1);
+        return ne;
+    }
+    if (_tc_starts(pos, "inf") == 1 || _tc_starts(pos, "nan") == 1) { _tc_rv = _tv_new(1); return pos + 3; }
+    if (_tc_starts(pos, "-inf") == 1 || _tc_starts(pos, "+inf") == 1) { _tc_rv = _tv_new(1); return pos + 4; }
+    if (_tc_starts(pos, "-nan") == 1 || _tc_starts(pos, "+nan") == 1) { _tc_rv = _tv_new(1); return pos + 4; }
+    _tc_raisec("Invalid value", pos);
+    return 0;
+}
+
+fn _tc_parse_array(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_array_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_array_b(pos): i64 {
+    pos = pos + 1;
+    var arr = _tv_new(3);
+    pos = _tc_skip_comments_ws(pos);
+    if (_tc_err != 0) { return 0; }
+    if (_tc_ch(pos) == 93) { _tc_rv = arr; return pos + 1; }
+    loop {
+        pos = _tc_parse_value(pos);
+        if (_tc_err != 0) { return 0; }
+        vec_push(_tv_items(arr), _tc_rv);
+        pos = _tc_skip_comments_ws(pos);
+        if (_tc_err != 0) { return 0; }
+        var c = _tc_ch(pos);
+        if (c == 93) { _tc_rv = arr; return pos + 1; }
+        if (c != 44) { _tc_raisec("Unclosed array", pos); return 0; }
+        pos = pos + 1;
+        pos = _tc_skip_comments_ws(pos);
+        if (_tc_err != 0) { return 0; }
+        if (_tc_ch(pos) == 93) { _tc_rv = arr; return pos + 1; }
+    }
+    return 0;
+}
+
+# parse_key_value_pair: the position; the key in _tc_pk, the value in _tc_rv.
+var _tc_pk = 0;
+fn _tc_parse_kv(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_kv_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_parse_kv_b(pos): i64 {
+    pos = _tc_parse_key(pos);
+    if (_tc_err != 0) { return 0; }
+    var key = _tc_rv;
+    if (_tc_ch(pos) != 61) { _tc_raisec("Expected '=' after a key in a key/value pair", pos); return 0; }
+    pos = pos + 1;
+    pos = _tc_skip_chars(pos, 1);
+    if (_tc_err != 0) { return 0; }
+    pos = _tc_parse_value(pos);
+    if (_tc_err != 0) { return 0; }
+    _tc_pk = key;
+    return pos;
+}
+
+fn _tc_parse_inline_table(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_parse_inline_table_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_nd_new(): i64 {
+    if (_tc_in() == 1) { return 0; }   # NestedDict.__init__
+    _tc_out();
+    return _tv_new(2);
+}
+fn _tc_parse_inline_table_b(pos): i64 {
+    pos = pos + 1;
+    var nd = _tc_nd_new();
+    if (_tc_err != 0) { return 0; }
+    var flags = _tf_new();
+    if (_tc_err != 0) { return 0; }
+    pos = _tc_skip_chars(pos, 1);
+    if (_tc_err != 0) { return 0; }
+    if (_tc_ch(pos) == 125) { _tc_rv = nd; return pos + 1; }
+    loop {
+        pos = _tc_parse_kv(pos);
+        if (_tc_err != 0) { return 0; }
+        var key = _tc_pk;
+        var value = _tc_rv;
+        var parent = _tk_head(key, vec_len(key) - 1);
+        var stem = _tk_last(key);
+        var fz = _tf_is(flags, key, 1);
+        if (_tc_err != 0) { return 0; }
+        if (fz == 1) { _tc_raise(hc_ccat("Cannot mutate immutable namespace ", _tc_repr_key(key)), pos); return 0; }
+        var nest = _tn_get_or_create(nd, parent, 0);
+        if (_tc_err != 0) { return 0; }
+        if (nest == 0) { _tc_raisec("Cannot overwrite a value", pos); return 0; }
+        if (_td_get(nest, stem) != 0) {
+            _tc_raise(hc_ccat("Duplicate inline table key ", tc_repr(stem)), pos);
+            return 0;
+        }
+        _td_set(nest, stem, value);
+        pos = _tc_skip_chars(pos, 1);
+        if (_tc_err != 0) { return 0; }
+        var c = _tc_ch(pos);
+        if (c == 125) { _tc_rv = nd; return pos + 1; }
+        if (c != 44) { _tc_raisec("Unclosed inline table", pos); return 0; }
+        if (_tv_kind(value) != 1) {
+            _tf_set(flags, key, 1, 1);
+            if (_tc_err != 0) { return 0; }
+        }
+        pos = pos + 1;
+        pos = _tc_skip_chars(pos, 1);
+        if (_tc_err != 0) { return 0; }
+    }
+    return 0;
+}
+
+# ── statements ───────────────────────────────────────────────────────────────────────────
+
+var _tc_data = 0;    # the document's NestedDict root
+var _tc_flags = 0;   # its Flags
+var _tc_header = 0;  # the current table's key
+
+fn _tc_create_dict_rule(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_create_dict_rule_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_create_dict_rule_b(pos): i64 {
+    pos = pos + 1;
+    pos = _tc_skip_chars(pos, 1);
+    if (_tc_err != 0) { return 0; }
+    pos = _tc_parse_key(pos);
+    if (_tc_err != 0) { return 0; }
+    var key = _tc_rv;
+    var ex = _tf_is(_tc_flags, key, 2);
+    if (_tc_err != 0) { return 0; }
+    var fz = 0;
+    if (ex == 0) { fz = _tf_is(_tc_flags, key, 1); if (_tc_err != 0) { return 0; } }
+    if (ex == 1 || fz == 1) {
+        _tc_raise(hc_cat3(hc_s("Cannot declare "), _tc_repr_key(key), hc_s(" twice")), pos);
+        return 0;
+    }
+    _tf_set(_tc_flags, key, 2, 0);
+    if (_tc_err != 0) { return 0; }
+    var nest = _tn_get_or_create(_tc_data, key, 1);
+    if (_tc_err != 0) { return 0; }
+    if (nest == 0) { _tc_raisec("Cannot overwrite a value", pos); return 0; }
+    if (_tc_ch(pos) != 93) { _tc_raisec("Expected ']' at the end of a table declaration", pos); return 0; }
+    _tc_header = key;
+    return pos + 1;
+}
+
+fn _tc_create_list_rule(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_create_list_rule_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_create_list_rule_b(pos): i64 {
+    pos = pos + 2;
+    pos = _tc_skip_chars(pos, 1);
+    if (_tc_err != 0) { return 0; }
+    pos = _tc_parse_key(pos);
+    if (_tc_err != 0) { return 0; }
+    var key = _tc_rv;
+    var fz = _tf_is(_tc_flags, key, 1);
+    if (_tc_err != 0) { return 0; }
+    if (fz == 1) { _tc_raise(hc_ccat("Cannot mutate immutable namespace ", _tc_repr_key(key)), pos); return 0; }
+    _tf_unset_all(_tc_flags, key);
+    if (_tc_err != 0) { return 0; }
+    _tf_set(_tc_flags, key, 2, 0);
+    if (_tc_err != 0) { return 0; }
+    var ok = _tn_append_list(_tc_data, key);
+    if (_tc_err != 0) { return 0; }
+    if (ok == 0) { _tc_raisec("Cannot overwrite a value", pos); return 0; }
+    if (_tc_starts(pos, "]]") == 0) { _tc_raisec("Expected ']]' at the end of an array declaration", pos); return 0; }
+    _tc_header = key;
+    return pos + 2;
+}
+
+fn _tc_key_value_rule(pos): i64 {
+    if (_tc_in() == 1) { return 0; }
+    var r = _tc_key_value_rule_b(pos);
+    _tc_out();
+    return r;
+}
+fn _tc_key_value_rule_b(pos): i64 {
+    pos = _tc_parse_kv(pos);
+    if (_tc_err != 0) { return 0; }
+    var key = _tc_pk;
+    var value = _tc_rv;
+    var parent = _tk_head(key, vec_len(key) - 1);
+    var stem = _tk_last(key);
+    var abs_parent = _tk_cat(_tc_header, parent);
+    var i = 1;
+    while (i < vec_len(key)) {
+        # the generator expression's frame, resumed for each container key
+        if (_tc_in() == 1) { return 0; }
+        _tc_out();
+        var ck = _tk_cat(_tc_header, _tk_head(key, i));
+        var ex = _tf_is(_tc_flags, ck, 2);
+        if (_tc_err != 0) { return 0; }
+        if (ex == 1) { _tc_raise(hc_ccat("Cannot redefine namespace ", _tc_repr_key(ck)), pos); return 0; }
+        _tf_add_pending(_tc_flags, ck, 2);
+        if (_tc_err != 0) { return 0; }
+        i = i + 1;
+    }
+    if (_tc_in() == 1) { return 0; }   # the generator's last resume (StopIteration)
+    _tc_out();
+    var fz = _tf_is(_tc_flags, abs_parent, 1);
+    if (_tc_err != 0) { return 0; }
+    if (fz == 1) {
+        _tc_raise(hc_ccat("Cannot mutate immutable namespace ", _tc_repr_key(abs_parent)), pos);
+        return 0;
+    }
+    var nest = _tn_get_or_create(_tc_data, abs_parent, 1);
+    if (_tc_err != 0) { return 0; }
+    if (nest == 0) { _tc_raisec("Cannot overwrite a value", pos); return 0; }
+    if (_td_get(nest, stem) != 0) { _tc_raisec("Cannot overwrite a value", pos); return 0; }
+    if (_tv_kind(value) != 1) {
+        _tf_set(_tc_flags, _tk_cat(_tc_header, key), 1, 1);
+        if (_tc_err != 0) { return 0; }
+    }
+    _td_set(nest, stem, value);
+    return pos;
+}
+
+# tomllib.loads(text) under a caller at frame depth 1 (the cymlcheck module): 0 when it parses,
+# else the message str(exception).
+fn tc_check(text): i64 {
+    # the code points, with CR LF folded to LF as loads folds them
+    var n = 0;
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(text)) { hc_u8(text, i, &l); i = i + l; n = n + 1; }
+    _tc_cp = alloc((n + 1) * 8);
+    var k = 0;
+    i = 0;
+    while (i < hc_n(text)) {
+        var cp = hc_u8(text, i, &l);
+        i = i + l;
+        if (cp == 13 && i < hc_n(text)) {
+            if (hc_at(text, i) == 10) { continue; }
+        }
+        store64(_tc_cp + k * 8, cp);
+        k = k + 1;
+    }
+    _tc_n = k;
+    _tc_err = 0;
+    _tc_depth = 1;
+    if (_tc_in() == 1) { return _tc_err; }   # loads
+    # Output() and its NestedDict() / Flags(): frames that come and go
+    if (_tc_in() == 1) { return _tc_err; }
+    _tc_out();
+    _tc_data = _tv_new(2);
+    _tc_flags = vec_new();
+    vec_push(_tc_flags, vec_new());
+    vec_push(_tc_flags, vec_new());
+    _tc_header = vec_new();
+    var pos = 0;
+    loop {
+        pos = _tc_skip_chars(pos, 1);
+        if (_tc_err != 0) { break; }
+        var c = _tc_ch(pos);
+        if (c < 0) { break; }
+        if (c == 10) { pos = pos + 1; continue; }
+        if (c >= 0 && (_tc_in_set(c, 3) == 1 || c == 34 || c == 39)) {
+            pos = _tc_key_value_rule(pos);
+            if (_tc_err != 0) { break; }
+            pos = _tc_skip_chars(pos, 1);
+            if (_tc_err != 0) { break; }
+        } elif (c == 91) {
+            var second = _tc_ch(pos + 1);
+            _tf_finalize(_tc_flags);
+            if (_tc_err != 0) { break; }
+            if (second == 91) { pos = _tc_create_list_rule(pos); }
+            else { pos = _tc_create_dict_rule(pos); }
+            if (_tc_err != 0) { break; }
+            pos = _tc_skip_chars(pos, 1);
+            if (_tc_err != 0) { break; }
+        } elif (c != 35) {
+            _tc_raisec("Invalid statement", pos);
+            break;
+        }
+        pos = _tc_skip_comment(pos);
+        if (_tc_err != 0) { break; }
+        var c2 = _tc_ch(pos);
+        if (c2 < 0) { break; }
+        if (c2 != 10) {
+            _tc_raisec("Expected newline or end of document after a statement", pos);
+            break;
+        }
+        pos = pos + 1;
+    }
+    return _tc_err;
+}

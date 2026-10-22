@@ -1,0 +1,49 @@
+rc=0
+--- stdout
+foldx @ v1 (pin 9.9.9): rc=1 ok=12 fail=8 skip=1
+--- stderr
+--- ci.log
+OK   [ci.yml] [build] [bash] Shell default from the workflow                    | xy
+FAIL [ci.yml] [build] [bash] Multi line                                         | one
+    one
+FAIL [ci.yml] [build] [bash] Pipefail failure                                   | 
+    
+FAIL [ci.yml] [build] [sh] sh step                                            | in-sh
+    in-sh
+FAIL [ci.yml] [build] [bash] Continue on error                                  | NON-GATING (continue-on-error: true) — 
+OK   [ci.yml] [build] [bash] Continue on error, passing                         | fine
+SKIP [ci.yml] [build] [bash] Sudo blocked                                       | needs sudo (a CI-runner package install) — cannot run here
+FAIL [ci.yml] [build] [bash]                                                    | bash: -c: line 1: syntax error near unexpected token `|'
+    bash: -c: line 1: syntax error near unexpected token `|'
+OK   [ci.yml] [build] [bash]                                                    | dash-form-line
+OK   [ci.yml] [build] [bash] A very long step name that goes on and on and on p | long-name
+OK   [ci.yml] [build] [bash] Uses with a run is still a run                     | ran-anyway
+OK   [ci.yml] [build] [bash] Folded                                             | folded
+OK   [ci.yml] [build] [bash] The toolchain from the throwaway home              | cyrius-home=home
+OK   [ci.yml] [build] [bash] Runner files                                       | github_env github_path github_output github_summary
+FAIL [ci.yml] [build] [bash] Slow                                               | timeout
+    
+OK   [ci.yml] [build] [bash] Long output                                        | tail-000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+FAIL [ci.yml] [build] [bash] Stderr only                                        | to-stderr
+    to-stderr
+OK   [ci.yml] [other] [sh] job default sh                                     | line2
+OK   [ci.yml] [other] [sh] unicode — naïve step ✓ with a long name to trim at | ünïcödé tail xxx
+FAIL [ci.yml] [other] [sh] Empty output failure                               | 
+    
+OK   [extra.yaml] [lint] [bash] yaml extension                                     | from-yaml
+--- copy/cyrius.cyml
+[package]
+name = "foldx"
+cyrius = "9.9.9"
+
+[deps]
+#   path = "../sibling"
+stdlib = ["string"]
+pathology = "not a path line"
+--- layout
+home/bin -> versions/9.9.9/bin
+home/lib -> versions/9.9.9/lib
+home/current: 9.9.9
+fh/.cyrius -> @T@/sibw/foldx/home
+9.9.9
+0
