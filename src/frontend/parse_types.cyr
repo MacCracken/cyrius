@@ -4631,6 +4631,7 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         _tn_refuse(S, ti, " as the element of slice ", vnoff);
         return 8;
     }
+    if (_vec_ann_at(S, ti) == 1) { return _tn_slice_vec(S, ti, vnoff); }   # 6.7.17 (D105): `[Vec<T>]`
     var g = _tn_slice_gen(S, ti);   # 6.7.16 (D89): `[Box<i64>]`, the instance
     if (g > 0) { return _tn_bytes(S, _tn_code(6, g)); }
     _tn_slice_ngt(S, ti);   # 6.7.16 (D7): `[Pt<i64>]`
@@ -4649,11 +4650,51 @@ fn _tn_slice_gen(S, ti): i64 {
     var sid = FINDSTRUCT(S, TOKVAL(S, ti));
     if (sid <= 0) { return 0; }
     if (_MONOMORPH_OK == 1) { if (GSTP(S, sid - 1) == 0) { return 0; } }
+    var over = _targ_over(S, ti + 1);   # 6.7.17: an over-closer is the slice's error (`_sl_el_over`)
     STI(S, ti + 1);
     var g = _gen_ann_sid(S, sid);
     _ta_pending_gt = 0;
-    STI(S, GTI(S) - 1);
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
     return g;
+}
+# The levels the `<..>` at token `k` closes beyond itself with its last closer (`_skip_targ_list`'s answer); the cursor
+# does not move.
+fn _targ_over(S, k): i64 {
+    var sv = GTI(S);
+    STI(S, k);
+    var o = _skip_targ_list(S);
+    STI(S, sv);
+    return o;
+}
+# ⛔ 6.7.17 (the user's D105, 2026-10-22) — A SLICE ELEMENT IS ANY TYPE VALID ELSEWHERE: `[Vec<i64>]` / `slice<Vec<T>>`
+# declare the 8-byte `vec_new()` handle `var v: Vec<i64>` does, `[*Vec<T>]` / `[**Vec<T>]` and `[*u128]` the 8-byte
+# pointer element (D93's). Each was a parse error — "expected ']', got '<'" / "expected ']', got u128" (the word form
+# "expected '=', got .." and "undefined variable 'i64'") — while `[u128]`, `[Box<i64>]` and the same annotations on a
+# local compiled. T is read as that annotation reads it (`_vec_ann_chk`: "unknown type 'Nope' as the Vec element of
+# 's'", a tuple, a pointer, a second argument refused by name) and the list stepped, the cursor on its last token (the
+# caller steps past it). CHANGELOG [6.7.17]
+fn _tn_slice_vec(S, ti, vnoff): i64 {
+    _vec_ann_chk(S, ti, vnoff);
+    STI(S, ti + 1);
+    var over = _skip_targ_list(S);
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
+    return 8;
+}
+# A slice element's `<..>` (`nti` its name; the cursor just past the list) whose last closer closed `over` levels beyond
+# it (`>>` / `>>>`): 1 when that is more than the slice may take — `slice<T<..>>`'s own `>` (one), none in `[T<..>]` (the
+# slice's opening token is the one before the element's `*`s). The caller then leaves the cursor so the slice's own read
+# meets that closer and reports it ("expected ']', got '>>'", "expected '=', got '>>>'"), as a declaration's list does
+# (6.7.17, `_tpl_skip`). A `>` after a closer that closed the slice too (`slice<Vec<i64>>>`) is reported here, where the
+# word form's read would take it as the slice's own: "expected '=', got '>'". Every element list asks it — Vec<T>, a
+# generic struct's (`[Box<i64>>]` compiled through 6.7.16, D89's), Result<..>, behind `*`s or not. CHANGELOG [6.7.17]
+fn _sl_el_over(S, nti, over): i64 {
+    var k = nti - 1;
+    while (TOKTYP(S, k) == 8) { k = k - 1; }
+    var lim = 1;
+    if (TOKTYP(S, k) == 28) { lim = 0; }
+    if (over > lim) { return 1; }
+    if (over == 1) { if (PEEKT(S) == 20) { ERR_EXPECT(S, 4); } }
+    return 0;
 }
 # 6.7.17 (D6): a slice element that is a type parameter with a list (`[U<i8>]`): refused (`_tp_targs_refuse`) and
 # stepped as `_tn_slice_ngt` steps one, before a bound parameter's early width — it was "expected ']', got '<'".
@@ -4669,8 +4710,8 @@ fn _tn_slice_tpa(S, ti): i64 {
 fn _tn_slice_ngt(S, ti): i64 {
     if (_ngt_refuse(S, ti) == 0) { return 0; }
     STI(S, ti + 1);
-    SKIP_GENERICS(S);
-    STI(S, GTI(S) - 1);
+    var over = _skip_targ_list(S);   # 6.7.17: an over-closer is the slice's error (`_sl_el_over`)
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
     return 0;
 }
 
@@ -4772,10 +4813,25 @@ fn _tn_slice_ptr_el(S, noff): i64 {
         _tup_pos_refuse(S, "a pointer target `*( .. )`");
         return 0;
     }
+    if (PEEKT(S) == 105) {   # 6.7.17 (D105): `[*u128]`, as `var p: *u128` (see `_tn_slice_vec`)
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
     if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+    if (_tn_slice_vptr(S, noff) == 1) { return 0; }   # 6.7.17 (D105): `[*Vec<T>]`
     if (_tn_slice_gptr(S) == 1) { return 0; }   # 6.7.16 (D89): `[*Box<i64>]`
-    _ngt_skip(S);   # 6.7.16: `[*Pt<i64>]` refused at the name (D7's words; it was "expected ']', got '<'")
+    # 6.7.16: `[*Pt<i64>]` refused at the name (D7's words; it was "expected ']', got '<'"), `[*Result<..>]` read
+    if (PEEKT(S) == 19) { if (_ngt_refuse(S, GTI(S) - 1) != 0) { _tn_slice_pskip(S); } }
     return 0;
+}
+# ... `[*Vec<T>]` / `slice<**Vec<T>>`, cursor on the `<` after `Vec`: T read as `var p: *Vec<T>` reads it, the list
+# stepped (the cursor past it, or on a closer that closes more than the slice may: `_sl_el_over`). 1 = stepped.
+fn _tn_slice_vptr(S, noff): i64 {
+    var nti = GTI(S) - 1;
+    if (_vec_ann_at(S, nti) == 0) { return 0; }
+    _vec_ann_chk(S, nti, noff);
+    _tn_slice_pskip(S);
+    return 1;
 }
 # ... `[*Box<i64>]` / `slice<*Box<i64>>`, cursor on the `<` after a generic struct's name: its list read as a pointer
 # field's is (`_targ_chk`: every refusal in it, nothing minted — a pointer is 8 bytes whatever it points at) and
@@ -4789,8 +4845,16 @@ fn _tn_slice_gptr(S): i64 {
         if (GSTP(S, sid - 1) == 0) { return 0; }
         _targ_chk(S, GTI(S));
     }
-    SKIP_GENERICS(S);
+    _tn_slice_pskip(S);
     return 1;
+}
+# A pointer element's `<..>` (cursor on its `<`): stepped; a closer that closes more than the slice may is left for the
+# slice's own read (`_sl_el_over`). CHANGELOG [6.7.17]
+fn _tn_slice_pskip(S): i64 {
+    var nti = GTI(S) - 1;
+    var over = _skip_targ_list(S);
+    if (_sl_el_over(S, nti, over) == 1) { STI(S, GTI(S) - 1); }
+    return 0;
 }
 # A slice local's canonical slot `li` (PARSE_VAR, `ann` the annotation's `[` / `slice`): its element
 # width `w` and, above bit 31, its element descriptor (`_slice_led`) — a slice store checks and
