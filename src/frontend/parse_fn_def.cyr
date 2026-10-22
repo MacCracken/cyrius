@@ -5350,10 +5350,28 @@ fn _tr_tp_third(S, p): i64 {
     if (TOKTYP(S, p + 2) != 19) { return 0; }
     _tpl_names(S, p + 2);   # 6.7.17 (D3): an entry that is no name, as a fn's
     var k = _tp_nth_at(S, p + 2, 2);
-    if (k < 0) { return 0; }
     var sv = GTI(S);
-    STI(S, k);
-    _ctp_third(S);
+    if (k >= 0) {
+        STI(S, k);
+        _ctp_third(S);
+        STI(S, sv);
+    }
+    _tr_tp_bounds(S, p);    # 6.7.17 (D4)
+    return 0;
+}
+# ⛔ 6.7.17 (D4) — A TRAIT MEMBER'S BOUNDS ARE LOOKED UP, as a fn's and an impl method's are: `trait T { fn i<U, V:
+# Nope>(self): i64; }` compiled though no trait `Nope` exists (the bound reader ran at a fn's and a method's definition,
+# never at a member's), where `fn i<U, V: Nope>` is "unknown trait 'Nope' in the bound on type parameter 'V'". The
+# member's list is read by the fn's own reader (`_capture_tparams`, the cursor put back) and judged by its (`_bnd_make`):
+# the fn's words, once, at the bound — a malformed bound (`V: 5`, `V: Show<i64>`, nine traits) as a fn's is too — the
+# latch put back (the user's D4, 2026-10-22). Pass 1, in source order (`_tl_trait1`); a default an impl inherits is
+# read by PARSE_FN_DEF as well, and the repeat prints nothing. CYRIUS_MONOMORPH=0 reads no bound, a member's as a fn's.
+# CHANGELOG [6.7.17]
+fn _tr_tp_bounds(S, p): i64 {
+    var sv = GTI(S);
+    STI(S, p + 2);
+    var tp = _capture_tparams(S);
+    if (tp != 0) { _bnd_make(S, tp); }
     STI(S, sv);
     return 0;
 }

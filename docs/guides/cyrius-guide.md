@@ -3369,7 +3369,10 @@ fn demo(): i64 {
   The impl's line is left out beside a member's refusal — the member's error is the one report — and beside a
   method's own refused return (a `*fn( .. )`, a multi-value element `(*fn( .. ), T)` too; 6.7.16). Under `cyrius lint`,
   which does not report a member's `: u8`..`: f32` or enum return, or a `Pt<i64>` / `i64<u8>` on either side, an impl
-  whose return differs keeps its own line (*'P.sh' returns i64, trait 'T2' declares u8*), as in 6.7.15.
+  whose return differs keeps its own line (*'P.sh' returns i64, trait 'T2' declares u8*), as in 6.7.15. A member's own
+  type parameters are a fn's too: their bounds are looked up as a fn's are — `fn i<U, V: Nope>(self): i64;` is
+  *unknown trait 'Nope' in the bound on type parameter 'V'* at `Nope`, a malformed bound its fn line — once, in source
+  order (6.7.17, the user's D4; through 6.7.16 a member's bound was never read).
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
   default body, and neither does a method of `impl X for T`: the trait's signature is the
   contract. An inherent `impl T` method may declare them (see *Default and named arguments*

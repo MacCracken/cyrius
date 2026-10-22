@@ -216,8 +216,9 @@ lines trm "1:22: a third type parameter 'C': $M" "T4: --syntax-only reports it" 
 printf 'trait T { fn g<A, B, C>(self, a: A, b: B, c: C): i64; }\nstruct P { x; }\nimpl T for P { fn g<A, B, C>(self, a: A, b: B, c: C): i64 { return 4; } }\nfn main(): i64 { var p = P { 1 }; return p.g(1, 2, 3); }\n' > "$D/t5.cyr"
 lines t5 "1:22: a third type parameter 'C': $M|3:27: a third type parameter 'C': $M" "T5: member and impl both <A, B, C> — one line per declaration, in source order"
 printf 'trait Show { fn show(self): i64; }\ntrait T { fn g<A, B, C, D>(self, a: A): i64; fn h<X, Y, Z: Show>(self): i64; fn i<U, V: Nope, W>(self): i64; fn k<U>(self, cb: *fn(i64): i64, u: U): i64; }\nfn main(): i64 { return 3; }\n' > "$D/t6.cyr"
-lines t6 "2:22: a third type parameter 'C': $M|2:57: a third type parameter 'Z': $M|2:95: a third type parameter 'W': $M" \
-    "T6: four parameters, a bounded third, a third after a bounded second — one line per member, at its third"
+# 6.7.17 (the user's D4): the member's unknown bound `V: Nope` is its own line now, after the third's, as a fn's is
+lines t6 "2:22: a third type parameter 'C': $M|2:57: a third type parameter 'Z': $M|2:95: a third type parameter 'W': $M|2:89: unknown trait 'Nope' in the bound on type parameter 'V'" \
+    "T6: four parameters, a bounded third, a third after a bounded second — one line per member, at its third (+ D4's bound line)"
 printf 'fn g4<A, B, C>(a: A): i64 { return 1; }\ntrait T { fn g<A, B, C>(self): i64; }\nstruct F<A, B, C> { a: A; }\nfn main(): i64 { return 2; }\n' > "$D/t7.cyr"
 lines t7 "1:13: a third type parameter 'C': $M|2:22: a third type parameter 'C': $M|3:16: a third type parameter 'C': $M" \
     "T7: a fn's, a member's and a struct's, in source order"
@@ -429,6 +430,13 @@ lines p1 "$P1W" "A [macho]: P1" "CYRIUS_MACHO=1 $CC"
 [ -n "$CXCC" ] && lines u1 "1:8: $UN" "A [cx]: U1" "$CXCC"
 lines u1 "1:8: $UN" "A [pe]: U1" "CYRIUS_TARGET_WIN=1 $CC"
 lines u1 "1:8: $UN" "A [macho]: U1" "CYRIUS_MACHO=1 $CC"
+# 6.7.17 (the user's D4): trait_bounds_checked.sh TM1 — a trait member's unknown bound — from every cross compiler
+printf 'trait T { fn i<U, V: Nope>(self): i64; }\nstruct P { x; }\nfn main(): i64 { return 3; }\nsyscall(60, main());\n' > "$D/tm1.cyr"
+TMW="1:22: unknown trait 'Nope' in the bound on type parameter 'V'"
+[ -n "$A64" ] && lines tm1 "$TMW" "A [a64]: TM1" "$A64"
+[ -n "$CXCC" ] && lines tm1 "$TMW" "A [cx]: TM1" "$CXCC"
+lines tm1 "$TMW" "A [pe]: TM1" "CYRIUS_TARGET_WIN=1 $CC"
+lines tm1 "$TMW" "A [macho]: TM1" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), a list entry that is no name (P, the user's D3), a union's list (U, the user's D5), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"

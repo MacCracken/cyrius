@@ -205,6 +205,17 @@
 #      a bound's names excluded. DW1 the signature's and the body's `Show` refused as g's is; DW2 no "unknown type 'U'"
 #      past a refused list, plain and under the flag; DW3 (control) `<T: Show + Eq, U>` a struct's and a fn's, `U` and
 #      `T[2]` in the body (exit 13). Mutant (2026-10-22): the compiler before (84a9da229) -> RED DW1 DW2 (both legs).
+#   TM (6.7.17, the user's D4, 2026-10-22: "Refuse with the fn's words") A TRAIT MEMBER'S BOUNDS ARE LOOKED UP:
+#      `trait T { fn i<U, V: Nope>(self): i64; }` compiled (exit 3) where `fn i<U, V: Nope>` is "unknown trait 'Nope' in
+#      the bound on type parameter 'V'" — the bound reader ran at a fn's and an impl method's definition only. The
+#      member's list is read and judged by the fn's own reader (`_tr_tp_bounds`: `_capture_tparams` + `_bnd_make`), in
+#      pass 1 in source order. TM1 the filed repro verbatim, plain and --syntax-only (as the fn's); TM2 a member's
+#      unknown, malformed (`X: 5`), argument-taking (`Y: Show<i64>`) bound and a default body's (inherited: once), then
+#      the next declaration's and fn's own errors; TM3 a bound naming a trait declared below the member builds (exit
+#      5); TM4 CYRIUS_MONOMORPH=0 reads no bound — the member's and the fn's spelling both build, as before. The cross
+#      legs are generic_tparam_count_refused.sh A [a64] / [cx] / [pe] / [macho] TM1. Issue row 2. Mutant (2026-10-22):
+#      the compiler before (8cdae35c6) -> RED TM1 (both rows: built) TM2 (an inherited default's line, Foo's and `1 2`'s
+#      alone); generic_tparam_count_refused.sh T6 and A [pe] / [macho] TM1.
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_capture_tparams` not reading a bound
 #   (every identifier a type parameter again) -> D1 builds, D2-D4 refused only by the cascade;
@@ -951,5 +962,34 @@ else bad "DW2 [mono0]: rc $rc: $(grep '^error' "$T/dw2m.err" | tr '\n' '|')"; fi
 printf 'trait Show { fn show(self): i64; }\ntrait Eq { fn eq(self, o): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nimpl Eq for i64 { fn eq(self, o): i64 { return 1; } }\nstruct B<T: Show + Eq, U> { a: T; b: U; }\nfn k<T: Show + Eq, U>(t: T, u: U): U { var q: U = u; var a: T[2]; return q + sizeof(T); }\nfn main(): i64 { var b: B<i64, i8>; b.b = 3; return b.b + k(1, 2); }\nsyscall(60, main());\n' > "$T/dw3.cyr"
 exits dw3 13 "DW3: <T: Show + Eq, U> — a struct's and a fn's U, T[2] in the body"
 
+# TM — 6.7.17 (the user's D4): a trait member's bounds are looked up (`_tr_tp_bounds`)
+printf 'trait T { fn i<U, V: Nope>(self): i64; }\nstruct P { x; }\nfn main(): i64 { return 3; }\nsyscall(60, main());\n' > "$T/tm1.cyr"
+TM1="error:<source>:1:22: unknown trait 'Nope' in the bound on type parameter 'V'"
+errs tm1 1 "TM1: the filed repro verbatim (it built: exit 3)" "$TM1"
+src=0; "$CC" --syntax-only < "$T/tm1.cyr" > /dev/null 2> "$T/tm1.so" || src=$?
+if [ "$src" -ne 0 ] && [ "$(grep -c '^error' "$T/tm1.so")" -eq 1 ] && grep -qF "$TM1" "$T/tm1.so"; then ok "TM1: --syntax-only reports it, as the fn's spelling"
+else bad "TM1: --syntax-only: rc $src: $(grep '^error' "$T/tm1.so" | tr '\n' '|')"; fi
+cat > "$T/tm2.cyr" <<'EOF'
+trait Show { fn show(self): i64; }
+trait T { fn i<U, V: Nope>(self): i64; fn j<W: Show>(self): i64; fn k<X: 5>(self): i64; fn l<Y: Show<i64>>(self): i64; fn m<Z: Zork>(self): i64 { return 1; } }
+struct P { x; }
+impl T for P { fn i<U, V: Show>(self): i64 { return 1; } fn j<W: Show>(self): i64 { return 2; } fn k<X: Show>(self): i64 { return 3; } fn l<Y: Show>(self): i64 { return 4; } }
+struct Q { a: Foo; }
+fn main(): i64 { var y = 1 2; return 3; }
+syscall(60, main());
+EOF
+errs tm2 6 "TM2: an unknown, a malformed, an argument-taking and an inherited default's bound — then the next declaration's and fn's own" \
+    "error:<source>:2:22: unknown trait 'Nope' in the bound on type parameter 'V'" "error:<source>:2:74: expected a trait name in a type parameter's bound" \
+    "error:<source>:2:97: a trait in a bound takes no type arguments: 'Show'" "error:<source>:2:128: unknown trait 'Zork' in the bound on type parameter 'Z'" \
+    "error:<source>:5:15: unknown type 'Foo' for struct field 'a'" "error:<source>:6:28: expected ';', got number 2"
+printf 'trait T { fn i<U: Later>(self): i64; }\ntrait Later { fn la(self): i64; }\nstruct P { x; }\nimpl Later for i64 { fn la(self): i64 { return self; } }\nimpl T for P { fn i<U: Later>(self): i64 { return 5; } }\nfn main(): i64 { var p = P { 1 }; return p.i(); }\nsyscall(60, main());\n' > "$T/tm3.cyr"
+exits tm3 5 "TM3: a member's bound naming a trait declared below it"
+printf 'fn i<U, V: Nope>(u: U): i64 { return 1; }\ntrait T { fn i<U, V: Nope>(self): i64; }\nfn main(): i64 { return i(2) + 2; }\nsyscall(60, main());\n' > "$T/tm4.cyr"
+rc=0; CYRIUS_MONOMORPH=0 "$CC" < "$T/tm4.cyr" > "$T/tm4.bin" 2> "$T/tm4.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "TM4: CYRIUS_MONOMORPH=0: rc $rc: $(grep '^error' "$T/tm4.err" | head -1)"
+else chmod +x "$T/tm4.bin"; got=0; "$T/tm4.bin" || got=$?
+    if [ "$got" -eq 3 ]; then ok "TM4: CYRIUS_MONOMORPH=0 reads no bound — the fn's and the member's spelling alike (exit 3)"; else bad "TM4: exit $got, want 3"; fi
+fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); a trait member's bounds looked up with a fn's words (TM, 6.7.17's D4); well-formed bounded code runs (C)"
