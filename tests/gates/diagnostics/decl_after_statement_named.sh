@@ -1,7 +1,7 @@
 #!/bin/sh
 # decl_after_statement_named.sh — a declaration after the first top-level statement is ONE error by name; an
 # `async fn` there is a function (6.7.14); a declaration inside a fn body or a block is one error too, and a use
-# of what a refused declaration names adds none (6.7.15).
+# of what a refused declaration names adds none (6.7.15); so is one in a body pass 2 never parses (6.7.17, D33).
 #
 # THE DEFECT (measured 6.7.10 - 6.7.13, x86_64; the frontend, every target). The guide's rule (§ Functions, § Traits)
 # keeps `struct`, `enum`, `union`, `trait`, `impl`, `mod`, `use` and `pub` / `public` declarations before the first
@@ -874,6 +874,7 @@ else printf '  FAIL: %-46s\n' "src/main_aarch64.cyr did not build"; fail=$((fail
 if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then chmod +x "$D/cc_cx"; LEGS="$LEGS cx"
 else printf '  FAIL: %-46s\n' "src/main_cx.cyr did not build"; fail=$((fail+1)); fi
 N5=0
+SET5=0
 comp5() {   # <leg> <src> <out> [cc-arg]: rc in CRC
     CRC=0
     case "$1" in
@@ -887,11 +888,13 @@ comp5() {   # <leg> <src> <out> [cc-arg]: rc in CRC
 row5() {   # <id> <what> <source> <want-lines> [cc-arg]
     printf '%s' "$3" > "$D/$1.cyr"
     printf '%s\n' "$4" > "$D/$1.want"
+    if [ "$SET5" = 1 ]; then LC_ALL=C sort -o "$D/$1.want" "$D/$1.want"; fi
     for leg in $LEGS; do
         o="$D/$1_$leg"
         comp5 "$leg" "$D/$1.cyr" "$o" "${5:-}"
         N5=$((N5 + 1))
         grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+        if [ "$SET5" = 1 ]; then LC_ALL=C sort -o "$o.got" "$o.got"; fi
         if [ "$CRC" -eq 0 ]; then printf '  FAIL: %s %s: %s: rc 0\n' "$1" "$leg" "$2"; fail=$((fail+1))
         elif ! cmp -s "$o.got" "$D/$1.want"; then
             printf '  FAIL: %s %s: %s: got %s lines: %s\n' "$1" "$leg" "$2" "$(wc -l < "$o.got")" "$(tr '\n' '|' < "$o.got")"; fail=$((fail+1))
@@ -899,6 +902,10 @@ row5() {   # <id> <what> <source> <want-lines> [cc-arg]
         else printf '  ok: %s %s: %s\n' "$1" "$leg" "$2"; pass=$((pass+1)); fi
     done
 }
+# `row5s`: `row5` with the lines compared as a SET — the end-of-parse flush (`_dl_pw_flush`, 6.7.17) says a declaration
+# in a body pass 2 never parsed after the parse's other errors, not in source order, until the diagnostics are buffered
+# and sorted (issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md).
+row5s() { SET5=1; row5 "$@"; SET5=0; }
 ok5() {   # <id> <what> <source> <exit>
     printf '%s' "$3" > "$D/$1.cyr"
     for leg in $LEGS; do
@@ -1131,14 +1138,14 @@ row5 UI8 "--syntax-only: UI3's shape" "$(printf 'fn f(): i64 { trait Tr { fn m(s
 # and NOTHING printed: UP1 UP2 UP4 UP5), or the use's own report was lost (UP3: E's; UP6: Q's beside the nested fn's).
 # Now the entry a stand-down answers through is marked (`_dl_pw_used`) and, once everything is parsed (`_dl_pw_end`),
 # a marked name no reported declaration entered has its declaration reported at the keyword, in `_decl_inner`'s words,
-# once (UP7: three uses of one enum, one line). UP8 / UP9 controls: unused, nothing changes (rc 0, exit 3); the default
-# inherited (the body parsed) — the one report, as before; UP10 a reported declaration of the same name answers the use
-# (the unparsed one stays unsaid); UP11 `dyn Tr` / `impl Tr for P`; UP12 a kernel build's global replay (after the
-# program; x86_64 ELF, a kernel target) reaches the late flush.
+# once (UP7: three uses of one enum, one line). UP9 control: the default inherited (the body parsed) — the one report,
+# as before; UP11 `dyn Tr` / `impl Tr for P`; UP12 a kernel build's global replay (after the program; x86_64 ELF, a
+# kernel target) reaches the late flush. 6.7.17 (D33, the DI block below): every such declaration is said, used or not —
+# UP8 (unused: rc 0, exit 3 through 6.7.16) is refused, and UP10's unparsed Q is said beside the parsed one (a set: the
+# flush prints last).
 #   the lane before it (6059d821c)                   -> RED UP1-UP7 UP11 UP12 (rc 1 with no line, or the decl's
 #                                                       line missing), 41; UP8 UP9 UP10 green
 #   `_dl_pw_flush` returns at once                   -> RED UP1-UP7 UP11 UP12, 41
-#   `_dl_pw_flush` without its `_dl_rep_has` test    -> RED UP10, 5 (the unparsed Q said too)
 #   `_dl_pw_late` returns at once                    -> RED UP12, 5 (rc 1, nothing printed)
 row5 UP1 "a trait default no impl inherits: its struct used" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { return g(0); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
@@ -1156,12 +1163,13 @@ row5 UP6 "a refused nested fn's body: its struct used" "$(printf 'fn f(): i64 { 
 error:<source>:1:29: a \`struct\` declaration $IR a fn body"
 row5 UP7 "three uses of one unparsed enum: one line" "$(printf 'trait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn h(): i64 { return E.B + B + E.A; }\nvar r = h();\nsyscall(60, r);\n')
 " "error:<source>:1:29: an \`enum\` declaration $IR a fn body"
-ok5 UP8 "control: unused, nothing changes" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
-" 3
+row5 UP8 "unused: refused too (6.7.17, D33)" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
 row5 UP9 "control: the default inherited — its one report" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nstruct P { a; }\nimpl T for P { }\nfn g(q: *Q): i64 { return 1; }\nfn main(): i64 { var p = P { 1 }; return p.d() + g(0); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
-row5 UP10 "a reported declaration of the name answers the use" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn a(): i64 { struct Q { y; } return 1; }\nfn g(q: *Q): i64 { return q.y; }\nsyscall(60, g(0) + a());\n')
-" "error:<source>:2:15: a \`struct\` declaration $IR a fn body"
+row5s UP10 "two bodies declaring Q, one parsed: both said (6.7.17)" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn a(): i64 { struct Q { y; } return 1; }\nfn g(q: *Q): i64 { return q.y; }\nsyscall(60, g(0) + a());\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body
+error:<source>:2:15: a \`struct\` declaration $IR a fn body"
 row5 UP11 "dyn Tr and impl Tr for P, Tr in a trait default" "$(printf 'struct P { x; }\nfn g(x: dyn Tr): i64 { return 1; }\nimpl Tr for P { fn m(self): i64 { return 1; } }\ntrait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nsyscall(60, 0);\n')
 " "error:<source>:4:29: a \`trait\` declaration $IR a fn body"
 one "UP12 a kernel build (x86_64 ELF): a global's E.B, replayed after the program" "$(printf 'kernel;\ntrait T { fn d(self): i64 { enum E { A, B } return 1; } }\nvar g = E.B;\nfn main(): i64 { return g; }\n')
@@ -1219,8 +1227,118 @@ error:<source>:4:1: unmatched '}' at module scope"
 row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
 " "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)" --syntax-only
 
+# DI — 6.7.17 (issues/2026-10-21-inner-declaration-in-a-body-pass-two-never-parses-never-refused.md): AN INNER
+# DECLARATION IS REFUSED WHEREVER IT SITS (the user's decision D33, 2026-10-22). Pass 2 refuses one where it parses the
+# body; a trait default no impl inherits, a bounded generic's base (a fn or a method, a stub until instantiated) and a
+# stepped body (a refused nested fn's, a refused impl's method) are never parsed, so a declaration there compiled (6.7.16:
+# said only once a use of its name stood down). Now the pre-walk records every declaration it meets in a body — every
+# kind `_decl_inner` refuses — (`_dl_pw_rec`), and the end-of-parse flush (`_dl_pw_flush`, once the top-level PARSE_PROG
+# and the global replay have both ended) says each at its keyword, in `_decl_inner`'s words; `_dl_in_say` says a token
+# once (`_ce_err_dup`), so one pass 2 reported is not said again. DI1 / DI2 the filed repros verbatim (rc 0, exit 3
+# before); DI3 the name also used (one line); DI4 / DI5 the parsed twins — the inherited default and the plain fn —
+# unchanged; DI6 a bodied default and a bounded generic (fn and method) with no inner declaration still compile; DI7
+# every kind; DI8 every never-parsed body (a bounded generic method, a closure and a block in one, an overridden default
+# beside an inherited one, a refused nested fn's body, a refused late impl's method; a default inherited by two impls:
+# once); DI9 a `#derive`d enum: the enum, never the derive's `public fn` codecs; DI10 --syntax-only; DI11 a kernel build
+# (x86_64 ELF): the flush waits for the global replay, so a global's closure is said in the replay's words, once.
+# MUTATION LEDGER (2026-10-22, measured: a scratch copy of the tree with the one change, its 2-stage cycc, this gate):
+#   the lane before it (e65604d5d)                   -> RED 111: DI1 DI2 DI7 (all ten) DI8_1-DI8_6 DI9a DI10 DI11a UP8
+#                                                       UP10 (rc 0, or the unparsed declaration unsaid)
+#   `_dl_pw_flush` returns at once                   -> RED 157: DI1-DI3 DI7 DI8_1-DI8_6 DI9a DI10 DI11a UP1-UP8
+#                                                       UP10-UP12
+#   the flush printing without `_dl_in_say`'s dedup  -> RED 286: every declaration pass 2 reported said twice (N, NS,
+#                                                       NM, NC, UI, DV, UP9, DI4, DI5, DI8_7, DI9b, DI11b, ...)
+#   `_dl_inner_at` recording the four named kinds    -> RED 30: DI7 impl, mod, use, pub-var, pub-fn, public-fn
+#   `_dl_pw_rec` without its `_dl_pw_skip` test      -> RED 15: DV5 DI9a DI9b (the derive's `public fn` codecs said)
+#   `_dl_pw_end` flushing before the replay          -> RED 1: DI11b ("not inside a block": the walk's words)
+#   `_dl_pw_late` returns at once                    -> RED 2: UP12 DI11a (a kernel build never flushes: rc 0)
+row5 DI1 "filed: a trait default no impl inherits" 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }
+fn main(): i64 { return 3; }
+var r = main();
+syscall(60, r);
+' "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 DI2 "filed: an uninstantiated bounded generic" 'trait Show { fn s(self): i64; }
+fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }
+fn main(): i64 { return 3; }
+var r = main();
+syscall(60, r);
+' "error:<source>:2:29: a \`struct\` declaration $IR a fn body"
+row5 DI3 "the unparsed declaration's name also used: one line" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { var q = Q { 5 }; return g(&q); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 DI4 "control: the default inherited (parsed): once" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nstruct P { k; }\nimpl T for P { }\nfn main(): i64 { var p = P { 1 }; return p.d(); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 DI5 "control: a plain fn" "$(printf 'fn h(): i64 { struct Q { y; } return 1; }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:15: a \`struct\` declaration $IR a fn body"
+ok5 DI6 "control: a bodied default and a bounded generic, no declaration" 'trait Show { fn s(self): i64; }
+trait Tq { fn d(self): i64 { var a = 1; if (a == 1) { a = 2; } return a; } }
+fn gg<T: Show>(x: T): i64 { var c = 0; while (c < 3) { c = c + 1; } return c; }
+struct Pq { k; }
+impl Pq { fn m<T: Show>(self, v: T): i64 { var w = |y| y + 1; return w(1); } }
+fn main(): i64 { return 3; }
+var r = main();
+syscall(60, r);
+' 3
+# kind label | the declaration | its article+keyword as reported
+DIKINDS='enum|enum E { A, B }|an `enum`
+union|union U { x; y: i32; }|a `union`
+trait|trait Tr { fn m(self): i64; }|a `trait`
+impl|impl P { fn g(self): i64 { return 1; } }|an `impl`
+mod|mod mm;|a `mod`
+use|use mm.f;|a `use`
+pub-var|pub var x = 1;|a `pub`
+pub-fn|pub fn pf(): i64 { return 1; }|a `pub`
+public-fn|public fn pf(): i64 { return 1; }|a `public`
+pub-struct|pub struct Q { y; }|a `pub`'
+printf '%s\n' "$DIKINDS" > "$D/dikinds"
+while IFS='|' read -r k decl art; do
+    [ -n "$k" ] || continue
+    row5 "DI7_$k" "every kind: $k in an unparsed default" "struct P { k; }
+trait T { fn d(self): i64 { $decl return 1; } }
+fn main(): i64 { return 3; }
+var r = main();
+syscall(60, r);
+" "error:<source>:2:29: $art declaration $IR a fn body"
+done < "$D/dikinds"
+row5 DI8_1 "a bounded generic method, never instantiated" "$(printf 'trait Show { fn s(self): i64; }\nstruct Q { k; }\nimpl Q { fn m<T: Show>(self, v: T): i64 { struct R { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:3:43: a \`struct\` declaration $IR a fn body"
+row5 DI8_2 "a closure in a bounded generic" "$(printf 'trait Show { fn s(self): i64; }\nfn gg<T: Show>(x: T): i64 { var c = |y| { struct R { y; } return y; }; return 1; }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:2:43: a \`struct\` declaration $IR a fn body"
+row5 DI8_3 "a block in an unparsed default" "$(printf 'trait T { fn d(self): i64 { if (1) { enum E { A } } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:38: an \`enum\` declaration $IR a fn body"
+row5s DI8_4 "an overridden default beside an inherited one" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } fn e(self): i64 { enum E { A } return 2; } }\nstruct P { k; }\nimpl T for P { fn d(self): i64 { return 5; } }\nfn main(): i64 { var p = P { 1 }; return p.e(); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body
+error:<source>:1:75: an \`enum\` declaration $IR a fn body"
+row5 DI8_5 "a refused nested fn's body, unused" "$(printf 'fn f(): i64 { fn g(): i64 { struct Q { y; } return 1; } return 0; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: fn 'g' is defined inside fn 'f'; define it at top level
+error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 DI8_6 "a refused late impl's method" "$(printf 'struct P { k; }\nvar a = 1;\na = 2;\nimpl P { fn m(self): i64 { struct Q { y; } return 1; } }\nsyscall(60, a);\n')
+" "error:<source>:4:1: an \`impl\` declaration $R (line 3)
+error:<source>:4:28: a \`struct\` declaration $IR a fn body"
+row5 DI8_7 "a default inherited by two impls: once" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nstruct P { k; }\nstruct P2 { k; }\nimpl T for P { }\nimpl T for P2 { }\nfn main(): i64 { var p = P { 1 }; var q = P2 { 2 }; return p.d() + q.d(); }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 DI9a "a derived enum in an unparsed default: the enum, not its codecs" "${DH}trait T { fn d(self): i64 {
+#derive(Serialize)
+enum E { A; B; }
+return 1;
+} }
+syscall(60, 3);
+" "error:<source>:9:1: an \`enum\` declaration $IR a fn body"
+row5 DI9b "a derived enum in a top-level block: the enum, not its codecs" "${DH}var a = 1;
+if (a == 1) {
+#derive(Serialize)
+enum E { A; B; }
+}
+syscall(60, a);
+" "error:<source>:10:1: an \`enum\` declaration $IR a block"
+row5 DI10 "--syntax-only: the filed repro" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:29: a \`struct\` declaration $IR a fn body" --syntax-only
+one "DI11a a kernel build (x86_64 ELF): an unparsed default" "$(printf 'kernel;\ntrait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 0; }\n')
+" "error:<source>:2:29: a \`struct\` declaration $IR a fn body"
+one "DI11b a kernel build: a global's closure, in the replay's words" "$(printf 'kernel;\nvar g = |x| { struct Q { y; } return x; };\nfn main(): i64 { return 3; }\n')
+" "error:<source>:2:15: a \`struct\` declaration $IR a fn body"
+
 # The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=200
+F5FLOOR=330
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"
