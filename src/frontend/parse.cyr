@@ -5416,7 +5416,7 @@ fn _deref_store(S, term): i64 {
             var ti = GTI(S);
             if (_istr_dsdx(S, d, ti, term) == 0) {   # 6.7.16 (D73): `*q = *p` through a `*Str` stores p
                 _sc_beg = 0 - 1;   # 6.7.16 (D99): only this value's own struct-call record may match
-                PCMPE(S);
+                _istr_dsvc(S, d, ti, term);   # PCMPE; 6.7.17 (D18): a struct value of another type through a `*Str`
                 _dsr_sres(S, d, oe, ti);   # 6.7.16 (D99): a struct result over 8 B through a `*i64`
                 _dst_fk_chk(S, ed, ti, d);   # an f32 element: the field's checks; 6.7.16 (D70): `*(&f)` / `*(&b)`
                 _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`

@@ -1437,7 +1437,7 @@ fn _fsc_src(S, ft, fnoff, term): i64 {
         var dr = _dyn_fsc(S, ft, term);
         if (dr != 0) { return dr; }
     }
-    if (IS_STR_FIELD(S, ft) == 1) { return _istr_fsc(S, term); }   # 6.7.13 (D7 (1)): an inline `Str`
+    if (IS_STR_FIELD(S, ft) == 1) { return _istr_fsrc(S, fnoff, term); }   # 6.7.13 (D7 (1)): an inline `Str`; 6.7.17 (D18)
     var pr = _fsc_psrc(S, ft, fnoff, term);   # 6.7.11: `o.s = GP` / `gp()` / `w.p` / `GP + n`
     if (pr != 0) { return pr; }
     if (PEEKT(S) != 2) { if (_pc_mchain(S, GTI(S)) == 1) {   # 6.7.16: a chain's method on a `(..)` / `callptr` head
@@ -3018,7 +3018,7 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
         _refuse_lossy_pair(S);
         var t0 = GTI(S);
         if (_istr_ldx(S, ft, pf) == 0) {   # 6.7.16: `V { *p, 1 }`, a `*Str`'s `*p` into a `Str` / `*Str` field, is p
-            PCMPE(S);
+            _istr_lsv(S, ft, t0, _sfw_fn);   # PCMPE; 6.7.17 (D18): a struct value of another type into a `Str` field
             _ifs_bx(S, fk, t0, _sfw_fn);
             _istr_lit(S, ft, t0);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` field
             _istr_pfld(S, pf, t0);   # 6.7.16 (D19): ... and into a `*Str` field (`W { gt, 1 }`)
@@ -8963,6 +8963,138 @@ fn _istr_rax_into(S, dli, dgv, term): i64 {
     if (dgv >= 0) { SLVAR(S, dgv); }
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);   # consume the terminator
+    return 1;
+}
+# ⛔ 6.7.17 — D18 AT EVERY `Str` SLOT (the user's D18, 2026-10-22: a struct value of another type into a `Str` handle is
+# refused, as into a `P`): a `Str` FIELD (`w.s = mkq();`, a for step's, a literal's `W { mkq(), 1 }`), a store through a
+# `*Str` or a `**Str` (`*ps = q;`) and `return mkq();` from a fn returning `Str` each stored or returned the struct's
+# first word as the header's address — silently, a crash at the next `str_len` — where the same value into a `P` field,
+# through a `*P` or from a fn returning a `P1` is refused by name. A `Str` field and a fn's `Str` result are handles (the
+# guide), so they take the handle's rule: a struct VALUE of another type — a call, method, operator, if-expression,
+# name, field or dereference, inside any wrap — is refused with the position's own words; a handle, a `*T`, a `Str` and
+# an untyped value keep their store. CHANGELOG [6.7.17]
+# The value [st, e) at the cursor (`st`), parsed — PCMPE, its emission unchanged — with the static-struct records armed
+# (`_ret_expr_sid`'s reading): its struct when it is such a value of another type than `Str` (`_istr_vk` 2 for a
+# dereference of a `*U`, named by `_hl_dname`), `_ess_nm` / `_ess_fi` naming it; else 0. A tuple and a dyn keep their own
+# refusals.
+var _istr_vk = 0;
+fn _istr_vsid(S, st, e): i64 {
+    _istr_vk = 0;
+    var a = _ie_unparen(S, st, e);
+    var pe = _ie_pe;
+    if (pe == a + 1) { if (TOKTYP(S, a) == 2) { return _istr_vnm(S, TOKVAL(S, a)); } }
+    if (TOKTYP(S, a) == 8) { return _istr_vdr(S, st, e); }
+    var fk = _fpk_want;
+    _fpk_want = a;
+    _fpk_ft = 0;
+    _sc_beg = 0 - 1;   # only this value's own record may match
+    PCMPE(S);
+    _fpk_want = fk;
+    _ess_fi = 0 - 1;
+    var u = 0;
+    if (TOKTYP(S, a) == 2) {
+        var o = _gcall_open(S, a);
+        if (o > a) { if (_call_close(S, o) + 1 == pe) { u = _sarg_call_rs(S, a); _ess_nm = TOKVAL(S, a); } }
+    }
+    if (u == 0) {
+        if (_sc_whole(S, st) != 0 - 2) { u = _sc_sid; _ess_nm = _sc_fn; _ess_fi = _sc_fi; }
+        elif (_fpk_ft > 0) { if (_fpk_end + a - st == GTI(S)) { u = _fpk_ft; _ess_nm = _fpk_name; } }
+    }
+    return _istr_vok(S, u);
+}
+# ... a NAME `noff`: a struct value (not a handle, which rebinds) of another type — its struct — the value then parsed.
+# (A vector's word into a `Str` slot is the vector values' own rule.)
+fn _istr_vnm(S, noff): i64 {
+    _agc_src_operand(S, noff);
+    var t = 0;
+    if (_agc_hdl() == 0) { t = 0 - _agc_t; }
+    _ess_nm = noff;
+    _ess_fi = 0 - 1;
+    PCMPE(S);
+    return _istr_vok(S, t);
+}
+# ... a dereference `* E` of a `*U`, U a plain struct (`*pp` of a `**U` reads a `*U`: a pointer, kept), the value then
+# parsed.
+fn _istr_vdr(S, st, e): i64 {
+    var u = _hl_dstar_e(S, st, e, 2);
+    if (_hl_dpp != 0) { u = 0; }
+    if (u > 0) { if (_dx_plain(S, u) == 0) { u = 0; } }
+    if (u > 0) { _istr_vk = 2; }
+    PCMPE(S);
+    return u;
+}
+fn _istr_vok(S, u): i64 {
+    if (u <= 0) { return 0; }
+    if (u >= 2048) { return 0; }
+    if (u == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, u) == 1) { return 0; }
+    if (_dyn_is(S, u) == 1) { return 0; }
+    return u;
+}
+# A `Str` field's or a literal `Str` element's refusal (`fnoff` the field): the field store's words.
+fn _istr_verr_f(S, fnoff): i64 {
+    if (_istr_vk == 2) { _fsc_type_err(S, _hl_dname(S), fnoff); return 0; }
+    _fsc_type_errf(S, _ess_nm, _ess_fi, fnoff);
+    return 0;
+}
+# `w.s = <v>` into a `Str` field (`_fsc_src`, ending at `term`): the inline `Str` arm (`_istr_fsc`), then the value with
+# D18's check (2: parsed, the value in rax).
+fn _istr_fsrc(S, fnoff, term): i64 {
+    var r = _istr_fsc(S, term);
+    if (r != 0) { return r; }
+    var st = GTI(S);
+    var e = _hl_dx_end(S, st, term);
+    if (e < 0) { return 0; }
+    if (_istr_vsid(S, st, e) != 0) { _istr_verr_f(S, fnoff); }
+    return 2;
+}
+# A literal's `Str` element at `t0` (EMIT_STRUCT_FIELD_W, `ft` its field's type, `fnoff` the field): parsed, D18's
+# check when the field is a `Str`.
+fn _istr_lsv(S, ft, t0, fnoff): i64 {
+    if (IS_STR_FIELD(S, ft) == 1) {
+        var e = _slit_eend(S, t0);
+        if (e > t0) {
+            if (_istr_vsid(S, t0, e) != 0) { _istr_verr_f(S, fnoff); }
+            return 0;
+        }
+    }
+    PCMPE(S);
+    return 0;
+}
+# `*d = <v>` (`_deref_store`, the value at `ti` ending at `term`), the operand [d + 1, ti - 1) a `*Str` or a `**Str`:
+# parsed, D18's check, in the words a `*P`'s store has ('pp' the operand's last name).
+fn _istr_dsvc(S, d, ti, term): i64 {
+    var ss = _STR_SID(S);
+    var e = _hl_dx_end(S, ti, term);
+    if (ss <= 0 || e < 0) { PCMPE(S); return 0; }
+    if (_hl_dpsid(S, d + 1, ti - 1) != ss) { if (_hl_dref_psid(S, d + 1, ti - 1) != ss) { PCMPE(S); return 0; } }
+    var u = _istr_vsid(S, ti, e);
+    if (u == 0) { return 0; }
+    var pn = _hl_lastnm(S, d + 1, ti - 1, TOKVAL(S, d + 1));
+    if (_istr_vk == 2) { _agg_dx_err(S, 0 - ss, 0 - u, pn); return 0; }
+    _err_ident_fn(S, "cannot copy ", _ess_nm, _ess_fi, " into a variable of a different struct/vector type: ", pn);
+    return 0;
+}
+# `return <v>;` in a fn returning `Str` (`_bx_pcmpe_ret`, the value at `st`): parsed, D18's check in the words a fn
+# returning a `P1` has (*a fn returning the struct `Str` takes a value of that struct ...*). Never in an inline replay.
+fn _istr_rsv(S, st): i64 {
+    var ss = _STR_SID(S);
+    var e = _hl_dx_end(S, st, 5);
+    if (ss <= 0 || e < 0) { PCMPE(S); return 0; }
+    if (_cur_fn_ret_sid != ss || GIDEP(S) != 0) { PCMPE(S); return 0; }
+    var u = _istr_vsid(S, st, e);
+    if (u == 0) { return 0; }
+    if (_istr_vk == 2) { return _ret_sid_refuse_d(S, st, _hl_dna, _hl_dne, _hl_dnm, u); }
+    return _ret_sid_refuse(S, st, _ess_nm, _ess_fi, u, 0);
+}
+# 1 = the tail call `return f(..);` (`cfi`) in a fn returning `Str` reaches a callee returning a struct of another type:
+# diverted to the normal path, where `_istr_rsv` refuses it (`_tc_small_sret_divert`).
+fn _istr_tcd(S, cfi): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_cur_fn_ret_sid != ss) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_istr_vok(S, GFRS(S, cfi)) == 0) { return 0; }
     return 1;
 }
 # ⛔ 6.7.14 — A TOP-LEVEL `var H: Str = gt;` BINDS A HANDLE TO gt's HEADER, AS THE SAME LINE IN A FN DOES (the user's

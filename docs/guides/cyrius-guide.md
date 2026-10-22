@@ -1775,7 +1775,11 @@ a `Str` handle (a local, a parameter, a global, a `*Str` name) is refused by nam
 user's decision D18, 2026-10-22): `h = mkq();` with `fn mkq(): Q1` is *cannot copy 'mkq' into a variable of a
 different struct/vector type: 'h'* — a method, operator or if-expression result, a struct name, field or dereference
 alike — where through 6.7.16 h took the struct's first word as the header's address (a crash at the next
-`str_len(h)`); a handle, a `*T` and a `: Str` call keep their rebind. Through 6.7.9 a struct of 8 bytes or
+`str_len(h)`); a handle, a `*T` and a `: Str` call keep their rebind. So at every other `Str` slot: a `Str` field
+(`w.s = mkq();`, a for step's, top level) and a literal's `Str` element (`W { mkq(), 1 }`) are *cannot copy 'mkq' into a
+struct field of a different struct type: 's'*, a store through a `*Str` or `**Str` (`*ps = q;`) is *cannot copy 'q'
+into a variable of a different struct/vector type: 'ps'*, and `return mkq();` from a fn returning `Str` (a tail call
+too) is *a fn returning the struct `Str` takes a value of that struct, or a pointer to one — got `mkq` (a `Q1`)*. Through 6.7.9 a struct of 8 bytes or
 less was outside the rule: no struct variable of that size was a handle (the handle line above),
 and a `*T` of one was no struct operand, so `l = p` and `G = p` with `p: *S8` stored the POINTER
 into the first field, and `q = r` through a `q: *S8` parameter rebound `q` (the caller's struct

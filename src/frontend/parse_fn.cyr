@@ -654,6 +654,7 @@ fn _tc_frame_divert(S, cfi): i64 {
 # (`_ret_small_ptr`). CHANGELOG [6.7.11]
 fn _tc_small_sret_divert(S, cfi): i64 {
     if (cfi < 0) { return 0; }
+    if (_istr_tcd(S, cfi) == 1) { return 1; }   # 6.7.17 (D18): another struct from a fn returning `Str`
     if (_ret_small_cls(S) == 0) { return 0; }
     var rs = GFRS(S, cfi);
     if (_hl_fn_psid(cfi) > 0) { return 1; }   # a `: *X` callee: its struct is copied (or refused)

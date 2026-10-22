@@ -152,7 +152,11 @@
 # method, an operator, an if-expression, `fncall0(&mkq)`, an inline struct name or global, a field, a dereference, wrapped,
 # a for step, at top level — is refused by name with the words the same assignment into a `P` handle has (SH1-SH15; SH1
 # the filed repro verbatim: it compiled and crashed — x86_64 139, cx 252, PE 5 — h holding Q1's word). A `*Q1`, a `Q2`
-# handle and a `: *Q1` call keep the rebind, a `: Str` call its value (SHK1).
+# handle and a `: *Q1` call keep the rebind, a `: Str` call its value (SHK1). And at every other `Str` slot (D18's class,
+# met in the bite): a `Str` field (a local's, a global's, through a `*W`, a for step, top level), a literal's `Str`
+# element (in a fn, in the zone), a store through a `*Str` / `**Str` and `return` from a fn returning `Str` (a tail call
+# too) refuse it with the position's words, as a `P` there does (SP1-SP10; each stored or returned the struct's first
+# word); a `: Str` value, a handle and a `*Q1` keep their store (SPK1).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
@@ -168,7 +172,7 @@
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
 # `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); X30 / X31 a frame's t returned from a fn returning `*Str` refused (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); SH1-SH15 a struct value of another type into a
-# `Str` handle refused, SHK1 its rebind controls (6.7.17, D18); CMP a handle into the retyped methods builds
+# `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -286,6 +290,7 @@
 #                                                     x4 (each compiled)
 #   2026-10-22 (6.7.17, D18 a struct value into a `Str` handle; the same scratch-copy method):
 #   x1 `_istr_hdt` answers `dt` (the fix reverted) -> RED 60: SH1-SH15 x4 (each compiled)
+#   x2 `_istr_vsid` only parses, `_istr_tcd` 0     -> RED 40: SP1-SP10 x4 (each compiled)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1137,6 +1142,61 @@ refused SH15 "cannot copy 'q' into a variable of a different struct/vector type:
 row SHK1 "$HQ"'
 fn go(): i64 { var q: Q1; var pq: *Q1 = &q; var hq: Q2 = alloc(16); var h: Str = str_from("x"); h = pq; var a = 0; if (h == pq) { a = 1; } h = hq; if (h == hq) { a = a + 2; } h = gpq(); if (h != 0) { a = a + 4; } h = str_from("abc"); return a * 10 + str_len(h); }'
 runs SHK1 73 "controls: a \`*Q1\`, a \`Q2\` handle and a \`: *Q1\` call rebind a \`Str\` handle; a \`: Str\` call is its value"
+# --- SP: 6.7.17 (D18 at every `Str` slot) a struct value of another type into a `Str` FIELD (a local's, a global's,
+# through a `*W`, a for step, top level), a literal's `Str` element, a store through a `*Str` / `**Str`, and `return` from a
+# fn returning `Str` (a tail call too) is refused with the position's words, as into a `P`; each stored or returned the
+# struct's first word as the header's address. Controls in SPK1. ---
+MSF="cannot copy 'mkq' into a struct field of a different struct type: 's'"
+row SP1 "$HQ"'
+fn go(): i64 { var w: W = W { 0, 1 }; w.s = mkq(); return f(w.s); }'
+refused SP1 "$MSF" "\`w.s = mkq();\` into a local's \`Str\` field"
+row SP2 "$HQ"'
+var GW: W = W { 0, 0 };
+fn go(): i64 { var q: Q1; GW.s = (q); return 0; }'
+refused SP2 "cannot copy 'q' into a struct field of a different struct type: 's'" "\`GW.s = (q);\` into a global's"
+row SP3 "$HQ"'
+fn go(): i64 { var q: Q1; var pq: *Q1 = &q; var p: *W = new_w(); p.s = *pq; return 0; }'
+refused SP3 "cannot copy '*pq' into a struct field of a different struct type: 's'" "\`p.s = *pq;\` through a \`*W\`"
+row SP4 "$HQ"'
+fn go(): i64 { var w: W = W { 0, 1 }; var x: WQ; var i = 0; for (i = 0; i < 1; w.s = x.q) { i = i + 1; } return 0; }'
+refused SP4 "cannot copy 'q' into a struct field of a different struct type: 's'" "a for step's \`w.s = x.q\`"
+row SP5 "$HQ"'
+fn go(): i64 { var q: Q1; var w: W = W { q.mk(), 1 }; return f(w.s); }'
+refused SP5 "cannot copy 'Q1.mk' into a struct field of a different struct type: 's'" "\`W { q.mk(), 1 }\`, a literal's \`Str\` element"
+cat > "$T/SP6.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct Q1 { a; }
+struct W { s: Str; n; }
+fn mkq(): Q1 { var q: Q1; q.a = 5; return q; }
+var GW = W { mkq(), 1 };
+GW.s = mkq();
+syscall(60, str_len(GW.s));
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" SP6
+    if [ "$crc" -ne 0 ] && [ "$(grep -c "^error.*$MSF" "$T/SP6.$leg.err")" -eq 2 ] && [ "$(grep -c '^error\|^warning' "$T/SP6.$leg.err")" -eq 2 ] && [ ! -s "$T/SP6.$leg" ]; then ok "SP6 top level: a zone literal's element and a field store, both refused ($leg)"
+    else bad "SP6 top level ($leg): rc $crc: $(grep '^error\|^warning' "$T/SP6.$leg.err" | tr '\n' '|')"; fi
+done
+row SP7 "$HQ"'
+fn go(): i64 { var q: Q1; var ps: *Str = new_slot(); *ps = q; return 0; }'
+refused SP7 "cannot copy 'q' into a variable of a different struct/vector type: 'ps'" "\`*ps = q;\` through a \`*Str\`"
+row SP8 "$HQ"'
+fn go(): i64 { var h: Str = str_from("x"); var p: *Str = &h; var pp: **Str = &p; **pp = mkq(); return 0; }'
+refused SP8 "cannot copy 'mkq' into a variable of a different struct/vector type: 'pp'" "\`**pp = mkq();\` through a \`**Str\`"
+row SP9 "$HQ"'
+fn r(): Str { return mkq(); }
+fn go(): i64 { return f(r()); }'
+refused SP9 "a fn returning the struct \`Str\` takes a value of that struct, or a pointer to one — got \`mkq\` (a \`Q1\`)" "\`return mkq();\` (a tail call) from a fn returning \`Str\`"
+row SP10 "$HQ"'
+fn r(pq: *Q1): Str { return (*pq); }
+fn go(): i64 { var q: Q1; return f(r(&q)); }'
+refused SP10 "a fn returning the struct \`Str\` takes a value of that struct, or a pointer to one — got \`*pq\` (a \`Q1\`)" "\`return (*pq);\` from a fn returning \`Str\`"
+row SPK1 "$HQ"'
+fn r(): Str { return str_from("abcd"); }
+fn go(): i64 { var w: W = W { str_from("ab"), 1 }; w.s = str_from("abc"); var w2: W = W { w.s, 2 }; var h: Str = str_from("x"); var p: *Str = &h; *p = r(); var q: Q1; var pq: *Q1 = &q; w.s = pq; var a = 0; if (w.s == pq) { a = 1; } return a * 100 + str_len(w2.s) * 10 + str_len(h); }'
+runs SPK1 134 "controls: a \`: Str\` call / field into a \`Str\` field and a literal, through a \`*Str\`, a \`*Q1\` rebinding a field"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1195,7 +1255,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=104   # 6.7.17: + SH1-SH15, SHK1 (D18); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=115   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
