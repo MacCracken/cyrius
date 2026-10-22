@@ -5974,7 +5974,7 @@ fn _ssc_err(S, kind, x, y): i64 {
     _refuse_in_sync(S);
     var tg = "_ssc_err";
     if (_err_once(S, (tg * 31 + kind) * 8 + 4) == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
         if (kind == 0) {
             PRSTR(": a struct value cannot be returned as ");
