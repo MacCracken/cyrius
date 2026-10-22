@@ -209,5 +209,10 @@ assert_eq(str_eq_cstr(bayan_json_get(pairs, str_from("a")), "x"), 1, "flat get a
 assert_eq(str_eq_cstr(bayan_json_get(pairs, str_from("b")), "y"), 1, "flat get b");
 var num_pairs = bayan_json_parse(str_from("{\"n\": 42}"));
 assert_eq(bayan_json_get_int(num_pairs, str_from("n")), 42, "flat get_int");
+# 6.7.17 (bayan 1.11.0): the typed names answer what the bare names (kept above, deprecated) answer.
+assert_eq(str_eq_cstr(bayan_json_get_by_str(pairs, str_from("a")), "x"), 1, "typed get_by_str a");
+assert_eq(str_eq_cstr(bayan_json_get_by_cstr(pairs, "b"), "y"), 1, "typed get_by_cstr b");
+assert_eq(bayan_json_get_int_by_str(num_pairs, str_from("n")), 42, "typed get_int_by_str");
+assert_eq(bayan_json_get_int_by_cstr(num_pairs, "n"), 42, "typed get_int_by_cstr");
 
 var r = assert_summary();
