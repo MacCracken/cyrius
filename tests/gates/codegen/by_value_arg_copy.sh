@@ -21,7 +21,12 @@
 #      struct value (`*pn + 1`, `pn: *i64`; `pw + 1`, pointer arithmetic; `pq.n + 1`, an integer field), C15
 #      `- w` and C16 `*pw` (no BINARY operator: a unary `-` / `*` dispatches nothing; C15 copied before) —
 #      and K7-K9 one that does: a dereference (`*pw + 1`), a typed pointer's struct field (`pq.w + 1`)
-#      and a `*HW` field's (`o2.p.w + 1`), each dispatching W's operator fn (no copy before 6.7.17)
+#      and a `*HW` field's (`o2.p.w + 1`), each dispatching W's operator fn (no copy before 6.7.17).
+#      6.7.17 (`_fn_nowrite`): C17-C20 a call to a fn that writes no memory — direct (`idn(n)`), a
+#      method (`o.nw(n)`), a generic (`gk<i64>(n)`), the `sizeof` intrinsic — takes no copy (each did
+#      before); K10-K15 one that may write does: a global store (`wg`), an operator fn its body runs
+#      on a struct parameter (`hop(w)`, `v + 1`), a call to a writer (`hw2`), a writing method
+#      (`o.wm`), a writing generic (`gw<i64>`), a recursive helper (`rr`, conservatively)
 #   T  objdump: `return rd(G, gbump())` (no `&`, which diverts any tail call) is an ordinary call —
 #      its copy is in the frame the `jmp` would free — and `return rd(G, n)` keeps its `jmp`
 #   TS the copy costs ONLY its own call the `jmp` (`_tc_snap_div`, never the per-fn
@@ -29,15 +34,20 @@
 #      keeps its `jmp`; T4 the two in a loop (the self call a pending site, `_tcp_site`) and T4B
 #      the self call first, decided at the loop's end (`_tcp_loop_end`); T5 a closure literal
 #      among the copying call's arguments runs its own tail arm, and the call still diverts; TR
-#      the probe run 3,000,000 deep (the lane's first cut: SIGSEGV)
-#   TU THE RULING (user, 2026-10-09 — "accept the TCO loss"): a tail call whose by-value argument is
-#      copied is an ORDINARY call, its evaluation order right, and only that call loses its `jmp`.
-#      TU1 the reviewer's tco2 shape `return f6(G, n - 1, g6(acc))` CALLS f6, and the self tail
-#      call written after it in the same fn keeps its `jmp` (objdump: one of each); TU2 f6 run
-#      3,000,000 deep, the later call doing the depth, exits 193. A per-fn "writes no memory"
-#      analysis would win the copying call's `jmp` back (issue
-#      2026-10-09-tail-call-by-value-copy-needs-effect-analysis, 6.7.13): TU1's call flips to a
-#      `jmp` then, as the ruling's own expiry
+#      the probe run 3,000,000 deep (the lane's first cut: SIGSEGV). (6.7.17: `gz` stores to a
+#      global, so its call still writes and the copy is still taken)
+#   TU A CALL TO A FN THAT WRITES NO MEMORY TAKES NO COPY (6.7.17, `_fn_nowrite`). The 6.7.7 ruling
+#      (user, 2026-10-09 — "accept the TCO loss") made a tail call whose by-value argument is copied
+#      an ORDINARY call, and every call among the later arguments counted as a write; a per-fn
+#      summary wins the copying call's `jmp` back where the callee writes nothing (issue
+#      2026-10-09-tail-call-by-value-copy-needs-effect-analysis — the ruling's own expiry). TU1 the
+#      reviewer's tco2 shape `return f6(G, n - 1, g6(acc))` is a `jmp` now, beside the later self
+#      tail call's (objdump: two `jmp`s, no call — one of each before 6.7.17); TU3 a helper that
+#      stores to a global keeps the copy and the call; TU4 a helper defined BELOW the caller, TU5 a
+#      method (`G.m6(acc)`), TU6 / TU6B a generic called with and without `<i64>` keep the `jmp`;
+#      TU7 a recursive helper is a call (a summary in progress reads as a write: conservative);
+#      TU2 every `jmp` form run 3,000,000 deep (the issue's tco2 verbatim among them), the call
+#      forms 1,000 deep, each with its value: exit 193
 #   AS AS1: CYRIUS_ASYNC=1 — the copy in an `async fn`, whose frame is the coroutine's heap frame
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count
@@ -91,6 +101,22 @@
 #   M18 `_nsv_ptr_base` answers 0                               -> K8; the tcyr's `rd(G, ph.v + 1)`
 #   M19 `_name_struct_val` stops at a `*T` field (the pre-fix line) -> K9; the tcyr's `rd(G, o.p.v + 1)`
 #   M20 `_tok_binop_at` answers 1 (a unary `-` / `*` an operator)  -> C15 (a copy for `- w`), K7
+# 6.7.17 (the no-write summary, `_fn_nowrite`; the same scratch-src method, this gate's x86 legs run with CYCC=):
+#   M21 `_fn_nowrite` answers 1 for every fn                  -> K1, K3, K10-K15, T, T1, T3, T4, T4B, TU3, TU7, AS1;
+#                                                              the tcyr's writer rows on x86 / IR3 / DCE
+#   M22 `_fn_nowrite` answers 0 (6.7.7's every-call rule)     -> C17-C19, TU1, TU1B, TU4-TU6B, TU2 (SIGSEGV); the
+#                                                              tcyr's 1,000,000-deep `nwalk` (SIGSEGV)
+#   M23 `_fnw_assign_ok` answers 1 (a store reads as none)    -> K10, K12-K14, T, T1, T3-T4B, TU3; the tcyr's
+#                                                              global-store rows and the tail arm `rd(G, gbump())`
+#   M24 `_fnw_arith_ok` answers 1 (no operator fn judged)     -> K11; the tcyr's `w_op` / `w_deref` / `w_field` rows
+#   M25 a callee's own calls read as writing nothing          -> K3, K12, K15, TU7; the tcyr's `w_wrap` row and its
+#                                                              two operator rows (`pbump` calls `bump`)
+#   M26 a summary in progress reads as writing nothing        -> K15, TU7 (a recursive helper)
+#   M27 `_call_meth_fn` resolves no method                    -> C18, TU5, TU2 (SIGSEGV)
+#   M28 `_fnw_gen_name` resolves no generic                   -> C19, TU6, TU2 (SIGSEGV)
+#   M29 `_fnw_tok_plain` answers 1 (no token writes)          -> K1, K3, AS1; the tcyr's `bump` rows
+#   (`_fnw_brace_ok` answering 1 kills no row: a struct literal builds in the callee's own frame — the rule is the
+#   allow-list's, for a `{` the scan does not read)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -140,15 +166,28 @@ C13@pw + 1@C
 C14@pq.n + 1@C
 C15@- w@C
 C16@*pw@C
+C17@idn(n)@C
+C18@o.nw(n)@C
+C19@gk<i64>(n)@C
+C20@sizeof(Big) + n@C
 K7@*pw + 1@K
 K8@pq.w + 1@K
-K9@o2.p.w + 1@K'
+K9@o2.p.w + 1@K
+K10@wg(n)@K
+K11@hop(w)@K
+K12@hw2(n)@K
+K13@o.wm(n)@K
+K14@gw<i64>(n)@K
+K15@rr(n)@K'
 {
     printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\nstruct OP2 { n: i64; p: *HW; }\n'
     printf 'fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\n'
     printf 'fn W_add(x: *W, y: *W): i64 { x.p = x.p + 10; return 0; }\n'
     printf 'fn Big_touch(self, p): i64 { return bump(p); }\n'
     printf 'fn rd(s: Big, z): i64 { return s.a; }\nfn rp(s: *Big, z): i64 { return s.a; }\n'
+    printf 'var GW = 0;\nfn idn(x): i64 { return x + 1; }\nfn Big_nw(self, x): i64 { return x; }\nfn gk<T>(x: T): i64 { return 7; }\n'
+    printf 'fn wg(x): i64 { GW = x; return 0; }\nfn hop(v: W): i64 { return v + 1; }\nfn hw2(x): i64 { return wg(x) + 1; }\n'
+    printf 'fn Big_wm(self, x): i64 { GW = x; return 0; }\nfn gw<T>(x: T): i64 { GW = 1; return 0; }\nfn rr(x): i64 { if (x > 100) { return rr(x - 1); } return x; }\n'
     echo "$ROWS" | while IFS='@' read -r id arg kind; do
         for f in rd rp; do
             nm=p; [ "$f" = rp ] && nm=q
@@ -179,7 +218,7 @@ else
     cat "$T/c.out"
     nf=$(grep -c '^  FAIL' "$T/c.out" || true); fails=$((fails + nf))
     nr=$(grep -c '^  ok' "$T/c.out" || true)
-    [ $((nr + nf)) -eq 25 ] || bad "C/K: $((nr + nf)) rows judged, want 25"
+    [ $((nr + nf)) -eq 35 ] || bad "C/K: $((nr + nf)) rows judged, want 35"
 fi
 
 # ── T: the tail form (objdump) ──────────────────────────────────────────────────────────────────
@@ -206,7 +245,7 @@ else
 fi
 
 # ── TS: the copy costs only its own call the `jmp` ──────────────────────────────────────────────
-printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn gz(): i64 { return 0; }\nfn idf(x): i64 { return x; }\nfn rdz(s: Big, z): i64 { return s.a + z; }\nfn rc(s: Big, cb): i64 { return s.a; }\nfn t3(n, acc): i64 {\n    if (n == 0) { return rdz(G, acc + gz()); }\n    return t3(n - 1, acc + 1);\n}\nfn t4(n, acc): i64 {\n    while (n >= 0) {\n        if (n == 0) { return rdz(G, acc + gz()); }\n        return t4(n - 1, acc + 1);\n    }\n    return 0;\n}\nfn t4b(n, acc): i64 {\n    while (n >= 0) {\n        if (n > 0) { return t4b(n - 1, acc + 1); }\n        return rdz(G, acc + gz());\n    }\n    return 0;\n}\nfn t5(): i64 { return rc(G, |x| { return idf(x); }); }\nfn tend(): i64 { return 0; }\nsyscall(60, (t3(3000000, 0) - 3000001) + (t4(3000000, 0) - 3000001) + (t4b(3000000, 0) - 3000001) + (t5() - 1) + tend());\n' > "$T/ts.cyr"
+printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nvar GZ = 0;\nfn gz(): i64 { GZ = 0; return 0; }\nfn idf(x): i64 { return x; }\nfn rdz(s: Big, z): i64 { return s.a + z; }\nfn rc(s: Big, cb): i64 { return s.a; }\nfn t3(n, acc): i64 {\n    if (n == 0) { return rdz(G, acc + gz()); }\n    return t3(n - 1, acc + 1);\n}\nfn t4(n, acc): i64 {\n    while (n >= 0) {\n        if (n == 0) { return rdz(G, acc + gz()); }\n        return t4(n - 1, acc + 1);\n    }\n    return 0;\n}\nfn t4b(n, acc): i64 {\n    while (n >= 0) {\n        if (n > 0) { return t4b(n - 1, acc + 1); }\n        return rdz(G, acc + gz());\n    }\n    return 0;\n}\nfn t5(): i64 { return rc(G, |x| { return idf(x); }); }\nfn tend(): i64 { return 0; }\nsyscall(60, (t3(3000000, 0) - 3000001) + (t4(3000000, 0) - 3000001) + (t4b(3000000, 0) - 3000001) + (t5() - 1) + tend());\n' > "$T/ts.cyr"
 rc=0; CYRIUS_SYMS="$T/ts.syms" "$CC" < "$T/ts.cyr" > "$T/ts.bin" 2> "$T/ts.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "TS: the probe did not build: $(grep '^error' "$T/ts.err" | head -1)"
 else
@@ -236,25 +275,73 @@ else
     else echo "  SKIP T3-T5: no objdump"; skips=$((skips + 1)); fi
 fi
 
-# ── TU: the ruling (user, 2026-10-09) — the copying tail call is a call; a later one keeps its jmp ──
-printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn g6(x): i64 { return x + 1; }\nfn f6(s: Big, n, acc): i64 {\n    if (n == 0) { return acc + s.a; }\n    if (n < 3) { return f6(G, n - 1, g6(acc)); }\n    return f6(G, n - 1, acc + 1);\n}\nfn uend(): i64 { return 0; }\nsyscall(60, (f6(G, 3000000, 0) & 255) + uend());\n' > "$T/tu.cyr"
+# ── TU: a call that writes no memory takes no copy (6.7.17) — the copying tail call keeps its jmp ──
+cat > "$T/tu.cyr" <<'TUEOF'
+struct Big { a: i64; b: i64; c: i64; }
+var G: Big = Big { 1, 2, 3 };
+var GW = 0;
+fn g6(x): i64 { return x + 1; }
+fn w6(x): i64 { GW = x; return x + 1; }
+fn r6(x): i64 { if (x > 1000000000) { return r6(x - 1); } return x + 1; }
+fn Big_m6(self, x): i64 { return x + 1; }
+fn gg6<T>(t: T, k): i64 { return k + 1; }
+fn f6(s: Big, n, acc): i64 {
+    if (n == 0) { return acc + s.a; }
+    if (n < 3) { return f6(G, n - 1, g6(acc)); }
+    return f6(G, n - 1, acc + 1);
+}
+fn f7(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f7(G, n - 1, w6(acc)); }
+fn f8(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f8(G, n - 1, b6(acc)); }
+fn f9(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f9(G, n - 1, G.m6(acc)); }
+fn f10(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f10(G, n - 1, gg6<i64>(0, acc)); }
+fn f11(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f11(G, n - 1, gg6(0, acc)); }
+fn f12(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f12(G, n - 1, r6(acc)); }
+fn b6(x): i64 { return x + 1; }
+fn g(x): i64 { return x + 1; }
+fn f(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f(G, n - 1, g(acc)); }
+fn uend(): i64 { return 0; }
+fn uchk(): i64 {
+    var e = 0;
+    if (f7(G, 1000, 0) != 1001) { e = e + 1; }
+    if (f8(G, 3000000, 0) != 3000001) { e = e + 2; }
+    if (f9(G, 3000000, 0) != 3000001) { e = e + 4; }
+    if (f10(G, 3000000, 0) != 3000001) { e = e + 8; }
+    if (f11(G, 3000000, 0) != 3000001) { e = e + 16; }
+    if (f12(G, 1000, 0) != 1001) { e = e + 32; }
+    if (f(G, 3000000, 0) != 3000001) { e = e + 64; }
+    return e;
+}
+syscall(60, (f6(G, 3000000, 0) & 255) + uchk() + uend());
+TUEOF
 rc=0; CYRIUS_SYMS="$T/tu.syms" "$CC" < "$T/tu.cyr" > "$T/tu.bin" 2> "$T/tu.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "TU: the probe did not build: $(grep '^error' "$T/tu.err" | head -1)"
 else
-    chmod +x "$T/tu.bin"; got=0; timeout 20 "$T/tu.bin" || got=$?
-    [ "$got" -eq 193 ] && ok "TU2: f6 runs 3,000,000 deep on its later self tail call: exit 193 (3000001 & 255)" || bad "TU2: exit $got, want 193 (139: the later self tail call lost its jmp)"
+    chmod +x "$T/tu.bin"; got=0; timeout 30 "$T/tu.bin" || got=$?
+    [ "$got" -eq 193 ] && ok "TU2: f6 / f / f8-f11 run 3,000,000 deep (f7 / f12 1,000), every value right: exit 193" || bad "TU2: exit $got, want 193 (139: a tail call lost its jmp; 194..: a walk's value is wrong)"
     if command -v objdump > /dev/null 2>&1; then
         sort "$T/tu.syms" > "$T/tu.sorted"
-        a=$(awk '$2 == "f6" { print $1 }' "$T/tu.sorted"); e=$(awk '$2 == "uend" { print $1 }' "$T/tu.sorted")
-        if [ -z "$a" ] || [ -z "$e" ]; then bad "TU1: the symbol map does not name f6 / uend"
-        else
-            fs=$(printf '%x' "0x$a")
-            nc=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/tu.bin" | grep -cE "call +0x$fs\b" || true)
-            nj=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/tu.bin" | grep -cE "jmp +0x$fs\b" || true)
-            if [ "$nc" -eq 1 ] && [ "$nj" -eq 1 ]; then ok "TU1: return f6(G, n - 1, g6(acc)) is a call (its copy); return f6(G, n - 1, acc + 1) after it keeps its jmp"
-            else bad "TU1: f6 has $nc call(s) and $nj jmp(s) to itself, want 1 and 1 (the ruling, user 2026-10-09)"; fi
-        fi
-    else echo "  SKIP TU1: no objdump"; skips=$((skips + 1)); fi
+        # tu_n <op> <fn>: how many <op>s to <fn> itself in [fn, the next symbol)
+        tu_n() {
+            _se=$(awk -v n="$2" 'f { print $1; exit } $2 == n { a = $1; f = 1 } END { }' "$T/tu.sorted")
+            _a=$(awk -v n="$2" '$2 == n { print $1 }' "$T/tu.sorted")
+            if [ -z "$_a" ] || [ -z "$_se" ]; then echo x; return 0; fi
+            objdump -d --start-address=0x"$_a" --stop-address=0x"$_se" "$T/tu.bin" | grep -cE "$1 +0x$(printf '%x' "0x$_a")\b" || true
+        }
+        tu_row() {   # <id> <fn> <jmps> <calls> <what>
+            _id=$1; _f=$2; _wj=$3; _wc=$4; shift 4
+            _nj=$(tu_n jmp "$_f"); _nc=$(tu_n call "$_f")
+            if [ "$_nj" = "$_wj" ] && [ "$_nc" = "$_wc" ]; then ok "$_id: $*"
+            else bad "$_id: $_f has $_nj jmp(s) and $_nc call(s) to itself, want $_wj and $_wc ($*)"; fi
+        }
+        tu_row TU1 f6 2 0 "return f6(G, n - 1, g6(acc)) is a jmp (g6 writes nothing: no copy), as the later self tail call"
+        tu_row TU1B f 1 0 "the issue's tco2 verbatim: return f(G, n - 1, g(acc)) is a jmp"
+        tu_row TU3 f7 0 1 "a helper that stores to a global (w6) keeps the copy and the call"
+        tu_row TU4 f8 1 0 "a helper defined below the caller (b6) writes nothing: a jmp"
+        tu_row TU5 f9 1 0 "a method that writes nothing (G.m6(acc)): a jmp"
+        tu_row TU6 f10 1 0 "a generic that writes nothing, gg6<i64>(0, acc): a jmp"
+        tu_row TU6B f11 1 0 "... called without its type argument, gg6(0, acc): a jmp"
+        tu_row TU7 f12 0 1 "a recursive helper (r6) reads as a writer: the copy and the call"
+    else echo "  SKIP TU1-TU7: no objdump"; skips=$((skips + 1)); fi
 fi
 
 # ── AS: an `async fn`'s frame ───────────────────────────────────────────────────────────────────
@@ -300,7 +387,7 @@ if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx" ]
    "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
     if "$T/cc_cx" < "$TC" > "$T/tc.cyx" 2> "$T/tc.cxerr" && [ -s "$T/tc.cyx" ]; then
-        got=0; timeout 120 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?
+        got=0; timeout 300 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?   # 6.7.17: ~50 s of CPU (its walks), 300 under a parallel check.sh
         tcyr_ok "A5: cx (cxvm)" "$T/tc.cxout" "$got"
     else bad "A5: cx: the tcyr did not compile: $(grep '^error' "$T/tc.cxerr" | head -1)"; fi
 else bad "A5: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi

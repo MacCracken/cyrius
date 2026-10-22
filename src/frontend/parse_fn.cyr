@@ -18597,7 +18597,10 @@ fn _name_struct_val(S, i): i64 {
     while (TOKTYP(S, j) == 41) {
         if (TOKTYP(S, j + 1) != 2) { return 1; }
         var fi = FINDFIELD(S, sid - 1, TOKVAL(S, j + 1));
-        if (fi < 0) { return 1; }
+        if (fi < 0) {
+            if (TOKTYP(S, j + 2) == 10) { return 0; }   # 6.7.17: `r.m(..)`, its `(` judges it (`_call_may_write`)
+            return 1;
+        }
         var ft = GETFTYPE(S, sid - 1, fi);
         if (ft <= 0) {
             if (TOKTYP(S, j + 2) != 41) { return 0; }
@@ -18610,7 +18613,8 @@ fn _name_struct_val(S, i): i64 {
     return 1;
 }
 # 1 = evaluating the tokens [q, e) — one argument (its `name:` label skipped) or an operand — may
-# write memory: a call (`_tok_calls` before a `(`), any token `_tok_pure` does not name (an
+# write memory: a call (`_tok_calls` before a `(`; 6.7.17: one whose callee may write — a fn that writes
+# no memory, `_fn_nowrite`, costs no copy, so its tail call keeps its `jmp`), any token `_tok_pure` does not name (an
 # assignment, a block or struct literal, a builtin, `?`, `if`, ...), or `+ - * /` beside a struct
 # value (`_name_struct_val`; 6.7.17: a dereference of a typed struct pointer, `_deref_struct_at`),
 # which dispatches that struct's operator fn. Conservative: a 1 costs a copy.
@@ -18621,8 +18625,8 @@ fn _span_may_write(S, q, e): i64 {
     var i = q;
     while (i < e) {
         var t = TOKTYP(S, i);
-        if (t == 10) {
-            if (i > q) { if (_tok_calls(TOKTYP(S, i - 1)) == 1) { return 1; } }
+        if (t == 10) {   # 6.7.17: a call writes only through a callee that may (`_call_may_write`)
+            if (i > q) { if (_tok_calls(TOKTYP(S, i - 1)) == 1) { if (_call_may_write(S, q, i) == 1) { return 1; } } }
         } elif (t == 2) {
             if (TOKTYP(S, i - 1) != 41) { if (_name_struct_val(S, i) == 1) { sn = 1; } }
         } elif (t >= 6 && t <= 9) {

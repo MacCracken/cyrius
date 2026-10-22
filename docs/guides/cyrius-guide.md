@@ -820,7 +820,9 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   as for any fn: pass all of its parameters.
 - **Tail calls.** A `return f(..)` that fills a default or names an argument is an ordinary call,
   not a `jmp` (as in a fn with a `defer`). A `return f(..)` that passes every argument by
-  position keeps its `jmp`, so write deep recursion that way.
+  position keeps its `jmp`, so write deep recursion that way — unless a by-value struct argument
+  is copied because a later argument may write memory (*A by-value argument is its value where it
+  is written*, below; since 6.7.17 a call to a fn that writes nothing does not count).
 - **`#inline`.** A fn with defaults is never inlined: `#inline` on one warns `#inline ignored:
   fn has parameter defaults`. A named call to an inlinable fn is an ordinary call, because the
   inlined body binds by position.
@@ -2478,6 +2480,27 @@ v6.6.16 it was the caller's address. An untyped `var k = q;` is a copy of the st
 *An untyped binding*). Write `&q` for the address (of the copy). A struct of 8 bytes or less was
 already a value: it travels in a register. An `async fn` refuses such a parameter (see *Other
 limits* under async).
+
+**A by-value argument is its value where it is written (6.7.7).** That struct (and a Win64 value-form
+vector) travels by address and is copied in the callee's prologue — after every argument of the call
+was evaluated — so when a LATER argument may write memory, the argument is copied where it stands
+first: `rd(b, bump(&b))` passes `b` as it was before `bump` ran. A later argument may write when it
+stores, assigns, applies `+ - * /` to a struct value (that struct's operator fn runs: a struct
+variable, a field, and since 6.7.17 one reached through a typed pointer — `*p + 1`, `p.v + 1`,
+`o.p.v + 1`), or calls a fn that may write. In a tail call that copy lives in the frame the `jmp`
+would free, so `return f(b, .., bump(&b))` is an ordinary call (the 6.7.7 ruling, the user,
+2026-10-09: "accept the TCO loss"). ⚠ Through 6.7.16 EVERY call among the later arguments counted
+as a write, so `return f(G, n - 1, g(acc))` with `fn g(x) { return x + 1; }` lost its `jmp` and a
+3,000,000-deep recursion overflowed the stack. Since 6.7.17 a call counts only when its callee may
+write memory — a direct call, a generic one (`g<i64>(..)` or inferred) and a method on a struct or
+typed-pointer receiver are judged by the callee's body: it writes nothing when it is declared to
+return nothing or one scalar (`i64`, `u8`, `f64`, `bool`, ...), declares no parameter default,
+assigns only its own scalar variables and parameters, stores nothing (no field, element, `*p` or
+global store, no store builtin, `syscall` or `asm`), makes no indirect call and no closure, applies
+`+ - * /` to no operand that may be a struct, and calls only fns that write nothing, directly or
+generically (a method call inside it, and a recursive or mutually recursive helper, count as
+writes). Such a call keeps the tail call's `jmp`. To keep it past a helper that writes, bind the
+argument first: `var a2 = w(acc); return f(G, n - 1, a2);`.
 
 From v6.6.6 to v6.6.15 every path that copied or returned such a parameter went through that
 address: `q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a
