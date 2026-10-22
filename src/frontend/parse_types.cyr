@@ -3743,6 +3743,8 @@ fn _pa_amp(S, a, e): i64 {
     }
     t = _pa_hamp(S, noff);   # 6.7.17 (D11): `&h` of a handle is a `**S`
     if (t > 0) { return t; }
+    t = _pa_aamp(S, n);   # 6.7.17: `&pa` of an array of `*S` is a `**S`
+    if (t > 0) { return t; }
     var w = _hl_name_pw(S, noff);
     if (w <= 0) { return 0; }
     if (_ps_pinned(w) == 1) {
@@ -3754,6 +3756,31 @@ fn _pa_amp(S, a, e): i64 {
     if (t <= 0) { return 0; }
     _pa_d = 2;
     return t;
+}
+# ⛔ 6.7.17 — `&pa` OF AN ARRAY OF STRUCT POINTERS IS A POINTER ONE STAR DEEPER THAN ITS ELEMENT (met with D109's
+# narrowing, the user, 2026-10-22: "fix the depth hole too"). D11 refused `ts(&hp)` (`hp: *Pt`, a `**Pt`) into
+# `p: *Pt`, but `var pa: *Pt[2]; ts(&pa)` passed the array's address as the Pt and read element 0's address as its
+# field (40 where 7 was stored): nothing typed `&` of an array of pointers. The array named at token n declared
+# `var NAME: *..S[N]` (`_arr_elem_toks`, k stars to one struct name) types `&NAME` as S behind k + 1 stars, judged by
+# D11's depth rule. An array of inline structs (`var sa: Pt[2]`: `&sa` is element 0's address) and an element that is
+# no plain struct name are not typed here — unchanged. CHANGELOG [6.7.17]
+fn _pa_aamp(S, n): i64 {
+    if (_arr_name_at(S, n, n + 1) < 0) { return 0; }
+    if (_arr_elem_toks(S, n) == 0) { return 0; }
+    var i = _aet_s;
+    var k = 0;
+    while (i < _aet_e) {
+        if (TOKTYP(S, i) != 8) { break; }
+        k = k + 1;
+        i = i + 1;
+    }
+    if (k == 0) { return 0; }
+    if (i + 1 != _aet_e) { return 0; }
+    if (TOKTYP(S, i) != 2) { return 0; }
+    var s = FINDSTRUCT(S, TOKVAL(S, i));
+    if (s <= 0) { return 0; }
+    _pa_d = k + 1;
+    return s;
 }
 # ... `&noff` of a struct name that is no `*T` and that `_hl_amp_sid` does not take: a handle (a pointer-mode local,
 # parameter, capture or global; a `Str` one) — its `&` is the slot holding the address, a `**S`, `_pa_d` 2 — or an

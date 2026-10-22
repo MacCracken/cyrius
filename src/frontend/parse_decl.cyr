@@ -11512,12 +11512,76 @@ fn _arr_parg_err(S, a, pn, fnoff, ord): i64 {
     STI(S, sv);
     return 1;
 }
+# ⛔ 6.7.17 — D109 NARROWED (the user, 2026-10-22: "refuse only when the array's element isn't the parameter's pointer
+# type; an array of matching pointers passes element 0 as in 6.7.16"). `var ap: *i64[4]; tp(ap)` with `p: *i64` ran
+# right through 6.7.16 — element 0 IS a `*i64` — and the first D109 refused it with a hint (`&ap`) that names the
+# array's address, not the pointer it holds. An array whose declared element type is the parameter's type
+# (`_ty_norm_eq`) passes element 0, as the guide's "an array's name is its first element" says. CHANGELOG [6.7.17]
+# The element type of the array named at token n, from its declaration `var NAME: T[N]` (a local, a global, a
+# captured one — the walk `_fpt_ptr_param` makes): 1 and its tokens [`_aet_s`, `_aet_e`), else 0 (a bare `var b[N]`,
+# a shape not read here — refused as before).
+var _aet_s = 0;
+var _aet_e = 0;
+fn _arr_elem_toks(S, n): i64 {
+    var noff = TOKVAL(S, n);
+    var a0 = 0;
+    if (GINFN(S) == 1) { if (_cur_fn_ix >= 0) { a0 = GFDS(S, _cur_fn_ix) - 1; } }
+    if (a0 < 0) { a0 = 0; }
+    var i = _tok_name_decl(S, a0, n, noff);
+    if (i < 0) { if (a0 > 0) { i = _tok_name_decl(S, 0, n, noff); } }
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 1) != 49) { return 0; }
+    var j = i + 2;
+    var d = 0;
+    var tc = GTCNT(S);
+    while (j < tc) {
+        var t = TOKTYP(S, j);
+        if (d == 0) {
+            if (t == 28) { break; }
+            if (t == 4 || t == 5 || t == 31 || t == 11) { return 0; }
+        }
+        d = _pl_tdepth(t, d);
+        j = j + 1;
+    }
+    if (j == i + 2) { return 0; }
+    if (TOKTYP(S, j) != 28) { return 0; }
+    _aet_s = i + 2;
+    _aet_e = j;
+    return 1;
+}
+# 1 = the array named at token a is declared with the pointer parameter's type [ps, pe) as its element type — or, for
+# a generic `fi`'s `*T` / `**T` (T its type parameter), with an element of at least as many stars (6.7.16 ran
+# `gp(ap)`, `fn gp<T>(p: *T)`, as 7). `fi` -1: no generic reading (a `*fn( .. )` annotation).
+fn _arr_elem_ptr_eq(S, a, ps, pe, fi): i64 {
+    if (_arr_elem_toks(S, a) == 0) { return 0; }
+    if (TOKTYP(S, _aet_s) != 8) { return 0; }
+    if (_ty_norm_eq(S, _aet_s, _aet_e, ps, pe) == 1) { return 1; }
+    if (fi < 0) { return 0; }
+    var k = ps;
+    while (k < pe) {
+        if (TOKTYP(S, k) != 8) { break; }
+        k = k + 1;
+    }
+    if (k + 1 != pe) { return 0; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    if (_is_tparam_of(S, fi, TOKVAL(S, k)) == 0) { return 0; }
+    var j = _aet_s + (k - ps);
+    if (j >= _aet_e) { return 0; }
+    while (j > _aet_s) {
+        j = j - 1;
+        if (TOKTYP(S, j) != 8) { return 0; }
+    }
+    return 1;
+}
 # A direct call's (a method's, a generic's) argument [t, cursor) for parameter `ord` of `fi`. 0.
 fn _arr_parg(S, fi, ord, t): i64 {
     if (fi < 0) { return 0; }
     var a = _arr_name_at(S, t, GTI(S));
     if (a < 0) { return 0; }
     if (_pptr_param(S, fi, ord) == 0) { return 0; }
+    var ps = _dps_ts;
+    var pe = _dps_te;
+    if (_arr_elem_ptr_eq(S, a, ps, pe, fi) == 1) { return 0; }   # 6.7.17: D109 narrowed — element 0 is the pointer
     _arr_parg_err(S, a, _bx_pname(S, fi, ord), _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), ord);
     return 0;
 }
@@ -11531,11 +11595,14 @@ fn _arr_iarg(S, cfi, ord, t, cst, ce): i64 {
     if (_ie_pe != c + 1) { return 0; }
     if (TOKTYP(S, c) != 2) { return 0; }
     if (_fpt_ptr_param(S, c, ord) == 0) { return 0; }
+    if (_arr_elem_ptr_eq(S, a, _fpt_ts, _fpt_te, 0 - 1) == 1) { return 0; }   # 6.7.17: D109 narrowed
     _arr_parg_err(S, a, 0 - 1, TOKVAL(S, c), ord);
     return 0;
 }
 # 1 = the name at token k is declared a fn pointer `*fn( P0, P1, .. )` (a local or parameter of the fn being parsed,
-# else a global above) whose parameter `ord` is a pointer (`*..`).
+# else a global above) whose parameter `ord` is a pointer (`*..`); its type's tokens [`_fpt_ts`, `_fpt_te`) (6.7.17).
+var _fpt_ts = 0;
+var _fpt_te = 0;
 fn _fpt_ptr_param(S, k, ord): i64 {
     var noff = TOKVAL(S, k);
     var a0 = 0;
@@ -11558,7 +11625,12 @@ fn _fpt_ptr_param(S, k, ord): i64 {
         if (d == 0) {
             if (tt == 11) { return 0; }
             if (start == 1) {
-                if (n == ord) { if (tt == 8) { return 1; } return 0; }
+                if (n == ord) {
+                    if (tt != 8) { return 0; }
+                    _fpt_ts = j;
+                    _fpt_te = _fpt_tend(S, j);
+                    return 1;
+                }
                 start = 0;
             }
             if (tt == 31) { n = n + 1; start = 1; }
@@ -11568,6 +11640,18 @@ fn _fpt_ptr_param(S, k, ord): i64 {
         j = j + 1;
     }
     return 0;
+}
+# The depth-0 `,` or `)` that ends a `*fn( .. )` annotation's parameter type from token i.
+fn _fpt_tend(S, i): i64 {
+    var d = 0;
+    var tc = GTCNT(S);
+    while (i < tc) {
+        var t = TOKTYP(S, i);
+        if (d == 0) { if (t == 31 || t == 11) { return i; } }
+        d = _pl_tdepth(t, d);
+        i = i + 1;
+    }
+    return i;
 }
 # The vector type of the name `noff` in a fn: a value-form vector local or parameter, a closure's captured vector; 0.
 fn _vnm_lty(S, noff): i64 {
