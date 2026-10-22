@@ -50,6 +50,8 @@
 #      TU7 a recursive helper is a call (a summary in progress reads as a write: conservative);
 #      TU2 every `jmp` form run 3,000,000 deep (the issue's tco2 verbatim among them), the call
 #      forms 1,000 deep, each with its value: exit 193
+#   TD a 60,000-deep chain of helpers that declare nothing, reached from a later argument, compiles and runs
+#      with its value (the summary's nesting is bounded: cycc's stack overflowed from 30,000 before)
 #   AS AS1: CYRIUS_ASYNC=1 — the copy in an `async fn`, whose frame is the coroutine's heap frame
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count
@@ -119,6 +121,7 @@
 #   M29 `_fnw_tok_plain` answers 1 (no token writes)          -> K1, K3, AS1; the tcyr's `bump` rows
 #   M30 `_tok_opnd_end` without `}` (the pre-fix line)        -> K16, K17; the tcyr's `w_ife_sub` / `w_ife_mul`
 #                                                              rows (11) on x86 / IR3 / DCE / aarch64 / cx / PE
+#   M31 `_fn_nowrite` without its depth bound (the pre-fix line) -> TD (rc 139: cycc's SIGSEGV)
 #   (`_fnw_brace_ok` answering 1 kills no row: a struct literal builds in the callee's own frame — the rule is the
 #   allow-list's, for a `{` the scan does not read)
 set -u
@@ -350,6 +353,24 @@ else
         tu_row TU6B f11 1 0 "... called without its type argument, gg6(0, acc): a jmp"
         tu_row TU7 f12 0 1 "a recursive helper (r6) reads as a writer: the copy and the call"
     else echo "  SKIP TU1-TU7: no objdump"; skips=$((skips + 1)); fi
+fi
+
+# ── TD: a deep chain of helpers that declare nothing (6.7.17 review fix) ─────────────────────────
+# `_fn_nowrite` summarises a callee inside its caller's summary; the decl table's cap bounds only chains whose helpers
+# declare a parameter or a var, so 60,000 helpers `fn h1(): i64 { return h2(); }` .. reached from a later argument
+# recursed once per helper and cycc died (SIGSEGV from 30,000). The nesting is bounded (4096 summaries in progress):
+# it compiles, and `rd(G, h1())` reads G.a + 1.
+{
+    printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn rd(s: Big, z): i64 { return s.a + z; }\n'
+    printf 'fn t(): i64 { return rd(G, h1()); }\n'
+    awk 'BEGIN { for (i = 1; i < 60000; i++) printf "fn h%d(): i64 { return h%d(); }\n", i, i + 1; print "fn h60000(): i64 { return 1; }" }'
+    printf 'syscall(60, t());\n'
+} > "$T/td.cyr"
+rc=0; "$CC" < "$T/td.cyr" > "$T/td.bin" 2> "$T/td.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "TD: a 60,000-deep chain of helpers reached from a later argument did not compile: rc $rc (139: the summary's recursion overflowed cycc's stack)"
+else
+    chmod +x "$T/td.bin"; got=0; timeout 10 "$T/td.bin" || got=$?
+    [ "$got" -eq 2 ] && ok "TD: a 60,000-deep chain of helpers that declare nothing compiles; rd(G, h1()) reads 2" || bad "TD: exit $got, want 2"
 fi
 
 # ── AS: an `async fn`'s frame ───────────────────────────────────────────────────────────────────

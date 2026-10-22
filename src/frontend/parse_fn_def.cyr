@@ -5970,6 +5970,7 @@ var _fnw_dt = 0;
 var _fnw_n = 0;     # entries in use; a nested scan (a callee's) pushes above its caller's and pops back
 var _fnw_cap = 0;
 var _fnw_b = 0;     # the first entry of the scan in progress
+var _fnw_depth = 0; # summaries in progress, one inside another (a callee's inside its caller's)
 # 1 = the call whose `(` is token `o` (in a span from `q`) may write memory: its callee does not resolve to a fn whose
 # summary says it writes none.
 fn _call_may_write(S, q, o): i64 {
@@ -6059,14 +6060,20 @@ fn _fnw_resolve(S, ct, o): i64 {
     if (TOKTYP(S, o + 1) == 27) { if (_fnc_ptr_sib(S, noff) >= 0) { return 0 - 1; } }
     return fi;
 }
-# 1 = fn `fi` writes no memory (above). Memoised; 0 while its own summary is in progress.
+# 1 = fn `fi` writes no memory (above). Memoised; 0 while its own summary is in progress, and 0 past 4096 summaries
+# in progress: a callee's summary runs inside its caller's, and a chain of helpers that declare nothing (the decl
+# table's cap never fills) recursed once per helper until cycc overflowed its stack (SIGSEGV at 30,000) — a deeper
+# chain reads as a write, as a full decl table does (conservative: it costs a `jmp`). CHANGELOG [6.7.17]
 fn _fn_nowrite(S, fi): i64 {
     if (fi < 0) { return 0; }
     var fl = GFLG(S, fi);
     if ((fl & 262144) != 0) { return (fl >> 19) & 1; }
     if ((fl & 1048576) != 0) { return 0; }
+    if (_fnw_depth >= 4096) { return 0; }
     SFLG(S, fi, fl | 1048576);
+    _fnw_depth = _fnw_depth + 1;
     var r = _fnw_scan(S, fi);
+    _fnw_depth = _fnw_depth - 1;
     var f2 = (GFLG(S, fi) & (0 - 1048577)) | 262144;
     if (r == 1) { f2 = f2 | 524288; }
     SFLG(S, fi, f2);
