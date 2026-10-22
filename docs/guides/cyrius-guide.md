@@ -8546,12 +8546,14 @@ byte locks are mandatory, so it excludes other lockers and leaves every handle's
 alone, as flock does; a refused `LOCK_NB` is -11 (-EAGAIN on PE; Darwin's is -35), where it used
 to answer -1 for every lock. Every other failure answers its errno through the Win32 table the fd
 reroutes use — a closed fd -9 (`ERROR_INVALID_HANDLE`), a code with no row -1 — and a negative fd
-is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). The arm reads the code
-with `syscall(0xF04F)`, the last error as -errno through that table. As under flock, re-taking the
-mode a handle already holds is a no-op that never lets go of the lock (6.7.13 — 6.7.12 dropped and
-re-took it, and a handle waiting for the lock got in between); the held mode is recorded as a lock
-on one more byte beside the sentinel (2^63 − 2 for `LOCK_EX`, 2^63 − 3 for `LOCK_SH`), so it dies
-with the handle. Changing the mode (SH ↔ EX) drops the old lock first, as flock's conversion does.
+is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). A bad op is -22 whatever
+the fd, as on Linux: the arm checks the op before the fd (macOS's flock checks the fd first and
+answers -9). The arm reads the code with `syscall(0xF04F)`, the last error as -errno through that
+table. As under flock, re-taking the mode a handle already holds is a no-op that never lets go of
+the lock (6.7.13 — 6.7.12 dropped and re-took it, and a handle waiting for the lock got in
+between); the held mode is recorded as a lock on one more byte beside the sentinel (2^63 − 2 for
+`LOCK_EX`, 2^63 − 3 for `LOCK_SH`), so it dies with the handle. Changing the mode (SH ↔ EX) drops
+the old lock first, as flock's conversion does.
 `cyrlint` flags a raw `sys_open` with literal flags for exactly this reason and points at the
 wrappers.
 `xgetdents(fd, buf, n)` answers as Linux's getdents64 does on every target that has one: the whole
@@ -8974,6 +8976,7 @@ never fired and `file_close_r` was never `Err`.
 | `file_rename` / `sys_rename` of a directory onto an existing file | -20 (the file kept) | 0, and the file is gone | 0, and the file is gone; -20 since 6.7.17 (the file kept) |
 | `file_rename` / `sys_rename` of a file onto a directory | -21 | -1 | -13; -21 since 6.7.17 |
 | `xflock(fd, LOCK_EX)` of a closed fd, `xflock(-4, LOCK_EX)` | -9 | -1 | -1; -9 since 6.7.17 |
+| `xflock(h + 1, 3)` (a bad op on an fd never opened, beside the open `h`) | -22 (-9 macOS) | -1; -22 since 6.7.12 | -22; -9 since 6.7.16; -22 since 6.7.17 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a

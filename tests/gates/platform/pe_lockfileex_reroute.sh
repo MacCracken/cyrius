@@ -35,8 +35,10 @@
 #           each helper answers a failure it does not read itself (contention -11, ERROR_NOT_LOCKED)
 #           with `syscall(0xF04F)` — the code through the one Win32 table, a closed handle -9 — and
 #           _xflock_win / _xflock_win_release pass that errno on: neither has a `return 0 - 1;`
-#           (every such failure answered -1). The behaviour rows are unopened_fd_ebadf.tcyr's
-#           (wine: axis 5 does not run it; pe_last_error_reroute.sh axis 6d pins 0xF04F's -9).
+#           (every such failure answered -1). The op is checked before both fd checks, as Linux
+#           checks it: a bad op is -22 whatever the fd (D37: "a bad op stays -22"). The behaviour
+#           rows are unopened_fd_ebadf.tcyr's (wine: axis 5 does not run it;
+#           pe_last_error_reroute.sh axis 6d pins 0xF04F's -9).
 #   axis 5  BEHAVIOUR under wine (skipped without wine — NOT hardware; the cass cross-OS leg of
 #           the release gate runs the same .tcyr): the filed repro exits 11 (xflock LOCK_EX -> 0;
 #           10 before), tests/tcyr/crossos/xflock_two_handle.tcyr's PE build reports 0 failed
@@ -95,7 +97,9 @@
 #                                                                under wine 2 rows (-1 for -9)
 #   _xflock_win_release folds to `return 0 - 1;` again           axis 4 FAIL; unopened_fd_ebadf.tcyr
 #                                                                under wine 1 row (LOCK_UN -1)
-# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.12] [6.7.13]
+#   the op check moved back below the two fd checks (review fix) axis 4 FAIL; unopened_fd_ebadf.tcyr
+#                                                                under wine 3 rows (-9 for -22)
+# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.12] [6.7.13] [6.7.17]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: pe_lockfileex_reroute: build/cycc missing"; exit 77; }
@@ -215,6 +219,14 @@ else
     hlp=$(printf '%s\n' "$body" | grep -n '_xflock_win_\(unlock\|lock\|release\)(' | head -1 | cut -d: -f1)
     if [ -z "$neg" ] || [ -z "$hlp" ] || [ "$neg" -ge "$hlp" ]; then
         bad "axis 4: _xflock_win does not answer a negative fd -9 before its first lock call (6.7.17's D37: line '${neg}', first helper '${hlp}')"
+    fi
+    # The op is checked before both fd checks, as Linux's flock(2) checks it: a bad op is -22 for
+    # every fd (D37: "a bad op stays -22"); with an fd check first a negative or an aliasing fd
+    # answered -9. CHANGELOG [6.7.17]
+    opl=$(printf '%s\n' "$body" | grep -n 'if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }' | head -1 | cut -d: -f1)
+    al=$(printf '%s\n' "$body" | grep -n 'if (_win_fd_aliases(fd) == 1) { return 0 - 9; }' | head -1 | cut -d: -f1)
+    if [ -z "$opl" ] || [ -z "$neg" ] || [ -z "$al" ] || [ "$opl" -ge "$neg" ] || [ "$opl" -ge "$al" ]; then
+        bad "axis 4: _xflock_win does not refuse a bad op -22 before its fd checks (Linux answers -22 for every fd): op check line '${opl}', fd < 0 '${neg}', alias '${al}'"
     fi
     printf '%s\n' "$lbody" | grep -q 'return syscall(0xF04F);' \
         || bad "axis 4: _xflock_win_lock does not answer a failure's errno through the Win32 table (syscall(0xF04F); 6.7.17's D37)"

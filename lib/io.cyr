@@ -549,7 +549,8 @@ fn xflock(fd, op): i64 {
 # the lock is ONE sentinel byte at 2^63 - 1, past any data a file can hold — it excludes other
 # lockers only. Returns 0; -11 (EAGAIN on PE) when LOCK_NB finds the lock held
 # (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an overlapped handle); -22 for an op that
-# is not LOCK_SH, LOCK_EX or LOCK_UN (+LOCK_NB), as on Linux. LOCK_UN of an unheld lock is 0
+# is not LOCK_SH, LOCK_EX or LOCK_UN (+LOCK_NB), whatever the fd, as on Linux (the op is checked
+# before the fd since 6.7.17: an aliasing fd answered -9). LOCK_UN of an unheld lock is 0
 # (ERROR_NOT_LOCKED 158), as on Linux. Measured on cass. CHANGELOG [6.7.12]
 # An fd above 2 with a low bit set is -9 (EBADF), as on Linux: LockFileEx ignores a handle's two
 # low bits, so `xflock(h + 1, LOCK_EX)` locked `h`'s file and answered 0 (`_win_fd_aliases`).
@@ -576,10 +577,12 @@ fn xflock(fd, op): i64 {
 # the new one is taken (a pending locker may get in between, and LOCK_NB may then fail -11).
 # CHANGELOG [6.7.13]
 fn _xflock_win(fd, op): i64 {
-    if (fd < 0) { return 0 - 9; }              # never a descriptor, and never handed to Windows (6.7.17)
-    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }   # never a descriptor: it locks `fd & ~3` (6.7.16)
+    # The op before the fd, as Linux's flock(2) checks it: a bad op is -22 for every fd, a negative
+    # or an aliasing one too (with the fd checks first they answered -9). CHANGELOG [6.7.17]
     var cmd = op & (0 - 5);                    # drop LOCK_NB (4)
     if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }
+    if (fd < 0) { return 0 - 9; }              # never a descriptor, and never handed to Windows (6.7.17)
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }   # never a descriptor: it locks `fd & ~3` (6.7.16)
     var r = 0;
     if (cmd != 8) {
         var mode = _xflock_win_mode(cmd);
