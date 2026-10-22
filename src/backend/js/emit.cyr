@@ -900,9 +900,10 @@ fn TS_JS_EMIT(ts_base, src): i64 {
     var root = load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ROOT_NODE);
 
     # Zero the revisit scratch for reachable nodes. The scratch is the parse
-    # stack, alloc()'d on first use: a program with no statement never pushed,
-    # so take it here, and name a failed allocation rather than walk address 0.
-    # CHANGELOG [6.7.17]
+    # stack, alloc()'d on first use; TS_PARSE's closing FLUSH takes it even for
+    # a program with no statement, but a failed allocation there is no parse
+    # error (nothing was pushed) — so check it here and name it rather than
+    # walk address 0. CHANGELOG [6.7.17]
     var cst = _ts_cst_buf();
     if (cst == 0) {
         syscall(SYS_WRITE, 2, "error: cannot allocate the TS scratch stack\n", 44);
