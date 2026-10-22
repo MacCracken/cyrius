@@ -224,7 +224,7 @@ np5 NP11 "beside another error: said after it" "trait T { fn d(self): i64 { retu
 fn main(): i64 { return zz; }
 var r = main();
 syscall(60, r);
-" "error:<source>:2:27: undefined variable 'zz' (missing include or enum?)
+" "error:<source>:2:25: undefined variable 'zz' (missing include or enum?)
 error:<source>:1:39: unexpected ';'"
 npok NPV "ANTI-VACUOUS: never-parsed bodies only an instance can judge compile clean" 'trait Show { fn show(self): i64; }
 struct S8 { a; }
@@ -257,27 +257,27 @@ syscall(60, r);
 echo "axis 6 — an undefined name in a body pass 2 never parses is refused, as a never-called plain fn's (D110):"
 NUN0=$NPN
 np5 NU1 "the review's repro: an uninstantiated bounded generic's zz" "${SH}fn gg<T: Show>(x: T): i64 { return zz; }
-$MN" "error:<source>:2:38: undefined variable 'zz' (missing include or enum?)"
+$MN" "error:<source>:2:36: undefined variable 'zz' (missing include or enum?)"
 NUF='{ var a = zz; yy = 2; for (var i = 0; i < 2; ww = 1) { } var q = &vv; return uu.f + a; }'
 np5 NU2p "control: every undefined-name site in a plain dead fn" "fn h(): i64 $NUF
-$MN" "error:<source>:1:25: undefined variable 'zz' (missing include or enum?)
-error:<source>:1:33: undefined variable 'yy'
-error:<source>:1:64: undefined variable 'ww'
-error:<source>:1:81: undefined variable 'vv'
-error:<source>:1:95: undefined variable 'uu'"
+$MN" "error:<source>:1:23: undefined variable 'zz' (missing include or enum?)
+error:<source>:1:27: undefined variable 'yy'
+error:<source>:1:58: undefined variable 'ww'
+error:<source>:1:79: undefined variable 'vv'
+error:<source>:1:90: undefined variable 'uu'"
 np5 NU2 "... the same sites in an uninstantiated bounded generic: the same lines" "fn h<T: Show>(x: T): i64 $NUF
-${SH}$MN" "error:<source>:1:38: undefined variable 'zz' (missing include or enum?)
-error:<source>:1:46: undefined variable 'yy'
-error:<source>:1:77: undefined variable 'ww'
-error:<source>:1:94: undefined variable 'vv'
-error:<source>:1:108: undefined variable 'uu'"
+${SH}$MN" "error:<source>:1:36: undefined variable 'zz' (missing include or enum?)
+error:<source>:1:40: undefined variable 'yy'
+error:<source>:1:71: undefined variable 'ww'
+error:<source>:1:92: undefined variable 'vv'
+error:<source>:1:103: undefined variable 'uu'"
 np5 NU3 "an un-inherited trait default's zz" "trait T { fn d(self): i64 { return zz; } }
-$MN" "error:<source>:1:38: undefined variable 'zz' (missing include or enum?)"
+$MN" "error:<source>:1:36: undefined variable 'zz' (missing include or enum?)"
 np5 NU4 "an uninstantiated bounded generic method's zz" "${SH}struct Q { k; }
 impl Q { fn m<T: Show>(self, v: T): i64 { return zz + self.k; } }
-$MN" "error:<source>:3:53: undefined variable 'zz' (missing include or enum?)"
+$MN" "error:<source>:3:50: undefined variable 'zz' (missing include or enum?)"
 np5 NU5 "an uncalled stub generic's zz" "fn wrap<T>(p: T): i64 { return p.x + zz; }
-$MN" "error:<source>:1:40: undefined variable 'zz' (missing include or enum?)"
+$MN" "error:<source>:1:38: undefined variable 'zz' (missing include or enum?)"
 printf '%s' "${SH}fn gg<T: Show>(x: T): i64 { return zz; }
 $MN" > "$T/NU6.cyr"
 for leg in $LEGS; do

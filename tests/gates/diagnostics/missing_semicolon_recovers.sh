@@ -20,7 +20,8 @@
 # declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse_decl.cyr). The classic-for header
 # (`_for_semis` / `_for_empty`), a dyn source's extent (`_dyn_ext`), a destructure's call check (`_dt_rhs_end`), a
 # whole call's end (`_call_ends_at`) and an `asm { }` body (`_asm_bad`) read a missing `;` / `}` as that, once.
-# The `undefined variable` rows pin today's caret (the `;` after the name); the caret move to the name re-derives them.
+# The `undefined variable` rows pin the name's own column (6.7.17, the user's D34; re-derived from the compiler — they
+# pinned the `;` after the name before it).
 #
 #   S2  the filing's s2 verbatim (`var a = 1` then `var b = zz;`): the `;`, then `zz`
 #   V   a `var` statement's `;` (PARSE_VAR): V1-V4 before an if / while / for / return, V5 before a closure, V6
@@ -171,7 +172,7 @@ var b = zz;
 return a; }
 syscall(60, main());
 ' "error:<source>:3:1: expected ';', got var
-error:<source>:3:11: $UZ"
+error:<source>:3:9: $UZ"
 
 VH='fn f(): i64 {
     var a = 1
@@ -182,33 +183,33 @@ syscall(60, f());
 '
 row V1 "var a = 1 then an if" "${VH}    if (a == 1) { a = zz; }
 ${VT}" "error:<source>:3:5: expected ';', got if
-error:<source>:3:25: $UZ"
+error:<source>:3:23: $UZ"
 row V2 "var a = 1 then a while" "${VH}    while (a == 1) { a = zz; }
 ${VT}" "error:<source>:3:5: expected ';', got while
-error:<source>:3:28: $UZ"
+error:<source>:3:26: $UZ"
 row V3 "var a = 1 then a for" "${VH}    for (var i = 0; i < 3; i = i + 1) { a = zz; }
 ${VT}" "error:<source>:3:5: expected ';', got for
-error:<source>:3:47: $UZ"
+error:<source>:3:45: $UZ"
 row V4 "var a = 1 then a return" "${VH}    return zz;
 }
 syscall(60, f());
 " "error:<source>:3:5: expected ';', got return
-error:<source>:3:14: $UZ"
+error:<source>:3:12: $UZ"
 row V5 "var a = 1 then a closure" "${VH}    var g = |x| { return x + zz; };
 ${VT}" "error:<source>:3:5: expected ';', got var
-error:<source>:3:32: $UZ"
+error:<source>:3:30: $UZ"
 row V6 "var a = 1 before the fn's }" 'fn f(): i64 { var a = 1 }
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:1:25: expected ';', got '}'
-error:<source>:2:24: $UZ"
+error:<source>:2:22: $UZ"
 
 # ---- P: a statement's `;` (_PARSE_STMT_IMPL and its arms, src/frontend/parse.cyr)
 row P1 "an assignment before the fn's }" 'fn f(): i64 { var x = 0; x = 5 }
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:1:32: expected ';', got '}'
-error:<source>:2:24: $UZ"
+error:<source>:2:22: $UZ"
 row P2 "break before the loop's }" 'fn f(): i64 {
     var i = 0;
     while (i < 3) { i = i + 1; break }
@@ -216,7 +217,7 @@ row P2 "break before the loop's }" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:38: expected ';', got '}'
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 row P3 "continue before the loop's }" 'fn f(): i64 {
     var i = 0;
     while (i < 3) { i = i + 1; continue }
@@ -224,7 +225,7 @@ row P3 "continue before the loop's }" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:41: expected ';', got '}'
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 row P4 "a method-call statement before a return" 'struct P { a; }
 impl P { fn m(self): i64 { return self.a; } }
 fn f(): i64 {
@@ -234,7 +235,7 @@ fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:6:5: expected ';', got return
-error:<source>:6:14: $UZ"
+error:<source>:6:12: $UZ"
 row P5 "an explicit generic call statement before a return" 'fn id<T>(x: T): T { return x; }
 fn f(): i64 {
     id<i64>(1)
@@ -242,7 +243,7 @@ fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:4:5: expected ';', got return
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 
 # ---- R: a `return`'s `;` (PARSE_RETURN's arms, src/frontend/parse_fn.cyr)
 row S1 "the filing's s1 verbatim: return 1 } — one error" 'fn h(): i64 { return 1 }
@@ -256,7 +257,7 @@ row R1 "return 1 } in a nested block" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:28: expected ';', got '}'
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 row R2 "return a before a var" 'fn f(): i64 {
     var a = 1;
     return a
@@ -264,13 +265,13 @@ row R2 "return a before a var" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:4:5: expected ';', got var
-error:<source>:4:15: $UZ"
+error:<source>:4:13: $UZ"
 row R3 "return h(1) } (a call's return)" 'fn h(a): i64 { return a; }
 fn f(): i64 { return h(1) }
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:2:27: expected ';', got '}'
-error:<source>:3:24: $UZ"
+error:<source>:3:22: $UZ"
 
 # ---- F: a C-style `for` header missing one of its two `;` (PARSE_FOR, src/frontend/parse_ctrl.cyr)
 FH='fn f(): i64 {
@@ -283,39 +284,39 @@ syscall(60, f());
 '
 row F1 "the condition's ; missing: for (var i = 0; i < 3 i = i + 1)" "${FH}    for (var i = 0; i < 3 i = i + 1) { b = zz; }
 ${FT}" "error:<source>:4:27: expected ';', got identifier 'i'
-error:<source>:4:46: $UZ"
+error:<source>:4:44: $UZ"
 row F2 "the init's ; missing: for (var i = 0 i < 3; i = i + 1)" "${FH}    for (var i = 0 i < 3; i = i + 1) { b = zz; }
 ${FT}" "error:<source>:4:20: expected ';', got identifier 'i'
-error:<source>:4:46: $UZ"
+error:<source>:4:44: $UZ"
 row F3 "an assignment init's ; missing: for (a = 0 a < 3; a = a + 1)" "${FH}    for (a = 0 a < 3; a = a + 1) { b = zz; }
 ${FT}" "error:<source>:4:16: expected ';', got identifier 'a'
-error:<source>:4:42: $UZ"
+error:<source>:4:40: $UZ"
 row F4 "both missing: for (var i = 0 i < 3)" "${FH}    for (var i = 0 i < 3) { b = zz; }
 ${FT}" "error:<source>:4:20: expected ';', got identifier 'i'
-error:<source>:4:35: $UZ"
+error:<source>:4:33: $UZ"
 row F5 "the step missing with its ;: for (var i = 0; i < 3)" "${FH}    for (var i = 0; i < 3) { b = zz; }
 ${FT}" "error:<source>:4:26: expected ';', got ')'
-error:<source>:4:36: $UZ"
+error:<source>:4:34: $UZ"
 row F6 "a compound step after the missing ;: for (var i = 0; i < 3 i += 1)" "${FH}    for (var i = 0; i < 3 i += 1) { b = zz; }
 ${FT}" "error:<source>:4:27: expected ';', got identifier 'i'
-error:<source>:4:43: $UZ"
+error:<source>:4:41: $UZ"
 
 FE="a \`for\` clause is empty - all three are required (\`loop { }\` loops without them)"
 row F7 "for (;;): the guide's refusal, once" "${FH}    for (;;) { b = zz; break; }
 ${FT}" "error:<source>:4:10: $FE
-error:<source>:4:22: $UZ"
+error:<source>:4:20: $UZ"
 row F8 "for (; c;)" "${FH}    for (; b < 3;) { b = zz; }
 ${FT}" "error:<source>:4:10: $FE
-error:<source>:4:28: $UZ"
+error:<source>:4:26: $UZ"
 row F9 "an empty condition" "${FH}    for (var i = 0; ; i = i + 1) { b = zz; }
 ${FT}" "error:<source>:4:21: $FE
-error:<source>:4:42: $UZ"
+error:<source>:4:40: $UZ"
 row F10 "an empty step" "${FH}    for (var i = 0; i < 3; ) { b = zz; }
 ${FT}" "error:<source>:4:28: $FE
-error:<source>:4:38: $UZ"
+error:<source>:4:36: $UZ"
 row F11 "an empty init" "${FH}    for (; b < 3; b = b + 1) { b = zz; }
 ${FT}" "error:<source>:4:10: $FE
-error:<source>:4:38: $UZ"
+error:<source>:4:36: $UZ"
 
 # ---- D: a `dyn` initializer's `;` (src/frontend/parse_types.cyr)
 DH='trait Show { fn show(self): i64; }
@@ -329,14 +330,14 @@ row D1 "var o: dyn Show = &p then a return" "${DH}fn f(): i64 {
 }
 syscall(60, f());
 " "error:<source>:7:5: expected ';', got return
-error:<source>:7:14: $UZ"
+error:<source>:7:12: $UZ"
 row D2 "var o: dyn Show = &p before the fn's }" "${DH}fn f(): i64 {
     var p = P { 1, 2 };
     var o: dyn Show = &p }
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 " "error:<source>:6:26: expected ';', got '}'
-error:<source>:7:24: $UZ"
+error:<source>:7:22: $UZ"
 
 row D3 "a dyn assignment o = &p before the fn's }" "${DH}fn f(): i64 {
     var p = P { 1, 2 };
@@ -345,7 +346,7 @@ row D3 "a dyn assignment o = &p before the fn's }" "${DH}fn f(): i64 {
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 " "error:<source>:7:12: expected ';', got '}'
-error:<source>:8:24: $UZ"
+error:<source>:8:22: $UZ"
 row D4 "a dyn assignment o = &p then a return" "${DH}fn f(): i64 {
     var p = P { 1, 2 };
     var o: dyn Show = &p;
@@ -354,7 +355,7 @@ row D4 "a dyn assignment o = &p then a return" "${DH}fn f(): i64 {
 }
 syscall(60, f());
 " "error:<source>:8:5: expected ';', got return
-error:<source>:8:14: $UZ"
+error:<source>:8:12: $UZ"
 
 # ---- E: a subscript store's `;` (src/frontend/parse_expr.cyr)
 row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
@@ -363,7 +364,7 @@ row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:3:14: expected ';', got '}'
-error:<source>:4:24: $UZ"
+error:<source>:4:22: $UZ"
 row E2 "a[0] = 1 then a return" 'fn f(): i64 {
     var a: i64[4];
     a[0] = 1
@@ -371,7 +372,7 @@ row E2 "a[0] = 1 then a return" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:4:5: expected ';', got return
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 
 # ---- T: an assignment's terminator (the `term` sites: `*p = v`, a struct copy, `a, b = f()`, a field store)
 row T1 "*q = 5 before the fn's }" 'fn f(): i64 {
@@ -381,7 +382,7 @@ row T1 "*q = 5 before the fn's }" 'fn f(): i64 {
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:4:12: expected ';', got '}'
-error:<source>:5:24: $UZ"
+error:<source>:5:22: $UZ"
 row T2 "a struct copy *q = o then a return" 'struct P { n; m; }
 fn f(): i64 {
     var p = P { 1, 2 };
@@ -392,7 +393,7 @@ fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:7:5: expected ';', got return
-error:<source>:7:14: $UZ"
+error:<source>:7:12: $UZ"
 
 row T3 "a field store p.n = 5 before the fn's }" 'struct P { n; m; }
 fn f(): i64 {
@@ -401,7 +402,7 @@ fn f(): i64 {
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:4:13: expected ';', got '}'
-error:<source>:5:24: $UZ"
+error:<source>:5:22: $UZ"
 row T4 "a field store p.n = 5 then a return" 'struct P { n; m; }
 fn f(): i64 {
     var p = P { 1, 2 };
@@ -410,7 +411,7 @@ fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:5:5: expected ';', got return
-error:<source>:5:14: $UZ"
+error:<source>:5:12: $UZ"
 row T5 "a call's field gp().n = 5 before the fn's }" 'struct P { n; m; }
 var gq = P { 1, 2 };
 fn gp(): *P { return &gq; }
@@ -418,7 +419,7 @@ fn f(): i64 { gp().n = 5 }
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:4:26: expected ';', got '}'
-error:<source>:5:24: $UZ"
+error:<source>:5:22: $UZ"
 
 # ---- M: a destructure's call missing its `;` is "expected ';'", not "needs a call on the right-hand side"
 row M1 "x, y = two(3) before the fn's }" 'fn two(a) { return (a, 4); }
@@ -429,7 +430,7 @@ fn f(): i64 {
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:5:19: expected ';', got '}'
-error:<source>:6:24: $UZ"
+error:<source>:6:22: $UZ"
 row M2 "var a, b = two(3) then a return" 'fn two(a) { return (a, 4); }
 fn f(): i64 {
     var a, b = two(3)
@@ -437,7 +438,7 @@ fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:4:5: expected ';', got return
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 row M3 "control: x, y = two(3) + 1; keeps its refusal" 'fn two(a) { return (a, 4); }
 fn f(): i64 {
     var x = 0;
@@ -447,7 +448,7 @@ fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:5:12: multi-value destructure needs a call on the right-hand side
-error:<source>:6:14: $UZ"
+error:<source>:6:12: $UZ"
 
 # ---- G: a whole call missing its `;` still types what it initialises / returns (`_call_ends_at`)
 row G1 "var r = mk() (a struct) then return r.pick(1);" 'struct P { a; b; c; }
@@ -472,7 +473,7 @@ fn o3(): P { return mk() }
 fn g(): i64 { return zz; }
 syscall(60, g());
 ' "error:<source>:3:26: expected ';', got '}'
-error:<source>:4:24: $UZ"
+error:<source>:4:22: $UZ"
 
 # ---- Z: the declaration zone — a `var` entry missing its `;` ends at the declaration after it (`_gv_entry_cut`,
 # src/frontend/parse_decl.cyr), so pass 1 / pass 2 register and parse what follows
@@ -481,51 +482,51 @@ fn f1(): i64 { return zz1; }
 fn f2(): i64 { return zz2; }
 syscall(60, g);
 ' "error:<source>:2:1: expected ';', got fn
-error:<source>:2:26: undefined variable 'zz1' (missing include or enum?)
-error:<source>:3:26: undefined variable 'zz2' (missing include or enum?)"
+error:<source>:2:23: undefined variable 'zz1' (missing include or enum?)
+error:<source>:3:23: undefined variable 'zz2' (missing include or enum?)"
 rowset Z1 "var g = 1 before a struct" 'var g = 1
 struct Q { a; }
 fn f1(): i64 { return zz1; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got struct
-error:<source>:3:26: undefined variable 'zz1' (missing include or enum?)"
+error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
 rowset Z2 "var g = 1 before var h = zz;" 'var g = 1
 var h = zz;
 fn f1(): i64 { return zz1; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got var
-error:<source>:2:11: $UZ
-error:<source>:3:26: undefined variable 'zz1' (missing include or enum?)"
+error:<source>:2:9: $UZ
+error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
 rowset Z3 "var g = 1 before a const (green on the parent: the const's own ; ended the skip)" 'var g = 1
 const C = 5;
 fn f1(): i64 { return zz1 + C; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got const
-error:<source>:3:27: undefined variable 'zz1' (missing include or enum?)"
+error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
 rowset Z4 "var g = 1 before an #assert" 'var g = 1
 #assert 2 == 3, "boom"
 fn f1(): i64 { return zz1; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got #assert
 error:<source>:2:17: #assert failed: boom
-error:<source>:3:26: undefined variable 'zz1' (missing include or enum?)"
+error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
 rowset Z5 "a closure var g = |x| { .. } before a fn" 'var g = |x| { return x; }
 fn f1(): i64 { return zz1; }
 syscall(60, f1());
 ' "error:<source>:2:1: expected ';', got fn
-error:<source>:2:26: undefined variable 'zz1' (missing include or enum?)"
+error:<source>:2:23: undefined variable 'zz1' (missing include or enum?)"
 rowset Z6 "var g = 1 before an enum and its impl" 'var g = 1
 enum E { A, B }
 impl E { fn m(self): i64 { return zz1; } }
 syscall(60, g);
 ' "error:<source>:2:1: expected ';', got enum
-error:<source>:3:38: undefined variable 'zz1' (missing include or enum?)"
+error:<source>:3:35: undefined variable 'zz1' (missing include or enum?)"
 rowset Z7 "a destructure var a, b = two(3) before a fn" 'fn two(a) { return (a, 4); }
 var a, b = two(3)
 fn g(): i64 { return zz; }
 syscall(60, g());
 ' "error:<source>:3:1: expected ';', got fn
-error:<source>:3:24: $UZ"
+error:<source>:3:22: $UZ"
 accept ZA "valid: a multi-line closure, a *fn global, initializers continued on the next line" 'var f = |x| {
     var y = x + 1;
     return y;
@@ -545,8 +546,8 @@ fn f1(): i64 { return zz1; }
 fn f2(): i64 { return zz2; }
 syscall(60, f1() + C);
 ' "error:<source>:2:1: expected ';' after a const's value
-error:<source>:2:26: undefined variable 'zz1' (missing include or enum?)
-error:<source>:3:26: undefined variable 'zz2' (missing include or enum?)"
+error:<source>:2:23: undefined variable 'zz1' (missing include or enum?)
+error:<source>:3:23: undefined variable 'zz2' (missing include or enum?)"
 row C2 "a refused const assignment N = 2 before a var" 'fn f(): i64 {
     var x = 0;
     const N = 1;
@@ -556,7 +557,7 @@ row C2 "a refused const assignment N = 2 before a var" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:4:7: cannot assign to const 'N' - a const has no storage (declare it \`var\` to change it)
-error:<source>:5:15: $UZ"
+error:<source>:5:13: $UZ"
 
 # ---- A: an `asm { }` body missing its `}` (`_asm_bad`, src/frontend/parse.cyr)
 row A1 "asm { 0x90; then the next asm block" 'fn f(): i64 {
@@ -566,14 +567,14 @@ row A1 "asm { 0x90; then the next asm block" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:5: expected '}', got asm
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 row A2 "asm { 0x90 then a return" 'fn f(): i64 {
     asm { 0x90
     return zz;
 }
 syscall(60, f());
 ' "error:<source>:3:5: expected '}', got return
-error:<source>:3:14: $UZ"
+error:<source>:3:12: $UZ"
 row A3 "asm { 0x90; at the end of file" 'fn f(): i64 {
     asm { 0x90;
 ' "error:<source>:2:16: expected '}', got end of file"
@@ -583,7 +584,7 @@ row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:1:32: expected ';', got '{'
-error:<source>:2:24: $UZ"
+error:<source>:2:22: $UZ"
 
 row B2 "the same in an if block, two statements inside the braces" 'fn f(): i64 {
     var a = 1;
@@ -592,7 +593,7 @@ row B2 "the same in an if block, two statements inside the braces" 'fn f(): i64 
 }
 syscall(60, f());
 ' "error:<source>:3:25: expected ';', got '{'
-error:<source>:4:14: $UZ"
+error:<source>:4:12: $UZ"
 
 # ---- K: the S22 control
 row K1 "S22 verbatim: var P = 3; P { 5 };" 'struct P { a; }
@@ -604,14 +605,14 @@ row K2 "S22, then a later error" 'struct P { a; }
 fn run(): i64 { var P = 3; P { 5 }; return zz; }
 syscall(60, run());
 ' "error:<source>:2:30: expected '=', got '{'
-error:<source>:2:46: $UZ"
+error:<source>:2:44: $UZ"
 
 row K3 "control: an unclosed literal var p = P { 1, 2; (CT4) — the } after is the fn's" 'struct P { a; b; }
 fn run(): i64 { var p = P { 1, 2; return p.b; }
 fn g(): i64 { return zz; }
 syscall(60, run() + g());
 ' "error:<source>:2:33: expected '}', got ';'
-error:<source>:3:24: $UZ"
+error:<source>:3:22: $UZ"
 
 echo "$G: $pass passed, $fail failed (legs: $LEGS)"
 [ "$fail" -eq 0 ] || exit 1
