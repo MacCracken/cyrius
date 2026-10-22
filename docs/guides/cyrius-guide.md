@@ -254,6 +254,13 @@ element `(*fn(i64): i64, i64)` are *a fn-pointer type `*fn( .. )` cannot be a fn
 type's first `*`, with the note — under `cyrius lint` too — and the body is read on (6.7.16; through 6.7.15 it was
 *expected identifier, got reserved keyword 'fn' (.. rename the variable/field/fn)*, and a bare `*fn` read the
 body as more of the type: *fn 'main' is defined inside fn 'h'*, *expected '}'*).
+It is also the type of a local, a global (either zone), a struct or union field and a slice element (6.7.17, the
+user's D8, 2026-10-22): `var c: *fn(i64): i64 = &f;`, `var G: *fn = 0;`, `struct H { cb: *fn(i64): i64; k; }`
+(16 bytes) and `var s: [*fn(i64): i64]` each declare the one 8-byte word a parameter's does — a bare `*fn` and
+`**fn( .. )` too — and its names are read as a parameter's are, each refusal once with the declaration's words
+(*unknown type 'Nope' for variable 'c'*, *... for struct field 'cb'*, *expected ')', got identifier 'i64'*).
+Through 6.7.16 each was *expected identifier, got reserved keyword 'fn'* followed by *undefined variable 'i64'* and
+*assigning non-pointer to typed pointer* (a global's also *expected '=', got '('*).
 
 **A `Vec<T>` annotation reads its `T` (6.7.11)** as a struct field `items: Vec<T>` always has — a
 local, a global (either zone), a parameter, `*Vec<T>` (a variable, a parameter, a field, a return),
@@ -7122,7 +7129,10 @@ when the callee is written `&f` (6.7.11): a callee held in a variable returns on
 
 A parameter that holds a fn pointer can say so (6.7.11): `fn ap(cb: *fn(i64): i64, x: i64)`, or a
 bare `cb: *fn`. It is one word; `fncall1(cb, x)` / `callptr(cb, x)` call through it, and the
-signature is not checked against the fn a caller passes (see *Type names*).
+signature is not checked against the fn a caller passes (see *Type names*). So can a local, a global, a
+struct or union field and a slice element since 6.7.17 (the user's D8): `var c: *fn(i64): i64 = &dbl;`,
+`struct H { cb: *fn(i64): i64; k; }` — each one word, called through as the parameter is (`fncall1(c, 5)`,
+`callptr(h.cb, 5)`).
 
 The older `lib/fnptr.cyr` helper API (`fncall0`..`fncall8`) still works for
 existing code:

@@ -204,6 +204,14 @@ fn _tn_fnptr_kw(S, k): i64 {
     if (TOKTYP(S, k - 1) == 8) { return 1; }
     return 0;
 }
+# ⛔ 6.7.17 (D8) — 1 when token `k` is a `fn` that begins a fn: not a fn-pointer type's. A local's, a global's and a
+# field's `*fn( .. )` declare since 6.7.17, so a `fn` token inside a body or at top level is no longer always a fn's
+# own; a walk for "the fn that holds this token" stopped at one: a tuple local after `var c: *fn = 0;` in a generic
+# fn escaped its refusal (R4), and `p = mk3();` after one was judged as an untyped `p`. CHANGELOG [6.7.17]
+fn _tok_fn_kw(S, k): i64 {
+    if (TOKTYP(S, k) != 32) { return 0; }
+    return 1 - _tn_fnptr_kw(S, k);
+}
 # 1 when `noff` is one of the `<T, ..>` of the fn whose `fn` token is `k` (`fn name <`).
 fn _fn_tp_has(S, k, noff): i64 {
     if (TOKTYP(S, k + 2) != 19) { return 0; }
@@ -810,7 +818,7 @@ fn _tup_fields(S, si, np, n): i64 {
 fn _tok_enclosing_fn(S, ti): i64 {
     var k = ti - 1;
     while (k >= 0) {
-        if (TOKTYP(S, k) == 32) { break; }
+        if (_tok_fn_kw(S, k) == 1) { break; }   # 6.7.17 (D8): not a local's `*fn( .. )`
         k = k - 1;
     }
     if (k < 0) { return 0 - 1; }
@@ -3926,8 +3934,71 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
     } elif (PEEKT(S) == 10) {
         if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); _ptr_refd_ti = ti0; }   # 6.7.7 (R3)
         else { STI(S, _call_close(S, GTI(S)) + 1); }
+    } elif (PEEKT(S) == 32) {   # 6.7.17 (D8): `*fn( .. )`, a bare `*fn`, `**fn( .. )`
+        STI(S, _ptr_fnp_end(S, ti0, vnoff, quiet, " for variable "));
     } elif (quiet == 0) { ERR_EXPECT(S, 2); }
     return ps;
+}
+# ⛔ 6.7.17 (the user's D8, 2026-10-22) — A `*fn( .. )` TYPE DECLARES A LOCAL, A GLOBAL OR A FIELD AS THE ONE POINTER
+# WORD A PARAMETER'S DOES. The readers took the token after the `*` as a type name and met the keyword: `var c:
+# *fn(i64): i64 = 0;` was "expected identifier, got reserved keyword 'fn'" and a cascade, so a fn pointer was held only
+# untyped.
+# The type (the first `*` at token `ti0`; a bare `*fn` and `**fn( .. )` too) is read by the parameter reader's grammar
+# (`_pty_end`), each refusal inside its list once with the declaration's words (`what`, `vnoff`) when `quiet` is 0, and
+# stepped; its step is a pointer's 8 (`_ptr_step_peek`), so `fncall1(c, 5)` / `callptr(c, 5)` read the word as they
+# read a `cb: *fn( .. )` parameter. The token after the type. CHANGELOG [6.7.17]
+# The parameter reader's (`_pty_*`, parse_fn.cyr) words for such a declaration (" for variable "; 0 = a parameter's)
+# and its name, and the token its list's missing `)` was expected at (-1 none; `_pty_rpn` 1 = nothing in that type
+# reported before it, so it is reported).
+var _pty_dk = 0;
+var _pty_dn = 0;
+var _pty_rpx = 0 - 1;
+var _pty_rpn = 0;
+fn _pty_what(): i64 {
+    if (_pty_dk != 0) { return _pty_dk; }
+    return " for parameter ";
+}
+fn _ptr_fnp_end(S, ti0, vnoff, quiet, what): i64 {
+    var sv_b = _pty_bad;
+    var sv_k = _pty_dk;
+    var sv_n = _pty_dn;
+    _pty_bad = 0;
+    _pty_dk = what;
+    _pty_dn = vnoff;
+    _pty_rpx = 0 - 1;
+    var e = _pty_end(S, ti0, 1 - quiet, 0);
+    if (_pty_rpx >= 0) {
+        if (quiet == 0) { _ptr_fnp_rp(S); }
+        e = _fnp_decl_end(S, e);
+    }
+    _pty_bad = sv_b;
+    _pty_dk = sv_k;
+    _pty_dn = sv_n;
+    return e;
+}
+# The `)` a `*fn( .. )` annotation's list lacks (`_pty_list` notes the token it was expected at): the parameter loop
+# reports a parameter's; a declaration's is reported here, once, unless the type reported before it (`_pty_rpn`).
+fn _ptr_fnp_rp(S): i64 {
+    if (_pty_rpn == 0) { return 0; }
+    if (_tn_once(S, _pty_rpx) == 0) { return 0; }
+    STI(S, _pty_rpx);
+    ERR_EXPECT(S, 11);
+    return 0;
+}
+# Past such a list (`e` the token its `)` was expected at): the declaration's `=` or `;` (or a brace), so the line
+# reads on from there in both passes, with nothing more to say about the type.
+fn _fnp_decl_end(S, e): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (e < n) {
+        var t = TOKTYP(S, e);
+        if (t == 5 || t == 12 || t == 13 || t == 14) { return e; }
+        if (t == 10 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 29) { if (d > 0) { d = d - 1; } }
+        elif (t == 4) { if (d == 0) { return e; } }
+        e = e + 1;
+    }
+    return e;
 }
 # The step of `*T` with the cursor on T, which does not move: `_tn_ptr_step`, except that a
 # generic struct with arguments is its INSTANCE (`*Box<i32>` steps sizeof(Box<i32>), as `var b:
@@ -3983,6 +4054,10 @@ fn _add_ptr_field(S, si, fnoff): i64 {
 # closed. CHANGELOG [6.7.16]
 var _ppk_nomint = 0;   # `_ptr_step_peek` checks a generic's list without minting it
 fn _fld_ptr_annot(S, fnoff, ann): i64 {
+    if (_trs_ret_fnp(S, ann) == 1) {   # 6.7.17 (D8): `cb: *fn( .. )`, one 8-byte word (`_ptr_fnp_end`)
+        STI(S, _ptr_fnp_end(S, ann, fnoff, 0, " for struct field "));
+        return 8;
+    }
     if (TOKTYP(S, ann + 1) != 8) { return _ptr_annot(S, fnoff, 0); }
     if (_fld_pp_late(S, ann) == 1) { return 8; }   # 6.7.16 (D103): `**B`, B declared below
     _ppk_nomint = 1;
@@ -4481,6 +4556,10 @@ fn _tn_slice_ptr_el(S, noff): i64 {
     if (_sl_ann_at(S, GTI(S)) == 1) {
         _sl_err_ptr(S, GTI(S));
         _sl_ann_skip(S);
+        return 0;
+    }
+    if (PEEKT(S) == 32) {   # 6.7.17 (D8): `[*fn( .. )]`, an 8-byte element (`_ptr_fnp_end`)
+        STI(S, _ptr_fnp_end(S, GTI(S) - 1, noff, 0, " for variable "));
         return 0;
     }
     if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }

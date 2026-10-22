@@ -14575,6 +14575,10 @@ fn _pty_list(S, i, loud): i64 {
         i = j;
     }
     if (TOKTYP(S, i) == 11) { return i + 1; }
+    if (_pty_rpx < 0) {   # 6.7.17 (D8): a declaration's, `_ptr_fnp_rp`
+        _pty_rpx = i;
+        _pty_rpn = 1 - _pty_bad;
+    }
     _pty_bad = 1;   # the parameter loop reports the `)` it expects here
     return i;
 }
@@ -14588,7 +14592,7 @@ fn _pty_name(S, i): i64 {
     if (_classify_param_type(S, nm) != 0) { return 0; }
     if (_tn_resolve_at(S, i) != 0) { return 0; }
     if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, nm) == 1) { return 0; } }
-    _tn_refuse_var(S, i, " for parameter ", _pty_pnoff(S));
+    _tn_refuse_var(S, i, _pty_what(), _pty_pnoff(S));
     return 0;
 }
 # ⛔ 6.7.15 (D7) — A GENERIC STRUCT'S TYPE ARGUMENTS INSIDE A `*fn( .. )` PARAMETER TYPE (and behind two `*`; `i` the
@@ -14618,6 +14622,7 @@ fn _pty_gen_end(S, i): i64 {
 }
 # The parameter's name (the token before its `:`), or -1.
 fn _pty_pnoff(S): i64 {
+    if (_pty_dk != 0) { return _pty_dn; }   # 6.7.17 (D8): a declaration's `*fn( .. )`
     if (TOKTYP(S, _pty_ts - 2) != 2) { return 0 - 1; }
     if (TOKTYP(S, _pty_ts - 1) != 49) { return 0 - 1; }
     return TOKVAL(S, _pty_ts - 2);
@@ -14638,7 +14643,8 @@ fn _pty_err(S, ti, loud): i64 {
     PRSTR(": expected a type");
     var pn = _pty_pnoff(S);
     if (pn >= 0) {
-        PRSTR(" for parameter '");
+        PRSTR(_pty_what());
+        PRSTR("'");
         PRSTR(S + 0xEC00000 + pn);
         PRSTR("'");
     }

@@ -1,0 +1,124 @@
+# fn_pointer_typed_holders.tcyr — 6.7.17 (the user's D8, 2026-10-22). A `*fn( .. )` TYPE DECLARES A LOCAL, A GLOBAL (the
+# declaration zone and after the first statement), A STRUCT / UNION FIELD AND A SLICE ELEMENT AS THE ONE POINTER WORD A
+# `cb: *fn( .. )` PARAMETER IS (issues/2026-10-21-fn-pointer-type-outside-a-parameter.md).
+#
+# ⛔ THE DEFECT, every release through 6.7.16. The declaration readers took the token after the `*` as a type name and
+# met the keyword: `var c: *fn(i64): i64 = 0;` was "expected identifier, got reserved keyword 'fn'" with a cascade (a
+# global's also "expected '='"), and `struct H { cb: *fn(i64): i64; k; }` the same, so a fn pointer was held only
+# untyped. A bare `*fn` and `**fn( .. )` declare the same way; each is one 8-byte word that `fncallN` / `callptr` call
+# through as they call through a parameter. A local's `*fn` is no nested fn to the token scans either (`_fh_qb`: the
+# `?` in its initializer is a pair route — it was stepped over as a refused nested fn's header, rc 139).
+#
+# ⚠ WHY crossos/: each call goes through the target's indirect-call sequence and the `?` re-emits the pair on each
+# target's return registers; the release gate runs this file on pi, ecb, ach and cass, and
+# tests/gates/frontend/fn_pointer_holders.sh runs it on x86_64 / aarch64 (qemu) / cx / PE (wine).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/slice.cyr"
+include "lib/assert.cyr"
+
+fn _fh_dbl(x) { return x * 2; }
+fn _fh_inc(x) { return x + 1; }
+fn _fh_add(a, b) { return a + b; }
+
+var _fh_G: *fn(i64): i64 = &_fh_dbl;   # the declaration zone
+var _fh_GB: *fn = &_fh_inc;            # a bare `*fn`
+var _fh_G0: *fn(i64): i64 = 0;         # the filed repro's shape
+
+struct FhH { cb: *fn(i64): i64; k; }
+struct FhH2 { a; f: *fn; g: **fn(i64): i64; b; }
+union FhU { cb: *fn(i64): i64; x; }
+struct FhB<T> { cb: *fn(T): T; v: T; }
+
+fn _fh_via(cb: *fn(i64): i64, v) { return fncall1(cb, v); }
+
+fn _fh_locals(): i64 {
+    var c: *fn(i64): i64 = &_fh_dbl;
+    var b: *fn = &_fh_inc;
+    var pp: **fn(i64): i64 = &c;
+    var c2: *fn(i64, i64): i64 = &_fh_add;
+    assert_eq(fncall1(c, 5), 10, "a *fn(i64): i64 local through fncall1");
+    assert_eq(callptr(c, 7), 14, "... and through callptr");
+    assert_eq(fncall1(b, 1), 2, "a bare *fn local");
+    assert_eq(fncall1(load64(pp), 2), 4, "a **fn( .. ) local holds a *fn local's address");
+    assert_eq(_fh_via(c, 3), 6, "a *fn local passed to a cb: *fn( .. ) parameter");
+    assert_eq(fncall2(c2, 1, 2), 3, "a two-parameter *fn( .. ) local");
+    c = &_fh_inc;
+    assert_eq(fncall1(c, 0), 1, "a *fn local assigned another fn");
+    return 0;
+}
+
+fn _fh_fields(): i64 {
+    var h = FhH { cb: &_fh_dbl, k: 7 };
+    assert_eq(fncall1(h.cb, 5), 10, "a *fn( .. ) field through fncall1");
+    assert_eq(callptr(h.cb, 2), 4, "... and through callptr");
+    assert_eq(h.k, 7, "the field after a *fn( .. ) field");
+    h.cb = &_fh_inc;
+    assert_eq(fncall1(h.cb, 1), 2, "a *fn( .. ) field store");
+    var hp: *FhH = &h;
+    assert_eq(callptr(hp.cb, 4), 5, "a *fn( .. ) field through a *FhH");
+    var h2 = FhH2 { 1, &_fh_inc, 0, 4 };
+    assert_eq(fncall1(h2.f, 9), 10, "a bare *fn field");
+    assert_eq(h2.b, 4, "the field after a **fn( .. ) field");
+    var u: FhU;
+    u.cb = &_fh_dbl;
+    assert_eq(fncall1(u.cb, 3), 6, "a union's *fn( .. ) field");
+    var gb: FhB<i64> = FhB { cb: &_fh_dbl, v: 4 };
+    assert_eq(fncall1(gb.cb, gb.v), 8, "a generic struct's *fn(T): T field");
+    return 0;
+}
+
+fn _fh_gen<T>(x: T): T { var c: *fn(T): T = &_fh_dbl; return fncall1(c, x); }
+
+fn _fh_slice(): i64 {
+    var buf: i64[4];
+    store64(&buf + 8, &_fh_dbl);
+    var s: [*fn(i64): i64] = 0;
+    slice_of(&s, &buf, 4);
+    assert_eq(fncall1(s[1], 3), 6, "a [*fn( .. )] slice's 8-byte element");
+    assert_eq(slice_len(&s), 4, "... its length");
+    return 0;
+}
+
+fn _fh_closure(): i64 {
+    var h = FhH { &_fh_dbl, 5 };
+    var f = |x| { var c: *fn(i64): i64 = h.cb; return fncall1(c, x); };
+    assert_eq(fncall1(f, h.k), 10, "a *fn( .. ) local in a closure body, from a captured struct's field");
+    return 0;
+}
+
+# A `: stack` pair whose only route out of `_fh_qb` is the `?` inside its `*fn` local's initializer; the caller sits
+# ABOVE it, so the pair is known from pass 1's token scan alone.
+enum FhQ: stack { FhOk(v); FhErr(e); FhSkip(); }
+fn _fh_pick(x) { if (x > 0) { return FhOk(&_fh_dbl); } return FhErr(0 - x); }
+fn _fh_qa(x) { var v = _fh_qb(x)?; return FhOk(v + 100); }
+fn _fh_qb(x) { var c: *fn(i64): i64 = _fh_pick(x)?; return FhSkip(); }
+
+fn _fh_pair(): i64 {
+    var t, v = _fh_qa(0 - 3);
+    assert_eq(t, 1, "an Err through the ? in a *fn local's initializer keeps its tag");
+    assert_eq(v, 3, "... and its payload");
+    var t2, v2 = _fh_qa(5);
+    assert_eq(t2, 2, "_fh_qb's own variant comes back through its caller's ?");
+    return 0;
+}
+
+var _a = _fh_locals();
+var G2: *fn(i64): i64 = &_fh_inc;   # after the first statement
+var _b = _fh_fields();
+assert_eq(sizeof(FhH), 16, "a *fn( .. ) field is one 8-byte word: FhH is 16 bytes");
+assert_eq(sizeof(FhH2), 32, "a bare *fn and a **fn( .. ) field: one word each");
+assert_eq(sizeof(FhU), 8, "a union's *fn( .. ) field: one word");
+assert_eq(sizeof(FhB<i64>), 16, "a generic struct's *fn(T): T field: one word");
+assert_eq(fncall1(_fh_G, 4), 8, "a declaration-zone *fn( .. ) global through fncall1");
+assert_eq(callptr(_fh_GB, 1), 2, "a declaration-zone bare *fn global through callptr");
+assert_eq(_fh_G0, 0, "a *fn( .. ) global initialised to 0");
+assert_eq(fncall1(G2, 4), 5, "a *fn( .. ) global after the first statement");
+_fh_G = &_fh_inc;
+assert_eq(callptr(_fh_G, 1), 2, "a *fn( .. ) global assigned another fn");
+assert_eq(_fh_gen(21), 42, "a generic fn's *fn(T): T local");
+var _c = _fh_slice();
+var _d = _fh_closure();
+var _e = _fh_pair();
+var r = assert_summary();
