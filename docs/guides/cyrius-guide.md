@@ -7833,6 +7833,19 @@ closure's own parameter (`|x| { var y = x; .. }`), a `for x in` loop or a destru
 rebinds, where it rebinds it: there `y.b` is refused at the definition. Through 6.7.15 each such
 use was refused at the definition, called or not: *no struct type in scope for 'y'* (`y = mk();` with 6.7.15's D33
 words).
+The rebound name itself is the rebinding's own untyped word too (6.7.17, the user's D1 of 2026-10-22): in
+`fn g<T: Show>(x: T)`, the `x` of a closure's `|x| { return x.show(); }`, of `for x in 0..2 { .. x.show() .. }` and of
+`var q, x = two(); x.show()` is no `T` value, so each `x.show()` / `x.b` there — a field store, `x = mk();`,
+`return &x;`, `x[0] = mk();`, a forward of `x` into a stub, a carrier's `|b| b.v.b` and `b.v.show()` alike — is what
+a plain fn makes of it: *no struct type in scope for 'x'; a method call needs its struct declaration* at the definition,
+as `fn h(x: Pt)` refuses the same body. Through 6.7.16 they were read as `g`'s own `x: T`: a bounded `x.show()` called
+the bound's impl on the closure's word (SIGSEGV at `T = Pt`; `g(7)` ran it through `impl Show for i64`), and `x.b` made
+the generic a stub, compiled when never called. The rebinding reaches where the parser binds it: a range's end bound
+reads the loop variable (`for x in 0..x.b`), its start bound and a collection the enclosing `x` (`for x in x.a..5`), and
+a destructure's right-hand side the enclosing `x` (`var q, x = pr(x.b);`). `g`'s own `x` read after the closure, the
+loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A bounded
+generic with no `impl` of its bound for `i64` has no base to parse (its body is judged in each instance), so there a
+rebound `x.other()` is refused at its first instance, not at the definition.
 
 ```
 struct Pt { x; y; }

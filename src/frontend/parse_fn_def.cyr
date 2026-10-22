@@ -5030,24 +5030,29 @@ fn _gs_cl_param(S, t, e, noff): i64 {
     return 0;
 }
 # 1 = `for NAME in .. { .. }` at token t binds noff and its body holds ni (the body: the first `{` outside parentheses
-# and brackets, as `_cl_prescan_forin` reads it).
+# and brackets, as `_cl_prescan_forin` reads it) — or (6.7.17) a range's end bound does: the parser binds the loop
+# variable after the start bound, so `0..x.b` reads it (`x.a..5` and a collection read the enclosing x).
 fn _gs_forin_holds(S, t, ni, noff): i64 {
     if (TOKTYP(S, t + 1) != 2) { return 0; }
     if (TOKTYP(S, t + 2) != 76) { return 0; }
     if (STREQ(S, TOKVAL(S, t + 1), noff) == 0) { return 0; }
     var k = t + 3;
     var dp = 0;
+    var rng = 0;   # 1 past the range's `..`
     while (k < ni) {
         var u = TOKTYP(S, k);
         if (u == 10 || u == 28) { dp = dp + 1; }
         if (u == 11 || u == 29) { dp = dp - 1; }
-        if (dp == 0) { if (u == 13) { if (_tok_skip_block(S, k, GTCNT(S)) > ni) { return 1; } return 0; } }
+        if (dp == 0) {
+            if (u == 13) { if (_tok_skip_block(S, k, GTCNT(S)) > ni) { return 1; } return 0; }
+            if (u == 41) { if (TOKTYP(S, k + 1) == 41) { rng = 1; } }
+        }
         k = k + 1;
     }
-    return 0;
+    return rng;
 }
 # 1 = `var a, b[, c] = ..` at token t binds noff as a later name (`_tok_name_decl` reads only `a`), in a block still
-# open at ni.
+# open at ni. 6.7.17: the names bind after the right-hand side, so `var q, x = pr(x.b);` reads the enclosing x there.
 fn _gs_mvar_holds(S, t, ni, noff): i64 {
     if (TOKTYP(S, t + 1) != 2) { return 0; }
     if (TOKTYP(S, t + 2) != 31) { return 0; }
@@ -5059,8 +5064,9 @@ fn _gs_mvar_holds(S, t, ni, noff): i64 {
         j = j + 2;
     }
     if (hit == 0) { return 0; }
+    var k = _gs_expr_end(S, j + 1);
+    if (ni <= k) { return 0; }
     var b = 0;
-    var k = j;
     while (k < ni) {
         var u = TOKTYP(S, k);
         if (u == 13) { b = b + 1; }
@@ -5073,6 +5079,113 @@ fn _gs_mvar_holds(S, t, ni, noff): i64 {
 fn _gs_cl_body_end(S, e): i64 {
     if (TOKTYP(S, e + 1) == 13) { return _tok_skip_block(S, e + 1, GTCNT(S)); }
     return _tok_expr_end(S, e + 1);
+}
+# ⛔ 6.7.17 (the user's D1, 2026-10-22) — THE NAME TABLES HONOUR THE SAME REBINDINGS. `_gsn` (the T-typed names), `_gcr`
+# (the carriers) and `_bnr_tab` (the bounded receivers) are keyed by name, and `_gs_tdep` / `_gs_dst_tp` /
+# `_gs_dsr_dep` / `_bnd_fsite` / `_gs_recv_sid` read `_tok_name_decl` alone, so in `fn g<T: Show>(x: T)` the `x` of a
+# closure's `|x|`, of `for x in 0..2` and of `var q, x = two();` was g's `x: T`: `x.show()` there was a bounded site
+# calling the bound's impl on the word (SIGSEGV at T = Pt; `g(7)` ran the closure's 5 through `impl Show for i64`), and
+# `x.b`, `x = mkp();`, a forward of x, or `|p| p.pick(t)` on a struct `p` made the generic a stub (compiled never
+# called). The new name is its own, untyped, as a plain fn reads it: each use is refused at the definition ("no struct
+# type in scope for 'x'"). CHANGELOG [6.7.17]
+# 1 = the name at token ni is rebound where it sits (`_gs_rebound`), in the fn whose parameter list opens at token o.
+fn _gs_rebound_at(S, o, ni): i64 {
+    var noff = TOKVAL(S, ni);
+    if (_rbn_has(S, o, noff) == 0) { return 0; }
+    var d = _tok_name_decl(S, o, ni, noff);
+    if (d < 0) { d = o; }
+    return _gs_rebound(S, d, ni, noff);
+}
+# `_gs_rebound_at`'s filter: the names the fn whose parameter list opens at token `_rbn_o` rebinds anywhere in its body
+# (a closure literal's parameter, a `for NAME in` variable, a destructure's later name — `_gs_rebound`'s three), read
+# once per fn. A name outside them is rebound nowhere, so its use costs no walk (3,000 bounded calls in one body: 5.4 s,
+# 8.4 s with the two walks at each).
+var _rbn = 0;
+var _rbn_n = 0;
+var _rbn_cap = 0;
+var _rbn_o = 0 - 1;
+var _rbn_tc = 0;   # the token count `_rbn_o` was read under
+fn _rbn_has(S, o, noff): i64 {
+    if (o != _rbn_o) { _rbn_scan(S, o); }
+    elif (GTCNT(S) != _rbn_tc) { _rbn_scan(S, o); }
+    var i = 0;
+    while (i < _rbn_n) {
+        if (STREQ(S, L64(_rbn + i * 8), noff) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _rbn_scan(S, o): i64 {
+    _rbn_o = o;
+    _rbn_tc = GTCNT(S);
+    _rbn_n = 0;
+    var n = GTCNT(S);
+    var t = _gs_body_open(S, o + 1);
+    if (t < 0) { return 0; }
+    var dp = 1;
+    var le = 0 - 1;   # the last literal's closing bar (`_gs_rebound`'s)
+    while (t < n) {
+        var tt = TOKTYP(S, t);
+        if (tt == 12) { return 0; }
+        if (tt == 13) { dp = dp + 1; }
+        if (tt == 14) { dp = dp - 1; if (dp == 0) { return 0; } }
+        if (tt == 35) { le = _rbn_lit(S, t, le); }
+        elif (tt == 55) { if (TOKTYP(S, t + 1) == 2) { if (TOKTYP(S, t + 2) == 76) { _rbn_add(S, TOKVAL(S, t + 1)); } } }
+        elif (tt == 3) { _rbn_mvar(S, t); }
+        t = t + 1;
+    }
+    return 0;
+}
+# ... a closure literal opening at the bar t, as `_gs_rebound` reads one: every name between its bars; the new `le`.
+fn _rbn_lit(S, t, le): i64 {
+    var lp = 0;
+    if (t - 1 == le) { lp = 1; }
+    elif (_cl_lit_pos(S, t) == 1) { lp = 1; }
+    if (lp == 0) { return le; }
+    var e = _cl_lit_end(S, t);
+    if (e <= t) { return le; }
+    var j = t + 1;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { _rbn_add(S, TOKVAL(S, j)); }
+        j = j + 1;
+    }
+    return e;
+}
+# ... `var a, b[, c]` at token t: its later names.
+fn _rbn_mvar(S, t): i64 {
+    if (TOKTYP(S, t + 1) != 2) { return 0; }
+    if (TOKTYP(S, t + 2) != 31) { return 0; }
+    var j = t + 3;
+    while (TOKTYP(S, j) == 2) {
+        _rbn_add(S, TOKVAL(S, j));
+        if (TOKTYP(S, j + 1) != 31) { return 0; }
+        j = j + 2;
+    }
+    return 0;
+}
+fn _rbn_add(S, noff): i64 {
+    var i = 0;
+    while (i < _rbn_n) {
+        if (STREQ(S, L64(_rbn + i * 8), noff) == 1) { return 0; }
+        i = i + 1;
+    }
+    if (_rbn == 0) { _rbn = alloc(64 * 8); _rbn_cap = 64; }
+    if (_rbn_n >= _rbn_cap) { _rbn = _tab_grow(_rbn, _rbn_cap); _rbn_cap = _rbn_cap * 2; }
+    S64(_rbn + _rbn_n * 8, noff);
+    _rbn_n = _rbn_n + 1;
+    return 0;
+}
+# 1 = the name at token ni is one of the scan's T-typed names (`_gsn`) where it sits.
+fn _gsn_live(S, ni): i64 {
+    if (_gsn_has(TOKVAL(S, ni)) == 0) { return 0; }
+    if (_gs_rebound_at(S, _gs_open, ni) == 1) { return 0; }
+    return 1;
+}
+# 1 = the name at token ni is one of the scan's struct carriers (`_gcr`) where it sits.
+fn _gcr_live(S, ni): i64 {
+    if (_gcr_has(TOKVAL(S, ni)) == 0) { return 0; }
+    if (_gs_rebound_at(S, _gs_open, ni) == 1) { return 0; }
+    return 1;
 }
 # 1 = the carrier `noff` has an entry for the struct named `gn` at `slot` (a `**G` one's 256 + slot too).
 fn _gcr_slot(noff, gn, slot): i64 {
@@ -5582,6 +5695,7 @@ fn _gs_dsr_dep(S, fi, j): i64 {
     if (_gs_name_dep(S, fi, _gs_open, j, 0) == 1) { return 1; }
     var d = _tok_name_decl(S, _gs_open, j, TOKVAL(S, j));
     if (d < 0) { return 0; }
+    if (_gs_rebound(S, d, j, TOKVAL(S, j)) == 1) { return 0; }   # 6.7.17 (D1)
     if (TOKTYP(S, d + 1) != 49) { return 0; }
     var e = _asa_end(S, d + 2);
     var k = d + 2;

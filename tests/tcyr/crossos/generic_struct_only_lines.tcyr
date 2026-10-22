@@ -16,6 +16,11 @@
 # vars mixing copies and `id(..)`, `id(..)` 9 deep (an 8-level budget left each "no struct type in scope" at the
 # definition). V19-V21: x read after a closure's own `|x|`, a `for x in` loop or a block destructuring `var q, x` is the
 # T value (inside them it is not: struct_result_type_refused.sh TV11-TV11i).
+# 6.7.17 (the user's D1, 2026-10-22), V22-V28: g's OWN x read past a closure's `|x|`, a `for x in` loop or a block's
+# `var q, x` is the T value — a bounded `x.show()` the bound's impl, `x.b` the struct's field, a carrier's `b.v.b` past
+# `|b|` — as is a T value a closure captures, a destructure's right-hand side `pr(x.b)` and a range's start bound
+# `x.a..10` (each reads the enclosing x; inside the rebindings x is their own word, refused at the definition:
+# struct_result_type_refused.sh RB*).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -76,6 +81,14 @@ fn two(): (i64, i64) { return (1, 2); }
 fn v19<T>(x: T): i64 { var f = |x| { return x + 1; }; var y = x; return y.b + fncall1(f, 1); }
 fn v20<T>(x: T): i64 { var s = 0; for x in 0..3 { s = s + x; } var y = x; return y.b + s; }
 fn v21<T>(x: T): i64 { var r = 0; if (r == 0) { var q, x = two(); r = q + x; } var y = x; return y.b + r; }
+fn pr(a: i64): (i64, i64) { return (a, a + 1); }
+fn v22<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; var s = 0; for x in 0..2 { s = s + x; } return x.show() + fncall1(f, 1) + s; }
+fn v23<T: Show>(x: T): i64 { var r = 0; if (r == 0) { var q, x = two(); r = q + x; } return x.show() + r; }
+fn v24<T: Show>(x: T): i64 { var f = |k| { return x.show() + k; }; return fncall1(f, 1); }
+fn v25<T>(x: T): i64 { var f = |x| { return x + 1; }; return x.b + fncall1(f, 1); }
+fn v26<T>(b: Box<T>): i64 { var f = |b| { return b + 1; }; return b.v.b + fncall1(f, 1); }
+fn v27<T>(x: T): i64 { var q, x = pr(x.b); return q + x; }
+fn v28<T>(x: T): i64 { var s = 0; for x in x.a..10 { s = s + 1; } return s; }
 
 fn run(): i64 {
     var s: S8; s.v = 7;
@@ -120,6 +133,15 @@ fn run(): i64 {
     assert_eq(v19(q), 10, "V19: var y = x; after a closure's own |x| reads the T-typed x");
     assert_eq(v20(q), 11, "V20: var y = x; after a for x in loop reads the T-typed x");
     assert_eq(v21(q), 11, "V21: var y = x; after a block destructuring var q, x reads the T-typed x");
+    assert_eq(v22(q), 81, "V22: bounded x.show() past a closure's |x| and a for x in loop: the T value's");
+    assert_eq(v22(5), 108, "V22i: ... at T = i64 (impl Show for i64)");
+    assert_eq(v23(q), 81, "V23: bounded x.show() past a block's var q, x: the T value's");
+    assert_eq(v24(q), 79, "V24: a closure capturing the T value calls the bound's impl");
+    assert_eq(v24(5), 106, "V24i: ... at T = i64");
+    assert_eq(v25(q), 10, "V25: x.b past a closure's |x|: the T value's field");
+    assert_eq(v26(bx), 10, "V26: b.v.b past a closure's |b|: the carrier's field");
+    assert_eq(v27(q), 17, "V27: var q, x = pr(x.b); reads the T value's x.b on its right-hand side");
+    assert_eq(v28(q), 3, "V28: for x in x.a..10 reads the T value's x.a in its start bound");
     return 0;
 }
 alloc_init();
