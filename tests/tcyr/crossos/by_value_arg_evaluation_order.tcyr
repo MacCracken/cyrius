@@ -18,11 +18,11 @@
 # bodies, and the ones that write nothing (no copy, a tail walk in constant stack).
 # On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls,
 # the first-position f64v2 (PE only) and the three 1,000,000-deep tail rows (controls too). Now an
-# argument a later argument may write (`_span_may_write`: a call, a builtin, an operator a struct
-# dispatches, ...) is copied where it stands, and the callee receives the copy. The 8 B struct
-# (passed in a register) was always right and is a control, as is an EARLIER argument's side
-# effect, which the callee sees (`rd2(bump(&b), b)` reads 11), and a reordered named call,
-# evaluated as written.
+# argument a later argument may write (`_span_may_write`: a call whose callee may write — 6.7.17,
+# `_fn_nowrite` — a builtin, an operator a struct dispatches, ...) is copied where it stands, and
+# the callee receives the copy. The 8 B struct (passed in a register) was always right and is a
+# control, as is an EARLIER argument's side effect, which the callee sees (`rd2(bump(&b), b)` reads
+# 11), and a reordered named call, evaluated as written.
 #
 # ⚠ CROSS-HOST: the copy is emitted by each backend's frame / global addressing and byte-exact
 # load / store pair (`_agc_copy_bytes`), and the arguments travel through each call convention

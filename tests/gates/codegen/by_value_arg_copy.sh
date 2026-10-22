@@ -14,10 +14,10 @@
 #      arguments; their sizes (CYRIUS_SYMS) are EQUAL for a later argument that only reads (a name,
 #      `n + 1`, a field, `&c`, a string, a comparison, an index, a closure literal, `-n`, `n % 3 << 1`,
 #      a struct's integer field in arithmetic, `c.a + 1`)
-#   K  ... and `pN` is LARGER — the copy — for one that may write: a call, a call inside an
-#      expression, a method call, a builtin store, an operator a struct dispatches (`w + w2`), and
-#      one on struct-typed fields (`h.w + h.v` — struct values, though today only a NAME on the left
-#      dispatches: the rule does not depend on that); 6.7.17: C12-C14 a typed pointer that reaches no
+#   K  ... and `pN` is LARGER — the copy — for one that may write: a call to a fn that may write
+#      (`bump`), one inside an expression, a writing method, a builtin store, an operator a struct
+#      dispatches (`w + w2`), and one on struct-typed fields (`h.w + h.v` — struct values: a
+#      struct-typed field dispatches W_add since 6.7.10); 6.7.17: C12-C14 a typed pointer that reaches no
 #      struct value (`*pn + 1`, `pn: *i64`; `pw + 1`, pointer arithmetic; `pq.n + 1`, an integer field), C15
 #      `- w` and C16 `*pw` (no BINARY operator: a unary `-` / `*` dispatches nothing; C15 copied before) —
 #      and K7-K9 one that does: a dereference (`*pw + 1`), a typed pointer's struct field (`pq.w + 1`)
