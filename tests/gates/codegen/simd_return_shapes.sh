@@ -525,6 +525,13 @@
 #   M-VL7 `_vin_zval` answering 0                      -> RED VL61
 #   M-VL8 `_vop_whole` judging a name's tuple element  -> RED VL37-VL39 (D100's words first)
 #   M-VL9 `_vop_tyerr` not in sync                     -> RED VLS1 VLS2 (the next statement's error lost)
+# 6.7.17 (D24, its review): the scans run only when something is typed a vector (`_vty_any`), and a program whose only
+# vectors are a vector global and a `*V` global or field was never marked — `var X: *i64 = (*GP);`, `return *(&GW);`,
+# `take(*GP)`, `1 + *h.pv` compiled (lane 0), and so did D25's `return (*GP, 3);`. A vector or `*V` global marks it now
+# (`_gv_vvd_set`, `_gv_pvd_set`), as a `*V` local, parameter, field and return do (`_ps_vw`). Rows VL71-VL74 (no vector
+# local anywhere). Mutation (2026-10-22, measured, host):
+#   M-VL10 the globals not marking                     -> RED VL71 VL72 (compiled; VL73's parse reads GP's word, which
+#       marks it before the argument is judged, and VL74's field marks it at its record)
 # 6.7.17 (met landing D23) — a refusal that keeps away from its source's own error (a vector receive's "got ..", a value-
 # form argument's `*E`, `_scv_err`) read that error as `_had_error` going 0 -> 1, which is sticky: after any earlier error
 # in the file the source's own error did not count, and the refusal followed it — `var y = zz8; .. w = zz9;` printed
@@ -3349,9 +3356,28 @@ syscall(60, 0);
     VL70) printf '%s' "$VLH"'fn r(): i64 { var w: f64v2 = mk2(4, 7); var b: bool = false; b = w; return 0; }
 syscall(60, r() % 256);
 ' ;;
+    VL71) printf '%s' 'var GW: f64v2 = 0;
+var GP: *f64v2 = &GW;
+var X: *i64 = (*GP);
+syscall(60, 0);
+' ;;
+    VL72) printf '%s' 'var GW: f64v2 = 0;
+fn r(): i64 { return *(&GW); }
+syscall(60, r() % 256);
+' ;;
+    VL73) printf '%s' 'var GW: f64v2 = 0;
+var GP: *f64v2 = &GW;
+fn take(t): i64 { return t; }
+fn r(): i64 { return take(*GP); }
+syscall(60, r() % 256);
+' ;;
+    VL74) printf '%s' 'struct H { pv: *f64v2; }
+fn r(h: *H): i64 { return 1 + *h.pv; }
+syscall(60, 0);
+' ;;
     esac
 }
-VL_ROWS="VL1 VL2 VL3 VL4 VL5 VL6 VL7 VL8 VL9 VL10 VL11 VL12 VL13 VL14 VL15 VL16 VL17 VL18 VL19 VL20 VL21 VL22 VL23 VL24 VL25 VL26 VL27 VL28 VL29 VL30 VL31 VL32 VL33 VL34 VL35 VL36 VL37 VL38 VL39 VL40 VL41 VL42 VL43 VL44 VL45 VL46 VL47 VL48 VL49 VL50 VL51 VL52 VL53 VL54 VL55 VL56 VL57 VL58 VL59 VL60 VL61 VL62 VL63 VL64 VL65 VL66 VL67 VL68 VL69 VL70"
+VL_ROWS="VL1 VL2 VL3 VL4 VL5 VL6 VL7 VL8 VL9 VL10 VL11 VL12 VL13 VL14 VL15 VL16 VL17 VL18 VL19 VL20 VL21 VL22 VL23 VL24 VL25 VL26 VL27 VL28 VL29 VL30 VL31 VL32 VL33 VL34 VL35 VL36 VL37 VL38 VL39 VL40 VL41 VL42 VL43 VL44 VL45 VL46 VL47 VL48 VL49 VL50 VL51 VL52 VL53 VL54 VL55 VL56 VL57 VL58 VL59 VL60 VL61 VL62 VL63 VL64 VL65 VL66 VL67 VL68 VL69 VL70 VL71 VL72 VL73 VL74"
 VLM="a vector value cannot be"
 VLD="vector type does not match the declared type"
 VLA="vector type does not match the assigned variable"
@@ -3427,6 +3453,10 @@ vl_msg() {
     VL68) echo "$VLD - 'w' is a vector";;
     VL69) echo "cannot return a value that is not a bool from bool fn 'r'";;
     VL70) echo "cannot assign a value that is not a bool to bool 'b'";;
+    VL71) echo "$VLD - '*GP' is a vector";;
+    VL72) echo "$VLM returned as i64 - '*(&GW)' is a vector";;
+    VL73) echo "$VLM passed to an integer parameter - '*GP' is a vector, passed to parameter 't' of 'take'";;
+    VL74) echo "$VLM returned as i64 - '*h.pv' is a vector";;
     esac
 }
 # VLS: the refusal is made in sync — the next statement keeps its own error (two errors): after a declaration, an

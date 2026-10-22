@@ -54,7 +54,8 @@
 # = 41) on x86_64, aarch64, cx and PE — and a parameter, a capture and `*pv` the same. Now one line at the element in
 # D90's shape (`_mret_vval`, parse_expr.cyr; the vector value read by `_vval_at`, parse_decl.cyr): "'two' returns vector
 # 'f64v2' (16 bytes) as a multi-value element - return its pointer, or its lanes as elements". Rows V1 (the filed repro
-# verbatim) - V6, V7 the control (a vector CALL as the element keeps 6.7.16's D100 words), V8 --syntax-only, K5 the
+# verbatim) - V6, V7 the control (a vector CALL as the element keeps 6.7.16's D100 words), V9 a `*V` global's
+# dereference in a program with no vector local (the scan's mark, `_gv_pvd_set`), V8 --syntax-only, K5 the
 # declaration `(f64v2, i64)` still compiling and a vector's lanes / pointer as elements (92). Mutations (2026-10-22, a
 # scratch copy of the tree, this gate run from it):
 #   `_mret_sval` without `_mret_vval` (the tree before) -> RED V1-V6 on every leg, 30 (each compiled, rc 0; V6 the next
@@ -302,6 +303,13 @@ row V7 "control: a vector CALL as the element keeps D100's words (6.7.16's VO54)
 fn main(): i64 { var a, c = mv(); return c; }
 syscall(60, main());
 ' "error:<source>:5:31: vector return type does not match the declared type"
+row V9 "a dereference of a *V global in a program with no vector local (6.7.17: the scan's mark)" 'include "lib/syscalls.cyr"
+var GW: f64v2 = 0;
+var GP: *f64v2 = &GW;
+fn two(): (i64, i64) { return (*GP, 3); }
+fn main(): i64 { var a, b = two(); return b; }
+syscall(60, main());
+' "error:<source>:4:32: 'two' returns vector 'f64v2' (16 bytes) $EV"
 quiet V8 "--syntax-only says nothing (V1, V3)" "$VH"'fn mv(pv: *f64v2): (i64, i64) { var w: f64v2 = mk2(41, 7); return (w, *pv); }
 fn main(): i64 { var v: f64v2 = mk2(1, 2); var a, c = mv(&v); return c; }
 syscall(60, main());
@@ -385,9 +393,9 @@ fn main(): i64 {
 syscall(60, main());
 ' 31
 
-# The floor: 26 refusal rows, 2 quiet rows and 7 acceptance rows on five legs (6.7.17: + V1-V7, V8, K5). A leg that did not
-# build is RED above.
-FLOOR=175
+# The floor: 27 refusal rows, 2 quiet rows and 7 acceptance rows on five legs (6.7.17: + V1-V7, V9, V8, K5). A leg that did
+# not build is RED above.
+FLOOR=180
 [ "$N" -ge "$FLOOR" ] || bad "the rows ran $N row-legs (floor $FLOOR) — rows or legs were lost"
 echo "$G: $pass passed, $fail failed, $skips skipped"
 [ "$fail" -eq 0 ] || exit 1

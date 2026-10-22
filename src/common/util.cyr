@@ -2070,7 +2070,8 @@ fn GPSC(S): i64 { return L64(S + 0x18F890); }
 fn SPSC(S, v): i64 { S64(S + 0x18F890, v); return 0; }
 fn GLTYPE(S, li): i64 { return L64(S + 0x5DDD000 + li * 8); }
 # 6.7.17 (D24 / D25): a local or parameter typed a vector (a descriptor, <= -2048) marks `_vty_any`, as a `*V` step word
-# does (`_ps_vw`) — the scans for a vector value that is no call (`_vval_at`) run only then. CHANGELOG [6.7.17]
+# does (`_ps_vw`) and a vector or `*V` global (`_gv_vvd_set`, `_gv_pvd_set`) — the scans for a vector value that is no
+# call (`_vval_at`) run only then. CHANGELOG [6.7.17]
 fn SLTYPE(S, li, v): i64 {
     if (v <= 0 - 2048) { _vty_any = 1; }
     S64(S + 0x5DDD000 + li * 8, v);
