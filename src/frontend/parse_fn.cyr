@@ -9842,7 +9842,7 @@ fn _tr_defaults(S, ii, mode): i64 {
                 SMOD(S, _tr_prefix(S, ii, m));
                 STI(S, dt - 1);
                 _pub_pending = 0;
-                if (mode == 0) { _prescan_fn_sig(S); } else { PARSE_FN_DEF(S); }
+                if (mode == 0) { _prescan_fn_sig(S); } else { _unp_dv = _unp_mark(_unp_dv, dt - 1); PARSE_FN_DEF(S); }
             } }
         k = k + 1;
     }
@@ -17027,6 +17027,7 @@ fn _fnst_tab_restore(S, b): i64 {
 # caller errors). pc=0 only this bite (param re-emission is the follow-on).
 fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     if (_gu_noinst == 1) { _gu_miss = 1; return 0 - 4; }   # 6.7.16: never at the zone sweep (`_gu_tp`)
+    if (_unp_on == 1) { return 0 - 4; }   # 6.7.17: never in a never-parsed body's read (`_unp_run`): no instance is
     # A STRUCT type argument re-emits the body with T bound to the struct sid, so a `T`
     # parameter is a by-value struct parameter and `p.x` resolves (v6.3.39, one parameter).
     # 6.7.1 (C3): on a two-parameter generic too — a struct as either argument, or both
@@ -17098,6 +17099,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
     STI(S, sv_ti);
     spec = FINDFN(S, mangled);                       # now registered by PARSE_FN_DEF
+    if (spec >= 0) { _unp_iv = _unp_mark(_unp_iv, base_fi); }   # 6.7.17: its base's body parsed (`_unp_run`)
     _gen_inst_record(S, spec, base_fi, conc0, conc1);   # 6.6.17 (a3, a5)
     _gen_inherit_dep(S, spec, base_fi);              # 6.6.16: `#deprecated` reaches instances
     return spec;

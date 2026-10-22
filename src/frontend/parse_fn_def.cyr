@@ -1333,6 +1333,143 @@ fn _dl_pw_say(S, k): i64 {
     _panic = 0;
     return _dl_in_say(S, ti, k - ti * 2);
 }
+# ⛔ 6.7.17 — A BODY PASS 2 NEVER PARSES IS READ FOR ITS SYNTAX (v6.5.17's rule: every fn body is parsed, called or
+# not; dead_fn_body_syntax_checked.sh). A trait default no impl inherits (or every impl overrides) and a generic base
+# pass 2 steps (`_b3_skip`: a stub, or a bounded generic i64 does not satisfy) that no instance re-parses were never
+# parsed, so `trait T { fn d(self): i64 { return 1 +; } }` compiled. Each is recorded where pass 2 meets it
+# (`_unp_rec`) and, once the image is built (`_unp_run`, every driver after its emit — nothing reads the compiler's
+# state again, so no memo the read leaves can silence a later refusal), parsed once in a fresh fn: its parameters
+# untyped slots, a generic's type parameters bound as its base binds them, names resolved as under `--syntax-only`, no
+# instance minted, MUTED (`_ew_mute`) — only a syntax error is said (ERR's `unexpected ..`, ERR_EXPECT's `expected ..`:
+# `_unp_say`), never a refusal about an instance that does not exist. One said refuses the build: the image dropped
+# (its length 0), `_had_error` set. CHANGELOG [6.7.17]
+var _unp_fx = 0 - 1;   # the fn entry a read's body is parsed as (`$unp`, never defined)
+fn _unp_rec(S, kind, fi, op, bt, ft): i64 {
+    if (_unp_on == 1) { return 0; }
+    if (_unp_v == 0) { _unp_v = vec_new(); }
+    vec_push(_unp_v, kind);
+    vec_push(_unp_v, fi);
+    vec_push(_unp_v, op);
+    vec_push(_unp_v, bt);
+    vec_push(_unp_v, ft);
+    return 0;
+}
+fn _unp_mark(v, x): i64 {
+    if (v == 0) { v = vec_new(); }
+    vec_push(v, x);
+    return v;
+}
+fn _unp_in(v, x): i64 {
+    if (v == 0) { return 0; }
+    var n = vec_len(v);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(v, i) == x) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 = recorded body `i` was never parsed and is not an earlier entry's (an inherited generic default records its base
+# once per impl).
+fn _unp_due(i): i64 {
+    var b = i * 5;
+    var bt = vec_get(_unp_v, b + 3);
+    var j = 0;
+    while (j < i) {
+        if (vec_get(_unp_v, j * 5 + 3) == bt) { return 0; }
+        j = j + 1;
+    }
+    if (vec_get(_unp_v, b) == 0) { return 1 - _unp_in(_unp_iv, vec_get(_unp_v, b + 1)); }
+    return 1 - _unp_in(_unp_dv, vec_get(_unp_v, b + 4));
+}
+fn _unp_run(S): i64 {
+    if (_unp_v == 0) { return 0; }
+    var ol = L64(S + 0x1903F8);
+    var he = _had_error;
+    var so = _syntax_only;
+    var gv = GVCNT(S);
+    _syntax_only = 1;
+    _ir_enabled = 0;
+    _ew_mute = 1;
+    var n = vec_len(_unp_v) / 5;
+    var i = 0;
+    while (i < n) {
+        if (_unp_due(i) == 1) { _unp_probe(S, i * 5); }
+        i = i + 1;
+    }
+    _ew_mute = 0;
+    _ew_say = 0;
+    _syntax_only = so;
+    SVCNT(S, gv);
+    _had_error = he;
+    S64(S + 0x1903F8, ol);
+    if (_unp_said > 0) {
+        _had_error = 1;
+        S64(S + 0x1903F8, 0);
+    }
+    return 0;
+}
+fn _unp_probe(S, b): i64 {
+    var fi = vec_get(_unp_v, b + 1);
+    var st = _fnst_save(S);
+    _cur_fn_ix = _unp_fn(S);
+    _tp_clear(S);
+    if (fi >= 0) { _bind_generic_call(S, fi, 0 - 8, 0 - 8); }
+    _unp_params(S, vec_get(_unp_v, b + 2));
+    S64(S + 0x19E000, 0);   # the jump-target count, as at a fn's start
+    _panic = 0;
+    _xdepth = 0;
+    _unp_on = 1;
+    STI(S, vec_get(_unp_v, b + 3));
+    PARSE_PROG(S);
+    _unp_on = 0;
+    _tp_clear(S);
+    _fnst_restore(S, st);
+    return 0;
+}
+fn _unp_fn(S): i64 {
+    if (_unp_fx >= 0) { return _unp_fx; }
+    NPOS_GUARD(S, 8);
+    var nm = GNPOS(S);
+    store8(S + 0xEC00000 + nm, 36);        # $
+    store8(S + 0xEC00000 + nm + 1, 117);   # u
+    store8(S + 0xEC00000 + nm + 2, 110);   # n
+    store8(S + 0xEC00000 + nm + 3, 112);   # p
+    store8(S + 0xEC00000 + nm + 4, 0);
+    SNPOS(S, nm + 5);
+    _unp_fx = REGFN(S, nm);
+    SFFI(S, _unp_fx, 1);
+    return _unp_fx;
+}
+# The parameters of the list whose `(` is token `op` (-1: none), each an untyped slot, as a closure's: a parameter's name
+# is the first name after the `(` or a `,` at depth 0; its `: Type` (a `<..>` counted) or `= default` is stepped.
+fn _unp_params(S, op): i64 {
+    if (op < 0) { return 0; }
+    var n = GTCNT(S);
+    var q = op + 1;
+    var d = 0;
+    var ang = 0;
+    var at = 1;
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (t == 12 || t == 13) { return 0; }
+        if (d == 0) {
+            if (t == 11) { return 0; }
+            if (t == 31) { at = 1; ang = 0; }
+            elif (at == 1) {
+                if (t == 2) { SFLC(S, _cl_param_slot(S, TOKVAL(S, q)) + 1); }
+                at = 0;
+            }
+            if (t == 49) { ang = 1; }
+            if (t == 4) { ang = 0; }
+        }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        if (ang == 1) { d = d + _cl_ang_step(t); }
+        q = q + 1;
+    }
+    return 0;
+}
 var _dlvr = 0;   # the refused variables' names, a vec made at the first
 fn _dl_var_refd_add(S, noff): i64 {
     if (_dlvr == 0) { _dlvr = vec_new(); }
@@ -3789,6 +3926,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         _coro_entry_cp = GCP(S);    # state 0 lands here
     }
     if (_b3_skip == 1) {
+        _unp_rec(S, 0, fi, _gen_def_open(S, fi), GTI(S), _defstart_ti);   # 6.7.17: read when no instance parses it
         var _b3_bd = 1;
         _rbs_begin(S, fi);   # 6.7.17 (D1): a rebound T-typed name's `x.f` / `x.m(` here, refused as a plain fn's
         while (_b3_bd > 0) {
@@ -5840,6 +5978,7 @@ fn _tl_trait2_body(S, ti): i64 {
             return 0;
         }
         _tr_sig_check(S, tx, p0, op, q);   # 6.7.8: the signature itself
+        if (TOKTYP(S, q) == 13) { _unp_rec(S, 1, 0 - 1, op, q + 1, p0); }   # 6.7.17: a default, read if no impl inherits it
     }
     STI(S, end);
     return 0;

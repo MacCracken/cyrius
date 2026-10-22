@@ -114,6 +114,135 @@ else
     fail=$((fail + 1))
 fi
 
+# ── AXIS 5 (6.7.17, the D33 review's finding) — A BODY PASS 2 NEVER PARSES IS READ FOR ITS SYNTAX. A trait default no
+# impl inherits (or every impl overrides) and a generic base pass 2 steps — a stub (`p.x` on a T) or a bounded generic
+# i64 does not satisfy — that no instance re-parses were never parsed, so `trait T { fn d(self): i64 { return 1 +; } }`
+# compiled (rc 0, exit 3). Now each is parsed once after the image is built (`_unp_run`, parse_fn_def.cyr), MUTED
+# through `_ew` (diagnostic_writer_census.sh): only a syntax error is said, at its token, in the words a plain dead fn's
+# gets; one refuses the build and no image is written. Five legs: the x86_64, PE and Mach-O compilers and the aarch64
+# and cx compilers built from this tree. NP1 the filed repro verbatim; NP2 a bounded generic fn, NP3 a bounded generic
+# method, NP4 a stub generic, never instantiated; NP5 a default every impl overrides; NP6 axis 1's garbage in a
+# default (one line, as in a plain dead fn); NP7 two bodies, each its own line; NP8 / NP9 controls — an instantiated
+# generic's and an inherited default's error said ONCE (their parse said it; the read is not run); NP10 --syntax-only;
+# NP11 beside another error (said after it). NPV ⭐ ANTI-VACUOUS: never-parsed bodies full of what only an instance can
+# judge — `x.show()`, `p.x`, `return &n` from a struct-returning generic, a forward of T into a stub, `Box<T>`,
+# `sizeof(T)`, a capturing closure, `for y in x.a..10`, an untyped `self.k` — compile clean and run (exit 3).
+# MUTATIONS (2026-10-22, measured): the merged tree's compiler before this (no read) -> RED 27, NP1-NP7, NP10, NP11 on
+# the x86_64 / PE / Mach-O legs (rc 0 / the line missing; the a64 / cx compilers are built from this tree); `_unp_run`
+# without its mute (`_ew_mute` never set) -> RED 5, NPV on every leg ("a capturing closure needs include .." and the
+# other instance-only refusals printed).
+LEGS="x86 pe macho"
+if "$CC" < src/main_aarch64.cyr > "$T/cc_a64" 2> /dev/null && [ -s "$T/cc_a64" ]; then chmod +x "$T/cc_a64"; LEGS="$LEGS a64"
+else echo "  FAIL: src/main_aarch64.cyr did not build"; fail=$((fail + 1)); fi
+if "$CC" < src/main_cx.cyr > "$T/cc_cx" 2> /dev/null && [ -s "$T/cc_cx" ]; then chmod +x "$T/cc_cx"; LEGS="$LEGS cx"
+else echo "  FAIL: src/main_cx.cyr did not build"; fail=$((fail + 1)); fi
+NPN=0
+npc() {   # <leg> <src> <out> [cc-arg]: rc in NRC
+    NRC=0
+    case "$1" in
+        x86)   timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || NRC=$? ;;
+        pe)    CYRIUS_TARGET_WIN=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || NRC=$? ;;
+        macho) CYRIUS_MACHO=1 timeout 60 "$CC" ${4:-} < "$2" > "$3" 2> "$3.err" || NRC=$? ;;
+        a64)   timeout 60 "$T/cc_a64" ${4:-} < "$2" > "$3" 2> "$3.err" || NRC=$? ;;
+        cx)    timeout 60 "$T/cc_cx" ${4:-} < "$2" > "$3" 2> "$3.err" || NRC=$? ;;
+    esac
+}
+np5() {   # <id> <what> <source> <want-lines> [cc-arg]: refused, exactly <want> as its error / warning lines, no image
+    printf '%s' "$3" > "$T/$1.cyr"
+    printf '%s\n' "$4" > "$T/$1.want"
+    for leg in $LEGS; do
+        o="$T/$1_$leg"
+        npc "$leg" "$T/$1.cyr" "$o" "${5:-}"
+        NPN=$((NPN + 1))
+        grep -E '^(error|warning)' "$o.err" > "$o.got" || true
+        if [ "$NRC" -eq 0 ]; then echo "  FAIL: $1 $leg: $2: rc 0"; fail=$((fail + 1))
+        elif ! cmp -s "$o.got" "$T/$1.want"; then echo "  FAIL: $1 $leg: $2: got $(tr '\n' '|' < "$o.got")"; fail=$((fail + 1))
+        elif [ -s "$o" ] && [ -z "${5:-}" ]; then echo "  FAIL: $1 $leg: $2: refused, but an image was written"; fail=$((fail + 1))
+        else echo "  ok: $1 $leg: $2"; fi
+    done
+}
+npok() {   # <id> <what> <source> <exit>: compiles clean on every leg, runs <exit> on x86_64
+    printf '%s' "$3" > "$T/$1.cyr"
+    for leg in $LEGS; do
+        o="$T/$1_$leg"
+        npc "$leg" "$T/$1.cyr" "$o"
+        NPN=$((NPN + 1))
+        if [ "$NRC" -ne 0 ] || [ ! -s "$o" ] || grep -qE '^(error|warning)' "$o.err"; then
+            echo "  FAIL: $1 $leg: $2: rc $NRC: $(grep -E '^(error|warning)' "$o.err" | head -3 | tr '\n' '|')"; fail=$((fail + 1))
+        elif [ "$leg" = x86 ]; then
+            chmod +x "$o"; x=0; ( ulimit -c 0; timeout 30 "$o" ) > /dev/null 2>&1 || x=$?
+            if [ "$x" = "$4" ]; then echo "  ok: $1 $leg: $2 (exit $x)"; else echo "  FAIL: $1 $leg: $2: exit $x, want $4"; fail=$((fail + 1)); fi
+        else echo "  ok: $1 $leg: $2"; fi
+    done
+}
+echo "axis 5 — a body pass 2 never parses (an un-inherited trait default, an uninstantiated generic) is read for its syntax:"
+MN='fn main(): i64 { return 3; }
+var r = main();
+syscall(60, r);
+'
+SH='trait Show { fn s(self): i64; }
+'
+np5 NP1 "filed: a trait default no impl inherits" "trait T { fn d(self): i64 { return 1 +; } }
+$MN" "error:<source>:1:39: unexpected ';'"
+np5 NP2 "an uninstantiated bounded generic fn" "${SH}fn gg<T: Show>(x: T): i64 { return 1 +; }
+$MN" "error:<source>:2:39: unexpected ';'"
+np5 NP3 "an uninstantiated bounded generic method" "${SH}struct Q { k; }
+impl Q { fn m<T: Show>(self, v: T): i64 { return 1 +; } }
+$MN" "error:<source>:3:53: unexpected ';'"
+np5 NP4 "an uncalled stub generic (p.x on a T)" "fn wrap<T>(p: T): i64 { var a = p.x; return 1 +; }
+$MN" "error:<source>:1:48: unexpected ';'"
+np5 NP5 "a default every impl overrides" "trait T { fn d(self): i64 { return 1 +; } }
+struct P { k; }
+impl T for P { fn d(self): i64 { return 5; } }
+$MN" "error:<source>:1:39: unexpected ';'"
+np5 NP6 "axis 1's garbage in a default: one line, as a plain dead fn's" "trait T { fn d(self) { var x = ; this is not cyrius at all ]] ((
+    return 0; } }
+fn main() { return 0; }
+var r = main();
+" "error:<source>:1:32: unexpected ';'"
+np5 NP7 "two never-parsed bodies: each its own line" "trait T { fn d(self): i64 { return 1 +; } }
+${SH}fn gg<T: Show>(x: T): i64 { return 2 *; }
+$MN" "error:<source>:1:39: unexpected ';'
+error:<source>:3:39: unexpected ';'"
+np5 NP8 "control: an instantiated generic's error, once" "${SH}struct P { k; }
+impl Show for P { fn s(self): i64 { return self.k; } }
+fn gg<T: Show>(x: T): i64 { return x.s() +; }
+fn main(): i64 { var p = P { 3 }; return gg(p); }
+var r = main();
+syscall(60, r);
+" "error:<source>:4:43: unexpected ';'"
+np5 NP9 "control: an inherited default's error, once" "trait T { fn d(self): i64 { return 1 +; } }
+struct P { k; }
+impl T for P { }
+fn main(): i64 { var p = P { 3 }; return p.d(); }
+var r = main();
+syscall(60, r);
+" "error:<source>:1:39: unexpected ';'"
+np5 NP10 "--syntax-only: the filed repro" "trait T { fn d(self): i64 { return 1 +; } }
+$MN" "error:<source>:1:39: unexpected ';'" --syntax-only
+np5 NP11 "beside another error: said after it" "trait T { fn d(self): i64 { return 1 +; } }
+fn main(): i64 { return zz; }
+var r = main();
+syscall(60, r);
+" "error:<source>:2:27: undefined variable 'zz' (missing include or enum?)
+error:<source>:1:39: unexpected ';'"
+npok NPV "ANTI-VACUOUS: never-parsed bodies only an instance can judge compile clean" 'trait Show { fn show(self): i64; }
+struct S8 { a; }
+struct Box<T> { v: T; n; }
+fn gx<U>(b: U): i64 { return b.x; }
+fn g1<T: Show>(x: T): i64 { var c = |k| { return x.show() + k; }; return fncall1(c, 1) + sizeof(T); }
+fn g2<T>(x: T): S8 { var n: T = x; return &n; }
+fn g3<T>(x: T): i64 { var q: Box<T>; q.n = 1; return gx(x) + q.n; }
+fn g4<T>(x: T): i64 { var s = 0; for y in x.a..10 { s = s + y; } return s; }
+struct Q { k; }
+impl Q { fn m<T: Show>(self, v: T): i64 { return v.show() + self.k; } }
+trait Tr { fn d(self): i64 { return self.k + self.other(); } fn e(self): i64 { var p: S8 = self; return p.a; } }
+fn main(): i64 { return 3; }
+var r = main();
+syscall(60, r);
+' 3
+[ "$NPN" -ge 60 ] || { echo "  FAIL: axis 5 ran $NPN row-legs (floor 60)"; fail=$((fail + 1)); }
+
 if [ "$fail" != 0 ]; then
     echo "FAIL: dead-fn-body-syntax-checked — $fail assertion(s) failed"
     exit 1

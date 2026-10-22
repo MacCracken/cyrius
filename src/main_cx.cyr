@@ -431,6 +431,7 @@ var dbase = cp;
 if (_syntax_only == 1) {
     _warn_large_static(totvar, 0, 0);
     _capacity_warnings(S, _CX_CODE_CAP, 0);
+    _unp_run(S);   # 6.7.17: as below
     syscall(SYS_EXIT, _had_error);
 }
 var cx_undef = 0;
@@ -462,6 +463,7 @@ while (ufi < GFCNT(S)) {
 }
 if (cx_undef > 0) {
     syscall(SYS_WRITE, 2, "  refusing to emit .cyx — an unresolved call patches a garbage offset and restarts the program.\n", 98);
+    _unp_run(S);   # 6.7.17: as below
     syscall(SYS_EXIT, 1);
 }
 
@@ -478,7 +480,10 @@ _warn_large_static(totvar, 0, 0);
 # as ftype 0xFF, the var-address arm, whose `vi < idx` loop ran off `_vars_base`: SIGSEGV
 # (rc 139) right after the correct diagnostic. The undefined-call report above still runs
 # (it ignores ftype 0xFF). CHANGELOG [6.6.9]
-if (_had_error == 1) { syscall(SYS_EXIT, 1); }
+if (_had_error == 1) {
+    _unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax after the program's own errors
+    syscall(SYS_EXIT, 1);
+}
 
 var fcnt = GFCNT(S);
 var fi = 0;
@@ -546,6 +551,7 @@ while (fi < fcnt) {
 # codebuf), so pass (_CX_CODE_CAP, 0). CHANGELOG [6.7.12]
 # Warnings go to stderr (fd 2); the .cyx below goes to stdout (fd 1), unaffected.
 _capacity_warnings(S, _CX_CODE_CAP, 0);
+_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse_fn_def.cyr)
 
 # Emit CYX file: header + bytecode + var data + string data
 # Header: "CYX" (3 bytes) + format version (1 byte) + entry_offset (4 bytes LE).

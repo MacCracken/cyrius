@@ -2200,6 +2200,19 @@ fn SEXW(S, v): i64 { S64(S + 0x1903F0, v); return 0; }
 # undefined name's silent (`_ew_say`). Bytes written are unchanged. CHANGELOG [6.7.17]
 var _ew_mute = 0;   # 1: nothing is written ...
 var _ew_say = 0;    # ... but the report being printed while this is 1
+var _unp_on = 0;    # 1 while a body pass 2 never parsed is read (`_unp_run`, parse_fn_def.cyr)
+var _unp_said = 0;  # the reports that read said (a syntax error)
+var _unp_v = 0;     # per body pass 2 stepped: kind (0 a generic base, 1 a trait default), fi, its `(`, its first token, its `fn`
+var _unp_iv = 0;    # the generics an instance was minted of (their bases' bodies parsed)
+var _unp_dv = 0;    # the trait defaults an impl inherited (their `fn` tokens: parsed as its methods)
+# A report the read says (ERR's, ERR_EXPECT's): printed through the mute, and counted.
+fn _unp_say(): i64 {
+    if (_unp_on == 1) {
+        _ew_say = 1;
+        _unp_said = _unp_said + 1;
+    }
+    return 0;
+}
 fn _ew(b, n): i64 {
     if (_ew_mute == 1) { if (_ew_say == 0) { return n; } }
     return syscall(SYS_WRITE, 2, b, n);
@@ -3275,6 +3288,7 @@ fn WARN_AT(S, ti, msg, len): i64 {
 
 fn ERR(S): i64 {
     if (_err_once(S, 1) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat (`_err_dup`)
+    _unp_say();   # 6.7.17: a syntax error, said by a never-parsed body's read too
     var typ = PEEKT(S);
     _ew("error:", 6);
     _err_head(S);
@@ -3291,6 +3305,7 @@ fn ERR(S): i64 {
     }
     _ew("\n", 1);
     _err_excerpt(S);
+    _ew_say = 0;
     _had_error = 1;
     _panic = 1;
     return 0;
@@ -3339,6 +3354,7 @@ fn _find_fn_by_name(S, name_cstr, name_len): i64 {
 fn ERR_EXPECT(S, expected_type): i64 {
     if (expected_type == 10) { if (_ngt_callee_lt(S) == 1) { return 0; } }   # 6.7.16: `load64<i64>(p)` (parse.cyr)
     if (_err_once(S, expected_type * 8 + 2) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat
+    _unp_say();   # 6.7.17: a syntax error, said by a never-parsed body's read too
     var got = PEEKT(S);
     _ew("error:", 6);
     _err_head(S);
@@ -3358,6 +3374,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
             _ew("' (cannot be used as an identifier; rename the variable/field/fn)", 65);
             _ew("\n", 1);
             _err_excerpt(S);
+            _ew_say = 0;
             _had_error = 1;
             _panic = 1;
             return 0;
@@ -3388,6 +3405,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
         }
     }
     _err_excerpt(S);
+    _ew_say = 0;
     _had_error = 1;
     _panic = 1;
     return 0;
