@@ -71,6 +71,15 @@
 #       (exit 36); A [a64] / [cx] / [pe] / [macho] P1. Issue: issues/2026-10-21-generic-parameter-and-type-argument-
 #       lists-judged-by-position.md row 1. Mutant (2026-10-22): the compiler before (193c42f72) -> RED P1-P4 on every
 #       leg (built, or only the bound's / a closer's line: `<T<i64>>` read `>>` past the list) and A [pe] / [macho] P1.
+#   U   (6.7.17, the user's D5, 2026-10-22: "Refuse it by name") A UNION TAKES NO TYPE PARAMETERS: `union U<T> { a; }`
+#       was pass 2's parse error alone ("expected '{', got '<'": `_tl_skip_union` stepped no list) after pass 1 had read
+#       the header. Now "a union takes no type parameters" at the `<`, once, in pass 1 (both passes step the list), plain,
+#       under CYRIUS_MONOMORPH=0 and --syntax-only. U1 the filed repro verbatim; U2 the next declaration's and the next
+#       fn's own errors after it; U3 its uses with a list (`U<i64>` as a local, a parameter, a return, `*U<..>`, a field,
+#       sizeof) say nothing more, as a refused third parameter's do; U4 `union V<T>> {` — and the header's closer line;
+#       UK a union without one keeps its `U<i64>` refusal, and runs (exit 3); A [a64] / [cx] / [pe] / [macho] U1.
+#       Issue row 3. Mutant (2026-10-22): the compiler before (27f8d216a) -> RED U1-U4 and A [pe] / [macho] U1 (the
+#       parse error, its cascade, the uses' "'U' is not a generic struct").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -323,6 +332,36 @@ else chmod +x "$D/pk.bin"; got=0; "$D/pk.bin" || got=$?
     if [ "$got" -eq 36 ]; then ok "PK: controls — <>, <T: Show + Eq, U>, enum Res<T, E>, a member's <V: Show + Eq, U>: exit 36"; else bad "PK: exit $got, want 36"; fi
 fi
 
+# ── U: a union takes no type parameters (6.7.17, the user's D5) ──────────────────────────────────────────────
+UN="a union takes no type parameters"
+printf 'union U<T> { a; }\nsyscall(60, 3);\n' > "$D/u1.cyr"
+lines u1 "1:8: $UN" "U1 [plain]: the filed repro verbatim (it was \"expected '{', got '<'\")"
+lines u1 "1:8: $UN" "U1 [mono0]" "CYRIUS_MONOMORPH=0 $CC"
+lines u1 "1:8: $UN" "U1 [lint]: --syntax-only reports it" "$CC --syntax-only"
+printf 'union U<T> { a: T; b; }\nstruct Q { a: Foo; }\nfn main(): i64 { var u: U; u.b = 3; var y = 1 2; return u.b; }\nsyscall(60, main());\n' > "$D/u2.cyr"
+lines u2 "1:8: $UN|2:15: unknown type 'Foo' for struct field 'a'|3:47: expected ';', got number 2" "U2: the next declaration's and fn's own errors"
+cat > "$D/u3.cyr" <<'EOF'
+struct A { p: *U<i64>; k; }
+union U<T> { a: T; b; }
+struct B { q: U<i8>; k; }
+fn f(x: U<i64>, y: *U<i8>): U<i32> { var l: U<i8>; return l; }
+fn h(x: i64): *U<i32> { return 0; }
+fn main(): i64 { var w: U<i64>; w.b = 3; return sizeof(U<i8>) + w.b; }
+syscall(60, main());
+EOF
+lines u3 "2:8: $UN" "U3 [plain]: its uses with a list say nothing more"
+lines u3 "2:8: $UN" "U3 [mono0]" "CYRIUS_MONOMORPH=0 $CC"
+printf 'union V<T>> { a; }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/u4.cyr"
+lines u4 "1:8: $UN|1:10: expected '{', got '>>'|$NX" "U4: union V<T>> { — the list's line and the header's"
+printf 'union W { a; b; }\nfn main(): i64 { var w: W<i64>; w.b = 3; return w.b; }\nsyscall(60, main());\n' > "$D/uk.cyr"
+lines uk "2:25: 'W' is not a generic struct: it takes no type arguments" "UK: a union declared without a list keeps its W<i64> refusal"
+printf 'union W { a: i64; b; }\nfn main(): i64 { var w: W; w.b = 3; return w.a; }\nsyscall(60, main());\n' > "$D/uk2.cyr"
+rc=0; "$CC" < "$D/uk2.cyr" > "$D/uk2.bin" 2> "$D/uk2.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "UK2: a plain union: rc $rc: $(grep '^error' "$D/uk2.err" | head -1)"
+else chmod +x "$D/uk2.bin"; got=0; "$D/uk2.bin" || got=$?
+    if [ "$got" -eq 3 ]; then ok "UK2: a plain union builds and runs: exit 3"; else bad "UK2: exit $got, want 3"; fi
+fi
+
 # ── C: controls, every leg ──────────────────────────────────────────────────────────────────────────────────
 cat > "$D/c.cyr" <<'EOF'
 trait Show { fn show(self): i64; }
@@ -386,7 +425,11 @@ lines trm "1:22: a third type parameter 'C': $M" "A [macho]: T1" "CYRIUS_MACHO=1
 [ -n "$CXCC" ] && lines p1 "$P1W" "A [cx]: P1" "$CXCC"
 lines p1 "$P1W" "A [pe]: P1" "CYRIUS_TARGET_WIN=1 $CC"
 lines p1 "$P1W" "A [macho]: P1" "CYRIUS_MACHO=1 $CC"
+[ -n "$A64" ] && lines u1 "1:8: $UN" "A [a64]: U1" "$A64"
+[ -n "$CXCC" ] && lines u1 "1:8: $UN" "A [cx]: U1" "$CXCC"
+lines u1 "1:8: $UN" "A [pe]: U1" "CYRIUS_TARGET_WIN=1 $CC"
+lines u1 "1:8: $UN" "A [macho]: U1" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), a list entry that is no name (P, the user's D3), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
+echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), a list entry that is no name (P, the user's D3), a union's list (U, the user's D5), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
 exit 0

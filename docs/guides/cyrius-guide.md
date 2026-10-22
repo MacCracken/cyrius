@@ -7894,6 +7894,10 @@ fn run(): i64 {
 }
 ```
 
+A union takes no type parameters: `union U<T> { a; }` is refused at its `<` — *a union takes no type parameters* —
+once, and a use's list (`var u: U<i64>`) says nothing more (6.7.17, the user's D5; it was pass 2's parse error *expected
+'{', got '<'*).
+
 The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.

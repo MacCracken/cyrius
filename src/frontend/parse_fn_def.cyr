@@ -1599,6 +1599,7 @@ fn _tl_skip_struct(S): i64 {
 
 fn _tl_skip_union(S): i64 {
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+    _tpl_skip(S);   # 6.7.17 (D5): pass 1 refused its `<..>` (`_union_tp_refuse`); stepped here, silent
     _tl_skip_body(S);
     return 0;
 }
@@ -5411,29 +5412,51 @@ fn _tpl_st(t, st): i64 {
     if (t == 6) { if (st == 3) { return 2; } return 0 - 1; }
     return 0 - 1;
 }
-# "a type parameter is a name, got <the token>" at token `k`: once per token, the latch left as it was, the cursor put
-# back. A declaration's pass-1 reader says it, never an instance's re-emit.
+# "a type parameter is a name, got <the token>" at token `k`.
 fn _tpl_err(S, k): i64 {
-    if (_inst_name != 0) { return 0; }
-    if (_panic == 1) { return 0; }
-    _err_n = _err_n + 1;
-    if (_tn_once(S, k) == 0) { return 0; }
-    var sv = GTI(S);
-    STI(S, k);
-    syscall(SYS_WRITE, 2, "error:", 6);
-    _err_head(S);
-    PRSTR(": a type parameter is a name, got ");
+    if (_tpl_beg(S, k) == 0) { return 0; }
+    PRSTR("a type parameter is a name, got ");
     var t = TOKTYP(S, k);
     if (IS_KEYWORD_TOK(t) == 1) { PRSTR("reserved keyword '"); PRSTR(TOKNAME(t)); PRSTR("'"); }
     else {
         PRSTR(TOKNAME(t));
         if (t == 1) { PRSTR(" "); PRNUM(TOKVAL(S, k)); }
     }
+    return _tpl_fin(S);
+}
+# A declaration list's refusal at token `k`, in two halves (`_dyn_ebeg` / `_dyn_eend`'s shape, said under --syntax-only
+# too — nothing is resolved): `_tpl_beg` prints the head and 0 = say nothing (an instance's re-emit, the panic latch,
+# or this token reported already); the caller the words; `_tpl_fin` the excerpt, the latch left as it was, the cursor
+# put back.
+var _tpl_sv = 0;
+fn _tpl_beg(S, k): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    _err_n = _err_n + 1;
+    if (_tn_once(S, k) == 0) { return 0; }
+    _tpl_sv = GTI(S);
+    STI(S, k);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    return 1;
+}
+fn _tpl_fin(S): i64 {
     syscall(SYS_WRITE, 2, "\n", 1);
     _err_excerpt(S);
     _had_error = 1;
-    STI(S, sv);
+    STI(S, _tpl_sv);
     return 0;
+}
+# ⛔ 6.7.17 (D5) — A UNION TAKES NO TYPE PARAMETERS: `union U<T> { a; }` was refused by pass 2 alone, as a parse error
+# ("expected '{', got '<'": `_tl_skip_union` stepped no list) after pass 1 had read the header and registered the union.
+# Refused by name at the `<` in pass 1 (the user's D5, 2026-10-22: "Refuse it by name") — "a union takes no type
+# parameters" — once; both passes step the list (`_tpl_skip`), so the next declaration reports its own errors.
+# Cursor on the `<`. CHANGELOG [6.7.17]
+fn _union_tp_refuse(S): i64 {
+    if (_tpl_beg(S, GTI(S)) == 0) { return 0; }
+    PRSTR("a union takes no type parameters");
+    return _tpl_fin(S);
 }
 # ⛔ 6.7.16 — A FN'S `*fn( .. )` RETURN IS THE MEMBER'S ONE LINE. PARSE_FN_DEF's return reader took `: *fn(i64): i64`
 # as a `*T` and met the `fn` as a name: "expected identifier, got reserved keyword 'fn' (.. rename the

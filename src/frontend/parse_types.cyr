@@ -366,9 +366,26 @@ fn _tn_seen_at(S, ti): i64 {
 # and a type parameter are not this shape. 1 = refused. 6.7.16 (D88): 2 / 3 = a Result / generic enum list read, 3
 # when the read refused an argument in it; the caller steps the list after any of them. CHANGELOG [6.7.15]
 fn _ngt_refuse(S, nti): i64 {
+    if (_ngt_union_q(S, nti) == 1) { return 1; }   # 6.7.17 (D5)
     var tail = _ngt_tail(S, nti);
     if (tail == 0) { return _ngt_hread(S, nti); }
     return _ngt_say(S, nti, tail);
+}
+# 6.7.17 (D5) — 1 when the name at token `nti` (its `<` next) is a union declared with a `<..>`: that declaration was
+# refused ("a union takes no type parameters", `_union_tp_refuse`), so a use's list says nothing more — refused
+# quietly (the caller steps it), as a refused third type parameter's uses say nothing (6.7.16's D8).
+fn _ngt_union_q(S, nti): i64 {
+    if (TOKTYP(S, nti) != 2) { return 0; }
+    if (TOKTYP(S, nti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, nti);
+    _dlx_build(S);
+    var i = 0;
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
+        if (TOKTYP(S, k) == 101) { if (TOKTYP(S, k + 2) == 19) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } } }
+        i = i + 1;
+    }
+    return 0;
 }
 # The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check
 # (`_tr_rt_bad`) knows a return its reader refuses.
@@ -6206,7 +6223,8 @@ fn PARSE_UNION_DEF(S): i64 {
     var noff = PEEKV(S);
     var _uname_ti = GTI(S);
     STI(S, GTI(S) + 1);
-    SKIP_GENERICS(S);
+    if (PEEKT(S) == 19) { _union_tp_refuse(S); }   # 6.7.17 (D5): "a union takes no type parameters"
+    _tpl_skip(S);
     _sdef_gen_prescan(S, 0, noff);   # 6.7.1 (C3): `b: Box<i32>` fields, before REGSTRUCT
     var _uprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
