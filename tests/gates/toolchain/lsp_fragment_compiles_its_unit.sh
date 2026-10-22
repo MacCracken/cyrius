@@ -493,8 +493,9 @@ else fail "F22 runs: $(tr '\n' ';' < "$W/r22.shim") / b.cyr: $(pub "$W/r22" p1/s
 # the sweep ends, after every later unit has published — must be empty, but for what these entries and
 # notes really say (the files their unit is themselves, or a NOTE). Its first publish alone could not
 # see a later SELF unit republishing a shared fragment (the aarch64-native fork's did, below):
-#   src/main.cyr, src/main_win.cyr, src/main_x86_macho.cyr — their own location-less
-#       `large static data` warning (an entry's, unchanged)
+#   (6.7.17: src/main.cyr, src/main_win.cyr and src/main_x86_macho.cyr have no exemption — their own
+#       `large static data` warning is gone, the TS scratch stack alloc()'d; an empty list like
+#       every other file)
 #   lib/alloc_cx.cyr (cx), lib/syscalls_aarch64_linux.cyr (aarch64) — the one Information NOTE
 #   src/main_aarch64_native.cyr — named by this repo's `[lsp] skip` (built only by the aarch64
 #       compiler, raw: a check of it on x86_64 with the [deps] prepend read its SYS_* numbers as
@@ -512,9 +513,6 @@ for f in $(tree_files); do
     last=$(grep "^\"uri\":\"TREE/$f\"," "$W/rs.t" | awk '{ l = $0 } END { if (NR) print l }' || true)
     [ -n "$last" ] && seen=$((seen + 1))
     case "$f" in
-        src/main.cyr|src/main_win.cyr|src/main_x86_macho.cyr)
-            sev=$(printf '%s' "$last" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')
-            [ "$sev" = '"severity":2 ' ] && printf '%s' "$last" | grep -qF 'large static data' && continue ;;
         lib/alloc_cx.cyr|lib/syscalls_aarch64_linux.cyr)
             sev=$(printf '%s' "$last" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')
             [ "$sev" = '"severity":3 ' ] && printf '%s' "$last" | grep -qF 'not compiled here' && continue ;;
