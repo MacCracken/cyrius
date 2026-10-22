@@ -1,0 +1,81 @@
+# vector_store_through_pointer.tcyr — 6.7.17 (D23 A, the user's decision, 2026-10-22: "The whole vector"): a store
+# through a pointer to a vector copies the whole vector, as `w = u` does, on every target.
+#
+# `*pv = v` with `pv: *f64v2` wrote ONE word: from a local its lane 0 (`*pv = u;` read 42 where 47 is right), from a
+# call whatever word its result register held — rax / x0 on x86_64 and aarch64 (2), lane 0 on cx and Windows (42,
+# where the call writes through a hidden result pointer) — and `*(&w) = ..` the same
+# (issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 1). The receive is the vector's own now:
+# a call into a frame temporary (SysV xmm / AAPCS64 v / cx registers, Win64's hidden pointer), then copied through the
+# pointer. Every lane is read back weighted, so a lost or stale lane changes the value. The compile-time refusals are
+# tests/gates/codegen/simd_return_shapes.sh rows VSK; in this directory so the release gate runs it on ecb / ach / cass
+# / pi.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a, b, c, d): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, b); store64(&v + 16, c); store64(&v + 24, d); return v; }
+fn mkf(a, b, c, d): f32v4 { var v: f32v4; store32(&v, a); store32(&v + 4, b); store32(&v + 8, c); store32(&v + 12, d); return v; }
+fn rd(p): i64 { return load64(p) * 10 + load64(p + 8); }
+fn rd4(p): i64 { return ((load64(p) * 10 + load64(p + 8)) * 10 + load64(p + 16)) * 10 + load64(p + 24); }
+fn rdf(p): i64 { return ((load32(p) * 10 + load32(p + 4)) * 10 + load32(p + 8)) * 10 + load32(p + 12); }
+struct Mv { k; }
+impl Mv { fn m2(self): f64v2 { return mk2(4, 7); } }
+struct H { pv: *f64v2; n; }
+var GW: f64v2 = 0;
+fn gp(p: *f64v2): *f64v2 { return p; }
+fn st(p: *f64v2, u: f64v2): i64 { *p = u; return 0; }
+
+# The filed row 1's three bodies and its control.
+fn r_local(): i64 { var w: f64v2 = mk2(1, 2); var u: f64v2 = mk2(4, 7); var pv: *f64v2 = &w; *pv = u; return rd(&w); }
+fn r_call(): i64 { var w: f64v2 = mk2(1, 2); var pv: *f64v2 = &w; *pv = mk2(4, 7); return rd(&w); }
+fn r_amp(): i64 { var w: f64v2 = mk2(1, 2); *(&w) = mk2(4, 7); return rd(&w); }
+fn r_ctl(): i64 { var w: f64v2 = mk2(1, 2); var u: f64v2 = mk2(4, 7); w = u; return rd(&w); }
+
+# Every call spelling the receives take, through a `*f64v2` local.
+fn r_calls(): i64 {
+    var w: f64v2 = mk2(1, 2); var pv: *f64v2 = &w; var s: Mv = Mv { 1 };
+    var t = 0;
+    *pv = s.m2(); t = t + rd(&w); w = mk2(1, 2);
+    *pv = callptr(&mk2, 4, 7); t = t + rd(&w); w = mk2(1, 2);
+    *pv = fncall2(&mk2, 4, 7); t = t + rd(&w); w = mk2(1, 2);
+    *pv = mkg<i64>(4, 7); t = t + rd(&w); w = mk2(1, 2);
+    *pv = ((mk2(4, 7))); t = t + rd(&w);
+    return t;
+}
+# Every pointer spelling: `*q` as the source, `**ppv`, a call returning the pointer, a field, a `*V` parameter, `pa + 1`,
+# `*&w = *q`, a closure's captures.
+fn r_ptrs(): i64 {
+    var w: f64v2 = mk2(1, 2); var pv: *f64v2 = &w; var u: f64v2 = mk2(4, 7);
+    var q: f64v2 = mk2(4, 7); var pq: *f64v2 = &q;
+    var t = 0;
+    *pv = *pq; t = t + rd(&w); w = mk2(1, 2);
+    var ppv: **f64v2 = &pv; **ppv = u; t = t + rd(&w); w = mk2(1, 2);
+    *gp(pv) = u; t = t + rd(&w); w = mk2(1, 2);
+    var h: H; h.pv = pv; *h.pv = (u); t = t + rd(&w); w = mk2(1, 2);
+    st(pv, u); t = t + rd(&w); w = mk2(1, 2);
+    var wa: f64v2[2]; var pa: *f64v2 = &wa; *(pa + 1) = u; t = t + rd(&wa + 16);
+    *&w = *pq; t = t + rd(&w); w = mk2(1, 2);
+    var f = |k| { *pv = u; return k; }; fncall1(f, 1); t = t + rd(&w);
+    return t;
+}
+# The other widths, and a vector global through its address.
+fn r_wide(): i64 {
+    var a4: f64v4 = mk4(1, 1, 1, 1); var p4: *f64v4 = &a4; *p4 = mk4(4, 7, 2, 9);
+    var af: f32v4 = mkf(1, 1, 1, 1); var pf: *f32v4 = &af; var bf: f32v4 = mkf(3, 1, 4, 1); *pf = bf;
+    var u: f64v2 = mk2(4, 7); *(&GW) = u; var g1 = rd(&GW);
+    var gpv: *f64v2 = &GW; store64(&GW, 0); *gpv = mk2(5, 8); var g2 = rd(&GW);
+    return rd4(&a4) + rdf(&af) + g1 * 100 + g2;
+}
+
+alloc_init();
+assert_eq(r_local(), 47, "*pv = u copies both lanes (the filed row: 42 before)");
+assert_eq(r_call(), 47, "*pv = mk2(4, 7) receives the whole vector (x86_64 / aarch64 2, cx / PE 42 before)");
+assert_eq(r_amp(), 47, "*(&w) = mk2(4, 7) is w = mk2(4, 7)");
+assert_eq(r_ctl(), 47, "the control: w = u");
+assert_eq(r_calls(), 235, "a method, callptr(&f), fncall2(&f), an explicit instance, a wrapped call through *pv");
+assert_eq(r_ptrs(), 376, "*q, **ppv, *gp(pv), *h.pv, a *V parameter, *(pa + 1), *&w, a closure's captures");
+assert_eq(r_wide(), 4729 + 3141 + 4700 + 58, "f64v4, f32v4 and a vector global through its address");
+var r = assert_summary();

@@ -2250,6 +2250,17 @@ through `p`, as `var v = mkv(..);` is the vector — `(*p)`, `**pp`, `*gp(p)` to
 unannotated declaration bound one word, lane 0, silently (x86_64 114, aarch64 26, cx 98, Windows 146 where 161 is
 right), and `return *p;` was refused.
 
+**A store through a `*V` copies the vector (6.7.17; the user's decision D23, 2026-10-22: A),** as `w = u` does and
+as a store through a `*S` copies the struct: `*pv = u;`, `*pv = mkv(4, 7);` (a by-name call, an explicit instance, a
+method, `callptr(&f, ..)` / `fncallN(&f, ..)`, wrapped), `*pv = *q;` and `*(&w) = ..` (which is `w = ..`) write all 16 /
+32 bytes, with `pv` any pointer to the vector — a local, a parameter, a field, `**ppv`, `*gp(pv)`, `pv + n` — in a fn,
+a closure or at top level (a vector call there is refused: no frame). The source rules are `w = <src>`'s: another
+vector is *cannot copy 'u4' into a variable of a different struct/vector type: 'pv'*, a word *a value-form vector
+local is assigned only from .. - got `5`*, and `*pv OP= v` is refused as `w OP= v` is (*compound assignment to the
+vector 'pv' points at is refused - a vector value is not an integer or a float ..*). ⚠ Through 6.7.16 the store wrote
+one word: from a local its lane 0 (`*pv = u;` 42 on every target where 47 is right), from a call whatever word its
+result register held (x86_64 / aarch64 2, cx / Windows 42), and `*pv += 1` added to lane 0.
+
 **An explicit instance is a call by name (6.7.13).** With `fn mkg<T>(a: T, b: T): f64v2`,
 `mkg<i64>(41, 7)` and `mkg<i32>(41, 7)` are calls declared to return `f64v2`, exactly as
 `mkg(41, 7)` is: `var v: f64v2 = mkg<i64>(41, 7);`, `v = mkg<i64>(41, 7);`, an untyped `var v =

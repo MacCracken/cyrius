@@ -5044,6 +5044,123 @@ fn _dst_struct(S, term, d): i64 {
     STI(S, GTI(S) + 1);
     return 1;
 }
+# ⛔ 6.7.17 (D23 A, the user's decision, 2026-10-22: "The whole vector") — `*pv = v` THROUGH A `*V` COPIES THE VECTOR,
+# as `w = u` does and as a store through a `*S` copies the struct (6.7.11); 6.7.13's D34 made `*pv` the vector when read.
+# The store wrote one word: from a local its lane 0 (`*pv = u;` 42 on x86_64 / aarch64 / cx / PE where 47 is right), from
+# a call the word its result register held (`*pv = mk2(4, 7);` x86_64 / aarch64 2, cx / PE 42), and `*(&w) = ..` the
+# same (issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 1). The cursor past the operand of the
+# `*` at `d`, rax = the pointer: when the operand points at a vector (`_dop_vd`: its step word — a `*V` local,
+# parameter, capture, field, global, `: *V` call, `pv + n`, `*ppv` of a `**V` — or `&w` of a vector, `*(&w)` being w),
+# `*pv OP= v` is refused as `w OP= v` is (the statement parses on: 0), and for `=` the pointer is parked in a hidden
+# temp and the value received as `w = <src>` receives it (`_dvec_rcv`). 1 = done (`term` consumed). CHANGELOG [6.7.17]
+fn _dst_vec(S, term, d): i64 {
+    var vd = _dop_vd(S, d + 1, GTI(S));
+    if (vd == 0) { return 0; }
+    if (PEEKT(S) != 4) {
+        if (_asg_pair_at(S) == 1) { _dvec_cop_err(S, d); }
+        return 0;
+    }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    STI(S, GTI(S) + 1);   # `=`
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (_dvec_rcv(S, term, 0 - vd, h, nm) == 1) { return 1; }
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# `*pv OP= v` through a pointer to a vector, refused by name as `w OP= v` is (`_asg_wide_refused`): `*(&w)` is w; else
+# "the vector 'pv' points at" (`**ppv`: '*ppv'). In sync, as the struct's (`_dst_cop_err`). 0.
+fn _dvec_cop_err(S, d): i64 {
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    if (_amp_vd(S, d + 1, GTI(S)) != 0) {
+        _err_in_sync(S, "compound assignment to vector ", nm,
+          " is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)");
+        return 0;
+    }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": compound assignment to the vector '");
+    _dst_spell(S, nm, _sval_stars(S, d + 1));
+    PRSTR("' points at is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# The value at the cursor (ended by `term`) stored into the vector of type `vt` the parked pointer `h` points at, as `w =
+# <src>` stores it (`_vrcv_asg`): a call declared to return `vt` — by name, an explicit instance, a method, `callptr(&f,
+# ..)` / `fncallN(&f, ..)`, inside parentheses — received into a frame temporary (SysV / AAPCS64 / cx: its vector
+# registers; Win64: the temporary is its hidden result pointer) and copied (at top level there is no frame: refused as a
+# top-level declaration is); a dereference `*q` of a pointer to `vt` (`_vrcv_demit`'s), copied through; a vector local,
+# parameter or capture of `vt`, copied (`_try_aggregate_copy_assign` with the parked pointer its destination,
+# `_agc_ovr`, as `_dst_struct`'s); another vector refused by name; anything else by the receive's words
+# (`_vrcv_other`). 1 = `term` consumed; 0 = the cursor on `term`.
+fn _dvec_rcv(S, term, vt, h, nm): i64 {
+    var ti = GTI(S);
+    var k = _vrcv_src(S, ti, vt, term);
+    _vec_desc(S, vt);
+    var n = GVEC_NSLOTS(S);
+    if (k == 4) { return _dvec_deref(S, vt, h, nm, n * 8); }
+    if (k != 0) {
+        if (GINFN(S) != 1) {
+            _vcall_vt(S, ti, term, 0);
+            _svc_toplevel_at(S, _vcv_a, _vcv_nt);
+            PCMPE(S);
+            return 0;
+        }
+        var t = _agg_temp_t(S, n, vt);
+        _vrcv_emit(S, t, vt, k);
+        _agc_copy_bytes(S, _dh_li(h), _dh_gv(h), t, 0 - 1, n * 8);
+        return 0;
+    }
+    if (_vval_at(S, ti, _hl_dx_end(S, ti, term)) != 0) {   # a vector name, wrapped too: copied, or refused by name
+        if (_dvec_name(S, term, vt, h, nm) == 1) { return 1; }
+    }
+    _vrcv_bad(S, ti, vt, term, 1);   # a call of another vector, wrapped or not
+    if (_vrcv_other(S, term, vt) == 1) { return 1; }
+    PCMPE(S);   # a call naming no fn: the undefined-function path's
+    return 0;
+}
+# ... a vector name: the statement's copy (`_try_aggregate_copy_assign`) into the parked pointer. 1 = done.
+fn _dvec_name(S, term, vt, h, nm): i64 {
+    var sv = _agc_ovr;
+    var svn = _agc_ovr_nm;
+    var svh = _agc_ovr_h;
+    var svt = _agc_ovr_t;
+    _agc_ovr = 1;
+    _agc_ovr_nm = nm;
+    _agc_ovr_h = h;
+    _agc_ovr_t = vt;
+    var r = _try_aggregate_copy_assign(S, nm, term);
+    _agc_ovr = sv;
+    _agc_ovr_nm = svn;
+    _agc_ovr_h = svh;
+    _agc_ovr_t = svt;
+    return r;
+}
+# ... a dereference `*q` (`_vrcv_k` parentheses, then `*`): q parsed and its vector read (`_vrcv_dparse`) — `vt`'s, the
+# `nb` bytes copied from where q points to where `h` points; another vector refused by name; none, the receive's words.
+fn _dvec_deref(S, vt, h, nm, nb): i64 {
+    var ti = GTI(S);
+    var a = ti + _vrcv_k + 1;
+    var vd = _vrcv_dparse(S);
+    if (vd == 0) { return _vrcv_err(S, ti, "assigned", 0); }
+    if (0 - vd != vt) { return _vrcv_dbad(S, ti, vt, vd, nm, _hl_lastnm(S, a, _vrcv_dpe, TOKVAL(S, a))); }
+    _agc_copy_bytes(S, _dh_li(h), _dh_gv(h), _dh_li(_vrcv_dh), _dh_gv(_vrcv_dh), nb);
+    return 0;
+}
+# A hidden temp `h` holding an address (`_HTEMP`: a frame slot in a fn, a hidden global at top level) as
+# `_agc_copy_bytes`' operand: the slot's band (`_AGC_DREF`), else -1 — and the global's (`0 - 1000 - gvi`), else -1.
+fn _dh_li(h): i64 {
+    if (h >= 0) { return _AGC_DREF(h); }
+    return 0 - 1;
+}
+fn _dh_gv(h): i64 {
+    if (h >= 0) { return 0 - 1; }
+    return 0 - 1000 - (0 - 2 - h);
+}
 # `*p OP= v` through a `*S` refused by name. ⛔ 6.7.14 — `*(&s) OP= v` (the `&` arm, `_hl_damp`) is the struct value
 # s (6.7.13), so it is refused as `s OP= v` is (the user's D17 (a), 2026-10-16): it kept 6.7.5's word op, on s's
 # first word, through 6.7.13. CHANGELOG [6.7.14]
@@ -5401,6 +5518,7 @@ fn _deref_store(S, term): i64 {
     PARSE_FACTOR(S);
     var oe = GTI(S);   # 6.7.16 (D99): the operand's end, for `_dsr_sres`
     if (_dst_struct(S, term, d) == 1) { return 0; }
+    if (_dst_vec(S, term, d) == 1) { return 0; }   # 6.7.17 (D23): through a `*V`, the whole vector
     _deref_u128(S, d);   # 6.7.15 (D20): `*pu = v` through a `*u128` refused by name; the statement parses on
     var ed = _deref_ed(S);   # before the push: the operand's own kind
     if (ed == 0) { ed = _amp_ew(S, d + 1, GTI(S)); }   # 6.7.16 (D21): `*(&x)` of a narrow x, at x's width
