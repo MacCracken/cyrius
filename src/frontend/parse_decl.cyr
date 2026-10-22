@@ -7516,7 +7516,14 @@ fn _tp_str_exempt(S, st): i64 {
 }
 # The warning (at the cursor) into a `*T`, unless the value starting at `st` is exempt or was refused already (an
 # `&a[i]` inside it). An assignment's (parse.cyr's `_PARSE_STMT_IMPL` arms) calls it directly.
+# ⛔ 6.7.17 (met landing D24) — A REFUSED STATEMENT PRINTS NO TYPED-POINTER WARNING, as it prints no float-type one
+# (6.7.16, `_FLT_TYPE_WARN`): `var p: *f64v2 = mk2(4, 7);` and `p = mk2(4, 7);` printed D100's refusal and then
+# "assigning non-pointer to typed pointer" about the refused value (`var x: *i64 = (*GP);` D24's the same). Not while
+# the statement's error holds the panic latch, nor after one that does not latch (`_err_n` past `_flt_en`, the count at
+# the statement's start). CHANGELOG [6.7.17]
 fn _tp_warn(S, st): i64 {
+    if (_panic == 1) { return 0; }
+    if (_err_n != _flt_en) { return 0; }
     if (_tp_exempt(S, st) == 1) { return 0; }
     if (_tp_refd_at >= st) { if (_tp_refd_at <= GTI(S)) { return 0; } }
     WARN(S, "assigning non-pointer to typed pointer", 38);
