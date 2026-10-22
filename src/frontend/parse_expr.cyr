@@ -886,10 +886,105 @@ fn _eta_gen(S, fi): i64 {
     var e = _tok_targs_close(S, nt + 2);
     if (e < 0) { return 0; }
     if (TOKTYP(S, e + 1) != 10) { return 0; }
+    if (_MONOMORPH_OK != 1) { if (_fn_gen_tok(S, fi) == 1) { return _tylist_fl(S, nt + 2, e); } }   # 6.7.17 (D7)
     if (_tylist_at(S, nt + 2, e, 0 - 1) == 0) { return 0; }
     _ngt_say(S, nt, " is not a generic fn: it takes no type arguments");
     STI(S, e + 1);
     return 0;
+}
+# ⛔ 6.7.17 (D7) — AN EXPLICIT TYPE-ARGUMENT CALL UNDER CYRIUS_MONOMORPH=0: `g<i32>(3)` of a defined `fn g<T>` was
+# "undefined function 'g'" (the explicit arm was compiled only under monomorphization, so the name read as a value and
+# the list as comparisons; as a statement "expected '=', got '<'" and two more), and a generic method's `p.m<i32>(1)`
+# "'Pt.m' is not a generic method". The flag records no type parameter, so a fn is generic by its definition's tokens
+# (`_fn_gen_tok`): `_eta_gen` answers 1 for one, as monomorphization does, and every explicit reader takes the call —
+# `_gcall_open` opens it, the arms reach `_explicit_generic_call` — whose refusal is by name at the `<`: "explicit type
+# arguments need monomorphization (CYRIUS_MONOMORPH=0 turns it off)" (the user's D7, 2026-10-22: the list is never
+# run as the i64 base silently), once, the list stepped and the BASE call parsed (`_egc_nomono`), so nothing cascades
+# — `.field` on the result, `[i] = v`, a statement. A fn that is not generic keeps 6.7.16's words under the flag too
+# (they were the same cascade). A type parameter in scope counts in the list (read off the tokens: the flag binds
+# none). Silent under --syntax-only, as D6's. CHANGELOG [6.7.17]
+fn _eta_nm_say(S, lt): i64 {
+    _dyn_err(S, lt, "explicit type arguments need monomorphization (CYRIUS_MONOMORPH=0 turns it off)", 0, 0 - 1, 0);
+    return 0;
+}
+# The factor's explicit-call arm, cursor past the callee's name on its `<` (out of PARSE_FACTOR: cybs's per-fn reference
+# ceiling): a generic fn's `<..>(` call parsed — 1; a fn that is not generic has its list refused and stepped
+# (`_eta_gen`), and the plain call is the factor's — 0.
+fn _eta_arm(S, noff): i64 {
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { return 0; }
+    if (_eta_gen(S, fi) == 0) { return 0; }   # 6.7.16: a non-generic fn's list refused, stepped
+    if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) != 1) { return 0; }
+    _explicit_generic_call(S, noff, fi);
+    _cfo = 0;
+    return 1;
+}
+# `_explicit_generic_call` under CYRIUS_MONOMORPH=0 (cursor on the `<`): refused, the list stepped, the base call.
+fn _egc_nomono(S, noff, fi): i64 {
+    _eta_nm_say(S, GTI(S));
+    _skip_targ_list(S);
+    PARSE_FNCALL(S, noff);
+    _call_ret_marks(S, fi);
+    return 0;
+}
+# 1 when fn `fi`'s definition declares a `<..>` (its name token's next): generic, read off the tokens.
+fn _fn_gen_tok(S, fi): i64 {
+    var d = GFDS(S, fi);
+    if (d <= 0) { return 0; }
+    if (TOKTYP(S, d + 1) == 19) { return 1; }
+    return 0;
+}
+# `_tylist_at` under CYRIUS_MONOMORPH=0: a name may also be a type parameter in scope, read off the tokens.
+fn _tylist_fl(S, a, e): i64 {
+    while (a < e) {
+        var t = TOKTYP(S, a);
+        if (t == 2) {
+            if (_bnd_tyname(S, 0 - 1, TOKVAL(S, a)) == 0) { if (_tn_tparam(S, a, TOKVAL(S, a)) == 0) { return 0; } }
+        } elif (t != 31 && t != 19 && t != 20 && t != 39 && t != 152) { return 0; }
+        a = a + 1;
+    }
+    return 1;
+}
+# ⛔ 6.7.17 — `&g<i32>` / `&nf<i32>`: the `&` factor took the fn's name and left its `<..>` to the expression as
+# comparisons — "undefined variable 'i32'" + "expected ';', got '>'" (a local's or a global's initializer, a `callptr`
+# argument alike). A fn that is not generic is refused at the name with 6.7.16's words ("'nf' is not a generic fn: it
+# takes no type arguments", `_eta_gen`'s), the list stepped and nf's address taken; a generic fn's instance has no
+# address to take: "cannot take the address of a generic instance: 'g' - ..." once at the name, the list (and a call's
+# `( .. )`) stepped, the factor 0. A list that is no type list stays a comparison. Both monomorph modes.
+# CHANGELOG [6.7.17]
+# Cursor past fn fni's name: 1 = refused (the factor yields 0), else 0 (the cursor past any refused list).
+fn _amp_targs(S, fni): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    var e = _tok_targs_close(S, nt + 2);
+    if (e < 0) { return 0; }
+    var gen = 0;
+    if (_MONOMORPH_OK != 1) {
+        if (_tylist_fl(S, nt + 2, e) == 0) { return 0; }
+        gen = _fn_gen_tok(S, fni);
+    } else {
+        if (_tylist_at(S, nt + 2, e, 0 - 1) == 0) { return 0; }
+        if (GFTP(S, fni) != 0) { gen = 1; }
+    }
+    STI(S, e + 1);
+    if (gen == 0) { _ngt_say(S, nt, " is not a generic fn: it takes no type arguments"); return 0; }
+    var tl = " - wrap the call in a fn that is not generic and take its address";
+    _dyn_err(S, nt, "cannot take the address of a generic instance: ", 0, TOKVAL(S, nt), tl);
+    if (PEEKT(S) == 10) { var c = _tok_close_paren(S, GTI(S)); if (c > 0) { STI(S, c + 1); } }
+    EMOVI(S, 0);
+    return 1;
+}
+# `_gcall_open`'s explicit call under CYRIUS_MONOMORPH=0 (name token ti, its `<` next): a generic fn's `<types>(`
+# opens at that `(`, as monomorphization opens it; else -1.
+fn _gcall_open_fl(S, ti): i64 {
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0 - 1; }
+    if (_fn_gen_tok(S, fi) == 0) { return 0 - 1; }
+    var e = _tok_targs_close(S, ti + 2);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+    if (_tylist_fl(S, ti + 2, e) == 0) { return 0 - 1; }
+    return e + 1;
 }
 fn LOOKAHEAD_IS_TYPE_ARG_CALL(S): i64 {
     var i = GTI(S);
@@ -3927,6 +4022,7 @@ fn _err_in_sync(S, msg, noff, tail): i64 {
 # which retired 6.6.8's `_call_forwarded_base` (a base call with the inline replay suppressed at
 # depth 0, which existed only to keep that replay out of such a base). CHANGELOG [6.6.10]
 fn _explicit_generic_call(S, noff, fi): i64 {
+    if (_MONOMORPH_OK != 1) { return _egc_nomono(S, noff, fi); }   # 6.7.17 (D7)
     STI(S, GTI(S) + 1);                 # consume `<`
     _ta_pending_gt = 0;
     _ta_refd = 0;
@@ -6099,16 +6195,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # misread (flag-off / non-generic → byte-identical default path). v6.3.10
         # bite-1 supports i64 type-args (the base IS the i64 instance → normal call);
         # non-i64 type-args (instantiate-once) land in a follow-on bite.
-        if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
-                var _eta_fi = FINDFN(S, noff);
-                if (_eta_fi >= 0) { if (_eta_gen(S, _eta_fi) == 1) {   # 6.7.16: a non-generic fn's list refused, stepped
-                        if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) == 1) {
-                            _explicit_generic_call(S, noff, _eta_fi);
-                            _cfo = 0;
-                            return 0;
-                        }
-                    } }
-            } }
+        # 6.7.17 (D7): under CYRIUS_MONOMORPH=0 too — refused there by name, the base call parsed (`_eta_arm`).
+        if (PEEKT(S) == 19) { if (_eta_arm(S, noff) == 1) { return 0; } }
         # Check for function call
         if (PEEKT(S) == 10) {
             PARSE_FNCALL(S, noff);
@@ -6408,6 +6496,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # (&fn_name), emitted as a fixup-type-3 function address.
         var fni = FINDFN(S, anoff);
         if (fni >= 0) {
+            if (_amp_targs(S, fni) == 1) { return 0; }   # 6.7.17: `&g<i32>` refused by name, `&nf<i32>` stepped
             # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
             # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
             _callee_site_checks_here(S, fni, anoff, 1);   # 6.6.16: and `#deprecated` — `&old_f` was silent

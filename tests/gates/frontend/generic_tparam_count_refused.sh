@@ -44,6 +44,42 @@
 #   M4  the report made in pass 2 by the member's signature walk (`_tr_sig_check`, the triage's plan) instead of
 #       `_tl_trait1`'s -> RED 2: T5 T7 (the member's line after pass 1's); `_tl_trait1` not walking at all -> M3's 10
 #   M5  `_tp_nth_at` counting a bound's trait names as parameters -> RED 2: T6 (at `Nope`), T8 (`Eq` refused)
+#
+#   GT  (6.7.17, met in genb GB1) A DECLARATION'S LIST CLOSED BY A `>>` THAT CLOSES MORE THAN IT (`fn f<T>>(x)`,
+#       `struct B<T>> {`, `enum E<T>> {`): the extra level was dropped — compiled under CYRIUS_MONOMORPH=0 and for an
+#       enum — and the default capture read on past it, the parameters and the body taken as the list ("a third type
+#       parameter 'i64'", "unknown trait 'T' in the bound on type parameter 'x'", "expected '(', got end of file", the
+#       rest of the file lost). The closer is left for the header (`_tpl_skip`): "expected '(', got '>>'", as `fn
+#       f<T> >(x)` says "got '>'"; the next declaration reports its own. GT1-GT3 a fn, a struct, an enum, plain and
+#       under CYRIUS_MONOMORPH=0; GTK controls (exit 5). Mutant (2026-10-22): the compiler before (96415bd9d) -> RED
+#       GT1-GT3 on both legs.
+#       GT4-GT7 (met beside it) A STRAY TOKEN WHERE A FN'S `(` GOES: after "expected '('" PARSE_FN_DEF stepped the one
+#       token, so the real `( .. )` was read as the first parameter — an impl method's `fn m<T>>(self, x: T)` / `fn
+#       m<T> >(..)` added "undefined variable 'T'" and "undefined variable 'x'", a refused bound's `fn f<T:
+#       Show<i64>>>(x: T)` "fn 'main' is defined inside fn 'f'". The cursor moves on to the list's `(` (`_fn_lp_find`).
+#       GT4 the bound, GT5 / GT6 the impl method, both spellings, GT7 `fn f 5 (a)`; plain and CYRIUS_MONOMORPH=0 (GT4
+#       there without its bound's line: the flag reads no bound). Mutant (2026-10-22): the compiler before (81b74c14f)
+#       -> RED GT4 [plain] and GT5-GT7 on both legs (GT7: "undefined variable 'a'").
+#   P   (6.7.17, the user's D3, 2026-10-22: "Refuse it at the token") A TYPE-PARAMETER LIST ENTRY THAT IS NO NAME:
+#       `struct P<5>`, `struct R<T, 5>`, `enum E<5>`, `fn f<5>()` compiled with the token stepped unread (rc 0, exit 3);
+#       now "a type parameter is a name, got number 5" at the token, once per list, in pass 1 in source order, plain,
+#       under CYRIUS_MONOMORPH=0 and --syntax-only (cyrius lint; no name is resolved). P1 the filed repro verbatim (four
+#       lines); P2 an empty entry (`<,T>`, `<T,,U>`, `<T,>`: its `,` / `>`); P3 a keyword, a string, `<T<i64>>`, `=`,
+#       `+`, `u128`, junk after a bound — and `<T: 5>` stays the bound's own line (none under the flag, which reads no
+#       bound); P4 a trait member's `fn g<5>` / `fn h<T, 6>`, a struct's and an enum's `<T<..>>`, the next fn's own
+#       error after them; PK controls `<>`, `<T: Show + Eq, U>`, `enum Res<T, E>`, a member's `<V: Show + Eq, U>`
+#       (exit 36); A [a64] / [cx] / [pe] / [macho] P1. Issue: issues/2026-10-21-generic-parameter-and-type-argument-
+#       lists-judged-by-position.md row 1. Mutant (2026-10-22): the compiler before (193c42f72) -> RED P1-P4 on every
+#       leg (built, or only the bound's / a closer's line: `<T<i64>>` read `>>` past the list) and A [pe] / [macho] P1.
+#   U   (6.7.17, the user's D5, 2026-10-22: "Refuse it by name") A UNION TAKES NO TYPE PARAMETERS: `union U<T> { a; }`
+#       was pass 2's parse error alone ("expected '{', got '<'": `_tl_skip_union` stepped no list) after pass 1 had read
+#       the header. Now "a union takes no type parameters" at the `<`, once, in pass 1 (both passes step the list), plain,
+#       under CYRIUS_MONOMORPH=0 and --syntax-only. U1 the filed repro verbatim; U2 the next declaration's and the next
+#       fn's own errors after it; U3 its uses with a list (`U<i64>` as a local, a parameter, a return, `*U<..>`, a field,
+#       sizeof) say nothing more, as a refused third parameter's do; U4 `union V<T>> {` — and the header's closer line;
+#       UK a union without one keeps its `U<i64>` refusal, and runs (exit 3); A [a64] / [cx] / [pe] / [macho] U1.
+#       Issue row 3. Mutant (2026-10-22): the compiler before (27f8d216a) -> RED U1-U4 and A [pe] / [macho] U1 (the
+#       parse error, its cascade, the uses' "'U' is not a generic struct").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -180,8 +216,9 @@ lines trm "1:22: a third type parameter 'C': $M" "T4: --syntax-only reports it" 
 printf 'trait T { fn g<A, B, C>(self, a: A, b: B, c: C): i64; }\nstruct P { x; }\nimpl T for P { fn g<A, B, C>(self, a: A, b: B, c: C): i64 { return 4; } }\nfn main(): i64 { var p = P { 1 }; return p.g(1, 2, 3); }\n' > "$D/t5.cyr"
 lines t5 "1:22: a third type parameter 'C': $M|3:27: a third type parameter 'C': $M" "T5: member and impl both <A, B, C> — one line per declaration, in source order"
 printf 'trait Show { fn show(self): i64; }\ntrait T { fn g<A, B, C, D>(self, a: A): i64; fn h<X, Y, Z: Show>(self): i64; fn i<U, V: Nope, W>(self): i64; fn k<U>(self, cb: *fn(i64): i64, u: U): i64; }\nfn main(): i64 { return 3; }\n' > "$D/t6.cyr"
-lines t6 "2:22: a third type parameter 'C': $M|2:57: a third type parameter 'Z': $M|2:95: a third type parameter 'W': $M" \
-    "T6: four parameters, a bounded third, a third after a bounded second — one line per member, at its third"
+# 6.7.17 (the user's D4): the member's unknown bound `V: Nope` is its own line now, after the third's, as a fn's is
+lines t6 "2:22: a third type parameter 'C': $M|2:57: a third type parameter 'Z': $M|2:95: a third type parameter 'W': $M|2:89: unknown trait 'Nope' in the bound on type parameter 'V'" \
+    "T6: four parameters, a bounded third, a third after a bounded second — one line per member, at its third (+ D4's bound line)"
 printf 'fn g4<A, B, C>(a: A): i64 { return 1; }\ntrait T { fn g<A, B, C>(self): i64; }\nstruct F<A, B, C> { a: A; }\nfn main(): i64 { return 2; }\n' > "$D/t7.cyr"
 lines t7 "1:13: a third type parameter 'C': $M|2:22: a third type parameter 'C': $M|3:16: a third type parameter 'C': $M" \
     "T7: a fn's, a member's and a struct's, in source order"
@@ -200,6 +237,130 @@ rc=0; "$CC" < "$D/t8.cyr" > "$D/t8.bin" 2> "$D/t8.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "T8: control — <V: Show + Eq, U> and <U> members: rc $rc: $(grep '^error' "$D/t8.err" | head -1)"
 else chmod +x "$D/t8.bin"; got=0; "$D/t8.bin" || got=$?
     if [ "$got" -eq 36 ]; then ok "T8: control — <V: Show + Eq, U> and <U> members build and run: exit 36"; else bad "T8: exit $got, want 36"; fi
+fi
+
+# ── GT: a declaration's list closed by a `>>` that closes more than it (6.7.17) ─────────────────────────────────
+NX="2:28: expected ';', got number 2"
+printf 'fn f<T>>(x: T): i64 { return 1; }\nfn main(): i64 { var y = 1 2; return f(3); }\nsyscall(60, main());\n' > "$D/gt1.cyr"
+printf 'struct B<T>> { a; }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt2.cyr"
+printf 'enum E<T>> { A }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt3.cyr"
+for leg in plain mono0; do
+    cc="$CC"; [ "$leg" = mono0 ] && cc="CYRIUS_MONOMORPH=0 $CC"
+    lines gt1 "1:7: expected '(', got '>>'|$NX" "GT1 [$leg]: fn f<T>>(x: T) — the closer left for the header" "$cc"
+    lines gt2 "1:11: expected '{', got '>>'|$NX" "GT2 [$leg]: struct B<T>> { a; }" "$cc"
+    lines gt3 "1:9: expected '{', got '>>'|$NX" "GT3 [$leg]: enum E<T>> { A }" "$cc"
+done
+NX3="3:28: expected ';', got number 2"
+printf 'trait Show { fn show(self): i64; }\nfn f<T: Show<i64>>>(x: T): i64 { return 1; }\nstruct Q { a: Foo; }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt4.cyr"
+printf 'struct P { a; }\nimpl P { fn m<T>>(self, x: T): i64 { return 1; } }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt5.cyr"
+printf 'struct P { a; }\nimpl P { fn m<T> >(self, x: T): i64 { return 1; } }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt6.cyr"
+printf 'fn f 5 (a): i64 { return a; }\nfn main(): i64 { var y = 1 2; return f(3); }\nsyscall(60, main());\n' > "$D/gt7.cyr"
+FOO="3:15: unknown type 'Foo' for struct field 'a'"
+lines gt4 "2:9: a trait in a bound takes no type arguments: 'Show'|$FOO|2:17: expected '(', got '>>>'|4:28: expected ';', got number 2" \
+    "GT4 [plain]: fn f<T: Show<i64>>>(x: T) — no \"fn 'main' is defined inside fn 'f'\""
+lines gt4 "$FOO|2:17: expected '(', got '>>>'|4:28: expected ';', got number 2" "GT4 [mono0]: the same under the flag" "CYRIUS_MONOMORPH=0 $CC"
+for leg in plain mono0; do
+    cc="$CC"; [ "$leg" = mono0 ] && cc="CYRIUS_MONOMORPH=0 $CC"
+    lines gt5 "2:16: expected '(', got '>>'|$NX3" "GT5 [$leg]: impl P { fn m<T>>(self, x: T) } — no \"undefined variable 'T'\" / 'x'" "$cc"
+    lines gt6 "2:18: expected '(', got '>'|$NX3" "GT6 [$leg]: impl P { fn m<T> >(self, x: T) }" "$cc"
+    lines gt7 "1:6: expected '(', got number 5|$NX" "GT7 [$leg]: fn f 5 (a)" "$cc"
+done
+printf 'trait Show { fn show(self): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nfn f<T: Show>(x: T): i64 { return x.show(); }\nstruct B<T, U> { a: T; b: U; }\nenum E<T> { A }\nfn main(): i64 { var b: B<i8, i64>; b.b = 4; return f(1) + b.b; }\nsyscall(60, main());\n' > "$D/gtk.cyr"
+rc=0; "$CC" < "$D/gtk.cyr" > "$D/gtk.bin" 2> "$D/gtk.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "GTK: controls: rc $rc: $(grep '^error' "$D/gtk.err" | head -1)"
+else chmod +x "$D/gtk.bin"; got=0; "$D/gtk.bin" || got=$?
+    if [ "$got" -eq 5 ]; then ok "GTK: controls — a bounded fn, a two-parameter struct, a generic enum: exit 5"; else bad "GTK: exit $got, want 5"; fi
+fi
+
+# ── P: a type-parameter list entry that is no name (6.7.17, the user's D3) ──────────────────────────────────────
+NM="a type parameter is a name, got"
+cat > "$D/p1.cyr" <<'EOF'
+struct P<5> { a; }
+struct R<T, 5> { a; }
+enum E<5> { A }
+fn f<5>(): i64 { return 3; }
+syscall(60, f());
+EOF
+P1W="1:10: $NM number 5|2:13: $NM number 5|3:8: $NM number 5|4:6: $NM number 5"
+lines p1 "$P1W" "P1 [plain]: the filed repro verbatim (it built: exit 3)"
+lines p1 "$P1W" "P1 [mono0]: under CYRIUS_MONOMORPH=0" "CYRIUS_MONOMORPH=0 $CC"
+lines p1 "$P1W" "P1 [lint]: --syntax-only reports it" "$CC --syntax-only"
+printf 'fn f<,T>(x: T): i64 { return 1; }\nfn g<T,,U>(x: T): i64 { return 1; }\nfn h<T,>(x: T): i64 { return 1; }\nsyscall(60, 3);\n' > "$D/p2.cyr"
+lines p2 "1:6: $NM ','|2:8: $NM ','|3:8: $NM '>'" "P2: an empty entry — <,T>, <T,,U>, <T,>"
+cat > "$D/p3.cyr" <<'EOF'
+fn k<if>(x): i64 { return 1; }
+fn l<"s">(x): i64 { return 1; }
+fn m<T<i64>>(x): i64 { return 1; }
+fn o<T = i64>(x): i64 { return 1; }
+trait Show { fn show(self): i64; }
+fn p<T: Show 5>(x): i64 { return 1; }
+fn q<T + U>(x): i64 { return 1; }
+fn r<u128>(x): i64 { return 1; }
+fn n<T: 5>(x): i64 { return 1; }
+syscall(60, 3);
+EOF
+P3W="1:6: $NM reserved keyword 'if'|2:6: $NM string|3:7: $NM '<'|4:8: $NM '='|6:14: $NM number 5|7:8: $NM '+'|8:6: $NM reserved keyword 'u128'"
+lines p3 "$P3W|9:9: expected a trait name in a type parameter's bound (\`T: Show + Eq\`)" "P3 [plain]: each token, once; <T: 5> the bound's line"
+lines p3 "$P3W" "P3 [mono0]: the same, no bound line (the flag reads none)" "CYRIUS_MONOMORPH=0 $CC"
+cat > "$D/p4.cyr" <<'EOF'
+trait Tr { fn g<5>(self): i64; fn h<T, 6>(self): i64; fn k<U>(self): i64; }
+struct B<T<i64>> { a; }
+enum E<T<i8>> { A }
+fn main(): i64 { var y = 1 2; return 0; }
+syscall(60, main());
+EOF
+P4W="1:17: $NM number 5|1:40: $NM number 6|2:11: $NM '<'|3:9: $NM '<'|4:28: expected ';', got number 2"
+lines p4 "$P4W" "P4 [plain]: a trait member's, a struct's, an enum's — the next fn's own error after them"
+lines p4 "$P4W" "P4 [mono0]" "CYRIUS_MONOMORPH=0 $CC"
+cat > "$D/pk.cyr" <<'EOF'
+trait Show { fn show(self): i64; }
+trait Eq { fn eq(self, o): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show(self): i64 { return self.x; } }
+impl Eq for Pt { fn eq(self, o): i64 { return 1; } }
+fn h<T: Show + Eq, U>(a: T, b: U): i64 { return a.show() + sizeof(U); }
+fn k<T, E>(a: T, b: E): i64 { return sizeof(T); }
+struct Two<A, B> { a: A; b: B; }
+enum Res<T, E> { Ok, Err }
+fn i<>(x): i64 { return x; }
+trait Tm { fn g<V: Show + Eq, U>(self, v: V, u: U): i64; }
+fn main(): i64 { var p = Pt { 3, 4 }; var t: Two<i8, Pt>; return h(p, 5) + k(1, 2) + sizeof(Two<i8, Pt>) + i(0); }
+syscall(60, main());
+EOF
+rc=0; "$CC" < "$D/pk.cyr" > "$D/pk.bin" 2> "$D/pk.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "PK: controls: rc $rc: $(grep '^error' "$D/pk.err" | head -1)"
+else chmod +x "$D/pk.bin"; got=0; "$D/pk.bin" || got=$?
+    if [ "$got" -eq 36 ]; then ok "PK: controls — <>, <T: Show + Eq, U>, enum Res<T, E>, a member's <V: Show + Eq, U>: exit 36"; else bad "PK: exit $got, want 36"; fi
+fi
+
+# ── U: a union takes no type parameters (6.7.17, the user's D5) ──────────────────────────────────────────────
+UN="a union takes no type parameters"
+printf 'union U<T> { a; }\nsyscall(60, 3);\n' > "$D/u1.cyr"
+lines u1 "1:8: $UN" "U1 [plain]: the filed repro verbatim (it was \"expected '{', got '<'\")"
+lines u1 "1:8: $UN" "U1 [mono0]" "CYRIUS_MONOMORPH=0 $CC"
+lines u1 "1:8: $UN" "U1 [lint]: --syntax-only reports it" "$CC --syntax-only"
+printf 'union U<T> { a: T; b; }\nstruct Q { a: Foo; }\nfn main(): i64 { var u: U; u.b = 3; var y = 1 2; return u.b; }\nsyscall(60, main());\n' > "$D/u2.cyr"
+lines u2 "1:8: $UN|2:15: unknown type 'Foo' for struct field 'a'|3:47: expected ';', got number 2" "U2: the next declaration's and fn's own errors"
+cat > "$D/u3.cyr" <<'EOF'
+struct A { p: *U<i64>; k; }
+union U<T> { a: T; b; }
+struct B { q: U<i8>; k; }
+fn f(x: U<i64>, y: *U<i8>): U<i32> { var l: U<i8>; return l; }
+fn h(x: i64): *U<i32> { return 0; }
+fn main(): i64 { var w: U<i64>; w.b = 3; return sizeof(U<i8>) + w.b; }
+syscall(60, main());
+EOF
+lines u3 "2:8: $UN" "U3 [plain]: its uses with a list say nothing more"
+lines u3 "2:8: $UN" "U3 [mono0]" "CYRIUS_MONOMORPH=0 $CC"
+printf 'union V<T>> { a; }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/u4.cyr"
+lines u4 "1:8: $UN|1:10: expected '{', got '>>'|$NX" "U4: union V<T>> { — the list's line and the header's"
+printf 'union W { a; b; }\nfn main(): i64 { var w: W<i64>; w.b = 3; return w.b; }\nsyscall(60, main());\n' > "$D/uk.cyr"
+lines uk "2:25: 'W' is not a generic struct: it takes no type arguments" "UK: a union declared without a list keeps its W<i64> refusal"
+printf 'union W { a: i64; b; }\nfn main(): i64 { var w: W; w.b = 3; return w.a; }\nsyscall(60, main());\n' > "$D/uk2.cyr"
+rc=0; "$CC" < "$D/uk2.cyr" > "$D/uk2.bin" 2> "$D/uk2.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "UK2: a plain union: rc $rc: $(grep '^error' "$D/uk2.err" | head -1)"
+else chmod +x "$D/uk2.bin"; got=0; "$D/uk2.bin" || got=$?
+    if [ "$got" -eq 3 ]; then ok "UK2: a plain union builds and runs: exit 3"; else bad "UK2: exit $got, want 3"; fi
 fi
 
 # ── C: controls, every leg ──────────────────────────────────────────────────────────────────────────────────
@@ -261,7 +422,22 @@ lines g3 "2:13: a third type parameter 'C': $M" "A [pe]: R1" "CYRIUS_TARGET_WIN=
 [ -n "$CXCC" ] && lines trm "1:22: a third type parameter 'C': $M" "A [cx]: T1" "$CXCC"
 lines trm "1:22: a third type parameter 'C': $M" "A [pe]: T1" "CYRIUS_TARGET_WIN=1 $CC"
 lines trm "1:22: a third type parameter 'C': $M" "A [macho]: T1" "CYRIUS_MACHO=1 $CC"
+[ -n "$A64" ] && lines p1 "$P1W" "A [a64]: P1" "$A64"
+[ -n "$CXCC" ] && lines p1 "$P1W" "A [cx]: P1" "$CXCC"
+lines p1 "$P1W" "A [pe]: P1" "CYRIUS_TARGET_WIN=1 $CC"
+lines p1 "$P1W" "A [macho]: P1" "CYRIUS_MACHO=1 $CC"
+[ -n "$A64" ] && lines u1 "1:8: $UN" "A [a64]: U1" "$A64"
+[ -n "$CXCC" ] && lines u1 "1:8: $UN" "A [cx]: U1" "$CXCC"
+lines u1 "1:8: $UN" "A [pe]: U1" "CYRIUS_TARGET_WIN=1 $CC"
+lines u1 "1:8: $UN" "A [macho]: U1" "CYRIUS_MACHO=1 $CC"
+# 6.7.17 (the user's D4): trait_bounds_checked.sh TM1 — a trait member's unknown bound — from every cross compiler
+printf 'trait T { fn i<U, V: Nope>(self): i64; }\nstruct P { x; }\nfn main(): i64 { return 3; }\nsyscall(60, main());\n' > "$D/tm1.cyr"
+TMW="1:22: unknown trait 'Nope' in the bound on type parameter 'V'"
+[ -n "$A64" ] && lines tm1 "$TMW" "A [a64]: TM1" "$A64"
+[ -n "$CXCC" ] && lines tm1 "$TMW" "A [cx]: TM1" "$CXCC"
+lines tm1 "$TMW" "A [pe]: TM1" "CYRIUS_TARGET_WIN=1 $CC"
+lines tm1 "$TMW" "A [macho]: TM1" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
+echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), a list entry that is no name (P, the user's D3), a union's list (U, the user's D5), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
 exit 0

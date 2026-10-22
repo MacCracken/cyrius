@@ -61,6 +61,9 @@
 #   `_tl_enum_init1` without its release            -> RED Q2 on every leg
 #   `_tl_skip_body` reporting with ERR again        -> RED Q3 Q4 Q6 Q7 on every leg
 #   `_tl_skip_body` without its end-of-file stops   -> RED Q5a Q5c Q5d on every leg (Q5b: the `<..>` stop)
+#   (6.7.17, genb) pass 2's struct skip stepping a `<..>` nested (44010cf5f) with the capture stepping past the end
+#   of file -> RED Q5b on every leg (pass 2's "expected '{', got end of file" a second line, at the token after it);
+#   Q5e / Q5f (`fn f<T`, `enum E<T` at the end of file) one line each (coverage: green on that compiler too)
 #   (the f16 review) the lane before it (edcf462c8) -> RED PT1-PT7 on every leg (each header's latch swallowed the
 #                                                      rest; PT3 an invented "expected '{', got ';'"; PT7 the statement)
 #   `_tl_trait1` stepping one token again           -> RED PT1-PT6 on every leg (pass 1 stopped at the trait)
@@ -377,6 +380,10 @@ refuse Q5a "an unclosed struct at the end of file" 'struct P {
 ' "error:<source>:1:11: expected '}', got end of file"
 refuse Q5b "an unclosed generic header at the end of file" 'struct P<T
 ' "error:<source>:1:11: expected '{', got end of file"
+refuse Q5e "an unclosed fn type-parameter list at the end of file" 'fn f<T
+' "error:<source>:1:7: expected '(', got end of file"
+refuse Q5f "an unclosed enum type-parameter list at the end of file" 'enum E<T
+' "error:<source>:1:9: expected '{', got end of file"
 refuse Q5c "an unclosed union at the end of file" 'union U {
 ' "error:<source>:1:10: expected '}', got end of file"
 refuse Q5d "an unclosed generic struct, a field's unknown type" 'struct P<T> { a; b: Foo
@@ -387,9 +394,11 @@ struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:9: expected '{', got identifier 'a'
 error:<source>:2:15: $F"
-refuse Q7 "a generic union (its refusal, pass 2's), then the program's first statement" 'union U<T> { a; }
+# 6.7.17 (the user's D5): a generic union is refused by name in pass 1 ("a union takes no type parameters"), its list
+# stepped in both passes — the program's first statement still reports its own
+refuse Q7 "a generic union (D5's refusal), then the program's first statement" 'union U<T> { a; }
 syscall(60, 1 2);
-' "error:<source>:1:8: expected '{', got '<'
+' "error:<source>:1:8: a union takes no type parameters
 error:<source>:2:15: expected ')', got number 2"
 refuse Q8 "pass 2's own refusal (a stack enum's two fields), then a fn body's" 'enum E: stack { A(x, y) }
 fn f(): i64 { var a = 1 2; return a; }

@@ -1726,18 +1726,20 @@ fn _tl_skip_use(S): i64 {
 }
 
 # A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`.
+# ⛔ 6.7.17 — the list is stepped NESTED, as pass 1 reads it (`_skip_targ_list`, its EOF guard): it stopped at the
+# first `>`, so `struct B<T: Show<i64>>` (one `>>` token) ran pass 2 to the end of the file — every later fn unparsed,
+# "undefined function 'main'" — and `<T: Show<i64> >` left a `>` for "expected '{', got '>'". A `>>` closing more than
+# the list (`struct B<T>> {`) is left on, as pass 1 leaves it (`_tpl_skip`). CHANGELOG [6.7.17]
 fn _tl_skip_struct(S): i64 {
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 19) {
-        while (PEEKT(S) != 20) { if (PEEKT(S) == 12) { return 0; } STI(S, GTI(S) + 1); }   # 6.7.16: EOF
-        STI(S, GTI(S) + 1);
-    }
+    _tpl_skip(S);
     _tl_skip_body(S);
     return 0;
 }
 
 fn _tl_skip_union(S): i64 {
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
+    _tpl_skip(S);   # 6.7.17 (D5): pass 1 refused its `<..>` (`_union_tp_refuse`); stepped here, silent
     _tl_skip_body(S);
     return 0;
 }
@@ -2337,6 +2339,23 @@ fn _dsg_report(S, noff, ti, what, fid): i64 {
 fn _dsg_async_check(S, fi, noff, ti, was, now): i64 {
     if (was == now) { return 0; }
     return _dsg_report(S, noff, ti, 4, GFFI(S, fi));
+}
+
+# ⛔ 6.7.17 — A STRAY TOKEN WHERE A FN'S `(` GOES (`fn f<T> >(x: T)`, an impl's `fn m<T>>(self, x: T)`, `fn f 5 (a)`):
+# after "expected '('" the cursor stepped that one token and read on, so the real `(` and its list were read as the
+# first parameter — "undefined variable 'T'" and "undefined variable 'x'" in an impl method, "fn 'main' is defined
+# inside fn 'f'" after a bound's refused `<..>`. The cursor moves to the list's `(` when one comes before the body's
+# `{` (the caller steps it, as it stepped the stray token). CHANGELOG [6.7.17]
+fn _fn_lp_find(S): i64 {
+    var k = GTI(S);
+    var e = GTCNT(S);
+    while (k < e) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { STI(S, k); return 0; }
+        if (t == 13 || t == 14 || t == 5 || t == 12) { return 0; }
+        k = k + 1;
+    }
+    return 0;
 }
 
 fn _PARSE_FN_DEF_IMPL(S): i64 {
@@ -3079,7 +3098,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
     var fn_start = GCP(S);
     # Parse params
-    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
+    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); _fn_lp_find(S); }   # 6.7.17: on to the list's `(`
     STI(S, GTI(S) + 1);
     var pc = 0;
     var str_mask = 0;
@@ -5390,6 +5409,7 @@ fn _tr_mv_elem_at(S, k): i64 {
 # declares (D5): each refused at the name, and silent under --syntax-only (`_ngt_say_n`, `_ta_over`'s reporter).
 fn _ty_rd_shape(S, k): i64 {
     if (_ngt_tail(S, k) != 0) { return 1; }
+    if (_tp_targs_at(S, k) == 1) { return 1; }   # 6.7.17 (D6): `U<i64>`, a type parameter's list
     if (_ngt_hover(S, k) == 1) { return 1; }   # 6.7.16 (D88): `Result<i64, Pt, Pt>`
     return _ta_over(S, k);
 }
@@ -5488,13 +5508,133 @@ fn _tl_trait2_body(S, ti): i64 {
 # PARSE_FN_DEF as well, and `_tn_once` keeps it to one line (the user's D92, 2026-10-20). CHANGELOG [6.7.16]
 fn _tr_tp_third(S, p): i64 {
     if (TOKTYP(S, p + 2) != 19) { return 0; }
+    _tpl_names(S, p + 2);   # 6.7.17 (D3): an entry that is no name, as a fn's
     var k = _tp_nth_at(S, p + 2, 2);
-    if (k < 0) { return 0; }
     var sv = GTI(S);
-    STI(S, k);
-    _ctp_third(S);
+    if (k >= 0) {
+        STI(S, k);
+        _ctp_third(S);
+        STI(S, sv);
+    }
+    _tr_tp_bounds(S, p);    # 6.7.17 (D4)
+    return 0;
+}
+# ⛔ 6.7.17 (D4) — A TRAIT MEMBER'S BOUNDS ARE LOOKED UP, as a fn's and an impl method's are: `trait T { fn i<U, V:
+# Nope>(self): i64; }` compiled though no trait `Nope` exists (the bound reader ran at a fn's and a method's definition,
+# never at a member's), where `fn i<U, V: Nope>` is "unknown trait 'Nope' in the bound on type parameter 'V'". The
+# member's list is read by the fn's own reader (`_capture_tparams`, the cursor put back) and judged by its (`_bnd_make`):
+# the fn's words, once, at the bound — a malformed bound (`V: 5`, `V: Show<i64>`, nine traits) as a fn's is too — the
+# latch put back (the user's D4, 2026-10-22). Pass 1, in source order (`_tl_trait1`); a default an impl inherits is
+# read by PARSE_FN_DEF as well, and the repeat prints nothing. CYRIUS_MONOMORPH=0 reads no bound, a member's as a fn's.
+# CHANGELOG [6.7.17]
+fn _tr_tp_bounds(S, p): i64 {
+    var sv = GTI(S);
+    STI(S, p + 2);
+    var tp = _capture_tparams(S);
+    if (tp != 0) { _bnd_make(S, tp); }
     STI(S, sv);
     return 0;
+}
+# ⛔ 6.7.17 (D3) — A TYPE-PARAMETER LIST ENTRY THAT IS NO NAME IS REFUSED AT ITS TOKEN: `struct P<5>`, `struct R<T, 5>`,
+# `enum E<5>`, `fn f<5>()` and a trait member's `fn g<5>(self)` compiled with the token stepped unread (each reader took
+# names and stepped anything else). "a type parameter is a name, got number 5" (the user's D3, 2026-10-22: refuse it at
+# the token), once per list at its first such token; an empty entry (`<,T>`, `<T,,U>`, `<T,>`) is the same mistake, its
+# `,` / `>` the token, as a fn's parameter list refuses `(a,,b)` / `(a,)`. Said in pass 1 in source order (a fn's
+# prescan, a struct's and an enum's definition, a trait member's walk; later readers of the same token say nothing,
+# `_tn_once`), in both monomorph modes, never by an instance's re-emit; no name is resolved, so `--syntax-only` (cyrius
+# lint) reports it too. A bound's own shape (`T: 5`, `T: Show<i64>`) stays `_bnd_make`'s, a closer that closes more
+# than the list the header's (`_tpl_skip`). Read off the tokens from the `<` at `lt`; nothing is consumed.
+# CHANGELOG [6.7.17]
+fn _tpl_names(S, lt): i64 {
+    var k = lt + 1;
+    var st = 0;   # 0 an entry next, 1 past a parameter's name, 2 a bound's trait next, 3 past a bound's trait
+    var d = 1;
+    var e = GTCNT(S);
+    while (k < e) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return 0; }
+        if (d == 1) {
+            if (_targ_gt_n(t) > 0) { return _tpl_end(S, k, st); }
+            if (t == 19) {
+                if (st < 2) { return _tpl_err(S, k); }   # `<T<i64>>`: a parameter takes no list
+                d = 2;                                    # a bound's (its refusal `_bnd_make`'s)
+            } else {
+                st = _tpl_st(t, st);
+                if (st < 0) { return _tpl_err(S, k); }
+            }
+        } else {
+            if (t == 19) { d = d + 1; }
+            d = d - _targ_gt_n(t);
+            if (d < 1) { return 0; }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+# The list's closer at token `k` (`st` as above): an entry was promised and none came (`<T,>`) — refused there.
+fn _tpl_end(S, k, st): i64 {
+    if (st != 0) { return 0; }
+    if (TOKTYP(S, k - 1) != 31) { return 0; }   # `<>`: no entry at all
+    return _tpl_err(S, k);
+}
+# The state after token type `t` at depth 1, from state `st`; -1 = the token is refused.
+fn _tpl_st(t, st): i64 {
+    if (st == 2) {            # a bound's trait next: anything else is the bound's own refusal (`_bnd_make`)
+        if (t == 2) { return 3; }
+        if (t == 31) { return 0; }
+        return 2;
+    }
+    if (t == 2) { return 1; }
+    if (t == 31) { if (st == 0) { return 0 - 1; } return 0; }
+    if (t == 49) { if (st == 1) { return 2; } return 0 - 1; }
+    if (t == 6) { if (st == 3) { return 2; } return 0 - 1; }
+    return 0 - 1;
+}
+# "a type parameter is a name, got <the token>" at token `k`.
+fn _tpl_err(S, k): i64 {
+    if (_tpl_beg(S, k) == 0) { return 0; }
+    PRSTR("a type parameter is a name, got ");
+    var t = TOKTYP(S, k);
+    if (IS_KEYWORD_TOK(t) == 1) { PRSTR("reserved keyword '"); PRSTR(TOKNAME(t)); PRSTR("'"); }
+    else {
+        PRSTR(TOKNAME(t));
+        if (t == 1) { PRSTR(" "); PRNUM(TOKVAL(S, k)); }
+    }
+    return _tpl_fin(S);
+}
+# A declaration list's refusal at token `k`, in two halves (`_dyn_ebeg` / `_dyn_eend`'s shape, said under --syntax-only
+# too — nothing is resolved): `_tpl_beg` prints the head and 0 = say nothing (an instance's re-emit, the panic latch,
+# or this token reported already); the caller the words; `_tpl_fin` the excerpt, the latch left as it was, the cursor
+# put back.
+var _tpl_sv = 0;
+fn _tpl_beg(S, k): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    _err_n = _err_n + 1;
+    if (_tn_once(S, k) == 0) { return 0; }
+    _tpl_sv = GTI(S);
+    STI(S, k);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": ", 2);
+    return 1;
+}
+fn _tpl_fin(S): i64 {
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, _tpl_sv);
+    return 0;
+}
+# ⛔ 6.7.17 (D5) — A UNION TAKES NO TYPE PARAMETERS: `union U<T> { a; }` was refused by pass 2 alone, as a parse error
+# ("expected '{', got '<'": `_tl_skip_union` stepped no list) after pass 1 had read the header and registered the union.
+# Refused by name at the `<` in pass 1 (the user's D5, 2026-10-22: "Refuse it by name") — "a union takes no type
+# parameters" — once; both passes step the list (`_tpl_skip`), so the next declaration reports its own errors.
+# Cursor on the `<`. CHANGELOG [6.7.17]
+fn _union_tp_refuse(S): i64 {
+    if (_tpl_beg(S, GTI(S)) == 0) { return 0; }
+    PRSTR("a union takes no type parameters");
+    return _tpl_fin(S);
 }
 # ⛔ 6.7.16 — A FN'S `*fn( .. )` RETURN IS THE MEMBER'S ONE LINE. PARSE_FN_DEF's return reader took `: *fn(i64): i64`
 # as a `*T` and met the `fn` as a name: "expected identifier, got reserved keyword 'fn' (.. rename the

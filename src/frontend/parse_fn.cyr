@@ -10483,8 +10483,14 @@ fn _ctp_bounds(S, slot): i64 {
         STI(S, GTI(S) + 1);             # consume the trait name
         if (PEEKT(S) == 19) {           # a trait takes no type arguments
             _ctp_badat(slot, GTI(S), 4);
-            # its `>>` may close the parameter list too (`<T: Show<i64>>`)
-            if (_skip_targ_list(S) > 0) { _ctp_closed = 1; return 0; }
+            # its `>>` may close the parameter list too (`<T: Show<i64>>`); 6.7.17: a closer closing more than that
+            # (`<T: Show<i64>>>`) is left for the header, as `_tpl_skip` leaves it
+            var cx = _skip_targ_list(S);
+            if (cx > 0) {
+                _ctp_closed = 1;
+                if (cx > 1) { STI(S, GTI(S) - 1); }
+                return 0;
+            }
         }
         if (PEEKT(S) == 6) { STI(S, GTI(S) + 1); }   # `+`
         else { go = 0; }
@@ -10518,7 +10524,18 @@ fn _bnd_errm_at(S, ti, msg, len): i64 {
 # The bound block for the list `_capture_tparams` just read (`tp` its packed names), or 0 when it has
 # no bound. Each trait name is resolved here, once per definition: an undeclared one is refused.
 # Block: [0] count0, [1..8] trait indices; [9] count1, [10..17].
+# ⛔ 6.7.17 — each refusal here puts the panic latch back (as `_ctp_third`'s): it held through pass 1, which nothing
+# resyncs, so `fn c<U: Nope2>` swallowed the next generic's bound refusal and every later struct's field error.
+# A refused inner trait's stand-down keeps the latch it sets. CHANGELOG [6.7.17]
+var _bnd_sd = 0;   # `_bnd_make_r` stood down for a refused inner trait (its latch kept)
 fn _bnd_make(S, tp): i64 {
+    var p0 = _panic;
+    var blk = _bnd_make_r(S, tp);
+    if (p0 == 0) { if (_bnd_sd == 0) { _panic = 0; } }
+    _bnd_sd = 0;
+    return blk;
+}
+fn _bnd_make_r(S, tp): i64 {
     if (_ctp_bad != 0) {
         var bt = _ctp_bad - 1;
         _ctp_bad = 0;
@@ -10540,7 +10557,7 @@ fn _bnd_make(S, tp): i64 {
             var tx = 0 - 1;
             if (_tr_tab != 0) { tx = _tr_find(S, bn); }
             if (tx < 0) {
-                if (_dl_refd_at(S, bn) == 1) { _panic = 1; }   # 6.7.16: a refused (inner) trait's — its one error stands
+                if (_dl_refd_at(S, bn) == 1) { _panic = 1; _bnd_sd = 1; }   # 6.7.16: a refused (inner) trait's — its one error stands
                 else { _bnd_err_at(S, L64(_ctp_buf + (slot * 8 + k) * 16 + 8), "unknown trait ", bn, " in the bound on type parameter ", tpn); }
             } else {
                 S64(blk + (slot * 9 + 1 + c) * 8, tx);
@@ -14063,6 +14080,16 @@ fn _skip_targ_list(S): i64 {
     }
     return 0 - d;
 }
+# ⛔ 6.7.17 — A DECLARATION'S `<..>` (a fn's, a struct's, a union's, an enum's) CLOSED BY A `>>` / `>>>` THAT CLOSES
+# MORE THAN THE LIST: `fn f<T>>(x)`, `struct B<T>> {`, `enum E<T>> {`. The extra level was dropped — they compiled under
+# CYRIUS_MONOMORPH=0 and for an enum — and the default capture read on past it (`>>` closed nothing there), the
+# parameters and the body taken as the list, the rest of the file with them. The cursor is left ON that closer, so the
+# header's next read reports it — "expected '(', got '>>'" — as it reports `fn f<T> >(x)`'s `>`. CHANGELOG [6.7.17]
+fn _tpl_skip(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    if (_skip_targ_list(S) > 0) { STI(S, GTI(S) - 1); }
+    return 0;
+}
 
 # v6.3.9 (F-fns): capture a generic param list `<T, U>` at a fn signature, returning
 # the names PACKED as (off0+1) | ((off1+1) << 32) (0 = no `<...>`). Consumes EXACTLY
@@ -14074,7 +14101,8 @@ fn _skip_targ_list(S): i64 {
 # `fn g3<A, B, C>` read `sizeof(C)` as 8 for a 24-byte struct argument and `struct Three<A, B, C>` laid C out as i64,
 # with no diagnostic. CHANGELOG [6.7.16]
 fn _capture_tparams(S): i64 {
-    if (_MONOMORPH_OK == 0) { SKIP_GENERICS(S); return 0; }
+    if (PEEKT(S) == 19) { _tpl_names(S, GTI(S)); }   # 6.7.17 (D3): an entry that is no name
+    if (_MONOMORPH_OK == 0) { _tpl_skip(S); return 0; }
     if (PEEKT(S) != 19) { return 0; }
     _ctp_n0 = 0; _ctp_n1 = 0; _ctp_bad = 0;   # 6.7.1 (C3): this list's bounds
     STI(S, GTI(S) + 1);  # consume <
@@ -14088,6 +14116,7 @@ fn _capture_tparams(S): i64 {
         # It must consume EXACTLY what SKIP_GENERICS does (see the comment on this fn),
         # so the two guards have to stay in lockstep.
         elif (PEEKT(S) == 12) { go = 0; }
+        elif (_targ_gt_n(PEEKT(S)) > 1) { return off0 | (off1 << 32); }   # 6.7.17: `<T>>` — left for the header (`_tpl_skip`)
         else {
             if (PEEKT(S) == 2) {
                 if (n == 0) { off0 = PEEKV(S) + 1; }
@@ -14101,12 +14130,22 @@ fn _capture_tparams(S): i64 {
                     _ctp_bounds(S, n - 1);
                     if (_ctp_closed == 1) { _ctp_closed = 0; return off0 | (off1 << 32); }   # `>>` closed it
                 }
+            } elif (PEEKT(S) == 19) {
+                # 6.7.17: `<T<i64>>` (refused, `_tpl_names`) — the inner list stepped whole, as SKIP_GENERICS steps it:
+                # its names were taken as parameters, and its `>>` read past the list
+                var nx = _skip_targ_list(S);
+                if (nx > 0) {
+                    if (nx > 1) { STI(S, GTI(S) - 1); }
+                    return off0 | (off1 << 32);
+                }
             } else {
                 STI(S, GTI(S) + 1);
             }
         }
     }
-    STI(S, GTI(S) + 1);  # consume >
+    # consume `>`; 6.7.17: never the end of file, as SKIP_GENERICS (`struct P<T` stepped pass 1 past it, so pass 2's
+    # "expected '{', got end of file" was a second line at another token)
+    if (PEEKT(S) != 12) { STI(S, GTI(S) + 1); }
     return off0 | (off1 << 32);
 }
 
@@ -16647,7 +16686,7 @@ fn _gcall_open(S, ti): i64 {
     var nt = TOKTYP(S, ti + 1);
     if (nt == 10) { return ti + 1; }
     if (nt != 19) { return 0 - 1; }
-    if (_MONOMORPH_OK == 0) { return 0 - 1; }
+    if (_MONOMORPH_OK == 0) { return _gcall_open_fl(S, ti); }   # 6.7.17 (D7): opened, refused at its arm
     var fi = FINDFN(S, TOKVAL(S, ti));
     if (fi < 0) { return 0 - 1; }
     if (GFTP(S, fi) == 0) { return 0 - 1; }
@@ -18318,7 +18357,9 @@ fn _classify_return_type(S, rt_noff): i64 {
 fn _prescan_skip_fn(S): i64 {
     STI(S, GTI(S) + 1);  # consume FN
     STI(S, GTI(S) + 1);  # consume name
-    if (PEEKT(S) == 19) { while (PEEKT(S) != 20 && PEEKT(S) != 12) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); }
+    # 6.7.17: the `<..>` NESTED (`_skip_targ_list`), as `_capture_tparams` reads it: to the first `>`, a bound's
+    # `<T: Show<i64>>` (one `>>`) ran pass 1 past the file's end, every later declaration unscanned. CHANGELOG [6.7.17]
+    _tpl_skip(S);
     # 6.7.7: the parameter list as one balanced `( .. )` first, so nothing in a parameter default
     # (a refused `{`) is taken for the body. The same cursor for every list that holds no brace.
     if (PEEKT(S) == 10) {

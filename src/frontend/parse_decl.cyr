@@ -318,17 +318,7 @@ fn _arr_fn_tparam(S, ti, noff): i64 {
     var k = ti - 1;
     while (k >= 0) {
         if (_tok_fn_kw(S, k) == 1) {   # 6.7.17 (D8): not a local's `*fn( .. )`
-            if (_tok_body_spans(S, k, ti) == 1) {
-                if (TOKTYP(S, k + 2) != 19) { return 0; }   # `fn name <`
-                var j = k + 3;
-                var t = TOKTYP(S, j);
-                while (t != 20 && t != 10 && t != 12) {
-                    if (t == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; } }
-                    j = j + 1;
-                    t = TOKTYP(S, j);
-                }
-                return 0;
-            }
+            if (_tok_body_spans(S, k, ti) == 1) { return _fn_tp_has(S, k, noff); }   # 6.7.17: `_tpl_has`
         }
         k = k - 1;
     }
@@ -2252,6 +2242,15 @@ fn _mngt_at(S, sid, nt): i64 {
     if (GFTP(S, mf) != 0) { return 0 - 1; }
     return mf;
 }
+# The refusal of method `mf`'s list at name token `nt`: "'Pt.m' is not a generic method: ..."; 6.7.17 (D7): a generic
+# one under CYRIUS_MONOMORPH=0 (which records no list) is the free call's refusal at its `<` (`_eta_nm_say`) — it was
+# "'Pt.m' is not a generic method", false. CHANGELOG [6.7.17]
+fn _meth_ngt_say(S, nt, mf): i64 {
+    if (_MONOMORPH_OK != 1) { if (_fn_gen_tok(S, mf) == 1) { return _eta_nm_say(S, nt + 1); } }
+    var nm = _fn_src_name(S, mf, L64(_fnt_names + mf * 8));   # `Pt.m`, `i64.show`
+    _ngt_say_n(S, nt, nm, " is not a generic method: it takes no type arguments");
+    return 0;
+}
 # The member arm past a list it does not take (cursor on the `<` past the method's name; receiver (idx, sid)): a
 # method that is not generic refused (`_mngt_at`), and any `.m<types>(` (`_mlist_end`: no such method, a receiver of
 # no known struct) stepped too — the call parsed from its `(` as the plain spelling is, which reports what `p.m(1)`
@@ -2262,10 +2261,7 @@ fn _meth_ngt(S, noff, fnoff, beg, idx, sid): i64 {
     var e = _mlist_end(S, sid, nt);
     if (e < 0) { return 0; }
     var mf = _mngt_at(S, sid, nt);
-    if (mf >= 0) {
-        var nm = _fn_src_name(S, mf, L64(_fnt_names + mf * 8));   # `Pt.m`, `i64.show`
-        _ngt_say_n(S, nt, nm, " is not a generic method: it takes no type arguments");
-    }
+    if (mf >= 0) { _meth_ngt_say(S, nt, mf); }
     STI(S, e + 1);
     _mx_ti = nt;   # the arm's method name, not the list's `>`
     _field_load_on(S, noff, fnoff, beg, idx, sid);
@@ -5749,7 +5745,7 @@ fn _gv_ifs(S, sti, ann_float): i64 {
 # and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
 fn _gen_ann_sid(S, sid): i64 {
     if (sid <= 0) { _vec_ann_chk(S, GTI(S) - 1, _vec_ann_vn(S, GTI(S) - 1)); }   # 6.7.11: `Vec<T>` reads T
-    if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
+    if (_MONOMORPH_OK != 1) { _tp_targs_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.17 (D6): `U<i8>`
     if (sid <= 0) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.15 (D6): `i64<..>`
     if (PEEKT(S) != 19) {
         if (GSTP(S, sid - 1) != 0) { _bnd_sbase(S, sid); }   # 6.7.1 (C3): a bare `Box` is its i64 base
@@ -6153,6 +6149,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # 6.7.2 (B1): one top-level name is a const OR a global, never both.
     if (_cst_n > 0) { if (_cst_find(S, noff) >= 0) { ERR_IDENT(S, "", noff, " is already declared as a top-level const", 0 - 1); } }
     STI(S, GTI(S) + 1);
+    _dt_ann1(S);   # 6.7.17: `var a: i64, b = f();` refused, its annotation stepped
     # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 1. `var t, v = f();` is the only correct way to
     # receive a `: stack` enum, so once Result went to the value form a top-level Result bind
     # had no legal spelling at all: this parser reached the annotation check with a `,` in hand
@@ -6166,6 +6163,7 @@ fn PARSE_GVAR_REG(S): i64 {
         var dg2 = PEEKV(S);
         _RSV_INTRINSIC_DECL(S, dg2, GTI(S), 0);
         STI(S, GTI(S) + 1);
+        _dt_annk(S);
         var dg3 = 0;
         var dgn = 2;
         if (PEEKT(S) == 31) {
@@ -6174,6 +6172,7 @@ fn PARSE_GVAR_REG(S): i64 {
             dg3 = PEEKV(S);
             _RSV_INTRINSIC_DECL(S, dg3, GTI(S), 0);
             STI(S, GTI(S) + 1);
+            _dt_annk(S);
             dgn = 3;
         }
         # v6.6.4: ONE `public` covers EVERY name of the declaration. _GVAR_VIS clears the
@@ -7708,6 +7707,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume IDENT
+        _dt_ann1(S);   # 6.7.17: an annotated destructure name, stepped (pass 1 refused it)
         # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 2 (the replay half; pass 1 registered the names
         # in PARSE_GVAR_REG). The DRAIN ORDER is the load-bearing part and it matches the
         # in-function path exactly: EMOVRA_R3 and EMOVRA_RDX both land in rax, so the third
@@ -7717,6 +7717,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
             var eg2 = PEEKV(S);
             STI(S, GTI(S) + 1);
+            _dt_annk(S);
             var eg3 = 0;
             var egn = 2;
             if (PEEKT(S) == 31) {
@@ -7724,6 +7725,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 eg3 = PEEKV(S);
                 STI(S, GTI(S) + 1);
+                _dt_annk(S);
                 egn = 3;
             }
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
@@ -11170,6 +11172,78 @@ fn _rcv_ann_pr(S, ann, eq): i64 {
     return 0;
 }
 
+# ⛔ 6.7.17 — AN ANNOTATED DESTRUCTURE NAME: `var a: i64, b: i64 = f();` (a local, a global, a for-init; `var a, b: i64`
+# too) was "expected '=', got ','" + "undefined variable 'b'" at every use of b (or "expected '=', got ':'" + "undefined
+# variable 'i64'"): the destructure reads bare names and the annotation reader expected the `=`. The names take none —
+# the callee's declared return types them — so the first annotated name is refused once per statement, at the name,
+# "a multi-value destructure's names take no type annotation: 'a' - ...", said under --syntax-only too (nothing is
+# resolved), each annotation stepped and the destructure read on: its names are declared and its call judged.
+# CHANGELOG [6.7.17]
+var _dt_ann_k = 0 - 1;   # the statement's first name token
+var _dt_ann_v = 0 - 1;   # the statement last refused
+# The token ending the annotation whose `:` is token k: the first `,` or `=` outside `( )` `[ ]` `< >`, or a `;` `{` `}`.
+fn _dt_ann_end(S, k): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var i = k + 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 5 || t == 12 || t == 13 || t == 14) { return i; }
+        if (t == 10 || t == 28 || t == 19) { d = d + 1; }
+        elif (t == 11 || t == 29 || t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        if (d < 0) { d = 0; }
+        if (d == 0) { if (t == 31 || t == 4) { return i; } }
+        i = i + 1;
+    }
+    return n;
+}
+# 1 when an `=` comes before the statement's end, from token i (a destructure, not `var a: i64, b: i64;`).
+fn _dt_ann_eq(S, i): i64 {
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 4) { return 1; }
+        if (t == 5 || t == 12 || t == 13 || t == 14) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+# The refusal at name token k, once per statement, then the cursor on the annotation's end `e`. A statement with no `=`
+# (`var a: i64, b: i64;`) is stepped silently: it reports what `var a, b;` reports, "expected '=', got ';'".
+fn _dt_ann_say(S, k, e): i64 {
+    if (_dt_ann_eq(S, e) == 0) { STI(S, e); return 1; }
+    if (_dt_ann_v != _dt_ann_k) {
+        _dt_ann_v = _dt_ann_k;
+        if (_tpl_beg(S, k) == 1) {
+            PRSTR("a multi-value destructure's names take no type annotation: '");
+            PRSTR(S + 0xEC00000 + TOKVAL(S, k));
+            PRSTR("' - the callee's declared return types them");
+            _tpl_fin(S);
+        }
+    }
+    STI(S, e);
+    return 1;
+}
+# Cursor past a destructure's FIRST name: an annotation ending at a `,` is refused and stepped (1); else 0, the cursor
+# untouched (a plain annotated `var`).
+fn _dt_ann1(S): i64 {
+    _dt_ann_k = GTI(S) - 1;
+    if (PEEKT(S) != 49) { return 0; }
+    var e = _dt_ann_end(S, GTI(S));
+    if (TOKTYP(S, e) != 31) { return 0; }
+    return _dt_ann_say(S, _dt_ann_k, e);
+}
+# Cursor past a LATER name: its annotation, ending at the next `,`, the `=` or the `;`, refused and stepped.
+fn _dt_annk(S): i64 {
+    if (PEEKT(S) != 49) { return 0; }
+    var e = _dt_ann_end(S, GTI(S));
+    var t = TOKTYP(S, e);
+    if (t != 31 && t != 4 && t != 5) { return 0; }
+    return _dt_ann_say(S, GTI(S) - 1, e);
+}
+
 # The right-hand side of a destructure (cursor on it) must be ONE whole call: `f(`, `g<..>(` or
 # `x.m(`, with `;` right after its `)`. `dm(17, 5) + (k / 9) - 11` opens with the same tokens and
 # used to compile with the arithmetic's leftovers in rdx landing in the second target (an idiv
@@ -11517,6 +11591,7 @@ fn PARSE_VAR(S): i64 {
     _RSV_INTRINSIC_DECL(S, noff, GTI(S), 0);   # 6.6.20: `var sizeof` / `var mulh64` / `var fncallN`
     _lc_var_dup(S, noff);                       # 6.7.2: a local const of this name in this scope
     STI(S, GTI(S) + 1);
+    _dt_ann1(S);   # 6.7.17: `var a: i64, b = f();` refused, its annotation stepped
     # Multi-var destructure: var x, y[, z] = fn()
     if (PEEKT(S) == 31) {
         STI(S, GTI(S) + 1);  # consume ,
@@ -11524,6 +11599,7 @@ fn PARSE_VAR(S): i64 {
         var noff2 = PEEKV(S);
         _RSV_INTRINSIC_DECL(S, noff2, GTI(S), 0);
         STI(S, GTI(S) + 1);
+        _dt_annk(S);
         # v6.5.21 — optional THIRD target: `var x, y, z = f();`
         var noff3 = 0;
         var _dt_n = 2;
@@ -11533,6 +11609,7 @@ fn PARSE_VAR(S): i64 {
             noff3 = PEEKV(S);
             _RSV_INTRINSIC_DECL(S, noff3, GTI(S), 0);
             STI(S, GTI(S) + 1);
+            _dt_annk(S);
             _dt_n = 3;
         }
         if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }

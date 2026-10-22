@@ -3464,7 +3464,10 @@ fn demo(): i64 {
   method's own refused return (a `*fn( .. )`, a multi-value element `(*fn( .. ), T)` too; 6.7.16; a member's
   multi-value element too, 6.7.17). Under `cyrius lint`,
   which does not report a member's `: u8`..`: f32` or enum return, or a `Pt<i64>` / `i64<u8>` on either side, an impl
-  whose return differs keeps its own line (*'P.sh' returns i64, trait 'T2' declares u8*), as in 6.7.15.
+  whose return differs keeps its own line (*'P.sh' returns i64, trait 'T2' declares u8*), as in 6.7.15. A member's own
+  type parameters are a fn's too: their bounds are looked up as a fn's are — `fn i<U, V: Nope>(self): i64;` is
+  *unknown trait 'Nope' in the bound on type parameter 'V'* at `Nope`, a malformed bound its fn line — once, in source
+  order (6.7.17, the user's D4; through 6.7.16 a member's bound was never read).
 - **Parameter defaults (6.7.7).** A trait's methods take none, in a required signature or a
   default body, and neither does a method of `impl X for T`: the trait's signature is the
   contract. An inherent `impl T` method may declare them (see *Default and named arguments*
@@ -3942,6 +3945,9 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
 #   var x, y, z = f();                # count disagrees with f's declared arity
+#   var a: i64, b: i64 = f();         # a name takes no annotation — f's declared return types them: "a multi-value
+#                                     # destructure's names take no type annotation: 'a'", once (6.7.17; it was
+#                                     # "expected '=', got ','" + "undefined variable 'b'" at each use of b)
 #   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
 #                                     # body is left only through them: it returns 2 values, and
 #                                     # the count is checked as a declared one is (6.7.11)
@@ -7829,7 +7835,11 @@ variable, `u8`..`u64`, `bool`, `ptr`, `f32`, an enum name) is a compile error na
 it (v6.6.8; an enum's values are i64, so write `i64`) — with type arguments of its own too:
 `g<Nonexist<u8>>(0)` is *unknown type 'Nonexist' as a type argument*, and a type parameter
 written with arguments (`h<T<u8>>`) is *a type parameter takes no type arguments* (6.7.14;
-both ran the i64 base). Only a generic struct takes type arguments (and, by declaration, `Result` or an enum
+both ran the i64 base). So is one written with arguments in any annotation — `fn g<U>(u: U<Nope>)`, `var l: U<i8>`,
+`*U<i8>`, `[U<i8>]`, `sizeof(U<i8>)`, a `: U<i64>` or `: *U<i64>` return, a field `a: T<i64>`, a trait member's
+signature — refused once at the name, *a type parameter takes no type arguments: 'U'*, with the list stepped, under
+`CYRIUS_MONOMORPH=0` too (6.7.17, the user's D6; the list was ignored, and a return or a field was a parse error with
+a cascade). Only a generic struct takes type arguments (and, by declaration, `Result` or an enum
 that declares its own `<..>` — below): a non-generic struct or
 a scalar written with them — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`,
 `Box<Pt<nosuch>>`, `fn f(p: Pt<i64>)`, a `: Pt<i64>` return, `Vec<Pt<i64>>` — is refused
@@ -7864,7 +7874,10 @@ name — *'nf' is not a generic fn: it takes no type arguments*, *'Pt.m' is not 
 arguments* — and the call parses as `nf(6)` / `p.m(1)` (6.7.16; the `<` was read as less-than: *undefined variable
 'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*); an intrinsic or a builtin the same (`mulh64<i64>(2, 3)`,
 `load64<i64>(p)`: *'mulh64' is not a generic fn: ...*). Only a list of type names is read so: `p.n < a, b >
-(c)` stays two comparisons. On a receiver with no struct — an untyped variable or parameter, a const, a variable whose
+(c)` stays two comparisons. An address takes no list either: `&nf<i64>` is that line, the address `&nf`'s; a generic
+fn's instance has none to take — `&g<i32>` (a local's or a global's initializer, a `callptr` argument) is refused once
+at the name, *cannot take the address of a generic instance: 'g' - wrap the call in a fn that is not generic and take its
+address* (6.7.17; both were *undefined variable 'i32'* + *expected ';', got '>'*); `&g` is the base's address. On a receiver with no struct — an untyped variable or parameter, a const, a variable whose
 annotation was refused, an undefined name, an enum's name — `x.m<i64>(1)` is refused as `x.m(1)` is, the list stepped
 (6.7.16; a const said *has no fields*, and each went on to *undefined variable 'i64'*). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
@@ -7883,7 +7896,11 @@ definition's base *is* its i64 instantiation: the body is emitted once with
 argument (`add<i32>`, `Box<Point>`) is **monomorphized on demand**: the
 specialized instance `add$i32` / `Box$Point` is emitted **once** (deduped — a
 second `add<i32>` call reuses it) and called normally. There is no runtime type
-dispatch — `T` is resolved entirely at compile time. An instance is named by its
+dispatch — `T` is resolved entirely at compile time. With monomorphization turned off
+(`CYRIUS_MONOMORPH=0`) an explicit call — `g<i32>(3)`, `p.m<i32>(1)`, in any position — is refused by name at its
+`<`: *explicit type arguments need monomorphization (CYRIUS_MONOMORPH=0 turns it off)*, once, and read as the base
+call, so nothing cascades (6.7.17, the user's D7; it was *undefined function 'g'*, or *'Pt.m' is not a generic
+method*). An instance is named by its
 type argument — `i8` / `i16` / `i32` / `f64` for a scalar, the struct's own name
 for a struct — and a struct named exactly like a scalar (`struct f64`, which
 `add<f64>` then binds) is marked `.f64`, so a scalar type argument never shares an
@@ -8032,6 +8049,10 @@ fn run(): i64 {
 }
 ```
 
+A union takes no type parameters: `union U<T> { a; }` is refused at its `<` — *a union takes no type parameters* —
+once, and a use's list (`var u: U<i64>`) says nothing more (6.7.17, the user's D5; it was pass 2's parse error *expected
+'{', got '<'*).
+
 The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.
@@ -8085,7 +8106,12 @@ type parameter 'C': a generic takes at most two type parameters* — and its use
 (6.7.16, the user's D8; through 6.7.15 it was accepted and bound nothing: `g3(1, 2, s)` read
 `sizeof(C)` as 8 for a 24-byte struct). So is a trait member's own third, `trait T { fn g<A, B, C>(self, c: C):
 i64; }`, at the member — with or without a default body, whatever its impls declare (6.7.16, the user's D92; a
-bodiless member's compiled, and so did an impl declaring `<A, B>` for it). A
+bodiless member's compiled, and so did an impl declaring `<A, B>` for it). Each entry of a
+type-parameter list is a name (with its bound): one that is not — `struct P<5>`, `struct R<T, 5>`, `enum E<5>`,
+`fn f<5>()`, a trait member's `fn g<5>(self)`, `<T<i64>>`, an empty entry `<,T>` / `<T,,U>` / `<T,>` — is refused at
+that token, once per list, under `--syntax-only` too: *a type parameter is a name, got number 5* (6.7.17, the user's
+D3; through 6.7.16 the token was stepped unread). A list closed by a `>>` that closes more than it (`fn f<T>>(x)`,
+`struct B<T>> {`) is the header's *expected '(', got '>>'* (6.7.17; the extra level was dropped). A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
 structs) — on every call path, struct receives and assignments included (6.7.1;
