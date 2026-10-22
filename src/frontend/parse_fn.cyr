@@ -7051,10 +7051,15 @@ fn _call_dotted(S, ti): i64 {
 # return took the call alone when it was only an operator's LEFT operand, so `var r = mk3(4) - s;`
 # and `return mk(1) + a;` were `expected ';', got '-'` on valid code. A call this cannot open (an
 # unresolvable `<..>`) answers 1, as before. CHANGELOG [6.7.6]
+# 6.7.17: a `;` missing after it (`_dt_rhs_end`: a `}`, EOF or a statement keyword follows) is the `;`'s error alone —
+# `var r = mk()` then `return r.pick(1);` left r untyped: "no struct type in scope for 'r'" after "expected ';'".
+# CHANGELOG [6.7.17]
 fn _call_ends_at(S, ti, term): i64 {
     var o = _gcall_open(S, ti);
     if (o < 0) { return 1; }
-    if (TOKTYP(S, _call_close(S, o) + 1) == term) { return 1; }
+    var e = _call_close(S, o) + 1;
+    if (TOKTYP(S, e) == term) { return 1; }
+    if (term == 5) { return _dt_rhs_end(S, e); }
     return 0;
 }
 

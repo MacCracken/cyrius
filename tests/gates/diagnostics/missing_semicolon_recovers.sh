@@ -18,8 +18,8 @@
 # `_stmt_resync` (src/frontend/parse.cyr) first steps through the `}` of each `{` the statement opened and left
 # unclosed (`_resync_close`) — unless the statement ended at its own `;`. A zone `var` entry and a const end at a
 # declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse_decl.cyr). The classic-for header
-# (`_for_semis` / `_for_empty`), a dyn source's extent (`_dyn_ext`), a destructure's call check (`_dt_rhs_end`) and an
-# `asm { }` body (`_asm_bad`) read a missing `;` / `}` as that, once.
+# (`_for_semis` / `_for_empty`), a dyn source's extent (`_dyn_ext`), a destructure's call check (`_dt_rhs_end`), a
+# whole call's end (`_call_ends_at`) and an `asm { }` body (`_asm_bad`) read a missing `;` / `}` as that, once.
 # The `undefined variable` rows pin today's caret (the `;` after the name); the caret move to the name re-derives them.
 #
 #   S2  the filing's s2 verbatim (`var a = 1` then `var b = zz;`): the `;`, then `zz`
@@ -42,6 +42,10 @@
 #       `return`, T5 a call's field `gp().n = 5` before the `}`
 #   M   a destructure's call missing its `;`: M1 `x, y = two(3)` before the `}`, M2 `var a, b = two(3)` before a
 #       `return` — "expected ';'", not "needs a call on the right-hand side"; M3 the control `two(3) + 1` keeps it
+#   G   a whole call missing its `;` still types what it initialises / returns: G1 `var r = mk()` then
+#       `return r.pick(1);` ("no struct type in scope for 'r'" after the `;`), G2 the same through a generic call
+#       (met by a `;`-deletion sweep of tests/tcyr/crossos/generic_method_struct_arg.tcyr), G3 `return mk() }` in a
+#       struct-returning fn ("return must be a bare local identifier, or a call ..")
 #   S3  the filing's s3 verbatim (`var g = 1` then two fns in the declaration zone): the `;`, `zz1` and `zz2` — a SET:
 #       the replay's `;` prints after pass 2's fn bodies until the zone replay is buffered
 #   Z   the zone: `var g = 1` before a struct (Z1), a `var h = zz;` (Z2: h its own entry), a const (Z3), an #assert
@@ -71,7 +75,7 @@
 # struct, `var h` swallowed, their errors never reported); Z3 ZA green. On 1094715eb (before `_cst_skip_decl`'s cut)
 # RED: C1 C2. On bd7abcdb4 (before `_for_empty`) RED: F7-F11 ("unexpected ';'" twice, "expected '=', got '{'").
 # On 0896f7c7b (before `_asm_bad`) RED: A1-A3 ("unexpected asm" / "unexpected return", then "parser recovery aborted
-# (desync — too many errors)").
+# (desync — too many errors)"). On f83155934 (before `_call_ends_at`'s missing-`;` arm) RED: G1-G3.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -444,6 +448,31 @@ fn f(): i64 {
 syscall(60, f());
 ' "error:<source>:5:12: multi-value destructure needs a call on the right-hand side
 error:<source>:6:14: $UZ"
+
+# ---- G: a whole call missing its `;` still types what it initialises / returns (`_call_ends_at`)
+row G1 "var r = mk() (a struct) then return r.pick(1);" 'struct P { a; b; c; }
+impl P { fn pick(self, w): i64 { return self.a + w; } }
+fn mk(): P { var t: P = P { 3, 4, 5 }; return t; }
+fn o3(): i64 { var r = mk()
+ return r.pick(1); }
+syscall(60, o3());
+' "error:<source>:5:2: expected ';', got return"
+row G2 "a generic call var r = gd2(pp) then return r.pick(1);" 'struct P { v; }
+impl P { fn pick(self, w): i64 { return self.v + w; } }
+fn gd2<T>(pp: **T): T { var t: T = **pp; return t; }
+var GP = P { 3 };
+var GPP = &GP;
+fn o3(pp: **P): i64 { var r = gd2(pp)
+ return r.pick(1); }
+syscall(60, o3(&GPP));
+' "error:<source>:7:2: expected ';', got return"
+row G3 "return mk() } in a struct-returning fn" 'struct P { a; b; c; }
+fn mk(): P { var t: P = P { 3, 4, 5 }; return t; }
+fn o3(): P { return mk() }
+fn g(): i64 { return zz; }
+syscall(60, g());
+' "error:<source>:3:26: expected ';', got '}'
+error:<source>:4:24: $UZ"
 
 # ---- Z: the declaration zone — a `var` entry missing its `;` ends at the declaration after it (`_gv_entry_cut`,
 # src/frontend/parse_decl.cyr), so pass 1 / pass 2 register and parse what follows
