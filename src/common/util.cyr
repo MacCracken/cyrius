@@ -2545,7 +2545,24 @@ fn TOKNAME(typ): i64 {
     if (bn != 0) { return bn; }
     bn = TOKNAME_BUILTIN(typ);
     if (bn != 0) { return bn; }
+    bn = TOKNAME_ATTR(typ);
+    if (bn != 0) { return bn; }
     return "unknown";
+}
+# 6.7.17 — the `#` attribute tokens (LEXATTRWORD, src/frontend/lex_attr.cyr; `#deprecated` is 124, `?`'s, named there):
+# `var g = 1` then `#assert ..` said "expected ';', got unknown". A fn of its own (cybs's per-fn string-literal
+# ceiling). CHANGELOG [6.7.17]
+fn TOKNAME_ATTR(typ): i64 {
+    if (typ == 107) { return "#assert"; }
+    if (typ == 109) { return "#regalloc"; }
+    if (typ == 110) { return "#pe_import"; }
+    if (typ == 122) { return "#must_use"; }
+    if (typ == 125) { return "#pure"; }
+    if (typ == 126) { return "#io"; }
+    if (typ == 127) { return "#alloc"; }
+    if (typ == 133) { return "#naked"; }
+    if (typ == 163) { return "#inline"; }
+    return 0;
 }
 
 # v5.8.45: returns 1 iff the current token is the bare ident "kernel".
