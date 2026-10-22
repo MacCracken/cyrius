@@ -29,6 +29,7 @@
 #       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's
 #   D   a `dyn` initializer's `;`: D1 before a `return` (its source ran on to the next `;`: "cannot form dyn Show
 #       from this expression"), D2 before the fn's `}`
+#   E   a subscript store's `;` (`a[0] = 1`): E1 before the fn's `}`, E2 before a `return`
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -42,6 +43,7 @@
 # init's resync ran into the condition, the step replayed from the token after the missing `;`, the step skip ran
 # to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
 # parse_types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
+# On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -255,6 +257,23 @@ fn g(): i64 { return zz; }
 syscall(60, f() + g());
 " "error:<source>:6:26: expected ';', got '}'
 error:<source>:7:24: $UZ"
+
+# ---- E: a subscript store's `;` (src/frontend/parse_expr.cyr)
+row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
+    var a: i64[4];
+    a[0] = 1 }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+' "error:<source>:3:14: expected ';', got '}'
+error:<source>:4:24: $UZ"
+row E2 "a[0] = 1 then a return" 'fn f(): i64 {
+    var a: i64[4];
+    a[0] = 1
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:4:5: expected ';', got return
+error:<source>:4:14: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
