@@ -3260,6 +3260,7 @@ fn _spi_dsrc(S, ft, fnm): i64 {
     if (e < 0) { return 0; }
     var ps = _hl_dstar_e(S, ti, e, 1);
     if (ps <= 0) { return 0; }
+    if (ps == _STR_SID(S)) { return _spi_dstr(S, ft, ti, e, fnm); }   # 6.7.17 (D19)
     if (_dx_plain(S, ps) == 0) { return 0; }
     if (ps != ft) { if (_spi_chain_has(S, ft, ps) == 0) { return _spi_dref(S, fnm); } }
     _fsc_hsrc(_hl_dx_src(S));
@@ -3272,6 +3273,26 @@ fn _spi_dref(S, fnm): i64 {
     _fsc_type_err(S, _hl_dname(S), fnm);
     PCMPE(S);
     return 4;
+}
+# ⛔ 6.7.17 — `*p` OF A `*Str` CARRIED TO A NESTED STRUCT'S `Str` FIRST LEAF IS p (the user's D19, 2026-10-22), as the
+# direct literal `WS { *p, 1 }` stores it (6.7.16's SS-8, D20 carried to a literal's `Str` field): `O { *p, 1, 2 }` with
+# O's first field a `WS` whose first field is `s: Str` stored the header's data word in `o.v.s`. A `Str` value whose
+# nested field does not open with a `Str` leaf is refused by name, as a `Str` name there is (`O { a, 1, 2 }`). `*pp` of
+# a `**Str` reads the `*Str` itself: a word, carried as before (0). 2 = E parsed (rax = p), carried to the leaf.
+fn _spi_dstr(S, ft, ti, e, fnm): i64 {
+    if (_hl_dpp != 0) { return 0; }
+    if (_spi_first_str(S, ft) == 0) { return _spi_dref(S, fnm); }
+    _istr_vdx(S, ti, e);
+    return 2;
+}
+# 1 = the first leaf of nested struct `ft` (down its first fields) is a `Str` field.
+fn _spi_first_str(S, ft): i64 {
+    var t = ft;
+    while (_spi_is_nested(S, t) == 1) {
+        if (GETFCOUNT(S, t - 1) == 0) { return 0; }
+        t = GETFTYPE(S, t - 1, 0);
+    }
+    return IS_STR_FIELD(S, t);
 }
 # 6.7.14 — a named struct in parentheses that wrap the whole element (`HE { 7, (q0), 8 }`, `((q0))`) is the
 # element the unwrapped name is (guide § Parentheses; 6.7.11's D44). It was an expression whose word went into

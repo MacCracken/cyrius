@@ -158,6 +158,12 @@
 # too) refuse it with the position's words, as a `P` there does (SP1-SP10; each stored or returned the struct's first
 # word); a `: Str` value, a handle and a `*Q1` keep their store (SPK1).
 #
+# 6.7.17 (the user's decision D19, 2026-10-22; the same issue's row 2): `*p` of a `*Str` as a nested struct field's
+# literal element reaching a `Str` first leaf — `O { *p, 1, 2 }` with O's first field a `WS { s: Str; n; }` — is p, as
+# the direct literal `WS { *p, 1 }` stores it (6.7.16's SS-8): it stored the header's data word (NS1, the filed repro
+# verbatim: 10, was 50; the tcyr's ns_* rows and R_TOP22: two levels deep, wrapped, a call's, top level). A `Str` value
+# whose nested field opens with no `Str` leaf is refused by name, as a `Str` name there is (NS2).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -172,7 +178,8 @@
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
 # `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); X30 / X31 a frame's t returned from a fn returning `*Str` refused (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); SH1-SH15 a struct value of another type into a
-# `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); CMP a handle into the retyped methods builds
+# `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
+# repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -291,6 +298,9 @@
 #   2026-10-22 (6.7.17, D18 a struct value into a `Str` handle; the same scratch-copy method):
 #   x1 `_istr_hdt` answers `dt` (the fix reverted) -> RED 60: SH1-SH15 x4 (each compiled)
 #   x2 `_istr_vsid` only parses, `_istr_tcd` 0     -> RED 40: SP1-SP10 x4 (each compiled)
+#   2026-10-22 (6.7.17, D19 `*p` into a nested `Str` leaf; the same scratch-copy method):
+#   y1 `_spi_dsrc` without its `Str` arm           -> RED 18: R1 x7 (the ns_* rows and R_TOP22 — the data word),
+#      (the fix reverted)                             NS1 x7 (50), NS2 x4 (compiled)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1197,6 +1207,22 @@ row SPK1 "$HQ"'
 fn r(): Str { return str_from("abcd"); }
 fn go(): i64 { var w: W = W { str_from("ab"), 1 }; w.s = str_from("abc"); var w2: W = W { w.s, 2 }; var h: Str = str_from("x"); var p: *Str = &h; *p = r(); var q: Q1; var pq: *Q1 = &q; w.s = pq; var a = 0; if (w.s == pq) { a = 1; } return a * 100 + str_len(w2.s) * 10 + str_len(h); }'
 runs SPK1 134 "controls: a \`: Str\` call / field into a \`Str\` field and a literal, through a \`*Str\`, a \`*Q1\` rebinding a field"
+# --- NS: 6.7.17 (the user's D19, 2026-10-22) `*p` of a `*Str` as a nested struct field's element reaching a `Str` first
+# leaf is p, as the direct literal `WS { *p, 1 }` stores it; it stored the header's data word (exit 50 on every target).
+# A `Str` value off the field's first-leaf chain is refused by name, as a `Str` name there is (NS2). ---
+cat > "$T/NS1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn main(): i64 { alloc_init(); var a = str_from("abcdefg"); var p: *Str = a; var o = O { *p, 1, 2 }; if (o.v.s == a) { return 10; } if (o.v.s == load64(a)) { return 50; } return 99; }
+syscall(60, main());
+EOF
+runs NS1 10 "the D19 filed repro, verbatim (was 50: the header's data word)" "$XLEGS $OLEGS"
+row NS2 'struct WI { n; m; }
+struct O2 { v: WI; k; }
+fn go(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = O2 { *p, 1, 2 }; return o.k; }'
+refused NS2 "cannot copy '*p' into a struct field of a different struct type: 'v'" "\`O2 { *p, 1, 2 }\`: a \`Str\` value off the first-leaf chain (it carried the data word into v.n)"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1255,7 +1281,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=115   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=117   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
