@@ -14135,7 +14135,9 @@ fn _capture_tparams(S): i64 {
             }
         }
     }
-    STI(S, GTI(S) + 1);  # consume >
+    # consume `>`; 6.7.17: never the end of file, as SKIP_GENERICS (`struct P<T` stepped pass 1 past it, so pass 2's
+    # "expected '{', got end of file" was a second line at another token)
+    if (PEEKT(S) != 12) { STI(S, GTI(S) + 1); }
     return off0 | (off1 << 32);
 }
 
