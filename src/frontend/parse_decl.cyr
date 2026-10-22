@@ -11243,7 +11243,7 @@ fn _vval_at(S, a0, e): i64 {
     if (t == 2) { if (pe == a + 1) {
             vt = _vnm_lty(S, TOKVAL(S, a));
             if (vt == 0) {   # 6.7.17 (D103): `take(wa)`, wa an array of vectors
-                vt = _vnm_arr(S, TOKVAL(S, a));
+                vt = _vnm_arr(S, TOKVAL(S, a), a);
                 arr = 1;
             }
         } }
@@ -11258,12 +11258,11 @@ fn _vval_at(S, a0, e): i64 {
 # AS A WORD IS REFUSED TOO. A typed array's name read as a word is its element 0 (§ compound assignment), so `var wa:
 # f64v2[2]; take(wa)` passed element 0's lane 0, silently and alike on every target — `take(wa)`, `return wa;` from an
 # `: i64` fn, `var x: i64 = wa;` and `if (wa)` 4, `1 + wa` 5 with wa[0] = (4, 7); a global's the same. D24's readers
-# refuse it now, naming it ("'wa' is an array of vectors"). The element type is recorded at the declaration
-# (PARSE_ARRAY's stack and static paths, the top-level `var g: T[N]`): per local slot (`_lav`, written for every typed
-# array local, so a reused slot keeps no stale answer, and read only while the slot is still that array — no type, a
-# span, its slice word in the array band, `_arr_named_marks`) and per global (`_gav`, a byte as `_gv_vvd`). An untyped
-# `var x = wa;` is unchanged. CHANGELOG [6.7.17]
-var _lav = 0;
+# refuse it now, naming it ("'wa' is an array of vectors"). A local's or a capture's element type is read from its
+# declaration's tokens (`_arr_decl_vt`: the walk back to its `var NAME: T[`, the slot confirming an element-typed array
+# — no type, a span, the slice band; a capture the snapshot's, `_cl_snap_arr`), so a slot a later local or a closure's
+# local reuses keeps no stale answer; a global's is recorded at its declaration (`_gav`, a byte as `_gv_vvd`). 6.7.17
+# (met): a closure's captured array too, now that its name reads its element 0 (`_cl_snap_arr`). CHANGELOG [6.7.17]
 var _gav = 0;
 # The vector element type of the array whose element type is token `ann`, else 0 (a bound type parameter: its binding).
 fn _arr_ann_vt(S, ann): i64 {
@@ -11273,16 +11272,9 @@ fn _arr_ann_vt(S, ann): i64 {
     if (b != 0) { return _tn_vec(_tn_from_rc(b)); }
     return _tn_vec(_tn_resolve_at(S, ann));
 }
+# A typed array local declared with the element type at token `ann`: an array of vectors marks the scans (`_vty_any`).
 fn _lav_set(S, li, ann): i64 {
-    var vt = _arr_ann_vt(S, ann);
-    if (_lav == 0) {
-        if (vt == 0) { return 0; }
-        _lav = alloc(16384 * 8);
-    }
-    if (li < 0) { return 0; }
-    if (li >= 16384) { return 0; }
-    if (vt != 0) { _vty_any = 1; }
-    S64(_lav + li * 8, vt);
+    if (_arr_ann_vt(S, ann) != 0) { _vty_any = 1; }
     return 0;
 }
 fn _gav_set(S, vi, ann): i64 {
@@ -11297,20 +11289,30 @@ fn _gav_set(S, vi, ann): i64 {
     if (vt == 0) { store8(_gav + vi, 0); } else { store8(_gav + vi, 0 - vt - 2048); }
     return 0;
 }
-# The vector element type of the array of vectors the name `noff` reads — a local's in a fn, else a global's; 0. A
-# closure's captured array keeps its own rules.
-fn _vnm_arr(S, noff): i64 {
+# The vector element type of the array the declaration that the name `noff` at token `k` reaches declares (`var NAME:
+# T[N]`, the walk back from k), else 0.
+fn _arr_decl_vt(S, k, noff): i64 {
+    var i = _tok_name_decl(S, 0, k, noff);
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 1) != 49) { return 0; }
+    if (TOKTYP(S, i + 3) != 28) { return 0; }
+    return _arr_ann_vt(S, i + 2);
+}
+# The vector element type of the array of vectors the name `noff` at token `k` reads — a local's or a closure's
+# captured one in a fn, else a global's; 0.
+fn _vnm_arr(S, noff, k): i64 {
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
         if (li >= 0) {
-            if (_lav == 0) { return 0; }
-            if (li >= 16384) { return 0; }
             if (GLTYPE(S, li) != 0) { return 0; }
             if (GLSPAN(S, li) == 0) { return 0; }
             if (GSLICE_W(S, li) > 0 - 0x1000000000000) { return 0; }
-            return L64(_lav + li * 8);
+            return _arr_decl_vt(S, k, noff);
         }
-        if (_hl_capn(S, noff) == 1) { return 0; }
+        if (_hl_capn(S, noff) == 1) {   # 6.7.17 (met): a captured array reads its element 0 (`_cl_snap_arr`)
+            if (_cl_snap_arr(_cl_snap_find(S, noff)) == 0) { return 0; }
+            return _arr_decl_vt(S, k, noff);
+        }
     }
     if (_gav == 0) { return 0; }
     var vi = _findvar_core(S, noff);

@@ -3908,13 +3908,15 @@ vds_msg() { echo "'*GP' $VDT"; echo "undefined variable 'zz9'"; }
 # an array of vectors". VY1 the decision's repro, VY2-VY5 D24's other filed slots, VY6-VY9 an assignment, a builtin's
 # argument, a compound right side, a `*f64v2` declaration, VY10 / VY11 a tuple literal's and a multi-value return's
 # element, VY12 / VY13 an i32v4[3] and an f32v4[1] (two slots: read as a u128 pair before), VY14-VY17 a global array of
-# vectors in a fn and at top level (the zone, after the first statement, an assignment), VY18 wrapped. VYC1: `&wa`,
+# vectors in a fn and at top level (the zone, after the first statement, an assignment), VY18 wrapped; VY19 / VY20 a
+# closure's captured array (6.7.17, met: a captured array's name reads its element 0 since 771613e1e), the second
+# beside a closure local array. VYC3 a closure reading the captured array through `&wa`. VYC1: `&wa`,
 # `rd(&wa)`, `&wa + 16`, a `*f64v2` from `&wa`, an i64 array read as a word (its element 0, unchanged), a slot an
 # array of vectors left to an `i64[4]`, to a scalar and to a `stack var` of the same name (no stale answer); VYC2 its
 # slot in the next fn a `stack var` of the same name (the record is stale: the slice band says so). An untyped `var x = wa;` is
-# unchanged. Mutation (measured): `_vval_at` without `_vnm_arr` (the tree before) -> RED VY1-VY18 on five legs (each
-# compiled; VY13 "not u128"); `_lav_set` not called -> RED VY1-VY13 VY18 (the globals green); `_vnm_arr` without its
-# slice-band check -> VYC2 RED (the next fn's `stack var wd[40]` refused as an array of vectors).
+# unchanged. Mutation (measured): `_vval_at` without `_vnm_arr` (the tree before D103) -> RED VY1-VY20 on five legs (each
+# compiled; VY13 "not u128"); `_vnm_arr` without its capture arm (the first D103 cut) -> RED VY19 VY20; a local's element
+# type not read (`_arr_decl_vt` 0 for a local) -> RED VY1-VY13 VY18 (the globals green).
 VYH='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 fn rd(p): i64 { return load64(p) * 10 + load64(p + 8); }
 fn take(t): i64 { return t; }
@@ -3982,14 +3984,26 @@ syscall(60, G);
     VY18) printf '%s' "$VYH"'fn r(): i64 { var wa: f64v2[2]; store64(&wa, 4); return take(((wa))); }
 syscall(60, r());
 ' ;;
+    VY19) printf '%s' 'include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+'"$VYH"'fn r(): i64 { var wa: f64v2[2]; store64(&wa, 4); var f = |k| take(wa) + k; return fncall1(f, 0); }
+alloc_init();
+syscall(60, r());
+' ;;
+    VY20) printf '%s' 'include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+'"$VYH"'fn r(): i64 { var wa: f64v2[2]; store64(&wa, 4); var f = |k| { var z: i64[4]; z[0] = k; if (k == 1) { return z[0]; } return wa; }; return fncall1(f, 0); }
+alloc_init();
+syscall(60, r());
+' ;;
     esac
 }
-VY_ROWS="VY1 VY2 VY3 VY4 VY5 VY6 VY7 VY8 VY9 VY10 VY11 VY12 VY13 VY14 VY15 VY16 VY17 VY18"
+VY_ROWS="VY1 VY2 VY3 VY4 VY5 VY6 VY7 VY8 VY9 VY10 VY11 VY12 VY13 VY14 VY15 VY16 VY17 VY18 VY19 VY20"
 VYA="is an array of vectors"
 vy_msg() {
     case "$1" in
-    VY1|VY18) echo "a vector value cannot be passed to an integer parameter - 'wa' $VYA, passed to parameter 't' of 'take'";;
-    VY2|VY4) echo "a vector value cannot be returned as i64 - 'wa' $VYA";;
+    VY1|VY18|VY19) echo "a vector value cannot be passed to an integer parameter - 'wa' $VYA, passed to parameter 't' of 'take'";;
+    VY2|VY4|VY20) echo "a vector value cannot be returned as i64 - 'wa' $VYA";;
     VY3|VY5|VY9) echo "vector type does not match the declared type - 'wa' $VYA";;
     VY6|VY8) echo "vector type does not match the assigned variable - 'wa' $VYA";;
     VY7) echo "a vector value cannot be passed to an integer parameter - 'wa' $VYA, passed to 'syscall'";;
@@ -4024,6 +4038,17 @@ fn r(): i64 {
 }
 syscall(60, r());
 ' ;;
+    VYC3) printf '%s' 'include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+'"$VYH"'fn r(): i64 {
+    var wa: f64v2[2]; store64(&wa, 4); store64(&wa + 8, 7); store64(&wa + 16, 2); store64(&wa + 24, 5);
+    var f = |k| rd(&wa) * 100 + rd(&wa + 16) + k;
+    if (fncall1(f, 0) == 4725) { return 161; }
+    return 1;
+}
+alloc_init();
+syscall(60, r() % 256);
+' ;;
     VYC2) printf '%s' "$VYH"'fn fa(): i64 { var wd: f64v2[2]; store64(&wd, 1); return load64(&wd); }
 fn fb(): i64 { stack var wd[40]; store64(&wd, 9); return take(wd); }
 fn r(): i64 { if (fa() + fb() == 10) { return 161; } return 1; }
@@ -4031,7 +4056,7 @@ syscall(60, r());
 ' ;;
     esac
 }
-VYC_ROWS="VYC1 VYC2"
+VYC_ROWS="VYC1 VYC2 VYC3"
 # 6.7.17: a table's rows built by the leg's compiler (`$7` an env assignment, or none) and run, each exiting `$6 <row>`.
 accept_want_all() {  # $1 leg label  $2 compiler  $3 runner fn name  $4 source fn  $5 rows  $6 want fn  [$7 VAR=value]
     for row in $5; do
