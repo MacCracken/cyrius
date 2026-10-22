@@ -12645,7 +12645,7 @@ fn PARSE_VAR(S): i64 {
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
-        if (ann_ti == 0) { pscale = _gu_late(S, pscale, scv_start); }   # 6.7.14 (D29 / D30): `var x = mk1();`
+        if (ann_ti == 0) { pscale = _gu_late(S, pscale, scv_start, _ti_inferred_sid); }   # 6.7.14 (D29 / D30): `var x = mk1();`; 6.7.17 (D22): a `Str`
         lfloat = _gzf_late(lfloat, pscale, scalar_type + slice_elt_w + dfc, _ti_inferred_sid);   # 6.7.16 (D98)
         var vcnt = GVCNT(S);
         S64(_varn_base + vcnt * 8, noff);
@@ -14035,13 +14035,61 @@ fn _gu_refuse(S, sid): i64 {
     return 1;
 }
 # PARSE_VAR's global arm (after the first statement), the untyped initialiser at `start` parsed: `0 - sid` for the
-# struct the global binds (registered as `var x: S = ..` is), else `pscale` as it was.
-fn _gu_late(S, pscale, start): i64 {
+# struct the global binds (registered as `var x: S = ..` is), else `pscale` as it was. 6.7.17 (D22): `inf` the line's
+# `_ti_inferred_sid`, a whole call's `Str` (`_gu_lstr`).
+fn _gu_late(S, pscale, start, inf): i64 {
     if (pscale != 0) { return pscale; }
     var sid = _gu_sid(S, start);
-    if (sid <= 0) { return 0 - _gu_rec(S, start); }   # 6.7.15 (D34 / D35): a method, operator or known `&f`
+    if (sid <= 0) {   # 6.7.15 (D34 / D35): a method, operator or known `&f`
+        var r = _gu_rec(S, start);
+        if (r > 0) { return 0 - r; }
+        return 0 - _gu_lstr(S, start, inf);
+    }
     _gu_refuse(S, sid);
     return 0 - sid;
+}
+# ⛔ 6.7.17 — AN UNTYPED TOP-LEVEL `var bb = str_from("xyz");` IS A `Str` (the user's D22, 2026-10-22), as the same line
+# in a fn is (6.7.12's D29, 6.7.16's ST-5): `bb.len` was "no struct type in scope for 'bb'" in the declaration zone and
+# after the first statement. A whole call returning `Str` — a free call, a method, a generic's `Str` instance, inside
+# any wrap — hands back the header's address, so the global is a `Str` HANDLE holding it (`_gu_type`: pointer-mode, as
+# `var bb: Str = ..` registers it), its value unchanged; whatever routes by its type (a generic call inferring T, an
+# overload) sees `Str`, as in a fn. A NAME keeps its word (`var H = gt;`, 6.7.14's D22 (b)), and so does a field read
+# and an if-expression (D15): only a call. In the zone the sweep reads it from the tokens (`_gu_okz`); after the first
+# statement from the line's `_ti_inferred_sid` (`_gu_lstr`). CHANGELOG [6.7.17]
+fn _gu_okz(S, rs): i64 {
+    var ss = _STR_SID(S);
+    if (ss > 0) { if (rs == ss) { return ss; } }
+    return _gu_ok(S, rs);
+}
+# The `Str` struct when the parsed initialiser [start, cursor) is a whole call whose inferred type (`inf`) is `Str`: it
+# ends in a call's `)` (a name's or a type-argument list's before its `(`), inside any wrap; else 0.
+fn _gu_lstr(S, start, inf): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (inf != ss) { return 0; }
+    var a = _ie_unparen(S, start, GTI(S));
+    var pe = _ie_pe;
+    if (TOKTYP(S, pe - 1) != 11) { return 0; }
+    var o = _gu_lopen(S, a, pe);
+    if (o <= a) { return 0; }
+    var k = TOKTYP(S, o - 1);
+    if (k != 2) { if (k != 20) { return 0; } }   # `name(`, `x.m(`, `g<Str>(`
+    return ss;
+}
+# The `(` whose `)` is the token before `pe` in [a, pe): a backward walk at depth 0; `a` when there is none.
+fn _gu_lopen(S, a, pe): i64 {
+    var d = 0;
+    var i = pe - 1;
+    while (i > a) {
+        var t = TOKTYP(S, i);
+        if (t == 11) { d = d + 1; }
+        if (t == 10) {
+            d = d - 1;
+            if (d == 0) { return i; }
+        }
+        i = i - 1;
+    }
+    return a;
 }
 # 6.7.15 (D34 / D35) — the struct of the whole method, operator or known `&f` result the initialiser at `start` (the
 # cursor on its `;`) is, from the parse's record: -3 (8 B or less, in rax) or -1 (9-16 B, no frame here: refused once
@@ -14435,7 +14483,7 @@ fn _gu_zsid(S, ti): i64 {
     _gu_slit0(S, ti);   # 6.7.16: and one whose literal names nothing
     var c = _gu_call(S, ti);
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
-            var sid = _gu_ok(S, _gz_call_rs(S, c));
+            var sid = _gu_okz(S, _gz_call_rs(S, c));   # 6.7.17 (D22): a `: Str` call too
             if (_gz_gb > 0) { sid = _gu_ok(S, _gu_gen(S, c)); }   # 6.7.15: `: G<T>`, the instance the call makes
             return sid;
         } }
@@ -14449,7 +14497,7 @@ fn _gu_zsid(S, ti): i64 {
 fn _gu_wsid(S, b): i64 {
     var e = _gz_end(S, b);
     _gz_mfi = 0 - 1;
-    var t = _gu_ok(S, _gz_ty(S, b, e));
+    var t = _gu_okz(S, _gz_ty(S, b, e));   # 6.7.17 (D22): a `: Str` method too (an if-expression's stays untyped: `_gu_ie`)
     if (_gz_k != 1) { return 0; }
     if (t <= 0) { return 0; }
     var a = b;

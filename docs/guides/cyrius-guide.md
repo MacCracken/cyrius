@@ -1904,8 +1904,12 @@ refused once) — a generic call's or method's branch the instance its call make
 is `G1<Pt>`, as is a branch naming a `G1<Pt>` global (in the declaration zone they bound nothing); a 16-byte struct
 branch is refused naming the struct (*an if expression branch cannot be a struct value
 over 8 bytes: struct 'P2'*; through 6.7.15 a 16-byte struct global there was refused as *a vector, u128 or slice value*)
-and `G` stays untyped, as in a fn. A `Str` and a name keep the word at top level; the overload dispatcher still routes an
-untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
+and `G` stays untyped, as in a fn. A whole call returning `Str` types the global `Str` too (6.7.17, the user's decision
+D22, 2026-10-22): `var bb = str_from("xyz");` — a method `h.clone()`, a generic's `Str` instance (`gg<Str>(h)`, the
+inferred `gg(h)`), wrapped — is a `Str` handle global holding the header's address (its value unchanged), in the
+declaration zone and after the first statement, so `bb.len` reads 3 as in a fn (through 6.7.16 *no struct type in scope
+for 'bb'*). A name keeps the word at top level (`var H = gt;`, below), and so do a field read and an if-expression of
+handles; the overload dispatcher routes an untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
 `println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
 bytes), and since 6.7.16 a method call is such a call — `var s = BB.mks();` with `fn mks(self): Str`, `(BB.mks())`, a
 chain ending in one (`W.b.mks()`), a `*B` receiver or `.m<..>(..)`, in the declaration zone or after the first

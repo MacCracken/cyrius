@@ -178,6 +178,13 @@
 # (NM3), `*p` of a `*Str` is p, a global's header its address (the tcyr's nm_* rows, in a fn, the zone, after a
 # statement).
 #
+# 6.7.17 (the user's decision D22, 2026-10-22; the same issue's row 5): an untyped top-level declaration from a whole
+# call returning `Str` — `var bb = str_from("xyz");`, a method (`h.clone()`), a generic's `Str` instance (`gg<Str>(h)`,
+# the inferred `gg(h)`), wrapped — is a `Str` handle global, in the declaration zone and after the first statement, as
+# the same line in a fn is: `bb.len` reads 3 (ZS1, the filed repro verbatim; ZS2 the zone line; the tcyr's zs_* rows),
+# where it was "no struct type in scope for 'bb'". Its value is unchanged (the header's address). A name keeps its word
+# (`var H = gt;`, D22a / D22b), and so do a field read and an if-expression (the tcyr's zs_word row).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -196,7 +203,8 @@
 # repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
 # `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
 # refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); NM1 the D21 filed repro verbatim (4
-# on every leg), NM2 / NM3 the named element keeps the `Str` field's refusals (6.7.17, D21); CMP a handle into the retyped methods builds
+# on every leg), NM2 / NM3 the named element keeps the `Str` field's refusals (6.7.17, D21); ZS1 the D22 filed repro
+# verbatim (3 on every leg), ZS2 its zone line (6.7.17, D22); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -329,6 +337,9 @@
 #   2026-10-22 (6.7.17, D21 a named `Str` field; the same scratch-copy method):
 #   n1 `_sl_named_nest` answering 1 for `Str`      -> RED 22: R1 x7 (the file stops compiling: the nm_* rows),
 #      (the fix reverted)                             NM1 x7 (refused), NM2 x4 / NM3 x4 (the named-init refusal first)
+#   2026-10-22 (6.7.17, D22 a top-level untyped `: Str` call; the same scratch-copy method):
+#   s1 `_gu_okz` / `_gu_lstr` answering no `Str`   -> RED 18: R1 x7 (the file stops compiling: the zs_* rows),
+#      (the fix reverted)                             ZS1 x7, ZS2 x4 (refused "no struct type in scope")
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1297,6 +1308,26 @@ refused NM2 "$MF" "\`W { n: 1, s: t }\` of a frame's t: refused as would-dangle,
 row NM3 "$HQ"'
 fn go(): i64 { var w: W = W { s: mkq(), n: 1 }; return f(w.s); }'
 refused NM3 "$MSF" "\`W { s: mkq(), n: 1 }\`: another struct refused, as positionally (D18)"
+# --- ZS: 6.7.17 (the user's D22, 2026-10-22) an untyped top-level `var bb = str_from("xyz");` is a `Str` (a handle
+# global, its value unchanged), in the declaration zone and after the first statement, as in a fn; `bb.len` was "no struct
+# type in scope for 'bb'". A name keeps its word (D22a / D22b above, 6.7.14's D22 (b)). ---
+cat > "$T/ZS1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+alloc_init();
+var bb = str_from("xyz");
+syscall(60, bb.len);
+EOF
+runs ZS1 3 "the D22 filed repro, verbatim (was refused)" "$XLEGS $OLEGS"
+cat > "$T/ZS2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var bb = str_from("xyz");
+fn rd(): i64 { return bb.len; }
+alloc_init();
+syscall(60, rd());
+EOF
+runs ZS2 3 "the filed zone line: \`var bb = str_from(..);\` above a fn reading \`bb.len\`"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1355,7 +1386,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=125   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=127   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1, ZS2 (D22); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
