@@ -1,0 +1,261 @@
+# programs/dev/ab.cyr — A/B self-compile timing of two refs: each ref's committed compiler compiling
+# each ref's sources, interleaved on one box (the CHANGELOG's bench delta).
+#
+# Usage:  cyrius run programs/dev/ab.cyr <old_ref> <new_ref> [--runs N] [--repo DIR]
+#
+# Input:  the two refs of the cyrius checkout (--repo DIR, $CYRIUS_REPO, else the one the current
+#         directory is in): each ref's compiler from `git show <ref>:build/cycc`, its sources from
+#         `git archive <ref> src lib`, both staged in a private temp dir under CYRIUS_SCRATCH
+#         (default ${XDG_CACHE_HOME:-$HOME/.cache}/c6), removed at the end.
+# Output: the min over N runs (default 6) of `<cc> < src/main.cyr > /dev/null`, run from each source
+#         tree, all four pairs interleaved run by run:
+#           own sources  old cc on old src vs new cc on new src: old ms, new ms, pct
+#           same input   old cc vs new cc on old src, and on new src: old ms, new ms, pct
+#         and every run's time per pair. A pair whose compile exits non-zero (the old compiler may
+#         refuse the new sources) prints `n/a (rc=<rc>)` in place of its time (a negative rc is the
+#         signal that ended it, as Python reported it).
+# The compilers run in the DEFAULT mode: CYRIUS_BOUNDS / CYRIUS_POISON / CYRIUS_COVERAGE /
+# CYRIUS_COVERAGE_FILE are dropped from their environment (an inherited mode would time a
+# bounds-checked, poison or instrumented compile). Exit 2 on a usage error, a ref that is not a
+# commit, or a ref with no build/cycc or src/main.cyr.
+#
+# It replaced scripts/dev/ab.py, with the same output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh compares it with the times masked).
+# CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+var PROG = "ab";
+var _tmp = 0;
+
+fn _die(msg): i64 {
+    if (_tmp != 0) { hc_rmtree(hc_cstr(_tmp)); }
+    return hc_die(PROG, msg, 2);
+}
+
+# The compilers' environment: ours, in the DEFAULT mode (gate row E4f).
+fn _compile_env(): i64 {
+    var env = hc_env_list();
+    hc_env_unset(env, "CYRIUS_BOUNDS");
+    hc_env_unset(env, "CYRIUS_POISON");
+    hc_env_unset(env, "CYRIUS_COVERAGE");
+    hc_env_unset(env, "CYRIUS_COVERAGE_FILE");
+    return env;
+}
+
+# <d>/cycc = <ref>:build/cycc, <d>/src + <d>/lib = <ref>'s trees; the compiler's path.
+fn _stage(root, ref, d): i64 {
+    hc_mkdirs(hc_cstr(d));
+    var spec = hc_catc(ref, ":build/cycc");
+    var av = hc_argv("git", "-C", hc_cstr(root), "show", hc_cstr(spec), 0);
+    var bin = hc_capture_full(av, 0, 0, 0, 2, 0);
+    if (hc_last_rc != 0 || hc_n(bin) == 0) {
+        _die(hc_cat(hc_cat3(hc_s("git show "), ref, hc_s(":build/cycc failed: ")), hc_strip(hc_cap_err)));
+    }
+    var cc = hc_joinc(d, "cycc");
+    if (hc_write_new(hc_cstr(cc), bin) != 0) { _die(hc_ccat("cannot write ", cc)); }
+    sys_chmod(hc_cstr(cc), 0x1ED);
+    var tarp = hc_catc(d, ".tar");
+    var aa = hc_argv("git", "-C", hc_cstr(root), "archive", hc_cstr(ref), "src");
+    vec_push(aa, "lib");
+    var rc = hc_run(aa, 0, 0, 0, hc_cstr(tarp), 0, 0);
+    var trc = 1;
+    if (rc == 0) { trc = hc_run(hc_argv("tar", "-x", "-C", hc_cstr(d), "-f", hc_cstr(tarp)), 0, 0, 0, 0, 0, 0); }
+    sys_unlink(hc_cstr(tarp));
+    if (rc != 0 || trc != 0) { _die(hc_cat3(hc_s("git archive "), ref, hc_s(" src lib | tar -x failed"))); }
+    if (hc_is_file(hc_cstr(hc_joinc(d, "src/main.cyr"))) == 0) { _die(hc_catc(ref, " has no src/main.cyr")); }
+    return cc;
+}
+
+# Python round(ns / 1e6): half to even.
+fn _ms(ns): i64 {
+    var q = ns / 1000000;
+    var r = ns % 1000000;
+    if (r > 500000) { return q + 1; }
+    if (r == 500000) { if (q % 2 == 1) { return q + 1; } }
+    return q;
+}
+
+var _cc = 0;      # per pair: the compiler
+var _dir = 0;     # per pair: the source tree
+var _times = 0;   # per pair: a vec of ns
+var _rcs = 0;     # per pair: the last non-zero rc (Python's: -signal for a signal)
+var _keys = 0;    # per pair: its name
+
+fn _fmt(k): i64 {
+    var rc = vec_get(_rcs, k);
+    var sb = hc_sb();
+    if (rc != 0) {
+        hc_sbc(sb, "n/a (rc=");
+        hc_sbi(sb, rc);
+        hc_sbc(sb, ")");
+        return hc_sbend(sb);
+    }
+    hc_sbi(sb, _ms(_best(k)));
+    hc_sbc(sb, " ms");
+    return hc_sbend(sb);
+}
+
+fn _best(k): i64 {
+    var t = vec_get(_times, k);
+    var b = vec_get(t, 0);
+    var i = 1;
+    while (i < vec_len(t)) {
+        if (vec_get(t, i) < b) { b = vec_get(t, i); }
+        i = i + 1;
+    }
+    return b;
+}
+
+fn _line(title, ko, kn): i64 {
+    var sb = hc_sb();
+    hc_sba(sb, hc_ljust(title, 34));
+    hc_sbc(sb, " old ");
+    hc_sba(sb, hc_rjust(_fmt(ko), 14));
+    hc_sbc(sb, "   new ");
+    hc_sba(sb, hc_rjust(_fmt(kn), 14));
+    if (vec_get(_rcs, ko) == 0 && vec_get(_rcs, kn) == 0) {
+        # (best(kn) / best(ko) - 1) * 100 to one decimal, half to even, with its sign
+        var bo = _best(ko);
+        var bn = _best(kn);
+        var num = (bn - bo) * 1000;
+        var neg = 0;
+        if (num < 0) { neg = 1; num = 0 - num; }
+        var q = 0;
+        var r = 0;
+        if (bo > 0) { q = num / bo; r = num % bo; }
+        if (r * 2 > bo) { q = q + 1; }
+        elif (r * 2 == bo) { if (q % 2 == 1) { q = q + 1; } }
+        hc_sbc(sb, "   delta ");
+        if (neg == 1) { hc_sbc(sb, "-"); } else { hc_sbc(sb, "+"); }
+        hc_sbi(sb, q / 10);
+        hc_sbc(sb, ".");
+        hc_sbi(sb, q % 10);
+        hc_sbc(sb, "%");
+    }
+    hc_sbc(sb, "\n");
+    hc_out(hc_sbend(sb));
+    return 0;
+}
+
+fn main(): i64 {
+    hc_opt("runs", 1);
+    hc_opt("repo", 1);
+    hc_parse(PROG, "ab [-h] [--runs RUNS] [--repo REPO] old_ref new_ref", 2);
+    var usage = "ab [-h] [--runs RUNS] [--repo REPO] old_ref new_ref";
+    if (hc_npos() == 0) {
+        _hc_usage_err(PROG, usage, hc_s("the following arguments are required: old_ref, new_ref"));
+    }
+    if (hc_npos() == 1) {
+        _hc_usage_err(PROG, usage, hc_s("the following arguments are required: new_ref"));
+    }
+    var runs = 6;
+    var rv = hc_optv("runs");
+    if (rv != 0) {
+        if (hc_pyint(rv, &runs) == 0) {
+            _hc_usage_err(PROG, usage, hc_cat3(hc_s("argument --runs: invalid int value: '"), rv, hc_s("'")));
+        }
+    }
+    if (runs < 1) { _die(hc_s("--runs must be at least 1")); }
+    var root = hc_repo_root(hc_optv("repo"));
+    if (root == 0) {
+        _die(hc_s("no cyrius checkout here (run it from the checkout, or pass --repo DIR / set CYRIUS_REPO)"));
+    }
+    var o = hc_pos(0);
+    var n = hc_pos(1);
+    var refs = vec_new();
+    vec_push(refs, o);
+    vec_push(refs, n);
+    var i = 0;
+    while (i < 2) {
+        var ref = vec_get(refs, i);
+        var av = vec_new();
+        vec_push(av, "git");
+        vec_push(av, "-C");
+        vec_push(av, hc_cstr(root));
+        vec_push(av, "rev-parse");
+        vec_push(av, "--verify");
+        vec_push(av, "--quiet");
+        vec_push(av, hc_cstr(hc_catc(ref, "^{commit}")));
+        hc_capture_full(av, 0, 0, 0, 2, 0);
+        if (hc_last_rc != 0) { _die(hc_cat3(ref, hc_s(": not a commit in "), root)); }
+        i = i + 1;
+    }
+    var scratch = hc_scratch();
+    hc_mkdirs(hc_cstr(scratch));
+    _tmp = hc_mkdtemp(hc_cstr(scratch), "ab.");
+    if (_tmp == 0) { _die(hc_ccat("cannot make a temp dir in ", scratch)); }
+    var env = _compile_env();
+    var old_d = hc_joinc(_tmp, "old");
+    var new_d = hc_joinc(_tmp, "new");
+    var old_cc = _stage(root, o, old_d);
+    var new_cc = _stage(root, n, new_d);
+
+    _cc = vec_new();
+    _dir = vec_new();
+    _times = vec_new();
+    _rcs = vec_new();
+    _keys = vec_new();
+    vec_push(_keys, "old cc / old src"); vec_push(_cc, old_cc); vec_push(_dir, old_d);
+    vec_push(_keys, "new cc / new src"); vec_push(_cc, new_cc); vec_push(_dir, new_d);
+    vec_push(_keys, "new cc / old src"); vec_push(_cc, new_cc); vec_push(_dir, old_d);
+    vec_push(_keys, "old cc / new src"); vec_push(_cc, old_cc); vec_push(_dir, new_d);
+    var k = 0;
+    while (k < 4) { vec_push(_times, vec_new()); vec_push(_rcs, 0); k = k + 1; }
+    var r = 0;
+    while (r < runs) {
+        k = 0;
+        while (k < 4) {
+            var d = vec_get(_dir, k);
+            var src = hc_cstr(hc_joinc(d, "src/main.cyr"));
+            var t0 = clock_now_ns();
+            var cav = hc_argv(hc_cstr(vec_get(_cc, k)), 0, 0, 0, 0, 0);
+            var rc = hc_run(cav, env, hc_cstr(d), src, "/dev/null", "/dev/null", 0);
+            var t1 = clock_now_ns();
+            vec_push(vec_get(_times, k), t1 - t0);
+            if (hc_last_signal != 0) { rc = 0 - hc_last_signal; }
+            if (rc != 0) { vec_set(_rcs, k, rc); }
+            k = k + 1;
+        }
+        r = r + 1;
+    }
+    hc_rmtree(hc_cstr(_tmp));
+    _tmp = 0;
+
+    var sb = hc_sb();
+    hc_sbc(sb, "old = ");
+    hc_sba(sb, o);
+    hc_sbc(sb, ", new = ");
+    hc_sba(sb, n);
+    hc_sbc(sb, "; min of ");
+    hc_sbi(sb, runs);
+    hc_sbc(sb, " run(s) each\n");
+    hc_out(hc_sbend(sb));
+    _line(hc_s("own sources (each on its own src)"), 0, 1);
+    _line(hc_cat3(hc_s("same input ("), o, hc_s(" src)")), 0, 2);
+    _line(hc_cat3(hc_s("same input ("), n, hc_s(" src)")), 3, 1);
+    k = 0;
+    while (k < 4) {
+        var sb2 = hc_sb();
+        hc_sbc(sb2, "all ");
+        hc_sbc(sb2, vec_get(_keys, k));
+        hc_sbc(sb2, ": [");
+        var t = vec_get(_times, k);
+        var j = 0;
+        while (j < vec_len(t)) {
+            if (j > 0) { hc_sbc(sb2, ", "); }
+            hc_sbi(sb2, _ms(vec_get(t, j)));
+            j = j + 1;
+        }
+        hc_sbc(sb2, "]");
+        if (vec_get(_rcs, k) != 0) {
+            hc_sbc(sb2, "  (rc=");
+            hc_sbi(sb2, vec_get(_rcs, k));
+            hc_sbc(sb2, ")");
+        }
+        hc_sbc(sb2, "\n");
+        hc_out(hc_sbend(sb2));
+        k = k + 1;
+    }
+    return 0;
+}

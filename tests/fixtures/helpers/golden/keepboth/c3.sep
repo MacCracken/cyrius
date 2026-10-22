@@ -1,0 +1,6 @@
+rc=1
+--- stdout
+--- stderr
+keepboth: no conflict block in f
+--- file
+nothing here

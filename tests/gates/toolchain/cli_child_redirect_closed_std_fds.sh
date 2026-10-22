@@ -60,6 +60,10 @@
 #      then the cached clone re-verified through `hash-object --stdin-paths` — `_git_run`) rc 0 with
 #      the v1 file vendored, and `cyrius update` (`ls-remote --tags` — `_dep_wt_run`) rc 0 listing
 #      "newer tags: v2"; control with every fd open. Without git the row says so by name.
+#   8  the programs/ helpers' child runner (programs/dev/helper_common.cyr, 6.7.17): a probe of
+#      hc_capture_full (stdin from a file into a capture, stdout / stderr captured apart, 2>&1) and
+#      hc_run (stdin, stdout, stderr each a file), started with fd 0, 1, 2, 0+1 and 0+1+2 closed ->
+#      every check holds (control: all open). CHANGELOG [6.7.17]
 #
 # MUTATION LEDGER — run 2026-10-19 (lane libfix, unit L3; x86_64 Linux), each in a scratch copy of
 # the tree, the gate run from that copy:
@@ -76,6 +80,12 @@
 #   f. `_dep_wt_run`'s lift turned into `cfd` -> axis 7 RED (update: "the remote's tags could not be
 #      listed (fatal: write failure on standard output: Bad file descriptor)")
 #   (a stale ALLOW row: tested by hand with the two cyrius-lsp sites guarded -> RED naming both rows)
+# 6.7.17 (lane tool, unit TO1; x86_64 Linux):
+#   g. helper_common.cyr as first committed (`if (fi != 0) { sys_dup2(fi, 0); sys_close(fi); }`, no
+#      lift of the capture pipe) -> axis 8 RED with fd 0 closed (probe exit 1: cat read nothing),
+#      and with fds 0+1 and 0+1+2 closed; axis 6 RED on its 7 pairs (hc_run, hc_capture_full)
+#   h. hc_capture_full's `_hc_lift_fd` calls dropped (the pipe fds as opened) -> axis 8 RED with fd 0,
+#      fds 0+1 and fds 0+1+2 closed (probe exit 1); axis 6 green (the redirects are guarded)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -419,8 +429,58 @@ else
     echo "  SKIP-ROW: axis 7 (git dep with fd 0 closed): git is not installed here — the row did not run"
 fi
 
+# ── axis 8: the programs/ helpers' child runner (programs/dev/helper_common.cyr) ──
+# hc_capture_full opens its capture pipe BEFORE the fork; with fd 0 closed the pipe's read end is
+# 0, the child's stdin redirect landed on it, and closing the read end closed that redirect (cat
+# read nothing). The probe exits with a bit per check that failed: 1 stdin from a file into a
+# capture, 2 stdout and stderr captured apart, 4 stderr into the stdout capture, 8 hc_run with
+# stdin, stdout and stderr each a file.
+cat > "$W/hcprobe.cyr" <<'HCP'
+include "programs/dev/helper_common.cyr"
+fn main(): i64 {
+    args_init();
+    var inp = argv(1);
+    var want = hc_read(inp);
+    var bad = 0;
+    var a = hc_capture_full(hc_argv("cat", 0, 0, 0, 0, 0), 0, 0, inp, 2, 30000);
+    if (hc_eq(a, want) == 0 || hc_last_rc != 0) { bad = bad | 1; }
+    var sh = "echo out; echo err >&2";
+    var b = hc_capture_full(hc_argv("sh", "-c", sh, 0, 0, 0), 0, 0, 0, 2, 30000);
+    if (hc_eqc(b, "out\n") == 0 || hc_eqc(hc_cap_err, "err\n") == 0) { bad = bad | 2; }
+    var c = hc_capture_full(hc_argv("sh", "-c", sh, 0, 0, 0), 0, 0, 0, 1, 30000);
+    if (hc_eqc(c, "out\nerr\n") == 0) { bad = bad | 4; }
+    var o = hc_cstr(hc_joinc(hc_s(argv(2)), "run.out"));
+    var e = hc_cstr(hc_joinc(hc_s(argv(2)), "run.err"));
+    var r = hc_run(hc_argv("sh", "-c", "cat; echo err >&2", 0, 0, 0), 0, 0, inp, o, e, 30000);
+    if (r != 0 || hc_eq(hc_read(o), want) == 0 || hc_eqc(hc_read(e), "err\n") == 0) { bad = bad | 8; }
+    return bad;
+}
+HCP
+( cd "$ROOT" && "$CC" < "$W/hcprobe.cyr" > "$W/hcprobe" 2> "$W/hcprobe.err" ) && [ -s "$W/hcprobe" ] && chmod +x "$W/hcprobe" \
+    || { echo "FAIL: $NAME: axis 8: the helper probe does not build:"; tail -3 "$W/hcprobe.err"; exit 1; }
+HD="$W/hc"; mkdir -p "$HD"; printf 'line one\nline two\n' > "$HD/in.txt"
+for m in none 0 1 2 01 012; do
+    rc=0
+    case $m in
+        none) run_in "$HD" "$W/hcprobe" "$HD/in.txt" "$HD" < /dev/null > /dev/null 2>&1 || rc=$? ;;
+        0) run_in "$HD" "$W/hcprobe" "$HD/in.txt" "$HD" 0<&- > /dev/null 2>&1 || rc=$? ;;
+        1) run_in "$HD" "$W/hcprobe" "$HD/in.txt" "$HD" < /dev/null 1>&- 2> /dev/null || rc=$? ;;
+        2) run_in "$HD" "$W/hcprobe" "$HD/in.txt" "$HD" < /dev/null > /dev/null 2>&- || rc=$? ;;
+        01) run_in "$HD" "$W/hcprobe" "$HD/in.txt" "$HD" 0<&- 1>&- 2> /dev/null || rc=$? ;;
+        012) run_in "$HD" "$W/hcprobe" "$HD/in.txt" "$HD" 0<&- 1>&- 2>&- || rc=$? ;;
+    esac
+    case $m in
+        none) lab="(control, every std fd open)" ;;
+        01) lab="with fds 0 and 1 closed" ;;
+        012) lab="with fds 0, 1 and 2 closed" ;;
+        *) lab="with fd $m closed" ;;
+    esac
+    if [ "$rc" = 0 ]; then ok "axis 8: helper_common's hc_capture_full / hc_run $lab: every redirect reaches the child"
+    else fail "axis 8: helper_common's hc_capture_full / hc_run $lab: probe exit $rc (bits: 1 stdin into a capture, 2 split capture, 4 2>&1 capture, 8 hc_run files)"; fi
+done
+
 if [ "$FAIL" = 0 ]; then
-    echo "PASS: $NAME — child redirects in cbt/ and programs/ keep their std fds with the parent's fd 0, 1 or 2 closed (js / native / cx builds, run_cx, the cx JIT build, the check driver's output row, a git dep's deps / update), and no unguarded sys_dup2 / sys_close pair is left"
+    echo "PASS: $NAME — child redirects in cbt/ and programs/ keep their std fds with the parent's fd 0, 1 or 2 closed (js / native / cx builds, run_cx, the cx JIT build, the check driver's output row, a git dep's deps / update, the programs/dev helpers' runner), and no unguarded sys_dup2 / sys_close pair is left"
     exit 0
 fi
 exit 1

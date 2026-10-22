@@ -1,0 +1,11 @@
+[package]
+name = "v"
+
+[[entries]]
+id = "x"
+  ---  
+not a terminator line (blanks before)
+[[entries]]
+id = "y"
+---   
+body

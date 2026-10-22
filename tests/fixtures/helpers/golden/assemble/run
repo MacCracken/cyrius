@@ -1,0 +1,47 @@
+rc=0
+--- stdout
+CHANGELOG +14 lines, migration +11 lines
+--- stderr
+--- tree
+== ./CHANGELOG.md
+# Changelog
+
+## [9.8.7] — 2026-10-22
+
+Head line: gate abc1234, driver 1 / 1, shell 2 / 2, bench 99 ms.
+
+### Lane one
+
+- a bite
+
+### Lane two
+- b bite
+
+### Integration
+
+### Filed
+
+- nothing
+
+## [9.8.6] — 2025-12-01
+
+old entry
+== ./docs/development/ecosystem-migration.md
+# Migration
+
+intro
+
+### 9.8.7
+
+What a consumer meets.
+
+
+- l1 note
+
+- l2 note
+
+- an extra migration part
+
+### 9.8.6
+
+old notes

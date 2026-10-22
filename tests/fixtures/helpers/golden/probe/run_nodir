@@ -1,0 +1,4 @@
+rc=2
+--- stdout
+--- stderr
+probe: nosuchdir: no such directory (from the caller's cwd or from @T@/probe_repo)

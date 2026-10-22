@@ -1,0 +1,65 @@
+{
+ "files": {
+  "docs/development/roadmap.md": [
+   {
+    "sub": "\\*\\*Current head: v(\\d+\\.\\d+\\.\\d+)\\*\\* \\((\\d{4}-\\d\\d-\\d\\d)\\)",
+    "to": "**Current head: v{ver}** ({date}; was v\\g<1> of \\2)",
+    "count": 1
+   },
+   {
+    "sub": "(?m)^## Where we are$",
+    "to": "## Where we are ({n_tcyr:,} tests, {n_gates:>4} gates, {cyc}, {placed[9.9.0]} later, {placed[1.2.3]} none)"
+   },
+   {
+    "sub": "(?i)FILLER (\\d)\\b",
+    "to": "row \\1",
+    "flags": "I"
+   },
+   {
+    "sub": "Keep.*?honest",
+    "to": "Figures: {text!r} {n_api:*^9} {n_open:#x} {n_prop:+d} {arm:.3} {gatehead}",
+    "flags": "S"
+   },
+   {
+    "sub": "zzz-no-such-thing",
+    "to": "x"
+   },
+   {
+    "replace": "| 9.8.7 | the one |",
+    "to": "| 9.8.7 | the one ({{literal braces}}) |",
+    "must": true
+   },
+   {
+    "replace": "not present at all",
+    "to": "never"
+   },
+   {
+    "cut": [
+     "## Sequence",
+     "filler line"
+    ]
+   }
+  ],
+  "docs/development/state.md": [
+   {
+    "row": "Version",
+    "to": "**{ver} — released {date}** (tagged at `{gatehead}`)"
+   },
+   {
+    "row": "Corpus",
+    "keep_from": " · **",
+    "to": "**{n_tcyr}** `.tcyr` (**{n_cross}** in `crossos/`)"
+   },
+   {
+    "row": "Gates",
+    "to": "check.sh {driver} · bench {bench} ms"
+   }
+  ],
+  "docs/development/completed-phases.md": [
+   {
+    "insert_after_row": "v9.7.x",
+    "to": "| **v{ver}** | the test | **{archived}** | {n_lib} lib |"
+   }
+  ]
+ }
+}

@@ -1,0 +1,361 @@
+# programs/dev/regen_issue_index.cyr — regenerate docs/development/issues/README.md § Open queue.
+#
+# Usage:  cyrius run programs/dev/regen_issue_index.cyr [--repo DIR | DIR]
+#
+# Input:  every docs/development/issues/*.md except README.md — its title is the first line
+#         (leading `#` and spaces dropped, a trailing " — OPEN" dropped), its group the text of its
+#         first `**Placement:** ` line; and the README's own § Open queue, whose existing
+#         `**<label>** (N)` lines name the groups.
+# Output: the § Open queue section of that README, rewritten in place (the rest of the file kept
+#         byte for byte; the file replaced atomically, its mode kept); one summary line on stdout.
+#
+# Groups, in the README's order:
+#   * a release group per `**<label>** (N)` line whose label starts with a release number
+#     (`**X.Y.Z — …** (N)`): it collects every file whose placement starts with that number
+#     followed by a space or `(`;
+#   * a placement whose leading release number has no label gets the automatic label `**<rel>**`,
+#     inserted before the first labelled release that sorts after it; an automatic group left
+#     empty (its last issue re-placed or archived) is dropped, a hand-written label is kept at (0);
+#   * `**Open by design …** (N)` collects placements starting `open by design` (always printed);
+#   * `**Unplaced** (N)` collects the rest (printed only when non-empty).
+# The text between the `## Open queue` heading and the first group line is kept as written.
+#
+# The checkout is --repo DIR, a bare DIR argument, $CYRIUS_REPO, else the one the current
+# directory is in. Exit 2 on a usage error or a README without the section.
+#
+# It replaced scripts/dev/regen-issue-index.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+var PROG = "regen-issue-index";
+var OBD_DEFAULT = "Open by design — placed arcs, not bugs";
+
+fn _die(msg): i64 { return hc_die(PROG, msg, 2); }
+
+# `\d+(?:\.\d+)+` matched at the start of s (Python's \d: any Unicode decimal digit); the
+# matched byte length, or 0 when there is none.
+fn _rel_len(s): i64 {
+    var i = 0;
+    var l = 0;
+    var n = hc_n(s);
+    var groups = 0;
+    var last_ok = 0;
+    loop {
+        # one digit run
+        var st = i;
+        while (i < n) {
+            var cp = hc_u8(s, i, &l);
+            if (hc_nd_value(cp) < 0) { break; }
+            i = i + l;
+        }
+        if (i == st) { break; }
+        groups = groups + 1;
+        if (groups >= 2) { last_ok = i; }
+        if (i < n && hc_at(s, i) == 46) {
+            # a `.` followed by a digit continues the number
+            if (i + 1 < n) {
+                var cp2 = hc_u8(s, i + 1, &l);
+                if (hc_nd_value(cp2) >= 0) { i = i + 1; continue; }
+            }
+        }
+        break;
+    }
+    return last_ok;
+}
+
+# The value tuple of a release number (Python tuple(int(x) for x in v.split('.'))).
+fn _relkey(v): i64 {
+    var parts = hc_split(v, 46);
+    var out = vec_new();
+    var i = 0;
+    var l = 0;
+    while (i < vec_len(parts)) {
+        var p = vec_get(parts, i);
+        var x = 0;
+        var j = 0;
+        while (j < hc_n(p)) {
+            var cp = hc_u8(p, j, &l);
+            x = x * 10 + hc_nd_value(cp);
+            j = j + l;
+        }
+        vec_push(out, x);
+        i = i + 1;
+    }
+    return out;
+}
+
+fn _cmp_relkey(a, b): i64 {
+    var ka = _relkey(a);
+    var kb = _relkey(b);
+    var i = 0;
+    while (i < vec_len(ka) && i < vec_len(kb)) {
+        var x = vec_get(ka, i);
+        var y = vec_get(kb, i);
+        if (x < y) { return 0 - 1; }
+        if (x > y) { return 1; }
+        i = i + 1;
+    }
+    return vec_len(ka) - vec_len(kb);
+}
+
+# LABEL = ^\*\*(.+)\*\* \((\d+)\)$ on a line with its trailing newlines stripped: the label, or 0.
+fn _label(line): i64 {
+    var t = hc_rstrip_set(line, "\n");
+    var n = hc_n(t);
+    if (n < 8) { return 0; }
+    if (hc_pre(t, "**") == 0) { return 0; }
+    if (hc_at(t, n - 1) != 41) { return 0; }
+    # the digit run before the `)`, read back by code points
+    var e = n - 1;
+    var ds = e;
+    loop {
+        # step back one code point from ds
+        if (ds <= 0) { break; }
+        var b = ds - 1;
+        while (b > 0 && (hc_at(t, b) & 0xC0) == 0x80) { b = b - 1; }
+        var l = 0;
+        var cp = hc_u8(t, b, &l);
+        if (hc_nd_value(cp) < 0) { break; }
+        ds = b;
+    }
+    if (ds == e) { return 0; }
+    if (ds < 4) { return 0; }
+    if (hc_at(t, ds - 1) != 40 || hc_at(t, ds - 2) != 32) { return 0; }
+    if (hc_at(t, ds - 3) != 42 || hc_at(t, ds - 4) != 42) { return 0; }
+    var lab_end = ds - 4;
+    if (lab_end <= 2) { return 0; }
+    return hc_sub(t, 2, lab_end);
+}
+
+# Python startswith(v + ' ') or startswith(v + '(').
+fn _placed_in(p, v): i64 {
+    if (hc_pre_s(p, v) == 0) { return 0; }
+    if (hc_n(p) <= hc_n(v)) { return 0; }
+    var c = hc_at(p, hc_n(v));
+    if (c == 32 || c == 40) { return 1; }
+    return 0;
+}
+
+var _seen = 0;
+fn _is_seen(fname): i64 {
+    var i = 0;
+    while (i < vec_len(_seen)) {
+        if (hc_eq(vec_get(_seen, i), fname) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# items are [fname, title, placement] triples (vecs of three Strs)
+fn _group(sb, lab, xs): i64 {
+    var i = 0;
+    while (i < vec_len(xs)) { vec_push(_seen, vec_get(vec_get(xs, i), 0)); i = i + 1; }
+    hc_sbc(sb, "**");
+    hc_sba(sb, lab);
+    hc_sbc(sb, "** (");
+    hc_sbi(sb, vec_len(xs));
+    hc_sbc(sb, ")\n\n");
+    i = 0;
+    while (i < vec_len(xs)) {
+        var x = vec_get(xs, i);
+        hc_sbc(sb, "- [");
+        hc_sba(sb, vec_get(x, 1));
+        hc_sbc(sb, "](");
+        hc_sba(sb, vec_get(x, 0));
+        hc_sbc(sb, ")\n");
+        i = i + 1;
+    }
+    hc_sbc(sb, "\n");
+    return 0;
+}
+
+fn _vec_has_str(v, s): i64 {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (hc_eq(vec_get(v, i), s) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    hc_opt("repo", 1);
+    hc_parse(PROG, "regen_issue_index [-h] [--repo DIR] [repo]", 1);
+    var explicit = hc_optv("repo");
+    if (explicit == 0 && hc_npos() > 0) { explicit = hc_pos(0); }
+    var root = hc_repo_root(explicit);
+    if (root == 0) {
+        _die(hc_s("no cyrius checkout here (run it from the checkout, or pass --repo DIR / set CYRIUS_REPO)"));
+    }
+    var idir = hc_joinc(root, "docs/development/issues");
+    var readme = hc_joinc(idir, "README.md");
+    if (hc_is_file(hc_cstr(readme)) == 0) {
+        _die(hc_cat(hc_cat3(readme, hc_s(" not found (is "), root), hc_s(" a cyrius checkout?)")));
+    }
+
+    var items = vec_new();
+    var names = hc_glob_names(hc_cstr(idir), ".md");
+    var i = 0;
+    while (i < vec_len(names)) {
+        var fn_ = vec_get(names, i);
+        i = i + 1;
+        if (hc_suf(fn_, "README.md") == 1) { continue; }
+        var s = hc_read_text(hc_cstr(hc_joinc(idir, hc_cstr(fn_))));
+        if (s == 0) { _die(hc_ccat("cannot read ", fn_)); }
+        var lines = hc_splitlines(s, 0);
+        if (vec_len(lines) == 0) { _die(hc_cat(fn_, hc_s(": empty file (no title line)"))); }
+        var t = hc_lstrip_set(vec_get(lines, 0), "# ");
+        if (hc_suf(t, " — OPEN") == 1) { t = hc_sub(t, 0, hc_n(t) - hc_n(hc_s(" — OPEN"))); }
+        var p = hc_s("");
+        # the first line starting `**Placement:** ` (a line start: offset 0 or after a \n)
+        var at = 0;
+        loop {
+            var k = hc_findc(s, "**Placement:** ", at);
+            if (k < 0) { break; }
+            if (k == 0 || hc_at(s, k - 1) == 10) {
+                var e = hc_findb(s, 10, k);
+                if (e < 0) { e = hc_n(s); }
+                p = hc_sub(s, k + hc_n(hc_s("**Placement:** ")), e);
+                break;
+            }
+            at = k + 1;
+        }
+        var it = vec_new();
+        vec_push(it, fn_);
+        vec_push(it, t);
+        vec_push(it, p);
+        vec_push(items, it);
+    }
+
+    var r = hc_read_text(hc_cstr(readme));
+    if (r == 0) { _die(hc_ccat("cannot read ", readme)); }
+    var a0 = hc_findc(r, "## Open queue", 0);
+    var b0 = 0 - 1;
+    if (a0 >= 0) { b0 = hc_findc(r, "\n## ", a0 + 5); }
+    if (a0 < 0 || b0 < 0) {
+        _die(hc_cat(readme, hc_s(" has no `## Open queue` section followed by another `## ` heading")));
+    }
+    var section = hc_sub(r, a0, b0 + 1);
+
+    var rel_v = vec_new();     # release numbers, in the README's order
+    var rel_lab = vec_new();   # their labels
+    var obd_label = 0;
+    var head = 0;
+    var pos = 0;
+    var sl = hc_splitlines(section, 1);
+    i = 0;
+    while (i < vec_len(sl)) {
+        var line = vec_get(sl, i);
+        var lab = _label(line);
+        if (lab != 0) {
+            if (head == 0) { head = hc_sub(section, 0, pos); }
+            if (hc_pre(lab, "Open by design") == 1) { obd_label = lab; }
+            elif (hc_eqc(lab, "Unplaced") == 1) { }
+            else {
+                var rl = _rel_len(lab);
+                if (rl == 0) {
+                    var why = hc_s("group label has no leading release number and is not ");
+                    _die(hc_cat3(hc_catc(why, "Open by design / Unplaced: **"), lab, hc_s("**")));
+                }
+                vec_push(rel_v, hc_sub(lab, 0, rl));
+                vec_push(rel_lab, lab);
+            }
+        }
+        pos = pos + hc_n(line);
+        i = i + 1;
+    }
+    if (head == 0) { head = hc_catc(hc_rstrip_set(section, "\n"), "\n\n"); }
+    if (obd_label == 0) { obd_label = hc_s(OBD_DEFAULT); }
+
+    # A placement release with no label gets `**<rel>**`, before the first labelled release after it.
+    var auto = vec_new();
+    i = 0;
+    while (i < vec_len(items)) {
+        var pl = vec_get(vec_get(items, i), 2);
+        var ml = _rel_len(pl);
+        if (ml > 0 && ml < hc_n(pl)) {
+            var nc = hc_at(pl, ml);
+            if (nc == 32 || nc == 40) {
+                var v = hc_sub(pl, 0, ml);
+                if (_vec_has_str(rel_v, v) == 0 && _vec_has_str(auto, v) == 0) { vec_push(auto, v); }
+            }
+        }
+        i = i + 1;
+    }
+    var auto_sorted = vec_new();
+    i = 0;
+    while (i < vec_len(auto)) { vec_push(auto_sorted, vec_get(auto, i)); i = i + 1; }
+    hc_sort_by(auto_sorted, &_cmp_relkey);
+    i = 0;
+    while (i < vec_len(auto_sorted)) {
+        var av = vec_get(auto_sorted, i);
+        var at2 = vec_len(rel_v);
+        var j = 0;
+        while (j < vec_len(rel_v)) {
+            if (_cmp_relkey(vec_get(rel_v, j), av) > 0) { at2 = j; break; }
+            j = j + 1;
+        }
+        # insert (av, av) at at2
+        vec_push(rel_v, 0);
+        vec_push(rel_lab, 0);
+        var k2 = vec_len(rel_v) - 1;
+        while (k2 > at2) {
+            vec_set(rel_v, k2, vec_get(rel_v, k2 - 1));
+            vec_set(rel_lab, k2, vec_get(rel_lab, k2 - 1));
+            k2 = k2 - 1;
+        }
+        vec_set(rel_v, at2, av);
+        vec_set(rel_lab, at2, av);
+        i = i + 1;
+    }
+
+    _seen = vec_new();
+    var sb = hc_sb();
+    hc_sba(sb, head);
+    i = 0;
+    while (i < vec_len(rel_v)) {
+        var rv = vec_get(rel_v, i);
+        var rlab = vec_get(rel_lab, i);
+        var xs = vec_new();
+        var j2 = 0;
+        while (j2 < vec_len(items)) {
+            var x = vec_get(items, j2);
+            if (_is_seen(vec_get(x, 0)) == 0 && _placed_in(vec_get(x, 2), rv) == 1) { vec_push(xs, x); }
+            j2 = j2 + 1;
+        }
+        i = i + 1;
+        if (vec_len(xs) == 0 && hc_eq(rlab, rv) == 1) { continue; }
+        _group(sb, rlab, xs);
+    }
+    var ob = vec_new();
+    i = 0;
+    while (i < vec_len(items)) {
+        var x2 = vec_get(items, i);
+        if (_is_seen(vec_get(x2, 0)) == 0 && hc_pre(vec_get(x2, 2), "open by design") == 1) { vec_push(ob, x2); }
+        i = i + 1;
+    }
+    _group(sb, obd_label, ob);
+    var un = vec_new();
+    i = 0;
+    while (i < vec_len(items)) {
+        var x3 = vec_get(items, i);
+        if (_is_seen(vec_get(x3, 0)) == 0) { vec_push(un, x3); }
+        i = i + 1;
+    }
+    if (vec_len(un) > 0) { _group(sb, hc_s("Unplaced"), un); }
+    var out = hc_sbend(sb);
+
+    var whole = hc_cat3(hc_sub(r, 0, a0), out, hc_sub(r, b0 + 1, hc_n(r)));
+    if (hc_replace_file(hc_cstr(readme), whole) != 0) { _die(hc_ccat("cannot write ", readme)); }
+    var msg = hc_sb();
+    hc_sbi(msg, vec_len(items));
+    hc_sbc(msg, " open; unplaced ");
+    hc_sbi(msg, vec_len(un));
+    if (vec_len(auto) > 0) {
+        hc_sbc(msg, "; new group label(s): ");
+        hc_sba(msg, hc_join(auto_sorted, ", "));
+    }
+    hc_outln(hc_sbend(msg));
+    return 0;
+}

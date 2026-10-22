@@ -1,0 +1,9 @@
+rc=0
+--- stdout
+  would write @T@/briefs_dry/alpha_A1.md
+  would write @T@/briefs_dry/alpha_A2.md
+  would write @T@/briefs_dry/beta_B1.md
+  would write @T@/briefs_dry/gamma_G1.md
+briefs 4
+--- stderr
+--- briefs

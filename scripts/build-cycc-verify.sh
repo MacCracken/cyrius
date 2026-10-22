@@ -33,44 +33,24 @@
 #   2 — fixpoint diverged, or stage_b failed or wrote nothing (invariant 2; real correctness bug)
 #   3 — stage_a != build/cycc (invariant 3; stale build artifact)
 #
-# --install <scratch-dir> — rebuild build/cycc from the source, once the source reaches a
-# fixpoint (what invariant 3's "Refresh via" asks for, done safely):
-#
-#   c1 = build/cycc(src/main.cyr), c2 = c1(src/main.cyr), c3 = c2(src/main.cyr)
-#
-# each written to <scratch-dir>/c1..c3 (stderr beside it as c<N>.err, kept for inspection); every
-# stage must exit 0 with a non-empty output, and c2 == c3 is required (c1 may differ from c2:
-# build/cycc can lag the source by a codegen change — the two-step bootstrap of ADR-005). Only then
-# is c2 copied to a temp file inside build/ and renamed over build/cycc with `mv -f` — atomic, and
-# never a cp over a binary that may be running. Exit codes:
-#   0 — build/cycc replaced by c2 (== c3)
-#   1 — c1 failed or wrote nothing; also a usage / setup error
-#   2 — c2 or c3 failed or wrote nothing, or c2 != c3
-#   4 — the replace of build/cycc failed
-# build/cycc is untouched on every non-zero exit.
-#
-# --fixpoint <scratch-dir> — the same three stages and checks as --install, and nothing installed:
-# "does the edited source reach a fixpoint?", asked before deciding to install (verify cannot
-# answer it after a codegen change: its stage_a == stage_b fails while build/cycc lags the source).
-# Exit codes 0 (c2 == c3), 1 and 2 as --install's; build/cycc is never touched.
+# Rebuilding build/cycc from the source once it reaches a fixpoint (what invariant 3's "Refresh
+# via" asks for, done safely: c1..c3 in a scratch dir, c2 == c3, an atomic rename) is the cyrius
+# program programs/dev/fixpoint.cyr — `cyrius run programs/dev/fixpoint.cyr --install <scratch-dir>`
+# (--fixpoint <scratch-dir> checks c2 == c3 and installs nothing). Those were this script's
+# --install / --fixpoint modes until 6.7.17; the verify below is CI's trust-root job and stays
+# shell. CHANGELOG [6.7.17]
 #
 # Usage: sh scripts/build-cycc-verify.sh                        (verify; CI's trust-root job)
-#        sh scripts/build-cycc-verify.sh --fixpoint <scratch-dir> (c2 == c3 check only)
-#        sh scripts/build-cycc-verify.sh --install <scratch-dir>  (rebuild build/cycc at a fixpoint)
 
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# Parsed before the cd, so a relative <scratch-dir> is the caller's.
-MODE=verify
-STAGES=""
 case "$#:${1:-}" in
     0:) ;;
     2:--install|2:--fixpoint)
-        [ -n "$2" ] || { echo "ERROR: $1 needs a scratch directory" >&2; exit 1; }
-        MODE=${1#--}
-        case "$2" in /*) STAGES=$2 ;; *) STAGES="$(pwd)/$2" ;; esac ;;
+        echo "error: $1 moved to programs/dev/fixpoint.cyr: cyrius run programs/dev/fixpoint.cyr $1 $2" >&2
+        exit 1 ;;
     *)
-        echo "usage: sh scripts/build-cycc-verify.sh [--fixpoint <scratch-dir> | --install <scratch-dir>]" >&2
+        echo "usage: sh scripts/build-cycc-verify.sh   (the --fixpoint / --install modes: cyrius run programs/dev/fixpoint.cyr)" >&2
         exit 1 ;;
 esac
 cd "$ROOT"
@@ -97,55 +77,6 @@ fi
 # temp dir, and every "$V/x" below then becomes "/x". CHANGELOG [6.6.6]
 TMPDIR=$(mktemp -d) && [ -d "$TMPDIR" ] || { echo "error: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 trap "rm -rf $TMPDIR" EXIT
-
-if [ "$MODE" != verify ]; then
-    if [ "$MODE" = install ]; then
-        echo "=== cycc self-host fixpoint + install (stages in $STAGES) ==="
-    else
-        echo "=== cycc self-host fixpoint (stages in $STAGES) ==="
-    fi
-    mkdir -p "$STAGES" || { echo "ERROR: cannot create $STAGES" >&2; exit 1; }
-    prev="$CC"
-    for n in 1 2 3; do
-        echo "  [$n/3] cat src/main.cyr | $(basename "$prev") > c$n..."
-        if ! cat "$SRC" | "$prev" > "$STAGES/c$n" 2> "$STAGES/c$n.err"; then
-            echo "  FAIL: stage c$n compile failed (stderr: $STAGES/c$n.err)" >&2
-            head -20 "$STAGES/c$n.err" >&2
-            [ "$n" = 1 ] && exit 1
-            exit 2
-        fi
-        if [ ! -s "$STAGES/c$n" ]; then
-            echo "  FAIL: stage c$n is EMPTY — the compiler exited 0 and wrote nothing" >&2
-            [ "$n" = 1 ] && exit 1
-            exit 2
-        fi
-        chmod +x "$STAGES/c$n"
-        echo "        c$n $(wc -c < "$STAGES/c$n") bytes"
-        prev="$STAGES/c$n"
-    done
-    if ! cmp -s "$STAGES/c2" "$STAGES/c3"; then
-        echo "  FAIL: fixpoint diverged — c2 != c3" >&2
-        echo "        c2: $(sha256sum "$STAGES/c2" | cut -d' ' -f1)" >&2
-        echo "        c3: $(sha256sum "$STAGES/c3" | cut -d' ' -f1)" >&2
-        exit 2
-    fi
-    echo "        FIXPOINT OK (c2 == c3 at $(wc -c < "$STAGES/c2") B)"
-    [ "$MODE" = fixpoint ] && exit 0
-    if cmp -s "$STAGES/c2" "$CC"; then WAS="already byte-identical to c2"; else WAS="replaced"; fi
-    # A temp in build/ itself, so the rename is on one filesystem (atomic).
-    NEW=$(mktemp "$ROOT/build/.cycc-install.XXXXXX") && [ -f "$NEW" ] || { echo "  FAIL: mktemp in build/ failed, build/cycc untouched" >&2; exit 4; }
-    # The EXIT trap now removes the build/ temp too, should the run stop before the rename (after
-    # it, the name is gone and the rm is a no-op).
-    trap 'rm -rf "$TMPDIR" "$NEW"' EXIT
-    if cp "$STAGES/c2" "$NEW" && chmod 755 "$NEW" && mv -f "$NEW" "$CC"; then
-        echo ""
-        echo "=== INSTALLED build/cycc ($WAS) ==="
-        exit 0
-    fi
-    rm -f "$NEW"
-    echo "  FAIL: replacing build/cycc failed — build/cycc untouched" >&2
-    exit 4
-fi
 
 STAGE_A="$TMPDIR/cc5_stage_a"
 STAGE_B="$TMPDIR/cc5_stage_b"
@@ -202,6 +133,6 @@ else
     echo "        stage_a:   $SIZE_A bytes — $(sha256sum "$STAGE_A" | cut -d' ' -f1)" >&2
     echo "        build/cycc: $SIZE_CC5 bytes — $(sha256sum "$CC" | cut -d' ' -f1)" >&2
     echo "        Likely cause: build/cycc lags source edits. Refresh via:" >&2
-    echo "          sh scripts/build-cycc-verify.sh --install <scratch-dir>" >&2
+    echo "          cyrius run programs/dev/fixpoint.cyr --install <scratch-dir>" >&2
     exit 3
 fi

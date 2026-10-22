@@ -1,0 +1,6 @@
+rc=1
+--- stdout
+OK   [ci.yml] [other] [sh] job default sh                                     | line2
+OK   [ci.yml] [other] [sh] unicode — naïve step ✓ with a long name to trim at | ünïcödé tail xxx
+FAIL [ci.yml] [other] [sh] Empty output failure                               | 
+--- stderr

@@ -1,0 +1,18 @@
+rc=2
+--- stdout
+=== cycc self-host fixpoint (stages in @T@/fp_diverge_fixpoint/../st_diverge_fixpoint) ===
+  [1/3] cat src/main.cyr | cycc > c1...
+        c1 35 bytes
+  [2/3] cat src/main.cyr | c1 > c2...
+        c2 39 bytes
+  [3/3] cat src/main.cyr | c2 > c3...
+        c3 43 bytes
+--- stderr
+  FAIL: fixpoint diverged — c2 != c3
+        c2: 0fd16d0f986124919a6bdbe1d764fa6ba60cdb12217fec2868ac08ebc5ce3936
+        c3: 4e293a1757d5b8a7c8e775962f4db68d7d34c37f785697434f609d8007ec1bc8
+--- build/
+cycc
+--- build/cycc
+#!/bin/sh
+cat "$0"; echo "# x"

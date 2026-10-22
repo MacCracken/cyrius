@@ -1,0 +1,326 @@
+# programs/release/briefs.cyr — at a release's slot open: write one brief per lane unit (the file
+# each implementing agent of scripts/release/lanes.js reads first): per issue its triage (title,
+# severity, status and evidence, fix plan, touches, rows, targets, hosts, risk) and the user's
+# final decisions with the chosen answer; then the lane's triage notes (groups, ordering,
+# cross-lane). Wave 0 (on main, before the lanes fork) gets no brief.
+#
+# usage:   cyrius run programs/release/briefs.cyr --ver X.Y.Z --date YYYY-MM-DD [--dry]
+#            [--repo <checkout>] [--c6 <dir>] [--units F] [--triage F] [--decisions F]
+#            [--notes F] [--out DIR]
+#   --date   the day the user answered the decisions (written into each brief)
+#   --dry    list the briefs it would write; write nothing
+# inputs:  <c6>/<tag>_units.json      {"W<n>": {"<lane>": {"<unit>": ["<issue>.md", ...]}}}
+#          <c6>/<tag>_triage.json     scripts/release/triage.js's result: [{"lane": "<name> …",
+#                                     "items": [...], "groups", "ordering_constraints", "cross_lane"}]
+#          <c6>/<tag>_decisions.json  the answered decisions (see place.cyr)
+#          <c6>/<tag>_brief_notes.json  optional, this release's literal content (a preamble, the
+#                                     unit notes, extra decisions per unit, cross-lane notes) —
+#                                     schema in scripts/release/README.md
+# outputs: <out>/<lane>_<unit>.md (default <out>: <c6>/<tag>_briefs/); a count on stdout. Exit 1
+#          when a unit names an issue the triage does not have. A lane with no triage group of
+#          its own takes the notes of the group its first issue was triaged in.
+#
+# It replaced scripts/release/briefs.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/release/common.cyr"
+
+# listed(v, sep): a list joined with sep, else str(v).
+fn _listed(v, sepc): i64 {
+    if (v != 0 && bayan_json_v_is_arr(v) == 1) {
+        var parts = vec_new();
+        var i = 0;
+        while (i < rc_jlen(v)) { vec_push(parts, rc_jstr(rc_jat(v, i))); i = i + 1; }
+        return hc_join(parts, sepc);
+    }
+    return rc_jstr(v);
+}
+
+# answer(d): the option whose label is rec_label.
+fn _answer(d): i64 {
+    var opts = rc_jreq(d, "options");
+    var rec = rc_jreq(d, "rec_label");
+    var i = 0;
+    while (i < rc_jlen(opts)) {
+        var o = rc_jat(opts, i);
+        if (rc_jeq(rc_jget(o, "label"), rec) == 1) { return o; }
+        i = i + 1;
+    }
+    rc_exit(hc_ccat("briefs: StopIteration: no option labelled ", hc_pyrepr(rc_jstr(rec))));
+    return 0;
+}
+
+# A small ordered str -> value map: a vec of [key, value].
+fn _m_get(m, k): i64 {
+    var i = 0;
+    while (i < vec_len(m)) {
+        if (hc_eq(vec_get(vec_get(m, i), 0), k) == 1) { return vec_get(vec_get(m, i), 1); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _m_set(m, k, v): i64 {
+    var i = 0;
+    while (i < vec_len(m)) {
+        if (hc_eq(vec_get(vec_get(m, i), 0), k) == 1) { vec_set(vec_get(m, i), 1, v); return 0; }
+        i = i + 1;
+    }
+    var p = vec_new();
+    vec_push(p, k);
+    vec_push(p, v);
+    vec_push(m, p);
+    return 0;
+}
+
+fn main(): i64 {
+    var usage = "briefs --ver X.Y.Z --date YYYY-MM-DD [--dry] [--units --triage --decisions --notes F] [--out D]";
+    rc_options("briefs", usage, 1, 1);
+    hc_opt("units", 1);
+    hc_opt("triage", 1);
+    hc_opt("decisions", 1);
+    hc_opt("notes", 1);
+    hc_opt("out", 1);
+    rc_finish(1, 0);
+    var up = hc_optv("units");
+    if (up == 0) { up = rc_in_c6("units.json"); }
+    var tp = hc_optv("triage");
+    if (tp == 0) { tp = rc_in_c6("triage.json"); }
+    var dp = hc_optv("decisions");
+    if (dp == 0) { dp = rc_in_c6("decisions.json"); }
+    var U = rc_json(up);
+    var T = rc_json(tp);
+    var D = rc_json(dp);
+    var notes_path = hc_optv("notes");
+    if (notes_path == 0) { notes_path = rc_in_c6("brief_notes.json"); }
+    var N = 0;
+    if (hc_exists(hc_cstr(notes_path)) == 1) { N = rc_json(notes_path); }
+    var out_dir = hc_optv("out");
+    if (out_dir == 0) { out_dir = rc_in_c6("briefs"); }
+    var ver = RC_VER;
+    var date = RC_DATE;
+
+    var items = vec_new();     # issue -> [triage lane, item]
+    var lanemeta = vec_new();  # lane -> group
+    var gi = 0;
+    while (gi < rc_jlen(T)) {
+        var g = rc_jat(T, gi);
+        gi = gi + 1;
+        var ln = vec_get(hc_split(rc_jreqs(g, "lane"), 32), 0);
+        _m_set(lanemeta, ln, g);
+        var its = rc_jreq(g, "items");
+        var ii = 0;
+        while (ii < rc_jlen(its)) {
+            var it = rc_jat(its, ii);
+            ii = ii + 1;
+            var pair = vec_new();
+            vec_push(pair, ln);
+            vec_push(pair, it);
+            _m_set(items, rc_jreqs(it, "issue"), pair);
+        }
+    }
+    var dec = vec_new();       # issue -> vec of decisions
+    var di = 0;
+    while (di < rc_jlen(D)) {
+        var d = rc_jat(D, di);
+        di = di + 1;
+        var iss = rc_jreqs(d, "issue");
+        var l = _m_get(dec, iss);
+        if (l == 0) { l = vec_new(); _m_set(dec, iss, l); }
+        vec_push(l, d);
+    }
+    var preamble = 0;
+    var unit_notes = 0;
+    var extra = 0;
+    var cross = 0;
+    if (N != 0) {
+        preamble = rc_jget(N, "preamble");
+        unit_notes = rc_jget(N, "unit_notes");
+        extra = rc_jget(N, "extra_decisions");
+        cross = rc_jget(N, "cross_lane");
+    }
+    if (RC_DRY == 0) { hc_mkdirs(hc_cstr(out_dir)); }
+    var n = 0;
+    var waves = rc_jitems(U);
+    var wi = 0;
+    while (wi < vec_len(waves)) {
+        var wname = vec_get(vec_get(waves, wi), 0);
+        var lanes = rc_jitems(vec_get(vec_get(waves, wi), 1));
+        wi = wi + 1;
+        var wave = 0;
+        if (hc_pyint(hc_lstrip_set(wname, "Ww"), &wave) == 0) {
+            var wbad = hc_pyrepr(hc_lstrip_set(wname, "Ww"));
+            rc_exit(hc_ccat("ValueError: invalid literal for int() with base 10: ", wbad));
+        }
+        if (wave == 0) { continue; }
+        var li = 0;
+        while (li < vec_len(lanes)) {
+            var lane = vec_get(vec_get(lanes, li), 0);
+            var unitsv = vec_get(vec_get(lanes, li), 1);
+            var units = rc_jitems(unitsv);
+            li = li + 1;
+            var meta = _m_get(lanemeta, lane);
+            if (meta == 0) {
+                # a release may run a triage group as several lanes (6.7.17): the lane takes the
+                # notes of the group its first issue was triaged in
+                var first = rc_jstr(rc_jat(vec_get(vec_get(units, 0), 1), 0));
+                var fi = _m_get(items, first);
+                if (fi == 0) { rc_exit(hc_cat3(lane, hc_s(": "), hc_catc(first, " is not in the triage"))); }
+                meta = _m_get(lanemeta, vec_get(fi, 0));
+            }
+            var ui = 0;
+            while (ui < vec_len(units)) {
+                var u = vec_get(vec_get(units, ui), 0);
+                var xs = vec_get(vec_get(units, ui), 1);
+                ui = ui + 1;
+                var key = hc_cat3(lane, hc_s("/"), u);
+                var out = vec_new();
+                var h = hc_sb();
+                hc_sbc(h, "# ");
+                hc_sba(h, ver);
+                hc_sbc(h, " brief — lane ");
+                hc_sba(h, lane);
+                hc_sbc(h, ", unit ");
+                hc_sba(h, u);
+                hc_sbc(h, " (wave ");
+                hc_sbi(h, wave);
+                hc_sbc(h, ")\n");
+                vec_push(out, hc_sbend(h));
+                if (preamble != 0) {
+                    var ps = rc_jstr(preamble);
+                    if (bayan_json_v_is_null(preamble) == 1) { ps = hc_s(""); }
+                    if (hc_n(ps) > 0) { vec_push(out, ps); }
+                }
+                var un = rc_jget(unit_notes, hc_cstr(key));
+                if (un != 0) { vec_push(out, hc_cat3(hc_s("**UNIT NOTE:** "), rc_jstr(un), hc_s("\n"))); }
+                var xi = 0;
+                while (xi < rc_jlen(xs)) {
+                    var x = rc_jstr(rc_jat(xs, xi));
+                    xi = xi + 1;
+                    var pr = _m_get(items, x);
+                    if (pr == 0) { rc_exit(hc_cat3(key, hc_s(": "), hc_catc(x, " is not in the triage"))); }
+                    var ol = vec_get(pr, 0);
+                    var i = vec_get(pr, 1);
+                    vec_push(out, hc_ccat("## ", x));
+                    vec_push(out, hc_ccat("**Title:** ", rc_jreqs(i, "title")));
+                    var sv = hc_sb();
+                    hc_sbc(sv, "**Severity:** ");
+                    hc_sba(sv, rc_jreqs(i, "severity"));
+                    hc_sbc(sv, " · **Kind:** ");
+                    hc_sba(sv, rc_jreqs(i, "kind"));
+                    hc_sbc(sv, " · **Size:** ");
+                    hc_sba(sv, rc_jreqs(i, "size"));
+                    if (hc_eq(ol, lane) == 0) {
+                        hc_sbc(sv, " · triaged in the ");
+                        hc_sba(sv, ol);
+                        hc_sbc(sv, " lane");
+                    }
+                    vec_push(out, hc_sbend(sv));
+                    var tsb = hc_sb();
+                    hc_sbc(tsb, "**Triage status:** ");
+                    hc_sba(tsb, rc_jreqs(i, "status"));
+                    hc_sbc(tsb, " — ");
+                    hc_sba(tsb, rc_jreqs(i, "evidence"));
+                    vec_push(out, hc_sbend(tsb));
+                    var dl = _m_get(dec, x);
+                    if (dl != 0) {
+                        var udh = hc_s(" — implement exactly the answer):**");
+                        vec_push(out, hc_cat3(hc_s("**USER DECISIONS (final, "), date, udh));
+                        var k = 0;
+                        while (k < vec_len(dl)) {
+                            var dd = vec_get(dl, k);
+                            k = k + 1;
+                            var ans = _answer(dd);
+                            var db = hc_sb();
+                            hc_sbc(db, "- **D");
+                            hc_sba(db, rc_jreqs(dd, "id"));
+                            hc_sbc(db, "** — ");
+                            hc_sba(db, rc_jreqs(dd, "question"));
+                            hc_sbc(db, "\n  **ANSWER: ");
+                            hc_sba(db, rc_jreqs(ans, "label"));
+                            hc_sbc(db, "** => ");
+                            hc_sba(db, rc_jreqs(ans, "effect"));
+                            vec_push(out, hc_sbend(db));
+                        }
+                    } else {
+                        var none = hc_sb();
+                        hc_sbc(none, "**USER DECISIONS:** none needed ");
+                        hc_sbc(none, "(a fix to what the source says / a codegen or tooling defect).");
+                        vec_push(out, hc_sbend(none));
+                    }
+                    vec_push(out, hc_ccat("**Fix plan (triage, verify line numbers):** ", rc_jreqs(i, "fix_plan")));
+                    vec_push(out, hc_ccat("**Touches:** ", _listed(rc_jget(i, "touches"), ", ")));
+                    vec_push(out, hc_ccat("**Rows:** ", _listed(rc_jget(i, "rows"), " | ")));
+                    vec_push(out, hc_ccat("**Targets:** ", _listed(rc_jget(i, "targets"), ", ")));
+                    vec_push(out, hc_ccat("**Hosts:** ", _listed(rc_jget(i, "hosts"), ", ")));
+                    vec_push(out, hc_cat3(hc_s("**Risk:** "), rc_jreqs(i, "risk"), hc_s("\n")));
+                }
+                var ex = rc_jget(extra, hc_cstr(key));
+                var ei = 0;
+                while (ei < rc_jlen(ex)) {
+                    var did = rc_jat(ex, ei);
+                    ei = ei + 1;
+                    var dd2 = 0;
+                    var q = 0;
+                    while (q < rc_jlen(D)) {
+                        if (rc_jeq(rc_jget(rc_jat(D, q), "id"), did) == 1) { dd2 = rc_jat(D, q); }
+                        q = q + 1;
+                    }
+                    if (dd2 == 0) { rc_exit(hc_ccat("briefs: KeyError: ", rc_jstr(did))); }
+                    var ans2 = _answer(dd2);
+                    var eb = hc_sb();
+                    hc_sbc(eb, "## ");
+                    hc_sba(eb, rc_jreqs(dd2, "issue"));
+                    hc_sbc(eb, " — D");
+                    hc_sba(eb, rc_jstr(did));
+                    hc_sbc(eb, "\n**USER DECISION (final, ");
+                    hc_sba(eb, date);
+                    hc_sbc(eb, "):** ");
+                    hc_sba(eb, rc_jreqs(dd2, "question"));
+                    hc_sbc(eb, "\n**ANSWER: ");
+                    hc_sba(eb, rc_jreqs(ans2, "label"));
+                    hc_sbc(eb, "** => ");
+                    hc_sba(eb, rc_jreqs(ans2, "effect"));
+                    hc_sbc(eb, "\n**Why:** ");
+                    hc_sba(eb, rc_jreqs(dd2, "why"));
+                    hc_sbc(eb, "\n");
+                    vec_push(out, hc_sbend(eb));
+                }
+                var nb = hc_sb();
+                hc_sbc(nb, "## Lane notes (from the ");
+                hc_sba(nb, lane);
+                hc_sbc(nb, " triage)\n**Groups:** ");
+                hc_sba(nb, rc_jreqs(meta, "groups"));
+                hc_sbc(nb, "\n\n**Ordering constraints:** ");
+                hc_sba(nb, rc_jreqs(meta, "ordering_constraints"));
+                hc_sbc(nb, "\n\n**Cross-lane:** ");
+                hc_sba(nb, rc_jreqs(meta, "cross_lane"));
+                hc_sbc(nb, "\n");
+                vec_push(out, hc_sbend(nb));
+                var cl = rc_jget(cross, hc_cstr(lane));
+                var ci = 0;
+                while (ci < rc_jlen(cl)) {
+                    var c = rc_jat(cl, ci);
+                    ci = ci + 1;
+                    var from = _m_get(lanemeta, rc_jreqs(c, "from"));
+                    if (from == 0) { rc_exit(hc_ccat("briefs: KeyError: ", hc_pyrepr(rc_jreqs(c, "from")))); }
+                    var cb = hc_sb();
+                    hc_sbc(cb, "**");
+                    hc_sba(cb, rc_jreqs(c, "label"));
+                    hc_sbc(cb, ":** ");
+                    hc_sba(cb, rc_jreqs(from, "cross_lane"));
+                    hc_sbc(cb, "\n");
+                    vec_push(out, hc_sbend(cb));
+                }
+                var fname = hc_cat3(lane, hc_s("_"), hc_catc(u, ".md"));
+                var path = hc_join2(out_dir, fname);
+                rc_wr(path, hc_join(out, "\n"), RC_DRY);
+                if (RC_DRY == 1) { hc_outc("  would write "); hc_out(path); hc_outc("\n"); }
+                n = n + 1;
+            }
+        }
+    }
+    hc_outc("briefs ");
+    hc_out(hc_itoa(n));
+    hc_outc("\n");
+    return 0;
+}

@@ -1,0 +1,107 @@
+rc=0
+--- stdout
+derived: n_tcyr=6 n_cross=1 n_lib=3 n_gates=3 n_api=5 n_open=5 n_prop=1 cyc=296 arm=1,234 text=16  placed: 1.0.0=1 9.8.10=2 9.9.0=1
+  docs/development/roadmap.md: sub '\\*\\*Current head: v(\\d+\\.\\d+\\.\\d+)\\*\\* \\((\\d{4}-\\d\\d-\\d\\d)\\)': 1
+  docs/development/roadmap.md: sub '(?m)^## Where we are$': 1
+  docs/development/roadmap.md: sub '(?i)FILLER (\\d)\\b': 10
+  docs/development/roadmap.md: sub 'Keep.*?honest': 1
+  docs/development/roadmap.md: sub 'zzz-no-such-thing': 0   <- matched nothing
+  docs/development/roadmap.md: replace '| 9.8.7 | the one |': 1
+  docs/development/roadmap.md: replace 'not present at all': 0   <- matched nothing
+  docs/development/roadmap.md: cut '## Sequence' .. 'filler line': 5 lines
+  docs/development/state.md: row 'Version'
+  docs/development/state.md: row 'Corpus'
+  docs/development/state.md: row 'Gates'
+  docs/development/completed-phases.md: insert after row 'v9.7.x'
+roadmap / state / completed-phases written
+--- stderr
+--- docs
+== ./completed-phases.md
+# Phases
+
+| Minor | Theme |
+|---|---|
+| **v9.7.x** | earlier | **v9.7.9** | notes |
+| **v9.8.7** | the test | **3** | 3 lib |
+| **v9.8.x** | current |
+== ./issues/README.md
+# index
+**Placement:** 1.0.0 — the index (counted in placed, not in n_open)
+== ./issues/i1.md
+# i1
+**Placement:** 9.9.0 — later (x)
+== ./issues/i2.md
+# i2
+**Placement:** 9.8.10 — x
+**Placement:** 9.9.0 — second line ignored
+== ./issues/i3.md
+# i3
+no placement
+== ./issues/i4.md
+# i4
+**Placement:** 9.9.0(no space)
+== ./issues/i5.md
+# i5
+**Placement:** 9.8.10 — y
+== ./proposals/README.md
+# not counted
+== ./proposals/p1.md
+# p
+== ./roadmap.md
+# Roadmap
+
+**Current head: v9.8.7** (2026-10-22; was v9.8.6 of 2025-12-01) — words.
+
+## Where we are (6 tests,    3 gates, 296, 1 later, 0 none)
+
+> Every figure above is DERIVED. Figures: '16' ****5**** 0x5 +1 1,2 abc1234.
+
+filler line
+row 0
+row 1
+row 2
+row 3
+row 4
+row 5
+row 6
+row 7
+row 8
+row 9
+filler 10
+filler 11
+filler 12
+filler 13
+filler 14
+filler 15
+filler 16
+filler 17
+filler 18
+filler 19
+filler 20
+filler 21
+filler 22
+filler 23
+filler 24
+filler 25
+filler 26
+filler 27
+filler 28
+filler 29
+filler 30
+filler 31
+filler 32
+filler 33
+filler 34
+filler 35
+filler 36
+filler 37
+filler 38
+filler 39
+an honest last line
+== ./state.md
+# State
+
+| **Version** | **9.8.7 — released 2026-10-22** (tagged at `abc1234`) |
+| **Corpus** | **6** `.tcyr` (**1** in `crossos/`) · **3** `lib/*.cyr` · stays |
+| **Gates** | check.sh 1 / 1 · bench 99 ms |
+| **No pipes after** | x

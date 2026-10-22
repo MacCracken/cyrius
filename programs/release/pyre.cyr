@@ -1,0 +1,1260 @@
+# programs/release/pyre.cyr — Python's `re` for the release steps: compile a pattern with Python's
+# syntax and flags and substitute with Python's re.subn semantics (leftmost-first backtracking,
+# lazy and possessive quantifiers, lookahead and fixed-width lookbehind, atomic groups, named and
+# numbered groups and backreferences, conditionals, inline and scoped flags, Unicode \d \w \s and
+# word boundaries, IGNORECASE by simple case mapping), over code points. roadmap_state's `sub`
+# operations are Python regexes written into a release's template, so the step that replaced
+# roadmap-state.py reads them as Python did. Not a program: programs/release/roadmap_state.cyr
+# includes it. CHANGELOG [6.7.17]
+#
+# The matcher is a backtracking machine with an explicit stack (no recursion per input character:
+# a `.*` over a whole document costs heap, not stack); a lookaround or atomic group runs a nested
+# machine, so recursion is bounded by the pattern's nesting. Like Python's sre, a repeated group
+# that matched empty stops repeating.
+
+include "programs/dev/helper_common.cyr"
+include "lib/unicode/casefold.cyr"
+
+var PR_I = 2;
+var PR_M = 8;
+var PR_S = 16;
+var PR_X = 64;
+
+var pr_err = 0;       # the compile error (a Str), or 0
+
+# ── the pattern's code points and the parser's state ────────────────────────────────────
+
+var _pp = 0;          # pattern code points (i64 array)
+var _pn = 0;
+var _pi = 0;          # parse position
+var _pflags = 0;      # flags in force
+var _pgroups = 0;     # capturing groups so far
+var _pnames = 0;      # vec of [name Str, group number]
+var _pclasses = 0;    # vec of classes
+var _patoms = 0;      # atoms parsed so far (global flags must come before any)
+
+fn _pr_fail(msgc): i64 {
+    if (pr_err == 0) { pr_err = hc_s(msgc); }
+    return 0;
+}
+fn _pc(i): i64 {
+    if (i < 0 || i >= _pn) { return 0 - 1; }
+    return load64(_pp + i * 8);
+}
+
+# ── AST: a vec [type, a, b, c, d] ────────────────────────────────────────────────────────
+var N_EMPTY = 0;
+var N_CHAR = 1;      # a = cp, b = icase
+var N_ANY = 2;       # a = dotall
+var N_CLASS = 3;     # a = class index
+var N_CAT = 4;       # a = vec of nodes
+var N_ALT = 5;       # a = vec of nodes
+var N_GROUP = 6;     # a = group number (-1: none), b = node
+var N_REPEAT = 7;    # a = node, b = min, c = max (-1 inf), d = 0 greedy 1 lazy 2 possessive
+var N_BOL = 8;       # a = multiline
+var N_EOL = 9;       # a = multiline
+var N_BOS = 10;
+var N_EOS = 11;
+var N_WB = 12;       # a = negated
+var N_BREF = 13;     # a = group, b = icase
+var N_LOOK = 14;     # a = node, b = behind, c = negated
+var N_ATOMIC = 15;   # a = node
+var N_COND = 16;     # a = group, b = yes, c = no
+
+fn _nd(t, a, b, c, d): i64 {
+    var v = vec_new();
+    vec_push(v, t);
+    vec_push(v, a);
+    vec_push(v, b);
+    vec_push(v, c);
+    vec_push(v, d);
+    return v;
+}
+fn _nt(n): i64 { return vec_get(n, 0); }
+fn _na(n): i64 { return vec_get(n, 1); }
+fn _nb(n): i64 { return vec_get(n, 2); }
+fn _nc(n): i64 { return vec_get(n, 3); }
+fn _ndd(n): i64 { return vec_get(n, 4); }
+
+# ── character tests ─────────────────────────────────────────────────────────────────────
+
+fn pr_isword(cp): i64 {
+    if (cp == 95) { return 1; }
+    if (cp >= 48 && cp <= 57) { return 1; }
+    if (cp >= 65 && cp <= 90) { return 1; }
+    if (cp >= 97 && cp <= 122) { return 1; }
+    if (cp < 128) { return 0; }
+    var c = unicode_category(cp);
+    if (c <= GC_LO) { return 1; }
+    if (c >= GC_ND && c <= GC_NO) { return 1; }
+    return 0;
+}
+fn pr_isdigit(cp): i64 {
+    if (hc_nd_value(cp) >= 0) { return 1; }
+    return 0;
+}
+fn pr_isspace(cp): i64 { return hc_py_space(cp); }
+
+fn _pr_lower(cp): i64 {
+    if (cp >= 65 && cp <= 90) { return cp + 32; }
+    if (cp < 128) { return cp; }
+    return unicode_to_lower(cp);
+}
+fn _pr_upper(cp): i64 {
+    if (cp >= 97 && cp <= 122) { return cp - 32; }
+    if (cp < 128) { return cp; }
+    return unicode_to_upper(cp);
+}
+# Python's IGNORECASE equivalence: equal through lower, upper, or lower-of-upper (which is how
+# `ſ` matches `s` and `K` (Kelvin) matches `k`).
+fn _pr_fold(cp): i64 { return _pr_lower(_pr_upper(cp)); }
+fn _pr_ieq(a, b): i64 {
+    if (a == b) { return 1; }
+    if (_pr_lower(a) == _pr_lower(b)) { return 1; }
+    if (_pr_upper(a) == _pr_upper(b)) { return 1; }
+    if (_pr_fold(a) == _pr_fold(b)) { return 1; }
+    return 0;
+}
+
+# A class: vec [negated, icase, items (vec of [kind, lo, hi])]; kind 0 a range, 1..6 \d \D \w \W
+# \s \S.
+fn _cls_item_match(it, cp): i64 {
+    var k = vec_get(it, 0);
+    if (k == 0) {
+        if (cp >= vec_get(it, 1) && cp <= vec_get(it, 2)) { return 1; }
+        return 0;
+    }
+    if (k == 1) { return pr_isdigit(cp); }
+    if (k == 2) { return 1 - pr_isdigit(cp); }
+    if (k == 3) { return pr_isword(cp); }
+    if (k == 4) { return 1 - pr_isword(cp); }
+    if (k == 5) { return pr_isspace(cp); }
+    if (k == 6) { return 1 - pr_isspace(cp); }
+    return 0;
+}
+fn _cls_match(cls, cp): i64 {
+    var items = vec_get(cls, 2);
+    var hit = 0;
+    var i = 0;
+    while (i < vec_len(items) && hit == 0) {
+        var it = vec_get(items, i);
+        if (_cls_item_match(it, cp) == 1) { hit = 1; }
+        elif (vec_get(cls, 1) == 1 && vec_get(it, 0) == 0) {
+            if (_cls_item_match(it, _pr_lower(cp)) == 1 || _cls_item_match(it, _pr_upper(cp)) == 1) { hit = 1; }
+            elif (_cls_item_match(it, _pr_fold(cp)) == 1) { hit = 1; }
+        }
+        i = i + 1;
+    }
+    if (vec_get(cls, 0) == 1) { return 1 - hit; }
+    return hit;
+}
+
+# ── the parser ───────────────────────────────────────────────────────────────────────────
+
+fn _pr_skip_x(): i64 {
+    if ((_pflags & PR_X) == 0) { return 0; }
+    loop {
+        var c = _pc(_pi);
+        if (c < 0) { break; }
+        if (pr_isspace(c) == 1) { _pi = _pi + 1; continue; }
+        if (c == 35) {
+            while (_pi < _pn && _pc(_pi) != 10) { _pi = _pi + 1; }
+            continue;
+        }
+        break;
+    }
+    return 0;
+}
+
+fn _pr_hexval(c): i64 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+# `n` hex digits at _pi: the value, or -1.
+fn _pr_hexn(n): i64 {
+    var v = 0;
+    var k = 0;
+    while (k < n) {
+        var h = _pr_hexval(_pc(_pi + k));
+        if (h < 0) { return 0 - 1; }
+        v = v * 16 + h;
+        k = k + 1;
+    }
+    _pi = _pi + n;
+    return v;
+}
+
+# An escape after a `\` (at _pi, past the backslash): a code point (>= 0), or a class item kind
+# as -(kind) for \d \D \w \W \s \S, or -100 for an error. `in_class`: \b is backspace, and a
+# backreference is not one.
+fn _pr_escape(in_class): i64 {
+    var c = _pc(_pi);
+    if (c < 0) { _pr_fail("bad escape (end of pattern)"); return 0 - 100; }
+    _pi = _pi + 1;
+    if (c == 100) { return 0 - 1; }
+    if (c == 68) { return 0 - 2; }
+    if (c == 119) { return 0 - 3; }
+    if (c == 87) { return 0 - 4; }
+    if (c == 115) { return 0 - 5; }
+    if (c == 83) { return 0 - 6; }
+    if (c == 110) { return 10; }
+    if (c == 116) { return 9; }
+    if (c == 114) { return 13; }
+    if (c == 102) { return 12; }
+    if (c == 118) { return 11; }
+    if (c == 97) { return 7; }
+    if (c == 98 && in_class == 1) { return 8; }
+    if (c == 120) {
+        var v = _pr_hexn(2);
+        if (v < 0) { _pr_fail("incomplete escape \\x"); return 0 - 100; }
+        return v;
+    }
+    if (c == 117) {
+        var v2 = _pr_hexn(4);
+        if (v2 < 0) { _pr_fail("incomplete escape \\u"); return 0 - 100; }
+        return v2;
+    }
+    if (c == 85) {
+        var v3 = _pr_hexn(8);
+        if (v3 < 0 || v3 > 0x10FFFF) { _pr_fail("bad escape \\U"); return 0 - 100; }
+        return v3;
+    }
+    if (c == 48) {
+        # \0 then up to two more octal digits
+        var o = 0;
+        var k = 0;
+        while (k < 2 && _pc(_pi) >= 48 && _pc(_pi) <= 55) { o = o * 8 + (_pc(_pi) - 48); _pi = _pi + 1; k = k + 1; }
+        return o;
+    }
+    if (c >= 49 && c <= 55 && in_class == 1) {
+        # octal in a class: up to three digits
+        var o2 = c - 48;
+        var k2 = 0;
+        while (k2 < 2 && _pc(_pi) >= 48 && _pc(_pi) <= 55) {
+            o2 = o2 * 8 + (_pc(_pi) - 48);
+            _pi = _pi + 1;
+            k2 = k2 + 1;
+        }
+        return o2;
+    }
+    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57)) {
+        _pr_fail("bad escape");
+        return 0 - 100;
+    }
+    return c;
+}
+
+fn _pr_new_class(neg): i64 {
+    var cls = vec_new();
+    vec_push(cls, neg);
+    var ic = 0;
+    if ((_pflags & PR_I) != 0) { ic = 1; }
+    vec_push(cls, ic);
+    vec_push(cls, vec_new());
+    vec_push(_pclasses, cls);
+    return vec_len(_pclasses) - 1;
+}
+fn _pr_cls_add(cls, kind, lo, hi): i64 {
+    var it = vec_new();
+    vec_push(it, kind);
+    vec_push(it, lo);
+    vec_push(it, hi);
+    vec_push(vec_get(cls, 2), it);
+    return 0;
+}
+
+# `[` already read.
+fn _pr_class(): i64 {
+    var neg = 0;
+    if (_pc(_pi) == 94) { neg = 1; _pi = _pi + 1; }
+    var ci = _pr_new_class(neg);
+    var cls = vec_get(_pclasses, ci);
+    var first = 1;
+    loop {
+        var c = _pc(_pi);
+        if (c < 0) { _pr_fail("unterminated character set"); return 0; }
+        if (c == 93 && first == 0) { _pi = _pi + 1; break; }
+        first = 0;
+        var lo = c;
+        _pi = _pi + 1;
+        if (c == 92) {
+            lo = _pr_escape(1);
+            if (pr_err != 0) { return 0; }
+            if (lo < 0) { _pr_cls_add(cls, 0 - lo, 0, 0); continue; }
+        }
+        # a range lo-hi (a `-` before `]` is a literal)
+        if (_pc(_pi) == 45 && _pc(_pi + 1) != 93 && _pc(_pi + 1) >= 0) {
+            _pi = _pi + 1;
+            var hi = _pc(_pi);
+            _pi = _pi + 1;
+            if (hi == 92) {
+                hi = _pr_escape(1);
+                if (pr_err != 0) { return 0; }
+                if (hi < 0) { _pr_fail("bad character range"); return 0; }
+            }
+            if (hi < lo) { _pr_fail("bad character range"); return 0; }
+            _pr_cls_add(cls, 0, lo, hi);
+            continue;
+        }
+        _pr_cls_add(cls, 0, lo, lo);
+    }
+    return _nd(N_CLASS, ci, 0, 0, 0);
+}
+
+# The flags letters at _pi (a i L m s u x): their bits.
+fn _pr_flagbits(c): i64 {
+    if (c == 105) { return PR_I; }
+    if (c == 109) { return PR_M; }
+    if (c == 115) { return PR_S; }
+    if (c == 120) { return PR_X; }
+    if (c == 97 || c == 117 || c == 76) { return 1024; }   # a / u / L: accepted, no effect here
+    return 0;
+}
+
+fn _pr_name(endc): i64 {
+    var sb = hc_sb();
+    while (_pi < _pn && _pc(_pi) != endc) { hc_sb_cp(sb, _pc(_pi)); _pi = _pi + 1; }
+    if (_pc(_pi) != endc) { _pr_fail("missing group name terminator"); return 0; }
+    _pi = _pi + 1;
+    return hc_sbend(sb);
+}
+fn _pr_group_of(name): i64 {
+    var i = 0;
+    while (i < vec_len(_pnames)) {
+        if (hc_eq(vec_get(vec_get(_pnames, i), 0), name) == 1) { return vec_get(vec_get(_pnames, i), 1); }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# A group, `(` already read.
+fn _pr_group(): i64 {
+    if (_pc(_pi) != 63) {
+        _pgroups = _pgroups + 1;
+        var g = _pgroups;
+        var body = _pr_alt();
+        if (pr_err != 0) { return 0; }
+        if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated subpattern"); return 0; }
+        _pi = _pi + 1;
+        return _nd(N_GROUP, g, body, 0, 0);
+    }
+    _pi = _pi + 1;
+    var c = _pc(_pi);
+    if (c == 58 || c == 62) {
+        _pi = _pi + 1;
+        var b1 = _pr_alt();
+        if (pr_err != 0) { return 0; }
+        if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated subpattern"); return 0; }
+        _pi = _pi + 1;
+        if (c == 62) { return _nd(N_ATOMIC, b1, 0, 0, 0); }
+        return _nd(N_GROUP, 0 - 1, b1, 0, 0);
+    }
+    if (c == 80) {
+        _pi = _pi + 1;
+        if (_pc(_pi) == 60) {
+            _pi = _pi + 1;
+            var name = _pr_name(62);
+            if (pr_err != 0) { return 0; }
+            _pgroups = _pgroups + 1;
+            var g2 = _pgroups;
+            var np = vec_new();
+            vec_push(np, name);
+            vec_push(np, g2);
+            vec_push(_pnames, np);
+            var b2 = _pr_alt();
+            if (pr_err != 0) { return 0; }
+            if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated subpattern"); return 0; }
+            _pi = _pi + 1;
+            return _nd(N_GROUP, g2, b2, 0, 0);
+        }
+        if (_pc(_pi) == 61) {
+            _pi = _pi + 1;
+            var rn = _pr_name(41);
+            if (pr_err != 0) { return 0; }
+            var rg = _pr_group_of(rn);
+            if (rg < 0) { _pr_fail("unknown group name"); return 0; }
+            var ic = 0;
+            if ((_pflags & PR_I) != 0) { ic = 1; }
+            return _nd(N_BREF, rg, ic, 0, 0);
+        }
+        _pr_fail("unknown extension ?P");
+        return 0;
+    }
+    if (c == 35) {
+        while (_pi < _pn && _pc(_pi) != 41) { _pi = _pi + 1; }
+        if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated comment"); return 0; }
+        _pi = _pi + 1;
+        return _nd(N_EMPTY, 0, 0, 0, 0);
+    }
+    if (c == 61 || c == 33) {
+        _pi = _pi + 1;
+        var b3 = _pr_alt();
+        if (pr_err != 0) { return 0; }
+        if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated subpattern"); return 0; }
+        _pi = _pi + 1;
+        var neg = 0;
+        if (c == 33) { neg = 1; }
+        return _nd(N_LOOK, b3, 0, neg, 0);
+    }
+    if (c == 60 && (_pc(_pi + 1) == 61 || _pc(_pi + 1) == 33)) {
+        var neg2 = 0;
+        if (_pc(_pi + 1) == 33) { neg2 = 1; }
+        _pi = _pi + 2;
+        var b4 = _pr_alt();
+        if (pr_err != 0) { return 0; }
+        if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated subpattern"); return 0; }
+        _pi = _pi + 1;
+        return _nd(N_LOOK, b4, 1, neg2, 0);
+    }
+    if (c == 40) {
+        # (?(id/name)yes|no)
+        _pi = _pi + 1;
+        var ref = _pr_name(41);
+        if (pr_err != 0) { return 0; }
+        var cg = 0;
+        if (hc_pyint(ref, &cg) == 0) {
+            cg = _pr_group_of(ref);
+            if (cg < 0) { _pr_fail("unknown group name"); return 0; }
+        }
+        var yes = _pr_cat();
+        if (pr_err != 0) { return 0; }
+        var no = _nd(N_EMPTY, 0, 0, 0, 0);
+        if (_pc(_pi) == 124) {
+            _pi = _pi + 1;
+            no = _pr_cat();
+            if (pr_err != 0) { return 0; }
+        }
+        if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated subpattern"); return 0; }
+        _pi = _pi + 1;
+        return _nd(N_COND, cg, yes, no, 0);
+    }
+    # inline flags: (?imsx) (global, at the start) or (?imsx-imsx:...) (scoped)
+    var on = 0;
+    var off = 0;
+    var minus = 0;
+    loop {
+        var f = _pc(_pi);
+        if (f == 45) { minus = 1; _pi = _pi + 1; continue; }
+        var bits = _pr_flagbits(f);
+        if (bits == 0) { break; }
+        if (minus == 1) { off = off | bits; } else { on = on | bits; }
+        _pi = _pi + 1;
+    }
+    on = on & (PR_I | PR_M | PR_S | PR_X);
+    off = off & (PR_I | PR_M | PR_S | PR_X);
+    if (_pc(_pi) == 41 && minus == 0) {
+        _pi = _pi + 1;
+        if (_patoms > 0) { _pr_fail("global flags not at the start of the expression"); return 0; }
+        _pflags = _pflags | on;
+        return _nd(N_EMPTY, 0, 0, 0, 0);
+    }
+    if (_pc(_pi) == 58) {
+        _pi = _pi + 1;
+        var saved = _pflags;
+        _pflags = (_pflags | on) & ~off;
+        var b5 = _pr_alt();
+        _pflags = saved;
+        if (pr_err != 0) { return 0; }
+        if (_pc(_pi) != 41) { _pr_fail("missing ), unterminated subpattern"); return 0; }
+        _pi = _pi + 1;
+        return _nd(N_GROUP, 0 - 1, b5, 0, 0);
+    }
+    _pr_fail("unknown extension");
+    return 0;
+}
+
+# One atom (or 0 at the end of a concatenation).
+fn _pr_atom(): i64 {
+    _pr_skip_x();
+    var c = _pc(_pi);
+    if (c < 0 || c == 124 || c == 41) { return 0; }
+    # a global-flags group (?imsx) is no atom; anything else (a scoped (?i:...) too) is
+    var gfl = 0;
+    if (c == 40 && _pc(_pi + 1) == 63) {
+        var f = _pi + 2;
+        while (_pr_flagbits(_pc(f)) != 0) { f = f + 1; }
+        if (f > _pi + 2 && _pc(f) == 41) { gfl = 1; }
+    }
+    if (gfl == 0) { _patoms = _patoms + 1; }
+    _pi = _pi + 1;
+    var ic = 0;
+    if ((_pflags & PR_I) != 0) { ic = 1; }
+    if (c == 40) { return _pr_group(); }
+    if (c == 91) { return _pr_class(); }
+    if (c == 46) {
+        var dot = 0;
+        if ((_pflags & PR_S) != 0) { dot = 1; }
+        return _nd(N_ANY, dot, 0, 0, 0);
+    }
+    if (c == 94) {
+        var m = 0;
+        if ((_pflags & PR_M) != 0) { m = 1; }
+        return _nd(N_BOL, m, 0, 0, 0);
+    }
+    if (c == 36) {
+        var m2 = 0;
+        if ((_pflags & PR_M) != 0) { m2 = 1; }
+        return _nd(N_EOL, m2, 0, 0, 0);
+    }
+    if (c == 42 || c == 43 || c == 63) { _pr_fail("nothing to repeat"); return 0; }
+    if (c == 92) {
+        var e = _pc(_pi);
+        if (e == 65) { _pi = _pi + 1; return _nd(N_BOS, 0, 0, 0, 0); }
+        if (e == 90) { _pi = _pi + 1; return _nd(N_EOS, 0, 0, 0, 0); }
+        if (e == 98) { _pi = _pi + 1; return _nd(N_WB, 0, 0, 0, 0); }
+        if (e == 66) { _pi = _pi + 1; return _nd(N_WB, 1, 0, 0, 0); }
+        if (e >= 49 && e <= 57) {
+            # a backreference (one or two digits), or a three-digit octal
+            var a1 = _pc(_pi + 1);
+            var a2 = _pc(_pi + 2);
+            if (e <= 55 && a1 >= 48 && a1 <= 55 && a2 >= 48 && a2 <= 55) {
+                _pi = _pi + 3;
+                return _nd(N_CHAR, (e - 48) * 64 + (a1 - 48) * 8 + (a2 - 48), ic, 0, 0);
+            }
+            var g = e - 48;
+            _pi = _pi + 1;
+            if (a1 >= 48 && a1 <= 57) { g = g * 10 + (a1 - 48); _pi = _pi + 1; }
+            if (g > _pgroups) { _pr_fail("invalid group reference"); return 0; }
+            return _nd(N_BREF, g, ic, 0, 0);
+        }
+        var v = _pr_escape(0);
+        if (pr_err != 0) { return 0; }
+        if (v < 0) {
+            var ci = _pr_new_class(0);
+            _pr_cls_add(vec_get(_pclasses, ci), 0 - v, 0, 0);
+            return _nd(N_CLASS, ci, 0, 0, 0);
+        }
+        return _nd(N_CHAR, v, ic, 0, 0);
+    }
+    return _nd(N_CHAR, c, ic, 0, 0);
+}
+
+# `{m}`, `{m,}`, `{,n}`, `{m,n}` at _pi (past the `{`): 1 with min / max at out (max -1 for
+# none), or 0 (then `{` is a literal and _pi is unchanged).
+fn _pr_brace(out): i64 {
+    var save = _pi;
+    var m = 0;
+    var have_m = 0;
+    while (_pc(_pi) >= 48 && _pc(_pi) <= 57) { m = m * 10 + (_pc(_pi) - 48); _pi = _pi + 1; have_m = 1; }
+    var mx = m;
+    if (_pc(_pi) == 44) {
+        _pi = _pi + 1;
+        mx = 0 - 1;
+        var have_n = 0;
+        var n = 0;
+        while (_pc(_pi) >= 48 && _pc(_pi) <= 57) { n = n * 10 + (_pc(_pi) - 48); _pi = _pi + 1; have_n = 1; }
+        if (have_n == 1) { mx = n; }
+    } elif (have_m == 0) { _pi = save; return 0; }
+    if (_pc(_pi) != 125) { _pi = save; return 0; }
+    _pi = _pi + 1;
+    store64(out, m);
+    store64(out + 8, mx);
+    return 1;
+}
+
+fn _pr_cat(): i64 {
+    var items = vec_new();
+    loop {
+        var a = _pr_atom();
+        if (pr_err != 0) { return 0; }
+        if (a == 0) { break; }
+        # quantifiers
+        loop {
+            _pr_skip_x();
+            var q = _pc(_pi);
+            var mn = 0 - 1;
+            var mx = 0 - 1;
+            if (q == 42) { mn = 0; mx = 0 - 1; _pi = _pi + 1; }
+            elif (q == 43) { mn = 1; mx = 0 - 1; _pi = _pi + 1; }
+            elif (q == 63) { mn = 0; mx = 1; _pi = _pi + 1; }
+            elif (q == 123) {
+                _pi = _pi + 1;
+                var br: i64[2];
+                if (_pr_brace(&br) == 1) { mn = br[0]; mx = br[1]; }
+                else { _pi = _pi - 1; }
+            }
+            if (mn < 0) { break; }
+            if (mx >= 0 && mx < mn) { _pr_fail("min repeat greater than max repeat"); return 0; }
+            var t = _nt(a);
+            if (t == N_BOL || t == N_EOL || t == N_BOS || t == N_EOS || t == N_WB) {
+                _pr_fail("nothing to repeat");
+                return 0;
+            }
+            if (t == N_REPEAT && vec_get(a, 4) != 3) { _pr_fail("multiple repeat"); return 0; }
+            var mode = 0;
+            if (_pc(_pi) == 63) { mode = 1; _pi = _pi + 1; }
+            elif (_pc(_pi) == 43) { mode = 2; _pi = _pi + 1; }
+            a = _nd(N_REPEAT, a, mn, mx, mode);
+        }
+        vec_push(items, a);
+    }
+    if (vec_len(items) == 1) { return vec_get(items, 0); }
+    return _nd(N_CAT, items, 0, 0, 0);
+}
+
+fn _pr_alt(): i64 {
+    var alts = vec_new();
+    loop {
+        var c = _pr_cat();
+        if (pr_err != 0) { return 0; }
+        if (c == 0) { c = _nd(N_EMPTY, 0, 0, 0, 0); }
+        vec_push(alts, c);
+        _pr_skip_x();
+        if (_pc(_pi) != 124) { break; }
+        _pi = _pi + 1;
+    }
+    if (vec_len(alts) == 1) { return vec_get(alts, 0); }
+    return _nd(N_ALT, alts, 0, 0, 0);
+}
+
+# The width of a node in code points when it is fixed (lookbehind's rule), else -1.
+fn _pr_width(n): i64 {
+    var t = _nt(n);
+    if (t == N_EMPTY || t == N_BOL || t == N_EOL || t == N_BOS || t == N_EOS || t == N_WB || t == N_LOOK) { return 0; }
+    if (t == N_CHAR || t == N_ANY || t == N_CLASS) { return 1; }
+    if (t == N_GROUP || t == N_ATOMIC) { return _pr_width(_nb(n)); }
+    if (t == N_CAT) {
+        var w = 0;
+        var i = 0;
+        while (i < vec_len(_na(n))) {
+            var x = _pr_width(vec_get(_na(n), i));
+            if (x < 0) { return 0 - 1; }
+            w = w + x;
+            i = i + 1;
+        }
+        return w;
+    }
+    if (t == N_ALT) {
+        var w0 = 0 - 2;
+        var j = 0;
+        while (j < vec_len(_na(n))) {
+            var y = _pr_width(vec_get(_na(n), j));
+            if (y < 0) { return 0 - 1; }
+            if (w0 == 0 - 2) { w0 = y; }
+            elif (w0 != y) { return 0 - 1; }
+            j = j + 1;
+        }
+        if (w0 < 0) { return 0; }
+        return w0;
+    }
+    if (t == N_REPEAT) {
+        if (_nc(n) != _nb(n)) { return 0 - 1; }
+        var z = _pr_width(_na(n));
+        if (z < 0) { return 0 - 1; }
+        return z * _nb(n);
+    }
+    return 0 - 1;
+}
+
+# ── code ─────────────────────────────────────────────────────────────────────────────────
+# An instruction is three i64s: op, a, b.
+var OP_CHAR = 1;
+var OP_CHARI = 2;
+var OP_ANY = 3;      # any but \n
+var OP_ANYS = 4;     # any
+var OP_CLASS = 5;
+var OP_SPLIT = 6;    # a first, then b
+var OP_JMP = 7;
+var OP_SAVE = 8;
+var OP_BOL = 9;
+var OP_BOLM = 10;
+var OP_EOL = 11;
+var OP_EOLM = 12;
+var OP_BOS = 13;
+var OP_EOS = 14;
+var OP_WB = 15;      # a = negated
+var OP_BREF = 16;    # a = group, b = icase
+var OP_LOOK = 17;    # a = sub-program, b = (behind | neg << 1 | width << 2)
+var OP_ATOMIC = 18;  # a = sub-program
+var OP_COND = 19;    # a = group, b = the no-branch target; the yes branch follows
+var OP_MATCH = 20;
+var OP_MARK = 21;    # reg a = sp
+var OP_PROG = 22;    # sp == reg a: jump b (the empty iteration ends the loop)
+
+var _pregs = 0;      # loop registers so far
+
+fn _code_new(): i64 { return vec_new(); }
+fn _emit(code, op, a, b): i64 {
+    vec_push(code, op);
+    vec_push(code, a);
+    vec_push(code, b);
+    return vec_len(code) / 3 - 1;
+}
+fn _patch(code, at, a, b): i64 {
+    vec_set(code, at * 3 + 1, a);
+    vec_set(code, at * 3 + 2, b);
+    return 0;
+}
+fn _here(code): i64 { return vec_len(code) / 3; }
+
+fn _gen(code, n): i64 {
+    var t = _nt(n);
+    if (t == N_EMPTY) { return 0; }
+    if (t == N_CHAR) {
+        if (_nb(n) == 1) { _emit(code, OP_CHARI, _na(n), 0); } else { _emit(code, OP_CHAR, _na(n), 0); }
+        return 0;
+    }
+    if (t == N_ANY) {
+        if (_na(n) == 1) { _emit(code, OP_ANYS, 0, 0); } else { _emit(code, OP_ANY, 0, 0); }
+        return 0;
+    }
+    if (t == N_CLASS) { _emit(code, OP_CLASS, _na(n), 0); return 0; }
+    if (t == N_BOL) {
+        if (_na(n) == 1) { _emit(code, OP_BOLM, 0, 0); } else { _emit(code, OP_BOL, 0, 0); }
+        return 0;
+    }
+    if (t == N_EOL) {
+        if (_na(n) == 1) { _emit(code, OP_EOLM, 0, 0); } else { _emit(code, OP_EOL, 0, 0); }
+        return 0;
+    }
+    if (t == N_BOS) { _emit(code, OP_BOS, 0, 0); return 0; }
+    if (t == N_EOS) { _emit(code, OP_EOS, 0, 0); return 0; }
+    if (t == N_WB) { _emit(code, OP_WB, _na(n), 0); return 0; }
+    if (t == N_BREF) { _emit(code, OP_BREF, _na(n), _nb(n)); return 0; }
+    if (t == N_CAT) {
+        var i = 0;
+        while (i < vec_len(_na(n))) { _gen(code, vec_get(_na(n), i)); i = i + 1; }
+        return 0;
+    }
+    if (t == N_ALT) {
+        var alts = _na(n);
+        var jumps = vec_new();
+        var k = 0;
+        while (k < vec_len(alts)) {
+            if (k + 1 < vec_len(alts)) {
+                var sp = _emit(code, OP_SPLIT, 0, 0);
+                _gen(code, vec_get(alts, k));
+                vec_push(jumps, _emit(code, OP_JMP, 0, 0));
+                _patch(code, sp, sp + 1, _here(code));
+            } else {
+                _gen(code, vec_get(alts, k));
+            }
+            k = k + 1;
+        }
+        var end = _here(code);
+        var q = 0;
+        while (q < vec_len(jumps)) { _patch(code, vec_get(jumps, q), end, 0); q = q + 1; }
+        return 0;
+    }
+    if (t == N_GROUP) {
+        var g = _na(n);
+        if (g >= 0) { _emit(code, OP_SAVE, g * 2, 0); }
+        _gen(code, _nb(n));
+        if (g >= 0) { _emit(code, OP_SAVE, g * 2 + 1, 0); }
+        return 0;
+    }
+    if (t == N_LOOK) {
+        var sub = _code_new();
+        _gen(sub, _na(n));
+        _emit(sub, OP_MATCH, 0, 0);
+        var w = 0;
+        if (_nb(n) == 1) {
+            w = _pr_width(_na(n));
+            if (w < 0) { _pr_fail("look-behind requires fixed-width pattern"); return 0; }
+        }
+        _emit(code, OP_LOOK, sub, _nb(n) | (_nc(n) << 1) | (w << 2));
+        return 0;
+    }
+    if (t == N_ATOMIC) {
+        var sub2 = _code_new();
+        _gen(sub2, _na(n));
+        _emit(sub2, OP_MATCH, 0, 0);
+        _emit(code, OP_ATOMIC, sub2, 0);
+        return 0;
+    }
+    if (t == N_COND) {
+        var c = _emit(code, OP_COND, _na(n), 0);
+        _gen(code, _nb(n));
+        var j = _emit(code, OP_JMP, 0, 0);
+        _patch(code, c, _na(n), _here(code));
+        _gen(code, _nc(n));
+        _patch(code, j, _here(code), 0);
+        return 0;
+    }
+    if (t == N_REPEAT) {
+        if (_ndd(n) == 2) {
+            # possessive: the greedy repeat, atomic
+            var inner = _nd(N_REPEAT, _na(n), _nb(n), _nc(n), 0);
+            var sub3 = _code_new();
+            _gen(sub3, inner);
+            _emit(sub3, OP_MATCH, 0, 0);
+            _emit(code, OP_ATOMIC, sub3, 0);
+            return 0;
+        }
+        var body = _na(n);
+        var mn = _nb(n);
+        var mx = _nc(n);
+        var lazy = _ndd(n);
+        var r = 0;
+        while (r < mn) { _gen(code, body); r = r + 1; }
+        if (mx < 0) {
+            var reg = _pregs;
+            _pregs = _pregs + 1;
+            var top = _emit(code, OP_SPLIT, 0, 0);
+            var b0 = _here(code);
+            _emit(code, OP_MARK, reg, 0);
+            _gen(code, body);
+            var pg = _emit(code, OP_PROG, reg, 0);
+            _emit(code, OP_JMP, top, 0);
+            var out = _here(code);
+            _patch(code, pg, reg, out);
+            if (lazy == 1) { _patch(code, top, out, b0); } else { _patch(code, top, b0, out); }
+            return 0;
+        }
+        var outs = vec_new();
+        var o = mn;
+        while (o < mx) {
+            var s2 = _emit(code, OP_SPLIT, 0, 0);
+            vec_push(outs, s2);
+            _gen(code, body);
+            o = o + 1;
+        }
+        var end2 = _here(code);
+        var u = 0;
+        while (u < vec_len(outs)) {
+            var at = vec_get(outs, u);
+            if (lazy == 1) { _patch(code, at, end2, at + 1); } else { _patch(code, at, at + 1, end2); }
+            u = u + 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+# A compiled pattern: [code, ngroups, names, classes, nregs]; 0 with pr_err set on an error.
+fn pr_compile(pat, flags): i64 {
+    pr_err = 0;
+    var n = 0;
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(pat)) { hc_u8(pat, i, &l); i = i + l; n = n + 1; }
+    _pp = alloc((n + 1) * 8);
+    i = 0;
+    var k = 0;
+    while (i < hc_n(pat)) { store64(_pp + k * 8, hc_u8(pat, i, &l)); i = i + l; k = k + 1; }
+    _pn = n;
+    _pi = 0;
+    _pflags = flags;
+    _pgroups = 0;
+    _pnames = vec_new();
+    _pclasses = vec_new();
+    _pregs = 0;
+    _patoms = 0;
+    # a leading run of global flags, (?imsx), applies to the whole pattern
+    var ast = _pr_alt();
+    if (pr_err != 0) { return 0; }
+    if (_pi < _pn) {
+        if (_pc(_pi) == 41) { _pr_fail("unbalanced parenthesis"); }
+        else { _pr_fail("unexpected end of pattern"); }
+        return 0;
+    }
+    var code = _code_new();
+    _gen(code, ast);
+    if (pr_err != 0) { return 0; }
+    _emit(code, OP_MATCH, 0, 0);
+    var prog = vec_new();
+    vec_push(prog, code);
+    vec_push(prog, _pgroups);
+    vec_push(prog, _pnames);
+    vec_push(prog, _pclasses);
+    vec_push(prog, _pregs);
+    return prog;
+}
+
+# ── the matcher ──────────────────────────────────────────────────────────────────────────
+
+var _mi = 0;      # the subject's code points
+var _mn = 0;
+var _mcaps = 0;   # capture slots (i64 array), -1 unset
+var _mregs = 0;   # loop registers
+var _mcls = 0;    # the program's classes
+var _mstk = 0;    # the backtrack stack: entries of three i64 (kind, a, b)
+var _mstart = 0;  # where this attempt started
+var _mmust = 0;   # an empty match at _mstart is refused (re.sub's rule after an empty match)
+var _mend = 0;    # where the last match ended
+var _mncap = 0;
+
+var BT_BRANCH = 1;
+var BT_CAP = 2;
+var BT_REG = 3;
+var BT_FENCE = 4;
+
+fn _mc(i): i64 { return load64(_mi + i * 8); }
+
+fn _push(kind, a, b): i64 {
+    vec_push(_mstk, kind);
+    vec_push(_mstk, a);
+    vec_push(_mstk, b);
+    return 0;
+}
+
+fn _is_word_at(i): i64 {
+    if (i < 0 || i >= _mn) { return 0; }
+    return pr_isword(_mc(i));
+}
+
+# Run `code` at `sp` with the stack above `base`: 1 (the end at _mend) or 0. On success the
+# entries above base stay (a caller that commits drops the branch points among them); on failure
+# they have been undone.
+fn _run(code, sp, top): i64 {
+    var base = vec_len(_mstk);
+    var pc = 0;
+    loop {
+        var op = vec_get(code, pc * 3);
+        var a = vec_get(code, pc * 3 + 1);
+        var b = vec_get(code, pc * 3 + 2);
+        var ok = 1;
+        if (op == OP_CHAR) {
+            if (sp < _mn && _mc(sp) == a) { sp = sp + 1; pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_CHARI) {
+            if (sp < _mn && _pr_ieq(_mc(sp), a) == 1) { sp = sp + 1; pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_ANY) {
+            if (sp < _mn && _mc(sp) != 10) { sp = sp + 1; pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_ANYS) {
+            if (sp < _mn) { sp = sp + 1; pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_CLASS) {
+            if (sp < _mn && _cls_match(vec_get(_mcls, a), _mc(sp)) == 1) { sp = sp + 1; pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_SPLIT) {
+            _push(BT_BRANCH, b, sp);
+            pc = a;
+        } elif (op == OP_JMP) {
+            pc = a;
+        } elif (op == OP_SAVE) {
+            _push(BT_CAP, a, load64(_mcaps + a * 8));
+            store64(_mcaps + a * 8, sp);
+            pc = pc + 1;
+        } elif (op == OP_MARK) {
+            _push(BT_REG, a, load64(_mregs + a * 8));
+            store64(_mregs + a * 8, sp);
+            pc = pc + 1;
+        } elif (op == OP_PROG) {
+            if (load64(_mregs + a * 8) == sp) { pc = b; } else { pc = pc + 1; }
+        } elif (op == OP_BOL) {
+            if (sp == 0) { pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_BOLM) {
+            if (sp == 0 || _mc(sp - 1) == 10) { pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_EOL) {
+            if (sp == _mn || (sp == _mn - 1 && _mc(sp) == 10)) { pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_EOLM) {
+            if (sp == _mn || _mc(sp) == 10) { pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_BOS) {
+            if (sp == 0) { pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_EOS) {
+            if (sp == _mn) { pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_WB) {
+            var wb = 0;
+            if (_is_word_at(sp - 1) != _is_word_at(sp)) { wb = 1; }
+            if (a == 1) { wb = 1 - wb; }
+            if (wb == 1) { pc = pc + 1; } else { ok = 0; }
+        } elif (op == OP_BREF) {
+            var s0 = load64(_mcaps + a * 2 * 8);
+            var e0 = load64(_mcaps + (a * 2 + 1) * 8);
+            if (s0 < 0 || e0 < 0) { ok = 0; }
+            else {
+                var len = e0 - s0;
+                if (sp + len > _mn) { ok = 0; }
+                else {
+                    var q = 0;
+                    while (q < len) {
+                        var x = _mc(s0 + q);
+                        var y = _mc(sp + q);
+                        if (x != y) {
+                            if (b == 0 || _pr_ieq(x, y) == 0) { ok = 0; break; }
+                        }
+                        q = q + 1;
+                    }
+                    if (ok == 1) { sp = sp + len; pc = pc + 1; }
+                }
+            }
+        } elif (op == OP_LOOK) {
+            var behind = b & 1;
+            var neg = (b >> 1) & 1;
+            var w = b >> 2;
+            var at = sp;
+            var hit = 0;
+            if (behind == 1) { at = sp - w; }
+            var lb = vec_len(_mstk);
+            _push(BT_FENCE, 0, 0);
+            var save_end = _mend;
+            if (at >= 0) {
+                if (_run(a, at, 0) == 1) {
+                    if (behind == 0 || _mend == sp) { hit = 1; }
+                }
+            }
+            _mend = save_end;
+            if (hit == 1 && neg == 0) {
+                _commit(lb);
+                pc = pc + 1;
+            } else {
+                _unwind_to(lb);
+                if (hit == 0 && neg == 1) { pc = pc + 1; } else { ok = 0; }
+            }
+        } elif (op == OP_ATOMIC) {
+            var lb2 = vec_len(_mstk);
+            _push(BT_FENCE, 0, 0);
+            if (_run(a, sp, 0) == 1) {
+                sp = _mend;
+                _commit(lb2);
+                pc = pc + 1;
+            } else {
+                _unwind_to(lb2);
+                ok = 0;
+            }
+        } elif (op == OP_COND) {
+            var gs = load64(_mcaps + a * 2 * 8);
+            var ge = load64(_mcaps + (a * 2 + 1) * 8);
+            if (gs >= 0 && ge >= 0) { pc = pc + 1; } else { pc = b; }
+        } elif (op == OP_MATCH) {
+            if (top == 1 && _mmust == 1 && sp == _mstart) { ok = 0; }
+            else { _mend = sp; return 1; }
+        }
+        if (ok == 0) {
+            # backtrack: undo to the last branch point above this run's base
+            var resumed = 0;
+            while (vec_len(_mstk) > base) {
+                var kind = vec_get(_mstk, vec_len(_mstk) - 3);
+                var x1 = vec_get(_mstk, vec_len(_mstk) - 2);
+                var x2 = vec_get(_mstk, vec_len(_mstk) - 1);
+                vec_truncate(_mstk, vec_len(_mstk) - 3);
+                if (kind == BT_CAP) { store64(_mcaps + x1 * 8, x2); }
+                elif (kind == BT_REG) { store64(_mregs + x1 * 8, x2); }
+                elif (kind == BT_BRANCH) { pc = x1; sp = x2; resumed = 1; break; }
+            }
+            if (resumed == 0) { return 0; }
+        }
+    }
+    return 0;
+}
+
+# Undo every entry above `lb` (a fence included).
+fn _unwind_to(lb): i64 {
+    while (vec_len(_mstk) > lb) {
+        var kind = vec_get(_mstk, vec_len(_mstk) - 3);
+        var x1 = vec_get(_mstk, vec_len(_mstk) - 2);
+        var x2 = vec_get(_mstk, vec_len(_mstk) - 1);
+        vec_truncate(_mstk, vec_len(_mstk) - 3);
+        if (kind == BT_CAP) { store64(_mcaps + x1 * 8, x2); }
+        elif (kind == BT_REG) { store64(_mregs + x1 * 8, x2); }
+    }
+    return 0;
+}
+
+# Keep what a committed sub-match set (its undo entries), drop its branch points and the fence.
+fn _commit(lb): i64 {
+    var w = lb;
+    var r = lb + 3;   # past the fence
+    var n = vec_len(_mstk);
+    while (r < n) {
+        var kind = vec_get(_mstk, r);
+        if (kind == BT_CAP || kind == BT_REG) {
+            vec_set(_mstk, w, kind);
+            vec_set(_mstk, w + 1, vec_get(_mstk, r + 1));
+            vec_set(_mstk, w + 2, vec_get(_mstk, r + 2));
+            w = w + 3;
+        }
+        r = r + 3;
+    }
+    vec_truncate(_mstk, w);
+    return 0;
+}
+
+# Search `prog` in the code points `cps` (n of them) from `from`: 1 with the match in pr_caps
+# (group 0 at slots 0 / 1), or 0. `must`: an empty match at `from` is refused.
+var pr_caps = 0;
+fn pr_search(prog, cps, n, from, must): i64 {
+    _mi = cps;
+    _mn = n;
+    _mcls = vec_get(prog, 3);
+    var ng = vec_get(prog, 1);
+    _mncap = (ng + 1) * 2;
+    _mcaps = alloc(_mncap * 8);
+    var nr = vec_get(prog, 4);
+    _mregs = alloc((nr + 1) * 8);
+    var code = vec_get(prog, 0);
+    var st = from;
+    _mstk = vec_new();
+    while (st <= n) {
+        var i = 0;
+        while (i < _mncap) { store64(_mcaps + i * 8, 0 - 1); i = i + 1; }
+        vec_truncate(_mstk, 0);
+        _mstart = st;
+        _mmust = 0;
+        if (must == 1 && st == from) { _mmust = 1; }
+        if (_run(code, st, 1) == 1) {
+            store64(_mcaps, st);
+            store64(_mcaps + 8, _mend);
+            pr_caps = _mcaps;
+            return 1;
+        }
+        st = st + 1;
+    }
+    return 0;
+}
+
+# ── re.subn ──────────────────────────────────────────────────────────────────────────────
+
+# Code points of a Str (a fresh i64 array); the count at *np.
+fn pr_cps(s, np): i64 {
+    var n = 0;
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(s)) { hc_u8(s, i, &l); i = i + l; n = n + 1; }
+    var a = alloc((n + 1) * 8);
+    i = 0;
+    var k = 0;
+    while (i < hc_n(s)) { store64(a + k * 8, hc_u8(s, i, &l)); i = i + l; k = k + 1; }
+    store64(np, n);
+    return a;
+}
+
+# cps[a:b] as a Str.
+fn _pr_slice(cps, a, b): i64 {
+    var sb = hc_sb();
+    var i = a;
+    while (i < b) { hc_sb_cp(sb, load64(cps + i * 8)); i = i + 1; }
+    return hc_sbend(sb);
+}
+
+# The replacement template parsed (Python's parse_template): a vec of items, a Str (literal) or
+# -(group + 1) for a group reference. 0 with pr_err on an error.
+fn pr_template(prog, repl): i64 {
+    var items = vec_new();
+    var n = 0;
+    var r = pr_cps(repl, &n);
+    var lit = hc_sb();
+    var i = 0;
+    var ng = vec_get(prog, 1);
+    while (i < n) {
+        var c = load64(r + i * 8);
+        if (c != 92 || i + 1 >= n) {
+            if (c == 92) {
+                # a lone trailing backslash
+                pr_err = hc_s("bad escape (end of pattern)");
+                return 0;
+            }
+            hc_sb_cp(lit, c);
+            i = i + 1;
+            continue;
+        }
+        var e = load64(r + (i + 1) * 8);
+        var g = 0 - 1;
+        if (e == 103) {
+            # \g<name> / \g<number>
+            if (i + 2 >= n || load64(r + (i + 2) * 8) != 60) { pr_err = hc_s("missing <"); return 0; }
+            var j = i + 3;
+            var nb = hc_sb();
+            while (j < n && load64(r + j * 8) != 62) { hc_sb_cp(nb, load64(r + j * 8)); j = j + 1; }
+            if (j >= n) { pr_err = hc_s("missing >, unterminated name"); return 0; }
+            var name = hc_sbend(nb);
+            if (hc_pyint(name, &g) == 0 || hc_n(name) == 0) {
+                g = 0 - 1;
+                var k = 0;
+                while (k < vec_len(vec_get(prog, 2))) {
+                    var np = vec_get(vec_get(prog, 2), k);
+                    if (hc_eq(vec_get(np, 0), name) == 1) { g = vec_get(np, 1); }
+                    k = k + 1;
+                }
+                if (g < 0) { pr_err = hc_ccat("unknown group name ", hc_pyrepr(name)); return 0; }
+            }
+            if (g > ng) { pr_err = hc_s("invalid group reference"); return 0; }
+            i = j + 1;
+        } elif (e == 48) {
+            # \0 and up to two more octal digits: a character
+            var o = 0;
+            var p = i + 2;
+            var k2 = 0;
+            while (k2 < 2 && p < n && load64(r + p * 8) >= 48 && load64(r + p * 8) <= 55) {
+                o = o * 8 + (load64(r + p * 8) - 48);
+                p = p + 1;
+                k2 = k2 + 1;
+            }
+            hc_sb_cp(lit, o);
+            i = p;
+            continue;
+        } elif (e >= 49 && e <= 57) {
+            var d1 = 0 - 1;
+            var d2 = 0 - 1;
+            if (i + 2 < n) { d1 = load64(r + (i + 2) * 8); }
+            if (i + 3 < n) { d2 = load64(r + (i + 3) * 8); }
+            if (e <= 55 && d1 >= 48 && d1 <= 55 && d2 >= 48 && d2 <= 55) {
+                hc_sb_cp(lit, ((e - 48) * 64 + (d1 - 48) * 8 + (d2 - 48)) & 0xFF);
+                i = i + 4;
+                continue;
+            }
+            g = e - 48;
+            i = i + 2;
+            if (d1 >= 48 && d1 <= 57) { g = g * 10 + (d1 - 48); i = i + 1; }
+            if (g > ng) { pr_err = hc_s("invalid group reference"); return 0; }
+        } else {
+            var esc = 0 - 1;
+            if (e == 110) { esc = 10; }
+            if (e == 116) { esc = 9; }
+            if (e == 114) { esc = 13; }
+            if (e == 102) { esc = 12; }
+            if (e == 118) { esc = 11; }
+            if (e == 97) { esc = 7; }
+            if (e == 98) { esc = 8; }
+            if (e == 92) { esc = 92; }
+            if (esc >= 0) { hc_sb_cp(lit, esc); i = i + 2; continue; }
+            if ((e >= 65 && e <= 90) || (e >= 97 && e <= 122)) {
+                pr_err = hc_s("bad escape");
+                return 0;
+            }
+            # another escape is kept as written
+            hc_sb_cp(lit, 92);
+            hc_sb_cp(lit, e);
+            i = i + 2;
+            continue;
+        }
+        if (hc_sblen(lit) > 0) { vec_push(items, hc_sbend(lit)); lit = hc_sb(); }
+        vec_push(items, 0 - (g + 1));
+    }
+    if (hc_sblen(lit) > 0) { vec_push(items, hc_sbend(lit)); }
+    return items;
+}
+
+var pr_nsub = 0;
+# re.subn(pattern, repl, s, count=count, flags=flags): the result (the count in pr_nsub), or 0
+# with pr_err on a pattern or template error.
+fn pr_subn(pattern, repl, s, count, flags): i64 {
+    var prog = pr_compile(pattern, flags);
+    if (prog == 0) { return 0; }
+    var tmpl = pr_template(prog, repl);
+    if (tmpl == 0) { return 0; }
+    var n = 0;
+    var cps = pr_cps(s, &n);
+    var sb = hc_sb();
+    var pos = 0;
+    var at = 0;
+    var must = 0;
+    pr_nsub = 0;
+    while (count <= 0 || pr_nsub < count) {
+        if (at > n) { break; }
+        if (pr_search(prog, cps, n, at, must) == 0) { break; }
+        var ms = load64(pr_caps);
+        var me = load64(pr_caps + 8);
+        hc_sba(sb, _pr_slice(cps, pos, ms));
+        var i = 0;
+        while (i < vec_len(tmpl)) {
+            var it = vec_get(tmpl, i);
+            if (it < 0) {
+                var g = 0 - it - 1;
+                var gs = load64(pr_caps + g * 2 * 8);
+                var ge = load64(pr_caps + (g * 2 + 1) * 8);
+                if (gs >= 0 && ge >= 0) { hc_sba(sb, _pr_slice(cps, gs, ge)); }
+            } else {
+                hc_sba(sb, it);
+            }
+            i = i + 1;
+        }
+        pr_nsub = pr_nsub + 1;
+        pos = me;
+        at = me;
+        must = 0;
+        if (me == ms) { must = 1; }
+    }
+    hc_sba(sb, _pr_slice(cps, pos, n));
+    return hc_sbend(sb);
+}

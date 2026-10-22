@@ -1,0 +1,4 @@
+rc=2
+--- stdout
+sibci.sh: <fold> is a fold NAME under @T@/folds, not a path: 'a/b'
+--- stderr

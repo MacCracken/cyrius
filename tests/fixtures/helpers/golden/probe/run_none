@@ -1,0 +1,4 @@
+rc=2
+--- stdout
+--- stderr
+probe: no *.cyr in @T@/noprobes

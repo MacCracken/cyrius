@@ -1,0 +1,4 @@
+rc=2
+--- stdout
+nopin @ v1: no pin read — git archive of @T@/folds/nopin at v1 failed, or its cyrius.cyml has no 'cyrius =' line
+--- stderr

@@ -1,0 +1,33 @@
+rc=0
+--- stdout
+placed 4 from the units + 1 special; decision lines 8 ; files changed 4
+--- stderr
+--- tree
+== ./docs/development/issues/a.md
+# A — OPEN
+
+**Status:** open
+**Placement:** 9.8.7 — the cleanup (on main, wave 0, before the lanes fork; placed at the 9.8.7 open, 2026-10-22) — never 7.x. Text after is kept.
+**Decision (user, 2026-10-22, at the 9.8.7 open):** D1 — Yes.
+**Severity:** Low
+
+body
+== ./docs/development/issues/b.md
+# B — OPEN
+**Placement:** 9.8.7 — wave label (lane1 lane, wave 1, unit L1; placed at the 9.8.7 open, 2026-10-22) — never 7.x.
+continuation line kept
+**Decision (user, 2026-10-22, at the 9.8.7 open):** D2 — No.
+**Decision (user, 2026-10-22, at the 9.8.7 open):** D3 — Keep — it.
+**Kind:** bug
+== ./docs/development/issues/c.md
+# C
+**Placement:** 9.8.7 — c label (lane1 lane, wave 1, unit L1; placed at the 9.8.7 open, 2026-10-22) — never 7.x.
+== ./docs/development/issues/d.md
+# D special
+**Placement:** 9.9.1 — special one (moved to 9.9.1 by the user) — never 7.x.
+**Decision (user, 2026-01-01, at the 9.8.6 open):** D3 — earlier.
+**Decision (user, 2026-10-22, at the 9.8.7 open):** D9 — moved.
+**Decision (user, 2026-10-22, at the 9.8.7 open):** D10 — also.
+== ./docs/development/issues/e.md
+# E — never placed for this release
+**Placement:** 9.9.0 — later (x) — never 7.x.

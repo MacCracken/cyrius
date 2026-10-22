@@ -1,0 +1,4 @@
+rc=1
+--- stdout
+--- stderr
+e.md: no "**Placement:** 9.8.7 — … — never 7.x." line — nothing written

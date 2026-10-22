@@ -1,0 +1,8 @@
+p1.prog: x86=5 a64=7 cx=6 pe=8
+rc=0
+p2.prog: x86=BUILD(1) a64=BUILD(3) cx=BUILD(2) pe=BUILD(1)
+rc=0
+p3.prog: x86=1 a64=BUILD(3) cx=2 pe=4
+rc=0
+p4.prog: x86=0 a64=2 cx=BUILD(2) pe=3
+rc=0

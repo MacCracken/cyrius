@@ -1,0 +1,66 @@
+name: CI
+on: [push]
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Cyrius toolchain
+        run: echo should-skip
+      - name: Shell default from the workflow
+        run: echo "hello from $REPO_NAME" && echo "${{ github.event.repository.name }}" && echo "x${{ secrets.TOKEN }}y"
+      - name: Multi line
+        run: |
+          echo one
+          false | true
+          echo two
+
+          echo after-blank
+      - name: Pipefail failure
+        run: |
+          false | true
+      - name: sh step
+        shell: sh
+        run: echo in-sh; exit 3
+      - name: Continue on error
+        continue-on-error: true
+        run: exit 7
+      - name: Continue on error, passing
+        continue-on-error: True
+        run: echo fine
+      - name: Sudo blocked
+        run: echo "sudo: a password is required" >&2; exit 1
+      - run: echo dash-form-line
+      - name: A very long step name that goes on and on and on past fifty characters for sure
+        run: echo long-name
+      - name: Uses with a run is still a run
+        uses: some/action@v1
+        run: echo ran-anyway
+      - name: Folded
+        run: >
+          echo folded
+      - name: The toolchain from the throwaway home
+        run: cyrius --version && test "$HOME" != "" && echo "cyrius-home=${CYRIUS_HOME##*/}"
+      - name: Runner files
+        run: test -n "$RUNNER_TEMP" && echo "${GITHUB_ENV##*/} ${GITHUB_PATH##*/} ${GITHUB_OUTPUT##*/} ${GITHUB_STEP_SUMMARY##*/}"
+      - name: Slow
+        run: sleep 6
+      # a comment line between steps
+      - name: Long output
+        run: printf 'tail-%0120d\n' 0
+      - name: Stderr only
+        run: echo to-stderr >&2; exit 4
+  other:
+    defaults:
+      run:
+        shell: sh -e {0}
+    steps:
+      - name: job default sh
+        run: echo job-sh && printf 'line1\r\nline2\r\n'
+      - name: unicode — naïve step ✓ with a long name to trim at fifty code points
+        run: printf 'ünïcödé tail %s\n' "$(printf 'x%.0s' 1 2 3)"
+      - name: Empty output failure
+        run: exit 9

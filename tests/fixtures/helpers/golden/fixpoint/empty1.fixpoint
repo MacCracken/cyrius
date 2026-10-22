@@ -1,0 +1,11 @@
+rc=1
+--- stdout
+=== cycc self-host fixpoint (stages in @T@/fp_empty1_fixpoint/../st_empty1_fixpoint) ===
+  [1/3] cat src/main.cyr | cycc > c1...
+--- stderr
+  FAIL: stage c1 is EMPTY — the compiler exited 0 and wrote nothing
+--- build/
+cycc
+--- build/cycc
+#!/bin/sh
+cat > /dev/null; exit 0

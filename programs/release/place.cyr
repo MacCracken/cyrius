@@ -1,0 +1,366 @@
+# programs/release/place.cyr — at a release's slot open, after the user has answered the open's
+# decisions: rewrite each planned issue's **Placement:** line to name its wave and unit, add a
+# **Decision** line under it for each decision on that issue, then apply the open's special
+# re-placements (an issue decided as a whole, an issue moved to a later release).
+#
+# usage:   cyrius run programs/release/place.cyr --ver X.Y.Z --date YYYY-MM-DD [--dry]
+#            [--repo <checkout>] [--c6 <dir>] [--units F] [--decisions F] [--plan F]
+#   --date   the day the user answered the decisions (written into each line)
+#   --dry    print what would change; write nothing
+# inputs:  <c6>/<tag>_units.json      {"W<n>": {"<lane>": {"<unit>": ["<issue>.md", ...]}}}; wave 0
+#                                     (lane "main") runs on main before the lanes fork
+#          <c6>/<tag>_decisions.json  [{"id", "issue", "question", "options": [{"label", "effect"}],
+#                                     "rec_label", "why", ...}] — the answered decisions (the answer
+#                                     is the option whose label is rec_label)
+#          <c6>/<tag>_place.json      optional, this release's literal content — schema in
+#                                     scripts/release/README.md
+#          docs/development/issues/<issue>.md, each holding a "**Placement:** X.Y.Z — <label> (...) —
+#          never 7.x." line for this release (<label> on the first line; the parenthetical may wrap
+#          onto continuation lines; text may follow "never 7.x." and is kept)
+# outputs: those issue files, edited in place (each replaced atomically); a count line on stdout.
+#          Exit 1 when a planned issue has no Placement line for this release (nothing is written
+#          then).
+#
+# It replaced scripts/release/place.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/release/common.cyr"
+
+# Python's ids(spec): "1-40,45" or a JSON list -> a vec of ints.
+fn _ids(spec): i64 {
+    var out = vec_new();
+    if (bayan_json_v_is_arr(spec) == 1) {
+        var i = 0;
+        while (i < rc_jlen(spec)) {
+            var e = rc_jat(spec, i);
+            if (bayan_json_v_is_int(e) == 1) { vec_push(out, bayan_json_v_int(e)); }
+            i = i + 1;
+        }
+        return out;
+    }
+    var parts = hc_split(rc_jstr(spec), 44);
+    var j = 0;
+    while (j < vec_len(parts)) {
+        var part = hc_strip(vec_get(parts, j));
+        j = j + 1;
+        var dash = hc_findb(part, 45, 0);
+        var a = 0;
+        var b = 0;
+        if (dash >= 0) {
+            if (hc_pyint(hc_sub(part, 0, dash), &a) == 0 || hc_pyint(hc_sub(part, dash + 1, hc_n(part)), &b) == 0) {
+                rc_exit(hc_cat3(hc_s("ValueError: invalid literal for int(): "), hc_pyrepr(part), hc_s("")));
+            }
+            while (a <= b) { vec_push(out, a); a = a + 1; }
+        } elif (hc_n(part) > 0) {
+            if (hc_pyint(part, &a) == 0) {
+                rc_exit(hc_ccat("ValueError: invalid literal for int(): ", hc_pyrepr(part)));
+            }
+            vec_push(out, a);
+        }
+    }
+    return out;
+}
+
+fn _vec_has_int(v, x): i64 {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (vec_get(v, i) == x) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A small ordered str -> value map: a vec of [key, value].
+fn _m_get(m, k): i64 {
+    var i = 0;
+    while (i < vec_len(m)) {
+        if (hc_eq(vec_get(vec_get(m, i), 0), k) == 1) { return vec_get(m, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _m_set(m, k, v): i64 {
+    var p = _m_get(m, k);
+    if (p != 0) { vec_set(p, 1, v); return 0; }
+    p = vec_new();
+    vec_push(p, k);
+    vec_push(p, v);
+    vec_push(m, p);
+    return 0;
+}
+
+# The first match of this release's Placement pattern (re.M):
+#   ^\*\*Placement:\*\* <ver> — (?P<label>[^(\n]*?) \((?:(?!\n\n|\n\*\*)[\s\S])*?\) — never 7\.x\.(?=[ \n]|$)
+# 1 with [start, end, label start, label end] at out, else 0.
+fn _find_place(s, ver, out): i64 {
+    var pre = hc_cat3(hc_s("**Placement:** "), ver, hc_s(" — "));
+    var term = hc_s(") — never 7.x.");
+    var at = 0;
+    loop {
+        var p = hc_find(s, pre, at);
+        if (p < 0) { return 0; }
+        at = p + 1;
+        if (p != 0 && hc_at(s, p - 1) != 10) { continue; }
+        var q = p + hc_n(pre);
+        # the label runs to the first `(` (it may hold neither `(` nor a newline), which must
+        # follow a space
+        var f = q;
+        while (f < hc_n(s) && hc_at(s, f) != 40 && hc_at(s, f) != 10) { f = f + 1; }
+        if (f >= hc_n(s) || hc_at(s, f) != 40) { continue; }
+        if (f - 1 < q || hc_at(s, f - 1) != 32) { continue; }
+        var k = f + 1;
+        var e = 0 - 1;
+        while (k <= hc_n(s)) {
+            if (hc_at_str(s, k, term) == 1) {
+                var after = k + hc_n(term);
+                if (after >= hc_n(s) || hc_at(s, after) == 32 || hc_at(s, after) == 10) { e = after; break; }
+            }
+            if (k >= hc_n(s)) { break; }
+            if (hc_at(s, k) == 10 && k + 1 < hc_n(s)) {
+                if (hc_at(s, k + 1) == 10) { break; }
+                if (k + 2 < hc_n(s) && hc_at(s, k + 1) == 42 && hc_at(s, k + 2) == 42) { break; }
+            }
+            k = k + 1;
+        }
+        if (e < 0) { continue; }
+        store64(out, p);
+        store64(out + 8, e);
+        store64(out + 16, q);
+        store64(out + 24, f - 1);
+        return 1;
+    }
+    return 0;
+}
+
+fn _sub_place(f, s, line): i64 {
+    var mt: i64[4];
+    if (_find_place(s, RC_VER, &mt) == 0) {
+        var tail = hc_s(" — … — never 7.x.\" line — nothing written");
+        rc_exit(hc_cat(hc_cat3(f, hc_s(": no \"**Placement:** "), RC_VER), tail));
+    }
+    var label = hc_sub(s, mt[2], mt[3]);
+    var rep = hc_replace(line, hc_s("{label}"), label);
+    return hc_cat3(hc_sub(s, 0, mt[0]), rep, hc_sub(s, mt[1], hc_n(s)));
+}
+
+# re.search(r'^' + re.escape(prefix) + r'.*(?:\n(?!\*\*)[^\n]+)*', s, re.M): insert the lines
+# (each after a newline) at the match's end.
+fn _add_after(s, lines, prefix): i64 {
+    var at = 0;
+    var p = 0 - 1;
+    loop {
+        var k = hc_find(s, prefix, at);
+        if (k < 0) { break; }
+        if (k == 0 || hc_at(s, k - 1) == 10) { p = k; break; }
+        at = k + 1;
+    }
+    if (p < 0) {
+        var tail2 = hc_s(" to add the Decision lines after — nothing written");
+        rc_exit(hc_cat3(hc_s("no line starting "), hc_pyrepr(prefix), tail2));
+    }
+    var e = hc_findb(s, 10, p);
+    if (e < 0) { e = hc_n(s); }
+    loop {
+        # a continuation line: a newline, then a non-empty line that does not start `**`
+        if (e >= hc_n(s)) { break; }
+        if (e + 1 >= hc_n(s)) { break; }
+        if (hc_at(s, e + 1) == 10) { break; }
+        if (e + 2 < hc_n(s) && hc_at(s, e + 1) == 42 && hc_at(s, e + 2) == 42) { break; }
+        var ne = hc_findb(s, 10, e + 1);
+        if (ne < 0) { ne = hc_n(s); }
+        e = ne;
+    }
+    var sb = hc_sb();
+    hc_sba(sb, hc_sub(s, 0, e));
+    var i = 0;
+    while (i < vec_len(lines)) {
+        hc_sbc(sb, "\n");
+        hc_sba(sb, vec_get(lines, i));
+        i = i + 1;
+    }
+    hc_sba(sb, hc_sub(s, e, hc_n(s)));
+    return hc_sbend(sb);
+}
+
+fn _jstrs(arr): i64 {
+    var v = vec_new();
+    var i = 0;
+    while (i < rc_jlen(arr)) { vec_push(v, rc_jstr(rc_jat(arr, i))); i = i + 1; }
+    return v;
+}
+
+fn main(): i64 {
+    var usage = "place --ver X.Y.Z --date YYYY-MM-DD [--dry] [--units F] [--decisions F] [--plan F]";
+    rc_options("place", usage, 1, 1);
+    hc_opt("units", 1);
+    hc_opt("decisions", 1);
+    hc_opt("plan", 1);
+    rc_finish(1, 0);
+    var up = hc_optv("units");
+    if (up == 0) { up = rc_in_c6("units.json"); }
+    var dp = hc_optv("decisions");
+    if (dp == 0) { dp = rc_in_c6("decisions.json"); }
+    var U = rc_json(up);
+    var D = rc_json(dp);
+    var plan_path = hc_optv("plan");
+    if (plan_path == 0) { plan_path = rc_in_c6("place.json"); }
+    var P = 0;
+    if (hc_exists(hc_cstr(plan_path)) == 1) { P = rc_json(plan_path); }
+    var I = hc_joinc(RC_REPO, "docs/development/issues");
+    var ver = RC_VER;
+    var date = RC_DATE;
+
+    var place = vec_new();   # [issue, placement text]
+    var waves = rc_jitems(U);
+    var wi = 0;
+    while (wi < vec_len(waves)) {
+        var wname = vec_get(vec_get(waves, wi), 0);
+        var lanes = rc_jitems(vec_get(vec_get(waves, wi), 1));
+        wi = wi + 1;
+        var wave = 0;
+        if (hc_pyint(hc_lstrip_set(wname, "Ww"), &wave) == 0) {
+            var wbad = hc_pyrepr(hc_lstrip_set(wname, "Ww"));
+            rc_exit(hc_ccat("ValueError: invalid literal for int() with base 10: ", wbad));
+        }
+        var li = 0;
+        while (li < vec_len(lanes)) {
+            var lane = vec_get(vec_get(lanes, li), 0);
+            var units = rc_jitems(vec_get(vec_get(lanes, li), 1));
+            li = li + 1;
+            var ui = 0;
+            while (ui < vec_len(units)) {
+                var u = vec_get(vec_get(units, ui), 0);
+                var xs = vec_get(vec_get(units, ui), 1);
+                ui = ui + 1;
+                var xi = 0;
+                while (xi < rc_jlen(xs)) {
+                    var x = rc_jstr(rc_jat(xs, xi));
+                    xi = xi + 1;
+                    var sb = hc_sb();
+                    if (wave == 0) {
+                        hc_sbc(sb, "on main, wave 0, before the lanes fork; placed at the ");
+                    } else {
+                        hc_sba(sb, lane);
+                        hc_sbc(sb, " lane, wave ");
+                        hc_sbi(sb, wave);
+                        hc_sbc(sb, ", unit ");
+                        hc_sba(sb, u);
+                        hc_sbc(sb, "; placed at the ");
+                    }
+                    hc_sba(sb, ver);
+                    hc_sbc(sb, " open, ");
+                    hc_sba(sb, date);
+                    _m_set(place, x, hc_sbend(sb));
+                }
+            }
+        }
+    }
+    var keep = 0;
+    if (P != 0 && rc_jhas(P, "decision_ids") == 1) { keep = _ids(rc_jget(P, "decision_ids")); }
+    var dec = vec_new();   # [issue, vec of lines]
+    var di = 0;
+    while (di < rc_jlen(D)) {
+        var d = rc_jat(D, di);
+        di = di + 1;
+        var idv = rc_jreq(d, "id");
+        var take = 1;
+        if (keep != 0) {
+            take = 0;
+            if (bayan_json_v_is_int(idv) == 1) { take = _vec_has_int(keep, bayan_json_v_int(idv)); }
+        }
+        if (take == 0) { continue; }
+        var issue = rc_jreqs(d, "issue");
+        var sb2 = hc_sb();
+        hc_sbc(sb2, "**Decision (user, ");
+        hc_sba(sb2, date);
+        hc_sbc(sb2, ", at the ");
+        hc_sba(sb2, ver);
+        hc_sbc(sb2, " open):** D");
+        hc_sba(sb2, rc_jstr(idv));
+        hc_sbc(sb2, " — ");
+        hc_sba(sb2, rc_jreqs(d, "rec_label"));
+        hc_sbc(sb2, ".");
+        var e = _m_get(dec, issue);
+        if (e == 0) { _m_set(dec, issue, vec_new()); e = _m_get(dec, issue); }
+        vec_push(vec_get(e, 1), hc_sbend(sb2));
+    }
+
+    var out = vec_new();   # [issue, text]
+    var nd = 0;
+    var pi = 0;
+    while (pi < vec_len(place)) {
+        var f = vec_get(vec_get(place, pi), 0);
+        var p = vec_get(vec_get(place, pi), 1);
+        pi = pi + 1;
+        var s = 0;
+        var o = _m_get(out, f);
+        if (o != 0) { if (hc_n(vec_get(o, 1)) > 0) { s = vec_get(o, 1); } }
+        if (s == 0) { s = rc_rd(hc_join2(I, f)); }
+        var line = hc_sb();
+        hc_sbc(line, "**Placement:** ");
+        hc_sba(line, ver);
+        hc_sbc(line, " — {label} (");
+        hc_sba(line, p);
+        hc_sbc(line, ") — never 7.x.");
+        s = _sub_place(f, s, hc_sbend(line));
+        var dl = _m_get(dec, f);
+        if (dl != 0) {
+            s = _add_after(s, vec_get(dl, 1), hc_s("**Placement:**"));
+            nd = nd + vec_len(vec_get(dl, 1));
+        }
+        _m_set(out, f, s);
+    }
+    var specials = 0;
+    if (P != 0) { specials = rc_jget(P, "special"); }
+    var si = 0;
+    while (si < rc_jlen(specials)) {
+        var sp = rc_jat(specials, si);
+        si = si + 1;
+        var f2 = rc_jreqs(sp, "file");
+        var s2 = 0;
+        var o2 = _m_get(out, f2);
+        if (o2 != 0) { if (hc_n(vec_get(o2, 1)) > 0) { s2 = vec_get(o2, 1); } }
+        if (s2 == 0) { s2 = rc_rd(hc_join2(I, f2)); }
+        s2 = _sub_place(f2, s2, rc_jreqs(sp, "placement"));
+        var sdec = rc_jget(sp, "decisions");
+        if (sdec != 0 && rc_jlen(sdec) > 0) {
+            var after = hc_s("**Placement:**");
+            if (rc_jhas(sp, "decisions_after") == 1) { after = rc_jreqs(sp, "decisions_after"); }
+            s2 = _add_after(s2, _jstrs(sdec), after);
+            if (rc_jhas(sp, "decision_count") == 1) { nd = nd + bayan_json_v_int(rc_jget(sp, "decision_count")); }
+            else { nd = nd + rc_jlen(sdec); }
+        }
+        _m_set(out, f2, s2);
+    }
+    var changed = vec_new();
+    var oi = 0;
+    while (oi < vec_len(out)) {
+        var f3 = vec_get(vec_get(out, oi), 0);
+        var s3 = vec_get(vec_get(out, oi), 1);
+        oi = oi + 1;
+        var path = hc_join2(I, f3);
+        if (hc_eq(s3, rc_rd(path)) == 0) { vec_push(changed, f3); }
+        rc_wr(path, s3, RC_DRY);
+    }
+    var msg = hc_sb();
+    if (RC_DRY == 1) { hc_sbc(msg, "would place "); } else { hc_sbc(msg, "placed "); }
+    hc_sbi(msg, vec_len(place));
+    hc_sbc(msg, " from the units + ");
+    hc_sbi(msg, rc_jlen(specials));
+    hc_sbc(msg, " special; decision lines ");
+    hc_sbi(msg, nd);
+    hc_sbc(msg, " ; files changed ");
+    hc_sbi(msg, vec_len(changed));
+    hc_sbc(msg, "\n");
+    hc_out(hc_sbend(msg));
+    if (RC_DRY == 1) {
+        var ci = 0;
+        while (ci < vec_len(changed)) {
+            hc_outc("   ");
+            hc_out(vec_get(changed, ci));
+            hc_outc("\n");
+            ci = ci + 1;
+        }
+    }
+    return 0;
+}

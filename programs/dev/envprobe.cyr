@@ -1,0 +1,302 @@
+# programs/dev/envprobe.cyr — a Linux dev machine's inventory: what a new box has, and lacks, next to
+# the one the toolchain is developed on.
+#
+# Usage:  cyrius run programs/dev/envprobe.cyr        (run it on each box and diff the two outputs)
+#
+# Input:  the running machine only (/proc, /etc, the resource limits, the locale, the network); it
+#         reads no checkout file.
+# Output: one `key: value` / `key=value` line per item on stdout — CPU and core count, memory,
+#         kernel, the sysctls the toolchain's gates and tools touch (ASLR, mmap_min_addr, ptrace
+#         scope, user namespaces, perf, inotify, overcommit, pid_max, max_map_count), the resource
+#         limits (as `sh`'s ulimit prints them: -s and -v in KiB, -c in 512-byte blocks), locale,
+#         timezone, /tmp's mount options and size, binfmt_misc (qemu-user's registrations), HTTPS
+#         reachability of 1.1.1.1 and api.github.com (8 s each), systemd-binfmt, TMPDIR /
+#         WINEPREFIX / CYRIUS_HOME, and the installed package count where pacman exists. An
+#         unreadable item prints n/a (or the tool's own error on stderr); the exit status is 0.
+#         The system's own tools answer what only they know: nproc, free, locale, findmnt, df, ls
+#         (binfmt_misc's entries, in the locale's order), curl under timeout, systemctl, pacman.
+#
+# It replaced scripts/dev/envprobe.sh, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh compares the keys: the values are the
+# machine's). CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+# `$(cmd)`: the output with its trailing newlines and NUL bytes dropped.
+fn _subst(s): i64 {
+    var t = hc_rstrip_set(s, "\n");
+    if (hc_findb(t, 0, 0) < 0) { return t; }
+    var sb = hc_sb();
+    var i = 0;
+    while (i < hc_n(t)) {
+        if (hc_at(t, i) != 0) { hc_sbb(sb, hc_at(t, i)); }
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# The output of argv (stderr: 0 inherited, HC_SAME into it, or a path), as $(…) gives it.
+fn _cmd(argv, errp): i64 { return _subst(hc_capture(argv, 0, 0, errp, 0)); }
+
+# `cat <path>` as $(…) gives it; 0 when it cannot be read (with cat's message on stderr when
+# `loud`).
+fn _cat(pathc, loud): i64 {
+    var s = hc_read(pathc);
+    if (s == 0) {
+        if (loud == 1) {
+            hc_errc("cat: ");
+            hc_errc(pathc);
+            if (hc_exists(pathc) == 0) { hc_errc(": No such file or directory\n"); }
+            else { hc_errc(": Permission denied\n"); }
+        }
+        return 0;
+    }
+    return _subst(s);
+}
+
+# The awk fields of a line (runs of blanks and tabs separate them).
+fn _fields(line): i64 {
+    var v = vec_new();
+    var i = 0;
+    var n = hc_n(line);
+    while (i < n) {
+        while (i < n && (hc_at(line, i) == 32 || hc_at(line, i) == 9)) { i = i + 1; }
+        if (i >= n) { break; }
+        var st = i;
+        while (i < n && hc_at(line, i) != 32 && hc_at(line, i) != 9) { i = i + 1; }
+        vec_push(v, hc_sub(line, st, i));
+    }
+    return v;
+}
+
+# The lines of an output (a final newline ends the last one).
+fn _lines(s): i64 {
+    var v = hc_split(s, 10);
+    var n = vec_len(v);
+    if (n > 0) { if (hc_n(vec_get(v, n - 1)) == 0) { vec_pop(v); } }
+    return v;
+}
+
+# `ulimit -<x>` in sh's unit: the soft limit / `div`, or `unlimited`.
+fn _ulimit(sb, res, div): i64 {
+    var rl[16];
+    if (sys_getrlimit(res, &rl) != 0) { hc_sbc(sb, "n/a"); return 0; }
+    var v = load64(&rl);
+    if (v == 0 - 1) { hc_sbc(sb, "unlimited"); return 0; }
+    hc_sbi(sb, v / div);
+    return 0;
+}
+
+fn _envor(sb, namec): i64 {
+    var v = hc_getenv_ne(namec);
+    if (v == 0) { hc_sbc(sb, "unset"); } else { hc_sba(sb, v); }
+    return 0;
+}
+
+fn _line(sb): i64 {
+    hc_sbc(sb, "\n");
+    hc_out(hc_sbend(sb));
+    return 0;
+}
+
+fn main(): i64 {
+    # cpu: the first `model name` line, its second `:` field, one leading space dropped
+    var sb = hc_sb();
+    hc_sbc(sb, "cpu: ");
+    var ci = hc_read("/proc/cpuinfo");
+    if (ci == 0) {
+        hc_errc("grep: /proc/cpuinfo: No such file or directory\n");
+    } else {
+        var cl = _lines(ci);
+        var i = 0;
+        while (i < vec_len(cl)) {
+            var l = vec_get(cl, i);
+            if (hc_has(l, "model name") == 1) {
+                var f2 = l;
+                var c1 = hc_findb(l, 58, 0);
+                if (c1 >= 0) {
+                    var c2 = hc_findb(l, 58, c1 + 1);
+                    if (c2 < 0) { c2 = hc_n(l); }
+                    f2 = hc_sub(l, c1 + 1, c2);
+                }
+                if (hc_n(f2) > 0) { if (hc_at(f2, 0) == 32) { f2 = hc_sub(f2, 1, hc_n(f2)); } }
+                hc_sba(sb, _subst(f2));
+                break;
+            }
+            i = i + 1;
+        }
+    }
+    hc_sbc(sb, "  nproc=");
+    hc_sba(sb, _cmd(hc_argv("nproc", 0, 0, 0, 0, 0), 0));
+    _line(sb);
+
+    # mem: free -g's `Mem:` lines, field 2 with a G
+    sb = hc_sb();
+    hc_sbc(sb, "mem: ");
+    var fl = _lines(hc_capture(hc_argv("free", "-g", 0, 0, 0, 0), 0, 0, 0, 0));
+    var mo = vec_new();
+    var j = 0;
+    while (j < vec_len(fl)) {
+        var ml = vec_get(fl, j);
+        if (hc_has(ml, "Mem:") == 1) {
+            var ff = _fields(ml);
+            var x = hc_s("");
+            if (vec_len(ff) >= 2) { x = vec_get(ff, 1); }
+            vec_push(mo, hc_catc(x, "G"));
+        }
+        j = j + 1;
+    }
+    hc_sba(sb, _subst(hc_join(mo, "\n")));
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "kernel: ");
+    var kr = _cat("/proc/sys/kernel/osrelease", 0);
+    if (kr != 0) { hc_sba(sb, kr); }
+    _line(sb);
+
+    var sysb = hc_sb();
+    hc_sbc(sysb, "kernel.randomize_va_space vm.mmap_min_addr kernel.yama.ptrace_scope ");
+    hc_sbc(sysb, "kernel.unprivileged_userns_clone user.max_user_namespaces kernel.perf_event_paranoid ");
+    hc_sbc(sysb, "fs.inotify.max_user_watches vm.overcommit_memory kernel.pid_max vm.max_map_count");
+    var sv = hc_split(hc_sbend(sysb), 32);
+    j = 0;
+    while (j < vec_len(sv)) {
+        var k = vec_get(sv, j);
+        sb = hc_sb();
+        hc_sba(sb, k);
+        hc_sbc(sb, "=");
+        var path = hc_ccat("/proc/sys/", hc_replace(k, hc_s("."), hc_s("/")));
+        var v = _cat(hc_cstr(path), 0);
+        if (v == 0) { hc_sbc(sb, "n/a"); } else { hc_sba(sb, v); }
+        _line(sb);
+        j = j + 1;
+    }
+
+    # RLIMIT_NOFILE 7, RLIMIT_STACK 3 (KiB), RLIMIT_NPROC 6, RLIMIT_AS 9 (KiB), RLIMIT_CORE 4
+    # (512-byte blocks, sh's POSIX unit)
+    sb = hc_sb();
+    hc_sbc(sb, "ulimit -n=");
+    _ulimit(sb, 7, 1);
+    hc_sbc(sb, " -s=");
+    _ulimit(sb, 3, 1024);
+    hc_sbc(sb, " -u=");
+    _ulimit(sb, 6, 1);
+    hc_sbc(sb, " -v=");
+    _ulimit(sb, 9, 1024);
+    hc_sbc(sb, " -c=");
+    _ulimit(sb, 4, 512);
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "locale: LANG=");
+    _envor(sb, "LANG");
+    hc_sbc(sb, " LC_ALL=");
+    _envor(sb, "LC_ALL");
+    hc_sbc(sb, "; ");
+    var ll = _lines(hc_capture(hc_argv("locale", 0, 0, 0, 0, 0), 0, 0, "/dev/null", 0));
+    var lo = vec_new();
+    j = 0;
+    while (j < vec_len(ll)) {
+        if (hc_pre(vec_get(ll, j), "LC_CTYPE") == 1) { vec_push(lo, vec_get(ll, j)); }
+        j = j + 1;
+    }
+    hc_sba(sb, _subst(hc_join(lo, "\n")));
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "localectl-conf: ");
+    var lc = _cat("/etc/locale.conf", 0);
+    if (lc != 0) { hc_sba(sb, lc); }
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "tz: ");
+    var lb = alloc(4097);
+    var rn = xreadlink("/etc/localtime", lb, 4096);
+    if (rn > 0) { hc_sba(sb, _subst(hc_mk(lb, rn))); }
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "tmp: ");
+    hc_sba(sb, _cmd(hc_argv("findmnt", "-no", "OPTIONS", "/tmp", 0, 0), 0));
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "tmp-size: ");
+    var dl = _lines(hc_capture(hc_argv("df", "-h", "/tmp", 0, 0, 0), 0, 0, 0, 0));
+    if (vec_len(dl) >= 2) {
+        var df = _fields(vec_get(dl, 1));
+        if (vec_len(df) >= 2) { hc_sba(sb, vec_get(df, 1)); }
+    }
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "binfmt: ");
+    var bs = _cat("/proc/sys/fs/binfmt_misc/status", 1);
+    if (bs != 0) { hc_sba(sb, bs); }
+    hc_sbc(sb, " entries=");
+    var bl = _lines(hc_capture(hc_argv("ls", "/proc/sys/fs/binfmt_misc", 0, 0, 0, 0), 0, 0, 0, 0));
+    j = 0;
+    while (j < vec_len(bl)) {
+        var be = vec_get(bl, j);
+        if (hc_eqc(be, "register") == 0 && hc_eqc(be, "status") == 0) {
+            hc_sba(sb, be);
+            hc_sbc(sb, " ");
+        }
+        j = j + 1;
+    }
+    _line(sb);
+
+    var nets = "1.1.1.1:443 github";
+    var urls = "https://1.1.1.1/ https://api.github.com/";
+    var nv = hc_split(hc_s(nets), 32);
+    var uv = hc_split(hc_s(urls), 32);
+    j = 0;
+    while (j < 2) {
+        sb = hc_sb();
+        hc_sbc(sb, "net-");
+        hc_sba(sb, vec_get(nv, j));
+        hc_sbc(sb, ": ");
+        var av = vec_new();
+        vec_push(av, "timeout");
+        vec_push(av, "8");
+        vec_push(av, "curl");
+        vec_push(av, "-s");
+        vec_push(av, "-o");
+        vec_push(av, "/dev/null");
+        vec_push(av, "-w");
+        vec_push(av, "%{http_code}");
+        vec_push(av, hc_cstr(vec_get(uv, j)));
+        var out = hc_capture(av, 0, 0, HC_SAME, 0);
+        if (hc_last_rc != 0) { out = hc_catc(out, "FAIL\n"); }
+        hc_sba(sb, _subst(out));
+        _line(sb);
+        j = j + 1;
+    }
+
+    sb = hc_sb();
+    hc_sbc(sb, "systemd-binfmt: ");
+    hc_sba(sb, _cmd(hc_argv("systemctl", "is-active", "systemd-binfmt", 0, 0, 0), HC_SAME));
+    _line(sb);
+
+    sb = hc_sb();
+    hc_sbc(sb, "TMPDIR=");
+    _envor(sb, "TMPDIR");
+    hc_sbc(sb, " WINEPREFIX=");
+    _envor(sb, "WINEPREFIX");
+    hc_sbc(sb, " CYRIUS_HOME=");
+    _envor(sb, "CYRIUS_HOME");
+    _line(sb);
+
+    sb = hc_sb();
+    if (hc_which("pacman") != 0) {
+        var pq = hc_capture(hc_argv("pacman", "-Q", 0, 0, 0, 0), 0, 0, 0, 0);
+        hc_sbc(sb, "pacman pkgs: ");
+        hc_sbi(sb, hc_countc(pq, "\n"));
+    } else {
+        hc_sbc(sb, "pacman pkgs: n/a (no pacman)");
+    }
+    _line(sb);
+    return 0;
+}

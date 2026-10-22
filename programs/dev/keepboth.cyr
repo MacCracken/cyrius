@@ -1,0 +1,92 @@
+# programs/dev/keepboth.cyr — resolve every merge-conflict block in a file by keeping BOTH sides,
+# ours then theirs (the two lanes each appended a row at the same place: scripts/check.sh's
+# `_chk_gate` list, a CHANGELOG section, a gate registry).
+#
+# Usage:  cyrius run programs/dev/keepboth.cyr [--sep] <file>
+#
+# Input:  <file> holding `<<<<<<< <label>` / `=======` / `>>>>>>> <label>` blocks; the labels may be
+#         anything (HEAD, a branch, a lane name). A diff3-style `||||||| base` section is not
+#         recognised: it would be kept as part of "ours". The file is read as Python's text mode
+#         read it (CR LF and a lone CR read as LF).
+# Output: <file> rewritten (replaced atomically, its mode kept), each block replaced by its first
+#         side followed by its second. --sep puts one blank line between the two sides (the first
+#         side's trailing newlines folded into one blank line); without it the sides are joined as
+#         they are. Prints `resolved <N> block(s) in <file>`. Exit 0 when at least one block was
+#         resolved and no marker remains; 1 when the file had no conflict block (nothing written)
+#         or a marker is left after resolving (an unmatched or nested block; nothing written); 2 on
+#         a usage error.
+#
+# A block is what the pattern `<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n` (DOTALL)
+# matches, scanned left to right without overlap — the markers are found anywhere, not only at
+# a line start.
+#
+# It replaced scripts/dev/keepboth.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+var PROG = "keepboth";
+
+fn main(): i64 {
+    hc_opt("sep", 0);
+    hc_parse(PROG, "keepboth [-h] [--sep] file", 1);
+    if (hc_npos() < 1) {
+        hc_errc("usage: keepboth [-h] [--sep] file\nkeepboth: error: the following arguments are required: file\n");
+        return 2;
+    }
+    var sep = hc_optv("sep");
+    var file = hc_pos(0);
+    var s = hc_read_text(hc_cstr(file));
+    if (s == 0) { hc_die(PROG, hc_cat(file, hc_s(": cannot read")), 1); }
+    var sb = hc_sb();
+    var n = 0;
+    var pos = 0;
+    loop {
+        var st = hc_findc(s, "<<<<<<< ", pos);
+        if (st < 0) { break; }
+        var h = hc_findb(s, 10, st + 8);
+        if (h < 0) { break; }
+        var g1 = h + 1;
+        var e1 = hc_findc(s, "=======\n", g1);
+        if (e1 < 0) { break; }
+        var g2 = e1 + 8;
+        var t = hc_findc(s, ">>>>>>> ", g2);
+        if (t < 0) { break; }
+        var nl = hc_findb(s, 10, t + 8);
+        if (nl < 0) { break; }
+        hc_sba(sb, hc_sub(s, pos, st));
+        var ours = hc_sub(s, g1, e1);
+        if (sep == 1) {
+            hc_sba(sb, hc_rstrip_set(ours, "\n"));
+            hc_sbc(sb, "\n\n");
+        } else {
+            hc_sba(sb, ours);
+        }
+        hc_sba(sb, hc_sub(s, g2, t));
+        n = n + 1;
+        pos = nl + 1;
+    }
+    hc_sba(sb, hc_sub(s, pos, hc_n(s)));
+    var s2 = hc_sbend(sb);
+    if (n == 0) {
+        hc_errc("keepboth: no conflict block in ");
+        hc_err(file);
+        hc_errc("\n");
+        return 1;
+    }
+    if (hc_has(s2, "<<<<<<<") == 1 || hc_has(s2, ">>>>>>>") == 1) {
+        hc_errc("keepboth: a conflict marker is left in ");
+        hc_err(file);
+        hc_errc(" after resolving ");
+        hc_err(hc_itoa(n));
+        hc_errc(" block(s) — not written\n");
+        return 1;
+    }
+    if (hc_replace_file(hc_cstr(file), s2) != 0) { hc_die(PROG, hc_cat(file, hc_s(": cannot write")), 1); }
+    hc_outc("resolved ");
+    hc_out(hc_itoa(n));
+    hc_outc(" block(s) in ");
+    hc_out(file);
+    hc_outc("\n");
+    return 0;
+}

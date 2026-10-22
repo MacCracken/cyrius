@@ -1,0 +1,8 @@
+jobs:
+  lint:
+    steps:
+      - name: Setup thing
+        run: echo skipped-by-name
+      - name: yaml extension
+        shell: bash
+        run: echo from-yaml

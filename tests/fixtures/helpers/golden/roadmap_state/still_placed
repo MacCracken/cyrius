@@ -1,0 +1,5 @@
+rc=1
+--- stdout
+derived: n_tcyr=6 n_cross=1 n_lib=3 n_gates=3 n_api=5 n_open=5 n_prop=1 cyc=296 arm=1,234 text=16  placed: 1.0.0=1 9.8.10=2 9.9.0=1
+--- stderr
+1 issue(s) still placed 9.9.0 — place them before the close (nothing written)

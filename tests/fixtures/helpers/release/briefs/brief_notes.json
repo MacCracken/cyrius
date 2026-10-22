@@ -1,0 +1,20 @@
+{
+ "preamble": "**Release context.** A preamble.\n",
+ "unit_notes": {
+  "alpha/A1": "note for A1",
+  "gamma/G1": "note for G1"
+ },
+ "extra_decisions": {
+  "alpha/A2": [
+   3
+  ]
+ },
+ "cross_lane": {
+  "beta": [
+   {
+    "from": "alpha",
+    "label": "Alpha says"
+   }
+  ]
+ }
+}

@@ -1,0 +1,86 @@
+# The YAML shapes run-ci.py misread (6.7.17): block scalar headers and folding, quoted and
+# commented scalars, env: at three levels, working-directory, a nested mapping under a step.
+name: yaml shapes
+on: push
+env:
+  WF_VAR: from-workflow
+  OVERRIDE: wf
+  QUOTED: "a \"quoted\" value"
+defaults:
+  run:
+    working-directory: sub
+jobs:
+  shapes:
+    env:
+      JOB_VAR: 'single ''quoted'''
+      OVERRIDE: job
+    steps:
+      - run: |-
+          echo dash-strip
+          echo second
+      - name: "Quoted name # not a comment"
+        run: "echo quoted-run"
+      - name: Plain name # a comment
+        run: echo plain-run # a comment bash ignores too
+      - name: 'Single quoted, it''s'
+        shell: 'bash'
+        run: echo single-quoted
+      - name: Keep chomping
+        run: |+
+          echo keep
+
+      - name: Folded
+        run: >
+          echo folded
+          one-line
+      - name: Folded paragraphs
+        run: >-
+          echo first
+
+          echo second
+      - name: Folded more-indented
+        run: >
+          echo a
+            echo b
+          echo c
+      - name: Indent indicator
+        run: |2
+            echo indented-two
+      - name: Deeper block
+        run: |
+            cat <<EOF
+            deep-heredoc
+            EOF
+      - name: Header comment
+        run: | # the header may carry a comment
+          echo after-header-comment
+      - name: Env at three levels
+        env:
+          STEP_VAR: from-step
+          OVERRIDE: step
+        run: echo "$WF_VAR|$JOB_VAR|$OVERRIDE|$STEP_VAR|$QUOTED"
+      - name: Flow env
+        env: {FLOW: flow-value, OVERRIDE: "flow"}
+        run: echo "$FLOW $OVERRIDE"
+      - name: Default working directory
+        run: echo "$(basename "$PWD") $(cat here.txt)"
+      - name: Step working directory
+        working-directory: other
+        run: echo "$(basename "$PWD") $(cat there.txt)"
+      - name: Uses with a nested mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: not-the-step-name
+          path: x
+        run: echo with-is-scoped
+      - name: If is not evaluated
+        if: false
+        run: echo ran-despite-if
+  defaults_job:
+    defaults:
+      run:
+        working-directory: other
+        shell: "sh"
+    steps:
+      - name: Job working directory and quoted shell
+        run: echo "$(basename "$PWD")"

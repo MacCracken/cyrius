@@ -1,0 +1,549 @@
+# programs/release/roadmap_state.cyr — at a release's close: derive the tree's figures (corpus
+# counts, compiler sizes, .text, api-surface, open issues / proposals, issues placed per release)
+# and apply the release's prose template to docs/development/roadmap.md, state.md and
+# completed-phases.md (the head stamp, the sequence table, the shipped section pruned, state's
+# rows, the completed-phases line). With --derive it only prints the figures.
+#
+# usage:   cyrius run programs/release/roadmap_state.cyr --ver X.Y.Z --derive [--repo <checkout>]
+#          cyrius run programs/release/roadmap_state.cyr --ver X.Y.Z [--template F]
+#            [--set key=value]... [--date YYYY-MM-DD] [--dry] [--repo <checkout>] [--c6 <dir>]
+#   --derive     print the derived figures (key=value) and exit; writes nothing, needs no template
+#   --set k=v    a value the template uses that the tree cannot give (the gate head, the driver and
+#                shell counts, the bench, the A/B figures, the archived count, ...); repeatable
+#   --date       available to the template as {date}
+#   --dry        print the unified diff it would apply; write nothing
+# inputs:  the checkout: tests/tcyr, tests/gates, lib/*.cyr, docs/api-surface.snapshot,
+#          docs/development/issues/*.md (their first **Placement:** line), docs/development/proposals,
+#          build/cycc and build/cycc-native-aarch64 (readelf reads build/cycc's .text);
+#          <template> (default <c6>/<tag>_roadmap_state.json): this release's prose as edit
+#          operations with {placeholders} — schema in scripts/release/README.md. A `sub` pattern
+#          is a Python regex and its `to` a Python re.sub template (programs/release/pyre.cyr);
+#          every `to` is a Python format string (programs/release/pyfmt.cyr).
+# outputs: --derive: the figures on stdout. Otherwise the three docs edited in place (each replaced
+#          atomically), the figures and one line per operation (a "matched nothing" warning when
+#          one does). Exit 1, writing nothing, when an issue is still placed in X.Y.Z, a
+#          placeholder has no value, or an operation's row / marker is missing.
+#
+# It replaced scripts/release/roadmap-state.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/release/common.cyr"
+include "programs/release/pyre.cyr"
+include "programs/release/pyfmt.cyr"
+include "programs/release/pydiff.cyr"
+
+# find <top> -name '*<suffix>' | wc -l (files and directories, at any depth; links not followed)
+fn _count_named(top, suffixc): i64 {
+    var ents = hc_listdir(hc_cstr(top));
+    if (ents == 0) { return 0; }
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = vec_get(ents, i);
+        i = i + 1;
+        if (hc_suf(e, suffixc) == 1) { n = n + 1; }
+        var p = hc_join2(top, e);
+        var st[256];
+        if (sys_lstat(hc_cstr(p), &st) == 0) {
+            if ((load32(&st + STAT_MODE) & 0xF000) == 0x4000) { n = n + _count_named(p, suffixc); }
+        }
+    }
+    return n;
+}
+
+# Python's glob(<dir>/*<suffix>): entries (no hidden ones) as full paths.
+fn _glob(dir, suffixc): i64 {
+    var names = hc_glob_names(hc_cstr(dir), suffixc);
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(names)) { vec_push(out, hc_join2(dir, vec_get(names, i))); i = i + 1; }
+    return out;
+}
+
+fn _size(pathc): i64 {
+    var st[256];
+    if (sys_stat(pathc, &st) != 0) {
+        rc_exit(hc_ccat("FileNotFoundError: [Errno 2] No such file or directory: ", hc_pyrepr(hc_s(pathc))));
+    }
+    return load64(&st + STAT_SIZE);
+}
+
+fn _text_size(elf): i64 {
+    if (hc_which("readelf") == 0) {
+        rc_exitc("roadmap-state: readelf not found (binutils) — it reads build/cycc's .text size");
+    }
+    var out = hc_capture_full(hc_argv("readelf", "-S", hc_cstr(elf), 0, 0, 0), 0, 0, 0, 2, 0);
+    if (hc_last_rc != 0) { rc_exit(hc_cat3(hc_s("roadmap-state: readelf -S "), elf, hc_s(" failed"))); }
+    var lines = hc_split(out, 10);
+    var i = 0;
+    while (i < vec_len(lines)) {
+        if (hc_has(vec_get(lines, i), " .text") == 1) {
+            if (i + 1 >= vec_len(lines)) { break; }
+            var nxt = hc_strip(vec_get(lines, i + 1));
+            var sp = 0;
+            while (sp < hc_n(nxt) && hc_py_space(hc_at(nxt, sp)) == 0) { sp = sp + 1; }
+            var hex = hc_sub(nxt, 0, sp);
+            var v = 0;
+            var k = 0;
+            while (k < hc_n(hex)) {
+                var c = hc_at(hex, k);
+                var d = 0 - 1;
+                if (c >= 48 && c <= 57) { d = c - 48; }
+                if (c >= 97 && c <= 102) { d = c - 87; }
+                if (c >= 65 && c <= 70) { d = c - 55; }
+                if (d < 0) { rc_exit(hc_ccat("ValueError: invalid literal for int() with base 16: ", hc_pyrepr(hex))); }
+                v = v * 16 + d;
+                k = k + 1;
+            }
+            return v;
+        }
+        i = i + 1;
+    }
+    rc_exit(hc_cat3(hc_s("roadmap-state: readelf -S "), elf, hc_s(" lists no .text section")));
+    return 0;
+}
+
+# The release number at the head of a Placement line: `\*\*Placement:\*\* (\d+\.\d+\.\d+) `.
+fn _placed_rel(line): i64 {
+    var pre = hc_s("**Placement:** ");
+    if (hc_pre_s(line, pre) == 0) { return 0; }
+    var i = hc_n(pre);
+    var st = i;
+    var l = 0;
+    var part = 0;
+    while (part < 3) {
+        var k = 0;
+        while (i < hc_n(line)) {
+            var cp = hc_u8(line, i, &l);
+            if (hc_nd_value(cp) < 0) { break; }
+            i = i + l;
+            k = k + 1;
+        }
+        if (k == 0) { return 0; }
+        part = part + 1;
+        if (part < 3) {
+            if (i >= hc_n(line) || hc_at(line, i) != 46) { return 0; }
+            i = i + 1;
+        }
+    }
+    if (i >= hc_n(line) || hc_at(line, i) != 32) { return 0; }
+    return hc_sub(line, st, i);
+}
+
+fn _relkey_cmp(a, b): i64 {
+    var pa = hc_split(a, 46);
+    var pb = hc_split(b, 46);
+    var i = 0;
+    var l = 0;
+    while (i < vec_len(pa) && i < vec_len(pb)) {
+        var x = 0;
+        var y = 0;
+        var s = vec_get(pa, i);
+        var t = vec_get(pb, i);
+        var k = 0;
+        while (k < hc_n(s)) { var cp = hc_u8(s, k, &l); x = x * 10 + hc_nd_value(cp); k = k + l; }
+        k = 0;
+        while (k < hc_n(t)) { var cp2 = hc_u8(t, k, &l); y = y * 10 + hc_nd_value(cp2); k = k + l; }
+        if (x != y) { return x - y; }
+        i = i + 1;
+    }
+    return vec_len(pa) - vec_len(pb);
+}
+
+var _vals = 0;      # the template's values (pyfmt's value set)
+var _placed = 0;    # vec of [release, count]
+
+fn _missing(name): i64 {
+    var mid = hc_s("}, which has no value (derive it, or pass --set ");
+    rc_exit(hc_cat3(hc_s("the template uses {"), name, hc_cat3(mid, name, hc_s("=...)"))));
+    return 0;
+}
+
+fn _fill(t): i64 {
+    pf_err = 0;
+    var r = pf_vformat(t, _vals);
+    if (r == 0) { rc_exit(hc_ccat("roadmap-state: ", pf_err)); }
+    return r;
+}
+
+# The first match of ^\| \*\*NAME\*\* \|.*\|$ (group: ^\| \*\*NAME\*\* \| (.*) \|$), re.M: 1 with
+# [start, end, group start, group end] at out.
+fn _row_find(s, name, group, out): i64 {
+    var pre = hc_cat3(hc_s("| **"), name, hc_s("** |"));
+    var at = 0;
+    loop {
+        var k = hc_find(s, pre, at);
+        if (k < 0) { return 0; }
+        at = k + 1;
+        if (k != 0 && hc_at(s, k - 1) != 10) { continue; }
+        var e = hc_findb(s, 10, k);
+        if (e < 0) { e = hc_n(s); }
+        var after = k + hc_n(pre);
+        if (group == 1) {
+            # ` (.*) \|$`: a space, then the line must end in ` |` (the group runs to before it)
+            if (after >= e || hc_at(s, after) != 32) { continue; }
+            if (e - 2 < after + 1 - 0) { continue; }
+            if (e - after < 3) { continue; }
+            if (hc_at(s, e - 1) != 124 || hc_at(s, e - 2) != 32) { continue; }
+            store64(out, k);
+            store64(out + 8, e);
+            store64(out + 16, after + 1);
+            store64(out + 24, e - 2);
+            return 1;
+        }
+        # `.*\|$`: the line must end in a `|` after the one that closes the name cell
+        if (e - 1 < after || hc_at(s, e - 1) != 124) { continue; }
+        store64(out, k);
+        store64(out + 8, e);
+        return 1;
+    }
+    return 0;
+}
+
+fn _log(rel, msg): i64 {
+    hc_outc("  ");
+    hc_out(rel);
+    hc_outc(": ");
+    hc_out(msg);
+    if (hc_suf(msg, ": 0") == 1) { hc_outc("   <- matched nothing"); }
+    hc_outc("\n");
+    return 0;
+}
+
+fn _head60(s): i64 { return hc_pyrepr(hc_uhead(s, 60)); }
+
+fn _apply(s, op, rel): i64 {
+    if (rc_jhas(op, "sub") == 1) {
+        var pat = rc_jreqs(op, "sub");
+        var flags = 0;
+        var fl = rc_jget(op, "flags");
+        if (fl != 0) {
+            var fs = rc_jstr(fl);
+            var i = 0;
+            while (i < hc_n(fs)) {
+                var c = hc_at(fs, i);
+                if (c == 83) { flags = flags | PR_S; }
+                elif (c == 77) { flags = flags | PR_M; }
+                elif (c == 73) { flags = flags | PR_I; }
+                else {
+                    var one = hc_sub(fs, i, i + 1);
+                    rc_exit(hc_ccat("KeyError: ", hc_pyrepr(one)));
+                }
+                i = i + 1;
+            }
+        }
+        var to = _fill(rc_jreqs(op, "to"));
+        var count = 0;
+        var cv = rc_jget(op, "count");
+        if (cv != 0) { count = bayan_json_v_int(cv); }
+        var r = pr_subn(pat, to, s, count, flags);
+        if (r == 0) { rc_exit(hc_ccat("re.error: ", pr_err)); }
+        _log(rel, hc_cat3(hc_s("sub "), _head60(pat), hc_ccat(": ", hc_itoa(pr_nsub))));
+        return r;
+    }
+    if (rc_jhas(op, "replace") == 1) {
+        var old = rc_jreqs(op, "replace");
+        var n = hc_count(s, old);
+        if (n == 0 && rc_jhas(op, "must") == 1) {
+            var mv = rc_jget(op, "must");
+            var truthy = 1;
+            if (bayan_json_v_is_bool(mv) == 1 && bayan_json_v_bool(mv) == 0) { truthy = 0; }
+            if (bayan_json_v_is_null(mv) == 1) { truthy = 0; }
+            if (bayan_json_v_is_int(mv) == 1 && bayan_json_v_int(mv) == 0) { truthy = 0; }
+            if (bayan_json_v_is_str(mv) == 1 && hc_n(bayan_json_v_str(mv)) == 0) { truthy = 0; }
+            if (truthy == 1) {
+                rc_exit(hc_cat3(hc_s("replace: "), hc_pyrepr(old), hc_s(" is not in the file — nothing written")));
+            }
+        }
+        _log(rel, hc_cat3(hc_s("replace "), _head60(old), hc_ccat(": ", hc_itoa(n))));
+        if (hc_n(old) == 0) {
+            # str.replace with an empty needle inserts between every character
+            var to0 = _fill(rc_jreqs(op, "to"));
+            var sb0 = hc_sb();
+            var i0 = 0;
+            var l0 = 0;
+            hc_sba(sb0, to0);
+            while (i0 < hc_n(s)) {
+                hc_u8(s, i0, &l0);
+                hc_sba(sb0, hc_sub(s, i0, i0 + l0));
+                hc_sba(sb0, to0);
+                i0 = i0 + l0;
+            }
+            return hc_sbend(sb0);
+        }
+        return hc_replace(s, old, _fill(rc_jreqs(op, "to")));
+    }
+    if (rc_jhas(op, "cut") == 1) {
+        var cut = rc_jget(op, "cut");
+        var a = rc_jstr(rc_jat(cut, 0));
+        var b = rc_jstr(rc_jat(cut, 1));
+        if (hc_has_s(s, a) == 0 || hc_has_s(s, b) == 0) {
+            var ctail = hc_ccat(" or ", hc_pyrepr(b));
+            rc_exit(hc_cat3(hc_ccat("cut: ", hc_pyrepr(a)), ctail, hc_s(" is not in the file — nothing written")));
+        }
+        var ia = hc_find(s, a, 0);
+        var jb = hc_find(s, b, 0);
+        var span = hc_s("");
+        if (jb > ia) { span = hc_sub(s, ia, jb); }
+        var msg = hc_sb();
+        hc_sbc(msg, "cut ");
+        hc_sba(msg, hc_pyrepr(a));
+        hc_sbc(msg, " .. ");
+        hc_sba(msg, hc_pyrepr(b));
+        hc_sbc(msg, ": ");
+        hc_sbi(msg, hc_countc(span, "\n"));
+        hc_sbc(msg, " lines");
+        _log(rel, hc_sbend(msg));
+        return hc_cat(hc_sub(s, 0, ia), hc_sub(s, jb, hc_n(s)));
+    }
+    if (rc_jhas(op, "row") == 1) {
+        var name = rc_jreqs(op, "row");
+        var m: i64[4];
+        var body = 0;
+        if (rc_jhas(op, "keep_from") == 1) {
+            var kf = rc_jreqs(op, "keep_from");
+            var found = _row_find(s, name, 1, &m);
+            var grp = 0;
+            if (found == 1) { grp = hc_sub(s, m[2], m[3]); }
+            if (found == 0 || hc_has_s(grp, kf) == 0) {
+                var rhead = hc_cat3(hc_s("row "), hc_pyrepr(name), hc_s(": no such row, or no "));
+                rc_exit(hc_cat3(rhead, hc_pyrepr(kf), hc_s(" in it — nothing written")));
+            }
+            body = hc_cat(_fill(rc_jreqs(op, "to")), hc_sub(grp, hc_find(grp, kf, 0), hc_n(grp)));
+        } else {
+            if (_row_find(s, name, 0, &m) == 0) {
+                rc_exit(hc_cat3(hc_s("row "), hc_pyrepr(name), hc_s(": no such row — nothing written")));
+            }
+            body = _fill(rc_jreqs(op, "to"));
+        }
+        _log(rel, hc_ccat("row ", hc_pyrepr(name)));
+        var sb = hc_sb();
+        hc_sba(sb, hc_sub(s, 0, m[0]));
+        hc_sbc(sb, "| **");
+        hc_sba(sb, name);
+        hc_sbc(sb, "** | ");
+        hc_sba(sb, body);
+        hc_sbc(sb, " |");
+        hc_sba(sb, hc_sub(s, m[1], hc_n(s)));
+        return hc_sbend(sb);
+    }
+    if (rc_jhas(op, "insert_after_row") == 1) {
+        var rn = rc_jreqs(op, "insert_after_row");
+        var m2: i64[4];
+        if (_row_find(s, rn, 0, &m2) == 0) {
+            rc_exit(hc_cat3(hc_s("insert_after_row "), hc_pyrepr(rn), hc_s(": no such row — nothing written")));
+        }
+        _log(rel, hc_ccat("insert after row ", hc_pyrepr(rn)));
+        return hc_cat(hc_cat3(hc_sub(s, 0, m2[1]), hc_s("\n"), _fill(rc_jreqs(op, "to"))), hc_sub(s, m2[1], hc_n(s)));
+    }
+    rc_exit(hc_ccat("unknown operation: ", rc_jstr(op)));
+    return 0;
+}
+
+# os.path.relpath(p, start) for two absolute paths.
+fn _relpath(p, start): i64 {
+    var a = hc_split(hc_normpath(p), 47);
+    var b = hc_split(hc_normpath(start), 47);
+    var i = 0;
+    while (i < vec_len(a) && i < vec_len(b) && hc_eq(vec_get(a, i), vec_get(b, i)) == 1) { i = i + 1; }
+    var parts = vec_new();
+    var k = i;
+    while (k < vec_len(b)) { if (hc_n(vec_get(b, k)) > 0) { vec_push(parts, hc_s("..")); } k = k + 1; }
+    k = i;
+    while (k < vec_len(a)) { if (hc_n(vec_get(a, k)) > 0) { vec_push(parts, vec_get(a, k)); } k = k + 1; }
+    if (vec_len(parts) == 0) { return hc_s("."); }
+    return hc_join(parts, "/");
+}
+
+fn main(): i64 {
+    var usage = "roadmap_state --ver X.Y.Z [--derive] [--template F] [--set KEY=VALUE]... [--date D] [--dry]";
+    rc_options("roadmap-state", usage, 0, 1);
+    hc_opt("derive", 0);
+    hc_opt("template", 1);
+    hc_opt("set", 2);
+    hc_opt("date", 1);
+    rc_finish(0, 0);
+    var date = hc_optv("date");
+    if (date != 0) {
+        if (_rc_is_date(date) == 0) { rc_exit(hc_ccat("--date must be YYYY-MM-DD, got ", hc_pyrepr(date))); }
+    }
+    var repo = RC_REPO;
+    # derive(repo)
+    _vals = vec_new();
+    pf_set_int(_vals, "n_tcyr", _count_named(hc_joinc(repo, "tests/tcyr"), ".tcyr"));
+    pf_set_int(_vals, "n_cross", _count_named(hc_joinc(repo, "tests/tcyr/crossos"), ".tcyr"));
+    pf_set_int(_vals, "n_lib", vec_len(_glob(hc_joinc(repo, "lib"), ".cyr")));
+    pf_set_int(_vals, "n_gates", _count_named(hc_joinc(repo, "tests/gates"), ".sh"));
+    var api = hc_splitlines(rc_rd(hc_joinc(repo, "docs/api-surface.snapshot")), 0);
+    var na = 0;
+    var ai = 0;
+    while (ai < vec_len(api)) { if (hc_pre(vec_get(api, ai), "#") == 0) { na = na + 1; } ai = ai + 1; }
+    pf_set_str(_vals, hc_s("n_api"), hc_commas(na));
+    var issues = _glob(hc_joinc(repo, "docs/development/issues"), ".md");
+    var no = 0;
+    var ii = 0;
+    while (ii < vec_len(issues)) { if (hc_has(vec_get(issues, ii), "README.md") == 0) { no = no + 1; } ii = ii + 1; }
+    pf_set_int(_vals, "n_open", no);
+    var props = _glob(hc_joinc(repo, "docs/development/proposals"), ".md");
+    var np = 0;
+    var pi = 0;
+    while (pi < vec_len(props)) { if (hc_has(vec_get(props, pi), "README") == 0) { np = np + 1; } pi = pi + 1; }
+    pf_set_int(_vals, "n_prop", np);
+    var cycc = hc_joinc(repo, "build/cycc");
+    pf_set_str(_vals, hc_s("cyc"), hc_commas(_size(hc_cstr(cycc))));
+    pf_set_str(_vals, hc_s("arm"), hc_commas(_size(hc_cstr(hc_joinc(repo, "build/cycc-native-aarch64")))));
+    pf_set_str(_vals, hc_s("text"), hc_commas(_text_size(cycc)));
+    _placed = vec_new();
+    # glob's own order (the directory's), which a Counter keeps: `{placed}` prints in it
+    var iss_dir = hc_joinc(repo, "docs/development/issues");
+    var raw = hc_listdir(hc_cstr(iss_dir));
+    var unsorted = vec_new();
+    if (raw != 0) {
+        var ri = 0;
+        while (ri < vec_len(raw)) {
+            var rn = vec_get(raw, ri);
+            ri = ri + 1;
+            if (hc_n(rn) > 0 && hc_at(rn, 0) != 46 && hc_suf(rn, ".md") == 1) {
+                vec_push(unsorted, hc_join2(iss_dir, rn));
+            }
+        }
+    }
+    var ij = 0;
+    while (ij < vec_len(unsorted)) {
+        var f = vec_get(unsorted, ij);
+        ij = ij + 1;
+        var txt = rc_rd(f);
+        var lines = hc_split(txt, 10);
+        var li = 0;
+        while (li < vec_len(lines)) {
+            var line = vec_get(lines, li);
+            li = li + 1;
+            if (hc_pre(line, "**Placement:**") == 1) {
+                var rel = _placed_rel(line);
+                if (rel != 0) {
+                    var found = 0;
+                    var q = 0;
+                    while (q < vec_len(_placed)) {
+                        if (hc_eq(vec_get(vec_get(_placed, q), 0), rel) == 1) {
+                            vec_set(vec_get(_placed, q), 1, vec_get(vec_get(_placed, q), 1) + 1);
+                            found = 1;
+                        }
+                        q = q + 1;
+                    }
+                    if (found == 0) {
+                        var pe = vec_new();
+                        vec_push(pe, rel);
+                        vec_push(pe, 1);
+                        vec_push(_placed, pe);
+                    }
+                }
+                break;
+            }
+        }
+    }
+    var sb = hc_sb();
+    hc_sbc(sb, "derived: ");
+    var vi = 0;
+    while (vi < vec_len(_vals)) {
+        var e = vec_get(_vals, vi);
+        if (vi > 0) { hc_sbc(sb, " "); }
+        hc_sba(sb, vec_get(e, 0));
+        hc_sbc(sb, "=");
+        if (vec_get(e, 1) == 1) { hc_sbi(sb, vec_get(e, 2)); } else { hc_sba(sb, vec_get(e, 2)); }
+        vi = vi + 1;
+    }
+    hc_sbc(sb, "  placed: ");
+    var keys = vec_new();
+    var pk = 0;
+    while (pk < vec_len(_placed)) { vec_push(keys, vec_get(vec_get(_placed, pk), 0)); pk = pk + 1; }
+    hc_sort_by(keys, &_relkey_cmp);
+    var ki = 0;
+    while (ki < vec_len(keys)) {
+        if (ki > 0) { hc_sbc(sb, " "); }
+        var kk = vec_get(keys, ki);
+        hc_sba(sb, kk);
+        hc_sbc(sb, "=");
+        var q2 = 0;
+        while (q2 < vec_len(_placed)) {
+            if (hc_eq(vec_get(vec_get(_placed, q2), 0), kk) == 1) { hc_sbi(sb, vec_get(vec_get(_placed, q2), 1)); }
+            q2 = q2 + 1;
+        }
+        ki = ki + 1;
+    }
+    hc_sbc(sb, "\n");
+    hc_out(hc_sbend(sb));
+    if (hc_optv("derive") == 1) { return 0; }
+    var still = 0;
+    var q3 = 0;
+    while (q3 < vec_len(_placed)) {
+        if (hc_eq(vec_get(vec_get(_placed, q3), 0), RC_VER) == 1) { still = vec_get(vec_get(_placed, q3), 1); }
+        q3 = q3 + 1;
+    }
+    if (still > 0) {
+        var stail = hc_s(" — place them before the close (nothing written)");
+        rc_exit(hc_cat(hc_cat3(hc_itoa(still), hc_s(" issue(s) still placed "), RC_VER), stail));
+    }
+    _pf_set(_vals, hc_s("placed"), 3, _placed);
+    pf_set_str(_vals, hc_s("ver"), RC_VER);
+    if (date != 0) { pf_set_str(_vals, hc_s("date"), date); }
+    var sets = hc_optv("set");
+    var si = 0;
+    while (si < vec_len(sets)) {
+        var kv = vec_get(sets, si);
+        si = si + 1;
+        var eq = hc_findb(kv, 61, 0);
+        if (eq < 0) { rc_exit(hc_ccat("--set wants KEY=VALUE, got ", hc_pyrepr(kv))); }
+        pf_set_str(_vals, hc_sub(kv, 0, eq), hc_sub(kv, eq + 1, hc_n(kv)));
+    }
+    pf_missing = &_missing;
+    var tp = hc_optv("template");
+    if (tp == 0) { tp = rc_in_c6("roadmap_state.json"); }
+    var T = rc_json(tp);
+    var files = rc_jitems(rc_jreq(T, "files"));
+    var newp = vec_new();   # [path, text]
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var rel2 = vec_get(vec_get(files, fi), 0);
+        var ops = vec_get(vec_get(files, fi), 1);
+        fi = fi + 1;
+        var p = hc_join2(repo, rel2);
+        var s = 0;
+        var slot = 0 - 1;
+        var q4 = 0;
+        while (q4 < vec_len(newp)) {
+            if (hc_eq(vec_get(vec_get(newp, q4), 0), p) == 1) {
+                slot = q4;
+                if (hc_n(vec_get(vec_get(newp, q4), 1)) > 0) { s = vec_get(vec_get(newp, q4), 1); }
+            }
+            q4 = q4 + 1;
+        }
+        if (s == 0) { s = rc_rd(p); }
+        var oi = 0;
+        while (oi < rc_jlen(ops)) {
+            s = _apply(s, rc_jat(ops, oi), rel2);
+            oi = oi + 1;
+        }
+        if (slot >= 0) { vec_set(vec_get(newp, slot), 1, s); }
+        else {
+            var ne = vec_new();
+            vec_push(ne, p);
+            vec_push(ne, s);
+            vec_push(newp, ne);
+        }
+    }
+    var wi = 0;
+    while (wi < vec_len(newp)) {
+        var pth = vec_get(vec_get(newp, wi), 0);
+        var ns = vec_get(vec_get(newp, wi), 1);
+        wi = wi + 1;
+        if (RC_DRY == 1) {
+            var old = rc_rd(pth);
+            var rp = _relpath(pth, repo);
+            hc_out(pd_unified(hc_splitlines(old, 1), hc_splitlines(ns, 1), rp, rp));
+        }
+        rc_wr(pth, ns, RC_DRY);
+    }
+    if (RC_DRY == 1) { hc_outc("(dry) roadmap / state / completed-phases checked\n"); }
+    else { hc_outc("roadmap / state / completed-phases written\n"); }
+    return 0;
+}

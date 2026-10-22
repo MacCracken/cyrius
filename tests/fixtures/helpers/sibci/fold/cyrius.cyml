@@ -1,0 +1,8 @@
+[package]
+name = "foldx"
+cyrius = "9.9.9"
+
+[deps]
+  path = "../sibling"
+stdlib = ["string"]
+pathology = "not a path line"

@@ -1,0 +1,4 @@
+rc=2
+--- stdout
+badpin @ v1: pin 0.0.1 is not installed in @T@/store
+--- stderr

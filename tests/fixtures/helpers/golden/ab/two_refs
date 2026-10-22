@@ -1,0 +1,11 @@
+rc=0
+--- stdout
+old = HEAD~1, new = HEAD; min of 2 run(s) each
+own sources (each on its own src) old N ms new N ms delta D
+same input (HEAD~1 src) old N ms new n/a (rc=4)
+same input (HEAD src) old n/a (rc=-11) new N ms
+all old cc / old src: [N, N]
+all new cc / new src: [N, N]
+all new cc / old src: [N, N] (rc=4)
+all old cc / new src: [N, N] (rc=-11)
+--- stderr

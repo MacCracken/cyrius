@@ -1,0 +1,54 @@
+[
+ {
+  "id": 1,
+  "issue": "a.md",
+  "question": "q1?",
+  "options": [
+   {
+    "label": "Yes",
+    "effect": "e1"
+   }
+  ],
+  "rec_label": "Yes",
+  "why": "w"
+ },
+ {
+  "id": 2,
+  "issue": "b.md",
+  "question": "q2?",
+  "options": [
+   {
+    "label": "No",
+    "effect": "e2"
+   }
+  ],
+  "rec_label": "No",
+  "why": "w"
+ },
+ {
+  "id": 3,
+  "issue": "b.md",
+  "question": "q3?",
+  "options": [
+   {
+    "label": "Keep — it",
+    "effect": "e3"
+   }
+  ],
+  "rec_label": "Keep — it",
+  "why": "w"
+ },
+ {
+  "id": 7,
+  "issue": "c.md",
+  "question": "q7?",
+  "options": [
+   {
+    "label": "Out",
+    "effect": "e7"
+   }
+  ],
+  "rec_label": "Out",
+  "why": "w"
+ }
+]

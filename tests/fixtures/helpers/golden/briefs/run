@@ -1,0 +1,124 @@
+rc=0
+--- stdout
+briefs 4
+--- stderr
+--- briefs
+== ./alpha_A1.md
+# 9.8.7 brief — lane alpha, unit A1 (wave 1)
+
+**Release context.** A preamble.
+
+**UNIT NOTE:** note for A1
+
+## i2.md
+**Title:** Two — naïve
+**Severity:** High · **Kind:** defect · **Size:** M
+**Triage status:** OPEN — ev2
+**USER DECISIONS (final, 2026-10-22 — implement exactly the answer):**
+- **D1** — Q1?
+  **ANSWER: B** => eb
+- **D2** — Q2?
+  **ANSWER: Only** => eo
+**Fix plan (triage, verify line numbers):** fp2
+**Touches:** a string
+**Rows:** 
+**Targets:** x86, aarch64
+**Hosts:** pi
+**Risk:** r2
+
+## i3.md
+**Title:** Three
+**Severity:** Low · **Kind:** bug · **Size:** S
+**Triage status:** PARTIAL — ev3
+**USER DECISIONS:** none needed (a fix to what the source says / a codegen or tooling defect).
+**Fix plan (triage, verify line numbers):** fp3
+**Touches:** None
+**Rows:** None
+**Targets:** None
+**Hosts:** None
+**Risk:** r3
+
+## Lane notes (from the alpha triage)
+**Groups:** g-alpha
+
+**Ordering constraints:** o-alpha
+
+**Cross-lane:** x-alpha
+== ./alpha_A2.md
+# 9.8.7 brief — lane alpha, unit A2 (wave 1)
+
+**Release context.** A preamble.
+
+## i4.md
+**Title:** Four
+**Severity:** Low · **Kind:** tooling · **Size:** S · triaged in the beta lane
+**Triage status:** OPEN — ev4
+**USER DECISIONS:** none needed (a fix to what the source says / a codegen or tooling defect).
+**Fix plan (triage, verify line numbers):** fp4
+**Touches:** t
+**Rows:** r
+**Targets:** t
+**Hosts:** h
+**Risk:** r4
+
+## i9.md — D3
+**USER DECISION (final, 2026-10-22):** Q3 elsewhere?
+**ANSWER: X** => ex
+**Why:** why3
+
+## Lane notes (from the alpha triage)
+**Groups:** g-alpha
+
+**Ordering constraints:** o-alpha
+
+**Cross-lane:** x-alpha
+== ./beta_B1.md
+# 9.8.7 brief — lane beta, unit B1 (wave 1)
+
+**Release context.** A preamble.
+
+## i5.md
+**Title:** Five
+**Severity:** Low · **Kind:** tooling · **Size:** S
+**Triage status:** OPEN — ev5
+**USER DECISIONS:** none needed (a fix to what the source says / a codegen or tooling defect).
+**Fix plan (triage, verify line numbers):** fp5
+**Touches:** t
+**Rows:** r
+**Targets:** t
+**Hosts:** h
+**Risk:** r5
+
+## Lane notes (from the beta triage)
+**Groups:** g-beta
+
+**Ordering constraints:** o-beta
+
+**Cross-lane:** x-beta
+
+**Alpha says:** x-alpha
+== ./gamma_G1.md
+# 9.8.7 brief — lane gamma, unit G1 (wave 2)
+
+**Release context.** A preamble.
+
+**UNIT NOTE:** note for G1
+
+## i6.md
+**Title:** Six
+**Severity:** Low · **Kind:** bug · **Size:** L · triaged in the alpha lane
+**Triage status:** OPEN — ev6
+**USER DECISIONS:** none needed (a fix to what the source says / a codegen or tooling defect).
+**Fix plan (triage, verify line numbers):** fp6
+**Touches:** 
+**Rows:** only
+**Targets:** 
+**Hosts:** 
+**Risk:** 7
+
+## Lane notes (from the gamma triage)
+**Groups:** g-alpha
+
+**Ordering constraints:** o-alpha
+
+**Cross-lane:** x-alpha

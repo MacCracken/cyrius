@@ -1,0 +1,23 @@
+rc=0
+--- stdout
+[ci.yml] [build] [bash] Shell default from the workflow  (1 lines)
+[ci.yml] [build] [bash] Multi line  (5 lines)
+[ci.yml] [build] [bash] Pipefail failure  (1 lines)
+[ci.yml] [build] [sh] sh step  (1 lines)
+[ci.yml] [build] [bash] Continue on error  (1 lines)
+[ci.yml] [build] [bash] Continue on error, passing  (1 lines)
+[ci.yml] [build] [bash] Sudo blocked  (1 lines)
+[ci.yml] [build] [bash]   (1 lines)
+[ci.yml] [build] [bash] A very long step name that goes on and on and on past fifty   (1 lines)
+[ci.yml] [build] [bash] Uses with a run is still a run  (1 lines)
+[ci.yml] [build] [bash] Folded  (1 lines)
+[ci.yml] [build] [bash] The toolchain from the throwaway home  (1 lines)
+[ci.yml] [build] [bash] Runner files  (1 lines)
+[ci.yml] [build] [bash] Slow  (1 lines)
+[ci.yml] [build] [bash] Long output  (1 lines)
+[ci.yml] [build] [bash] Stderr only  (1 lines)
+[ci.yml] [other] [sh] job default sh  (1 lines)
+[ci.yml] [other] [sh] unicode — naïve step ✓ with a long name to trim at fifty cod  (1 lines)
+[ci.yml] [other] [sh] Empty output failure  (1 lines)
+[extra.yaml] [lint] [bash] yaml extension  (1 lines)
+--- stderr

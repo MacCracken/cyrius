@@ -1,0 +1,256 @@
+# programs/folds/sibci.cyr — run ONE fold release's full GitHub CI locally, the way GitHub would run
+# it, fully isolated. A fold is a folded stdlib (docs/ecosystem.md); consumers are never run.
+#   - a clean `git archive <commit>` copy (committed files only), with any `path = "../X"` dep
+#     line commented out (a path dep beats a tag and would read the local worktree, not the
+#     release);
+#   - a throwaway CYRIUS_HOME holding a COPY of <store>/<the fold's pin> and an EMPTY deps/ (so
+#     every dep tag is fetched from GitHub), and HOME pointed at a throwaway dir too — a CI
+#     "Install Cyrius toolchain" step can never reach the live ~/.cyrius (the 6.6.12 incident);
+#   - the steps run by programs/folds/ci_steps.cyr (run_ci's runner) with GitHub's shell semantics.
+#
+# Usage:  cyrius run programs/folds/sibci.cyr <fold> <commit-or-tag> [workdir]
+#   <fold> is the fold's NAME (its checkout is $CYRIUS_FOLDS_ROOT/<fold>), NOT a path: a path
+#   exits 2 before anything is removed, and a bad fold or commit (no pin read from the archive's
+#   cyrius.cyml) exits 2 before the store is copied, each with a named message. Read ok=N in the
+#   summary, never rc=0 alone (a copy with no runnable step reads rc=0 ok=0). [workdir] (and
+#   CYRIUS_SCRATCH) must be absolute: the run cd's into the copy.
+#
+# Inputs (environment; each default in parentheses):
+#   CYRIUS_FOLDS_ROOT  where the fold checkouts live                ($HOME/Repos)
+#   CYRIUS_STORE       the installed toolchain store, one slot per version
+#                                                                   ($HOME/.cyrius/versions)
+#   CYRIUS_SCRATCH     scratch root; the workdir is $CYRIUS_SCRATCH/sibci when no [workdir]
+#                      argument is given                (${XDG_CACHE_HOME:-$HOME/.cache}/c6)
+#   every tool a CI step calls, under /usr/local/bin:/usr/bin:/bin — the steps' PATH is reset to
+#   the slot's bin/, the qemu shim and those three (a CI image's shape); qemu-aarch64 on the
+#   caller's PATH, optional, is shimmed as qemu-aarch64-static (the name CI images use).
+# Outputs:
+#   stdout: one summary line, `<fold> @ <commit> (pin <v>): rc=N ok=N fail=N skip=N`;
+#   <workdir>/<fold>/ci.log: the step log (the OK / FAIL / SKIP lines, CI_VERBOSE tails);
+#   <workdir>/<fold>/ is left for inspection and wiped at the next run of the same fold.
+#   Exit 2 when <fold> is a path, when no pin is read, or when the fold's pin is not installed in
+#   the store; 1 when an argument is missing or the shim's temp dir / the cd into the copy fails;
+#   otherwise 0 — the verdict is the summary line, not the exit status.
+#
+# It replaced scripts/folds/sibci.sh (and the run-ci.py it ran), with byte-identical output (the
+# golden row in tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/folds/ci_steps.cyr"
+
+# `grep -m1 '^cyrius *=' <file> | sed 's/.*"\(.*\)".*/\1/'`: the pin, or "" (0 when the file
+# cannot be read).
+fn _pin(pathc): i64 {
+    var s = hc_read(pathc);
+    if (s == 0) { return 0; }
+    var lines = hc_split(s, 10);
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var l = vec_get(lines, i);
+        i = i + 1;
+        if (hc_pre(l, "cyrius") == 0) { continue; }
+        var j = 6;
+        while (j < hc_n(l) && hc_at(l, j) == 32) { j = j + 1; }
+        if (j >= hc_n(l) || hc_at(l, j) != 61) { continue; }
+        var q2 = 0 - 1;
+        var q1 = 0 - 1;
+        var k = 0;
+        while (k < hc_n(l)) {
+            if (hc_at(l, k) == 34) { q1 = q2; q2 = k; }
+            k = k + 1;
+        }
+        if (q1 < 0) { return l; }
+        return hc_sub(l, q1 + 1, q2);
+    }
+    return hc_s("");
+}
+
+# sed 's/^\([[:space:]]*path *=.*\)$/# \1/' over the manifest's lines.
+fn _comment_paths(s): i64 {
+    var lines = hc_split(s, 10);
+    var sb = hc_sb();
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var l = vec_get(lines, i);
+        if (i > 0) { hc_sbc(sb, "\n"); }
+        var j = 0;
+        while (j < hc_n(l)) {
+            var c = hc_at(l, j);
+            if (c != 32 && c != 9 && c != 11 && c != 12 && c != 13) { break; }
+            j = j + 1;
+        }
+        var hit = 0;
+        if (hc_pre(hc_sub(l, j, hc_n(l)), "path") == 1) {
+            var k = j + 4;
+            while (k < hc_n(l) && hc_at(l, k) == 32) { k = k + 1; }
+            if (k < hc_n(l) && hc_at(l, k) == 61) { hit = 1; }
+        }
+        if (hit == 1) { hc_sbc(sb, "# "); }
+        hc_sba(sb, l);
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# grep -c '^<prefix>' over the log's lines.
+fn _count(s, prefc): i64 {
+    var lines = hc_split(s, 10);
+    var n = vec_len(lines);
+    if (n > 0) { if (hc_n(vec_get(lines, n - 1)) == 0) { n = n - 1; } }
+    var k = 0;
+    var i = 0;
+    while (i < n) {
+        if (hc_pre(vec_get(lines, i), prefc) == 1) { k = k + 1; }
+        i = i + 1;
+    }
+    return k;
+}
+
+fn _out3(a, b, c): i64 {
+    hc_out(a);
+    hc_out(b);
+    hc_out(c);
+    return 0;
+}
+
+fn main(): i64 {
+    args_init();
+    if (argc() < 3) {
+        hc_errc("usage: cyrius run programs/folds/sibci.cyr <fold> <commit-or-tag> [workdir]\n");
+        return 1;
+    }
+    var r = hc_arg(1);
+    var c = hc_arg(2);
+    var home = hc_getenv("HOME");
+    if (home == 0) { home = hc_s(""); }
+    var folds = hc_getenv_ne("CYRIUS_FOLDS_ROOT");
+    if (folds == 0) { folds = hc_catc(home, "/Repos"); }
+    var store = hc_getenv_ne("CYRIUS_STORE");
+    if (store == 0) { store = hc_catc(home, "/.cyrius/versions"); }
+    # A path here would make the removal of <workdir>/<fold> below reach outside the workdir.
+    if (hc_n(r) == 0 || hc_eqc(r, ".") == 1 || hc_eqc(r, "..") == 1 || hc_findb(r, 47, 0) >= 0) {
+        hc_outc("sibci: <fold> is a fold NAME under ");
+        _out3(folds, hc_s(", not a path: '"), r);
+        hc_outc("'\n");
+        return 2;
+    }
+    var w = 0;
+    if (argc() > 3) { w = hc_arg(3); if (hc_n(w) == 0) { w = 0; } }
+    if (w == 0) { w = hc_catc(hc_scratch(), "/sibci"); }
+    var q = hc_which("qemu-aarch64");
+    var b = hc_cat3(w, hc_s("/"), r);
+    hc_rmtree(hc_cstr(b));
+    var copy = hc_catc(b, "/copy");
+    hc_mkdirs(hc_cstr(copy));
+    hc_mkdirs(hc_cstr(hc_catc(b, "/home/versions")));
+    hc_mkdirs(hc_cstr(hc_catc(b, "/home/deps")));
+    hc_mkdirs(hc_cstr(hc_catc(b, "/fh")));
+    # git archive <commit> | tar -x, through a file beside the copy
+    var tarp = hc_catc(b, "/archive.tar");
+    var src = hc_cat3(folds, hc_s("/"), r);
+    hc_run(hc_argv("git", "-C", hc_cstr(src), "archive", hc_cstr(c), 0), 0, 0, 0, hc_cstr(tarp), 0, 0);
+    hc_run(hc_argv("tar", "-x", "-C", hc_cstr(copy), "-f", hc_cstr(tarp)), 0, 0, 0, 0, 0, 0);
+    sys_unlink(hc_cstr(tarp));
+    var manifest = hc_catc(copy, "/cyrius.cyml");
+    var pin = _pin(hc_cstr(manifest));
+    if (pin == 0) {
+        hc_errc("grep: ");
+        hc_err(manifest);
+        hc_errc(": No such file or directory\n");
+        pin = hc_s("");
+    }
+    if (hc_n(pin) == 0) {
+        _out3(r, hc_s(" @ "), c);
+        hc_outc(": no pin read — git archive of ");
+        _out3(folds, hc_s("/"), r);
+        hc_outc(" at ");
+        hc_out(c);
+        hc_outc(" failed, or its cyrius.cyml has no 'cyrius =' line\n");
+        return 2;
+    }
+    var slot = hc_cat3(store, hc_s("/"), pin);
+    if (hc_is_dir(hc_cstr(slot)) == 0) {
+        _out3(r, hc_s(" @ "), c);
+        _out3(hc_s(": pin "), pin, hc_s(" is not installed in "));
+        hc_out(store);
+        hc_outc("\n");
+        return 2;
+    }
+    var hv = hc_catc(b, "/home/versions/");
+    hc_run(hc_argv("cp", "-a", hc_cstr(slot), hc_cstr(hv), 0, 0), 0, 0, 0, 0, 0, 0);
+    var hb = hc_catc(b, "/home");
+    sys_symlink(hc_cstr(hc_cat3(hc_s("versions/"), pin, hc_s("/bin"))), hc_cstr(hc_catc(hb, "/bin")));
+    sys_symlink(hc_cstr(hc_cat3(hc_s("versions/"), pin, hc_s("/lib"))), hc_cstr(hc_catc(hb, "/lib")));
+    hc_write_new(hc_cstr(hc_catc(hb, "/current")), hc_catc(pin, "\n"));
+    sys_symlink(hc_cstr(hb), hc_cstr(hc_catc(b, "/fh/.cyrius")));
+    # the qemu shim: a symlink made per run (a tracked symlink would pin one box's qemu path)
+    var shim = 0;
+    var tries = 0;
+    while (shim == 0 && tries < 100) {
+        var cand = hc_cat(hc_catc(b, "/shim."), hc_rand_name(6));
+        if (sys_mkdir(hc_cstr(cand), 0x1C0) == 0) { shim = cand; }
+        tries = tries + 1;
+    }
+    if (shim == 0) {
+        _out3(r, hc_s(" @ "), c);
+        hc_outc(": mktemp -d failed under ");
+        hc_out(b);
+        hc_outc("\n");
+        return 1;
+    }
+    if (q != 0) { sys_symlink(q, hc_cstr(hc_catc(shim, "/qemu-aarch64-static"))); }
+    if (sys_chdir(hc_cstr(copy)) != 0) { return 1; }
+    var ms = hc_read("cyrius.cyml");
+    if (ms != 0) {
+        if (hc_write_new("cyrius.cyml.sibci", _comment_paths(ms)) == 0) {
+            sys_rename("cyrius.cyml.sibci", "cyrius.cyml");
+        }
+    }
+    if (hc_run(hc_argv("git", "init", "-q", 0, 0, 0), 0, 0, 0, 0, 0, 0) == 0) {
+        if (hc_run(hc_argv("git", "add", "-A", 0, 0, 0), 0, 0, 0, 0, 0, 0) == 0) {
+            var cv = hc_argv("git", "-c", "user.email=ci@local", "-c", "user.name=ci", "commit");
+            vec_push(cv, "-q");
+            vec_push(cv, "-m");
+            vec_push(cv, "ci");
+            hc_run(cv, 0, 0, 0, 0, 0, 0);
+        }
+    }
+    var env = hc_env_list();
+    hc_env_set(env, "HOME", hc_catc(b, "/fh"));
+    hc_env_set(env, "CYRIUS_HOME", hb);
+    var path = hc_sb();
+    hc_sba(path, hb);
+    hc_sbc(path, "/bin:");
+    hc_sba(path, shim);
+    hc_sbc(path, ":/usr/local/bin:/usr/bin:/bin");
+    hc_env_set(env, "PATH", hc_sbend(path));
+    hc_env_set(env, "REPO_NAME", r);
+    hc_env_set(env, "CYRIUS_VERSION", pin);
+    hc_env_set(env, "RUNNER_TEMP", hc_catc(b, "/rt"));
+    hc_env_setc(env, "CI_VERBOSE", "1");
+    var logp = hc_cstr(hc_catc(b, "/ci.log"));
+    var fd = sys_open(logp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    var rc = 1;
+    if (fd >= 0) {
+        rc = ci_run(copy, 0, 0, env, fd);
+        sys_close(fd);
+    }
+    var log = hc_read(logp);
+    if (log == 0) { log = hc_s(""); }
+    var sb = hc_sb();
+    hc_sba(sb, r);
+    hc_sbc(sb, " @ ");
+    hc_sba(sb, c);
+    hc_sbc(sb, " (pin ");
+    hc_sba(sb, pin);
+    hc_sbc(sb, "): rc=");
+    hc_sbi(sb, rc);
+    hc_sbc(sb, " ok=");
+    hc_sbi(sb, _count(log, "OK  "));
+    hc_sbc(sb, " fail=");
+    hc_sbi(sb, _count(log, "FAIL"));
+    hc_sbc(sb, " skip=");
+    hc_sbi(sb, _count(log, "SKIP"));
+    hc_sbc(sb, "\n");
+    hc_out(hc_sbend(sb));
+    return 0;
+}

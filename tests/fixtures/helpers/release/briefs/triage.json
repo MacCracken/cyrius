@@ -1,0 +1,133 @@
+[
+ {
+  "lane": "alpha (the first group)",
+  "items": [
+   {
+    "issue": "i1.md",
+    "title": "One",
+    "severity": "Low",
+    "kind": "bug",
+    "size": "S",
+    "status": "OPEN",
+    "evidence": "ev1",
+    "fix_plan": "fp1",
+    "touches": [
+     "a.cyr",
+     "b.cyr"
+    ],
+    "rows": [
+     "r1",
+     "r2"
+    ],
+    "targets": "x86",
+    "hosts": null,
+    "risk": "none"
+   },
+   {
+    "issue": "i2.md",
+    "title": "Two — naïve",
+    "severity": "High",
+    "kind": "defect",
+    "size": "M",
+    "status": "OPEN",
+    "evidence": "ev2",
+    "fix_plan": "fp2",
+    "touches": "a string",
+    "rows": [],
+    "targets": [
+     "x86",
+     "aarch64"
+    ],
+    "hosts": [
+     "pi"
+    ],
+    "risk": "r2"
+   },
+   {
+    "issue": "i3.md",
+    "title": "Three",
+    "severity": "Low",
+    "kind": "bug",
+    "size": "S",
+    "status": "PARTIAL",
+    "evidence": "ev3",
+    "fix_plan": "fp3",
+    "risk": "r3"
+   },
+   {
+    "issue": "i6.md",
+    "title": "Six",
+    "severity": "Low",
+    "kind": "bug",
+    "size": "L",
+    "status": "OPEN",
+    "evidence": "ev6",
+    "fix_plan": "fp6",
+    "touches": [],
+    "rows": [
+     "only"
+    ],
+    "targets": [],
+    "hosts": [],
+    "risk": 7
+   }
+  ],
+  "groups": "g-alpha",
+  "ordering_constraints": "o-alpha",
+  "cross_lane": "x-alpha"
+ },
+ {
+  "lane": "beta",
+  "items": [
+   {
+    "issue": "i4.md",
+    "title": "Four",
+    "severity": "Low",
+    "kind": "tooling",
+    "size": "S",
+    "status": "OPEN",
+    "evidence": "ev4",
+    "fix_plan": "fp4",
+    "touches": [
+     "t"
+    ],
+    "rows": [
+     "r"
+    ],
+    "targets": [
+     "t"
+    ],
+    "hosts": [
+     "h"
+    ],
+    "risk": "r4"
+   },
+   {
+    "issue": "i5.md",
+    "title": "Five",
+    "severity": "Low",
+    "kind": "tooling",
+    "size": "S",
+    "status": "OPEN",
+    "evidence": "ev5",
+    "fix_plan": "fp5",
+    "touches": [
+     "t"
+    ],
+    "rows": [
+     "r"
+    ],
+    "targets": [
+     "t"
+    ],
+    "hosts": [
+     "h"
+    ],
+    "risk": "r5"
+   }
+  ],
+  "groups": "g-beta",
+  "ordering_constraints": "o-beta",
+  "cross_lane": "x-beta"
+ }
+]

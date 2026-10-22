@@ -9,20 +9,24 @@ named in `cyrius.cyml`'s `[release] scripts`).
 - The `.js` files are scripts for Claude Code's **Workflow tool**. Each one starts with a pure-literal
   `export const meta` and takes its inputs as the global `args`. They have no filesystem or
   environment access, so every path and release fact is an `args` field.
-- The `.py` files are Python 3 steps that edit the checkout. `release_common.py` holds the arguments
-  they share and is imported by the others. It is not meant to be run on its own.
-
-Converting the Python steps to cyrius is filed as
-[`2026-10-19-dev-helper-scripts-converted-to-cyrius.md`](../../docs/development/issues/2026-10-19-dev-helper-scripts-converted-to-cyrius.md).
-That issue also records the open choice for the Workflow scripts, which have no cyrius form.
+- The steps that edit the checkout are cyrius programs in [`programs/release/`](../../programs/release/)
+  (6.7.17: they replaced this folder's Python, each with the same output on the same input —
+  [`tests/gates/toolchain/dev_helpers_match_golden.sh`](../../tests/gates/toolchain/dev_helpers_match_golden.sh)).
+  Run each from the checkout's root with `cyrius run programs/release/<step>.cyr` (their includes
+  resolve from there). `common.cyr` holds the
+  options they share; `pyre.cyr` (Python's `re`), `pyfmt.cyr` (Python's `str.format`) and
+  `pydiff.cyr` (`difflib`'s unified diff) are what roadmap_state's template reads and prints with.
+  None of them is a program of its own.
+- The Workflow scripts have no cyrius form; they stay here, beside the steps' docs (the user,
+  2026-10-22, 6.7.17's D38).
 
 ## Conventions
 
 | Name | Meaning |
 |---|---|
-| `<c6>` | the release scratch directory. The Python steps take it as `--c6`, default `$CYRIUS_SCRATCH`, else `${XDG_CACHE_HOME:-$HOME/.cache}/c6`. The Workflow scripts take it as `args.c6`. |
+| `<c6>` | the release scratch directory. The steps take it as `--c6`, default `$CYRIUS_SCRATCH`, else `${XDG_CACHE_HOME:-$HOME/.cache}/c6`. The Workflow scripts take it as `args.c6`. |
 | `<tag>` | the version without dots (`X.Y.Z` → `XYZ`). Every per-release file is `<c6>/<tag>_<name>`. |
-| `--repo` | the checkout a Python step reads and edits. Default `$CYRIUS_REPO`, else the checkout the script lives in. |
+| `--repo` | the checkout a step reads and edits. Default `$CYRIUS_REPO`, else the cyrius checkout the current directory is in (the nearest directory up holding `src/main.cyr` whose `cyrius.cyml` has `[package] name = "cyrius"`; the Python steps used the checkout they lived in). |
 | `--ver` | the release, `X.Y.Z`. Required by every step. |
 | `--date` | `YYYY-MM-DD` for the step's dated lines. Required where the step writes dated text. |
 | `--dry` | report what would change and write nothing. Offered by every step that writes. |
@@ -60,16 +64,16 @@ either step. Two files come out of it:
 - `<c6>/<tag>_decisions.json`: `[{"id": N, "issue": "<file>.md", "lane", "question", "options": [{"label", "effect"}], "rec", "rec_label", "why"}]`. `rec_label` is the label of the chosen option. A human-readable `<c6>/<tag>_decisions.md` goes beside it.
 - `<c6>/<tag>_units.json`: `{"W<n>": {"<lane>": {"<unit>": ["<issue>.md", ...]}}}`. Wave 0 (lane `main`) is the work done on main before the lanes fork.
 
-### 2. Slot open — placements (`place.py`) and briefs (`briefs.py`)
+### 2. Slot open — placements (`place`) and briefs (`briefs`)
 
 ```sh
-python3 scripts/release/place.py  --ver X.Y.Z --date YYYY-MM-DD [--dry] [--units F] [--decisions F] [--plan F]
-python3 scripts/release/briefs.py --ver X.Y.Z --date YYYY-MM-DD [--dry] [--units F] [--triage F] [--decisions F] [--notes F] [--out DIR]
+cyrius run programs/release/place.cyr  --ver X.Y.Z --date YYYY-MM-DD [--dry] [--units F] [--decisions F] [--plan F]
+cyrius run programs/release/briefs.cyr --ver X.Y.Z --date YYYY-MM-DD [--dry] [--units F] [--triage F] [--decisions F] [--notes F] [--out DIR]
 ```
 
-- **place.py** rewrites each planned issue's `**Placement:** X.Y.Z — <label> (…) — never 7.x.` line.
+- **place** rewrites each planned issue's `**Placement:** X.Y.Z — <label> (…) — never 7.x.` line.
   The new line names the issue's wave and unit, keeps `<label>`, and is dated `--date`. Under it,
-  place.py adds one `**Decision (user, <date>, at the X.Y.Z open):** D<n> — <answer>.` line per
+  place adds one `**Decision (user, <date>, at the X.Y.Z open):** D<n> — <answer>.` line per
   decision on that issue. Then it applies the plan's special items.
   - **The line's shape:** `<label>` sits on the `**Placement:**` line itself. The parenthetical may
     wrap onto continuation lines (never across a blank line or a `**Field:**` line), and it becomes
@@ -78,7 +82,7 @@ python3 scripts/release/briefs.py --ver X.Y.Z --date YYYY-MM-DD [--dry] [--units
   - **Reads:** `units.json`, `decisions.json`, and the optional `<c6>/<tag>_place.json`.
   - **Writes:** the issue files.
   - **Fails:** exits 1, writing nothing, when an issue has no Placement line for `X.Y.Z`.
-- **briefs.py** writes `<c6>/<tag>_briefs/<lane>_<unit>.md` for every unit of waves 1 and up. Each
+- **briefs** writes `<c6>/<tag>_briefs/<lane>_<unit>.md` for every unit of waves 1 and up. Each
   brief holds the unit's issues with their triage, the user's decisions with the chosen answer, and
   the lane's triage notes.
   - **Reads:** `units.json`, `triage.json`, `decisions.json`, and the optional `<c6>/<tag>_brief_notes.json`.
@@ -191,7 +195,7 @@ Per lane it writes, in `<c6>/<tag>_docs/`:
 
 The session writes the rest of the docs dir by hand:
 
-- `changelog_head.md`: the entry's head. It may carry `@GATEHEAD@`, `@DRIVER@`, `@SHELL@` and `@BENCH@`, which assemble.py fills.
+- `changelog_head.md`: the entry's head. It may carry `@GATEHEAD@`, `@DRIVER@`, `@SHELL@` and `@BENCH@`, which assemble fills.
 - `changelog_integration.md`
 - `changelog_filed.md`
 - any extra part, for example a fold's `changelog_fold_<name>.md`
@@ -200,14 +204,14 @@ The session writes the rest of the docs dir by hand:
 ### 5. Close — after the release gate is GREEN and the bench has run, in this order
 
 ```sh
-python3 scripts/release/assemble.py --ver X.Y.Z --prev X.Y.W --date YYYY-MM-DD \
+cyrius run programs/release/assemble.cyr --ver X.Y.Z --prev X.Y.W --date YYYY-MM-DD \
     --lanes <lane>,<lane>,... [--extra integration,filed] [--mig-extra <part>,...] \
     --gatehead <sha> --driver '<n / n>' --shell '<n / n>' --bench '<ms>' [--dry]
-python3 scripts/release/archive.py --ver X.Y.Z [--dry]
-python3 scripts/release/roadmap-state.py --ver X.Y.Z --set gatehead=<sha> --set archived=<N> ... [--dry]
+cyrius run programs/release/archive.cyr --ver X.Y.Z [--dry]
+cyrius run programs/release/roadmap_state.cyr --ver X.Y.Z --set gatehead=<sha> --set archived=<N> ... [--dry]
 ```
 
-**assemble.py** writes the CHANGELOG entry and the migration section.
+**assemble** writes the CHANGELOG entry and the migration section.
 
 - **CHANGELOG entry:** it replaces the release's placeholder header `## [X.Y.Z] — <date>` (written by
   `version-bump.sh`; it must appear exactly once) with `## [X.Y.Z] — <--date>`, followed by these
@@ -223,17 +227,17 @@ python3 scripts/release/roadmap-state.py --ver X.Y.Z --set gatehead=<sha> --set 
   release's `## [`. A header that already carries an entry, or a migration doc that already has
   `### X.Y.Z`, stops the step before anything is written, so a second run refuses.
 
-**archive.py** archives the resolved issues.
+**archive** archives the resolved issues.
 
 - For each issue named in `<c6>/<tag>_docs/banners_*.json`, it marks the title `— RESOLVED` (or
   `— CLOSED (not a cyrius bug)`), puts the banner under the title, rewrites the `**Status:**` line,
   and `git mv`s the file into `docs/development/issues/archived/`.
 - It then repoints every link to those files in every tracked text file.
-- Run it after assemble.py, so the new CHANGELOG entry's links are repointed too.
+- Run it after assemble, so the new CHANGELOG entry's links are repointed too.
 - `--dry` neither moves nor rewrites anything. In a dry run the moved files' own links are
   therefore counted at their old paths, so the repointed count is higher than a real run's.
 
-**roadmap-state.py** has two modes.
+**roadmap_state** has two modes.
 
 - **`--derive`** prints the tree's figures and writes nothing. It works on any checkout, at any time.
   The figures are:
@@ -267,17 +271,20 @@ per file:
 }}
 ```
 
-- Every `to` is a Python `str.format` template, so literal braces are written `{{ }}`.
+- Every `to` is a Python `str.format` template (read as Python reads it, by `pyfmt.cyr`), so literal
+  braces are written `{{ }}`.
 - The placeholders the template can use:
   - the derived figures: `{n_tcyr}` `{n_cross}` `{n_lib}` `{n_gates}` `{n_api}` `{n_open}` `{n_prop}` `{cyc}` `{arm}` `{text}`
   - the count of issues placed in a release: `{placed[X.Y.Z]}`
   - `{ver}`, and `{date}` when `--date` is given
   - every `--set key=value`: the gate head, the driver and shell counts, the bench, the A/B figures, the archived count, and anything the tree cannot give, such as the number of issues filed
-- The `sub` patterns and every literal are written as-is (no placeholders). A `sub` replacement goes
-  through `re.sub`, so it may use `\g<1>`.
+- The `sub` patterns and every literal are written as-is (no placeholders). A `sub` pattern is a
+  Python regex and its replacement a Python `re.sub` template (read as Python reads them, by
+  `pyre.cyr`), so it may use `\g<1>`.
 - A row is a `docs/development/state.md`-style line `| **<name>** | … |`.
 - An operation that matches nothing is reported in the output. A missing row or marker stops the
   step before anything is written.
 
-After the close steps, the session regenerates the issue index (`docs/development/issues/README.md`),
+After the close steps, the session regenerates the issue index (`docs/development/issues/README.md`,
+`cyrius run programs/dev/regen_issue_index.cyr`),
 reads the diffs, and hand-edits what the templates did not foresee before committing.

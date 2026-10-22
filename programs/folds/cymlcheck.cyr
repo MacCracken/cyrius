@@ -1,0 +1,157 @@
+# programs/folds/cymlcheck.cyr — CYML validator: a TOML preamble, then [[entries]] blocks; each
+# block's TOML part ends at a line that is exactly '---' (trailing blanks allowed; the markdown
+# body follows, up to the next '[[entries]]' line). Every TOML part is checked as Python's tomllib
+# checks it (programs/folds/tomlcheck.cyr: tomllib's verdicts and messages).
+#
+# Usage:  cyrius run programs/folds/cymlcheck.cyr <root> [<file>...]
+#   <root> is a DIRECTORY and each <file> is a path RELATIVE to it; with no <file>, every .cyml
+#   tracked under <root>/content at any depth (`git -C <root> ls-files 'content/*.cyml'` —
+#   vidya's layout). A lone file path is read as the root and checks 0 files: read the TOTAL
+#   line's file count.
+#   e.g. cymlcheck.cyr . cyrius.cyml   ·   cymlcheck.cyr ../vidya   (every vidya entry file)
+# Input:  the .cyml files (UTF-8; a file that is not stops the run, exit 1).
+# Output: stdout — an `  ERR <file>:<line>: <error>` per failing part (<line> is the part's first
+#   line), a per-file count line (for every file named explicitly, or any file with errors), then
+#   `TOTAL errors: N (E entries, F files)`. Exit 0 whatever the count: compare the count before
+#   and after an edit.
+#
+# It replaced scripts/folds/cymlcheck.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/folds/tomlcheck.cyr"
+
+# Python's str.split() with no argument: the runs between whitespace.
+fn _wsplit(s): i64 {
+    var v = vec_new();
+    var i = 0;
+    var l = 0;
+    var st = 0 - 1;
+    while (i < hc_n(s)) {
+        var cp = hc_u8(s, i, &l);
+        if (hc_py_space(cp) == 1) {
+            if (st >= 0) { vec_push(v, hc_sub(s, st, i)); st = 0 - 1; }
+        } elif (st < 0) {
+            st = i;
+        }
+        i = i + l;
+    }
+    if (st >= 0) { vec_push(v, hc_sub(s, st, hc_n(s))); }
+    return v;
+}
+
+fn main(): i64 {
+    args_init();
+    var root = hc_s(".");
+    if (argc() > 1) { root = hc_arg(1); }
+    var files = vec_new();
+    var i = 2;
+    while (i < argc()) { vec_push(files, hc_arg(i)); i = i + 1; }
+    if (vec_len(files) == 0) {
+        var av = hc_argv("git", "-C", hc_cstr(root), "ls-files", "content/*.cyml", 0);
+        files = _wsplit(hc_capture_full(av, 0, 0, 0, 2, 0));
+    }
+    var named = 0;
+    if (argc() > 2) { named = 1; }
+    var total = 0;
+    var nent = 0;
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var f = vec_get(files, fi);
+        fi = fi + 1;
+        var path = hc_join2(root, f);
+        var raw = hc_read(hc_cstr(path));
+        if (raw == 0) {
+            hc_errc("cymlcheck: ");
+            hc_err(path);
+            hc_errc(": No such file or directory\n");
+            return 1;
+        }
+        if (hc_utf8_ok(raw) == 0) {
+            hc_errc("cymlcheck: ");
+            hc_err(path);
+            hc_errc(": not valid UTF-8\n");
+            return 1;
+        }
+        var lines = hc_split(hc_univ_nl(raw), 10);
+        var chunks = vec_new();   # each [start line, vec of lines]
+        var cur = vec_new();
+        var start = 1;
+        var li = 0;
+        while (li < vec_len(lines)) {
+            var l = vec_get(lines, li);
+            if (hc_eqc(hc_strip(l), "[[entries]]") == 1) {
+                var ch = vec_new();
+                vec_push(ch, start);
+                vec_push(ch, cur);
+                vec_push(chunks, ch);
+                cur = vec_new();
+                vec_push(cur, l);
+                start = li + 1;
+            } else {
+                vec_push(cur, l);
+            }
+            li = li + 1;
+        }
+        var lastc = vec_new();
+        vec_push(lastc, start);
+        vec_push(lastc, cur);
+        vec_push(chunks, lastc);
+        var errs = vec_new();
+        var k = 0;
+        while (k < vec_len(chunks)) {
+            var st = vec_get(vec_get(chunks, k), 0);
+            var chl = vec_get(vec_get(chunks, k), 1);
+            var toml = chl;
+            var j = 0;
+            while (j < vec_len(chl)) {
+                if (hc_eqc(hc_rstrip(vec_get(chl, j)), "---") == 1) {
+                    toml = vec_new();
+                    var q = 0;
+                    while (q < j) { vec_push(toml, vec_get(chl, q)); q = q + 1; }
+                    break;
+                }
+                j = j + 1;
+            }
+            var e = tc_check(hc_join(toml, "\n"));
+            if (e != 0) {
+                var sb = hc_sb();
+                hc_sba(sb, f);
+                hc_sbc(sb, ":");
+                hc_sbi(sb, st);
+                hc_sbc(sb, ": ");
+                hc_sba(sb, e);
+                vec_push(errs, hc_sbend(sb));
+            }
+            if (k > 0) { nent = nent + 1; }
+            k = k + 1;
+        }
+        total = total + vec_len(errs);
+        var ei = 0;
+        while (ei < vec_len(errs)) {
+            hc_outc("  ERR ");
+            hc_out(vec_get(errs, ei));
+            hc_outc("\n");
+            ei = ei + 1;
+        }
+        if (vec_len(errs) > 0 || named == 1) {
+            var cb = hc_sb();
+            hc_sba(cb, f);
+            hc_sbc(cb, ": ");
+            hc_sbi(cb, vec_len(errs));
+            hc_sbc(cb, " errors, ");
+            hc_sbi(cb, vec_len(chunks) - 1);
+            hc_sbc(cb, " entries\n");
+            hc_out(hc_sbend(cb));
+        }
+    }
+    var tb = hc_sb();
+    hc_sbc(tb, "TOTAL errors: ");
+    hc_sbi(tb, total);
+    hc_sbc(tb, " (");
+    hc_sbi(tb, nent);
+    hc_sbc(tb, " entries, ");
+    hc_sbi(tb, vec_len(files));
+    hc_sbc(tb, " files)\n");
+    hc_out(hc_sbend(tb));
+    return 0;
+}

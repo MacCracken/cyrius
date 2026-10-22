@@ -1,0 +1,285 @@
+# programs/release/archive.cyr — at a release's close: archive each issue the release resolved.
+# Each file's title gets " — RESOLVED" (or " — CLOSED (not a cyrius bug)" when its banner says NOT
+# A CYRIUS BUG), its banner goes under the title, its **Status:** line is rewritten, and it is
+# `git mv`'d into docs/development/issues/archived/; then every link to it in every tracked text
+# file (build/ excepted) is repointed to the archived path.
+#
+# usage:   cyrius run programs/release/archive.cyr --ver X.Y.Z [--dry] [--repo <checkout>]
+#            [--c6 <dir>] [--docs DIR]
+#   --dry    rewrite nothing and move nothing: print the count and the files it would repoint
+# inputs:  <docs>/banners_*.json (default <docs>: <c6>/<tag>_docs/), each a JSON array of
+#          {"file": "<issue>.md", "banner": "> ✅ **RESOLVED in vX.Y.Z** (…)"} written by
+#          scripts/release/docs.js (two entries for one file are both kept); the open issue files
+#          they name; `git ls-files` of the checkout (it must be a git checkout)
+# outputs: the archived issue files (git mv, so the move is staged) and the repointed files (each
+#          replaced atomically); on stdout "<N> archived; <M> files repointed" and the repointed
+#          paths. Exit 1, writing nothing, when a banner names a file that is not open on disk.
+#          A tracked file that is not UTF-8 is not read.
+#
+# It replaced scripts/release/archive.py, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/release/common.cyr"
+
+# The title's ending, as re.sub(r'\s*—\s*(OPEN|PARTIAL)\s*$', end, t) rewrites it: t with the
+# match replaced, or t itself.
+fn _retitle(t, endc): i64 {
+    var j = 0;
+    var l = 0;
+    var em = hc_s("—");
+    while (j < hc_n(t)) {
+        if (hc_at_str(t, j, em) == 1) {
+            var k = j + hc_n(em);
+            while (k < hc_n(t)) {
+                var cp = hc_u8(t, k, &l);
+                if (hc_py_space(cp) == 0) { break; }
+                k = k + l;
+            }
+            var w = 0;
+            if (hc_at_str(t, k, hc_s("OPEN")) == 1) { w = 4; }
+            elif (hc_at_str(t, k, hc_s("PARTIAL")) == 1) { w = 7; }
+            if (w > 0) {
+                var rest = hc_sub(t, k + w, hc_n(t));
+                if (hc_n(hc_strip(rest)) == 0) {
+                    # the match starts at the whitespace run before the dash
+                    var st = j;
+                    loop {
+                        if (st == 0) { break; }
+                        var b = st - 1;
+                        while (b > 0 && (hc_at(t, b) & 0xC0) == 0x80) { b = b - 1; }
+                        var cp2 = hc_u8(t, b, &l);
+                        if (hc_py_space(cp2) == 0) { break; }
+                        st = b;
+                    }
+                    return hc_catc(hc_sub(t, 0, st), endc);
+                }
+            }
+        }
+        hc_u8(t, j, &l);
+        j = j + l;
+    }
+    return t;
+}
+
+fn _rewrite(issdir, f, banner): i64 {
+    var s = hc_split(rc_rd(hc_join2(issdir, f)), 10);
+    var t = vec_get(s, 0);
+    var notbug = hc_has(banner, "NOT A CYRIUS BUG");
+    var endc = " — RESOLVED";
+    if (notbug == 1) { endc = " — CLOSED (not a cyrius bug)"; }
+    var t2 = _retitle(t, endc);
+    if (hc_eq(t2, t) == 1 && hc_suf(hc_rstrip(t), "RESOLVED") == 0) { t2 = hc_catc(hc_rstrip(t), " — RESOLVED"); }
+    var out = vec_new();
+    vec_push(out, t2);
+    vec_push(out, hc_s(""));
+    vec_push(out, hc_strip(banner));
+    var rest = vec_new();
+    var i = 1;
+    while (i < vec_len(s) && hc_n(hc_strip(vec_get(s, i))) == 0) { i = i + 1; }
+    while (i < vec_len(s)) { vec_push(rest, vec_get(s, i)); i = i + 1; }
+    var done = 0;
+    var r = 0;
+    while (r < vec_len(rest)) {
+        var l = vec_get(rest, r);
+        if (done == 0 && hc_pre(l, "**Status:**") == 1) {
+            var sb = hc_sb();
+            hc_sbc(sb, "**Status:** ✅ **");
+            if (notbug == 1) { hc_sbc(sb, "CLOSED — NOT A CYRIUS BUG (v"); hc_sba(sb, RC_VER); hc_sbc(sb, ")"); }
+            else { hc_sbc(sb, "RESOLVED in v"); hc_sba(sb, RC_VER); }
+            hc_sbc(sb, "** (see the banner). Was: ");
+            hc_sba(sb, hc_strip(hc_sub(l, hc_n(hc_s("**Status:**")), hc_n(l))));
+            vec_set(rest, r, hc_sbend(sb));
+            done = 1;
+        }
+        r = r + 1;
+    }
+    if (done == 0) { hc_outc("NO STATUS LINE: "); hc_out(f); hc_outc("\n"); }
+    vec_push(out, hc_s(""));
+    var k = 0;
+    while (k < vec_len(rest)) { vec_push(out, vec_get(rest, k)); k = k + 1; }
+    return hc_join(out, "\n");
+}
+
+# Python's \w for one code point.
+fn _word(cp): i64 {
+    if (cp == 95) { return 1; }
+    if (cp >= 48 && cp <= 57) { return 1; }
+    if (cp >= 65 && cp <= 90) { return 1; }
+    if (cp >= 97 && cp <= 122) { return 1; }
+    if (cp < 128) { return 0; }
+    var c = unicode_category(cp);
+    if (c <= GC_LO) { return 1; }
+    if (c >= GC_ND && c <= GC_NO) { return 1; }
+    return 0;
+}
+
+# The code point before byte i (or -1 at the start).
+fn _prev_cp(s, i): i64 {
+    if (i <= 0) { return 0 - 1; }
+    var b = i - 1;
+    while (b > 0 && (hc_at(s, b) & 0xC0) == 0x80) { b = b - 1; }
+    var l = 0;
+    return hc_u8(s, b, &l);
+}
+
+# Replace each occurrence of `pat` whose preceding text passes `ok` (mode 1: not preceded by
+# "archived/"; mode 2: not preceded by `/`, a word character, `.` or `-`; mode 0: any) with `rep`.
+fn _resub(s, pat, rep, mode): i64 {
+    var sb = hc_sb();
+    var pos = 0;
+    var at = 0;
+    var any = 0;
+    loop {
+        var k = hc_find(s, pat, at);
+        if (k < 0) { break; }
+        var ok = 1;
+        if (mode == 1) {
+            if (k >= 9) { if (hc_at_str(s, k - 9, hc_s("archived/")) == 1) { ok = 0; } }
+        }
+        if (mode == 2) {
+            var cp = _prev_cp(s, k);
+            if (cp == 47 || cp == 46 || cp == 45) { ok = 0; }
+            if (cp >= 0) { if (_word(cp) == 1) { ok = 0; } }
+        }
+        if (ok == 1) {
+            hc_sba(sb, hc_sub(s, pos, k));
+            hc_sba(sb, rep);
+            pos = k + hc_n(pat);
+            at = pos;
+            any = 1;
+        } else {
+            at = k + 1;
+        }
+    }
+    if (any == 0) { return s; }
+    hc_sba(sb, hc_sub(s, pos, hc_n(s)));
+    return hc_sbend(sb);
+}
+
+fn main(): i64 {
+    rc_options("archive", "archive [-h] [--repo REPO] --ver VER [--c6 C6] [--dry] [--docs DOCS]", 0, 1);
+    hc_opt("docs", 1);
+    rc_finish(0, 0);
+    var repo = RC_REPO;
+    var dry = RC_DRY;
+    var D = hc_optv("docs");
+    if (D == 0) { D = rc_in_c6("docs"); }
+    var ISS = hc_joinc(repo, "docs/development/issues");
+
+    var banners = vec_new();   # [file, banner]
+    var bnames = hc_glob_names(hc_cstr(D), ".json");
+    var bi = 0;
+    while (bi < vec_len(bnames)) {
+        var bn = vec_get(bnames, bi);
+        bi = bi + 1;
+        if (hc_pre(bn, "banners_") == 0) { continue; }
+        var arr = rc_json(hc_join2(D, bn));
+        var ai = 0;
+        while (ai < rc_jlen(arr)) {
+            var e = rc_jat(arr, ai);
+            ai = ai + 1;
+            var f = rc_jreqs(e, "file");
+            var b = rc_jreqs(e, "banner");
+            var found = 0;
+            var q = 0;
+            while (q < vec_len(banners)) {
+                var p = vec_get(banners, q);
+                if (hc_eq(vec_get(p, 0), f) == 1) {
+                    # two lanes closed one file: keep both
+                    vec_set(p, 1, hc_cat3(vec_get(p, 1), hc_s("\n"), b));
+                    found = 1;
+                    break;
+                }
+                q = q + 1;
+            }
+            if (found == 0) {
+                var np = vec_new();
+                vec_push(np, f);
+                vec_push(np, b);
+                vec_push(banners, np);
+            }
+        }
+    }
+    var missing = vec_new();
+    var mi = 0;
+    while (mi < vec_len(banners)) {
+        var mf = vec_get(vec_get(banners, mi), 0);
+        if (hc_exists(hc_cstr(hc_join2(ISS, mf))) == 0) { vec_push(missing, hc_pyrepr(mf)); }
+        mi = mi + 1;
+    }
+    if (vec_len(missing) > 0) {
+        hc_outc("MISSING (not open on disk): [");
+        hc_out(hc_join(missing, ", "));
+        hc_outc("]\n");
+        return 1;
+    }
+    var wi = 0;
+    while (wi < vec_len(banners)) {
+        var f2 = vec_get(vec_get(banners, wi), 0);
+        var b2 = vec_get(vec_get(banners, wi), 1);
+        wi = wi + 1;
+        var txt = _rewrite(ISS, f2, b2);
+        if (dry == 1) { continue; }
+        rc_wr(hc_join2(ISS, f2), txt, 0);
+        var src = hc_ccat("docs/development/issues/", f2);
+        var dst = hc_ccat("docs/development/issues/archived/", f2);
+        var gv = hc_argv("git", "-C", hc_cstr(repo), "mv", hc_cstr(src), hc_cstr(dst));
+        if (hc_run(gv, 0, 0, 0, 0, 0, 0) != 0) { rc_exit(hc_cat3(hc_s("archive: git mv "), src, hc_s(" failed"))); }
+    }
+
+    # Repoint links in every tracked text file.
+    var ls = hc_capture_full(hc_argv("git", "-C", hc_cstr(repo), "ls-files", 0, 0), 0, 0, 0, 0, 0);
+    if (hc_last_rc != 0) { rc_exitc("archive: git ls-files failed (is the checkout a git checkout?)"); }
+    var files = hc_split(ls, 10);
+    var changed = vec_new();
+    var tbls = vec_new();   # each name's skip table, for the "is it in this file at all" scan
+    var ti = 0;
+    while (ti < vec_len(banners)) { vec_push(tbls, hc_bmh_table(vec_get(vec_get(banners, ti), 0))); ti = ti + 1; }
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var rel = vec_get(files, fi);
+        fi = fi + 1;
+        if (hc_n(rel) == 0 || hc_pre(rel, "build/") == 1) { continue; }
+        var p2 = hc_join2(repo, rel);
+        if (hc_is_file(hc_cstr(p2)) == 0) { continue; }
+        var raw = hc_read(hc_cstr(p2));
+        if (raw == 0) { continue; }
+        if (hc_utf8_ok(raw) == 0) { continue; }
+        var s = hc_univ_nl(raw);
+        var o = s;
+        var d = hc_dirname(rel);
+        var ni = 0;
+        while (ni < vec_len(banners)) {
+            var nf = vec_get(vec_get(banners, ni), 0);
+            var ntb = vec_get(tbls, ni);
+            ni = ni + 1;
+            if (hc_bmh_find(s, nf, ntb, 0) < 0) { continue; }
+            s = _resub(s, hc_ccat("issues/", nf), hc_ccat("issues/archived/", nf), 1);
+            if (hc_eqc(d, "docs/development/issues") == 1) {
+                # an open issue / the index linking a sibling by bare name
+                s = _resub(s, nf, hc_ccat("archived/", nf), 2);
+            } elif (hc_eqc(d, "docs/development/issues/archived") == 1) {
+                # an archived issue linking the formerly-open file as ../<f>
+                s = _resub(s, hc_ccat("../", nf), nf, 0);
+            }
+        }
+        if (hc_eq(s, o) == 0) {
+            vec_push(changed, rel);
+            rc_wr(p2, s, dry);
+        }
+    }
+    var sb = hc_sb();
+    hc_sbi(sb, vec_len(banners));
+    if (dry == 1) { hc_sbc(sb, " would be archived; "); } else { hc_sbc(sb, " archived; "); }
+    hc_sbi(sb, vec_len(changed));
+    if (dry == 1) { hc_sbc(sb, " files would be repointed\n"); } else { hc_sbc(sb, " files repointed\n"); }
+    hc_out(hc_sbend(sb));
+    var ci = 0;
+    while (ci < vec_len(changed)) {
+        hc_outc("   ");
+        hc_out(vec_get(changed, ci));
+        hc_outc("\n");
+        ci = ci + 1;
+    }
+    return 0;
+}

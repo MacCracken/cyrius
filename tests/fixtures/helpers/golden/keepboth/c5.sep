@@ -1,0 +1,14 @@
+rc=1
+--- stdout
+--- stderr
+keepboth: a conflict marker is left in f after resolving 1 block(s) — not written
+--- file
+<<<<<<< H
+<<<<<<< I
+x
+=======
+y
+>>>>>>> I
+=======
+z
+>>>>>>> H

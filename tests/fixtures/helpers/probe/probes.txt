@@ -1,0 +1,21 @@
+leading junk before the first block
+== exit3
+EXIT 3
+== bad
+BADBAD
+== hello
+SAY hi
+SAY there
+EXIT 0
+== warn
+WARN
+EXIT 1
+== spin
+SAY spinning
+SPIN
+== empty
+EMPTYOUT
+==   spaced   
+EXIT 5
+== 
+a block with an empty name is dropped
