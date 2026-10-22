@@ -25,7 +25,14 @@
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || { echo "FAIL: coroutine_midbody_suspend: cannot cd to $R"; exit 1; }
-T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: coroutine_midbody_suspend: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: coroutine_midbody_suspend: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+WP="$T/wine"   # axis 12's PE leg: a private prefix, its wineserver stopped on exit
+_wine_down() {
+  [ -d "$WP" ] || return 0
+  WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
+  WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL coroutine_midbody_suspend: no build/cycc"; exit 1; }
 
@@ -765,5 +772,206 @@ chmod +x "$T/a11"; g11=0; timeout 30 "$T/a11" || g11=$?
   echo "  the coroutine frame by slot index (_cl_emit_cap_word)."
   exit 1; }
 
-echo "PASS coroutine_midbody_suspend: a closure made in a coroutine captures a struct / tuple / u128 / array / slice in field order (before and after the await, nested) · the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct params over 8 B (24 B / 16 B x coroutine/plain) refused by name with the p: *T spelling (a *P3, a <= 8 B struct and a Str still compute) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
+
+# ── axis 12 — A NARROW PARAMETER OR LOCAL OF A COROUTINE (6.7.17, the user's decision D27) ──────
+# ⛔ A coroutine's slots live in its heap frame, and EFLLOAD_W / EFLSTORE_W (the i8 .. u32 load /
+# store ladder) refused that frame: a narrow LOCAL was "a sub-word local in an `async fn` is not
+# supported yet", and a narrow PARAMETER was left untyped (`_pnw_apply` skipped a coroutine), so it
+# held the caller's whole word where 6.7.16's D72 narrows every other parameter: the filed repro
+# printed `98304 511 255 -32768`. D27 (2026-10-22): narrowed, as D72 — the ladder addresses
+# `[r11 + disp32]` (`_ECORO_LOAD_W` / `_ECORO_STORE_W`), so the repro prints `-32768 255 255 -32768`
+# and a narrow local compiles.
+# Rows: R the filed repro verbatim (its stdout); N1-N27 (stdout "N<row>" for each red row) every
+# width's parameter read after a suspend, every width's `+= 1` wrap, every width's local (stored
+# before or after the suspend), and the other spellings — a narrow param into a narrow local, `*(&y)`
+# (6.7.16's D21), a stack-passed parameter, a closure's capture of a narrow param / local, two
+# suspends, a `u8` loop counter across suspends, a defer, `<<=`. Each async row is compared with its
+# literal value AND a plain-fn control with the same body (D72's answer); `trash()` runs between
+# forces. Legs: x86_64, CYRIUS_IR=3 (its LASE / DCE / DSE see the narrow coroutine nodes), PE (wine,
+# a private prefix). aarch64 and cx refuse a suspending `async fn` (axis 4's x86 guard); x86 Mach-O
+# shares this emitter and ran on ach by hand (6.7.17).
+# MUTATION LEDGER (2026-10-22, a copy of src/ mutated, stage1 rebuilt from it; every leg alike):
+#   the pre-fix src (e65604d5d)                      -> R prints `98304 511 255 -32768`; the rows
+#     probe refused ("a sub-word local in an `async fn` is not supported yet")
+#   `_pnw_apply`'s coroutine skip alone restored     -> R `98304 511 255 -32768`; N 1-12 19-22 24-27
+#   `_ECORO_LOAD_W` zero-extending every width       -> R `32768 255 255 -32768`; N 1 3 5 7 9 11 13
+#     15 17 19 22 (every signed row)
+cat > "$T/a12r.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/async.cyr"
+fn pr(x): i64 { fmt_int(x); syscall(SYS_WRITE, 1, " ", 1); return 0; }
+fn nopark(): i64 { return 0; }
+async fn st(C, y: i16): i64 {
+    var s1 = await nopark();
+    y += 1;
+    return y;
+}
+async fn st1(y: u8): i64 {
+    var s1 = await nopark();
+    return y;
+}
+async fn ns(y: u8): i64 { return y; }
+fn sync16(y: i16): i64 { y += 1; return y; }
+fn main(): i64 {
+    alloc_init();
+    var C = st(0, 0x17FFF);
+    future_force(C);
+    pr(future_force(C));
+    var D = st1(0x1FF);
+    future_force(D);
+    pr(future_force(D));
+    var E = ns(0x1FF);
+    pr(future_force(E));
+    pr(sync16(0x17FFF));
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+cat > "$T/a12.cyr" <<EOF
+${PRE}include "lib/fnptr.cyr"
+var g_red = 0;
+var g_d = 0;
+fn nopark(): i64 { return 0; }
+fn trash(n) { var pad[512]; store64(&pad, 123456789); if (n > 0) { trash(n - 1); } return load64(&pad); }
+fn runf(F): i64 { var r = future_force(F); while (future_pending(F) == 1) { trash(40); r = future_force(F); } return r; }
+fn chk(row, got, ctl, want): i64 {
+    if (got != want || ctl != want) { fmt_int(row); syscall(SYS_WRITE, 1, " ", 1); g_red = g_red + 1; }
+    return 0;
+}
+async fn a1(y: i8): i64 { var s = await nopark(); return y; }
+fn c1(y: i8): i64 { return y; }
+async fn a2(y: u8): i64 { var s = await nopark(); return y; }
+fn c2(y: u8): i64 { return y; }
+async fn a3(y: i16): i64 { var s = await nopark(); return y; }
+fn c3(y: i16): i64 { return y; }
+async fn a4(y: u16): i64 { var s = await nopark(); return y; }
+fn c4(y: u16): i64 { return y; }
+async fn a5(y: i32): i64 { var s = await nopark(); return y; }
+fn c5(y: i32): i64 { return y; }
+async fn a6(y: u32): i64 { var s = await nopark(); return y; }
+fn c6(y: u32): i64 { return y; }
+async fn a7(y: i8): i64 { var s = await nopark(); y += 1; return y; }
+fn c7(y: i8): i64 { y += 1; return y; }
+async fn a8(y: u8): i64 { var s = await nopark(); y += 1; return y; }
+fn c8(y: u8): i64 { y += 1; return y; }
+async fn a9(y: i16): i64 { y += 1; var s = await nopark(); return y; }
+fn c9(y: i16): i64 { y += 1; return y; }
+async fn a10(y: u16): i64 { var s = await nopark(); y += 1; return y; }
+fn c10(y: u16): i64 { y += 1; return y; }
+async fn a11(y: i32): i64 { var s = await nopark(); y += 1; return y; }
+fn c11(y: i32): i64 { y += 1; return y; }
+async fn a12(y: u32): i64 { var s = await nopark(); y += 1; return y; }
+fn c12(y: u32): i64 { y += 1; return y; }
+async fn a13(C): i64 { var y: i8 = 0 - 3; var s = await nopark(); return y; }
+fn c13(C): i64 { var y: i8 = 0 - 3; return y; }
+async fn a14(C): i64 { var y: u8 = 0 - 3; var s = await nopark(); return y; }
+fn c14(C): i64 { var y: u8 = 0 - 3; return y; }
+async fn a15(C): i64 { var y: i16 = 5; var s = await nopark(); y = 0x18000; return y; }
+fn c15(C): i64 { var y: i16 = 5; y = 0x18000; return y; }
+async fn a16(C): i64 { var y: u16 = 0; var s = await nopark(); y = 0 - 1; return y; }
+fn c16(C): i64 { var y: u16 = 0; y = 0 - 1; return y; }
+async fn a17(C): i64 { var y: i32 = 0x7FFFFFFF; var s = await nopark(); y += 1; return y; }
+fn c17(C): i64 { var y: i32 = 0x7FFFFFFF; y += 1; return y; }
+async fn a18(C): i64 { var y: u32 = 0xFFFFFFFF; var s = await nopark(); y += 1; return y; }
+fn c18(C): i64 { var y: u32 = 0xFFFFFFFF; y += 1; return y; }
+async fn a19(a: u8, b: i16, c): i64 { var s = await nopark(); var d: i8 = a; return d * 1000000 + b * 100 + c; }
+fn c19(a: u8, b: i16, c): i64 { var d: i8 = a; return d * 1000000 + b * 100 + c; }
+async fn a20(y: u8): i64 { var s = await nopark(); var a = *(&y); *(&y) = 0x2FF; var b = y; *(&y) += 1; return a * 1000000 + b * 1000 + y; }
+fn c20(y: u8): i64 { var a = *(&y); *(&y) = 0x2FF; var b = y; *(&y) += 1; return a * 1000000 + b * 1000 + y; }
+async fn a21(a, b, c, d, e, f, y: u8): i64 { var s = await nopark(); return y; }
+fn c21(a, b, c, d, e, f, y: u8): i64 { return y; }
+async fn a22(y: i16): i64 { var f = |k| y + k; var s = await nopark(); return fncall1(f, 0); }
+fn c22(y: i16): i64 { var f = |k| y + k; return fncall1(f, 0); }
+async fn a23(C): i64 { var s = await nopark(); var b: u16 = 0 - 2; var k = |z| b + z; return callptr(k, 0); }
+fn c23(C): i64 { var b: u16 = 0 - 2; var k = |z| b + z; return callptr(k, 0); }
+async fn a24(y: i16): i64 { var s = await nopark(); y = y + 0x10000; var t = await nopark(); return y; }
+fn c24(y: i16): i64 { y = y + 0x10000; return y; }
+async fn a25(n: u8): i64 { var acc = 0; var i: u8 = 250; while (i != 4) { var s = await nopark(); acc = acc + 1; i += 1; } return acc * 1000 + n; }
+fn c25(n: u8): i64 { var acc = 0; var i: u8 = 250; while (i != 4) { acc = acc + 1; i += 1; } return acc * 1000 + n; }
+async fn a26(y: i8): i64 { defer { g_d = y; } var s = await nopark(); y -= 1; return 0; }
+fn c26(y: i8): i64 { defer { g_d = y; } y -= 1; return 0; }
+async fn a27(y: u8): i64 { var s = await nopark(); y = y << 1; y <<= 1; return y; }
+fn c27(y: u8): i64 { y = y << 1; y <<= 1; return y; }
+fn main(): i64 {
+    alloc_init();
+    chk(1, runf(a1(0x1FF)), c1(0x1FF), 0 - 1);
+    chk(2, runf(a2(0x1FF)), c2(0x1FF), 255);
+    chk(3, runf(a3(0x18000)), c3(0x18000), 0 - 32768);
+    chk(4, runf(a4(0x1FFFF)), c4(0x1FFFF), 65535);
+    chk(5, runf(a5(0x180000000)), c5(0x180000000), 0 - 2147483648);
+    chk(6, runf(a6(0x1FFFFFFFF)), c6(0x1FFFFFFFF), 4294967295);
+    chk(7, runf(a7(127)), c7(127), 0 - 128);
+    chk(8, runf(a8(255)), c8(255), 0);
+    chk(9, runf(a9(0x7FFF)), c9(0x7FFF), 0 - 32768);
+    chk(10, runf(a10(0xFFFF)), c10(0xFFFF), 0);
+    chk(11, runf(a11(0x7FFFFFFF)), c11(0x7FFFFFFF), 0 - 2147483648);
+    chk(12, runf(a12(0xFFFFFFFF)), c12(0xFFFFFFFF), 0);
+    chk(13, runf(a13(0)), c13(0), 0 - 3);
+    chk(14, runf(a14(0)), c14(0), 253);
+    chk(15, runf(a15(0)), c15(0), 0 - 32768);
+    chk(16, runf(a16(0)), c16(0), 65535);
+    chk(17, runf(a17(0)), c17(0), 0 - 2147483648);
+    chk(18, runf(a18(0)), c18(0), 0);
+    chk(19, runf(a19(0x181, 0x1FFFF, 7)), c19(0x181, 0x1FFFF, 7), 0 - 127000093);
+    chk(20, runf(a20(0x1C8)), c20(0x1C8), 200255000);
+    chk(21, runf(a21(1, 2, 3, 4, 5, 6, 0x3FF)), c21(1, 2, 3, 4, 5, 6, 0x3FF), 255);
+    chk(22, runf(a22(0x18000)), c22(0x18000), 0 - 32768);
+    chk(23, runf(a23(0)), c23(0), 65534);
+    chk(24, runf(a24(0x17FFF)), c24(0x17FFF), 32767);
+    chk(25, runf(a25(0x105)), c25(0x105), 10005);
+    runf(a26(0x180)); var d1 = g_d; g_d = 0; c26(0x180); chk(26, d1, g_d, 127);
+    chk(27, runf(a27(0x41)), c27(0x41), 4);
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return g_red;
+}
+var e = main();
+syscall(60, e);
+EOF
+A12_WANT='-32768 255 255 -32768 '
+a12_skip=0
+a12_red=0
+# a12_leg <label> <runner or ""> [ENV=V]: the repro prints A12_WANT, the rows probe exits 0.
+a12_leg() {
+  for p in a12r a12; do
+    rc=0
+    if [ -n "${3:-}" ]; then env CYRIUS_ASYNC=1 "$3" "$T/stage1" < "$T/$p.cyr" > "$T/$p.bin" 2> "$T/$p.err" || rc=$?
+    else CYRIUS_ASYNC=1 "$T/stage1" < "$T/$p.cyr" > "$T/$p.bin" 2> "$T/$p.err" || rc=$?; fi
+    if [ "$rc" -ne 0 ] || [ ! -s "$T/$p.bin" ]; then
+      echo "  FAIL axis12 $1 $p: did not build (rc $rc): $(grep '^error' "$T/$p.err" | head -1)"; a12_red=$((a12_red + 1)); continue; fi
+    chmod +x "$T/$p.bin"
+    got=0
+    if [ -n "$2" ]; then out=$(timeout 120 $2 "$T/$p.bin" 2>/dev/null) || got=$?
+    else out=$(timeout 30 "$T/$p.bin" 2>/dev/null) || got=$?; fi
+    out=$(printf '%s' "$out" | tr -d '\r')
+    if [ "$p" = a12r ]; then
+      [ "$got" -eq 0 ] && [ "$out" = "$A12_WANT" ] || {
+        echo "  FAIL axis12 $1 R: the filed repro printed '$out' (exit $got), want '$A12_WANT'"; a12_red=$((a12_red + 1)); }
+    else
+      [ "$got" -eq 0 ] || { echo "  FAIL axis12 $1: exit $got, red rows N: $out"; a12_red=$((a12_red + 1)); }
+    fi
+  done
+}
+a12_leg "x86_64" ""
+a12_leg "CYRIUS_IR=3" "" CYRIUS_IR=3
+if command -v wine > /dev/null 2>&1; then
+  mkdir -p "$T/whome"
+  printf '#!/bin/sh\ncp "$1" "$1.exe" || exit 1\ncd "%s" && WINEPREFIX="%s" HOME="%s" XDG_CACHE_HOME="%s/.cache" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1.exe"\n' \
+    "$T" "$WP" "$T/whome" "$T/whome" > "$T/winrun"; chmod +x "$T/winrun"
+  a12_leg "PE (wine)" "$T/winrun" CYRIUS_TARGET_WIN=1
+else echo "  SKIP coroutine_midbody_suspend axis12: the PE leg (wine not installed)"; a12_skip=1; fi
+[ "$a12_red" -eq 0 ] || {
+  echo "FAIL coroutine_midbody_suspend axis12: $a12_red leg(s) red — a coroutine's narrow parameter or local"
+  echo "  does not hold its type's value (N<row>: 1-6 a parameter of each width, 7-12 each width's += 1 wrap,"
+  echo "  13-18 a local of each width, 19 a param into a narrow local, 20 *(&y), 21 stack-passed, 22 / 23 a"
+  echo "  closure's capture, 24 two suspends, 25 a u8 loop counter, 26 a defer, 27 <<=)."
+  exit 1; }
+
+if [ "$a12_skip" -eq 1 ]; then echo "SKIP coroutine_midbody_suspend: every axis that ran passed, but axis 12's PE leg could not run (exit 77: a SKIP, not a PASS)"; exit 77; fi
+echo "PASS coroutine_midbody_suspend: a narrow (i8 .. u32) parameter or local of a coroutine holds its type's value (D27: the filed repro prints -32768 255 255 -32768; 27 rows on x86_64 / IR=3 / PE) · a closure made in a coroutine captures a struct / tuple / u128 / array / slice in field order (before and after the await, nested) · the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct params over 8 B (24 B / 16 B x coroutine/plain) refused by name with the p: *T spelling (a *P3, a <= 8 B struct and a Str still compute) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0

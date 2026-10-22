@@ -18,8 +18,10 @@
 # hardware) / cx (cxvm) / PE (wine, a private prefix); T1-T5 tests/tcyr/crossos/closure_capture_narrow_scalar.tcyr on
 # the same legs, each requiring exactly "N passed, 0 failed (N total)", N derived from the file (one per
 # `assert_eq(`, floor 31); A0 (CYRIUS_ASYNC=1, x86) a non-suspending `async fn` capturing an `i8` local reads -3 (it
-# read 253 too); A1 (CYRIUS_ASYNC=1) a narrow local in a suspending `async fn` stays refused by name. The release gate
-# runs the .tcyr on ecb / ach / cass / pi.
+# read 253 too); A1 (CYRIUS_ASYNC=1) a narrow local in a suspending `async fn` — refused by name ("a sub-word local
+# in an `async fn` is not supported yet") until 6.7.17's D27 (2026-10-22) gave the coroutine frame the narrow ladder
+# — is captured as its value: -3, exit 253 (`& 255`) from the second force (the first suspends); on x86_64 and
+# CYRIUS_IR=3. The release gate runs the .tcyr on ecb / ach / cass / pi.
 #
 # MUTATION LEDGER (2026-10-16; a scratch copy of src/ with the one edit, its cycc built from it, this gate run as
 # CYCC=<mutant> — so the cross legs, built from the tree's src/, stay green except the x86-built PE leg):
@@ -149,11 +151,15 @@ else
     chmod +x "$T/a0"; got=0; timeout 10 "$T/a0" > /dev/null 2>&1 || got=$?
     if [ "$got" -eq 42 ]; then ok "A0: a non-suspending async fn's captured i8 reads -3 (exit 42)"; else bad "A0: a non-suspending async fn's captured i8: exit $got, want 42 (1: not -3)"; fi
 fi
-printf '%b' "${ASH}fn nopark(): i64 { return 0; }\nasync fn ac(): i64 { var b: i8 = 0 - 3; var k = |z| b + z; var w = await nopark(); return callptr(k, 0) + w; }\nfn main(): i64 { alloc_init(); var f = ac(); return future_force(f); }\nsyscall(60, main() & 255);\n" > "$T/a1.cyr"
-rc=0; CYRIUS_ASYNC=1 "$CC" < "$T/a1.cyr" > "$T/a1" 2> "$T/a1.err" || rc=$?
-if [ "$rc" -eq 0 ]; then bad "A1: a narrow local in a suspending async fn BUILT (rc 0)"
-elif grep -qF 'a sub-word local in an `async fn` is not supported yet' "$T/a1.err"; then ok "A1: a narrow local in a suspending async fn stays refused by name"
-else bad "A1: refused, but not by name: $(grep '^error' "$T/a1.err" | head -1)"; fi
+printf '%b' "${ASH}fn nopark(): i64 { return 0; }\nasync fn ac(): i64 { var b: i8 = 0 - 3; var k = |z| b + z; var w = await nopark(); return callptr(k, 0) + w; }\nfn main(): i64 { alloc_init(); var f = ac(); future_force(f); return future_force(f); }\nsyscall(60, main() & 255);\n" > "$T/a1.cyr"
+for a1env in CYRIUS_ASYNC=1 CYRIUS_IR=3; do
+    rc=0; env CYRIUS_ASYNC=1 "$a1env" "$CC" < "$T/a1.cyr" > "$T/a1" 2> "$T/a1.err" || rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$T/a1" ]; then bad "A1 ($a1env): a narrow local in a suspending async fn did not build (rc $rc): $(grep '^error' "$T/a1.err" | head -1)"
+    else
+        chmod +x "$T/a1"; got=0; timeout 10 "$T/a1" > /dev/null 2>&1 || got=$?
+        if [ "$got" -eq 253 ]; then ok "A1 ($a1env): a suspending async fn's captured i8 reads -3 (exit 253)"; else bad "A1 ($a1env): a suspending async fn's captured i8: exit $got, want 253 (-3 & 255)"; fi
+    fi
+done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
