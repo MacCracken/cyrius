@@ -3889,34 +3889,63 @@ fn _assert_open(S): i64 {
 fn _assert_end(S, pw): i64 {
     var e = 0 - 1;
     if (_panic == 1) { e = _asrt_ext(S); }
-    var bs = _assert_tail(S);
+    var p1 = _panic;
+    var bs = _assert_tail(S, 1);
     if (bs == 1) { _asrt_brace_err(S); }
+    if (p1 == 0) { if (_panic == 1) { e = GTI(S); } }   # 6.7.17: the tail's own refusal, its line stepped: in sync
     if (_panic == 1) { if (_asrt_synced(S, e, bs) == 0) { return 0; } }
     _panic = pw;
     return 0;
 }
 # 1 = the tail stopped at the enclosing block's `}` (left for the block), else 0.
-fn _assert_tail(S): i64 {
+# ⛔ 6.7.17 — ONLY `;` OR THE LINE'S END MAY FOLLOW THE MESSAGE (the user's D28, 2026-10-22). The tail skipped whatever
+# followed the message to the next `;` or the line's end, unread: `#assert 1 == 1, "m" junk` compiled, and in an impl
+# body `#assert 1 == 1, "m" fn m(self): i64 { return 5; }` ate the method up to its `;`, pass 2 ended the impl at the
+# method's `}`, and the program's statements after it were never compiled (exit 0, not 9). Now a token there — or
+# after a `,` with no message — is one error (`rep` 1: PARSE_STMT's arm; pass 1 steps silently), and the rest of the
+# line is stepped whole (`_ln_rest`: a `{` through its `}`), so the next line reports its own. Both passes stop on the
+# same token. CHANGELOG [6.7.17]
+fn _assert_tail(S, rep): i64 {
     var ln = GTLINE(S, GTI(S) - 1);
-    if (PEEKT(S) == 30) { ln = GTLINE(S, GTI(S)); }
-    var bd = 0;
+    var m = 0;
+    if (PEEKT(S) == 30) { ln = _str_end_line(S, GTI(S)); STI(S, GTI(S) + 1); m = 1; }
     var blk = _asrt_in_blk(S);
-    while (PEEKT(S) != 5 && PEEKT(S) != 12) {
-        if (GTLINE(S, GTI(S)) != ln) { break; }
-        if (PEEKT(S) == 13) { bd = bd + 1; }
-        if (PEEKT(S) == 14) {
-            if (bd == 0) { if (blk == 1) { return 1; } }
-            else { bd = bd - 1; }
+    var t = PEEKT(S);
+    if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+    if (t == 12) { return 0; }
+    if (GTLINE(S, GTI(S)) != ln) { return 0; }
+    if (t == 14) { if (blk == 1) { return 1; } }
+    if (rep == 1) { _asrt_tail_err(S, m); }
+    return _ln_rest(S, ln, blk);
+}
+# The line the string token `ti` ends on: its first line (the token's) plus the line breaks inside it, a raw LF or
+# `\<LF>`. A message spanning lines ends on its last: `"multi<LF>line" junk` has `junk` on the message's line.
+fn _str_end_line(S, ti): i64 {
+    var p = GTOFF(S, ti) + 1;
+    var bl = GBL(S);
+    var ln = GTLINE(S, ti);
+    while (p < bl) {
+        var c = load8(S + 0x459D000 + p);
+        if (c == 34) { return ln; }
+        if (c == 10) { ln = ln + 1; }
+        if (c == 92) {
+            p = p + 1;
+            if (load8(S + 0x459D000 + p) == 10) { ln = ln + 1; }
         }
-        STI(S, GTI(S) + 1);
+        p = p + 1;
     }
-    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return ln;
+}
+# The tail's refusal at the cursor: after the message (`m` 1), or after a `,` that has none.
+fn _asrt_tail_err(S, m): i64 {
+    if (m == 1) { ERR_MSG(S, "#assert: expected `;` or the end of the line after the message", 62); }
+    else { ERR_MSG(S, "#assert: expected the message string, `;` or the end of the line after `,`", 74); }
     return 0;
 }
 # A refused directive line's rest, from the cursor, stepped whole: each `(` / `[` / `{` through its match wherever that
 # sits, the walk then going on along the line the match closes on. Stops at EOF, at a token on a later line and, `blk`
-# 1, at a `}` at depth 0, which closes the enclosing body: 1 = stopped there, else 0. Both passes step the same tokens
-# through it. CHANGELOG [6.7.17]
+# 1, at a `}` at depth 0, which closes the enclosing body: 1 = stopped there, else 0. An #assert's refused tail
+# (`_assert_tail`) and a refused `use` (`_use_step`): both passes step the same tokens through it. CHANGELOG [6.7.17]
 fn _ln_rest(S, ln, blk): i64 {
     var d = 0;
     while (PEEKT(S) != 12) {

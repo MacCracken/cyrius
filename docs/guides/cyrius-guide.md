@@ -5170,6 +5170,24 @@ end of file*); write `{ #assert 1 == 1, "m"; }`. A failing `#assert` no longer s
 compile on the spot: every failing assert and any other error in the file is
 reported, and no binary is written.
 
+After the message the same rule holds as after the expression: only `;` or the end of
+the line (6.7.17, the user's D28, 2026-10-22). Anything else on the line is one error at
+its first token, and the rest of the line is skipped whole (a `{` through its `}`), so the
+next line reports its own errors:
+
+```text
+error:<source>:2:30: #assert: expected `;` or the end of the line after the message
+    impl S { #assert 1 == 1, "m" fn m(self): i64 { return 5; } }
+                                 ^
+```
+
+After a `,` with no message it is *#assert: expected the message string, `;` or the end
+of the line after `,`* (`#assert 1 == 1, junk`). A message that spans lines ends on its
+last line. Through 6.7.16 the rest of the line was skipped unread up to its next `;`:
+`#assert 1 == 1, "m" junk` compiled, a `}` after the message at module scope was taken,
+and in an impl body the example above ate the method — the impl then ended at the
+method's `}`, and every statement after it was silently never compiled.
+
 ```
 enum Wire { HDR = 16; }
 struct Hdr { magic; len; }

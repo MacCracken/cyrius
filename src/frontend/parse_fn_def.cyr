@@ -146,7 +146,7 @@ fn _tl_assert(S, arm): i64 {
     STI(S, GTI(S) + 1);
     STI(S, _ce_extent(S, GTI(S)));   # 6.7.4: a const expression, by the evaluator's grammar
     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-    _assert_tail(S);
+    _assert_tail(S, 0);   # 6.7.17: silent here, PARSE_STMT's arm reports
     return 0;
 }
 
