@@ -25,6 +25,8 @@
 #   S1  the filing's s1 verbatim (`return 1 }`): one error, the next fn not "inside" it
 #   R   a `return`'s `;` (src/frontend/parse_fn.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
 #       R3 a call's return before the fn's `}`
+#   F   a C-style `for` header missing one of its two `;`: F1 the condition's, F2 the init's, F3 an assignment
+#       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -34,7 +36,9 @@
 # is defined inside fn 'f'"); K green. On bc51aa5c6 (before `_resync_close`) RED: B1 B2 (the stray `{`'s `}` closed the
 # fn: "unexpected ';'" / "unexpected number 4", "return outside a fn body"). `_resync_close` without its own-`;`
 # exemption -> RED K3 ("expected '}', got end of file"). On 99355d191 (before parse.cyr's sites) RED: P1-P5.
-# On 11bbb4141 (before parse_fn.cyr's sites) RED: S1 R1-R3.
+# On 11bbb4141 (before parse_fn.cyr's sites) RED: S1 R1-R3. On b91579399 (before `_for_semis`) RED: F1-F6 (the
+# init's resync ran into the condition, the step replayed from the token after the missing `;`, the step skip ran
+# to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'").
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -199,6 +203,34 @@ fn g(): i64 { return zz; }
 syscall(60, f() + g());
 ' "error:<source>:2:27: expected ';', got '}'
 error:<source>:3:24: $UZ"
+
+# ---- F: a C-style `for` header missing one of its two `;` (PARSE_FOR, src/frontend/parse_ctrl.cyr)
+FH='fn f(): i64 {
+    var a = 0;
+    var b = 0;
+'
+FT='    return b;
+}
+syscall(60, f());
+'
+row F1 "the condition's ; missing: for (var i = 0; i < 3 i = i + 1)" "${FH}    for (var i = 0; i < 3 i = i + 1) { b = zz; }
+${FT}" "error:<source>:4:27: expected ';', got identifier 'i'
+error:<source>:4:46: $UZ"
+row F2 "the init's ; missing: for (var i = 0 i < 3; i = i + 1)" "${FH}    for (var i = 0 i < 3; i = i + 1) { b = zz; }
+${FT}" "error:<source>:4:20: expected ';', got identifier 'i'
+error:<source>:4:46: $UZ"
+row F3 "an assignment init's ; missing: for (a = 0 a < 3; a = a + 1)" "${FH}    for (a = 0 a < 3; a = a + 1) { b = zz; }
+${FT}" "error:<source>:4:16: expected ';', got identifier 'a'
+error:<source>:4:42: $UZ"
+row F4 "both missing: for (var i = 0 i < 3)" "${FH}    for (var i = 0 i < 3) { b = zz; }
+${FT}" "error:<source>:4:20: expected ';', got identifier 'i'
+error:<source>:4:35: $UZ"
+row F5 "the step missing with its ;: for (var i = 0; i < 3)" "${FH}    for (var i = 0; i < 3) { b = zz; }
+${FT}" "error:<source>:4:26: expected ';', got ')'
+error:<source>:4:36: $UZ"
+row F6 "a compound step after the missing ;: for (var i = 0; i < 3 i += 1)" "${FH}    for (var i = 0; i < 3 i += 1) { b = zz; }
+${FT}" "error:<source>:4:27: expected ';', got identifier 'i'
+error:<source>:4:43: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
