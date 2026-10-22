@@ -47,7 +47,8 @@
 #   cymlcheck          116 TOML cases in [[entries]] blocks (every tomllib error class, mutated
 #                      documents, nesting either side of Python's recursion limit), CR LF, the
 #                      `---` terminator, and the git-tracked content/**.cyml walk
-#   place              Placement / Decision lines, a special re-placement, --dry, the refusal
+#   place              Placement / Decision lines, a special re-placement, --dry, the refusal; a
+#                      missing input and a missing key end it with exit 1 (as place.py's exceptions)
 #   briefs             every brief shape (notes, extra decisions, cross-lane, a group-less lane), --dry
 #   archive            banners, titles, Status lines, git mv, every repointed link, --dry, a missing file
 #   assemble           the CHANGELOG entry and the migration section, --dry, both refusals
@@ -87,6 +88,7 @@
 #   tomlcheck's "Unclosed array" raised one position early                         -> RED cymlcheck
 #   tomlcheck's frame limit 1001, not 1000                                         -> RED cymlcheck
 #   _hc_is_cyrius_checkout back to the filename probe (src/main.cyr + cyrius.cyml) -> RED default checkout
+#   release/common.cyr's prefix back to `hc_ccat(RC_PROG, ": ")` (a C string as a Str) -> RED place
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dev_helpers_match_golden: cannot cd to $ROOT"; exit 1; }
@@ -327,6 +329,22 @@ done
     --decisions "$RF/place/decisions.json" --plan "$RF/place/none.json" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "place/no_line" "$T/rep"
+# A missing input and a decision with no "id": place.py's FileNotFoundError and KeyError ended it
+# with exit 1; the step's own refusal does the same, in its words (no Python traceback to match).
+# Until 6.7.17's review fix both were a SIGSEGV: release/common.cyr built the "place: " prefix by
+# handing a C string to a Str slot.
+printf '{}' > "$T/units_empty.json"
+printf '[{"issue": "a.md"}]' > "$T/dec_noid.json"
+"$BIN/place" --repo "$PL" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$T/no_units.json" \
+    --decisions "$RF/place/decisions.json" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
+if [ "$rc" != 1 ] || [ "$(cat "$T/e")" != "place: $T/no_units.json: cannot read (no such file?)" ]; then
+    _fail "place with a units file that does not exist: rc $rc (place.py: 1), stderr: $(head -2 "$T/e" | tr '\n' ' ')"
+fi
+"$BIN/place" --repo "$PL" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$T/units_empty.json" \
+    --decisions "$T/dec_noid.json" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
+if [ "$rc" != 1 ] || [ "$(cat "$T/e")" != "place: KeyError: 'id'" ]; then
+    _fail "place with a decision that has no id: rc $rc (place.py: 1), stderr: $(head -2 "$T/e" | tr '\n' ' ')"
+fi
 _axis_end "place: Placement and Decision lines, a special re-placement, --dry and the refusal match place.py"
 
 # briefs: every brief shape (a preamble, unit notes, an extra decision, a cross-lane note, a lane

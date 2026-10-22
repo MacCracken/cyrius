@@ -31,6 +31,11 @@ fn rc_exit(msg): i64 {
 }
 fn rc_exitc(c): i64 { return rc_exit(hc_s(c)); }
 
+# "<step>: " as a Str, the prefix of a step's own refusals. RC_PROG is a C string: handed to
+# hc_ccat's Str slot as `hc_ccat(RC_PROG, ": ")` the literal was read as a Str header and a
+# missing input file was a SIGSEGV, not this refusal. CHANGELOG [6.7.17]
+fn rc_who(): i64 { return hc_catc(hc_s(RC_PROG), ": "); }
+
 # The common options; `date` and `dry` add --date (required) and --dry. Declare the step's own
 # options with hc_opt after this, then call rc_finish.
 fn rc_options(progc, usagec, date, dry): i64 {
@@ -128,8 +133,8 @@ fn rc_in_c6(namec): i64 {
 # cannot be read (or decoded) ends the step, exit 1.
 fn rc_rd(path): i64 {
     var s = hc_read(hc_cstr(path));
-    if (s == 0) { rc_exit(hc_cat3(hc_ccat(RC_PROG, ": "), path, hc_s(": cannot read (no such file?)"))); }
-    if (hc_utf8_ok(s) == 0) { rc_exit(hc_cat3(hc_ccat(RC_PROG, ": "), path, hc_s(": not valid UTF-8"))); }
+    if (s == 0) { rc_exit(hc_cat3(rc_who(), path, hc_s(": cannot read (no such file?)"))); }
+    if (hc_utf8_ok(s) == 0) { rc_exit(hc_cat3(rc_who(), path, hc_s(": not valid UTF-8"))); }
     return hc_univ_nl(s);
 }
 
@@ -140,7 +145,7 @@ fn rc_wr(path, s, dry): i64 {
     var r = 0;
     if (hc_exists(hc_cstr(path)) == 1) { r = hc_replace_file(hc_cstr(path), s); }
     else { r = hc_write_new(hc_cstr(path), s); }
-    if (r != 0) { rc_exit(hc_cat3(hc_ccat(RC_PROG, ": "), path, hc_s(": cannot write"))); }
+    if (r != 0) { rc_exit(hc_cat3(rc_who(), path, hc_s(": cannot write"))); }
     return 0;
 }
 
@@ -149,7 +154,7 @@ fn rc_wr(path, s, dry): i64 {
 fn rc_json(path): i64 {
     var v = bayan_json_v_parse(rc_rd(path));
     if (v == 0) {
-        rc_exit(hc_cat3(hc_ccat(RC_PROG, ": "), path, hc_ccat(": invalid JSON: ", hc_s(bayan_json_last_error()))));
+        rc_exit(hc_cat3(rc_who(), path, hc_ccat(": invalid JSON: ", hc_s(bayan_json_last_error()))));
     }
     return v;
 }
@@ -251,7 +256,7 @@ fn _rc_jrepr(v): i64 {
 # d[k] that must be there (Python: a KeyError ends the step).
 fn rc_jreq(obj, k): i64 {
     var v = rc_jget(obj, k);
-    if (v == 0) { rc_exit(hc_cat3(hc_ccat(RC_PROG, ": KeyError: "), hc_pyrepr(hc_s(k)), hc_s(""))); }
+    if (v == 0) { rc_exit(hc_cat3(rc_who(), hc_s("KeyError: "), hc_pyrepr(hc_s(k)))); }
     return v;
 }
 # str(d[k])
