@@ -1831,6 +1831,12 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
     if (fsg != 1) { return _tn_hs_fail(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_HANDSHAKE_FAILED); }
     if (fks != 1) { return _tn_hs_fail(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_HANDSHAKE_FAILED); }
     if (_tn_sg_has(sg, sgl, 0) < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+    # The list validated once, each share's group is looked up in O(1) (_tn_sg_set /
+    # _tn_sg_member): _tn_sg_has per share cost shares x groups reads, both counts the peer's
+    # (CYRIUS-2026-0037). CHANGELOG [6.7.17]
+    var sgs = 0;
+    var sgr = _tn_sg_set(ctx, sg, sgl, &sgs);
+    if (sgr != TLS_OK) { return sgr; }
     # KeyShareClientHello: client_shares<0..2^16-1>, filling the extension exactly.
     if (ksl < 2) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var list_len = _tn_be16_r(ks);
@@ -1846,7 +1852,7 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
         kp = kp + 4;
         if (kl < 1) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
         if (kp + kl > ksl) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
-        if (_tn_sg_has(sg, sgl, kg) != 1) {             # a share for a group the client did not list
+        if (_tn_sg_member(sgs, sg, sgl, kg) != 1) {     # a share for a group the client did not list
             return _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
         }
         var want = _tn_group_point_len(kg);
@@ -1949,6 +1955,44 @@ fn _tn_sg_has(sg, sg_len, group): i64 {
     if (2 + list_len != sg_len) { return 0 - 1; }
     if (list_len < 2) { return 0 - 1; }
     if ((list_len & 1) != 0) { return 0 - 1; }
+    var pos = 2;
+    while (pos < sg_len) {
+        if (_tn_be16_r(sg + pos) == group) { return 1; }
+        pos = pos + 2;
+    }
+    return 0;
+}
+
+# The 1.3 server's membership set over a client's supported_groups (`sg`, `sg_len` bytes, already
+# validated by _tn_sg_has(sg, sg_len, 0)), for its key_share loop, stored at `out_set`: 0 for a
+# list of at most 32 groups (_tn_sg_member scans it), else an 8 KB bitmap — one bit per
+# NamedGroup, from the ctx's allocator, taken only for such a list (a real client sends under 32)
+# — filled by one pass. TLS_OK, or TLS_ERR_OOM when the map cannot be allocated. Per-share
+# _tn_sg_has made a peer's 16 KB ClientHello (1,610 shares on the last of 4,025 groups) cost the
+# server ~21 ms of CPU (x86_64) before its refusal (CYRIUS-2026-0037); the set makes the loop
+# O(shares). CHANGELOG [6.7.17]
+fn _tn_sg_set(ctx, sg, sg_len, out_set): i64 {
+    store64(out_set, 0);
+    if (sg_len <= 2 + 2 * 32) { return TLS_OK; }
+    var map = _tn_alloc(ctx, 8192);
+    if (map == 0) { return TLS_ERR_OOM; }
+    memset(map, 0, 8192);
+    var pos = 2;
+    while (pos < sg_len) {
+        var g = _tn_be16_r(sg + pos);
+        var bp = map + (g >> 3);
+        store8(bp, (load8(bp) & 0xFF) | (1 << (g & 7)));
+        pos = pos + 2;
+    }
+    store64(out_set, map);
+    return TLS_OK;
+}
+
+# 1 if `group` is on the validated supported_groups list `sg` (`sg_len` bytes), else 0: a bit test
+# in `set` (_tn_sg_set's bitmap), or with `set` 0 a scan of the short list, not validated again.
+# CHANGELOG [6.7.17]
+fn _tn_sg_member(set, sg, sg_len, group): i64 {
+    if (set != 0) { return (load8(set + (group >> 3)) >> (group & 7)) & 1; }
     var pos = 2;
     while (pos < sg_len) {
         if (_tn_be16_r(sg + pos) == group) { return 1; }

@@ -3197,5 +3197,11 @@ _chk_gate "$ROOT/tests/gates/platform/emacho_sysxlat_fold.sh"
 # scripts/hooks/pre-commit in a throwaway `git init` (6.7.11: the bound is 1.10x build/cycc, under 700K–3M).
 _chk_gate "$ROOT/tests/gates/toolchain/precommit_arm_size_band.sh"
 
+# 6.7.17 — the native TLS 1.3 server's key_share loop is O(shares) (CYRIUS-2026-0037): a 16 KB
+# ClientHello of 1,610 shares on the last of 4,025 groups costs at most 5x the CPU of one share
+# (respond_hello's own CPU time, best of 5, re-measured up to 3 rounds); a fixture over 10 s FAILS.
+# `# check: serial`. x86_64 Linux only (exit 77 elsewhere, by name).
+_chk_gate "$ROOT/tests/gates/platform/tls13_key_share_scan_linear.sh"
+
 # 6.7.0: a parallel run executes everything queued above, then reports (_chk_par_drain).
 _chk_par_drain

@@ -2494,7 +2494,7 @@ close (the release-docs pass found it neither fixed nor filed). Filed as
 | **Severity** | P3 |
 | **Attacker / boundary** | any network peer that can open a connection and send a ClientHello / the network, into the server's CPU |
 | **Files** | `lib/tls_native_hs13.cyr` — the 1.3 server's key_share loop and `_tn_sg_has` |
-| **Fixed** | not yet — tracked (the issue's proposed fix) |
+| **Fixed** | 6.7.17 |
 
 **Vector and impact.** RFC 8446 § 4.2.8 refuses a key_share for a group the client did not list in supported_groups;
 the server answered that by calling `_tn_sg_has` — a re-validation and a linear walk of the whole supported_groups list —
@@ -2502,3 +2502,19 @@ once per share. A ClientHello filling its 16 KB record with 1,610 one-byte share
 4,025-group list cost the server ~24 ms of CPU (x86_64, the p16 lane's measurement) before the handshake was refused,
 so a peer repeating such hellos keeps server cores busy at a small fraction of the bandwidth. No memory is corrupted and
 nothing is disclosed; the cost per hello is bounded by the record size, hence P3.
+
+**Fix (6.7.17 — lane plat, unit PL1).** `_tn_parse_client_hello` validates supported_groups once (the existing
+`_tn_sg_has(sg, sgl, 0)` check), then `_tn_sg_set` makes a membership set: for a list of more than 32 groups an 8 KB
+bitmap (one bit per NamedGroup, from the ctx's allocator — `TLS_ERR_OOM` when it cannot be had), filled in one pass;
+for a shorter list none. The key_share loop asks `_tn_sg_member` — a bit test, or a scan of at most 32 entries with no
+re-validation — so it costs O(shares). Every refusal is unchanged (a share for an unlisted group illegal_parameter, no
+shared group handshake_failure); `_tn_sg_has` stays for `_tn_pick_group` and the 1.2 server, which scan only our own
+three groups. Measured on x86_64, respond_hello's own CPU time per hello: the 16,166-byte ClientHello above
+20.9 ms → 0.14-0.21 ms, against 0.11-0.17 ms for the same framing with one share (121-122 %). Rows:
+`tests/gates/platform/tls13_key_share_scan_linear.sh` (`# check: serial`; the two fixtures' CPU time over 1,000
+hellos each, best of 5, bound 500 %, re-measured up to 3 rounds, a fixture over 10 s FAILS — the 6.7.16 loop restored:
+the adversarial fixture killed at 10 s; a membership test still scanning 150 entries per share: 941-948 % on every
+round) and `tests/tcyr/crypto/tls13_ch_conformance.tcyr` K1-K8 (the hello still refused with handshake_failure; an
+unlisted share illegal_parameter on the bitmap and on the short scan; x25519 negotiated at the end of 32 / 33 / 40
+groups; the bitmap's edge bits 0xFFFF / 0x0000 and an unlisted neighbour in a listed byte) — 88/88 on x86_64 Linux,
+qemu-aarch64, pi, ecb and ach, 84/84 on wine and cass (the four socketpair rows a named SKIP there).
