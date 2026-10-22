@@ -1018,6 +1018,7 @@ fn _run_regression_gates(): i64 {
     # ends a UEFI image. This one exits from inside a fn body, the way lib/alloc.cyr and
     # lib/bounds.cyr abort. 6.6.4 and the 6.6.5 first cut both fault here.
     _efi_ovmf_fn_exit_gate();
+    _efi_ovmf_boot_codes_gate();      # 6.7.17: the pipeline both stand on, on stub firmwares
     println("");
 
     _section("EFI trampoline REX encoding (efi_main convention)");

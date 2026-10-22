@@ -1412,10 +1412,23 @@ fn _efi_emit_gate(): i64 {
 # _efi_ovmf_fn_exit_gate below). `$1` is the .efi, `$2` is a marker that must appear on the
 # serial log AFTER the image's own output — the evidence that firmware regained control
 # rather than that the image merely printed. Exit codes: 1 = never printed, 2 = the firmware
-# took an X64 exception, 3 = printed and did not fault but firmware never came back.
+# took an X64 exception, 3 = printed and did not fault but firmware never came back, 4 = the
+# deadline passed before the image printed (nothing about the image was measured).
 # CHANGELOG [6.6.5]
-fn _efi_ovmf_boot(efi_bin, after_marker): i64 {
-    var script = "set -e; D=$(mktemp -d -t efi-smoke.XXXXXX); trap 'rm -rf \"$D\"' EXIT; cd \"$D\"; dd if=/dev/zero of=disk.img bs=1M count=64 status=none; parted -s disk.img mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1; mformat -i disk.img@@1048576 -F; mmd -i disk.img@@1048576 ::EFI; mmd -i disk.img@@1048576 ::EFI/BOOT; mcopy -i disk.img@@1048576 \"$1\" ::EFI/BOOT/BOOTX64.EFI; cp /usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd vars.fd; chmod +w vars.fd; timeout 12 qemu-system-x86_64 -machine q35 -m 256M -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=vars.fd -drive file=disk.img,format=raw -serial stdio -display none -no-reboot 2>/dev/null > out.txt || true; if ! grep -q 'hello, uefi' out.txt; then exit 1; fi; if grep -q 'X64 Exception' out.txt; then exit 2; fi; if ! sed -n '/hello, uefi/,$p' out.txt | grep -q \"$2\"; then exit 3; fi; exit 0";
+#
+# ⛔ 6.7.17 — THE BOOT ENDS WHEN THE FIRMWARE COMES TO REST, NOT AT A FIXED 12 s. The run was
+# `timeout 12 qemu-system-x86_64 …`: one number was both the stop and the deadline. OVMF under
+# TCG reaches the image's print about 4 s in on an idle box; on a loaded one (thirteen check.sh
+# runs at once, load 44 – 78 on 16 cores) qemu was cut off before the firmware had started the
+# image, and both rows read "the image never reached OutputString" for images byte-identical
+# to ones that pass (measured: qemu sharing one core with four busy loops, rc 1 at 13 s; this
+# pipeline, rc 0 at 18 s). qemu now runs in the background and the script polls the serial log
+# until the firmware rests — its boot menu ("Please select boot device", where both images end
+# once control is back), an X64 exception, or qemu's own exit — or `$4` seconds pass (90 for
+# the real boots, under the driver's 120 s bound on a child). `$3` is the qemu to run:
+# _efi_ovmf_boot_codes_gate hands it stub firmwares. CHANGELOG [6.7.17]
+fn _efi_ovmf_boot_run(efi_bin, after_marker, qemu, deadline_s): i64 {
+    var script = "set -e; D=$(mktemp -d -t efi-smoke.XXXXXX); Q=; trap 'if [ -n \"$Q\" ]; then kill \"$Q\" 2>/dev/null || true; fi; rm -rf \"$D\"' EXIT; cd \"$D\"; dd if=/dev/zero of=disk.img bs=1M count=64 status=none; parted -s disk.img mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1; mformat -i disk.img@@1048576 -F; mmd -i disk.img@@1048576 ::EFI; mmd -i disk.img@@1048576 ::EFI/BOOT; mcopy -i disk.img@@1048576 \"$1\" ::EFI/BOOT/BOOTX64.EFI; cp /usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd vars.fd; chmod +w vars.fd; : > out.txt; E=$(($(date +%s) + $4)); \"$3\" -machine q35 -m 256M -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=vars.fd -drive file=disk.img,format=raw -serial stdio -display none -no-reboot 2>/dev/null > out.txt & Q=$!; L=1; while [ \"$(date +%s)\" -lt \"$E\" ]; do if grep -q 'Please select boot device' out.txt || grep -q 'X64 Exception' out.txt || ! kill -0 \"$Q\" 2>/dev/null; then L=0; break; fi; sleep 0.25; done; kill \"$Q\" 2>/dev/null || true; wait \"$Q\" 2>/dev/null || true; Q=; if ! grep -q 'hello, uefi' out.txt; then if [ \"$L\" = 1 ]; then exit 4; fi; exit 1; fi; if grep -q 'X64 Exception' out.txt; then exit 2; fi; if ! sed -n '/hello, uefi/,$p' out.txt | grep -q \"$2\"; then exit 3; fi; exit 0";
     var args = vec_new();
     vec_push(args, str_from("/bin/sh"));
     vec_push(args, str_from("-c"));
@@ -1423,7 +1436,79 @@ fn _efi_ovmf_boot(efi_bin, after_marker): i64 {
     vec_push(args, str_from("--"));
     vec_push(args, str_from(efi_bin));
     vec_push(args, str_from(after_marker));
+    vec_push(args, str_from(qemu));
+    vec_push(args, str_from(deadline_s));
     return exec_vec_str(args);
+}
+
+fn _efi_ovmf_boot(efi_bin, after_marker): i64 {
+    return _efi_ovmf_boot_run(efi_bin, after_marker, "qemu-system-x86_64", "90");
+}
+
+# ── 6.7.17: the boot pipeline's exit codes, measured on STUB firmwares (no qemu, no image). Both
+# OVMF rows stand on this pipeline, and its old fixed 12 s cut-off turned them RED on a loaded
+# host for images that pass. Each stub stands in for qemu-system-x86_64 and writes to its stdout
+# (the serial log) what OVMF writes, then idles until killed, as the firmware does:
+#   slow   the image's line 13 s in (past the old cut-off), then the boot menu  -> 0
+#   mute   nothing, with a 3 s deadline (a firmware too slow to measure)        -> 4, not 1
+#   rest   the boot menu and no image line (the firmware came to rest)          -> 1, at once
+#   fault  the image's line, then an X64 exception                              -> 2
+#   lost   the image's line and the menu, no marker after the line              -> 3
+# Mutation: the poll restored to `timeout 12 "$3" … || true` -> slow 1 and mute 1 (RED).
+# CHANGELOG [6.7.17]
+fn _efi_ovmf_stub_case(name, serial, deadline_s, want): i64 {
+    var stub = _tmp_path(name);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "#!/bin/sh\n");
+    str_builder_add_cstr(sb, serial);
+    str_builder_add_cstr(sb, "exec sleep 600\n");
+    var s = str_builder_build(sb);
+    var img = _tmp_path("efi_stub_img_");
+    var wrote = file_write_all(stub, str_data(s), str_len(s));
+    if (wrote == str_len(s)) { wrote = file_write_all(img, "MZ stub image\n", 14); }
+    if (wrote < 0) {
+        sys_unlink(stub);
+        sys_unlink(img);
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": "); _p(name); println(" could not write its stub firmware or image");
+        return 1;
+    }
+    sys_chmod(stub, 493);
+    var rc = _efi_ovmf_boot_run(img, "BdsDxe", stub, deadline_s);
+    sys_unlink(stub);
+    sys_unlink(img);
+    if (rc == want) {
+        _p("  "); _p(ANSI_GREEN); _p("ok"); _p(ANSI_RESET);
+        _p(": "); _p(name); _p(" -> "); print_num(rc);
+        println("");
+        return 0;
+    }
+    _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+    _p(": "); _p(name); _p(" -> "); print_num(rc); _p(", want "); print_num(want);
+    println("");
+    return 1;
+}
+
+fn _efi_ovmf_boot_codes_gate(): i64 {
+    var label = "the OVMF boot pipeline waits for the firmware to rest, not a fixed 12 s: a firmware that prints 13 s in passes, a mute one is the deadline's own code (4), one that rests without the image's line is 1 at once (6.7.17)";
+    if (_efi_ovmf_tools_ready() != 1) {
+        _skip(label, "parted/mtools/OVMF not all present — the pipeline cannot build its disk image");
+        return 0;
+    }
+    var bad = 0;
+    bad = bad + _efi_ovmf_stub_case("efi_stub_slow_", "sleep 13\nprintf 'BdsDxe: starting Boot0002\\r\\nhello, uefi\\r\\nBdsDxe: loading Boot0000\\r\\nPlease select boot device\\r\\n'\n", "90", 0);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_mute_", "", "3", 4);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_rest_", "printf 'BdsDxe: starting Boot0002\\r\\nPlease select boot device\\r\\n'\n", "90", 1);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_fault_", "printf 'hello, uefi\\r\\n!!!! X64 Exception Type - 06(#UD) !!!!\\r\\n'\n", "90", 2);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_lost_", "printf 'hello, uefi\\r\\nPlease select boot device\\r\\n'\n", "90", 3);
+    if (bad == 0) {
+        _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
+        println(": five stub firmwares, five exit codes (0 slow / 4 mute / 1 rest / 2 fault / 3 lost)");
+        _check(label, 0);
+        return 0;
+    }
+    _check(label, 1);
+    return 1;
 }
 
 # The qemu/parted/mtools/OVMF probe shared by both runtime gates. 1 = ready, 0 = skip.
@@ -1516,6 +1601,8 @@ fn _efi_ovmf_smoke_gate(): i64 {
         println(": OVMF took an X64 exception — the image printed but FAULTED (a #UD here means the image returned with rsp off: see the 6.6.5 landing seed, the entry-rsp park, and EEXIT's restore)");
     } elif (rc2 == 3) {
         println(": the image printed and did not fault, but BdsDxe never regained control — the firmware `ret` did not return where firmware left it");
+    } elif (rc2 == 4) {
+        println(": qemu+OVMF had not reached the image's print 90 s in and the firmware never came to rest — a host too loaded to boot it, or a hung firmware; nothing about the image was measured");
     } else {
         _p(": OVMF runtime smoke failed (sh rc=");
         print_num(rc2);
@@ -1592,6 +1679,8 @@ fn _efi_ovmf_fn_exit_gate(): i64 {
         println(": the fn-exit probe printed and then FAULTED — a `syscall(60, x)` inside a fn body is not restoring the parked entry rsp (6.6.4 gives #UD here; the 6.6.5 first cut gave #GP)");
     } elif (rc2 == 3) {
         println(": the fn-exit probe printed and did not fault, but firmware never regained control — the `ret` went somewhere other than firmware's return address");
+    } elif (rc2 == 4) {
+        println(": qemu+OVMF had not reached the fn-exit probe's print 90 s in and the firmware never came to rest — a host too loaded to boot it, or a hung firmware; nothing about the exit route was measured");
     } else {
         _p(": fn-exit OVMF run failed (sh rc=");
         print_num(rc2);
