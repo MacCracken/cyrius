@@ -4371,6 +4371,7 @@ fn _esub_assign(S, ed, nm): i64 {
               " is refused - its result is not a bool (write `b = b && c`, `b = !b`)", 0 - 1);
         }
         if (ed != 0) { _arr_sub_load(S, _ek_lw(ed)); }
+        _cop_dst = ed + 8;   # 6.7.17 (D15): an element, for `_cop_sres`
         _asg_compound_op(S, cop, _ek_lt(ed));
     }
     if (k == 1 || k == 2) { SEXW(S, 0); }

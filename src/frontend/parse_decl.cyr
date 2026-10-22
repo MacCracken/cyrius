@@ -795,6 +795,8 @@ fn _fld_compound(S, idx, sid, off, hop, cop): i64 {
     _fld_addr_ra(S, idx, sid, off, hop);
     EPUSHR(S);                  # the field's address
     _arr_sub_load(S, w);        # rax = the field (clears the flags tracker)
+    _cop_dst = 1;               # 6.7.17 (D15): a field, for `_cop_sres`
+    _cop_fd = ((si + 1) << 16) | fi;
     _asg_cstep = ps;            # last, right before the op that reads it
     _asg_compound_op(S, cop, lt);
     return _asg_store_w(S, w);
@@ -2796,6 +2798,7 @@ fn _slice_fld_store(S, lli, fnoff, term): i64 {
         if (fld_off > 0) { EADDRA_IMM(S, fld_off); }
         EPUSHR(S);
         _arr_sub_load(S, 8);
+        _cop_dst = 2;   # 6.7.17 (D15): a slice's field, for `_cop_sres`
         _asg_compound_op(S, cop, 0);
         _asg_store_w(S, 8);
         return _fst_end(S, term);
@@ -2806,7 +2809,7 @@ fn _slice_fld_store(S, lli, fnoff, term): i64 {
     _refuse_lossy_pair(S);   # 6.7.7 (T5b): `s.len = f();` stored the tag
     var ti = GTI(S);
     PCMPE(S);
-    _dsr_slf(S, ti);   # 6.7.17 (D16): a struct result over 8 B into `.ptr` / `.len`
+    _dsr_slf(S, ti, ti - 1);   # 6.7.17 (D16): a struct result over 8 B into `.ptr` / `.len`
     EPUSHR(S);
     EFLADDR_X1(S, lli);
     if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
@@ -2948,7 +2951,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
             PCMPE(S);
             _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
             _istr_pfld(S, lps, fst_ti);   # 6.7.16 (D19): an inline `Str` into a `*Str` field
-            _dsr_fld(S, fst_ti, lfd);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
+            _dsr_fld(S, fst_ti, fst_ti - 1, lfd);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
         }
     }
     _tup_fst_chk(S, ft, lfn, fsrc);   # 6.7.7 (R12): a value in rax is never a tuple

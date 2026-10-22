@@ -172,6 +172,16 @@
 #   MFE5 `_dsr_slf` answering 0                         -> RED 1: FE16
 #   MFE6 `_gs_fst_sres` answering 0                     -> RED 5: FE18 FE18b (compiled: the base kept the word), FEX FE18 x3
 #   MFE7 `_gs_lit_sres` answering 0                     -> RED 2: FE18c (compiled), FEK5 (refused at the definition)
+# 6.7.17 (D15, the user's decision, 2026-10-22; the same issue, row B3) — A COMPOUND ASSIGNMENT `OP=` WITH A STRUCT RESULT
+# OVER 8 B ON ITS RIGHT is refused with its `=` form's words (`_cop_sres` from `_asg_compound_op`, every OP= site; the
+# field, slice and element sites name their destination through `_cop_dst`): CO0 the filed repro verbatim (116 through
+# 6.7.16; its two lines), CO1-CO19, CO8w no float warning beside the refusal, COK1-COK3; COX CO5 / CO7 on aarch64 / cx /
+# PE. (2026-10-22, as above:)
+#   MCO1 `_cop_sres` answering 0 (the tree before)      -> RED 28: CO0 (both lines) CO1-CO19 CO8w (compiled), COX x6
+#   MCO2 `_fld_compound` without its `_cop_dst = 1`     -> RED 8: CO7 CO8 CO8w CO9 CO19, COX CO7 x3
+#   MCO3 `_esub_assign` without its `_cop_dst`          -> RED 2: CO10 CO11 (an array's element; `p[0]` judged by its word)
+#   MCO4 `_slice_fld_store` without its `_cop_dst = 2`  -> RED 1: CO14
+#   MCO5 the float arm warning beside a refusal         -> RED 1: CO8w
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1651,6 +1661,53 @@ fn g(): i64 { var q: Q; return gl(q); }'"$FTE" 44 'syscall(60, 44);'
 accept "FEK6 buf[0] = mkp().b, a field of the result" "$FQ"'fn g(): i64 { var buf: i64[2]; buf[0] = mkp().b; return buf[0] - 400; }'"$FTE" 44 'syscall(60, 44);'
 accept "FEK7 a Str result into an i64 field keeps its handle" "$FQ"'fn g(): i64 { alloc_init(); var w = W { 1, 0 }; w.n = mks(); var s: Str = w.n; return s.len(); }'"$FTE" 3 'syscall(60, 3);'
 
+echo "=== 6.7.17 (D15): a compound assignment with a struct result over 8 B on its right is refused, in its = form's words ==="
+# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B3 — `*p += mk3();` and `y += mk3();` added
+# Q's first word (the filed repro exited 116), silently. CO0 the filed repro verbatim (its two lines, each its `=` form's
+# words); CO1-CO19 every OP= destination (a typed / untyped / parameter / global name, top level, `*p` typed and untyped,
+# `*(&x)`, a field, an f64 field, a captured struct's field, an array's and a `*i64`'s element, a global array, a
+# `*i64` name, a slice's `.len`, a for step) and result (a method, an operator, `fncall0`); COK1-COK3 a field of the
+# result, 8 B, a wrapped result's field.
+CO0S='struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn mk3(): Q { var q: Q; q.a = 3; q.b = 4; return q; }
+fn main(): i64 { var x = 10; var p: *i64 = &x; *p += mk3(); var y = 100; y += mk3(); return x + y; }
+syscall(60, main());
+'
+refuse "CO0 the filed repro B3 verbatim (its two lines)" "cannot assign '\*p: i64' from 'mk3', which returns the struct 'Q' - store it through a '\*Q' or bind a field" "$CO0S" 2
+if grep -q "cannot assign 'y' from 'mk3', which returns the struct 'Q' - declare 'y: Q' or bind a field" "$D/r.err"; then printf '  ok(refused): %-40s\n' "CO0 its second line, y (D33's words)"; pass=$((pass+1))
+else printf '  FAIL: %-46s %s\n' "CO0 its second line, y" "$(grep '^error' "$D/r.err" | sed -n 2p)"; fail=$((fail+1)); fi
+CQ="$FQ"'var GY = 5;
+'
+refuse "CO1 y -= mk3(); a typed i64" "cannot assign 'y: i64' from 'mk3', which returns the struct 'Q3' - declare 'y: Q3' or bind a field" "$CQ"'fn g(): i64 { var y: i64 = 100; y -= mk3(); return y; }'"$FTE" one
+refuse "CO2 an i64 parameter" "cannot assign 'y: i64' from 'mkp'" "$CQ"'fn f(y: i64): i64 { y += mkp(); return y; }
+fn g(): i64 { return f(1); }'"$FTE" one
+refuse "CO3 an untyped global" "cannot assign 'GY' from 'mkp'" "$CQ"'fn g(): i64 { GY *= mkp(); return GY; }'"$FTE" one
+refuse "CO4 after the first top-level statement" "cannot assign 'GY' from 'mkp'" "$CQ"'syscall(1, 1, "", 0);
+GY += mkp();
+fn g(): i64 { return GY; }'"$FTE" one
+refuse "CO5 *p += through an untyped p" "cannot assign '\*p' from 'mkp'" "$CQ"'fn g(): i64 { var x = 10; var p = &x; *p += mkp(); return x; }'"$FTE" one
+refuse "CO6 *(&x) += is x += (D27's words)" "cannot assign 'x: i64' from 'mkp'" "$CQ"'fn g(): i64 { var x: i64 = 1; *(&x) += mkp(); return x; }'"$FTE" one
+refuse "CO7 a field" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn g(): i64 { var w = W { 1, 0 }; w.n += mkp(); return w.n; }'"$FTE" one
+refuse "CO8 an f64 field (no float warning beside it)" "cannot assign 'w\.f: f64' from 'mkp'" "$CQ"'fn g(): i64 { var w: WF; w.f += mkp(); return 0; }'"$FTE" one
+if grep -q '^warning' "$D/r.err"; then printf '  FAIL: %-46s %s\n' "CO8w no warning" "$(grep '^warning' "$D/r.err" | head -1)"; fail=$((fail+1))
+else printf '  ok(refused): %-40s\n' "CO8w no warning beside it"; pass=$((pass+1)); fi
+refuse "CO9 a closure's captured struct's field" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn g(): i64 { var w = W { 1, 0 }; var f = || { w.n += mkp(); return 0; }; fncall0(f); return 0; }'"$FTE" one
+refuse "CO10 an array's element" "cannot assign 'b\[0\]: i64' from 'mkp'" "$CQ"'fn g(): i64 { var b: i64[2]; b[0] = 1; b[0] += mkp(); return b[0]; }'"$FTE" one
+refuse "CO11 a global array's element" "cannot assign 'GB\[1\]: i64' from 'mkp'" "$CQ"'fn g(): i64 { GB[1] |= mkp(); return GB[1]; }'"$FTE" one
+refuse "CO12 a *i64's element p[0]" "cannot assign 'p\[0\]: i64' from 'mkp'" "$CQ"'fn g(): i64 { var x = 1; var p: *i64 = &x; p[0] += mkp(); return x; }'"$FTE" one
+refuse "CO13 a *i64 name p += (D32's words)" "cannot assign 'p: \*i64' from 'mkp', which returns the struct 'Q' - declare 'p: Q' and take" "$CQ"'fn g(): i64 { var x = 1; var p: *i64 = &x; p += mkp(); return 0; }'"$FTE" one
+refuse "CO14 a slice's .len" "cannot assign 's\.len: i64' from 'mkp'" "$CQ"'fn g(): i64 { var a: i64[2]; var s: [i64] = sl(&a, 2); s.len += mkp(); return 0; }
+fn sl(p, n): i64 { return p; }'"$FTE" one
+refuse "CO15 a for step" "cannot assign 'y' from 'mkp'" "$CQ"'fn g(): i64 { var y = 1; for (var i = 0; i < 1; y += mkp()) { i = 1; } return y; }'"$FTE" one
+refuse "CO16 a method's result" "cannot assign 'y' from 'Q\.dup'" "$CQ"'fn g(): i64 { var q: Q; var y = 1; y += q.dup(); return y; }'"$FTE" one
+refuse "CO17 an operator's result" "cannot assign 'y' from 'Q_add'" "$CQ"'fn g(): i64 { var q: Q; var y = 1; y += q + q; return y; }'"$FTE" one
+refuse "CO18 fncall0(&mkp)" "cannot assign 'y' from 'mkp'" "$CQ"'fn g(): i64 { var y = 1; y += fncall0(&mkp); return y; }'"$FTE" one
+refuse "CO19 a field's for step" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn g(): i64 { var w = W { 1, 0 }; for (var i = 0; i < 1; w.n += mkp()) { i = 1; } return w.n; }'"$FTE" one
+accept "COK1 y += mkp().a, a field of the result" "$CQ"'fn g(): i64 { var y = 1; y += mkp().a; return y - 300; }'"$FTE" 34 'syscall(60, 34);'
+accept "COK2 an 8 B result keeps its word" "$CQ"'fn g(): i64 { var y = 1; y += mk8(); return y; }'"$FTE" 10 'syscall(60, 10);'
+accept "COK3 y += (mkp()).b, a wrapped result's field" "$CQ"'fn g(): i64 { var y = 1; y += (mkp()).b; return y - 400; }'"$FTE" 45 'syscall(60, 45);'
+
 # TV (6.7.16, the user's D102, 2026-10-20; issues/archived/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
 # so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
@@ -1863,6 +1920,8 @@ cross_rows() {  # $1 the leg's name
 fn main(): i64 { return gds(5); }'"$TE" one
     refuse_at "UPX [$1] UP0" "3:46: $(printf '%s' "$UPM" | tr -d '\\')" "$UP0S"
     refuse "UPX [$1] UP5" "cannot assign '\*p' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p = &x; *p = q.dup(); return x; }'"$TE" one
+    refuse "COX [$1] CO5" "cannot assign '\*p' from 'mkp'" "$CQ"'fn g(): i64 { var x = 10; var p = &x; *p += mkp(); return x; }'"$FTE" one
+    refuse "COX [$1] CO7" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn g(): i64 { var w = W { 1, 0 }; w.n += mkp(); return w.n; }'"$FTE" one
     refuse "FEX [$1] FE1" "cannot assign 'pw\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; var pw: *W = &w; pw.n = mkp(); return w.n; }'"$FTE" one
     refuse "FEX [$1] FE15b" "cannot assign 'b\[1\]: u8' from 'mkp'" "$FQ"'fn g(): i64 { var b: u8[4]; b[1] = mkp(); return b[1]; }'"$FTE" one
     refuse "FEX [$1] FE17" "cannot assign 'n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { mkp(), 0 }; return w.n; }'"$FTE" one
@@ -1882,10 +1941,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 541 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 541"; exit 1
+if [ $((nrefuse + naccept)) -lt 570 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 570"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

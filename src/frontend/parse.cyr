@@ -4967,13 +4967,14 @@ fn _asg_float_fop(cop, lt): i64 {
 }
 # Stack = x, rax = the right operand — EMIT_F{64,32}_BINOP's convention. Warns when the right
 # operand is not the slot's kind (kind 1 for f64, kind 5 for f32), as `x = x + <rhs>` does.
-fn _asg_compound_float(S, fop, lt): i64 {
+# `q` 1: the right operand was refused (`_cop_sres`), so its kind is not warned about too. CHANGELOG [6.7.17]
+fn _asg_compound_float(S, fop, lt, q): i64 {
     if (lt == F64_TYID) {
-        if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); }
+        if (q == 0) { if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } }
         EMIT_F64_BINOP(S, fop);
         return 0;
     }
-    if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); }
+    if (q == 0) { if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } }
     EMIT_F32_BINOP(S, fop);
     return 0;
 }
@@ -4986,15 +4987,20 @@ fn _asg_compound_float(S, fop, lt): i64 {
 fn _asg_compound_op(S, cop, lt): i64 {
     var st = _asg_cstep;
     _asg_cstep = 0;
+    var cd = _cop_dst;   # 6.7.17 (D15): the destination's kind, for `_cop_sres`
+    _cop_dst = 0;
     if (_W128_IS(S) == 1) { if (_w128_cop(S, cop) == 1) { return 0; } }   # 6.7.6 (D2): a u128 place
     EPUSHR(S);
     _refuse_lossy_pair(S);   # 6.7.7 (T5b): `x += f();` combined the tag, every OP= place
+    var cti = GTI(S);
+    _sc_beg = 0 - 1;   # 6.7.17 (D15): only this value's own struct-call record may match
     PCMPE(S);
+    var crf = _cop_sres(S, cti, cd);   # 6.7.17 (D15): a struct result over 8 B on the right
     var rt = _FBR_ST(S);
     if (_ifm_at(S) == 1) { rt = 0; }   # 6.7.11: `x += x + 1.5` — that mix warned already (_INT_F64_MIX)
     if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
     var fop = _asg_float_fop(cop, lt);
-    if (fop >= 0) { return _asg_compound_float(S, fop, lt); }
+    if (fop >= 0) { return _asg_compound_float(S, fop, lt, crf); }
     if (rt == F64_TYID) { if (cop >= 6) { if (cop <= 9) { _FLT_TYPE_WARN(S, 2); } } }   # CHANGELOG [6.7.7]
     EMOVCA(S);   # rcx = expr; pop rax = x; rax = x OP rcx
     EPOPR(S);
@@ -5013,6 +5019,35 @@ fn _asg_compound_op(S, cop, lt): i64 {
     return 0;
 }
 
+# ⛔ 6.7.17 (D15, the user's decision, 2026-10-22) — A COMPOUND ASSIGNMENT WITH A STRUCT RESULT OVER 8 B ON ITS
+# RIGHT IS REFUSED, as its `=` form is: `*p += mk3();` (p `*i64`) and `y += mk3();` added Q's first word (the filed
+# repro exited 116), silently, where 6.7.16's D100 refuses `x += mk2(..)` of a vector call and D27 / D33 / D99 / D16
+# the `=` forms. The value [ti, cursor) that `_dsr_rec` reads as one whole struct result, the destination before the
+# `OP =` pair (`_vsl_sbeg`), judged with its `=` form's words: a name D27 / D32 / D33's (`_asa_refuse`: "cannot assign
+# 'y: i64' from 'mk3', which returns the struct 'Q' - declare 'y: Q' or bind a field"), `*E` D99 / D13's
+# (`_dsr_sres`), an element D99 / D16's (`_dsr_esub`), a field D16's. `cd` names what the site knows the tokens do not
+# carry (`_cop_dst`): 1 a field (`_cop_fd` packs it), 2 a slice's `.len` / `.ptr`, else an element's kind + 8. A
+# struct-typed name or field keeps its own refusal (a struct value is not an integer). CHANGELOG [6.7.17]
+var _cop_dst = 0;
+var _cop_fd = 0;
+fn _cop_sres(S, ti, cd): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    var op = ti - 2;
+    var s = _vsl_sbeg(S, op);
+    if (s < 0) { return 0; }
+    if (cd == 1) { return _dsr_fld(S, ti, op, _cop_fd); }
+    if (cd == 2) { return _dsr_slf(S, ti, op); }
+    if (TOKTYP(S, s) == 8) { return _dsr_sres(S, s, op, ti); }
+    if (TOKTYP(S, op - 1) == 29) { return _dsr_esub(S, op, ti, cd - 8); }
+    if (op != s + 1) { return 0; }
+    if (TOKTYP(S, s) != 2) { return 0; }
+    _rcv_fi = _dsr_afi;
+    var r = _asa_refuse(S, TOKVAL(S, s), op, _dsr_at, _dsr_fno, _dsr_sid);
+    _rcv_fi = 0 - 1;
+    return r;
+}
 # ⛔ 6.7.11 — `*p = v` THROUGH A `*S` COPIES THE STRUCT (the user's decision (a), 2026-10-13; issues/2026-10-11-
 # deref-store-through-struct-pointer-decision.md). Decision 6 makes `*p` a struct value at every size, and since
 # 6.7.10 `p = l` copies `l` INTO `*p`; the store wrote the 8-byte word whatever S: a zero-size or 3..7 B struct
@@ -5230,7 +5265,7 @@ fn _dsr_earr(S, s, lb, eq, ed): i64 {
 # "cannot assign 'w.n: i64' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field". A
 # struct-typed field is `_fsc_src`'s, a bool its own refusal, a `*Q` field of the result's own struct D14's copy. In a
 # generic's base parse a destination typed by its type parameter is the stub rule's (`_gs_fst_sres`). CHANGELOG [6.7.17]
-fn _dsr_fld(S, ti, lfd): i64 {
+fn _dsr_fld(S, ti, eq, lfd): i64 {
     if (_syntax_only == 1) { return 0; }
     if (lfd <= 0) { return 0; }
     var si = (lfd >> 16) - 1;
@@ -5239,7 +5274,6 @@ fn _dsr_fld(S, ti, lfd): i64 {
     if (GFBOOL(S, si, fi) == 1) { return 0; }
     if (_dsr_rec(S, ti) == 0) { return 0; }
     if (_fld_ptr_sid(S, si, fi) == _dsr_sid) { return 0; }
-    var eq = ti - 1;
     var s = _vsl_sbeg(S, eq);
     if (s < 0) { return 0; }
     if (_dsr_tdep(S, s, eq, s) == 1) { return 0; }
@@ -5272,15 +5306,16 @@ fn _dsr_lit_tp(S, si): i64 {
     if (GFTP(S, _cur_fn_ix) == 0) { return 0; }
     return 1;
 }
-# ... a slice's `.ptr` / `.len` (`s.len = mkp();`), its value [ti, cursor): 's.len: i64'. CHANGELOG [6.7.17]
-fn _dsr_slf(S, ti): i64 {
+# ... a slice's `.ptr` / `.len` (`s.len = mkp();`), its value [ti, cursor), the destination ending at `eq`: 's.len:
+# i64'. CHANGELOG [6.7.17]
+fn _dsr_slf(S, ti, eq): i64 {
     if (_syntax_only == 1) { return 0; }
     if (_dsr_rec(S, ti) == 0) { return 0; }
-    var s = _vsl_sbeg(S, ti - 1);
+    var s = _vsl_sbeg(S, eq);
     if (s < 0) { return 0; }
     _dsr_tm = 1;
     _dsr_tk = 8;
-    return _dsr_err(S, s, ti - 1, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+    return _dsr_err(S, s, eq, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
 }
 # The `[` matching the `]` at token j.
 fn _dsr_lbr(S, j): i64 {
