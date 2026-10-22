@@ -294,6 +294,7 @@ FIXUP(S);
 # v6.4.50: soft capacity warnings, shared across all 7 drivers (util.cyr).
 _capacity_warnings(S, 67108864, 1);
 EMITELF(S);
+_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse_fn_def.cyr)
 # v6.6.6 — the loop that used to sit here stopped on the first failing `write` and
 # then exited 0 with a TRUNCATED image. _write_out_all (src/common/util.cyr) is the
 # same loop plus the comparison it was missing, shared by every fork so the check

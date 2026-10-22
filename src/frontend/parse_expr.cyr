@@ -1309,7 +1309,7 @@ fn _icall_fld_err(S, beg): i64 {
     var say = 0;
     if (_panic + _syntax_only == 0) { if (_derr_seen(GTI(S), "_icall_fld_err", beg, 1) == 0) { say = 1; } }   # 6.7.15
     if (say == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
         PRSTR(": cannot take a field of the result of '");
         if (TOKTYP(S, beg) == 137) { PRSTR("callptr"); }
@@ -1539,11 +1539,11 @@ fn _sysx_raw_warn(S, sc_num): i64 {
         var sxm = _sysx_meant_here(S, sc_num);   # 6.6.12: 0 inside a native aarch64 #ifdef
         if (sxm != 0) {
             if (_warn_seen(GTI(S), "_sysx_raw_warn", sc_num) == 1) { return 0; }   # 6.7.15: once per site
-            syscall(SYS_WRITE, 2, "warning:", 8);
+            _ew("warning:", 8);
             _err_head(S);
-            syscall(SYS_WRITE, 2, ": raw syscall ", 14);
+            _ew(": raw syscall ", 14);
             PRNUM(sc_num);
-            syscall(SYS_WRITE, 2, " is x86_64 `", 12);
+            _ew(" is x86_64 `", 12);
             PRSTR(sxm);
             # ⛔ THIS SECOND CLAUSE WAS DEAD CODE FROM v6.5.51 TO v6.6.4 — measured, 43
             # rows compiled, 43 taking the `sxa == 0` path and not one carrying the
@@ -1558,9 +1558,9 @@ fn _sysx_raw_warn(S, sc_num): i64 {
             # genuinely unassigned on aarch64. CHANGELOG [6.6.5]
             var sxa = _SYSX_ACTUALLY(sc_num);
             if (sxa != 0) {
-                syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is `", 34);
+                _ew("`; on ELF-aarch64 that number is `", 34);
                 PRSTR(sxa);
-                syscall(SYS_WRITE, 2, "`. Use ", 7);
+                _ew("`. Use ", 7);
             }
             if (sxa == 0) {
                 # v6.6.5: the table is the KERNEL's generic aarch64 list now, so a 0 here
@@ -1568,11 +1568,11 @@ fn _sysx_raw_warn(S, sc_num): i64 {
                 # -ENOSYS. (v6.6.4's text said "not one the aarch64 stdlib declares",
                 # correct while the table came from the peer; before that it claimed "not
                 # a syscall at all", which was simply false — 91 is capset there.)
-                syscall(SYS_WRITE, 2, "`; on ELF-aarch64 that number is unassigned, so the call fails with -ENOSYS", 75);
-                syscall(SYS_WRITE, 2, ". Use ", 6);
+                _ew("`; on ELF-aarch64 that number is unassigned, so the call fails with -ENOSYS", 75);
+                _ew(". Use ", 6);
             }
             PRSTR(_SYSX_USE(sc_num));
-            syscall(SYS_WRITE, 2, " from lib/syscalls.cyr instead of the raw number.
+            _ew(" from lib/syscalls.cyr instead of the raw number.
 ", 50);
         }
     }
@@ -1585,9 +1585,9 @@ fn _macho_warn_short(sc_num, argc): i64 {
     var need = _macho_min_argc(_TARGET_MACHO, sc_num);
     if (need == 0) { return 0; }
     if (argc >= need) { return 0; }
-    syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+    _ew("warning: syscall ", 17);
     PRNUM(sc_num);
-    syscall(SYS_WRITE, 2, " not routed at this arity: its Mach-O emulation stores through a pointer argument and this call passes none; it will SIGSYS on macOS. Pass the fds buffer, or use the stdlib wrapper.\n", 182);
+    _ew(" not routed at this arity: its Mach-O emulation stores through a pointer argument and this call passes none; it will SIGSYS on macOS. Pass the fds buffer, or use the stdlib wrapper.\n", 182);
     return 1;
 }
 
@@ -1629,16 +1629,16 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     if (_panic == 1) { return 0; }   # a refused call (`syscall(60 0)`): its arity is unknown. CHANGELOG [6.7.16]
     var ti = _sc_site_ti(S);
     if (_warn_seen(ti, "_pe_warn_unrouted", sc_num * 4096 + argc) == 1) { return 0; }   # 6.7.15: once per site
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": syscall ", 10);
+    _ew(": syscall ", 10);
     PRNUM(sc_num);
-    syscall(SYS_WRITE, 2, " with ", 6);
+    _ew(" with ", 6);
     PRNUM(argc - 1);
-    syscall(SYS_WRITE, 2, " argument(s) is not routed on CYRIUS_TARGET_WIN=1; it returns -38 (-ENOSYS) on Windows. Guard the call with #ifdef CYRIUS_TARGET_WIN, use the stdlib wrapper, or add a PE reroute.\n", 179);
+    _ew(" argument(s) is not routed on CYRIUS_TARGET_WIN=1; it returns -38 (-ENOSYS) on Windows. Guard the call with #ifdef CYRIUS_TARGET_WIN, use the stdlib wrapper, or add a PE reroute.\n", 179);
     if (_pe_unrouted_noted == 1) { return 0; }
     _pe_unrouted_noted = 1;
-    syscall(SYS_WRITE, 2,
+    _ew(
       "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,11,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll) + 0xF04B (kernel32: GetLastError) + 0xF04C-0xF04D (kernel32: LockFileEx/UnlockFileEx) + 0xF04E (kernel32: GetFinalPathNameByHandleW) + 0xF04F (kernel32: GetLastError as -errno).\n",
       1730);
     return 0;
@@ -1651,11 +1651,11 @@ fn _pe_warn_dyn(S, argc): i64 {
     if (_panic == 1) { return 0; }
     var ti = _sc_site_ti(S);
     if (_warn_seen(ti, "_pe_warn_dyn", argc) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, ti);
-    syscall(SYS_WRITE, 2, ": syscall(<non-literal number>, ...) with ", 42);
+    _ew(": syscall(<non-literal number>, ...) with ", 42);
     PRNUM(argc - 1);
-    syscall(SYS_WRITE, 2,
+    _ew(
       " argument(s) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
       221);
     return 0;
@@ -1681,22 +1681,22 @@ fn _macho_warn_unrouted(sc_num, argc): i64 {
     var want = _macho_reroute_argc(_TARGET_MACHO, sc_num);
     if (want > 0) {
         if (argc != want) {
-            syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+            _ew("warning: syscall ", 17);
             PRNUM(sc_num);
-            syscall(SYS_WRITE, 2, " not routed at this arity: its Mach-O reroute takes the number plus ", 68);
+            _ew(" not routed at this arity: its Mach-O reroute takes the number plus ", 68);
             PRNUM(want - 1);
-            syscall(SYS_WRITE, 2, " argument(s) and this call passes ", 34);
+            _ew(" argument(s) and this call passes ", 34);
             PRNUM(argc - 1);
-            syscall(SYS_WRITE, 2, "; it will SIGSYS on macOS. Pass the full argument list, or use the stdlib wrapper.\n", 83);
+            _ew("; it will SIGSYS on macOS. Pass the full argument list, or use the stdlib wrapper.\n", 83);
             return 0;
         }
     }
     if (_TARGET_MACHO == 1) {
         var sx_ok = _macho_x86_routes(sc_num);
         if (sx_ok == 0) {
-            syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+            _ew("warning: syscall ", 17);
             PRNUM(sc_num);
-            syscall(SYS_WRITE, 2,
+            _ew(
               " not routed by the Mach-O x86 translation (EMACHO_SYSXLAT); will SIGSYS on macOS. Add an _msx row or use a stdlib wrapper.\n",
               123);
         }
@@ -1708,9 +1708,9 @@ fn _macho_warn_unrouted(sc_num, argc): i64 {
         if (sc_ok == 0) {
             # v6.5.43: NAME the number. This warned 470 times during cycc's own build and never
             # once said which syscall — so it read as noise and was scrolled past.
-            syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+            _ew("warning: syscall ", 17);
             PRNUM(sc_num);
-            syscall(SYS_WRITE, 2,
+            _ew(
               " not routed by the Mach-O ARM translation (ESYSXLAT/__got); will SIGSYS on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
               129);
         }
@@ -2555,7 +2555,7 @@ fn _mret_sval_err(S, t, asid): i64 {
     var fi = _mret_fn(S);
     var sv = GTI(S);
     STI(S, t);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     if (_fn_is_closure(S, fi) == 1) { PRSTR(": a closure"); }
     else {
@@ -2588,7 +2588,7 @@ fn _mret_vval(S, t): i64 {
     var fi = _mret_fn(S);
     var sv = GTI(S);
     STI(S, t);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     if (_fn_is_closure(S, fi) == 1) { PRSTR(": a closure"); }
     else {
@@ -3155,9 +3155,9 @@ fn _w128_refuse_at(S, ti, typ, cop): i64 {
     if (_w128_k == 2) { nm = L64(_varn_base + _w128_v * 8); }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
+    _ew(": ", 2);
     if (cop == 1) { PRSTR("compound assignment `"); } else { PRSTR("`"); }
     PRSTR(_w128_opstr(typ));
     if (cop == 1) { PRSTR("=` to "); } else { PRSTR("` on "); }
@@ -3424,7 +3424,7 @@ fn _call_fld_err(S, fi, noff, beg): i64 {
 fn _mret_fld_err(S, fi, noff, beg): i64 {
     if (_panic == 1) { return 0; }
     if (_derr_seen(GTI(S), "_mret_fld_err", fi * 31 + noff, 1) == 1) { return 0; }   # 6.7.15: once per site
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot take a field of the result of '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # written after the head, which may use the scratch
@@ -3801,7 +3801,7 @@ fn _pd_place(S, a, ie): i64 {
 fn _pd_err(S, a, ie, e): i64 {
     var m = ": an assignment's destination is not parenthesised - write `";
     if (_err_once(S, (m * 31 + 61) * 8 + 4) == 0) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(m);
     _pd_src(S, GTOFF(S, a), GTOFF(S, ie));
@@ -3819,7 +3819,7 @@ fn _pd_src(S, b, c): i64 {
         if (ch != 32 && ch != 9 && ch != 10 && ch != 13) { break; }
         c = c - 1;
     }
-    if (c > b) { syscall(SYS_WRITE, 2, S + 0x459D000 + b, c - b); }
+    if (c > b) { _ew(S + 0x459D000 + b, c - b); }
     return 0;
 }
 # The statement's `;` at or after token i (depth 0), or the token that ends it first (`}`, EOF).
@@ -4406,7 +4406,7 @@ fn _sub_err(S, noff, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
     _refuse_in_sync(S);
     if (_derr_seen(GTI(S), "_sub_err", ((noff * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15: once
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot subscript '");
     PRSTR(S + 0xEC00000 + noff);
@@ -4418,7 +4418,7 @@ fn _sub_err(S, noff, a, b, n2): i64 {
         PRSTR(S + 0xEC00000 + n2);
         PRSTR("'");
     }
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
@@ -4658,7 +4658,7 @@ fn _psub_err(S, hd, nt, a, b, n2): i64 {
     if (_panic == 1) { return 0; }
     _refuse_in_sync(S);
     if (_derr_seen(GTI(S), "_psub_err", (((hd * 31 + nt) * 31 + a) * 31 + b) * 31 + n2, 1) == 1) { return 0; }   # 6.7.15
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(hd);
     if (nt >= 0) {
@@ -4673,7 +4673,7 @@ fn _psub_err(S, hd, nt, a, b, n2): i64 {
         PRSTR(n2);
         PRSTR("'");
     }
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
@@ -4975,7 +4975,7 @@ fn _sub_wide_err(S, noff, sw): i64 {
     if (_panic == 1) { return 0; }
     _refuse_in_sync(S);
     if (_derr_seen(GTI(S), "_sub_wide_err", noff * 31 + sw, 1) == 1) { return 0; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot subscript '");
     PRSTR(S + 0xEC00000 + noff);
@@ -5167,7 +5167,7 @@ fn _bck_file(S, tb): i64 {
     while (load8(nm + n) != 0) { n = n + 1; }
     var so = GSPOS(S);
     if (so + n + 1 > 2097152) {
-        syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
+        _ew("error: string data overflow (2MB limit)\n", 40);
         syscall(SYS_EXIT, 1);
     }
     var k = 0;
@@ -5310,8 +5310,8 @@ fn _bck_creport(S, ti, v, n): i64 {
     if (_bnd_mode == 1) { if (_bck_unsafe_at(S, ti) == 0) { er = 1; } }
     var sv = GTI(S);
     STI(S, ti);
-    if (er == 1) { syscall(SYS_WRITE, 2, "error:", 6); }
-    else { syscall(SYS_WRITE, 2, "warning:", 8); }
+    if (er == 1) { _ew("error:", 6); }
+    else { _ew("warning:", 8); }
     _err_head(S);
     PRSTR(": index ");
     PRNUM(v);
@@ -5327,7 +5327,7 @@ fn _bck_creport(S, ti, v, n): i64 {
     PRSTR("'");
     if (er == 0) { PRSTR(" (an error under the bounds-checked mode)"); }
     else { PRSTR(" (the bounds-checked mode; inside @unsafe { } it is a warning)"); }
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
     STI(S, sv);
     if (er == 1) { _had_error = 1; }
@@ -5411,7 +5411,7 @@ fn _deref_u128_err(S, d): i64 {
     if (_derr_seen(d, "_deref_u128_err", nm * 31 + star, 1) == 1) { return 0; }
     var sv = GTI(S);
     STI(S, d);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot dereference '");
     _dst_spell(S, nm, star);
@@ -5824,7 +5824,7 @@ fn _slit_undecl(S, ti, noff): i64 {
     var a = TOKTYP(S, _slit_close(S, o) + 1);
     if (a != 5 && a != 11 && a != 31) { return 0 - 1; }
     var eq = _slit_wrap_eq(S, ti, o);
-    if (_syntax_only == 0) {
+    if (_syntax_only == 0 || _unp_names == 1) {   # 6.7.17 (D110): the never-parsed body's read (`_unp_names`) too
         if (_slit_ann_said(S, eq, noff) == 1) { _had_error = 1; }
         else { _undef_var_report(S, noff, " (missing include or enum?)"); }
     }
@@ -6007,7 +6007,7 @@ fn _slit_err(S, ti, o): i64 {
     if (_tn_once(S, ti) == 0) { return 0; }
     var sv = GTI(S);
     STI(S, ti);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": a struct literal is an initializer: declare `var t: ");
     _slit_ptype(S, ti, o);
@@ -6062,7 +6062,7 @@ fn _slit_ptype(S, ti, o): i64 {
         if (c != 32 && c != 9 && c != 10) { break; }
         b = b - 1;
     }
-    syscall(SYS_WRITE, 2, S + 0x459D000 + a, b - a);
+    _ew(S + 0x459D000 + a, b - a);
     return 0;
 }
 # `&` takes a name. Anything else (`&(x)`, `&5`, `&*p`) is "expected identifier" once, at that token, and the
@@ -6087,15 +6087,17 @@ fn _sub_undef_said(S, noff): i64 {
 fn _undef_var_report(S, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
     if (_dl_name_refd(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr); 6.7.16: a variable
-    ERR_UNDEF(S, noff, tail);   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
+    if (_unp_on == 1) { _ew_say = 1; }   # 6.7.17 (D110): said by a never-parsed body's read too (`_unp_run`)
+    if (ERR_UNDEF(S, noff, tail) == 1) { if (_unp_on == 1) { _unp_said = _unp_said + 1; } }   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
     _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
+    _ew_say = 0;
     return 0;
 }
 # The factor's read of a name that is nothing in any scope (cursor past it): reported (not under --syntax-only, where it
 # is the constant 0 of a sibling file's name), its value 0; or the call `_ugc_call` takes.
 fn _undef_read(S, noff): i64 {
     if (_ugc_call(S, noff) == 1) { return 0; }
-    if (_syntax_only == 0) { _undef_var_report(S, noff, " (missing include or enum?)"); _undef_tlist(S); }
+    if (_syntax_only == 0 || _unp_names == 1) { _undef_var_report(S, noff, " (missing include or enum?)"); _undef_tlist(S); }
     EMOVI(S, 0);
     return 0;
 }
@@ -6620,7 +6622,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _gen_addr_check(S, fni, anoff);   # 6.6.10: `&g` of a stub generic reaches the stub
             var fc = GFCNT(S);
             if (fc >= 1048576) {
-                syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+                _ew("error: fixup table full (1048576)\n", 34);
                 syscall(SYS_EXIT, 1);
             }
             # Register the function-address fixup (common to both
@@ -6633,7 +6635,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             return 0;
         }
         # Nothing of this name exists in any scope.
-        if (_syntax_only == 1) { EMOVI(S, 0); return 0; }   # v6.5.19: see _syntax_only
+        if (_syntax_only == 1) { if (_unp_names == 0) { EMOVI(S, 0); return 0; } }   # v6.5.19: see _syntax_only; 6.7.17 (D110)
         _undef_var_report(S, anoff, "");   # 6.7.14: once per token (ERR_UNDEF)
         EMOVI(S, 0); return 0;
     }
@@ -7897,7 +7899,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             EPUSHR(S);                       # push dest = obj + 0
             var clfc = GFCNT(S);
             if (clfc >= 1048576) {
-                syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+                _ew("error: fixup table full (1048576)\n", 34);
                 syscall(SYS_EXIT, 1);
             }
             ELOAD_FN_ADDR(S, _fixup_base + clfc * 16, clfc, clfi);   # rax = fn addr
@@ -7924,7 +7926,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # `&fn_name`). v6.3.7-stable path.
             var clfc = GFCNT(S);
             if (clfc >= 1048576) {
-                syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+                _ew("error: fixup table full (1048576)\n", 34);
                 syscall(SYS_EXIT, 1);
             }
             var clfaddr = _fixup_base + clfc * 16;
@@ -9661,7 +9663,7 @@ fn _op_star_param(fi, k): i64 {
 }
 fn _refuse_toplevel_op_operand(S, fi, k): i64 {
     if (_panic == 1) { return 0 - 1; }
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     if (k == 0) { PRSTR(": the left operand of '"); } else { PRSTR(": the right operand of '"); }
     PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
@@ -10057,20 +10059,20 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_panic == 1) { return 0; }   # 6.7.16: the statement has its error; its operands' types are that error's cascade
     if (_err_n != _flt_en) { return 0; }   # 6.7.16: and one that does not latch (`undefined variable`, a tuple's)
     if (_warn_seen(GTI(S), "_FLT_TYPE_WARN", kind) == 1) { return 0; }   # 6.7.15: once per token and kind
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
     if (kind == 0) {
-        syscall(SYS_WRITE, 2, ": comparison mixes f64 and integer operands\n", 44);
+        _ew(": comparison mixes f64 and integer operands\n", 44);
     } elif (kind == 2) {
-        syscall(SYS_WRITE, 2, ": integer arithmetic with an f64 right operand\n", 47);
+        _ew(": integer arithmetic with an f64 right operand\n", 47);
     } elif (kind == 3) {
-        syscall(SYS_WRITE, 2, ": unary minus on an untyped variable holding a float is integer negation (declare it f64)\n", 90);
+        _ew(": unary minus on an untyped variable holding a float is integer negation (declare it f64)\n", 90);
     } elif (kind == 4) {
-        syscall(SYS_WRITE, 2, ": an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)\n", 88);
+        _ew(": an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)\n", 88);
     } elif (kind == 5) {
-        syscall(SYS_WRITE, 2, ": f32 arithmetic with a non-f32 right operand\n", 46);
+        _ew(": f32 arithmetic with a non-f32 right operand\n", 46);
     } else {
-        syscall(SYS_WRITE, 2, ": f64 arithmetic with a non-f64 right operand\n", 46);
+        _ew(": f64 arithmetic with a non-f64 right operand\n", 46);
     }
     return 0;
 }
