@@ -873,9 +873,13 @@ else
 fi
 
 # axis 5: static, lib/io.cyr's Windows classification of CREATE_NEW's -EACCES over a directory.
-code() { grep -vE '^[[:space:]]*#[^a-z]' "$1"; }
-fnbody() { code "$IO" | awk -v n="fn $1(" 'index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
-warm() { fnbody "$1" | awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { w = 1; next } w == 1 && /^[[:space:]]*#endif/ { exit } w == 1 { print }'; }
+# One fn, comment lines dropped (a `#` line that is not a directive), and its Windows arm. No
+# reader below a pipe exits before its input ends: awk reads the file itself, and warm's arm reader
+# stops printing at #endif rather than exiting — behind `grep -v`, an exit at the brace killed grep
+# with SIGPIPE, and under `bash -eo pipefail` (GitHub's run: shell) `ssym=$(swfn …)` stopped the
+# gate with rc 141 and no verdict (3 of 100 runs). CHANGELOG [6.7.17]
+fnbody() { awk -v n="fn $1(" '/^[[:space:]]*#[^a-z]/ { next } index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO"; }
+warm() { fnbody "$1" | awk 'w < 2 && /^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { w = 1; next } w == 1 && /^[[:space:]]*#endif/ { w = 2 } w == 1 { print }'; }
 case "$(warm file_create_exclusive)" in
     *'if (fd == 0 - 13) {'*'_io_name_exists(path) == 1'*'return 0 - 17;'*) ok ;;
     *) bad "axis 5: file_create_exclusive's CYRIUS_TARGET_WIN arm does not classify -13 (CREATE_NEW over a directory) as -17 by asking the name: $(warm file_create_exclusive | tr -s ' \n' '  ')" ;;
@@ -887,7 +891,7 @@ esac
 
 # axis 5, 6.7.16 (D95): lib/syscalls_windows.cyr asks the name on an open's / unlink's -13.
 SW="$ROOT/lib/syscalls_windows.cyr"
-swfn() { code "$SW" | awk -v n="fn $1(" 'index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
+swfn() { awk -v n="fn $1(" '/^[[:space:]]*#[^a-z]/ { next } index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$SW"; }
 case "$(swfn sys_open)" in
     *'& 196608) == 0) { return _win_open_eacces(path, flags, syscall(SYS_OPEN'*'& 192) == 192) { return _win_open_eacces(path, flags, syscall(SYS_OPEN'*) ok ;;
     *) bad "axis 5: sys_open's plain and O_CREAT|O_EXCL arms do not hand CreateFileW's answer to _win_open_eacces: $(swfn sys_open | tr -s ' \n' '  ')" ;;

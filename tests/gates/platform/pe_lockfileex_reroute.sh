@@ -178,15 +178,18 @@ else
 fi
 
 # axis 4: static, over the tree's lib/io.cyr.
-code() { grep -vE '^[[:space:]]*#' "$1"; }
+# No reader below a pipe exits before its input ends: the writer would die of SIGPIPE, which
+# `bash -eo pipefail` (GitHub's run: shell) reads as the assignment failing — the gate stopped with
+# rc 141 and no verdict (fnbody behind `grep -v`: 4 of 100 runs). CHANGELOG [6.7.17]
 xarm=$(awk '/^fn xflock\(/ { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO" \
-    | awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { w = 1; next } w == 1 { print; exit }')
+    | awk 'w < 2 && /^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { w = 1; next } w == 1 { print; w = 2 }')
 case "$xarm" in
     *'return _xflock_win(fd, op);'*) ok ;;
     *) bad "axis 4: xflock's CYRIUS_TARGET_WIN arm does not call _xflock_win (it reads: $(printf '%s' "$xarm" | tr -s ' '))" ;;
 esac
-# One fn of lib/io.cyr, comments dropped: from `fn NAME(` to its closing brace.
-fnbody() { code "$IO" | awk -v n="fn $1(" 'index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
+# One fn of lib/io.cyr, comment lines dropped: from `fn NAME(` to its closing brace (awk reads the
+# file itself).
+fnbody() { awk -v n="fn $1(" '/^[[:space:]]*#/ { next } index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO"; }
 body=$(fnbody _xflock_win)
 lbody=$(fnbody _xflock_win_lock)
 ubody=$(fnbody _xflock_win_unlock)

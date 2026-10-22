@@ -30,6 +30,12 @@
 #     already stopped (ESRCH, rc 1 after 107 of 166 rows), and behind it the same kill at axis 7's
 #     real-clone row, a killed FIFO holder's `wait` (143) and `k9k=$(ls <dir not made yet> | … |
 #     head -1)` (rc 2): each now `|| true`.
+#   * embed_link_race_pe.sh, pe_lockfileex_reroute.sh, pe_reroute_failure_errno.sh (6.7.17) — a
+#     fn-body helper `code FILE | awk '… { exit }'`: awk exits at the fn's closing brace while
+#     `grep -v` is still writing the rest of a large file (cbt/manifest.cyr 123 KB, lib/io.cyr,
+#     lib/syscalls_windows.cyr), grep dies of SIGPIPE, and `eo=$(fnbody …)` stopped the gate with
+#     rc 141 and NO output — embed_link_race_pe on 89 of 100 runs, the other two on 3-4 of 100.
+#     awk now reads the file itself, and no reader below a pipe exits before its input ends.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -45,7 +51,9 @@
 # Mutation (6.7.15): any gate's fix reverted (axis 2's `|| true` dropped, the census's
 # `for-each-ref` back to `git tag … | head -1`, axis 5's `prc=0; ( … ) || prc=$?` back to
 # `( … ); prc=$?`) -> RED here naming the gate, its rc and its last lines; 6.7.16: the
-# agnos-crossbuild-gate.sh server-probe greps back to `echo "$sdis" | grep -q` -> RED (FAIL, rc 1).
+# agnos-crossbuild-gate.sh server-probe greps back to `echo "$sdis" | grep -q` -> RED (FAIL, rc 1);
+# 6.7.17: embed_link_race_pe.sh's fnbody back behind `code "$1" |` -> RED (STOPPED, rc 141, no
+# output).
 # Add a gate to GATES when its pipefail stop or false verdict is fixed.
 set -u
 
@@ -63,7 +71,10 @@ tests/gates/platform/io_rdwr_agnos.sh
 tests/gates/toolchain/gates_read_only_the_tree.sh
 scripts/agnos-crossbuild-gate.sh
 tests/gates/frontend/redefinition_layout_and_enum_over_var.sh
-tests/gates/toolchain/cli_temp_dir_no_leak.sh"
+tests/gates/toolchain/cli_temp_dir_no_leak.sh
+tests/gates/toolchain/embed_link_race_pe.sh
+tests/gates/platform/pe_lockfileex_reroute.sh
+tests/gates/platform/pe_reroute_failure_errno.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }

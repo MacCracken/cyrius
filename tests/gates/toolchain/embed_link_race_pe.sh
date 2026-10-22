@@ -126,8 +126,11 @@ else
 fi
 
 # axis 4: static, over the tree's cbt/manifest.cyr and lib/fs_win.cyr.
-code() { grep -vE '^[[:space:]]*#' "$1"; }
-fnbody() { code "$1" | awk -v f="$2" 'index($0, "fn " f "(") == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
+# One fn, comment lines dropped: from `fn NAME(` to its closing brace. awk reads the file itself:
+# behind a `grep -v` pipe, its exit at the brace killed grep (still writing the rest of the file)
+# with SIGPIPE, and under `bash -eo pipefail` (GitHub's run: shell) `eo=$(fnbody …)` stopped the
+# gate with rc 141 and no verdict on 89 of 100 runs. CHANGELOG [6.7.17]
+fnbody() { awk -v f="$2" '/^[[:space:]]*#/ { next } index($0, "fn " f "(") == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$1"; }
 f4=$fail
 eo=$(fnbody "$MF" _embed_open)
 warm=$(grep -A2 '^    #ifdef CYRIUS_TARGET_WIN' <<EOF
