@@ -14915,7 +14915,7 @@ fn _gu_pass(S, n): i64 {
     var ch = 0;
     var i = 0;
     while (i < n) {
-        if (vec_get(_gu_v, i) >= 0) {   # 6.7.17: a note a redeclaration dropped (`_gu_drop`) types nothing
+        if (_gu_cut_at(vec_get(_gu_v, i), 0, i) == 0) {   # 6.7.17: a note a redeclaration dropped (`_gu_drop`) types nothing
             var sid = _gu_zsid(S, vec_get(_gu_v, i + 1));
             if (sid != vec_get(_gu_v, i + 2)) {
                 _gu_set(S, i, sid);
@@ -14930,22 +14930,29 @@ fn _gu_pass(S, n): i64 {
 # global, the last declaration's (`_gv_fold`), but the end-of-pass-1 sweep still typed it from the first initialiser — a
 # `: P1` call's struct (`gr + 1` dispatched `P1_add`: "undefined function"), a `: f64` call's f64 (6.7.16's D98), and
 # since 6.7.17's D22 a `Str` (`foo(0, gr)` into a cstring parameter took the `Str` overload). A fold drops the slot's
-# earlier notes in both vectors (the gvi word -1); the redeclaration notes its own. CHANGELOG [6.7.17]
+# earlier notes in both vectors; the redeclaration notes its own. CHANGELOG [6.7.17]
+# The drop is a cut per slot — each vector's length at the fold, below which the slot's notes read as dropped — not a
+# scan of every note: a scan per redeclaration made the zone quadratic in its redeclared globals (globals_scale_linear's
+# redecl row, 10k -> 20k 3.7x; 10k 1,211 ms where 6.7.16 took 167). CHANGELOG [6.7.17]
+var _gu_cutv = 0;   # per global slot `vi`: [vi * 2] the `_gu_v` length, [vi * 2 + 1] the `_gzf_v` length at its last fold
 fn _gu_drop(vi): i64 {
-    var i = 0;
+    if (_gu_cutv == 0) { _gu_cutv = vec_new(); }
+    while (vec_len(_gu_cutv) <= vi * 2 + 1) { vec_push(_gu_cutv, 0); }
     var n = 0;
     if (_gu_v != 0) { n = vec_len(_gu_v); }
-    while (i < n) {
-        if (vec_get(_gu_v, i) == vi) { vec_set(_gu_v, i, 0 - 1); }
-        i = i + 3;
-    }
-    i = 0;
+    vec_set(_gu_cutv, vi * 2, n);
     n = 0;
     if (_gzf_v != 0) { n = vec_len(_gzf_v); }
-    while (i < n) {
-        if (vec_get(_gzf_v, i) == vi) { vec_set(_gzf_v, i, 0 - 1); }
-        i = i + 5;
-    }
+    vec_set(_gu_cutv, vi * 2 + 1, n);
+    return 0;
+}
+# 1 = the note at word `i` of slot `gvi` is one a redeclaration dropped (`w` 0: `_gu_v`, 1: `_gzf_v`).
+fn _gu_cut_at(gvi, w, i): i64 {
+    if (_gu_cutv == 0) { return 0; }
+    if (gvi < 0) { return 0; }
+    var k = gvi * 2 + w;
+    if (k >= vec_len(_gu_cutv)) { return 0; }
+    if (i < vec_get(_gu_cutv, k)) { return 1; }
     return 0;
 }
 # Note `i`'s global takes struct `sid` (`_gu_type`; a handle for a refused type-argument list, `_gu_hdl`), or with 0 is
@@ -15015,7 +15022,7 @@ fn _gzf_pass(S, m): i64 {
         var ti = vec_get(_gzf_v, i + 1);
         var k = vec_get(_gzf_v, i + 2);
         var f = 0;
-        if (gvi < 0) { f = 0; }   # 6.7.17: dropped by a redeclaration (`_gu_drop`)
+        if (_gu_cut_at(gvi, 1, i) == 1) { f = 0; }   # 6.7.17: dropped by a redeclaration (`_gu_drop`)
         elif (k < 0) { f = _gzf_init(S, ti, _gz_end(S, ti)); }
         else { f = _gzf_elem(S, ti, k); }
         if (f != vec_get(_gzf_v, i + 3)) {
