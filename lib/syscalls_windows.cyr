@@ -276,6 +276,30 @@ fn _win_unlink_eacces(path, r): i64 {
     return r;
 }
 
+# 6.7.17 — A RENAME ONTO THE OTHER KIND answers Linux's errno (6.7.17's D35 / D36, the user,
+# 2026-10-22: "Refuse with -20, as Linux"; "-21, as Linux"). MoveFileExW with
+# MOVEFILE_REPLACE_EXISTING let a DIRECTORY replace an existing FILE (it answered 0 and the file
+# and its bytes were gone), and refuses a file onto a directory ERROR_ACCESS_DENIED (-13 through
+# the table). A directory onto an existing non-directory is -20 (ENOTDIR) without the move, the
+# file kept: the target is asked just before the move, so a file made there in that instant can
+# still be replaced (Linux refuses atomically). A -13 whose target is a directory and whose source
+# is not is -21 (EISDIR), D95's shape; a real permission refusal stays -13, and so does a directory
+# onto a directory (Windows cannot replace one; Linux answers 0 or -39). Shared by sys_rename and
+# lib/io.cyr's file_rename. CHANGELOG [6.7.17]
+fn _win_rename(oldpath, newpath): i64 {
+    if (_win_is_dir(oldpath) == 1) {
+        var at = syscall(61465, newpath);       # GetFileAttributesW (narrow)
+        if (at != 4294967295) {                 # the target exists ...
+            if ((at & 16) == 0) { return 0 - 20; }   # ... and is no directory
+        }
+    }
+    var r = syscall(61492, oldpath, newpath);   # MoveFileExW (REPLACE_EXISTING | WRITE_THROUGH)
+    if (r != 0 - 13) { return r; }
+    if (_win_is_dir(newpath) == 0) { return r; }
+    if (_win_is_dir(oldpath) == 1) { return r; }
+    return 0 - 21;
+}
+
 # Attributes (low dword) and reparse tag (high dword) of an OPEN handle, via
 # GetFileInformationByHandleEx(FileAttributeTagInfo = 9) — reroute 0xF03D. -1 if the query
 # fails. Asking the handle, not the path, is what makes the O_NOFOLLOW / O_DIRECTORY checks
@@ -1161,10 +1185,11 @@ fn sys_qpc_ns(): i64 {
 # MOVEFILE_REPLACE_EXISTING, live since v6.4.57 and already the Windows arm of
 # lib/io.cyr's portable `file_rename`. Returns 0 on success, or the negative errno through the
 # Win32 table, as rename(2) answers — a missing source -2 (6.7.16's D94; -1 for every failure
-# before).
+# before). A directory onto an existing file is -20 and a file onto a directory -21, as Linux
+# (`_win_rename`; 6.7.17's D35 / D36 — the directory replaced the file and a file answered -13).
 # ⚠ Unlike rename(2) this CAN move across volumes (MOVEFILE_COPY_ALLOWED is not set, so
 # it does not; a cross-volume move fails, as rename(2) does with EXDEV).
-fn sys_rename(oldpath, newpath): i64 { return syscall(61492, oldpath, newpath); }
+fn sys_rename(oldpath, newpath): i64 { return _win_rename(oldpath, newpath); }
 
 # GetModuleFileNameW(NULL, wbuf, cch) — 0xF03A (61498), the Windows source for the full
 # path of THIS executable. `cch` is the buffer capacity in WCHARs (wbuf must hold

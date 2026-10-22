@@ -8967,6 +8967,8 @@ never fired and `file_close_r` was never `Err`.
 | `sys_unlink` / `xunlink` of a directory | -21 (-1 macOS: `EPERM`) | -1 | -1; -21 since 6.7.16 |
 | `sys_truncate(dir, n)` | -21 | -1 | -1; -21 since 6.7.16 |
 | `file_open(dir, O_WRONLY, 0)` | -21 | -1 | -13; -21 since 6.7.16 |
+| `file_rename` / `sys_rename` of a directory onto an existing file | -20 (the file kept) | 0, and the file is gone | 0, and the file is gone; -20 since 6.7.17 (the file kept) |
+| `file_rename` / `sys_rename` of a file onto a directory | -21 | -1 | -13; -21 since 6.7.17 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
@@ -9002,7 +9004,14 @@ retries without `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` only when a Windo
 (6.7.16's D95; macOS's unlink of a directory says `EPERM`, -1): `DeleteFileW` and `CreateFileW`
 refuse one `ERROR_ACCESS_DENIED`, so on that -13 the name is asked (`GetFileAttributesW`), and a
 refusal of anything else — a file another handle holds open, which `DeleteFileW` refuses where
-Linux unlinks it — stays -13. `sys_ftruncate`
+Linux unlinks it — stays -13. A rename onto the other kind answers as Linux and macOS do since
+6.7.17 (6.7.17's D35 / D36): a directory onto an existing file is -20 (`ENOTDIR`) and the file
+keeps its bytes — `MoveFileExW`'s `MOVEFILE_REPLACE_EXISTING` let the directory replace it, and the
+rename answered 0 — and a file onto a directory is -21 (`EISDIR`; it was -13). The target is asked
+(`GetFileAttributesW`) just before a directory's move, so unlike Linux's refusal it is not atomic: a
+file made at the target in that instant can still be replaced. A directory onto a directory stays
+-13 (Windows cannot replace one; Linux answers 0 for an empty target, -39 for a full one), and so
+does a file onto a file another handle holds open (Linux replaces it). `sys_ftruncate`
 answers -22 for a descriptor it cannot truncate, as Linux does: a pipe or a console (the seek is
 -29 there), a device such as `NUL` (`SetEndOfFile` fails it `ERROR_INVALID_FUNCTION`, which the table leaves -1; macOS truncates its
 `/dev/null` as a no-op and answers 0), and one without write access — a read-only descriptor and,

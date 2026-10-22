@@ -345,12 +345,14 @@ fn xlink(oldpath, newpath): i64 {
 # file_open bridges sys_open: POSIX (Linux/macOS/aarch64) is 2-arg
 # sys_rename(old,new) (the backend ESYSXLAT handles aarch64 82→renameat 38+AT_FDCWD
 # and macho 82→BSD 128); AGNOS is length-carrying 4-arg sys_rename(old,ol,new,nl);
-# Windows has no POSIX rename — route to a MoveFileExW(old,new,
-# MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) reroute (syscall 0xF034;
-# backend/x86/emit.cyr EMOVEFILEEX_PE; write-through since 6.6.7, so the rename is
+# Windows has no POSIX rename — its sys_rename (lib/syscalls_windows.cyr `_win_rename`) makes a
+# MoveFileExW(old,new, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) reroute (syscall
+# 0xF034; backend/x86/emit.cyr EMOVEFILEEX_PE; write-through since 6.6.7, so the rename is
 # on disk when it returns). Returns 0 on success / negative errno on every target (Windows
 # through its Win32 error table since 6.7.16's D94 — a missing source -2; it was -1 for every
-# failure). See issue 2026-07-12-thoth-portable-atomic-file-write.md.
+# failure; a directory onto a file -20 and a file onto a directory -21 since 6.7.17's D35 / D36 —
+# the directory replaced the file, and the file answered -13). See issue
+# 2026-07-12-thoth-portable-atomic-file-write.md.
 fn file_rename(oldpath, newpath): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     var ol = 0;
@@ -360,7 +362,7 @@ fn file_rename(oldpath, newpath): i64 {
     return sys_rename(oldpath, ol, newpath, nl);
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return syscall(0xF034, oldpath, newpath);   # kernel32!MoveFileExW (REPLACE_EXISTING|WRITE_THROUGH)
+    return sys_rename(oldpath, newpath);        # _win_rename: MoveFileExW (REPLACE_EXISTING|WRITE_THROUGH)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
