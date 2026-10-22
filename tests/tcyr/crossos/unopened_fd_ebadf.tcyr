@@ -39,7 +39,8 @@
 # answers its code through the one Win32 table (0xF04F) — a closed handle ERROR_INVALID_HANDLE, -9
 # — and a negative fd is -9 before any Win32 call (-1 is the current-process pseudo-handle). A cx
 # guest on a Windows host has no flock route: -38. A bad op is -22 whatever the fd, as on Linux: the
-# Windows arm checks the op first (Darwin's flock checks the fd first, -9). CHANGELOG [6.7.17]
+# Windows arm checks the op first (Darwin's flock checks the fd first, so a non-descriptor is -9
+# there). CHANGELOG [6.7.17]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -164,8 +165,9 @@ assert_eq(ln1, lbad, "xflock(-1, LOCK_EX | LOCK_NB) is -9 (Windows handed the ps
 assert_eq(lnun, lbad, "xflock(-8, LOCK_UN) is -9 (Windows answered -1)");
 
 # A bad op is -22 whatever the fd: Linux's flock(2) checks the op before the fd, and so does the
-# Windows arm since 6.7.17 (an aliasing fd answered -9). Darwin's flock checks the fd first: -9
-# there, natively and for a cx guest on a Mac (measured on ecb and ach).
+# Windows arm since 6.7.17 (an aliasing fd answered -9). Darwin's flock checks the fd first, so
+# every fd below, none a descriptor, is -9 there, natively and for a cx guest on a Mac (measured on
+# ecb and ach); on an OPEN fd Darwin takes 3 as LOCK_EX and answers 0, which no row here asks.
 test_group("xflock with a bad op is -EINVAL, whatever the fd");
 var hb = file_open(p, O_RDONLY, 0);
 assert_eq(hb >= 0, 1, "a descriptor to close opens");
