@@ -208,6 +208,18 @@ syscall(60, f());
 refuse "R10 a generic literal: GBx<Pt>{q, 1}" "$MF" "$T"'fn f(): i64 { var q: Q; var b = GBx<Pt> { q, 1 }; return b.n; }
 syscall(60, f());
 '
+# R13 (6.7.17): a DEREFERENCE of a `*Q` is a Q value (6.7.10's decision 6) — refused by name as the name `q` is, the
+# one error; it was a word carried into Box.v's first leaf (`*pq` of a 24-byte Q: then "missing struct field"). The
+# copy of the right type is A5 and tests/tcyr/crossos/struct_literal_deref_element.tcyr. Mutation (2026-10-22, CYCC=
+# the compiler before the fix): RED R13 R13b ("missing struct field in initializer") A5 (no binary).
+refuse "R13 a dereference *pq (a *Q) into Box.v" "cannot copy '\*pq' into a struct field of a different struct type: 'v'" "$T"'fn f(): i64 { var q: Q; var pq: *Q = &q; var b = Box { *pq, 5 }; return b.n; }
+syscall(60, f());
+' only
+refuse "R13b top level: Box { (*GQP), 5 }" "cannot copy '\*GQP' into a struct field of a different struct type: 'v'" "$T"'var GQ = Q { 1, 2, 3 };
+var GQP: *Q = &GQ;
+var G = Box { (*GQP), 5 };
+syscall(60, G.n);
+' only
 # The top-level refusal is the ONLY error: the refused value is taken as the whole nested field, not
 # descended into (which reported the values it was then short as "unexpected '}'").
 T5="$T"'fn mkbig(a): Big { var p: Big; p.a = a; p.b = a + 1; p.c = a + 2; return p; }
@@ -250,6 +262,11 @@ syscall(1, 1, "", z);
 var G = GBx<i64> { 7, 5 };
 syscall(60, G.v + G.n * 10);
 ' 57 "$T"'fn f(): i64 { var b: GBx<i64>; b.v = 7; b.n = 5; return b.v + b.n * 10; }
+syscall(60, f());
+'
+accept "A5 fn: Box { *pp, 5 } copies *pp (6.7.17)" "$T"'fn f(): i64 { var p: Pt; p.x = 2; p.y = 3; var pp: *Pt = &p; var b = Box { *pp, 5 }; p.x = 9; return b.n + b.v.x * 10 + b.v.y * 20; }
+syscall(60, f());
+' 85 "$T"'fn f(): i64 { var b: Box; b.v.x = 2; b.v.y = 3; b.n = 5; return b.n + b.v.x * 10 + b.v.y * 20; }
 syscall(60, f());
 '
 accept "A4 fn: Box { mkpt(2), 5 }" "$T"'fn f(): i64 { var b = Box { mkpt(2), 5 }; return b.n + b.v.x * 10 + b.v.y * 20; }

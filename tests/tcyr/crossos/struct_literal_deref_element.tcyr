@@ -1,0 +1,80 @@
+# struct_literal_deref_element.tcyr — a dereference as a nested struct field's literal element is the struct it reads
+# (6.7.17).
+#
+# THE DEFECT (measured on 6.7.16's build/cycc, every target: the frontend's literal walk). `struct O4 { v: Q2; m; }` with
+# `pq: *Q2`: `O4 { *pq, 5 }` was "missing struct field in initializer" — the walk read `*pq` as ONE word, carried it
+# into v's first leaf, took `5` as v.b and found m short — where `O4 { q, 5 }` copies q (6.6.12). `*p` is a struct
+# value at every size (6.7.10's decision 6), so the element is the struct `*pq` reads: copied into a field of its
+# type, filling the inner struct on the field's first-field chain, and (the gate struct_literal_type_refused.sh)
+# refused by name for any other struct. `*pp` of a `**S` is the `*S` it reads, copied through as a `*S` name is.
+#
+# WHY A CROSS-HOST TEST: the copy through the parked pointer (a frame temp in a fn, a hidden global at top level) is
+# emitted per backend. Mutation: `_spi_dsrc` (src/frontend/parse_decl.cyr) answering 0 — this file stops compiling.
+include "lib/assert.cyr"
+
+struct DeQ2 { a; b; }
+struct DeO4 { v: DeQ2; m; }
+struct DeI2 { q: DeQ2; k; }
+struct DeO5 { i: DeI2; m; }
+struct DeQ1 { a; }
+struct DeO1 { v: DeQ1; m; }
+struct DeN { a: i8; b: i32; }
+struct DeON { n: DeN; c: i16; }
+
+fn de_id(p: *DeQ2): *DeQ2 { return p; }
+
+# The declaration zone.
+var deg_q: DeQ2 = DeQ2 { 3, 4 };
+var deg_p: *DeQ2 = &deg_q;
+var deg_o = DeO4 { *deg_p, 5 };
+
+fn de_local(): i64 {
+    var q: DeQ2 = DeQ2 { 3, 4 };
+    var pq: *DeQ2 = &q;
+    var o = DeO4 { *pq, 5 };
+    q.a = 9;   # o owns its copy
+    return o.v.a * 100 + o.v.b * 10 + o.m;
+}
+fn de_chain(): i64 {
+    var q: DeQ2 = DeQ2 { 3, 4 };
+    var o = DeO5 { *de_id(&q), 6, 7 };
+    return o.i.q.a * 1000 + o.i.q.b * 100 + o.i.k * 10 + o.m;
+}
+fn de_pp(): i64 {
+    var q: DeQ2 = DeQ2 { 3, 4 };
+    var pq: *DeQ2 = &q;
+    var pp: **DeQ2 = &pq;
+    var o = DeO4 { (*pp), 5 };
+    return o.v.a * 100 + o.v.b * 10 + o.m;
+}
+fn de_wrap(): i64 {
+    var q: DeQ2 = DeQ2 { 3, 4 };
+    var pq: *DeQ2 = &q;
+    var o = DeO4 { ((*pq)), 5 };
+    return o.v.a * 100 + o.v.b * 10 + o.m;
+}
+fn de_small(): i64 {
+    var q: DeQ1 = DeQ1 { 9 };
+    var pq: *DeQ1 = &q;
+    var o = DeO1 { *pq, 5 };
+    return o.v.a * 10 + o.m;
+}
+fn de_narrow(): i64 {
+    var n: DeN = DeN { 0x12, 0x3456 };
+    var pn: *DeN = &n;
+    var o = DeON { *pn, 0x78 };
+    return o.n.a + o.n.b + o.c;
+}
+
+assert_eq(de_local(), 345, "O4 { *pq, 5 }: the 16-byte struct *pq reads, then m (was 'missing struct field')");
+assert_eq(de_chain(), 3467, "O5 { *id(&q), 6, 7 }: Q2 fills the inner struct on the first-field chain");
+assert_eq(de_pp(), 345, "O4 { (*pp), 5 }: *pp of a **Q2 is the *Q2 it reads, copied through");
+assert_eq(de_wrap(), 345, "O4 { ((*pq)), 5 }: wrapped");
+assert_eq(de_small(), 95, "O1 { *pq, 5 }: an 8-byte struct (one word, as before)");
+assert_eq(de_narrow(), 0x12 + 0x3456 + 0x78, "ON { *pn, 0x78 }: narrow fields at their own widths");
+assert_eq(deg_o.v.a * 100 + deg_o.v.b * 10 + deg_o.m, 345, "the declaration zone: DeO4 { *GP, 5 }");
+deg_q.a = 7;
+var dea_o = DeO4 { *deg_p, 6 };
+assert_eq(dea_o.v.a * 100 + dea_o.v.b * 10 + dea_o.m, 746, "after the first statement");
+assert_eq(deg_o.v.a, 3, "the zone's copy is its own");
+var r = assert_summary();

@@ -821,9 +821,59 @@ syscall(60, 0);
 gwrefuse "GW5 a for step" "6:46: cannot copy 'GU' into a variable of a different struct/vector type: 'GP'" "$GWH"'fn main(): i64 { for (var i = 0; i < 1; GP = GU) { i = 1; } return 0; } syscall(60, main());
 '
 
+# NW1-NW6 (6.7.17) — an assignment refused for its struct type is ONE diagnostic: `pp = mkq();` into a `*P`, `h = GQ;`
+# into a `P` handle from an inline struct global, `h = w.q2;` / `l = w.q;` from a struct-typed field each gave "assigning
+# non-pointer to typed pointer" beside the refusal (the statement judged the value the refusal had named). The error
+# lines as `pnrefuse` reads them, and no `^warning`, on the x86_64, aarch64, cx and PE compilers. Mutation (2026-10-22,
+# CYCC=the compiler before the fix): RED 6 — each the warning beside, on the x86_64 and PE legs (CYCC's own; the
+# aarch64 / cx compilers are built from the tree).
+nwrefuse() {  # $1 label  $2 the error lines, in order (after "error:<source>:")  $3 source
+    printf '%s' "$3" > "$D/nw.cyr"
+    printf '%s\n' "$2" | sed 's/^/error:<source>:/' > "$D/nw.want"
+    nrefuse=$((nrefuse+1))
+    _nwok=1
+    for leg in x86_64 aarch64 cx pe; do
+        rc=0
+        case $leg in
+            x86_64)  "$CC" < "$D/nw.cyr" > "$D/nw.bin" 2> "$D/nw.err" || rc=$? ;;
+            aarch64) "$D/cc_a64" < "$D/nw.cyr" > "$D/nw.bin" 2> "$D/nw.err" || rc=$? ;;
+            cx)      "$D/cc_cx" < "$D/nw.cyr" > "$D/nw.bin" 2> "$D/nw.err" || rc=$? ;;
+            pe)      CYRIUS_TARGET_WIN=1 "$CC" < "$D/nw.cyr" > "$D/nw.bin" 2> "$D/nw.err" || rc=$? ;;
+        esac
+        grep '^error' "$D/nw.err" > "$D/nw.got" || true
+        if [ "$rc" -eq 0 ]; then printf '  FAIL: %-38s compiled (rc 0) (%s)\n' "$1" "$leg"; _nwok=0
+        elif ! cmp -s "$D/nw.got" "$D/nw.want"; then printf '  FAIL: %-38s (%s) got: %s\n' "$1" "$leg" "$(tr '\n' '|' < "$D/nw.got")"; _nwok=0
+        elif grep -q '^warning' "$D/nw.err"; then printf '  FAIL: %-38s a warning beside the refusal (%s): %s\n' "$1" "$leg" "$(grep '^warning' "$D/nw.err" | head -1)"; _nwok=0
+        elif [ -s "$D/nw.bin" ]; then printf '  FAIL: %-38s refused, but a binary was written (%s)\n' "$1" "$leg"; _nwok=0
+        fi
+    done
+    if [ "$_nwok" -eq 1 ]; then printf '  ok(refused): %-31s (x86_64 aarch64 cx pe, no warning)\n' "$1"; pass=$((pass+1)); else fail=$((fail+1)); fi
+}
+NWH='include "lib/syscalls.cyr"
+struct Q1 { a; }
+struct Q2 { a; b; }
+struct P { x; y; }
+struct WQ { q: Q1; q2: Q2; n; }
+fn mkq(): Q1 { var q: Q1; q.a = 5; return q; }
+var GQ: Q1 = Q1 { 5 };
+var GPP: *P = 0;
+'
+nwrefuse "NW1 pp = mkq() into a *P" "9:47: cannot copy 'mkq' into a variable of a different struct/vector type: 'pp'" "$NWH"'fn f(): i64 { var x: P; var pp: *P = &x; pp = mkq(); return pp.x; }
+'
+nwrefuse "NW2 h = GQ into a P handle" "9:41: cannot copy 'GQ' into a variable of a different struct/vector type: 'h'" "$NWH"'fn f(): i64 { var h: P = alloc(16); h = GQ; return h.x; }
+'
+nwrefuse "NW3 h = w.q2 into a P handle" "9:56: cannot copy 'q2' into a variable of a different struct/vector type: 'h'" "$NWH"'fn f(): i64 { var w: WQ; var h: P = alloc(16); h = w.q2; return h.x; }
+'
+nwrefuse "NW4 l = w.q into an inline P" "9:43: cannot copy 'q' into a variable of a different struct/vector type: 'l'" "$NWH"'fn f(): i64 { var w: WQ; var l: P; l = w.q; return l.x; }
+'
+nwrefuse "NW5 a for step pp = mkq()" "9:77: cannot copy 'mkq' into a variable of a different struct/vector type: 'pp'" "$NWH"'fn f(): i64 { var x: P; var pp: *P = &x; var i = 0; for (i = 0; i < 1; pp = mkq()) { i = 1; } return 0; }
+'
+nwrefuse "NW6 GPP = mkq() at top level" "9:7: cannot copy 'mkq' into a variable of a different struct/vector type: 'GPP'" "$NWH"'GPP = mkq();
+'
+
 # Anti-vacuous: a rewritten row list must move these, and a `refuse`/`accept` helper that
 # silently stopped running would leave them at 0.
-[ "$nrefuse" -ge 76 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 76)"; fail=$((fail+1)); }   # 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34, R35, R36, PN1-PN10; 6.7.17: + GW1-GW5
+[ "$nrefuse" -ge 82 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 82)"; fail=$((fail+1)); }   # 6.7.17: GW (vala) + NW (valb); 6.7.15: + R29-R32, W1-W8; 6.7.16: + R33, R34, R35, R36, PN1-PN10; 6.7.17: + NW1-NW6
 [ "$naccept" -ge 15 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 15)"; fail=$((fail+1)); }
 # And the message this gate greps for must still be the one the compiler emits, spelled in
 # exactly one place in src/ — a reworded diagnostic with an unchanged gate greps for nothing

@@ -441,6 +441,52 @@ fn e_derive(): i64 {
     return memeq(str_data(s), want, strlen(want));
 }
 
+# 6.7.17 (the user's D19, 2026-10-22): `*p` of a `*Str` as a nested struct field's element reaching a `Str` first leaf is
+# p, as the direct literal `WS { *p, 1 }` stores it; it stored the header's data word (the ns_* rows, R_TOP22).
+struct NsWS { s: Str; n; }
+struct NsO { v: NsWS; m; }
+struct NsX { o: NsO; k; }
+fn ns_gp(p: *Str): *Str { return p; }
+fn ns_filed(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = NsO { *p, 1, 2 }; if (o.v.s == a) { return 10; } if (o.v.s == load64(a)) { return 50; } return 99; }
+fn ns_deep(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var x = NsX { *p, 1, 2, 3 }; return (x.o.v.s == a) * 1000 + x.o.v.n * 100 + x.o.m * 10 + x.k; }
+fn ns_wrap(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = NsO { (*ns_gp(p)), 4, 5 }; return str_len(o.v.s) * 10 + o.v.n; }
+fn ns_glob(): i64 { var p: *Str = &gt; var o = NsO { ((*p)), 4, 5 }; return (o.v.s == &gt) * 100 + str_len(o.v.s) * 10 + o.m; }
+# 6.7.17 (the user's D20, 2026-10-22): `*(&t) = v` with t a closure's captured inline `Str` copies v's header into the
+# closure's copy of t, as `*(&t) = v` of a local t does (6.7.16's D71); it wrote v's first word into t.data (the ca_* rows).
+struct CaW { s: Str; n; }
+var ca_gt: Str = Str { "abcdefghij", 10 };
+fn ca_sx(): Str { return str_from("xyz"); }
+fn ca_filed(): i64 { var t: Str = Str { "abcdefg", 7 }; var v = str_from("xy"); var c = |k| { *(&t) = v; return t.len + k; }; return fncall1(c, 0) * 10 + t.len; }
+fn ca_call(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { *(&t) = ca_sx(); return t.len * 10 + load8(t.data) - 120 + k; }; return fncall1(c, 0); }
+fn ca_local(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var h = str_from("abcd"); *(&t) = h; h.len = 1; return t.len + k; }; return fncall1(c, 0); }
+fn ca_field(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: CaW; w.s = str_from("abcde"); var c = |k| { *((&t)) = w.s; return t.len + k; }; return fncall1(c, 0); }
+fn ca_dx(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var a = str_from("abcdef"); var p: *Str = a; *(&t) = *p; return t.len + k; }; return fncall1(c, 0); }
+fn ca_glob(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { *&t = ca_gt; return t.len + k; }; return fncall1(c, 0); }
+fn ca_meth(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var h = str_from("abcd"); *(&t) = h.clone(); return t.len + k; }; return fncall1(c, 0); }
+fn ca_inl(): i64 { var t: Str = Str { "abcdefg", 7 }; var u: Str = Str { "abcdefghi", 9 }; var c = |k| { *(&t) = u; return t.len + k; }; return fncall1(c, 0); }
+fn ca_step(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var i = 0; for (i = 0; i < 1; *(&t) = ca_sx()) { i = i + 1; } return t.len + k; }; return fncall1(c, 0); }
+fn ca_word(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { *(&t) = 0; return t.len + k; }; return fncall1(c, 0); }
+# 6.7.17 (the user's D21, 2026-10-22): a `Str` field's NAMED initialiser compiles, as the positional one does, with the
+# same `Str` field checks; it was "named init not supported for nested struct fields" (the nm_* rows).
+struct NmV { s: Str; n; }
+var GNM = NmV { n: 2, s: gt };   # the declaration zone: gt's header
+fn nm_filed(): i64 { var a = str_from("abc"); var v = NmV { s: a, n: 1 }; return str_len(v.s) + v.n; }
+fn nm_order(): i64 { var a = str_from("abcd"); var v = NmV { n: 3, s: a }; return (v.s == a) * 100 + str_len(v.s) * 10 + v.n; }
+fn nm_glob(): i64 { var v = NmV { s: gt, n: 1 }; return (v.s == &gt) * 10 + v.n; }
+fn nm_dx(): i64 { var a = str_from("abc"); var p: *Str = a; var v = NmV { s: *p, n: 1 }; return (v.s == a) * 10 + v.n; }
+fn nm_call(): i64 { var v = NmV { s: str_from("abcde"), n: 1 }; return str_len(v.s) + v.n; }
+# 6.7.17 (the user's D22, 2026-10-22): an untyped top-level declaration from a whole call returning `Str` is a `Str`
+# handle global, in the declaration zone and after the first statement, as in a fn (the zs_* rows, R_TOP24); a name, a
+# field read and an if-expression keep their word.
+fn zs_id<T>(x: T): T { return x; }
+var ZSB = str_from("xyz");          # the declaration zone: a free call
+var ZSW = ((str_from("abcd")));    # wrapped
+var ZSK = ZSB.clone();             # a method
+var ZSG = zs_id<Str>(ZSW);         # a generic's `Str` instance
+var ZSI = zs_id(ZSB);              # ... inferred T = Str
+fn zs_zone(): i64 { return ZSB.len * 10000 + ZSW.len * 1000 + ZSK.len * 100 + ZSG.len * 10 + ZSI.len; }
+fn zs_same(): i64 { return (ZSI == ZSB) * 10 + (ZSG == ZSW); }
+fn zs_wrapm(): i64 { var h = str_from("abc"); var k = (h.clone()); var k2 = ((h.clone().clone())); return k.len * 10 + k2.len; }
 alloc_init();
 var R_TOP = f(gt);   # at top level, a global inline `Str`
 GA = str_from("abcde");
@@ -506,6 +552,17 @@ GH = *&gt;
 var R_TOP20 = (HAL == &gt) * 100 + gi4.len * 10 + (GH == &gt);
 *(&gi3) = gt;                # top level: `*(&gi3) = gt` copies gt's header into the inline gi3, as `gi3 = gt` (6.7.16, D71)
 var R_TOP21 = gi3.len;
+var nsp: *Str = &gt;          # top level after a statement: `*nsp` into a nested `Str` leaf is nsp (6.7.17, D19)
+var GNSO = NsO { *nsp, 4, 5 };
+var R_TOP22 = (GNSO.v.s == &gt) * 100 + str_len(GNSO.v.s) * 10 + GNSO.v.n;
+var GNM2 = NmV { s: gt, n: 4 };   # after a statement: a named `Str` field (6.7.17, D21)
+var R_TOP23 = (GNM.s == &gt) * 1000 + (GNM2.s == &gt) * 100 + GNM.n * 10 + GNM2.n;
+var zsl = str_from("abcde");       # after a statement: a free call, a method, a generic (6.7.17, D22)
+var zsk = zsl.clone();
+var zsg = zs_id(zsl);
+var zsn = zsl;                     # a name keeps its word: untyped
+var zsw = (zsl.clone());           # wrapped (6.7.17: `_var_rhs_mchain` sees through the wrap)
+var R_TOP24 = zsl.len * 100 + zsk.len * 10 + zsg.len + (zsn == zsl) * 1000 + zsw.len * 10000;
 gi4.len = 2;
 GH = 0;
 GPS = 0;
@@ -744,6 +801,31 @@ assert_eq(R_TOP18, 77, "top level after a statement: var U: Str = *GPPS; / var V
 assert_eq(R_TOP19, 111, "top level: *GQS = *GPS, GXS = *GPS, var LYS: *Str = *GPS are GPS (6.7.16, D73)");
 assert_eq(R_TOP20, 171, "top level after a statement: var H: Str = *(&gt); gi4 = *(&gt) copies; GH = *&gt (6.7.16, D71)");
 assert_eq(R_TOP21, 7, "top level: *(&gi3) = gt copies the header (6.7.16, D71)");
+assert_eq(R_TOP22, 174, "top level after a statement: NsO { *nsp, 4, 5 } stores nsp in the nested Str leaf (6.7.17, D19)");
+assert_eq(ca_filed(), 27, "a closure's *(&t) = v copies v's header into its copy of t (6.7.17, D20; was 7); the fn's t keeps 7");
+assert_eq(ca_call(), 30, "*(&t) = sx(): a `: Str` call's header (t.data 'x')");
+assert_eq(ca_local(), 4, "*(&t) = h: a handle local's header, copied (a later h.len = 1 leaves t)");
+assert_eq(ca_field(), 5, "*((&t)) = w.s: a Str field");
+assert_eq(ca_dx(), 6, "*(&t) = *p: the header p points at");
+assert_eq(ca_glob(), 10, "*&t = ca_gt: an inline Str global");
+assert_eq(ca_meth(), 4, "*(&t) = h.clone(): a method's");
+assert_eq(ca_inl(), 9, "*(&t) = u: another captured inline Str");
+assert_eq(ca_step(), 3, "a for step's *(&t) = sx()");
+assert_eq(ca_word(), 7, "*(&t) = 0: an untyped value keeps the one-word store into t.data (t.len 7)");
+assert_eq(zs_zone(), 34343, "the zone: var ZSB = str_from(..), ((..)), ZSB.clone(), zs_id<Str>(..), zs_id(..) are Str (6.7.17, D22)");
+assert_eq(zs_same(), 11, "... each the call's header address (zs_id hands back its argument)");
+assert_eq(R_TOP24, 51555, "after a statement: var zsl = str_from(..), zsl.clone(), zs_id(zsl), (zsl.clone()) are Str; var zsn = zsl keeps the word");
+assert_eq(zs_wrapm(), 33, "in a fn: var k = (h.clone()); / ((h.clone().clone())) are Str, as unwrapped (6.7.17; an untyped word)");
+assert_eq(nm_filed(), 4, "NmV { s: a, n: 1 }: a named Str field (6.7.17, D21; was refused)");
+assert_eq(nm_order(), 143, "NmV { n: 3, s: a }: in any order, the handle itself");
+assert_eq(nm_glob(), 11, "NmV { s: gt, n: 1 }: an inline Str global's header address");
+assert_eq(nm_dx(), 11, "NmV { s: *p, n: 1 }: *p of a *Str is p");
+assert_eq(nm_call(), 6, "NmV { s: str_from(..), n: 1 }: a `: Str` call");
+assert_eq(R_TOP23, 1124, "top level: a named Str field in the zone and after a statement takes gt's header (6.7.17, D21)");
+assert_eq(ns_filed(), 10, "NsO { *p, 1, 2 }: the nested Str leaf is p, the header's address (6.7.17, D19; was 50, the data word)");
+assert_eq(ns_deep(), 1123, "NsX { *p, 1, 2, 3 }: two levels deep");
+assert_eq(ns_wrap(), 74, "NsO { (*gp(p)), 4, 5 }: a wrapped call's dereference");
+assert_eq(ns_glob(), 175, "NsO { ((*p)), 4, 5 } with p = &gt: gt's header");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");

@@ -15,6 +15,7 @@
 # word where `var uf = fa(&p);` is an f64 (v6.5.21) — `_var_rhs_msid` now types it from the method;
 # a method ending a longer chain (`w.v.area()`, `self.v.area()`, `p.ms(1.5).area()`,
 # `cr_mkp(1.5).area()`) from the result's type once parsed (`_var_rhs_mchain`, the 6.7.9 review).
+# 6.7.17: inside any parentheses wrapping the whole initialiser too (`var uwp = (p.area());` was an integer word).
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/call_result_type.sh, on the
 # four hardware hosts by the release gate's cross-OS leg. Every f64 expectation is compared as a BIT
 # PATTERN (assert_eq on an f64-typed value), so a float literal on the right is exact; every free-call
@@ -118,6 +119,10 @@ fn main(): i64 {
     assert_eq(um + 1.0, 3.5, "var um = cr_mkp(1.5).area(); um + 1.0 (a method on a free call's result)");
     var upp = pp.area();
     assert_eq(upp + 1.0, 3.5, "var upp = pp.area(); upp + 1.0 (a *T receiver)");
+    var uwp = (p.area());
+    assert_eq(uwp + 1.0, 3.5, "var uwp = (p.area()); uwp + 1.0 (wrapped: an f64 as unwrapped, 6.7.17)");
+    var uwc = ((w.v.area()));
+    assert_eq(uwc + 1.0, 3.5, "var uwc = ((w.v.area())); uwc + 1.0 (a wrapped chain, 6.7.17)");
     var ui = w.v.m(1.5);
     assert_eq(ui * 2, 42, "var ui = w.v.m(1.5); ui * 2 (an integer method's binding stays an integer)");
 

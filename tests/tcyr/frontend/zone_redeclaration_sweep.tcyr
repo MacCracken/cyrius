@@ -1,0 +1,35 @@
+# zone_redeclaration_sweep.tcyr — a declaration-zone redeclaration supersedes the sweep's reading of the earlier one
+# (6.7.17).
+#
+# THE DEFECT (measured on 6.7.16's build/cycc and the 6.7.17 valb lane before the fix). `var gr = mk1(); var gr = 5;` in
+# the declaration zone is ONE global, the last declaration's (`_gv_fold`), but the end-of-pass-1 sweep (6.7.14's D29,
+# 6.7.16's D98) still typed it from the FIRST initialiser: a `: P1` call's struct — `gr + 1` dispatched `P1_add`
+# ("undefined function 'P1_add'", no binary) — and a `: f64` call's f64 — `gf * 2` was f64 arithmetic on the integer 7
+# (0 where 14 is right, with a warning); 6.7.17's D22 added a `: Str` call's `Str`. The fold now drops the slot's earlier
+# notes, so the last declaration types the global; a call redeclaring a plain global still types it.
+# Mutation: `_gv_fold` without its `_gu_drop` call (src/frontend/parse_decl.cyr) — this file stops compiling.
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct ZrP1 { a; }
+fn zr_mk1(): ZrP1 { var p: ZrP1; p.a = 3; return p; }
+fn zr_mkf(x: f64): f64 { return x; }
+
+var zr_gr = zr_mk1();
+var zr_gr = 5;                  # an integer after a struct call: the integer
+var zr_gf = zr_mkf(1.5);
+var zr_gf = 7;                  # ... after an f64 call
+var zr_gs = str_from("abc");
+var zr_gs = 9;                  # ... after a `: Str` call (6.7.17's D22)
+var zr_gq = 5;
+var zr_gq = zr_mk1();           # a struct call after an integer: the struct
+var zr_gt = 9;
+var zr_gt = str_from("abcd");   # a `: Str` call after an integer: a `Str`
+
+assert_eq(zr_gr + 1, 6, "var gr = mk1(); var gr = 5; — gr + 1 is integer arithmetic (was 'undefined function ZrP1_add')");
+assert_eq(zr_gf * 2, 14, "var gf = mkf(1.5); var gf = 7; — gf * 2 is 14 (was f64 arithmetic on 7: 0)");
+assert_eq(zr_gs + 1, 10, "var gs = str_from(..); var gs = 9; — an integer");
+assert_eq(zr_gq.a, 3, "var gq = 5; var gq = mk1(); — the struct");
+assert_eq(zr_gt.len, 4, "var gt = 9; var gt = str_from(..); — a Str");
+var r = assert_summary();

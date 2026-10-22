@@ -147,6 +147,45 @@
 # method's (the tcyr's rp_* rows); it returned gt's data word — and a frame's `return t;` is refused by name, as from a
 # fn returning `Str` (X30 / X31; it compiled).
 #
+# 6.7.17 (the user's decision D18, 2026-10-22; issues/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md row 1): a struct
+# value of another type assigned into a `Str` HANDLE — a local, a parameter, a global; from a call, a
+# method, an operator, an if-expression, `fncall0(&mkq)`, an inline struct name or global, a field, a dereference, wrapped,
+# a for step, at top level — is refused by name with the words the same assignment into a `P` handle has (SH1-SH15 but
+# SH13 — a `*Str` name keeps 6.7.16's typed-pointer warning, typed_pointer_warn_sign.sh SC1 / SC6; SH1
+# the filed repro verbatim: it compiled and crashed — x86_64 139, cx 252, PE 5 — h holding Q1's word). A `*Q1`, a `Q2`
+# handle and a `: *Q1` call keep the rebind, a `: Str` call its value (SHK1). And at every other `Str` slot (D18's class,
+# met in the bite): a `Str` field (a local's, a global's, through a `*W`, a for step, top level), a literal's `Str`
+# element (in a fn, in the zone), a store through a `*Str` (`**pp` too) and `return` from a fn returning `Str` (a tail call
+# too) refuse it with the position's words, as a `P` there does (SP1-SP10; each stored or returned the struct's first
+# word); a `: Str` value, a handle and a `*Q1` keep their store (SPK1).
+#
+# 6.7.17 (the user's decision D19, 2026-10-22; the same issue's row 2): `*p` of a `*Str` as a nested struct field's
+# literal element reaching a `Str` first leaf — `O { *p, 1, 2 }` with O's first field a `WS { s: Str; n; }` — is p, as
+# the direct literal `WS { *p, 1 }` stores it (6.7.16's SS-8): it stored the header's data word (NS1, the filed repro
+# verbatim: 10, was 50; the tcyr's ns_* rows and R_TOP22: two levels deep, wrapped, a call's, top level). A `Str` value
+# whose nested field opens with no `Str` leaf is refused by name, as a `Str` name there is (NS2).
+#
+# 6.7.17 (the user's decision D20, 2026-10-22; the same issue's row 3): `*(&t) = v` with t a closure's captured inline
+# `Str` copies v's 16-byte header into the closure's copy of t, as `*(&t) = v` of a local t is `t = v` (6.7.16's D71)
+# and a captured struct's `*(&s) = v` copies (6.7.13): it wrote v's first word into the copy's data word and left t.len
+# (CA1, the filed repro verbatim: 2, was 7; the tcyr's ca_* rows: a captured handle, a `: Str` call, a local handle, a
+# `Str` field, `*p`, an inline global, a method, another inline `Str`, a for step; the enclosing fn's t unchanged). An
+# untyped value keeps the one-word store into t.data, as `t = x` does; another struct is refused (CA2).
+#
+# 6.7.17 (the user's decision D21, 2026-10-22; the same issue's row 4): a struct literal's NAMED `Str` field — `V { s: a,
+# n: 1 }` — compiles, as the positional `V { a, 1 }` does: a `Str` field is one handle slot, not a nested struct. It was
+# "named init not supported for nested struct fields — use positional" (NM1, the filed repro verbatim: 4). The element
+# takes the positional field's checks: a frame's inline `Str` refused as would-dangle (NM2), another struct refused
+# (NM3), `*p` of a `*Str` is p, a global's header its address (the tcyr's nm_* rows, in a fn, the zone, after a
+# statement).
+#
+# 6.7.17 (the user's decision D22, 2026-10-22; the same issue's row 5): an untyped top-level declaration from a whole
+# call returning `Str` — `var bb = str_from("xyz");`, a method (`h.clone()`), a generic's `Str` instance (`gg<Str>(h)`,
+# the inferred `gg(h)`), wrapped — is a `Str` handle global, in the declaration zone and after the first statement, as
+# the same line in a fn is: `bb.len` reads 3 (ZS1, the filed repro verbatim; ZS2 the zone line; the tcyr's zs_* rows),
+# where it was "no struct type in scope for 'bb'". Its value is unchanged (the header's address). A name keeps its word
+# (`var H = gt;`, D22a / D22b), and so do a field read and an if-expression (the tcyr's zs_word row).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -160,7 +199,13 @@
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
 # `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); X30 / X31 a frame's t returned from a fn returning `*Str` refused (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
-# / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
+# / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); SH1-SH15 a struct value of another type into a
+# `Str` handle refused (no SH13), SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
+# repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
+# `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
+# refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); NM1 the D21 filed repro verbatim (4
+# on every leg), NM2 / NM3 the named element keeps the `Str` field's refusals (6.7.17, D21); ZS1 the D22 filed repro
+# verbatim (3 on every leg), ZS2 its zone line (6.7.17, D22); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -276,6 +321,28 @@
 #   w1 `_istr_ret` asking `Str` only (the fix       -> RED 15: R1 x7 (4 rows: rp_ret, rp_len — the data word — and the
 #      reverted)                                      two encoder rows the wild `p.len = 3` corrupted), X30 / X31
 #                                                     x4 (each compiled)
+#   2026-10-22 (6.7.17, D18 a struct value into a `Str` handle; the same scratch-copy method):
+#   x1 `_istr_hdt` answers `dt` (the fix reverted) -> RED 56: SH1-SH15 (no SH13) x4 (each compiled)
+#   x2 `_istr_vsid` only parses, `_istr_tcd` 0     -> RED 40: SP1-SP10 x4 (each compiled)
+#   2026-10-22 (6.7.17, D19 `*p` into a nested `Str` leaf; the same scratch-copy method):
+#   y1 `_spi_dsrc` without its `Str` arm           -> RED 18: R1 x7 (the ns_* rows and R_TOP22 — the data word),
+#      (the fix reverted)                             NS1 x7 (50), NS2 x4 (compiled)
+#   y2 `_spi_dsrc` without its `*(&t)` test        -> RED 8: NS3 x4, NS4 x4 (each compiled, the data word carried)
+#   2026-10-22 (6.7.17, D20 a captured t's `*(&t) = v`; the same scratch-copy method):
+#   z1 `_istr_amp_dst` returning 0 for a capture     -> RED 18: R1 x7 (the ca_* rows — the first word into t.data, t.len
+#      (the fix reverted)                             7), CA1 x7 (7), CA2 x4 (compiled)
+#   z2 `_istr_inl_dst` without the override          -> RED 7: R1 x7 (ca_call / ca_field / ca_dx / ca_meth / ca_step:
+#                                                     one word)
+#   z3 `_istr_amp_dst` returning 0 for a capture's  -> RED 4: CA3 x4 (compiled)
+#      compound operator (the fix reverted)
+#   2026-10-22 (6.7.17, D21 a named `Str` field; the same scratch-copy method):
+#   n1 `_sl_named_nest` answering 1 for `Str`      -> RED 22: R1 x7 (the file stops compiling: the nm_* rows),
+#      (the fix reverted)                             NM1 x7 (refused), NM2 x4 / NM3 x4 (the named-init refusal first)
+#   2026-10-22 (6.7.17, D22 a top-level untyped `: Str` call; the same scratch-copy method):
+#   s1 `_gu_okz` / `_gu_lstr` answering no `Str`   -> RED 18: R1 x7 (the file stops compiling: the zs_* rows),
+#      (the fix reverted)                             ZS1 x7, ZS2 x4 (refused "no struct type in scope")
+#   s2 `_var_rhs_mchain` without its unwrap (the    -> RED 7: R1 x7 (the file stops compiling: zs_wrapm's `(h.clone())`
+#      compiler before the fix)                       and the top-level `(zsl.clone())` untyped)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1051,6 +1118,217 @@ runs D22a 0 "the filed repro 2: an untyped top-level \`var H = gt;\` keeps gt's 
 sed 's/^fn main() { return f(H); }$/fn main() { if (H == load64(\&gt)) { return 1; } return 2; }/' "$T/D22a.cyr" > "$T/D22b.cyr"
 runs D22b 1 "\`var H = gt;\` at top level is gt's first word (H == load64(&gt))"
 
+# --- SH: 6.7.17 (the user's D18, 2026-10-22) a struct value of another type into a `Str` HANDLE is refused by name, with
+# the words the same assignment into a `P` handle has; it stored the struct's first word as the header's address
+# (SIGSEGV at the next str_len). A handle, a `*T` or a `Str` value keeps its rebind (the SHK controls). ---
+cat > "$T/SH1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct Q1 { a; }
+fn mkq(): Q1 { var q: Q1; q.a = 5; return q; }
+fn main(): i64 { alloc_init(); var h: Str = str_from("x"); h = mkq(); return str_len(h); }
+syscall(60, main());
+EOF
+MSH="cannot copy 'mkq' into a variable of a different struct/vector type: 'h'"
+refused SH1 "$MSH" "the D18 filed repro, verbatim (x86_64 139, cx 252, PE 5: h took Q1's word)"
+HQ='struct Q1 { a; }
+struct Q2 { a; b; }
+struct WQ { q: Q1; pq: *Q1; n; }
+fn mkq(): Q1 { var q: Q1; q.a = 5; return q; }
+fn mkq2(): Q2 { var q: Q2; q.a = 5; q.b = 6; return q; }
+fn gpq(): *Q1 { return alloc(8); }
+impl Q1 { fn mk(self): Q1 { var q: Q1; q.a = 5; return q; } }
+fn Q1_add(a: Q1, b: Q1): Q1 { var q: Q1; q.a = a.a + b.a; return q; }
+var GQ: Q1 = Q1 { 5 };'
+row SH2 "$HQ"'
+fn go(): i64 { var h: Str = str_from("x"); h = mkq2(); return str_len(h); }'
+refused SH2 "cannot copy 'mkq2' into a variable of a different struct/vector type: 'h'" "a 16-byte struct result"
+row SH3 "$HQ"'
+fn g(h: Str): i64 { h = mkq(); return str_len(h); }
+fn go(): i64 { return g(str_from("x")); }'
+refused SH3 "$MSH" "into a \`Str\` parameter"
+row SH4 "$HQ"'
+fn go(): i64 { G = str_from("x"); G = mkq(); return str_len(G); }'
+refused SH4 "cannot copy 'mkq' into a variable of a different struct/vector type: 'G'" "into a \`Str\` global"
+row SH5 "$HQ"'
+fn go(): i64 { var q: Q1; var h: Str = str_from("x"); h = q.mk(); return str_len(h); }'
+refused SH5 "cannot copy 'Q1.mk' into a variable of a different struct/vector type: 'h'" "a method result"
+row SH6 "$HQ"'
+fn go(): i64 { var q: Q1; var h: Str = str_from("x"); h = q + q; return str_len(h); }'
+refused SH6 "cannot copy 'Q1_add' into a variable of a different struct/vector type: 'h'" "an operator result"
+row SH7 "$HQ"'
+fn go(): i64 { var c = 1; var h: Str = str_from("x"); h = if (c == 1) { mkq() } else { mkq() }; return str_len(h); }'
+refused SH7 "cannot copy 'Q1' into a variable of a different struct/vector type: 'h'" "an if-expression of struct results"
+row SH8 "$HQ"'
+fn go(): i64 { var q: Q1; var h: Str = str_from("x"); h = q; return str_len(h); }'
+refused SH8 "cannot copy 'q' into a variable of a different struct/vector type: 'h'" "an inline struct name"
+row SH9 "$HQ"'
+fn go(): i64 { var h: Str = str_from("x"); h = (GQ); return str_len(h); }'
+refused SH9 "cannot copy 'GQ' into a variable of a different struct/vector type: 'h'" "a wrapped inline struct global"
+row SH10 "$HQ"'
+fn go(): i64 { var q: Q1; var w: WQ; w.pq = &q; var h: Str = str_from("x"); h = *w.pq; return str_len(h); }'
+refused SH10 "cannot copy '*w.pq' into a variable of a different struct/vector type: 'h'" "a dereference of a \`*Q1\`"
+row SH11 "$HQ"'
+fn go(): i64 { var h: Str = str_from("x"); var i = 0; for (i = 0; i < 1; h = (mkq())) { i = i + 1; } return str_len(h); }'
+refused SH11 "$MSH" "a for step, wrapped"
+row SH12 "$HQ"'
+fn go(): i64 { var h = str_from("x"); h = fncall0(&mkq); return str_len(h); }'
+refused SH12 "cannot copy 'mkq' into a variable of a different struct/vector type: 'h'" "an untyped \`var h = str_from(..)\` (a \`Str\`) from \`fncall0(&mkq)\`"
+cat > "$T/SH14.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct Q1 { a; }
+fn mkq(): Q1 { var q: Q1; q.a = 5; return q; }
+alloc_init();
+var GH: Str = str_from("x");
+GH = mkq();
+syscall(60, str_len(GH));
+EOF
+refused SH14 "cannot copy 'mkq' into a variable of a different struct/vector type: 'GH'" "at top level"
+row SH15 "$HQ"'
+fn go(): i64 { var w: WQ; var h: Str = str_from("x"); h = w.q; return str_len(h); }'
+refused SH15 "cannot copy 'q' into a variable of a different struct/vector type: 'h'" "a struct-typed field"
+row SHK1 "$HQ"'
+fn go(): i64 { var q: Q1; var pq: *Q1 = &q; var hq: Q2 = alloc(16); var h: Str = str_from("x"); h = pq; var a = 0; if (h == pq) { a = 1; } h = hq; if (h == hq) { a = a + 2; } h = gpq(); if (h != 0) { a = a + 4; } h = str_from("abc"); return a * 10 + str_len(h); }'
+runs SHK1 73 "controls: a \`*Q1\`, a \`Q2\` handle and a \`: *Q1\` call rebind a \`Str\` handle; a \`: Str\` call is its value"
+# --- SP: 6.7.17 (D18 at every `Str` slot) a struct value of another type into a `Str` FIELD (a local's, a global's,
+# through a `*W`, a for step, top level), a literal's `Str` element, a store through a `*Str` (`*ps`, `**pp`), and `return` from a
+# fn returning `Str` (a tail call too) is refused with the position's words, as into a `P`; each stored or returned the
+# struct's first word as the header's address. Controls in SPK1. ---
+MSF="cannot copy 'mkq' into a struct field of a different struct type: 's'"
+row SP1 "$HQ"'
+fn go(): i64 { var w: W = W { 0, 1 }; w.s = mkq(); return f(w.s); }'
+refused SP1 "$MSF" "\`w.s = mkq();\` into a local's \`Str\` field"
+row SP2 "$HQ"'
+var GW: W = W { 0, 0 };
+fn go(): i64 { var q: Q1; GW.s = (q); return 0; }'
+refused SP2 "cannot copy 'q' into a struct field of a different struct type: 's'" "\`GW.s = (q);\` into a global's"
+row SP3 "$HQ"'
+fn go(): i64 { var q: Q1; var pq: *Q1 = &q; var p: *W = new_w(); p.s = *pq; return 0; }'
+refused SP3 "cannot copy '*pq' into a struct field of a different struct type: 's'" "\`p.s = *pq;\` through a \`*W\`"
+row SP4 "$HQ"'
+fn go(): i64 { var w: W = W { 0, 1 }; var x: WQ; var i = 0; for (i = 0; i < 1; w.s = x.q) { i = i + 1; } return 0; }'
+refused SP4 "cannot copy 'q' into a struct field of a different struct type: 's'" "a for step's \`w.s = x.q\`"
+row SP5 "$HQ"'
+fn go(): i64 { var q: Q1; var w: W = W { q.mk(), 1 }; return f(w.s); }'
+refused SP5 "cannot copy 'Q1.mk' into a struct field of a different struct type: 's'" "\`W { q.mk(), 1 }\`, a literal's \`Str\` element"
+cat > "$T/SP6.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct Q1 { a; }
+struct W { s: Str; n; }
+fn mkq(): Q1 { var q: Q1; q.a = 5; return q; }
+var GW = W { mkq(), 1 };
+GW.s = mkq();
+syscall(60, str_len(GW.s));
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" SP6
+    if [ "$crc" -ne 0 ] && [ "$(grep -c "^error.*$MSF" "$T/SP6.$leg.err")" -eq 2 ] && [ "$(grep -c '^error\|^warning' "$T/SP6.$leg.err")" -eq 2 ] && [ ! -s "$T/SP6.$leg" ]; then ok "SP6 top level: a zone literal's element and a field store, both refused ($leg)"
+    else bad "SP6 top level ($leg): rc $crc: $(grep '^error\|^warning' "$T/SP6.$leg.err" | tr '\n' '|')"; fi
+done
+row SP7 "$HQ"'
+fn go(): i64 { var q: Q1; var ps: *Str = new_slot(); *ps = q; return 0; }'
+refused SP7 "cannot copy 'q' into a variable of a different struct/vector type: 'ps'" "\`*ps = q;\` through a \`*Str\`"
+row SP8 "$HQ"'
+fn go(): i64 { var h: Str = str_from("x"); var p: *Str = &h; var pp: **Str = &p; **pp = mkq(); return 0; }'
+refused SP8 "cannot copy 'mkq' into a variable of a different struct/vector type: 'pp'" "\`**pp = mkq();\` through a \`**Str\`"
+row SP9 "$HQ"'
+fn r(): Str { return mkq(); }
+fn go(): i64 { return f(r()); }'
+refused SP9 "a fn returning the struct \`Str\` takes a value of that struct, or a pointer to one — got \`mkq\` (a \`Q1\`)" "\`return mkq();\` (a tail call) from a fn returning \`Str\`"
+row SP10 "$HQ"'
+fn r(pq: *Q1): Str { return (*pq); }
+fn go(): i64 { var q: Q1; return f(r(&q)); }'
+refused SP10 "a fn returning the struct \`Str\` takes a value of that struct, or a pointer to one — got \`*pq\` (a \`Q1\`)" "\`return (*pq);\` from a fn returning \`Str\`"
+row SPK1 "$HQ"'
+fn r(): Str { return str_from("abcd"); }
+fn go(): i64 { var w: W = W { str_from("ab"), 1 }; w.s = str_from("abc"); var w2: W = W { w.s, 2 }; var h: Str = str_from("x"); var p: *Str = &h; *p = r(); var q: Q1; var pq: *Q1 = &q; w.s = pq; var a = 0; if (w.s == pq) { a = 1; } return a * 100 + str_len(w2.s) * 10 + str_len(h); }'
+runs SPK1 134 "controls: a \`: Str\` call / field into a \`Str\` field and a literal, through a \`*Str\`, a \`*Q1\` rebinding a field"
+# --- NS: 6.7.17 (the user's D19, 2026-10-22) `*p` of a `*Str` as a nested struct field's element reaching a `Str` first
+# leaf is p, as the direct literal `WS { *p, 1 }` stores it; it stored the header's data word (exit 50 on every target).
+# A `Str` value off the field's first-leaf chain is refused by name, as a `Str` name there is (NS2). ---
+cat > "$T/NS1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn main(): i64 { alloc_init(); var a = str_from("abcdefg"); var p: *Str = a; var o = O { *p, 1, 2 }; if (o.v.s == a) { return 10; } if (o.v.s == load64(a)) { return 50; } return 99; }
+syscall(60, main());
+EOF
+runs NS1 10 "the D19 filed repro, verbatim (was 50: the header's data word)" "$XLEGS $OLEGS"
+row NS2 'struct WI { n; m; }
+struct O2 { v: WI; k; }
+fn go(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = O2 { *p, 1, 2 }; return o.k; }'
+refused NS2 "cannot copy '*p' into a struct field of a different struct type: 'v'" "\`O2 { *p, 1, 2 }\`: a \`Str\` value off the first-leaf chain (it carried the data word into v.n)"
+# NS3 / NS4 (6.7.17, met in the D19 bite): `*(&t)` of an inline `Str` is t (6.7.16's D71), so as a nested element it is
+# refused as `O { t, 1, 2 }` is, named at t; it carried t's data word into the field's first leaf, silently.
+row NS3 'struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var o = O { *(&t), 1, 2 }; return o.m; }'
+refused NS3 "cannot copy 't' into a struct field of a different struct type: 'v'" "\`O { *(&t), 1, 2 }\` of a frame's t"
+row NS4 'struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn go(): i64 { var o = O { (*&gt), 1, 2 }; return o.m; }'
+refused NS4 "cannot copy 'gt' into a struct field of a different struct type: 'v'" "\`O { (*&gt), 1, 2 }\` of an inline global"
+# --- CA: 6.7.17 (the user's D20, 2026-10-22) `*(&t) = v` with t a closure's captured inline `Str` copies v's header into
+# the closure's copy of t, as `*(&t) = v` of a local t does (6.7.16's D71) and a captured struct's `*(&s) = v` does
+# (6.7.13); it wrote v's first word into the copy's data word (exit 7). Another struct is refused as `t = mkq()` is (CA2). ---
+cat > "$T/CA1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+fn main(): i64 { alloc_init(); var t: Str = Str { "abcdefg", 7 }; var v = str_from("xy"); var f = |k| { *(&t) = v; return t.len + k; }; return fncall1(f, 0); }
+syscall(60, main());
+EOF
+runs CA1 2 "the D20 filed repro, verbatim (was 7: v's word into the copy's data word)" "$XLEGS $OLEGS"
+row CA2 'include "lib/fnptr.cyr"
+struct Q1 { a; }
+fn mkq(): Q1 { var q: Q1; return q; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var f = |k| { *(&t) = mkq(); return t.len + k; }; return fncall1(f, 0); }'
+refused CA2 "cannot copy 'mkq' into a variable of a different struct/vector type: 't'" "a closure's \`*(&t) = mkq();\` (it stored Q1's word)"
+# CA3 (6.7.17, met in the D20 bite): a captured t's `*(&t) += 1` is refused as a local t's is (X29) and a captured
+# struct's `*(&s) += 1` is; it stepped the copy's data word, silently.
+row CA3 'include "lib/fnptr.cyr"
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var f = |k| { *(&t) += 1; return t.len + k; }; return fncall1(f, 0); }'
+refused CA3 "compound assignment to struct 't' is refused - a struct value is not an integer or a float (write \`a = a + b\`)" "a closure's \`*(&t) += 1\` of its captured t"
+# --- NM: 6.7.17 (the user's D21, 2026-10-22) a `Str` field's NAMED initialiser compiles, as the positional `V { a, 1 }`
+# does, with the same `Str` field checks; it was "named init not supported for nested struct fields — use positional". ---
+cat > "$T/NM1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct V { s: Str; n; }
+fn main(): i64 { alloc_init(); var a = str_from("abc"); var v = V { s: a, n: 1 }; return str_len(v.s) + v.n; }
+syscall(60, main());
+EOF
+runs NM1 4 "the D21 filed repro, verbatim (was refused)" "$XLEGS $OLEGS"
+row NM2 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: W = W { n: 1, s: t }; return f(w.s); }'
+refused NM2 "$MF" "\`W { n: 1, s: t }\` of a frame's t: refused as would-dangle, as \`W { t, 1 }\` is"
+row NM3 "$HQ"'
+fn go(): i64 { var w: W = W { s: mkq(), n: 1 }; return f(w.s); }'
+refused NM3 "$MSF" "\`W { s: mkq(), n: 1 }\`: another struct refused, as positionally (D18)"
+# --- ZS: 6.7.17 (the user's D22, 2026-10-22) an untyped top-level `var bb = str_from("xyz");` is a `Str` (a handle
+# global, its value unchanged), in the declaration zone and after the first statement, as in a fn; `bb.len` was "no struct
+# type in scope for 'bb'". A name keeps its word (D22a / D22b above, 6.7.14's D22 (b)). ---
+cat > "$T/ZS1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+alloc_init();
+var bb = str_from("xyz");
+syscall(60, bb.len);
+EOF
+runs ZS1 3 "the D22 filed repro, verbatim (was refused)" "$XLEGS $OLEGS"
+cat > "$T/ZS2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var bb = str_from("xyz");
+fn rd(): i64 { return bb.len; }
+alloc_init();
+syscall(60, rd());
+EOF
+runs ZS2 3 "the filed zone line: \`var bb = str_from(..);\` above a fn reading \`bb.len\`"
+
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
 cat > "$T/CMP.cyr" <<'EOF'
@@ -1108,7 +1386,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=88   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=126   # 6.7.17: + SH1-SH15 (no SH13), SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1, ZS2 (D22); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

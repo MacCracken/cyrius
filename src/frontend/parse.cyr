@@ -4624,7 +4624,7 @@ fn _hl_small_copy(S, noff, src_noff, dt): i64 {
     _agc_src_operand(S, src_noff);
     var sh = _agc_hdl();
     if (dh == 1) { if (sh == 1) { return 0; } }
-    if (_AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff) == 1) { return _agc_refd(); }
+    if (_asg_type_err(S, dt, _agc_t, noff, src_noff) == 1) { return 0; }   # 6.7.17: no warning beside it
     # A CAPTURED handle or `*T` (B7-1c) is a source the copy goes through (its word is the address),
     # never a rebind — as over 8 B, where `_agc_src_operand` answers a capture as a value.
     if (_agc_li == 0 - 2) { sh = _hl_cap_addr(S, src_noff); }
@@ -4690,7 +4690,7 @@ fn _asg_dstar(S, noff, term): i64 {
     var ps = _hl_dstar_x(S, GTI(S), term, 2);
     if (ps <= 0) { return 0; }
     if (_dx_plain(S, ps) == 0) { return _istr_dxa(S, noff, ps, term); }   # 6.7.15 (D14): `t = *p` of a `*Str`
-    if (_agc_operand(S, noff) == 0) { return 0; }
+    if (_agc_operand(S, noff) == 0) { return _istr_hdx(S, noff, ps); }   # 6.7.17 (D18): into a `Str` handle
     if (_asg_dpp_rebind() == 1) { return 0; }
     var dt = _agc_t;
     if (dt >= 0) { return 0; }
@@ -4762,7 +4762,7 @@ fn _sca_mismatch(S, fi, noff): i64 {
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
     if (_agc_hdl() == 1) { if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, rs - 1) > 8) { return 0; } } }
-    return _AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - rs, noff, PEEKV(S));
+    return _asg_type_err(S, _istr_hdt(S, noff, _agc_t), 0 - rs, noff, PEEKV(S));   # 6.7.17: no warning; (D18) a `Str` handle
 }
 
 # The copy both struct-call assignments end with: temp `t` (field-0 slot, `n` slots of struct
@@ -5803,7 +5803,7 @@ fn _deref_store(S, term): i64 {
             var ti = GTI(S);
             if (_istr_dsdx(S, d, ti, term) == 0) {   # 6.7.16 (D73): `*q = *p` through a `*Str` stores p
                 _sc_beg = 0 - 1;   # 6.7.16 (D99): only this value's own struct-call record may match
-                PCMPE(S);
+                _istr_dsvc(S, d, ti, term);   # PCMPE; 6.7.17 (D18): a struct value of another type through a `*Str`
                 _dsr_sres(S, d, oe, ti);   # 6.7.16 (D99): a struct result over 8 B through a `*i64`
                 _dst_fk_chk(S, ed, ti, d);   # an f32 element: the field's checks; 6.7.16 (D70): `*(&f)` / `*(&b)`
                 _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
@@ -5974,14 +5974,16 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
 # 1 after that refusal, for the statement: its typed-pointer warning is not given about the tuple
 # (its slot type is `0 - sid`, the pointer form). Cleared by each statement assignment. CHANGELOG [6.7.11]
 var _asg_tup_refd = 0;
-# ⛔ 6.7.17 — A REFUSED COPY FROM A STRUCT GLOBAL OF ANOTHER TYPE DRAWS NO TYPED-POINTER WARNING BESIDE IT: `GP = GU;`,
-# `p = GU;` (a `*P` destination) and even `t = GU;` into an inline P local, a for step too, printed "assigning
-# non-pointer to typed pointer" after "cannot copy 'GU' into a variable of a different struct/vector type" — the
-# statement's value store went on and judged the global's address. The statement is marked refused, as 6.7.16's DSW
-# rows mark `l = *pq`. 0 (the arm's "not a copy"). CHANGELOG [6.7.17]
-fn _agc_refd(): i64 {
+# ⛔ 6.7.17 — AN ASSIGNMENT REFUSED FOR ITS STRUCT TYPE IS ONE DIAGNOSTIC. `pp = mkq();` into a `*P`, `h = GQ;` into a `P`
+# handle from an inline struct global of another type and `l = w.q;` from a struct-typed field of another type each
+# gave "assigning non-pointer to typed pointer" beside the refusal "cannot copy .. into a variable of a different
+# struct/vector type": the statement went on to judge the value the refusal had already named. `_AGG_ASSIGN_TYPE_ERR`
+# at an assignment's arm, and the statement's warning withheld (as R12's and the dereference's refusals withhold it).
+# 1 = refused. CHANGELOG [6.7.17]
+fn _asg_type_err(S, td, ts, dnoff, snoff): i64 {
+    if (_AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff) == 0) { return 0; }
     _asg_tup_refd = 1;
-    return 0;
+    return 1;
 }
 fn _tup_asg_chk(S, noff, st): i64 {
     _agc_operand(S, noff);
@@ -6000,7 +6002,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     var st = GTI(S);
     _agc_operand(S, noff);
     var dt = _agc_t;
-    _fla_arm(st, dt);
+    _fla_arm(st, _istr_hdt(S, noff, dt));   # 6.7.17 (D18): a struct field into a `Str` handle is recorded, refused
     var fs = _fla_stp;
     if (term == 11) { _fla_stp = st; }   # 6.6.20: a for step's field source ends at `)`
     var w = _sc_arm(S);
@@ -6023,7 +6025,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     }
     var n = _agc_operand(S, noff);
     if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
-    if (_agg_sc_err(S, _agc_t, noff) == 1) { return _asa_term(S, term); }   # 6.7.15: `Pt.dup`; no store, no warning
+    if (_agg_sc_err(S, _istr_hdt(S, noff, _agc_t), noff) == 1) { return _asa_term(S, term); }   # 6.7.15: `Pt.dup`; 6.7.17 (D18): a `Str` handle
     if (t == 0 - 3) { return _hl_res_into(S, term, _sc_sid); }   # 6.7.10 (B7-1): into a handle
     if (_agc_t == 0) { if (_asa_rec(S, noff, st, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
     if (n <= 1) { return 0; }
@@ -6044,6 +6046,44 @@ fn _agg_sc_err(S, td, noff): i64 {
     if (td == 0 - _sc_sid) { return 0; }
     _err_ident_fn(S, "cannot copy ", _sc_fn, _sc_fi, " into a variable of a different struct/vector type: ", noff);
     return 1;
+}
+# ⛔ 6.7.17 — A STRUCT VALUE OF ANOTHER TYPE INTO A `Str` HANDLE IS REFUSED BY NAME (the user's D18, 2026-10-22), as
+# into a `P` handle: `h = mkq();` with `h` a `Str` local, parameter or global and `mkq` returning a
+# `Q1` — a call, method, operator, if-expression, field, name, dereference, wrapped, in a fn, a for step or at top
+# level — stored the struct's first word as the header's address, silently (SIGSEGV at the next `str_len(h)`). `Str` is
+# kept out of the aggregate operand (`_agc_plain_big`, 6.6.16's C2) because it is a heap handle every assignment
+# rebinds, not because it takes other structs: `var h: Str = mkq();` was already refused. The type checks ask this for
+# the destination's struct type: `dt` as `_agc_operand` left it, or for a `Str` handle `0 - _STR_SID` (a handle or
+# `*T` source stays the rebind, `Str` itself the same type). A `*Str` name is no `Str` handle: it keeps 6.7.16's
+# "assigning non-pointer to typed pointer" (typed_pointer_warn_sign.sh SC1 / SC6). CHANGELOG [6.7.17]
+fn _istr_hdt(S, noff, dt): i64 {
+    if (dt != 0) { return dt; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return dt; }
+    if (_agc_ovr_is(noff) == 1) { return dt; }
+    var d = _istr_dst(S, noff);
+    if (d == 0) { return dt; }
+    if (d > 2) { return dt; }   # a `*Str` local / global
+    return 0 - ss;
+}
+# `h = q` — a NAME source `snoff` into a `Str` handle `noff` (`_try_aggregate_copy_assign`'s one-slot exit): refused
+# when the name is a struct value of another type (a handle or a `*T` rebinds). Nothing emitted.
+fn _istr_hnm(S, noff, snoff): i64 {
+    var dt = _istr_hdt(S, noff, 0);
+    if (dt == 0) { return 0; }
+    _agc_src_operand(S, snoff);
+    if (_agc_hdl() == 1) { return 0; }
+    _asg_type_err(S, dt, _agc_t, noff, snoff);
+    return 0;
+}
+# `h = *pq` — a dereference of a `*U` (`ps` = U, a plain struct) into a `Str` handle `noff` (`_asg_dstar`): refused,
+# named from its `*`. `*pp` of a `**U` reads a `*U`: the rebind.
+fn _istr_hdx(S, noff, ps): i64 {
+    if (_hl_dpp != 0) { return 0; }
+    var dt = _istr_hdt(S, noff, 0);
+    if (dt == 0) { return 0; }
+    if (_agg_dx_err(S, dt, 0 - ps, noff) == 1) { _asg_tup_refd = 1; }
+    return 0;
 }
 # ⛔ 6.7.14 — D24 AT AN ASSIGNMENT (the user's decision D27 (a), 2026-10-16). `x = mkp();` / `x = b.mk();` / `x = a + c;`
 # / `x = fncall0(&mkp);` (a classic-for step too) with the struct result over 8 B and `x` a SCALAR — a local, a
@@ -6462,7 +6502,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
     var src_noff = TOKVAL(S, GTI(S));
     if (nslots <= 1) {
         if (dt < 0) { return _hl_small_copy(S, noff, src_noff, dt); }   # 6.7.10 (B7-1): + a handle
-        return 0;
+        return _istr_hnm(S, noff, src_noff);   # 6.7.17 (D18): a struct value into a `Str` handle
     }
     # ⛔ 6.6.16 (C2) — read whether the destination is a HANDLE (`_agc_hdl`) before the source
     # probe resets the globals. handle <- handle is a pointer REBIND — the one-word store below,
@@ -6480,7 +6520,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
     if (dh == 1) { if (_agc_hdl() == 1) { return 0; } }
     # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
     # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
-    if (_AGG_ASSIGN_TYPE_ERR(S, lt, _agc_t, noff, src_noff) == 1) { return _agc_refd(); }
+    if (_asg_type_err(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }   # 6.7.17: no warning beside it
     if (snslots != nslots) { return 0; }
     if (_agc_t != lt) { return 0; }
     var src_li = _agc_li;
