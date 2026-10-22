@@ -22,6 +22,9 @@
 #       before the fn's `}` (the next fn not "inside" it)
 #   P   a statement's `;` (src/frontend/parse.cyr): P1 an assignment before the fn's `}`, P2 / P3 break / continue
 #       before the loop's `}`, P4 a method call and P5 an explicit generic call before a `return`
+#   S1  the filing's s1 verbatim (`return 1 }`): one error, the next fn not "inside" it
+#   R   a `return`'s `;` (src/frontend/parse_fn.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
+#       R3 a call's return before the fn's `}`
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -31,6 +34,7 @@
 # is defined inside fn 'f'"); K green. On bc51aa5c6 (before `_resync_close`) RED: B1 B2 (the stray `{`'s `}` closed the
 # fn: "unexpected ';'" / "unexpected number 4", "return outside a fn body"). `_resync_close` without its own-`;`
 # exemption -> RED K3 ("expected '}', got end of file"). On 99355d191 (before parse.cyr's sites) RED: P1-P5.
+# On 11bbb4141 (before parse_fn.cyr's sites) RED: S1 R1-R3.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -167,6 +171,34 @@ fn f(): i64 {
 syscall(60, f());
 ' "error:<source>:4:5: expected ';', got return
 error:<source>:4:14: $UZ"
+
+# ---- R: a `return`'s `;` (PARSE_RETURN's arms, src/frontend/parse_fn.cyr)
+row S1 "the filing's s1 verbatim: return 1 } — one error" 'fn h(): i64 { return 1 }
+fn main(): i64 { return 2; }
+syscall(60, main());
+' "error:<source>:1:24: expected ';', got '}'"
+row R1 "return 1 } in a nested block" 'fn f(): i64 {
+    var a = 1;
+    if (a == 1) { return 1 }
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:3:28: expected ';', got '}'
+error:<source>:4:14: $UZ"
+row R2 "return a before a var" 'fn f(): i64 {
+    var a = 1;
+    return a
+    var b = zz;
+}
+syscall(60, f());
+' "error:<source>:4:5: expected ';', got var
+error:<source>:4:15: $UZ"
+row R3 "return h(1) } (a call's return)" 'fn h(a): i64 { return a; }
+fn f(): i64 { return h(1) }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+' "error:<source>:2:27: expected ';', got '}'
+error:<source>:3:24: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
