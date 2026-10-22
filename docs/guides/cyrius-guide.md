@@ -4759,6 +4759,19 @@ include "lib/string.cyr"
 # Textual inclusion — file contents replace the include line
 ```
 
+An include is a whole line: after the file name only blanks, one `;` and a `#` comment may
+follow (`include "x.cyr"`, `include "x.cyr";`, `include "x.cyr"  # note`). Anything else is
+refused at its first character (6.7.17, the user's D29, 2026-10-22):
+
+```text
+error:<source>:1:29: expected the end of the line after an include's file name
+```
+
+for `include "lib/syscalls.cyr"; var x = 42; syscall(60, x);` — through 6.7.16 the rest of
+the line was dropped unread (that program exited 0), and a second include on the line
+(`include "a.cyr"; include "b.cyr";`) was never read. Put each include, and each statement,
+on its own line.
+
 Includes are **include-once by spelling**: a second `include` of the same spelling is skipped, so a
 file's top-level statements run once and its fns are defined once. The key is the spelling as
 written, whole, at any length (`"./a.cyr"` and `"a.cyr"` are two spellings). A compilation unit

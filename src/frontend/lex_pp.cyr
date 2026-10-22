@@ -1149,6 +1149,30 @@ fn PP_INCLUDE_NEEDS_QUOTE(): i64 {
     return 0;
 }
 
+# ⛔ 6.7.17 — AN `include` LINE ENDS AT ITS FILE NAME (the user's D29, 2026-10-22). The file's text replaces the whole
+# line, so whatever followed the name was dropped unread: `include "lib/syscalls.cyr"; var x = 42; syscall(60, x);`
+# exited 0, and a second include on the line was never read. From `ip` (just past the name's closing quote) only blanks,
+# one `;`, a `#` comment and the line's end may follow; anything else is "expected the end of the line after an
+# include's file name" at its first byte (`_pp_err_at`: located, the build fails, the line is still included). Both
+# include sites call it — PP_PASS (the entry's own lines) and PP_IFDEF_PASS (an included file's). CHANGELOG [6.7.17]
+fn PP_INCLUDE_TAIL(S, base, ip, bl): i64 {
+    var p = _pp_blanks(base, ip, bl);
+    if (p < bl) { if (load8(base + p) == 59) { p = _pp_blanks(base, p + 1, bl); } }
+    if (p >= bl) { return 0; }
+    var c = load8(base + p);
+    if (c == 10 || c == 13 || c == 35) { return 0; }
+    _pp_err_at(S, base, p, "expected the end of the line after an include's file name");
+    return 0;
+}
+# The first offset at or past `p` (below `bl`) that is not a blank (a space or a tab).
+fn _pp_blanks(base, p, bl): i64 {
+    while (p < bl) {
+        if (PP_DBLANK(load8(base + p)) == 0) { return p; }
+        p = p + 1;
+    }
+    return p;
+}
+
 fn PP_FNAME_TOO_LONG(): i64 {
     syscall(SYS_WRITE, 2, "error: include/#ref filename exceeds 767 bytes\n", 47);
     syscall(SYS_EXIT, 1);
@@ -4688,6 +4712,7 @@ fn PP_PASS(S): i64 {
                                 }
                             }
                             store8(fname + fi, 0);
+                            PP_INCLUDE_TAIL(S, S + _SRCB, ip, bl);   # 6.7.17 (D29)
                             var sgo = 1;
                             while (sgo == 1) {
                                 if (ip >= bl) { sgo = 0; }
@@ -5117,6 +5142,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                     }
                                 }
                                 store8(fname + fi, 0);
+                                PP_INCLUDE_TAIL(S, tmp, ip, bl);   # 6.7.17 (D29)
                                 var sgo = 1;
                                 while (sgo == 1) {
                                     if (ip >= bl) { sgo = 0; }

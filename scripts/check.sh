@@ -1619,6 +1619,10 @@ _chk_gate "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
 # entry to the alloc'd spelling. The filed repro (128 / 127), 308 and 766 characters, two spellings sharing
 # 250, the count's edge; x86 / aarch64 / cx / PE / cycc_win. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/include_once_long_spelling.sh"
+# 6.7.17 (the user's D29) — an include line ends at its file name: source after the name on the line (`include "x"; var
+# y = 1;`, a second include) was dropped unread; now refused by name in both preprocessor copies (PP_PASS, PP_IFDEF_PASS:
+# PP_INCLUDE_TAIL). 12 rows on x86 / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/include_line_tail.sh"
 
 # v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
 # ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes

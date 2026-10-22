@@ -5,9 +5,12 @@
 #   A  an #assert's line ends at its `;` or the line's end (the user's D28 refuses anything else there): a statement
 #      after the `;` on its line runs, the line after a `;`-less message runs, and an impl's `#assert .., "m";` keeps
 #      the method after it
+#   I  an include line may end with `;` and a `#` comment (the user's D29 refuses anything else there): the two lines
+#      below are such controls, the second an include-once skip
 # WHY A CROSS-HOST TEST. Each reader is in the shared front end, but the consequence is a statement that runs or not,
 # on every target alike; these rows run on ecb / ach / cass / pi with the release gate's cross-OS leg.
-include "lib/assert.cyr"
+include "lib/assert.cyr"  # I: a comment after the file name
+include "lib/assert.cyr";  # I: `;` then a comment, on an include-once skip
 
 struct DleS { a; }
 impl DleS { #assert 1 == 1, "m"; fn five(self): i64 { return 5; } }
