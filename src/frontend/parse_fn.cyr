@@ -4053,6 +4053,7 @@ fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
         PRSTR("`");
     }
     PRSTR("\n");
+    _err_excerpt_at(S, ti);   # 6.7.17: the source line and caret, as every error has
     _had_error = 1;
     return 0;
 }
@@ -4245,6 +4246,7 @@ fn _rsr_print(S, ti, nm, usid, kind): i64 {
     if (kind == 1 || kind == 3) { PRSTR("*"); }
     _sn_pr(S, usid);
     PRSTR("`)\n");
+    _err_excerpt_at(S, ti);   # 6.7.17: the source line and caret, as every error has
     _had_error = 1;
     return 0;
 }
@@ -8168,6 +8170,7 @@ fn _refuse_struct_tuple_return(S): i64 {
     PRSTR("` returns that struct — `");
     if (_tup_commas(S, GTI(S)) > 1) { PRSTR("(a, b, c)"); } else { PRSTR("(a, b)"); }
     PRSTR("` is a tuple, another type\n");
+    _err_excerpt(S);   # 6.7.17: the source line and caret, as every error has
     _had_error = 1;
     return 0;
 }
@@ -8183,6 +8186,7 @@ fn _refuse_pair_return(S): i64 {
     syscall(SYS_WRITE, 2, "` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `", 105);
     _pair_ret_offender(S);
     syscall(SYS_WRITE, 2, "`\n", 2);
+    _err_excerpt(S);   # 6.7.17: the source line and caret, as every error has
     _had_error = 1;
     return 0;
 }

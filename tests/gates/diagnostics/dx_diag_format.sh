@@ -164,5 +164,13 @@ xm CR11 "error:<source>:4:8: undefined variable 'zw'" '    x, zw = two();' 8 'fn
 xm CR12 "error:<source>:1:29: undefined variable 'zq'$MI" 'fn g<T>(a: T): i64 { return zq + 1; }' 29 'fn g<T>(a: T): i64 { return zq + 1; }\nfn main(): i64 { return g(1) + g(2.0); }\nsyscall(60, main());\n'
 [ "$(grep -c '^error:' "$E")" = 1 ] || { echo "FAIL: CR12: the instance's report is not once:"; cat "$E"; exit 1; }
 
-echo "PASS: dx diagnostics — column (:L:C:) + source excerpt + caret; no at-fail noise; a struct named as written (MN1-MN20); an undefined name at the name (CR1-CR12)"
+# ── 6.7.17 (met in FD1): the struct-return refusals printed their head line alone, where every other error shows
+# its source line and the caret: EX1 the 9-16 B pair class, EX2 a call returning another struct, EX3 a tuple literal,
+# EX4 `&q` of a handle.
+xm EX1 'error:<source>:4:28: a fn returning the 9-16 byte struct `B<Q>` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `c`' 'fn mk(c: C): B<Q> { return c; }' 28 'struct Q { a; }\nstruct B<T> { v: T; w: T; }\nstruct C { a; b; }\nfn mk(c: C): B<Q> { return c; }\nfn main(): i64 { return 0; }\nsyscall(60, main());\n'
+xm EX2 'error:<source>:4:35: a fn returning the struct `B<i32>` takes a value of that struct, or a pointer to one — got `gq(&q)` (a `*Q`)' 'fn f(): B<i32> { var q: Q; return gq(&q); }' 35 'struct B<T> { v: T; w: i64; u: i64; }\nstruct Q { a; b; c; }\nfn gq(q: *Q): *Q { return q; }\nfn f(): B<i32> { var q: Q; return gq(&q); }\nfn main(): i64 { return 0; }\nsyscall(60, main());\n'
+xm EX3 'error:<source>:2:20: a fn returning the struct `Q` returns that struct — `(a, b)` is a tuple, another type' 'fn f(): Q { return (1, 2); }' 20 'struct Q { a; b; c; }\nfn f(): Q { return (1, 2); }\nsyscall(60, 0);\n'
+xm EX4 'error:<source>:4:52: a fn returning the struct `S8` takes a value of that struct, or a pointer to one — `&q` is the address of q'"'"'s slot, not a struct — return q' 'fn h(): S8 { var q: S8 = alloc(8); q.v = 3; return &q; }' 52 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\nstruct S8 { v; }\nfn h(): S8 { var q: S8 = alloc(8); q.v = 3; return &q; }\nfn main(): i64 { alloc_init(); var c: S8 = h(); return c.v == 3; }\nsyscall(60, main());\n'
+
+echo "PASS: dx diagnostics — column (:L:C:) + source excerpt + caret; no at-fail noise; a struct named as written (MN1-MN20); an undefined name at the name (CR1-CR12); every struct-return refusal with its excerpt (EX1-EX4)"
 exit 0
