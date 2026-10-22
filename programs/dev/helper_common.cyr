@@ -610,7 +610,7 @@ fn hc_access_x(pathc): i64 {
 fn hc_mtime_ns(pathc): i64 {
     var st[256];
     if (sys_stat(pathc, &st) != 0) { return 0 - 1; }
-    return load64(&st + 88) * 1000000000 + load64(&st + 96);
+    return load64(&st + STAT_MTIME) * 1000000000 + load64(&st + STAT_MTIME_NSEC);
 }
 
 # The entries of a directory (no . and ..), unsorted, as a vec of Str; 0 when it cannot be listed.

@@ -66,7 +66,9 @@
 #                      cyrius.cyml, as `cyrius init` makes) is never the cyrius checkout — the
 #                      resolver walks past it, and regen_issue_index, ab, place, fixpoint, xb and
 #                      probe refuse it and write nothing; one named cyrius is found from a subdir
-# FLOOR: the axis count is at least 19.
+#   stat fields        every stat buffer the helpers read goes through lib's STAT_* constants (the
+#                      macOS layouts differ), never a numeric offset
+# FLOOR: the axis count is at least 20.
 #
 # MUTATION LEDGER (each measured RED, then restored):
 #   regen_issue_index's automatic label inserted after the first LATER release   -> RED regen
@@ -91,6 +93,7 @@
 #   tomlcheck's frame limit 1001, not 1000                                         -> RED cymlcheck
 #   _hc_is_cyrius_checkout back to the filename probe (src/main.cyr + cyrius.cyml) -> RED default checkout
 #   release/common.cyr's prefix back to `hc_ccat(RC_PROG, ": ")` (a C string as a Str) -> RED place
+#   xb's mtime read back at `&st + 88` / `&st + 96`                                -> RED stat fields
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dev_helpers_match_golden: cannot cd to $ROOT"; exit 1; }
@@ -704,8 +707,27 @@ done
 [ "$ncyr" -ge 15 ] || _fail "the programs/ scan read only $ncyr .cyr files (floor 15)"
 _axis_end "scripts/ holds no Python ($nscan files read: no *.py, no python #! line); no string in $ncyr helper sources names a replaced script"
 
+# ── stat fields through lib's layout (6.7.17's review) ───────────────────────────────────
+# A stat buffer's fields sit at other offsets on other targets (st_mtime: 88 on Linux x86_64 and
+# aarch64, 40 on macOS x86_64, 48 on macOS arm64), and lib/syscalls_*.cyr names each one STAT_*.
+# hc_mtime_ns and xb's freshness walk read st_mtime at 88 / 96 and roadmap_state st_size at 48 —
+# right on Linux only, byte-identical once spelled STAT_*. Every buffer a helper hands to sys_stat /
+# sys_lstat / sys_fstat is read through STAT_*, never at a number; the one exception is hc_pwd's
+# "same directory?" compare, whole words at 0 and 8 (dev and inode on every layout).
+_axis_begin
+nst=0
+for f in $(find programs/dev programs/folds programs/release -type f -name '*.cyr' | LC_ALL=C sort); do
+    for b in $(grep -oE 'sys_[lf]?stat\([^;&]*&[A-Za-z_][A-Za-z0-9_]*' "$f" | sed 's/.*&//' | LC_ALL=C sort -u || true); do
+        nst=$((nst + 1))
+        hits=$(grep -nE "load(8|16|32|64)\(&$b \+ [0-9]" "$f" | grep -vF 'load64(&a + 8) == load64(&b + 8)' | cut -d: -f1 | tr '\n' ' ' || true)
+        [ -z "$hits" ] || _fail "$f reads stat buffer $b at a numeric offset (line(s) $hits): lib's STAT_* names each field"
+    done
+done
+[ "$nst" -ge 5 ] || _fail "the stat-buffer census found only $nst buffers (floor 5)"
+_axis_end "stat fields: the $nst stat buffers in the helpers are read through lib's STAT_* layout, never at a number"
+
 # ── verdict ──────────────────────────────────────────────────────────────────────────────
-[ "$AXES" -ge 19 ] || _fail "only $AXES axes ran (floor 19)"
+[ "$AXES" -ge 20 ] || _fail "only $AXES axes ran (floor 20)"
 if [ "$FAILS" -ne 0 ]; then
     echo "FAIL: $NAME: $FAILS case(s) differ from the replaced scripts' output"
     exit 1

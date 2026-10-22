@@ -70,7 +70,7 @@ fn _newer_cyr(dir, ns): i64 {
         var p = hc_joinc(dir, hc_cstr(e));
         var st[256];
         if (sys_lstat(hc_cstr(p), &st) == 0) {
-            var mt = load64(&st + 88) * 1000000000 + load64(&st + 96);
+            var mt = load64(&st + STAT_MTIME) * 1000000000 + load64(&st + STAT_MTIME_NSEC);
             if (hc_suf(e, ".cyr") == 1 && mt > ns) { return 1; }
             if ((load32(&st + STAT_MODE) & 0xF000) == 0x4000) {
                 if (_newer_cyr(p, ns) == 1) { return 1; }
