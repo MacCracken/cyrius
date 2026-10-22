@@ -382,7 +382,8 @@ fw5() {   # <row> <file in $D> <want warnings: `L:C` per line, or empty> <want e
 # whole (`(h.name)`, `((str_from(..)))` — into the local and a handle too, where a wrapped value warned while the bare
 # one did not). SF0 the filed repro verbatim (2 warnings before, exit 6); SF1 nested `w.h.name` (5 before); SF2 the
 # siblings (13 before); SF3 controls: an i64 field (`h.n`, wrapped too) and a value the parentheses do not wrap whole
-# still warn, at their lines (the zone's at its replay, last). Warning text only: every row's binary is the one before (exits unchanged).
+# still warn, at their lines (the zone's 7:20 first: in source order since 6.7.17's ZR1 — it printed last, at its
+# replay, until then). Warning text only: every row's binary is the one before (exits unchanged).
 #   the lane's compiler before the bite (7bab85ee)                -> RED SF0 SF1 SF2 (2, 5 and 13 warnings)
 #   `_tp_call_pointee` with 6.7.16's earlier calls-only test      -> RED SF0 SF1 SF2 (the fields, the names, the wraps)
 #   `_tpv_peel` refusing any wrap                                 -> RED SF2 (the wrapped siblings, the handle)
@@ -491,7 +492,7 @@ fn main(): i64 {
 }
 syscall(60, main());
 EOF
-fw5 "SF3 (controls: an i64 field, wrapped too, and a value its parentheses do not wrap whole still warn)" sf3.cyr "13:22 14:24 15:13 17:12 18:31 19:28 7:20" 0
+fw5 "SF3 (controls: an i64 field, wrapped too, and a value its parentheses do not wrap whole still warn)" sf3.cyr "7:20 13:22 14:24 15:13 17:12 18:31 19:28" 0
 [ "$F5N" -ge 20 ] || bad "SF: the five-leg rows ran $F5N row-legs (floor 20)"
 
 if [ "$fail" -ne 0 ]; then echo "FAIL false_warnings_valid_shapes: $fail row(s) red"; exit 1; fi

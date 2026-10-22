@@ -451,14 +451,14 @@ syscall(60, yy);
 ' "error:<source>:2:15: a \`struct\` declaration $IR a block
 error:<source>:2:35: undefined variable 'zz' (missing include or enum?)
 error:<source>:3:13: undefined variable 'yy' (missing include or enum?)"
-one "NS6 an impl method, a closure (the zone's, replayed last), a nested block" 'struct P { x; }
+one "NS6 an impl method, a closure (the zone's), a nested block: in source order" 'struct P { x; }
 impl P { fn m(self): i64 { union U { x; } return 1; } }
 var g = |x| { enum E { A, B } return x; };
 fn f(): i64 { if (1 == 1) { struct Q { y; } } return 1; }
 syscall(60, f());
 ' "error:<source>:2:28: a \`union\` declaration $IR a fn body
-error:<source>:4:29: a \`struct\` declaration $IR a fn body
-error:<source>:3:15: an \`enum\` declaration $IR a fn body"
+error:<source>:3:15: an \`enum\` declaration $IR a fn body
+error:<source>:4:29: a \`struct\` declaration $IR a fn body"
 one "NS7 a switch case, @unsafe in a fn" 'fn f(x): i64 { switch (x) { case 1: struct Q { y; } return 2; } return 1; }
 fn g(): i64 { @unsafe { trait T { fn m(self): i64; } } return 1; }
 syscall(60, f(1) + g());
@@ -589,8 +589,8 @@ var g = |x| { pub var y = x; return y; };
 fn f(x): i64 { switch (x) { case 1: use m.g; return 2; } return 1; }
 syscall(60, f(1));
 ' "error:<source>:2:28: a \`mod\` declaration $IR a fn body
-error:<source>:4:37: a \`use\` declaration $IR a fn body
-error:<source>:3:15: a \`pub\` declaration $IR a fn body"
+error:<source>:3:15: a \`pub\` declaration $IR a fn body
+error:<source>:4:37: a \`use\` declaration $IR a fn body"
 one "NM15 a pub with nothing after it: the block's } left" 'var a = 1;
 if (a == 1) { pub }
 syscall(60, a);
@@ -843,9 +843,9 @@ const C = Z.B;
 var y = g<i64>(1);
 var w = k<i64>(1);
 syscall(60, E.A + y + w);
-" "error:<source>:8:11: unknown name 'Z' in a const context
-error:<source>:6:1: an \`enum\` declaration $L5
+" "error:<source>:6:1: an \`enum\` declaration $L5
 error:<source>:7:1: a \`trait\` declaration $L5
+error:<source>:8:11: unknown name 'Z' in a const context
 error:<source>:10:16: generic 'k': its type argument does not implement trait 'Tv'"
 one "UE4 exact: a by-name Result parameter the inclusion did not declare" 'syscall(39);
 include "lib/str.cyr"
@@ -874,7 +874,6 @@ else printf '  FAIL: %-46s\n' "src/main_aarch64.cyr did not build"; fail=$((fail
 if "$CC" < src/main_cx.cyr > "$D/cc_cx" 2> /dev/null && [ -s "$D/cc_cx" ]; then chmod +x "$D/cc_cx"; LEGS="$LEGS cx"
 else printf '  FAIL: %-46s\n' "src/main_cx.cyr did not build"; fail=$((fail+1)); fi
 N5=0
-SET5=0
 comp5() {   # <leg> <src> <out> [cc-arg]: rc in CRC
     CRC=0
     case "$1" in
@@ -888,13 +887,11 @@ comp5() {   # <leg> <src> <out> [cc-arg]: rc in CRC
 row5() {   # <id> <what> <source> <want-lines> [cc-arg]
     printf '%s' "$3" > "$D/$1.cyr"
     printf '%s\n' "$4" > "$D/$1.want"
-    if [ "$SET5" = 1 ]; then LC_ALL=C sort -o "$D/$1.want" "$D/$1.want"; fi
     for leg in $LEGS; do
         o="$D/$1_$leg"
         comp5 "$leg" "$D/$1.cyr" "$o" "${5:-}"
         N5=$((N5 + 1))
         grep -E '^(error|warning)' "$o.err" > "$o.got" || true
-        if [ "$SET5" = 1 ]; then LC_ALL=C sort -o "$o.got" "$o.got"; fi
         if [ "$CRC" -eq 0 ]; then printf '  FAIL: %s %s: %s: rc 0\n' "$1" "$leg" "$2"; fail=$((fail+1))
         elif ! cmp -s "$o.got" "$D/$1.want"; then
             printf '  FAIL: %s %s: %s: got %s lines: %s\n' "$1" "$leg" "$2" "$(wc -l < "$o.got")" "$(tr '\n' '|' < "$o.got")"; fail=$((fail+1))
@@ -902,10 +899,6 @@ row5() {   # <id> <what> <source> <want-lines> [cc-arg]
         else printf '  ok: %s %s: %s\n' "$1" "$leg" "$2"; pass=$((pass+1)); fi
     done
 }
-# `row5s`: `row5` with the lines compared as a SET — the end-of-parse flush (`_dl_pw_flush`, 6.7.17) says a declaration
-# in a body pass 2 never parsed after the parse's other errors, not in source order, until the diagnostics are buffered
-# and sorted (issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md).
-row5s() { SET5=1; row5 "$@"; SET5=0; }
 ok5() {   # <id> <what> <source> <exit>
     printf '%s' "$3" > "$D/$1.cyr"
     for leg in $LEGS; do
@@ -1141,8 +1134,8 @@ row5 UI8 "--syntax-only: UI3's shape" "$(printf 'fn f(): i64 { trait Tr { fn m(s
 # once (UP7: three uses of one enum, one line). UP9 control: the default inherited (the body parsed) — the one report,
 # as before; UP11 `dyn Tr` / `impl Tr for P`; UP12 a kernel build's global replay (after the program; x86_64 ELF, a
 # kernel target) reaches the late flush. 6.7.17 (D33, the DI block below): every such declaration is said, used or not —
-# UP8 (unused: rc 0, exit 3 through 6.7.16) is refused, and UP10's unparsed Q is said beside the parsed one (a set: the
-# flush prints last).
+# UP8 (unused: rc 0, exit 3 through 6.7.16) is refused, and UP10's unparsed Q is said beside the parsed one (in source
+# order since ZR1 sorts the parse's reports; the flush printed last, so UP10 and DI8_4 compared a set until then).
 #   the lane before it (6059d821c)                   -> RED UP1-UP7 UP11 UP12 (rc 1 with no line, or the decl's
 #                                                       line missing), 41; UP8 UP9 UP10 green
 #   `_dl_pw_flush` returns at once                   -> RED UP1-UP7 UP11 UP12, 41
@@ -1152,8 +1145,8 @@ row5 UP1 "a trait default no impl inherits: its struct used" "$(printf 'trait T 
 row5 UP2 "an uninstantiated bounded generic's base: its struct used" "$(printf 'fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }\ntrait Show { fn s(self): i64; }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { return g(0); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
 row5 UP3 "a trait default's enum: E.B beside an undefined zz" "$(printf 'trait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn h(): i64 { return E.B + zz; }\nvar r = h();\nsyscall(60, r);\n')
-" "error:<source>:2:28: $ZZ
-error:<source>:1:29: an \`enum\` declaration $IR a fn body"
+" "error:<source>:1:29: an \`enum\` declaration $IR a fn body
+error:<source>:2:28: $ZZ"
 row5 UP4 "a trait default's trait: a bound naming it" "$(printf 'trait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nfn g<U: Tr>(x: U): i64 { return 1; }\nfn main(): i64 { return g<i64>(1); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`trait\` declaration $IR a fn body"
 row5 UP5 "a trait default's enum: a zone array size naming it" "$(printf 'var arr: i64[E.B];\ntrait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n')
@@ -1167,7 +1160,7 @@ row5 UP8 "unused: refused too (6.7.17, D33)" "$(printf 'trait T { fn d(self): i6
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
 row5 UP9 "control: the default inherited — its one report" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nstruct P { a; }\nimpl T for P { }\nfn g(q: *Q): i64 { return 1; }\nfn main(): i64 { var p = P { 1 }; return p.d() + g(0); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
-row5s UP10 "two bodies declaring Q, one parsed: both said (6.7.17)" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn a(): i64 { struct Q { y; } return 1; }\nfn g(q: *Q): i64 { return q.y; }\nsyscall(60, g(0) + a());\n')
+row5 UP10 "two bodies declaring Q, one parsed: both said (6.7.17)" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn a(): i64 { struct Q { y; } return 1; }\nfn g(q: *Q): i64 { return q.y; }\nsyscall(60, g(0) + a());\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body
 error:<source>:2:15: a \`struct\` declaration $IR a fn body"
 row5 UP11 "dyn Tr and impl Tr for P, Tr in a trait default" "$(printf 'struct P { x; }\nfn g(x: dyn Tr): i64 { return 1; }\nimpl Tr for P { fn m(self): i64 { return 1; } }\ntrait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nsyscall(60, 0);\n')
@@ -1183,7 +1176,8 @@ one "UP12 a kernel build (x86_64 ELF): a global's E.B, replayed after the progra
 # end of pass 1's tail walk unless a refused declaration declared the name. UZ1 / UZ2 the filed repros verbatim (two
 # errors each before); UZ3 several zone uses, of two late enums (one error per enum); UZ4 control: a zone const and a
 # zone #assert (one error, as before); UZ5 control: a VALID forward zone reference (no statement between) still says
-# "unknown name 'E'" once — after the pass-1 reports between it and the zone's end (UZ6: the struct field's); UZ7 a name
+# "unknown name 'E'" once — at its place, since 6.7.17's ZR1 prints the parse's reports in source order (UZ6: before the
+# struct field's below it; it printed after them, at the zone's end, until then); UZ7 a name
 # declared nowhere is reported in place; UZ8 a held report is said before an unmatched `}` stops the compile; UZ9
 # --syntax-only of UZ1.
 #   the lane before it (8c5be2e81)                   -> RED UZ1 UZ2 UZ3 UZ9 (the early "unknown name 'E'"), UZ6
@@ -1213,9 +1207,9 @@ row5 UZ4 "control: a zone const and a zone #assert" "$(printf 'const C = E.B;\n#
 row5 UZ5 "control: a valid forward zone reference is said once" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
 " "error:<source>:1:14: unknown name 'E' in a const context
 error:<source>:4:13: $ZZ"
-row5 UZ6 "control: ... after the pass-1 reports before the zone's end" "$(printf 'var arr: i64[E.B];\nstruct P { x: Zt; }\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
-" "error:<source>:2:15: unknown type 'Zt' for struct field 'x'
-error:<source>:1:14: unknown name 'E' in a const context
+row5 UZ6 "control: ... at its place among the pass-1 reports" "$(printf 'var arr: i64[E.B];\nstruct P { x: Zt; }\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
+" "error:<source>:1:14: unknown name 'E' in a const context
+error:<source>:2:15: unknown type 'Zt' for struct field 'x'
 error:<source>:5:13: $ZZ"
 row5 UZ7 "control: a name declared nowhere is said in place" "$(printf 'var arr: i64[Z.B];\nstruct P { x: Zt; }\nvar a = 1;\na = 2;\nsyscall(60, zz);\n')
 " "error:<source>:1:14: unknown name 'Z' in a const context
@@ -1311,7 +1305,7 @@ row5 DI8_2 "a closure in a bounded generic" "$(printf 'trait Show { fn s(self): 
 " "error:<source>:2:43: a \`struct\` declaration $IR a fn body"
 row5 DI8_3 "a block in an unparsed default" "$(printf 'trait T { fn d(self): i64 { if (1) { enum E { A } } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:38: an \`enum\` declaration $IR a fn body"
-row5s DI8_4 "an overridden default beside an inherited one" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } fn e(self): i64 { enum E { A } return 2; } }\nstruct P { k; }\nimpl T for P { fn d(self): i64 { return 5; } }\nfn main(): i64 { var p = P { 1 }; return p.e(); }\nvar r = main();\nsyscall(60, r);\n')
+row5 DI8_4 "an overridden default beside an inherited one" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } fn e(self): i64 { enum E { A } return 2; } }\nstruct P { k; }\nimpl T for P { fn d(self): i64 { return 5; } }\nfn main(): i64 { var p = P { 1 }; return p.e(); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body
 error:<source>:1:75: an \`enum\` declaration $IR a fn body"
 row5 DI8_5 "a refused nested fn's body, unused" "$(printf 'fn f(): i64 { fn g(): i64 { struct Q { y; } return 1; } return 0; }\nsyscall(60, f());\n')

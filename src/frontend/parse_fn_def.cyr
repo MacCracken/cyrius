@@ -1289,8 +1289,9 @@ fn _dl_inner_at(S, i, bk): i64 {
 # and since 6.7.16 a declaration there was reported only once a use of its name stood down. The walk above records
 # every declaration it meets in a body (`_dl_pw_rec`), and once everything is parsed — the top-level PARSE_PROG and the
 # global replay both ended (`_dl_pw_end`, `_dl_pw_late`: a kernel build replays after the program) — each is said at
-# its keyword in `_decl_inner`'s words, in source order, after the parse's other errors: `_dl_in_say` says a TOKEN
-# once (`_ce_err_dup`), so one pass 2 reported stays one line, and two bodies declaring one name are two.
+# its keyword in `_decl_inner`'s words (printed among the parse's other reports in source order: `_dl_pw_fin`, util.cyr
+# `_eb_end`): `_dl_in_say` says a TOKEN once (`_ce_err_dup`), so one pass 2 reported stays one line, and two bodies
+# declaring one name are two.
 # CHANGELOG [6.7.17]
 fn _dl_pw_rec(i, bk): i64 {
     if (i >= _dl_pw_skip0) { if (i < _dl_pw_skip) { return 0; } }

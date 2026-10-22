@@ -760,7 +760,7 @@ dlines f08c5 "F8c5: a count that differs only by a default (D13's refusal) — i
     "3:31: $DFL"
 dlines f08c6 "F8c6: a count mismatch beside a default — D13's line and the impl's, not the site's" \
     "${CQ}trait T2 { fn sh(self): f64; }\nimpl T2 for Q { fn sh(self, k, m = 1): f64 { return 1.0; } }\n${FC}${MQ}" \
-    "3:34: $DFL" "3:17: method 'sh' $CNT"
+    "3:17: method 'sh' $CNT" "3:34: $DFL"
 # F8bf1-F8bf4 — 6.7.16 (f16 FG2, D91): a member's bare `*fn` parameter is a type; the pair check compares it as one.
 F8F="cannot form dyn T2 from P - its method 'sh' does not match its declaration in trait T2: parameter 'cb' has another type"
 FF='fn f(q: *P): i64 { var o: dyn T2 = q; return o.sh(0); }\nfn main(): i64 { var p = P { 1, 2 }; return f(&p) + p.sh(0); }\nsyscall(60, main());\n'
