@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/frontend/pointer_type_positions.sh — 6.7.17 (the user's D93, 2026-10-22)
+# tests/gates/frontend/pointer_type_positions.sh — 6.7.17 (the user's D93 and D94, 2026-10-22)
 #
 # A POINTER TYPE IS A POINTER TYPE IN EVERY POSITION THAT TAKES ONE. The lanes met two positions that read one `*`
 # and then a name, where `var p: **i64` / `*fn( .. )` are types elsewhere:
@@ -7,6 +7,10 @@
 #      "undefined variable 'i64'", `slice<**i64>` was "expected '=', got '*'". `_tn_slice_ptr_el`
 #      (src/frontend/parse_types.cyr) now steps every `*` and reads the rest as `[*T]` reads T: the same 8-byte element,
 #      the same refusals by name.
+#   Z  (D94) a sizeof operand — `sizeof(*i64)` was "expected identifier, got '*'" (`sizeof(*fn(i64): i64)` a cascade),
+#      in an expression, a const context and `#assert` alike. `_sizeof_type` hands a `*` to `_sizeof_ptr`
+#      (src/frontend/parse_types.cyr), and the const evaluator's `_ce_sizeof` (src/frontend/parse_fn.cyr) passes it on:
+#      the `*`s and T stepped, T read as its own position reads it, the value 8.
 # Measured on the 6.7.17 wave-1 integration (l6717-integ 45c7ff467), x86_64; the parse is every target's.
 #
 #   P   the repro verbatim (`[**i64]`) and `slice<**i64>`, `[***i64]`, `[**fn(i64): i64]`, `slice<**fn>`: no error, no
@@ -15,9 +19,15 @@
 #   PG  a refusal behind two `*` is the one-star element's one line: an unknown name (PG1, PG2), a fn-pointer type's
 #       unknown name (PG3), a pointer to a slice (PG4), a generic struct's unknown argument (PG5); PG6 a control (a
 #       declaration-zone global's slice: the zone's line, as before)
+#   Z   the repro verbatim (`syscall(60, sizeof(*i64));`: exit 8), `sizeof(*fn(i64): i64)`, `sizeof(**fn)`, a const,
+#       an `#assert`: no error, no warning, the value on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine); ZL each under
+#       --syntax-only: rc 0, silent
+#   ZG  a refusal inside a sizeof operand behind a `*` is one line, sizeof's words: an unknown name (an expression, a
+#       const, `#assert` — no "#assert failed" beside it), a fn-pointer type's unknown name, `*( .. )`, `*[T]`, no type
+#       at all; ZG8 a control (a false `#assert` on the value 8 is "#assert failed", once)
 #   T   each values file on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine):
 #       "N passed, 0 failed (N total)", N derived from the file (one row per `assert_eq(`):
-#       tests/tcyr/crossos/slice_pointer_element_stars.tcyr (P)
+#       tests/tcyr/crossos/slice_pointer_element_stars.tcyr (P), tests/tcyr/crossos/sizeof_pointer_type.tcyr (Z)
 #
 # MUTATION LEDGER (2026-10-22; a scratch copy of the tree, this gate run from that copy with CYCC=<its compiler>;
 # measured):
@@ -25,6 +35,13 @@
 #       its src and build/cycc; `_tn_slice_ptr_el`        ']', got '*'" / "expected '=', got '*'"), PG1-PG5 (that line,
 #       stepping one `*`)                                 PG2 PG3 PG5 also "undefined variable 'Nope'"), T on every leg
 #                                                         (6: did not build) — PG6 (the zone's line) is a control
+#   MZ0 the tree before D94 (2c0dade0e's src, its     -> RED 39: Z1-Z5 on every leg (20) and Z1L-Z5L (5) ("expected
+#       2-stage compiler: sizeof reads a name only)       identifier, got '*'"), ZG1-ZG8 (8: that line, or "expected
+#                                                         ')', got '*'" in a const context), T sizeof_pointer_type on
+#                                                         every leg (6: did not build)
+#   MZ1 `_ce_sizeof` not passing a `*` on               -> RED 20: Z4 Z5 on every leg and Z4L Z5L (a const, an array
+#                                                         size, an #assert: "expected ')', got '*'"), ZG2 ZG3 ZG7 ZG8,
+#                                                         T sizeof_pointer_type on every leg
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -53,7 +70,7 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 
 # The values files and their floors: one row per `assert_eq(` call (none defines it). A floor keeps a gutted file from
 # passing.
-TCS="tests/tcyr/crossos/slice_pointer_element_stars.tcyr:10"
+TCS="tests/tcyr/crossos/slice_pointer_element_stars.tcyr:10 tests/tcyr/crossos/sizeof_pointer_type.tcyr:17"
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -152,6 +169,24 @@ refused PG5 "2:32: $NT as a type argument (a type argument is a struct, i8/i16/i
 refused PG6 "1:8: a slice cannot be declared in the declaration zone (6.7.8: slices are fn-locals) - declare it in a fn; a top-level slice after the first statement is used through slice_ptr / slice_len" \
     "PG6 control: a declaration-zone [**i64] is the zone's line, once" 'var G: [**i64] = 0;\nsyscall(60, 3);\n'
 
+echo "Z. a pointer type is a sizeof operand (D94): no error, no warning, 8"
+builds z1 "Z1 the repro verbatim, sizeof(*i64)" 8 'syscall(60, sizeof(*i64));\n'
+builds z2 "Z2 sizeof(*fn(i64): i64)" 8 'syscall(60, sizeof(*fn(i64): i64));\n'
+builds z3 "Z3 sizeof(**fn) + sizeof(***Pt) in a fn" 16 'struct Pt { x; }\nfn f(): i64 { return sizeof(**fn) + sizeof(***Pt); }\nsyscall(60, f());\n'
+builds z4 "Z4 a const and an array size" 9 'const C = sizeof(*i64);\nvar a: i64[sizeof(**u8)];\na[7] = 1;\nsyscall(60, C + a[7]);\n'
+builds z5 "Z5 an #assert, at top level and in a fn" 3 '#assert sizeof(*i64) == 8, "m"\nfn f(): i64 { #assert sizeof(*fn(i64): i64) == 8, "n"\n return 3; }\nsyscall(60, f());\n'
+
+echo "ZG. a refusal inside a sizeof operand behind a \`*\`: one line, sizeof's words"
+refused ZG1 "1:21: $NT in sizeof" "ZG1 sizeof(*Nope)" 'syscall(60, sizeof(*Nope));\n'
+refused ZG2 "1:19: $NT in sizeof" "ZG2 a const's sizeof(*Nope)" 'const C = sizeof(*Nope);\nsyscall(60, 3);\n'
+refused ZG3 "1:17: $NT in #assert sizeof" "ZG3 #assert sizeof(*Nope) (no \"#assert failed\" beside it)" '#assert sizeof(*Nope) == 8, "m"\nsyscall(60, 3);\n'
+refused ZG4 "1:24: $NT in sizeof" "ZG4 sizeof(*fn(Nope): i64)" 'syscall(60, sizeof(*fn(Nope): i64));\n'
+refused ZG5 "1:21: a tuple type cannot be a pointer target \`*( .. )\`" "ZG5 sizeof(*(i64, i64))" 'syscall(60, sizeof(*(i64, i64)));\n'
+refused ZG6 "1:21: a pointer to a slice is not a type (6.7.8: slices are fn-locals) - pass &s as a plain pointer and read slice_ptr / slice_len" \
+    "ZG6 sizeof(*[u8])" 'syscall(60, sizeof(*[u8]));\n'
+refused ZG7 "1:17: expected identifier, got '+'" "ZG7 #assert sizeof(*+): no type after the \`*\`" '#assert sizeof(*+) == 8, "m"\nsyscall(60, 3);\n'
+refused ZG8 "1:28: #assert failed: m" "ZG8 control: a false #assert on sizeof(*i64) is its one line" '#assert sizeof(*i64) == 4, "m"\nsyscall(60, 3);\n'
+
 for tc in $TCS; do
     TC=${tc%%:*}; FLOOR=${tc##*:}
     [ -f "$TC" ] || { bad "T: $TC is missing"; continue; }
@@ -169,4 +204,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a pointer type behind any number of \`*\` is a slice's pointer element (P, PG; the user's D93) and the values files (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a pointer type behind any number of \`*\` is a slice's pointer element (P, PG; the user's D93) and a sizeof operand, 8 (Z, ZG; the user's D94), and the values files (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

@@ -209,6 +209,7 @@ matches the **whole** name:
 | a type parameter in scope (`T`) | its argument's size | the `i64` base: 8 |
 | a tuple `(i64, f64)` (6.7.7) | — | 8 bytes per element; only a `var`, a parameter, a struct field and a multi-value return take it (`sizeof((..))` is refused) — see [Tuples](#tuples) |
 | `dyn Tr` (6.7.8) | — | two opaque words (16 bytes), wherever a struct type goes after a `:`; `sizeof(dyn Tr)` is refused — see [Trait objects](#trait-objects-dyn-678) |
+| a pointer `*T`, `**T`, `*fn( .. )`, a bare `*fn` | 8 | `sizeof(*i64)`, `sizeof(**Pt)`, `sizeof(*Box<i64>)`, `sizeof(*fn(i64): i64)` — in an expression, a const context and `#assert` — whatever T is; T is read as its position reads it (`sizeof(*Nope)` is *unknown type 'Nope' in sizeof*). 6.7.17, the user's D94; through 6.7.16 *expected identifier, got '*'* |
 
 `var a: T[N]` reserves exactly `N * sizeof(T)`. Inside a generic fn's instance a type
 parameter IS its argument: in `g<f64>`, `var y: T` and a parameter `x: T` are `f64`s (their `+`
