@@ -3,9 +3,16 @@
 # Not a program: they include it and call ci_run.
 #
 # The workflows: <copy>/.github/workflows/*.yml and *.yaml, in name order (hidden files skipped),
-# read by indentation alone — no YAML library: a job is a key under `jobs:`, a step a `- ` item
-# under a job's `steps:`, and a step's `name:`, `uses:`, `shell:`, `continue-on-error:` and `run:`
-# (one line, or a `|` / `|-` / `>` block of deeper-indented lines) are read.
+# read by indentation — no YAML library: a job is a key under `jobs:`, a step a `- ` item under a
+# job's `steps:`, and a step's `name:`, `uses:`, `shell:`, `continue-on-error:`, `env:`,
+# `working-directory:` and `run:` are read, with the job's and the workflow's `env:` and
+# `defaults.run` (`shell`, `working-directory`). The values are read as YAML reads them (6.7.17;
+# run-ci.py kept a quoted value's quotes and a plain one's ` #comment`, ran a dash-form `|-`
+# header as the script's first line, read `>` as `|`, and ignored env: and working-directory):
+# a quoted scalar's quotes and escapes, a plain one's trailing comment, and a block scalar (`|` or
+# `>`, a chomping indicator, an indentation digit, a header comment) folded or kept by YAML's
+# rules with its indentation found from its first line. A nested mapping under a step (`with:`)
+# stays its own. `if:` is NOT evaluated: every step runs.
 #
 # Shell selection follows GitHub on ubuntu: a step's own `shell:`, else the job's
 # `defaults.run.shell`, else the workflow's; `bash` means `bash --noprofile --norc -eo pipefail`,
@@ -22,14 +29,18 @@
 # any gating step failed, else 0.
 #
 # The environment each step gets is `env` (the caller's) with RUNNER_TEMP set and GITHUB_ENV /
-# GITHUB_PATH / GITHUB_OUTPUT / GITHUB_STEP_SUMMARY defaulted into it; `${{ github.event.repository
-# .name }}` is REPO_NAME (default: the copy's name) and any other `${{ … }}` renders empty, as on
-# GitHub. Read from `env`: REPO_NAME, RUNNER_TEMP (default <copy>/../runner_tmp), CI_TIMEOUT (each
-# step's seconds, default 1500; the step alone is killed at it), CI_JOB (run only that job),
-# CI_VERBOSE (set: the last 40 output lines of each failing step).
+# GITHUB_PATH / GITHUB_OUTPUT / GITHUB_STEP_SUMMARY defaulted into it, then the workflow's, the
+# job's and the step's `env:` (each over the one before); it runs in the copy, or in its
+# working-directory (the step's, else the job's default, else the workflow's). `${{
+# github.event.repository.name }}` is REPO_NAME (default: the copy's name) and any other `${{ … }}`
+# renders empty, as on GitHub. Read from `env`: REPO_NAME, RUNNER_TEMP (default
+# <copy>/../runner_tmp), CI_TIMEOUT (each step's seconds, default 1500; the step alone is killed
+# at it), CI_JOB (run only that job), CI_VERBOSE (set: the last 40 output lines of each failing
+# step).
 #
 # These replaced scripts/folds/run-ci.py, with byte-identical output (the golden row in
-# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+# tests/gates/toolchain/dev_helpers_match_golden.sh) but for the YAML it misread (that axis's
+# goldens are a PyYAML oracle's). CHANGELOG [6.7.17]
 
 include "programs/dev/helper_common.cyr"
 
@@ -96,7 +107,8 @@ fn _ci_match(l, out): i64 {
     return 1;
 }
 
-# A step: [name, run (vec of Str), shell (0 or Str), uses, coe]
+# A step: [name, run (vec of the script's lines), shell (0 or Str), uses, coe, env (vec of
+# [name, value]), working-directory (0 or Str)]
 fn _ci_step_new(name, uses): i64 {
     var st = vec_new();
     vec_push(st, name);
@@ -104,14 +116,18 @@ fn _ci_step_new(name, uses): i64 {
     vec_push(st, 0);
     vec_push(st, uses);
     vec_push(st, 0);
+    vec_push(st, vec_new());
+    vec_push(st, 0);
     return st;
 }
-# A job: [name, shell (0 or Str), steps (vec)]
+# A job: [name, shell (0 or Str), steps (vec), env (vec of [name, value]), working-directory]
 fn _ci_job_new(name): i64 {
     var j = vec_new();
     vec_push(j, name);
     vec_push(j, 0);
     vec_push(j, vec_new());
+    vec_push(j, vec_new());
+    vec_push(j, 0);
     return j;
 }
 
@@ -140,6 +156,11 @@ fn _ci_keys_has(ctx, k): i64 {
     return 0;
 }
 
+fn _ci_top_is(ctx, k): i64 {
+    if (vec_len(ctx) == 0) { return 0; }
+    return hc_eqc(vec_get(vec_get(ctx, vec_len(ctx) - 1), 1), k);
+}
+
 fn _ci_pair(ind, keyc): i64 {
     var p = vec_new();
     vec_push(p, ind);
@@ -147,31 +168,237 @@ fn _ci_pair(ind, keyc): i64 {
     return p;
 }
 
-var _ci_wf_shell = 0;
+# ── YAML scalars (6.7.17: run-ci.py kept the quotes, a comment and a block header's own line) ──
 
-# Parse one workflow file into its jobs (a vec); the workflow's shell goes to _ci_wf_shell.
+fn _ci_hexv(c): i64 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+
+# A one-line scalar's value: a double-quoted one with its escapes read, a single-quoted one with
+# '' read as ', a plain one without a trailing ` #comment`. An unclosed quote is kept as written.
+fn _ci_scalar(v): i64 {
+    if (hc_n(v) == 0) { return v; }
+    var q = hc_at(v, 0);
+    if (q == 34) {
+        var sb = hc_sb();
+        var i = 1;
+        while (i < hc_n(v)) {
+            var c = hc_at(v, i);
+            if (c == 34) { return hc_sbend(sb); }
+            if (c == 92 && i + 1 < hc_n(v)) {
+                var e = hc_at(v, i + 1);
+                i = i + 2;
+                if (e == 110) { hc_sbb(sb, 10); }
+                elif (e == 116 || e == 9) { hc_sbb(sb, 9); }
+                elif (e == 114) { hc_sbb(sb, 13); }
+                elif (e == 48) { hc_sbb(sb, 0); }
+                elif (e == 97) { hc_sbb(sb, 7); }
+                elif (e == 98) { hc_sbb(sb, 8); }
+                elif (e == 101) { hc_sbb(sb, 27); }
+                elif (e == 102) { hc_sbb(sb, 12); }
+                elif (e == 118) { hc_sbb(sb, 11); }
+                elif (e == 78) { hc_sb_cp(sb, 0x85); }
+                elif (e == 95) { hc_sb_cp(sb, 0xA0); }
+                elif (e == 76) { hc_sb_cp(sb, 0x2028); }
+                elif (e == 80) { hc_sb_cp(sb, 0x2029); }
+                elif (e == 120 || e == 117 || e == 85) {
+                    var nd = 2;
+                    if (e == 117) { nd = 4; }
+                    if (e == 85) { nd = 8; }
+                    var cp = 0;
+                    var k = 0;
+                    while (k < nd && i < hc_n(v) && _ci_hexv(hc_at(v, i)) >= 0) {
+                        cp = cp * 16 + _ci_hexv(hc_at(v, i));
+                        i = i + 1;
+                        k = k + 1;
+                    }
+                    hc_sb_cp(sb, cp);
+                }
+                else { hc_sbb(sb, e); }   # \\ \" \/ \ (space) and the rest: the character itself
+                continue;
+            }
+            hc_sbb(sb, c);
+            i = i + 1;
+        }
+        return v;
+    }
+    if (q == 39) {
+        var sb2 = hc_sb();
+        var j = 1;
+        while (j < hc_n(v)) {
+            var c2 = hc_at(v, j);
+            if (c2 == 39) {
+                if (j + 1 < hc_n(v) && hc_at(v, j + 1) == 39) { hc_sbb(sb2, 39); j = j + 2; continue; }
+                return hc_sbend(sb2);
+            }
+            hc_sbb(sb2, c2);
+            j = j + 1;
+        }
+        return v;
+    }
+    var m = 1;
+    while (m < hc_n(v)) {
+        if (hc_at(v, m) == 35 && (hc_at(v, m - 1) == 32 || hc_at(v, m - 1) == 9)) {
+            return hc_rstrip_set(hc_sub(v, 0, m), " \t");
+        }
+        m = m + 1;
+    }
+    return v;
+}
+
+# A block scalar header (`|` or `>`, then at most one chomping indicator and one indentation
+# digit, in either order): 1 with style / chomp / indent at out[0..2] (chomp 0 clip, 1 strip,
+# 2 keep), else 0.
+fn _ci_block_header(v, out): i64 {
+    if (hc_n(v) < 1 || hc_n(v) > 3) { return 0; }
+    var st = hc_at(v, 0);
+    if (st != 124 && st != 62) { return 0; }
+    var chomp = 0;
+    var ind = 0;
+    var i = 1;
+    while (i < hc_n(v)) {
+        var c = hc_at(v, i);
+        if ((c == 45 || c == 43) && chomp == 0) {
+            if (c == 45) { chomp = 1; } else { chomp = 2; }
+        } elif (c >= 49 && c <= 57 && ind == 0) {
+            ind = c - 48;
+        } else {
+            return 0;
+        }
+        i = i + 1;
+    }
+    store64(out, st);
+    store64(out + 8, chomp);
+    store64(out + 16, ind);
+    return 1;
+}
+
+# A block scalar's value from its lines (indentation removed; "" for an empty line), YAML's
+# literal or folded reading (PyYAML's scan_block_scalar): the script's lines (one final newline
+# dropped), or an empty vec when the value is empty.
+fn _ci_block_value(lines, style, chomp): i64 {
+    var sb = hc_sb();
+    var i = 0;
+    var n = vec_len(lines);
+    var breaks = 0;
+    while (i < n && hc_n(vec_get(lines, i)) == 0) { breaks = breaks + 1; i = i + 1; }
+    var line_break = 0;
+    while (i < n) {
+        var k = 0;
+        while (k < breaks) { hc_sbb(sb, 10); k = k + 1; }
+        var line = vec_get(lines, i);
+        var lns = 1;
+        if (hc_at(line, 0) == 32 || hc_at(line, 0) == 9) { lns = 0; }
+        hc_sba(sb, line);
+        line_break = 1;
+        i = i + 1;
+        breaks = 0;
+        while (i < n && hc_n(vec_get(lines, i)) == 0) { breaks = breaks + 1; i = i + 1; }
+        if (i < n) {
+            var nx = vec_get(lines, i);
+            if (style == 62 && lns == 1 && hc_at(nx, 0) != 32 && hc_at(nx, 0) != 9) {
+                if (breaks == 0) { hc_sbb(sb, 32); }
+            } else {
+                hc_sbb(sb, 10);
+            }
+        }
+    }
+    if (chomp != 1 && line_break == 1) { hc_sbb(sb, 10); }
+    if (chomp == 2) {
+        var k2 = 0;
+        while (k2 < breaks) { hc_sbb(sb, 10); k2 = k2 + 1; }
+    }
+    var val = hc_sbend(sb);
+    var out = vec_new();
+    if (hc_n(val) == 0) { return out; }
+    if (hc_at(val, hc_n(val) - 1) == 10) { val = hc_sub(val, 0, hc_n(val) - 1); }
+    return hc_split(val, 10);
+}
+
+# A flow mapping `{A: 1, B: "x"}` into `env` (a vec of [name, value]); 1 when it was one.
+fn _ci_flow_env(v, env): i64 {
+    if (hc_n(v) < 2 || hc_at(v, 0) != 123 || hc_at(v, hc_n(v) - 1) != 125) { return 0; }
+    var body = hc_sub(v, 1, hc_n(v) - 1);
+    var parts = hc_split(body, 44);
+    var i = 0;
+    while (i < vec_len(parts)) {
+        var p = hc_strip(vec_get(parts, i));
+        var c = hc_findb(p, 58, 0);
+        if (c > 0) { _ci_env_put(env, hc_strip(hc_sub(p, 0, c)), _ci_scalar(hc_strip(hc_sub(p, c + 1, hc_n(p))))); }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn _ci_env_put(env, k, v): i64 {
+    var i = 0;
+    while (i < vec_len(env)) {
+        if (hc_eq(vec_get(vec_get(env, i), 0), k) == 1) { vec_set(vec_get(env, i), 1, v); return 0; }
+        i = i + 1;
+    }
+    var p = vec_new();
+    vec_push(p, k);
+    vec_push(p, v);
+    vec_push(env, p);
+    return 0;
+}
+
+var _ci_wf_shell = 0;
+var _ci_wf_env = 0;
+var _ci_wf_wd = 0;
+
+# Parse one workflow file into its jobs (a vec); the workflow's shell, env and working-directory
+# go to _ci_wf_shell / _ci_wf_env / _ci_wf_wd.
 fn _ci_parse(pathc): i64 {
     _ci_wf_shell = 0;
+    _ci_wf_env = vec_new();
+    _ci_wf_wd = 0;
     var jobs = vec_new();
     var text = hc_read_text(pathc);
     if (text == 0) { text = hc_s(""); }
     var lines = hc_split(text, 10);
     var job = 0;
     var step = 0;
-    var in_run = 0;
-    var run_ind = 0;
     var ctx = vec_new();
+    var env_to = 0;      # the env an `env:` block fills
+    var blk = 0;         # in a block scalar
+    var blk_lines = 0;
+    var blk_parent = 0;  # the content must be indented more than this
+    var blk_ind = 0;     # its indentation (0 until the first content line)
+    var hdr: i64[3];
     var mt: i64[3];
     var li = 0;
-    while (li < vec_len(lines)) {
-        var l = vec_get(lines, li);
+    while (li <= vec_len(lines)) {
+        var l = 0;
+        if (li < vec_len(lines)) { l = vec_get(lines, li); }
         li = li + 1;
-        var s = hc_strip(l);
-        if (in_run == 1) {
-            if (hc_n(s) == 0) { vec_push(vec_get(step, 1), hc_s("")); continue; }
-            if (_ci_indent(l) >= run_ind) { vec_push(vec_get(step, 1), hc_sub(l, run_ind, hc_n(l))); continue; }
-            in_run = 0;
+        if (blk == 1) {
+            var take = 0;
+            if (l != 0) {
+                var lind = _ci_indent(l);
+                if (hc_n(hc_strip(l)) == 0) {
+                    take = 1;
+                    if (blk_ind > 0 && hc_n(l) > blk_ind) { vec_push(blk_lines, hc_sub(l, blk_ind, hc_n(l))); }
+                    else { vec_push(blk_lines, hc_s("")); }
+                } else {
+                    if (blk_ind == 0 && lind > blk_parent) { blk_ind = lind; }
+                    if (blk_ind > 0 && lind >= blk_ind) {
+                        take = 1;
+                        vec_push(blk_lines, hc_sub(l, blk_ind, hc_n(l)));
+                    }
+                }
+            }
+            if (take == 1) { continue; }
+            # the block ends: trailing empty lines belong to it (its chomping decides), the line
+            # that ended it is read below
+            vec_set(step, 1, _ci_block_value(blk_lines, hdr[0], hdr[1]));
+            blk = 0;
         }
+        if (l == 0) { break; }
+        var s = hc_strip(l);
         if (hc_n(s) == 0 || hc_pre(s, "#") == 1) { continue; }
         var ind = _ci_indent(l);
         while (vec_len(ctx) > 0) {
@@ -182,61 +409,82 @@ fn _ci_parse(pathc): i64 {
         var dash = mt[0];
         var key = mt[1];
         var val = mt[2];
+        if (_ci_top_is(ctx, "env") == 1 && dash == 0) { _ci_env_put(env_to, key, _ci_scalar(val)); continue; }
         if (hc_eqc(key, "jobs") == 1 && ind == 0) { vec_push(ctx, _ci_pair(ind, "jobs")); continue; }
+        if (hc_eqc(key, "env") == 1 && ind == 0) {
+            if (_ci_flow_env(val, _ci_wf_env) == 0) { env_to = _ci_wf_env; vec_push(ctx, _ci_pair(ind, "env")); }
+            continue;
+        }
         if (_ci_keys_are(ctx, "jobs", 0, 0, 0) == 1 && dash == 0) {
             job = _ci_job_new(key);
             vec_push(jobs, job);
             vec_push(ctx, _ci_pair(ind, "job"));
             continue;
         }
-        if (hc_eqc(key, "shell") == 1 && _ci_keys_are(ctx, "defaults", "run", 0, 0) == 1) {
-            _ci_wf_shell = val;
+        if (_ci_keys_are(ctx, "jobs", "job", 0, 0) == 1 && dash == 0 && hc_eqc(key, "env") == 1) {
+            if (_ci_flow_env(val, vec_get(job, 3)) == 0) {
+                env_to = vec_get(job, 3);
+                vec_push(ctx, _ci_pair(ind, "env"));
+            }
             continue;
         }
-        if (hc_eqc(key, "shell") == 1 && _ci_keys_are(ctx, "jobs", "job", "defaults", "run") == 1 && job != 0) {
-            vec_set(job, 1, val);
-            continue;
+        if (_ci_keys_are(ctx, "defaults", "run", 0, 0) == 1) {
+            if (hc_eqc(key, "shell") == 1) { _ci_wf_shell = _ci_scalar(val); continue; }
+            if (hc_eqc(key, "working-directory") == 1) { _ci_wf_wd = _ci_scalar(val); continue; }
         }
+        if (_ci_keys_are(ctx, "jobs", "job", "defaults", "run") == 1 && job != 0) {
+            if (hc_eqc(key, "shell") == 1) { vec_set(job, 1, _ci_scalar(val)); continue; }
+            if (hc_eqc(key, "working-directory") == 1) { vec_set(job, 4, _ci_scalar(val)); continue; }
+        }
+        var in_step = 0;
+        var pind = ind;   # the indentation of the step's mapping (a block scalar's parent)
         if (job != 0 && _ci_keys_has(ctx, "steps") == 1 && dash != 0) {
-            var nm = hc_s("");
-            if (hc_eqc(key, "name") == 1) { nm = val; }
-            var uses = 0;
-            if (hc_eqc(key, "uses") == 1) { uses = 1; }
-            step = _ci_step_new(nm, uses);
+            step = _ci_step_new(hc_s(""), 0);
             vec_push(vec_get(job, 2), step);
-            if (hc_eqc(key, "run") == 1) {
-                # (the dash form keeps a `|-` header as the script's first line, as run-ci.py did)
-                if (hc_eqc(val, "|") == 0 && hc_eqc(val, ">") == 0) { vec_push(vec_get(step, 1), val); }
-                if (hc_eqc(val, "|") == 1 || hc_eqc(val, "|-") == 1 || hc_eqc(val, ">") == 1) {
-                    in_run = 1;
-                    run_ind = ind + hc_n(dash) + 2;
-                }
-            }
             vec_push(ctx, _ci_pair(ind, "step"));
-            continue;
+            in_step = 1;
+            pind = ind + hc_n(dash);
+        } elif (step != 0 && _ci_top_is(ctx, "step") == 1) {
+            in_step = 1;
         }
-        if (step != 0 && vec_len(ctx) > 0) {
-            if (hc_eqc(vec_get(vec_get(ctx, vec_len(ctx) - 1), 1), "step") == 1) {
-                if (hc_eqc(key, "name") == 1) { vec_set(step, 0, val); }
-                elif (hc_eqc(key, "uses") == 1) { vec_set(step, 3, 1); }
-                elif (hc_eqc(key, "shell") == 1) { vec_set(step, 2, val); }
-                elif (hc_eqc(key, "continue-on-error") == 1) {
-                    var coe = 0;
-                    if (hc_eq(_ci_lower(hc_strip(val)), hc_s("true")) == 1) { coe = 1; }
-                    vec_set(step, 4, coe);
-                }
-                elif (hc_eqc(key, "run") == 1) {
-                    if (hc_eqc(val, "|") == 1 || hc_eqc(val, "|-") == 1 || hc_eqc(val, ">") == 1) {
-                        in_run = 1;
-                        run_ind = ind + 2;
-                    } else {
-                        var rv = vec_new();
-                        vec_push(rv, val);
-                        vec_set(step, 1, rv);
-                    }
-                }
-                continue;
+        if (in_step == 1) {
+            if (hc_eqc(key, "name") == 1) { vec_set(step, 0, _ci_scalar(val)); }
+            elif (hc_eqc(key, "uses") == 1) { vec_set(step, 3, 1); }
+            elif (hc_eqc(key, "shell") == 1) { vec_set(step, 2, _ci_scalar(val)); }
+            elif (hc_eqc(key, "working-directory") == 1) { vec_set(step, 6, _ci_scalar(val)); }
+            elif (hc_eqc(key, "continue-on-error") == 1) {
+                var coe = 0;
+                if (hc_eq(_ci_lower(hc_strip(_ci_scalar(val))), hc_s("true")) == 1) { coe = 1; }
+                vec_set(step, 4, coe);
             }
+            elif (hc_eqc(key, "env") == 1) {
+                if (_ci_flow_env(val, vec_get(step, 5)) == 0) {
+                    env_to = vec_get(step, 5);
+                    vec_push(ctx, _ci_pair(pind, "env"));
+                }
+            }
+            elif (hc_eqc(key, "run") == 1) {
+                var hv = _ci_scalar(val);
+                if (hc_n(val) > 0 && hc_at(val, 0) != 34 && hc_at(val, 0) != 39 && _ci_block_header(hv, &hdr) == 1) {
+                    blk = 1;
+                    blk_lines = vec_new();
+                    blk_parent = pind;
+                    blk_ind = 0;
+                    if (hdr[2] > 0) { blk_ind = pind + hdr[2]; }
+                } else {
+                    var rv = vec_new();
+                    vec_push(rv, hv);
+                    vec_set(step, 1, rv);
+                }
+            }
+            elif (hc_n(val) == 0) {
+                # a nested mapping (`with:`, `if:` …): its lines are not the step's own keys
+                var np = vec_new();
+                vec_push(np, pind);
+                vec_push(np, key);
+                vec_push(ctx, np);
+            }
+            continue;
         }
         if (hc_n(val) == 0) {
             var p = vec_new();
@@ -284,6 +532,19 @@ fn _ci_drop_exprs(s): i64 {
 }
 
 fn _ci_put(fd, s): i64 { return hc_wr(fd, hc_d(s), hc_n(s)); }
+
+# Set each [name, value] of `pairs` in the environment vec `senv`, the value's `${{ }}`
+# expressions rendered as the step script's are.
+fn _ci_env_apply(senv, pairs, repo_name): i64 {
+    var i = 0;
+    while (i < vec_len(pairs)) {
+        var p = vec_get(pairs, i);
+        var v = hc_replace(vec_get(p, 1), hc_s("${{ github.event.repository.name }}"), repo_name);
+        hc_env_set(senv, hc_cstr(vec_get(p, 0)), _ci_drop_exprs(v));
+        i = i + 1;
+    }
+    return 0;
+}
 
 var _ci_skip = 0;
 fn _ci_skipped(name): i64 {
@@ -417,7 +678,19 @@ fn ci_run(repo, incl_release, list_only, env, out_fd): i64 {
                 hc_env_default(senv, "GITHUB_PATH", hc_joinc(rt, "github_path"));
                 hc_env_default(senv, "GITHUB_OUTPUT", hc_joinc(rt, "github_output"));
                 hc_env_default(senv, "GITHUB_STEP_SUMMARY", hc_joinc(rt, "github_summary"));
-                var so = hc_capture_full(argv, senv, 0, 0, 2, tmo * 1000);
+                # the workflow's, the job's and the step's env: (each over the one before)
+                _ci_env_apply(senv, _ci_wf_env, repo_name);
+                _ci_env_apply(senv, vec_get(job, 3), repo_name);
+                _ci_env_apply(senv, vec_get(st, 5), repo_name);
+                var wd = vec_get(st, 6);
+                if (wd == 0) { wd = vec_get(job, 4); }
+                if (wd == 0) { wd = _ci_wf_wd; }
+                var cwd = 0;
+                if (wd != 0) {
+                    if (hc_n(wd) > 0 && hc_at(wd, 0) == 47) { cwd = hc_cstr(wd); }
+                    else { cwd = hc_cstr(hc_join2(repo, wd)); }
+                }
+                var so = hc_capture_full(argv, senv, cwd, 0, 2, tmo * 1000);
                 var rc = hc_last_rc;
                 var out = hc_s("");
                 var tail = hc_s("");

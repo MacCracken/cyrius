@@ -1,0 +1,21 @@
+rc=0
+--- stdout
+OK   [yaml.yml] [shapes] [bash -e]                                                    | second
+OK   [yaml.yml] [shapes] [bash -e] Quoted name # not a comment                        | quoted-run
+OK   [yaml.yml] [shapes] [bash -e] Plain name                                         | plain-run
+OK   [yaml.yml] [shapes] [bash] Single quoted, it's                                | single-quoted
+OK   [yaml.yml] [shapes] [bash -e] Keep chomping                                      | keep
+OK   [yaml.yml] [shapes] [bash -e] Folded                                             | folded one-line
+OK   [yaml.yml] [shapes] [bash -e] Folded paragraphs                                  | second
+OK   [yaml.yml] [shapes] [bash -e] Folded more-indented                               | c
+OK   [yaml.yml] [shapes] [bash -e] Indent indicator                                   | indented-two
+OK   [yaml.yml] [shapes] [bash -e] Deeper block                                       | deep-heredoc
+OK   [yaml.yml] [shapes] [bash -e] Header comment                                     | after-header-comment
+OK   [yaml.yml] [shapes] [bash -e] Env at three levels                                | from-workflow|single 'quoted'|step|from-step|a "quoted" value
+OK   [yaml.yml] [shapes] [bash -e] Flow env                                           | flow-value flow
+OK   [yaml.yml] [shapes] [bash -e] Default working directory                          | sub a file in sub
+OK   [yaml.yml] [shapes] [bash -e] Step working directory                             | other a file in other
+OK   [yaml.yml] [shapes] [bash -e] Uses with a nested mapping                         | with-is-scoped
+OK   [yaml.yml] [shapes] [bash -e] If is not evaluated                                | ran-despite-if
+OK   [yaml.yml] [defaults_job] [sh] Job working directory and quoted shell             | other
+--- stderr

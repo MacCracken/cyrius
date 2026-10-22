@@ -1,6 +1,6 @@
 rc=0
 --- stdout
-foldx @ v1 (pin 9.9.9): rc=1 ok=12 fail=8 skip=1
+foldx @ v1 (pin 9.9.9): rc=1 ok=12 fail=7 skip=1
 --- stderr
 --- ci.log
 OK   [ci.yml] [build] [bash] Shell default from the workflow                    | xy
@@ -13,8 +13,6 @@ FAIL [ci.yml] [build] [sh] sh step                                            | 
 FAIL [ci.yml] [build] [bash] Continue on error                                  | NON-GATING (continue-on-error: true) — 
 OK   [ci.yml] [build] [bash] Continue on error, passing                         | fine
 SKIP [ci.yml] [build] [bash] Sudo blocked                                       | needs sudo (a CI-runner package install) — cannot run here
-FAIL [ci.yml] [build] [bash]                                                    | bash: -c: line 1: syntax error near unexpected token `|'
-    bash: -c: line 1: syntax error near unexpected token `|'
 OK   [ci.yml] [build] [bash]                                                    | dash-form-line
 OK   [ci.yml] [build] [bash] A very long step name that goes on and on and on p | long-name
 OK   [ci.yml] [build] [bash] Uses with a run is still a run                     | ran-anyway

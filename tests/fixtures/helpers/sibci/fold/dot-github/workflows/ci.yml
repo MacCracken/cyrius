@@ -33,8 +33,6 @@ jobs:
         run: echo fine
       - name: Sudo blocked
         run: echo "sudo: a password is required" >&2; exit 1
-      - run: |-
-          echo dash-form-block
       - run: echo dash-form-line
       - name: A very long step name that goes on and on and on past fifty characters for sure
         run: echo long-name

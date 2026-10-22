@@ -68,9 +68,13 @@ status is 0 and the summary line is the verdict.
   pipefail), `sh` is `sh -e`. `uses:` steps, and the steps whose NAME starts with the
   Cyrius-toolchain install (`Install Cyrius`, `Install cyrius`), `Checkout`, `Upload`, `Cache`,
   `Set up` or `Setup `, are skipped (the throwaway `CYRIUS_HOME` stands in for them); every other
-  install step runs. Release workflows are skipped unless `--include-release`. A step that fails because `sudo` needs a password is a
-  named `SKIP`, never a pass; a `continue-on-error: true` step that fails is a NON-GATING `FAIL`
-  line; an undefined `${{ }}` expression renders empty, as on GitHub.
+  install step runs. Release workflows are skipped unless `--include-release`. A step that fails
+  because `sudo` needs a password is a named `SKIP`, never a pass; a `continue-on-error: true`
+  step that fails is a NON-GATING `FAIL` line; an undefined `${{ }}` expression renders empty, as
+  on GitHub. The workflow, job and step `env:` apply (each over the one before), and a step runs
+  in its `working-directory` (else the job's or the workflow's `defaults.run` one). Values are read
+  as YAML reads them — quoted, commented, and block scalars with their folding and chomping (since
+  6.7.17; run-ci.py misread each). `if:` is **not** evaluated: every step runs.
 - **Not isolated:** `/tmp`, network ports, background processes and the caller's other
   environment variables (an exported `CYRIUS_BOUNDS` / `CYRIUS_POISON` / `CYRIUS_COVERAGE`
   reaches every step's compile, which GitHub never sees). yantra's browser jobs write fixed

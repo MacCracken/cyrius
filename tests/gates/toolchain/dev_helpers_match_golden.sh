@@ -12,7 +12,8 @@
 # (docs/development/issues/2026-10-19-dev-helper-scripts-converted-to-cyrius.md). A conversion is
 # only as good as its sameness: each golden under tests/fixtures/helpers/golden/ is the REPLACED
 # script's own output on the fixture input, captured before the script was removed, and each axis
-# runs the cyrius program on the same input and compares byte for byte.
+# runs the cyrius program on the same input and compares byte for byte. The one exception is named
+# where it stands: run_ci's YAML axis checks a repair of the old runner against an oracle.
 #
 # Hermetic: every external the helpers drive is a stand-in from tests/fixtures/helpers/stub/ (a
 # compiler that writes shell scripts, qemu-aarch64, wine, cxvm, curl), the checkouts are scratch
@@ -33,6 +34,8 @@
 #                      signal death (rc -11, Python's spelling), and the usage errors
 #   run_ci             the step list (with and without --include-release), a run of every step
 #                      shape, and a run of one job (CI_JOB)
+#   run_ci (YAML)      the YAML shapes run-ci.py misread — the 6.7.17 repair, whose goldens are a
+#                      PyYAML oracle's output, not the old script's
 #   sibci              an isolated run of a stand-in fold against a stand-in store slot (the summary,
 #                      the step log, the path-commented manifest, the throwaway home's links) and the
 #                      refusals (a path, no pin, a pin not in the store, a missing argument)
@@ -42,7 +45,7 @@
 #   fixpoint           --fixpoint and --install (scripts/build-cycc-verify.sh's two modes until
 #                      6.7.17) over stand-in compilers: a fixpoint, a divergence, a failure at each
 #                      stage, an empty stage, an install that replaces and one that finds it equal
-# FLOOR: the axis count is at least 11.
+# FLOOR: the axis count is at least 12.
 #
 # MUTATION LEDGER (each measured RED, then restored):
 #   regen_issue_index's automatic label inserted after the first LATER release   -> RED regen
@@ -53,6 +56,8 @@
 #   ab's "same input (<new> src)" row given the wrong pair                         -> RED ab
 #   fixpoint's c2 == c3 compare made a byte count compare                          -> RED fixpoint
 #   run_ci's step tail cut at 100 code points, not 110                             -> RED run_ci, sibci
+#   run_ci's `- run: |-` header kept as the script's first line (run-ci.py's bug) -> RED run_ci (YAML)
+#   run_ci's step env: not applied                                                 -> RED run_ci (YAML)
 #   tomlcheck's "Unclosed array" raised one position early                         -> RED cymlcheck
 #   tomlcheck's frame limit 1001, not 1000                                         -> RED cymlcheck
 set -u
@@ -350,6 +355,25 @@ done
 [ "$rc" = 1 ] || _fail "sibci with a missing argument exited $rc (the script: 1)"
 _axis_end "sibci: an isolated run (summary, step log, manifest, the throwaway home) and the refusals match sibci.sh"
 
+# ── run_ci's YAML (6.7.17's repair of what run-ci.py misread) ─────────────────────────────
+# Block scalar headers (`|-` / `|+` / `>` / `>-` / an indentation digit / a header comment) and
+# folding, quoted and commented scalars, env: at the workflow, job and step (block and flow), the
+# working-directory defaults and the step's, a nested mapping under a step. These goldens are NOT
+# the old script's (it misread every one): they are PyYAML's reading of the same workflow run
+# through run-ci.py's own loop and line format — an independent oracle, taken 2026-10-22.
+_axis_begin
+YC="$T/yc"
+mkdir -p "$YC"
+cp -R "$F/run_ci_yaml/." "$YC/"
+mv "$YC/dot-github" "$YC/.github"
+"$BIN/run_ci" "$YC" --list > "$T/o" 2> "$T/e"; rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "run_ci_yaml/list" "$T/rep"
+(cd "$T" && RUNNER_TEMP="$T/yc_rt" "$BIN/run_ci" "$YC" > "$T/o" 2> "$T/e"); rc=$?
+_rep "$T/rep" "$rc" "$T/o" "$T/e"
+_golden "run_ci_yaml/run" "$T/rep"
+_axis_end "run_ci: the YAML shapes run-ci.py misread now read as YAML reads them (a PyYAML oracle's output)"
+
 # ── cymlcheck (scripts/folds/cymlcheck.py until 6.7.17) ────────────────────────────────────
 # One hundred and sixteen TOML cases (tomllib's grammar and namespace rules, each error class and
 # a run of mutated documents), one [[entries]] block each; nesting at Python's recursion limit
@@ -371,9 +395,9 @@ _golden "cymlcheck/tracked" "$T/rep"
 _axis_end "cymlcheck: 116 TOML cases, the recursion limit, CR LF and the tracked-tree walk match cymlcheck.py (tomllib)"
 
 # ── verdict ──────────────────────────────────────────────────────────────────────────────
-[ "$AXES" -ge 11 ] || _fail "only $AXES axes ran (floor 11)"
+[ "$AXES" -ge 12 ] || _fail "only $AXES axes ran (floor 12)"
 if [ "$FAILS" -ne 0 ]; then
     echo "FAIL: $NAME: $FAILS case(s) differ from the replaced scripts' output"
     exit 1
 fi
-echo "PASS $NAME: $AXES helpers, each byte-identical to the script it replaced on its fixture input"
+echo "PASS $NAME: $AXES axes — each helper byte-identical to the script it replaced on its fixture input (run_ci's YAML repair: to its oracle)"

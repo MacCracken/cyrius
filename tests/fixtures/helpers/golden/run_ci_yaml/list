@@ -1,0 +1,21 @@
+rc=0
+--- stdout
+[yaml.yml] [shapes] [bash -e]   (2 lines)
+[yaml.yml] [shapes] [bash -e] Quoted name # not a comment  (1 lines)
+[yaml.yml] [shapes] [bash -e] Plain name  (1 lines)
+[yaml.yml] [shapes] [bash] Single quoted, it's  (1 lines)
+[yaml.yml] [shapes] [bash -e] Keep chomping  (2 lines)
+[yaml.yml] [shapes] [bash -e] Folded  (1 lines)
+[yaml.yml] [shapes] [bash -e] Folded paragraphs  (2 lines)
+[yaml.yml] [shapes] [bash -e] Folded more-indented  (3 lines)
+[yaml.yml] [shapes] [bash -e] Indent indicator  (1 lines)
+[yaml.yml] [shapes] [bash -e] Deeper block  (3 lines)
+[yaml.yml] [shapes] [bash -e] Header comment  (1 lines)
+[yaml.yml] [shapes] [bash -e] Env at three levels  (1 lines)
+[yaml.yml] [shapes] [bash -e] Flow env  (1 lines)
+[yaml.yml] [shapes] [bash -e] Default working directory  (1 lines)
+[yaml.yml] [shapes] [bash -e] Step working directory  (1 lines)
+[yaml.yml] [shapes] [bash -e] Uses with a nested mapping  (1 lines)
+[yaml.yml] [shapes] [bash -e] If is not evaluated  (1 lines)
+[yaml.yml] [defaults_job] [sh] Job working directory and quoted shell  (1 lines)
+--- stderr
