@@ -11366,7 +11366,7 @@ fn _arr_parg_err(S, a, pn, fnoff, ord): i64 {
     if (_derr_seen(a, "_arr_parg_err", ord, 0) == 1) { return 0; }
     var sv = GTI(S);
     STI(S, a);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": cannot pass array '");
     PRSTR(S + 0xEC00000 + TOKVAL(S, a));
@@ -12720,7 +12720,7 @@ fn _vavv_err(S, vt): i64 {
     var sv = GTI(S);
     STI(S, _vvl_a);
     _refuse_in_sync(S);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     PRSTR(": '");
     _vval_pnm(S);
