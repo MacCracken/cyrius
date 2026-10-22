@@ -2797,7 +2797,9 @@ decision D71, 2026-10-20): wherever a `Str` value is taken, `*(&t)` / `*&t` is t
 `f(*(&t))`, `fp(*(&t))` into a `*Str`, `gg<Str>(*(&t))`, the inferred `gg(*&t)` (which binds `T = Str`) and
 `h.eq(*(&t))` pass it, `u = *(&t)` into an inline `Str` copies it, `k = *(&t)` rebinds a handle, `p = *(&t)` / `var p:
 *Str = *&t;` take it — a global's and a closure's captured copy too, in a fn and at top level; and `*(&t) = v` is `t =
-v` (a copy), `*(&t) OP= v` is refused as `t OP= v` is. A frame's t keeps every refusal t has, named at t: `return
+v` (a copy), `*(&t) OP= v` is refused as `t OP= v` is — and with t a closure's captured copy `*(&t) = v` copies v's
+header into the closure's copy (since 6.7.17, the user's decision D20, 2026-10-22; through 6.7.16 v's first word went into
+the copy's data word), as a captured struct's `*(&s) = v` does: the enclosing fn's t is untouched. A frame's t keeps every refusal t has, named at t: `return
 *(&t);` from a fn returning `Str`, `G = *(&t);`, `w.s = *(&t);`, `*ps = *(&t);`, `W { *&t, 1 }`. ⚠ Through 6.7.15 it
 was t's data word (`str_len(h)` 0), the assignments warned *assigning non-pointer to typed pointer*, the refused stores
 compiled, and `*(&t) = gt` wrote gt's first word into t.data. A position that takes no `Str` value (`fncall1(&f,

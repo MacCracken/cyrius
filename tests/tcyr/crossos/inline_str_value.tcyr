@@ -451,6 +451,21 @@ fn ns_filed(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = NsO {
 fn ns_deep(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var x = NsX { *p, 1, 2, 3 }; return (x.o.v.s == a) * 1000 + x.o.v.n * 100 + x.o.m * 10 + x.k; }
 fn ns_wrap(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = NsO { (*ns_gp(p)), 4, 5 }; return str_len(o.v.s) * 10 + o.v.n; }
 fn ns_glob(): i64 { var p: *Str = &gt; var o = NsO { ((*p)), 4, 5 }; return (o.v.s == &gt) * 100 + str_len(o.v.s) * 10 + o.m; }
+# 6.7.17 (the user's D20, 2026-10-22): `*(&t) = v` with t a closure's captured inline `Str` copies v's header into the
+# closure's copy of t, as `*(&t) = v` of a local t does (6.7.16's D71); it wrote v's first word into t.data (the ca_* rows).
+struct CaW { s: Str; n; }
+var ca_gt: Str = Str { "abcdefghij", 10 };
+fn ca_sx(): Str { return str_from("xyz"); }
+fn ca_filed(): i64 { var t: Str = Str { "abcdefg", 7 }; var v = str_from("xy"); var c = |k| { *(&t) = v; return t.len + k; }; return fncall1(c, 0) * 10 + t.len; }
+fn ca_call(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { *(&t) = ca_sx(); return t.len * 10 + load8(t.data) - 120 + k; }; return fncall1(c, 0); }
+fn ca_local(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var h = str_from("abcd"); *(&t) = h; h.len = 1; return t.len + k; }; return fncall1(c, 0); }
+fn ca_field(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: CaW; w.s = str_from("abcde"); var c = |k| { *((&t)) = w.s; return t.len + k; }; return fncall1(c, 0); }
+fn ca_dx(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var a = str_from("abcdef"); var p: *Str = a; *(&t) = *p; return t.len + k; }; return fncall1(c, 0); }
+fn ca_glob(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { *&t = ca_gt; return t.len + k; }; return fncall1(c, 0); }
+fn ca_meth(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var h = str_from("abcd"); *(&t) = h.clone(); return t.len + k; }; return fncall1(c, 0); }
+fn ca_inl(): i64 { var t: Str = Str { "abcdefg", 7 }; var u: Str = Str { "abcdefghi", 9 }; var c = |k| { *(&t) = u; return t.len + k; }; return fncall1(c, 0); }
+fn ca_step(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var i = 0; for (i = 0; i < 1; *(&t) = ca_sx()) { i = i + 1; } return t.len + k; }; return fncall1(c, 0); }
+fn ca_word(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { *(&t) = 0; return t.len + k; }; return fncall1(c, 0); }
 alloc_init();
 var R_TOP = f(gt);   # at top level, a global inline `Str`
 GA = str_from("abcde");
@@ -758,6 +773,16 @@ assert_eq(R_TOP19, 111, "top level: *GQS = *GPS, GXS = *GPS, var LYS: *Str = *GP
 assert_eq(R_TOP20, 171, "top level after a statement: var H: Str = *(&gt); gi4 = *(&gt) copies; GH = *&gt (6.7.16, D71)");
 assert_eq(R_TOP21, 7, "top level: *(&gi3) = gt copies the header (6.7.16, D71)");
 assert_eq(R_TOP22, 174, "top level after a statement: NsO { *nsp, 4, 5 } stores nsp in the nested Str leaf (6.7.17, D19)");
+assert_eq(ca_filed(), 27, "a closure's *(&t) = v copies v's header into its copy of t (6.7.17, D20; was 7); the fn's t keeps 7");
+assert_eq(ca_call(), 30, "*(&t) = sx(): a `: Str` call's header (t.data 'x')");
+assert_eq(ca_local(), 4, "*(&t) = h: a handle local's header, copied (a later h.len = 1 leaves t)");
+assert_eq(ca_field(), 5, "*((&t)) = w.s: a Str field");
+assert_eq(ca_dx(), 6, "*(&t) = *p: the header p points at");
+assert_eq(ca_glob(), 10, "*&t = ca_gt: an inline Str global");
+assert_eq(ca_meth(), 4, "*(&t) = h.clone(): a method's");
+assert_eq(ca_inl(), 9, "*(&t) = u: another captured inline Str");
+assert_eq(ca_step(), 3, "a for step's *(&t) = sx()");
+assert_eq(ca_word(), 7, "*(&t) = 0: an untyped value keeps the one-word store into t.data (t.len 7)");
 assert_eq(ns_filed(), 10, "NsO { *p, 1, 2 }: the nested Str leaf is p, the header's address (6.7.17, D19; was 50, the data word)");
 assert_eq(ns_deep(), 1123, "NsX { *p, 1, 2, 3 }: two levels deep");
 assert_eq(ns_wrap(), 74, "NsO { (*gp(p)), 4, 5 }: a wrapped call's dereference");

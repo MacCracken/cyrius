@@ -164,6 +164,13 @@
 # verbatim: 10, was 50; the tcyr's ns_* rows and R_TOP22: two levels deep, wrapped, a call's, top level). A `Str` value
 # whose nested field opens with no `Str` leaf is refused by name, as a `Str` name there is (NS2).
 #
+# 6.7.17 (the user's decision D20, 2026-10-22; the same issue's row 3): `*(&t) = v` with t a closure's captured inline
+# `Str` copies v's 16-byte header into the closure's copy of t, as `*(&t) = v` of a local t is `t = v` (6.7.16's D71)
+# and a captured struct's `*(&s) = v` copies (6.7.13): it wrote v's first word into the copy's data word and left t.len
+# (CA1, the filed repro verbatim: 2, was 7; the tcyr's ca_* rows: a captured handle, a `: Str` call, a local handle, a
+# `Str` field, `*p`, an inline global, a method, another inline `Str`, a for step; the enclosing fn's t unchanged). An
+# untyped value keeps the one-word store into t.data, as `t = x` does; another struct is refused (CA2).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -180,7 +187,8 @@
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); SH1-SH15 a struct value of another type into a
 # `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
 # repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
-# `*(&t)` refused as t is (6.7.17, D71's rule); CMP a handle into the retyped methods builds
+# `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
+# refused there (6.7.17, D20); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -303,6 +311,11 @@
 #   y1 `_spi_dsrc` without its `Str` arm           -> RED 18: R1 x7 (the ns_* rows and R_TOP22 — the data word),
 #      (the fix reverted)                             NS1 x7 (50), NS2 x4 (compiled)
 #   y2 `_spi_dsrc` without its `*(&t)` test        -> RED 8: NS3 x4, NS4 x4 (each compiled, the data word carried)
+#   2026-10-22 (6.7.17, D20 a captured t's `*(&t) = v`; the same scratch-copy method):
+#   z1 `_istr_amp_dst` returning 0 for a capture     -> RED 18: R1 x7 (the ca_* rows — the first word into t.data, t.len
+#      (the fix reverted)                             7), CA1 x7 (7), CA2 x4 (compiled)
+#   z2 `_istr_inl_dst` without the override          -> RED 7: R1 x7 (ca_call / ca_field / ca_dx / ca_meth / ca_step:
+#                                                     one word)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1235,6 +1248,22 @@ row NS4 'struct WS { s: Str; n; }
 struct O { v: WS; m; }
 fn go(): i64 { var o = O { (*&gt), 1, 2 }; return o.m; }'
 refused NS4 "cannot copy 'gt' into a struct field of a different struct type: 'v'" "\`O { (*&gt), 1, 2 }\` of an inline global"
+# --- CA: 6.7.17 (the user's D20, 2026-10-22) `*(&t) = v` with t a closure's captured inline `Str` copies v's header into
+# the closure's copy of t, as `*(&t) = v` of a local t does (6.7.16's D71) and a captured struct's `*(&s) = v` does
+# (6.7.13); it wrote v's first word into the copy's data word (exit 7). Another struct is refused as `t = mkq()` is (CA2). ---
+cat > "$T/CA1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+fn main(): i64 { alloc_init(); var t: Str = Str { "abcdefg", 7 }; var v = str_from("xy"); var f = |k| { *(&t) = v; return t.len + k; }; return fncall1(f, 0); }
+syscall(60, main());
+EOF
+runs CA1 2 "the D20 filed repro, verbatim (was 7: v's word into the copy's data word)" "$XLEGS $OLEGS"
+row CA2 'include "lib/fnptr.cyr"
+struct Q1 { a; }
+fn mkq(): Q1 { var q: Q1; return q; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var f = |k| { *(&t) = mkq(); return t.len + k; }; return fncall1(f, 0); }'
+refused CA2 "cannot copy 'mkq' into a variable of a different struct/vector type: 't'" "a closure's \`*(&t) = mkq();\` (it stored Q1's word)"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1293,7 +1322,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=119   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4; 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=121   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

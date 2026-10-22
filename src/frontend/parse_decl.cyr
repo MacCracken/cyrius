@@ -8742,8 +8742,8 @@ fn _istr_amp_dst(S, term): i64 {
     if (e <= d + 2) { return 0; }
     var r = _istr_amp(S, d, e);
     if (r == 0) { return 0; }
-    if (r == 3) { return 0; }
     var noff = TOKVAL(S, _istr_ti);
+    if (r == 3) { if (TOKTYP(S, e) == 4) { return _istr_amp_cap(S, d, e, noff, term); } return 0; }   # 6.7.17 (D20)
     STI(S, e);
     if (PEEKT(S) == 4) {
         STI(S, e + 1);   # `=`
@@ -8756,6 +8756,28 @@ fn _istr_amp_dst(S, term): i64 {
     }
     STI(S, d);
     return 0;
+}
+# ⛔ 6.7.17 — `*(&t) = v` WITH t A CLOSURE'S CAPTURED INLINE `Str` COPIES v's HEADER INTO THE CLOSURE'S COPY OF t (the
+# user's D20, 2026-10-22), as `*(&t) = v` of a local t is `t = v` (6.7.16's D71) and a captured struct's `*(&s) = v`
+# copies into the capture's copy (6.7.13): it wrote v's first word into the copy's data word and left t.len (the filed
+# repro 7, want 2). The enclosing fn's t is untouched. The copy's address `&t` (the closure's environment) is parked in a
+# hidden temp and the statement's assignment arms run with it as their destination (`_dst_arms`, the `*p = v`
+# override, typed `Str`), so every source `t = v` takes copies — a handle, a captured handle, a `: Str` call or method,
+# a `Str` field, `*p`, another inline `Str` — another struct is refused by name, and an untyped value keeps the
+# one-word store into t.data (`_dst_word`), as `t = x` does. `d` the `*`, `e` the `=`; 1, `term` consumed.
+# CHANGELOG [6.7.17]
+fn _istr_amp_cap(S, d, e, noff, term): i64 {
+    STI(S, d + 1);
+    PARSE_FACTOR(S);   # `(&t)` / `&t`: rax = the closure's copy of t
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    STI(S, e + 1);   # `=`
+    var ss = _STR_SID(S);
+    if (_dst_arms(S, term, ss, h, noff) == 1) { return 1; }
+    _dst_word(S, h, STRUCTSZ(S, ss - 1));
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
 }
 # `NAME = <v>` (the cursor on the value), NAME an inline `Str` local or global: the statement's assignment arms, then
 # its store of a value they leave in rax (an untyped value's word into t.data, warned as the statement warns it).
@@ -8970,14 +8992,25 @@ fn _istr_dxh(S, noff, term): i64 {
     STI(S, GTI(S) + 1);   # consume the terminator
     return 1;
 }
-# 1 = `_agc_operand`'s destination is an inline `Str` (a local or global of 9 B or more, no handle, no `*p` override).
+# 1 = `_agc_operand`'s destination is an inline `Str` (a local or global of 9 B or more, no handle, no `*p` override —
+# 6.7.17 (D20): but the override `_istr_amp_cap` parks, a captured t's copy, whose address `_agc_li` / `_agc_gvi` then
+# names in the deref band).
 fn _istr_inl_dst(S, n): i64 {
     if (n < 2) { return 0; }
     var ss = _STR_SID(S);
     if (ss <= 0) { return 0; }
     if (_agc_t != 0 - ss) { return 0; }
     if (_agc_hdl() == 1) { return 0; }
-    if (_agc_pp != 0) { return 0; }
+    if (_agc_pp != 0) { return _istr_ovr_dst(S); }
+    return 1;
+}
+# ... the `*p = v` override typed `Str` (only `_istr_amp_cap` arms one: `_dst_struct` takes no `Str`): 1, its address in
+# the deref band.
+fn _istr_ovr_dst(S): i64 {
+    if (_agc_ovr != 1) { return 0; }
+    if (_agc_pp != 1) { return 0; }
+    if (_agc_li >= 0) { _agc_li = _AGC_DREF(_agc_li); }
+    _agc_pp = 0;
     return 1;
 }
 # `t = f(..);` (`_try_struct_call_assign`, `_agc_operand` just ran on t, `n` its span), `fi` declared `: Str` (its
