@@ -34,7 +34,8 @@
 #   probe split        a `== name` file into probes (stale *.bin removed, other files kept)
 #   probe run          the split probes run: default, OLD_CC before / after, a timeout, the errors
 #   xb                 four programs on the four targets (stand-in compilers and runners)
-#   envprobe           the line keys (the values are the machine's)
+#   envprobe           the line keys (the values are the machine's; a value's continuation line
+#                      is not a key)
 #   ab                 two refs of a scratch repository, times masked: a refusal (rc 4) and a
 #                      signal death (rc -11, Python's spelling), and the usage errors
 #   run_ci             the step list (with and without --include-release), a run of every step
@@ -73,6 +74,7 @@
 #   probe run's error lines cut at 120 bytes, not 170                             -> RED probe run
 #   xb's cx leg reporting its BUILD rc one high                                    -> RED xb
 #   envprobe's ulimit line keyed `ulimit-n` (a key the script never printed)       -> RED envprobe
+#   envprobe's key filter dropped (every line head compared, as first committed)   -> RED envprobe
 #   ab's "same input (<new> src)" row given the wrong pair                         -> RED ab
 #   fixpoint's c2 == c3 compare made a byte count compare                          -> RED fixpoint
 #   run_ci's step tail cut at 100 code points, not 110                             -> RED run_ci, sibci
@@ -263,10 +265,23 @@ _golden "xb/four_programs" "$T/xb.out"
 _axis_end "xb: four programs' four-target lines match the replaced script"
 
 # ── envprobe ─────────────────────────────────────────────────────────────────────────────
+# The values are the machine's; the keys — the line heads the script printed, in its order — are
+# compared. A value printed verbatim may run over lines (an /etc/locale.conf of two settings,
+# findmnt naming two /tmp mounts), and a continuation line's head is no key: only heads that ARE
+# the golden's keys are kept, so a missing, renamed or reordered key is RED on any box and a
+# two-line value is not. The filter itself is checked on the output with such a line planted.
 _axis_begin
 PATH="$FB:$PATH" "$BIN/envprobe" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
-{ echo "rc=$rc"; sed 's/[:=].*//' "$T/o"; } > "$T/keys"
+sed '1d' "$G/envprobe/keys" > "$T/envkeys"
+nk=$(wc -l < "$T/envkeys" | tr -d ' ')
+[ "$nk" -ge 25 ] || _fail "envprobe's golden names $nk keys (floor 25)"
+_envkeys() { { echo "rc=$rc"; sed 's/[:=].*//' "$1" | grep -xF -f "$T/envkeys" || true; } > "$2"; }
+_envkeys "$T/o" "$T/keys"
 _golden "envprobe/keys" "$T/keys"
+sed '/^localectl-conf:/a\
+LC_TIME=en_GB.UTF-8' "$T/o" > "$T/o2"
+_envkeys "$T/o2" "$T/keys2"
+cmp -s "$T/keys" "$T/keys2" || _fail "envprobe's key filter read a value's continuation line as a key"
 _axis_end "envprobe: the inventory's lines are the replaced script's (keys; the values are the machine's)"
 
 # ── ab ───────────────────────────────────────────────────────────────────────────────────
