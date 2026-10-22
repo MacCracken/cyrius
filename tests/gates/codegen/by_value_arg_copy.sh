@@ -144,6 +144,8 @@
 #   M38 `_span_may_write` reads every builtin as a write (the pre-fix line) -> C21, TU8, TU2 (SIGSEGV); the tcyr's
 #                                                              1,000,000-deep `nwalk_l` on x86 / IR3 / DCE (SIGSEGV)
 #                                                              and PE (wine: exit 1)
+#   (gate hygiene, the review fix: `cpu_run`'s CPU bound for A5 set to 5 s -> A5 FAILs by name — exit 152, over its
+#   CPU bound (SIGXCPU); with a plain `ulimit -t` (soft = hard) it was SIGKILL, exit 137, which names nothing)
 #   (`_fnw_brace_ok` answering 1 kills no row: a struct literal builds in the callee's own frame — the rule is the
 #   allow-list's, for a `{` the scan does not read)
 set -u
@@ -169,6 +171,25 @@ fails=0
 skips=0
 ok()  { echo "  ok   $1"; }
 bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
+# Every probe run is CPU-bound, and a wall-clock bound failed it on a loaded box with nothing wrong in the code: A5's
+# cxvm run (~57 s of CPU) took 2m50s at load ~60 and `timeout 300` killed it (exit 124) under a parallel check.sh.
+# A run is bounded by its CPU time (the soft `ulimit -t`: SIGXCPU, exit 152 — a hang or a real slowdown) and,
+# generously, by the wall clock (a run that blocks: 124). The soft limit is set first (a hard one below the unlimited
+# soft one is EINVAL) and the hard one 30 s past it: a plain `ulimit -t` sets both, and at a hard limit equal to the
+# soft one the kernel sends SIGKILL (137), which names nothing. `cpu_run <cpu s> <wall s> <cmd> [args..]`; the caller
+# redirects; an environment goes through `env`. CHANGELOG [6.7.17]
+cpu_run() {
+    _cs=$1; _ws=$2; shift 2
+    (ulimit -S -t "$_cs" 2>/dev/null; ulimit -H -t $((_cs + 30)) 2>/dev/null; exec timeout "$_ws" "$@")
+}
+# What a bound's exit code means (152, 137, 124), else nothing — appended to a FAIL line.
+bound_why() {
+    case $1 in
+        152) echo " — over its CPU bound (SIGXCPU): a hang or a real slowdown" ;;
+        137) echo " — killed (SIGKILL): past its hard CPU bound, or the OOM killer" ;;
+        124) echo " — past its wall-clock backstop: the run blocked" ;;
+    esac
+}
 
 # ── C / K: the copy's cost, by size ─────────────────────────────────────────────────────────────
 # Each row: <id>@<later argument>@<C = same size | K = larger>. `b` is the Big under test, `c` /
@@ -295,14 +316,14 @@ K24EOF
 rc=0; CYRIUS_SYMS="$T/k24.syms" "$CC" < "$T/k24.cyr" > "$T/k24.bin" 2> "$T/k24.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "K24: the probe did not build: $(grep '^error' "$T/k24.err" | head -1)"
 else
-    chmod +x "$T/k24.bin"; got=0; timeout 10 "$T/k24.bin" || got=$?
+    chmod +x "$T/k24.bin"; got=0; cpu_run 10 300 "$T/k24.bin" || got=$?
     sort "$T/k24.syms" > "$T/k24.sorted"
     _k=$(awk 'f { print a " " $1; exit } $2 == "pK24" { a = $1; f = 1 }' "$T/k24.sorted"); _l=$(awk 'f { print a " " $1; exit } $2 == "qK24" { a = $1; f = 1 }' "$T/k24.sorted")
     if [ -z "$_k" ] || [ -z "$_l" ]; then bad "K24: the symbol map does not size pK24 / qK24"
     else
         sp=$(( 0x${_k#* } - 0x${_k% *} )); sq=$(( 0x${_l#* } - 0x${_l% *} ))
         if [ "$sp" -gt "$sq" ] && [ "$got" -eq 27 ]; then ok "K24: rd(b, kt(s)) — kt_str, a writing \`_str\` sibling — copies b ($sp B > rp's $sq B) and reads 1: exit 27"
-        else bad "K24: rd(b, kt(s)) is $sp B, rp's $sq B, exit $got — want a copy and exit 27 (187: rd read kt_str's write)"; fi
+        else bad "K24: rd(b, kt(s)) is $sp B, rp's $sq B, exit $got — want a copy and exit 27 (187: rd read kt_str's write)$(bound_why "$got")"; fi
     fi
 fi
 
@@ -311,8 +332,8 @@ printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nf
 rc=0; CYRIUS_SYMS="$T/t.syms" "$CC" < "$T/t.cyr" > "$T/t.bin" 2> "$T/t.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "T: the probe did not build: $(grep '^error' "$T/t.err" | head -1)"
 else
-    chmod +x "$T/t.bin"; got=0; timeout 10 "$T/t.bin" || got=$?
-    [ "$got" -eq 25 ] && ok "T: t1() reads G.a = 1 (its copy), then t2(4) reads 11 + 4: exit 25" || bad "T: exit $got, want 25"
+    chmod +x "$T/t.bin"; got=0; cpu_run 10 300 "$T/t.bin" || got=$?
+    [ "$got" -eq 25 ] && ok "T: t1() reads G.a = 1 (its copy), then t2(4) reads 11 + 4: exit 25" || bad "T: exit $got, want 25$(bound_why "$got")"
     if command -v objdump > /dev/null 2>&1; then
         r=$(awk '$2 == "rd" { print $1 }' "$T/t.syms"); a=$(awk '$2 == "t1" { print $1 }' "$T/t.syms")
         b=$(awk '$2 == "t2" { print $1 }' "$T/t.syms"); e=$(awk '$2 == "tend" { print $1 }' "$T/t.syms")
@@ -334,8 +355,8 @@ printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nv
 rc=0; CYRIUS_SYMS="$T/ts.syms" "$CC" < "$T/ts.cyr" > "$T/ts.bin" 2> "$T/ts.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "TS: the probe did not build: $(grep '^error' "$T/ts.err" | head -1)"
 else
-    chmod +x "$T/ts.bin"; got=0; timeout 20 "$T/ts.bin" || got=$?
-    [ "$got" -eq 0 ] && ok "TR: t3 / t4 / t4b run 3,000,000 deep beside their copying tail call: exit 0" || bad "TR: exit $got, want 0 (139: a self tail call lost its jmp)"
+    chmod +x "$T/ts.bin"; got=0; cpu_run 20 300 "$T/ts.bin" || got=$?
+    [ "$got" -eq 0 ] && ok "TR: t3 / t4 / t4b run 3,000,000 deep beside their copying tail call: exit 0" || bad "TR: exit $got, want 0 (139: a self tail call lost its jmp)$(bound_why "$got")"
     if command -v objdump > /dev/null 2>&1; then
         sort "$T/ts.syms" > "$T/ts.sorted"
         # ts_n <op> <from fn> <to fn (exclusive)> <target fn>: how many <op>s in [from, to) reach target
@@ -406,8 +427,8 @@ TUEOF
 rc=0; CYRIUS_SYMS="$T/tu.syms" "$CC" < "$T/tu.cyr" > "$T/tu.bin" 2> "$T/tu.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "TU: the probe did not build: $(grep '^error' "$T/tu.err" | head -1)"
 else
-    chmod +x "$T/tu.bin"; got=0; timeout 30 "$T/tu.bin" || got=$?
-    [ "$got" -eq 193 ] && ok "TU2: f6 / f / f8-f11 / f13 run 3,000,000 deep (f7 / f12 1,000), every value right: exit 193" || bad "TU2: exit $got, want 193 (139: a tail call lost its jmp; any other: a walk's value is wrong)"
+    chmod +x "$T/tu.bin"; got=0; cpu_run 30 300 "$T/tu.bin" || got=$?
+    [ "$got" -eq 193 ] && ok "TU2: f6 / f / f8-f11 / f13 run 3,000,000 deep (f7 / f12 1,000), every value right: exit 193" || bad "TU2: exit $got, want 193 (139: a tail call lost its jmp; any other: a walk's value is wrong)$(bound_why "$got")"
     if command -v objdump > /dev/null 2>&1; then
         sort "$T/tu.syms" > "$T/tu.sorted"
         # tu_n <op> <fn>: how many <op>s to <fn> itself in [fn, the next symbol)
@@ -449,8 +470,8 @@ fi
 rc=0; "$CC" < "$T/td.cyr" > "$T/td.bin" 2> "$T/td.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "TD: a 60,000-deep chain of helpers reached from a later argument did not compile: rc $rc (139: the summary's recursion overflowed cycc's stack)"
 else
-    chmod +x "$T/td.bin"; got=0; timeout 10 "$T/td.bin" || got=$?
-    [ "$got" -eq 2 ] && ok "TD: a 60,000-deep chain of helpers that declare nothing compiles; rd(G, h1()) reads 2" || bad "TD: exit $got, want 2"
+    chmod +x "$T/td.bin"; got=0; cpu_run 10 300 "$T/td.bin" || got=$?
+    [ "$got" -eq 2 ] && ok "TD: a 60,000-deep chain of helpers that declare nothing compiles; rd(G, h1()) reads 2" || bad "TD: exit $got, want 2$(bound_why "$got")"
 fi
 
 # ── AS: an `async fn`'s frame ───────────────────────────────────────────────────────────────────
@@ -458,8 +479,8 @@ if [ -f "$ROOT/lib/async.cyr" ]; then
     printf 'include "lib/alloc.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/fnptr.cyr"\ninclude "lib/async.cyr"\nstruct Big { a: i64; b: i64; c: i64; }\nfn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\nfn rd(s: Big, z): i64 { return s.a; }\nasync fn job(x): i64 { return x; }\nasync fn outer(x): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var u = await job(x);\n    var r = rd(b, bump(&b));\n    var v = await job(r);\n    return u * 100 + v * 10 + b.a;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = outer(1);\n    var r = 0;\n    var n = 0;\n    while (n < 4) { r = future_force(C); n = n + 1; }\n    if (r != 121) { return r & 255; }\n    return 0;\n}\nvar rr = main();\nsyscall(60, rr);\n' > "$T/as1.cyr"
     rc=0; CYRIUS_ASYNC=1 "$CC" < "$T/as1.cyr" > "$T/as1.bin" 2> "$T/as1.err" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "AS1: rc $rc: $(grep '^error' "$T/as1.err" | head -1)"
-    else chmod +x "$T/as1.bin"; got=0; timeout 10 "$T/as1.bin" || got=$?
-        [ "$got" -eq 0 ] && ok "AS1: CYRIUS_ASYNC=1: rd(b, bump(&b)) in an async fn across awaits reads 1" || bad "AS1: exit $got (121 & 255 = 0 is right; 221 & 255 = 221 reads the write)"; fi
+    else chmod +x "$T/as1.bin"; got=0; cpu_run 10 300 "$T/as1.bin" || got=$?
+        [ "$got" -eq 0 ] && ok "AS1: CYRIUS_ASYNC=1: rd(b, bump(&b)) in an async fn across awaits reads 1" || bad "AS1: exit $got (121 & 255 = 0 is right; 221 & 255 = 221 reads the write)$(bound_why "$got")"; fi
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
 # ── A: the crossos tcyr on every leg ────────────────────────────────────────────────────────────
@@ -470,7 +491,7 @@ WANT=$(grep -c '^ *assert_eq(' "$TC")
 tcyr_ok() {   # <label> <output> <exit> [<count>]
     n=${4:-$WANT}
     if [ "$3" -eq 0 ] && grep -q "^$n passed, 0 failed ($n total)" "$2"; then ok "$1: $n passed"
-    else bad "$1: exit $3, $(grep -E 'passed|FAIL' "$2" | head -3 | tr '\n' ' ')"; fi
+    else bad "$1: exit $3$(bound_why "$3"), $(grep -E 'passed|FAIL' "$2" | head -3 | tr '\n' ' ')"; fi
 }
 for mode in plain IR3 DCE; do
     case $mode in
@@ -480,14 +501,14 @@ for mode in plain IR3 DCE; do
     esac
     rc=0; env $env_ "$CC" < "$TC" > "$T/tc_$mode" 2> "$T/tc_$mode.err" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "$lbl: rc $rc: $(grep '^error' "$T/tc_$mode.err" | head -1)"; continue; fi
-    chmod +x "$T/tc_$mode"; got=0; timeout 60 "$T/tc_$mode" > "$T/tc_$mode.out" 2>&1 || got=$?
+    chmod +x "$T/tc_$mode"; got=0; cpu_run 60 900 "$T/tc_$mode" > "$T/tc_$mode.out" 2>&1 || got=$?
     tcyr_ok "$lbl" "$T/tc_$mode.out" "$got"
 done
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
         if "$T/cc_a64" < "$TC" > "$T/tc.a" 2> "$T/tc.aerr"; then
-            chmod +x "$T/tc.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || got=$?
+            chmod +x "$T/tc.a"; got=0; (cd "$T" && cpu_run 120 900 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || got=$?
             tcyr_ok "A4: aarch64 (qemu)" "$T/tc.aout" "$got"
         else bad "A4: aarch64: the tcyr did not compile: $(grep '^error' "$T/tc.aerr" | head -1)"; fi
     else bad "A4: could not build src/main_aarch64.cyr"; fi
@@ -496,15 +517,15 @@ if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx" ]
    "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
     if "$T/cc_cx" < "$TC" > "$T/tc.cyx" 2> "$T/tc.cxerr" && [ -s "$T/tc.cyx" ]; then
-        got=0; timeout 300 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?   # 6.7.17: ~50 s of CPU (its walks), 300 under a parallel check.sh
+        got=0; cpu_run 240 900 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?   # ~57 s of CPU (its walks)
         tcyr_ok "A5: cx (cxvm)" "$T/tc.cxout" "$got"
     else bad "A5: cx: the tcyr did not compile: $(grep '^error' "$T/tc.cxerr" | head -1)"; fi
 else bad "A5: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 if command -v wine > /dev/null 2>&1; then
     if CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$T/tc.exe" 2> "$T/tc.werr" && [ -s "$T/tc.exe" ]; then
         got=0
-        (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
-            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine ./tc.exe > "$T/tc.wout" 2>/dev/null) || got=$?
+        (cd "$T" && cpu_run 180 900 env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine ./tc.exe > "$T/tc.wout" 2>/dev/null) || got=$?
         tcyr_ok "A6: PE (wine)" "$T/tc.wout" "$got"
     else bad "A6: PE: the tcyr did not compile: $(grep '^error' "$T/tc.werr" | head -1)"; fi
 else echo "  SKIP A6: PE leg — wine not installed"; skips=$((skips + 1)); fi
