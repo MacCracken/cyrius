@@ -1770,7 +1770,12 @@ struct. Before v6.6.16 each of these stored ONE word: `q = a` put `a`'s address 
 by-value parameter made `a` point at the CALLER's struct, so `a.x = 9` changed it. `Str`, `Result`,
 `Option` and `Tagged` (heap handles by name; the last three only while no struct of the program takes the
 name, 6.7.14) are unchanged (an inline `Str` assigned into a `Str` handle
-binds it to its header: see *An inline `Str` passes its header*). Through 6.7.9 a struct of 8 bytes or
+binds it to its header: see *An inline `Str` passes its header*) — but a struct VALUE of another type assigned into
+a `Str` handle (a local, a parameter, a global, a `*Str` name) is refused by name as into a `P` handle (6.7.17, the
+user's decision D18, 2026-10-22): `h = mkq();` with `fn mkq(): Q1` is *cannot copy 'mkq' into a variable of a
+different struct/vector type: 'h'* — a method, operator or if-expression result, a struct name, field or dereference
+alike — where through 6.7.16 h took the struct's first word as the header's address (a crash at the next
+`str_len(h)`); a handle, a `*T` and a `: Str` call keep their rebind. Through 6.7.9 a struct of 8 bytes or
 less was outside the rule: no struct variable of that size was a handle (the handle line above),
 and a `*T` of one was no struct operand, so `l = p` and `G = p` with `p: *S8` stored the POINTER
 into the first field, and `q = r` through a `q: *S8` parameter rebound `q` (the caller's struct
