@@ -1542,6 +1542,8 @@ if (_init_km == 1) {
     # Parse main code (top-level statements)
     PARSE_PROG(S);
 }
+_eb_end();   # 6.7.17: the parse is over: what it holds, written in source order before anything after it writes or
+#   exits raw (FIXUP) — `_dl_pw_end` ends it only at the end of file, not at a `}` recovery left. CHANGELOG [6.7.17]
 if (_prof_on == 1) { _prof_parse_end = _prof_clock_ns(); }
 
 # Exit epilogue
