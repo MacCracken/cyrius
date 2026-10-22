@@ -5328,7 +5328,10 @@ fn PP_REF_PASS(S): i64 {
                         syscall(SYS_WRITE, 2, "\n", 1);
                         syscall(SYS_EXIT, 1);
                     }
-                    # Inline: emit var declarations for each key-value line
+                    # Inline: emit var declarations for each key-value line — all on the #ref's own line, which keeps
+                    # its line break. 6.7.17: each declaration took a line of its own, so every later line of the file
+                    # was numbered off by the key count less one (`#ref` of three keys, then `zz` on line 2: "4:15"; of
+                    # none: "1:15"). CHANGELOG [6.7.17]
                     var ri = 0;
                     while (ri < rnr) {
                         var rch = load8(S + 0x191800 + ri);
@@ -5344,10 +5347,11 @@ fn PP_REF_PASS(S): i64 {
                                 store8(out + op, rch); op = op + 1; ri = ri + 1;
                             }
                             while (load8(out + op - 1) == 32) { op = op - 1; }
-                            store8(out + op, 59); store8(out + op + 1, 10); op = op + 2;
+                            store8(out + op, 59); store8(out + op + 1, 32); op = op + 2;
                         }
                         else { ri = ri + 1; }
                     }
+                    if (load8(S + _SRCB + ip - 1) == 10) { store8(out + op, 10); op = op + 1; }
                     found = 1;
                     bol = 1;
                 }

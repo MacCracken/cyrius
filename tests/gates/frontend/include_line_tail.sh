@@ -208,12 +208,30 @@ syscall(60, ka + 2);' 7
 runs RC4 'control: #ref "x" ;  # note' '#ref "f.toml" ;  # note
 syscall(60, ka + 2);' 7
 runs RC5 'control: CRLF line ends' "$(printf '#ref "f.toml"\r\nsyscall(60, ka + 2);\r')" 7
+# RL — the #ref line keeps its place in the line count (met in the finish pass, 2026-10-22). Each key's declaration took
+# a line of its own, so every later line was numbered off by the key count less one: a three-key file then `zz` on line
+# 2 said "4:15", a file with no key "1:15". The declarations now sit on the #ref's own line.
+#   PP_REF_PASS emitting a line per declaration again (6.7.16) -> RED RL1 RL2 RL3, 12 row-legs (RL4 green: values)
+printf 'kb = 6\n# c\nkc = 7\nkd = 8\n' > "$D/ref/f3k.toml"
+printf '# no key\n[sec]\n' > "$D/ref/f0k.toml"
+refuse RL1 "a three-key file: the next line is line 2" '#ref "f3k.toml"
+syscall(60, zz);' "error:<source>:2:15: $ZZ"
+refuse RL2 "a file with no key: the next line is line 2" '#ref "f0k.toml"
+syscall(60, zz);' "error:<source>:2:15: $ZZ"
+refuse RL3 "two #ref lines, then a later line" 'var a = 1;
+#ref "f3k.toml"
+#ref "f.toml"
+var b = 2;
+syscall(60, a + zz);' "error:<source>:5:19: $ZZ"
+runs RL4 "control: every key of both files is declared" '#ref "f.toml"
+#ref "f3k.toml"
+syscall(60, ka + kb + kc + kd);' 26
 RDIR=
-# The corpus floor: 26 rows on four legs. A row or a leg lost reads RED, never green.
-[ "$N" -ge 104 ] || bad "floor: $N row-legs ran (floor 104) - rows or legs were lost"
+# The corpus floor: 30 rows on four legs. A row or a leg lost reads RED, never green.
+[ "$N" -ge 120 ] || bad "floor: $N row-legs ran (floor 120) - rows or legs were lost"
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: $G: $NFAIL check(s) failed"
     exit 1
 fi
-echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies, an unclosed file name said so, a #ref line likewise ($N row-legs on $LEGS) (6.7.17, D29, D92)"
+echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies, an unclosed file name said so, a #ref line likewise and numbered in place ($N row-legs on $LEGS) (6.7.17, D29, D92)"
 exit 0

@@ -6719,7 +6719,9 @@ error:<source>:1:16: expected the end of the line after a #ref's file name
 
 for `#ref "f.toml"; var y = 2; syscall(60, ka + y);` — through 6.7.16 the rest of the line was
 dropped unread (with `ka = 5` in f.toml that program exited 5, not 7). Put each statement on its
-own line.
+own line. The declarations a `#ref` emits all sit on its own line, so the lines after it keep their
+numbers in diagnostics (through 6.7.16 each key took a line, and every later line was numbered off
+by the key count less one).
 
 ## Inline Assembly
 
