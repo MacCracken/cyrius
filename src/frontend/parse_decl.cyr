@@ -11957,13 +11957,16 @@ fn _dt_ann_say(S, k, e): i64 {
     STI(S, e);
     return 1;
 }
-# Cursor past a destructure's FIRST name: an annotation ending at a `,` is refused and stepped (1); else 0, the cursor
-# untouched (a plain annotated `var`).
+# Cursor past a destructure's FIRST name: an annotation ending at a `,` with a name after it is refused and stepped
+# (1); else 0, the cursor untouched (a plain annotated `var`). 6.7.17 review: a `,` with no name after it is no
+# destructure — `var b: , = 0;`, `var b: i64, = 0;` keep the annotation reader's one line ("expected a type for
+# variable 'b', got ','" / "expected '=', got ','"); they were this refusal plus "expected identifier". CHANGELOG [6.7.17]
 fn _dt_ann1(S): i64 {
     _dt_ann_k = GTI(S) - 1;
     if (PEEKT(S) != 49) { return 0; }
     var e = _dt_ann_end(S, GTI(S));
     if (TOKTYP(S, e) != 31) { return 0; }
+    if (TOKTYP(S, e + 1) != 2) { return 0; }
     return _dt_ann_say(S, _dt_ann_k, e);
 }
 # Cursor past a LATER name: its annotation, ending at the next `,`, the `=` or the `;`, refused and stepped.
