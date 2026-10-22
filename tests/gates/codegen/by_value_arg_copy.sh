@@ -14,10 +14,30 @@
 #      arguments; their sizes (CYRIUS_SYMS) are EQUAL for a later argument that only reads (a name,
 #      `n + 1`, a field, `&c`, a string, a comparison, an index, a closure literal, `-n`, `n % 3 << 1`,
 #      a struct's integer field in arithmetic, `c.a + 1`)
-#   K  ... and `pN` is LARGER — the copy — for one that may write: a call, a call inside an
-#      expression, a method call, a builtin store, an operator a struct dispatches (`w + w2`), and
-#      one on struct-typed fields (`h.w + h.v` — struct values, though today only a NAME on the left
-#      dispatches: the rule does not depend on that)
+#   K  ... and `pN` is LARGER — the copy — for one that may write: a call to a fn that may write
+#      (`bump`), one inside an expression, a writing method, a builtin store, an operator a struct
+#      dispatches (`w + w2`), and one on struct-typed fields (`h.w + h.v` — struct values: a
+#      struct-typed field dispatches W_add since 6.7.10); 6.7.17: C12-C14 a typed pointer that reaches no
+#      struct value (`*pn + 1`, `pn: *i64`; `pw + 1`, pointer arithmetic; `pq.n + 1`, an integer field), C15
+#      `- w` and C16 `*pw` (no BINARY operator: a unary `-` / `*` dispatches nothing; C15 copied before) —
+#      and K7-K9 one that does: a dereference (`*pw + 1`), a typed pointer's struct field (`pq.w + 1`)
+#      and a `*HW` field's (`o2.p.w + 1`), each dispatching W's operator fn (no copy before 6.7.17).
+#      6.7.17 (`_fn_nowrite`): C17-C20 a call to a fn that writes no memory — direct (`idn(n)`), a
+#      method (`o.nw(n)`), a generic (`gk<i64>(n)`), the `sizeof` intrinsic — takes no copy (each did
+#      before); K10-K15 one that may write does: a global store (`wg`), an operator fn its body runs
+#      on a struct parameter (`hop(w)`, `v + 1`), a call to a writer (`hw2`), a writing method
+#      (`o.wm`), a writing generic (`gw<i64>`), a recursive helper (`rr`, conservatively); K16 / K17 a
+#      helper whose if-expression `if (c) { v } else { w } - 1` (`* 1`) runs S1's operator fn (its `}` read
+#      as ending no operand, the `-` / `*` was a unary one: no copy before the review fix); C21 a read-only
+#      builtin written inline (`load64(&n) + 1`) takes no copy, as the summary's allow-list reads one
+#      (`_fnw_builtin_tok`; a copy before the review fix, where a helper wrapping it took none); the summary's
+#      soundness rules, each a K row that takes the copy: K18 a local holding a struct global (`var v = w0;
+#      v - 1`, `_fnw_val_ok`), K19 a parenthesised struct global (`(w0) - 1`, `_fnw_paren_ok`), K20 a struct
+#      global whose name a block's `var` declares (`_fnw_name_ok`), K21 an assignment to a global whose name a
+#      block's `var` declares (`_fnw_assignable`), K22 a call an `&` routes to a writing `_ptr` sibling
+#      (`kq(&n)`) and K23 one routed to a writing `_int` sibling (`ki(idn(n))`, `_fnw_resolve`); C22 the
+#      control: `var v = x; v - 1` on a scalar takes none. K24 (its own probe: lib/str.cyr) a call routed to a
+#      writing `_str` sibling takes the copy and reads b as written
 #   T  objdump: `return rd(G, gbump())` (no `&`, which diverts any tail call) is an ordinary call —
 #      its copy is in the frame the `jmp` would free — and `return rd(G, n)` keeps its `jmp`
 #   TS the copy costs ONLY its own call the `jmp` (`_tc_snap_div`, never the per-fn
@@ -25,15 +45,23 @@
 #      keeps its `jmp`; T4 the two in a loop (the self call a pending site, `_tcp_site`) and T4B
 #      the self call first, decided at the loop's end (`_tcp_loop_end`); T5 a closure literal
 #      among the copying call's arguments runs its own tail arm, and the call still diverts; TR
-#      the probe run 3,000,000 deep (the lane's first cut: SIGSEGV)
-#   TU THE RULING (user, 2026-10-09 — "accept the TCO loss"): a tail call whose by-value argument is
-#      copied is an ORDINARY call, its evaluation order right, and only that call loses its `jmp`.
-#      TU1 the reviewer's tco2 shape `return f6(G, n - 1, g6(acc))` CALLS f6, and the self tail
-#      call written after it in the same fn keeps its `jmp` (objdump: one of each); TU2 f6 run
-#      3,000,000 deep, the later call doing the depth, exits 193. A per-fn "writes no memory"
-#      analysis would win the copying call's `jmp` back (issue
-#      2026-10-09-tail-call-by-value-copy-needs-effect-analysis, 6.7.13): TU1's call flips to a
-#      `jmp` then, as the ruling's own expiry
+#      the probe run 3,000,000 deep (the lane's first cut: SIGSEGV). (6.7.17: `gz` stores to a
+#      global, so its call still writes and the copy is still taken)
+#   TU A CALL TO A FN THAT WRITES NO MEMORY TAKES NO COPY (6.7.17, `_fn_nowrite`). The 6.7.7 ruling
+#      (user, 2026-10-09 — "accept the TCO loss") made a tail call whose by-value argument is copied
+#      an ORDINARY call, and every call among the later arguments counted as a write; a per-fn
+#      summary wins the copying call's `jmp` back where the callee writes nothing (issue
+#      2026-10-09-tail-call-by-value-copy-needs-effect-analysis — the ruling's own expiry). TU1 the
+#      reviewer's tco2 shape `return f6(G, n - 1, g6(acc))` is a `jmp` now, beside the later self
+#      tail call's (objdump: two `jmp`s, no call — one of each before 6.7.17); TU3 a helper that
+#      stores to a global keeps the copy and the call; TU4 a helper defined BELOW the caller, TU5 a
+#      method (`G.m6(acc)`), TU6 / TU6B a generic called with and without `<i64>` keep the `jmp`;
+#      TU7 a recursive helper is a call (a summary in progress reads as a write: conservative);
+#      TU8 a read-only builtin inline, `return f13(G, n - 1, acc + load64(P))`, keeps its `jmp`;
+#      TU2 every `jmp` form run 3,000,000 deep (the issue's tco2 verbatim among them), the call
+#      forms 1,000 deep, each with its value: exit 193
+#   TD a 60,000-deep chain of helpers that declare nothing, reached from a later argument, compiles and runs
+#      with its value (the summary's nesting is bounded: cycc's stack overflowed from 30,000 before)
 #   AS AS1: CYRIUS_ASYNC=1 — the copy in an `async fn`, whose frame is the coroutine's heap frame
 #   A  ANTI-VACUOUS: the crossos tcyr built and run — x86 plain, CYRIUS_IR=3 and CYRIUS_DCE=1, then
 #      aarch64 (qemu), cx (cxvm) and PE (wine), each with the full assertion count
@@ -80,6 +108,46 @@
 #                                                              (its value taken for an address)
 #   (a definition's copies row replaced whole, and none written for a redefined fn, is
 #   fn_redefinition_binds_last.sh's)
+# 6.7.17 (the struct-operator rule through a typed pointer; each mutant's cycc built from a scratch src copy, this gate
+# run with CYCC= it):
+#   M17 `_deref_struct_at` answers 0                            -> K7; the tcyr's `rd(G, *pv + 1)` (11) on x86 /
+#                                                              IR3 / DCE / PE
+#   M18 `_nsv_ptr_base` answers 0                               -> K8; the tcyr's `rd(G, ph.v + 1)`
+#   M19 `_name_struct_val` stops at a `*T` field (the pre-fix line) -> K9; the tcyr's `rd(G, o.p.v + 1)`
+#   M20 `_tok_binop_at` answers 1 (a unary `-` / `*` an operator)  -> C15 (a copy for `- w`), K7
+# 6.7.17 (the no-write summary, `_fn_nowrite`; the same scratch-src method, this gate's x86 legs run with CYCC=):
+#   M21 `_fn_nowrite` answers 1 for every fn                  -> K1, K3, K10-K15, T, T1, T3, T4, T4B, TU3, TU7, AS1;
+#                                                              the tcyr's writer rows on x86 / IR3 / DCE
+#   M22 `_fn_nowrite` answers 0 (6.7.7's every-call rule)     -> C17-C19, TU1, TU1B, TU4-TU6B, TU2 (SIGSEGV); the
+#                                                              tcyr's 1,000,000-deep `nwalk` (SIGSEGV)
+#   M23 `_fnw_assign_ok` answers 1 (a store reads as none)    -> K10, K12-K14, T, T1, T3-T4B, TU3; the tcyr's
+#                                                              global-store rows and the tail arm `rd(G, gbump())`
+#   M24 `_fnw_arith_ok` answers 1 (no operator fn judged)     -> K11; the tcyr's `w_op` / `w_deref` / `w_field` rows
+#   M25 a callee's own calls read as writing nothing          -> K3, K12, K15, TU7; the tcyr's `w_wrap` row and its
+#                                                              two operator rows (`pbump` calls `bump`)
+#   M26 a summary in progress reads as writing nothing        -> K15, TU7 (a recursive helper)
+#   M27 `_call_meth_fn` resolves no method                    -> C18, TU5, TU2 (SIGSEGV)
+#   M28 `_fnw_gen_name` resolves no generic                   -> C19, TU6, TU2 (SIGSEGV)
+#   M29 `_fnw_tok_plain` answers 1 (no token writes)          -> K1, K3, AS1; the tcyr's `bump` rows
+#   M30 `_tok_opnd_end` without `}` (the pre-fix line)        -> K16, K17; the tcyr's `w_ife_sub` / `w_ife_mul`
+#                                                              rows (11) on x86 / IR3 / DCE / aarch64 / cx / PE
+#   M31 `_fn_nowrite` without its depth bound (the pre-fix line) -> TD (rc 139: cycc's SIGSEGV)
+#   M32 `_fnw_val_ok` answers 1                                -> K18, K19; the tcyr's `w_val` / `w_paren` rows (11)
+#   M33 `_fnw_paren_ok` answers 1                              -> K19; the tcyr's `w_paren` row
+#   M34 `_fnw_name_ok` without its `_sarg_gv_sid` line          -> K18-K20; the tcyr's `w_val` / `w_paren` / `w_shadow`
+#   M35 `_fnw_assignable` without its `_findvar_core` line      -> K21; the tcyr's `w_asg` row
+#   M36 `_fnw_resolve` without its `_fnc_ptr_sib` line          -> K22; the tcyr's `w_psib` row
+#   M37 `_fnw_resolve` without its `_fnt_ovstr` line            -> K24 (exit 187: p read 11)
+#   M39 `_fnw_resolve` without its `_fnt_ovint` line            -> K23; the tcyr's `w_isib` row
+#   (M32-M36 and M39: the tcyr's rows on x86 / IR3 / DCE and PE, which compile with CYCC= the mutant; the aarch64 /
+#   cx legs build their compilers from the tree's src)
+#   M38 `_span_may_write` reads every builtin as a write (the pre-fix line) -> C21, TU8, TU2 (SIGSEGV); the tcyr's
+#                                                              1,000,000-deep `nwalk_l` on x86 / IR3 / DCE (SIGSEGV)
+#                                                              and PE (wine: exit 1)
+#   (gate hygiene, the review fix: `cpu_run`'s CPU bound for A5 set to 5 s -> A5 FAILs by name — exit 152, over its
+#   CPU bound (SIGXCPU); with a plain `ulimit -t` (soft = hard) it was SIGKILL, exit 137, which names nothing)
+#   (`_fnw_brace_ok` answering 1 kills no row: a struct literal builds in the callee's own frame — the rule is the
+#   allow-list's, for a `{` the scan does not read)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -103,6 +171,25 @@ fails=0
 skips=0
 ok()  { echo "  ok   $1"; }
 bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
+# Every probe run is CPU-bound, and a wall-clock bound failed it on a loaded box with nothing wrong in the code: A5's
+# cxvm run (~57 s of CPU) took 2m50s at load ~60 and `timeout 300` killed it (exit 124) under a parallel check.sh.
+# A run is bounded by its CPU time (the soft `ulimit -t`: SIGXCPU, exit 152 — a hang or a real slowdown) and,
+# generously, by the wall clock (a run that blocks: 124). The soft limit is set first (a hard one below the unlimited
+# soft one is EINVAL) and the hard one 30 s past it: a plain `ulimit -t` sets both, and at a hard limit equal to the
+# soft one the kernel sends SIGKILL (137), which names nothing. `cpu_run <cpu s> <wall s> <cmd> [args..]`; the caller
+# redirects; an environment goes through `env`. CHANGELOG [6.7.17]
+cpu_run() {
+    _cs=$1; _ws=$2; shift 2
+    (ulimit -S -t "$_cs" 2>/dev/null; ulimit -H -t $((_cs + 30)) 2>/dev/null; exec timeout "$_ws" "$@")
+}
+# What a bound's exit code means (152, 137, 124), else nothing — appended to a FAIL line.
+bound_why() {
+    case $1 in
+        152) echo " — over its CPU bound (SIGXCPU): a hang or a real slowdown" ;;
+        137) echo " — killed (SIGKILL): past its hard CPU bound, or the OOM killer" ;;
+        124) echo " — past its wall-clock backstop: the run blocked" ;;
+    esac
+}
 
 # ── C / K: the copy's cost, by size ─────────────────────────────────────────────────────────────
 # Each row: <id>@<later argument>@<C = same size | K = larger>. `b` is the Big under test, `c` /
@@ -123,17 +210,54 @@ K2@n + bump(&b)@K
 K3@o.touch(&b)@K
 K4@store64(&b, 5)@K
 K5@w + w2@K
-K6@h.w + h.v@K'
+K6@h.w + h.v@K
+C12@*pn + 1@C
+C13@pw + 1@C
+C14@pq.n + 1@C
+C15@- w@C
+C16@*pw@C
+C17@idn(n)@C
+C18@o.nw(n)@C
+C19@gk<i64>(n)@C
+C20@sizeof(Big) + n@C
+K7@*pw + 1@K
+K8@pq.w + 1@K
+K9@o2.p.w + 1@K
+K10@wg(n)@K
+K11@hop(w)@K
+K12@hw2(n)@K
+K13@o.wm(n)@K
+K14@gw<i64>(n)@K
+K15@rr(n)@K
+K16@ife(1, s1, s1)@K
+K17@ifm(1, s1, s1)@K
+C21@load64(&n) + 1@C
+K18@kv(n)@K
+K19@kp(n)@K
+K20@ks(n)@K
+K21@ka(n)@K
+K22@kq(&n)@K
+K23@ki(idn(n))@K
+C22@kv2(n)@C'
 {
-    printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\n'
+    printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\nstruct OP2 { n: i64; p: *HW; }\n'
     printf 'fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\n'
     printf 'fn W_add(x: *W, y: *W): i64 { x.p = x.p + 10; return 0; }\n'
     printf 'fn Big_touch(self, p): i64 { return bump(p); }\n'
     printf 'fn rd(s: Big, z): i64 { return s.a; }\nfn rp(s: *Big, z): i64 { return s.a; }\n'
+    printf 'var GW = 0;\nfn idn(x): i64 { return x + 1; }\nfn Big_nw(self, x): i64 { return x; }\nfn gk<T>(x: T): i64 { return 7; }\n'
+    printf 'fn wg(x): i64 { GW = x; return 0; }\nfn hop(v: W): i64 { return v + 1; }\nfn hw2(x): i64 { return wg(x) + 1; }\n'
+    printf 'fn Big_wm(self, x): i64 { GW = x; return 0; }\nfn gw<T>(x: T): i64 { GW = 1; return 0; }\nfn rr(x): i64 { if (x > 100) { return rr(x - 1); } return x; }\n'
+    printf 'struct S1 { a: i64; }\nfn S1_sub(x: S1, y): i64 { GW = 1; return 5; }\nfn S1_mul(x: S1, y): i64 { GW = 1; return 6; }\n'
+    printf 'fn ife(c, v: S1, w: S1): i64 { return if (c) { v } else { w } - 1; }\nfn ifm(c, v: S1, w: S1): i64 { return if (c) { v } else { w } * 1; }\n'
+    printf 'var w0: W = W { 1, 2, 3 };\nfn W_sub(x: *W, y): i64 { GW = 1; return 0; }\n'
+    printf 'fn kv(x): i64 { var v = w0; return v - 1; }\nfn kp(x): i64 { return (w0) - 1; }\nfn ks(x): i64 { if (x == 5) { var w0 = 0; } return w0 - 1; }\n'
+    printf 'fn ka(x): i64 { if (x == 99) { var GW = 0; GW = 1; } GW = x; return 0; }\nfn kq(x): i64 { return x; }\nfn kq_ptr(p): i64 { GW = 1; return 0; }\n'
+    printf 'fn ki(x: cstring): i64 { return 0; }\nfn ki_int(x): i64 { GW = 1; return 0; }\nfn kv2(x): i64 { var v = x; return v - 1; }\n'
     echo "$ROWS" | while IFS='@' read -r id arg kind; do
         for f in rd rp; do
             nm=p; [ "$f" = rp ] && nm=q
-            printf 'fn %s%s(): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var c: Big = Big { 4, 5, 6 };\n    var o: Big = Big { 0, 0, 0 };\n    var w: W = W { 1, 2, 3 };\n    var w2: W = W { 0, 0, 0 };\n    var h: HW;\n    h.n = 0;\n    h.w.p = 1;\n    h.v.p = 2;\n    var n = 3;\n    var a: i64[4];\n    a[1] = 7;\n    var r = %s(b, %s);\n    return r + n + c.a + o.a + w.p + w2.p + h.w.p + a[1];\n}\n' "$nm" "$id" "$f" "$arg"
+            printf 'fn %s%s(): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var c: Big = Big { 4, 5, 6 };\n    var o: Big = Big { 0, 0, 0 };\n    var w: W = W { 1, 2, 3 };\n    var w2: W = W { 0, 0, 0 };\n    var h: HW;\n    h.n = 0;\n    h.w.p = 1;\n    h.v.p = 2;\n    var n = 3;\n    var a: i64[4];\n    a[1] = 7;\n    var pw: *W = &w;\n    var pq: *HW = &h;\n    var pn: *i64 = &n;\n    var o2: OP2;\n    o2.n = 0;\n    o2.p = &h;\n    var s1: S1 = S1 { 1 };\n    var r = %s(b, %s);\n    return r + n + c.a + o.a + w.p + w2.p + h.w.p + a[1];\n}\n' "$nm" "$id" "$f" "$arg"
         done
     done
     printf 'fn zend(): i64 { return 0; }\nsyscall(60, zend());\n'
@@ -160,7 +284,47 @@ else
     cat "$T/c.out"
     nf=$(grep -c '^  FAIL' "$T/c.out" || true); fails=$((fails + nf))
     nr=$(grep -c '^  ok' "$T/c.out" || true)
-    [ $((nr + nf)) -eq 17 ] || bad "C/K: $((nr + nf)) rows judged, want 17"
+    [ $((nr + nf)) -eq 45 ] || bad "C/K: $((nr + nf)) rows judged, want 45"
+fi
+# K24: a call routed to a `_str` sibling (lib/str.cyr's Str) — `kt(s)` reaches `kt_str`, which writes b through GP
+cat > "$T/k24.cyr" <<'K24EOF'
+include "lib/str.cyr"
+struct Big { a: i64; b: i64; c: i64; }
+var GP = 0;
+fn rd(s: Big, z): i64 { return s.a; }
+fn rp(s: *Big, z): i64 { return s.a; }
+fn kt(x): i64 { return 0; }
+fn kt_str(x: Str): i64 { store64(GP, 11); return 0; }
+fn pK24(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var s: Str = str_from("ab");
+    GP = &b;
+    var r = rd(b, kt(s));
+    return r;
+}
+fn qK24(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var s: Str = str_from("ab");
+    GP = &b;
+    var r = rp(b, kt(s));
+    return r;
+}
+fn zend(): i64 { return 0; }
+alloc_init();
+syscall(60, pK24() * 16 + qK24() + zend());
+K24EOF
+rc=0; CYRIUS_SYMS="$T/k24.syms" "$CC" < "$T/k24.cyr" > "$T/k24.bin" 2> "$T/k24.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "K24: the probe did not build: $(grep '^error' "$T/k24.err" | head -1)"
+else
+    chmod +x "$T/k24.bin"; got=0; cpu_run 10 300 "$T/k24.bin" || got=$?
+    sort "$T/k24.syms" > "$T/k24.sorted"
+    _k=$(awk 'f { print a " " $1; exit } $2 == "pK24" { a = $1; f = 1 }' "$T/k24.sorted"); _l=$(awk 'f { print a " " $1; exit } $2 == "qK24" { a = $1; f = 1 }' "$T/k24.sorted")
+    if [ -z "$_k" ] || [ -z "$_l" ]; then bad "K24: the symbol map does not size pK24 / qK24"
+    else
+        sp=$(( 0x${_k#* } - 0x${_k% *} )); sq=$(( 0x${_l#* } - 0x${_l% *} ))
+        if [ "$sp" -gt "$sq" ] && [ "$got" -eq 27 ]; then ok "K24: rd(b, kt(s)) — kt_str, a writing \`_str\` sibling — copies b ($sp B > rp's $sq B) and reads 1: exit 27"
+        else bad "K24: rd(b, kt(s)) is $sp B, rp's $sq B, exit $got — want a copy and exit 27 (187: rd read kt_str's write)$(bound_why "$got")"; fi
+    fi
 fi
 
 # ── T: the tail form (objdump) ──────────────────────────────────────────────────────────────────
@@ -168,8 +332,8 @@ printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nf
 rc=0; CYRIUS_SYMS="$T/t.syms" "$CC" < "$T/t.cyr" > "$T/t.bin" 2> "$T/t.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "T: the probe did not build: $(grep '^error' "$T/t.err" | head -1)"
 else
-    chmod +x "$T/t.bin"; got=0; timeout 10 "$T/t.bin" || got=$?
-    [ "$got" -eq 25 ] && ok "T: t1() reads G.a = 1 (its copy), then t2(4) reads 11 + 4: exit 25" || bad "T: exit $got, want 25"
+    chmod +x "$T/t.bin"; got=0; cpu_run 10 300 "$T/t.bin" || got=$?
+    [ "$got" -eq 25 ] && ok "T: t1() reads G.a = 1 (its copy), then t2(4) reads 11 + 4: exit 25" || bad "T: exit $got, want 25$(bound_why "$got")"
     if command -v objdump > /dev/null 2>&1; then
         r=$(awk '$2 == "rd" { print $1 }' "$T/t.syms"); a=$(awk '$2 == "t1" { print $1 }' "$T/t.syms")
         b=$(awk '$2 == "t2" { print $1 }' "$T/t.syms"); e=$(awk '$2 == "tend" { print $1 }' "$T/t.syms")
@@ -187,12 +351,12 @@ else
 fi
 
 # ── TS: the copy costs only its own call the `jmp` ──────────────────────────────────────────────
-printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn gz(): i64 { return 0; }\nfn idf(x): i64 { return x; }\nfn rdz(s: Big, z): i64 { return s.a + z; }\nfn rc(s: Big, cb): i64 { return s.a; }\nfn t3(n, acc): i64 {\n    if (n == 0) { return rdz(G, acc + gz()); }\n    return t3(n - 1, acc + 1);\n}\nfn t4(n, acc): i64 {\n    while (n >= 0) {\n        if (n == 0) { return rdz(G, acc + gz()); }\n        return t4(n - 1, acc + 1);\n    }\n    return 0;\n}\nfn t4b(n, acc): i64 {\n    while (n >= 0) {\n        if (n > 0) { return t4b(n - 1, acc + 1); }\n        return rdz(G, acc + gz());\n    }\n    return 0;\n}\nfn t5(): i64 { return rc(G, |x| { return idf(x); }); }\nfn tend(): i64 { return 0; }\nsyscall(60, (t3(3000000, 0) - 3000001) + (t4(3000000, 0) - 3000001) + (t4b(3000000, 0) - 3000001) + (t5() - 1) + tend());\n' > "$T/ts.cyr"
+printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nvar GZ = 0;\nfn gz(): i64 { GZ = 0; return 0; }\nfn idf(x): i64 { return x; }\nfn rdz(s: Big, z): i64 { return s.a + z; }\nfn rc(s: Big, cb): i64 { return s.a; }\nfn t3(n, acc): i64 {\n    if (n == 0) { return rdz(G, acc + gz()); }\n    return t3(n - 1, acc + 1);\n}\nfn t4(n, acc): i64 {\n    while (n >= 0) {\n        if (n == 0) { return rdz(G, acc + gz()); }\n        return t4(n - 1, acc + 1);\n    }\n    return 0;\n}\nfn t4b(n, acc): i64 {\n    while (n >= 0) {\n        if (n > 0) { return t4b(n - 1, acc + 1); }\n        return rdz(G, acc + gz());\n    }\n    return 0;\n}\nfn t5(): i64 { return rc(G, |x| { return idf(x); }); }\nfn tend(): i64 { return 0; }\nsyscall(60, (t3(3000000, 0) - 3000001) + (t4(3000000, 0) - 3000001) + (t4b(3000000, 0) - 3000001) + (t5() - 1) + tend());\n' > "$T/ts.cyr"
 rc=0; CYRIUS_SYMS="$T/ts.syms" "$CC" < "$T/ts.cyr" > "$T/ts.bin" 2> "$T/ts.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "TS: the probe did not build: $(grep '^error' "$T/ts.err" | head -1)"
 else
-    chmod +x "$T/ts.bin"; got=0; timeout 20 "$T/ts.bin" || got=$?
-    [ "$got" -eq 0 ] && ok "TR: t3 / t4 / t4b run 3,000,000 deep beside their copying tail call: exit 0" || bad "TR: exit $got, want 0 (139: a self tail call lost its jmp)"
+    chmod +x "$T/ts.bin"; got=0; cpu_run 20 300 "$T/ts.bin" || got=$?
+    [ "$got" -eq 0 ] && ok "TR: t3 / t4 / t4b run 3,000,000 deep beside their copying tail call: exit 0" || bad "TR: exit $got, want 0 (139: a self tail call lost its jmp)$(bound_why "$got")"
     if command -v objdump > /dev/null 2>&1; then
         sort "$T/ts.syms" > "$T/ts.sorted"
         # ts_n <op> <from fn> <to fn (exclusive)> <target fn>: how many <op>s in [from, to) reach target
@@ -217,25 +381,97 @@ else
     else echo "  SKIP T3-T5: no objdump"; skips=$((skips + 1)); fi
 fi
 
-# ── TU: the ruling (user, 2026-10-09) — the copying tail call is a call; a later one keeps its jmp ──
-printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn g6(x): i64 { return x + 1; }\nfn f6(s: Big, n, acc): i64 {\n    if (n == 0) { return acc + s.a; }\n    if (n < 3) { return f6(G, n - 1, g6(acc)); }\n    return f6(G, n - 1, acc + 1);\n}\nfn uend(): i64 { return 0; }\nsyscall(60, (f6(G, 3000000, 0) & 255) + uend());\n' > "$T/tu.cyr"
+# ── TU: a call that writes no memory takes no copy (6.7.17) — the copying tail call keeps its jmp ──
+cat > "$T/tu.cyr" <<'TUEOF'
+struct Big { a: i64; b: i64; c: i64; }
+var G: Big = Big { 1, 2, 3 };
+var GW = 0;
+fn g6(x): i64 { return x + 1; }
+fn w6(x): i64 { GW = x; return x + 1; }
+fn r6(x): i64 { if (x > 1000000000) { return r6(x - 1); } return x + 1; }
+fn Big_m6(self, x): i64 { return x + 1; }
+fn gg6<T>(t: T, k): i64 { return k + 1; }
+fn f6(s: Big, n, acc): i64 {
+    if (n == 0) { return acc + s.a; }
+    if (n < 3) { return f6(G, n - 1, g6(acc)); }
+    return f6(G, n - 1, acc + 1);
+}
+fn f7(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f7(G, n - 1, w6(acc)); }
+fn f8(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f8(G, n - 1, b6(acc)); }
+fn f9(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f9(G, n - 1, G.m6(acc)); }
+fn f10(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f10(G, n - 1, gg6<i64>(0, acc)); }
+fn f11(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f11(G, n - 1, gg6(0, acc)); }
+fn f12(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f12(G, n - 1, r6(acc)); }
+fn b6(x): i64 { return x + 1; }
+fn g(x): i64 { return x + 1; }
+fn f(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f(G, n - 1, g(acc)); }
+var ONE = 1;
+var P = 0;
+fn f13(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f13(G, n - 1, acc + load64(P)); }
+fn uend(): i64 { return 0; }
+fn uchk(): i64 {
+    var e = 0;
+    P = &ONE;
+    if (f7(G, 1000, 0) != 1001) { e = e + 1; }
+    if (f8(G, 3000000, 0) != 3000001) { e = e + 2; }
+    if (f9(G, 3000000, 0) != 3000001) { e = e + 4; }
+    if (f10(G, 3000000, 0) != 3000001) { e = e + 8; }
+    if (f11(G, 3000000, 0) != 3000001) { e = e + 16; }
+    if (f12(G, 1000, 0) != 1001) { e = e + 32; }
+    if (f(G, 3000000, 0) != 3000001) { e = e + 64; }
+    if (f13(G, 3000000, 0) != 3000001) { e = e + 128; }
+    return e;
+}
+syscall(60, (f6(G, 3000000, 0) & 255) + uchk() + uend());
+TUEOF
 rc=0; CYRIUS_SYMS="$T/tu.syms" "$CC" < "$T/tu.cyr" > "$T/tu.bin" 2> "$T/tu.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "TU: the probe did not build: $(grep '^error' "$T/tu.err" | head -1)"
 else
-    chmod +x "$T/tu.bin"; got=0; timeout 20 "$T/tu.bin" || got=$?
-    [ "$got" -eq 193 ] && ok "TU2: f6 runs 3,000,000 deep on its later self tail call: exit 193 (3000001 & 255)" || bad "TU2: exit $got, want 193 (139: the later self tail call lost its jmp)"
+    chmod +x "$T/tu.bin"; got=0; cpu_run 30 300 "$T/tu.bin" || got=$?
+    [ "$got" -eq 193 ] && ok "TU2: f6 / f / f8-f11 / f13 run 3,000,000 deep (f7 / f12 1,000), every value right: exit 193" || bad "TU2: exit $got, want 193 (139: a tail call lost its jmp; any other: a walk's value is wrong)$(bound_why "$got")"
     if command -v objdump > /dev/null 2>&1; then
         sort "$T/tu.syms" > "$T/tu.sorted"
-        a=$(awk '$2 == "f6" { print $1 }' "$T/tu.sorted"); e=$(awk '$2 == "uend" { print $1 }' "$T/tu.sorted")
-        if [ -z "$a" ] || [ -z "$e" ]; then bad "TU1: the symbol map does not name f6 / uend"
-        else
-            fs=$(printf '%x' "0x$a")
-            nc=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/tu.bin" | grep -cE "call +0x$fs\b" || true)
-            nj=$(objdump -d --start-address=0x"$a" --stop-address=0x"$e" "$T/tu.bin" | grep -cE "jmp +0x$fs\b" || true)
-            if [ "$nc" -eq 1 ] && [ "$nj" -eq 1 ]; then ok "TU1: return f6(G, n - 1, g6(acc)) is a call (its copy); return f6(G, n - 1, acc + 1) after it keeps its jmp"
-            else bad "TU1: f6 has $nc call(s) and $nj jmp(s) to itself, want 1 and 1 (the ruling, user 2026-10-09)"; fi
-        fi
-    else echo "  SKIP TU1: no objdump"; skips=$((skips + 1)); fi
+        # tu_n <op> <fn>: how many <op>s to <fn> itself in [fn, the next symbol)
+        tu_n() {
+            _se=$(awk -v n="$2" 'f { print $1; exit } $2 == n { a = $1; f = 1 } END { }' "$T/tu.sorted")
+            _a=$(awk -v n="$2" '$2 == n { print $1 }' "$T/tu.sorted")
+            if [ -z "$_a" ] || [ -z "$_se" ]; then echo x; return 0; fi
+            objdump -d --start-address=0x"$_a" --stop-address=0x"$_se" "$T/tu.bin" | grep -cE "$1 +0x$(printf '%x' "0x$_a")\b" || true
+        }
+        tu_row() {   # <id> <fn> <jmps> <calls> <what>
+            _id=$1; _f=$2; _wj=$3; _wc=$4; shift 4
+            _nj=$(tu_n jmp "$_f"); _nc=$(tu_n call "$_f")
+            if [ "$_nj" = "$_wj" ] && [ "$_nc" = "$_wc" ]; then ok "$_id: $*"
+            else bad "$_id: $_f has $_nj jmp(s) and $_nc call(s) to itself, want $_wj and $_wc ($*)"; fi
+        }
+        tu_row TU1 f6 2 0 "return f6(G, n - 1, g6(acc)) is a jmp (g6 writes nothing: no copy), as the later self tail call"
+        tu_row TU1B f 1 0 "the issue's tco2 verbatim: return f(G, n - 1, g(acc)) is a jmp"
+        tu_row TU3 f7 0 1 "a helper that stores to a global (w6) keeps the copy and the call"
+        tu_row TU4 f8 1 0 "a helper defined below the caller (b6) writes nothing: a jmp"
+        tu_row TU5 f9 1 0 "a method that writes nothing (G.m6(acc)): a jmp"
+        tu_row TU6 f10 1 0 "a generic that writes nothing, gg6<i64>(0, acc): a jmp"
+        tu_row TU6B f11 1 0 "... called without its type argument, gg6(0, acc): a jmp"
+        tu_row TU7 f12 0 1 "a recursive helper (r6) reads as a writer: the copy and the call"
+        tu_row TU8 f13 1 0 "a read-only builtin inline, acc + load64(P), writes nothing: a jmp"
+    else echo "  SKIP TU1-TU8: no objdump"; skips=$((skips + 1)); fi
+fi
+
+# ── TD: a deep chain of helpers that declare nothing (6.7.17 review fix) ─────────────────────────
+# `_fn_nowrite` summarises a callee inside its caller's summary; the decl table's cap bounds only chains whose helpers
+# declare a parameter or a var, so 60,000 helpers `fn h1(): i64 { return h2(); }` .. reached from a later argument
+# recursed once per helper and cycc died (SIGSEGV from 30,000). The nesting is bounded (4096 summaries in progress):
+# it compiles, and `rd(G, h1())` reads G.a + 1.
+{
+    printf 'struct Big { a: i64; b: i64; c: i64; }\nvar G: Big = Big { 1, 2, 3 };\nfn rd(s: Big, z): i64 { return s.a + z; }\n'
+    printf 'fn t(): i64 { return rd(G, h1()); }\n'
+    awk 'BEGIN { for (i = 1; i < 60000; i++) printf "fn h%d(): i64 { return h%d(); }\n", i, i + 1; print "fn h60000(): i64 { return 1; }" }'
+    printf 'syscall(60, t());\n'
+} > "$T/td.cyr"
+rc=0; "$CC" < "$T/td.cyr" > "$T/td.bin" 2> "$T/td.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "TD: a 60,000-deep chain of helpers reached from a later argument did not compile: rc $rc (139: the summary's recursion overflowed cycc's stack)"
+else
+    chmod +x "$T/td.bin"; got=0; cpu_run 10 300 "$T/td.bin" || got=$?
+    [ "$got" -eq 2 ] && ok "TD: a 60,000-deep chain of helpers that declare nothing compiles; rd(G, h1()) reads 2" || bad "TD: exit $got, want 2$(bound_why "$got")"
 fi
 
 # ── AS: an `async fn`'s frame ───────────────────────────────────────────────────────────────────
@@ -243,8 +479,8 @@ if [ -f "$ROOT/lib/async.cyr" ]; then
     printf 'include "lib/alloc.cyr"\ninclude "lib/vec.cyr"\ninclude "lib/syscalls.cyr"\ninclude "lib/fnptr.cyr"\ninclude "lib/async.cyr"\nstruct Big { a: i64; b: i64; c: i64; }\nfn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\nfn rd(s: Big, z): i64 { return s.a; }\nasync fn job(x): i64 { return x; }\nasync fn outer(x): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var u = await job(x);\n    var r = rd(b, bump(&b));\n    var v = await job(r);\n    return u * 100 + v * 10 + b.a;\n}\nfn main(): i64 {\n    alloc_init();\n    var C = outer(1);\n    var r = 0;\n    var n = 0;\n    while (n < 4) { r = future_force(C); n = n + 1; }\n    if (r != 121) { return r & 255; }\n    return 0;\n}\nvar rr = main();\nsyscall(60, rr);\n' > "$T/as1.cyr"
     rc=0; CYRIUS_ASYNC=1 "$CC" < "$T/as1.cyr" > "$T/as1.bin" 2> "$T/as1.err" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "AS1: rc $rc: $(grep '^error' "$T/as1.err" | head -1)"
-    else chmod +x "$T/as1.bin"; got=0; timeout 10 "$T/as1.bin" || got=$?
-        [ "$got" -eq 0 ] && ok "AS1: CYRIUS_ASYNC=1: rd(b, bump(&b)) in an async fn across awaits reads 1" || bad "AS1: exit $got (121 & 255 = 0 is right; 221 & 255 = 221 reads the write)"; fi
+    else chmod +x "$T/as1.bin"; got=0; cpu_run 10 300 "$T/as1.bin" || got=$?
+        [ "$got" -eq 0 ] && ok "AS1: CYRIUS_ASYNC=1: rd(b, bump(&b)) in an async fn across awaits reads 1" || bad "AS1: exit $got (121 & 255 = 0 is right; 221 & 255 = 221 reads the write)$(bound_why "$got")"; fi
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
 # ── A: the crossos tcyr on every leg ────────────────────────────────────────────────────────────
@@ -255,7 +491,7 @@ WANT=$(grep -c '^ *assert_eq(' "$TC")
 tcyr_ok() {   # <label> <output> <exit> [<count>]
     n=${4:-$WANT}
     if [ "$3" -eq 0 ] && grep -q "^$n passed, 0 failed ($n total)" "$2"; then ok "$1: $n passed"
-    else bad "$1: exit $3, $(grep -E 'passed|FAIL' "$2" | head -3 | tr '\n' ' ')"; fi
+    else bad "$1: exit $3$(bound_why "$3"), $(grep -E 'passed|FAIL' "$2" | head -3 | tr '\n' ' ')"; fi
 }
 for mode in plain IR3 DCE; do
     case $mode in
@@ -265,14 +501,14 @@ for mode in plain IR3 DCE; do
     esac
     rc=0; env $env_ "$CC" < "$TC" > "$T/tc_$mode" 2> "$T/tc_$mode.err" || rc=$?
     if [ "$rc" -ne 0 ]; then bad "$lbl: rc $rc: $(grep '^error' "$T/tc_$mode.err" | head -1)"; continue; fi
-    chmod +x "$T/tc_$mode"; got=0; timeout 60 "$T/tc_$mode" > "$T/tc_$mode.out" 2>&1 || got=$?
+    chmod +x "$T/tc_$mode"; got=0; cpu_run 60 900 "$T/tc_$mode" > "$T/tc_$mode.out" 2>&1 || got=$?
     tcyr_ok "$lbl" "$T/tc_$mode.out" "$got"
 done
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
         if "$T/cc_a64" < "$TC" > "$T/tc.a" 2> "$T/tc.aerr"; then
-            chmod +x "$T/tc.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || got=$?
+            chmod +x "$T/tc.a"; got=0; (cd "$T" && cpu_run 120 900 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || got=$?
             tcyr_ok "A4: aarch64 (qemu)" "$T/tc.aout" "$got"
         else bad "A4: aarch64: the tcyr did not compile: $(grep '^error' "$T/tc.aerr" | head -1)"; fi
     else bad "A4: could not build src/main_aarch64.cyr"; fi
@@ -281,15 +517,15 @@ if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx" ]
    "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
     if "$T/cc_cx" < "$TC" > "$T/tc.cyx" 2> "$T/tc.cxerr" && [ -s "$T/tc.cyx" ]; then
-        got=0; timeout 120 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?
+        got=0; cpu_run 240 900 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?   # ~57 s of CPU (its walks)
         tcyr_ok "A5: cx (cxvm)" "$T/tc.cxout" "$got"
     else bad "A5: cx: the tcyr did not compile: $(grep '^error' "$T/tc.cxerr" | head -1)"; fi
 else bad "A5: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 if command -v wine > /dev/null 2>&1; then
     if CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$T/tc.exe" 2> "$T/tc.werr" && [ -s "$T/tc.exe" ]; then
         got=0
-        (cd "$T" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
-            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 180 wine ./tc.exe > "$T/tc.wout" 2>/dev/null) || got=$?
+        (cd "$T" && cpu_run 180 900 env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
+            WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' wine ./tc.exe > "$T/tc.wout" 2>/dev/null) || got=$?
         tcyr_ok "A6: PE (wine)" "$T/tc.wout" "$got"
     else bad "A6: PE: the tcyr did not compile: $(grep '^error' "$T/tc.werr" | head -1)"; fi
 else echo "  SKIP A6: PE leg — wine not installed"; skips=$((skips + 1)); fi

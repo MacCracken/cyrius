@@ -12,14 +12,18 @@
 # arguments (in order and reordered), a tail call (the ordinary path and the tail arm), an
 # operator's left operand (an i64 and a struct result), a later argument that writes through an
 # operator fn, and f64v2 / f64v4 arguments (an `async fn`'s frame is by_value_arg_copy.sh's AS1);
-# 6.7.9: the same shapes at parameter 62 and later, past the 62-bit copies mask.
+# 6.7.9: the same shapes at parameter 62 and later, past the 62-bit copies mask. 6.7.17: an operator fn
+# reached through a typed pointer — a dereference, a typed pointer's struct field, a `*T` field's; and a later
+# argument's call, which writes only through a callee that may (`_fn_nowrite`): the callees that write in their
+# bodies, and the ones that write nothing (no copy, a tail walk in constant stack) — as a read-only builtin written
+# inline (`load64`, `f64_add`) writes nothing.
 # On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls,
 # the first-position f64v2 (PE only) and the three 1,000,000-deep tail rows (controls too). Now an
-# argument a later argument may write (`_span_may_write`: a call, a builtin, an operator a struct
-# dispatches, ...) is copied where it stands, and the callee receives the copy. The 8 B struct
-# (passed in a register) was always right and is a control, as is an EARLIER argument's side
-# effect, which the callee sees (`rd2(bump(&b), b)` reads 11), and a reordered named call,
-# evaluated as written.
+# argument a later argument may write (`_span_may_write`: a call whose callee may write — 6.7.17,
+# `_fn_nowrite` — a builtin, an operator a struct dispatches, ...) is copied where it stands, and
+# the callee receives the copy. The 8 B struct (passed in a register) was always right and is a
+# control, as is an EARLIER argument's side effect, which the callee sees (`rd2(bump(&b), b)` reads
+# 11), and a reordered named call, evaluated as written.
 #
 # ⚠ CROSS-HOST: the copy is emitted by each backend's frame / global addressing and byte-exact
 # load / store pair (`_agc_copy_bytes`), and the arguments travel through each call convention
@@ -38,6 +42,10 @@ struct Sm { a: i64; }
 struct Odd { a: i64; b: i32; }
 struct H { n: i64; big: Big; }
 struct W { p: i64; q: i64; r: i64; }
+struct V { p: i64; q: i64; r: i64; }
+struct HV { n: i64; v: V; }
+struct OV { n: i64; p: *HV; }
+struct S1 { a: i64; }
 
 fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }
 fn bump32(p): i64 { store32(p + 8, load32(p + 8) + 10); return 0; }
@@ -53,6 +61,9 @@ fn rdg<T>(s: T, z): i64 { return s.a; }
 fn mkb(s: Big, z): Big { var r: Big = s; return r; }
 fn rw(s: W, z): i64 { return s.p; }
 fn W_add(x: *W, y: *W): i64 { x.p = x.p + 10; return 0; }
+fn V_add(x: *V, y): i64 { G.a = G.a + 10; return 0; }
+fn S1_sub(x: S1, y): i64 { G.a = G.a + 10; return 5; }
+fn S1_mul(x: S1, y): i64 { G.a = G.a + 10; return 6; }
 fn Big_add(x: Big, y: *Big): i64 { return x.a * 100 + y.a; }
 fn Big_sub(x: Big, y: *Big): Big { var r: Big = x; r.b = y.a; return r; }
 fn Big_get(self: Big, z): i64 { return self.a; }
@@ -90,6 +101,20 @@ fn src_generic(): i64 { var b: Big = Big { 1, 2, 3 }; return rdg(b, bump(&b)); }
 fn src_forward(): i64 { var b: Big = Big { 1, 2, 3 }; return fwd(b, bump(&b)); }
 fn src_receive(): i64 { var b: Big = Big { 1, 2, 3 }; var r: Big = mkb(b, bump(&b)); return r.a; }
 fn src_opwrite(): i64 { var w: W = W { 1, 2, 3 }; var w2: W = W { 0, 0, 0 }; return rw(w, w + w2); }
+# 6.7.17: ... an operator fn (`V_add` writes G) on a struct reached through a typed pointer — a dereference
+# (`*pv + 1`), a typed pointer's field (`ph.v + 1`, `ph: *HV`) and a `*HV` field's (`o.p.v + 1`): read as integers,
+# they took no copy of G (11)
+fn src_opwrite_deref(): i64 { var v: V = V { 1, 2, 3 }; var pv: *V = &v; G.a = 1; return rd(G, *pv + 1); }
+fn src_opwrite_ptr_base(): i64 { var h: HV; h.n = 0; var ph: *HV = &h; G.a = 1; return rd(G, ph.v + 1); }
+fn src_opwrite_ptr_field(): i64 {
+    var h: HV;
+    h.n = 0;
+    var o: OV;
+    o.n = 0;
+    o.p = &h;
+    G.a = 1;
+    return rd(G, o.p.v + 1);
+}
 # ── call forms ──────────────────────────────────────────────────────────────────────────────────
 fn form_method_arg(): i64 { var b: Big = Big { 1, 2, 3 }; var o: Big = Big { 0, 0, 0 }; return o.arg(b, bump(&b)); }
 fn form_self(): i64 { var b: Big = Big { 1, 2, 3 }; return b.get(bump(&b)); }
@@ -104,7 +129,8 @@ fn form_tail_arm(): i64 { G.a = 1; return rd(G, gbump()); }
 # its own, 1,000,000 deep — after it in the body, after it in a loop (a pending site), and before
 # it in a loop (decided at the loop's end). Controls on the merged compiler; the lane's first cut
 # overflowed the stack here (its copy set the per-fn flag).
-fn gzero(): i64 { return 0; }
+var GZ = 0;
+fn gzero(): i64 { GZ = 0; return 0; }   # 6.7.17: a store, so its call still writes and the copy stays
 fn rdz(s: Big, z): i64 { return s.a + z; }
 fn walk_after(n, acc): i64 {
     if (n == 0) { return rdz(G, acc + gzero()); }
@@ -129,6 +155,96 @@ fn form_tail_then_self_loop(): i64 { G.a = 1; return walk_after_loop(1000000, 0)
 fn form_self_then_tail_loop(): i64 { G.a = 1; return walk_before_loop(1000000, 0); }
 fn form_op(): i64 { var b: Big = Big { 1, 2, 3 }; return b + pbump(&b); }
 fn form_op_struct(): i64 { var b: Big = Big { 1, 2, 3 }; var c: Big = b - pbump(&b); return c.a * 100 + c.b; }
+# ── 6.7.17: a later argument's CALL writes only through a callee that may ──────────────────────────────────────────────
+# Every call among the later arguments counted as a write until 6.7.17; now its callee's summary decides
+# (`_fn_nowrite`). These callees write G (or `b`) in their BODIES — a global field store, a call to a writer, an
+# operator fn run on a struct parameter, on a dereference and on a field, a writing method, a writing generic, a helper
+# defined below its caller, a mutual recursion — so the copy stays and `rd` reads the value as written (1; a summary
+# that called them "writes nothing" read 11). A callee that writes nothing takes no copy: the value as written, and
+# the issue's shape `return f(G, n - 1, g(acc))` walks 1,000,000 deep in constant stack (its `jmp`; a call per level
+# before 6.7.17), as do the method, generic and defined-below forms (1,000 deep: their `jmp` is the gate's TU4-TU6).
+fn w_gset(x): i64 { G.a = G.a + 10; return x; }
+fn w_wrap(p): i64 { return bump(p) + 0; }
+fn w_op(v: V): i64 { return v + 1; }
+fn w_deref(pv: *V): i64 { return *pv + 1; }
+fn w_field(ph: *HV): i64 { return ph.v + 1; }
+fn Big_wmeth(self, x): i64 { G.a = G.a + 10; return x; }
+fn w_gen<T>(t: T, x): i64 { G.a = G.a + 10; return x; }
+fn cyc_a(x): i64 { if (x > 0) { return cyc_b(x - 1); } return 0; }
+fn cyc_b(x): i64 { G.a = G.a + 10; return cyc_a(x); }
+fn eff_gset(): i64 { G.a = 1; return rd(G, w_gset(0)); }
+fn eff_wrap(): i64 { var b: Big = Big { 1, 2, 3 }; return rd(b, w_wrap(&b)); }
+fn eff_op(): i64 { var v: V = V { 1, 2, 3 }; G.a = 1; return rd(G, w_op(v)); }
+fn eff_deref(): i64 { var v: V = V { 1, 2, 3 }; G.a = 1; return rd(G, w_deref(&v)); }
+fn eff_field(): i64 { var h: HV; h.n = 0; G.a = 1; return rd(G, w_field(&h)); }
+fn eff_meth(): i64 { G.a = 1; return rd(G, G.wmeth(0)); }
+fn eff_gen(): i64 { G.a = 1; return rd(G, w_gen<i64>(0, 0)); }
+fn eff_below(): i64 { G.a = 1; return rd(G, w_below(0)); }
+fn eff_cycle(): i64 { G.a = 1; return rd(G, cyc_a(3)); }
+fn w_below(x): i64 { G.a = G.a + 10; return x; }
+# ... an operator fn its callee runs on an if-expression's struct value: `if (c) { v } else { w } - 1` (and `* 1`)
+# dispatches S1_sub / S1_mul (an 8 B struct, by value), which write G — the `}` before a `-` / `*` read as a unary
+# operator's, so the summary called the callee no writer and took no copy (11)
+fn w_ife_sub(c, v: S1, w: S1): i64 { return if (c) { v } else { w } - 1; }
+fn w_ife_mul(c, v: S1, w: S1): i64 { return if (c) { v } else { w } * 1; }
+fn eff_ife_sub(): i64 { var s: S1 = S1 { 1 }; G.a = 1; return rd(G, w_ife_sub(1, s, s)); }
+fn eff_ife_mul(): i64 { var s: S1 = S1 { 1 }; G.a = 1; return rd(G, w_ife_mul(1, s, s)); }
+fn eff_ife_ran(): i64 {
+    var s: S1 = S1 { 1 };
+    G.a = 1;
+    var r = w_ife_sub(1, s, s) * 10 + w_ife_mul(0, s, s);
+    return r * 100 + G.a;
+}
+fn nw_add(x): i64 { return x + 1; }
+# ... a callee the summary must read as a writer though its body names no store: an operator fn run on a local that
+# holds a struct global (`var v = GVV; v + 1`), on a parenthesised struct global (`(GVV) + 1`), on a struct global
+# whose name a block's `var` declares (the global past the block), an assignment to a global G whose name a block's
+# `var` declares (`G = GBK` past the block copies GBK into G), and a call an `&` routes to a `_ptr` sibling, or an
+# i64-returning call to an `_int` sibling, that writes G — each read 11 had its summary rule been missing
+var GVV: V = V { 1, 2, 3 };
+var GBK: Big = Big { 11, 2, 3 };
+fn w_val(x): i64 { var v = GVV; return v + 1; }
+fn w_paren(x): i64 { return (GVV) + 1; }
+fn w_shadow(x): i64 { if (x == 5) { var GVV = 0; } return GVV + 1; }
+fn w_asg(x): i64 { if (x == 99) { var G = 0; G = 1; } G = GBK; return 0; }
+fn w_ps(x): i64 { return x; }
+fn w_ps_ptr(p): i64 { G.a = G.a + 10; return 0; }
+fn w_is(x: cstring): i64 { return 0; }
+fn w_is_int(x): i64 { G.a = G.a + 10; return 0; }
+fn eff_val(): i64 { G.a = 1; return rd(G, w_val(0)); }
+fn eff_paren(): i64 { G.a = 1; return rd(G, w_paren(0)); }
+fn eff_shadow(): i64 { G.a = 1; return rd(G, w_shadow(0)); }
+fn eff_asg(): i64 { G.a = 1; return rd(G, w_asg(5)); }
+fn eff_psib(): i64 { var k = 0; G.a = 1; return rd(G, w_ps(&k)); }
+fn eff_isib(): i64 { G.a = 1; return rd(G, w_is(nw_add(1))); }
+fn nw_field(ph: *HV): i64 { return ph.n + 1; }
+fn Big_nwm(self, x): i64 { return x + 1; }
+fn nw_gen<T>(t: T, x): i64 { return x + 1; }
+fn nw_vals(): i64 {
+    var b: Big = Big { 1, 2, 3 };
+    var h: HV;
+    h.n = 4;
+    var k = 4;
+    var e = 0;
+    if (rd(b, nw_add(5)) != 1) { e = e | 1; }
+    if (rd(b, nw_field(&h)) != 1) { e = e | 2; }
+    if (rd(b, G.nwm(5)) != 1) { e = e | 4; }
+    if (rd(b, nw_gen<i64>(0, 5)) != 1) { e = e | 8; }
+    if (rd(b, nw_gen(0, 5)) != 1) { e = e | 16; }
+    if (rd(b, load64(&k) + 1) != 1) { e = e | 32; }
+    if (rd(b, f64_to(f64_add(f64_from(k), f64_from(1)))) != 1) { e = e | 64; }
+    return e;
+}
+fn nwalk(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk(G, n - 1, nw_add(acc)); }
+fn nwalk_m(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk_m(G, n - 1, G.nwm(acc)); }
+fn nwalk_g(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk_g(G, n - 1, nw_gen<i64>(0, acc)); }
+fn nwalk_b(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk_b(G, n - 1, nw_below(acc)); }
+fn nw_below(x): i64 { return x + 1; }
+# ... and a read-only builtin written inline: `acc + load64(PONE)` is no write (a copy, and so a call per level, before
+# the review fix — where a helper wrapping the load kept the `jmp`)
+var ONE = 1;
+var PONE = 0;
+fn nwalk_l(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk_l(G, n - 1, acc + load64(PONE)); }
 # ── value-form vectors ──────────────────────────────────────────────────────────────────────────
 fn vec_first(): i64 {
     var v: f64v2 = f64v2(f64_from(1), f64_from(2));
@@ -309,6 +425,9 @@ assert_eq(src_generic(), 1, "a generic instance: rdg(b, bump(&b))");
 assert_eq(src_forward(), 1, "a fn defined after the call: fwd(b, bump(&b))");
 assert_eq(src_receive(), 1, "a struct-valued receive: var r: Big = mkb(b, bump(&b))");
 assert_eq(src_opwrite(), 1, "a later operator fn writes it: rw(w, w + w2) with W_add(x: *W, ..)");
+assert_eq(src_opwrite_deref(), 1, "... an operator on a dereference of a typed pointer: rd(G, *pv + 1)");
+assert_eq(src_opwrite_ptr_base(), 1, "... on a typed pointer's struct field: rd(G, ph.v + 1)");
+assert_eq(src_opwrite_ptr_field(), 1, "... through a `*HV` field: rd(G, o.p.v + 1)");
 assert_eq(form_method_arg(), 1, "a method's argument: o.arg(b, bump(&b))");
 assert_eq(form_self(), 1, "a method's by-value self: b.get(bump(&b))");
 assert_eq(form_named(), 1, "named, in order: rd(s: b, z: bump(&b))");
@@ -320,6 +439,32 @@ assert_eq(form_tail_then_self_loop(), 1000001, "... the two in a loop (the self 
 assert_eq(form_self_then_tail_loop(), 1000001, "... in a loop, the self call first (decided at the loop's end)");
 assert_eq(form_op(), 111, "an operator's by-value left operand: b + pbump(&b)");
 assert_eq(form_op_struct(), 111, "... with a struct result: b - pbump(&b)");
+assert_eq(eff_gset(), 1, "6.7.17: a later call's callee stores to G: rd(G, w_gset(0)) copies G");
+assert_eq(eff_wrap(), 1, "... its callee calls a writer: rd(b, w_wrap(&b))");
+assert_eq(eff_op(), 1, "... its callee runs an operator fn on a struct parameter (V_add writes G): rd(G, w_op(v))");
+assert_eq(eff_deref(), 1, "... on a dereference: rd(G, w_deref(&v))");
+assert_eq(eff_field(), 1, "... on a typed pointer's struct field: rd(G, w_field(&h))");
+assert_eq(eff_meth(), 1, "... a method that stores to G: rd(G, G.wmeth(0))");
+assert_eq(eff_gen(), 1, "... a generic that stores to G: rd(G, w_gen<i64>(0, 0))");
+assert_eq(eff_below(), 1, "... a writer defined below its caller: rd(G, w_below(0))");
+assert_eq(eff_cycle(), 1, "... a mutual recursion that stores to G: rd(G, cyc_a(3))");
+assert_eq(eff_ife_sub(), 1, "... an operator fn on an if-expression (`.. else { w } - 1`): rd(G, w_ife_sub(1, s, s))");
+assert_eq(eff_ife_mul(), 1, "... the `* 1` twin: rd(G, w_ife_mul(1, s, s))");
+assert_eq(eff_ife_ran(), 5621, "control: the if-expression's S1_sub / S1_mul run (5, 6; G.a 1 + 20)");
+assert_eq(eff_val(), 1, "... an operator fn on a local holding a struct global: rd(G, w_val(0)), var v = GVV; v + 1");
+assert_eq(eff_paren(), 1, "... on a parenthesised struct global: rd(G, w_paren(0)), (GVV) + 1");
+assert_eq(eff_shadow(), 1, "... on a struct global a block's var names: rd(G, w_shadow(0))");
+assert_eq(eff_asg(), 1, "... an assignment to G past a block's var G: rd(G, w_asg(5)), G = GBK");
+assert_eq(eff_psib(), 1, "... a call an & routes to a writing _ptr sibling: rd(G, w_ps(&k))");
+assert_eq(eff_isib(), 1, "... a call routed to a writing _int sibling: rd(G, w_is(nw_add(1)))");
+assert_eq(nw_vals(), 0, "a callee that writes nothing (direct, a field read, a method, a generic both ways; a load and f64_add inline): the value as written");
+G.a = 1;
+assert_eq(nwalk(G, 1000000, 0), 1000001, "the issue's shape: return nwalk(G, n - 1, nw_add(acc)) 1,000,000 deep (its jmp)");
+assert_eq(nwalk_m(G, 1000, 0), 1001, "... through a method: G.nwm(acc)");
+assert_eq(nwalk_g(G, 1000, 0), 1001, "... through a generic: nw_gen<i64>(0, acc)");
+assert_eq(nwalk_b(G, 1000, 0), 1001, "... through a helper defined below the walk");
+PONE = &ONE;
+assert_eq(nwalk_l(G, 1000000, 0), 1000001, "... a read-only builtin inline: return nwalk_l(G, n - 1, acc + load64(PONE)) 1,000,000 deep (its jmp)");
 assert_eq(vec_first(), 0, "an f64v2 argument: rv(v, bump(&v)) reads the low lane as written");
 assert_eq(vec_mid(), 0, "an f64v2 between two arguments: rv2(0, v, bump(&v))");
 assert_eq(vec_wide(), 0, "an f64v4 argument: rv4(0, v, bump(&v))");

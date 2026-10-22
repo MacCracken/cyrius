@@ -5909,3 +5909,648 @@ fn _targ_at_name(S, noff): i64 {
     STI(S, sv);
     return 0;
 }
+
+# ⛔ 6.7.17 — THE BY-VALUE COPY MISSED AN OPERATOR ON A STRUCT REACHED THROUGH A TYPED POINTER. A later argument that
+# dispatches a struct's operator fn may write the earlier by-value argument (`_span_may_write`), but its struct-value
+# test read only a struct-typed name and a chain of struct-typed fields: `rd(G, *pw + 1)`, `rd(G, pw.x + 1)` and
+# `rd(G, o.p.x + 1)` (`pw: *W`, a `*Mid` field `p`) dispatched an operator fn that wrote G after G's address was
+# pushed, and `rd` read 11 where 1 is right — silent, every target. A typed pointer now types the chain from its base
+# and through a `*T` field (`_name_struct_val`), and a dereference whose operand may be one is a struct value. The
+# operator half counts a BINARY `+ - * /` only (`_tok_binop_at`): a lone `*p` or `-w` dispatches nothing, so
+# `a - *p` and `rd(b, -w)` take no copy. CHANGELOG [6.7.17]
+# 1 = token type `t` ends an operand, so an operator token after it is binary: a name, a literal, `)`, `]`, a `?`,
+# and a `}` — an if-expression's: `if (c) { v } else { w } - 1` runs a struct operand's operator fn, and read as a
+# unary `-` / `*` the summary missed its write (CHANGELOG [6.7.17]).
+fn _tok_opnd_end(t): i64 {
+    if (t == 2 || t == 11 || t == 29 || t == 1 || t == 30) { return 1; }
+    if (t == 61 || t == 169 || t == 170 || t == 124 || t == 14) { return 1; }
+    return 0;
+}
+# The struct a typed-pointer name at token `i` points at when a `.field` follows it (`pw.x`), else 0.
+fn _nsv_ptr_base(S, i): i64 {
+    if (TOKTYP(S, i + 1) != 41) { return 0; }
+    var sid = _hl_psid(S, i, i + 1);
+    if (sid <= 0) { return 0; }
+    return sid;
+}
+# 1 = the operator token at `i` (in a span from `q`) is binary: an operand ends just before it. Only a binary `+ - * /`
+# dispatches a struct's operator fn; a unary `-` reads none (`-s` is an integer) and a unary `*` is a dereference.
+fn _tok_binop_at(S, q, i): i64 {
+    if (i <= q) { return 0; }
+    return _tok_opnd_end(TOKTYP(S, i - 1));
+}
+# 1 = the unary `*` at token `d` is a dereference that may read a struct value: its operand is anything but one name
+# `_hl_dpsid` — the reader the dereference's own dispatch asks (`_dlo_park`) — types as no struct pointer.
+fn _deref_struct_at(S, d): i64 {
+    if (TOKTYP(S, d + 1) != 2) { return 1; }
+    var t = TOKTYP(S, d + 2);
+    if (t == 41 || t == 28 || t == 10 || t == 19) { return 1; }   # `.f`, `[i]`, a call: not one name
+    if (_hl_dpsid(S, d + 1, d + 2) > 0) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.7.17 — A FN THAT WRITES NO MEMORY. A by-value struct argument is copied where it stands when a LATER argument
+# may write memory (`_span_may_write`, 6.7.7), and in tail position that copy, a temporary in the frame the `jmp` would
+# free, turns the call into an ordinary one (`_tc_snap_div`). Every call among the later arguments counted as a write,
+# so `return f(G, n - 1, g(acc))` with `fn g(x) { return x + 1; }` lost its `jmp` and overflowed the stack 3,000,000
+# deep (exit 139; it ran in constant stack before 6.7.7: the user's 2026-10-09 "accept the TCO loss" ruling). A call
+# now counts as a write only when its callee may write (`_call_may_write`): a direct `g(..)`, a generic `g<..>(..)`
+# and a method `r.m(..)` on a struct or typed-pointer receiver resolve to the fn whose summary is read. The summary
+# (`_fn_nowrite`) is lazy and memoised per fn (GFLG bits 18 computed / 19 writes nothing / 20 in progress: a call
+# back into a fn being summarised — recursion, a cycle — reads as a write). It token-scans the fn's own definition,
+# so a callee defined below the call is summarised the same, and it is an allow-list: anything it does not read is a
+# write. A fn writes no memory when its kind allows it (`_fnw_fn_ok`), its return is no struct, its parameters have no
+# default, and its body assigns only its own scalar names, stores nothing (no field, element or `*p` store, builtin
+# store, `syscall`, `asm`), makes no indirect call or closure, applies `+ - * /` to no operand that may be a struct
+# (whose operator fn would run, `_fnw_end_ok`) and calls only fns that write no memory. Issue
+# 2026-10-09-tail-call-by-value-copy-needs-effect-analysis. CHANGELOG [6.7.17]
+# The scan's declarations, 24 B each: the name, its flags (1 may hold a struct, 2 not assignable, 4 a parameter) and
+# its annotation's first token (0 = none).
+var _fnw_dt = 0;
+var _fnw_n = 0;     # entries in use; a nested scan (a callee's) pushes above its caller's and pops back
+var _fnw_cap = 0;
+var _fnw_b = 0;     # the first entry of the scan in progress
+var _fnw_depth = 0; # summaries in progress, one inside another (a callee's inside its caller's)
+# 1 = the call whose `(` is token `o` (in a span from `q`) may write memory: its callee does not resolve to a fn whose
+# summary says it writes none.
+fn _call_may_write(S, q, o): i64 {
+    var ct = _fnw_callee_tok(S, o, q);
+    if (ct < 0) { return 1; }
+    var fi = 0 - 1;
+    if (TOKTYP(S, ct - 1) == 41) { fi = _call_meth_fn(S, ct, o); }
+    elif (_fnw_pure_intrinsic(S, ct) == 1) { return 0; }
+    else { fi = _fnw_resolve(S, ct, o); }
+    if (fi < 0) { return 1; }
+    if (_fn_nowrite(S, fi) == 1) { return 0; }
+    return 1;
+}
+# The method a call `r.m(` (name token `ct`, its `(` at `o`) reaches when its receiver `r` is one name of a struct
+# type — a struct value or a typed pointer to one — through `_meth_fn_at`, the lookaheads' resolver; else -1 (a dyn's
+# method is an indirect call, a tuple has none, a chain is not read).
+fn _call_meth_fn(S, ct, o): i64 {
+    var r = ct - 2;
+    if (TOKTYP(S, r) != 2) { return 0 - 1; }
+    if (TOKTYP(S, r - 1) == 41) { return 0 - 1; }
+    if (_pd_named_at(S, o) == 1) { return 0 - 1; }
+    var sid = _sarg_name_sid(S, r);
+    if (sid <= 0) { sid = _hl_psid(S, r, r + 1); }
+    if (sid <= 0) { return 0 - 1; }
+    if (_dyn_is(S, sid) == 1) { return 0 - 1; }
+    if (_tup_is(S, sid) == 1) { return 0 - 1; }
+    return _meth_fn_at(S, sid, TOKVAL(S, ct), ct);
+}
+# The name token of the call whose `(` is token `o` (walking back no further than `lo`): `f(` or a generic `g<..>(`;
+# -2 for a call the summary does not resolve (through an expression, `(..)(` / `a[i](`, or `n<..>(` whose `n` is no
+# generic fn); -1 when the `(` calls nothing (`a > (b)`, a comparison).
+fn _fnw_callee_tok(S, o, lo): i64 {
+    var p = TOKTYP(S, o - 1);
+    if (p == 2) { return o - 1; }
+    if (p == 11 || p == 29) { return 0 - 2; }
+    if (_targ_gt_n(p) == 0) { return 0 - 1; }
+    return _fnw_gen_name(S, o - 1, lo);
+}
+# The generic's name token before the type arguments that close at token `g` (`>`, `>>`, `>>>`), or as above.
+fn _fnw_gen_name(S, g, lo): i64 {
+    var d = _targ_gt_n(TOKTYP(S, g));
+    var j = g - 1;
+    while (j > lo) {
+        var t = TOKTYP(S, j);
+        if (t == 19) {
+            d = d - 1;
+            if (d == 0) {
+                if (TOKTYP(S, j - 1) != 2) { return 0 - 1; }
+                var fi = _fnw_findfn(S, TOKVAL(S, j - 1));
+                if (fi < 0) { return 0 - 2; }
+                if (GFTP(S, fi) == 0) { return 0 - 2; }
+                return j - 1;
+            }
+        } elif (_targ_gt_n(t) > 0) { d = d + _targ_gt_n(t); }
+        elif (_fnw_targ_tok(t) == 0) { return 0 - 1; }
+        j = j - 1;
+    }
+    return 0 - 1;
+}
+# 1 = token type `t` may stand inside a type-argument list: a name, `,`, `*`, `[ ]`, `( )`, a number.
+fn _fnw_targ_tok(t): i64 {
+    if (t == 2 || t == 31 || t == 8 || t == 28 || t == 29) { return 1; }
+    if (t == 1 || t == 10 || t == 11) { return 1; }
+    return 0;
+}
+# FINDFN without its trait fallback, which can report (an ambiguous `T_m`) from where the scan stands: -1 there.
+fn _fnw_findfn(S, noff): i64 {
+    var tn = _ti_n;
+    _ti_n = 0;
+    var fi = FINDFN(S, noff);
+    _ti_n = tn;
+    return fi;
+}
+# The fn a direct call `name(` / `name<..>(` (name token `ct`, its `(` at `o`) reaches — PARSE_FNCALL's FINDFN — or -1
+# when something else decides: `fncallN` (indirect), a name `private` split across files (FINDFN answers by the
+# current token's file), a `_str` / `_int` overload sibling, a `_ptr` sibling an `&` first argument takes, or a named
+# argument (`_fnc_route` reroutes each).
+fn _fnw_resolve(S, ct, o): i64 {
+    var noff = TOKVAL(S, ct);
+    if (_IS_FNCALL_NAME(S, noff) == 1) { return 0 - 1; }
+    var fi = _fnw_findfn(S, noff);
+    if (fi < 0) { return 0 - 1; }
+    if ((GFLG(S, fi) & 128) != 0) { return 0 - 1; }
+    if (L64(_fnt_ovstr + fi * 8) != 0) { return 0 - 1; }
+    if (L64(_fnt_ovint + fi * 8) != 0) { return 0 - 1; }
+    if (_pd_named_at(S, o) == 1) { return 0 - 1; }
+    if (TOKTYP(S, o + 1) == 27) { if (_fnc_ptr_sib(S, noff) >= 0) { return 0 - 1; } }
+    return fi;
+}
+# 1 = fn `fi` writes no memory (above). Memoised; 0 while its own summary is in progress, and 0 past 4096 summaries
+# in progress: a callee's summary runs inside its caller's, and a chain of helpers that declare nothing (the decl
+# table's cap never fills) recursed once per helper until cycc overflowed its stack (SIGSEGV at 30,000) — a deeper
+# chain reads as a write, as a full decl table does (conservative: it costs a `jmp`). CHANGELOG [6.7.17]
+fn _fn_nowrite(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var fl = GFLG(S, fi);
+    if ((fl & 262144) != 0) { return (fl >> 19) & 1; }
+    if ((fl & 1048576) != 0) { return 0; }
+    if (_fnw_depth >= 4096) { return 0; }
+    SFLG(S, fi, fl | 1048576);
+    _fnw_depth = _fnw_depth + 1;
+    var r = _fnw_scan(S, fi);
+    _fnw_depth = _fnw_depth - 1;
+    var f2 = (GFLG(S, fi) & (0 - 1048577)) | 262144;
+    if (r == 1) { f2 = f2 | 524288; }
+    SFLG(S, fi, f2);
+    return r;
+}
+# The scan: fn `fi`'s definition read from its recorded start (`_gen_def_open`) through its body's `}` — the
+# parameters and the body's declarations first (`_fnw_params`, `_fnw_decls`), then every body token (`_fnw_body`).
+fn _fnw_scan(S, fi): i64 {
+    if (_fnw_fn_ok(S, fi) == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    var c = _call_close(S, o);
+    var b = _fnw_body_open(S, fi, o, c);
+    if (b < 0) { return 0; }
+    var e = _fnw_block_end(S, b);
+    if (e < 0) { return 0; }
+    var sb = _fnw_b;
+    _fnw_b = _fnw_n;
+    var r = 0;
+    if (_fnw_params(S, fi, o, c) == 1) {
+        if (_fnw_decls(S, fi, o, b, e) == 1) { r = _fnw_body(S, b, e); }
+    }
+    _fnw_n = _fnw_b;
+    _fnw_b = sb;
+    return r;
+}
+# 1 = fn `fi`'s kind lets it write no memory: one definition (which one a call binds is the binder's, flag 2048), one
+# name (not split by `private`, 128), one value returned (no pair, 256, no multi-value), not `async` (a call makes a
+# coroutine frame), not `#naked`, and a definition the scan can find.
+fn _fnw_fn_ok(S, fi): i64 {
+    var fl = GFLG(S, fi);
+    if ((fl & 2048) != 0) { return 0; }
+    if ((fl & 128) != 0) { return 0; }
+    if ((fl & 256) != 0) { return 0; }
+    if ((fl & 196608) != 0) { return 0; }
+    if (GFRN(S, fi) != 0) { return 0; }
+    if (GFAS(S, fi) != 0) { return 0; }
+    var ds = GFDS(S, fi);
+    if (ds <= 0) { return 0; }
+    if (TOKTYP(S, ds - 1) != 32) { return 0; }
+    if (_prescan_maybe_naked(S, ds - 1) == 1) { return 0; }
+    return 1;
+}
+# The `{` of fn `fi`'s body (its parameter list `(` at `o`, `)` at `c`) when it returns no struct — no annotation, or
+# one scalar name (`_fnw_scalar_ann`) — else -1.
+fn _fnw_body_open(S, fi, o, c): i64 {
+    var i = c + 1;
+    if (TOKTYP(S, i) == 49) {
+        if (_fnw_scalar_ann(S, fi, o, i + 1) == 0) { return 0 - 1; }
+        i = i + 2;
+    }
+    if (TOKTYP(S, i) != 13) { return 0 - 1; }
+    return i;
+}
+# The `}` closing the `{` at token `b`, or -1.
+fn _fnw_block_end(S, b): i64 {
+    var d = 0;
+    var i = b;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0 - 1; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) {
+            d = d - 1;
+            if (d == 0) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# 1 = the annotation at token `ti` is one builtin scalar name — an integer, f32 / f64 or bool (`_tn_scalar`; never
+# Vec) — that no struct and no type parameter of `fi` (between its name and its `(` at `o`) takes, with no `<..>`.
+fn _fnw_scalar_ann(S, fi, o, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 19) { return 0; }
+    var noff = TOKVAL(S, ti);
+    var c = _tn_scalar(L64(S + 0xEC00000 + noff));
+    if (c == 0) { return 0; }
+    if (_tn_class(c) == 4) { if (_tn_val(c) != 1) { return 0; } }
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    var k = GFDS(S, fi) + 1;
+    while (k < o) {
+        if (TOKTYP(S, k) == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) { return 0; } }
+        k = k + 1;
+    }
+    return 1;
+}
+# Records one declaration (name `noff`, flags `f`, annotation token `ann`, 0 = none). 0 when the table is full.
+fn _fnw_push(noff, f, ann): i64 {
+    if (_fnw_dt == 0) {
+        _fnw_cap = 4096;
+        _fnw_dt = alloc(_fnw_cap * 24);
+    }
+    if (_fnw_n >= _fnw_cap) { return 0; }
+    S64(_fnw_dt + _fnw_n * 24, noff);
+    S64(_fnw_dt + _fnw_n * 24 + 8, f);
+    S64(_fnw_dt + _fnw_n * 24 + 16, ann);
+    _fnw_n = _fnw_n + 1;
+    return 1;
+}
+# The OR of the flags of every declaration of `noff` the scan has recorded, or -1 when none names it.
+fn _fnw_flags(S, noff): i64 {
+    var r = 0 - 1;
+    var k = _fnw_b;
+    while (k < _fnw_n) {
+        if (STREQ(S, L64(_fnw_dt + k * 24), noff) == 1) {
+            if (r < 0) { r = 0; }
+            r = r | L64(_fnw_dt + k * 24 + 8);
+        }
+        k = k + 1;
+    }
+    return r;
+}
+# Declares fn `fi`'s parameters (between `(` at `o` and `)` at `c`): an untyped one or one annotated with a scalar
+# name holds no struct (`self` excepted: a method's receiver), anything else may (a struct, `*T`, a type parameter,
+# a tuple, ...). 0 for a list the summary does not read: a default (`= v`, filled at the call) or a variadic `...`.
+fn _fnw_params(S, fi, o, c): i64 {
+    var i = o + 1;
+    while (i < c) {
+        if (TOKTYP(S, i) != 2) { return 0; }
+        var pe = _fnw_param_end(S, i, c);
+        if (pe < 0) { return 0; }
+        var f = 1;
+        var ann = 0;
+        if (TOKTYP(S, i + 1) == 49) {
+            ann = i + 2;
+            if (pe == i + 3) { if (_fnw_scalar_ann(S, fi, o, i + 2) == 1) { f = 0; } }
+        } elif (pe == i + 1) {
+            if (_noff_is(S, TOKVAL(S, i), "self", 4) == 0) { f = 0; }
+        } else { return 0; }
+        if (_fnw_push(TOKVAL(S, i), f | 4, ann) == 0) { return 0; }
+        i = pe + 1;
+    }
+    return 1;
+}
+# The `,` ending the parameter at token `i` (its type may nest `( [ <`), or `c`; -1 at an `=` or a `...`.
+fn _fnw_param_end(S, i, c): i64 {
+    var d = 0;
+    while (i < c) {
+        var t = TOKTYP(S, i);
+        if (t == 4 || t == 112) { return 0 - 1; }
+        if (d == 0) { if (t == 31) { return i; } }
+        if (t == 10 || t == 28 || t == 19) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        d = d - _targ_gt_n(t);
+        i = i + 1;
+    }
+    return c;
+}
+# Declares every `var` of the body (b, e): a scalar annotation, or none with an initializer whose value is no struct
+# (`_fnw_val_ok`), or `var x;` holds no struct; a buffer (`var x[N]`, `var a: i64[N]`) is no assignable name; anything
+# else may hold one. 0 for a declaration the summary does not read (`var a, b = ..`, `var (a, b) = ..`).
+fn _fnw_decls(S, fi, o, b, e): i64 {
+    var i = b + 1;
+    while (i < e) {
+        if (TOKTYP(S, i) == 3) { if (_fnw_decl(S, fi, o, i) == 0) { return 0; } }
+        i = i + 1;
+    }
+    return 1;
+}
+fn _fnw_decl(S, fi, o, v): i64 {
+    if (TOKTYP(S, v + 1) != 2) { return 0; }
+    var t = TOKTYP(S, v + 2);
+    var f = 1;
+    var ann = 0;
+    if (t == 5) { f = 0; }
+    elif (t == 4) { if (_fnw_val_ok(S, v + 3, _fnw_stmt_end(S, v + 3)) == 1) { f = 0; } }
+    elif (t == 28) { f = 2; }
+    elif (t == 49) {
+        ann = v + 3;
+        if (_fnw_scalar_ann(S, fi, o, v + 3) == 1) {
+            var t4 = TOKTYP(S, v + 4);
+            if (t4 == 4 || t4 == 5) { f = 0; }
+            elif (t4 == 28) { f = 2; }
+        }
+    } else { return 0; }
+    return _fnw_push(TOKVAL(S, v + 1), f, ann);
+}
+# The `;` ending the statement whose token `a` is in it (outside `( [ {`), or an unmatched closer.
+fn _fnw_stmt_end(S, a): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (a < n) {
+        var t = TOKTYP(S, a);
+        if (t == 12) { return a; }
+        if (d == 0) { if (t == 5) { return a; } }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) {
+            if (d == 0) { return a; }
+            d = d - 1;
+        }
+        a = a + 1;
+    }
+    return a;
+}
+# 1 = the expression [a, e) is no struct value: a binary operator applies at its depth 0 (an integer, a float or a
+# pointer — the scan judges every `+ - * /` itself), or it is one operand `_fnw_unary_ok` types as none.
+fn _fnw_val_ok(S, a, e): i64 {
+    if (a >= e) { return 0; }
+    if (_fnw_has_binop(S, a, e) == 1) { return 1; }
+    return _fnw_unary_ok(S, a, e);
+}
+fn _fnw_has_binop(S, a, e): i64 {
+    var d = 0;
+    var i = a;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d == 0) { if (_fnw_op_tok(t) == 1) { if (_tok_binop_at(S, a, i) == 1) { return 1; } } }
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 = token type `t` is a binary operator where an operand ends before it.
+fn _fnw_op_tok(t): i64 {
+    if (t >= 6) { if (t <= 9) { return 1; } }
+    if (t >= 17) { if (t <= 22) { return 1; } }
+    if (t >= 34) { if (t <= 39) { return 1; } }
+    if (t == 27 || t == 53 || t == 54 || t == 113 || t == 116 || t == 152) { return 1; }
+    return 0;
+}
+# One operand [a, e): `-x`, `!x`, `~x` (an integer), `&x` (an address); `*p` may be a struct; else by its last token.
+fn _fnw_unary_ok(S, a, e): i64 {
+    var t = TOKTYP(S, a);
+    if (t == 7 || t == 171 || t == 37 || t == 27) { return 1; }
+    if (t == 8) { return 0; }
+    return _fnw_end_ok(S, e - 1, a);
+}
+# 1 = the operand ending at token `k` (none of it before `lo`) is no struct value: a literal (not `t.0`), an element
+# (a subscript takes no struct element), a call (the scan requires its callee to return none) or a parenthesised
+# value, a name the fn declares or a global that holds none (`_fnw_name_ok`), or a chain of fields that ends at no
+# struct (`_fnw_chain_ok`) — never a dereference `*p`, whose operand may point at one.
+fn _fnw_end_ok(S, k, lo): i64 {
+    var t = TOKTYP(S, k);
+    if (t == 1 || t == 30 || t == 61 || t == 169 || t == 170) {
+        if (k > lo) { if (TOKTYP(S, k - 1) == 41) { return 0; } }
+        return 1;
+    }
+    if (t == 29) { return 1; }
+    if (t == 11) { return _fnw_paren_ok(S, k, lo); }
+    if (t != 2) { return 0; }
+    if (k > lo) {
+        var p = TOKTYP(S, k - 1);
+        if (p == 41) { return _fnw_chain_ok(S, k, lo); }
+        if (p == 8) { if (_tok_binop_at(S, lo, k - 1) == 0) { return 0; } }
+    }
+    return _fnw_name_ok(S, TOKVAL(S, k));
+}
+# The operand `( .. )` closing at token `k`: a call's result (`f(..)`, `g<..>(..)`, a builtin's) is no struct; a
+# parenthesised expression is as its value is; a tuple `(a, b)` may be one.
+fn _fnw_paren_ok(S, k, lo): i64 {
+    var m = _fnw_open_of(S, k, lo);
+    if (m < 0) { return 0; }
+    if (m > lo) {
+        var ct = _fnw_callee_tok(S, m, lo);
+        if (ct != 0 - 1) { return 1; }
+        if (_fnw_builtin_tok(TOKTYP(S, m - 1)) == 1) { return 1; }
+    }
+    if (_fnw_has_comma(S, m + 1, k) == 1) { return 0; }
+    return _fnw_val_ok(S, m + 1, k);
+}
+# The `(` matching the `)` at token `k`, no further back than `lo`, or -1.
+fn _fnw_open_of(S, k, lo): i64 {
+    var d = 0;
+    var j = k;
+    while (j >= lo) {
+        var t = TOKTYP(S, j);
+        if (t == 11) { d = d + 1; }
+        if (t == 10) {
+            d = d - 1;
+            if (d == 0) { return j; }
+        }
+        j = j - 1;
+    }
+    return 0 - 1;
+}
+# 1 = [a, e) holds a `,` outside any `( [ {`.
+fn _fnw_has_comma(S, a, e): i64 {
+    var d = 0;
+    var i = a;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d == 0) { if (t == 31) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# A chain `x.f.g` ending at the field name at token `k`: no struct value when its base is a name the fn declares with a
+# struct annotation (`S` or `*S`, `_fnw_name_sid`) or a struct global, and its fields — through a `*T` field too —
+# end at one of no struct type. Anything it cannot type (an untyped `self`, `f(..).x`, a generic struct) may be one.
+fn _fnw_chain_ok(S, k, lo): i64 {
+    var j = k;
+    while (j - 2 >= lo) {
+        if (TOKTYP(S, j - 1) != 41) { break; }
+        if (TOKTYP(S, j - 2) != 2) { return 0; }
+        j = j - 2;
+    }
+    if (j > lo) {
+        var p = TOKTYP(S, j - 1);
+        if (p == 41) { return 0; }
+        if (p == 8) { if (_tok_binop_at(S, lo, j - 1) == 0) { return 0; } }
+    }
+    var sid = _fnw_name_sid(S, TOKVAL(S, j));
+    if (sid <= 0) { return 0; }
+    while (j < k) {
+        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, j + 2));
+        if (fi < 0) { return 0; }
+        var ft = GETFTYPE(S, sid - 1, fi);
+        if (j + 2 == k) {
+            if (ft > 0) { return 0; }
+            return 1;
+        }
+        if (ft <= 0) { ft = _fld_ptr_sid(S, sid - 1, fi); }
+        if (ft <= 0) { return 0; }
+        sid = ft;
+        j = j + 2;
+    }
+    return 0;
+}
+# The struct the name `noff` holds or points at in the scanned fn: its one declaration's annotation `S` / `*S` (no
+# `<..>`), or, declared nowhere in the fn, a struct global's; else 0.
+fn _fnw_name_sid(S, noff): i64 {
+    var ann = 0 - 1;
+    var k = _fnw_b;
+    while (k < _fnw_n) {
+        if (STREQ(S, L64(_fnw_dt + k * 24), noff) == 1) {
+            if (ann >= 0) { return 0; }
+            ann = L64(_fnw_dt + k * 24 + 16);
+        }
+        k = k + 1;
+    }
+    if (ann < 0) { return _sarg_gv_sid(S, _findvar_core(S, noff)); }
+    if (ann == 0) { return 0; }
+    if (TOKTYP(S, ann) == 8) { ann = ann + 1; }
+    if (TOKTYP(S, ann) != 2) { return 0; }
+    if (TOKTYP(S, ann + 1) == 19) { return 0; }
+    return FINDSTRUCT(S, TOKVAL(S, ann));
+}
+# 1 = the name `noff` in the scanned body holds no struct value: no declaration of it in the fn may hold one, and when
+# none is a parameter (in scope through the whole body) the global it may name is no struct aggregate (as
+# `_name_struct_val` reads one). A name declared nowhere (no local, no global) may be anything.
+fn _fnw_name_ok(S, noff): i64 {
+    var f = _fnw_flags(S, noff);
+    if (f >= 0) {
+        if ((f & 1) != 0) { return 0; }
+        if ((f & 4) != 0) { return 1; }
+    }
+    var gvi = _findvar_core(S, noff);
+    if (gvi < 0) {
+        if (f >= 0) { return 1; }
+        return 0;
+    }
+    if (_sarg_gv_sid(S, gvi) > 0) { return 0; }
+    return 1;
+}
+# 1 = `noff = ..` in the scanned body writes a scalar of the fn's own: every declaration of the name holds no struct
+# and none is a buffer, and when none is a parameter no global of the name exists (a block's `var` may not be visible
+# where the assignment stands, the name then the global's).
+fn _fnw_assignable(S, noff): i64 {
+    var f = _fnw_flags(S, noff);
+    if (f < 0) { return 0; }
+    if ((f & 3) != 0) { return 0; }
+    if ((f & 4) != 0) { return 1; }
+    if (_findvar_core(S, noff) >= 0) { return 0; }
+    return 1;
+}
+# 1 = no token of the body (b, e) writes memory as the summary reads it (`_fnw_tok_ok`).
+fn _fnw_body(S, b, e): i64 {
+    var i = b + 1;
+    while (i < e) {
+        if (_fnw_tok_ok(S, b, i) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+fn _fnw_tok_ok(S, b, i): i64 {
+    var t = TOKTYP(S, i);
+    if (t == 10) { return _fnw_paren_tok(S, b, i); }
+    if (t == 4) { return _fnw_assign_ok(S, b, i); }
+    if (t == 13) { return _fnw_brace_ok(S, i); }
+    if (t >= 6) { if (t <= 9) { return _fnw_arith_ok(S, b, i); } }
+    if (t == 113 || t == 116) { return _fnw_arith_ok(S, b, i); }
+    if (t == 35 || t == 54) { return _tok_binop_at(S, b, i); }   # a binary `|` / `||`; else a closure literal
+    return _fnw_tok_plain(t);
+}
+# 1 = token type `t` writes nothing by itself: a literal, a name, `var`, a separator or bracket, a control keyword, a
+# comparison or bit / logic operator, a load builtin, an f64 arithmetic builtin.
+fn _fnw_tok_plain(t): i64 {
+    if (t == 1 || t == 2 || t == 3 || t == 5 || t == 11) { return 1; }
+    if (t == 14 || t == 15 || t == 16 || t == 23 || t == 27) { return 1; }
+    if (t == 28 || t == 29 || t == 30 || t == 31 || t == 33) { return 1; }
+    if (t == 41 || t == 49 || t == 50 || t == 51 || t == 52) { return 1; }
+    if (t == 53 || t == 55 || t == 57 || t == 58 || t == 59) { return 1; }
+    if (t == 61 || t == 152 || t == 169 || t == 170 || t == 171 || t == 172) { return 1; }
+    if (t >= 17) { if (t <= 22) { return 1; } }
+    if (t >= 34) { if (t <= 39) { return 1; } }
+    return _fnw_builtin_tok(t);
+}
+# 1 = token type `t` is a builtin that reads or computes and writes nothing: `load8` .. `load64`, `f64_add` ..
+# `f64_neg`.
+fn _fnw_builtin_tok(t): i64 {
+    if (t == 25 || t == 42 || t == 43 || t == 44) { return 1; }
+    if (t >= 62) { if (t <= 71) { return 1; } }
+    return 0;
+}
+# 1 = the name at token `ct` is `sizeof` or `mulh64`, an intrinsic recognised by name that computes and writes nothing.
+fn _fnw_pure_intrinsic(S, ct): i64 {
+    if (_noff_is(S, TOKVAL(S, ct), "sizeof", 6) == 1) { return 1; }
+    if (_noff_is(S, TOKVAL(S, ct), "mulh64", 6) == 1) { return 1; }
+    return 0;
+}
+# A `(` in the body: a grouping or a statement's; or a call, which writes nothing only through a direct or generic
+# callee whose own summary says so (a method's receiver is not typed in the scan: a write).
+fn _fnw_paren_tok(S, b, i): i64 {
+    if (_tok_calls(TOKTYP(S, i - 1)) == 0) { return 1; }
+    var ct = _fnw_callee_tok(S, i, b);
+    if (ct == 0 - 1) { return 1; }
+    if (ct < 0) { return 0; }
+    if (TOKTYP(S, ct - 1) == 41) { return 0; }
+    if (_fnw_pure_intrinsic(S, ct) == 1) { return 1; }
+    var fi = _fnw_resolve(S, ct, i);
+    if (fi < 0) { return 0; }
+    return _fn_nowrite(S, fi);
+}
+# A `{` in the body opens a block — after `)`, `else`, `do`, `loop`, or a statement — never a struct literal (`P {`).
+fn _fnw_brace_ok(S, i): i64 {
+    var p = TOKTYP(S, i - 1);
+    if (p == 11 || p == 23 || p == 172 || p == 13 || p == 14 || p == 5) { return 1; }
+    if (_TOK_IS_LOOP(S, i - 1) == 1) { return 1; }
+    return 0;
+}
+# A `+ - * /` in the body: unary `-` (an integer) and `*` (a read) write nothing; a binary one runs a struct's
+# operator fn unless its left operand is no struct value (`_fnw_end_ok`).
+fn _fnw_arith_ok(S, b, i): i64 {
+    if (_tok_binop_at(S, b, i) == 0) {
+        var t = TOKTYP(S, i);
+        if (t == 7 || t == 8) { return 1; }
+        return 0;
+    }
+    return _fnw_end_ok(S, i - 1, b + 1);
+}
+# An `=` in the body: a declaration's (`var x = ..`), or an assignment whose whole target is one name the fn owns as a
+# scalar (`_fnw_assignable`; `x += 1` too) — a field, an element, `*p`, a global: a store.
+fn _fnw_assign_ok(S, b, i): i64 {
+    var j = i - 1;
+    if (_fnw_cmpd_tok(TOKTYP(S, j)) == 1) { j = j - 1; }
+    var st = _fnw_stmt_start(S, b, j);
+    if (st < 0) { return 0; }
+    if (TOKTYP(S, st) == 3) { return 1; }
+    if (st != j) { return 0; }
+    if (TOKTYP(S, j) != 2) { return 0; }
+    return _fnw_assignable(S, TOKVAL(S, j));
+}
+# 1 = token type `t` is the operator of a compound assignment (`+=` lexes as `+` `=`).
+fn _fnw_cmpd_tok(t): i64 {
+    if (t >= 6) { if (t <= 9) { return 1; } }
+    if (t == 27 || t == 34 || t == 35 || t == 36 || t == 38 || t == 39 || t == 152) { return 1; }
+    return 0;
+}
+# The first token of the statement (or `for` / `while` head part) whose token `j` is in it, walking back to a `;`, `{`,
+# `}` or an unmatched `(` (no further than the body's `{` at `b`), or -1.
+fn _fnw_stmt_start(S, b, j): i64 {
+    var k = j;
+    var d = 0;
+    while (k > b) {
+        var t = TOKTYP(S, k - 1);
+        if (d == 0) { if (t == 5 || t == 13 || t == 14) { return k; } }
+        if (t == 11 || t == 29) { d = d + 1; }
+        if (t == 10 || t == 28) {
+            if (d == 0) { return k; }
+            d = d - 1;
+        }
+        k = k - 1;
+    }
+    return 0 - 1;
+}
