@@ -4233,7 +4233,11 @@ fn _stmt_value_builtin(S, typ): i64 {
     var nt = GTI(S);
     STI(S, nt + 1);
     _ngt_callee_lt(S);   # `load8<i64>(p);`: the list refused at the name and stepped
-    if (PEEKT(S) != 10) { return _stmt_intrinsic_dot(S, nt); }
+    if (PEEKT(S) != 10) {   # `load16;`: "expected '('", the statement ending at its `;` in sync (the next one parsed)
+        STI(S, nt);
+        _refuse_in_sync(S);
+        return _stmt_intrinsic_dot(S, nt);
+    }
     var c = _call_close(S, GTI(S)) + 1;
     if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
     STI(S, nt);   # the name
