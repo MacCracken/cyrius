@@ -264,11 +264,12 @@ fn _fn_def_find(S, noff, ti): i64 {
 # byte-identical to before.
 fn _prescan_skip_impl(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
-    _impl_name_skip(S);  # consume the trait (or, inherent, the type) name
+    if (_impl_hdr_name(S) == 0) { return _impl_hdr_skip(S); }   # the trait (or, inherent, the type) name; 6.7.17
     if (PEEKT(S) == 55) {   # 6.7.0 (A3): absent in an inherent `impl Type {`
         STI(S, GTI(S) + 1);  # consume FOR
-        _impl_name_skip(S);  # consume type name
+        if (_impl_hdr_name(S) == 0) { return _impl_hdr_skip(S); }   # the type name
     }
+    if (PEEKT(S) != 13) { return _impl_hdr_skip(S); }   # 6.7.17
     if (PEEKT(S) == 13) {
         STI(S, GTI(S) + 1);
         var idep = 0;
@@ -282,6 +283,51 @@ fn _prescan_skip_impl(S): i64 {
         }
     }
     return 0;
+}
+
+# ⛔ 6.7.17 — A MALFORMED impl HEADER IS ONE ERROR, ITS BLOCK STEPPED (met in passing by the feg lane). PARSE_IMPL took
+# whatever stood where a name, `for` or the `{` belonged (`impl<T: Show> Bx<T> {`, `impl P Q {`, `impl Tr for P<i64> {`,
+# `impl P;`) as that token and read on, so the program after it was the impl's body: "an impl body holds only `fn`
+# definitions - in impl 'trait'" per statement and "expected '}', got end of file", or every later error hidden. Pass 1
+# stepped one token for each name, so `impl Tr for {` took the `{` as the type and met the body's `}` as "unmatched '}'
+# at module scope", the header's own error never printed. Now, after the header's one error (PARSE_IMPL) or at the same
+# token (pass 1: `_impl_hdr_name` takes only what PARSE_IMPL takes), both step the rest of the header to its `{` and the
+# block through its `}`. A `;` ends the header (stepped), and a `}`, a declaration keyword, `fn`, `var` or `const` at
+# depth 0 ends it before that token, so the program after a header with no block is its own. CHANGELOG [6.7.17]
+fn _impl_hdr_skip(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) {
+            if (t == 13) { return _skip_refused_body(S); }
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (_impl_hdr_end(t) == 1) { return 0; }
+        }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { if (d > 0) { d = d - 1; } }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# PARSE_IMPL's malformed header at `impl` token `ti`, its one error said: the block stepped, and the methods it would
+# have defined entered as reported (`_dl_quiet`), so a call of one adds no "undefined function" / "refusing to emit".
+fn _impl_hdr_bad(S, ti): i64 {
+    _impl_hdr_skip(S);
+    _dl_quiet(S, ti, GTI(S));
+    return 0;
+}
+# 1 = token kind `t` ends a malformed impl header before it: a `}`, `fn`, `var`, `const` or a declaration keyword.
+fn _impl_hdr_end(t): i64 {
+    if (t == 14 || t == 32 || t == 3 || t == 168) { return 1; }
+    return _dl_kind(t);
+}
+# Pass 1's step over an impl header's name, as PARSE_IMPL reads it: a tuple type's `( .. )` (PARSE_IMPL refuses it,
+# `_impl_tup_refuse`) or an identifier. 1 = stepped, 0 = neither (the cursor left on it).
+fn _impl_hdr_name(S): i64 {
+    if (PEEKT(S) == 10) { _impl_name_skip(S); return 1; }
+    if (PEEKT(S) != 2) { return 0; }
+    STI(S, GTI(S) + 1);
+    return 1;
 }
 
 # 6.6.5 — pass-1 impl scan. Registers and stamps each method (`Type_method`) exactly as a
@@ -989,14 +1035,34 @@ fn _dl_fn_at(S, i, d, isid): i64 {
     if (mn == GNPOS(S)) { var l = 0; while (load8(S + 0xEC00000 + mn + l) != 0) { l = l + 1; } SNPOS(S, mn + l + 1); }
     return _dl_fn_quiet(S, mn, i, ((L64(S + 0x1A6018 + (isid - 1) * 8) + 1) << 32) | n);
 }
-# `impl T {` / `impl Tr for T {` at token `i`: T's struct id, 0 when T names none.
+# `impl T {` / `impl Tr for T {` at token `i`: T's struct id, 0 when T names none. 6.7.17: a refused
+# `impl<T: B> Bx<T> {` (PARSE_IMPL's malformed header, `_impl_hdr_bad`) names Bx: a `<..>` list after `impl` is
+# stepped.
 fn _dl_impl_sid(S, i): i64 {
-    var n = i + 1;
-    if (TOKTYP(S, i + 2) == 55) { n = i + 3; }
+    var n = _dl_after_angles(S, i + 1);
+    if (TOKTYP(S, n + 1) == 55) { n = n + 2; }
     if (TOKTYP(S, n) != 2) { return 0; }
     var sid = FINDSTRUCT(S, TOKVAL(S, n));
     if (sid < 0) { return 0; }
     return sid;
+}
+# The token after the `<..>` list that opens at token `j` (a `>>` / `>>>` closes two / three; a `{`, `;` or the end of
+# input ends it), or `j` when none opens there.
+fn _dl_after_angles(S, j): i64 {
+    if (TOKTYP(S, j) != 19) { return j; }
+    var d = 0;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 13 || t == 5 || t == 12) { return j; }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        j = j + 1;
+        if (d <= 0) { return j; }
+    }
+    return j;
 }
 fn _dl_fn_quiet(S, noff, kw, meth): i64 {
     var fi = FINDFN(S, noff);

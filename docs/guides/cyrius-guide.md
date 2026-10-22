@@ -3357,6 +3357,13 @@ fn demo(): i64 {
   for 'A'`), and the body reads on: the methods after it are defined (6.7.16; through 6.7.15 it was
   "expected '}', got struct" and the rest of the body was read as top-level code, two or three invented
   errors, the methods after it lost).
+- **An impl header is `impl Type {` or `impl Trait for Type {`.** Anything else where a name, `for` or the
+  `{` belongs — `impl<T: Show> Bx<T> {` (a generic method takes its own list: `fn m<T: Show>(self, v: T)`),
+  `impl P Q {`, `impl Tr for P<i64> {`, `impl P;` — is one error at that token; the header is stepped to
+  its `{` and the block through its `}`, a call of a method it would have defined adds nothing, and the
+  program after it reads on (6.7.17; through 6.7.16 the program after it was read as the impl's body —
+  "an impl body holds only `fn` definitions - in impl 'trait'" per line — or, for `impl Tr for {`,
+  "unmatched '}' at module scope" with the header's own error never printed).
 - **A member's signature is parsed (6.7.8)** where the trait declares it, with a `fn` definition's
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type
