@@ -1768,6 +1768,12 @@ For a struct of any size (6.7.10; through 6.7.9 only over 8 bytes):
   was. So is a handle assigned something that is not a struct value: an untyped pointer
   (`a = alloc(24)`, `a = p`) or a call returning `Str`. Between two `*P3` parameters `a = b`
   rebinds too; before v6.6.16 it copied `*b` into `*a`.
+* `var p: *P3 = s;` — a `*P3` DECLARED from an inline `P3` value (a local, a by-value parameter, a captured copy,
+  an inline global, in parentheses or not; in a fn, in the declaration zone or after the first statement) takes
+  s's ADDRESS, as passing s to a `p: *P3` parameter does (6.7.17; the user's decision D17, 2026-10-22: a
+  declaration has no pointee to copy into yet). Through 6.7.16 p held s's first field as an address and the first
+  `p.x` faulted (and a top-level one warned *assigning non-pointer to typed pointer*). A value of another struct
+  type is refused by name there, as `p = u` and `f(u)` are.
 
 A struct value of a different type assigned into a handle is refused
 (`cannot copy 'r' into a variable of a different struct/vector type: 'a'`), as into an inline

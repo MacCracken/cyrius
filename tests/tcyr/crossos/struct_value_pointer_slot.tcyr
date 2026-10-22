@@ -1,0 +1,68 @@
+# struct_value_pointer_slot.tcyr — 6.7.17 (issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md,
+# rows B5 and B2): an inline struct VALUE meeting a `*S` slot.
+#
+# D17 (the user's decision, 2026-10-22: "s's address") — `var p: *P = s;` with s an inline P takes s's address, as
+# passing s to a `p: *P` parameter does (6.6.20) and `var p: *Str = t;` does for an inline `Str` (6.7.14's D18 (c)).
+# Through 6.7.16 p held s's FIRST FIELD as an address: the filed repro faulted on every target (x86_64 / aarch64 139,
+# cx "guest address out of range: 7", PE an access violation, exit 5). The a_* rows: a local (8 B and 16 B), wrapped, a
+# by-value parameter of each size, an inline global in a fn, a closure's captured copy, a generic's `*T` at T = P, a
+# write through p reaching s, and at top level (the declaration zone and after the first statement); the controls a
+# handle, a `*P`, `&s`.
+#
+# CROSS-HOST: a frame address, a static address and a parameter's slot on every backend — run by
+# tests/gates/codegen/small_struct_handle_line.sh R18 on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64, cx and PE, and
+# on ecb / ach / cass / pi by the cross-OS leg.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct P { a; b; }
+struct P8 { v; }
+
+var GS = P { 7, 2 };
+var GS8 = P8 { 7 };
+var GZ: *P = GS;          # the declaration zone: GS's address
+var GZ8: *P8 = (GS8);
+
+fn a_local(): i64 { var s: P; s.a = 7; s.b = 2; var p: *P = s; return p.a * 10 + p.b; }
+fn a_small(): i64 { var s: P8; s.v = 7; var p: *P8 = s; return p.v; }
+fn a_wrap(): i64 { var s = P { 7, 2 }; var p: *P = ((s)); return p.a; }
+fn a_param_in(s: P): i64 { var p: *P = s; return p.a * 10 + p.b; }
+fn a_param(): i64 { var s = P { 7, 2 }; return a_param_in(s); }
+fn a_param8_in(s: P8): i64 { var p: *P8 = s; return p.v; }
+fn a_param8(): i64 { var s = P8 { 7 }; return a_param8_in(s); }
+fn a_global(): i64 { var p: *P = GS; return p.a; }
+fn a_global8(): i64 { var p: *P8 = GS8; return p.v; }
+fn a_cap(): i64 { var s = P { 7, 2 }; var f = || { var p: *P = s; return p.a; }; return fncall0(f); }
+fn a_gen<T>(x: T): i64 { var s: T = x; var p: *T = s; return p.a; }
+fn a_write(): i64 { var s = P { 1, 2 }; var p: *P = s; p.a = 7; return s.a; }
+fn a_same(): i64 { var s = P { 7, 2 }; var p: *P = s; if (p == &s) { return 1; } return 0; }
+fn a_handle(): i64 { var h: P = alloc(16); h.a = 7; var p: *P = h; return p.a; }
+fn a_ptr(): i64 { var s = P { 7, 2 }; var q: *P = &s; var p: *P = q; return p.a; }
+
+alloc_init();
+syscall(1, 1, "", 0);
+var GA: *P = GS;          # after the first statement
+var GA8: *P8 = GS8;
+
+assert_eq(a_local(), 72, "a: var p: *P = s; points at s (16 B)");
+assert_eq(a_small(), 7, "a: ... at 8 B");
+assert_eq(a_wrap(), 7, "a: wrapped ((s))");
+assert_eq(a_param(), 72, "a: a by-value parameter over 8 B");
+assert_eq(a_param8(), 7, "a: a by-value parameter of 8 B");
+assert_eq(a_global(), 7, "a: an inline global in a fn");
+assert_eq(a_global8(), 7, "a: ... at 8 B");
+assert_eq(a_cap(), 7, "a: a closure's captured copy");
+var gs = P { 7, 2 };
+assert_eq(a_gen(gs), 7, "a: a generic's *T at T = P");
+assert_eq(a_write(), 7, "a: a write through p reaches s");
+assert_eq(a_same(), 1, "a: p == &s");
+assert_eq(GZ.a, 7, "a: the declaration zone, GZ: *P = GS");
+assert_eq(GZ8.v, 7, "a: ... GZ8: *P8 = (GS8)");
+assert_eq(GA.a, 7, "a: after the first statement, GA: *P = GS");
+assert_eq(GA8.v, 7, "a: ... GA8: *P8 = GS8");
+assert_eq(a_handle(), 7, "a control: a handle holds the address");
+assert_eq(a_ptr(), 7, "a control: a *P aliases");
+
+var r = assert_summary();
