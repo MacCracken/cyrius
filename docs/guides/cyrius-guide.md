@@ -621,8 +621,10 @@ var r = add(20, 22);   # r = 42
           ^
   ```
 
-  Through 6.7.16 `use 5;`, `use m.;`, `use m;` and `use m.f g;` compiled and bound nothing, and `use
-  m.f` with no `;` silently dropped the line after it — that line was never compiled.
+  When the name is whole and only what follows it is wrong (`use m.f g;`), the name is still bound, so
+  its calls add nothing to that one error. Through 6.7.16 `use 5;`, `use m.;` and `use m;` compiled and
+  bound nothing, `use m.f g;` bound `f` and dropped the `g`, and `use m.f` with no `;` silently dropped
+  the line after it — that line was never compiled.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
@@ -6717,6 +6719,20 @@ unless the same file also held a real `#ref "x"` (only that triggers the pass's 
 then the comment's neighbour failed with an error naming a word from the middle of the comment.
 `include ` had the same shape and now reports `include expects a quoted filename` instead of
 passing mangled bytes on.
+
+A `#ref` is a whole line, as an include is: after the file name only blanks, one `;` and a `#`
+comment may follow. Anything else is refused at its first character (6.7.17, the user's D92,
+2026-10-22):
+
+```text
+error:<source>:1:16: expected the end of the line after a #ref's file name
+```
+
+for `#ref "f.toml"; var y = 2; syscall(60, ka + y);` — through 6.7.16 the rest of the line was
+dropped unread (with `ka = 5` in f.toml that program exited 5, not 7). Put each statement on its
+own line. The declarations a `#ref` emits all sit on its own line, so the lines after it keep their
+numbers in diagnostics (through 6.7.16 each key took a line, and every later line was numbered off
+by the key count less one).
 
 ## Inline Assembly
 

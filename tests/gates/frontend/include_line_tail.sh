@@ -26,6 +26,14 @@
 #   IT6  the refused line's file is still included: a later line's own error (`zz`) is reported, nothing invented
 #   IC1-IC6 controls: `include "x"`, `include "x";`, `include "x"  # note`, `include "x" ;  # note`, CRLF line ends,
 #        and an included file whose own include lines end clean — each compiles and runs
+# A `#ref` LINE ENDS AT ITS FILE NAME TOO (6.7.17, the user's D92, 2026-10-22). PP_REF_PASS stepped the rest of the line
+# unread: `#ref "f.toml"; var y = 2; syscall(60, ka + y);` exited 5, not 7. The same rule (PP_FNAME_TAIL_AT, shared with
+# PP_INCLUDE_TAIL) and the same words: "expected the end of the line after a #ref's file name" at its first byte, the
+# line numbered as PP_PASS numbers it (`_bnd_err`: below cbt's `#@incdir` / `#@srcline` lines, the user's own line);
+# the file is still read. The rows run in a scratch dir holding f.toml (`ka = 5`), as the filed repro does.
+#   RT1  the repro verbatim; RT2 a second `;`; RT3 the file is still read — a later line's own error, nothing invented;
+#   RT4  under a `#@incdir` line the user's own line number; RT5 under a `#@srcline` marker likewise
+#   RC1-RC5 controls: `#ref "x"`, `#ref "x";`, `#ref "x"  # note`, `#ref "x" ;  # note`, CRLF — each runs (exit 7)
 # MUTATION LEDGER (2026-10-22, lane fea FA1; a scratch copy of the tree with the one change, its 2-stage cycc run as
 # CYCC=, so every leg's compiler carries the mutant):
 #   PP_INCLUDE_TAIL answering 0 at once (6.7.16)        -> RED IT1-IT6, 24 row-legs (rc 0, or the line lost)
@@ -34,10 +42,14 @@
 #   the `#` comment not accepted                         -> RED IC3 IC4 IC6 on x86 / PE / aarch64, 9 (a commented
 #                                                           include line refused), and the cx leg lost (main_cx /
 #                                                           cxvm include such lines: they no longer build)
+# (the finish pass, 2026-10-22, D92 — the same way):
+#   PP_REF_PASS's PP_REF_TAIL call removed (6.7.16)     -> RED RT1-RT5, 20 (rc 0, the tail dropped)
+#   PP_REF_TAIL reporting with `_pp_err_at` (no bias)    -> RED RT4 RT5, 8 (the raw line: 2, 3 for the user's 1)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: include_line_tail: cannot cd to $ROOT"; exit 1; }
 CC="${CYCC:-$ROOT/build/cycc}"
+case "$CC" in /*) ;; *) CC="$ROOT/$CC" ;; esac   # the #ref rows compile from a scratch dir
 G=include_line_tail
 [ -x "$CC" ] || { echo "FAIL: $G: $CC missing"; exit 1; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: $G: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -69,8 +81,9 @@ WINE=0; command -v wine > /dev/null 2>&1 && WINE=1
 # The nested fixtures live in the scratch dir, so their includes are absolute.
 CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1; export CYRIUS_ALLOW_ABSOLUTE_INCLUDES
 
-comp() {   # <leg> <src> <out>: PRC = the compiler's rc (from $ROOT, where `include "lib/.."` resolves)
+comp() {   # <leg> <src> <out>: PRC = the compiler's rc (from $ROOT, where `include "lib/.."` resolves; from $RDIR when set)
     PRC=0
+    cd "${RDIR:-$ROOT}" || { PRC=99; return 0; }
     case "$1" in
         x86) timeout 60 "$CC" < "$2" > "$3" 2> "$3.err" || PRC=$? ;;
         pe)  CYRIUS_TARGET_WIN=1 timeout 60 "$CC" < "$2" > "$3" 2> "$3.err" || PRC=$? ;;
@@ -168,11 +181,57 @@ refuse IU3 "an unclosed name with no quote for 767+ bytes" "$(printf 'include "l
 refuse IU4 "an unclosed #ref name" '#ref "nope.toml
 var a = "x";
 syscall(60, 3);' "error: #ref \"nope.toml: $UM_"
-# The corpus floor: 16 rows on four legs. A row or a leg lost reads RED, never green.
-[ "$N" -ge 64 ] || bad "floor: $N row-legs ran (floor 64) - rows or legs were lost"
+# RT / RC — the #ref line (D92; see the header). Compiled from $D/ref, where f.toml sits, as the filed repro is.
+RM_="expected the end of the line after a #ref's file name"
+mkdir -p "$D/ref" && printf 'ka = 5\n' > "$D/ref/f.toml" || bad "cannot write $D/ref/f.toml"
+RDIR="$D/ref"
+refuse RT1 "the D92 repro verbatim" '#ref "f.toml"; var y = 2; syscall(60, ka + y);' "error:<source>:1:16: $RM_"
+refuse RT2 "a second ';' is a tail" '#ref "f.toml";;
+syscall(60, ka);' "error:<source>:1:15: $RM_"
+refuse RT3 "the file is still read: a later line's own error, nothing invented" 'var a = 1;
+#ref "f.toml" junk
+syscall(60, ka + zz);' "error:<source>:2:15: $RM_
+error:<source>:3:20: $ZZ"
+refuse RT4 "under cbt's #@incdir line: the user's own line" "#@incdir $D/ref
+#ref \"f.toml\" x
+syscall(60, ka);" "error:<source>:1:15: $RM_"
+refuse RT5 "under a #@srcline marker: the user's own line" '# a prepended line
+#@srcline
+#ref "f.toml" x
+syscall(60, ka);' "error:<source>:1:15: $RM_"
+runs RC1 'control: #ref "x"' '#ref "f.toml"
+syscall(60, ka + 2);' 7
+runs RC2 'control: #ref "x";' '#ref "f.toml";
+syscall(60, ka + 2);' 7
+runs RC3 'control: #ref "x"  # note' '#ref "f.toml"  # note
+syscall(60, ka + 2);' 7
+runs RC4 'control: #ref "x" ;  # note' '#ref "f.toml" ;  # note
+syscall(60, ka + 2);' 7
+runs RC5 'control: CRLF line ends' "$(printf '#ref "f.toml"\r\nsyscall(60, ka + 2);\r')" 7
+# RL — the #ref line keeps its place in the line count (met in the finish pass, 2026-10-22). Each key's declaration took
+# a line of its own, so every later line was numbered off by the key count less one: a three-key file then `zz` on line
+# 2 said "4:15", a file with no key "1:15". The declarations now sit on the #ref's own line.
+#   PP_REF_PASS emitting a line per declaration again (6.7.16) -> RED RL1 RL2 RL3, 12 row-legs (RL4 green: values)
+printf 'kb = 6\n# c\nkc = 7\nkd = 8\n' > "$D/ref/f3k.toml"
+printf '# no key\n[sec]\n' > "$D/ref/f0k.toml"
+refuse RL1 "a three-key file: the next line is line 2" '#ref "f3k.toml"
+syscall(60, zz);' "error:<source>:2:15: $ZZ"
+refuse RL2 "a file with no key: the next line is line 2" '#ref "f0k.toml"
+syscall(60, zz);' "error:<source>:2:15: $ZZ"
+refuse RL3 "two #ref lines, then a later line" 'var a = 1;
+#ref "f3k.toml"
+#ref "f.toml"
+var b = 2;
+syscall(60, a + zz);' "error:<source>:5:19: $ZZ"
+runs RL4 "control: every key of both files is declared" '#ref "f.toml"
+#ref "f3k.toml"
+syscall(60, ka + kb + kc + kd);' 26
+RDIR=
+# The corpus floor: 30 rows on four legs. A row or a leg lost reads RED, never green.
+[ "$N" -ge 120 ] || bad "floor: $N row-legs ran (floor 120) - rows or legs were lost"
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: $G: $NFAIL check(s) failed"
     exit 1
 fi
-echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies, an unclosed file name said so ($N row-legs on $LEGS) (6.7.17, D29)"
+echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies, an unclosed file name said so, a #ref line likewise and numbered in place ($N row-legs on $LEGS) (6.7.17, D29, D92)"
 exit 0

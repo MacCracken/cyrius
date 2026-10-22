@@ -1156,14 +1156,33 @@ fn PP_INCLUDE_NEEDS_QUOTE(): i64 {
 # include's file name" at its first byte (`_pp_err_at`: located, the build fails, the line is still included). Both
 # include sites call it — PP_PASS (the entry's own lines) and PP_IFDEF_PASS (an included file's). CHANGELOG [6.7.17]
 fn PP_INCLUDE_TAIL(S, base, ip, bl, fname, fi): i64 {
-    if (_pp_has_eol(fname, fi) == 1) { return 0; }   # an unclosed name: its own report (PP_FNAME_UNCLOSED)
+    var p = PP_FNAME_TAIL_AT(base, ip, bl, fname, fi);
+    if (p < bl) { _pp_err_at(S, base, p, "expected the end of the line after an include's file name"); }
+    return 0;
+}
+# ⛔ 6.7.17 — A #ref LINE ENDS AT ITS FILE NAME, as an include's does (the user's D92, 2026-10-22): PP_REF_PASS stepped
+# the rest of the line unread, so `#ref "f.toml"; var y = 2; syscall(60, ka + y);` exited 5, not 7. The same rule
+# (PP_FNAME_TAIL_AT) and words: "expected the end of the line after a #ref's file name" at its first byte, the line
+# numbered as PP_PASS numbers it (`_bnd_err` lends the `#@incdir` / `#@srcline` bias; PP_PASS has not run). The file is
+# still read. CHANGELOG [6.7.17]
+fn PP_REF_TAIL(S, ip, bl, rfn, rfi): i64 {
+    var base = S + _SRCB;
+    var p = PP_FNAME_TAIL_AT(base, ip, bl, rfn, rfi);
+    if (p < bl) { _bnd_err(S, p, _bnd_entry_start(base, bl), "expected the end of the line after a #ref's file name"); }
+    return 0;
+}
+# The offset of the first byte after a directive's file name (`ip`, just past its closing quote) that may not end its
+# line — anything but blanks, one `;`, a `#` comment, CR / LF / EOF — or `bl` when the line ends clean, or when the name
+# ran past its line (an unclosed name: its own report, PP_FNAME_UNCLOSED). One rule for an include (PP_INCLUDE_TAIL)
+# and a #ref (PP_REF_PASS, the user's D92). CHANGELOG [6.7.17]
+fn PP_FNAME_TAIL_AT(base, ip, bl, fname, fi): i64 {
+    if (_pp_has_eol(fname, fi) == 1) { return bl; }
     var p = _pp_blanks(base, ip, bl);
     if (p < bl) { if (load8(base + p) == 59) { p = _pp_blanks(base, p + 1, bl); } }
-    if (p >= bl) { return 0; }
+    if (p >= bl) { return bl; }
     var c = load8(base + p);
-    if (c == 10 || c == 13 || c == 35) { return 0; }
-    _pp_err_at(S, base, p, "expected the end of the line after an include's file name");
-    return 0;
+    if (c == 10 || c == 13 || c == 35) { return bl; }
+    return p;
 }
 # The first offset at or past `p` (below `bl`) that is not a blank (a space or a tab).
 fn _pp_blanks(base, p, bl): i64 {
@@ -5297,6 +5316,7 @@ fn PP_REF_PASS(S): i64 {
                         store8(rfn + rfi, rc); rfi = rfi + 1; ip = ip + 1;
                     }
                     store8(rfn + rfi, 0);
+                    PP_REF_TAIL(S, ip, bl, rfn, rfi);   # 6.7.17 (D92): the line ends at the file name
                     while (ip < bl) { if (load8(S + _SRCB + ip) == 10) { ip = ip + 1; break; } ip = ip + 1; }
                     var rnr = READFILE(rfn, S + 0x191800, 16384);
                     if (rnr < 0) {
@@ -5308,7 +5328,10 @@ fn PP_REF_PASS(S): i64 {
                         syscall(SYS_WRITE, 2, "\n", 1);
                         syscall(SYS_EXIT, 1);
                     }
-                    # Inline: emit var declarations for each key-value line
+                    # Inline: emit var declarations for each key-value line — all on the #ref's own line, which keeps
+                    # its line break. 6.7.17: each declaration took a line of its own, so every later line of the file
+                    # was numbered off by the key count less one (`#ref` of three keys, then `zz` on line 2: "4:15"; of
+                    # none: "1:15"). CHANGELOG [6.7.17]
                     var ri = 0;
                     while (ri < rnr) {
                         var rch = load8(S + 0x191800 + ri);
@@ -5324,10 +5347,11 @@ fn PP_REF_PASS(S): i64 {
                                 store8(out + op, rch); op = op + 1; ri = ri + 1;
                             }
                             while (load8(out + op - 1) == 32) { op = op - 1; }
-                            store8(out + op, 59); store8(out + op + 1, 10); op = op + 2;
+                            store8(out + op, 59); store8(out + op + 1, 32); op = op + 2;
                         }
                         else { ri = ri + 1; }
                     }
+                    if (load8(S + _SRCB + ip - 1) == 10) { store8(out + op, 10); op = op + 1; }
                     found = 1;
                     bol = 1;
                 }

@@ -114,6 +114,9 @@ fi
 #            reported
 #   UL11     a refused `;`-less use after the first statement: a call of the name it binds adds no "undefined function"
 #            (`_dl_quiet` read the name two tokens before the `;`)
+#   UL12-UL14 (the finish pass, 2026-10-22) a refused line whose `use module.name` is whole — `use m.f g;`, `use m.f(1)`
+#            in the zone, `use m.f g;` after the first statement — is its one error: a call of `f` adds no "undefined
+#            function 'f'" + "refusing to emit binary" (the name is bound, or entered as reported by `_dl_quiet`)
 #   UC1-UC2  controls: `use m.f;` binds (exit 4); `pub use m.f` with no `;` binds, the next line runs
 # MUTATION LEDGER (2026-10-22, lane fea FA1; a scratch copy of the tree with the one change, its 2-stage cycc run as
 # CYCC=, so every leg's compiler carries the mutant):
@@ -123,6 +126,8 @@ fi
 #   `_dl_skip_at` without `_dl_skip_use` (to the next `;`)     -> RED UL8, 4 (both `zz` lost)
 #   `_dl_inner_fill` holding a `use` header open again         -> RED UL9, 4 ("type 'Q' is declared after its use")
 #   `_dl_quiet` reading the name two tokens before the end     -> RED UL11, 4 ("undefined function 'f'")
+#   (the finish pass:) `_tl_use` binding nothing when refused  -> RED UL12 UL13, 8 (+ "undefined function 'f'")
+#   `_dl_quiet` entering only a well-formed `use`              -> RED UL14, 4 (the same)
 UL_LEGS="x86 pe"
 ULN=0
 if "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then chmod +x "$D/cc_a64"; UL_LEGS="$UL_LEGS a64"
@@ -228,6 +233,19 @@ ulrefuse UL11 "a refused ';'-less use: a call of the name it binds adds nothing"
 a = 2;
 use m.f
 syscall(60, f());' "error:<source>:3:1: a \`use\` declaration must come before the first top-level statement (line 2)"
+ulrefuse UL12 "use m.f g; with a call of f: the one error" 'mod m;
+fn f(): i64 { return 3; }
+use m.f g;
+syscall(60, f());' "error:<source>:3:9: $UM"
+ulrefuse UL13 "use m.f(1) with a call of f: the one error" 'mod m;
+fn f(): i64 { return 3; }
+use m.f(1)
+syscall(60, f());' "error:<source>:3:8: $UM"
+ulrefuse UL14 "use m.f g; after the first statement, a call of f: the one error" 'mod m;
+fn f(): i64 { return 3; }
+syscall(1, 1, "", 0);
+use m.f g;
+syscall(60, f());' "error:<source>:4:1: a \`use\` declaration must come before the first top-level statement (line 3)"
 ulrun UC1 "control: use m.f; binds" 'mod m;
 fn f(): i64 { return 4; }
 use m.f;
@@ -237,8 +255,8 @@ fn f(): i64 { return 6; }
 pub use m.f
 var r = f();
 syscall(60, r);' 6
-# The corpus floor: 13 rows on four legs. A row or a leg lost reads RED, never green.
-[ "$ULN" -ge 52 ] || bad "UL floor: $ULN row-legs ran (floor 52) - rows or legs were lost"
+# The corpus floor: 16 rows on four legs. A row or a leg lost reads RED, never green.
+[ "$ULN" -ge 64 ] || bad "UL floor: $ULN row-legs ran (floor 64) - rows or legs were lost"
 
 [ "$NROWS" -eq 5 ] || bad "floor: $NROWS rows ran, want 5"
 if [ "$NFAIL" -ne 0 ]; then
