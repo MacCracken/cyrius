@@ -1099,7 +1099,9 @@ _chk_gate "$ROOT/tests/gates/frontend/intrinsic_names_reserved.sh"
 
 # v6.5.56: `private fn h()` must be rejected rather than silently privatising the whole file
 # (twelve releases live, no diagnostic). Axes 2-3 keep the fix honest: the own-line and
-# `private;` forms are the legitimate spellings and must keep working.
+# `private;` forms are the legitimate spellings and must keep working. 6.7.17 (the user's D31): the file-level line
+# after the first top-level statement compiles (the PL rows; "unexpected private" before, its latch swallowing the
+# next statement's error), and in a body it is "unexpected private" in sync.
 _chk_gate "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
 
 # 6.6.5: `private` was enforced only against definitions PASS 1 REGISTERED, and pass 1 skipped

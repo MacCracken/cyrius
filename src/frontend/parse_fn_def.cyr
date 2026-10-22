@@ -699,11 +699,11 @@ fn _decl_inner(S): i64 {
 # variable"); a `fn` where a fn is defined (module scope, a top-level block: GINFN 0) is left to PARSE_PROG, which
 # defines it; a `fn` in a fn body, or a declaration the declaration-section rule refuses (`_dl_kind`), is stepped as
 # that refusal steps it, its names and fns entered as reported (`_dl_names`, `_dl_quiet`), the per-item error standing
-# for it. The file-level marker (alone on its line) is not this arm's. 1 = consumed (PARSE_STMT returns), 0 = parse on
-# at the cursor. CHANGELOG [6.7.16]
+# for it. The file-level marker (alone on its line) is `_dl_priv_file`'s (6.7.17). 1 = consumed (PARSE_STMT returns),
+# 0 = parse on at the cursor. CHANGELOG [6.7.16]
 fn _dl_priv(S): i64 {
     while (PEEKT(S) == 153) {
-        if (_priv_is_item(S, GTI(S)) == 0) { return 0; }
+        if (_priv_is_item(S, GTI(S)) == 0) { return _dl_priv_file(S); }
         STI(S, GTI(S) + 1);
     }
     var ti = GTI(S);
@@ -716,6 +716,26 @@ fn _dl_priv(S): i64 {
     _dl_derived(S, ti);
     _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# ⛔ 6.7.17 — THE FILE-LEVEL `private` LINE AFTER THE FIRST TOP-LEVEL STATEMENT IS ACCEPTED (the user's D31, 2026-10-22):
+# the file is private, exactly as when the line sits above the first statement — `_PRIV_PRESCAN` marked it already, from
+# the line wherever it sits (the guide: "the WHOLE file, wherever in it the marker sits"). Only the statement parser
+# refused it: "unexpected private", and with no `;` the refusal's latch swallowed the next statement's own error. At
+# module scope (GINFN 0, `_pp_depth` <= 1) the marker and an optional `;` are stepped, as `_TL_VIS` steps them in the
+# declaration zone. In a fn body or a block it is still "unexpected private", now made in sync: the marker (and its
+# `;`) stepped and the latch it set released, so the next statement reports its own error (with no `;` the resync
+# skipped it: `private` then `a = zz;` reported the `private` alone). 1 = consumed. CHANGELOG [6.7.17]
+fn _dl_priv_file(S): i64 {
+    if (GINFN(S) == 0) { if (_pp_depth <= 1) { return _dl_priv_mark(S); } }
+    var p0 = _panic;
+    ERR(S);
+    if (p0 == 0) { _panic = 0; }
+    return _dl_priv_mark(S);
+}
+fn _dl_priv_mark(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 1;
 }
 # ... a refused declaration after the first statement (`_decl_late`'s arm, `rep` 2: an include line is still reported,

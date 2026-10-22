@@ -4877,6 +4877,12 @@ Rules:
   in**, not to the files that file includes, and not to the file that includes it —
   and to the WHOLE file, wherever in it the marker sits (6.6.5; before that a
   definition written above the marker was stamped as if the file were public).
+  That includes a line after the file's first top-level statement (6.7.17, the user's
+  D31, 2026-10-22): it compiles and the file is private, exactly as with the line on
+  top. Through 6.7.16 it was *unexpected private*, and with no `;` the next statement's
+  own error was never reported. Inside a fn body or a block the line is still *unexpected
+  private* (it is no file-level marker there), and the next statement's error is
+  reported after it (through 6.7.16 it was skipped).
 - There is **no per-item `private`**. `private fn h()` on one line is a hard error naming
   the file-level form (v6.5.56) — `private` alone on its own line, or `private;`, which
   closes the statement and lets an item follow on the same line. ⚠ Until 6.6.5 that
