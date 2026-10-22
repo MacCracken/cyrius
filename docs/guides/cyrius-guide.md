@@ -1213,8 +1213,9 @@ fault, an access violation on Windows). Into any parameter
 declared a pointer — a fn's, a method's, a generic's `*T`, a known `&f` through `callptr` /
 `fncallN`, a fn pointer declared `*fn( .. )` — from a local, a global, a closure's capture or a
 bare `var b[N]`, it is *cannot pass array 'a' to pointer parameter 'p' of 'tp' - an array's name
-is its first element; pass &a for its address*. An untyped parameter still takes the first element
-(`take(a)`).
+is its first element; pass &a for its address*, whatever the element — an array of pointers too
+(`var ap: *i64[4]; tp(ap)`, whose element 0 is a `*i64` and ran right through 6.7.16: write
+`tp(load64(&ap))` for that element). An untyped parameter still takes the first element (`take(a)`).
 
 ## Memory
 
