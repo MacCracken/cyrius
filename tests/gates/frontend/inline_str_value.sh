@@ -340,6 +340,8 @@
 #   2026-10-22 (6.7.17, D22 a top-level untyped `: Str` call; the same scratch-copy method):
 #   s1 `_gu_okz` / `_gu_lstr` answering no `Str`   -> RED 18: R1 x7 (the file stops compiling: the zs_* rows),
 #      (the fix reverted)                             ZS1 x7, ZS2 x4 (refused "no struct type in scope")
+#   s2 `_var_rhs_mchain` without its unwrap (the    -> RED 7: R1 x7 (the file stops compiling: zs_wrapm's `(h.clone())`
+#      compiler before the fix)                       and the top-level `(zsl.clone())` untyped)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).

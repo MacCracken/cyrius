@@ -1872,7 +1872,8 @@ a crash), at every size since 6.7.13: `var x = (mk1());` with `mk1` returning an
 that struct (`x.a` was refused, *no struct type in scope*), and `var x = (f());` with `f` returning
 `: f64` is an f64, as `var x = f();` is. In a fn, `var s = (mks());` with `mks` returning `Str` is a `Str`, as
 `var s = mks();` is (6.7.14; it was an untyped word: `println(s)` printed the header's bytes and `s.len()`
-was refused). A GLOBAL declared so binds the struct too (6.7.14; the user's decisions D29 (a) and D30 (a),
+was refused), and since 6.7.17 so is a wrapped method or chain ending in one — `var k = (h.clone());` a `Str`, `var a
+= (p.area());` an f64 — as unwrapped (through 6.7.16 an untyped word: `k.len` refused, `a + 1.0` integer arithmetic). A GLOBAL declared so binds the struct too (6.7.14; the user's decisions D29 (a) and D30 (a),
 2026-10-16): at top level — in the declaration zone or after the first statement, wrapped or not — `var x =
 mk1(30);` with `mk1` returning a struct of 8 bytes or less declares `x` that struct (`x.a` was *no struct type in
 scope for 'x'*; `x + 1` now dispatches `P1_add`, refused when there is none; a generic call's instance too — in the

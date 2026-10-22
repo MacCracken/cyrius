@@ -486,6 +486,7 @@ var ZSG = zs_id<Str>(ZSW);         # a generic's `Str` instance
 var ZSI = zs_id(ZSB);              # ... inferred T = Str
 fn zs_zone(): i64 { return ZSB.len * 10000 + ZSW.len * 1000 + ZSK.len * 100 + ZSG.len * 10 + ZSI.len; }
 fn zs_same(): i64 { return (ZSI == ZSB) * 10 + (ZSG == ZSW); }
+fn zs_wrapm(): i64 { var h = str_from("abc"); var k = (h.clone()); var k2 = ((h.clone().clone())); return k.len * 10 + k2.len; }
 alloc_init();
 var R_TOP = f(gt);   # at top level, a global inline `Str`
 GA = str_from("abcde");
@@ -560,7 +561,8 @@ var zsl = str_from("abcde");       # after a statement: a free call, a method, a
 var zsk = zsl.clone();
 var zsg = zs_id(zsl);
 var zsn = zsl;                     # a name keeps its word: untyped
-var R_TOP24 = zsl.len * 100 + zsk.len * 10 + zsg.len + (zsn == zsl) * 1000;
+var zsw = (zsl.clone());           # wrapped (6.7.17: `_var_rhs_mchain` sees through the wrap)
+var R_TOP24 = zsl.len * 100 + zsk.len * 10 + zsg.len + (zsn == zsl) * 1000 + zsw.len * 10000;
 gi4.len = 2;
 GH = 0;
 GPS = 0;
@@ -812,7 +814,8 @@ assert_eq(ca_step(), 3, "a for step's *(&t) = sx()");
 assert_eq(ca_word(), 7, "*(&t) = 0: an untyped value keeps the one-word store into t.data (t.len 7)");
 assert_eq(zs_zone(), 34343, "the zone: var ZSB = str_from(..), ((..)), ZSB.clone(), zs_id<Str>(..), zs_id(..) are Str (6.7.17, D22)");
 assert_eq(zs_same(), 11, "... each the call's header address (zs_id hands back its argument)");
-assert_eq(R_TOP24, 1555, "after a statement: var zsl = str_from(..), zsl.clone(), zs_id(zsl) are Str; var zsn = zsl keeps the word");
+assert_eq(R_TOP24, 51555, "after a statement: var zsl = str_from(..), zsl.clone(), zs_id(zsl), (zsl.clone()) are Str; var zsn = zsl keeps the word");
+assert_eq(zs_wrapm(), 33, "in a fn: var k = (h.clone()); / ((h.clone().clone())) are Str, as unwrapped (6.7.17; an untyped word)");
 assert_eq(nm_filed(), 4, "NmV { s: a, n: 1 }: a named Str field (6.7.17, D21; was refused)");
 assert_eq(nm_order(), 143, "NmV { n: 3, s: a }: in any order, the handle itself");
 assert_eq(nm_glob(), 11, "NmV { s: gt, n: 1 }: an inline Str global's header address");

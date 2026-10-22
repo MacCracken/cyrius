@@ -1083,8 +1083,18 @@ fn _sc_small_whole(S, start): i64 {
 # and `var k = h.clone().clone();` left k an untyped word, so `k.len()` was refused "no struct type in scope for 'k'"
 # and `println(k)` took the cstring overload: a `Str` is 16 B, so the 8 B arm (`_var_rhs_msid`) declined it, and as a
 # handle in rax it has no temp to receive (`_sc_var_receive`). CHANGELOG [6.7.16]
+# ⛔ 6.7.17 — INSIDE ANY PARENTHESES WRAPPING THE WHOLE INITIALISER, as a free call's (`_var_rhs_wsid`) and an 8 B
+# struct method's (`_sc_small_whole`) are: `var k = (h.clone());` left k an untyped word — `k.len` refused, `println(k)`
+# the cstring overload — and `var a = (p.area());` an integer word, where the unwrapped lines are a `Str` / an f64 (the
+# wrap is transparent: 6.7.11's D42, 6.7.14's D12). A fn's line and, through `_ti_inferred_sid`, a top-level one (6.7.17's
+# D22). CHANGELOG [6.7.17]
 fn _var_rhs_mchain(S, ti, end): i64 {
     if (TOKTYP(S, end) != 5) { return 0; }
+    var a = _ie_unparen(S, ti, end);
+    return _var_rhs_mch2(S, a, _ie_pe);
+}
+# ... the chain [ti, end), unwrapped.
+fn _var_rhs_mch2(S, ti, end): i64 {
     var k = ti + 1;
     var o = _gcall_open(S, ti);
     if (o >= 0) { k = _call_close(S, o) + 1; }
