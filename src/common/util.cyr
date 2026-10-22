@@ -3062,8 +3062,12 @@ fn _sync_skip(S): i64 {
 }
 # The statement-start keywords `_sync_skip` stops at (token `t` at the cursor): fn, var, if, while,
 # do (6.7.5), `loop {` (6.7.5, contextual), for, return, switch, match, struct, enum.
+# 6.7.17: not the `fn` of a fn-pointer type (`*fn( .. )`, a declaration's since D8): the resync stopped there and the
+# statement loop read it as a nested fn — `h(1 *fn(i64): i64;` added "a fn is defined inside fn 'f'" and "unexpected
+# '('" to its one error. CHANGELOG [6.7.17]
 fn _sync_kw(S, t): i64 {
-    if (t == 32 || t == 3 || t == 15 || t == 16 || t == 172 || t == 55) { return 1; }
+    if (t == 32) { return _tok_fn_kw(S, GTI(S)); }
+    if (t == 3 || t == 15 || t == 16 || t == 172 || t == 55) { return 1; }
     if (t == 33 || t == 57 || t == 75 || t == 40 || t == 60) { return 1; }
     if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 1; }
     return 0;

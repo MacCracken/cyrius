@@ -28,6 +28,10 @@
 #      zone / late / assigned global, a for step, `|x| x + 1`, `|| 4`, wrapped `((&f))` / `((|x| x))`, `&f` into a `*i64`,
 #      `&P_m` — each warned "assigning non-pointer to typed pointer" through 6.7.16 (`_tp_fna_exempt`,
 #      src/frontend/parse_decl.cyr); WC1-WC3 the controls that still warn (an untyped variable, `&f + 0`, `(|x| x) + 1`)
+#   Y  (met landing D8) the statement resync (`_sync_kw`, src/common/util.cyr) stopped at a fn-pointer type's `fn` as at a
+#      statement keyword, so junk `h(1 *fn(i64): i64;` added "a fn is defined inside fn 'f'" (and, once D8 made
+#      `_skip_nested_body` take a `*fn` as no unit, "unexpected '('"): Y1 one error, Y2 the next statement's error kept,
+#      Y3 the top-level control
 #   T  tests/tcyr/crossos/fn_pointer_typed_holders.tcyr on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
 #      cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived from the file (one row per `assert_eq(`)
 #
@@ -53,6 +57,9 @@
 #   MW2 a wrapped closure not taken (`_tp_cl_whole` 0)  -> RED 1: W4 (`((|x| x))`)
 #   MW3 `&f` taken without its terminator check         -> RED 1: WC2 (`&f + 0` silent)
 #   MW4 a closure taken however it is wrapped           -> RED 1: WC3 (`(|x| x) + 1` silent)
+# Y, on the D9 commit (313adedb4):
+#   MY0 the D9 commit itself (`_sync_kw` stops at `fn`) -> RED 2: Y1 Y2 (+ "a fn is defined inside fn 'f'" and
+#                                                         "unexpected '('")
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -241,6 +248,28 @@ warns WC2 "2:40" "WC2 control: &f + 0 (arithmetic, not the whole &f) still warns
     'fn inc(x): i64 { return x + 1; }\nfn main(): i64 { var s: *i64 = &inc + 0; return 0; }\nsyscall(60, main());\n'
 warns WC3 "2:42" "WC3 control: (|x| x) + 1 still warns" \
     'fn inc(x): i64 { return x + 1; }\nfn main(): i64 { var v: *fn = (|x| x) + 1; return 0; }\nsyscall(60, main());\n'
+
+echo "Y. a resync does not stop at a fn-pointer type's \`fn\`"
+# errs <name> <what> <want-line>... <body is $D/<name>.cyr>: exactly these error lines (`L:C: text`), rc 1, no binary
+errs() {
+    nm=$1; what=$2; shift 2
+    rc=0; timeout 60 "$CC" < "$D/$nm.cyr" > "$D/$nm.bin" 2> "$D/$nm.err" || rc=$?
+    grep -E '^(error|warning)' "$D/$nm.err" > "$D/$nm.got" || true
+    : > "$D/$nm.want"
+    for w in "$@"; do printf 'error:<source>:%s\n' "$w" >> "$D/$nm.want"; done
+    if [ "$rc" -eq 0 ]; then bad "$what: compiled (rc 0)"
+    elif ! cmp -s "$D/$nm.got" "$D/$nm.want"; then bad "$what: got $(tr '\n' '|' < "$D/$nm.got") want $(tr '\n' '|' < "$D/$nm.want")"
+    elif [ -s "$D/$nm.bin" ]; then bad "$what: refused, but a binary was written"
+    else ok "$what: exactly $# line(s)"; fi
+}
+YH='fn h(x): i64 { return x; }\n'
+printf "${YH}"'fn f(): i64 { h(1 *fn(i64): i64; return 3; }\nsyscall(60, f());\n' > "$D/y1.cyr"
+errs y1 "Y1 junk *fn( .. ) in an expression: one error (it added \"a fn is defined inside fn 'f'\", 6.7.17's D8 also \"unexpected '('\")" \
+    "2:20: unexpected fn"
+printf "${YH}"'fn f(): i64 { h(1 *fn(i64): i64; var b = 2 2; return 3; }\nsyscall(60, f());\n' > "$D/y2.cyr"
+errs y2 "Y2 ... the next statement's own error is still reported" "2:20: unexpected fn" "2:44: expected ';', got number 2"
+printf "${YH}"'var a = 1;\na = h(1 *fn(i64): i64;\nsyscall(60, 3);\n' > "$D/y3.cyr"
+errs y3 "Y3 control: at top level after the first statement, one error (as before)" "3:10: unexpected fn"
 
 echo "T. $TC ($N rows)"
 for leg in x86 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
