@@ -30,6 +30,8 @@
 #   D   a `dyn` initializer's `;`: D1 before a `return` (its source ran on to the next `;`: "cannot form dyn Show
 #       from this expression"), D2 before the fn's `}`
 #   E   a subscript store's `;` (`a[0] = 1`): E1 before the fn's `}`, E2 before a `return`
+#   T   an assignment's terminator (the `term` sites the statement and the classic-for step share): T1 `*q = 5`
+#       before the fn's `}`, T2 a struct copy `*q = o` before a `return`
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -43,7 +45,7 @@
 # init's resync ran into the condition, the step replayed from the token after the missing `;`, the step skip ran
 # to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
 # parse_types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
-# On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2.
+# On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -274,6 +276,27 @@ row E2 "a[0] = 1 then a return" 'fn f(): i64 {
 syscall(60, f());
 ' "error:<source>:4:5: expected ';', got return
 error:<source>:4:14: $UZ"
+
+# ---- T: an assignment's terminator (the `term` sites: `*p = v`, a struct copy, `a, b = f()`, a field store)
+row T1 "*q = 5 before the fn's }" 'fn f(): i64 {
+    var x = 0;
+    var q: *i64 = &x;
+    *q = 5 }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+' "error:<source>:4:12: expected ';', got '}'
+error:<source>:5:24: $UZ"
+row T2 "a struct copy *q = o then a return" 'struct P { n; m; }
+fn f(): i64 {
+    var p = P { 1, 2 };
+    var o = P { 3, 4 };
+    var q: *P = &p;
+    *q = o
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:7:5: expected ';', got return
+error:<source>:7:14: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }

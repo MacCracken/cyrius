@@ -4761,8 +4761,7 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     var t = _struct_call_into_temp(S);
     _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -4823,8 +4822,7 @@ fn _hl_psrc_copy(S, noff, st, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # ⛔ 6.7.11 — AN ASSIGNMENT FROM A STRUCT DEREFERENCE COPIES THE STRUCT (6.7.10 decision 6: `*p` is a struct
@@ -4863,8 +4861,7 @@ fn _asg_dstar(S, noff, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # 1 = the source `_hl_dstar_x` just read is `*pp` (a `*S`) and the destination `_agc_operand` just resolved a handle
@@ -4890,8 +4887,7 @@ fn _hl_val_into(S, term, sid, dli, dgv): i64 {
     else { tg = _hl_gtemp(S); EVSTORE(S, tg); }   # 6.7.10 (B7-1g): top level, a hidden global
     if (dgv == 0 - 1) { dli = _AGC_DREF(dli); }
     _agc_copy_bytes(S, dli, dgv, t, tg, STRUCTSZ(S, sid - 1));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # `a = mk(..);` — a free call returning a struct of 8 B or less (class 0, in rax) into a HANDLE `a` of
@@ -5375,8 +5371,7 @@ fn _dst_struct(S, term, d): i64 {
     _HTSTORE(S, h);
     if (_dst_arms(S, term, sid, h, nm) == 1) { return 1; }
     _dst_word(S, h, STRUCTSZ(S, sid - 1));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # ⛔ 6.7.17 (D14, the user's decision, 2026-10-22: "copy through the slot") — A STRUCT VALUE STORED INTO A `*S` SLOT
@@ -5413,8 +5408,7 @@ fn _psl_store(S, term, sid, nm): i64 {
     _agc_ovr_pp = sv;
     if (r == 1) { return 1; }
     _dst_word(S, hs, 8);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # 1 = the value [st, its `term`) is provably no struct value, by its tokens: empty, an address `&x`, a literal, a name
@@ -5488,8 +5482,7 @@ fn _dst_vec(S, term, d): i64 {
     var h = _HTEMP(S);
     _HTSTORE(S, h);
     if (_dvec_rcv(S, term, 0 - vd, h, nm) == 1) { return 1; }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # `*pv OP= v` through a pointer to a vector, refused by name as `w OP= v` is (`_asg_wide_refused`): `*(&w)` is w; else
@@ -6194,8 +6187,7 @@ fn _deref_store(S, term): i64 {
     }
     if (_ek_fk(ed) == 2) { SEXW(S, 0); }   # a float has no integer width to narrow from
     _asg_store_w(S, _ek_lw(ed));   # rcx = the address, rax = the value; a word when ed is 0
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 0;
 }
 
@@ -6410,8 +6402,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     var pdli = _agc_li;
     if (_agc_pp != 0) { pdli = _AGC_DREF(pdli); }   # 6.6.16 (C2): a handle too
     _agc_from_temp(S, t, pdli, _agc_gvi, n, _sc_sid);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -6489,8 +6480,7 @@ fn _asa_rec(S, noff, st, term): i64 {
     return _asa_term(S, term);
 }
 fn _asa_term(S, term): i64 {
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
@@ -6725,8 +6715,7 @@ fn _asg_paren(S, noff, term, which): i64 {
     else { r = _pcmpe_struct_assign(S, noff, 11); }
     if (r == 1) {   # the inside consumed its own `)`
         _pw_close(S, k - 1);
-        if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, term);
         return 1;
     }
     if (which == 2) { _pw_close(S, k); return 0; }
@@ -6792,8 +6781,7 @@ fn _tup_asg(S, noff, term): i64 {
     _tup_elems(S, sid, 0, t, 0);
     _pw_close(S, lp - st);
     _agc_from_temp(S, t, dli, dgv, n, sid);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # ⛔ 6.7.7 (B4, T5) — `t = f();` / `G = f();` (a for step too, `term` 11): a multi-value call CAPTURED
@@ -6823,8 +6811,7 @@ fn _tup_asg_call(S, noff, term): i64 {
             if (gv >= 0) { SLVAR(S, gv); }
         }
     }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # The tuple a destination name holds, else 0 — lookups only, nothing reported: a local (in a fn)
@@ -7336,8 +7323,7 @@ fn _masg_store(S, x): i64 {
     return 0;
 }
 fn _masg_end(S, term): i64 {
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # The targets after the first, cursor on its `,`: their count (2..3), the cursor left on `=`; 0 = a
