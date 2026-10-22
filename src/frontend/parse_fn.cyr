@@ -18617,7 +18617,7 @@ fn _name_struct_val(S, i): i64 {
 # no memory, `_fn_nowrite`, costs no copy, so its tail call keeps its `jmp`), any token `_tok_pure` does not name (an
 # assignment, a block or struct literal, a builtin, `?`, `if`, ...), or `+ - * /` beside a struct
 # value (`_name_struct_val`; 6.7.17: a dereference of a typed struct pointer, `_deref_struct_at`),
-# which dispatches that struct's operator fn. Conservative: a 1 costs a copy.
+# which dispatches that struct's operator fn. Conservative: a 1 costs a copy. CHANGELOG [6.7.17]
 fn _span_may_write(S, q, e): i64 {
     if (_pd_label_at(S, q) == 1) { q = q + 2; }
     var op = 0;
@@ -18729,7 +18729,8 @@ fn _snap_slots(S, ty): i64 {
 # ordinary one (`_tc_snap_div`); the callee copies it in its prologue, so nothing holds it after
 # the call and it is not `_fn_local_addr` (`_sarg_escapes` is a no-op for a copying callee, the
 # only kind that gets here). Byte-exact (`_agc_copy_bytes`): an odd-size struct reads no byte past
-# itself.
+# itself. 6.7.17: no copy (and no divert) when every later argument writes nothing — a call whose
+# callee `_fn_nowrite` reads as writing nothing. CHANGELOG [6.7.17]
 fn _sarg_snap(S, tail, ty): i64 {
     var n = _snap_slots(S, ty);
     var nb = n * 8;
