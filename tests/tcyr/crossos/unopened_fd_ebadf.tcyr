@@ -167,7 +167,9 @@ assert_eq(lnun, lbad, "xflock(-8, LOCK_UN) is -9 (Windows answered -1)");
 # A bad op is -22 whatever the fd: Linux's flock(2) checks the op before the fd, and so do the
 # Windows arm (an aliasing fd answered -9) and, since 6.7.17's D97, the macOS arm and cxvm on a
 # Darwin host — Darwin's flock checks the fd first, so every fd below, none a descriptor, was -9
-# there, natively and for a cx guest on a Mac (measured on ecb and ach). A bad op on an OPEN fd is
+# there, natively and for a cx guest on a Mac (measured on ecb and ach). Linux's flock(2) answered
+# an op carrying LOCK_MAND (32) 0 whatever the fd, and read only the op's low 32 bits; the Linux arm
+# and cxvm on a Linux host check the whole op first since 6.7.17's D104. A bad op on an OPEN fd is
 # xflock_two_handle.tcyr's group.
 test_group("xflock with a bad op is -EINVAL, whatever the fd");
 var hb = file_open(p, O_RDONLY, 0);
@@ -176,6 +178,8 @@ file_close(hb);
 var lb_c = xflock(hb, 3);                      # LOCK_SH | LOCK_EX: not one op
 var lb_n1 = xflock(0 - 1, 3);
 var lb_n4 = xflock(0 - 4, 16);                 # no lock bit at all
+var lb_m1 = xflock(0 - 1, 32);                 # LOCK_MAND
+var lb_cx = xflock(hb, 0x100000002);           # LOCK_EX in the low 32 bits
 var opbad = 0 - 22;
 #ifdef CYRIUS_TARGET_CX
 if (lc_ex == 0 - 38) { opbad = 0 - 38; }      # a Windows host has no flock route
@@ -183,6 +187,8 @@ if (lc_ex == 0 - 38) { opbad = 0 - 38; }      # a Windows host has no flock rout
 assert_eq(lb_c, opbad, "xflock(closed, 3) is -22 (macOS answered -9)");
 assert_eq(lb_n1, opbad, "xflock(-1, 3) is -22 (macOS answered -9)");
 assert_eq(lb_n4, opbad, "xflock(-4, 16) is -22 (macOS answered -9)");
+assert_eq(lb_m1, opbad, "xflock(-1, 32) is -22 (Linux answered 0: LOCK_MAND ignored)");
+assert_eq(lb_cx, opbad, "xflock(closed, 0x100000002) is -22 (Linux read LOCK_EX: -9)");
 if (_ufe_check(h + 1) == 1) {
     assert_eq(xflock(h + 1, 3), opbad, "xflock(h + 1, 3) is -22 (macOS and Windows answered -9)");
 }

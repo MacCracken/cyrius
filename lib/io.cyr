@@ -518,6 +518,22 @@ fn xflock(fd, op): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return _xflock_win(fd, op);                # LockFileEx / UnlockFileEx on a sentinel byte
     #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_CX
+    # The op before the fd, as the Windows arm checks it: an op that is not LOCK_SH, LOCK_EX or
+    # LOCK_UN (+ LOCK_NB), read whole, is -22 whatever the fd — a bad op is -22 on every OS (6.7.17's
+    # D37 / D97 / D104). Darwin's flock reads an op naming LOCK_UN as an unlock, else LOCK_EX, else
+    # LOCK_SH, whatever other bits it carries (3 locked exclusive and answered 0), and answers an op
+    # naming none, or any op on a non-descriptor, -9 (D97). Linux's flock(2) answers an op carrying
+    # LOCK_MAND (32) 0 with nothing locked, whatever the fd, and reads only the op's low 32 bits
+    # (0x100000002 locked exclusive) (D104). A cx guest's op is checked by cxvm on its host
+    # (`_cx_host_flock`). CHANGELOG [6.7.17]
+    var cmd = op & (0 - 5);                    # drop LOCK_NB (4)
+    if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }
+    #endif
+    #endif
+    #endif
     #ifdef CYRIUS_TARGET_MACOS
     # v6.5.16: was `syscall(92, ...)` labelled "BSD flock". Darwin 92 is **fcntl** —
     # flock is 131 (read off ecb's SDK syscall.h) — so this called fcntl with flock's
@@ -526,13 +542,7 @@ fn xflock(fd, op): i64 {
     # process, while on arm64 it ran with a stale x16. Issue the x86-Linux flock number
     # (73) and let ESYSXLAT renumber it to 131 — the sanctioned "x86 number + an
     # ESYSXLAT entry" pattern (CLAUDE.md), so ONE source number serves both backends.
-    # The op before the fd, as Linux's flock(2) and the Windows arm check it: a bad op is -22 for
-    # every fd. Darwin's flock reads an op naming LOCK_UN as an unlock, else LOCK_EX, else LOCK_SH,
-    # whatever other bits it carries (3 locked exclusive and answered 0), and answers an op naming
-    # none, or any op on a non-descriptor, -9 (6.7.17's D97). CHANGELOG [6.7.17]
-    var cmd = op & (0 - 5);                    # drop LOCK_NB (4)
-    if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }
-    return syscall(73, fd, op);                # → BSD flock 131 via ESYSXLAT
+    return syscall(73, fd, op);                # → BSD flock 131 via ESYSXLAT (the op checked above)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN

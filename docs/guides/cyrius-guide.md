@@ -8929,14 +8929,18 @@ alone, as flock does; a refused `LOCK_NB` is -11 (-EAGAIN on PE; Darwin's is -35
 to answer -1 for every lock. Every other failure answers its errno through the Win32 table the fd
 reroutes use — a closed fd -9 (`ERROR_INVALID_HANDLE`), a code with no row -1 — and a negative fd
 is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). A bad op — one that is
-not `LOCK_SH`, `LOCK_EX` or `LOCK_UN`, with or without `LOCK_NB` — is -22 whatever the fd and takes,
-drops or changes no lock, as on Linux: the arm checks the op before the fd. So does macOS since
-6.7.17 (6.7.17's D97), natively and for a cx guest on a Mac: it passed the op to Darwin's flock,
-which answers an fd that is no descriptor -9 whatever the op, and on an open fd reads an op naming
+not `LOCK_SH`, `LOCK_EX` or `LOCK_UN`, with or without `LOCK_NB`, the op read whole — is -22 whatever
+the fd and takes, drops or changes no lock, on every target (6.7.17's D37 / D97 / D104): each arm
+checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host. Through
+6.7.16 Linux and macOS passed the op to the kernel. Linux's flock(2) answers an op carrying
+`LOCK_MAND` (32) 0 with nothing locked, whatever the fd, and reads only the op's low 32 bits —
+0x100000002 took the exclusive lock and 0x100000008 let it go, each answering 0 (D104). Darwin's
+flock answers an fd that is no descriptor -9 whatever the op, and on an open fd reads an op naming
 `LOCK_UN` as an unlock, else one naming `LOCK_EX` as the exclusive lock, else one naming `LOCK_SH`
 as the shared one, whatever other bits it carries — 3 (`LOCK_SH | LOCK_EX`) took the exclusive lock
-and answered 0, 9 (`LOCK_UN | LOCK_SH`) let the lock go — and an op naming none of the three -9.
-The Windows arm reads the code with `syscall(0xF04F)`, the last error as -errno through that table. As under flock,
+and answered 0, 9 (`LOCK_UN | LOCK_SH`) let the lock go — and an op naming none of the three -9
+(D97). The Windows arm reads the code with `syscall(0xF04F)`, the last error as -errno through that
+table. As under flock,
 re-taking the mode a handle already holds is a no-op that never lets go of the lock (6.7.13 —
 6.7.12 dropped and re-took it, and a handle waiting for the lock got in between); the held mode
 is recorded as a lock on one more byte beside the sentinel (2^63 − 2 for `LOCK_EX`, 2^63 − 3 for
@@ -9367,6 +9371,7 @@ never fired and `file_close_r` was never `Err`.
 | `file_rename` / `sys_rename` to another volume (the source kept) | -18 | -1 | -1; -18 since 6.7.17 |
 | `xflock(fd, LOCK_EX)` of a closed fd, `xflock(-4, LOCK_EX)` | -9 | -1 | -1; -9 since 6.7.17 |
 | `xflock(h + 1, 3)` (a bad op on an fd never opened, beside the open `h`) | -22 (macOS: -9; -22 since 6.7.17) | -1; -22 since 6.7.12 | -22; -9 since 6.7.16; -22 since 6.7.17 |
+| `xflock(fd, 32)`, `xflock(-1, 32)` (`LOCK_MAND`); `xflock(fd, 0x100000002)` | -22 (0 before 6.7.17: ignored, or the low 32 bits locked) | -1; -22 since 6.7.12 | -22 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a
