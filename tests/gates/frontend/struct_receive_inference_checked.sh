@@ -159,9 +159,11 @@
 # A generic returning its own `: T` kept the reset (`_gen_ret_tp`) through 6.7.14: at a scalar instance the struct-
 # annotated local was refused at its field use. 6.7.15 — THE USER'S D13 (a), 2026-10-18: it is a handle, as the
 # non-generic word-returning call is (issues/archived/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md;
-# tests/gates/frontend/generic_t_return_decl.sh carries the rows of that decision). GHT1-GHT4 now pin the handle: a field
+# tests/gates/frontend/generic_t_return_decl.sh carries the rows of that decision). GHT1-GHT3 now pin the handle: a field
 # use compiles, and the word the handle holds is the call's (GHT1 `gid(&GQ)` reads GQ.z through it); GHT5 the
-# struct-instance control.
+# struct-instance control. 6.7.17: GHT4's `gid(w.v)` binds T = P3 since the user's D2 (a whole struct field binds T), so
+# `a` is a copy of w.v (a.z 9) — its `var k: i64 = a;` read the copy's first word, the same 7 the handle row wanted, and
+# is refused since D106 (a struct value into a word: GHT4b).
 #   N33 (6.7.15) `_gen_decl_reset` with 6.7.14's `_gen_ret_tp` reset -> RED 8: GHT1-GHT4 on x86_64 / PE (refused: "no
 #                                                           struct type in scope for 'a'"; the aarch64 / cx legs build
 #                                                           from the tree); GHT5 and the rest green
@@ -963,8 +965,10 @@ ght GHT2 'fn f(): i64 { var a: P3 = gid<i32>(5); var k: i64 = a; if (k == 0) { r
 runs GHT2 5 "\`var a: P3 = gid<i32>(5);\` (an explicit scalar instance): a handle holding 5, its field use compiles"
 ght GHT3 'fn f(): i64 { var h: f64 = 1.5; var a: P3 = gid(h); var k: i64 = a; if (k == 0) { return a.z; } return k >> 56; }'
 runs GHT3 63 "\`var a: P3 = gid(h);\` (\`h: f64\`): a handle holding its bits, its field use compiles"
-ght GHT4 'fn f(): i64 { var w: W; w.v.x = 7; var a: P3 = gid(w.v); var k: i64 = a; if (k == 0) { return a.z; } return k; }'
-runs GHT4 7 "\`var a: P3 = gid(w.v);\` (i64 by the whole-argument rule): a handle holding w.v's word, its field use compiles"
+ght GHT4 'fn f(): i64 { var w: W; w.v.x = 7; w.v.z = 9; var a: P3 = gid(w.v); return a.z; }'
+runs GHT4 9 "\`var a: P3 = gid(w.v);\` (T = P3 by 6.7.17's D2: the whole struct field): a copy of w.v, a.z 9"
+ght GHT4b 'fn f(): i64 { var w: W; w.v.x = 7; var a: P3 = gid(w.v); var k: i64 = a; return k; }'
+refused GHT4b "cannot initialise 'k: i64' from 'a', which is the struct 'P3'" "\`var k: i64 = a;\`, a the P3 copy: a struct value into a word (6.7.17's D106)"
 ght GHT5 'fn f(): i64 { var p = P3 { 1, 2, 3 }; var a: P3 = gid(p); return a.z; }'
 runs GHT5 3 "control: \`var a: P3 = gid(p);\` (\`p: P3\`) receives the struct"
 
@@ -2222,7 +2226,7 @@ _u1=$("$CC" < "$T/TI22zone.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreacha
 _u2=$("$CC" < "$T/TI22after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
 if [ -n "$_u1" ] && [ "$_u1" = "$_u2" ]; then ok "TI33 the zone sweep instanced no fn: '$_u1' in both forms"
 else bad "TI33 the zone sweep moved the fn layout: zone '$_u1', after '$_u2'"; fi
-[ "$rows" -ge 546 ] || bad "only $rows rows ran (floor 546)"
+[ "$rows" -ge 547 ] || bad "only $rows rows ran (floor 547)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $G ($rows rows) — \`var x = (mk());\` receives the struct (16 B, 24 B, a closure, a generic) and an annotation naming no struct (i64, u8, f64, bool, ...) is refused by name on x86_64 / aarch64 / cx / PE; the 8 B, \`Str\`, struct-annotated, field-bind, generic-base and dyn controls hold; a known fn-pointer call is refused as the direct call is (D28); and at top level, in the declaration zone and after a first statement (6.7.13); a method or operator result is refused as the free call is (D13); a struct over 8 B into a pointer annotation is refused by name in a fn (D14) and at top level (D28, 6.7.14); a generic \`: *T\` call into \`var h: S\` binds a handle, a \`: T\` one at a scalar instance stays refused (6.7.14); a wrapped \`Str\` call is a Str and a wrapped \`: f64\` call before an operator an f64 (6.7.14); an untyped top-level whole call binds its 8 B struct, a 9-16 B one is refused (D29 / D30, 6.7.14); and a whole method, operator or known \`&f\` result (D34 / D35, 6.7.15), and in the zone a generic call's generic struct instance (6.7.15), whatever carries its type argument, and a generic method's (6.7.16); and an if-expression of struct branches (D16, 6.7.16), whose branch refused as over 8 bytes leaves no cascade at the declared variable's uses (6.7.16)"

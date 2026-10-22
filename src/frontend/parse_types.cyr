@@ -3571,6 +3571,62 @@ fn _pa_derr(S, fi, sa, sp, dp): i64 {
     _panic = 1;
     return 1;
 }
+# ⛔ 6.7.17 (D107, the user's decision, 2026-10-22: "refuse it, naming both pointer types, as an argument of another
+# depth is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION. `var u: *Pt = &h;` (h a handle: its `&` is
+# the slot holding the address, a `**Pt`) held the slot, so `u.x` read the handle's word as the Pt; `var u: *Pt = pp;`
+# (a `**Pt`) and `var pp: **Pt = pq;` (a `*Pt`) the same, silently. The annotation at `ann` (one or more `*`, then a
+# struct: `_ppd_ann`), the initialiser [ti, e) typed as an argument is (`_pa_sid`: a name, `&x`, a field, a call,
+# `*ppp`, an if-expression) at another number of stars: "cannot initialise 'u: *Pt' from '&h', a '**Pt' - a pointer of
+# another depth", at the initialiser. A pointer of the annotation's depth (to any struct, as 6.7.3 left declarations),
+# an untyped pointer, `0` and an inline struct (D17's address) are unchanged. PARSE_VAR in a fn and at top level
+# after the first statement (cursor on the `=`), the zone replay (`_vin_zone`). 1 = refused. CHANGELOG [6.7.17]
+var _ppd_d = 0;
+fn _ppd_val(S, ti, e, ann, noff): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (e <= ti) { return 0; }
+    var ds = _ppd_ann(S, ann);
+    if (ds <= 0) { return 0; }
+    var dd = _ppd_d;
+    var sa = _pa_sid(S, ti, e);
+    if (sa <= 0) { return 0; }
+    if (sa >= 2048) { return 0; }
+    if (_pa_d == dd) { return 0; }
+    if (_tn_once(S, _pa_b) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, _pa_b);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot initialise '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(": ");
+    _pa_tyname(S, ds, dd);
+    PRSTR("' from '");
+    PRSTR(S + 0xEC00000 + _src_span_nm(S, _pa_b, _pa_e, TOKVAL(S, _pa_e - 1)));
+    PRSTR("', a '");
+    _pa_tyname(S, sa, _pa_d);
+    PRSTR("' - a pointer of another depth\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _ptr_refd_ti = ann;
+    return 1;
+}
+# The struct the pointer annotation at `ann` points through to — `*S`, `**S`, `***S` (S a plain struct or an instance;
+# a bound T's at one star) — `_ppd_d` its stars; else 0.
+fn _ppd_ann(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    var d = 0;
+    while (TOKTYP(S, ann + d) == 8) { d = d + 1; }
+    if (d == 0) { return 0; }
+    _ppd_d = d;
+    var t = 0;
+    if (d == 1) { t = _ptr_ann_sid_tp(S, ann); }
+    else { t = _ptr_tok_sid(S, ann + d); }
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    if (_dx_plain(S, t) == 0) { if (t != _STR_SID(S)) { return 0; } }
+    return t;
+}
 # `d` stars, then struct `sid` as the source spells it (`Box<Pt>`; a generic's base is its i64 binding, `Box<i64>`), on
 # stderr.
 fn _pa_tyname(S, sid, d): i64 {

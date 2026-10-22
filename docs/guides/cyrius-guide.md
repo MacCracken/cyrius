@@ -2101,7 +2101,18 @@ less and a `Str` keep their word. A COMPOUND assignment is judged as its `=` for
 which returns the struct 'P2' - declare 'y: P2' or bind a field*; through 6.7.16 they combined the struct's first
 word, silently). In a generic, the same store into a destination typed by `T` (`y += mk3();` with `y: T`, `*p +=
 ..` and `p[0] += ..` with `p: *T`, `b.v += ..` with `b: *Box<T>`) has no scalar instance, as its `=` form (D1's
-rule): `g(5)` is refused naming the line. A global declaration is judged the same (6.7.14; the user's decision D28,
+rule): `g(5)` is refused naming the line. A struct VALUE that is no call is judged as the call is in each of these
+slots (6.7.17; the user's decision D106, 2026-10-22): an inline local, a by-value parameter, a captured copy, an
+inline global, a dereference (`*pq`, `**ppq`, `*(&q)`) or a struct-typed field (`w.q`) over 8 bytes, stored into a
+scalar or pointer name (`y = q;`, `p = q;` with `p: *i64`), declared into one (`var z: i64 = q;`, `var p: *i64 = q;`,
+in a fn, the declaration zone and after the first statement), a field, an element, `*p`, a compound right side or a
+literal's element, is refused in that slot's words with *which is the struct 'Q'*: *cannot assign 'y' from 'q', which
+is the struct 'Q' - declare 'y: Q' or bind a field*; in a generic, into a destination typed by `T`, it has no scalar
+instance (D1's rule). Through 6.7.16 each kept the struct's first word, silently. A struct of 8 bytes or less, a `Str`,
+a handle (its word is the address), a `*T`, a field of the value (`y = q.a`) and a struct destination (a copy) keep
+their meaning. ⚠ A struct value or call as an ARGUMENT to an integer or untyped parameter, a `return` from a scalar fn,
+an operand (`1 + q`), a condition or an index is not refused: it passes its first word, as the call does there.
+A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was
@@ -2604,7 +2615,13 @@ address, a `**Pt`; a `Str` handle's `&s` a `**Str`) — the argument named as th
 written out, at every source and path the pointee check above reads. A pointer of the parameter's depth passes, as do
 `*pp` (a `*Pt`) and `**pp` (the struct value, whose address a `*Pt` takes), an untyped pointer and `0`. Through
 6.7.16 a pointer of another depth passed: `nc4(&pq)` read pq's slot as the Pt (`p.x` was p's address) and `nc2(pz)`
-read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows).
+read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows). A DECLARATION of a
+pointer to a struct is judged the same (6.7.17; the user's decision D107, 2026-10-22): `var u: *Pt = &h;` with h a
+handle, `var u: *Pt = pp;` with `pp: **Pt`, `var pp: **Pt = u;` with `u: *Pt` — a field, a call, `*ppp`, wrapped, a
+capture, in a fn, the declaration zone and after the first statement — reports `cannot initialise 'u: *Pt' from '&h',
+a '**Pt' - a pointer of another depth`; through 6.7.16 `u` held the handle's slot and `u.x` read its word as the Pt.
+A pointer of the annotation's depth still converts (to any struct, `var q: *Q = &p;`), and `*pp`, an untyped
+pointer, `0` and an inline struct (its address, D17) pass.
 
 ⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
 (a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is
