@@ -1528,7 +1528,9 @@ the tuple: `var t = (1, 2 3);` is `expected ',' between tuple literal elements` 
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
 level), an argument (`f(P { 5, 6 })`), an operand, a nested literal's element (`W { P { 2 } }`), a
 `return` value or a statement it is one error by name — a generic `Box<i64> { .. }` alike (6.7.14, the
-user's decision D12 (a), 2026-10-16):
+user's decision D12 (a), 2026-10-16), and as a generic's argument too: `g(P { 2, 4 })` is the literal's error, not the
+refusal of the `i64` call it would make (6.7.17; through 6.7.16 a bounded `g` asked for `impl Show for i64`, a stub
+said it "has no i64 (or other scalar) instance"):
 
 ```text
 error:<source>:3:21: a struct literal is an initializer: declare `var t: P = P { .. };` and assign or pass t
