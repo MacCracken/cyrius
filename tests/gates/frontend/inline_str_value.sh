@@ -188,7 +188,7 @@
 # `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
 # repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
 # `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
-# refused there (6.7.17, D20); CMP a handle into the retyped methods builds
+# refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -316,6 +316,8 @@
 #      (the fix reverted)                             7), CA1 x7 (7), CA2 x4 (compiled)
 #   z2 `_istr_inl_dst` without the override          -> RED 7: R1 x7 (ca_call / ca_field / ca_dx / ca_meth / ca_step:
 #                                                     one word)
+#   z3 `_istr_amp_dst` returning 0 for a capture's  -> RED 4: CA3 x4 (compiled)
+#      compound operator (the fix reverted)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1264,6 +1266,11 @@ struct Q1 { a; }
 fn mkq(): Q1 { var q: Q1; return q; }
 fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var f = |k| { *(&t) = mkq(); return t.len + k; }; return fncall1(f, 0); }'
 refused CA2 "cannot copy 'mkq' into a variable of a different struct/vector type: 't'" "a closure's \`*(&t) = mkq();\` (it stored Q1's word)"
+# CA3 (6.7.17, met in the D20 bite): a captured t's `*(&t) += 1` is refused as a local t's is (X29) and a captured
+# struct's `*(&s) += 1` is; it stepped the copy's data word, silently.
+row CA3 'include "lib/fnptr.cyr"
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var f = |k| { *(&t) += 1; return t.len + k; }; return fncall1(f, 0); }'
+refused CA3 "compound assignment to struct 't' is refused - a struct value is not an integer or a float (write \`a = a + b\`)" "a closure's \`*(&t) += 1\` of its captured t"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1322,7 +1329,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=121   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=122   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3; 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

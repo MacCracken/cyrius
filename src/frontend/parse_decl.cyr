@@ -8743,13 +8743,13 @@ fn _istr_amp_dst(S, term): i64 {
     var r = _istr_amp(S, d, e);
     if (r == 0) { return 0; }
     var noff = TOKVAL(S, _istr_ti);
-    if (r == 3) { if (TOKTYP(S, e) == 4) { return _istr_amp_cap(S, d, e, noff, term); } return 0; }   # 6.7.17 (D20)
+    if (r == 3) { if (TOKTYP(S, e) == 4) { return _istr_amp_cap(S, d, e, noff, term); } }   # 6.7.17 (D20)
     STI(S, e);
     if (PEEKT(S) == 4) {
         STI(S, e + 1);   # `=`
         return _istr_amp_asg(S, noff, term);
     }
-    if (_asg_pair_at(S) == 1) {
+    if (_asg_pair_at(S) == 1) {   # 6.7.17: a captured t's too, as a captured struct's `*(&s) += 1` (CHANGELOG [6.7.17])
         _hl_damp = 1;
         _dst_cop_err(S, noff, 0);   # "compound assignment to struct 't' is refused", as `t += 1`
         _hl_damp = 0;
