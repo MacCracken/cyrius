@@ -1414,14 +1414,16 @@ fn tls_native_new_server(cert_chain, cert_len, key, key_len): i64 {
 }
 
 # ================================================================
-# Server credential loading (.16)
+# Server credential loading
 # ================================================================
 # Parse the cert chain + private key (stored as opaque refs by
 # new_server) into usable form: detect the key format (PEM vs DER)
-# and algorithm (Ed25519 / ECDSA P-256 / P-384; RSA recognized but
-# not yet usable), and parse the leaf certificate. The crypto lives
-# in sigil (`lib/sigil.cyr`, folded 3.5.9); this is the protocol-layer
-# wiring. Signing with the loaded key is .18 (CertificateVerify).
+# and algorithm (Ed25519 / ECDSA P-256 / P-384; an RSA key is
+# recognized and refused, TLS_ERR_KEY_UNSUPPORTED — RSA server keys
+# are not provided, as lib/tls_native.cyr's header says), and parse
+# the leaf certificate. The crypto lives in sigil (`lib/sigil.cyr`);
+# this is the protocol-layer wiring. Signing with the loaded key is
+# _tn_sign (the CertificateVerify, _tn_build_cert_verify).
 
 # ⛔ 6.6.16 — A PEM PRIVATE KEY IS DECODED ONCE PER PROCESS, NOT ON EVERY ACCEPT.
 # lib/tls.cyr's server accept builds a ctx from the caller's credentials on EVERY connection and
