@@ -49,7 +49,9 @@
 #   roadmap_state      --derive, every template operation dry and real (a Python regex, a Python
 #                      format string, difflib's diff), the refusals
 #   no Python          `find scripts -name '*.py'` is empty, and no file under scripts/ has a
-#                      python #! line (the issue's acceptance: scripts/ holds no Python)
+#                      python #! line (the issue's acceptance: scripts/ holds no Python); and no
+#                      string in programs/{dev,folds,release} names a script they replaced (a
+#                      message pointing at a file that is gone)
 #   fixpoint           --fixpoint and --install (scripts/build-cycc-verify.sh's two modes until
 #                      6.7.17) over stand-in compilers: a fixpoint, a divergence, a failure at each
 #                      stage, an empty stage, an install that replaces and one that finds it equal
@@ -72,6 +74,7 @@
 #   assemble's migration parts joined without the blank line                       -> RED assemble
 #   pyre's lazy repeat made greedy                                                 -> RED roadmap_state
 #   a scripts/x.py planted (and, apart, an extension-less #!/usr/bin/env python3)  -> RED no Python
+#   roadmap_state's refusals back to "roadmap-state.py: …" (as first committed)    -> RED no Python
 #   tomlcheck's "Unclosed array" raised one position early                         -> RED cymlcheck
 #   tomlcheck's frame limit 1001, not 1000                                         -> RED cymlcheck
 set -u
@@ -565,7 +568,19 @@ for f in $(find scripts -type f | LC_ALL=C sort); do
     if head -1 "$f" 2>/dev/null | grep -qE '^#!.*python'; then _fail "$f is a Python script (its #! line)"; fi
 done
 [ "$nscan" -ge 30 ] || _fail "the scripts/ scan read only $nscan files (floor 30)"
-_axis_end "scripts/ holds no Python ($nscan files read: no *.py, no python #! line)"
+# A program's message naming the script it replaced points its reader at a file that is gone:
+# no string on a code line (comments, which say what each one replaced, are skipped) names one.
+GONE='regen-issue-index\.py|ab\.py|keepboth\.py|probe-split\.py|probe\.sh|xb\.sh|envprobe\.sh|sibci\.sh'
+GONE="$GONE|run-ci\\.py|cymlcheck\\.py|place\\.py|briefs\\.py|archive\\.py|assemble\\.py|roadmap-state\\.py"
+GONE="$GONE|release_common\\.py"
+ncyr=0
+for f in $(find programs/dev programs/folds programs/release -type f -name '*.cyr' | LC_ALL=C sort); do
+    ncyr=$((ncyr + 1))
+    hits=$(grep -nE "^[[:space:]]*[^#[:space:]].*\"[^\"]*($GONE)" "$f" | cut -d: -f1 | tr '\n' ' ' || true)
+    [ -z "$hits" ] || _fail "$f names a replaced script in a string (line(s) $hits)"
+done
+[ "$ncyr" -ge 15 ] || _fail "the programs/ scan read only $ncyr .cyr files (floor 15)"
+_axis_end "scripts/ holds no Python ($nscan files read: no *.py, no python #! line); no string in $ncyr helper sources names a replaced script"
 
 # ── verdict ──────────────────────────────────────────────────────────────────────────────
 [ "$AXES" -ge 18 ] || _fail "only $AXES axes ran (floor 18)"

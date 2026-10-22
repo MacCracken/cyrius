@@ -70,10 +70,10 @@ fn _size(pathc): i64 {
 
 fn _text_size(elf): i64 {
     if (hc_which("readelf") == 0) {
-        rc_exitc("roadmap-state.py: readelf not found (binutils) — it reads build/cycc's .text size");
+        rc_exitc("roadmap-state: readelf not found (binutils) — it reads build/cycc's .text size");
     }
     var out = hc_capture_full(hc_argv("readelf", "-S", hc_cstr(elf), 0, 0, 0), 0, 0, 0, 2, 0);
-    if (hc_last_rc != 0) { rc_exit(hc_cat3(hc_s("roadmap-state.py: readelf -S "), elf, hc_s(" failed"))); }
+    if (hc_last_rc != 0) { rc_exit(hc_cat3(hc_s("roadmap-state: readelf -S "), elf, hc_s(" failed"))); }
     var lines = hc_split(out, 10);
     var i = 0;
     while (i < vec_len(lines)) {
@@ -99,7 +99,7 @@ fn _text_size(elf): i64 {
         }
         i = i + 1;
     }
-    rc_exit(hc_cat3(hc_s("roadmap-state.py: readelf -S "), elf, hc_s(" lists no .text section")));
+    rc_exit(hc_cat3(hc_s("roadmap-state: readelf -S "), elf, hc_s(" lists no .text section")));
     return 0;
 }
 
@@ -162,7 +162,7 @@ fn _missing(name): i64 {
 fn _fill(t): i64 {
     pf_err = 0;
     var r = pf_vformat(t, _vals);
-    if (r == 0) { rc_exit(hc_ccat("roadmap-state.py: ", pf_err)); }
+    if (r == 0) { rc_exit(hc_ccat("roadmap-state: ", pf_err)); }
     return r;
 }
 
