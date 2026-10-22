@@ -594,7 +594,9 @@ rows=$((rows + 19))
 # (79a311056) -> RED 10: every rp_ row but rp_fld and rp_ctl; `_ptr_annot` not setting `_ptr_refd_ti` -> RED 6: rp_loc_name
 # rp_pp_name rp_loc_fnp rp_loc_notype rp_gen rp_lint (the warning); `_tp_warn_gv` not asking `_ann_said` -> RED 3:
 # rp_dz_name rp_dz_fnp rp_dz_notype; `_ptr_notype` keeping ERR_EXPECT -> RED 4: rp_loc_notype rp_dz_notype rp_pp_semi
-# rp_lint ("expected identifier").
+# rp_lint ("expected identifier"). rp_ret / rp_mret / rp_ret2 (6.7.17, met reviewing D8): a `*T` with no variable to
+# name — a return, a multi-value element — said "unknown type 'Nope' as the target of pointer " with nothing after it
+# (6.6.17 - 6.7.16); now "... as the target of a pointer" (`_tn_ptr_tail`; the compiler before it, 9314c587e's: RED 3).
 # alone <name> <source> <want-line>: exactly that one error line (`L:C: text`), no warning, rc 1, no binary
 alone() {
     rows=$((rows + 1))
@@ -615,6 +617,9 @@ alone rp_dz_notype "${RX}var G: *5 = x;\nsyscall(60, 3);\n" "2:9: expected a typ
 alone rp_pp_semi   "${RX}x = x + 0;\nvar G: *;\nsyscall(60, 3);\n" "3:9: expected a type for variable 'G', got ';'"
 alone rp_gen       'fn g<T>(a: T): i64 { var x = 5; var p: *Nope = x; return a; }\nsyscall(60, g(1) + g(2));\n' "1:41: unknown type 'Nope' as the target of pointer 'p'"
 alone rp_fld       'struct H { k: *+; j; }\nsyscall(60, 3);\n' "1:16: expected identifier, got '+'"
+alone rp_ret       'fn f(): *Nope { return 0; }\nsyscall(60, 3);\n' "1:10: unknown type 'Nope' as the target of a pointer"
+alone rp_mret      'fn f(): (*Nope, i64) { return (0, 1); }\nsyscall(60, 3);\n' "1:11: unknown type 'Nope' as the target of a pointer"
+alone rp_ret2      'fn f(): **Nope { return 0; }\nsyscall(60, 3);\n' "1:11: unknown type 'Nope' as the target of a pointer"
 alone rp_lint      "${FN}    var x = 5;\n    var p: *+ = x;\n    return 3;\n}\nsyscall(60, f());\n" "3:13: expected a type for variable 'p', got '+'" --syntax-only
 rows=$((rows + 1))
 printf '%b' "${FN}"'    var x = 5;\n    var p: *i64 = x;\n    return 3;\n}\nsyscall(60, f());\n' > "$T/rp_ctl.cyr"

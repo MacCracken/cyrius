@@ -4022,11 +4022,18 @@ fn _tn_ptr(S, ti, vnoff): i64 {
     if (TOKTYP(S, ti) != 2) { return 8; }
     var c = _tn_resolve_at(S, ti);
     if (c == 0) {
-        _tn_refuse_var(S, ti, " as the target of pointer ", vnoff);
+        _tn_refuse_var(S, ti, _tn_ptr_tail(vnoff), vnoff);
         return 8;
     }
     if (_tn_class(c) == 1) { return _tn_val(c); }
     return 8;
+}
+# The words after "unknown type 'Nope'" in a `*T`: "as the target of pointer 'p'" names its variable; with none (a
+# return `fn f(): *Nope`, a multi-value element: `vnoff` -1) "as the target of a pointer" — the line ended "as the
+# target of pointer " with nothing after it (6.6.17 - 6.7.16). CHANGELOG [6.7.17]
+fn _tn_ptr_tail(vnoff): i64 {
+    if (vnoff < 0) { return " as the target of a pointer"; }
+    return " as the target of pointer ";
 }
 
 # 6.6.17 — sizeof(T) for the pointer annotation `*T` at token `ti` (T, the token after the `*`):
@@ -4042,7 +4049,7 @@ fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
     else {
         var c = _tn_resolve_at(S, ti);
         if (c == 0) {
-            if (quiet == 0) { _tn_refuse_var(S, ti, " as the target of pointer ", vnoff); }
+            if (quiet == 0) { _tn_refuse_var(S, ti, _tn_ptr_tail(vnoff), vnoff); }
             return 8;
         }
         w = _tn_bytes(S, c);
