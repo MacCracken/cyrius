@@ -12,10 +12,15 @@
 # `var g = 1` to the next `;` at depth 0, swallowing the declarations after it and their errors.
 # (issues/2026-10-21-statement-missing-semicolon-loses-what-follows.md)
 #
-# THE FIX. The `;` sites step only a token that is not a recovery point (`_expect_step`, src/common/util.cyr: a `}`,
-# EOF, a `;` or a statement keyword stays for the block loop / the statement resync). `_stmt_resync`
-# (src/frontend/parse.cyr) first steps through the `}` of each `{` the statement opened and left unclosed
-# (`_resync_close`) — unless the statement ended at its own `;`.
+# THE FIX. Every statement-terminator site — the 46 literal `;` sites in six frontend files and the 25 `term` sites
+# the assignments share with the classic-for step — steps only a token that is not a recovery point (`_expect_step`,
+# src/common/util.cyr: a `}`, EOF, a `;` or a statement keyword stays for the block loop / the statement resync).
+# `_stmt_resync` (src/frontend/parse.cyr) first steps through the `}` of each `{` the statement opened and left
+# unclosed (`_resync_close`) — unless the statement ended at its own `;`. A zone `var` entry and a const end at a
+# declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse_decl.cyr). The classic-for header
+# (`_for_semis` / `_for_empty`), a dyn source's extent (`_dyn_ext`), a destructure's call check (`_dt_rhs_end`) and an
+# `asm { }` body (`_asm_bad`) read a missing `;` / `}` as that, once.
+# The `undefined variable` rows pin today's caret (the `;` after the name); the caret move to the name re-derives them.
 #
 #   S2  the filing's s2 verbatim (`var a = 1` then `var b = zz;`): the `;`, then `zz`
 #   V   a `var` statement's `;` (PARSE_VAR): V1-V4 before an if / while / for / return, V5 before a closure, V6
@@ -51,7 +56,7 @@
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
 #       the fn's
 #
-# On the parent (db54fb84e) RED: S2 V1-V6 (the keyword or `}` stepped: `zz` lost, "return outside a fn body", "fn 'g'
+# On the parent (f6f0aaf44) RED: S2 V1-V6 (the keyword or `}` stepped: `zz` lost, "return outside a fn body", "fn 'g'
 # is defined inside fn 'f'"); K green. On bc51aa5c6 (before `_resync_close`) RED: B1 B2 (the stray `{`'s `}` closed the
 # fn: "unexpected ';'" / "unexpected number 4", "return outside a fn body"). `_resync_close` without its own-`;`
 # exemption -> RED K3 ("expected '}', got end of file"). On 99355d191 (before parse.cyr's sites) RED: P1-P5.
