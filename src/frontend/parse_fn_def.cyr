@@ -5250,6 +5250,7 @@ fn _tr_mv_elem_at(S, k): i64 {
 # declares (D5): each refused at the name, and silent under --syntax-only (`_ngt_say_n`, `_ta_over`'s reporter).
 fn _ty_rd_shape(S, k): i64 {
     if (_ngt_tail(S, k) != 0) { return 1; }
+    if (_tp_targs_at(S, k) == 1) { return 1; }   # 6.7.17 (D6): `U<i64>`, a type parameter's list
     if (_ngt_hover(S, k) == 1) { return 1; }   # 6.7.16 (D88): `Result<i64, Pt, Pt>`
     return _ta_over(S, k);
 }

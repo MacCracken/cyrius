@@ -398,16 +398,23 @@ fn _ngt_union_q(S, nti): i64 {
 # enclosing body's (`_tn_tparam`, read off the tokens: the flag captures none). Name token `ti`, its `<` next; 1 =
 # refused (silent under --syntax-only, as D6's of 6.7.15). CHANGELOG [6.7.17]
 fn _tp_targs_refuse(S, ti): i64 {
-    if (TOKTYP(S, ti) != 2) { return 0; }
-    if (TOKTYP(S, ti + 1) != 19) { return 0; }
-    if (_tp_here(S, ti) == 0) { return 0; }
+    if (_tp_targs_at(S, ti) == 0) { return 0; }
     _dyn_err(S, ti, "a type parameter takes no type arguments: ", 0, TOKVAL(S, ti), 0);
     return 1;
 }
-# 1 when the name at token `ti` is a type parameter in scope there (see above).
+# 1 when token `ti` is that shape — the impl check counts it as its reader's refusal (`_ty_rd_shape`), so the impl's
+# "returns .., trait declares .." line is not a second report beside the member's or the method's.
+fn _tp_targs_at(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    return _tp_here(S, ti);
+}
+# 1 when the name at token `ti` is a type parameter in scope there (see above). A name that is a type is none (no
+# token walk: `Result<..>` / `Pt<..>` reach here from every annotation).
 fn _tp_here(S, ti): i64 {
     var noff = TOKVAL(S, ti);
     if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 1; } }
+    if (_tn_resolve(S, noff) != 0) { return 0; }
     return _tn_tparam(S, ti, noff);
 }
 # The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check

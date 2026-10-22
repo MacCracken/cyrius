@@ -43,12 +43,17 @@
 #       `Vec<U<..>>`, `U<..>[4]`, sizeof, a struct field `a: T<..>` (an instance re-reads it silently) and `*T<..>`,
 #       a member's return / `*U<..>` / `*fn(U<..>)` / multi-value element, an impl method's parameter and return, a
 #       trait default's local, a generic body called at three types (once); TPX --syntax-only silent (as 6.7.15's
-#       D6); TPK controls — `U`, `*U`, `[U]`, sizeof(U), `Box<U>`, `Vec<U>` in a generic, unchanged (exit 36; 43
-#       under the flag, every T its i64 base). A
+#       D6); TP5 the impl check beside it: a member's `: U<i64>` against an impl's `: U`, and an impl's `: U<i64>`
+#       against a member's `: U` — the refusal alone, no "'P.m' returns U, trait 'T' declares U<i64>" (`_ty_rd_shape`
+#       counts the shape as its reader's refusal, as 6.7.16 does for `Pt<i64>`; the impl's own return was otherwise
+#       swallowed behind that line); TPK controls — `U`, `*U`, `[U]`, sizeof(U), `Box<U>`, `Vec<U>` in a generic,
+#       unchanged (exit 36; 43 under the flag, every T its i64 base). A
 #       type argument's own (`h<T<u8>>`) is 6.7.14's, unchanged. Issue row 4:
 #       issues/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md. Mutant (2026-10-22): the
 #       compiler before (4de25d178) -> RED 63: TP1-TP3 and TP4 on both legs (built, or the parse errors and their
-#       cascades), TPX on tp3 / tp_sf (lint's own parse errors there) and A [pe] (both) / [macho] TP1.
+#       cascades), TPX on tp3 / tp_sf (lint's own parse errors there) and A [pe] (both) / [macho] TP1. TP5: the D6 commit
+#       without `_ty_rd_shape`'s arm (3e9a46cff) -> RED TP5a (the impl's line beside the member's), TP5b (the impl's line
+#       in place of the method's own refusal), both legs.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -253,6 +258,12 @@ for x in tp1 tp3 tp_l tp_sf; do
     if [ "$rc" -eq 0 ] && [ "$(grep -c '^error' "$D/$x.so")" -eq 0 ]; then ok "TPX: --syntax-only on $x is silent"
     else bad "TPX: --syntax-only on $x: rc $rc: $(grep '^error' "$D/$x.so" | tr '\n' '|')"; fi
 done
+printf 'trait T { fn m<U>(self, u: U): U<i64>; fn n<V>(self, v: V<i8>): i64; }\nstruct P { x; }\nimpl T for P { fn m<U>(self, u: U): U { return u; } fn n<V>(self, v: V): i64 { return 1; } }\nfn main(): i64 { var p: P; return 3; }\nsyscall(60, main());\n' > "$D/tp5a.cyr"
+printf 'trait T { fn m<U>(self, u: U): U; fn n<V>(self, v: V): i64; }\nstruct P { x; }\nimpl T for P { fn m<U>(self, u: U): U<i64> { return u; } fn n<V>(self, v: V<i8>): i64 { return 1; } }\nfn main(): i64 { var p: P; return 3; }\nsyscall(60, main());\n' > "$D/tp5b.cyr"
+tpl tp5a "1:32: $TPW 'U'|1:57: $TPW 'V'" "TP5a [plain]: a member's U<i64> against an impl's U — no impl line beside it"
+tpl tp5b "3:37: $TPW 'U'|3:75: $TPW 'V'" "TP5b [plain]: an impl's U<i64> against a member's U — its own refusal, no impl line"
+# under the flag a `: U` return is the flag's own refusal (unchanged); the impl's U<i64> still D6's line alone
+tpl tp5b "3:37: $TPW 'U'|3:75: $TPW 'V'" "TP5b [mono0]" "CYRIUS_MONOMORPH=0 $CC"
 cat > "$D/tpk.cyr" <<'EOF'
 include "lib/vec.cyr"
 struct Pt { x; y; }

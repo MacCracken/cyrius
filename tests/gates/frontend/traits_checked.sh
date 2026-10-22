@@ -109,7 +109,9 @@
 #      the impl's line, TRR11b both sides `Result<i64, Pt>` with a dyn formed build. TRR12: 6.7.15's D4 arm in
 #      `_tr_rt_bad` ("a name that is no type, wherever it stands") counts only the names a reader reads
 #      (`_ty_rd_scan(.., 1)`): a member's own `: U<Nope>` (a type parameter's list, read by no reader) against an impl's
-#      `: i64` stood the impl's line down and compiled, reported by no one; now the impl's line.
+#      `: i64` stood the impl's line down and compiled, reported by no one; now the impl's line. 6.7.17 (the user's D6):
+#      a type parameter's list is refused by every reader ("a type parameter takes no type arguments: 'U'", the
+#      member's), so TRR12 is that reader's line alone — the impl's line stands down beside it (`_ty_rd_shape`).
 #      TRR13 / TRR13b a member's / a method's `Result<i64, Pt, Pt>` (D5's, read off the tokens: `_ngt_hover`) — the
 #      reader's line alone; TRR13c under --syntax-only, where D5 is silent, the impl's line.
 #      Filed: docs/development/issues/archived/2026-10-20-enum-and-handle-type-arguments-unread.md,
@@ -647,8 +649,8 @@ lines_are trr11 "TRR11: control — a member's Result<i64, Pt> (read, nothing re
 printf 'include "lib/syscalls.cyr"\nstruct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): Result<i64, Pt>; }\nfn f(q: *P): i64 { var o: dyn T2 = q; return o.sh(); }\nimpl T2 for P { fn sh(self): Result<i64, Pt> { return self.a + 4; } }\nfn main(): i64 { var p = P { 2, 0 }; return f(&p); }\nsyscall(60, main());\n' > "$T/trr11b.cyr"
 exits trr11b 6 "TRR11b: control — member and method both Result<i64, Pt>, called through a formed dyn"
 printf 'struct P { a; }\ntrait T { fn g<U>(self): U<Nope>; }\nimpl T for P { fn g<U>(self): i64 { return 1; } }\nfn main(): i64 { return 0; }\n' > "$T/trr12.cyr"
-lines_are trr12 "TRR12: a name inside a list no reader reads (a member's own U<Nope>) is not counted as refused — the impl's line (it compiled, reported by no one)" \
-    "3:31: 'P.g' returns i64, trait 'T' declares U<Nope>"
+lines_are trr12 "TRR12: a member's own U<Nope> — 6.7.17's D6 refuses a type parameter's list at the member, its line alone (6.7.16: the impl's; it compiled before)" \
+    "2:26: a type parameter takes no type arguments: 'U'"
 printf 'struct Pt { x; y; }\n'"$PQ"'trait T2 { fn sh(self): Result<i64, Pt, Pt>; }\nimpl T2 for P { fn sh(self): i64 { return 4; } }\nfn main(): i64 { return 0; }\n' > "$T/trr13.cyr"
 lines_are trr13 "TRR13: a member's Result<i64, Pt, Pt> (D5, read off the tokens: \`_ngt_hover\`) — the reader's line alone" \
     "3:41: 'Result' takes 2 type arguments, 3 given"
