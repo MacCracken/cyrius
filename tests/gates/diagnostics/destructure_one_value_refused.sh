@@ -52,6 +52,14 @@
 #           (1) run; pass 1 counts a `return (a, b);` body, so three names from `: i64` / `: f64` and a 3-tuple
 #           capture are refused; a `: f64` fn's values are each an f64 (3.0); a `: bool` fn's first value is
 #           checked as its bool.
+#   axis 9  6.7.17 (met in genb's GB1, no decision: the shape never compiled) — an annotated destructure name:
+#           `var a: i64, b: i64 = two(3);` (a local, both top-level zones, a for-init, three names, a later name's
+#           `b: *i64`) was "expected '=', got ','" + "undefined variable 'b'" at each use; now "a multi-value
+#           destructure's names take no type annotation: 'a' - the callee's declared return types them", once per
+#           statement at the first annotated name, every annotation stepped and the destructure read on (`_dt_ann1` /
+#           `_dt_annk`, PARSE_VAR, PARSE_GVAR_REG, EMIT_GVAR_INITS); --syntax-only says it too; no `=` is what `var a,
+#           b;` says. MUTATION (2026-10-22): the compiler before (ba69fd9d4) -> RED 34 (every axis-9 refusal row on each
+#           leg, da_two and the --syntax-only row; da_ctl green).
 #   axis 6  6.7.13 — `callptr(fp, ..)` is a call (issues/archived/2026-10-13-destructure-of-callptr-refused.md): `var c, d =
 #           callptr(fp, 5);` was refused "needs a call on the right-hand side" where `fncall1(fp, 5)` destructures.
 #           Accepted in a fn (the repro verbatim, 22), as an assignment and a for step, in both top-level zones;
@@ -484,6 +492,34 @@ refused7 pw_one "fn one(x) { return x; }\nfn t(): i64 { var a, b = ((one(7))); r
 refused7 pw_zone_arity "fn three(x): (i64, i64, i64) { return (x, x, x); }\nvar a, b = (three(7));\nsyscall(60, a);\n" "2:13: multi-value destructure count does not match the fn's declared return arity"
 refused7 pw_masg_arity "fn three(x): (i64, i64, i64) { return (x, x, x); }\nfn t(): i64 { var a = 0; var b = 0; a, b = (three(1)); return a; }\nsyscall(60, t());\n" "multi-value destructure count does not match the fn's declared return arity"
 refused7 pw_masg_struct "struct P { a; b; c; }\nfn mkp(): P { var p: P; p.a = 5; return p; }\nfn t(): i64 { var a = 0; var b = 0; a, b = (mkp()); return a; }\nsyscall(60, t());\n" "cannot re-assign from 'mkp' - it returns struct 'P', not multiple values"
+
+
+echo "axis 9 - an annotated destructure name is refused once, at the name (6.7.17), on every target:"
+# `var a: i64, b: i64 = two(3);` was "expected '=', got ','" + "undefined variable 'b'" at each use (a later name's
+# `b: i64` "expected '=', got ':'" + "undefined variable 'i64'"). The callee's declared return types the names.
+DA9="a multi-value destructure's names take no type annotation"
+TH9='fn three(x): (i64, i64, i64) { return (x, x, x); }\n'
+refused7 da_both "${TWO8}fn t(): i64 { var a: i64, b: i64 = two(3); return a * 10 + b; }\nsyscall(60, t());\n" "2:19: $DA9: 'a'"
+refused7 da_first "${TWO8}fn t(): i64 { var a: i64, b = two(3); return a * 10 + b; }\nsyscall(60, t());\n" "2:19: $DA9: 'a'"
+refused7 da_later "${TWO8}fn t(): i64 { var a, b: *i64 = two(3); return a * 10 + b; }\nsyscall(60, t());\n" "2:22: $DA9: 'b'"
+refused7 da_three "${TH9}fn t(): i64 { var a: i64, b: (i64, i64), c: Box<i64, i64> = three(1); return a + b + c; }\nsyscall(60, t());\n" "2:19: $DA9: 'a'"
+refused7 da_zone "${TWO8}var a: i64, b: i64 = two(3);\nsyscall(60, a * 10 + b);\n" "2:5: $DA9: 'a'"
+refused7 da_top "${TWO8}syscall(1, 1, \"\", 0);\nvar a, b: i64 = two(3);\nsyscall(60, a * 10 + b);\n" "3:8: $DA9: 'b'"
+refused7 da_for "${TWO8}fn t(): i64 { var c = 0; for (var a: i64, b = two(1); a < 0; a = a + 1) { c = b; } return c; }\nsyscall(60, t());\n" "2:35: $DA9: 'a'"
+# no `=`: what `var a, b;` reports, once
+refused7 da_noeq "fn t(): i64 { var a: i64, b: i64; return 3; }\nsyscall(60, t());\n" "1:33: expected '=', got ';'"
+# two statements: one line each, and the program's next error still its own
+rows=$((rows + 1))
+printf "${TWO8}fn t(): i64 { var a: i64, b = two(3); var c, d: i64 = two(4); return a + b + c + d + zq; }\nsyscall(60, t());\n" > "$T/da_two.cyr"
+"$CC" < "$T/da_two.cyr" > "$T/da_two.bin" 2> "$T/da_two.err"
+check "da_two: two statements, one line each, then 'zq'" "2:19 'a'|2:46 'd'|undefined variable 'zq'" \
+    "$(grep '^error' "$T/da_two.err" | sed -n "s/^error:<source>:\([0-9:]*\): .*: \('[a-z]*'\).*/\1 \2/p;s/^error:<source>:[0-9:]*: \(undefined variable 'zq'\).*/\1/p" | tr '\n' '|' | sed 's/|$//')"
+# --syntax-only (cyrius lint) reports it too (a parse-level refusal, nothing resolved)
+rows=$((rows + 1))
+"$CC" --syntax-only < "$T/da_both.cyr" > /dev/null 2> "$T/da_both.so"
+check "da_both: --syntax-only names it, once" 1 "$(grep -c "^error.*$DA9" "$T/da_both.so")"
+# controls: an annotated plain var beside a destructure, a list's own `,` inside an annotation
+runs7 da_ctl "${TWO8}struct Box<T> { v: T; n; }\nfn t(): i64 { var a: i64 = 5; var c, d = two(3); var q: Box<i64> = 0; var e: (i64, i64) = two(1); return a + c * 10 + d; }\nsyscall(60, t());\n" 39
 
 if [ "$rows" -lt 150 ]; then echo "FAIL: destructure_one_value_refused: only $rows rows ran (floor 150)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: destructure_one_value_refused: $fails check(s) failed"; exit 1; fi

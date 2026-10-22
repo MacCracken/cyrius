@@ -3850,6 +3850,9 @@ var hi, lo, bexp = dd_pow10(k);
 #   var q, r = 42;                    # not a call
 #   var q, r = dm(17, 5) + (k / 9);   # call is not the whole RHS
 #   var x, y, z = f();                # count disagrees with f's declared arity
+#   var a: i64, b: i64 = f();         # a name takes no annotation — f's declared return types them: "a multi-value
+#                                     # destructure's names take no type annotation: 'a'", once (6.7.17; it was
+#                                     # "expected '=', got ','" + "undefined variable 'b'" at each use of b)
 #   var q, r, z = dm(17, 5);          # `dm` is undeclared, but every `return` is `(a, b)` and its
 #                                     # body is left only through them: it returns 2 values, and
 #                                     # the count is checked as a declared one is (6.7.11)
