@@ -634,7 +634,7 @@ fn pb5(): i64 { var q: *Box<S8> = mkp<S8>(G8); q.v.v = 9; return q.v.v * 10 + G8
 # pointers (`_gen_infer_sc` -> `_ic_pp_arg`): `&q`, a `**Box<S16>` local / parameter / global / field / `: **Box<S16>`
 # call, wrapped, `***Box<T>` one pointee down, a generic method, a second type parameter, a second slot, a scalar
 # instance, a forward into a stub. Each returns `n * 10 + sizeof(T)`: 96 at S16, 84 at i32, 78 for `Box<i64>`'s base.
-# issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md
+# issues/archived/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md
 struct PPr<A, B> { a: A; b: B; n; }
 struct PHB { k; qq: **Box<S16>; }
 fn ppn<T>(pp: **Box<T>): i64 { var b: *Box<T> = *pp; return b.n * 10 + sizeof(T); }

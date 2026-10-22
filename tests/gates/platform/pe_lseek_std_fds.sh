@@ -11,7 +11,7 @@
 # handle). ELSEEK_PE now does too: offset and whence are parked at [rsp+0x30] / [rsp+0x38] of a
 # 0x40 frame across the GetStdHandle call, the EWRITE_PE shape.
 #
-# A PIPE OR CONSOLE — 6.7.16 (issues/2026-10-18-pe-seek-on-pipe-or-console-std-handle-succeeds.md;
+# A PIPE OR CONSOLE — 6.7.16 (issues/archived/2026-10-18-pe-seek-on-pipe-or-console-std-handle-succeeds.md;
 # 6.7.16's D31, "-29 (ESPIPE), as Linux"): real Windows lets SetFilePointerEx succeed on both and
 # the stream does not move (on cass the filed repro with a piped stdin printed `3 0 0 1 97`; a
 # console stdin / stdout / stderr answered 3 / 0 / 0), and wine 11.19 failed it

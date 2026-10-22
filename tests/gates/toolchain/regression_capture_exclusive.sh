@@ -60,7 +60,7 @@
 #      .tcyr does not compile (it predicts names with the new helpers). Axis 1 reads green there:
 #      the old code looked in /tmp, not the gate's TMPDIR, so its plants were never in the way.
 # MUTATION LEDGER (2026-10-19, 6.7.16 — the name unlinked at its create, the capture read from the
-# fd; issues/2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md). The .tcyr has 23 rows:
+# fd; issues/archived/2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md). The .tcyr has 23 rows:
 #   j. the unlink dropped                    -> axes 1 (the files are left) and 4b; the .tcyr 7 (the
 #      6 `_cr_private` rows see the name while the child runs, and a leaked name stops one plant)
 #   k. the parent's lift dropped              -> the .tcyr 1 (`_cr_parent_stderr`: fd 2 closed, the

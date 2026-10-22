@@ -689,7 +689,7 @@ check "  …and does not count a fn that never appends" 2 "$(grep -c ':' "$T/bld
 # fork before it in its fn) is a -1 stub on PE just the same, and nothing above saw it: `cyrius
 # sign-efi` exec'd cyrsign-efi in place, so the Windows CLI fell through to "helper not found
 # (Linux-only …)" with cyrsign-efi.exe shipped beside it
-# (issues/2026-10-19-windows-cli-sign-efi-cannot-run-the-shipped-helper.md). The rule: the site
+# (issues/archived/2026-10-19-windows-cli-sign-efi-cannot-run-the-shipped-helper.md). The rule: the site
 # sits in a PE-excluded region (`#ifndef CYRIUS_TARGET_WIN`, a macOS-only `#ifdef`), or an
 # `#ifdef CYRIUS_TARGET_WIN` region that leaves (`return` / `_cbt_exit(`) DOMINATES it — it
 # closed earlier in a block that still encloses the site — and that arm names what it does

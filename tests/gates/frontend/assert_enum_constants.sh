@@ -37,7 +37,7 @@
 # (rc 0) and the shared-name row exits 22 (want 12); match the parent by the FIRST enum of
 # that name only -> the re-declared-enum row is refused (`'SB' is not a variant of 'Sig'`).
 #
-# EQ (6.7.16, issues/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md): `Color.NOPE`, Color a
+# EQ (6.7.16, issues/archived/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md): `Color.NOPE`, Color a
 # declared enum and NOPE declared nowhere, blamed the ENUM — "undefined variable 'Color'" (an expression), "unknown
 # name 'Color' in a const context" (a const, a case label, an array size, #assert): the resolver answered such a
 # member -1 silently and each caller fell back to its undefined-name report for the base. Now it is the resolver's

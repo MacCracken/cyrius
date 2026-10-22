@@ -1,0 +1,61 @@
+# An operator after a by-name vector call into a vector local (`var w = mk2(41, 7) + 1;`, `: f64v2`, `w = ..`) is dropped silently on x86_64 / aarch64, applied to a lane on cx, and a parse error on Windows — RESOLVED
+
+> ✅ **RESOLVED in v6.7.16** (RV-6, `f774e5c50`, with the RV-5r / RV-6r review fixes `0b2446c31` / `5464b630e`, and RV-7, `2e478b6e4`, met fixing it — D24, the user, 2026-10-19: "Refused by name"; the vector destinations under 6.7.11's value-form rule, no decision needed. Every by-name receive takes the call only when it is the whole source (`_vrcv_src`, PARSE_VAR's inline receives through `_vrcv_wcall`, `_vrcv_vcall`), so Windows' own-call arms no longer take it; an untyped declaration a vector call starts takes its vector (`_vin_ustart`) and meets the value-form refusal; `_vtop_ref` reads a starting call at top level; only a binary operator, `.`, `[` or a postfix `?` after the call makes it a start (`_vcall_more`, RV-6r). The filed rows, verbatim, are refused once on x86_64, IR=3, aarch64, cx and PE: rows 1 – 3 (`var w = mk2(41, 7) + 1;`, `: f64v2`, `w = ..`; 161 / cx 165 / PE parse error) and 4 – 5 (`s.m2() + 1`; row 4 bound one word) "a value-form vector local is initialised (assigned) only from .. - got `mk2`" / ".. got `s`", row 6 (top-level `var w = mkv(41, 7) + 1;`; 1 / 42) "'mkv' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn" — every spelling, operator and width, and `var w = (mk2(41, 7) + 1) * 2;` since RV-5r. Its return twin `return mk2(41, 7) + 1;` from a vector fn is refused by the 6.6.6 rule (RV-7). A stray token after a whole call reports the token alone (RV-6r). Rows: `simd_return_shapes.sh` OP1 – OP6 (the filed rows verbatim) – OP25, OPC1, RV1 – RV4 / RVC1, SX1 – SX18, on five legs. Mutations M-OP1 – M-OP5, M-RV1 / M-RV2, M-SX1 each RED. Filed beside it: a vector call as a later operand (D100) and a whole vector call into a scalar return or parameter (D101), both s16 SZ6 in 6.7.16. CHANGELOG [6.7.16])
+
+**Status:** ✅ **RESOLVED in v6.7.16** (see the banner). Was: 🟡 **OPEN** — measured 2026-10-18 on the 6.7.15 vectors lane (unit V3's final tree, 89fd5ad53), x86_64 /
+x86_64 `CYRIUS_IR=3` / aarch64 (qemu) / cx (cxvm) / PE (wine); the lane's tree before V3 (024a5e421) gives the same on
+x86_64. Pre-existing.
+**Placement:** 6.7.16 — Break 2, repair 6 (receives lane, wave 3, unit R2; placed at the 6.7.16 open, 2026-10-19) — never 7.x.
+**Decision (user, 2026-10-19, at the 6.7.16 open):** D24 — Refused by name.
+**Severity:** Medium — x86_64 / aarch64 compile clean and drop `+ 1` (the local holds the call's vector), cx adds 1
+to a lane, Windows refuses with a parse error naming the `+`: one source, three behaviours.
+**Kind:** bug (the receive's acceptance test reads the call, not the source it starts).
+**Discovered:** 2026-10-18, probing the neighbours of D28 / D29 (unit V3).
+
+## Reproduction
+
+```cyrius
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct Mv { k; }
+impl Mv { fn m2(self): f64v2 { return mk2(41, 7); } }
+fn r(): i64 { var w = mk2(41, 7) + 1; return load64(&w) * 10 + load64(&w + 8); }
+syscall(60, r() % 256);
+```
+
+The same header with `fn r()` replaced by each row:
+
+```
+row 1 (above)  var w = mk2(41, 7) + 1;              x86_64 / IR=3 / aarch64 161, cx 165, PE error "expected ';', got '+'"
+row 2          var w: f64v2 = mk2(41, 7) + 1;       x86_64 / IR=3 / aarch64 161, cx 165, PE error "expected ';', got '+'"
+row 3          var w: f64v2; w = mk2(41, 7) + 1;    x86_64 / IR=3 / aarch64 161, cx 165, PE error "expected ';', got '+'"
+row 4          var s: Mv = Mv { 1 }; var w = s.m2() + 1;
+                                                    x86_64 / IR=3 / aarch64 11, cx 165, PE 205 (one word)
+row 5          var s: Mv = Mv { 1 }; var w: f64v2 = s.m2() + 1;
+                                                    refused on all five: "a value-form vector local is initialised
+                                                    only from .. - got `s`"
+```
+
+And at top level, where 6.7.15's D26 refuses the WHOLE call (`var w = mkv(41, 7);`: "'mkv' returns a vector by value,
+and a vector result needs storage in a fn's frame"), a call that STARTS the untyped initialiser is taken as a word:
+
+```
+row 6  fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+       var w = mkv(41, 7) + 1;
+       syscall(60, w % 256);                        x86_64 / IR=3 / aarch64 1, cx 42, PE 42 (the result's word + 1)
+```
+
+## Root cause (partial — suspected, not traced to the instruction)
+
+PARSE_VAR's vin block infers / checks the callee's vector from a by-name call that STARTS the initialiser
+(`_vcall_fi(S, GTI(S) + 1)`), and the inline 16 / 32-byte receives below it (`_is_simd128` / `_is_simd256`, the
+`IDENT (` lookahead; `_try_vector_call_assign`'s by-name arm for the assignment) take that call as the source without
+checking that it is the whole source (`_vrcv_src` checks it for every other spelling): the x86_64 / aarch64 receive
+stores the vector registers and the `+ 1` changes no lane, cx's receive adds it to one, and the Win64 arm emits its own
+call and then expects `;`. The method spelling is refused as a source (row 5) or binds a word (row 4: D37 infers only
+from a whole call). At top level (row 6) D26 refuses only a whole call, so the starting one is scalar code.
+
+## Fix direction
+
+The by-name receives take the call only when it is the whole source (as `_vrcv_src` checks for every other spelling);
+an operator on a vector call's result is then whatever the language says an operator on a vector value is — refused by
+name ("a value-form vector local is initialised only from ..") as row 5 is, unless an operator fn applies.

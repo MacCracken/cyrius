@@ -70,7 +70,7 @@
 # a `Str` parameter — `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`, `h.eq(*p)` — passes the header p points at (its
 # address, p), as `str_len(p)` does; it passed the header's first word, the data pointer, as the header (SD1, the filed
 # repro verbatim: 5555, was 5500).
-# 6.7.16 (issues/2026-10-18-generic-str-instance-dereference-argument-passes-data-word.md): ... and into a generic's `x: T`
+# 6.7.16 (issues/archived/2026-10-18-generic-str-instance-dereference-argument-passes-data-word.md): ... and into a generic's `x: T`
 # at T = Str, which is address-passed (its struct-mask bit set, so the by-value arm never ran) — `gg<Str>(*p)`, the
 # inferred `gg(*p)` (6.7.15's D12 (a) binds T = Str), wrapped, `*w.p`, `**pp`, `*gsp()`, a second argument, a tail
 # call, a capture, a forwarder, a generic method, top level (the tcyr's sd_g* rows, R_TOP15): the header's data word
@@ -83,7 +83,7 @@
 # `Str` handles keeps the one-word store, documented (the user's decision D15, 2026-10-18: its value is untyped, as for
 # every inline struct — D15, pinned: 22 with today's warning).
 #
-# 6.7.16 (issues/2026-10-18-inline-str-from-double-str-pointer-single-deref-stores-one-word.md): `t = *pp` with pp a
+# 6.7.16 (issues/archived/2026-10-18-inline-str-from-double-str-pointer-single-deref-stores-one-word.md): `t = *pp` with pp a
 # `**Str` (so `*pp` is the `*Str` 6.7.13's D9 (a) made it) copies the header that `*Str` points at, as `t = p` does
 # (D14, above): it stored the header's address into t.data and left t.len stale (PP1, the filed repro verbatim: 55, was
 # 22; no warning before or after). Into a `*Str` or a handle `q = *pp` stays the rebind `q = p` is (the tcyr's pps_*
@@ -102,13 +102,13 @@
 # and 7, were 0 and 0). A frame's t is refused by name into ANY field — a local struct's too (D19: `w.p = t` as `v.s =
 # t`) — with the field's words, and through `*pp` with the pointer's (X15-X19).
 #
-# 6.7.16 (issues/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md): `*p` (p a `*Str`) into a
+# 6.7.16 (issues/archived/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md): `*p` (p a `*Str`) into a
 # `Str` FIELD — `w.s = *p`, `GW.s = *p`, through a `*W`, nested, a `: *W` call's, a for step, at top level, `**pp` — a
 # literal's `Str` field (`W { *p, 1 }`, in a fn, in the zone and after a statement) and `return *p;` from a fn returning
 # `Str` is p, as `v.s = p` and D20's `h = *p` are (the tcyr's hf_* rows, R_TOP16): each stored or returned the header's
 # data word as the handle (HF1, the filed repro verbatim: `161010` exit 43, was `160111` exit 50).
 #
-# 6.7.16 (D19, issues/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md): a struct
+# 6.7.16 (D19, issues/archived/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md): a struct
 # LITERAL's `*Str` element from an inline `Str` — `W { gt, 1 }`, named, a nested struct's leaf, in a fn, in the zone and
 # after a statement, a capture's t — takes its header's address, as `w.p = gt` does (the tcyr's pl_* rows, R_TOP17;
 # PL1 / PL3 the filed repro and top-level line: 7, were 0); a frame's `W { t, 1 }` is refused with the field's words
@@ -130,7 +130,7 @@
 # Each took the header's data word (DS1, the filed repro verbatim: `20120121`, was `21020121`), the names and the
 # declaration with a false "assigning non-pointer to typed pointer". `*q = *pp` (already the `*Str`) is unchanged.
 #
-# 6.7.16 (the user's decision D71, 2026-10-20; issues/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md):
+# 6.7.16 (the user's decision D71, 2026-10-20; issues/archived/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md):
 # `*(&t)` / `*&t` of an inline `Str` t is t itself, as 6.7.15's D21 A reads `*(&p)` as p — every D7 (1) arm reads it as
 # the name: `var h: Str = *(&t);` (and the untyped `var h = *(&t);`) binds a handle on t, `f(*(&t))` / `fp(*(&t))` /
 # `gg<Str>(*(&t))` / the inferred `gg(*&t)` / `h.eq(*(&t))` pass its header, `u = *(&t)` copies it into an inline u, `k
@@ -679,7 +679,7 @@ for leg in $XLEGS $OLEGS; do
     if [ "$got" -eq 0 ] && [ "$last" = "5555" ]; then ok "SD1 the filed repro: str_len(*p) / str_len(**pp) pass the header ($leg): $last"
     else bad "SD1 ($leg): exit $got, prints '$last' (want 5555; 5500 = the data word passed as the header)"; fi
 done
-# --- SD2: the filed repro (issues/2026-10-18-generic-str-instance-dereference-argument-passes-data-word.md), verbatim:
+# --- SD2: the filed repro (issues/archived/2026-10-18-generic-str-instance-dereference-argument-passes-data-word.md), verbatim:
 # `gg<Str>(*p)` / `gg(*p)` into a generic's `x: T` at T = Str (address-passed) pass the header p points at (6.7.16; the
 # header's data word through 6.7.15: 500 % 256 = 244) ---
 cat > "$T/SD2.cyr" <<'EOF'
@@ -737,7 +737,7 @@ for leg in $(legs); do
 done
 runs D15 22 "an if-expression of Str handles keeps the one-word store (D15: documented, 22 as before)" "$XLEGS $OLEGS"
 
-# --- PP1: the filed repro (issues/2026-10-18-inline-str-from-double-str-pointer-single-deref-stores-one-word.md), verbatim:
+# --- PP1: the filed repro (issues/archived/2026-10-18-inline-str-from-double-str-pointer-single-deref-stores-one-word.md), verbatim:
 # `t = *pp` (pp a `**Str`) copies the header the `*Str` *pp reads points at (6.7.16; 22 through 6.7.15), no warning ---
 cat > "$T/PP1.cyr" <<'EOF'
 include "lib/syscalls.cyr"
@@ -764,7 +764,7 @@ for leg in $(legs); do
 done
 runs PP1 55 "the filed repro: \`t = *pp;\` (pp a \`**Str\`) copies the header into an inline Str (was 22: t.data = *pp, t.len stale)" "$XLEGS $OLEGS"
 
-# --- HD1: the filed repro (issues/2026-10-18-str-handle-assigned-str-pointer-dereference-stores-data-word.md), verbatim:
+# --- HD1: the filed repro (issues/archived/2026-10-18-str-handle-assigned-str-pointer-dereference-stores-data-word.md), verbatim:
 # `h = *p` into a Str handle (p a `*Str`) rebinds h to the header p points at (6.7.16, D20; through 6.7.15 the header's
 # data word, str_len 0, and a false "assigning non-pointer to typed pointer"), no warning ---
 cat > "$T/HD1.cyr" <<'EOF'
@@ -790,7 +790,7 @@ for leg in $(legs); do
 done
 runs HD1 5 "the filed repro: \`h = *p;\` into a Str handle rebinds it to the header p points at (D20; was 0, the data word)" "$XLEGS $OLEGS"
 
-# --- HF1: the filed repro (issues/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md), verbatim:
+# --- HF1: the filed repro (issues/archived/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md), verbatim:
 # `w.s = *p` / `GW.s = *p` into a `Str` FIELD (p a `*Str`) is p, as `v.s = p` is (6.7.16; through 6.7.15 the header's
 # data word: `160111`, exit 50), no warning ---
 cat > "$T/HF1.cyr" <<'EOF'
@@ -830,7 +830,7 @@ for leg in $XLEGS $OLEGS; do
     else bad "HF1 the filed repro ($leg): '$last', exit $got (want '161010', exit 43: w.s and GW.s are p)"; fi
 done
 
-# --- PL1-PL3: the filed repros (issues/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md):
+# --- PL1-PL3: the filed repros (issues/archived/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md):
 # a struct literal's `*Str` element from an inline `Str` takes its header's address, as `w.p = gt` does (6.7.16, D19;
 # through 6.7.15 the data word: 0) — PL1 verbatim (7), PL3 the filed top-level line (7); a frame's `W { t, 1 }` is
 # refused with the field's words, as `w.p = t` is (PL2 verbatim; it compiled, 0) — named (PL2b) and a nested struct's
@@ -875,7 +875,7 @@ syscall(SYS_EXIT, r);
 EOF
 runs PL3 7 "the filed top-level line: a zone \`var GW: W = W { gt, 1 };\` (was 0)" "$XLEGS $OLEGS"
 
-# --- PD1: the filed repro (issues/2026-10-19-str-declaration-from-double-str-pointer-single-deref-binds-handle.md),
+# --- PD1: the filed repro (issues/archived/2026-10-19-str-declaration-from-double-str-pointer-single-deref-binds-handle.md),
 # verbatim: `var u: Str = *pp;` (pp a `**Str`) is u's own copy of the header, as `var v: Str = p;` is (6.7.16, the
 # user's D74, 2026-10-20; through 6.7.15 a handle on it: 15) ---
 cat > "$T/PD1.cyr" <<'EOF'
@@ -897,7 +897,7 @@ syscall(SYS_EXIT, r);
 EOF
 runs PD1 55 "the filed repro: \`var u: Str = *pp;\` is u's own copy (D74; was 15, a handle)" "$XLEGS $OLEGS"
 
-# --- DS1: the filed repro (issues/2026-10-19-store-through-str-pointer-from-str-pointer-dereference-stores-data-word.md),
+# --- DS1: the filed repro (issues/archived/2026-10-19-store-through-str-pointer-from-str-pointer-dereference-stores-data-word.md),
 # verbatim: `*q = *p` (q, p `*Str`) stores p — q's first word becomes the header's address, as `*q = *pp` and `*q = gt`
 # store (6.7.16, the user's D73, 2026-10-20; through 6.7.15 the header's data word: `21020121`), no warning ---
 cat > "$T/DS1.cyr" <<'EOF'
@@ -942,7 +942,7 @@ for leg in $XLEGS $OLEGS; do
     else bad "DS1 the filed repro ($leg): '$last', exit $got (want '20120121', exit 0: q's first word is p)"; fi
 done
 
-# --- AMP1: the filed repro (issues/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md), verbatim: `*(&t)`
+# --- AMP1: the filed repro (issues/archived/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md), verbatim: `*(&t)`
 # of an inline `Str` is t (6.7.16, the user's D71, 2026-10-20) — `var h: Str = *(&t);` a handle on t, `f(*(&t))`, `u =
 # *(&t)` a copy, `k = *(&t)` a rebind: `3 3 3`, exit 3, no warning (through 6.7.15 `0 0 1`, exit 0, and two false
 # "assigning non-pointer to typed pointer") ---
@@ -983,7 +983,7 @@ for leg in $XLEGS $OLEGS; do
     else bad "AMP1 the filed repro ($leg): '$last', exit $got (want '3 3 3', exit 3: *(&t) is t)"; fi
 done
 
-# --- FD1 / FD2: the filed repros (issues/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
+# --- FD1 / FD2: the filed repros (issues/archived/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
 # verbatim: an inline `Str` global into a `*Str` field (a local's, a global's, through a `*W`) and through a `**Str` takes
 # its header's address (6.7.16, D19; through 6.7.15 the data word: 0 and 0) ---
 cat > "$T/FD1.cyr" <<'EOF'

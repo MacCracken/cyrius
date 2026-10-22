@@ -67,7 +67,7 @@
 #                                                           exits 110, close_answer 4 passed 9 failed)
 #   ECLOSE_PE's `xor eax,eax` dropped (TRUE answers the BOOL 1)  axis 2 FAIL; axis 4 FAIL
 # 6.7.16 — fd 0 / 1 / 2 reach the std handles in a close and a truncate
-# (issues/2026-10-18-pe-close-and-ftruncate-pass-std-fds-raw.md; 6.7.16's D30, "close it, as Linux
+# (issues/archived/2026-10-18-pe-close-and-ftruncate-pass-std-fds-raw.md; 6.7.16's D30, "close it, as Linux
 # does"). ECLOSE_PE and ESETEOF_PE put the fd straight into rcx, so CloseHandle / SetEndOfFile got
 # the HANDLE values 0 / 1 / 2: `sys_close(2)` answered -9 and stderr stayed open (the filed repro
 # printed `-9 1` on cass and wine, Linux `0 -9`), and `sys_ftruncate(1, 3)` of a redirected stdout
@@ -122,7 +122,7 @@
 #                                                           one Win32 call later — the js answers it
 #                                                           before any, and axis 2 holds it
 # 6.7.16 — a failed mkdir / unlink / rmdir / ftruncate / truncate answers -errno
-# (issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md; 6.7.16's D79,
+# (issues/archived/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md; 6.7.16's D79,
 # "Linux's negative errno, through the Windows error table", and D80, "-22, as Linux", for what
 # ftruncate cannot truncate). `_pe_path_bool1` — CreateDirectoryW (83), DeleteFileW (87, 0xF035),
 # RemoveDirectoryW (0xF03B) — ended `dec rax; sar rax, 63` and never read GetLastError, and

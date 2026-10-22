@@ -100,20 +100,20 @@
 #                                                     T15 x4 (the second, false "cannot subscript field 'p': it is not
 #                                                     a *T field")
 #   t2 `_call_field`'s refusal arm without its `[..]` step (= the tree before) -> RED 12: T16-T18 x4
-# (6.7.16, issues/2026-10-18-cx-syntax-only-refuses-sibling-module-calls.md; a scratch copy of the tree, src/main_cx.cyr
+# (6.7.16, issues/archived/2026-10-18-cx-syntax-only-refuses-sibling-module-calls.md; a scratch copy of the tree, src/main_cx.cyr
 # edited, the gate run from the copy)
 #   x1 the `_syntax_only` exit dropped (= the tree before) -> RED 7: S1-S4 cx (rc 1, "undefined function(s) called (cx
 #                                                     backend)"), S5-S7 cx (that refusal a second error line)
 #   x2 the walk's REPORTED (-2) mark dropped       -> RED 1: SX ("gp listed 2 time(s)")
 #   x3 the `_syntax_only` exit without its two advisory calls (= the lane's first cut, 87cd284ac) -> RED 2: SA1 SA2 cx
 #                                                     ("the large-static advisory printed 0 time(s)")
-# (6.7.16, the structs lane, unit S4; issues/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md;
+# (6.7.16, the structs lane, unit S4; issues/archived/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md;
 # the same procedure, 2026-10-19)
 #   n1 `_call_nodef` routing only an unregistered callee (= the tree before) -> RED 16: U16-U19 x4 ("cannot take a field
 #                                                     of the result of 'undefd': it does not return a struct")
 #   n2 `_call_nodef` without its enum-variant exclusion -> RED 4: U23 x4 ("undefined function 'Some'" for a defined
 #                                                     constructor)
-# (6.7.16, unit S4; issues/2026-10-18-syntax-only-pointer-return-of-sibling-struct-field-store-false-temporary.md; the same
+# (6.7.16, unit S4; issues/archived/2026-10-18-syntax-only-pointer-return-of-sibling-struct-field-store-false-temporary.md; the same
 # procedure)
 #   q1 `_cf_unres_fn` answering `_fn_nodef` alone (= the tree before) -> RED 32: S10-S17 x4 ("the result is a
 #                                                     temporary"; S17 in place of the value's own error)
@@ -121,10 +121,10 @@
 #   q3 `_ret_ptr_unk` recorded in pass 2 only      -> RED 4: S13 x4 (the callee defined below the statement)
 # (`_cf_unres_fn`'s `_hl_fn_psid` test is a guard no current path reaches: the byte is 1 only for a `*T` record whose T
 # resolved to nothing, which records no struct. Its GFRS -8 test went in 6.7.16, d3 below.)
-# (6.7.16, the s16 lane, unit SS1; issues/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md;
+# (6.7.16, the s16 lane, unit SS1; issues/archived/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md;
 # the same procedure, 2026-10-20)
 #   e1 `_cf_unres_fn` without its enum-variant exclusion (= the tree before) -> RED 20: S23-S23d x4 (rc 0, accepted)
-# (6.7.16, unit SS1; issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md; the same
+# (6.7.16, unit SS1; issues/archived/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md; the same
 # procedure)
 #   d1 `_ret_ptr_owns` answering 1 for every definition (pass 2's earlier `*Foo` recorded) -> RED 8: S24 S24b x4
 #   d2 `_ret_redef_reset` a no-op (pass 1 keeps the first definition's byte) -> RED 12: S24 S24a S24b x4
@@ -588,7 +588,7 @@ done
 # `var x = mulh64(2, 3).n;` are each ONE error, "expected ';', got '.'", no warning, no binary. ⛔ 6.7.16: U14 read only
 # `^error` lines for "undefined function 'mulh64'", so it passed while the statement still printed "warning: undefined
 # function 'mulh64'" twice and "error: refusing to emit binary" (a check that shared the defect read green); it is now
-# `refused`'s exact count (issues/2026-10-19-intrinsic-call-with-field-statement-still-undefined-function.md:
+# `refused`'s exact count (issues/archived/2026-10-19-intrinsic-call-with-field-statement-still-undefined-function.md:
 # `_stmt_intrinsic_dot`, src/frontend/parse.cyr — the statement no longer reaches the call statement's field arm).
 row U14 'fn go(): i64 { mulh64(2, 3).n = 5; return 0; }'
 refused U14 "expected ';', got '.'" "control: \`mulh64(2, 3).n = 5;\`, an intrinsic, is no undefined fn"
@@ -600,7 +600,7 @@ refused U15 "expected ';', got '.'" "control: \`var x = mulh64(2, 3).n;\`, an in
 row U24 'fn go(): i64 { var i = 0; for (i = 0; i < 3; mulh64(2, 3).n = 5) { i = i + 1; } return 0; }'
 refused U24 "expected '=', got '('" "control: the for step \`mulh64(2, 3).n = 5\`, an intrinsic, is no undefined fn"
 
-# --- U16-U23 (6.7.16, issues/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md): the
+# --- U16-U23 (6.7.16, issues/archived/2026-10-18-field-of-call-registered-undefined-fn-says-does-not-return-a-struct.md): the
 # same `.field` after an EARLIER PLAIN CALL to the undefined fn — the call registered the name, so the field resolved to
 # that entry and read "cannot take a field of the result of 'undefd': it does not return a struct". It is named
 # "undefined function 'undefd'" at the field call's name (`_call_nodef`: no code and no owner); the plain call keeps
@@ -668,7 +668,7 @@ refused U23 "3:37: cannot take a field of the result of 'Some': it does not retu
 # tail silently: it was "cannot assign to a field of a call result: the result is a temporary", true only of a callee
 # KNOWN to return a struct by value. S1 is the filed repro verbatim (the statement registers gp, so the step's callee
 # is a call-registered fn with no definition). On the x86_64, aarch64, PE and cx compilers. The cx leg is 6.7.16's
-# (issues/2026-10-18-cx-syntax-only-refuses-sibling-module-calls.md): cx refused every call to a fn the file does not
+# (issues/archived/2026-10-18-cx-syntax-only-refuses-sibling-module-calls.md): cx refused every call to a fn the file does not
 # define even under --syntax-only ("undefined function(s) called (cx backend)", rc 1, `gp` listed once per call).
 # synonly <name> <want-rc> <fragment|-> <what> [<fn>]: `--syntax-only`; rc <want-rc>; `-` = no `^error` line and the
 # "warning: undefined function '<fn>'" (default gp); else ONE `^error` line holding <fragment>.
@@ -764,7 +764,7 @@ synadv SA1 - "a 2,400,008-byte static under --syntax-only"
 printf 'var big: i64[300000];\nfn f(): i64 { return big[0]; }\nfn h(): i64 { return gp(); }\nvar r = f();\nsyscall(60, r);\n' > "$T/SA2.cyr"
 synadv SA2 gp "the same with a sibling's fn called from an unreachable fn"
 
-# --- S10-S22 (6.7.16, issues/2026-10-18-syntax-only-pointer-return-of-sibling-struct-field-store-false-temporary.md):
+# --- S10-S22 (6.7.16, issues/archived/2026-10-18-syntax-only-pointer-return-of-sibling-struct-field-store-false-temporary.md):
 # --syntax-only, the callee DEFINED here and declared `: *Foo` with `Foo` a sibling module's struct — its field
 # assignment parses silently too: it was "the result is a temporary" (gp resolved, but no struct, by value or `*T`, is
 # known here). One `*` whose T no type here resolves (`_fn_ret_unk`, recorded at the `: *T`); a `: Foo` by value and a
@@ -831,7 +831,7 @@ syndef S21 0 + "control: Foo declared here, D8 (a)'s store"
 printf '%s\n%s\n' 'fn gi(): *i64 { return 0; }' 'fn go(): i64 { gi().n = 5; return 0; }' > "$T/S22.cyr"
 syndef S22 1 "$MT" "control: \`: *i64\`, a T that resolves to no struct, keeps the refusal"
 
-# --- S23 (6.7.16, issues/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md): --syntax-only,
+# --- S23 (6.7.16, issues/archived/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md): --syntax-only,
 # an enum variant's payload constructor called in a fn ABOVE its enum — registered by pass 1 with no owner, its code
 # emitted at the enum — read as a sibling module's fn (`_fn_nodef`), so `Some(5).n = 1;` parsed silently (rc 0) where
 # the full build refuses it ("does not return a struct", U23). The variant is defined here: `_cf_unres_fn` excludes it
@@ -862,7 +862,7 @@ syndef S23e 1 "4:26: $MT" "control: the enum above the fn"
 erow S23f 'fn go(): i64 { Non().n = 1; return 0; }'
 synonly S23f 0 - "control: a unit variant called, \`Non().n = 1;\`, keeps a sibling module's path" Non
 
-# --- S24 (6.7.16, issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md): --syntax-only,
+# --- S24 (6.7.16, issues/archived/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md): --syntax-only,
 # `fn gp(): *Foo` then `fn gp(): Foo` (Foo a sibling's): the last definition's result is a by-value temporary, but the
 # first's `*Foo` record (the "T not declared here" byte) was kept, so `gp().n = 5;` parsed silently. The records are the
 # last definition's: refused once, wherever the call sits (S24 after both, S24a above, S24b between). S24c / S24d

@@ -32,7 +32,7 @@
 #
 # 6.7.16 — the RUNTIME axis is gone (axis 5: the refused-calibration probe run under mirshi, a
 # BUILT binary from another project's checkout). A language does not gate on other projects
-# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md): running
+# (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md): running
 # cyrius-built agnos programs is agnos's own CI's check now. Axes 1-4 are static — the source
 # scan and the emitted code — and need nothing outside this checkout but llvm-objdump (a package
 # docs/development/dev-tools-linux.md lists). Without it axes 2-4 cannot read the emitted code,

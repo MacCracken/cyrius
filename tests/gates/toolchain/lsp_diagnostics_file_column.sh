@@ -48,7 +48,7 @@
 #       sibling-include row under the same environment: still empty.
 #   R17 the same, with CYRIUS_RESOLVED=0 and CYRIUS_NO_WARN_PIN_DRIFT=0 inherited by the server: empty
 #   R18 a file of that pinned project still reports the pin (the project route is unchanged)
-#   R19 (6.7.16, issues/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md, the
+#   R19 (6.7.16, issues/archived/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md, the
 #       LSP sites) the server started with its fd 1 CLOSED: the `cyrius check` child a project file
 #       starts has fd 0 and fd 1 on /dev/null and fd 2 on the stderr pipe. The child redirected with
 #       `sys_dup2(fd, N); sys_close(fd)`: its /dev/null opened AT 1, dup2(1, 1) did nothing and the

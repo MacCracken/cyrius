@@ -23,7 +23,7 @@
 #      content) — and its `q: *P` takes the slot — byte-identical to `var a = &q;` of an i64 parameter
 #      (before: identical to the content load). x86_64, aarch64 and PE; on cx `#naked` is inert (the
 #      by-value parameter is copied in, so only the `*P` half applies there)
-#   R3 6.7.16 — issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md row 1, the
+#   R3 6.7.16 — issues/archived/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md row 1, the
 #      filed repro verbatim: `*(&pi) += 1` of a `pi: *i32` steps 4 bytes, as `q += 1` does (6.7.15's D21 A:
 #      `*(&p)` is p) — exit 44 (14 before: one byte) on x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm)
 #      and PE (wine); the amp_cop_* rows in T carry its shapes
@@ -38,12 +38,12 @@
 #      shapes. R5d (x86_64, compile only): through `*(&b)` of a bool the bool checks name b — `*(&b) = 5` "cannot assign
 #      a value that is not a bool to bool 'b'", `*(&b) += 1` "compound assignment to bool 'b' is refused" — and `*(&f) =
 #      3` of an f64 warns "an integer stored into an f64/f32 slot", as `b = 5`, `b += 1` and `f = 3` do (it built clean)
-#   R6 6.7.16 — issues/2026-10-19-signed-narrow-global-declared-after-top-level-statement-reads-zero-extended.md,
+#   R6 6.7.16 — issues/archived/2026-10-19-signed-narrow-global-declared-after-top-level-statement-reads-zero-extended.md,
 #      the filed repro verbatim: a signed i16 / i32 / i8 global declared after the first top-level statement reads
 #      sign-extended, as one in the declaration zone — prints `-2 -2 -2` (`65534 4294967294 254` before) on x86_64,
 #      x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine); T's amp_narrow_after row and
 #      tests/tcyr/crossos/narrow_global_init_width.tcyr's ps_ rows carry its shapes
-#   R7 6.7.16 (D72, the user's decision, 2026-10-20) — issues/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md,
+#   R7 6.7.16 (D72, the user's decision, 2026-10-20) — issues/archived/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md,
 #      the filed repro verbatim: a narrow parameter is narrowed in the fn, like a narrow local — prints
 #      `255 -1 -32768 -32768` (`511 8589934591 32768 -32768` before) on x86_64, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1, aarch64 (qemu), cx (cxvm) and PE (wine); T2 carries its shapes. R7a (x86_64, CYRIUS_ASYNC=1):

@@ -6,7 +6,7 @@
 # loops of PARSE_STRUCT_DEF and PARSE_UNION_DEF stepped a `;` after a field when one was there and read the next field
 # wherever the cursor stood, so `struct P { a b }` and `struct Q { x: i64 y: i64 }` compiled (the filed repro ran 46,
 # as the separated form does), `union U { a: i64 b: i32 }` too, and one field per line with no `;`
-# (issues/2026-10-19-struct-and-union-fields-need-no-separator.md). Now a field that follows another with no `;` is ONE
+# (issues/archived/2026-10-19-struct-and-union-fields-need-no-separator.md). Now a field that follows another with no `;` is ONE
 # error at it, "expected ';' between struct fields" ("... union fields") — once per declaration (the declaration's `}`
 # releases the latch, `_tl_decl1`, so the next declaration reports its own), under --syntax-only too, a line break
 # being no separator, and a generic struct's instances (`_inst_name`) say nothing more. The last field may omit its `;`

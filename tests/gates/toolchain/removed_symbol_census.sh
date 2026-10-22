@@ -24,7 +24,7 @@
 # (CYRIUS_SIBLING_ROOT, default the checkout's parent: ~146 consumer repos) and to require a row
 # only when one of them still called the symbol — a consumer survey inside a gate, and a language
 # does not gate on other projects (the user, 2026-10-19;
-# docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). The census reads the
+# docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md). The census reads the
 # source roots of THIS checkout (lib/ src/ cbt/ programs/ tests/ benches/ fuzz/ bootstrap/), and
 # lib/ vendors the 12 folded stdlibs, so the folds are covered as vendored. Since a tree that
 # compiles rarely still calls a removed name, EVERY removed public name now needs its row — the

@@ -160,7 +160,7 @@ else
 fi
 
 # ── PI: BELOW MODULE SCOPE AND AFTER THE FIRST STATEMENT (6.7.16) ─────────────────────────────────────────────────
-# issues/2026-10-19-per-item-private-below-module-scope-is-two-errors.md. In the declaration zone `private var x = 1;`
+# issues/archived/2026-10-19-per-item-private-below-module-scope-is-two-errors.md. In the declaration zone `private var x = 1;`
 # was one error (`_TL_VIS` steps the marker); in a fn body, a block or after the first top-level statement PARSE_STMT
 # met the token the pre-pass had already reported: "unexpected private" too, and `private fn g` in a fn body "fn 'g'
 # is defined inside fn 'f'" as well — two or three errors for one mistake. Now `_dl_priv` (src/frontend/

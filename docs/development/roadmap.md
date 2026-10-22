@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.16** (2026-10-21) — Break 2 repair 5, what 6.7.14 filed: 119 issues closed in seven lanes over four waves (wave 0 on main: the check driver's SIGPIPE, the `parse_fn.cyr` split), CYRIUS-2026-0036 fixed, the fold patra 1.16.5 · cycc **2,542,240 B** · `cycc-native-aarch64` **2,755,520 B** · **663** `.tcyr`, **353** in `crossos/` · **106** `lib/*.cyr` · **565** shell gates under `tests/gates/<bucket>/` · api-surface **5,891** · **111** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0037**
+**Current head: v6.7.16** (2026-10-21) — Break 2 repair 6, what 6.7.15 filed and what 6.7.16's own waves found: 188 issues closed in sixteen lanes over five waves (wave 0 on main: the cross-project gates ripped out, the fold wave, the ProtectedRoots measurement); 23 left unplaced at the close (the user, 2026-10-21); CYRIUS-2026-0037 recorded; the folds sigil 3.13.13, patra 1.16.6, yukti 2.3.18, sandhi 1.13.3 · cycc **2,822,280 B** · `cycc-native-aarch64` **3,084,584 B** · **680** `.tcyr`, **369** in `crossos/` · **106** `lib/*.cyr` · **578** shell gates under `tests/gates/<bucket>/` · api-surface **5,892** · **31** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0038**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -50,8 +50,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 | Release | Content |
 |---|---|
-| 6.7.0 – 6.7.15 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) |
-| 6.7.16 | Break 2, repair 6 (added 2026-10-18): **what 6.7.15 filed** (101 placed), re-balanced at its open; the 6.7.15 changes beyond the decisions' text asked there, and the ProtectedRoots measurement |
+| 6.7.0 – 6.7.16 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) · repair 6: what 6.7.15 filed and what 6.7.16's own waves found (6.7.16) |
 | 6.7.17 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
 | 6.7.18 → | what the 6.7.17 reviews produce — the number of releases is open, set at 6.7.17's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
@@ -85,46 +84,6 @@ the handle line and size-independent struct copies, and P5-B execution coverage 
 ## The releases after 6.7.8 (placed 2026-10-09; shifted one 2026-10-11)
 
 Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
-
-### 6.7.16 — repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18)
-
-The user (2026-10-18), asked where the issues 6.7.15 files go: a new repair release, 6.7.16 — the audit and the
-refactor review move to 6.7.17, keeping Break 2's goal (the queue at 0 before the audit). Re-balanced at its open
-against everything placed here; its decision questions (the language questions among the filed issues) asked there.
-
-**Placed:** the 99 issues 6.7.15 filed and left open (wave 1 51, wave 2 26, wave 3 20, its libfix4 lane 3, placed at
-each integration — less the forward-call pointer-return twin, resolved by 6.7.15's ST-1; [issues/README.md](issues/README.md)
-§ *Open queue* lists them; among them the fold patches it opens with — patra 1.16.6, sigil),
-[the 6.7.15 changes beyond the decisions' text](issues/2026-10-19-6715-behaviour-changes-beyond-the-decisions-text.md)
-(32 items, keep or restore each at its open) and
-[the Windows ProtectedRoots flag-1 measurement](issues/2026-10-15-windows-protectedroots-flag1-user-root-unverified.md)
-(the user's two steps at cass's desktop), and — placed 2026-10-19 by the user, best landed first —
-[the gates that read other projects' checkouts](issues/2026-10-19-gates-read-other-projects-checkouts.md) ripped out
-("LANGUAGES DO NOT GATE ON OTHER PROJECTS": agnos, mirshi, sit, agnoshi, secureyeoman, the `~/Repos` census; a gate
-refusing any read outside the cyrius tree), and the language server's two —
-[an include fragment compiled through its entry](issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md)
-(with the user's `[lsp] skip` manifest key) and [`cyrius-lsp` on macOS](issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md).
-
-**The open (2026-10-19):** triaged on the slot-open compiler (`99177e350`): 103 issues, 101 open and 2 partial, none
-already fixed; S / M / L = 67 / 33 / 3; no heap-layout change. **67 decisions asked once, all as recommended** (the
-user, 2026-10-19). D36–D67 keep every one of the 32 changes 6.7.15 shipped beyond its decisions' text. D27, the
-ProtectedRoots measurement, was asked on its own: "Yes, this release". Each decision is on its issue's **Decision**
-line. **Wave 0 on main:** the cross-project gates came out first (no gate reads another project's checkout;
-`RG_SKIP_ALLOW` is empty; check.sh 565 / 565, the driver 128 / 128, 0 SKIPs). The rest of wave 0 is the fold wave
-(sigil 3.13.13, patra 1.16.6 — the user tags, an integration re-vendors) and ProtectedRoots, which the session runs
-with the user's cass desktop step. **The lanes** run at most two parser lanes per wave:
-- wave 1: frontend and structs, beside platform, tools (both language-server issues) and libfix;
-- wave 2: zone and gensig;
-- wave 3: genbind and receives.
-
-Each issue's **Placement** line names its unit.
-
-**What 6.7.16 files stays in 6.7.16** (the user, 2026-10-20, asked at the wave-1 integration where the lanes' findings
-go: "INTO .16"). Wave 1 merged green on `b73e8d5fe`: the five lanes, `build/cycc` 2,565,440 B, check.sh 570 / 570, the
-driver 128 / 128, seed-derive OK. Its 47 findings are placed here, and their own triage and decisions follow. The
-parser findings run in a wave after wave 3. The platform, tools and libfix findings run beside wave 3. A 48th finding,
-a suggested CLAUDE.md line about qemu-aarch64 and binfmt, is the user's to take or drop; it is not an issue. Each later
-wave's findings follow the same rule.
 
 ### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18)
 

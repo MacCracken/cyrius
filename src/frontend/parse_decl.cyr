@@ -3358,7 +3358,7 @@ fn _spi_pcall(S): i64 {
 # or struct field, `(1, 2) + 1`, `g((1, 2))`, any wrap) is the whole field too, as 6.6.12's refused value: the walk
 # carried the element into the field's first leaf, wanted one value more and met the `}` — "unexpected '}'" after
 # the literal's own error (alone under --syntax-only, where R9 says nothing: an invented syntax error)
-# (issues/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md). CHANGELOG [6.7.16]
+# (issues/archived/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md). CHANGELOG [6.7.16]
 fn _spi_expr(S, ft): i64 {
     var st = GTI(S);
     var tl0 = _tls_n;
@@ -4909,7 +4909,7 @@ fn _gai_blob(S, vi, eb, k, seed): i64 {
     return b;
 }
 # ⛔ 6.7.16 — THE SEED IS THE SLOT'S LAST SCALAR CONSTANT BEFORE THE LIST, HOWEVER IT IS SPELLED
-# (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md). It was the static init,
+# (issues/archived/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md). It was the static init,
 # which only a pass-1 literal writes: a const- or enum-named scalar (`var a = C; var a[1] = {9};`) is a deferred entry
 # the list supersedes (_gvk_one's bk 4: folded, not baked), so the list dropped its bytes (0x0009, where `var a =
 # 0x0506;` gives 0x0509), and `var a = 0x0506; var a = C;` seeded the stale literal. Now the nearest earlier entry
@@ -6042,7 +6042,7 @@ fn _var_value(S): i64 {
 # ⛔ 6.7.16 — AN UNTYPED `var t = ( .. );` WHOSE INITIALIZER WAS REFUSED STANDS DOWN AS A REFUSED ANNOTATION'S DOES.
 # `var t = (1 2);` (no `,`: not a tuple literal, so the parenthesised expression `(1`, refused at `2`) declared t a
 # scalar, and `t.1` added "no struct type in scope for 't'" after "expected ')', got number 2"
-# (issues/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md); `(1 + )` the same. The initializer the
+# (issues/archived/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md); `(1 + )` the same. The initializer the
 # latch went up in (0 -> 1), a `(` group after an untyped `var NAME =`, marks NAME (`_ann_refd_mark`: the
 # registration binds it), so `t.1`, `t.0 = 5` and `t.m()` are counted, not reported. An initializer that is no `(`
 # group (`var t = zz;`) keeps its uses' reports. CHANGELOG [6.7.16]
@@ -6653,7 +6653,7 @@ fn _gvc_cmp(S, slot, v, ti): i64 {
 # all of them; superseded itself (bk 4), by a later list or constant that already superseded every earlier scalar
 # entry, the one writer left is an earlier list — which a literal's pass-1 supersede reaches too (_gv_supersede):
 # `var a[1] = {7}; var a = C; var a[1] = {9};` is C's bytes under the second list, as with `var a = 0x0506;`
-# (6.7.16, issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md).
+# (6.7.16, issues/archived/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md).
 fn _gvk_link(S, gi): i64 {
     var sti = _gv_tok(L64(_gvt(S) + gi * 8));
     var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
@@ -7028,7 +7028,7 @@ fn _spc_leaf(S, si, fi, off, d): i64 {
 # _gvs_undo). As with a scalar constant, a call in an earlier initializer that writes the global keeps its write.
 # cx bakes the literal into its var data too (main_cx.cyr, _gai_bake). CHANGELOG [6.7.15]
 # ⛔ 6.7.16 — A REDECLARED LITERAL OF CONSTANTS IS THE VALUE FROM PROGRAM START (the user's decision D14 (a),
-# 2026-10-19; issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md). 6.7.15's D2 (a) made every scalar
+# 2026-10-19; issues/archived/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md). 6.7.15's D2 (a) made every scalar
 # constant redeclaration the global's value from program start, but a struct or tuple literal is baked at the replay
 # (_spc_try), after _gvk_chain had run, so a later literal of other bytes superseded nothing: `var p = P { 1, 2 }; var
 # b = p.a; var p = P { 3, 4 };` gave b 1 (both literals stored in order) and a call between the two that wrote p was
@@ -7474,7 +7474,7 @@ fn _tp_exempt(S, st): i64 {
 # 1 = from `st` to its `;`: the integer literal 0 under any parentheses that wrap it whole — `0`, `(0)`, `((0))` (the
 # guide's whole-wrap transparency, as the string literal's arm peels it). `var p: *i64 = (0);`, `p = (0);` and a zone
 # `var G: *i64 = (0);` warned "non-pointer" where `= 0;` was quiet; `(0) + 1` and `(1)` are judged as before
-# (issues/2026-10-18-parenthesised-null-literal-into-typed-pointer-warns.md). Warning text only. CHANGELOG [6.7.16]
+# (issues/archived/2026-10-18-parenthesised-null-literal-into-typed-pointer-warns.md). Warning text only. CHANGELOG [6.7.16]
 fn _tp_null_exempt(S, st): i64 {
     var k = 0;
     while (TOKTYP(S, st + k) == 10) { k = k + 1; }
@@ -7552,12 +7552,12 @@ fn _tp_warn_gasg(S, gvi, st): i64 {
 # (a `Str` is a handle: `_rcv_big`), which is what a `*Str` holds, so `var p: *Str = str_from(..);`, a zone
 # `var G: *Str = str_from(..);` and `GP = str_from(..);` / `GP = h.clone();` into a `*Str` global no longer warn
 # "assigning non-pointer to typed pointer" — the `*Str` local's assignment was already quiet (`_asg_ret_sid`, v6.5.28)
-# (issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md). Any other struct's call
+# (issues/archived/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md). Any other struct's call
 # keeps the warning: `: Q` into a `*Str`, and a `: P` call into a `*P` (a struct of 8 B or less is returned as its word,
 # not an address; over 8 B is D14's refusal). Warning text only.
 # ⛔ 6.7.16 — AND EVERY OTHER VALUE THE `*Str` LOCAL TAKES. A `: Str` FIELD is a pointer slot (its value is the header's
 # address), but this took calls only, so `var f: *Str = h.name;` and `GZ = h.name;` warned where `l = h.name;` into the
-# local did not (issues/2026-10-19-str-field-into-str-pointer-declaration-or-global-warns-typed-pointer.md); so did a
+# local did not (issues/archived/2026-10-19-str-field-into-str-pointer-declaration-or-global-warns-typed-pointer.md); so did a
 # `Str`-typed name (`var a: *Str = GS;`), a field or a method of a call's result (`mkh().name`, `mkh().nm()`), and each
 # of those and the call under parentheses that wrap the value whole (`(h.name)`, `(str_from(..))` — in the local too).
 # 1 = the value from `st` to its `;` is one primary the local's arm types as the destination's pointee (`_tpv_sid`,
@@ -7849,7 +7849,7 @@ fn _sci_gsrc_type(S, snoff): i64 {
     return 0 - gt;
 }
 # ⛔ 6.7.16 — A `*U` GLOBAL'S NAME INTO AN `S` DECLARATION IS REFUSED BY NAME, AT EVERY SIZE (the user's D87 (a),
-# 2026-10-20; issues/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md), as a `*U`
+# 2026-10-20; issues/archived/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md), as a `*U`
 # local (6.6.6 / 6.7.0), its dereference `*GU` and the assignment `t = GU` are: `var t: P = GU;` (U another struct) bound
 # a handle reading U's object as a P, in a fn and at top level over 8 B, and held GU's address as the struct's word
 # at top level at 8 B or less. A `*U` global (no struct value: GVPM 0, U a struct, `_gv_ptr_sid`) is typed `0 - U`
@@ -9227,7 +9227,7 @@ fn _vmc_open(S, ti): i64 {
 # `(gw(&w)).s.mv()` (`_paren_field`) — a call — `gw(&w).s.mv()`, `mks(1).mv()`, `callptr(&gw, &w).s.mv()` (`_call_field`,
 # `_icall_chain`) — and a method's result mid-chain (`o.gp(&w).s.mv()`). 6.7.15 read a name head only: on any other,
 # `var v = ..;` bound one word of stack garbage, `var x: i64 = ..;` stored a word, `var v: f64v2 = ..;` was refused
-# "got `(...)`" (issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md). The typers it
+# "got `(...)`" (issues/archived/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md). The typers it
 # asks are lookaheads: their answers stay their callers'. CHANGELOG [6.7.16]
 fn _mch_open(S, ti): i64 {
     if (ti > 0) { if (TOKTYP(S, ti - 1) == 41) { return 0 - 1; } }   # mid-chain: not its head
@@ -9895,7 +9895,7 @@ fn _vcv_more(S): i64 {
 # `return s.m2();`, a closure's expression body (`|k| mk2(41, 7)`), `takei(mk2(41, 7))` into `n: i64`, `take(mk2(41,
 # 7))` into an untyped parameter and a builtin's or an indirect call's argument (`syscall(60, mk2(..))`, `store64(&x,
 # mk2(..))`, `fncall1(f, mk2(..))`) the same word
-# (issues/2026-10-20-whole-vector-call-returned-as-scalar-or-passed-to-integer-parameter.md). Refused by name at the call
+# (issues/archived/2026-10-20-whole-vector-call-returned-as-scalar-or-passed-to-integer-parameter.md). Refused by name at the call
 # (any spelling `_vcall_vt` reads: by name, an explicit instance, a method on any head, `&f` through fncallN / callptr,
 # inside any parentheses wrapping it whole), once, the panic latch set (`_vsc_err`). A vector fn's own `return`, a `*V`
 # or value-form vector parameter, a bool parameter or return and a struct or pointer parameter (6.7.13's D31) keep their
@@ -10064,7 +10064,7 @@ fn _vsc_arg(S, fi, ord, t): i64 {
 # operator (`-mk2(..)`, `!mk2(..)`, `~mk2(..)`, `*mk2(..)`: 139), an operand inside an argument (`take(mk2(41, 7) + 1)`;
 # `rd(mk2(41, 7) + 1)` into a `*f64v2`: 139, cx 221, PE 5), in a condition or a `return` (`return 1 + mk2(41, 7);`)
 # reached the scalar path, which read the result register as an integer — x86_64 / aarch64 rax's leftover, cx / PE the
-# vector's lane 0 — silently (issues/2026-10-20-vector-call-as-later-operand-or-compound-right-side-uses-first-word.md).
+# vector's lane 0 — silently (issues/archived/2026-10-20-vector-call-as-later-operand-or-compound-right-side-uses-first-word.md).
 # The call (`_vop_call`) with an operator on either side (`_vop_opnd`) is refused at the call in D24-D26's words by what
 # receives the value (`_vop_ctx`): a declaration's initialiser "vector return type does not match the declared type", an
 # assignment's ".. the assigned variable", a `return` (a closure's expression body too) D101's words (`_vsc_err`),

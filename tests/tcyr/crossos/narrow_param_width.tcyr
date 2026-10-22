@@ -9,7 +9,7 @@
 # writes it. The ABI is unchanged — the whole register is homed and the callee reads its low bytes — so a fn-pointer
 # call narrows too, as does a stack-passed parameter, an `#inline` replay (the GFIPT pack carries the code) and a
 # generic `x: T` at T = i8 / i16 / i32 (a type argument is never unsigned). `*(&y)` reads and writes y's width (D21).
-# issues/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md
+# issues/archived/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md
 # Run on x86_64 / IR=1 / IR=3 / DCE / aarch64 / cx / PE by tests/gates/frontend/address_of_pointer_param.sh (T2, with
 # the filed repro as R7), on the four hardware hosts by the release gate's cross-OS leg.
 # A slot index keeps the sign mark an earlier fn's local or parameter left on it, so an unsigned parameter's mark is

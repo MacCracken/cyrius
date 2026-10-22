@@ -46,7 +46,7 @@
 #      `**pp` as the struct value (a declaration copy, a by-value argument: 77), B3 the `<Pt>` instances, `**pp` read
 #      through the instance's own pin (n at 16: 99), B4 a concrete `**Box<Pt>` parameter (11, unchanged) — every leg; more rows are
 #      tests/tcyr/crossos/double_pointer_struct_value.tcyr's gb_* (small_struct_handle_line.sh R16)
-#   G  (6.7.16, issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md) a `pp: **Box<T>`
+#   G  (6.7.16, issues/archived/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md) a `pp: **Box<T>`
 #      parameter CARRIES T from its argument, as `p: *Box<T>` does: `_gs_param` read one `*`, so `nb(&q)` with
 #      `q: *Box<Pt>` inferred nothing and ran the i64 base, reading `Box<Pt>.n` at `Box<i64>`'s offset (Pt.y). The
 #      carrier is recorded with GFGM bit 9 (`_gs_pparam`) and a call reads its whole argument through its pointers
@@ -361,7 +361,7 @@ xo() {
         else bad "$1 $leg: $4 exits $RC, prints '$LAST', want '$3'"; fi
     done
 }
-# G1 the filed repro, verbatim (issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md).
+# G1 the filed repro, verbatim (issues/archived/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md).
 cat > "$D/g1.cyr" <<'X'
 include "lib/syscalls.cyr"
 include "lib/fmt.cyr"

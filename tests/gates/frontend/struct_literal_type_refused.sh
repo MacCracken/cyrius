@@ -619,7 +619,7 @@ syscall(60, run());
 # literal"; it is "expected ',' between tuple literal elements", at the same token: in a fn, the declaration zone,
 # after the first statement, an argument, an assignment, --syntax-only. A struct literal keeps its wording, inside a
 # tuple too (TU6, refused earlier as an initializer: that one error)
-# (issues/2026-10-18-commaless-tuple-literal-named-as-struct-literal.md).
+# (issues/archived/2026-10-18-commaless-tuple-literal-named-as-struct-literal.md).
 MU="expected ',' between tuple literal elements"
 exact1 "TU1 filed repro: fn (1, 2 3)" 'fn f(): i64 { var t = (1, 2 3); return t.1; }
 ' "error:<source>:1:29: $MU"
@@ -676,7 +676,7 @@ syscall(60, G.o.x + G.o.y * 10 + G.w + G.h);
 syscall(60, f());
 '
 
-# SH (6.7.16, met beside issues/2026-10-20-literal-of-undeclared-struct-name-cascades-expected-semicolon.md, whose fn repro
+# SH (6.7.16, met beside issues/archived/2026-10-20-literal-of-undeclared-struct-name-cascades-expected-semicolon.md, whose fn repro
 # holds one) — A POSITIONAL LITERAL SHORT OF A FIELD IS "missing struct field in initializer", as the named form short of
 # one is (`_spi_short`). The walk parsed the literal's `}` as the next leaf's value: "unexpected '}'", naming no rule. At
 # its `}`, once, in sync (SH9: the next statement still reports its own). RED on the lane before this bite: SH1-SH9

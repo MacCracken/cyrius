@@ -30,7 +30,7 @@
 #           mistake); each host's answer must be whether ITS fork carries the front end.
 #   axis 4  the CLI turns a real .ts into real JS on x86-64 Linux (the positive control) AND as
 #           an aarch64-Linux CLI under qemu exec'ing an aarch64 native cycc — the same bytes.
-#   axis 5  (6.7.16, issues/2026-10-18-cmdline-read-cuts-ts-path-at-255-bytes.md) every driver
+#   axis 5  (6.7.16, issues/archived/2026-10-18-cmdline-read-cuts-ts-path-at-255-bytes.md) every driver
 #           that reads /proc/self/cmdline — cycc, the aarch64 cross, the Linux-hosted Windows
 #           cross, the cx compiler and the aarch64 native compiler (qemu) — reads it WHOLE. They
 #           read 255 bytes once: a TS path past byte 255 was cut and the cut name opened, a flag
@@ -40,7 +40,7 @@
 #           5d one of exactly 2,097,152 bytes (it fills the 2 MiB mapping) is refused by name; 5e
 #           `--emit-js <path>` with the path across byte 2,097,152 is refused by name, the cut path
 #           never opened. 5c-5e raise the stack limit (Linux's ARG_MAX follows it).
-#   axis 6  (6.7.16, issues/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md)
+#   axis 6  (6.7.16, issues/archived/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md)
 #           EVALUATES `_js_cc_is_host()` under each host's macro set from find_tools' own
 #           default-arch block: with no target selector it answers 1 on every host (arm64 macOS's
 #           default compiler is cycc_aarch64, and the `current_cc() == _cc` predicate refused

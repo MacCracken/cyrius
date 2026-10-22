@@ -20,7 +20,7 @@
 # B4/B5 "no struct type in scope".
 # 6.7.16: a bounded receiver CAPTURED by a closure (K1-K9): `|| v.show()` at a scalar T was "undefined variable 'v'" — the
 # field and method arms' capture rung took a struct capture only — and `self` captured in a trait default instantiated
-# for i64 the same (issues/2026-10-18-untyped-closure-capture-field-use-says-undefined-variable.md; the rung now hands
+# for i64 the same (issues/archived/2026-10-18-untyped-closure-capture-field-use-says-undefined-variable.md; the rung now hands
 # every capture to the arm an untyped local takes, which calls the bound's impl on the value).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

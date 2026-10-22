@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — recorded at the 6.7.16 close as CYRIUS-2026-0037 (P3, tracked); not fixed.
 **Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
 **Discovered:** 2026-10-20, by the 6.7.16 p16 lane (unit PP3, fixing
-issues/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md), reported in one line in
+issues/archived/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md), reported in one line in
 its handoff ("met, not swept; not fixed") and neither fixed nor filed; met again by the release-docs pass at the close.
 **Severity:** Medium — a remote, unauthenticated CPU-amplification denial of service against a program serving TLS 1.3
 with the native stack (`lib/tls_native_hs13.cyr`); bounded per hello by the 16 KB record.

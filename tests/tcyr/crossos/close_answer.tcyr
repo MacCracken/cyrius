@@ -11,7 +11,7 @@
 # (`_pe_w32_errno_site`, the table the read / write / open / seek reroutes use), and a handle that
 # is not open (ERROR_INVALID_HANDLE) is -EBADF, -9, as on Linux and macOS. The first group is the
 # filed repro, its file named per process (test_scratch). CHANGELOG [6.7.15]
-# The last group (issues/2026-10-19-pe-close-of-negative-fd-closes-a-pseudo-handle.md): a negative fd
+# The last group (issues/archived/2026-10-19-pe-close-of-negative-fd-closes-a-pseudo-handle.md): a negative fd
 # answers -9 on Windows too, without reaching CloseHandle (6.7.16's D78). CHANGELOG [6.7.16]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

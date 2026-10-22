@@ -682,7 +682,7 @@ for spec in 'cp@var a = callptr(&f); var y = a + 1.5; return f64_to(y);@4@0' \
 done
 
 # --- axis 20 (6.7.16, the user's D104, 2026-10-20): `+| +? -| -? *| *?` give an INTEGER, as `&` does ---
-# issues/2026-10-20-saturating-checked-ops-keep-f64-right-operand-type.md: with an f64 RIGHT operand the result kept
+# issues/archived/2026-10-20-saturating-checked-ops-keep-f64-right-operand-type.md: with an f64 RIGHT operand the result kept
 # the f64 type, so `(m +| x) * 3` took the f64 arm ("f64 arithmetic with a non-f64 right operand", a float multiply)
 # and `(m +| x) < 3` warned "comparison mixes f64 and integer operands". `x` holds f64 bits whose low byte is 3.
 # <id>@<statements>@<exit>@<kind-0>@<kind-1>@<kind-2> warnings, each one program built and run on x86_64.

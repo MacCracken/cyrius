@@ -68,7 +68,7 @@ NFOLDS=$(echo $FOLDS | wc -w)
 # (`stdlib = [...]` and `[deps.*]`) at the folded version. A fold missing from this table is a
 # FAIL (say what it depends on). 6.7.16: the table is no longer compared with the fold repos'
 # manifests (that axis read $HOME/Repos/<fold>, another checkout — a language does not gate on
-# other projects: docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md);
+# other projects: docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md);
 # in-tree, the borrow and include-walk checks below fail a row that UNDER-declares.
 fold_deps() {
     case "$1" in

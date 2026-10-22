@@ -115,7 +115,7 @@ fn PATCHXP(S): i64 {
 }
 
 # ⛔ 6.7.16 — A REFUSAL LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`
-# (issues/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md). An `if` / `elif` /
+# (issues/archived/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md). An `if` / `elif` /
 # `while` / `for` / `for .. in` / `switch` / `match` header that refused (`pa[0]` through a `*u128`, an undefined
 # `qq[0]`, `y == 0 +`) left the latch set for the block: its first statement ended latched, PARSE_STMT's resync
 # skipped the SECOND one, and that statement's own error was never reported. When the latch was clear as the head

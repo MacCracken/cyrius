@@ -193,7 +193,7 @@ runs en_ctor    "$EA"'enum E { A; Pair(a, b); }\nfn main(): i64 { var e = Pair(4
 # wrote a binary that exited 132 (SIGILL at the unresolved call) (issues/2026-10-18-intrinsic-as-bare-statement-is-
 # undefined-function.md). Compiled from the checkout (lib/syscalls.cyr resolves). The value forms still run (16), the
 # next statement's own error is still reported, and `fncallN(..);` stays a call (fc_stmt above).
-# ⛔ EVERY LEG (6.7.16, issues/2026-10-20-intrinsic-statement-refusal-gated-on-x86-64-only.md): each target is its own
+# ⛔ EVERY LEG (6.7.16, issues/archived/2026-10-20-intrinsic-statement-refusal-gated-on-x86-64-only.md): each target is its own
 # compiler build, so every row runs on the x86_64 compiler, its PE (CYRIUS_TARGET_WIN=1) and Mach-O (CYRIUS_MACHO=1)
 # legs, and the aarch64, cx and PE-cross (src/main_win.cyr) compilers built here from the tree; st_val's value forms
 # RUN on x86_64, aarch64 (qemu-aarch64 — emulation, not hardware), cx (the tree's cxvm) and both PE legs (wine, a
@@ -336,7 +336,7 @@ echo "  axis 5: $A5 row-legs on $LEGS; $skips skipped"
 
 echo ""
 # AXIS 6 (6.7.16, f16 FF6) — A TYPE-ARGUMENT LIST ON A CALLEE THAT TAKES NONE IS ONE ERROR AT ITS NAME, in statement and
-# value position (issues/2026-10-19-type-arguments-on-non-generic-fn-call-cascade.md). The filed fn shapes (ng1, ng2)
+# value position (issues/archived/2026-10-19-type-arguments-on-non-generic-fn-call-cascade.md). The filed fn shapes (ng1, ng2)
 # and the method's (ng5) are genbind's `_eta_gen` / `_meth_ngt` since 9ac212def; the intrinsics and the builtins were
 # not: `mulh64<i64>(2, 3);` said "undefined function 'mulh64'", `var x = mulh64<i64>(2, 3);` "expected '(', got '<'" +
 # "undefined variable 'i64'", `load64<i64>(&a)` / `syscall<i64>(60, a)` / `callptr<i64>(&cb)` / `f64_sqrt<f64>(2.0)` the

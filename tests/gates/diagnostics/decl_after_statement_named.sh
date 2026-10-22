@@ -53,7 +53,7 @@
 #       declaration with no body (`struct Q }`: the block's `}` is not stepped), --syntax-only: one error each
 #   NC  a `const fn`'s body: the definition check's one refusal (the run-time body stands down at its token)
 #
-# THE OTHER KINDS ONE LEVEL DOWN (6.7.16; issues/2026-10-18-mod-use-pub-inside-fn-body-or-block-named-by-token.md).
+# THE OTHER KINDS ONE LEVEL DOWN (6.7.16; issues/archived/2026-10-18-mod-use-pub-inside-fn-body-or-block-named-by-token.md).
 # `_decl_inner` took the five kinds 6.7.15's issue filed; a `mod`, `use`, `pub` / `public` in a fn body or a block
 # reached PARSE_STMT's fallback: "unexpected mod", "unexpected pub'/'public" (the token table's two-spelling name),
 # and a `pub fn` there added "fn 'g' is defined inside fn 'f'". Now every kind `_dl_kind` names, one error by the
@@ -923,7 +923,7 @@ include "lib/vec.cyr"
 include "lib/bayan.cyr"
 '
 
-# DV — 6.7.16 (issues/2026-10-19-refused-declaration-derive-step-takes-enclosing-body-brace.md): A REFUSED DECLARATION'S
+# DV — 6.7.16 (issues/archived/2026-10-19-refused-declaration-derive-step-takes-enclosing-body-brace.md): A REFUSED DECLARATION'S
 # DERIVE STEP TAKES ONLY WHAT THE DERIVE WROTE. `_dl_derived` stepped every token left on a refused struct's / enum's
 # closing line when it began `fn` / `pub` — where a `#derive` writes its generated fns — so the user's own `fn h()`
 # there was stepped as a derive's: below module scope through the enclosing fn body's or block's `}` ("expected '}',
@@ -1035,7 +1035,7 @@ error:<source>:14:685: undefined variable 'zz2' (missing include or enum?)
 error:<source>:16:1: a \`struct\` declaration must come before the first top-level statement (line 8)
 error:<source>:16:274: undefined variable 'zz3' (missing include or enum?)"
 
-# UI — 6.7.16 (issues/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
+# UI — 6.7.16 (issues/archived/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
 # REFUSED IN A FN BODY OR A BLOCK IS NO SECOND ERROR. `_decl_inner` entered the refused declaration's names (`_dl_names`)
 # when PARSE_PROG parsed its body, in source order, so an earlier fn's `q: *Q` was "type 'Q' is declared after its use",
 # `E.B` "undefined variable 'E'", and pass 1's bound `T: Tr` "unknown trait 'Tr'" — each printed before or beside the
@@ -1164,7 +1164,7 @@ row5 UP11 "dyn Tr and impl Tr for P, Tr in a trait default" "$(printf 'struct P 
 one "UP12 a kernel build (x86_64 ELF): a global's E.B, replayed after the program" "$(printf 'kernel;\ntrait T { fn d(self): i64 { enum E { A, B } return 1; } }\nvar g = E.B;\nfn main(): i64 { return g; }\n')
 " "error:<source>:2:29: an \`enum\` declaration $IR a fn body"
 
-# UZ — 6.7.16 (issues/2026-10-19-zone-const-context-names-late-refused-enum-before-its-refusal.md): A ZONE CONST
+# UZ — 6.7.16 (issues/archived/2026-10-19-zone-const-context-names-late-refused-enum-before-its-refusal.md): A ZONE CONST
 # CONTEXT NAMING A LATE (REFUSED) ENUM IS NO SECOND ERROR. A declaration-zone global's array size and an enum's value are
 # evaluated during pass 1's zone scan, before the first statement — and so the late declarations' names (`_dl_fill`) —
 # is known: "unknown name 'E' in a const context", printed BEFORE the enum's own error. Now `_ce_unk` holds the report

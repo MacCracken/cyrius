@@ -116,7 +116,7 @@ fn cr_ret2(h: *CrH): f64v2 { return h.w.s.mg<i64>(50); }
 #     declaration's address is the call's hidden result pointer. ---
 fn iw2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 
-# --- J (6.7.16, issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md): a method declared
+# --- J (6.7.16, issues/archived/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md): a method declared
 #     `: V` on a PARENTHESISED or CALL head — `(*ps).mv()`, `(*pw).s.mv()`, `gw(&w).s.mv()`, a method's result mid-chain
 #     `o.gp(&w).s.mv()` — is the vector at every receive a name head's is. The untyped declaration bound one word of stack
 #     garbage (x86_64 96, IR=3 112, aarch64 168, cx 106, PE 195 for `(*ps).mv()` where 161 is right), `var x: i64 = ..`

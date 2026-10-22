@@ -116,7 +116,7 @@
 #   MTG10 `_gs_mret` answering `_gs_ret_sid`'s          -> RED 2: TG15 TG16
 #   MTG11 `_gs_opg` answering the base's GFRS           -> RED 6: TG17 TG18 TG21, TGX TG17 x3
 #   MTG12 `_gs_mtp` without `_cam_open` (parameter k read at position k) -> RED 2: TG15 TG16
-# 6.7.16 (D99, the user's decision, 2026-10-20; issues/2026-10-20-dereference-store-of-struct-result-keeps-first-word.md) —
+# 6.7.16 (D99, the user's decision, 2026-10-20; issues/archived/2026-10-20-dereference-store-of-struct-result-keeps-first-word.md) —
 # A STRUCT RESULT OVER 8 B STORED THROUGH A POINTER TO A SCALAR is refused, "cannot assign '*p: i64' from 'mkp', which
 # returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_sres`, src/frontend/parse.cyr), and in a
 # generic a store through a name reading T is a stub line (`_gs_dsr_stmt`): DP0 the filed repro verbatim (its one error,
@@ -402,7 +402,7 @@ var G2: Q = Q0.gmk(nope);
 syscall(60, G2.a);
 ' one
 
-# 6.7.16 (issues/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): the PU*b / PU*c rows name the `*U`
+# 6.7.16 (issues/archived/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): the PU*b / PU*c rows name the `*U`
 # value as written — `gu8()`, `w.pu` (they named `gu8`, `pu`, the chain's last name); PU*a / PU*e keep the name.
 echo "6.7.11 — a *U of another struct returned from a struct fn is refused by name, at every size:"
 MU="takes a value of that struct, or a pointer to one — got"
@@ -532,7 +532,7 @@ refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q
 # level and in every fn body. The controls: an untyped `y.a`, another fn's untyped `x`, a global named like a refused
 # parameter of a fn — each still "no struct type in scope". A top-level `var P: *Foo` global took a garbage struct type
 # through 6.7.15 (`P.a` added "unknown field 'a' on struct '<some name>'"); 6.7.16 stands it down too
-# (issues/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md; rows: type_name_refused.sh axis 7).
+# (issues/archived/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md; rows: type_name_refused.sh axis 7).
 #   the tree before (`_tn_refuse_var` = `_tn_refuse`, no mark)  -> RED 12: U13-U24 (2-4 error lines each); U25-U28 green
 echo "6.7.15 — a use of a variable whose annotation was refused is not a second error:"
 MS="no struct type in scope for"
@@ -583,7 +583,7 @@ fn g(): i64 { var X = 5; return X.a; }
 syscall(60, g());
 ' 2
 
-# SH1-SH12 (6.7.16, issues/2026-10-18-refused-annotation-stand-down-silences-a-shadowing-block-variable.md) — THE STAND-DOWN
+# SH1-SH12 (6.7.16, issues/archived/2026-10-18-refused-annotation-stand-down-silences-a-shadowing-block-variable.md) — THE STAND-DOWN
 # IS THE VARIABLE'S, NOT ITS NAME'S. U13-U28's record was (fn, name), so a same-named variable in a nested or sibling
 # block had its own genuine "no struct type in scope" silenced: SH1 (the filed repro, verbatim) printed only 4:12. The
 # record now holds the refused declaration's slot, bound when it registers (`_ann_refd_bind`, parse_fn_def.cyr: a
@@ -703,7 +703,7 @@ var X: Foo = 5;
 syscall(60, X.a);
 '
 
-# UC (6.7.16, issues/2026-10-18-untyped-closure-capture-field-use-says-undefined-variable.md) — `.field`, a field store and
+# UC (6.7.16, issues/archived/2026-10-18-untyped-closure-capture-field-use-says-undefined-variable.md) — `.field`, a field store and
 # `.m()` ON AN UNTYPED CLOSURE CAPTURE take the `sid == 0` arms an untyped local takes. PARSE_FIELD_LOAD's and
 # PARSE_FIELD_STORE's capture rung (`_CL_CAP_FIELD_IDX`) answered for a struct capture only, so an untyped one fell to
 # the globals and "undefined variable 'x'" — at the right column, naming the wrong fault; after a refused annotation it
@@ -1076,7 +1076,7 @@ var GW1, GW2 = two();'"$E" one
 refuse "AUK5 undefx = mkp()  (an undefined name: its own error)" "undefined variable 'undefx'" "$PQ"'fn main(): i64 { undefx = mkp(); return 1; }'"$E" one
 refuse "AUK4 t = mkp() on a capture  (its own refusal)" "'t' is captured by value; a captured name is not assignable in a closure" "$PQ"'fn main(): i64 { var t = 0; var k = |y| { t = mkp(); return t + y; }; return callptr(k, 0); }'"$E" one
 
-# CP (6.7.16, issues/2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type.md) — A CLOSURE'S PARAMETER IS UNTYPED
+# CP (6.7.16, issues/archived/2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type.md) — A CLOSURE'S PARAMETER IS UNTYPED
 # IN EVERY SLOT. The closure prologue (`_PARSE_FACTOR_IMPL`'s `|params|` arm) wrote only a parameter's name and depth
 # word; the slot's type word (GLTYPE) and slice word are kept per slot INDEX across fns, so a parameter in the slot an
 # earlier fn's typed local or parameter used (here `fn h(w: *Q)`, slot 0) was read as that type: `x.b`, `x.m()` and
@@ -1399,7 +1399,7 @@ accept "TA9 an 8 B G1<Q8> into y: T at i64 keeps its word" "$TH"'fn main(): i64 
 accept "TA10 var y: T = mkg1(q); at T = G1<Q> copies" "$TH"'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return gk4(mkg1(q)); }'"$TE" 44 'syscall(60, 44);'
 
 echo "=== 6.7.16 (D99): a struct result over 8 B stored through a pointer to a scalar is refused, as its siblings ==="
-# issues/2026-10-20-dereference-store-of-struct-result-keeps-first-word.md — `*p = mkp();` (p: *i64) stored Q's first
+# issues/archived/2026-10-20-dereference-store-of-struct-result-keeps-first-word.md — `*p = mkp();` (p: *i64) stored Q's first
 # word (the filed repro exited 77), silently, where `y = mkp();` (D27) and `p = mkp();` (D32) are refused. DP0 the
 # filed repro verbatim; DP1-DP19 every operand the compiler types as a pointer to no struct (a `*u8` / `*f64` / `*bool`
 # local, a parameter, a global, a field, a `: *i64` call, `p + n`, `**pp`, `*pp` of a `**i64` or of a `**Pt`, a capture)
@@ -1499,7 +1499,7 @@ fn main(): i64 { return gds<i32>(5); }'"$TE" one
 accept "TA15c p[0] = 7; (p: *T) at i64 is no stub" "$TH"'fn gdk<T>(x: T): i64 { var p: *T = &x; p[0] = 7; return x + 7; }
 fn main(): i64 { return gdk(5); }'"$TE" 14 'syscall(60, 14);'
 
-# TV (6.7.16, the user's D102, 2026-10-20; issues/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
+# TV (6.7.16, the user's D102, 2026-10-20; issues/archived/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
 # so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
 # though valid at T = Q, and `y = mkp();` on it had 6.7.15's D33 words. y is now a T-typed name (`_gs_uvar` /

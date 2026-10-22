@@ -2543,7 +2543,7 @@ fn _target_cc_has_js(): i64 {
 # 6.7.16: the question is "did a selector change the compiler", so the default is `_cc_default()`,
 # not the `cycc` slot: on arm64 macOS the default IS cycc_aarch64 (the native Mach-O compiler), and
 # `cyrius build --target=js x.ts out.js` with no selector was refused there as if one had been given
-# (issues/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md). CHANGELOG [6.7.16]
+# (issues/archived/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md). CHANGELOG [6.7.16]
 fn _js_cc_is_host(): i64 {
     if (current_cc() == _cc_default()) { return 1; }
     return 0;

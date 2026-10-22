@@ -5,20 +5,20 @@
 # THE DEFECT (measured on 6.7.15, x86_64; the shared front end, every target): the member loop of PARSE_ENUM_DEF stepped
 # a `;` / `,` after a member when one was there and read the next member wherever the cursor stood, so
 # `enum E { A B }` compiled (E.B = 1, as `{ A, B }`), `enum E { A = 1 B = 5 }` too (B = 5), and a `: stack` enum's
-# `{ Ok(x) Err(e) }` (issues/2026-10-18-enum-members-need-no-separator.md). Now a member that follows another with no
+# `{ Ok(x) Err(e) }` (issues/archived/2026-10-18-enum-members-need-no-separator.md). Now a member that follows another with no
 # separator is ONE error at it, "expected ';' or ',' between enum members" — once per enum (the enum's `}` releases
 # the latch, so a second enum reports its own), under --syntax-only too, and a line break is no separator. A trailing
 # separator stays valid, `;` and `,` mix, and the separated forms keep their values. A token that cannot start a
 # member keeps the loop's own "expected identifier" (S8). 6.7.15's D1 (a) for a struct literal is the twin
 # (tests/gates/frontend/struct_literal_type_refused.sh CM).
 #
-# G (6.7.16, met with issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md): a member
+# G (6.7.16, met with issues/archived/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md): a member
 # token that is not a name is refused and registers NOTHING (`_enum_mem_name`). It was registered all the same, its
 # token value read as a name offset — a number's (6, 7) or a keyword's named whatever stood there in the name table —
 # so `enum F { X 6 }` + `enum G { Y 7 }` warned "duplicate symbol 'X' redefined with conflicting value" and an
 # unclosed enum one "duplicate symbol 'enum'" per keyword it ran over. The refused member keeps its position.
 #
-# P (6.7.16, issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md): ANY refusal in an
+# P (6.7.16, issues/archived/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md): ANY refusal in an
 # enum declaration — a member that is not a name ("expected identifier, got number 5" / "got ','"), a payload's
 # parameter, the enum's name, its `: stack`, its `{` — ends at the enum's own `}`: pass 1 (no statement resync) held
 # its panic latch to the end of the scan, so every later declaration's error was swallowed (`struct Q { a: Foo; }`,
@@ -397,7 +397,7 @@ syscall(60, f());
 ' "error:<source>:1:25: stack enum variant takes 0 or 1 fields (the pair holds tag + one payload)
 error:<source>:2:25: expected ';', got number 2"
 
-# U (6.7.16, issues/2026-10-20-malformed-enum-member-use-cascades-no-struct-type-in-scope.md) — a USE of an enum whose
+# U (6.7.16, issues/archived/2026-10-20-malformed-enum-member-use-cascades-no-struct-type-in-scope.md) — a USE of an enum whose
 # body was refused is not a second error. The member loop registered the refused token's VALUE as a member's name
 # offset, so `enum E { A 5 }` declared a constant named whatever the name pool held at offset 5 — "E" — and `E.A` was
 # a field access on it: "no struct type in scope for 'E'" in the zone (U1, U2: since the zone's per-entry latch

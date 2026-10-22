@@ -1855,7 +1855,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
 # ⭐ THE RULE: a gate that depends on another MACHINE (an ssh host) belongs at the END, after
 # everything that depends only on this repo — anything else lets an absent host hide a real
 # in-repo regression. No gate depends on a sibling checkout since 6.7.16: a language does not gate
-# on other projects (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md;
+# on other projects (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md;
 # tests/gates/toolchain/gates_read_only_the_tree.sh refuses such a read).
 
 # ⛔ v6.6.0 — THE AGNOS CROSS-BUILD GATE, MOVED FROM CI-ONLY TO HERE, AND THE REASON MATTERS.

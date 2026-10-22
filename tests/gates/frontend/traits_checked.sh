@@ -69,7 +69,7 @@
 #      was fixed. The refusal sets no panic latch (it consumes nothing), so the walk goes on. TRC1 the filed repro
 #      verbatim: exactly three lines (3:28 `P.a`, 3:58 `P.b`, the missing `c`); TRC2 a parameter-count mismatch and
 #      TRC3 a method the trait does not declare, each after a return refusal — two lines. Filed:
-#      docs/development/issues/2026-10-18-impl-check-stops-at-first-differing-return.md
+#      docs/development/issues/archived/2026-10-18-impl-check-stops-at-first-differing-return.md
 #      Mutant (2026-10-20): the lane's base compiler (b73e8d5fe, the early return) -> RED 3: TRC1 TRC2 TRC3 (one line)
 #   TP (6.7.16) a generic member's own `<U>` reads after a `*fn(..)` in its signature: the signature resolver
 #      (`_tn_sig_tparam`) walked back to the NEAREST `fn` token, the fn-pointer type's, and refused `U` as "unknown type".
@@ -77,7 +77,7 @@
 #      `*fn` last, a `: U` return (refused at 3:51); TP3 a `U` inside the `*fn(U): i64` itself (refused at 3:34) — each
 #      5; TP4 a non-generic member unchanged; TP5 an unknown name after a `*fn(..)` still refused once; TP6 a non-generic
 #      fn's `U` after a `*fn(..)` still refused once. Filed:
-#      docs/development/issues/2026-10-18-generic-trait-member-type-parameter-unknown-after-fn-pointer-type.md
+#      docs/development/issues/archived/2026-10-18-generic-trait-member-type-parameter-unknown-after-fn-pointer-type.md
 #      Mutant (2026-10-20): the lane's previous compiler (7a6df215c, no step-over) -> RED 3: TP1 TP2 TP3 (refused)
 #   TM (6.7.16, the user's D9, 2026-10-19) a member's return is held to a fn's WHOLE return set, as 6.7.15's D9 / D3 held
 #      it for `Vec` / `u128`: `: u8`..`: u64`, `: f32` and an enum are "type 'u8' cannot be a fn return type" with a fn's
@@ -89,7 +89,7 @@
 #      there) and is silent on the names (as a fn's are); TM4 V4's `Sd` member, and `**fn( .. )`, refused once at their
 #      `*`; TM5 an impl adds no "returns .., trait declares .." line beside the member's refusal (two members, and a
 #      default two impls override); TM6 an enum declared below the trait. Filed:
-#      docs/development/issues/2026-10-18-trait-member-return-outside-fn-return-set-accepted.md
+#      docs/development/issues/archived/2026-10-18-trait-member-return-outside-fn-return-set-accepted.md
 #      Mutant (2026-10-20): the lane's previous compiler (d4a59f3e4) -> RED 8: TM1 TM1b TM4 TM4b TM6 (built), TM3 (no
 #      line), TM5 TM5b (the impl's "returns .., trait declares .." lines instead); TM2 and TM3b green
 #   TRR (6.7.16 review) "a side its own reader refuses" counts only names a reader READS: a `<..>` after `Result`,
@@ -112,8 +112,8 @@
 #      `: i64` stood the impl's line down and compiled, reported by no one; now the impl's line.
 #      TRR13 / TRR13b a member's / a method's `Result<i64, Pt, Pt>` (D5's, read off the tokens: `_ngt_hover`) — the
 #      reader's line alone; TRR13c under --syntax-only, where D5 is silent, the impl's line.
-#      Filed: docs/development/issues/2026-10-20-enum-and-handle-type-arguments-unread.md,
-#      docs/development/issues/2026-10-20-dyn-pair-check-adds-a-line-to-a-type-its-reader-refuses.md (the residual)
+#      Filed: docs/development/issues/archived/2026-10-20-enum-and-handle-type-arguments-unread.md,
+#      docs/development/issues/archived/2026-10-20-dyn-pair-check-adds-a-line-to-a-type-its-reader-refuses.md (the residual)
 #      Mutants (2026-10-21, f16 FG3): see handle_type_args.sh's ledger
 #      TRR3-TRR6 (D5's shape): a generic struct given more type arguments than it declares is its reader's refusal too
 #      (`_ta_over`), so the impl adds no "returns .." line beside "'Box' takes 1 type argument, 2 given": TRR3 the
@@ -129,7 +129,7 @@
 #      impl's `: u8` against a member's `: i64` stays silent under lint (6.7.15's verdict: a method's `: u8` arm is
 #      6.7.15's); TRR9f / TRR9g the method's side (`: *Pt<i64>`, `: i64<u8>`); TRR9h two members, one line each, and
 #      TRR9i the full compile of it — the members' refusals alone (unchanged). Filed:
-#      docs/development/issues/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md
+#      docs/development/issues/archived/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md
 #      Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc): the lane before it (3482cd42e) -> RED 7:
 #      TRR9 TRR9b-TRR9d TRR9f-TRR9h (rc 0, no line); `_tr_rt_nr` counting a member's names under lint -> RED 4: TRR9
 #      TRR9b TRR9d TRR9h; `_ty_rd_name`'s `_ngt_tail` arm unguarded -> RED 4: TRR9c TRR9f TRR9g TRR9h; `_tr_rt_nr`
@@ -667,7 +667,7 @@ lines_are trr13b "TRR13b: the method's Result<i64, Pt, Pt> — the reader's line
 # under --syntax-only too, the type stepped (`_fnp_ty_end`) and the body parsed; pass 1 records nothing for it. A
 # member's bare `: *fn;` was "expected '(', got ';'": the same line now. An impl adds no "returns .." line beside a
 # method's own refusal (a multi-value element too); a member's multi-value `*fn( .. )` element keeps the impl's line.
-# Filed: docs/development/issues/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md
+# Filed: docs/development/issues/archived/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md
 # Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc, CYCC= it): the lane before it (d280e29e1)
 #   -> RED 18: TR8c FP1-FP8b FP10-FP11b FP13-FP13c; `_ret_ann_alt`'s arm gone -> RED 14 (all but the multi-value rows
 #   FP7 FP8 FP8b); `_mret_elem`'s arm gone -> RED 3: FP7 FP8 FP8b; the method-side stand-down gone from `_tr_rt_bad` ->
@@ -734,7 +734,7 @@ fpuse fp13c "FP13c: an inherent method's bare *fn return, its call into *i32" "3
 # `**fn` in the list — as a fn's parameter reader reads them; BF5 a member's `cb: *fn(i64): i64` unchanged; BF6 a
 # member's bare `*fn` against a method's `cb: i64` — the impl compiles (parameter types are not compared by the impl
 # check, the guide's word; dyn_checked.sh F8bf3 is the formed-dyn guard).
-# Filed: docs/development/issues/2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md
+# Filed: docs/development/issues/archived/2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md
 # Mutant (2026-10-21): the lane before it (6ee893493) -> RED 5: BF1-BF4 BF6 ("expected '(', got ')'")
 cat > "$T/bf1.cyr" <<'EOF'
 include "lib/syscalls.cyr"

@@ -89,7 +89,7 @@
 #      inline; `_gci_below`'s refusal); GC4 one global declared a value and a handle refused by name
 #      (two shapes), two handle declarations fold; GC5 the sweep repeats: a global bound to a handle
 #      declared below it binds, and an operator on such a handle is pointer arithmetic
-#   GC11-GC14 (6.7.16, issues/2026-10-20-small-struct-global-from-pointer-global-declared-below-faults-at-startup.md),
+#   GC11-GC14 (6.7.16, issues/archived/2026-10-20-small-struct-global-from-pointer-global-declared-below-faults-at-startup.md),
 #      on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine), each refusal the ONE error at its token: a struct global of
 #      8 B or less from a source a declaration below it stores at run time is refused by name, as over 8 B (GC3, GC9,
 #      GC10) — GC11 the filed repro's four forms (`*GP8` 2:14, `GP8`, `*GPP8`, `(*GP8)` 2:13; SIGSEGV at startup
@@ -101,7 +101,7 @@
 #      redeclares (6: the earlier store), G declared twice — its second copy below the entry that stores GP8 (6), a
 #      call's field through a fn declared below (6)
 #   GC15-GC17 (6.7.16, the user's D87 (a), 2026-10-20;
-#      issues/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md), on the same four legs:
+#      issues/archived/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md), on the same four legs:
 #      a `*U` global's NAME into an `S` declaration (U another struct) is refused by name at every size, as the `*U`
 #      local, `*GU` and `t = GU` are ("cannot copy 'GU' into a variable of a different struct/vector type: 't'") —
 #      GC15 the filed repro VERBATIM: one error at each of its six declarations (it printed 0999962938166293816:
@@ -303,11 +303,11 @@
 #      on s); another struct is refused by name (struct_copy_type_checked.sh R29-R32). The file's gb_* rows (floor 59):
 #      a generic's `pp: **GBox<T>` parameter compiles (issues/2026-10-17-generic-double-pointer-to-generic-struct-
 #      parameter-refused.md; its repro is generic_double_pointer_infer.sh B1)
-#      6.7.16 (issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md): `o.s =
+#      6.7.16 (issues/archived/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md): `o.s =
 #      *pp` into a struct-typed FIELD copies too (the file's wf_* rows, floor 76); R16f that filing's repro VERBATIM:
 #      prints 444 (004 through 6.7.15: the pointer word in the field's first word); another struct is refused by name
 #      (struct_copy_type_checked.sh R33 / R34)
-#   R17 (6.7.16, issues/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md, the user's D17
+#   R17 (6.7.16, issues/archived/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md, the user's D17
 #      (a), 2026-10-19) a TOP-LEVEL `var G: S = *GPP;` copies at every size, in the declaration zone and after the first
 #      statement: the filed repro VERBATIM prints 04646.. and exits 9 on the same legs (09999.. through 6.7.15: Z, Z8, T,
 #      T8 handles on the struct); the file's d_* rows carry 16 / 8 / 3 B and every spelling; GC9 a `**H`
@@ -1225,7 +1225,7 @@ for rw in d:1:444 e:2:4444 f:3:444; do
     done
 done
 
-# 6.7.16 — R17: the repro of issues/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md,
+# 6.7.16 — R17: the repro of issues/archived/2026-10-18-top-level-declaration-from-double-pointer-single-deref-binds-handle.md,
 # verbatim. The user's D17 (a), 2026-10-19: a top-level `var G: S = *GPP;` (GPP a `**S`) is a copy at every size, in
 # the declaration zone and after the first statement — Z.y / T.y read 4 and Z8.v / T8.v 6 after `GS.y = 9` (9 / 9
 # through 6.7.15: handles on GS / GS8); the fn's `var t: P = *GPP;` copies (exit 9). And D18 (a): its `*S`-name twin
@@ -1431,7 +1431,7 @@ glrow "GC14 control: a call's field through a fn declared below (no global it re
   'struct P8 { v; }\nstruct W { s: P8; }\nvar GS = P8 { 6 };\nvar GW = W { GS };\nvar A: P8 = gw().s;\nfn gw(): *W { return &GW; }\nsyscall(60, A.v);\n'
 
 echo "GC15-GC17. a *U global's name into a struct S declaration: refused by name at every size (6.7.16's D87 (a); x86_64, aarch64, cx, PE)"
-# The filed repro, verbatim (docs/development/issues/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md):
+# The filed repro, verbatim (docs/development/issues/archived/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md):
 # compiled and printed 0999962938166293816 through 6.7.15 (handles on U's objects; Z8 / T8 GU8's address).
 cat > "$D/d87.cyr" <<'EOF'
 include "lib/syscalls.cyr"

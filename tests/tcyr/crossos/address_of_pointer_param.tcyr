@@ -24,7 +24,7 @@
 #
 # 6.7.16 — `*(&pi) OP= n` steps as `pi OP= n` (the amp_cop_* rows; it stepped one byte), and (the user's D21,
 # 2026-10-19) `*(&x)` of a narrow integer x reads and writes x's width, as x itself (the amp_narrow_* rows; it was the
-# untyped word). issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md
+# untyped word). issues/archived/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md
 #
 # 6.7.16 (D70, the user's decision, 2026-10-20) — `*(&f)` of an f64 / f32 / bool variable is f, with f's type (the
 # amp_float_* rows): `*(&f) + 1.0` is a float add (it was an integer add of f's bits, warned), `*(&f) = 2.5` and
@@ -32,7 +32,7 @@
 # argument, a bool declaration, an if-expression's bool branch). A capture keeps its env word (the control). As a dyn
 # source `*(&b)` is b, so it takes bool's impl (D70's "the bool overload"; `*(&f)` f64's, `*(&h)` of a narrow `h` its
 # type's — the amp_float_dyn rows; each was refused "cannot form dyn .. from this expression").
-# issues/2026-10-19-dereference-of-address-of-float-variable-is-untyped-word.md
+# issues/archived/2026-10-19-dereference-of-address-of-float-variable-is-untyped-word.md
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 include "lib/simd.cyr"
@@ -151,7 +151,7 @@ fn row_ad_step(): i64 {
 }
 
 # --- 6.7.16: `*(&p) OP= n` of a typed pointer steps as `p OP= n` (6.7.15's D21 A reach; it stepped one byte) ----
-# issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md, row 1. Each row returns the
+# issues/archived/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md, row 1. Each row returns the
 # byte distance the pointer moved, so a one-byte step reads as 1 (or 2), never the element's size.
 var AC_GPI: *i32 = 0;
 var AC_TPI: *i32 = 0;
@@ -194,7 +194,7 @@ var AN_PS: i16 = 0 - 2;
 var AN_PT: i16 = 4;
 
 # --- 6.7.16 (D21, the user's decision, 2026-10-19): `*(&x)` of a NARROW integer x is x, at x's width -------------
-# issues/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md, row 3. It was the untyped word:
+# issues/archived/2026-10-18-dereference-of-address-of-compound-assignment-steps-one-byte.md, row 3. It was the untyped word:
 # the read took the neighbouring global's bytes (packed narrow globals) or an `i32` -1's zero high half, and the store
 # wrote 8 bytes over the next global. `*(&x + 0)` is still the byte pointer's word (6.7.11's D15).
 fn an_id(v): i64 { return v; }

@@ -18,7 +18,7 @@
 # 6.7.16 — and (d), the cx crossos leg: each leg calls `_co_cxw_posix <host>` (`_co_cxw_cass` on cass),
 # which runs four tests/tcyr/crossos files on that host's cxvm and judges each against its cx
 # assertion count less the rows it names as not run (axis 3); the helpers exist, and the file list
-# names all four (issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md).
+# names all four (issues/archived/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md).
 # Mutation ledger (measured 6.6.20): the 6.6.19 script → axis 2 red on ach (it stages no
 # `_co_cx.cyx`); delete the cass `nat.cyx` line → axis 2 red on cass (c); add a fifth host to
 # release-gate.sh's loop with no leg here → axis 1 red. (6.7.16) the pi leg's `_co_cxw_posix pi`

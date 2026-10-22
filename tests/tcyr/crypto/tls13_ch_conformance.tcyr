@@ -15,7 +15,7 @@
 #          clear. A named SKIP where socketpair is refused.
 # On the lib before the fix: T1, T2 and W1 fail.
 #
-# issues/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md; the
+# issues/archived/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md; the
 # user's decision 6.7.16 D81 (2026-10-20): "Refuse with decode_error". The parse looked extensions
 # up with _tn_find_ext, whose `pos + 4 <= ext_len` loop never reads 1-3 bytes after the block's last
 # whole extension, so a block ending in a partial entry negotiated (the filed repro's row D). Now the

@@ -53,7 +53,7 @@
 #           6.7.16: a trait member's `cb: *fn(i64): u128` is a fn pointer's own return, read on as a fn's parameter
 #           reads it (u128_trait_fnret, the filed repro verbatim, exit 3): it was refused as a `u128` parameter (3:36).
 #           The parameter's own `u128` after it stays refused, at its own token (u128_trait_fnret_own, 2:45; it was
-#           reported at the fn pointer's 2:36). (issues/2026-10-18-trait-member-fn-pointer-parameter-u128-return-refused.md)
+#           reported at the fn pointer's 2:36). (issues/archived/2026-10-18-trait-member-fn-pointer-parameter-u128-return-refused.md)
 #           Mutant (2026-10-20): the lane's previous compiler (be7156d69, the return read at the parameter's level)
 #           -> RED 2: u128_trait_fnret (refused), u128_trait_fnret_own (at 2:36).
 #
@@ -375,7 +375,7 @@ refused vg_compound     "${VG}    g += 1;\n${VE}" "$VM"
 refused vg_untyped_read "${VG}    var x = g;\n    return x;\n}\nsyscall(60, f());\n" "$VM"
 refused vg_init_dz      'include "lib/simd.cyr"\nvar g: f64v2 = 5;\nsyscall(60, 0);\n' "vector global 'g' takes no initializer but 0"
 refused vg_init_late    'include "lib/simd.cyr"\nvar k = 1;\nk = 2;\nvar g: f64v4 = f64v4_make(1, 2, 3, 4);\nsyscall(60, 0);\n' "vector global 'g' takes no initializer but 0"
-# 6.7.16 (met with issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var g:
+# 6.7.16 (met with issues/archived/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var g:
 # f64v2;` in the declaration zone has no initializer to refuse — it is the one "uninitialized variable not allowed".
 # It added "vector global 'g' takes no initializer but 0" first, and that refusal's latch (pass 1 never resyncs)
 # swallowed the next declaration's own error (vg_noinit_next: "unknown type 'Nope' for variable 'd'" was lost).
@@ -429,7 +429,7 @@ for sx in u128_ret u128_field u128_param u128_trait_ret1; do
 done
 
 echo "axis 7 - a \`*T\` global whose T is no struct names none at \`.field\` (6.7.16):"
-# 6.7.16 (issues/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md) — a `*T` GLOBAL's var type is 0 - its
+# 6.7.16 (issues/archived/2026-10-18-global-pointer-to-unknown-type-reads-first-struct.md) — a `*T` GLOBAL's var type is 0 - its
 # step (6.6.17), and `_gv_recv_sid` handed it to the field arms as a struct id: any negative id was the program's FIRST
 # struct. `var x: *Foo = 0; x.y` (Foo refused) added "unknown field 'y' on struct 'var'" (the first lexed word), beside
 # `struct P { a; }` `x.a` was resolved as P's `a`, a refused late struct's pointer the same; and a SCALAR `*i64` global's

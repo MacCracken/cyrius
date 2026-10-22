@@ -85,7 +85,7 @@ var l14[1] = { 3 };
 var c14 = load8(&l14);
 var l14 = RE.RB;
 # 15 - 21 — 6.7.16: a FLOAT constant redeclaration is the value from program start too (the user's decision D13 (a),
-# 2026-10-19; issues/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md). f64 bits: 1.5 =
+# 2026-10-19; issues/archived/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md). f64 bits: 1.5 =
 # 0x3FF8.., 2.5 = 0x4004.., 0.5 = 0x3FE0..; f32: 1.5 = 0x3FC00000, 2.5 = 0x40200000. 15 - 17 the filed repros (each
 # read 1.5: 248, and 17 ended at 2.5: 4), 18 an f32 pair, 19 an f64 const (`= CF`), 20 f64 arithmetic of constants,
 # 21 a computed float redeclaration — still in declaration order.

@@ -63,11 +63,11 @@
 # ADDRESS-OF another struct, `*(&q)` / `*&u`, refused by name as from `q` itself (issues/2026-10-14-dereference-of-
 # address-of-struct-faults.md; through 6.7.12 R35 / R37 / R38 compiled clean, R36 with a warning). Mutation
 # (2026-10-15): `_hl_dpsid` answering `_hl_psid` (no `&x` arm) -> RED 4: R35-R38 compiled.
-# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): R17-R23 and R35-R38 name the
+# 6.7.16 (issues/archived/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): R17-R23 and R35-R38 name the
 # dereference as written, from its `*` — '*pu', '*PU', '*gu()', '*(&q)', '*&u', '*(&GQ)' (they named 'pu', 'PU', 'gu',
 # 'q', 'u', 'GQ'); every printer's rows: struct_arg_type_refused.sh DS.
 #   (struct_field_value_copy.tcyr: MG1-MG3 SIGSEGV at its first through-pointer row, x86 and cxvm)
-# 6.7.16 (issues/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): R25 / R26 / R29 name the `*Q` source as
+# 6.7.16 (issues/archived/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): R25 / R26 / R29 name the `*Q` source as
 # written — 'gu()', 'w.pu' (they named 'gu', 'pu', the chain's last name); R24 / R27 / R28 keep 'PU' (a name, and the
 # pointer operand of `PU + 0`). The whole surface: struct_copy_type_checked.sh PN1-PN10.
 #

@@ -480,7 +480,7 @@ _nrow WN11 2 4 '3:7 4:7' 'const C = 5;\nvar a = 3;\nvar a = C;\nvar a = 4;\nsysc
 _nrow WN12 1 5 4:7 'fn f(): i64 { return 2; }\nvar a = 3;\nvar a = f();\nvar a = 5;\nsyscall(60, a);\n'
 _nrow WN13 1 1 4:13 'const RT = true;\nconst RF = false;\nvar G: bool = RF;\nvar G: bool = RT;\nsyscall(60, G);\n'
 # WN14-WN17 — 6.7.16 (the user's decision D13 (a), 2026-10-19): a FLOAT constant pair is compared bit for bit, at the
-#      later `=` (issues/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md; each was silent):
+#      later `=` (issues/archived/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md; each was silent):
 #      WN14 the filed f64 pair (3:12), WN15 a same-bits pair silent, WN16 an f32 pair, WN17 `= 0` then a float.
 #      MUTATION (6.7.16, a scratch tree): `_gvk_chain` linking integer folds only (6.7.15's `== 1`) -> RED WN14 WN16 WN17.
 _nrow WN14 1 4 3:12 'var G: f64 = 1.5;\nvar b = load64(&G);\nvar G: f64 = 2.5;\nsyscall(60, (b >> 48) & 255);\n'

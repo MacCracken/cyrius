@@ -173,7 +173,7 @@ fn tm_read(): i64 { return TM1.a + dpm(TM2) + TM3.a + TM4.a; }
 var TG1 = mkg1(33);
 var TG2 = mkg1<i32>(30);
 fn tg_read(): i64 { return TG1.v + TG2.v; }
-# --- 6.7.16: whatever carries the type argument (issues/2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md) ---
+# --- 6.7.16: whatever carries the type argument (issues/archived/2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md) ---
 # The zone read a carrying argument only as a struct, a lone integer literal or a lone global, so an expression, `-3`,
 # a float literal, a call returning a scalar, `&n`, a struct carrier and a bounded generic struct bound nothing (`x.v`
 # was "no struct type in scope for 'x'"); it now binds as the replay's call does. After a statement (TH*) below. TG9's
@@ -203,7 +203,7 @@ var TG10 = mkzb(GP1);
 var TG11 = mkzc(ZBX);
 var TG12 = mkg1(&ZM);
 fn tg_read2(): i64 { return TG3.v + TG4.v + zt4(TG8) + zt4(TG9) + zt4(TG11) + TG10.v.zshow(); }
-# --- 6.7.16: a generic method's generic struct result (issues/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md) ---
+# --- 6.7.16: a generic method's generic struct result (issues/archived/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md) ---
 # `var y = b.mkg(P);` / `b.mkg<i32>(33)` with `fn mkg<T>(self, v: T): G1<T>` bound nothing in the zone (`y.v`: "no
 # struct type in scope for 'y'"); they are the instance the call reaches, as after the first statement (TN*, below). A
 # generic operator fn bound to i64 (`GZB + 30`, `ZB_add<T>`) is its base, as its call's (6.7.16's D85 (a): a struct
@@ -222,25 +222,25 @@ var TM7 = GZB.zmkg<i32>(33);
 var TM8 = GZB + 30;
 var TM9 = GZB.zmk<i32>(33);
 fn tm_read2(): i64 { return TM6.v.a + zt4(TM7) + TM8.v + TM9.a; }
-# 6.7.16 (issues/2026-10-20-zone-annotated-generic-method-instance-result-misread.md): ANNOTATED, the zone refused it
+# 6.7.16 (issues/archived/2026-10-20-zone-annotated-generic-method-instance-result-misread.md): ANNOTATED, the zone refused it
 # "the declaration zone misread whether the initializer of 'TM10' is a struct value"; TN10 / TN11 after a statement.
 var TM10: G1<P1> = GZB.zmkg(GP1);
 var TM11: G1<i32> = GZB.zmkg<i32>(33);
 fn tm_read3(): i64 { return TM10.v.a + zt4(TM11); }
-# 6.7.16 (issues/2026-10-20-zone-untyped-generic-method-t-return-binds-nothing.md): a generic method returning `: T` is the
+# 6.7.16 (issues/archived/2026-10-20-zone-untyped-generic-method-t-return-binds-nothing.md): a generic method returning `: T` is the
 # struct T binds (TM12 bound nothing: "no struct type in scope for 'TM12'"; TM13 annotated was a misread refusal).
 var TM12 = GZB.zidm(GP1);
 var TM13: P1 = GZB.zidm(GP1);
 fn tm_read4(): i64 { return TM12.a + TM13.a; }
 # --- 6.7.16 (the user's decision D16 (a), 2026-10-19): an if-expression of struct branches binds the struct ---
 # `var G = if (c) { B1 } else { B1 };` at top level bound nothing: `G.a` was "no struct type in scope for 'G'", where in a fn
-# the line binds (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md). The zone here (read by
+# the line binds (issues/archived/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md). The zone here (read by
 # a fn body before the replay: `ti_read`); after a statement (TJ*) below.
 var TI1 = if (1 == 1) { GP1 } else { mk1() };
 var TI2 = (if (1 == 2) { GPM } else { GPM.dup() });
 var TI3 = TI2 + TI2;
 fn ti_read(): i64 { return TI1.a + TI2.a; }
-# 6.7.16 (issues/2026-10-20-zone-if-expression-generic-instance-branch-binds-nothing.md): branches that are a generic call's
+# 6.7.16 (issues/archived/2026-10-20-zone-if-expression-generic-instance-branch-binds-nothing.md): branches that are a generic call's
 # or method's instance bind it (TI4 bound nothing: "no struct type in scope for 'TI4'").
 var TI4 = if (1 == 1) { mkg1(GP1) } else { GZB.zmkg(GP1) };
 fn ti_read2(): i64 { return TI4.v.a; }

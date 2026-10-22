@@ -797,7 +797,7 @@ echo "axis 15b — every cyrius.cyml [release] bins entry ships in the macOS and
 # exempted HERE with a reason (REL_EXEMPT_*). Those builders built a HAND list (cyrfmt cyrlint cyrdoc
 # cyrius-init cyrsign cxvm cyaudit cyrius_api_surface), so no macOS or Windows binary install had
 # cyrius-lsp, ark, cyrld, ts_test_runner or cyrsign-efi, and bin/cyriusly was the shell script on
-# macOS (issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md; the user's 6.7.14 D59: the
+# macOS (issues/archived/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md; the user's 6.7.14 D59: the
 # manifest is the source of truth for every tarball). They now build the list through
 # scripts/release-bins.sh. The census before this one read the builders' TEXT (a `for tool in` line,
 # a `/bin/<t>` name), which cannot see a helper that skips an entry or a later line that overwrites
@@ -1143,7 +1143,7 @@ else
         wrun test pass.tcyr fail.tcyr
         check "⭐ wine: the private temp base is %TEMP% (named in the fail-closed refusal)" 1 \
             "$(grep -c 'cannot create a private temp directory under C:.cyr-no-such-base' "$T/out" || true)"
-        # 6.7.16 (issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md, D79):
+        # 6.7.16 (issues/archived/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md, D79):
         # PE's mkdir answers the errno, so a missing %TEMP% is named as THAT, with -ENOENT's 2 — as
         # deps_cache_capture_failure_named.sh's axis 5 holds TMPDIR on POSIX — never as "16
         # candidates were taken" (its answer while every failed mkdir was -1).

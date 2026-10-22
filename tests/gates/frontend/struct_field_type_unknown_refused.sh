@@ -444,7 +444,7 @@ done
 rc=0; ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$T/vp0.cyr" > "$T/vp7_pe.bin" 2> "$T/vp7_pe.err" ) || rc=$?
 repro7 vp7_pe "VP7 PE: the filed repro, CYRIUS_TARGET_WIN=1"
 
-# UL (6.7.16, f16 FF6; met with issues/2026-10-19-struct-and-union-fields-need-no-separator.md): an UNKNOWN field type
+# UL (6.7.16, f16 FF6; met with issues/archived/2026-10-19-struct-and-union-fields-need-no-separator.md): an UNKNOWN field type
 # written with a type-argument list (`a: Zt<i64>`) is its one "unknown type" error — the list is stepped with it. It
 # was left for the field loop: "expected identifier, got '<'" at the same column, and that latch swallowed the next
 # field's own error (UL1's `b: Zq<..>`). The struct and union arms share `_add_named_field`. Exact lines on the x86_64,
@@ -472,7 +472,7 @@ for leg in x86 pe macho aarch64 cx; do
     else ok "UL $leg: an unknown field type's <..> is stepped with its one error, the next field's own kept"; fi
 done
 
-# UC (6.7.16, f16 FF6; met with issues/2026-10-19-struct-and-union-fields-need-no-separator.md): a field type's refusal
+# UC (6.7.16, f16 FF6; met with issues/archived/2026-10-19-struct-and-union-fields-need-no-separator.md): a field type's refusal
 # is reported AT the type's name — "unknown type 'Zt' for struct field 'a'", a union's, "makes a struct contain itself"
 # (plain and generic), a `Vec<Zt>` element, "is declared after its use" (a bare `Vec`, a struct), "vector type ...
 # cannot be a struct field type". The caret stood one token past the name (`a: Zt;` at the `;`, `Vec<Zt>` at the `>`,

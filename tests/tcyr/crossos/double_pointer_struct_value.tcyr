@@ -36,7 +36,7 @@
 # pointer word into the field's first word, the rest stale (the filed repro printed 004, want 444). Rows wf_*: 8 / 16 /
 # 24 / 3 B, a local's field, a global's, through a `*W`, a by-value parameter's, `(*pp)` / `*(pp)`, a for step, `*GPP`,
 # `*gpp()`, `*w.pp`, `**ppp`, a capture, top level; `o.ps = *pp` into a `*P` field stays the pointer store. Filed:
-# docs/development/issues/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md
+# docs/development/issues/archived/2026-10-18-struct-field-destination-from-double-pointer-single-deref-stores-pointer-word.md
 # (its repro verbatim is small_struct_handle_line.sh R16f; another struct's `**U` into an S field is refused by name,
 # struct_copy_type_checked.sh R33 / R34).
 #

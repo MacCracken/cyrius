@@ -152,7 +152,7 @@ KU='struct P { x; }\nfn main() {\n'
 cascade K14 1 "$KU"'    t.x = 1;\n    return 0;\n}\nvar r = main();\n' "3:9: undefined variable 't'"
 cascade K15 2 "$KU"'    t.x += 1;\n    var v = u.x;\n    return v;\n}\nvar r = main();\n' "3:9: undefined variable 't'" "4:16: undefined variable 'u'"
 cascade K16 1 "$KU"'    t.m(1);\n    return 0;\n}\nvar r = main();\n' "3:8: undefined variable 't'"
-# Z1-Z8 (6.7.16, issues/2026-10-18-zone-replay-reports-only-first-latched-error.md) — THE DECLARATION ZONE REPORTS ONE ERROR
+# Z1-Z8 (6.7.16, issues/archived/2026-10-18-zone-replay-reports-only-first-latched-error.md) — THE DECLARATION ZONE REPORTS ONE ERROR
 #     PER DECLARATION, as a fn's statements do. EMIT_GVAR_INITS replayed its entries without releasing the panic latch,
 #     so the first latched error swallowed every later entry's: Z1 (the filed repro, verbatim) printed only 2:13, Z2 one
 #     "unknown struct field", Z3 one "expected ','", Z4 (a destructure's zone check between two others) one, Z8 (a bad
@@ -169,7 +169,7 @@ cascade Z5 1 "$ZG"'var p = g(1 2);\nvar q = 5;\nsyscall(60, q);\n' "2:13: expect
 cascade Z6 2 "$ZG"'syscall(39);\nvar p = g(1 2);\nvar q = g(3 4);\nsyscall(60, 0);\n' "3:13: expected ')', got number 2" "4:13: expected ')', got number 4"
 cascade Z7 2 'fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }\nstruct S { k; }\nimpl S { fn mv(self): f64v2 { return mkv(41, 7); } }\nvar s: S = S { 1 };\nvar w = mkv(41, 7);\nvar v = s.mv();\nsyscall(60, 0);\n' "5:9: 'mkv' returns a vector by value" "6:9: 'mv' returns a vector by value"
 cascade Z8 2 "$ZG"'var a = 1;\nvar p = g(1 2);\nvar b = 2;\nvar q = g(3 4);\nvar c = 3;\nsyscall(60, a + b + c);\n' "3:13: expected ')', got number 2" "5:13: expected ')', got number 4"
-# D1-D5 (6.7.16, met with issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md) — A `)` /
+# D1-D5 (6.7.16, met with issues/archived/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md) — A `)` /
 #     `]` THAT CLOSES NOTHING at the top level did not stop pass 1's walk of the statements after the first one
 #     (`_prescan_skip_stmt`): its depth went negative, a later fn body's `;` ended the "statement" and the walk met that
 #     fn's `}` as "unmatched '}' at module scope" — which stops the compile, so the real error was never printed. D1 the
@@ -194,7 +194,7 @@ cascade D8 2 'impl 5 { }\nfn g(): i64 { var x = 1 2; return x; }\nsyscall(60, g(
 cascade D9 2 'struct S { a; }\nimpl S {\n    fn a(5) { }\n    fn b(self): i64 { var x = 1 2; return x; }\n}\nsyscall(60, 0);\n' "3:10: expected identifier, got number 5" "4:33: expected ';', got number 2"
 cascade D10 2 'fn h(5) { }\nvar a = 1;\na = 2;\nsyscall(60, 1 2);\n' "1:6: expected identifier, got number 5" "4:15: expected ')', got number 2"
 cascade D11 2 'fn h(5): i64 { return 0; }\nfn g(): i64 { var x = 1 2; return x; }\nsyscall(60, g());\n' "1:6: expected identifier, got number 5" "2:25: expected ';', got number 2"
-# Z9-Z13 (6.7.16, issues/2026-10-20-zone-replay-last-entry-latch-swallows-first-statement-error.md) — THE ZONE'S LAST
+# Z9-Z13 (6.7.16, issues/archived/2026-10-20-zone-replay-last-entry-latch-swallows-first-statement-error.md) — THE ZONE'S LAST
 #     ENTRY'S LATCH NO LONGER SWALLOWS THE FIRST STATEMENT'S ERROR. EMIT_GVAR_INITS ends with the latch as it found it
 #     (pass 2's silent re-read of a refused declaration), so an entry's latch is released before PARSE_PROG while the
 #     re-read's keeps PARSE_PROG from reporting that declaration twice. Z9 (the filed repro, verbatim) printed 2:13 and
@@ -224,7 +224,7 @@ cascade_legs Z12 3 'fn h(): i64 { return 1; }\nvar a = 1;\nvar c, b = h();\nsysc
 KENV=CYRIUS_ELF64_KERNEL=1
 cascade Z13 3 'kernel;\n'"$ZG"'var p = g(1 2);\nsyscall(60 0);\nsyscall(60 1);\n' "3:13: expected ')', got number 2" "4:12: expected ')', got number 0" "5:12: expected ')', got number 1"
 KENV=
-# G1-G2 (6.7.16, met beside issues/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md) —
+# G1-G2 (6.7.16, met beside issues/archived/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md) —
 #     AN UNINITIALIZED VECTOR GLOBAL IN THE ZONE IS ONE ERROR. G1 `var V: f64v2;` was two errors at 1:13: pass 1's
 #     "vector global 'V' takes no initializer but 0" (for no initializer at all) and the replay's "uninitialized
 #     variable not allowed"; pass 1 now judges only an initializer that is there. G2 (control) a vector global
@@ -232,7 +232,7 @@ KENV=
 GU="uninitialized variable not allowed; use \`var X = 0;\` or initial value"
 cascade_legs G1 1 'var V: f64v2;\nsyscall(60, 0);\n' "1:13: $GU"
 cascade_legs G2 1 'var V: f64v2 = 5;\nsyscall(60, 0);\n' "1:14: vector global 'V' takes no initializer but 0"
-# L1-L14 (6.7.16, issues/2026-10-20-literal-of-undeclared-struct-name-cascades-expected-semicolon.md) — A STRUCT LITERAL
+# L1-L14 (6.7.16, issues/archived/2026-10-20-literal-of-undeclared-struct-name-cascades-expected-semicolon.md) — A STRUCT LITERAL
 #     WHOSE NAME IS NOTHING (no struct, variable or fn) IS ONE ERROR, AT THE NAME. `var x = Q { 1 };` was "undefined
 #     variable 'Q'" and then "expected ';', got '{'"; in a fn the resync stopped inside the braces ("unexpected ';'",
 #     "unexpected '}'", "return outside a fn body"). Where the literal stands whole in a value place — a declaration's
@@ -267,7 +267,7 @@ for _sl in 'var x = Q { 1 };\nsyscall(60, x.a);\n' 'fn f(): i64 { var x = Q { 1 
     rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
     if [ "$rc" -ne 0 ] || grep -q '^error' "$E"; then echo "FAIL: L13: --syntax-only refused a sibling struct's literal ($_sl):"; cat "$E"; kfail=$((kfail + 1)); fi
 done
-# F1-F14 (6.7.16, met while landing issues/2026-10-20-zone-generic-call-carrying-generic-instance-call-misread.md) — A
+# F1-F14 (6.7.16, met while landing issues/archived/2026-10-20-zone-generic-call-carrying-generic-instance-call-misread.md) — A
 #     `.name` PAST A FIELD THAT IS NO STRUCT IS ONE ERROR, IN ITS OWN WORDS, AT THE NAME: "field 'n' is not a struct: it has
 #     no field 'b'". `w.n.b` (n an i64) read "expected ';', got '.'" (in a condition "expected ')'"), and `w.n.b = 1;` /
 #     `+= 1` added "undefined variable 'b'" to "expected '=', got '.'" (`_fld_tail_bad`, from the read's

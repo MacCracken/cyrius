@@ -404,7 +404,7 @@ refuse4 "R29 return &p; (p: *S24, a local) from : S24" "$MS — \`&p\` $SLOT p's
 fn main(): i64 { var c: S24 = h(); return c.v; }
 syscall(60, main());
 '
-# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): a dereference is named as the
+# 6.7.16 (issues/archived/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): a dereference is named as the
 # source spells it — `*` and its operand's tokens; it was `*` and the operand's LAST name (`*pu` for `*gu(pu)` and
 # `*w.pu`, `*GU` for `*gu(&GU)`). R11 `return *pu;` reads the same either way. Over 8 B (the pointer arm): struct_arg_type_refused.sh DS5 DS6.
 DG='fn gu(p: *U8): *U8 { return p; }
@@ -778,7 +778,7 @@ fn main(): i64 { var c: P3 = r(); return c.x; }
 syscall(60, main());
 '
 
-# 6.7.16 — THE VALUE'S OWN ERROR FIRST (issues/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md): a 9-16 B
+# 6.7.16 — THE VALUE'S OWN ERROR FIRST (issues/archived/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md): a 9-16 B
 # struct fn's `return E;` whose E reports an error of its own printed the class's refusal ("... two registers ... got `zz`")
 # AND E's error, the refusal first (it was printed before E was parsed). It is printed after E's parse now, unless the
 # statement reported an error since (`_pair_ret_late`, the statement's `_err_n`): one error, E's own, as the 8 B class

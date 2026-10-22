@@ -889,7 +889,7 @@ fn _lsp_reap(pid): i64 {
 # closed, the child's next open lands AT that fd: dup2(N, N) is a no-op and the close then closed the
 # redirect just made, so the `cyrius check` / cycc child ran with that fd closed (its stdout, with
 # the server's fd 1 closed). lib/process.cyr's `_proc_redirect` since 6.7.15, here.
-# issues/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md, CHANGELOG [6.7.16]
+# issues/archived/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md, CHANGELOG [6.7.16]
 fn _lsp_redirect(fd, target): i64 {
     sys_dup2(fd, target);
     if (fd != target) { sys_close(fd); }
@@ -1028,7 +1028,7 @@ fn _lsp_env_selects(e): i64 {
 # ================================================================
 # COMPILE UNITS (6.7.16)
 # ================================================================
-# ⛔ issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md — in a project the open file
+# ⛔ issues/archived/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md — in a project the open file
 # was always the unit (`cyrius check --with-deps --no-redirect <the open file>`). A file that is an
 # `include` of another was compiled ALONE, so every name an earlier include declares read
 # "undefined": 55 false errors on src/frontend/parse_ctrl.cyr, a duplicate-fn warning for each fn of

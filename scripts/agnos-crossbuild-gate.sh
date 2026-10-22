@@ -10,7 +10,7 @@
 # Exit 0 = pass. Everything it builds is in this checkout. 6.7.16: part 2 — the
 # cross-build of agnoshi's agnsh from a sibling checkout ($CYRIUS_AGNOSHI_DIR, else
 # ../agnoshi) — is gone: a language does not gate on other projects
-# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). A
+# (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md). A
 # consumer's cross-build is that consumer's CI's check.
 # 6.7.16: every disassembly is written to a file and grepped there, never `objdump | grep -q`
 # or `echo "$dis" | grep -q` — under `bash -eo pipefail` grep -q's early exit SIGPIPEs the

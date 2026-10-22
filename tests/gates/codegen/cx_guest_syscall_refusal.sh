@@ -36,7 +36,7 @@
 #       offsets), symlink, readlink, rename, unlink (raw and the stdlib's sys_unlink), rmdir
 #   R8  (6.7.15) on cx a path or buffer outside the guest answers -EFAULT without reaching the host:
 #       mkdir at the null page, stat's / readlink's buffer past the segment, rename's second path
-#   R9  (6.7.16; issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md) the directory, FIFO
+#   R9  (6.7.16; issues/archived/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md) the directory, FIFO
 #       and child calls are served on both legs (a bitmask; 0 = all): sleep_ms(60) sleeps (lib/chrono.cyr's
 #       cx arm, poll(NULL, 0, ms) — a no-op on cx until 6.7.16), sys_mknodat makes a FIFO in a fresh
 #       directory, getdents64 lists it with DT_FIFO beside "." and "..", sys_waitpid reaps a child that

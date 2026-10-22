@@ -418,7 +418,7 @@ tpx SL5 0 0 98 "a *i64 from (\"abc\") + 1 (D59 and the shape together)" 'fn main
 tpx SLK1 1 0 - "control: var p: *u8 = \"abc\" + x * 2; still warns (not one operand)" 'fn main(): i64 {\n    var x = 1;\n    var p: *u8 = "abc" + x * 2;\n    return 0;\n}\nsyscall(60, main());\n'
 tpx SLK2 1 0 - "control: a char literal plus 0 is no string: var p: *u8 = 'a' + 0; still warns" 'fn main(): i64 {\n    var p: *u8 = '"'"'a'"'"' + 0;\n    return 0;\n}\nsyscall(60, main());\n'
 
-# --- axis 16 (6.7.16; issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md) ---
+# --- axis 16 (6.7.16; issues/archived/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md) ---
 # A `: Str` call into a `*Str` declaration or global is quiet now (tests/gates/diagnostics/false_warnings_valid_shapes.sh
 # SP0 SP1): `_tp_call_pointee` takes only a value whose declared type IS the pointee and that pointee a `Str` (a handle,
 # the header's address) — since the field bite, every value the `*T` local's arm types (`_tpv_sid`: a call, a method,
@@ -494,7 +494,7 @@ tp5() {   # <name> <what> <source (printf %b)> <want warnings: `L:C` per line, o
     done
 }
 
-# --- axis 16, the `*T` LOCAL (6.7.16; issues/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md) ---
+# --- axis 16, the `*T` LOCAL (6.7.16; issues/archived/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md) ---
 # The local arm kept ANY struct a call is declared to return (v6.5.28), whatever the local points at and whatever followed
 # the call, so `p = str_from(..);` into a `*P` local said nothing where the declaration and a `*P` global warn — p held a
 # `Str` header's address and `p.b` read its length. Into a `*T` local or `p: *T` parameter (the typed-pointer bit) the
@@ -510,7 +510,7 @@ SCL='include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct P { a; b; }\nstru
 tp5 SC6 "into a *T: a p: *P parameter, a *i64 local, an 8-byte struct's word, a call's i64 field, a call that is not the whole value (all quiet before)" "${SCL}fn fp(p: *P): i64 {\n    p = str_from(\"abc\");\n    return 0;\n}\nfn main(): i64 {\n    alloc_init();\n    var x = 1;\n    var q: *i64 = &x;\n    q = str_from(\"abc\");\n    var h: *Str = 0;\n    h = mkq();\n    h = mkh().n;\n    h = str_from(\"x\") + 0;\n    var s: P;\n    return fp(&s);\n}\nsyscall(60, main());\n" "14:24 21:24 23:14 24:16 25:26" 0
 tp5 SC7 "controls, quiet: a : Str call / field / method into a *Str, into a Str handle, a : P1 / : P call copied through a *P1 / *P, a Str call into a P3 handle (a rebind)" "${SCL}fn main(): i64 {\n    alloc_init();\n    var h: *Str = 0;\n    h = str_from(\"abc\");\n    var t: Str = str_from(\"x\");\n    t = str_from(\"wxyz\");\n    var l: *Str = 0;\n    l = mkh().name;\n    var m: *Str = 0;\n    m = mkh().nm();\n    var s1: P1;\n    var o: *P1 = &s1;\n    o = mk1();\n    var s: P;\n    var p: *P = &s;\n    p = mkp();\n    var a: P3 = alloc(24);\n    a = str_from(\"ab\");\n    var u = a;\n    return str_len(h) + str_len(t) * 2 + str_len(l) * 3 + str_len(m) * 4 + s1.a * 5 + s.b * 6 + str_len(u) * 7;\n}\nsyscall(60, main());\n" "" 104
 
-# --- axis 17, the classic-for STEP (6.7.16; met with issues/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md) ---
+# --- axis 17, the classic-for STEP (6.7.16; met with issues/archived/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md) ---
 # The warning is given at every `*T` site (6.7.13's D18 (a)), but a plain classic-for step `p = 7` / `G = 7` / `q = x`
 # into a `*T` local, parameter or global (or a struct handle) said nothing: the step shared the statement's store and
 # its aggregate dispatch (6.6.12, 6.6.20), not its warning. `_for_step_tpw` (parse_ctrl.cyr) is the statement's test,

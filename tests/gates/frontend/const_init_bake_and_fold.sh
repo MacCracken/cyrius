@@ -36,7 +36,7 @@
 #          computed initializer still runs (its count) with its result discarded; N13 a bool global keeps its
 #          startup store (its replay judges the value, after setg)
 #   N14-N22 6.7.16 (the user's decision D13 (a), 2026-10-19): a FLOAT constant redeclaration is the value from program
-#          start too (issues/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md), by value on every
+#          start too (issues/archived/2026-10-18-float-literal-global-redeclaration-keeps-declaration-order.md), by value on every
 #          leg: the three filed repros (N14 / N15 248 -> 4, N16 4 -> 224: setg's 0.5 kept), an f32 pair (N17 63 -> 64),
 #          `= CF` (N18) and `= 1.5 + 1.0` (N19) after a literal, a computed float redeclaration still in order (N20: 252),
 #          a computed initializer then a float constant (N21: f() runs into a sink, 5 -> 249), `= 0` then a float (N22:
@@ -59,7 +59,7 @@
 #          6.7.14 12), and between two literals of other bytes (Z12: 94 — 6.7.16; 6.7.15 34: the later literal was
 #          stored at its place); a later copy of another global (Z13)
 #   Z14-Z26 6.7.16 (the user's decision D14 (a), 2026-10-19): a redeclared literal of constants is the value from program
-#          start (issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md), by value on every leg: the
+#          start (issues/archived/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md), by value on every leg: the
 #          filing's d1-d4 (Z14 12 -> 32, Z15 1 -> 3, Z16 / Z17 9), every spelling of the pair (Z18 named, Z19 generic,
 #          Z20 wrapped, Z21 an annotated tuple: 14 -> 34), an earlier computed literal runs once into a sink (Z22: 71 ->
 #          31), a later computed one keeps its order (Z23: 17), a constant literal before a computed one leaves no
@@ -76,7 +76,7 @@
 #          kmode_enum_initializer_baked.sh RC / KC); 6.7.16 (D15 (a)) rows 12-18: an integer or enum operand on the
 #          right (`1.5 + 1`, `1.5 * E.A`) baked too, its bits the target's own run-time arithmetic (18)
 #   L1-L13 6.7.16: a list over a NAMED scalar constant keeps the bytes it does not list, as over a literal (L10)
-#          (issues/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md), by value on every
+#          (issues/archived/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md), by value on every
 #          leg: a const name (L1, the filed repro: 9 -> 14), an enum name (L2), a literal then a const (L3: the later
 #          constant, 14 -> 16), a const then a literal (L4), a computed scalar (L5: 9) and the guide's `var a = f();
 #          var a[1] = {0, 4};` (L6: 0x400), a const between two lists (L7: 9 -> 14), a computed initializer between
@@ -86,7 +86,7 @@
 #          float seeds (L13: 14, the control)
 #   L14-L24 6.7.16 (the user's decision D86 (a), 2026-10-20): a list over an untyped FLOAT constant keeps the float's
 #          bytes it does not list, as over the integer spelling of those bits
-#          (issues/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md), by value on every
+#          (issues/archived/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md), by value on every
 #          leg: the filed x12 (L14: 0 -> 63) and x14 (L15: a literal before the float, 5 -> 0), a const before the
 #          float (L16: 0 -> 63; L11 / L12, its low bytes, do not move), the listed byte kept under the float's (L17: 9
 #          -> 72), a constant f64 expression (L18: 0 -> 64), a negated literal (L19: 0 -> 191), an f64 const name (L20:

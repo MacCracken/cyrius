@@ -234,7 +234,7 @@ fn f(x) { var g = |y| { if (y > 5) { return Ok(5); } return (gd<i32>(y)); }; ret
 #   `_warn_mixed_method` without `_pbs_iself`                -> RED 2: im_iself (0 — `self.div` unresolved, x86, aarch64)
 #   `_warn_mixed_impls` without `_warn_mixed_defaults`       -> RED 7: im_default2 im_override im_override_ok (x86, aarch64),
 #                                                               the im_default2 position check
-# 6.7.16 (issues/2026-10-18-mixed-return-warning-trait-default-names-first-impl.md): an inherited default's warning names
+# 6.7.16 (issues/archived/2026-10-18-mixed-return-warning-trait-default-names-first-impl.md): an inherited default's warning names
 # the trait's member, `Dv.qd` (`_warn_mixed_default` hands `_warn_mixed_method` the trait's name), not the first impl
 # that inherits it — `Pt.qd` sent the reader to an empty `impl Dv for Pt { }`; an override keeps its impl's name
 # (im_override_pt: `Pt.qd` at the override, `Dv.qd` for Qt's inherited copy). Mutant (2026-10-20): the lane's previous

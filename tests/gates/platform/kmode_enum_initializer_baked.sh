@@ -81,7 +81,7 @@
 #   C2. _gvk_fx evaluating loudly (_ce_top_expr)   -> RED, 1 check: RC does not build (CN's NaN refusal is an error)
 #   C3. _gvk_fx's f32 narrowing dropped            -> RED, 1 check: RC check 4 (an f32 read as binary64 bits)
 # MUTATION LEDGER (6.7.16 — an integer or enum operand in a float scalar's constant f64 expression baked, D15 (a); RC
-# checks 14 / 15, RM; issues/2026-10-18-kernel-float-global-mixed-int-operand-left-late.md):
+# checks 14 / 15, RM; issues/archived/2026-10-18-kernel-float-global-mixed-int-operand-left-late.md):
 #   0. real tree                                   -> GREEN (22 rows)
 #   F1. _gvk_fscan not taking an integer literal   -> RED, 5 checks: RC check 14 (CM read 0), 3 late warnings, CM named,
 #       RM check 1 and its late warning (const_init_bake_and_fold.sh: S33, T9-T12 row 12)
@@ -329,7 +329,7 @@ if CYRIUS_ELF64_KERNEL=1 "$CC" < "$T/rc.cyr" > "$T/rc.bin" 2> "$T/rc.err" && [ -
 else
     bad "RC: the ELF64 kernel build failed: $(grep -m1 '^error' "$T/rc.err")"
 fi
-# RM (6.7.16) — the filed repro of issues/2026-10-18-kernel-float-global-mixed-int-operand-left-late.md, verbatim: in a
+# RM (6.7.16) — the filed repro of issues/archived/2026-10-18-kernel-float-global-mixed-int-operand-left-late.md, verbatim: in a
 # CYRIUS_ELF64_KERNEL=1 build M (`1.5 + 1`) and N (`1.5 * E.A`) are in the image from program start (exit 100; through
 # 6.7.15 exit 1, M read 0), the two mix warnings are given once each at 3:21 / 4:23 and no late-initializer warning;
 # and the host build of the same file without `kernel;` exits 100 with its two warnings (2:21 / 3:23).

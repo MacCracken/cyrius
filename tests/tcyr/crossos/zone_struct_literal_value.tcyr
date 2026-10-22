@@ -11,7 +11,7 @@
 # that writes the global keeps its write (12, 13: through 6.7.14 the startup store reset it to the literal's 1).
 #
 # ⛔ 6.7.16 — A REDECLARED LITERAL OF CONSTANTS IS THE VALUE FROM PROGRAM START (the user's decision D14 (a),
-# 2026-10-19; issues/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md), as a scalar constant redeclaration
+# 2026-10-19; issues/archived/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md), as a scalar constant redeclaration
 # is (6.7.15's D2 (a)): an earlier literal of the name leaves no startup store. A read between two literals of other
 # bytes sees the later one (10: 13 -> 33; 15 - 20 every spelling: tuple, named, generic, wrapped, annotated tuple,
 # enum leaves), a call between them keeps its write (14: 34 -> 94), an earlier computed initializer still runs, its

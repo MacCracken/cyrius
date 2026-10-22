@@ -11,7 +11,7 @@
 # is quiet for a generic refused here), and a bound on it is refused with it (the old "a bound on a third type
 # parameter" line is gone). It needs no name resolved, so --syntax-only (cyrius lint) reports it too.
 # CYRIUS_MONOMORPH=0 records no list at all and is unchanged (type_name_refused.sh tparams_mono0).
-# Filed: docs/development/issues/2026-10-18-third-type-parameter-accepted-and-unrecorded.md
+# Filed: docs/development/issues/archived/2026-10-18-third-type-parameter-accepted-and-unrecorded.md
 #
 #   R   the filed programs, verbatim: g3.cyr refused at 2:13 alone (exit 108 before); `var t: Three<i8, i16, i32>`,
 #       `sizeof(Three<i8, i16, i32>)` and `g3<i32, i16, i8>(1, 2, 3)` each the declaration's line alone (their
@@ -148,7 +148,7 @@ lines g3 "2:13: a third type parameter 'C': $M" "X1: --syntax-only reports it" "
 # The trait reader stepped a member's `<..>` uncounted, so a bodiless member's third compiled, and so did an impl
 # declaring two for it; a default body was refused (PARSE_FN_DEF reads it). Now D8's line at the member's name, in
 # pass 1 in source order (`_tl_trait1` -> `_tr_tp3_walk`), once per token.
-# Filed: docs/development/issues/2026-10-20-trait-member-third-type-parameter-accepted.md
+# Filed: docs/development/issues/archived/2026-10-20-trait-member-third-type-parameter-accepted.md
 cat > "$D/trm.cyr" <<'EOF'
 trait T { fn g<A, B, C>(self, a: A, b: B, c: C): i64; }
 struct P { x; }

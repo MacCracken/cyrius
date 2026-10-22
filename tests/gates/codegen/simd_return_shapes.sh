@@ -299,7 +299,7 @@
 #   M-CR1 `_vmc_open` without its chain arm            -> RED 60: CR1-CR7 and CRK1-CRK5 on all five legs; CRK6 green (the
 #       return rule names `w` either way)
 #   M-CR2 `_svc_rs` naming token ti + 2                 -> RED 5: CRK5 on all five legs ("cannot pass 's'")
-# 6.7.16 (issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md) — and on EVERY OTHER
+# 6.7.16 (issues/archived/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md) — and on EVERY OTHER
 # RECEIVER the method arm takes: a parenthesised head (`(*ps).mv()`, `((*ps)).mv()`, `(*pw).s.mv()`, `(s).mv()`,
 # `(ps).mv()`, `(w.s).mv()`, `(gw(&w)).s.mv()`, `(mks(3)).mv()`, `(*q.ps).mv()`, `(ps + 0).mv()`), a call's result
 # (`gw(&w).s.mv()`, `gs(&s).mv()`, `mks(3).mv()`, `gwg<W>(&w).s.mv()`, `callptr(&gw, &w).s.mv()`, `fncall1(&gs, ps).mv()`)
@@ -376,7 +376,7 @@
 #   M-GA3 `_vasg_vt` without the by-name start      -> RED 5: GA11 on all five legs
 #   M-GA4 `_vasg_gnv` judging a vector global too   -> RED 5: GV1 on all five legs (the mismatch's words, not the vector
 #       global's)
-# 6.7.16 (issues/2026-10-18-top-level-assignment-of-vector-call-to-scalar-global-stores-a-word.md) — and ASSIGNED AT TOP
+# 6.7.16 (issues/archived/2026-10-18-top-level-assignment-of-vector-call-to-scalar-global-stores-a-word.md) — and ASSIGNED AT TOP
 # LEVEL to a global that is no vector: `G = mkv(41, 7);` / `G = s.mv();` after the first statement (or as it, or in a
 # top-level for step) compiled with no diagnostic and stored one word (x86_64 / IR=3 / aarch64 0, cx / PE 41), where
 # the same assignment in a fn is refused (rows GA) — `_try_vector_call_assign` returned before any check outside a fn.
@@ -1390,7 +1390,7 @@ impl S {
     fn md(self): f64v4 { return mkd(1, 2, 3, self.k); }
 }
 '
-# 6.7.16 (issues/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md): CPF the filing's header;
+# 6.7.16 (issues/archived/2026-10-18-vector-method-on-dereference-or-call-head-receiver-binds-a-word.md): CPF the filing's header;
 # CRP the heads CR12-CR17 and CRK8-CRK16 add to CRH.
 CPF='fn mkv(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
 struct S { k; }
@@ -1944,7 +1944,7 @@ refuse_gaf_all() {  # $1 leg label  $2 compiler
     elif [ -s "$W/gaf.out" ]; then bad "$1 GAF: reported but still emitted an artifact"
     else good "$1 GAF refused: both statements, the mismatch's words"; fi
 }
-# ---- 6.7.16 (issues/2026-10-18-top-level-assignment-of-vector-call-to-scalar-global-stores-a-word.md): a call declared to
+# ---- 6.7.16 (issues/archived/2026-10-18-top-level-assignment-of-vector-call-to-scalar-global-stores-a-word.md): a call declared to
 # return a vector ASSIGNED at top level to a global that is no vector, refused as the same assignment in a fn is (rows
 # GT refused once; GTV the vector-global control keeps its own refusal; GC2 the scalar control, 161) -------------------
 # GT1 / GT2 the filed rows 1 / 2 verbatim (by name after a first statement, a method); GT3 `fncall2(&mkv, ..)`; GT4

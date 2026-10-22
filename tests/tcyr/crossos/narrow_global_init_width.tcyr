@@ -30,7 +30,7 @@
 # the width but not the sign mark, so `var G: i16 = 0 - 2;` there read 65534 (i32 4294967294, i8
 # 254) — through a read, `G < 0`, arithmetic, an argument and `*(&G)` alike. The ps_ rows; the
 # unsigned pu_ ones stay zero-extended (controls). The pre-fix compiler fails 14 of them.
-# issues/2026-10-19-signed-narrow-global-declared-after-top-level-statement-reads-zero-extended.md
+# issues/archived/2026-10-19-signed-narrow-global-declared-after-top-level-statement-reads-zero-extended.md
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"

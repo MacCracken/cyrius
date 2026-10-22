@@ -325,7 +325,7 @@
 #   F8n (6.7.16) the pair check reads each type as an annotation is (`_ty_norm_eq`, the impl-return check's comparator):
 #       `Box<i64>` IS `Box` and `Box<Box<i64>>` IS `Box<Box<i64> >` (6.7.15's D4 / its review fix), as the guide's "by its
 #       resolved type" says; `_dyn_sig_eq` compared tokens (`_dyn_ty_eq`), so an impl accepted and run directly could
-#       not be formed into a dyn (issues/2026-10-18-dyn-pair-check-compares-type-spellings-token-by-token.md).
+#       not be formed into a dyn (issues/archived/2026-10-18-dyn-pair-check-compares-type-spellings-token-by-token.md).
 #       F8n1-F8n3 the three filed programs verbatim (a return `Box<i64>` / `Box`, a return `Box<Box<i64>>` /
 #       `Box<Box<i64> >`, a parameter `*Box<i64>` / `*Box`) — each forms its dyn and exits 4; F8n4 a `Box<i32>` member
 #       against a `Box<i64>` impl return stays refused once, by the impl (4:29); F8n5 a `*Box<i32>` parameter against
@@ -353,8 +353,8 @@
 #       alone (the site's line was the one report it had). F8r8 / F8r8b the residual with a dyn formed above the impl: a
 #       method's `: Option<i64>` / `: Result<Pt<i64>>` return against `: i64` was "expected '{', got '<'" plus a
 #       cascade beside the impl's "returns .." line; now the method reader's one line, and the site adds nothing.
-#       (issues/2026-10-20-dyn-pair-check-adds-a-line-to-a-type-its-reader-refuses.md, the residual;
-#       issues/2026-10-20-enum-and-handle-type-arguments-unread.md). Mutants (2026-10-21, f16 FG3): handle_type_args.sh's
+#       (issues/archived/2026-10-20-dyn-pair-check-adds-a-line-to-a-type-its-reader-refuses.md, the residual;
+#       issues/archived/2026-10-20-enum-and-handle-type-arguments-unread.md). Mutants (2026-10-21, f16 FG3): handle_type_args.sh's
 #       ledger (the lane before -> RED F8r7 F8r8 F8r8b F8p8 F8p13).
 #   F8p (6.7.16 review) a parameter type its own reader refuses is that refusal alone too: the pair check compared it
 #       and added "parameter 'p' has another type" beside the reader's line (`n: Nope`, D7's `p: *Pt<i64>`, D5's
@@ -382,7 +382,7 @@
 #       verbatim (5:17 alone); F8c2 the dyn formed above the impl; F8c3 / F8c4 controls — an earlier method the trait
 #       does not declare, an earlier count mismatch: the impl's check never reaches 'sh', so the site keeps its line;
 #       F8c5 a default-only difference (D13's line alone); F8c6 a count mismatch beside a default (D13's and the impl's).
-#       Filed: docs/development/issues/2026-10-20-dyn-pair-check-repeats-impl-parameter-count-refusal.md
+#       Filed: docs/development/issues/archived/2026-10-20-dyn-pair-check-repeats-impl-parameter-count-refusal.md
 #       Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc): the lane before it (bda59e432) -> RED
 #       5: F8c1 F8c2 F8c4-F8c6 (the site's line; F8c4 named 'ra'); the hand-off unguarded (`d == 5` always 0) -> RED 2:
 #       F8c3 F8c4; `_tr_cnt_dflt` gone -> RED 1: F8c5; the replay not stopping at a method the trait does not declare ->
@@ -392,7 +392,7 @@
 #       method both take `cb: *fn` — no F8 line, it runs (3 + 3); F8bf2 `cb: **fn` the same; guards (a widening on the
 #       wrong side would silence them): F8bf3 a member's `cb: *fn` against a method's `cb: i64`, F8bf4 against a method's
 #       `cb: *fn(i64): i64` — the site's "parameter 'cb' has another type" each.
-#       Filed: docs/development/issues/2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md
+#       Filed: docs/development/issues/archived/2026-10-20-trait-member-bare-fn-pointer-parameter-refused.md
 #       Mutants (2026-10-21, a scratch copy of src/ with the one change, its cycc): the lane before it (6ee893493) -> RED
 #       4: F8bf1-F8bf4 ("expected '(', got ')'"); the parameter side counting a `*fn` as reader-refused (`_dsq_rf_one`
 #       asking `_trs_ret_fnp`, the widening on the wrong side) -> RED 2: F8bf3 F8bf4 (no line: the mismatch silenced)

@@ -16,7 +16,7 @@
 # the shape readers take a chain on any head (`_pc_shape`, `_pw_head`: `_pair_unwrap`, `_pair_vwrap`,
 # `_call_is_propagated`, `_tok_q_is_pair`'s `_tok_chain_back`), and each asker names the chain's method and spells its
 # receiver as written (`_mc_recv_pr`).
-# Filed: docs/development/issues/2026-10-20-multi-value-method-on-field-chain-receiver-refused-as-destructure-source.md
+# Filed: docs/development/issues/archived/2026-10-20-multi-value-method-on-field-chain-receiver-refused-as-destructure-source.md
 #
 #   R0 the filed repro, verbatim: exit 34 (rc 1, "needs a call", before) on x86_64, CYRIUS_IR=3, aarch64 (qemu), cx
 #      (cxvm) and PE (wine)

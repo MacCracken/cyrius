@@ -1315,7 +1315,7 @@ var y = x + 1;' 'y'
 done
 
 # 6.7.16 — A ZONE GENERIC CALL BINDS ITS INSTANCE WHATEVER CARRIES THE TYPE ARGUMENT
-# (issues/2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md). The end of pass 1 read a carrying
+# (issues/archived/2026-10-18-zone-untyped-generic-call-instance-argument-shapes-unread.md). The end of pass 1 read a carrying
 # argument only as a struct, a lone integer literal or a lone global (`_gu_tp`), and declined a bounded generic struct
 # (`_gu_inst`), so `var x = mkg1(30 + 3);`, a struct carrier `mkc(BX)` (`b: Box<T>`, `BX: Box<i32>`) and `mkb(P)` with
 # `struct G1<T: Show>` bound nothing in the zone (`x.v`: "no struct type in scope for 'x'") where after the first
@@ -1413,7 +1413,7 @@ awk '/^var x = /{print "var e = nope;"} {print}' "$T/GZ21zone.cyr" > "$T/GZ21b.c
 refused GZ21b "undefined variable 'nope'" "the zone: the bound is judged at the call's replay, after an earlier line's error (not at the end of pass 1)" 2
 
 # 6.7.16 — A ZONE GENERIC CALL WITH A NEGATED-LITERAL CARRIER OR A REFUSED TYPE ARGUMENT TYPES ITS GLOBAL AS THE LINE AFTER
-# THE FIRST STATEMENT DOES (issues/2026-10-18-zone-generic-instance-refused-type-argument-or-negated-literal-unbound.md).
+# THE FIRST STATEMENT DOES (issues/archived/2026-10-18-zone-generic-instance-refused-type-argument-or-negated-literal-unbound.md).
 # `var x = mkg1(-3);` left x untyped in the zone (`x.v`: "no struct type in scope for 'x'"; after a first statement it
 # exits 253): `-3` is now read by the classifier (edd339932's `_gu_tp`), i64, the base. `var x = mkg1<*u8>(33);` gave
 # the type argument's refusal AND "no struct type in scope for 'x'" at `x.v`; after a first statement the refusal alone,
@@ -1458,7 +1458,7 @@ for zw in zone after; do
 done
 
 # 6.7.16 — A ZONE UNTYPED GENERIC METHOD'S GENERIC STRUCT RESULT IS THE INSTANCE ITS CALL REACHES
-# (issues/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md). `var y = b.mkg(P);` with
+# (issues/archived/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md). `var y = b.mkg(P);` with
 # `fn mkg<T>(self, v: T): G1<T>` bound nothing in the declaration zone (`y.v.a`: "no struct type in scope for 'y'"; the
 # sweep declined a generic method's base, which is no instance), nor did the explicit `b.mkg<i32>(33)` (the reader took
 # its `<` for a comparison); after the first statement both bind the instance. The sweep now reads a `.m<..>(` step
@@ -1545,7 +1545,7 @@ rowm2 GZM8 'var y = b.mkg<*u8>(33);' 'y.v'
 for zw in zone after; do
     refused "GZM8$zw" "a type argument is a type name, got '*'" "the $zw: \`b.mkg<*u8>(33)\` is the type argument's one refusal (\`y.v\` adds none)"
 done
-# 6.7.16 (issues/2026-10-20-zone-annotated-generic-method-instance-result-misread.md) — ANNOTATED, the same results: `var G:
+# 6.7.16 (issues/archived/2026-10-20-zone-annotated-generic-method-instance-result-misread.md) — ANNOTATED, the same results: `var G:
 # G1<Pt> = b.mkg(P);` / `var G: G1<i32> = b.mkg<i32>(33);` in the zone were refused "the declaration zone misread whether
 # the initializer of 'G' is a struct value" (the method step typed the base `G1`, which `_gz_sval` compared with `G1$Pt`;
 # a free generic call's `: G<..>` is taken as an instance of G through `_gz_gb`, which the method arm cleared). The
@@ -1590,7 +1590,7 @@ rowma GZM21 'var G: G1<i32> = b.mkg(P);' '0'
 for zw in zone after; do refused "GZM21$zw" "fn return struct-id differs from declared var type" "the $zw: \`var G: G1<i32> = b.mkg(P);\` (another instance) is its one type refusal"; done
 
 # ---- 6.7.16 (the user's decision D16 (a), 2026-10-19): an untyped top-level if-expression of struct branches binds the
-# struct (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md) -------------------------------
+# struct (issues/archived/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md) -------------------------------
 # `var G = if (c) { B1 } else { B1 };` (B1 a struct of 8 B or less) bound nothing at top level — `G.a` was "no struct type
 # in scope for 'G'" in the declaration zone and after the first statement, where in a fn the line binds — and a 16 B
 # struct branch was refused "cannot be a vector, u128 or slice value", naming no struct (`_ie_wide_name` took any 16 B
@@ -1660,7 +1660,7 @@ for zw in zone after; do
         ok "TI3$zw both branch refusals name 'P2'; no \`G.a\` cascade"
     else bad "TI3$zw want two struct-named branch refusals and no cascade: $(grep '^error' "$T/TI3$zw.x86_64.err" | tr '\n' '|')"; fi
 done
-# ---- 6.7.16 (issues/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md): a declaration
+# ---- 6.7.16 (issues/archived/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md): a declaration
 # whose if-expression branch is refused as over 8 bytes is not a second error at its use. The refusal left the variable
 # untyped and unmarked, so `g.a` / `G.a` added "no struct type in scope" after the two branch refusals — in a fn, the zone,
 # after the first statement, and in a fn body compiled before the replay. When the if-expression is a `var`
@@ -1746,7 +1746,7 @@ _u2=$("$CC" < "$T/TI20after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreach
 if [ -n "$_u1" ] && [ "$_u1" = "$_u2" ]; then ok "TI20 the zone sweep instanced nothing: '$_u1' in both forms"
 else bad "TI20 the zone sweep moved the fn layout: zone '$_u1', after '$_u2'"; fi
 
-# ---- 6.7.16 (issues/2026-10-20-zone-sweep-reports-type-argument-refusal-out-of-source-order.md): a zone generic call
+# ---- 6.7.16 (issues/archived/2026-10-20-zone-sweep-reports-type-argument-refusal-out-of-source-order.md): a zone generic call
 # whose explicit list the call's parse refuses while its names resolve (`mkg1<*Pt>(33)`, `<1>`, `<[i64]>` behind a name,
 # a nested `Pt<i32>` of a non-generic Pt, a nested bound that fails) was parsed by the sweep at the end of pass 1
 # (`_gu_xlist`), which printed the refusal before every earlier line's error. The sweep now reads a list of names only
@@ -1843,7 +1843,7 @@ for zw in zone after; do
     runs "GOP2$zw" 33 "the $zw: \`G1_add\` over two generic calls, annotated and untyped"
 done
 
-# ---- 6.7.16 (issues/2026-10-20-generic-operator-fn-dispatched-at-its-i64-base.md; the user's decision D85 (a),
+# ---- 6.7.16 (issues/archived/2026-10-20-generic-operator-fn-dispatched-at-its-i64-base.md; the user's decision D85 (a),
 # 2026-10-20): A GENERIC OPERATOR fn BINDS ITS TYPE PARAMETERS AS ITS CALL DOES. With `fn B1_add<T>(l: B1, r: T): G1<T>`
 # the dispatch called the i64 base whatever its operands were: `var y = b + P;` (P a `Pt`) held P's address in `y.v`
 # (`y.v.a`: "field 'v' is not a struct: it has no field 'a'"), where `B1_add(b, P)` calls `B1_add$Pt`; the declaration
@@ -1974,7 +1974,7 @@ runs GOG13 33 "the zone: a fn body reads \`y.v.a\` of \`b + P\` before the repla
 printf '%s\nfn h<T>(x: T, n): Pt { var r: Pt; r.a = n; if (n == 0) { return r; } var y = b + h(P, n - 1); r.a = y.v.a + 11; return r; }\nfn f(): i64 { var q = h(5, 3); return q.a; }\nsyscall(60, f());\n' "$GOGH" > "$T/GOG14.cyr"
 runs GOG14 33 "a generic fn whose operator's right operand instances that same generic (\`b + h(P, n - 1)\`, its body parsed again inside the operand's read)"
 
-# ---- 6.7.16 (issues/2026-10-20-zone-untyped-generic-method-t-return-binds-nothing.md): a zone `var y = b.idm(P);` — a
+# ---- 6.7.16 (issues/archived/2026-10-20-zone-untyped-generic-method-t-return-binds-nothing.md): a zone `var y = b.idm(P);` — a
 # GENERIC method returning its own type parameter `: T`, bound to a struct — bound nothing (`y.a`: "no struct type in
 # scope for 'y'"), and its annotated twin `var y: Pt = b.idm(P);` was refused "the declaration zone misread whether the
 # initializer of 'y' is a struct value"; after the first statement both are Pt. The zone reader's method step typed it
@@ -2045,7 +2045,7 @@ runs GZT14 33 "the zone: \`b.idm(QB)\` with QB swept below it is Pt, read by a f
 rowt GZT15 'var y = b.idm(Q2);' 'y.a'
 for zw in zone after; do refused "GZT15$zw" "returns a struct by value, and a struct result needs storage in a fn's frame" "the $zw: a 16 B binding is the call's one refusal (\`y.a\` adds none)"; done
 
-# ---- 6.7.16 (issues/2026-10-20-zone-generic-call-carrying-generic-instance-call-misread.md): a zone generic call whose
+# ---- 6.7.16 (issues/archived/2026-10-20-zone-generic-call-carrying-generic-instance-call-misread.md): a zone generic call whose
 # carrying argument is a generic call returning a generic struct's instance — `var x = mkg1(mkg1(P));` — was refused "the
 # declaration zone misread whether the initializer of 'x' is a struct value": the sweep read the inner call by its BASE
 # return through the pair scans' token reader (`_tok_init_sid`, shared with pass 2), minting `G1$G1` where the replay's
@@ -2147,7 +2147,7 @@ for n in 1 2 3 4 5 6; do
     for zw in zone after; do runs "GZF$n$zw" 33 "the $zw: GZF$n's generic fixed-instance (or carried) return is that instance"; done
 done
 
-# ---- 6.7.16 (issues/2026-10-20-zone-if-expression-generic-instance-branch-binds-nothing.md): a zone `var G = if (c) {
+# ---- 6.7.16 (issues/archived/2026-10-20-zone-if-expression-generic-instance-branch-binds-nothing.md): a zone `var G = if (c) {
 # mkg1(P) } else { mkg1(P) };` bound nothing (`G.v`: "no struct type in scope for 'G'"), where after the first statement
 # and in a fn it binds `G1<Pt>` (D16 (a)): the first branch read as the generic struct's BASE (`_gz_gb`) and `_gu_ie`
 # declined every generic struct — a generic instance global's too (`GSTP` marks an instance as well). The first branch

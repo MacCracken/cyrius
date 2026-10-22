@@ -4,7 +4,7 @@
 # `cyrius sign-efi` reaches the cyrsign-efi helper the install ships beside the CLI, on Windows
 # too, and a missing helper is named by its real path and source.
 #
-# THE DEFECT (issues/2026-10-19-windows-cli-sign-efi-cannot-run-the-shipped-helper.md). The verb
+# THE DEFECT (issues/archived/2026-10-19-windows-cli-sign-efi-cannot-run-the-shipped-helper.md). The verb
 # exec'd the helper in place with `sys_execve`, a `return 0 - 1` stub on PE, so the Windows CLI
 # fell through to its error whatever was installed: the 6.7.16 Windows tarball ships
 # bin\cyrsign-efi.exe, and `cyrius.exe sign-efi --help` beside it gave rc 127 and

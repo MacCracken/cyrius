@@ -1,7 +1,7 @@
 # path_failure_errno.tcyr — 6.7.16: a failed mkdir / unlink / rmdir / ftruncate / truncate answers
 # the negative errno that names the failure on every target, Windows included.
 #
-# ⛔ THE DEFECT (issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md). The
+# ⛔ THE DEFECT (issues/archived/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md). The
 # PE path reroutes behind mkdir (83, CreateDirectoryW), unlink (87 and 0xF035, DeleteFileW) and
 # rmdir (0xF03B, RemoveDirectoryW) — `_pe_path_bool1` in src/backend/x86/emit.cyr — turned the BOOL
 # into 0 / -1 and never read GetLastError, and lib/syscalls_windows.cyr's sys_ftruncate /
@@ -33,7 +33,7 @@
 # table leaves -1; the made-link rows then report that and skip. A path error comes before that
 # refusal (a missing directory -2, an existing name -17), so those rows run everywhere.
 #
-# A directory (issues/2026-10-20-pe-unlink-truncate-open-of-a-directory-answer-eacces-not-eisdir.md;
+# A directory (issues/archived/2026-10-20-pe-unlink-truncate-open-of-a-directory-answer-eacces-not-eisdir.md;
 # 6.7.16's D95, the user, 2026-10-20: "-21 as Linux"). CreateFileW and DeleteFileW refuse a
 # directory ERROR_ACCESS_DENIED, -13 through the table, so the filed dirfail printed `-13 -13 -13
 # -13` on cass and wine (Linux `-21 -21 -21 -21`). On a -13 the Windows peer now asks the name: a

@@ -95,7 +95,7 @@ fn mr_fall_inline(x): (i64, i64) { mr_k40(x); }
 fn mr_empty(): (i64, i64) { }
 
 # --- 6.7.16: a generic's element typed by its type parameter is the instance's binding, as a `: T` return is
-# (issues/2026-10-18-generic-multi-value-type-parameter-element-binds-i64.md): `(V, i64)` at V = f64 binds an f64 (it
+# (issues/archived/2026-10-18-generic-multi-value-type-parameter-element-binds-i64.md): `(V, i64)` at V = f64 binds an f64 (it
 # bound an i64 word: `a * 2.0` was integer arithmetic on the double's bits), in every spelling — the explicit and the
 # inferred free call, the explicit, inferred and free method call, a tuple capture (refused before: "it returns 2
 # values, (i64, i64)"), a multi-value assignment, a wrap, a for step, a closure, arity 3, a second type parameter, a
@@ -111,7 +111,7 @@ impl MvP {
 
 # --- 6.7.16 (D98, the user's decision, 2026-10-20): in the declaration zone a destructure's f64 element is an f64, and
 # so is an untyped global from an f64 call, as in a fn and after the first statement
-# (issues/2026-10-20-zone-destructure-leaves-f64-element-untyped.md) — each was an untyped word holding the double's
+# (issues/archived/2026-10-20-zone-destructure-leaves-f64-element-untyped.md) — each was an untyped word holding the double's
 # bits, so `MZA * 2.0` was integer arithmetic (7 for 10): a written `(f64, i64)`, a generic's `(V, i64)` explicit and
 # inferred, a generic method's, three names, a wrap; a single name from a `: f64` call, a `: T` generic at f64, a
 # method, f64 arithmetic on a leading call. Read in main, a fn body compiled before the zone's replay; a comparison

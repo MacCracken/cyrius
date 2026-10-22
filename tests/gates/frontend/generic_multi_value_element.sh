@@ -10,7 +10,7 @@
 # integer stays an i64 slot), and the destructure's callee lookahead (`_dt_call_fn`) resolves a generic method's
 # inferred `p.mm(h)` to the instance its arguments bind (`_mcall_gen`, quiet), as the explicit `p.mm<f64>(h)` and the
 # free spellings already reached theirs.
-# Filed: docs/development/issues/2026-10-18-generic-multi-value-type-parameter-element-binds-i64.md
+# Filed: docs/development/issues/archived/2026-10-18-generic-multi-value-type-parameter-element-binds-i64.md
 #
 #   V1 the filed repro, verbatim: exit 10 and no warning (7 and the warning before) on x86_64, CYRIUS_IR=3, aarch64
 #      (qemu), cx (cxvm) and PE (wine)
@@ -33,7 +33,7 @@
 #      `P.gm<f64>`, `mt2<i64, f64>` (V5a / V5c / V5d: the refusal an instance can now meet printed `mt$f64`), a method
 #      `Q.pair` (V5b: `Q_pair`), a struct instance element `(Box<Pt>, i64)` (V5e / V5f: `(Box$Pt, i64)`); V5K the same
 #      body at i64 compiles
-#   V6 (6.7.16, the user's D98, 2026-10-20; issues/2026-10-20-zone-destructure-leaves-f64-element-untyped.md) the
+#   V6 (6.7.16, the user's D98, 2026-10-20; issues/archived/2026-10-20-zone-destructure-leaves-f64-element-untyped.md) the
 #      declaration zone types a destructure's f64 element and an untyped global from an f64 call, as a fn and the line
 #      after the first statement do: V6 the filed repro verbatim (10, no warning; 7 and "integer arithmetic with an f64
 #      right operand" before), V6b its after-the-first-statement twin (10, unchanged), V6c `var Y = mkf(1.5);` /

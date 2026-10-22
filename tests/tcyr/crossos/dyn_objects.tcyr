@@ -56,7 +56,7 @@
 #   §spellings     (6.7.16) one type spelled two ways is one type to the pair check: a member's `*Bs<i64>` /
 #                  `Bs<i64>` / `Bs<Bs<i64>>` against the impl's `*Bs` / `Bs` / `Bs<Bs<i64> >` forms the dyn (it was
 #                  refused, "parameter 'b' has another type"), and a parameter, a 16 B and a 24 B result go through
-#                  its slots (issues/2026-10-18-dyn-pair-check-compares-type-spellings-token-by-token.md)
+#                  its slots (issues/archived/2026-10-18-dyn-pair-check-compares-type-spellings-token-by-token.md)
 # The refusals (F1-F11, C1-C9), the zone global in a `kernel;` build, the paren-wrapped destinations,
 # what a prototype is not (S4-S7) and what the call is (CG1-CG2) are compile-time:
 # tests/gates/frontend/dyn_checked.sh. cx runs the whole file (tests/gates/codegen/cx_crossos_rows_run.sh R9).

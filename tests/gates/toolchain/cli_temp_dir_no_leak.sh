@@ -1103,7 +1103,7 @@ for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # same-user process puts there later: since 6.7.16 `_dep_copy_file` clears the temp's record when
 # `_aw_commit` / `_aw_abort` returns, under the same HUP / INT / TERM hold (cbt/deps.cyr
 # `_dep_aw_finish`); 6.7.15 kept the record, and the kill unlinked one planted file per copy
-# (issues/2026-10-18-scratch-resolve-keeps-a-renamed-temp-recorded.md). Once the stand-in git sleeps
+# (issues/archived/2026-10-18-scratch-resolve-keeps-a-renamed-temp-recorded.md). Once the stand-in git sleeps
 # in the clone, the gate plants forty `<file>.cyrtmp.<pid>.<n>` beside each copy and SIGTERMs.
 G9_PLANT=40
 g9_run g9r 6.6.6 "" clone deps --locked

@@ -56,7 +56,7 @@
 # (`ratio_rounds`), and the axis fails only when every round is over: the regressions these bounds
 # guard read over them every round. A reference whose CPU time is under 100,000 µs FAILS by name
 # (`too-fast`): these are the regression axes, and a skip would hide them. CHANGELOG [6.7.16];
-# issues/2026-10-19-simd-valueform-axis2a-reads-150-percent-under-host-load.md
+# issues/archived/2026-10-19-simd-valueform-axis2a-reads-150-percent-under-host-load.md
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || { echo "FAIL: simd_valueform_no_avx_transition: cannot cd to $R"; exit 1; }

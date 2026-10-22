@@ -352,7 +352,7 @@ else bad "Q9 --syntax-only: rc $crc: $(grep '^error' "$T/Q9.err" | head -2 | tr 
 # `callptr(&f, ..)`. A callee held in a variable stays a word (6.7.11's D31), and so does `&gp` of a LOCAL named gp
 # (the `&` factor takes the local): both still refused. The same typing is every token-typed consumer's — the copies,
 # arguments, returns and top level of A2 (tests/tcyr/crossos/known_callee_struct_pointer_source.tcyr).
-# issues/2026-10-18-parenthesised-known-callee-pointer-to-struct-field-refused.md
+# issues/archived/2026-10-18-parenthesised-known-callee-pointer-to-struct-field-refused.md
 cat > "$T/KC1.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -396,7 +396,7 @@ runs A2 0 "$TK ($NK rows: a known callee's *P2 at every token-typed consumer)"
 # was "unexpected '('" (`_stmt_paren_sub`, from `_stmt_paren_dst`). Not an assignment after the `[..]` steps
 # (`(pn)[0];`) keeps "unexpected '('" (PS9). A classic-for STEP takes the same words since 6.7.16 (PS10; it was
 # "expected '=', got identifier 'pn'"; the FS rows below).
-# issues/2026-10-18-subscript-store-through-parenthesised-base-is-unexpected-paren.md
+# issues/archived/2026-10-18-subscript-store-through-parenthesised-base-is-unexpected-paren.md
 SB="a subscript's base is a name, a *T field or a call returning *T - name the pointer first (var q: *T = ..; q[i])"
 cat > "$T/PS1.cyr" <<'EOF'
 fn main(): i64 {
@@ -455,7 +455,7 @@ crc=0; "$CC" --syntax-only < "$T/PS11.cyr" > /dev/null 2> "$T/PS11.err" || crc=$
 if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/PS11.err")" -eq 1 ] && grep -qF "$SB" "$T/PS11.err"; then ok "PS11 --syntax-only refuses (pn)[0] = 1; in the read's words"
 else bad "PS11 --syntax-only: rc $crc: $(grep '^error' "$T/PS11.err" | head -2 | tr '\n' '|')"; fi
 
-# 6.7.16 (issues/2026-10-19-parenthesised-for-step-destination-is-expected-equals.md): a classic-for STEP whose
+# 6.7.16 (issues/archived/2026-10-19-parenthesised-for-step-destination-is-expected-equals.md): a classic-for STEP whose
 # destination is parenthesised is refused in its statement's words — 6.7.15's D19 (`(n) = 7`, `(*pn) += 1`), 6.7.16's
 # D22 (`(pn)[0] = 2`), 6.7.14's D24 (a) (`(s).a = 3`) — once, at the statement's token (the `(`; the field store's `.`).
 # It was "expected '=', got <the token after the `(`>": `_for_step_replay` took the `(` as the destination's name

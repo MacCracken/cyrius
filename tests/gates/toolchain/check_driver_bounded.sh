@@ -815,7 +815,7 @@ check "   …premise: the axis-4 driver calls ran (4b and its control wrote thei
 
 # ── axis 5 — 6.7.16: NOTHING THIS GATE RAN LEFT A CAPTURE FILE IN THE CALLER'S TMPDIR ──
 # Axis 2's SIGKILLed runner used to leave `audit_xc_<its pid>` in the caller's TMPDIR, one per run,
-# for ever (issues/2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md). Every harness
+# for ever (issues/archived/2026-10-19-killed-capture-verb-leaves-capture-file-for-ever.md). Every harness
 # run logged "<pid> <TMPDIR>"; 5a every one saw the gate's private dir; 5b no name the caller's base
 # gained during the run carries one of those pids (a name another process made meanwhile — a
 # concurrent check.sh sharing /tmp — is not this gate's). MUTATIONS (6.7.16): the TMPDIR line

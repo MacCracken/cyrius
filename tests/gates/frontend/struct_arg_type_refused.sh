@@ -227,7 +227,7 @@
 # the address-passed arm (`_dro_check`), name the argument as written — '*(&p)', '**ppp' (they named 'p', 'ppp'); the
 # multi-target rows are simd_pointer_param.sh OKN.
 #
-# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md) — EVERY STRUCT VALUE DEREFERENCE
+# 6.7.16 (issues/archived/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md) — EVERY STRUCT VALUE DEREFERENCE
 # REFUSED BY ITS STRUCT IS NAMED AS THE SOURCE SPELLS IT, FROM ITS `*` (as the address-passed arm has since 6.7.15): the
 # by-value argument (`_ess_anm`), the pointer-of-another-kind argument (`_sval_kind_err`), the small-struct and pointer-arm
 # returns (`_ret_sid_refuse_d`), the assignment, field, declaration and top-level copies (`_hl_dname`, the `* IDENT` arms)
@@ -245,7 +245,7 @@
 #                                                          (the for step) never warned
 #   real tree                                           -> GREEN (153 refusal rows — floor 153 — and 41 acceptance rows)
 #
-# 6.7.16 (D97, the user's decision, 2026-10-20; issues/2026-10-20-pointer-to-other-struct-argument-unchecked.md) — A
+# 6.7.16 (D97, the user's decision, 2026-10-20; issues/archived/2026-10-20-pointer-to-other-struct-argument-unchecked.md) — A
 # POINTER TO ANOTHER STRUCT INTO A `*S` / `**S` PARAMETER IS REFUSED, in this gate's words, at the argument (`&y` named
 # `y`): 6.7.3's "a typed pointer converts freely" (the user's, 2026-10-08) now holds into a BY-VALUE struct parameter
 # only (R4b). `nc1(&y)` (`y: Box<Pt>`, `p: *Box<i64>`) read Pt's `y` as Box<i64>'s `n`, silently. PD1-PD3 the filed
@@ -1175,7 +1175,7 @@ fn Pt_dup(a: Pt): Pt { return a; }
 fn run(): i64 { var s: Pt; var h: H; h.q = Pt_dup(s); return 0; } syscall(60, run());"
 
 echo "=== 6.7.16: a struct VALUE dereference refused by its struct is named as the source spells it (x86_64, aarch64, cx, PE) ==="
-# issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md: the by-value argument (`_ess_deref`), the
+# issues/archived/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md: the by-value argument (`_ess_deref`), the
 # pointer-of-another-kind argument, the small-struct and pointer-arm returns and every copy destination (`_hl_dstar_x`,
 # the `* IDENT` declaration arms) quoted the operand's LAST name — `ri(*gps(&s))` '*s', `take8(*gu(pu))` 'pu', `return
 # *gu(pu);` `*pu`, `var s: S8 = *h.pu;` 'pu' — where 6.7.15's address-passed arm already prints the source's spelling.
@@ -1303,7 +1303,7 @@ var GPQ: *Q3 = &GQ;
 fn go(): i64 { var l: P3; l = GPQ; return l.x; } syscall(60, go());"
 
 echo "=== 6.7.16 (D97): a pointer to another struct into a \`*S\` / \`**S\` parameter (x86_64, aarch64, cx, PE) ==="
-# issues/2026-10-20-pointer-to-other-struct-argument-unchecked.md — refused at the argument in 6.7.3's words (`_pa_chk`,
+# issues/archived/2026-10-20-pointer-to-other-struct-argument-unchecked.md — refused at the argument in 6.7.3's words (`_pa_chk`,
 # parse_fn.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
 accept4() {  # $1 label  $2 source  $3 expected x86_64 exit
     printf '%s' "$2" > "$D/k4.cyr"

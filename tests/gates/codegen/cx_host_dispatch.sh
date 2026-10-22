@@ -35,24 +35,24 @@
 # readlink -38, the rest served); dup2's self-dup (6.7.15,
 # issues/archived/2026-10-18-aarch64-sys-dup2-same-fd-answers-einval.md) — dup2(1, 1) 1, dup2 of an fd the
 # fixture just closed -9 (Windows: both -38, the PE peer's dup2 is a stub); a failure's errno (6.7.16,
-# issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md) — open(link, O_RDONLY|O_NOFOLLOW)
+# issues/archived/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md) — open(link, O_RDONLY|O_NOFOLLOW)
 # -40 and rmdir of a non-empty directory -39 (a Mac's cxvm answered Darwin's -62 / -66), and an
 # unassigned number (999) -38, cxvm's own refusal, which the map must leave 38 (Darwin's 38 is
 # ENOTSOCK) (Windows the same since 6.7.16's D79 — its rmdir answered -1 for every failure);
-# kill(getpid(), 99) -22 (6.7.16, issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md: a
+# kill(getpid(), 99) -22 (6.7.16, issues/archived/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md: a
 # signal no host has; Windows -38). The signal map itself (SIGUSR1 10 is Darwin's 30, 10 there is
 # SIGBUS) is held by the ecb / ach legs of scripts/cross-os-selfhost.sh, which run the filed repro
 # (kill(getpid(), 10)) to its SIGUSR1 death, status 158 there. Row 15 (6.7.16,
-# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md): poll(NULL, 0, 60) sleeps; mknodat
+# issues/archived/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md): poll(NULL, 0, 60) sleeps; mknodat
 # makes a FIFO stat calls one; getdents64 reads a directory whole with a 4096- and a 96-byte buffer
 # (every name once, d_type DT_FIFO for the FIFO — a Darwin host converts its records and, for the
 # small buffer, reads the directory again) and a 16-byte one is -22; wait4 reaps the fork row's child,
 # then -ECHILD; a child that stops itself, is continued and is killed by SIGUSR1 gives 0x137f, 0xffff
 # (WCONTINUED) and 10 (a Darwin host reports 0x117f, 0x137f, 30) (Windows: the sleep, the rest -38).
-# Row 16 (6.7.16, issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md):
+# Row 16 (6.7.16, issues/archived/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md):
 # O_CREAT | O_EXCL over an existing directory -17 on every host, Windows included (cass's CreateFileW
 # says ERROR_ACCESS_DENIED, which cxvm answered as -13 until 6.7.16; wine says ERROR_FILE_EXISTS).
-# Row 17 (6.7.16, the platform review of issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md):
+# Row 17 (6.7.16, the platform review of issues/archived/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md):
 # getdents64 lists /dev — a Mac's devfs has no extended readdir, so a small re-read returns fewer
 # records than were delivered — with a 200-byte buffer, the 4096-byte listing's names in its order,
 # and with a 96-byte one, which ends (0, or -22 on a Mac: ecb 592 of 635) within 2 x the names in

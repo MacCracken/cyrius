@@ -8184,7 +8184,7 @@ fn _refuse_pair_return(S): i64 {
 # ⛔ 6.7.16 — THE VALUE'S OWN ERROR FIRST. The refusal above was printed BEFORE the value was parsed, so a value with an
 # error of its own was two reports: `return zz;` the refusal and "undefined variable 'zz'", `return &(q);` the refusal
 # and "expected identifier", `return 5 + ;` the refusal and "unexpected ';'" — where the 8 B class reports the value's
-# alone (issues/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md). `_ret_struct_pair` records the
+# alone (issues/archived/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md). `_ret_struct_pair` records the
 # value's first token and the statement's error count; PARSE_RETURN asks `_pair_ret_late` once its arms have parsed the
 # value: the refusal is printed at that token unless the statement reported an error since (a report or a repeat,
 # `_err_n` — never the file-wide `_had_error`, so an earlier statement's error forces nothing). CHANGELOG [6.7.16]
@@ -9981,7 +9981,7 @@ fn _tr_rt_rd(S, a, ae): i64 {
 # Under --syntax-only a shape counts only where its reader reports it there (`mem` 1 = the member's side): a member's
 # `: u8` / `: f32` / enum (D9) and either side's `Pt<i64>` (D7 / D6) are silent there, so the impl's "returns .., trait
 # declares .." line is lint's one report of the program, as it was in 6.7.15 — counting them left lint silent on it
-# (issues/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md). CHANGELOG [6.7.16]
+# (issues/archived/2026-10-20-lint-silent-on-impl-return-mismatch-member-type-refused.md). CHANGELOG [6.7.16]
 fn _tr_rt_bad(S, a, ae, mem): i64 {
     if (_tr_rt_head(S, a, ae, _tr_rt_nr(mem)) == 1) { return 1; }
     if (mem == 0) { if (_tr_rt_mvfnp(S, a, ae) == 1) { return 1; } }   # 6.7.16: a method's `(*fn( .. ), T)`
@@ -13276,7 +13276,7 @@ fn _enum_qual_lv_refuse(S, bnoff, what): i64 {
 # assignment after it (`E.A;`, `E.A + 1;`) it is the syntax error `A;` is, "expected '='" (it said
 # "cannot assign to enum constant 'A'").
 # 6.7.16: E an enum declaring no `vn` — "'vn' is not a variant of 'E'", the statement stepped — not "undefined
-# variable 'E'" (issues/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md). CHANGELOG [6.7.16]
+# variable 'E'" (issues/archived/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md). CHANGELOG [6.7.16]
 fn _enum_qual_store_refused(S, bnoff, vn): i64 {
     var vi = _enum_variant_in(S, bnoff, vn);
     if (vi < 0) {
@@ -19229,7 +19229,7 @@ fn _fn_ret_arity(S, fi): i64 {
 # ⛔ 6.7.16 — OR RIGHT AFTER A SWITCH LABEL: `case 1: ret2(1, 2);` / `default: ret2(1, 2);` start a statement too, but the
 # token before was the label's `:`, so the `ret2` read as one inside an expression and the fn's count went unrecorded:
 # `var a, b, c = g2(1);` bound c to a stale register (88 seeded, every target) where `case 1: return (1, 2);` is refused
-# (issues/2026-10-18-ret2-after-case-label-not-counted.md; 6.7.14's D42, kept by 6.7.15's D62). `_ret2_lbl`. CHANGELOG [6.7.16]
+# (issues/archived/2026-10-18-ret2-after-case-label-not-counted.md; 6.7.14's D42, kept by 6.7.15's D62). `_ret2_lbl`. CHANGELOG [6.7.16]
 fn _ret2_stmt(S, k): i64 {
     var p = TOKTYP(S, k - 1);
     if (p == 49) { if (_ret2_lbl(S, k - 1) == 0) { return 0; } }

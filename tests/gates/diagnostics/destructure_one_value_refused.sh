@@ -81,7 +81,7 @@
 #           r2_loop_nested r2_loop_switch (7); `_has_return_tok` without its `ret2` arm -> r2_loop_nested
 #           r2_loop_switch build.
 #           (6.7.16) A `ret2(..);` right after a `case N:` / `default:` label starts a statement too
-#           (issues/2026-10-18-ret2-after-case-label-not-counted.md: the repro read the seeded 88 on every target): the
+#           (issues/archived/2026-10-18-ret2-after-case-label-not-counted.md: the repro read the seeded 88 on every target): the
 #           r2_case_ rows. MUTATIONS (scratch trees, run 2026-10-20, every leg): the tree before (43e661ac) -> every
 #           r2_case_ refusal builds (6); `_ret2_lbl` without its `default` arm -> r2_case_default; without the walk to
 #           `case` -> r2_case_repro r2_case_loop r2_case_tup3 r2_case_expr r2_case_method build; the walk crossing a
@@ -443,7 +443,7 @@ refused7 r2_loop_switch "${H88}fn g2(x) { loop { switch (x) { case 1: { ret2(1, 
 refused7 r2_loop_top "${LP7}var a, b, c = g2(5);\nsyscall(60, a);\n" "2:15: $G32"
 runs7 r2_loop_brk "${H88}fn g2(x) { loop { if (x > 0) { ret2(x, 1); } break; } }\nfn main(): i64 { var x, y, w = h(); var a, b, c = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 11
 runs7 r2_loop_two "${H88}${LP7}fn main(): i64 { var x, y, w = h(); var a, b = g2(1); return a * 10 + b; }\nsyscall(60, main());\n" 12
-# 6.7.16 — a `ret2(..);` RIGHT AFTER A SWITCH LABEL starts a statement too (issues/2026-10-18-ret2-after-case-label-not-counted.md:
+# 6.7.16 — a `ret2(..);` RIGHT AFTER A SWITCH LABEL starts a statement too (issues/archived/2026-10-18-ret2-after-case-label-not-counted.md:
 # `case 1: ret2(1, 2);` read as a `ret2` inside an expression, so the count went unrecorded and the repro read the seeded 88 on
 # every target): the repro verbatim, `default: ret2(..);`, a loop-ending switch, the 3-tuple capture, a case value that is an
 # expression (`case 1 + 1:`, `case (3):`) and a method are refused once; the repro's fn bound to two names runs (1, 2), as the

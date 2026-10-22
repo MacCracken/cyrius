@@ -20,7 +20,7 @@
 # for agnos, and the source carries both bridge lines and both AO_* constants.
 # 6.7.16 — part (3) and (5)'s agnos leg are gone: they RAN the agnos binaries under mirshi, a
 # BUILT binary from another project's checkout, and a language does not gate on other projects
-# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). Running
+# (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md). Running
 # cyrius-built agnos programs is agnos's own CI's check now; what stays needs only this checkout.
 set -u
 cd "$(dirname "$0")/../../.." || exit 2

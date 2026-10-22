@@ -11,7 +11,7 @@
 # never "undefined variable 'zz9'"; `*pa = 1;` after `y = *pa;` was not reported at all. The same for an untyped
 # `n[0]`, `g()[0]` (a call not returning `*T`), a field that is not a `*T`, `&a[i]`, `a[i][j]` and an undefined base
 # `qq[0]`. Only 6.7.11's pair refusal (`_pair_sync_ti`) and 6.7.14's const ones recorded that they were in sync.
-# (issues/2026-10-18-in-sync-refusal-in-assignment-swallows-next-statement.md)
+# (issues/archived/2026-10-18-in-sync-refusal-in-assignment-swallows-next-statement.md)
 #
 # THE FIX. `_refuse_in_sync` (src/frontend/parse.cyr) records the mark `_stmt_resync` reads, called just before each
 # such refusal latches: `_arr_sub_addr`'s undefined-base and u128 arms, `_sub_err`, `_psub_err` and `_deref_u128_err`
@@ -269,7 +269,7 @@ okrow() {
     done
 }
 
-# AS — 6.7.16 (issues/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): AN #assert IS
+# AS — 6.7.16 (issues/archived/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): AN #assert IS
 # LINE-TERMINATED, SO A REFUSED ONE ENDS IN SYNC AT ITS LINE, not only at its `;`. `_assert_end` (src/frontend/
 # parse.cyr) put the caller's latch back only when the tail ended at a `;`: `#assert zz9 == 1` with no `;` kept it,
 # and the statement on the next line was skipped by the resync with its own error (after the first top-level
@@ -463,7 +463,7 @@ okrow ASV3 "control: a message holding braces, and a } at module scope on the li
 syscall(60, f(1));
 ' 7
 
-# H — 6.7.16 (issues/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md): A REFUSAL
+# H — 6.7.16 (issues/archived/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md): A REFUSAL
 # LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`. The header of an `if` / `elif` / `while` /
 # classic `for` / `for .. in` / `switch` / `match` that refused left the latch set for the block: its first
 # statement ended latched, PARSE_STMT's resync skipped the SECOND statement, and that statement's error was never
@@ -671,7 +671,7 @@ ${TAIL}" "error:<source>:5:11: undefined variable 'qq' (missing include or enum?
 error:<source>:5:21: expected '{', got identifier 'y'
 error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
 
-# U — 6.7.16 (issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var c: S;` AT
+# U — 6.7.16 (issues/archived/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var c: S;` AT
 # TOP LEVEL after the first statement (an uninitialized struct or vector, which only a fn's frame holds) IS REFUSED
 # IN SYNC AND DECLARES `c` AS REPORTED. PARSE_VAR's arm latched with no mark — the resync skipped the next statement
 # — and registered a fn-local slot no top-level use reads, so each use of `c` added "undefined variable 'c'".
@@ -763,7 +763,7 @@ syscall(60, zz);
 error:<source>:5:8: unknown type 'c' for variable 'x'
 error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
 
-# BB — 6.7.16 (f16 FG2, met with issues/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md):
+# BB — 6.7.16 (f16 FG2, met with issues/archived/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md):
 # A FN SIGNATURE WITH NO BODY (`fn h(): i64;`, a trait member's shape) IS ONE ERROR, "expected '{', got ';'". PARSE_FN_DEF
 # took the `;` for the `{`, so the declarations after it were read as the body ("fn 'main' is defined inside fn 'h'",
 # "expected '}', got end of file"), and pass 1's `_prescan_skip_fn` ran on to the next fn's `}`, leaving it

@@ -763,7 +763,7 @@ if [ "$cxok" = 1 ]; then
         "txt 2 error: cannot map the preprocessor's 24 MiB source buffer| / exit 1" \
         "$(awk '$1 == "txt" && $2 == 2 { print; exit }' "$T/c2.log") / $(awk '$1 == "exit" { print "exit", $2 } $1 == "signal" { print "signal", $2 }' "$T/c2.log")"
     # The flags come off the init stack (the tracer hands the child its arguments): agnos has no
-    # /proc/self/cmdline. issues/2026-10-19-cx-agnos-arm-reads-flags-from-proc-agnos-lacks.md
+    # /proc/self/cmdline. issues/archived/2026-10-19-cx-agnos-arm-reads-flags-from-proc-agnos-lacks.md
     env -i "$T/sct" "$T/cxag" cli --version < /dev/null > "$T/c3.log" 2>&1
     check "C3 \`cycc_cx --version\` writes the version to fd 1 and exits 0, opening nothing" \
         "txt 1 $("$CC" --version | tr '\n' '|') / exit 0 / 0 open#7" \

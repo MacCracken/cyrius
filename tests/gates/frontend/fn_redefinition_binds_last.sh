@@ -115,7 +115,7 @@
 #   o. `_pm_copies` answering 0 past ordinal 61 (the pre-fix line), or pass 1 (`_bvcp_note`)
 #        recording nothing there                                     -> 4 red: the .tcyr on every
 #        backend (rd_kp62_check 72: an over-divert)
-#   6.7.16 (issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md, the s16 lane; the same
+#   6.7.16 (issues/archived/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md, the s16 lane; the same
 #   procedure, 2026-10-20; 84 rows):
 #   p. `_ret_ptr_owns` answering 1 for every definition (pass 2 records an earlier definition's `*T`)
 #                                                                    -> 32 red: PT0 PT2 PT4 PT7 PT8 (124), PT9 PT10
@@ -251,7 +251,7 @@ _legs() {
     _ptlegs "$1" "$2" "$3"
 }
 
-# ── 6.7.16 (issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md): A REDEFINED FN'S
+# ── 6.7.16 (issues/archived/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md): A REDEFINED FN'S
 # `: *T` RECORDS ARE THE LAST DEFINITION'S. The step word, the pointee struct and the --syntax-only byte were written
 # only by a `: *T` return and never cleared, so `fn gp(): *H` then `fn gp(): i64` kept the first one's `*H` at every
 # call: `gp() + 1` stepped sizeof(H) (124, not 101) and `gp().b = 5` stored through the i64 (139), on every backend.

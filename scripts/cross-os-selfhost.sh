@@ -261,7 +261,7 @@ cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
 # the child branch), on ecb kill ran lseek and getppid / dup / lseek / exit_group died of SIGSYS.
 # CHANGELOG [6.7.15] [6.7.16]
 cat tests/fixtures/cx_host_dispatch.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxh.cyx
-# 6.7.16 — kill's signal on a Mac's cxvm (issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md,
+# 6.7.16 — kill's signal on a Mac's cxvm (issues/archived/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md,
 # the filed repro verbatim): the guest's kill(getpid(), 10) is x86_64 Linux's SIGUSR1, and cxvm on ecb /
 # ach must deliver Darwin's SIGUSR1 (30): status 158. Until 6.7.16 the number went as it was and 10 is
 # Darwin's SIGBUS ("Bus error: 10", status 138). CHANGELOG [6.7.16]
@@ -271,8 +271,8 @@ var p = syscall(39);
 syscall(62, p, 10);
 syscall(60, 0);
 CXS
-# 6.7.16 — the cx CROSSOS leg (issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md,
-# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md): four crossos files, built once with
+# 6.7.16 — the cx CROSSOS leg (issues/archived/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md,
+# issues/archived/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md): four crossos files, built once with
 # the local cycc_cx, run on each host's own cxvm, each from its own empty directory, and must exit 0
 # printing `<N> passed, 0 failed`, N their cx assertion count less the rows they name as not run.
 # Only a Windows host's cxvm names any (6.7.16's D28: a row whose call has no route there prints
@@ -431,7 +431,7 @@ _co_cov_posix() {
 # (<cc>, plus a copy under each other name — arm64 macOS's CLI runs cycc_aarch64). On arm64 macOS
 # the js arm refused the filed repro ("runs this host's cycc, not the compiler another target
 # selector chose", rc 1): its predicate was `current_cc() == _cc`, and the default compiler there
-# is cycc_aarch64 (issues/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md).
+# is cycc_aarch64 (issues/archived/2026-10-19-macos-arm64-cli-refuses-target-js-with-no-selector.md).
 #   J1  the filed repro verbatim (`const x: number = 1;` / `console.log(x);` -> out.js): rc 0 and
 #       the 29 bytes `const x = 1;\nconsole.log(x);\n`.
 #   J2  `--aarch64 --target=js`: rc 1, 6.7.12's D20 line, no output written.
@@ -515,7 +515,7 @@ _co_cass_defender() {
 # The server read HOME, CYRIUS_HOME and its children's environment from /proc/self/environ and its
 # own path from /proc/self/exe, and macOS has no /proc: under an editor's launcher it logged `cycc
 # not found — diagnostics disabled` and published an empty list for a file with an error
-# (issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md). It reads them through the
+# (issues/archived/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md). It reads them through the
 # stdlib now (getenv; lib/io.cyr's env_block; argv(0) + fcntl(F_GETPATH) on macOS). Each Mac leg
 # builds the server with the host's own native cycc (ad-hoc signed on ecb, which kills an unsigned
 # binary) and drives it over JSON-RPC — initialize, didOpen of _lspp/e.cyr (a one-line syntax error,

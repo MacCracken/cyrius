@@ -2,7 +2,7 @@
 # lsp_fragment_compiles_its_unit.sh — 6.7.16. cyrius-lsp checks each file of a project through its
 # UNIT — the entry that includes it, on the target that includes it — not alone.
 #
-# THE DEFECT (issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md, measured on the
+# THE DEFECT (issues/archived/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md, measured on the
 # 6.7.16-open server): in a project the open file was always the unit (`cyrius check --with-deps
 # --no-redirect <the open file>`), so a file that is an `include` of another was compiled ALONE and
 # every name an earlier include declares read "undefined" — 55 false errors on cyrius's own
@@ -278,7 +278,7 @@ if pub "$W/r8" p2/src/d.cyr | head -1 | grep -qF 'nope_d' && note_last "$W/r8" p
 else fail "F8 src/d.cyr's publishes: $(pub "$W/r8" p2/src/d.cyr | tr '\n' ' ' | cut -c1-300)"; fi
 
 # ── p7: the unit note follows the unit — the filed project of ───────────────────────────────
-# issues/2026-10-19-cyrius-lsp-clears-a-fragment-unit-note-from-another-file.md
+# issues/archived/2026-10-19-cyrius-lsp-clears-a-fragment-unit-note-from-another-file.md
 mk7() {   # mk7 <dir> <src/d.cyr's text>
     mkdir -p "$1/src"
     printf '[package]\nname = "lspfrag"\nversion = "0.1.0"\n\n[build]\nentry = "src/main.cyr"\n' > "$1/cyrius.cyml"

@@ -7,7 +7,7 @@
 # ship since 6.7.16 ran install.sh with no HOME and no CYRIUS_HOME), and on Linux an environment
 # larger than the read was cut, every variable past the cut gone. It is built from lib/io.cyr's
 # env_block now, the block getenv reads whole. The review of the 6.7.16 tools lane
-# (issues/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md, its tarball half).
+# (issues/archived/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md, its tarball half).
 #
 # THE MECHANISM. A test cannot set its own environment, so it runs ITSELF again (argv(0), through
 # exec_env, which hands the child exactly the environment given) with CY_ECF_PHASE set. That copy

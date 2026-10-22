@@ -307,7 +307,7 @@ fn p_scalar_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c: i64 = (a +
 fn p_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = (a - b); return r + 1; }
 
 # ── 6.7.16 (the user's decision D85 (a), 2026-10-20): a GENERIC operator fn binds its type parameters as its call ──
-# does (issues/2026-10-20-generic-operator-fn-dispatched-at-its-i64-base.md). With `fn GB1_add<T>(l: GB1, r: T):
+# does (issues/archived/2026-10-20-generic-operator-fn-dispatched-at-its-i64-base.md). With `fn GB1_add<T>(l: GB1, r: T):
 # GG1<T>`, `b + p` (p a GPt) called the i64 base — `y.v` held p's address, `y.v.a` was refused — where `GB1_add(b, p)`
 # calls `GB1_add$GPt`. The left operand is argument 0, the right one argument 1, each read as the call reads it: in a
 # fn (GO1-GO17, GO21-GO23: a call result as the left operand, its 8 / 16 / 24 B value held while the instance is made),

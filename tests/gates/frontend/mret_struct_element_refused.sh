@@ -7,7 +7,7 @@
 # { .. return (b, 5); }` with a 16-byte `b` exited 14 (b.x 9 + 5; b.y gone), and the caller's binding passed on as a `Pt`
 # (`take(b)`) was read as the struct's address: SIGSEGV. The same in a fn declared `: (i64, i64)` and in an undeclared
 # one, from a struct-returning call (`return (mk(), 5)`), a method or operator result, a by-value field, `*p`, a
-# by-value parameter, a global (issues/2026-10-20-multi-value-struct-element-returns-its-first-word.md). Now ONE line
+# by-value parameter, a global (issues/archived/2026-10-20-multi-value-struct-element-returns-its-first-word.md). Now ONE line
 # at the element's first token: "'mv' returns struct 'Pt' (16 bytes) as a multi-value element - return its pointer, or
 # its fields as elements" (`_mret_sval`, parse_expr.cyr), once per token (a generic's instances name the base, a method
 # `P.mv`, a closure "a closure"), no latch (the statement reads on), silent under --syntax-only. The declaration

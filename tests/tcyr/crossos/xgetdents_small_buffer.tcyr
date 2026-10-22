@@ -2,7 +2,7 @@
 # fit in n, then -EINVAL (-22) when the next record does not — Linux's getdents64 answer — on every
 # target that has it, macOS included.
 #
-# ⛔ THE DEFECT (issues/2026-10-19-macos-xgetdents-small-buffer-hangs-or-ends-listing-early.md). On
+# ⛔ THE DEFECT (issues/archived/2026-10-19-macos-xgetdents-small-buffer-hangs-or-ends-listing-early.md). On
 # macOS xgetdents handed Darwin's getdirentries64 the caller's n as it was. macOS 27 answers 0 — the
 # end of the directory — when the next record does not fit, so a 64-byte loop over a directory
 # holding a 100-byte name stopped there with a success-shaped answer and lost that entry and every

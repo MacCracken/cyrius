@@ -102,7 +102,7 @@ fi
 # routing warnings judge is unknown: the literal arm warned "syscall 60 with 0 argument(s) is not routed" at 1:1 (its
 # walk back to the `syscall` token found no `)`) and the non-literal arm "no Windows-routable syscall of this arity" —
 # an invented warning after the one error, at the file's first column. Met beside
-# issues/2026-10-20-zone-replay-last-entry-latch-swallows-first-statement-error.md. Mutant: either arm's `_panic` check
+# issues/archived/2026-10-20-zone-replay-last-entry-latch-swallows-first-statement-error.md. Mutant: either arm's `_panic` check
 # dropped — RF1 / RF2 or RF3 red. RF4 (control): a valid non-literal call at an arity no route takes still warns.
 rf() {
     printf '%b' "$2" > "$D/rf.cyr"

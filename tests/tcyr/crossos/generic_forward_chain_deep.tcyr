@@ -1,5 +1,5 @@
 # generic_forward_chain_deep.tcyr — 6.7.16: a chain of 200 generics forwarding their T, called at f64, compiles and runs
-# on every host's own compiler (issues/2026-10-18-generic-forwarding-chain-hits-instance-nesting-cap.md).
+# on every host's own compiler (issues/archived/2026-10-18-generic-forwarding-chain-hits-instance-nesting-cap.md).
 #
 # An instance is parsed when a call first reaches it, nested inside that call, so the chain below instantiates o199$f64
 # inside main's call, o198$f64 inside o199$f64's, and so on to the bounded `describe`. Two compiler limits refused it:

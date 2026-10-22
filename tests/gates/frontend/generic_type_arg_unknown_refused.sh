@@ -164,7 +164,7 @@
 #      back around the pin's read, as `_targ_chk` does; the refusal stands at its token once (the parameter reader's
 #      read of the same list repeats it). PL0 the filed repro verbatim (two lines); PL1 a generic's, two instances; PL2
 #      `***Box<Zork>`; PL3 two such parameters, then one more; a control (`**Box<Pt>`, exit 4). SR4 stays once.
-#      Filed: docs/development/issues/2026-10-18-double-pointer-generic-parameter-refusal-swallows-the-next.md
+#      Filed: docs/development/issues/archived/2026-10-18-double-pointer-generic-parameter-refusal-swallows-the-next.md
 #      Mutant (2026-10-20): the lane's previous compiler (1e3aad696) -> RED 4: PL0-PL3 (the first line alone)
 #   NR (6.7.16, the user's D7, 2026-10-19) `Name<..>` ON A NON-GENERIC STRUCT OR A SCALAR IN THE POSITIONS D6 DID NOT
 #      REACH: a pointer field `p: *Pt<i64>` (its pointee above or further down, `_fld_ngt`), a trait member's type
@@ -176,7 +176,7 @@
 #      `Pt<..>` return as its reader's refusal (`_tr_rt_bad`), so neither side adds "'P.r' returns ..". NR0-NR5 the
 #      filed programs verbatim; NR6-NR10 the rest of each reader's positions, a generic's instances once; NR11 / NR12 a
 #      member's and a method's `: Pt<i64>` against the other's `: Pt`; NRX --syntax-only silent, as D6; a control.
-#      Filed: docs/development/issues/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-positions.md
+#      Filed: docs/development/issues/archived/2026-10-18-non-generic-type-arguments-unrefused-in-remaining-positions.md
 #      Mutants (2026-10-20): the lane's previous compiler (b56d6abb7) -> RED 14 (NR0-NR12, NRX: built, parse errors,
 #      the impl's line); MNR1 `_tr_rt_bad` without its `_ngt_tail` arm -> RED 2: NR11 NR12 (the impl check's line).
 #      NR13 (a find repaired in passing): a union's by-value field, PARSE_UNION_DEF's parallel copy of the struct's
@@ -189,7 +189,7 @@
 #      element's name (`_tup_ngt`), silent under --syntax-only, pass 1's quiet scan and the replay silent. NT0 the filed
 #      tup.cyr verbatim (five lines); NT1 a generic body, three instances (once, beside R4's line); NT2 a global after
 #      the first statement and a nested list; NT3 an element that is no tuple type keeps its own line; NTX; a control.
-#      Filed: docs/development/issues/2026-10-20-tuple-element-scalar-type-arguments-unread.md
+#      Filed: docs/development/issues/archived/2026-10-20-tuple-element-scalar-type-arguments-unread.md
 #      Mutant (2026-10-21): the lane's previous compiler (d06199187) -> RED 3: NT0 NT1 NT2 (each built, or R4's line
 #      alone); NT3, NTX and the control green on it.
 #   NS (6.7.16, the user's D89, 2026-10-20) A GENERIC STRUCT INSTANCE AS A SLICE ELEMENT — `[Box<i64>]`, `slice<Box<i64>>`,
@@ -199,7 +199,7 @@
 #      filed repro verbatim (7); NS1 an unknown type; NS2 D5's extra argument in each spelling; NS3 D7's inside the
 #      list; NS4 a generic body, three instances (once); NSX. The run rows (the widths, the reads, a generic's instances)
 #      are tests/tcyr/crossos/slice_generic_element.tcyr.
-#      Filed: docs/development/issues/2026-10-20-generic-struct-slice-element-parse-error.md
+#      Filed: docs/development/issues/archived/2026-10-20-generic-struct-slice-element-parse-error.md
 #      Mutant (2026-10-21): the lane's previous compiler (7ec606f70) -> RED 5: NS0-NS4 (the parse errors); NSX green.
 #   NC (6.7.16) A TYPE ARGUMENT'S NAME REFUSAL IS AT THE NAME — "unknown type 'Nope' as a type argument", "'Color' is an
 #      enum, not a type argument" and "generic type-args must be a scalar .. Result/Option/.. are unsupported" pointed at
@@ -215,7 +215,7 @@
 #      at the name, the list, the call and its chain stepped (`_ugc_call`; the statement, `_stmt_undef_gcall`), silent
 #      under --syntax-only — when every name in the list is a type here (`_ugc_open`), so a shift or two comparisons of
 #      values keep their reading (UC9, UC10). UC1-UC8, UCX (a find met fixing
-#      issues/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md). Mutants (2026-10-20, a scratch copy
+#      issues/archived/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md). Mutants (2026-10-20, a scratch copy
 #      of the tree, its 2-stage cycc, this gate run from it): the compiler before it (e9df2922) -> RED 15: UC1-UC8 (three
 #      lines), UCX x7; MUC1 `_ugc_open` taking any list (`_tok_targs_close`) -> RED 2: UC9 UC10 ("undefined function
 #      'zz'", UC10 an arity line too); MUC2 `_stmt_explicit_generic` without the statement arm -> RED 4: UC2 UC3, UCX uc2

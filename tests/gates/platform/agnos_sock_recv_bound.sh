@@ -19,7 +19,7 @@
 # deterministic and instant. CHANGELOG [6.6.7]
 # 6.7.16 — axis 5 is gone: it ran a REAL TCP exchange under mirshi, a BUILT binary from another
 # project's checkout, and a language does not gate on other projects
-# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md). The live path
+# (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md). The live path
 # under an agnos supervisor is agnos's own CI's check now; axes 1-4 carry every clock tier
 # against the in-tree fake kernel and need nothing outside this checkout.
 set -u

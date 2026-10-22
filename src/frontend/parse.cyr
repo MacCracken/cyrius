@@ -3868,7 +3868,7 @@ var _assert_rep_ti = 0 - 1;
 # the resync skipped the next statement — and one after another declaration's latched error printed "#assert
 # failed" in place of its refusal. CHANGELOG [6.7.15]
 # ⛔ 6.7.16 — AN #assert IS LINE-TERMINATED, SO ITS REFUSAL ENDS IN SYNC AT ITS LINE TOO, not only at its `;`
-# (issues/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): `#assert zz9 == 1` with no
+# (issues/archived/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): `#assert zz9 == 1` with no
 # `;` kept the latch, and the statement on the next line was skipped by the resync, its own error unreported. The
 # refused expression is stepped to its grammar's end (`_ce_extent`, what pass 1 skips — the evaluator stops at the
 # refusal, maybe a line short), when that is a well-bracketed stretch with no `;` (`_asrt_span_ok`), then the tail
@@ -3996,7 +3996,7 @@ fn _assert_operands_end(S): i64 {
 # 6.7.16: NAME declared nowhere after a Base that IS an enum is the same "'NOPE' is not a variant of 'Color'", at
 # NAME, and -2 (reported): each caller fell back to its undefined-name report for the BASE — "undefined variable
 # 'Color'", "unknown name 'Color' in a const context" — blaming the enum, which is declared
-# (issues/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md). A Base that is no enum keeps -1.
+# (issues/archived/2026-10-19-enum-qualified-unknown-member-named-as-unknown-enum.md). A Base that is no enum keeps -1.
 # CHANGELOG [6.7.16]
 fn _enum_qual_resolve(S, bti): i64 {
     var bnoff = TOKVAL(S, bti);
@@ -5478,7 +5478,7 @@ fn _asg_rejudge(S, idx, t, g): i64 {
 # name, a call, either through nested fields) and kept only when it is T (`0 - lt`), so `l = mkh().name;` (a `: Str`
 # field) into a `*Str` stays quiet. A struct local that is no `*T` (a handle) keeps the call arm: a struct call into it
 # is a rebind at any type (6.6.16 (C2)), quiet as its declaration and a handle global are
-# (issues/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md). Warning text only. CHANGELOG [6.7.16]
+# (issues/archived/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md). Warning text only. CHANGELOG [6.7.16]
 fn _asg_ret_peek(S, noff): i64 {
     _asg_ret_sid = 0;
     if (GINFN(S) == 0) { return 0; }

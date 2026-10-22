@@ -207,7 +207,7 @@ rc=0; "$CC" < "$D/d3.cyr" > /dev/null 2> "$D/d3.err" || rc=$?
 n=$(grep -c "pointer difference of pointers with different element sizes" "$D/d3.err" || true)
 [ "$rc" != 0 ] && [ "$n" = 1 ] || bad "D3 (*pp - b, a *i64 less a *u8): rc $rc, refused $n time(s), want refused once"
 
-# N (6.7.16; issues/2026-10-18-parenthesised-null-literal-into-typed-pointer-warns.md): the literal 0 is a null pointer
+# N (6.7.16; issues/archived/2026-10-18-parenthesised-null-literal-into-typed-pointer-warns.md): the literal 0 is a null pointer
 # under parentheses that wrap it whole (6.7.13's D18 (a) by the guide's whole-wrap transparency, as 6.7.15's D59 took
 # the string literal): `var p: *i64 = (0);`, `p = (0);` and a zone `var G: *i64 = (0);` warned "non-pointer" where
 # `= 0;` is quiet. N0 the filed repro verbatim; N1 `((0))`, after the first statement, a global assignment, a `*P`
@@ -256,7 +256,7 @@ syscall(60, main());
 EOF
 chk "N2 (control: (0) + 1, (1), (0) + 0 still warn)" n2.cyr "assigning non-pointer to typed pointer" 6
 
-# SP (6.7.16; issues/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md): a call declared
+# SP (6.7.16; issues/archived/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md): a call declared
 # `: Str` returns the header's address, which is what a `*Str` holds, so a `: Str` call into a `*Str` declaration (in a
 # fn, the zone, after the first statement) or a `*Str` global's assignment is quiet, as the `*Str` local's assignment
 # already was (v6.5.28): SP0 the filed repro verbatim (2 warnings before, exit 20); SP1 the method forms (a local, a
@@ -373,7 +373,7 @@ fw5() {   # <row> <file in $D> <want warnings: `L:C` per line, or empty> <want e
   done
 }
 
-# SF (6.7.16; issues/2026-10-19-str-field-into-str-pointer-declaration-or-global-warns-typed-pointer.md): a `: Str` FIELD
+# SF (6.7.16; issues/archived/2026-10-19-str-field-into-str-pointer-declaration-or-global-warns-typed-pointer.md): a `: Str` FIELD
 # is a pointer slot (its value is the header's address), so a `: Str` field into a `*Str` declaration (in a fn, the zone,
 # after the first statement) or a `*Str` global's assignment is quiet, as `l = h.name;` into the local already was
 # (6.6.17). `_tp_call_pointee` took calls only (the value had to end `)`); it now reads what the local's arm reads

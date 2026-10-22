@@ -104,7 +104,7 @@
 # handle.md): a TOP-LEVEL `var G: P3 = *GQQ;` copies too, so it is refused by name — R35 in the declaration zone, R36
 # `(*GQQ)` after the first statement (both compiled through 6.7.15: a handle). Mutation (2026-10-20, CYCC=the lane's
 # compiler before the fix): RED 2 — R35 / R36 compile.
-# 6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): the source is named as written,
+# 6.7.16 (issues/archived/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): the source is named as written,
 # from its `*` — R33 '*qq', R34 '*GQQ' (they were 'qq', 'GQQ'); every other printer: struct_arg_type_refused.sh DS.
 #
 # 6.7.15 — `**pp OP= v` NAMES ITS OPERAND AS WRITTEN (issues/2026-10-17-double-pointer-compound-refusal-names-the-
@@ -695,7 +695,7 @@ else
     printf '  FAIL: %-38s exit=%s, want 5\n' "A7 scalar src still only warns" "$a7"; fail=$((fail+1))
 fi
 
-# PN1-PN10 (6.7.16, issues/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): a `*T` struct source that is
+# PN1-PN10 (6.7.16, issues/archived/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): a `*T` struct source that is
 # no dereference, refused into a struct of another type, is named AS THE SOURCE SPELLS IT — `l = gq(&q)` 'gq(&q)' (it was
 # 'q', the call's argument: the chain's last name), `o.s = gq(&q)` 'gq(&q)', `l = h.pq` 'h.pq' (it was 'pq'), `return
 # gq(&q);` `gq(&q)` (it was `q`) — as 6.7.16 names a dereference and 6.7.15 an argument. PN1 the filed repro verbatim

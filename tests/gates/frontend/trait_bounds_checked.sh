@@ -62,7 +62,7 @@
 #      emitted, X(x) at i64 refused at A's definition); MMC3 no memo (no cap) -> green here, RED in
 #      bound_forward_chain_scale.sh (7-15x)
 #   F14d-F14g (6.7.16) THE CALL THAT INSTANTIATES A CHAIN IS BOUNDED BY THE STACK, NOT BY 256 LEVELS
-#      (issues/2026-10-18-generic-forwarding-chain-hits-instance-nesting-cap.md). An instance is parsed nested inside
+#      (issues/archived/2026-10-18-generic-forwarding-chain-hits-instance-nesting-cap.md). An instance is parsed nested inside
 #      the call that reaches it, and each link spent two of the parser's 256 levels: the filed 122-link chain was
 #      "nesting too deep (over 256 levels)". An instance's body counts its own levels (`_rd_inst_enter`) and the
 #      stack bounds the chain (`_rd_enter`: 6 MB, ~300 links). On x86 the enclosing fn's jump-target table (1023) held
@@ -118,7 +118,7 @@
 #      latch saved, cleared and put back. NS0 the filed repro verbatim (6:38 and 7:38, two notes); NS1 one body's two
 #      `b.v.other()`; NS2 an ambiguous refusal (a name, a carrier's field) after a contract refusal; NS3 pass-2 errors
 #      around them still print; NS4 a generic method's (recorded in pass 2) beside a fn's.
-#      Filed: docs/development/issues/2026-10-18-later-bound-contract-refusals-swallowed-in-pass-one.md
+#      Filed: docs/development/issues/archived/2026-10-18-later-bound-contract-refusals-swallowed-in-pass-one.md
 #      Mutant (2026-10-20): the lane's previous compiler (10afe6e68, the fix reverted) -> RED 8: N2, NS0 (both rows),
 #      NS1 (both rows), NS2, NS3, NS4 (one error each).
 #   BX (6.7.16, the user's D4, 2026-10-19) THE EXPLICIT SPELLING `v.m<..>(..)` IS HELD TO THE CONTRACT: the site scan keyed a
@@ -136,7 +136,7 @@
 #      (i32)); BX8 a refused site at an instance prints the definition's one error; BXK unchanged — a comparison on a
 #      bounded T's field, `if (v.y < a)`, an unbounded T's explicit call; BXU a list naming no type is no site (the call's
 #      own "unknown type"). The run-time half on every backend: tests/tcyr/crossos/trait_bound_explicit_member.tcyr.
-#      Filed: docs/development/issues/2026-10-18-explicit-method-type-args-escape-bound-contract.md
+#      Filed: docs/development/issues/archived/2026-10-18-explicit-method-type-args-escape-bound-contract.md
 #      Mutants (2026-10-20, a one-edit scratch copy of src/ each, CYCC= its cycc): the previous compiler (24a74beff, the
 #      fix reverted) -> RED 9: BX0 (both rows) BX1 BX2 BX3 (built) BX5 BX6 BX7 (the stub) BX8; MBX1 `_bnd_mopen` taking
 #      `(` alone -> RED 9, the same; MBX2 `_bnd_tyname` taking any name -> RED 2: BXK (the comparison refused) BXU; MBX3
@@ -177,7 +177,7 @@
 #      global; VN5 deeper — the first refused list alone (`Vec<Box<Box<Box<R>>>>`), a pending argument's own pending
 #      argument named whole (`UB$UB$R`); VN6 a generic's `Vec<Box<Box<T>>>` per instance; VN7 once per (struct,
 #      arguments), the by-value form among them (`_pn_canon`); VN8 an `impl Show for Box` names no instance.
-#      Filed: docs/development/issues/2026-10-18-vec-element-nested-instance-argument-bound-unjudged.md
+#      Filed: docs/development/issues/archived/2026-10-18-vec-element-nested-instance-argument-bound-unjudged.md
 #      Mutants (2026-10-20; MVN1 / MVN2 a one-edit scratch copy of the tree each, CYCC= its cycc): the lane's previous
 #      compiler (cacd0ff68) -> RED 15: VN0 VN1 VN5 VN5b (both rows each), VN4 VN4b VN4c VN6 (each built), VN7 (the
 #      by-value line alone), VN8 (both rows: the element built); MVN1 `_pn_canon` answering its argument -> RED 1: VN7

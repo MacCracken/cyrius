@@ -42,9 +42,9 @@
 #   MP3 `_call_ptr_field` without the explicit `g<..>(` arm -> RED 3: P6, PF1, PF2 refused (PF3, inferred,
 #                                                       stays green; the tcyr does not build)
 #   MP4 `_hl_lastnm` without the type-argument skip -> RED 8: PR1-PR7 name 'U', PB names 'S'
-#   6.7.16 (issues/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): PR2 PR3 PR7 — a dereference
+#   6.7.16 (issues/archived/2026-10-18-struct-value-dereference-refusals-name-operand-last-name.md): PR2 PR3 PR7 — a dereference
 #   source — are named as written, '*gug<U>()' (they named 'gug'), so MP4 no longer reaches them.
-#   6.7.16 (issues/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): PR1 PR4 — a `*U` call that is no
+#   6.7.16 (issues/archived/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): PR1 PR4 — a `*U` call that is no
 #   dereference — are named as written too, 'gug<U>()' (they named 'gug'); MP4 now reaches PB only (re-measured
 #   2026-10-20: RED 1).
 #
@@ -97,7 +97,7 @@
 #                                                       generic_ptr_param_infer.sh PT on every leg: does not build)
 #   MHF2 `_fld_ptr_sid` back on `_ptr_tok_sid` (T read unbound) -> RED 20: HF1-HF4 on every leg; HF5 green (PT as MHF1)
 #
-#   PP (6.7.16, met writing issues/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md's field
+#   PP (6.7.16, met writing issues/archived/2026-10-18-generic-double-pointer-generic-struct-parameter-infers-nothing.md's field
 #      row) a `**G<..>` field (two stars or more) mints G<..> after the struct's `}`, under the struct's own binding. Its
 #      annotation (`_ptr_annot`) and its pin (`_pp_pin_at`) minted the instance in the middle of the struct's run of
 #      the field pool — the run this gate's first mutation describes — so the struct's next field overwrote the
@@ -116,7 +116,7 @@
 #                                                           sized LL<Pt> with the fields so far, 24) on every leg
 #   MPP4 `_fld_pp_one` without the struct's binding      -> RED 5: PP5 on every leg ("unknown type 'T'"); the tcyr refused
 #
-#   NF (6.7.16, issues/2026-10-18-generic-nested-instance-field-of-field-judged-a-stub.md) a field of a field in a generic body
+#   NF (6.7.16, issues/archived/2026-10-18-generic-nested-instance-field-of-field-judged-a-stub.md) a field of a field in a generic body
 #      (`g.v.v = v` with `g: G1<Box<T>>`) was judged a struct use of the parameter `v` — the stub scan read every name
 #      before a `.`, field names included — and the base read its signature's `: G1<Box<T>>` as the base G1 while its
 #      body's `var g: G1<Box<T>>` was `G1$Box`. NF1 the filed repro verbatim (33; refused twice before), NF2 `q.a.k`
@@ -608,7 +608,7 @@ refused_once ppk1 "unknown type 'Zork' as a type argument" "PPK1: qq: **PB<Zork>
 printf '%s\ntrait Show { fn show(self): i64; }\nstruct Bx<T: Show> { v: T; n; }\nstruct HQ { k; qq: **Bx<Pt>; }\nsyscall(60, 1);\n' "$PPH" > "$T/ppk2.cyr"
 refused_once ppk2 "does not implement trait 'Show'" "PPK2: qq: **Bx<Pt>, Pt not Show (unchanged)"
 
-# NF — 6.7.16 (issues/2026-10-18-generic-nested-instance-field-of-field-judged-a-stub.md): a field of a field in a generic
+# NF — 6.7.16 (issues/archived/2026-10-18-generic-nested-instance-field-of-field-judged-a-stub.md): a field of a field in a generic
 # body is no use of a parameter that shares its spelling, and a generic's BASE reads its signature's type-argument
 # list with T bound to i64, as its body reads the same annotation.
 cat > "$T/nf1.cyr" <<'EOF'

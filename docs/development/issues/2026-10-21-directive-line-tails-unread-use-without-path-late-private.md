@@ -4,7 +4,7 @@
 decided answers; the 6.7.16 lanes stopped on each (the user, 2026-10-21: no new decision round).
 **Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
 **Discovered:** the f16 lane — unit FF2 (`#assert`'s tail, met while fixing
-issues/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md; the f16 review's file_as_issue,
+issues/archived/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md; the f16 review's file_as_issue,
 staged as 2026-10-21-assert-tail-after-message-skipped-drops-impl-methods-and-program.md), unit FF3 (`use`), unit FF5
 (`private`); the pw review (`include`'s tail, met while writing its one-line repros; left unfiled in the lane's handoff,
 flagged by the release-docs pass).

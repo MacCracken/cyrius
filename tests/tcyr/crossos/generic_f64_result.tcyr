@@ -75,7 +75,7 @@ var GF_G: f64 = 1.5;
 # "binds f64, like the local it captures"). The capture rung (`_ic_cap`) read every capture that is no struct and
 # no pointer as a global of its name, so `|| gf_gid(h) * 2.0` ran the i64 base and multiplied the double's bits
 # (0, with "integer arithmetic with an f64 right operand"). Each row returns its value as an f64, compared as bits.
-# Filed: docs/development/issues/2026-10-18-generic-captured-f64-binds-i64-through-plain-parameter.md
+# Filed: docs/development/issues/archived/2026-10-18-generic-captured-f64-binds-i64-through-plain-parameter.md
 fn gfc_m(): i64 { var h: f64 = 1.5; return f64_to(gf_gid(h) * 2.0); }
 fn gfc_mc(): i64 { var h: f64 = 1.5; var f = || f64_to(gf_gid(h) * 2.0); return fncall0(f); }
 fn gfc_val(): f64 { var h: f64 = 1.5; var f = || gf_gid(h) * 2.0; var r: f64 = fncall0(f); return r; }

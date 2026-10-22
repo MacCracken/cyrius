@@ -4,7 +4,7 @@
 # The Windows cyriusly.exe refuses its POSIX verbs BY NAME, before any output or change, and its
 # own verbs keep working.
 #
-# THE DEFECT (issues/2026-10-19-windows-tarball-ships-cyriusly-whose-verbs-run-bin-sh.md). The
+# THE DEFECT (issues/archived/2026-10-19-windows-tarball-ships-cyriusly-whose-verbs-run-bin-sh.md). The
 # Windows tarball ships cyriusly.exe since 6.7.16 (it is one of cyrius.cyml's [release] bins), and
 # install / update / setup / uninstall / cmdtools run /bin/sh, curl and rm, while `use --global`
 # re-points <home>\bin and <home>\lib as links where install.ps1 makes copies. Measured on cass:

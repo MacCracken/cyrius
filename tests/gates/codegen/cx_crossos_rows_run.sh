@@ -119,13 +119,13 @@
 #   R25 (6.7.15, the same issue) the filed `file_write_atomic("wa_target.txt", "hello", 5)`, native and
 #       on cxvm, each from its own empty directory: it prints 0 and exits 0, wa_target.txt holds
 #       "hello", and no `.cyrtmp.` name is left (cx printed -38 and left wa_target.txt.cyrtmp.<pid>.1).
-#   R26 (6.7.16; issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md)
+#   R26 (6.7.16; issues/archived/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md)
 #       tests/tcyr/crossos/audit_walk_fifo.tcyr — native and cxvm each print `<N> passed, 0 failed`, N
 #       derived per target (n_tgt; floor 8 on each leg), each leg from its own empty directory. On cx
 #       its directory walk needs getdents64, its FIFO mknodat, its forked walk wait4 and sleep_ms (a
 #       no-op on cx until 6.7.16, so the 5 s window was ~0): all four answered -38, `2 passed, 6
 #       failed` on every host's cxvm.
-#   R27 (6.7.16; issues/2026-10-18-impl-above-its-struct-untyped-self-unresolved.md)
+#   R27 (6.7.16; issues/archived/2026-10-18-impl-above-its-struct-untyped-self-unresolved.md)
 #       tests/tcyr/crossos/impl_self_typed.tcyr — an untyped `self` is a `*T`, an impl written ABOVE its struct
 #       included (`Lo_raw(lo)` / `Lo_set(lo, ..)` / `Lt_first(lt)` pass &lo / &lt): native and cxvm each print
 #       `<N> passed, 0 failed`, N derived from the source (21, floor 21), the whole file. Before the fix the impl

@@ -191,7 +191,7 @@ if [ "$rc" -eq 0 ]; then bad "D8: var v: S = if (k == 1) { *p } else { *q } (16 
 elif [ -s "$T/d08.bin" ]; then bad "D8: refused but still emitted a binary"
 elif [ "$(grep -c "$BIG: struct 'S'" "$T/d08.err")" -ne 2 ]; then bad "D8: want the over-8-bytes refusal once per branch: $(grep '^error' "$T/d08.err" | head -2 | tr '\n' '|')"
 else ok "D8: the filed { *p } else { *q } at 16 B is refused at each branch, no binary"; fi
-# 6.7.16 (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md, the user's D16 (a)) — A 16 B
+# 6.7.16 (issues/archived/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md, the user's D16 (a)) — A 16 B
 # STRUCT GLOBAL AS A BRANCH IS REFUSED NAMING THE STRUCT, as a 16 B struct local is (R12-R15): `_ie_wide_name` took
 # any 16 B global for a u128, so `var G = if (1 == 1) { B2 } else { B2 };` (top level, and a fn reading the global)
 # was refused "cannot be a vector, u128 or slice value". G16a the top level, G16b a fn; G16c the control: a u128

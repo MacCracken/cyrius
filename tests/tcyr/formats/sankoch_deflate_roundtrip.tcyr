@@ -3,7 +3,7 @@
 # Until 6.7.16 the only check of sankoch's DEFLATE in cyrius's gate was a check-driver row that
 # ran ANOTHER project's built binary (sit, a git-like store whose objects are zlib streams) over a
 # 100-commit fixture. A language does not gate on other projects
-# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md), so that row left
+# (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md), so that row left
 # and the folded stdlib is tested directly, here, on every host the corpus runs on:
 #   * round-trips through deflate_compress / deflate_compress_level and zlib_compress /
 #     zlib_compress_level at levels 1, 6 and 9 (fixed and dynamic Huffman), over empty, 1-byte,

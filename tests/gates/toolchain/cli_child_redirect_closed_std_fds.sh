@@ -4,7 +4,7 @@
 # A CHILD the CLI (cbt/), the check driver (programs/checks/) or a tool in programs/ forks gets
 # the std fds its redirects name, whichever std fds the parent started with.
 #
-# THE DEFECT (issues/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md). Each
+# THE DEFECT (issues/archived/2026-10-18-cbt-and-programs-child-redirects-close-their-own-std-fd.md). Each
 # child redirect was `sys_dup2(fd, N); sys_close(fd);`. A parent started with std fd N closed
 # hands that number to the child's next open, `dup2(N, N)` is a no-op, and the close then closed
 # the redirect it had just made. Measured on x86_64 Linux at 480de63eb:

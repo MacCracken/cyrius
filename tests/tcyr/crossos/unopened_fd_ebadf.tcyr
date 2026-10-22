@@ -1,7 +1,7 @@
 # unopened_fd_ebadf.tcyr — 6.7.16: a close / read / write / seek / fsync / ftruncate of an fd that
 # was never opened answers -9 (EBADF) on every target, and the descriptor beside it is untouched.
 #
-# ⛔ THE DEFECT (issues/2026-10-20-pe-fd-not-multiple-of-four-aliases-the-handle-below-it.md). On
+# ⛔ THE DEFECT (issues/archived/2026-10-20-pe-fd-not-multiple-of-four-aliases-the-handle-below-it.md). On
 # Windows an fd above 2 IS the HANDLE, and the NT kernel ignores a HANDLE value's two low bits: fd
 # `h + 1` / `h + 2` / `h + 3` reached CloseHandle / ReadFile / WriteFile / SetFilePointerEx /
 # FlushFileBuffers / SetEndOfFile as the live file `h`. The filed alias printed `52 0 -9 -9` under

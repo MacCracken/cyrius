@@ -29,7 +29,7 @@ impl Tri {
 
 # 6.7.16: an impl written ABOVE its struct types `self` too. Pass 1 met it before the struct registered, so `self.v` was
 # "no struct type in scope for 'self'" and the direct call `Lo_raw(lo)` passed lo's value (SIGSEGV) — the end of pass 1
-# now re-reads it (issues/2026-10-18-impl-above-its-struct-untyped-self-unresolved.md).
+# now re-reads it (issues/archived/2026-10-18-impl-above-its-struct-untyped-self-unresolved.md).
 impl Lo {
     fn get(self): i64 { return self.v; }
     fn raw(self): i64 { return load64(self); }

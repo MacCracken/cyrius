@@ -2,7 +2,7 @@
 # check: serial — a timing/scaling measurement; the parallel check.sh runs it alone, after its pool (6.7.0)
 # generic_definitions_scale_linear.sh — 6.7.16. Compile time is LINEAR in the number of generic fn definitions.
 #
-# THE DEFECT (issues/2026-10-18-generic-definitions-compile-time-superlinear.md). A type parameter named in a generic
+# THE DEFECT (issues/archived/2026-10-18-generic-definitions-compile-time-superlinear.md). A type parameter named in a generic
 # fn's signature (`x: T`, `p: *T`) resolves through `_tn_resolve_at`, which tried every other reading first: an enum
 # of that name declared further down (`_declared_later`, a scan of every token from the cursor to the end of the
 # file), then an enclosing fn body (`_arr_fn_tparam`, a walk back over every earlier fn) — and only then the

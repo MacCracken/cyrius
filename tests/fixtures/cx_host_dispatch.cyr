@@ -216,13 +216,13 @@ fn _cxh_dup2(): i64 {
 }
 
 # A failure's errno is x86_64 Linux's on every host (6.7.16,
-# issues/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md): open(link, O_RDONLY | O_NOFOLLOW)
+# issues/archived/2026-10-18-cxvm-darwin-errnos-reach-the-guest-unmapped.md): open(link, O_RDONLY | O_NOFOLLOW)
 # -ELOOP 40 and rmdir of a non-empty directory -ENOTEMPTY 39, where a Darwin host's own answers are
 # 62 and 66 (cxvm maps them back; a Mac's cxvm answered -62 / -66 until 6.7.16); and a number nothing
 # serves answers -ENOSYS 38 — x86_64 Linux's own answer for an unassigned number, cxvm's D55 refusal on
 # every host (spelled the host's way inside cxvm, so the map leaves it 38: Darwin's 38 is ENOTSOCK).
 # 0 the Linux answers — a Windows host's too since 6.7.16's D79 (its rmdir answered -1 for every
-# failure: issues/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md) — 2 neither.
+# failure: issues/archived/2026-10-19-pe-mkdir-unlink-rmdir-answer-minus-one-for-every-failure.md) — 2 neither.
 fn _cxh_errno(): i64 {
     syscall(87, "cxh_el");
     syscall(87, "cxh_et");
@@ -332,7 +332,7 @@ fn _cxh_waits(): i64 {
 }
 
 # getdents64, mknodat, wait4 and poll(NULL, 0, ms) (6.7.16,
-# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md — the first three answered -38
+# issues/archived/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md — the first three answered -38
 # and lib/chrono.cyr's sleep_ms was a no-op on cx): poll(NULL, 0, 60) sleeps; mknodat makes a FIFO,
 # which stat and the listing both call one; the directory reads whole with a 4096- and a 96-byte
 # buffer (a Darwin host converts each record, and for the 96-byte one puts the directory back and
@@ -434,7 +434,7 @@ fn _cxh_seq(d, n, cap, at, res): i64 {
 }
 
 # getdents64 lists /dev — a Mac's devfs, which has no extended readdir — with small buffers (6.7.16,
-# issues/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md, the platform review): a Darwin
+# issues/archived/2026-10-18-cx-audit-walk-fifo-getdents-mknodat-refused.md, the platform review): a Darwin
 # host's cxvm converts getdirentries64's records and, when the guest's buffer holds fewer than it
 # read, puts the directory back and reads those again; devfs re-reads fewer records than were
 # delivered (or none), and until the review fix the guest got the records twice — 953 names for
@@ -493,7 +493,7 @@ _cxh_row(2048, d2 == 0, d2 == 1);
 var en = _cxh_errno();
 _cxh_row(4096, en == 0, en == 0);
 # kill's signal is x86_64 Linux's number on every host (6.7.16,
-# issues/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md): one no host has answers -EINVAL (a
+# issues/archived/2026-10-18-cxvm-macos-kill-signal-numbers-unmapped.md): one no host has answers -EINVAL (a
 # Darwin host maps the guest's number to its own, and refuses one it lacks with the same -22).
 # Windows: -38, the PE peer's kill is a stub.
 var k99 = syscall(62, me, 99);
@@ -501,7 +501,7 @@ _cxh_row(8192, k99 == 0 - 22, k99 == 0 - 38);
 var wk = _cxh_walk();
 _cxh_row(16384, wk == 0, wk == 1);
 # O_CREAT | O_EXCL over an existing directory answers -EEXIST on every host (6.7.16,
-# issues/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md): Windows' CreateFileW
+# issues/archived/2026-10-18-cx-crossos-rows-on-a-windows-host-miss-tmp-and-eacces.md): Windows' CreateFileW
 # says ERROR_ACCESS_DENIED there (-13 through the PE errno table; wine says ERROR_FILE_EXISTS), and a
 # Windows host's cxvm answered the guest -13 until 6.7.16.
 syscall(84, "cxh_xd");

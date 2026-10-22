@@ -93,7 +93,7 @@ fi
 # and alloc (an indented comment) — and leave out str and vec (real headers). 6.7.16: this
 # replaces reading another checkout's sidecar ($HOME/Repos/patra/dist/patra.deps), a file this
 # tree's CLI never wrote; a language does not gate on other projects
-# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md).
+# (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md).
 rc4=0; ( cd "$P" && "$W/cyrius" distlib > "$W/out4" 2>&1 ) || rc4=$?
 leaves=$(grep -v '^#' "$P/dist/q.deps" 2>/dev/null | grep . | sort | tr '\n' ' ' || true)
 if [ "$rc4" -eq 0 ] && [ "$leaves" = "alloc fmt math string " ]; then

@@ -351,7 +351,7 @@ _c12 out
 # An `#inline` fn's const declared in a region of its own file, the fn called from outside any
 # region: warned in the inline body's file, once, as its literal twin is — the body is emitted for
 # the definition and again at each call, and since 6.7.16 the warning is printed once per site
-# (issues/2026-10-18-syscall-warnings-repeat-once-per-inline-replay.md) — and the binaries are
+# (issues/archived/2026-10-18-syscall-warnings-repeat-once-per-inline-replay.md) — and the binaries are
 # identical.
 printf '%s\n' '#inline' 'fn inl_umount(p): i64 {' '#ifdef CYRIUS_ARCH_AARCH64' '    const NR_IU = 39;' '    return syscall(NR_IU, p, 0);' '#endif' '    return 0;' '}' > "$T/a12/inc/inl.cyr"
 printf '%s\n' '#inline' 'fn inl_umount(p): i64 {' '#ifdef CYRIUS_ARCH_AARCH64' '' '    return syscall(39, p, 0);' '#endif' '    return 0;' '}' > "$T/a12/inc/inllit.cyr"

@@ -11,7 +11,7 @@
 # `: P2` fn and `(fncall0(&gp)).b` / `(*fncall0(&gp)).b` were refused, and `t = fncall0(&mks)` (`mks: Str`) into an
 # inline `Str` kept t's stale length. Each row equals its direct twin (`gp()`, `mks()`). A callee held in a VARIABLE
 # stays a word (6.7.11's D31): row kc_var.
-# Filed: docs/development/issues/2026-10-18-parenthesised-known-callee-pointer-to-struct-field-refused.md (its repro and
+# Filed: docs/development/issues/archived/2026-10-18-parenthesised-known-callee-pointer-to-struct-field-refused.md (its repro and
 # its two other spellings verbatim, and the variable / shadowed callee refusals, are
 # tests/gates/frontend/paren_field_access.sh KC1-KC5; that gate runs this file on x86_64, aarch64, cx and PE as A2).
 # CROSS-HOST: the release gate's cross-OS leg runs it on ecb / ach / cass / pi.

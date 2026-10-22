@@ -8,7 +8,7 @@
 # `s: cstring<i64>` and `t: Tagged<Zork>` compiled — a name in the list that is no type included — while a fn's own
 # `: Option<i64>` return was a parse error with a cascade ("expected '{', got '<'", "undefined variable 'i64'"), and a
 # trait member's `: Result<Nope>` against an impl's `: i64` compiled (the impl check counted the unread `Nope` as a side
-# its reader refuses: issues/2026-10-20-enum-and-handle-type-arguments-unread.md). Now, by declaration:
+# its reader refuses: issues/archived/2026-10-20-enum-and-handle-type-arguments-unread.md). Now, by declaration:
 #   * a name that declares no type parameters — an enum declared without `<..>` (above or below its use), Option and
 #     Tagged (lib/tagged.cyr declares `enum Option: stack`), cstring, a program's own `enum Result` written without a
 #     list — is refused once, at the name, with D7's words: "'Color' takes no type arguments" (`_ngt_tail`), the list

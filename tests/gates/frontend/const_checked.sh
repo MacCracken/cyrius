@@ -655,7 +655,7 @@ exits q25 3 "Q25: control — a typed array local named like an outer local cons
 exits q26 7 "Q26: control — a generic method called with explicit type arguments in an ordinary fn" 'struct P { x; }\nimpl P { fn id<T>(self, v: T): T { return v; } }\nfn main(): i64 { var p = P { 1 }; return p.id<i64>(7); }\nsyscall(60, main());\n'
 # W (6.7.16) — each `case` label is evaluated with the latch clear and closed at its `:`: a second refused label
 # reports its own refusal, not "expected ':', got identifier 'ww'"
-# (issues/2026-10-18-second-refused-case-label-reported-as-expected-colon.md; W1 the filed repro verbatim, W2 its variant)
+# (issues/archived/2026-10-18-second-refused-case-label-reported-as-expected-colon.md; W1 the filed repro verbatim, W2 its variant)
 cat > "$T/w1.cyr" <<'EOF'
 fn f(v): i64 {
     switch (v) {
@@ -686,7 +686,7 @@ exits w14 46 "W14: control — a jump-table switch of const labels runs" 'const 
 exits c1 42 "C1: consts, a const fn, a local const, an array size, #assert, a case label, an enum value" 'const N = 4;\nconst fn twice(x) { return x * 2; }\nenum E { EA = twice(N); }\nvar g[N];\n#assert twice(N) == 8, "twice";\nfn f(v): i64 { const L = 2; switch (v) { case twice(N): return 40 + L; default: return 0; } return 1; }\nsyscall(60, f(EA));\n'
 
 # MX (6.7.16, f16 FF6) — `x.m<T>(..)` ON A RECEIVER WITH NO STRUCT IS A METHOD CALL
-# (issues/2026-10-19-explicit-method-type-args-on-receiver-with-no-struct-read-as-comparison.md). A const, a local
+# (issues/archived/2026-10-19-explicit-method-type-args-on-receiver-with-no-struct-read-as-comparison.md). A const, a local
 # const, a variable whose annotation was refused, an undefined name and an enum's name took `.m` as a FIELD and read
 # `<i64>` as a comparison: "const 'C' has no fields" + "undefined variable 'i64'" (the `C.m(1)` words are "has no
 # methods"), "unknown type 'Foo'" + "undefined variable 'i64'", "undefined variable 'zq'" + "'i64'", "'m' is not a

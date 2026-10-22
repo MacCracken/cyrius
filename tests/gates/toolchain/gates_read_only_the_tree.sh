@@ -10,7 +10,7 @@
 # secureyeoman's .ts files and surveyed every repo beside the checkout — and SKIPped without
 # them, which the release gate refuses. The user, 2026-10-19: "we need to rip out all those
 # gates longer term, LANGUAGES DO NOT GATE ON OTHER PROJECTS." 6.7.16 removed every such read
-# (docs/development/issues/2026-10-19-gates-read-other-projects-checkouts.md); this gate keeps
+# (docs/development/issues/archived/2026-10-19-gates-read-other-projects-checkouts.md); this gate keeps
 # them out. Its allowlist has ZERO entries: a read it refuses is removed, never excused.
 #
 # WHAT IT SCANS — every NON-COMMENT line (a comment line is optional whitespace then `#`, in

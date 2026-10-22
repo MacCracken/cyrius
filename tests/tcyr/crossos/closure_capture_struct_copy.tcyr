@@ -349,7 +349,7 @@ fn shadowg(): i64 {
 # The closure prologue wrote a parameter's name and depth word only; the slot's type word is kept per
 # slot INDEX across fns, so the fn just before (`_cph`'s `w: *Pt`, `_cpf`'s `w: f64`, slot 0) typed
 # the parameter: `x.y` read through *Pt (SIGSEGV), `x + 1` was f64 arithmetic with a warning
-# (issues/2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type.md).
+# (issues/archived/2026-10-18-closure-parameter-keeps-an-earlier-fns-slot-type.md).
 fn _cph(w: *Pt): i64 { return 0; }
 fn cpq(): i64 { var k = |x| { return x + 1; }; return callptr(k, 41); }
 fn _cpf(w: f64): i64 { return 0; }
@@ -361,7 +361,7 @@ fn cpcap(): i64 { var t = 2; var k = |x| { return x + t; }; return callptr(k, 40
 # here the base of the 16 B `var w: GW` — and kept GW's type: a generic given `k` bound T = GW
 # (`w.s.gs(k)` called the GW instance, whose `a + self.k` is the undefined `GW_add`; `_cpid(k)` and
 # `_cpsz(k)` copied 16 bytes through k, SIGSEGV)
-# (issues/2026-10-18-generic-method-on-field-chain-in-closure-binds-captured-struct.md).
+# (issues/archived/2026-10-18-generic-method-on-field-chain-in-closure-binds-captured-struct.md).
 struct GS { k; }
 struct GW { s: GS; j; }
 impl GS { fn gs<T>(self, a: T): i64 { return a + self.k; } }

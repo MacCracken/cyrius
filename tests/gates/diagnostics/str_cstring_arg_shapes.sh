@@ -500,7 +500,7 @@ if [ "$(cat "$T/w5.cyr.rc")" = 0 ]; then
 else _bad "axis 5 controls: did not compile"; sed -n 1,4p "$T/w5.cyr.err"; fi
 
 # ---- axis 6 (6.7.16): a whole METHOD call (or a chain ending in one) records its global as a free call does ----
-# issues/2026-10-18-top-level-untyped-str-method-global-prints-header-bytes.md: `var s = BB.mks();` with a `: Str` method
+# issues/archived/2026-10-18-top-level-untyped-str-method-global-prints-header-bytes.md: `var s = BB.mks();` with a `: Str` method
 # recorded nothing (`_gv_rhs_call_sid` wanted `IDENT (`), so `println(s)` took the cstring base and printed the Str
 # header's bytes (x86_64 `214 016 ` \n`), in the declaration zone and after a first statement, where `var s = mks2();`
 # prints the string. The chain's first token is recorded tagged and resolved when asked (`_gvm_sid`: the receiver's

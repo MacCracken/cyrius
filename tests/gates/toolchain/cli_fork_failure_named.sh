@@ -271,7 +271,7 @@ msg() { printf 'Content-Length: %d\r\n\r\n%s' "$(printf '%s' "$1" | wc -c)" "$1"
 grep -q "could not start $W/lhome2/.cyrius/bin/cycc: fork failed" "$W/lsp2.err" \
     || fail "axis 3: the raw-cycc diagnostics spawn did not log its fork failure: $(grep -v '^\[cyrius-lsp\] /' "$W/lsp2.err" | tail -3 | tr '\n' ' ')"
 # 6.7.16: a project's file spawns the CLI twice — `cyrius build --print-config` (its unit's
-# configuration, issues/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md) and the check — so
+# configuration, issues/archived/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md) and the check — so
 # three failures are named: those two, and the loose file's check
 [ "$(grep -c "could not start $LH/.cyrius/bin/cyrius: fork failed" "$W/lsp.err")" = 3 ] \
     || fail "axis 3: the wrapper spawns (a project file's configuration read and check, a loose file's check) did not each log a fork failure: $(grep -c "could not start" "$W/lsp.err") logged"

@@ -1,6 +1,6 @@
 # The TypeScript front end is measured against one project's files (secureyeoman's corpus), not the language — it needs true, in-tree language support — OPEN
 
-**Status:** 🟡 **OPEN** — filed 2026-10-19 with [the cross-project gates issue](2026-10-19-gates-read-other-projects-checkouts.md).
+**Status:** 🟡 **OPEN** — filed 2026-10-19 with [the cross-project gates issue](archived/2026-10-19-gates-read-other-projects-checkouts.md).
 The user, 2026-10-19: "I get TS corpus from SY but in effect that needs to convert into true language support not just
 SY corpus there was tons of work relates to that."
 **Placement:** open by design — a feature / arc, not a bug: roadmap.md § *Placed arcs* — the TypeScript language-support arc, its own

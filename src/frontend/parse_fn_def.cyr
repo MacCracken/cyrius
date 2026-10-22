@@ -1086,7 +1086,7 @@ fn _dl_refd_at(S, noff): i64 {
 }
 # ⛔ 6.7.16 — A REFUSED TOP-LEVEL `var c: S;` (after the first statement: an uninitialized struct or vector, which only
 # a fn's frame holds) DECLARES `c` AS REPORTED: it registered a fn-local slot no top-level use reads, so each use
-# added "undefined variable 'c'" (issues/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md).
+# added "undefined variable 'c'" (issues/archived/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md).
 # A VARIABLE's name, kept apart from `_dlr` (whose names a type annotation also asks about): `_undef_var_report`
 # reads both. CHANGELOG [6.7.16]
 # ⛔ 6.7.16 — AN INNER DECLARATION'S NAMES ARE KNOWN BEFORE PASS 1 READS ANY USE. A `struct` / `enum` / `union` / `trait`
@@ -1379,7 +1379,7 @@ fn _tl_scan1(S, objok): i64 {
 # ⛔ 6.7.16 — A PASS-1 DECLARATION'S REFUSAL ENDS AT ITS OWN `}`. Pass 1 has no statement resync, so a refusal's panic
 # latch held to the end of the scan and swallowed every later declaration's error: `enum E { A 5 }` then `struct Q {
 # a: Foo; }` and `enum F { X 6 }` printed the enum's "expected identifier" alone
-# (issues/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md). A declaration that met the
+# (issues/archived/2026-10-19-pass-one-enum-member-refusal-swallows-later-declaration-errors.md). A declaration that met the
 # latch clear and ended in sync — past the `}` closing its one `{ .. }`, no brace between (`_tl_decl_synced`) —
 # releases what it set, so the next declaration reports its own (D12's missing separator was released so first).
 # A struct's and a union's refusals the same (a field that is not a name, its type, the declaration's name or `{`).
@@ -5345,7 +5345,7 @@ fn _tr_tp_third(S, p): i64 {
 # `_trs_fnp_refuse`'s line at the type's first `*` (under --syntax-only too, as before), the type stepped
 # (`_fnp_ty_end`), the body parsed. The return is recorded as the pointer it is, as pass 1 records it (`_ret_ptr_annot`,
 # quiet), so its uses add nothing ("assigning non-pointer to typed pointer" at `var q: *i32 = h();`)
-# (issues/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md). CHANGELOG [6.7.16]
+# (issues/archived/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md). CHANGELOG [6.7.16]
 # The token after the fn-pointer type whose first `*` is token `i`: its `*`s, `fn`, an optional `( .. )` and `: T` (a
 # nested `*fn` too), stepped unread, as the parameter reader steps a type it does not report (`_pty_end`, quiet).
 fn _fnp_ty_end(S, i): i64 {

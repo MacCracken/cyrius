@@ -21,7 +21,7 @@
 #          routes) hands the 1.2 hello to the 1.2 server, which refuses it the same way.
 # On the lib before the fix: S1-S4, W1 and W2 fail.
 #
-# issues/2026-10-18-tls-native-1-2-server-clienthello-other-leniencies.md; the user's decision 6.7.16
+# issues/archived/2026-10-18-tls-native-1-2-server-clienthello-other-leniencies.md; the user's decision 6.7.16
 # D32 (2026-10-19): "Refuse with decode_error". The 1.2 parse skipped a missing compression_methods
 # byte, read a list overrunning the message as "no extension block", read a _tn_find_ext -1 (an
 # extension overrunning the block) as "absent", and returned its three short-message refusals bare,
@@ -37,7 +37,7 @@
 # On the lib before D32: P1-P7's results (P1-P3, P6, P7 negotiated 0xC02C) or alerts (P4, P5: none),
 # X1-X7 and Y6-Y7 fail; Y1-Y5 pass (the version sniffer, _tn_ch_is_tls13, already refused them).
 #
-# issues/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md; the
+# issues/archived/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md; the
 # user's decision 6.7.16 D82 (2026-10-20): "Refuse with illegal_parameter". The parse looked
 # extensions up with _tn_find_ext, which takes the first of a repeated type, and negotiated (the
 # filed row B: 49196 alert=0). RFC 5246 §7.4.1.4: no more than one extension of a type. Now the

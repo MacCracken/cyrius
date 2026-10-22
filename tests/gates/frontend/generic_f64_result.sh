@@ -38,7 +38,7 @@
 #      captured f64 binds T = f64 as the f64 local it captures does: the filed repro, verbatim, exits 33 (30
 #      before: mc() ran the i64 base on the double's bits, 0) on x86_64, CYRIUS_IR=3, aarch64, cx and PE, with
 #      no warning on x86_64 (one before: "integer arithmetic with an f64 right operand"); `_ic_cap`'s f64 rung.
-#      Filed: docs/development/issues/2026-10-18-generic-captured-f64-binds-i64-through-plain-parameter.md
+#      Filed: docs/development/issues/archived/2026-10-18-generic-captured-f64-binds-i64-through-plain-parameter.md
 #   T  tests/tcyr/crossos/generic_f64_result.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach

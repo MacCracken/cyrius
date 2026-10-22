@@ -641,7 +641,7 @@ refused4 r17w10 "cannot pass a bool to tuple parameter 't' (i64, i64) of 'X.take
 refused4 r17w11 "2:18: $LIT" "R17w11: at top level, \`take('a' - 1)\`" "${TW}syscall(60, take('a' - 1));\n"
 exits4 r17w12 34 "R17w12: still the address — \`take(&t)\`, \`take(u)\`, \`take(mk())\`, a const \`take(C)\` (compiled, not taken), and a literal expression into a parameter that is no tuple" 'include "lib/alloc.cyr"\nconst C = 0;\nfn take(t: (i64, i64)): i64 { return t.0 * 10 + t.1; }\nfn take2(k, t: (i64, i64)): i64 { return t.0 * 10 + t.1 + k; }\nfn mk(): i64 { var p = alloc(16); store64(p, 3); store64(p + 8, 4); return p; }\nfn f(x): i64 { alloc_init(); var t: (i64, i64) = (3, 4); var u = &t; if (x == 0) { return take(C); } return take(&t) + take(u) + take(mk()) + take2(-1 + 1, t) - 102; }\nsyscall(60, f(1));\n'
 refused4 r17w13 "1:12: a tuple type in a generic fn is refused" "R17w13: a generic's tuple parameter, \`g(-5, 0)\`: R4 alone" 'fn g<T>(t: (i64, i64), x: T): T { return x; }\nfn f(): i64 { return g(-5, 0); }\nsyscall(60, f());\n'
-# R17x (6.7.16; issues/2026-10-18-tuple-parameter-comparison-argument-called-an-integer.md) — the words name the
+# R17x (6.7.16; issues/archived/2026-10-18-tuple-parameter-comparison-argument-called-an-integer.md) — the words name the
 # argument's VALUE: a boolean value (guide § bool: a comparison, \`!x\`, \`&&\` / \`||\`, or any of these in parentheses)
 # is "a bool", as \`take(true)\` is; D36's scan said "an integer" for each (it read only the literals). \`_tty_arg\` reads
 # the argument at the parser's levels, so an operator applied to a boolean value is "an integer" (R17x11-R17x13).
@@ -661,7 +661,7 @@ refused4 r17x10b "2:18: $BOOLT" "R17x10b: at top level, \`take('a' == 97)\`" "${
 refused4 r17x11 "2:27: $LIT" "R17x11: control — \`take((1 == 1) + 1)\` stays an integer" "${TW}fn f(): i64 { return take((1 == 1) + 1); }\nsyscall(60, f());\n"
 refused4 r17x12 "2:27: $LIT" "R17x12: control — \`take(!0 + 1)\` stays an integer (\`!\` binds its factor)" "${TW}fn f(): i64 { return take(!0 + 1); }\nsyscall(60, f());\n"
 refused4 r17x13 "2:27: $LIT" "R17x13: control — \`take(-(1 == 1))\` stays an integer (\`-\` outermost)" "${TW}fn f(): i64 { return take(-(1 == 1)); }\nsyscall(60, f());\n"
-# R17y (6.7.16, D23, the user's decision of 2026-10-19; issues/2026-10-18-tuple-parameter-float-literal-dereferenced.md)
+# R17y (6.7.16, D23, the user's decision of 2026-10-19; issues/archived/2026-10-18-tuple-parameter-float-literal-dereferenced.md)
 # — a FLOAT literal is a literal too: \`take(1.5)\`, \`take(-1.5)\`, \`take((2.0))\` and \`take(1.5 + 1)\` compiled and the
 # callee read through the double's bits (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE) — \`_tal_scan\` took no token
 # 61. Refused as "an f64" when the compiler types the value f64 (D23: "an f64 when the compiler sees one"): a float
@@ -1272,7 +1272,7 @@ cascade cs8e 1 "CS8e: ... a struct \`U\` value above" 'struct U { a; b; }\nvar B
 cascade cs8f 1 "CS8f: ... wrapped, \`(B)\`" 'var B = (1, 2, 3);\nvar A: (i64, i64) = (B);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "2:21: cannot copy 'B' into a variable of a different struct/vector type: 'A'"
 cascade cs8g 1 "CS8g: ... a struct field \`W.s\` above" 'struct U { a; b; }\nstruct W { s: U; n; }\nvar B = U { 1, 2 };\nvar W0 = W { B, 3 };\nvar A: (i64, i64) = W0.s;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "5:21: cannot copy 's' into a variable of a different struct/vector type: 'A'"
 cascade cs8h 1 "CS8h: ... a scalar \`B\` above: R12 alone (the control)" 'var B = 5;\nvar A: (i64, i64) = B;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "2:8: cannot initialize tuple 'A' with a value that is not a tuple"
-# CS9 (6.7.16, issues/2026-10-18-refused-annotation-cascades-tuple-literal-initializer.md) — a REFUSED annotation over a
+# CS9 (6.7.16, issues/archived/2026-10-18-refused-annotation-cascades-tuple-literal-initializer.md) — a REFUSED annotation over a
 # tuple literal initializer is the annotation's one error: the refusal left no type, which R9 read as a declared
 # non-tuple ("a tuple literal cannot initialize 'b' - its declared type is not a tuple" after it, every row below
 # through 6.7.15). `_tup_r9` (parse_decl.cyr) stands R9 down for an annotation refused at its token (`_tup_ann_refd`:
@@ -1362,7 +1362,7 @@ accept5() {   # <name> <what> <source (printf %b)> <flag>: rc 0, no error / warn
         else ok "$2 ($leg)"; fi
     done
 }
-# TL (6.7.16, issues/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md) — a tuple literal as
+# TL (6.7.16, issues/archived/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md) — a tuple literal as
 # a struct literal's element is R9's refusal (the guide lists no such position), and ONLY that: the walk carried the
 # refused element into the nested field's first leaf, wanted one value more and met the `}` — "unexpected '}'" (under
 # --syntax-only, where R9 says nothing, an invented syntax error alone). An element in which the factor refused a
@@ -1387,7 +1387,7 @@ accept5 tl8 "TL8: --syntax-only: the file parses (R9 is no syntax error; the inv
 lines5 tl9 "TL9: control — the named form keeps its own refusal" "${TW}fn f(): i64 { var w = W { p: (1, 2), q: 3 }; return w.q; }\nsyscall(60, f());\n" "error:<source>:2:30: named init not supported for nested struct fields — use positional"
 exits4 tl10 3 "TL10: control — \`W { 1, 2, 3 }\` (the leaves) runs" "${TW}fn f(): i64 { var w = W { 1, 2, 3 }; return w.q; }\nsyscall(60, f());\n"
 exits4 tl11 3 "TL11: control — \`W { t, 3 }\` with a tuple variable runs" "${TW}fn f(): i64 { var t = (1, 2); var w = W { t, 3 }; return w.q; }\nsyscall(60, f());\n"
-# CT (6.7.16, issues/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md) — `var t = (1 2);` is the
+# CT (6.7.16, issues/archived/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md) — `var t = (1 2);` is the
 # parenthesised expression `(1` refused at `2` (no `,`: no tuple literal), and t was declared a scalar, so `t.1` added
 # "no struct type in scope for 't'". An untyped `var NAME = ( .. )` whose initializer was refused (the latch went up in
 # it, or — in a fn — the wrap the untyped peel stepped into is not closed where the value stopped) marks NAME as a

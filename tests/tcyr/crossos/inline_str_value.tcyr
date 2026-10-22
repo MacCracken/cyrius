@@ -30,7 +30,7 @@
 # rebind `q = p` is. And `h = *p` into a `Str` HANDLE (p a `*Str`) rebinds h to the header p points at, as `h = p`
 # does (the user's D20, 2026-10-19; the hd_* rows, R_TOP12: a local, a parameter, a global, wrapped, a for step, `*GP`,
 # `*gp()`, `*w.p`, `*w.sp()`, a capture, top level): it stored the header's data word as the handle (the filed repro 0,
-# want 5; issues/2026-10-18-str-handle-assigned-str-pointer-dereference-stores-data-word.md, inline_str_value.sh HD1).
+# want 5; issues/archived/2026-10-18-str-handle-assigned-str-pointer-dereference-stores-data-word.md, inline_str_value.sh HD1).
 # And an inline `Str` stored into a `*Str` FIELD or through a `**Str` takes its header's address, as `p = gt` into a
 # `*Str` name does (the user's D19, 2026-10-19; the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14: a local's field, a
 # global's, through a `*W`, nested, a `: *W` call's, a for step, a capture, `*pp`, `*(pp)`, `*GPP`, `*gpp()`, a `pp:

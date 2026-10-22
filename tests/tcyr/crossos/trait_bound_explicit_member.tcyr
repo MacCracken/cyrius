@@ -1,6 +1,6 @@
 # trait_bound_explicit_member.tcyr — 6.7.16 (the user's D4, 2026-10-19): a bound's own GENERIC member called with its
 # explicit type-argument list (6.7.14's D7 (a) spelling) on a bounded T, at run time, on every backend
-# (issues/2026-10-18-explicit-method-type-args-escape-bound-contract.md).
+# (issues/archived/2026-10-18-explicit-method-type-args-escape-bound-contract.md).
 #
 # The bound's contract site scan keyed a call by `name . name (`, so `v.show<i32>(1)` was no bounded site: the stub
 # scan read it as a struct use of T, the base was the stub, and at a SCALAR T (`impl Show for i64`) the call was refused
