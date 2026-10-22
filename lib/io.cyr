@@ -544,14 +544,15 @@ fn xflock(fd, op): i64 {
 
 #ifdef CYRIUS_TARGET_WIN
 # xflock's Windows arm: flock emulated with kernel32 byte-range locks (LockFileEx 0xF04C,
-# UnlockFileEx 0xF04D, GetLastError 0xF04B). Windows byte locks are MANDATORY: locking the
-# file's real bytes would fail every read and write through another handle (patra's own), so
-# the lock is ONE sentinel byte at 2^63 - 1, past any data a file can hold — it excludes other
-# lockers only. Returns 0; -11 (EAGAIN on PE) when LOCK_NB finds the lock held
-# (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an overlapped handle); -22 for an op that
-# is not LOCK_SH, LOCK_EX or LOCK_UN (+LOCK_NB), whatever the fd, as on Linux (the op is checked
-# before the fd since 6.7.17: an aliasing fd answered -9). LOCK_UN of an unheld lock is 0
-# (ERROR_NOT_LOCKED 158), as on Linux. Measured on cass. CHANGELOG [6.7.12]
+# UnlockFileEx 0xF04D, GetLastError 0xF04B, and 0xF04F: the last error as -errno, through the
+# Win32 table). Windows byte locks are MANDATORY: locking the file's real bytes would fail every
+# read and write through another handle (patra's own), so the lock is ONE sentinel byte at
+# 2^63 - 1, past any data a file can hold — it excludes other lockers only. Returns 0; -11 (EAGAIN
+# on PE) when LOCK_NB finds the lock held (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an
+# overlapped handle); -22 for an op that is not LOCK_SH, LOCK_EX or LOCK_UN (+LOCK_NB), whatever
+# the fd, as on Linux (the op is checked before the fd since 6.7.17: an aliasing fd answered -9).
+# LOCK_UN of an unheld lock is 0 (ERROR_NOT_LOCKED 158), as on Linux. Measured on cass.
+# CHANGELOG [6.7.12]
 # An fd above 2 with a low bit set is -9 (EBADF), as on Linux: LockFileEx ignores a handle's two
 # low bits, so `xflock(h + 1, LOCK_EX)` locked `h`'s file and answered 0 (`_win_fd_aliases`).
 # CHANGELOG [6.7.16]

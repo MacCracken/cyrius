@@ -160,7 +160,7 @@ assert_eq(lc_ex, lbad, "xflock(closed, LOCK_EX) is -9 (the filed repro; Windows 
 assert_eq(lc_shnb, lbad, "xflock(closed, LOCK_SH | LOCK_NB) is -9 (Windows answered -1)");
 assert_eq(lc_un, lbad, "xflock(closed, LOCK_UN) is -9 (Windows answered -1)");
 assert_eq(ln4, lbad, "xflock(-4, LOCK_EX) is -9 (the filed repro; Windows answered -1)");
-assert_eq(ln1, lbad, "xflock(-1, LOCK_EX | LOCK_NB) is -9 (Windows handed -1, the process pseudo-handle, to LockFileEx)");
+assert_eq(ln1, lbad, "xflock(-1, LOCK_EX | LOCK_NB) is -9 (Windows handed the pseudo-handle -1 to LockFileEx)");
 assert_eq(lnun, lbad, "xflock(-8, LOCK_UN) is -9 (Windows answered -1)");
 
 # A bad op is -22 whatever the fd: Linux's flock(2) checks the op before the fd, and so does the
