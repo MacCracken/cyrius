@@ -318,17 +318,7 @@ fn _arr_fn_tparam(S, ti, noff): i64 {
     var k = ti - 1;
     while (k >= 0) {
         if (TOKTYP(S, k) == 32) {
-            if (_tok_body_spans(S, k, ti) == 1) {
-                if (TOKTYP(S, k + 2) != 19) { return 0; }   # `fn name <`
-                var j = k + 3;
-                var t = TOKTYP(S, j);
-                while (t != 20 && t != 10 && t != 12) {
-                    if (t == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; } }
-                    j = j + 1;
-                    t = TOKTYP(S, j);
-                }
-                return 0;
-            }
+            if (_tok_body_spans(S, k, ti) == 1) { return _fn_tp_has(S, k, noff); }   # 6.7.17: `_tpl_has`
         }
         k = k - 1;
     }

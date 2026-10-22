@@ -207,12 +207,28 @@ fn _tn_fnptr_kw(S, k): i64 {
 # 1 when `noff` is one of the `<T, ..>` of the fn whose `fn` token is `k` (`fn name <`).
 fn _fn_tp_has(S, k, noff): i64 {
     if (TOKTYP(S, k + 2) != 19) { return 0; }
-    var j = k + 3;
-    var t = TOKTYP(S, j);
-    while (t != 20 && t != 10 && t != 12) {
-        if (t == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; } }
+    return _tpl_has(S, k + 2, noff);
+}
+# ⛔ 6.7.17 — 1 when `noff` is a type parameter of the declaration list whose `<` is token `lt`, read as the capture
+# reads it: a name at the list's own depth, not a bound's trait (after `:` / `+`). The three walkers that answer "is
+# this name a type parameter here" (`_fn_tp_has` a signature's, `_arr_fn_tparam` a body's, `_is_own_tparam` a
+# struct's) took every name to the first `>`: a bound's trait was a type parameter (`fn f<T: Show>(x: T, y: Show)`
+# compiled where `fn g(y: Show)` is "unknown type 'Show'"), and a name past a nested list was none (`struct B<T:
+# Show<i64>, U> { a: U; }` added "unknown type 'U'" to the bound's refusal). CHANGELOG [6.7.17]
+fn _tpl_has(S, lt, noff): i64 {
+    var j = lt + 1;
+    var d = 1;
+    var e = GTCNT(S);
+    while (j < e) {
+        var t = TOKTYP(S, j);
+        if (t == 10 || t == 12 || t == 13 || t == 5) { return 0; }
+        if (t == 19) { d = d + 1; }
+        d = d - _targ_gt_n(t);
+        if (d <= 0) { return 0; }
+        if (t == 2) { if (d == 1) { if (_tp_after_bound(S, j) == 0) {
+                    if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; }
+                } } }
         j = j + 1;
-        t = TOKTYP(S, j);
     }
     return 0;
 }
@@ -5444,16 +5460,7 @@ fn _is_own_tparam(S, noff): i64 {
     var k = _sdef_tp_ti;
     if (k <= 0) { return 0; }
     if (TOKTYP(S, k) != 19) { return 0; }
-    k = k + 1;
-    while (k < GTCNT(S)) {
-        var t = TOKTYP(S, k);
-        if (t == 20) { return 0; }
-        if (t == 13) { return 0; }
-        if (t == 2) { if (TOKTYP(S, k - 1) != 49 && TOKTYP(S, k - 1) != 6) {   # 6.7.1: not a bound's trait
-                if (STREQ(S, TOKVAL(S, k), noff) == 1) { return 1; } } }
-        k = k + 1;
-    }
-    return 0;
+    return _tpl_has(S, k, noff);   # 6.7.17: nested lists stepped (6.7.1: not a bound's trait)
 }
 
 # Is a declaration of this name — keyword token `ta` or `tb` (struct 40, union 101, enum 60; only those, the

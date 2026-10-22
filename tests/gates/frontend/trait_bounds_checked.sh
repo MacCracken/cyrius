@@ -197,6 +197,14 @@
 #      in source order; DL2 a struct's field error and a fn body's error after one; DL3 a malformed bound `<U: 5>` and
 #      a bound with arguments `<U: Show<i64> >`, each with the next struct's error; DL4 two impl methods' (pass 2).
 #      Mutant (2026-10-22): the compiler before (e65604d5d) -> RED DL1-DL4 (the first line alone, DL2 its pass-2 line too).
+#   DW (6.7.17, met in genb GB1) A BOUND'S TRAIT IS NO TYPE PARAMETER, AND A NAME PAST A NESTED LIST IS ONE: the walkers
+#      that answer "is this name a type parameter here" (`_fn_tp_has`, `_arr_fn_tparam`, `_is_own_tparam`) took every
+#      name of the list to its first `>` — `fn f<T: Show>(x: T, y: Show)` and a body's `var z: Show` compiled where
+#      `fn g(y: Show)` is "unknown type 'Show'", and `struct B<T: Show<i64>, U> { a: U; }` added "unknown type 'U'"
+#      (under CYRIUS_MONOMORPH=0 too, with `fn k<T: Show<i64>, U>(u: U)`'s two). One reader (`_tpl_has`): depth-tracked,
+#      a bound's names excluded. DW1 the signature's and the body's `Show` refused as g's is; DW2 no "unknown type 'U'"
+#      past a refused list, plain and under the flag; DW3 (control) `<T: Show + Eq, U>` a struct's and a fn's, `U` and
+#      `T[2]` in the body (exit 13). Mutant (2026-10-22): the compiler before (84a9da229) -> RED DW1 DW2 (both legs).
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_capture_tparams` not reading a bound
 #   (every identifier a type parameter again) -> D1 builds, D2-D4 refused only by the cascade;
@@ -928,6 +936,20 @@ errs dl3 4 "DL3: a malformed bound and a bound with arguments, each with the nex
     "error:<source>:4:9: a trait in a bound takes no type arguments: 'Show'" "error:<source>:5:15: unknown type 'Bar' for struct field 'b'"
 printf 'struct M { x; }\nimpl M { fn m<V: Nope4>(self, v: V): i64 { return 1; } fn n<V: Nope5>(self, v: V): i64 { return 1; } }\nsyscall(60, 3);\n' > "$T/dl4.cyr"
 errs dl4 2 "DL4: two impl methods' unknown bounds" "error:<source>:2:18: unknown trait 'Nope4' $UTB 'V'" "error:<source>:2:64: unknown trait 'Nope5' $UTB 'V'"
+
+# DW — 6.7.17: a bound's trait is no type parameter; a name past a nested list is one (`_tpl_has`)
+printf 'trait Show { fn show(self): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nfn f<T: Show>(x: T, y: Show): i64 { return 1; }\nfn h<T: Show>(x: T): i64 { var z: Show = 0; return 1; }\nfn g(y: Show): i64 { return 1; }\nsyscall(60, f(1, 2) + h(1));\n' > "$T/dw1.cyr"
+errs dw1 3 "DW1: y: Show in a bounded generic's signature and body, as in g's" "error:<source>:3:24: unknown type 'Show' for parameter 'y'" \
+    "error:<source>:4:35: unknown type 'Show' for variable 'z'" "error:<source>:5:9: unknown type 'Show' for parameter 'y'"
+printf 'trait Show { fn show(self): i64; }\nstruct B<T: Show<i64>, U> { a: U; }\nstruct C<T<i64>, U> { a: U; }\nfn k<T: Show<i64>, U>(u: U): i64 { var q: U = u; return q; }\nsyscall(60, 3);\n' > "$T/dw2.cyr"
+errs dw2 3 "DW2: no \"unknown type 'U'\" past a refused list" "error:<source>:2:13: a trait in a bound takes no type arguments: 'Show'" \
+    "error:<source>:3:11: a type parameter is a name, got '<'" "error:<source>:4:9: a trait in a bound takes no type arguments: 'Show'"
+rc=0; CYRIUS_MONOMORPH=0 "$CC" < "$T/dw2.cyr" > /dev/null 2> "$T/dw2m.err" || rc=$?
+if [ "$rc" -ne 0 ] && [ "$(grep -c '^error' "$T/dw2m.err")" -eq 1 ] && grep -qF "error:<source>:3:11: a type parameter is a name, got '<'" "$T/dw2m.err"; then
+    ok "DW2 [mono0]: the list's own line alone (the flag reads no bound)"
+else bad "DW2 [mono0]: rc $rc: $(grep '^error' "$T/dw2m.err" | tr '\n' '|')"; fi
+printf 'trait Show { fn show(self): i64; }\ntrait Eq { fn eq(self, o): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nimpl Eq for i64 { fn eq(self, o): i64 { return 1; } }\nstruct B<T: Show + Eq, U> { a: T; b: U; }\nfn k<T: Show + Eq, U>(t: T, u: U): U { var q: U = u; var a: T[2]; return q + sizeof(T); }\nfn main(): i64 { var b: B<i64, i8>; b.b = 3; return b.b + k(1, 2); }\nsyscall(60, main());\n' > "$T/dw3.cyr"
+exits dw3 13 "DW3: <T: Show + Eq, U> — a struct's and a fn's U, T[2] in the body"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"
