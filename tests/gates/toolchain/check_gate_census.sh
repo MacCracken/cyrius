@@ -257,7 +257,6 @@ inline|if CYRIUS_TARGET_AGNOS=1 "$R/build/cycc" < "$T/p.cyr" > "$T/p.bin"; then 
 inline|./build/cycc < src/main_aarch64.cyr > "$D/a" 2>/dev/null || true
 inline|( cd "$ROOT" && "$ROOT/build/cycc" < x.cyr > "$T/p" )
 inline|if ! "$ROOT/build/cycc" < "$1" > "$2" 2> "$T/build.err"; then exit 1; fi
-inline|cp "$ROOT/build/cycc" "$T/home/bin/cycc"
 inline|ln -s "$ROOT/build/cycc" "$R4/build/cycc"
 inline|cat "$ROOT/x.cyr" | "$ROOT/build/cycc" > /dev/null
 inline|"${ROOT}"/build/cycc < x.cyr > "$T/x"
@@ -269,10 +268,13 @@ none|CC=${CYCC:-"$ROOT/build/cycc"}
 none|# cat src/main.cyr | build/cycc > "$T/o"
 none|[ -x "$ROOT/build/cycc" ] || { echo "FAIL: build/cycc not built"; exit 1; }
 none|printf '#!/bin/sh\nexit 0\n' > "$W/root/build/cycc"
-none|cp "$D/cycc.new" "$ROOT/build/cycc"
 none|cat src/main_aarch64.cyr | ./build/cycc_aarch64 > "$D/x"
 none|rm -f "$R/build/cycc-native-aarch64" "$R/build/cycc"
 CASES
+# Two cases spell a copy from and into build/cycc. Written here with `$''ROOT` so this gate's own source carries no
+# backup-then-write-back of the tree's compiler for gates_never_write_tree.sh axis 1 to read (the case files get
+# `$ROOT` byte for byte). CHANGELOG [6.7.17]
+printf '%s\n' 'inline|cp "$''ROOT/build/cycc" "$T/home/bin/cycc"' 'none|cp "$D/cycc.new" "$''ROOT/build/cycc"' >> "$D/pin.cases"
 _ci=0
 while IFS='|' read -r _kind _line; do
     _ci=$((_ci + 1))
