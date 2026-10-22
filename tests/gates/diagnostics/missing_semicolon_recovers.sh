@@ -36,7 +36,10 @@
 #       F7-F11 an empty clause (`for (;;)`, `for (; c;)`, an empty condition / step / init — the guide's refusal) is
 #       one error, named, at the clause (`_for_empty`)
 #   D   a `dyn` initializer's `;`: D1 before a `return` (its source ran on to the next `;`: "cannot form dyn Show
-#       from this expression"), D2 before the fn's `}`; D3 / D4 a dyn assignment `o = &p` before the `}` / a `return`
+#       from this expression"), D2 before the fn's `}`; D3 / D4 a dyn assignment `o = &p` before the `}` / a `return`;
+#       D5 the control: an `if` / `match` expression AS the source is its own refusal, once (the keyword stop at the
+#       source's first token added "expected ';', got if" and parsed the expression as statements, to "expected '}',
+#       got end of file" — the review, RED on l6717-integ 3011c4b59)
 #   E   a subscript store's `;` (`a[0] = 1`): E1 before the fn's `}`, E2 before a `return`
 #   T   an assignment's terminator (the `term` sites the statement and the classic-for step share): T1 `*q = 5`
 #       before the fn's `}`, T2 a struct copy `*q = o` before a `return`, T3 / T4 a field store before the `}` / a
@@ -341,6 +344,18 @@ row D4 "a dyn assignment o = &p then a return" "${DH}fn f(): i64 {
 syscall(60, f());
 " "error:<source>:8:5: expected ';', got return
 error:<source>:8:12: $UZ"
+DF="cannot form dyn Show from this expression - a dyn is formed from a \`*T\` the compiler knows (\`&p\`, a \`*T\` name, a pointer-mode handle, a \`*T\` field or call), a declared scalar or a literal: bind it to a declared variable first"
+row D5 "an if / match expression as a dyn source (control: its own refusal, no keyword stop)" "${DH}fn f(): i64 {
+    var p = P { 1, 2 };
+    var c = 1;
+    var o: dyn Show = if (c == 1) { &p } else { &p };
+    o = match c { 1 => &p, _ => &p };
+    return zz;
+}
+syscall(60, f());
+" "error:<source>:7:23: $DF
+error:<source>:8:9: $DF
+error:<source>:9:12: $UZ"
 
 # ---- E: a subscript store's `;` (src/frontend/parse_expr.cyr)
 row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
