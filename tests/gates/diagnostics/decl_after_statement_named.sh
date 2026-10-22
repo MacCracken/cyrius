@@ -1364,9 +1364,9 @@ row5 UM4 "pub mod m; in a fn body: the pub refusal, then zz" "$(printf 'fn f(): 
 " "error:<source>:1:15: a \`pub\` declaration $IR a fn body
 error:<source>:1:35: $ZZ"
 
-# The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=330
-F5FLOOR=220
+# The five-leg rows' floor: a row or a leg lost reads RED, never green. (6.7.17's merge of lanes fea and feg left two
+# assignments, 330 then 220; the later one ruled, so 130 lost row-legs read green.)
+F5FLOOR=350
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"
