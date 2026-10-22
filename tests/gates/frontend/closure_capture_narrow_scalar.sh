@@ -20,8 +20,9 @@
 # `assert_eq(`, floor 31); A0 (CYRIUS_ASYNC=1, x86) a non-suspending `async fn` capturing an `i8` local reads -3 (it
 # read 253 too); A1 (CYRIUS_ASYNC=1) a narrow local in a suspending `async fn` — refused by name ("a sub-word local
 # in an `async fn` is not supported yet") until 6.7.17's D27 (2026-10-22) gave the coroutine frame the narrow ladder
-# — is captured as its value: -3, exit 253 (`& 255`) from the second force (the first suspends); on x86_64 and
-# CYRIUS_IR=3. The release gate runs the .tcyr on ecb / ach / cass / pi.
+# — is captured as its value: the program compares it with -3 itself and exits 42 from the second force (the first
+# suspends), as A0 does — an exit code `& 255` cannot tell -3 from 253; on x86_64 and CYRIUS_IR=3. The release gate
+# runs the .tcyr on ecb / ach / cass / pi.
 #
 # MUTATION LEDGER (2026-10-16; a scratch copy of src/ with the one edit, its cycc built from it, this gate run as
 # CYCC=<mutant> — so the cross legs, built from the tree's src/, stay green except the x86-built PE leg):
@@ -29,6 +30,10 @@
 #   M-NC1 `_cl_cap_narrow` ignores the sign (`lw = lt`)    -> RED 7: R1 R2 R5, T1 T2 T5 (10 failed each), A0
 #   M-NC2 `_cl_cap_narrow` sign-extends every width        -> RED 3: T1 T2 T5 (8 failed each: the u8 / u16 / u32 rows
 #       over the signed range)
+#   (2026-10-22) the pre-D27 compiler (e65604d5d)          -> RED 2: A1 (CYRIUS_ASYNC=1), A1 (CYRIUS_IR=3), refused
+#       by name ("a sub-word local in an `async fn` is not supported yet")
+#   (2026-10-22) `_ECORO_LOAD_W` zero-extends an i8 (movzx for movsx) -> RED 2: A1 (CYRIUS_ASYNC=1), A1 (CYRIUS_IR=3),
+#       exit 1 each (the A1 that exited `main() & 255` stayed green: -3 and 253 both exit 253)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -151,13 +156,13 @@ else
     chmod +x "$T/a0"; got=0; timeout 10 "$T/a0" > /dev/null 2>&1 || got=$?
     if [ "$got" -eq 42 ]; then ok "A0: a non-suspending async fn's captured i8 reads -3 (exit 42)"; else bad "A0: a non-suspending async fn's captured i8: exit $got, want 42 (1: not -3)"; fi
 fi
-printf '%b' "${ASH}fn nopark(): i64 { return 0; }\nasync fn ac(): i64 { var b: i8 = 0 - 3; var k = |z| b + z; var w = await nopark(); return callptr(k, 0) + w; }\nfn main(): i64 { alloc_init(); var f = ac(); future_force(f); return future_force(f); }\nsyscall(60, main() & 255);\n" > "$T/a1.cyr"
+printf '%b' "${ASH}fn nopark(): i64 { return 0; }\nasync fn ac(): i64 { var b: i8 = 0 - 3; var k = |z| b + z; var w = await nopark(); if (callptr(k, 0) + w == 0 - 3) { return 42; } return 1; }\nfn main(): i64 { alloc_init(); var f = ac(); future_force(f); return future_force(f); }\nsyscall(60, main());\n" > "$T/a1.cyr"
 for a1env in CYRIUS_ASYNC=1 CYRIUS_IR=3; do
     rc=0; env CYRIUS_ASYNC=1 "$a1env" "$CC" < "$T/a1.cyr" > "$T/a1" 2> "$T/a1.err" || rc=$?
     if [ "$rc" -ne 0 ] || [ ! -s "$T/a1" ]; then bad "A1 ($a1env): a narrow local in a suspending async fn did not build (rc $rc): $(grep '^error' "$T/a1.err" | head -1)"
     else
         chmod +x "$T/a1"; got=0; timeout 10 "$T/a1" > /dev/null 2>&1 || got=$?
-        if [ "$got" -eq 253 ]; then ok "A1 ($a1env): a suspending async fn's captured i8 reads -3 (exit 253)"; else bad "A1 ($a1env): a suspending async fn's captured i8: exit $got, want 253 (-3 & 255)"; fi
+        if [ "$got" -eq 42 ]; then ok "A1 ($a1env): a suspending async fn's captured i8 reads -3 (exit 42)"; else bad "A1 ($a1env): a suspending async fn's captured i8: exit $got, want 42 (1: not -3)"; fi
     fi
 done
 
