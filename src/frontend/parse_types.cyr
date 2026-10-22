@@ -367,6 +367,7 @@ fn _tn_seen_at(S, ti): i64 {
 # when the read refused an argument in it; the caller steps the list after any of them. CHANGELOG [6.7.15]
 fn _ngt_refuse(S, nti): i64 {
     if (_ngt_union_q(S, nti) == 1) { return 1; }   # 6.7.17 (D5)
+    if (_tp_targs_refuse(S, nti) == 1) { return 1; }   # 6.7.17 (D6)
     var tail = _ngt_tail(S, nti);
     if (tail == 0) { return _ngt_hread(S, nti); }
     return _ngt_say(S, nti, tail);
@@ -386,6 +387,28 @@ fn _ngt_union_q(S, nti): i64 {
         i = i + 1;
     }
     return 0;
+}
+# ⛔ 6.7.17 (D6) — A TYPE PARAMETER WRITTEN WITH TYPE ARGUMENTS IN AN ANNOTATION: `fn g<U>(u: U<Nope>)`, `var l: U<i8>`,
+# `u: *U<i8>`, `sizeof(U<i8>)` and a `: *U<i64>` return compiled with the list stepped unread, while a `: U<i64>` return
+# and a struct field `a: T<i64>` were parse errors with a cascade; as a type ARGUMENT (`h<T<u8>>`) 6.7.14 already
+# refused it. Each position now refuses it once, at the name, with those words — "a type parameter takes no type
+# arguments: 'U'" (the user's D6, 2026-10-22: "Refuse it once, in every position") — in a trait member's signature and
+# under CYRIUS_MONOMORPH=0 too; the caller steps the list and reads the name alone, so nothing cascades. In scope: a
+# parameter bound right now (an instance's body), or the lexical one — the struct being declared, the signature's, the
+# enclosing body's (`_tn_tparam`, read off the tokens: the flag captures none). Name token `ti`, its `<` next; 1 =
+# refused (silent under --syntax-only, as D6's of 6.7.15). CHANGELOG [6.7.17]
+fn _tp_targs_refuse(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    if (_tp_here(S, ti) == 0) { return 0; }
+    _dyn_err(S, ti, "a type parameter takes no type arguments: ", 0, TOKVAL(S, ti), 0);
+    return 1;
+}
+# 1 when the name at token `ti` is a type parameter in scope there (see above).
+fn _tp_here(S, ti): i64 {
+    var noff = TOKVAL(S, ti);
+    if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 1; } }
+    return _tn_tparam(S, ti, noff);
 }
 # The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check
 # (`_tr_rt_bad`) knows a return its reader refuses.
@@ -4389,6 +4412,7 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
     }
     if (TOKTYP(S, ti) == 105) { return 16; }      # u128
     if (TOKTYP(S, ti) != 2) { return 8; }
+    _tn_slice_tpa(S, ti);                         # 6.7.17 (D6): `[U<i8>]`, `slice<U<i8>>`
     var b = _tp_resolve(S, TOKVAL(S, ti));
     if (b != 0) { return _tn_bytes(S, _tn_from_rc(b)); }
     var c = _tn_resolve_at(S, ti);
@@ -4419,6 +4443,15 @@ fn _tn_slice_gen(S, ti): i64 {
     _ta_pending_gt = 0;
     STI(S, GTI(S) - 1);
     return g;
+}
+# 6.7.17 (D6): a slice element that is a type parameter with a list (`[U<i8>]`): refused (`_tp_targs_refuse`) and
+# stepped as `_tn_slice_ngt` steps one, before a bound parameter's early width — it was "expected ']', got '<'".
+fn _tn_slice_tpa(S, ti): i64 {
+    if (_tp_targs_refuse(S, ti) == 0) { return 0; }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    STI(S, GTI(S) - 1);
+    return 0;
 }
 # A slice element's non-generic `<..>` (`ti` the name): refused at the name and stepped, the cursor on the list's last
 # token (the caller steps past it). It was "expected ']', got '<'". CHANGELOG [6.7.16]
@@ -4654,7 +4687,7 @@ fn _tn_ret_refuse(S): i64 {
     var ti = GTI(S);
     var rc = 0;
     if (_syntax_only == 1) { rc = 0 - 8; }
-    else { _tn_ret_report(S, ti); }
+    elif (_tp_targs_refuse(S, ti) == 0) { _tn_ret_report(S, ti); }   # 6.7.17 (D6): `: U<i64>` is D6's line alone
     if (TOKTYP(S, ti + 1) != 19) { return rc; }
     STI(S, ti + 1);
     SKIP_GENERICS(S);
@@ -6162,6 +6195,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                 if (_tp_c0 != 0) { _ftc = _tp_resolve(S, tnoff); }
                 if (_ftc != 0) {
                     STI(S, GTI(S) + 1);   # consume the type name
+                    _ngt_skip(S);         # 6.7.17 (D6): an instance's `a: T<i64>` — its list stepped (the base said it)
                     if (_ftc == 0 - 9) {
                         ADDFIELDFK(S, si, fnoff, 1);   # 6.6.10: `T` bound to f64 is an f64 field
                     } elif (_ftc < 0) {

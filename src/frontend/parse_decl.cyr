@@ -5745,7 +5745,7 @@ fn _gv_ifs(S, sti, ann_float): i64 {
 # and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
 fn _gen_ann_sid(S, sid): i64 {
     if (sid <= 0) { _vec_ann_chk(S, GTI(S) - 1, _vec_ann_vn(S, GTI(S) - 1)); }   # 6.7.11: `Vec<T>` reads T
-    if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
+    if (_MONOMORPH_OK != 1) { _tp_targs_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.17 (D6): `U<i8>`
     if (sid <= 0) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.15 (D6): `i64<..>`
     if (PEEKT(S) != 19) {
         if (GSTP(S, sid - 1) != 0) { _bnd_sbase(S, sid); }   # 6.7.1 (C3): a bare `Box` is its i64 base

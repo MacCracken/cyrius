@@ -7694,7 +7694,11 @@ variable, `u8`..`u64`, `bool`, `ptr`, `f32`, an enum name) is a compile error na
 it (v6.6.8; an enum's values are i64, so write `i64`) — with type arguments of its own too:
 `g<Nonexist<u8>>(0)` is *unknown type 'Nonexist' as a type argument*, and a type parameter
 written with arguments (`h<T<u8>>`) is *a type parameter takes no type arguments* (6.7.14;
-both ran the i64 base). Only a generic struct takes type arguments (and, by declaration, `Result` or an enum
+both ran the i64 base). So is one written with arguments in any annotation — `fn g<U>(u: U<Nope>)`, `var l: U<i8>`,
+`*U<i8>`, `[U<i8>]`, `sizeof(U<i8>)`, a `: U<i64>` or `: *U<i64>` return, a field `a: T<i64>`, a trait member's
+signature — refused once at the name, *a type parameter takes no type arguments: 'U'*, with the list stepped, under
+`CYRIUS_MONOMORPH=0` too (6.7.17, the user's D6; the list was ignored, and a return or a field was a parse error with
+a cascade). Only a generic struct takes type arguments (and, by declaration, `Result` or an enum
 that declares its own `<..>` — below): a non-generic struct or
 a scalar written with them — `var c: Pt<i64>;`, `g<Pt<i32>>(0)`, `g<i64<u8>>(0)`,
 `Box<Pt<nosuch>>`, `fn f(p: Pt<i64>)`, a `: Pt<i64>` return, `Vec<Pt<i64>>` — is refused
