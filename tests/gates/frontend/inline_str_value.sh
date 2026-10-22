@@ -102,6 +102,51 @@
 # and 7, were 0 and 0). A frame's t is refused by name into ANY field — a local struct's too (D19: `w.p = t` as `v.s =
 # t`) — with the field's words, and through `*pp` with the pointer's (X15-X19).
 #
+# 6.7.16 (issues/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md): `*p` (p a `*Str`) into a
+# `Str` FIELD — `w.s = *p`, `GW.s = *p`, through a `*W`, nested, a `: *W` call's, a for step, at top level, `**pp` — a
+# literal's `Str` field (`W { *p, 1 }`, in a fn, in the zone and after a statement) and `return *p;` from a fn returning
+# `Str` is p, as `v.s = p` and D20's `h = *p` are (the tcyr's hf_* rows, R_TOP16): each stored or returned the header's
+# data word as the handle (HF1, the filed repro verbatim: `161010` exit 43, was `160111` exit 50).
+#
+# 6.7.16 (D19, issues/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md): a struct
+# LITERAL's `*Str` element from an inline `Str` — `W { gt, 1 }`, named, a nested struct's leaf, in a fn, in the zone and
+# after a statement, a capture's t — takes its header's address, as `w.p = gt` does (the tcyr's pl_* rows, R_TOP17;
+# PL1 / PL3 the filed repro and top-level line: 7, were 0); a frame's `W { t, 1 }` is refused with the field's words
+# (PL2 verbatim, PL2b named, PL2c nested; it compiled, the data word stored). An untyped field keeps the word.
+#
+# 6.7.16 (the user's decision D74, 2026-10-20; issues/2026-10-19-str-declaration-from-double-str-pointer-single-deref-
+# binds-handle.md): `var u: Str = *pp;` (pp a `**Str`) is u's own copy of the header, as `var u: Str = p;`, `= *p` and
+# `= **pp` are — `(*pp)`, a `pp: **Str` parameter, a capture, `*GPPS`, `*gpps()`, `*w.pp`, `**ppp` (the tcyr's
+# pps_decl_* rows); it bound u as a handle on the header (PD1, the filed repro verbatim: 55, was 15). At top level, in the
+# declaration zone and after a statement, `var U: Str = *GPP;` and `var V: Str = GP;` copy too (D74 and D18 (a), whose
+# zone-lane code kept `Str` out; R_TOP18 and the zone row) — both bound a handle. `var q: *Str = *pp;` and an untyped
+# `var h = *pp;` stay the pointer.
+#
+# 6.7.16 (the user's decision D73, 2026-10-20; issues/2026-10-19-store-through-str-pointer-from-str-pointer-dereference-
+# stores-data-word.md): `*p` (p a `*Str`) into a `*Str` SLOT is p, the header's address — `*q = *p` through a `*Str` or
+# a `**Str` (`**qq = *p`, `*pp = *p`), `x = *p` / `GX = *p` into a `*Str` name, `var y: *Str = *p;` (in a fn, in the
+# zone, after a statement), `w.p = *p` into a `*Str` field, a literal's `*Str` element, a `s: *Str` argument (`fps(*p)`,
+# 6.7.15's arm took only a `Str` parameter) and `return *p;` from a fn returning `*Str` (the tcyr's ds_* rows, R_TOP19).
+# Each took the header's data word (DS1, the filed repro verbatim: `20120121`, was `21020121`), the names and the
+# declaration with a false "assigning non-pointer to typed pointer". `*q = *pp` (already the `*Str`) is unchanged.
+#
+# 6.7.16 (the user's decision D71, 2026-10-20; issues/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md):
+# `*(&t)` / `*&t` of an inline `Str` t is t itself, as 6.7.15's D21 A reads `*(&p)` as p — every D7 (1) arm reads it as
+# the name: `var h: Str = *(&t);` (and the untyped `var h = *(&t);`) binds a handle on t, `f(*(&t))` / `fp(*(&t))` /
+# `gg<Str>(*(&t))` / the inferred `gg(*&t)` / `h.eq(*(&t))` pass its header, `u = *(&t)` copies it into an inline u, `k
+# = *(&t)` rebinds a handle, `p = *(&t)` / `var p: *Str = *&t;` take the address; a global's and a capture's too, in
+# the zone and after a statement (the tcyr's amp_* rows, R_TOP20). It took t's data word (AMP1, the filed repro
+# verbatim: `3 3 3` exit 3 and no warning, was `0 0 1` exit 0 with two false "assigning non-pointer to typed
+# pointer"). A frame's t keeps every refusal t has, named at t (X20-X28). An untyped position keeps the word. The store
+# side too: `*(&t) = v` of an inline `Str` local or global is `t = v` (a copy from `gt`, a handle, `*p`, a `: Str` call,
+# a `Str` field, `*(&u)`; the tcyr's amp_st* rows, R_TOP21) — it wrote v's first word into t.data — and `*(&t) += 1` is
+# refused as `t += 1` is (X29; it stepped t.data).
+#
+# 6.7.16 (met in the s16 lane's D73 / D71 bites): an inline `Str` returned from a fn returning `*Str` takes its header's
+# address, as into every other `*Str` slot (6.7.14's D18 (c), 6.7.15's D16, D19) — `return gt;`, `((gt))`, `*(&gt)`, a
+# method's (the tcyr's rp_* rows); it returned gt's data word — and a frame's `return t;` is refused by name, as from a
+# fn returning `Str` (X30 / X31; it compiled).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -114,7 +159,7 @@
 # (0; 1); D16a / D16b / X14 the assignment into a `*Str` (D16); SD1 a `*Str` dereference into a `Str` parameter;
 # SD2 the same into a generic's `x: T` at T = Str (6.7.16);
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
-# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); FD1 / FD2 an inline `Str` into a `*Str` field
+# `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); X30 / X31 a frame's t returned from a fn returning `*Str` refused (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
@@ -206,6 +251,31 @@
 #   2026-10-20 (6.7.16, a `*Str` dereference into a generic's `x: T` at T = Str; the same scratch-copy method):
 #   q1 `_try_push_struct_addr_arg` without its     -> RED 14: R1 x7 (11 rows: the sd_g* rows but the controls, and
 #      `_sarg_istr_dx` arm (the fix reverted)         R_TOP15 — the data word as the header), SD2 x7 (244)
+#   2026-10-20 (6.7.16, `*p` into a `Str` field / a literal's / a `: Str` return; the same scratch-copy method):
+#   r1 `_istr_vdx` answers 0 (the fix reverted)    -> RED 14: R1 x7 (16 rows: the hf_* rows, R_TOP16 — the data word as
+#                                                     the handle), HF1 x7 ('160111', exit 50)
+#   2026-10-20 (6.7.16, D19 a struct literal's `*Str` element; the same scratch-copy method):
+#   s1 EMIT_STRUCT_FIELD_W without `_istr_pfld`   -> RED 33: R1 x7 (8 rows: the pl_* rows, R_TOP17 — the data word —
+#      (the fix reverted)                             and the two encoder rows), PL1 x7 (0), PL2 / PL2b / PL2c x4 (each
+#                                                     compiled), PL3 x7 (0)
+#   2026-10-20 (6.7.16, D74 `var u: Str = *pp;` and the top-level twins; the same scratch-copy method):
+#   t1 `_hl_dpp_str` answering mode 2 only, and    -> RED 14: R1 x7 (7 rows: the pps_decl_* copies, the zone row and
+#      `_gz_pnat` without `Str` (the fix reverted)    R_TOP18 — handles), PD1 x7 (15)
+#   2026-10-20 (6.7.16, D73 `*p` into a `*Str` slot; the same scratch-copy method):
+#   u1 every D73 arm reverted (`_istr_dsdx`,       -> RED 14: R1 x7 (17 rows: the ds_* rows, R_TOP19 — the data word),
+#      `_istr_pfdx`, `_istr_pvd`, `_istr_gzdx`,       DS1 x7 ('21020121')
+#      `_istr_ldx`'s `*Str`, `_istr_rstr`'s `*Str`,
+#      `_istr_dxh`'s 3 / 4, `_pptr_param` back)
+#   2026-10-20 (6.7.16, D71 `*(&t)` of an inline `Str` is t; the same scratch-copy method):
+#   v1 `_istr_amp` answers 0 (the reading         -> RED 54: R1 x7 (a crash — SIGSEGV, a cx guest fault, PE — the
+#      reverted)                                      amp_* rows read t's data word as a header), X20-X28 x4 (each
+#                                                     compiled), AMP1 x4 (warned) + x7 ('0 0 1', exit 0)
+#   v2 `_istr_amp_dst` answers 0 (the store side)  -> RED 11: R1 x7 (4 rows: amp_st*, R_TOP21 — the first word stored),
+#                                                     X29 x4 (compiled)
+#   2026-10-20 (6.7.16, an inline `Str` returned from a fn returning `*Str`; the same scratch-copy method):
+#   w1 `_istr_ret` asking `Str` only (the fix       -> RED 15: R1 x7 (4 rows: rp_ret, rp_len — the data word — and the
+#      reverted)                                      two encoder rows the wild `p.len = 3` corrupted), X30 / X31
+#                                                     x4 (each compiled)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -328,7 +398,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=170   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15
+FLOOR=239   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19; + the amp_* rows, R_TOP20 / R_TOP21; + the rp_* rows
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
@@ -407,6 +477,40 @@ refused X18 "$MP" "\`*pp = t;\` through a \`**Str\`"
 row X19 'struct WP { p: *Str; n; }
 fn go(): i64 { var t: Str; var w: WP = WP { 0, 1 }; var i = 0; for (i = 0; i < 1; w.p = t) { i = i + 1; } return 0; }'
 refused X19 "$MF" "a for step's \`*Str\` field store of a bare \`var t: Str;\`"
+# X20-X28 (6.7.16, D71): `*(&t)` / `*&t` of a frame's t is t, so it keeps every refusal t has, named at t; through
+# 6.7.15 each compiled, t's data word stored or returned.
+row X20 'fn mk(): Str { var t: Str = Str { "abcdefg", 7 }; return *(&t); }
+fn go(): i64 { return f(mk()); }'
+refused X20 "$MR" "\`return *(&t);\` from a fn returning Str (D71)"
+row X21 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; G = *(&t); return 0; }'
+refused X21 "$MG" "\`G = *(&t);\` into a Str global"
+row X22 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: W = W { 0, 1 }; w.s = *(&t); return 0; }'
+refused X22 "$MF" "\`w.s = *(&t);\` into a Str field"
+row X23 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var ps: *Str = new_slot(); *ps = *(&t); return 0; }'
+refused X23 "$MP" "\`*ps = *(&t);\` through a \`*Str\`"
+row X24 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var q: *Str = 0; var pp: **Str = &q; *pp = *((&t)); return 0; }'
+refused X24 "$MP" "\`*pp = *((&t));\` through a \`**Str\`"
+row X25 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: W = W { *&t, 1 }; return 0; }'
+refused X25 "$MF" "\`W { *&t, 1 }\`, a literal's Str field"
+row X26 'var GP: *Str = 0;
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; GP = *(&t); return 0; }'
+refused X26 "$MG" "\`GP = *(&t);\` into a \`*Str\` global"
+row X27 'struct WP { p: *Str; n; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: WP = WP { 0, 1 }; w.p = *(&t); return 0; }'
+refused X27 "$MF" "\`w.p = *(&t);\` into a \`*Str\` field"
+row X28 'fn go(): i64 { var t: Str; var w: W = W { 0, 1 }; var i = 0; for (i = 0; i < 1; w.s = *(&t)) { i = i + 1; } return 0; }'
+refused X28 "$MF" "a for step's \`w.s = *(&t)\` of a bare \`var t: Str;\`"
+row X29 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; *(&t) += 1; return t.len; }'
+refused X29 "compound assignment to struct 't' is refused - a struct value is not an integer or a float (write \`a = a + b\`)" "\`*(&t) += 1;\` refused as \`t += 1;\` is (it stepped t.data)"
+# X30 / X31 (6.7.16): a frame's t returned from a fn returning `*Str` — refused as from a fn returning `Str` (it compiled,
+# the data word returned; a global's `return gt;` returns gt's address, the tcyr's rp_* rows).
+MRP="cannot return the inline Str 't' from a fn returning *Str - its header lives in this frame and would dangle (return a handle: str_new(data, len))"
+row X30 'fn mk(): *Str { var t: Str = Str { "abcdefg", 7 }; return t; }
+fn go(): i64 { return str_len(mk()); }'
+refused X30 "$MRP" "\`return t;\` from a fn returning \`*Str\`"
+row X31 'fn mk(): *Str { var t: Str; t.data = "ab"; t.len = 2; return *((&t)); }
+fn go(): i64 { return str_len(mk()); }'
+refused X31 "$MRP" "\`return *((&t));\` of a bare \`var t: Str;\` from a fn returning \`*Str\`"
 
 # --- K: controls (a global's or a capture's header does not dangle; untyped positions keep the word) ---
 row K1 'fn mk(): Str { return gt; }
@@ -686,6 +790,199 @@ for leg in $(legs); do
 done
 runs HD1 5 "the filed repro: \`h = *p;\` into a Str handle rebinds it to the header p points at (D20; was 0, the data word)" "$XLEGS $OLEGS"
 
+# --- HF1: the filed repro (issues/2026-10-19-str-field-assigned-str-pointer-dereference-stores-data-word.md), verbatim:
+# `w.s = *p` / `GW.s = *p` into a `Str` FIELD (p a `*Str`) is p, as `v.s = p` is (6.7.16; through 6.7.15 the header's
+# data word: `160111`, exit 50), no warning ---
+cat > "$T/HF1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+struct WS { s: Str; n; }
+var GW: WS = WS { 0, 0 };
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var w: WS = WS { str_from("zz"), 1 };
+    var v: WS = WS { str_from("zz"), 1 };
+    w.s = *p;
+    v.s = p;
+    GW.s = *p;
+    fmt_int(sizeof(WS)); fmt_int(w.s == a); fmt_int(w.s == load64(a)); fmt_int(v.s == a); fmt_int(GW.s == load64(a));
+    return str_len(w.s) * 100 + str_len(v.s) * 10 + str_len(GW.s);
+}
+var r = main();
+syscall(SYS_EXIT, r % 256);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" HF1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/HF1.$leg" ]; then bad "HF1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/HF1.$leg.err"; then bad "HF1 ($leg): warned: $(grep '^warning' "$T/HF1.$leg.err" | head -1)"
+    else ok "HF1 \`w.s = *p;\` ($leg): no warning"; fi
+done
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" HF1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/HF1.$leg" ]; then bad "HF1 ($leg): did not build (rc $crc)"; continue; fi
+    execute "$leg" HF1
+    if [ "$got" = 43 ] && [ "$last" = 161010 ]; then ok "HF1 the filed repro ($leg): '$last', exit 43"
+    else bad "HF1 the filed repro ($leg): '$last', exit $got (want '161010', exit 43: w.s and GW.s are p)"; fi
+done
+
+# --- PL1-PL3: the filed repros (issues/2026-10-19-struct-literal-str-pointer-field-from-inline-str-stores-data-word.md):
+# a struct literal's `*Str` element from an inline `Str` takes its header's address, as `w.p = gt` does (6.7.16, D19;
+# through 6.7.15 the data word: 0) — PL1 verbatim (7), PL3 the filed top-level line (7); a frame's `W { t, 1 }` is
+# refused with the field's words, as `w.p = t` is (PL2 verbatim; it compiled, 0) — named (PL2b) and a nested struct's
+# leaf (PL2c) too ---
+cat > "$T/PL1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var gt: Str = Str { "abcdefg", 7 };
+struct W { p: *Str; n; }
+fn go(): i64 { var w: W = W { gt, 1 }; return str_len(w.p); }
+fn main(): i64 { alloc_init(); return go(); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs PL1 7 "the filed repro 1: \`W { gt, 1 }\` into a \`*Str\` field takes gt's header (was 0, the data word)" "$XLEGS $OLEGS"
+cat > "$T/PL2.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct W { p: *Str; n; }
+fn go(): i64 { var t: Str = Str { "abc", 3 }; var w: W = W { t, 1 }; return str_len(w.p); }
+fn main(): i64 { alloc_init(); return go(); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+refused PL2 "$MF" "the filed repro 2: a frame's \`W { t, 1 }\` into a \`*Str\` field (D19; it compiled, the data word)"
+row PL2b 'struct WP { p: *Str; n; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: WP = WP { n: 1, p: (t) }; return str_len(w.p); }'
+refused PL2b "$MF" "\`WP { n: 1, p: (t) }\`, named"
+row PL2c 'struct WP2 { n; p: *Str; }
+struct OP2 { k; w: WP2; }
+fn go(): i64 { var t: Str; var o: OP2 = OP2 { 5, 1, t }; return str_len(o.w.p); }'
+refused PL2c "$MF" "\`OP2 { 5, 1, t }\`, a nested struct's \`*Str\` leaf, of a bare \`var t: Str;\`"
+cat > "$T/PL3.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+var gt: Str = Str { "abcdefg", 7 };
+struct W { p: *Str; n; }
+var GW: W = W { gt, 1 };
+fn main(): i64 { alloc_init(); return str_len(GW.p); }
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs PL3 7 "the filed top-level line: a zone \`var GW: W = W { gt, 1 };\` (was 0)" "$XLEGS $OLEGS"
+
+# --- PD1: the filed repro (issues/2026-10-19-str-declaration-from-double-str-pointer-single-deref-binds-handle.md),
+# verbatim: `var u: Str = *pp;` (pp a `**Str`) is u's own copy of the header, as `var v: Str = p;` is (6.7.16, the
+# user's D74, 2026-10-20; through 6.7.15 a handle on it: 15) ---
+cat > "$T/PD1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+fn f(s: Str): i64 { return str_len(s); }
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var pp: **Str = &p;
+    var u: Str = *pp;
+    var v: Str = p;
+    a.len = 1;
+    return u.len * 10 + f(v);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+runs PD1 55 "the filed repro: \`var u: Str = *pp;\` is u's own copy (D74; was 15, a handle)" "$XLEGS $OLEGS"
+
+# --- DS1: the filed repro (issues/2026-10-19-store-through-str-pointer-from-str-pointer-dereference-stores-data-word.md),
+# verbatim: `*q = *p` (q, p `*Str`) stores p — q's first word becomes the header's address, as `*q = *pp` and `*q = gt`
+# store (6.7.16, the user's D73, 2026-10-20; through 6.7.15 the header's data word: `21020121`), no warning ---
+cat > "$T/DS1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+var gt: Str = Str { "abcdefg", 7 };
+fn main(): i64 {
+    alloc_init();
+    var a = str_from("abcde");
+    var p: *Str = a;
+    var pp: **Str = &p;
+    var b = str_from("xy");
+    var q: *Str = b;
+    *q = *p;
+    fmt_int(str_len(q)); fmt_int(load64(q) == load64(a)); fmt_int(load64(q) == a);
+    var c = str_from("uv");
+    var r: *Str = c;
+    *r = *pp;
+    fmt_int(str_len(r)); fmt_int(load64(r) == load64(a)); fmt_int(load64(r) == a);
+    var d = str_from("st");
+    var s: *Str = d;
+    *s = gt;
+    fmt_int(str_len(s)); fmt_int(load64(s) == &gt);
+    return 0;
+}
+syscall(60, main());
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" DS1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/DS1.$leg" ]; then bad "DS1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/DS1.$leg.err"; then bad "DS1 ($leg): warned: $(grep '^warning' "$T/DS1.$leg.err" | head -1)"
+    else ok "DS1 \`*q = *p;\` ($leg): no warning"; fi
+done
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" DS1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/DS1.$leg" ]; then bad "DS1 ($leg): did not build (rc $crc)"; continue; fi
+    execute "$leg" DS1
+    if [ "$got" = 0 ] && [ "$last" = 20120121 ]; then ok "DS1 the filed repro ($leg): '$last'"
+    else bad "DS1 the filed repro ($leg): '$last', exit $got (want '20120121', exit 0: q's first word is p)"; fi
+done
+
+# --- AMP1: the filed repro (issues/2026-10-19-dereference-of-address-of-inline-str-reads-data-word.md), verbatim: `*(&t)`
+# of an inline `Str` is t (6.7.16, the user's D71, 2026-10-20) — `var h: Str = *(&t);` a handle on t, `f(*(&t))`, `u =
+# *(&t)` a copy, `k = *(&t)` a rebind: `3 3 3`, exit 3, no warning (through 6.7.15 `0 0 1`, exit 0, and two false
+# "assigning non-pointer to typed pointer") ---
+cat > "$T/AMP1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+fn f(s: Str): i64 { return str_len(s); }
+fn main(): i64 {
+    alloc_init();
+    var t: Str = Str { "xyz", 3 };
+    var h: Str = *(&t);
+    fmt_int(str_len(h)); syscall(SYS_WRITE, 1, " ", 1);
+    fmt_int(f(*(&t))); syscall(SYS_WRITE, 1, " ", 1);
+    var u: Str = Str { "q", 1 };
+    u = *(&t);
+    fmt_int(u.len); syscall(SYS_WRITE, 1, "\n", 1);
+    var k = str_from("q");
+    k = *(&t);
+    return str_len(k);
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+rows=$((rows + 1))
+for leg in $(legs); do
+    compile "$leg" AMP1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/AMP1.$leg" ]; then bad "AMP1 ($leg): did not build (rc $crc)"
+    elif grep -q '^warning' "$T/AMP1.$leg.err"; then bad "AMP1 ($leg): warned: $(grep '^warning' "$T/AMP1.$leg.err" | head -1)"
+    else ok "AMP1 \`u = *(&t);\` / \`k = *(&t);\` ($leg): no warning"; fi
+done
+rows=$((rows + 1))
+for leg in $XLEGS $OLEGS; do
+    compile "$leg" AMP1
+    if [ "$crc" -ne 0 ] || [ ! -s "$T/AMP1.$leg" ]; then bad "AMP1 ($leg): did not build (rc $crc)"; continue; fi
+    execute "$leg" AMP1
+    if [ "$got" = 3 ] && [ "$last" = "3 3 3" ]; then ok "AMP1 the filed repro ($leg): '$last', exit 3"
+    else bad "AMP1 the filed repro ($leg): '$last', exit $got (want '3 3 3', exit 3: *(&t) is t)"; fi
+done
+
 # --- FD1 / FD2: the filed repros (issues/2026-10-18-inline-str-into-str-pointer-field-or-double-pointer-keeps-data-word.md),
 # verbatim: an inline `Str` global into a `*Str` field (a local's, a global's, through a `*W`) and through a `**Str` takes
 # its header's address (6.7.16, D19; through 6.7.15 the data word: 0 and 0) ---
@@ -811,7 +1108,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=64   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2; the floor is the count that runs
+FLOOR_ROWS=88   # 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

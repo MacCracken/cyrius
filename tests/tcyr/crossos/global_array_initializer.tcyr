@@ -309,14 +309,24 @@ var GRLL = GAI_KC;
 var GRLL[1] = {9};
 var GRKR = GAI_KC;
 var GRKR[1] = {9};
-# the seed is the slot's last INTEGER constant: a float constant between it and the list stops the search (stepping
-# past the float seeded the const it superseded: 0x0509), and a const after the float seeds.
+# the seed is the slot's last constant: a float constant between a const and the list is that constant (stepping past
+# it seeded the const it superseded: 0x0509), and a const after the float seeds. 6.7.16 (the user's D86 (a),
+# issues/2026-10-20-list-redeclaration-over-untyped-float-constant-loses-unlisted-bytes.md): a float constant keeps its
+# bytes the list does not list, as the integer spelling of its bits does (each read 0x0009; GRLF, a literal before the
+# float, 0x0509).
 var GRKF = GAI_KC;
 var GRKF = 1.5;
 var GRKF[1] = {9};
 var GRFK = 1.5;
 var GRFK = GAI_KC;
 var GRFK[1] = {9};
+var GRFL = 1.5;
+var GRFL[1] = {9};
+var GRLF = 0x0506;
+var GRLF = 1.5;
+var GRLF[1] = {9};
+var GRFX = 1.5 + 1.0;
+var GRFX[1] = {9};
 
 alloc_init();
 
@@ -431,7 +441,10 @@ assert_eq(load64(&GRCF), 9, "a list over a computed scalar is the value");
 assert_eq(load64(&GRNC), 0x0509, "a computed initializer between a const name and the list is no constant");
 assert_eq(load64(&GRLL), 0x0509, "a const name between two lists: the second keeps its bytes, as over a literal");
 assert_eq(GRKRD, 0x0509, "an earlier initializer reads the list over a const name");
-assert_eq(load64(&GRKF), 9, "a float constant between a const name and the list stops the seed");
+assert_eq(load64(&GRKF), 0x3FF8000000000009, "a float constant between a const name and the list seeds it");
 assert_eq(load64(&GRFK), 0x0509, "a const name after a float constant seeds the list");
+assert_eq(load64(&GRFL), 0x3FF8000000000009, "a list over a float constant keeps the bytes it does not list");
+assert_eq(load64(&GRLF), 0x3FF8000000000009, "a literal before the float: the float's bytes, not the literal's");
+assert_eq(load64(&GRFX), 0x4004000000000009, "a list over a constant f64 expression keeps its bytes");
 
 var r = assert_summary();

@@ -37,6 +37,8 @@
 # (`_dsg_check`), and so is `async fn` against a plain fn, in pass 1 (`_dsg_async_check`).
 #
 # ROWS (compilers are BUILT FROM THIS TREE into a private dir; build/cycc_* is never read)
+#   PT0-PT11 (6.7.16, every backend): a redefined fn's `: *T` return records are its LAST definition's — see `_ptlegs`;
+#   BX1-BX8 (6.7.16, x86_64; the .tcyr runs three on every backend): and its bool return / parameter facts — row 1c.
 #   1. x86_64: the filed repro exits 1 (was 2) and reports no unreachable fn (the winner was);
 #      the three-shape repro exits 111 (was 212); tests/tcyr/crossos/fn_redefinition_last_wins.tcyr
 #      exits 0 (25 shapes: forward, direct, tail, expression, &fn, top level, three definitions,
@@ -113,6 +115,22 @@
 #   o. `_pm_copies` answering 0 past ordinal 61 (the pre-fix line), or pass 1 (`_bvcp_note`)
 #        recording nothing there                                     -> 4 red: the .tcyr on every
 #        backend (rd_kp62_check 72: an over-divert)
+#   6.7.16 (issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md, the s16 lane; the same
+#   procedure, 2026-10-20; 84 rows):
+#   p. `_ret_ptr_owns` answering 1 for every definition (pass 2 records an earlier definition's `*T`)
+#                                                                    -> 32 red: PT0 PT2 PT4 PT7 PT8 (124), PT9 PT10
+#        (compiled through the first's `*H`) and the .tcyr (rd_p_mid, rd_p_after, rd_pu_after) on every backend
+#   q. `_ret_redef_reset` a no-op (pass 1 keeps the first definition's records)
+#                                                                    -> 36 red: as p, and PT3 / rd_p_above (the call
+#        above both definitions)
+#   (the bool facts, row 1c; 92 rows)
+#   r. `_bx_fn_reset` without its earlier-definition arm (= the tree before) -> 9 red: BX1-BX5 (refused / accepted against
+#        the earlier definition) and the .tcyr on every backend (rd_bl_mid, rd_bp_mid, rd_br refused)
+#   s. `_bx_cur_bits` reading the fn's word only -> 9 red: BX1 BX5 BX6-BX8 (an earlier body checked against the last
+#        definition's return) and the .tcyr on every backend
+#   t. `_bx_param` recording an earlier definition's kinds -> 6 red: BX3 BX4 and the .tcyr on every backend
+#   u. PARSE_FN_DEF not putting `_bx_ldef_fi` / `_bx_ldef_bits` back -> 4 red: BX2 BX6 BX7 BX8 (two errors: the
+#        last definition's body checked against the earlier one's return)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -225,11 +243,95 @@ _want() {
         pass=$((pass + 1))
     fi
 }
-# _legs <prefix> <compile-cmd> <run-cmd> : the three rows every backend runs
+# _legs <prefix> <compile-cmd> <run-cmd> : the rows every backend runs
 _legs() {
     _want "$1_repro" "$2" "$3" "$T/repro.cyr" 1 "the filed repro (h binds the LAST g; was 2)"
     _want "$1_shapes" "$2" "$3" "$T/shapes.cyr" 111 "the three-shape repro (was 212: direct and expression calls bound the first g)"
     _want "$1_tcyr" "$2" "$3" "$TCYR" 0 "fn_redefinition_last_wins.tcyr"
+    _ptlegs "$1" "$2" "$3"
+}
+
+# ── 6.7.16 (issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md): A REDEFINED FN'S
+# `: *T` RECORDS ARE THE LAST DEFINITION'S. The step word, the pointee struct and the --syntax-only byte were written
+# only by a `: *T` return and never cleared, so `fn gp(): *H` then `fn gp(): i64` kept the first one's `*H` at every
+# call: `gp() + 1` stepped sizeof(H) (124, not 101) and `gp().b = 5` stored through the i64 (139), on every backend.
+# Pass 1 starts each redefinition's return afresh; pass 2 re-reads an earlier definition without recording its `*T`.
+# PT0 the filed repro verbatim (101 and ONE warning line, the duplicate's); PT1 the reverse order (`: i64` then `: *H`,
+# the winner steps 24: 124); PT2 a call in a fn between the definitions, PT3 above both; PT4 `: *H` then no annotation;
+# PT5 `: *H` then `: *G2` (steps 16: 116); PT6 `: *H` then `: *i64` (steps 8: 108); PT7 a method redefined in its
+# impl; PT8 a generic whose inferred call reaches its i64 base; PT9 / PT10 `gp().b = 5;` / `gp().b` after a non-struct
+# winner, refused as one definition is ("does not return a struct"; it stored / read through the first's `*H`); PT11
+# (control) `: *H` then `: H2` by value stays "disagrees about its return type". The .tcyr's rd_p* rows carry PT0-PT5
+# to the real hosts.
+cat > "$T/pt0.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct H { a; b; c; }
+fn gp(): *H { return 0; }
+fn gp(): i64 { return 100; }
+fn go(): i64 { return gp() + 1; }
+syscall(60, go());
+EOF
+_ptsrc() { printf 'include "lib/syscalls.cyr"\nstruct H { a; b; c; }\nstruct H2 { a; b; c; }\nstruct G2 { a; b; }\nvar buf: i64[8];\n%s\nsyscall(60, go());\n' "$2" > "$T/$1.cyr"; }
+_ptsrc pt1 'fn gp(): i64 { return 100; }
+fn gp(): *H { return 100; }
+fn go(): i64 { return gp() + 1; }'
+_ptsrc pt2 'fn gp(): *H { return 0; }
+fn go(): i64 { return gp() + 1; }
+fn gp(): i64 { return 100; }'
+_ptsrc pt3 'fn go(): i64 { return gp() + 1; }
+fn gp(): *H { return 0; }
+fn gp(): i64 { return 100; }'
+_ptsrc pt4 'fn gp(): *H { return 0; }
+fn gp() { return 100; }
+fn go(): i64 { return gp() + 1; }'
+_ptsrc pt5 'fn gp(): *H { return 0; }
+fn gp(): *G2 { return 100; }
+fn go(): i64 { return gp() + 1; }'
+_ptsrc pt6 'fn gp(): *H { return 0; }
+fn gp(): *i64 { return 100; }
+fn go(): i64 { return gp() + 1; }'
+_ptsrc pt7 'impl H { fn gp(self): *H { return 0; } fn gp(self): i64 { return 100; } }
+fn go(): i64 { var h: H; return h.gp() + 1; }'
+_ptsrc pt8 'fn gp<T>(x: T): *H { return 0; }
+fn gp<T>(x: T): i64 { return 100; }
+fn go(): i64 { return gp(5) + 1; }'
+_ptsrc pt9 'fn gp(): *H { return &buf; }
+fn gp(): i64 { return 0; }
+fn go(): i64 { gp().b = 5; return buf[1]; }'
+_ptsrc pt10 'fn gp(): *H { return &buf; }
+fn gp(): *i64 { return &buf; }
+fn go(): i64 { buf[1] = 7; return gp().b; }'
+_ptsrc pt11 'fn gp(): *H { return 0; }
+fn gp(): H2 { var h: H2; return h; }
+fn go(): i64 { return 0; }'
+# _ptrefused <label> <compile-cmd> <source> <fragment>: rc != 0, no binary, the one `^error` line holds <fragment>
+_ptrefused() {
+    _rc=0; $2 < "$3" > "$T/$1.bin" 2> "$T/$1.err" || _rc=$?
+    _n=$(grep -c '^error' "$T/$1.err" || true)
+    if [ "$_rc" -eq 0 ]; then _bad "$1: compiled (rc 0) — want refused: $4"
+    elif [ "$_n" -ne 1 ]; then _bad "$1: $_n error lines (want 1): $(grep -m1 '^error' "$T/$1.err" | cut -c1-140)"
+    elif ! grep '^error' "$T/$1.err" | grep -qF "$4"; then _bad "$1: refused, but not as '$4': $(grep -m1 '^error' "$T/$1.err" | cut -c1-140)"
+    else pass=$((pass + 1)); fi
+}
+_ptlegs() {
+    _want "$1_pt0" "$2" "$3" "$T/pt0.cyr" 101 "PT0 the filed repro (\`fn gp(): *H\` then \`fn gp(): i64\`: gp() + 1 stepped 24, 124)"
+    if [ "$LRC" -ne -1 ]; then
+        _nw=$(grep -c '^warning' "$T/$1_pt0.err" || true)
+        if [ "$_nw" -ne 1 ] || ! grep -q "^warning:<source>:4:1: duplicate fn 'gp' (last definition wins" "$T/$1_pt0.err"; then
+            _bad "$1_pt0: want ONE warning line, the duplicate's at 4:1: $(grep -c '^warning' "$T/$1_pt0.err" || true) — $(grep -m1 '^warning' "$T/$1_pt0.err" | cut -c1-120)"
+        else pass=$((pass + 1)); fi
+    fi
+    _want "$1_pt1" "$2" "$3" "$T/pt1.cyr" 124 "PT1 \`: i64\` then \`: *H\` (the winner steps 24)"
+    _want "$1_pt2" "$2" "$3" "$T/pt2.cyr" 101 "PT2 a call between the definitions"
+    _want "$1_pt3" "$2" "$3" "$T/pt3.cyr" 101 "PT3 a call above both definitions"
+    _want "$1_pt4" "$2" "$3" "$T/pt4.cyr" 101 "PT4 \`: *H\` then no annotation"
+    _want "$1_pt5" "$2" "$3" "$T/pt5.cyr" 116 "PT5 \`: *H\` then \`: *G2\` (steps 16)"
+    _want "$1_pt6" "$2" "$3" "$T/pt6.cyr" 108 "PT6 \`: *H\` then \`: *i64\` (steps 8)"
+    _want "$1_pt7" "$2" "$3" "$T/pt7.cyr" 101 "PT7 a method redefined in its impl"
+    _want "$1_pt8" "$2" "$3" "$T/pt8.cyr" 101 "PT8 a generic's inferred call (its i64 base)"
+    _ptrefused "$1_pt9" "$2" "$T/pt9.cyr" "8:18: cannot take a field of the result of 'gp': it does not return a struct"
+    _ptrefused "$1_pt10" "$2" "$T/pt10.cyr" "8:37: cannot take a field of the result of 'gp': it does not return a struct"
+    _ptrefused "$1_pt11" "$2" "$T/pt11.cyr" "disagrees about its return type"
 }
 
 # ── row 1: x86_64 ───────────────────────────────────────────────────────────────────────────
@@ -375,6 +477,48 @@ fn main(): i64 { alloc_init(); return h() * 10 + h2(); }
 syscall(60, main());" > "$T/async_ctor.cyr"
 _want async_ctor "$T/acc" "" "$T/async_ctor.cyr" 77 "an async fn redefined as a coroutine (was 139)"
 
+# ── row 1c (6.7.16): a call between the definitions is CHECKED against the last one's bool facts too ─────────────────
+# Pass 2 re-recorded each definition's bool return bits and parameter kinds, so a call compiled between two definitions
+# was checked against the earlier one: BX1 `: i64` then `: bool`, `var x: bool = f();` between, was refused (now 3);
+# BX2 the reverse was accepted (x held 5) — now refused as one `: i64` definition is; BX3 / BX4 the same for a
+# parameter `b: bool` / `b: i64` and `f(5)`; BX5 an earlier body calling its own name reaches the last definition.
+# Controls: an earlier body is still checked against its OWN declaration (BX6 `return 5;` in its `: bool` body, BX7 a
+# bool element of its `(bool, i64)`, BX8 a bare `return;`). The .tcyr's rd_bl / rd_bp / rd_br rows run BX1 BX3 BX5
+# on every backend and host.
+_bxsrc() { printf 'include "lib/syscalls.cyr"\n%s\nsyscall(60, go());\n' "$2" > "$T/$1.cyr"; }
+_bxsrc bx1 'fn f(): i64 { return 5; }
+fn go(): i64 { var x: bool = f(); if (x) { return 3; } return 4; }
+fn f(): bool { return 1 == 1; }'
+_want bx1 "$T/x86" "" "$T/bx1.cyr" 3 "BX1 \`: i64\` then \`: bool\`, a bool bind between (was refused)"
+_bxsrc bx2 'fn f(): bool { return 1 == 1; }
+fn go(): i64 { var x: bool = f(); if (x) { return 3; } return 4; }
+fn f(): i64 { return 5; }'
+_ptrefused bx2 "$T/x86" "$T/bx2.cyr" "3:30: cannot initialize bool 'x' with a value that is not a bool"
+_bxsrc bx3 'fn f(b: bool): i64 { return 1; }
+fn go(): i64 { return f(5); }
+fn f(b: i64): i64 { return b; }'
+_want bx3 "$T/x86" "" "$T/bx3.cyr" 5 "BX3 \`b: bool\` then \`b: i64\`, \`f(5)\` between (was refused)"
+_bxsrc bx4 'fn f(b: i64): i64 { return b; }
+fn go(): i64 { return f(5); }
+fn f(b: bool): i64 { return 1; }'
+_ptrefused bx4 "$T/x86" "$T/bx4.cyr" "3:25: cannot pass a value that is not a bool to bool parameter 'b' of 'f'"
+_bxsrc bx5 'fn f(): i64 { var x: bool = f(); if (x) { return 1; } return 0; }
+fn f(): bool { return 1 == 1; }
+fn go(): i64 { var x: bool = f(); if (x) { return 3; } return 4; }'
+_want bx5 "$T/x86" "" "$T/bx5.cyr" 3 "BX5 an earlier body's own call reaches the last (bool) definition (was refused)"
+_bxsrc bx6 'fn f(): bool { return 5; }
+fn f(): i64 { return 5; }
+fn go(): i64 { return f(); }'
+_ptrefused bx6 "$T/x86" "$T/bx6.cyr" "2:23: cannot return a value that is not a bool from bool fn 'f'"
+_bxsrc bx7 'fn f(): (bool, i64) { return (5, 1); }
+fn f(): (i64, i64) { return (5, 1); }
+fn go(): i64 { var a, b = f(); return a + b; }'
+_ptrefused bx7 "$T/x86" "$T/bx7.cyr" "2:31: cannot return a value that is not a bool as a bool element of 'f'"
+_bxsrc bx8 'fn f(): bool { return; }
+fn f(): i64 { return 5; }
+fn go(): i64 { return f(); }'
+_ptrefused bx8 "$T/x86" "$T/bx8.cyr" "2:16: a bare \`return;\` in bool fn 'f' returns 0"
+
 # ── row 2: aarch64 under qemu ───────────────────────────────────────────────────────────────
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$T/x86" < src/main_aarch64.cyr > "$T/cc_a64" 2> "$T/eb" && [ -s "$T/cc_a64" ]; then
@@ -412,5 +556,5 @@ if [ "$skips" -gt 0 ]; then
     echo "SKIP $G: $skips leg(s) above could not run; all $pass that ran passed (exit 77: a SKIP, not a PASS)"
     exit 77
 fi
-echo "PASS $G: $pass rows — a redefined fn binds every call to its LAST definition (the filed repro exits 1, the three call shapes 111, fn_redefinition_last_wins.tcyr passes on x86_64, aarch64/qemu, cx/cxvm and PE/wine; the winner is not reported unreachable and survives dead-code elimination with the redirect repaired, #naked included; a redefinition called differently, or async against plain, is refused)"
+echo "PASS $G: $pass rows — a redefined fn binds every call to its LAST definition (the filed repro exits 1, the three call shapes 111, fn_redefinition_last_wins.tcyr passes on x86_64, aarch64/qemu, cx/cxvm and PE/wine; the winner is not reported unreachable and survives dead-code elimination with the redirect repaired, #naked included; a redefinition called differently, or async against plain, is refused; its \`: *T\` return records are the last definition's, 6.7.16)"
 exit 0

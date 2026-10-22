@@ -33,6 +33,14 @@
 #      `P.gm<f64>`, `mt2<i64, f64>` (V5a / V5c / V5d: the refusal an instance can now meet printed `mt$f64`), a method
 #      `Q.pair` (V5b: `Q_pair`), a struct instance element `(Box<Pt>, i64)` (V5e / V5f: `(Box$Pt, i64)`); V5K the same
 #      body at i64 compiles
+#   V6 (6.7.16, the user's D98, 2026-10-20; issues/2026-10-20-zone-destructure-leaves-f64-element-untyped.md) the
+#      declaration zone types a destructure's f64 element and an untyped global from an f64 call, as a fn and the line
+#      after the first statement do: V6 the filed repro verbatim (10, no warning; 7 and "integer arithmetic with an f64
+#      right operand" before), V6b its after-the-first-statement twin (10, unchanged), V6c `var Y = mkf(1.5);` /
+#      `mkf(1.5) * 2.0` in the zone read by a later global and a fn body compiled before the replay, V6d the same after
+#      the first statement (untyped there too before), V6e a generic's `(V, i64)`, a generic method's, an f64 method,
+#      and an f64 comparison that stays an integer, V6k a `kernel;` build (its replay runs after the program: the types
+#      are read at the end of pass 1); the tcyr's MZ rows (T) on every leg
 #
 # MUTATION LEDGER (2026-10-20; each mutant a scratch copy of the tree with the one change, its 2-stage cycc, this gate
 # run from the copy with CYCC= that cycc, so the aarch64 / cx / PE compilers are built from the mutant too):
@@ -47,6 +55,16 @@
 #   M5 `_ret_tup_err` naming the fn table's entry        -> RED 16: V5a-V5d x4 (`mt$f64`, `Q_pair`, `P_gm$f64`,
 #                                                           `mt2$i64$f64`)
 #   M6 `_mret_spell` naming a struct by its table entry   -> RED 8: V5e / V5f x4 (`(Box$Pt, i64)`)
+# D98 (2026-10-21; each mutant a scratch copy of the tree with the one change, its compiler built from it, the gate run
+# from the copy):
+#   M7 the tree before (1cfdeb9d1)                       -> RED 28: T x7 (the MZ rows), V6 / V6c / V6d / V6e x5, V6k
+#   M8 `_gzf_pass` reading nothing                       -> RED 23: T x7, V6 / V6c / V6e x5, V6k
+#   M9 `_gzf_late` keeping the line untyped              -> RED 5: V6d x5
+#   M10 `_gzf_lead` answering 1 (a comparison typed f64) -> RED 12: T x7 (MZN), V6e x5 (N)
+#   M11 `_gzf_elem` answering 0                          -> RED 18: T x7, V6 / V6e x5, V6k
+#   M12 `_gzf_dt_reg` noting nothing                     -> RED 18: the same
+#   M13 `_gzf_bind` answering 0 (no generic binding)     -> RED 12: T x7, V6e x5
+#   M14 `_gzf_mret` answering 0 (no method's f64)        -> RED 12: T x7, V6e x5
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -76,7 +94,7 @@ bad() { echo "  FAIL $1"; fails=$((fails + 1)); }
 TC=tests/tcyr/crossos/multi_return.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=71   # 6.7.16: + the mv_* rows
+FLOOR=82   # 6.7.16: + the mv_* rows, + the MZ rows (D98)
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 MV=$(grep -c 'assert_eq(mv_' "$TC")
 [ "$MV" -ge 17 ] || bad "only $MV mv_* rows in $TC (floor 17)"
@@ -256,6 +274,73 @@ syscall(SYS_EXIT, r);
 EOF
 xr V4 "$D/v4.cyr" 0 "a zone capture, a destructure, a method destructure, a multi-value assignment and a capture at top level"
 
+echo "V6. (6.7.16, D98) the declaration zone types a destructure's f64 element and an f64 call's global, as a fn does"
+cat > "$D/v6.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn mm3(x: f64): (f64, i64) { return (x, 7); }
+var ZA, ZB = mm3(1.5);
+var r = f64_to(ZA * 2.0) + ZB;
+syscall(60, r);
+EOF
+xr V6 "$D/v6.cyr" 10 "the filed repro, verbatim: ZA an f64 in the zone (7 and a warning before)"
+cat > "$D/v6b.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn mm3(x: f64): (f64, i64) { return (x, 7); }
+var q = 1;
+q = 2;
+var ZA, ZB = mm3(1.5);
+var r = f64_to(ZA * 2.0) + ZB;
+syscall(60, r);
+EOF
+xr V6b "$D/v6b.cyr" 10 "the same line after the first statement (unchanged)"
+cat > "$D/v6c.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn mkf(x: f64): f64 { return x; }
+var Y = mkf(1.5);
+var W = mkf(1.5) * 2.0;
+fn rd(): i64 { return f64_to(Y * 2.0) * 10 + f64_to(W); }
+var r = f64_to(Y * 2.0) * 100 + rd();
+syscall(60, r % 256);
+EOF
+xr V6c "$D/v6c.cyr" 77 "var Y = mkf(1.5); / mkf(1.5) * 2.0 in the zone, read by a later global and a fn body: f64s (333; 0 before)"
+cat > "$D/v6d.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn mkf(x: f64): f64 { return x; }
+var q = 1;
+q = 2;
+var Y = mkf(1.5);
+var W = mkf(1.5) * 2.0;
+var r = f64_to(Y * 2.0) * 10 + f64_to(W);
+syscall(60, r);
+EOF
+xr V6d "$D/v6d.cyr" 33 "the same after the first statement: f64s, as in a fn (0 and a warning before)"
+cat > "$D/v6e.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn mkf(x: f64): f64 { return x; }
+fn mm2<V>(x: V): (V, i64) { return (x, 7); }
+struct P { k; }
+impl P {
+    fn mm<V>(self, x: V): (V, i64) { return (x, self.k); }
+    fn mf(self, x: f64): f64 { return x; }
+}
+var GP = P { 7 };
+var A, B = mm2<f64>(1.5);
+var C, D = GP.mm(1.5);
+var E = GP.mf(1.5);
+var N = mkf(1.5) > 1.0;
+var r = (f64_to(A * 2.0) + B) * 10 + f64_to(C * 2.0) + D + f64_to(E * 2.0) + N * 3;
+syscall(60, r);
+EOF
+xr V6e "$D/v6e.cyr" 116 "zone generic, method and f64-method shapes (an f64 comparison stays an integer: N * 3)"
+printf 'kernel;\n' > "$D/v6k.cyr"
+cat "$D/v6.cyr" >> "$D/v6k.cyr"
+krc=0
+CYRIUS_ELF64_KERNEL=1 "$CC" < "$D/v6k.cyr" > "$D/v6k" 2> "$D/v6k.err" || krc=$?
+nf=$(grep -c 'integer arithmetic with an f64' "$D/v6k.err" || true)
+nk=$(grep -c '^warning.*in a kernel build the initializer' "$D/v6k.err" || true)
+if [ "$krc" -eq 0 ] && [ "$nf" -eq 0 ] && [ "$nk" -eq 2 ]; then ok "V6k x86 kernel: the zone typed before the late replay (no f64-mix warning; its 2 late-initializer warnings)"
+else bad "V6k x86 kernel: rc $krc, $nf f64-mix warning(s), $nk late-initializer warning(s): $(grep -m1 '^warning' "$D/v6k.err")"; fi
+
 echo "  $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a generic's (V, i64) element is the instance's binding: the filed repro (V1), the tcyr's mv_* spellings (T) on x86_64 / IR / DCE / aarch64 / cx / PE, the checks reading the instance's signature (V2), a generic's tuple local refused once (V3), top level (V4), the refusals' spelling (V5)"
+echo "PASS: $G — a generic's (V, i64) element is the instance's binding: the filed repro (V1), the tcyr's mv_* spellings (T) on x86_64 / IR / DCE / aarch64 / cx / PE, the checks reading the instance's signature (V2), a generic's tuple local refused once (V3), top level (V4), the refusals' spelling (V5), the declaration zone's f64 element and f64 call global (V6, D98)"

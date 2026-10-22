@@ -119,8 +119,17 @@
 #                                                     temporary"; S17 in place of the value's own error)
 #   q2 `_ret_ptr_unk` marking any named T, resolved or not -> RED 4: S22 x4 (`*i64` accepted)
 #   q3 `_ret_ptr_unk` recorded in pass 2 only      -> RED 4: S13 x4 (the callee defined below the statement)
-# (`_cf_unres_fn`'s GFRS -8 and `_hl_fn_psid` tests are guards no current path reaches: the byte is 1 only for a `*T`
-# record whose T resolved to nothing, which records no struct.)
+# (`_cf_unres_fn`'s `_hl_fn_psid` test is a guard no current path reaches: the byte is 1 only for a `*T` record whose T
+# resolved to nothing, which records no struct. Its GFRS -8 test went in 6.7.16, d3 below.)
+# (6.7.16, the s16 lane, unit SS1; issues/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md;
+# the same procedure, 2026-10-20)
+#   e1 `_cf_unres_fn` without its enum-variant exclusion (= the tree before) -> RED 20: S23-S23d x4 (rc 0, accepted)
+# (6.7.16, unit SS1; issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md; the same
+# procedure)
+#   d1 `_ret_ptr_owns` answering 1 for every definition (pass 2's earlier `*Foo` recorded) -> RED 8: S24 S24b x4
+#   d2 `_ret_redef_reset` a no-op (pass 1 keeps the first definition's byte) -> RED 12: S24 S24a S24b x4
+#   d3 `_cf_unres_fn` keeping its GFRS -8 test (= the tree before)  -> RED 4: S24d x4 (the earlier definition's return
+#                                                     word, 0, read between the definitions: "the result is a temporary")
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
 set -u
@@ -661,8 +670,8 @@ refused U23 "3:37: cannot take a field of the result of 'Some': it does not retu
 # is a call-registered fn with no definition). On the x86_64, aarch64, PE and cx compilers. The cx leg is 6.7.16's
 # (issues/2026-10-18-cx-syntax-only-refuses-sibling-module-calls.md): cx refused every call to a fn the file does not
 # define even under --syntax-only ("undefined function(s) called (cx backend)", rc 1, `gp` listed once per call).
-# synonly <name> <want-rc> <fragment|-> <what>: `--syntax-only`; rc <want-rc>; `-` = no `^error` line and the
-# "warning: undefined function 'gp'"; else ONE `^error` line holding <fragment>.
+# synonly <name> <want-rc> <fragment|-> <what> [<fn>]: `--syntax-only`; rc <want-rc>; `-` = no `^error` line and the
+# "warning: undefined function '<fn>'" (default gp); else ONE `^error` line holding <fragment>.
 synonly() {
     rows=$((rows + 1))
     for leg in x86_64 aarch64 pe cx; do
@@ -679,7 +688,7 @@ synonly() {
         if [ "$crc" -ne "$2" ]; then bad "$1 $4 ($leg): rc $crc (want $2): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"
         elif [ "$3" = - ]; then
             if [ "$n" -ne 0 ]; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
-            elif ! grep -q "^warning: undefined function 'gp'" "$T/$1.$leg.err"; then bad "$1 $4 ($leg): no undefined-function warning"
+            elif ! grep -q "^warning: undefined function '${5:-gp}'" "$T/$1.$leg.err"; then bad "$1 $4 ($leg): no undefined-function warning"
             else ok "$1 $4 ($leg): accepted"; fi
         elif [ "$n" -ne 1 ]; then bad "$1 $4 ($leg): $n error lines (want 1)"
         elif ! grep '^error' "$T/$1.$leg.err" | grep -qF "$3"; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
@@ -822,8 +831,78 @@ syndef S21 0 + "control: Foo declared here, D8 (a)'s store"
 printf '%s\n%s\n' 'fn gi(): *i64 { return 0; }' 'fn go(): i64 { gi().n = 5; return 0; }' > "$T/S22.cyr"
 syndef S22 1 "$MT" "control: \`: *i64\`, a T that resolves to no struct, keeps the refusal"
 
-FLOOR_ROWS=97   # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
-                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX, SA1, SA2 (tools), U16-U23, S10-S22 (structs), U24 (f16)
+# --- S23 (6.7.16, issues/2026-10-19-syntax-only-enum-constructor-above-its-enum-field-store-accepted.md): --syntax-only,
+# an enum variant's payload constructor called in a fn ABOVE its enum — registered by pass 1 with no owner, its code
+# emitted at the enum — read as a sibling module's fn (`_fn_nodef`), so `Some(5).n = 1;` parsed silently (rc 0) where
+# the full build refuses it ("does not return a struct", U23). The variant is defined here: `_cf_unres_fn` excludes it
+# (`_fn_enum_var`, as `_call_nodef` does), so it takes the defined callee's path — refused once, as with the enum above
+# (S23e). S23 is the filed repro verbatim; S23full its full compile (unchanged). S23a-S23d the step, `+=`, a `: stack`
+# enum's constructor, a nested field; S23f (control) a unit variant called (`Non()`: no fn of that name here) keeps a
+# sibling module's path.
+cat > "$T/S23.cyr" <<'EOF2'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+fn go(): i64 { Some(5).n = 1; return 0; }
+enum Opt { Some(v); Non; }
+syscall(60, go());
+EOF2
+syndef S23 1 "3:26: $MT" "the filed repro: \`Some(5).n = 1;\` in a fn above its enum"
+refused S23 "3:20: cannot take a field of the result of 'Some': it does not return a struct" "the filed repro, a full compile (unchanged)"
+erow() { printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\n%s\nenum Opt { Some(v); Non; }\nenum SR: stack { SOk(v); SErr(e); }\n' "$2" > "$T/$1.cyr"; }
+erow S23a 'fn go(): i64 { var i = 0; for (i = 0; i < 1; Some(5).n += 1) { i = i + 1; } return 0; }'
+syndef S23a 1 "3:56: $MT" "the for step \`Some(5).n += 1\` above the enum"
+erow S23b 'fn go(): i64 { Some(5).n += 1; return 0; }'
+syndef S23b 1 "3:26: $MT" "\`Some(5).n += 1;\`"
+erow S23c 'fn go(): i64 { SOk(5).n = 1; return 0; }'
+syndef S23c 1 "3:25: $MT" "a \`: stack\` enum's constructor"
+erow S23d 'fn go(): i64 { Some(5).h.n = 1; return 0; }'
+syndef S23d 1 "$MT" "a nested field"
+printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\nenum Opt { Some(v); Non; }\nfn go(): i64 { Some(5).n = 1; return 0; }\nsyscall(60, go());\n' > "$T/S23e.cyr"
+syndef S23e 1 "4:26: $MT" "control: the enum above the fn"
+erow S23f 'fn go(): i64 { Non().n = 1; return 0; }'
+synonly S23f 0 - "control: a unit variant called, \`Non().n = 1;\`, keeps a sibling module's path" Non
+
+# --- S24 (6.7.16, issues/2026-10-19-duplicate-fn-later-non-pointer-return-keeps-first-star-t-records.md): --syntax-only,
+# `fn gp(): *Foo` then `fn gp(): Foo` (Foo a sibling's): the last definition's result is a by-value temporary, but the
+# first's `*Foo` record (the "T not declared here" byte) was kept, so `gp().n = 5;` parsed silently. The records are the
+# last definition's: refused once, wherever the call sits (S24 after both, S24a above, S24b between). S24c / S24d
+# (controls): a last definition `: *Foo` after `: Foo` or after no annotation stays silent (S24d, a call between them,
+# was "the result is a temporary": pass 2's earlier definition's return word was read).
+printf '%s\n%s\n%s\n' 'fn gp(): *Foo { return 0; }' 'fn gp(): Foo { return 0; }' 'fn go(): i64 { gp().n = 5; return 0; }' > "$T/S24.cyr"
+syndup() {
+    rows=$((rows + 1))
+    for leg in $(legs); do
+        crc=0
+        case $leg in
+            x86_64)  timeout 60 "$CC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            aarch64) timeout 60 "$A64" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            cx)      timeout 60 "$CXC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+            pe)      CYRIUS_TARGET_WIN=1 timeout 60 "$CC" --syntax-only < "$T/$1.cyr" > /dev/null 2> "$T/$1.$leg.err" || crc=$? ;;
+        esac
+        n=$(grep -c '^error' "$T/$1.$leg.err" || true)
+        w=$(grep -c "^warning:<source>:[0-9]*:1: duplicate fn 'gp'" "$T/$1.$leg.err" || true)
+        if [ "$crc" -ne "$2" ]; then bad "$1 $4 ($leg): rc $crc (want $2): $(grep '^error' "$T/$1.$leg.err" | head -1 || true)"
+        elif [ "$w" -ne 1 ]; then bad "$1 $4 ($leg): $w duplicate-fn warnings (want 1)"
+        elif [ "$3" = + ]; then
+            if [ "$n" -ne 0 ]; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"; else ok "$1 $4 ($leg): accepted"; fi
+        elif [ "$n" -ne 1 ]; then bad "$1 $4 ($leg): $n error lines (want 1)"
+        elif ! grep '^error' "$T/$1.$leg.err" | grep -qF "$3"; then bad "$1 $4 ($leg): $(grep '^error' "$T/$1.$leg.err" | head -1)"
+        else ok "$1 $4 ($leg): one error"; fi
+    done
+}
+syndup S24 1 "3:23: $MT" "\`fn gp(): *Foo\` then \`fn gp(): Foo\`, \`gp().n = 5;\` after both"
+printf '%s\n%s\n%s\n' 'fn go(): i64 { gp().n = 5; return 0; }' 'fn gp(): *Foo { return 0; }' 'fn gp(): Foo { return 0; }' > "$T/S24a.cyr"
+syndup S24a 1 "1:23: $MT" "... the call above both"
+printf '%s\n%s\n%s\n' 'fn gp(): *Foo { return 0; }' 'fn go(): i64 { gp().n = 5; return 0; }' 'fn gp(): Foo { return 0; }' > "$T/S24b.cyr"
+syndup S24b 1 "2:23: $MT" "... the call between them"
+printf '%s\n%s\n%s\n' 'fn gp(): Foo { return 0; }' 'fn go(): i64 { gp().n = 5; return 0; }' 'fn gp(): *Foo { return 0; }' > "$T/S24c.cyr"
+syndup S24c 0 + "control: \`: Foo\` then \`: *Foo\` (the last a pointer), the call between"
+printf '%s\n%s\n%s\n' 'fn gp() { return 0; }' 'fn go(): i64 { gp().n = 5; return 0; }' 'fn gp(): *Foo { return 0; }' > "$T/S24d.cyr"
+syndup S24d 0 + "control: no annotation then \`: *Foo\`, the call between (was the temporary)"
+
+FLOOR_ROWS=110  # 6.7.14: the base 11 + the structs lane's for-step / top-level rows (13) + the receives lane's CP rows (11);
+                # 6.7.15: + U1-U15, S1-S9, T6-T18; 6.7.16: + SX, SA1, SA2 (tools), U16-U23, S10-S22 (structs), U24 (f16),
+                # S23-S24d (s16)
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

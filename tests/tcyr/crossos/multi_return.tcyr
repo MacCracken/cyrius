@@ -108,6 +108,33 @@ struct MvP { k; }
 impl MvP {
     fn mm<V>(self, x: V): (V, i64) { return (x, self.k); }
 }
+
+# --- 6.7.16 (D98, the user's decision, 2026-10-20): in the declaration zone a destructure's f64 element is an f64, and
+# so is an untyped global from an f64 call, as in a fn and after the first statement
+# (issues/2026-10-20-zone-destructure-leaves-f64-element-untyped.md) — each was an untyped word holding the double's
+# bits, so `MZA * 2.0` was integer arithmetic (7 for 10): a written `(f64, i64)`, a generic's `(V, i64)` explicit and
+# inferred, a generic method's, three names, a wrap; a single name from a `: f64` call, a `: T` generic at f64, a
+# method, f64 arithmetic on a leading call. Read in main, a fn body compiled before the zone's replay; a comparison
+# on an f64 call stays an integer (MZN).
+fn mz_mm3(x: f64): (f64, i64) { return (x, 7); }
+fn mz_m4(x: f64): (i64, f64, f64) { return (7, x, x); }
+fn mz_f(x: f64): f64 { return x; }
+fn mz_id<T>(x: T): T { return x; }
+impl MvP {
+    fn mzf(self, x: f64): f64 { return x; }
+}
+var MZP = MvP { 7 };
+var MZA, MZB = mz_mm3(1.5);
+var MZC, MZD = mv_mm2<f64>(1.5);
+var MZE, MZF = mv_mm2(1.5);
+var MZG, MZH = MZP.mm(1.5);
+var MZI, MZJ, MZK = mz_m4(1.5);
+var MZL, MZM = (mz_mm3(1.5));
+var MZY = mz_f(1.5);
+var MZT = mz_id(1.5);
+var MZV = MZP.mzf(1.5);
+var MZX = mz_f(1.5) * 2.0;
+var MZN = mz_f(1.5) > 1.0;
 fn mv_free(): i64 { var h: f64 = 1.5; var a, b = mv_mm2<f64>(h); return f64_to(a * 2.0) + b; }
 fn mv_infer(): i64 { var h: f64 = 1.5; var a, b = mv_mm2(h); return f64_to(a * 2.0) + b; }
 fn mv_mx(): i64 { var h: f64 = 1.5; var p: MvP = MvP { 7 }; var a, b = p.mm<f64>(h); return f64_to(a * 2.0) + b; }
@@ -292,6 +319,19 @@ fn main(): i64 {
     assert_eq(mv_gfwd(), 1010, "a generic forwarding V: mv_fwd<f64>(h) / mv_fwd(h)");
     assert_eq(mv_i32(), 1212, "(V, i64) at i32 stays an i64 slot: 5 + 7");
     assert_eq(mv_i64(), 1213, "(V, i64) at i64 unchanged");
+
+    # 6.7.16 (D98): the declaration zone's f64 elements and f64 call results (read before the zone's replay)
+    assert_eq(f64_to(MZA * 2.0) + MZB, 10, "zone var MZA, MZB = mz_mm3(1.5): MZA an f64 (7 before: its bits as an integer)");
+    assert_eq(f64_to(MZC * 2.0) + MZD, 10, "zone var MZC, MZD = mv_mm2<f64>(1.5)");
+    assert_eq(f64_to(MZE * 2.0) + MZF, 10, "zone var MZE, MZF = mv_mm2(1.5), inferred");
+    assert_eq(f64_to(MZG * 2.0) + MZH, 10, "zone var MZG, MZH = MZP.mm(1.5), a generic method");
+    assert_eq(f64_to(MZJ * 2.0) + f64_to(MZK * 4.0) + MZI, 16, "zone (i64, f64, f64): three names");
+    assert_eq(f64_to(MZL * 2.0) + MZM, 10, "zone var MZL, MZM = (mz_mm3(1.5)), wrapped");
+    assert_eq(f64_to(MZY * 2.0), 3, "zone var MZY = mz_f(1.5): an f64 (0 before)");
+    assert_eq(f64_to(MZT * 2.0), 3, "zone var MZT = mz_id(1.5): a `: T` generic at f64");
+    assert_eq(f64_to(MZV * 2.0), 3, "zone var MZV = MZP.mzf(1.5): a method's f64");
+    assert_eq(f64_to(MZX), 3, "zone var MZX = mz_f(1.5) * 2.0: the leading call's f64 arithmetic");
+    assert_eq(MZN * 3, 3, "zone var MZN = mz_f(1.5) > 1.0 stays an integer");
 
     var r2 = assert_summary();
     return r2;

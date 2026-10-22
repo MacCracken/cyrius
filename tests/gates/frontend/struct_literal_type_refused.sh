@@ -676,6 +676,52 @@ syscall(60, G.o.x + G.o.y * 10 + G.w + G.h);
 syscall(60, f());
 '
 
+# SH (6.7.16, met beside issues/2026-10-20-literal-of-undeclared-struct-name-cascades-expected-semicolon.md, whose fn repro
+# holds one) — A POSITIONAL LITERAL SHORT OF A FIELD IS "missing struct field in initializer", as the named form short of
+# one is (`_spi_short`). The walk parsed the literal's `}` as the next leaf's value: "unexpected '}'", naming no rule. At
+# its `}`, once, in sync (SH9: the next statement still reports its own). RED on the lane before this bite: SH1-SH9
+# ("unexpected '}'").
+MSH="missing struct field in initializer"
+SHP='struct P { a; b; }
+struct Pt { x; y; }
+struct B { p: Pt; n; }
+'
+refuse "SH1 fn: P { 2 }" "$MSH" "${SHP}fn f(): i64 { var y = P { 2 }; return y.a; }
+syscall(60, f());
+" only
+refuse "SH2 zone: P { 2 }" "$MSH" "${SHP}var y = P { 2 };
+syscall(60, y.a);
+" only
+refuse "SH3 after a statement: P { 2 }" "$MSH" "${SHP}var q = 0;
+q = 1;
+var y = P { 2 };
+syscall(60, y.a);
+" only
+refuse "SH4 nested leaves: B { 1, 2 }" "$MSH" "${SHP}fn f(): i64 { var b = B { 1, 2 }; return b.n; }
+syscall(60, f());
+" only
+refuse "SH5 a whole nested value: B { p }" "$MSH" "${SHP}fn f(): i64 { var p = Pt { 1, 2 }; var b = B { p }; return b.n; }
+syscall(60, f());
+" only
+refuse "SH6 empty: P { }" "$MSH" "${SHP}fn f(): i64 { var y = P { }; return y.a; }
+syscall(60, f());
+" only
+refuse "SH7 a trailing comma: P { 2, }" "$MSH" "${SHP}fn f(): i64 { var y = P { 2, }; return y.a; }
+syscall(60, f());
+" only
+refuse "SH8 nested, one leaf: B { 1 }" "$MSH" "${SHP}var b = B { 1 };
+syscall(60, b.n);
+" only
+printf '%s' "${SHP}fn f(): i64 { var y = P { 2 }; return zz; }
+syscall(60, f());
+" > "$D/r.cyr"
+cat "$D/r.cyr" | "$CC" > "$D/r.bin" 2>"$D/r.err" || true
+if [ "$(grep '^error' "$D/r.err" | sed 's/: .*//; s/^error:<source>://' | tr '\n' ' ')" = "4:29 4:41 " ] && grep -q "$MSH" "$D/r.err" && grep -q "undefined variable 'zz'" "$D/r.err"; then
+    printf '  ok(refused): %-34s\n' "SH9 in sync: the next statement reports"; pass=$((pass+1))
+else
+    printf '  FAIL: %-40s %s\n' "SH9 in sync: the next statement reports" "$(grep '^error' "$D/r.err" | tr '\n' '|')"; fail=$((fail+1))
+fi
+
 # X — the tree's aarch64 and cx compilers (frontend shared): the filed repro is the one error there too.
 X1SRC='struct P { a; }
 var G: P = P { 1 };

@@ -263,6 +263,8 @@
 #       use); MCS4b `_tup_gci_in` registering no tuple over 256 -> CS4e (the use's error printed before the refusal)
 #   MCS8 `_tup_svtype_p1` reporting in pass 1 -> CS8, CS8c (R12 first, then the real cause); MCS8b `_gvi_tup_late`
 #       saying nothing -> CS8b BUILDS (the replay's report is what refuses a scalar declared below)
+#   MCS8d (6.7.16) `_tup_src_replay` without its `_gci_src` arm (the tree before it) -> CS8d-CS8g (R12 first, then the
+#       type mismatch: two errors)
 # 6.7.11 REPAIR 1 (the genfe lane, unit G4; a one-edit copy of src/, its compiler built by the fixed one, this gate
 # run with CYCC= the mutant; issues/archived/2026-10-09-vec-annotation-type-argument-unchecked.md):
 #   MV1 `_vec_ann_chk` returning at once (every `Vec<..>` annotation unread again) -> R3q-R3z BUILD
@@ -983,7 +985,7 @@ CC=$CC_SV
 R15="cannot take a field of the result of 'mk': it returns 2 values - bind them first, \`var t: (i64, i64) = mk(..);\`, then read \`t.0\`"
 refused r15a "$R15" "R15a: \`return mk(1).0;\`" "${MK}fn f(): i64 { return mk(1).0; }\nsyscall(60, f());\n"
 refused r15b "$R15" "R15b: in an operand" "${MK}fn f(): i64 { var x = mk(1).0 + 1; return x; }\nsyscall(60, f());\n"
-refused r15c "it returns 2 values - bind them first, \`var t: (i64, f64) = B_mk(..);\`" "R15c: a method's result (its declared values spelled)" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\nfn f(): i64 { var b: B; return b.mk(1).1; }\nsyscall(60, f());\n"
+refused r15c "cannot take a field of the result of 'B.mk': it returns 2 values - bind them first, \`var t: (i64, f64) = b.mk(..);\`" "R15c: a method's result (its declared values spelled; 6.7.16: the method and the call as written, it printed 'B_mk')" "struct B { v; }\nimpl B { fn mk(self, a): (i64, f64) { return (a, 1.5); } }\nfn f(): i64 { var b: B; return b.mk(1).1; }\nsyscall(60, f());\n"
 # R16 — a capture refused, mirroring the destructure. Its own texts for a callee class or element that
 # disagrees; a one-value callee, \`f()?\` or any other value is no capture at all — the tuple's "not a tuple"
 # refusal (R12). (\`callptr\` was R16o until 6.7.14: R16cp. A wrapped call was R16l / R16q until 6.7.14: R16pw.)
@@ -1193,7 +1195,8 @@ refused cl2 "'t' is captured by value; a captured name is not assignable in a cl
 # form's caret too); CS3 no "assigning non-pointer to typed pointer" after the tuple store's refusal nor about a
 # refused `*( .. )`; CS4 a literal refused for its shape still declares its name — a local, a global after the
 # first statement (annotated or not) — and a > 256 zone literal registers at the cap; CS8 a zone tuple copied
-# from a tuple declared below it is `_gci_below`'s error alone, a scalar below is R12 alone.
+# from a tuple declared below it is `_gci_below`'s error alone, a scalar below is R12 alone; CS8d-CS8h (6.7.16) a
+# whole struct / tuple value of another type declared above is the type mismatch alone, a scalar above R12 alone.
 cascade() {   # <name> <errors> <what> <source> <want>..: exactly <errors> error lines, no warning; each <want> is one
     _cn=$1; _ce=$2; _cw=$3
     printf '%b' "$4" > "$T/$_cn.cyr"
@@ -1227,6 +1230,13 @@ cascade cs4e 1 "CS4e: a zone literal of 257 elements, then \`G.0\` (the filed re
 cascade cs8 1 "CS8: \`var A: (i64, i64) = B;\` above \`var B = (1, 2);\` (the filed repro): the real cause alone" 'var A: (i64, i64) = B;\nvar B = (1, 2);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:21: cannot copy-init 'A' from a global declared below it (declare the source first): 'B'"
 cascade cs8b 1 "CS8b: ... a scalar \`B\` below: R12 alone" 'var A: (i64, i64) = B;\nvar B = 5;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:8: cannot initialize tuple 'A' with a value that is not a tuple"
 cascade cs8c 1 "CS8c: ... a 3-tuple \`B\` below: the type mismatch alone" 'var A: (i64, i64) = B;\nvar B = (1, 2, 3);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "1:21: cannot copy 'B' into a variable of a different struct/vector type: 'A'"
+# CS8d-CS8h (6.7.16): a whole struct / tuple VALUE of another type declared ABOVE is the replay's type mismatch alone,
+# as in a fn and after the first statement — pass 1 printed R12 ("... not a tuple": for a tuple, false) first.
+cascade cs8d 1 "CS8d: ... a 3-tuple \`B\` above: the type mismatch alone" 'var B = (1, 2, 3);\nvar A: (i64, i64) = B;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "2:21: cannot copy 'B' into a variable of a different struct/vector type: 'A'"
+cascade cs8e 1 "CS8e: ... a struct \`U\` value above" 'struct U { a; b; }\nvar B = U { 1, 2 };\nvar A: (i64, i64) = B;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "3:21: cannot copy 'B' into a variable of a different struct/vector type: 'A'"
+cascade cs8f 1 "CS8f: ... wrapped, \`(B)\`" 'var B = (1, 2, 3);\nvar A: (i64, i64) = (B);\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "2:21: cannot copy 'B' into a variable of a different struct/vector type: 'A'"
+cascade cs8g 1 "CS8g: ... a struct field \`W.s\` above" 'struct U { a; b; }\nstruct W { s: U; n; }\nvar B = U { 1, 2 };\nvar W0 = W { B, 3 };\nvar A: (i64, i64) = W0.s;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "5:21: cannot copy 's' into a variable of a different struct/vector type: 'A'"
+cascade cs8h 1 "CS8h: ... a scalar \`B\` above: R12 alone (the control)" 'var B = 5;\nvar A: (i64, i64) = B;\nfn main(): i64 { return A.0; }\nsyscall(60, main());\n' "2:8: cannot initialize tuple 'A' with a value that is not a tuple"
 # CS9 (6.7.16, issues/2026-10-18-refused-annotation-cascades-tuple-literal-initializer.md) — a REFUSED annotation over a
 # tuple literal initializer is the annotation's one error: the refusal left no type, which R9 read as a declared
 # non-tuple ("a tuple literal cannot initialize 'b' - its declared type is not a tuple" after it, every row below

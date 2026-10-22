@@ -1103,7 +1103,15 @@ fn _ipt_sltype(packed, which): i64 {
     if (f == 0) { return 0; }
     if (f == 0x8001) { return F64_TYID; }
     if (f == 0x8002) { return F32_TYID; }
+    if ((f & 0xFF00) == 0x8100) { return f & 7; }   # 6.7.16 (D72): a narrow integer's width (`_pnw_apply`)
     return 0 - ((f - 1) + 2048);
+}
+# 6.7.16 (D72): param `which`'s narrow code in a GFIPT word (the width, | 8 when signed), else 0.
+fn _ipt_ncode(packed, which): i64 {
+    var f = packed & 0xFFFF;
+    if (which == 1) { f = (packed >> 16) & 0xFFFF; }
+    if ((f & 0xFF00) != 0x8100) { return 0; }
+    return f & 15;
 }
 
 # Slot count for a param SLTYPE: vectors are 2 (128-bit) or 4 (256-bit), everything else 1.
@@ -1173,6 +1181,35 @@ fn GFPSID(S, fi, pc): i64 {
     if (_fnt_psid == 0) { return 0; }
     if (fi < 0) { return 0; }
     var row = L64(_fnt_psid + fi * 8);
+    if (row == 0) { return 0; }
+    if (pc >= load64(row)) { return 0; }
+    return L64(row + 8 + pc * 8);
+}
+# 6.7.16 (D97) — a `**S` / `***S` parameter's struct, behind its stars: `(stars << 32) | sid`, 0 = none (a `*S` is
+# GFPSID's). Rows as `_fnt_psid`'s; written by pass 1 (`_pps_scan`) and the definition (`_pps_def_note`), read by the
+# argument check (`_pps_param`). A 0 is written only over a row that exists. CHANGELOG [6.7.16]
+var _fnt_pps = 0;
+fn SFPPS(S, fi, pc, v): i64 {
+    if (fi < 0) { return 0; }
+    if (_fnt_pps == 0) {
+        if (v == 0) { return 0; }
+        _fnt_pps = alloc(131072 * 8);
+    }
+    var row = L64(_fnt_pps + fi * 8);
+    var cap = 0;
+    if (row != 0) { cap = load64(row); }
+    if (pc >= cap) {
+        if (v == 0) { return 0; }
+        row = _psid_grow(row, cap, pc);
+        S64(_fnt_pps + fi * 8, row);
+    }
+    S64(row + 8 + pc * 8, v);
+    return 0;
+}
+fn GFPPS(S, fi, pc): i64 {
+    if (_fnt_pps == 0) { return 0; }
+    if (fi < 0) { return 0; }
+    var row = L64(_fnt_pps + fi * 8);
     if (row == 0) { return 0; }
     if (pc >= load64(row)) { return 0; }
     return L64(row + 8 + pc * 8);

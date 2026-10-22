@@ -19,7 +19,7 @@
 # that names it): R0 the filed repro verbatim (33); V1-V12 the values; A1 the crossos values file
 # (tests/tcyr/crossos/struct_receive_paren_call.tcyr, the release gate's real-hardware carrier); N1-N7 the refusals,
 # each exactly one error line, no binary. 6.7.16: KC1-KC5 and A2 (a known `&f` callee's `*S`), PS0-PS11 (a subscript
-# store through a parenthesised base, D22), below.
+# store through a parenthesised base, D22), FS1-FS10 (a classic-for step's parenthesised destination), below.
 #
 # MUTATION LEDGER (2026-10-17, a scratch copy of src/ with the one edit, this gate run as CYCC=<mutant>; the
 # aarch64 / cx compilers build from the tree's src/, so a mutant is RED on its x86_64 and PE legs):
@@ -66,6 +66,11 @@
 #                                                             PS3 / PS4 still report the next statement (kept as D19's
 #                                                             sibling keeps it); `_psub_err`'s own `_derr_seen` makes
 #                                                             the refusal once per site, a generic's three parses too (PS5)
+# 6.7.16 (the s16 lane, unit SS1, 2026-10-20; the same scratch-tree mutants). Rows FS1-FS10:
+#   `_for_step_replay` without its `_step_paren` call (= the tree before) -> RED 46: PS10 FS1-FS5 FS9 FS10 on every leg
+#                                                             ("expected '=', got .."; FS1's lines 2-4; FS10's later
+#                                                             statement's error swallowed by the latch), FS8
+#   `_pf_store_err` silent under --syntax-only (= the tree before) -> RED 2: N8, FS11 (rc 0)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -318,7 +323,7 @@ refused Q8 "unknown field 'zz' on struct 'P1'" "(s).zz; a read that does not res
 src Q10 'struct P9 { a; b; }
 fn main(): i64 { var s = P9 { 1, 2 }; (s).a.b; return s.a; }
 syscall(60, main());'
-refused Q10 "expected ';', got '.'" "(s).a.b; a chain that does not parse (a is no struct) keeps its own error"
+refused Q10 "field 'a' is not a struct: it has no field 'b'" "(s).a.b; a chain that does not parse (a is no struct) keeps its own error (6.7.16: in its own words; it was \"expected ';', got '.'\")"
 src Q11 'fn h(): i64 { return undefined_q; }
 fn main(): i64 { var s = P1 { 33 }; (s).zz; return s.a + h(); }
 syscall(60, main());'
@@ -389,8 +394,8 @@ runs A2 0 "$TK ($NK rows: a known callee's *P2 at every token-typed consumer)"
 # parenthesised subscript READ gets — "a subscript's base is a name, a *T field or a call returning *T - name the pointer
 # first (var q: *T = ..; q[i])" — once at the `(`, the statement stepped in sync (the next statement parsed normally); it
 # was "unexpected '('" (`_stmt_paren_sub`, from `_stmt_paren_dst`). Not an assignment after the `[..]` steps
-# (`(pn)[0];`) keeps "unexpected '('" (PS9). A classic-for STEP is not a statement and keeps "expected '='" for every
-# parenthesised destination (PS10; filed with the D19 / D24 (a) step shapes).
+# (`(pn)[0];`) keeps "unexpected '('" (PS9). A classic-for STEP takes the same words since 6.7.16 (PS10; it was
+# "expected '=', got identifier 'pn'"; the FS rows below).
 # issues/2026-10-18-subscript-store-through-parenthesised-base-is-unexpected-paren.md
 SB="a subscript's base is a name, a *T field or a call returning *T - name the pointer first (var q: *T = ..; q[i])"
 cat > "$T/PS1.cyr" <<'EOF'
@@ -443,14 +448,96 @@ syscall(60, main());'
 refused PS9 "unexpected '('" "(pn)[0]; no assignment: unchanged"
 src PS10 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; var i = 0; for (i = 0; i < 1; (pn)[0] = 7) { i = i + 1; } return pn[0]; }
 syscall(60, main());'
-refused PS10 "expected '=', got identifier 'pn'" "a for STEP: unchanged (filed: the step reaches no statement refusal)"
+refused PS10 "$SB" "a for STEP: the statement's words (6.7.16; it was expected '=', got identifier 'pn')"
 printf '%s\n' 'fn main(): i64 { var buf[16]; var pn: *i64 = &buf; (pn)[0] = 1; return 0; }' 'syscall(60, main());' > "$T/PS11.cyr"
 rows=$((rows + 1))
 crc=0; "$CC" --syntax-only < "$T/PS11.cyr" > /dev/null 2> "$T/PS11.err" || crc=$?
 if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/PS11.err")" -eq 1 ] && grep -qF "$SB" "$T/PS11.err"; then ok "PS11 --syntax-only refuses (pn)[0] = 1; in the read's words"
 else bad "PS11 --syntax-only: rc $crc: $(grep '^error' "$T/PS11.err" | head -2 | tr '\n' '|')"; fi
 
-FLOOR=64   # 6.7.16: + KC1-KC5, A2; + PS0-PS11 (D22)
+# 6.7.16 (issues/2026-10-19-parenthesised-for-step-destination-is-expected-equals.md): a classic-for STEP whose
+# destination is parenthesised is refused in its statement's words — 6.7.15's D19 (`(n) = 7`, `(*pn) += 1`), 6.7.16's
+# D22 (`(pn)[0] = 2`), 6.7.14's D24 (a) (`(s).a = 3`) — once, at the statement's token (the `(`; the field store's `.`).
+# It was "expected '=', got <the token after the `(`>": `_for_step_replay` took the `(` as the destination's name
+# (`_step_paren` now asks the statement's readers, the step's `)` as the end). FS1 the filed repro verbatim (four
+# refusals, one per line, no binary); FS2 `((n)) += 1`; FS3 `(*(&s)) -= 1`; FS4 `(pp)[0][1] = 1`; FS5 at top level;
+# FS9 a generic at three types (once); FS10 two such steps, and a later statement's own error still reported.
+# Controls: FS6 `(n + 1) = 7` and FS7 `(s).m()` keep "expected '='"; FS8 --syntax-only refuses the D19 / D22 steps alike.
+cat > "$T/FS1.cyr" <<'EOF'
+struct P1 { a; }
+fn main(): i64 {
+    var n = 5;
+    var pn: *i64 = &n;
+    var s = P1 { 1 };
+    var i = 0;
+    for (i = 0; i < 1; (n) = 7) { i = i + 1; }
+    for (i = 0; i < 1; (*pn) += 1) { i = i + 1; }
+    for (i = 0; i < 1; (pn)[0] = 2) { i = i + 1; }
+    for (i = 0; i < 1; (s).a = 3) { i = i + 1; }
+    return n;
+}
+syscall(60, main());
+EOF
+PD="an assignment's destination is not parenthesised - write"
+FA="cannot assign to a field after parentheses - write the store without them (\`s.a = v\`)"
+refused FS1 "<source>:7:24: $PD \`n = 7\`" "the filed repro verbatim: four steps (expected '=' before)" 4
+for leg in $(legs); do
+    _l2=$(grep '^error' "$T/FS1.$leg.err" | sed -n 2p); _l3=$(grep '^error' "$T/FS1.$leg.err" | sed -n 3p); _l4=$(grep '^error' "$T/FS1.$leg.err" | sed -n 4p)
+    case $_l2 in *"<source>:8:24: $PD \`*pn += 1\`"*) ;; *) bad "FS1 ($leg): line 2 is not D19's at 8:24: $_l2" ;; esac
+    case $_l3 in *"<source>:9:24: $SB"*) ;; *) bad "FS1 ($leg): line 3 is not D22's at 9:24: $_l3" ;; esac
+    case $_l4 in *"<source>:10:27: $FA"*) ;; *) bad "FS1 ($leg): line 4 is not D24 (a)'s at 10:27: $_l4" ;; esac
+done
+src FS2 'fn main(): i64 { var n = 5; var i = 0; for (i = 0; i < 1; ((n)) += 1) { i = i + 1; } return n; }
+syscall(60, main());'
+refused FS2 "$PD \`n += 1\`" "((n)) += 1, two wraps"
+src FS3 'fn main(): i64 { var s = 5; var i = 0; for (i = 0; i < 1; (*(&s)) -= 1) { i = i + 1; } return s; }
+syscall(60, main());'
+refused FS3 "$PD \`*(&s) -= 1\`" "(*(&s)) -= 1"
+src FS4 'fn main(): i64 { var buf[32]; var pp: **i64 = &buf; var i = 0; for (i = 0; i < 1; (pp)[0][1] = 1) { i = i + 1; } return 0; }
+syscall(60, main());'
+refused FS4 "$SB" "(pp)[0][1] = 1, two subscript steps"
+src FS5 'var FN = 5;
+var FI = 0;
+for (FI = 0; FI < 1; (FN) = 7) { FI = FI + 1; }
+syscall(60, FN);'
+refused FS5 "<source>:18:22: $PD \`FN = 7\`" "at top level"
+src FS9 'fn g<T>(x: T): i64 { var n = 5; var i = 0; for (i = 0; i < 1; (n) = 7) { i = i + 1; } return n; }
+fn main(): i64 { return g(1) + g<i32>(2) + g<i16>(3); }
+syscall(60, main());'
+refused FS9 "$PD \`n = 7\`" "a generic at three types: once"
+src FS10 'fn main(): i64 { var s = P1 { 1 }; var i = 0; for (i = 0; i < 1; (s).a += 3) { i = i + 1; } for (i = 0; i < 1; (i) = 2) { i = i + 1; } zz = 1; return 0; }
+syscall(60, main());'
+refused FS10 "$FA" "two steps, then a statement's own error (undefined zz) still reported" 3
+if ! grep -qF "undefined variable 'zz'" "$T/FS10.x86_64.err"; then bad "FS10 the later statement's error is missing"; fi
+src FS6 'fn main(): i64 { var n = 5; var i = 0; for (i = 0; i < 1; (n + 1) = 7) { i = i + 1; } return n; }
+syscall(60, main());'
+refused FS6 "expected '=', got identifier 'n'" "control: (n + 1) = 7, a value, unchanged"
+src FS7 'fn main(): i64 { var s = P1 { 1 }; var i = 0; for (i = 0; i < 1; (s).m()) { i = i + 1; } return 0; }
+syscall(60, main());'
+refused FS7 "expected '=', got identifier 's'" "control: (s).m(), a call, unchanged"
+printf '%s\n' 'fn main(): i64 {' '    var n = 5;' '    var pn: *i64 = &n;' '    var i = 0;' '    for (i = 0; i < 1; (n) = 7) { i = i + 1; }' '    for (i = 0; i < 1; (*pn) += 1) { i = i + 1; }' '    for (i = 0; i < 1; (pn)[0] = 2) { i = i + 1; }' '    return n;' '}' > "$T/FS8.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" --syntax-only < "$T/FS8.cyr" > /dev/null 2> "$T/FS8.err" || crc=$?
+if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/FS8.err" || true)" -eq 3 ] && grep -qF "<source>:5:24: $PD \`n = 7\`" "$T/FS8.err" \
+   && grep -qF "<source>:6:24: $PD \`*pn += 1\`" "$T/FS8.err" && grep -qF "<source>:7:24: $SB" "$T/FS8.err"; then ok "FS8 --syntax-only refuses the D19 / D22 steps alike"
+else bad "FS8 --syntax-only: rc $crc: $(grep '^error' "$T/FS8.err" | head -3 | tr '\n' '|')"; fi
+
+# 6.7.16 (the s16 lane, met while landing the FS rows): --syntax-only refuses a store through parentheses as the build
+# does — `(s).a = 1;`, `(s).a += 1;` (N8) and the step `(s).a = 3` (FS11) parsed silently under lint (rc 0), while its
+# D19 / D22 / D60 siblings (PS11, FS8, Q9) are refused there; the rule reads no type.
+printf '%s\n' 'struct P1 { a; }' 'fn main(): i64 { var s = P1 { 1 }; (s).a = 1; (s).a += 1; return s.a; }' 'syscall(60, main());' > "$T/N8.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" --syntax-only < "$T/N8.cyr" > /dev/null 2> "$T/N8.err" || crc=$?
+if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/N8.err" || true)" -eq 2 ] && grep -qF "<source>:2:39: $FA" "$T/N8.err" \
+   && grep -qF "<source>:2:50: $FA" "$T/N8.err"; then ok "N8 --syntax-only refuses (s).a = 1; and (s).a += 1; as the build does"
+else bad "N8 --syntax-only: rc $crc: $(grep '^error' "$T/N8.err" | head -3 | tr '\n' '|')"; fi
+printf '%s\n' 'struct P1 { a; }' 'fn main(): i64 { var s = P1 { 1 }; var i = 0; for (i = 0; i < 1; (s).a = 3) { i = i + 1; } return 0; }' > "$T/FS11.cyr"
+rows=$((rows + 1))
+crc=0; "$CC" --syntax-only < "$T/FS11.cyr" > /dev/null 2> "$T/FS11.err" || crc=$?
+if [ "$crc" -ne 0 ] && [ "$(grep -c '^error' "$T/FS11.err" || true)" -eq 1 ] && grep -qF "<source>:2:69: $FA" "$T/FS11.err"; then ok "FS11 --syntax-only refuses the step (s).a = 3"
+else bad "FS11 --syntax-only: rc $crc: $(grep '^error' "$T/FS11.err" | head -2 | tr '\n' '|')"; fi
+
+FLOOR=76   # 6.7.16: + KC1-KC5, A2; + PS0-PS11 (D22); + FS1-FS11, N8 (the for step; --syntax-only's store)
 [ "$rows" -ge "$FLOOR" ] || bad "only $rows rows ran (floor $FLOOR)"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails failed ($rows rows, $skips legs skipped)"; exit 1; fi
 echo "PASS: $G — $rows rows: a .field / .m() after parentheses around a struct value reads it as unwrapped (D24 (a)), a non-struct / a store / a top-level struct result refused once by name; a parenthesised assignment destination refused once by name (D19); a call-free field-read statement through parentheses refused once by name (D60); a known &f callee's *S read through the wrap; a subscript store through parentheses refused once in the read's words (D22) ($skips legs skipped)"

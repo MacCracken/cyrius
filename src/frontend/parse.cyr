@@ -221,20 +221,86 @@ fn _skip_nested_body(S, k): i64 {
 # before the 256-level nesting bound refused it, recursion_depth_bounded.sh). CHANGELOG [6.7.13]
 fn _pair_unwrap(S, ti): i64 {
     if (TOKTYP(S, ti) != 10) { return ti; }
+    var h = _pw_head(S, ti);   # 6.7.16: a parenthesised method-chain head, inside any wrap
+    if (h >= 0) { return _pw_hchain(S, ti, h); }
     var a = ti;
     while (TOKTYP(S, a) == 10) { a = a + 1; }
-    if (TOKTYP(S, a) != 2) { return 0 - 1; }
-    var o = _pair_ret_open(S, a);
-    if (o < 0) { o = _pair_mopen(S, a); }
+    if (TOKTYP(S, a) != 2) { if (TOKTYP(S, a) != 137) { return 0 - 1; } }   # 6.7.16: a `callptr(..)` head's chain
+    var o = _pair_lead_open(S, a);
     if (o < 0) { return 0 - 1; }
     return _pair_unwrap_k(S, _call_close(S, o) + 1, a - ti, a);
 }
-# The `(` of a method call at token a by its shape — `x.m(`, or `x.m<..>(` (6.7.15) — its callee the asker's to
-# resolve (a comparison `p.n < a > (b)` resolves to none), else -1.
-fn _pair_mopen(S, a): i64 {
-    if (_tok_method_open(S, a) == 1) { return a + 3; }
-    if (_tok_mx_shape(S, a) == 0) { return 0 - 1; }
-    return _tok_targs_close(S, a + 4) + 1;
+# The `(` of the call a value starting at the name (or `callptr`) at token a starts with, by its shape: the last call
+# of a method chain on any receiver (`_pc_shape`: `x.m(`, `x.m<..>(` (6.7.15), 6.7.16 `w.p.m(`, `f(..).m(`), else
+# `name(` / `name<..>(` — its callee the asker's to resolve (a comparison `p.n < a > (b)` resolves to none); else -1.
+fn _pair_lead_open(S, a): i64 {
+    var o = _pc_shape(S, a);
+    if (o >= 0) { return o; }
+    if (TOKTYP(S, a) != 2) { return 0 - 1; }
+    return _pair_ret_open(S, a);
+}
+# ⛔ 6.7.16 — A METHOD CHAIN BY ITS SHAPE: the `(` of the call ending the chain headed at token h — a name, a call
+# (`f(..)`, `g<..>(..)`, `fncallN(..)`, `callptr(..)`) or a parenthesised head (`_mch_hend`), then `.name` steps, each a
+# field or a call `.m(..)` / `.m<..>(..)` (`_mchain_targs`) — when its last step is a call; else -1 (no step, or a
+# field ends it). Tokens only: the callee is the asker's to resolve. CHANGELOG [6.7.16]
+fn _pc_shape(S, h): i64 {
+    var i = _mch_hend(S, h);
+    var o = 0 - 1;
+    while (_mchain_at(S, i) == 1) {
+        var k = _mchain_targs(S, i + 2);
+        if (TOKTYP(S, k) == 10) {
+            o = k;
+            i = _call_close(S, k) + 1;
+        } else {
+            o = 0 - 1;
+            i = i + 2;
+        }
+    }
+    return o;
+}
+# ⛔ 6.7.16 — A PARENTHESISED RECEIVER HEADS A METHOD CHAIN, it wraps no call: `(*pw).m(..)`, `(w).p.m(..)`, and inside
+# a wrap `((*pw).m(..))`. The outermost of the `(` leading the value at token ti (0 = ti itself) whose `)` a `.name`
+# step follows, else -1. One pass to ti's own `)`: a leading `(` closes the first time the depth falls to its level.
+# CHANGELOG [6.7.16]
+fn _pw_head(S, ti): i64 {
+    var k = 0;
+    while (TOKTYP(S, ti + k) == 10) { k = k + 1; }
+    var d = k;
+    var low = k;
+    var i = ti + k;
+    var h = 0 - 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { d = d + 1; }
+        elif (t == 11) {
+            d = d - 1;
+            if (d < low) {
+                low = d;
+                if (_mchain_at(S, i + 1) == 1) { h = d; }
+                if (d == 0) { return h; }
+            }
+        }
+        elif (t == 12) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# ... the chain headed at token ti + h inside the h `(` before it: its head when its last call closes right before
+# their h `)`, else -1.
+fn _pw_hchain(S, ti, h): i64 {
+    var o = _pc_shape(S, ti + h);
+    if (o < 0) { return 0 - 1; }
+    return _pair_unwrap_k(S, _call_close(S, o) + 1, h, ti + h);
+}
+# The wrapping `(` before the value at token st: up to a parenthesised chain head (`_pw_head`), else all of them.
+fn _pw_lead(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var h = _pw_head(S, st);
+    if (h >= 0) { return h; }
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    return k;
 }
 # `a` when the k tokens from e are each `)` (inside the token stream), else -1.
 fn _pair_unwrap_k(S, e, k, a): i64 {
@@ -398,7 +464,7 @@ fn _tok_gen_ret_sid(S, a, i, j, fi): i64 {
 # binds it (`_gen_arg_whole`).
 fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     var r = 0;
-    if (TOKTYP(S, j + 1) == 19) {
+    if (_tok_gen_xl(S, j) == 1) {
         var k = j + 2;
         if (w == 1) { if (TOKTYP(S, k + 1) != 31) { return 0; } k = k + 2; }
         if (TOKTYP(S, k) != 2) { return 0; }
@@ -419,6 +485,13 @@ fn _tok_gen_tp_sid(S, a, i, j, fi, w): i64 {
     var at = _call_arg_for(S, fi, j + 1, pk - 1);   # 6.7.7: or the argument naming it
     if (at < 0) { return 0; }
     return _tok_ta_arg(S, a, i, at, _ic_ptr_param(S, fi, pk - 1));
+}
+# 1 = the call at token j names an explicit type-argument list (`g<..>(`); an operator's binding (`_gs_opg`: j + 1 the
+# `_OPI_OPEN` mark, no token) has none. CHANGELOG [6.7.16]
+fn _tok_gen_xl(S, j): i64 {
+    if (j + 1 == _OPI_OPEN) { return 0; }
+    if (TOKTYP(S, j + 1) == 19) { return 1; }
+    return 0;
 }
 # ⛔ 6.7.16 — THE SCAN READS A `pp: **T` BINDING AS THE PARSER MAKES IT (6.7.14's D40 A, `_gen_infer_ind`): T that no
 # `x: T` / `p: *T` parameter and no struct carrier carries rides the first parameter declared `*..*T` (`_pp_tparam`,
@@ -1058,6 +1131,7 @@ fn _tok_method_any(S, mnoff): i64 {
 fn _tok_ret_callee(S, a, t): i64 {
     t = _pair_unwrap(S, t);   # 6.7.13: `return (f(..));` forwards as `return f(..);`
     if (t < 0) { return 0 - 1; }
+    if (_pc_mchain(S, t) == 1) { return _tok_mch_fn(S, a, t); }   # 6.7.16: a method chain, any receiver
     if (TOKTYP(S, t) != 2) { return 0 - 1; }
     var o = _pair_ret_open(S, t);
     if (o >= 0) {
@@ -1342,6 +1416,7 @@ var _mixed_warned = 0;
 fn _ret_is_variant(S, a, t): i64 {
     t = _pair_unwrap(S, t);
     if (t < 0) { return 1; }
+    if (_pc_mchain(S, t) == 1) { return _riv_chain(S, a, t); }   # 6.7.16: a method chain, any receiver
     if (TOKTYP(S, t) != 2) { return 1; }
     var rf = _tok_ret_callee(S, a, t);
     var nt = 10;
@@ -1358,6 +1433,20 @@ fn _ret_is_variant(S, a, t): i64 {
         if ((fl & 512) != 0) { return 0; }
     }
     if (nt == 5) { if ((fl & 512) != 0) { return 0; } }
+    return 1;
+}
+# 6.7.16 — `return w.p.m(..)`, `return f(..).m(..)`, `return (*pw).m(..)`: the chain's last method as the tokens resolve
+# it (`_tok_mch_fn`) — a pair, a nullary variant, else plain; unresolved, a `.m(` is unknown (not plain), and a
+# `.m<..>(` may be a comparison (plain), as on a single name. CHANGELOG [6.7.16]
+fn _riv_chain(S, a, t): i64 {
+    var rf = _tok_mch_fn(S, a, t);
+    if (rf < 0) {
+        if (TOKTYP(S, _pc_shape(S, t) - 1) == 2) { return 0; }
+        return 1;
+    }
+    var fl = GFLG(S, rf);
+    if ((fl & 256) != 0) { return 0; }
+    if ((fl & 512) != 0) { return 0; }
     return 1;
 }
 
@@ -1422,7 +1511,7 @@ fn _tok_q_is_pair(S, a, q): i64 {
                 var ct = TOKTYP(S, c);
                 if (_tok_wrap_open(ct) == 1) { return _tok_call_is_pair(S, a, p); }   # 6.7.13: `(f(..))?`
                 if (ct == 20 || ct == 39 || ct == 152) { c = _tok_targs_open(S, c) - 1; }
-                elif (c >= 2) { if (TOKTYP(S, c - 1) == 41) { c = c - 2; } }
+                c = _tok_chain_back(S, c);   # 6.7.16: a method chain's head (`w.p.m(..)?`, `f(..).m(..)?`)
                 var r = _tok_call_is_pair(S, a, c);
                 return r;
             }
@@ -1430,6 +1519,38 @@ fn _tok_q_is_pair(S, a, q): i64 {
         p = p - 1;
     }
     return 0;
+}
+# ⛔ 6.7.16 — the head of the method chain whose step's name is token c, back over `. name`, `. name(..)` and
+# `. name<..>(..)` steps: the name, the call (its name, or `fncallN` / `callptr`) or the parenthesised head before
+# the first `.`; c itself when no `.` precedes it. Through 6.7.15 only `x.m(..)?` stepped back to x, so `w.p.m(..)?`
+# was judged on `p` as a single name and `f(..).m(..)?` was no method at all. CHANGELOG [6.7.16]
+fn _tok_chain_back(S, c): i64 {
+    while (c >= 2) {
+        if (TOKTYP(S, c - 1) != 41) { return c; }
+        var p = c - 2;
+        if (TOKTYP(S, p) == 2) { c = p; }
+        elif (TOKTYP(S, p) == 11) {
+            var h = _tcb_group(S, p);
+            if (h < 0) { return c; }
+            if (TOKTYP(S, h) == 10) { return h; }   # a parenthesised head
+            c = h;
+        }
+        else { return c; }
+    }
+    return c;
+}
+# ... the head of the group whose `)` is token p: a call's name (past its `<..>`), its `fncallN` / `callptr`, or a
+# parenthesised head's `(`; -1 when unmatched.
+fn _tcb_group(S, p): i64 {
+    var op = _tok_open_back(S, p);
+    if (op < 1) { return 0 - 1; }
+    var ct = TOKTYP(S, op - 1);
+    if (ct == 137) { return op - 1; }
+    if (_tok_wrap_open(ct) == 1) { return op; }
+    if (ct == 2) { return op - 1; }
+    var lt = _tok_targs_open(S, op - 1);
+    if (lt < 1) { return 0 - 1; }
+    return lt - 1;
 }
 
 # The mixed-return warning for a CLOSURE, at its plain `return` (token k). `encl` is the name
@@ -1661,18 +1782,19 @@ fn _ensure_pair_flags(S): i64 {
 #   - `x.m(` on a single name typed as a struct (`_recv_sid`, PARSE_FIELD_LOAD's order): `T_m`.
 #     BUILD_METHOD_NAME writes only uncommitted scratch at GNPOS, so the peek is safe — the real
 #     call path does the same.
-# A receiver that is not one name (`a.b.m()`, `f().m()`, an untyped impl `self`) is typed by no
-# call path; it stays -1, today's answer. CHANGELOG [6.6.16]
+#   - 6.7.16: a method ending a chain on any receiver the method arm takes (`_mcall_open`'s chain arm) —
+#     `w.p.m(`, `f(..).m(`, `(*pw).m(`, `p.gp().m(` — its method.
 # ⛔ 6.6.17 (a7): a GENERIC's call answers for the INSTANCE it reaches (`_pair_gen_inst`), not the
 # template — `fn w<T>(p: T, d) { return p.div(d); }` is a pair at T = Pt (`Pt_div` returns Ok/Err)
 # and one value at T = Qt, and the template, whose flag no single answer fits, left `w(p, d)?` on
 # the boxed lowering (rc 139). CHANGELOG [6.6.17]
 fn _pair_callee_at(S, ti): i64 {
+    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
+    if (o >= 0) { if (_mco_ch == 1) { return _mco_inst(S, _mco_mf, _mco_mt, o); } }   # 6.7.16: a chain's last method
     if (_gcall_open(S, ti) >= 0) {
         var fi = _pair_gen_inst(S, ti);
         return fi;
     }
-    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too, at its explicit instance
     if (o < 0) { return 0 - 1; }
     var sid = _recv_sid(S, TOKVAL(S, ti));
     if (sid <= 0) { return 0 - 1; }
@@ -1707,9 +1829,27 @@ fn _tok_method_open(S, ti): i64 {
 # m and a generic method m (`_mtargs_at`, the method arm's own test), so `p.n < a > (b)` stays a comparison. x is
 # typed as its asker types it: by the parser's scope (`a` < 0, `_recv_sid`), or from the tokens of the unit
 # starting at token a (`_tok_name_sid`; an impl's untyped `self`, `_tok_iself`). -1 otherwise. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AND A METHOD ENDING A CHAIN ON ANY RECEIVER THE METHOD ARM TAKES: a field chain `w.p.m(..)` (`w.q.m(..)`
+# through a `*P` field, `h.w.p.m(..)`, `pw.p.m(..)`, `self.p.m(..)`), a method's result `p.gp().m(..)`, a call `f(..).m(..)`
+# / `fncallN(&f, ..).m(..)`, a parenthesised head `(*pw).m(..)` — `_mch_open`, the vector receive's recogniser since
+# 6.7.15, from the tokens of the unit at `a` when `a` >= 0 (`_mch_tok`). Every asker keyed a method call on `x . m (`
+# with x one name, so `var c, d = w.p.m2();` was "multi-value destructure needs a call on the right-hand side",
+# `var v = w.p.rs(3)?;` took the boxed `?` (SIGSEGV), `var v = w.p.rs(3);` kept a pair's tag in silence, `var t: (i64,
+# i64) = w.p.m2();` was "not a tuple" (issues/2026-10-20-multi-value-method-on-field-chain-receiver-refused-as-destructure-
+# source.md). `_mco_mt` is the answer's method name token (t + 2 on a single name) and, for a chain (`_mco_ch` 1), `_mco_rs`
+# its receiver's struct and `_mco_mf` its fn — an explicit `.m<..>(` its template, as the single-name arm resolves no
+# instance either, nor at any step before it (`_mch_mres`) (`_mco_inst` does, for an asker that wants it: a lookahead in
+# the declaration zone's pass 1, `_gzf_elem`, must instantiate nothing — a `GW.p.mm<f64>(2.5)` instance minted there SIGSEGV'd the program under CYRIUS_COVERAGE=1):
+# an asker reads them right after the call. CHANGELOG [6.7.16]
+var _mco_mt = 0;
+var _mco_rs = 0;
+var _mco_mf = 0 - 1;
+var _mco_ch = 0;
 fn _mcall_open(S, t, a): i64 {
-    if (_tok_method_open(S, t) == 1) { return t + 3; }
-    if (_tok_mx_shape(S, t) == 0) { return 0 - 1; }
+    _mco_ch = 0;
+    _mco_mt = t + 2;
+    if (_tok_method_open(S, t) == 1) { return _mco_one(S, t, a, t + 3); }
+    if (_tok_mx_shape(S, t) == 0) { return _mco_chain(S, t, a); }
     if (t > 0) { if (TOKTYP(S, t - 1) == 41) { return 0 - 1; } }   # `a.x.m<..>(`: not a single name
     var sid = 0;
     if (a < 0) { sid = _recv_sid(S, TOKVAL(S, t)); }
@@ -1717,8 +1857,88 @@ fn _mcall_open(S, t, a): i64 {
         sid = _tok_name_sid(S, a, t, TOKVAL(S, t));
         if (sid == 0) { sid = _tok_iself(S, a, t); }
     }
-    if (_mtargs_at(S, sid, t + 2) == 0) { return 0 - 1; }
-    return _tok_targs_close(S, t + 4) + 1;
+    if (_mtargs_at(S, sid, t + 2) == 0) { return _mco_chain(S, t, a); }
+    return _mco_one(S, t, a, _tok_targs_close(S, t + 4) + 1);
+}
+# The single name's call `(` at o — unless a chain continues past its `)` to a method (`p.gp().m(..)`): that one's.
+fn _mco_one(S, t, a, o): i64 {
+    if (_mchain_at(S, _call_close(S, o) + 1) == 0) { return o; }
+    var x = _mco_chain(S, t, a);
+    if (x >= 0) { return x; }
+    return o;
+}
+# The chain arm: `_mch_open` at t (the parser's scope, or with `a` >= 0 the unit's tokens), `_mco_*` set from its
+# answer; the vector receive's `_vmc_*` are put back (a lookahead). -1: no chain ending in a method.
+var _mch_tok = 0;   # 1 = `_mch_open` types from the tokens of the unit starting at `_mch_ta` (a token pass)
+var _mch_ta = 0;
+# The method `mf` named at token mt, its call's `(` at o: an explicit `.m<..>(`'s instance (`_mcall_xquiet`), else mf.
+fn _mco_inst(S, mf, mt, o): i64 {
+    if (o == mt + 1) { return mf; }
+    return _mcall_xquiet(S, mf, mt + 1);
+}
+fn _mco_chain(S, t, a): i64 {
+    if (_mco_hgate(S, t) == 0) { return 0 - 1; }
+    var m0 = _vmc_mf;
+    var t0 = _vmc_mt;
+    var r0 = _vmc_rs;
+    var sk = _mch_tok;
+    var sa = _mch_ta;
+    _mch_tok = 0;
+    if (a >= 0) {
+        _mch_tok = 1;
+        _mch_ta = a;
+    }
+    var o = _mch_open(S, t);
+    _mch_tok = sk;
+    _mch_ta = sa;
+    if (o >= 0) {
+        _mco_ch = 1;
+        _mco_mt = _vmc_mt;
+        _mco_rs = _vmc_rs;
+        _mco_mf = _vmc_mf;
+    }
+    _vmc_mf = m0;
+    _vmc_mt = t0;
+    _vmc_rs = r0;
+    return o;
+}
+# 1 = token t may head a method chain (a cheap test, before `_mch_open` scans to the head's end): a name and `.`; a call
+# whose callee may return a struct or a `*S` (a generic, a struct result, a `: *S` fn, `fncallN`); `callptr`; a `(`.
+fn _mco_hgate(S, t): i64 {
+    var tt = TOKTYP(S, t);
+    if (tt == 10) { return 1; }
+    if (tt == 137) { return 1; }
+    if (tt != 2) { return 0; }
+    var nt = TOKTYP(S, t + 1);
+    if (nt == 41) { return 1; }
+    if (nt != 10) { if (nt != 19) { return 0; } }
+    var fi = FINDFN(S, TOKVAL(S, t));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 1; }
+    if (_hl_fn_psid(fi) > 0) { return 1; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) { if (rs < 2048) { return 1; } }
+    return _IS_FNCALL_NAME(S, TOKVAL(S, t));
+}
+# 1 = the value at token t is a method chain ending in a call (`_pc_shape`) other than a single name's one call
+# `x.m(` / `x.m<..>(` (whose arms stay the single-name ones). Tokens only.
+fn _pc_mchain(S, t): i64 {
+    var o = _pc_shape(S, t);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, t) != 2) { return 1; }
+    if (TOKTYP(S, t + 1) != 41) { return 1; }
+    if (o == t + 3) { return 0; }
+    if (TOKTYP(S, t + 3) == 19) { if (o == _tok_targs_close(S, t + 4) + 1) { return 0; } }
+    return 1;
+}
+# The method ending the chain at token t, resolved from the tokens of the unit starting at token a (the token passes:
+# the pair flags' propagation, the mixed-return warning) — its template for an explicit `.m<..>(`, as on a single
+# name; -1 when unresolved.
+fn _tok_mch_fn(S, a, t): i64 {
+    var o = _mcall_open(S, t, a);
+    if (o < 0) { return 0 - 1; }
+    if (_mco_ch == 0) { return 0 - 1; }
+    return _mco_mf;
 }
 # 1 = the tokens at t are `x . m < .. > (` — a method call's explicit spelling, or a comparison: by its shape alone.
 fn _tok_mx_shape(S, t): i64 {
@@ -1758,7 +1978,13 @@ fn _callee_returns_pair_at(S, ti): i64 {
 # pair-returning, but `?` CONSUMES the pair — it propagates the Err half out of the enclosing
 # function and yields the payload alone, so exactly one value reaches the binding. Refusing it
 # would make the propagation operator unusable on the very type it exists for.
+# 6.7.16: a method chain's `?` follows its last call (`f(..).m(..)?`, `(*pw).m(..)?`), not its head's `)`.
 fn _call_is_propagated(S, ti): i64 {
+    var co = _pc_shape(S, ti);
+    if (co >= 0) {
+        if (TOKTYP(S, _call_close(S, co) + 1) == 124) { return 1; }
+        return 0;
+    }
     var _d = 0;
     var _i = ti;
     var _g = 0;
@@ -1818,13 +2044,13 @@ fn _refuse_lossy_pair(S): i64 {
 # `_pair_unwrap` reads it. Linear: the call's close, the run of `)` after it, one `_call_close` from
 # the innermost whole wrap (the outer ones close in the run after it). Asked at the refusal sites
 # only — never in `_callee_returns_pair_at`, which also feeds `_tpair`. CHANGELOG [6.7.14]
+# 6.7.16: the call may end a method chain on any receiver (`_pair_lead_open`), a parenthesised one too (`_pw_lead`).
 fn _pair_vwrap(S, st): i64 {
     if (TOKTYP(S, st) != 10) { return 0 - 1; }
-    var a = st;
-    while (TOKTYP(S, a) == 10) { a = a + 1; }
-    if (TOKTYP(S, a) != 2) { return 0 - 1; }
-    var o = _pair_ret_open(S, a);
-    if (o < 0) { o = _pair_mopen(S, a); }
+    var a = st + _pw_lead(S, st);
+    var o = 0 - 1;
+    if (TOKTYP(S, a) == 10) { o = _pc_shape(S, a); }
+    elif (TOKTYP(S, a) == 2 || TOKTYP(S, a) == 137) { o = _pair_lead_open(S, a); }
     if (o < 0) { return 0 - 1; }
     var e = _call_close(S, o) + 1;
     var m = a - st;
@@ -4329,7 +4555,7 @@ fn _hl_psrc_copy(S, noff, st, term): i64 {
     if (dt >= 0) { return 0; }
     if (dt <= 0 - 2048) { return 0; }
     if (_ps_step(GPSC(S)) != STRUCTSZ(S, ps - 1)) { return 0; }
-    if (_AGG_ASSIGN_TYPE_ERR(S, dt, 0 - ps, noff, _hl_dnm) == 1) { return 0; }
+    if (_hl_psrc_err(S, dt, 0 - ps, noff) == 1) { return 0; }   # 6.7.16: the source as written, 'gq(&q)'
     var dli = _agc_li;
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
     var dgv = _agc_gvi;
@@ -4930,10 +5156,198 @@ fn _dst_word(S, h, sz): i64 {
 # 6.7.11: through a `*S` (a struct), `*p = v` copies the struct and `*p OP= v` is refused (`_dst_struct`).
 # 6.7.16: `*(&pi) OP= n` of a typed pointer steps as `pi OP= n` does — `*(&p)` is p, its type kept (6.7.15's D21 A,
 # `_amp_pw`), as `*(&pi) + n` already stepped; it stepped one byte. CHANGELOG [6.7.16]
+# 6.7.16 (D70): the value just stored by `*E = v` (`ti` its first token, `d` the `*`) through the element kind `ed` — an
+# f32's checks (an integer constant warns, an f64 rounds), and for `*(&x)` of an f64 x the integer-constant warning and
+# of a bool x the refusal of a non-bool, named at x, as `x = v` takes them.
+fn _dst_fk_chk(S, ed, ti, d): i64 {
+    var k = _ek_fk(ed);
+    if (k == 0) { return 0; }
+    if (k == 16) { return _bx_asg(S, _dst_amp_nm(S, d), ti); }
+    return _ifs_bx(S, k, ti, 0);
+}
+# `*(&b) OP= v` of a bool b: refused as `b OP= v` is (6.7.16, D70).
+fn _dst_fk_cop(S, ed, d): i64 {
+    if (_ek_fk(ed) != 16) { return 0; }
+    return _bx_compound(S, _dst_amp_nm(S, d));
+}
+# The NAME of `*(& NAME)` / `*&NAME` whose `*` is token `d` (the shape `_amp_ew` vouched for: a bool kind is its alone).
+fn _dst_amp_nm(S, d): i64 {
+    var i = d + 1;
+    while (TOKTYP(S, i) == 10) { i = i + 1; }
+    return TOKVAL(S, i + 1);
+}
+# ⛔ 6.7.16 (D99, the user's decision, 2026-10-20) — A STRUCT RESULT OVER 8 B STORED THROUGH A POINTER TO A SCALAR IS
+# REFUSED, as its sibling stores are: `*p = mkp();` with `p: *i64` and mkp returning a 16-byte Q stored Q's first word
+# (the filed repro exited 77), silently, where `var y: i64 = mkp();` (6.7.11's D24), `y = mkp();` (6.7.14's D27) and
+# `p = mkp();` (6.7.15's D32) are refused. The dereference `*E` at token `d` (its operand ends at `oe`) whose operand is
+# a typed pointer to no struct, by its declared word (`_hl_pw`: a `*i64` / `*u8` / `*f64` / `*bool` name, field, call
+# or `p + n`; `**pp` of a `**i64`; `*pp` of a `**i64` or of a `**S` of another struct: a pointer slot, D32's own), and
+# the value [ti, cursor) one whole struct result over 8 B (a free or generic call, a method, an operator, a known `&f`
+# call, wrapped; not a `Str`, a dyn, 8 B or less): "cannot assign '*p: i64' from 'mkp', which returns the struct 'Q' -
+# store it through a '*Q' or bind a field", at the call, once. `*(&x) = mkp()` is `x = mkp()` (D27 / D33 judge x). In
+# a generic's base parse a destination typed by its type parameter is the stub rule's (D1: `g(5)` has no scalar
+# instance, `_gs_asg_sres`); each instance judges its own. CHANGELOG [6.7.16]
+fn _dsr_sres(S, d, oe, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    var sid = 0;
+    var fno = 0;
+    var at = ti;
+    var afi = 0 - 1;
+    if (_sc_whole(S, ti) != 0 - 2) {
+        sid = _sc_sid;
+        fno = _sc_fn;
+        afi = _sc_fi;
+        at = _sc_beg;
+    } else {
+        var c = _dsr_call(S, ti);
+        if (c < 0) { return 0; }
+        var cfi = _pair_gen_inst(S, c);   # parsed already: the instance its call made (a dedup hit)
+        if (cfi < 0) { return 0; }
+        sid = GFRS(S, cfi);
+        fno = TOKVAL(S, c);
+        afi = cfi;
+        at = c;
+    }
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    if (_dsr_amp(S, d, oe, ti, at, fno, afi, sid) == 1) { return 1; }
+    var w = _hl_pw(S, d + 1, oe);
+    if (w <= 0) { return 0; }
+    if (_ps_pinned(w) == 1) {
+        if (_pp_sid(S, _ps_pin(w)) == sid) { return 0; }   # a `*Q` slot of Q itself: B7-1c's copy, not this rule
+    } else {
+        if (_hl_dpsid(S, d + 1, oe) > 0) { return 0; }   # a struct pointee: `_dst_struct`'s
+        if (_ps_vdesc(w) != 0) { return 0; }
+    }
+    if (_dsr_tdep(S, d + 1, oe, d) == 1) { return 0; }
+    return _dsr_err(S, d, oe, w, at, fno, afi, sid);
+}
+# The whole free call (`f(..)` / `g<..>(..)`, not dotted) the value at token ti is, inside any parentheses that wrap
+# all of it up to the cursor: its name token, else -1.
+fn _dsr_call(S, ti): i64 {
+    var k = 0;
+    while (TOKTYP(S, ti + k) == 10) { k = k + 1; }
+    var c = ti + k;
+    if (TOKTYP(S, c) != 2) { return 0 - 1; }
+    var o = _gcall_open(S, c);
+    if (o < 0) { return 0 - 1; }
+    if (_icall_open_at(S, c) >= 0) { return 0 - 1; }
+    var e = _call_close(S, o) + 1;
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, e + i) != 11) { return 0 - 1; }
+        i = i + 1;
+    }
+    if (e + k != GTI(S)) { return 0 - 1; }
+    return c;
+}
+# `*(&x) = E` / `*&x = E` (the operand exactly `& NAME` inside any parentheses) is `x = E`: judged as that assignment is
+# (D27 / D32 / D33, `_asa_refuse`). 1 = this shape (refused or not).
+fn _dsr_amp(S, d, oe, ti, at, fno, afi, sid): i64 {
+    var b = _ie_unparen(S, d + 1, oe);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    _rcv_fi = afi;
+    _asa_refuse(S, TOKVAL(S, b + 1), d, at, fno, sid);
+    _rcv_fi = 0 - 1;
+    return 1;
+}
+# 1 = in a generic's BASE parse (`_inst_name` 0) the operand [a, e) may be typed by its type parameter: a name that is
+# one, a name declared with one (`_asa_ann` back from `from`), a call of a generic fn — each instance judges it.
+fn _dsr_tdep(S, a, e, from): i64 {
+    if (_inst_name != 0) { return 0; }
+    var i = a;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) { if (TOKTYP(S, i - 1) != 41) {
+                if (_rcv_tp_base(S, i) == 1) { return 1; }
+                var gf = FINDFN(S, TOKVAL(S, i));
+                if (gf >= 0) { if (GFTP(S, gf) != 0) { return 1; } }
+                var an = _asa_ann(S, TOKVAL(S, i), from);
+                if (an > 0) { if (_dsr_ann_tp(S, an) == 1) { return 1; } }
+            } }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _dsr_ann_tp(S, an): i64 {
+    var e = _asa_end(S, an);
+    var i = an;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) { if (_rcv_tp_base(S, i) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The refusal at the call token `at` (fn `fn` / `afi`, struct `sid`), the destination `*E` spelled from its `*` at d,
+# its type from the operand's declared word `w`. 1.
+fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, at) == 0) { return 1; }
+    var dn = _src_span_nm(S, d, oe, TOKVAL(S, oe - 1));
+    var sv = GTI(S);
+    STI(S, at);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot assign '");
+    PRSTR(S + 0xEC00000 + dn);
+    _dsr_tn(S, w, 1);
+    PRSTR("' from '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
+    PRSTR("', which returns the struct '");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("' - store it through a '*");
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    PRSTR("' or bind a field\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 1;
+}
+# The type a dereference of step word `w` reaches, after ": " when `lead` is 1: a scalar by its element kind (`i64`,
+# `u8`, `i32`, `f64`, `f32`, `bool`), a pointer slot `*` and its pointee (a struct by name); nothing for a kind the word
+# does not carry.
+fn _dsr_tn(S, w, lead): i64 {
+    if (_ps_pinned(w) == 1) {
+        var ps = _pp_sid(S, _ps_pin(w));
+        var iw = _pp_inner(S, w);
+        if (ps <= 0) { if (iw <= 0) { return 0; } }
+        if (lead == 1) { PRSTR(": "); }
+        PRSTR("*");
+        if (ps > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (ps - 1) * 8)); return 0; }
+        return _dsr_tn(S, iw, 0);
+    }
+    var ed = (w >> 40) & 0xFF;
+    var nm = _dsr_kname(ed, _ps_step(w));
+    if (nm == 0) { return 0; }
+    if (lead == 1) { PRSTR(": "); }
+    PRSTR(nm);
+    return 0;
+}
+fn _dsr_kname(ed, st): i64 {
+    var k = _ek_fk(ed);
+    if (k == 1) { return "f64"; }
+    if (k == 2) { return "f32"; }
+    if (k == 16) { return "bool"; }
+    var wd = _ek_w(ed);
+    if (wd == 0) { if (st == 8) { return "i64"; } return 0; }
+    if (wd == 8) { return "i64"; }
+    if ((ed & 0x40) != 0) {
+        if (wd == 1) { return "i8"; }
+        if (wd == 2) { return "i16"; }
+        if (wd == 4) { return "i32"; }
+        return 0;
+    }
+    if (wd == 1) { return "u8"; }
+    if (wd == 2) { return "u16"; }
+    if (wd == 4) { return "u32"; }
+    return 0;
+}
 fn _deref_store(S, term): i64 {
+    if (_istr_amp_dst(S, term) == 1) { return 0; }   # 6.7.16 (D71): `*(&t) = v` of an inline `Str` is `t = v`
     var d = GTI(S);
     STI(S, GTI(S) + 1);   # `*`
     PARSE_FACTOR(S);
+    var oe = GTI(S);   # 6.7.16 (D99): the operand's end, for `_dsr_sres`
     if (_dst_struct(S, term, d) == 1) { return 0; }
     _deref_u128(S, d);   # 6.7.15 (D20): `*pu = v` through a `*u128` refused by name; the statement parses on
     var ed = _deref_ed(S);   # before the push: the operand's own kind
@@ -4948,11 +5362,16 @@ fn _deref_store(S, term): i64 {
             STI(S, GTI(S) + 1);
             _refuse_lossy_pair(S);   # 6.7.7 (T5b): `*p = f();` stored the tag
             var ti = GTI(S);
-            PCMPE(S);
-            if (_ek_fk(ed) == 2) { _ifs_bx(S, 2, ti, 0); }   # an f32 element: the field's checks
-            _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
+            if (_istr_dsdx(S, d, ti, term) == 0) {   # 6.7.16 (D73): `*q = *p` through a `*Str` stores p
+                _sc_beg = 0 - 1;   # 6.7.16 (D99): only this value's own struct-call record may match
+                PCMPE(S);
+                _dsr_sres(S, d, oe, ti);   # 6.7.16 (D99): a struct result over 8 B through a `*i64`
+                _dst_fk_chk(S, ed, ti, d);   # an f32 element: the field's checks; 6.7.16 (D70): `*(&f)` / `*(&b)`
+                _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
+            }
         }
     } elif (ed != 0) {
+        _dst_fk_cop(S, ed, d);   # 6.7.16 (D70): `*(&b) OP= v` of a bool refused as `b OP= v`
         _arr_sub_load(S, _ek_lw(ed));   # rax = the element at the address
         _asg_compound_op(S, cop, _ek_lt(ed));
     } else {
@@ -5472,11 +5891,15 @@ fn _asg_struct_dst(S, noff): i64 {
 # literal into a variable of any other aggregate type is refused by name (a scalar's, or a name that
 # is not a variable here, is the stray refusal at its factor). At top level there is no frame for
 # the temp: refused by name (R10; `var G = (..);` declares one). 1 = done (`term` consumed).
+# ⛔ 6.7.16 — a capture whose call ends a chain on a PARENTHESISED head (`_pw_head`: `t = (*pw).p.m2();`, `t = (p).mm(5);`,
+# `t = ((*pw).p.m2());`, a for step) is a capture, as the declaration's is (`_dt_wrap_k`): it was tried only as a tuple
+# literal and refused "cannot assign a value that is not a tuple". CHANGELOG [6.7.16]
 fn _tup_asg(S, noff, term): i64 {
     if (PEEKT(S) == 2) { return _tup_asg_call(S, noff, term); }   # 6.7.7 (T5): a capture
     if (PEEKT(S) == 137) { return _tup_asg_call(S, noff, term); }   # 6.7.14: `t = callptr(..);`
     if (PEEKT(S) != 10) { return 0; }
     var st = GTI(S);
+    if (_pw_head(S, st) >= 0) { if (_tup_asg_call(S, noff, term) == 1) { return 1; } }
     var lp = _tup_lit_at(S, st);
     if (lp < 0) { return 0; }
     if (TOKTYP(S, _pw_end) != term) { return 0; }   # an operand (`(1, 2) + u`): the stray refusal

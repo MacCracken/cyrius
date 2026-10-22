@@ -88,6 +88,7 @@ var HZ2: Str = ((gz));
 var HZ3: Str = gz;
 var PZ: *Str = gz;
 var UZ = gz;
+var GWZ: W = W { *PZ, 1 };   # a zone literal: `*PZ` into a `Str` field is PZ, gz's header (6.7.16)
 # ── gb declared BELOW the handle binds too: its address is static (6.7.15, D17; refused "cannot copy-init" before)
 var HB: Str = gb;
 var HB2: Str = ((gb));
@@ -207,6 +208,15 @@ fn pa_step(): i64 { var t: Str = Str { "abcdefg", 7 }; var p: *Str = 0; var i = 
 struct WS { p: *Str; n; }
 struct OS { w: WS; pw: *WS; }
 var GWS: WS = WS { 0, 0 };
+var GWSZ: WS = WS { gz, 1 };          # a zone literal's `*Str` element: gz's header (6.7.16, D19)
+var GWSZN: WS = WS { n: 2, p: gz };   # ... named
+var PPZ: **Str = &PZ;
+var UZPP: Str = *PPZ;                 # a zone `Str` declaration from `*pp` of a `**Str` global: a copy (6.7.16, D74)
+var VZP: Str = PZ;                    # ... from a `*Str` global's name: a copy (6.7.16, D18 (a))
+var GYZS: *Str = *PZ;                 # a zone `*Str` declaration from `*PZ` is PZ (6.7.16, D73)
+var HAZ: Str = *(&gz);                # a zone `var H: Str = *(&gz);` is a handle on gz, as `= gz` is (6.7.16, D71)
+var HAZ2: Str = *((&gz));
+var PAZ: *Str = *&gz;
 fn mkws(): *WS { return &GWS; }
 fn pa_fld_local(): i64 { var w: WS = WS { 0, 1 }; w.p = gt; return str_len(w.p); }
 fn pa_fld_global(): i64 { GWS.p = gt; var r = str_len(GWS.p); GWS.p = 0; return r; }
@@ -268,6 +278,107 @@ fn hd_step(): i64 { var a = str_from("abc"); var p: *Str = a; var h = str_from("
 fn hd_chain(): i64 { var a = str_from("abcde"); GPS = a; var w: WP = WP { a, 1 }; var h = str_from("z"); h = *GPS; var r = (h == a); h = str_from("z"); h = *gsp(); r = r * 10 + (h == a); h = str_from("z"); h = *w.p; r = r * 10 + (h == a); h = str_from("z"); h = *w.sp(); GPS = 0; return r * 10 + (h == a); }
 fn hd_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var c = || { var h = str_from("z"); h = *p; return (h == p) * 100 + str_len(h); }; return callptr(c); }
 fn hd_inl(): i64 { var t: Str = Str { "abc", 3 }; var p: *Str = t; var h = str_from("z"); h = *p; h.len = 1; return t.len; }
+# ── `*p` (p a `*Str`) into a `Str` FIELD, a literal's `Str` field or a `: Str` fn's return is p, as `h = *p` rebinds a
+#    handle (6.7.16): each stored or returned the header's data word as the handle ────────────────────────────────────
+struct OW { w: W; pw: *W; }
+var GW: W = W { 0, 0 };
+fn mkw(): *W { return &GW; }
+fn rsp(p: *Str): Str { return *p; }
+fn rsp2(p: *Str): Str { return ((*p)); }
+fn hf_local(): i64 { var a = str_from("abcde"); var p: *Str = a; var w: W = W { 0, 1 }; w.s = *p; w.s.len = 2; return (w.s == p) * 10 + str_len(p); }
+fn hf_global(): i64 { var a = str_from("abcde"); var p: *Str = a; GW.s = *p; var r = (GW.s == p) * 10 + str_len(GW.s); GW.s = 0; return r; }
+fn hf_ptr(): i64 { var a = str_from("abcde"); var p: *Str = a; var w: W = W { 0, 1 }; var pw: *W = &w; pw.s = *p; return (w.s == p) * 10 + str_len(w.s); }
+fn hf_nest(): i64 { var a = str_from("abcde"); var p: *Str = a; var w0: W = W { 0, 1 }; var o: OW = OW { w0, &w0 }; o.w.s = *p; o.pw.s = (*p); return (o.w.s == p) * 100 + (w0.s == p) * 10 + str_len(o.w.s); }
+fn hf_call(): i64 { var a = str_from("abcde"); var p: *Str = a; mkw().s = *p; var r = (GW.s == p) * 10 + str_len(GW.s); GW.s = 0; return r; }
+fn hf_wrap(): i64 { var a = str_from("abcd"); var p: *Str = a; var w: W = W { 0, 1 }; w.s = (*p); var r = (w.s == a); w.s = 0; w.s = *(p); r = r * 10 + (w.s == a); w.s = 0; w.s = *(p + 0); r = r * 10 + (w.s == a); w.s = 0; w.s = ((*p)); return r * 10 + (w.s == a); }
+fn hf_step(): i64 { var a = str_from("abc"); var p: *Str = a; var w: W = W { 0, 1 }; var i = 0; for (i = 0; i < 1; w.s = *p) { i = i + 1; } return (w.s == p) * 10 + str_len(w.s); }
+fn hf_chain(): i64 { var a = str_from("abcde"); GPS = a; var wp: WP = WP { a, 1 }; var w: W = W { 0, 1 }; w.s = *GPS; var r = (w.s == a); w.s = 0; w.s = *gsp(); r = r * 10 + (w.s == a); w.s = 0; w.s = *wp.p; r = r * 10 + (w.s == a); w.s = 0; w.s = *wp.sp(); GPS = 0; return r * 10 + (w.s == a); }
+fn hf_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var c = || { var w: W = W { 0, 1 }; w.s = *p; return (w.s == p) * 10 + str_len(w.s); }; return callptr(c); }
+fn hf_pp(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var w: W = W { 0, 1 }; w.s = **pp; var r = (w.s == a); w.s = 0; w.s = *pp; return r * 10 + (w.s == a); }
+fn hf_inl(): i64 { var t: Str = Str { "abc", 3 }; var p: *Str = t; var w: W = W { 0, 1 }; w.s = *p; w.s.len = 1; return t.len; }
+fn hf_lit(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var v: W = W { *p, 1 }; var v2: W = W { (*p), 2 }; var v3: W = W { **pp, 3 }; var v4: W = W { *pp, 4 }; return (v.s == a) * 1000 + (v2.s == a) * 100 + (v3.s == a) * 10 + (v4.s == a); }
+fn hf_litn(): i64 { var a = str_from("abcde"); GPS = a; var wp: WP = WP { a, 1 }; var v: W = W { *gsp(), 1 }; var v2: W = W { *wp.p, 1 }; GPS = 0; return (v.s == a) * 100 + (v2.s == a) * 10 + v2.n; }
+fn hf_ret(): i64 { var a = str_from("abcde"); var p: *Str = a; var h: Str = rsp(p); h.len = 2; return (rsp(p) == a) * 100 + (rsp2(p) == a) * 10 + str_len(p); }
+fn hf_zone(): i64 { return (GWZ.s == &gz) * 10 + str_len(GWZ.s); }
+# ── a struct literal's `*Str` element from an inline `Str` takes its header's address, as `w.p = gt` does (6.7.16,
+#    D19): `W { gt, 1 }` stored gt's data word; a frame's `W { t, 1 }` is refused (the gate's PL2) ─────────────────────
+struct WS2 { n; p: *Str; }
+struct OS2 { k; w: WS2; }
+struct UWS { p; n; }
+fn pl_local(): i64 { var w: WS = WS { gt, 1 }; return str_len(w.p); }
+fn pl_named(): i64 { var w: WS = WS { p: gt, n: 1 }; var w2: WS = WS { n: 1, p: (gt) }; return str_len(w.p) * 10 + str_len(w2.p); }
+fn pl_nest(): i64 { var o: OS2 = OS2 { 5, 1, gt }; return str_len(o.w.p) * 10 + o.w.n; }
+fn pl_bind(): i64 { var w: WS = WS { gt, 1 }; w.p.len = 3; var r = gt.len; gt.len = 7; return r; }
+fn pl_cap(): i64 { var t: Str = Str { "abc", 3 }; var c = || { var w: WS = WS { t, 1 }; var w2: WS = WS { p: t, n: 2 }; return str_len(w.p) * 10 + str_len(w2.p); }; return callptr(c); }
+fn pl_zone(): i64 { return str_len(GWSZ.p) * 10 + str_len(GWSZN.p); }
+fn pl_untyped(): i64 { var u: UWS = UWS { gt, 1 }; if (u.p == load64(&gt)) { return 1; } return 0; }
+# ── `var u: Str = *pp;` (pp a `**Str`) is u's own copy of the header, as `var u: Str = p;` is (6.7.16, the user's D74,
+#    2026-10-20): it bound u as a handle on the header; at top level `var U: Str = *GPP;` and `var V: Str = GP;` copy
+#    too (D74, D18 (a)) ─────────────────────────────────────────────────────────────────────────────────────────────
+fn pps_decl_local(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var u: Str = *pp; var u2: Str = (*pp); a.len = 1; return u.len * 10 + u2.len; }
+fn pps_decl_param(pp: **Str): i64 { var u: Str = *pp; var p: *Str = *pp; p.len = 1; return u.len * 10 + str_len(p); }
+fn pps_decl_param_c(): i64 { var a = str_from("abcde"); var p: *Str = a; return pps_decl_param(&p); }
+fn pps_decl_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var c = || { var u: Str = *pp; a.len = 1; return u.len; }; return callptr(c); }
+fn pps_decl_chain(): i64 { var a = str_from("abcde"); GPS = a; var w: WPP = WPP { &GPS, 1 }; var p: *Str = a; var pp: **Str = &p; var ppp: ***Str = &pp; var u: Str = *GPPS; var u2: Str = *gpps(); var u3: Str = *w.pp; var u4: Str = **ppp; a.len = 1; GPS = 0; return u.len * 1000 + u2.len * 100 + u3.len * 10 + u4.len; }
+fn pps_decl_inl(): i64 { var t: Str = Str { "abc", 3 }; var p: *Str = t; var pp: **Str = &p; var u: Str = *pp; u.len = 1; return t.len * 10 + u.len; }
+fn pps_decl_ctl(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var q: *Str = *pp; var h = *pp; return (q == a) * 10 + (h == a); }
+fn pps_decl_zone(): i64 { gz.len = 1; var r = UZPP.len * 10 + VZP.len; gz.len = 7; return r; }
+# ── `*p` (p a `*Str`) into a `*Str` SLOT is p, the header's address (6.7.16, the user's D73, 2026-10-20): `*q = *p`
+#    through a `*Str` or a `**Str`, a `*Str` name, declaration, field or literal element, a `p: *Str` argument and a
+#    `: *Str` fn's `return *p;` each took the header's data word as the address ──────────────────────────────────────
+var GQS: *Str = 0;
+var GXS: *Str = 0;
+fn gqs(): *Str { return GQS; }
+fn fps2(s: *Str): i64 { return str_len(s); }
+fn rps1(p: *Str): *Str { return *p; }
+fn rps2(p: *Str): *Str { return ((*p)); }
+fn ds_local(): i64 { var a = str_from("abcde"); var p: *Str = a; var b = str_from("xy"); var q: *Str = b; *q = *p; return (load64(q) == p) * 10 + str_len(load64(q)); }
+fn ds_wrap(): i64 { var a = str_from("abcde"); var p: *Str = a; var b = str_from("xy"); var q: *Str = b; *q = (*p); var r = (load64(b) == a); store64(b, 0); *(q) = *(p); r = r * 10 + (load64(b) == a); store64(b, 0); *q = *(p + 0); return r * 10 + (load64(b) == a); }
+fn ds_chain(): i64 { var a = str_from("abcde"); var b = str_from("xy"); GQS = b; var w: WP = WP { a, 1 }; *GQS = *w.p; var r = (load64(b) == a); store64(b, 0); *gqs() = *w.p; GQS = 0; return r * 10 + (load64(b) == a); }
+fn ds_step(): i64 { var a = str_from("abc"); var p: *Str = a; var b = str_from("xy"); var q: *Str = b; var i = 0; for (i = 0; i < 1; *q = *p) { i = i + 1; } return (load64(b) == a) * 10 + str_len(load64(q)); }
+fn ds_param(q: *Str, p: *Str): i64 { *q = *p; return (load64(q) == p); }
+fn ds_param_c(): i64 { var a = str_from("abcde"); var b = str_from("xy"); return ds_param(b, a); }
+fn ds_cap(): i64 { var a = str_from("abcde"); var p: *Str = a; var b = str_from("xy"); var q: *Str = b; var c = || { *q = *p; return 0; }; callptr(c); return (load64(b) == a); }
+fn ds_pp(): i64 { var a = str_from("abcde"); var p: *Str = a; var b = str_from("xy"); var q: *Str = b; var qq: **Str = &q; **qq = *p; var r = (load64(b) == a); var c = str_from("uv"); var q2: *Str = c; var pp2: **Str = &q2; *pp2 = *p; return r * 10 + (q2 == a); }
+fn ds_ctl(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var b = str_from("xy"); var q: *Str = b; *q = *pp; return (load64(b) == a); }
+fn ds_name(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var x: *Str = 0; x = *p; var r = (x == a); x = 0; x = **pp; r = r * 10 + (x == a); GXS = (*p); r = r * 10 + (GXS == a); GXS = 0; return r; }
+fn ds_nparam(x: *Str, p: *Str): i64 { x = *p; return (x == p); }
+fn ds_decl(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; var y: *Str = *p; var y2: *Str = ((*p)); var y3: *Str = **pp; return (y == a) * 100 + (y2 == a) * 10 + (y3 == a); }
+fn ds_fld(): i64 { var a = str_from("abcde"); var p: *Str = a; var w: WP = WP { 0, 1 }; w.p = *p; var r = (w.p == a); var pw: *WP = &w; pw.p = 0; pw.p = (*p); r = r * 10 + (w.p == a); var i = 0; w.p = 0; for (i = 0; i < 1; w.p = *p) { i = i + 1; } return r * 10 + (w.p == a); }
+fn ds_lit(): i64 { var a = str_from("abcde"); var p: *Str = a; var w: WP = WP { *p, 1 }; var w2: WP = WP { n: 2, p: (*p) }; return (w.p == a) * 10 + (w2.p == a); }
+fn ds_arg(): i64 { var a = str_from("abcde"); var p: *Str = a; var pp: **Str = &p; return fps2(*p) * 100 + fps2(**pp) * 10 + fps2(*pp); }
+fn ds_ret(): i64 { var a = str_from("abcde"); var p: *Str = a; return (rps1(p) == a) * 10 + (rps2(p) == a); }
+fn ds_inl(): i64 { var t: Str = Str { "abc", 3 }; var p: *Str = t; var b = str_from("xy"); var q: *Str = b; *q = *p; var x: *Str = *p; x.len = 1; return t.len * 10 + (load64(b) == &t); }
+fn ds_zone(): i64 { return (GYZS == PZ) * 10 + str_len(GYZS); }
+# ── `*(&t)` / `*&t` of an inline `Str` t is t itself (6.7.16, the user's D71, 2026-10-20): wherever a `Str` value is
+#    taken it is t's header's address — it was t's data word — and a frame's t keeps every refusal t has (the gate's
+#    X20-X28); an untyped position keeps the word, as t's does ──────────────────────────────────────────────────────
+fn fu1(x): i64 { return x; }
+fn ramp(): Str { return *(&gt); }
+fn amp_decl(): i64 { var t: Str = Str { "xyz", 3 }; var h: Str = *(&t); h.len = 1; var h2 = *(&t); return t.len * 10 + str_len(h2); }
+fn amp_arg(): i64 { var t: Str = Str { "xyz", 3 }; return f(*(&t)) * 1000 + fp(*(&t)) * 100 + gg<Str>(*(&t)) * 10 + gg(*&t); }
+fn amp_meth(): i64 { var t: Str = Str { "xyz", 3 }; var h = str_from("xyz"); return h.eq(*(&t)) * 10 + h.contains(*&t); }
+fn amp_copy(): i64 { var t: Str = Str { "xyz", 3 }; var u: Str = Str { "q", 1 }; u = *(&t); t.len = 1; return u.len; }
+fn amp_rebind(): i64 { var t: Str = Str { "xyz", 3 }; var k = str_from("q"); k = *(&t); var k2: Str = str_from("q"); k2 = *((&t)); return (k == &t) * 10 + (k2 == &t); }
+fn amp_ptr(): i64 { var t: Str = Str { "xyz", 3 }; var p: *Str = 0; p = *(&t); var p2: *Str = *&t; return (p == &t) * 10 + (p2 == &t); }
+fn amp_glob(): i64 { GH = *(&gt); var r = (GH == &gt); GH = 0; GPS = *(&gt); r = r * 10 + (GPS == &gt); GPS = 0; GW.s = *(&gt); r = r * 10 + (GW.s == &gt); GW.s = 0; return r * 10 + (ramp() == &gt); }
+fn amp_fld(): i64 { var w: W = W { 0, 1 }; w.s = *(&gt); var wp: WS = WS { 0, 1 }; wp.p = *(&gt); var l: W = W { *(&gt), 1 }; var lp: WS = WS { *&gt, 1 }; return (w.s == &gt) * 1000 + (wp.p == &gt) * 100 + (l.s == &gt) * 10 + (lp.p == &gt); }
+fn amp_dst(): i64 { var b = str_from("xy"); var ps: *Str = b; *ps = *(&gt); var q: *Str = 0; var pp: **Str = &q; *pp = *(&gt); return (load64(b) == &gt) * 10 + (q == &gt); }
+fn amp_cap(): i64 { var t: Str = Str { "xyz", 3 }; var c = || { var h: Str = *(&t); var w: W = W { 0, 1 }; w.s = *(&t); GH = *(&t); var r = f(*(&t)) * 1000 + str_len(h) * 100 + str_len(w.s) * 10 + str_len(GH); GH = 0; return r; }; return callptr(c); }
+fn amp_untyped(): i64 { var t: Str = Str { "xyz", 3 }; var a = fncall1(&fu1, *(&t)); var b = fu1(*(&t)); return (a == load64(&t)) * 10 + (b == load64(&t)); }
+fn amp_zone(): i64 { return (HAZ == &gz) * 100 + (HAZ2 == &gz) * 10 + (PAZ == &gz); }
+fn mkamp(): Str { return str_from("abcd"); }
+fn amp_st(): i64 { var t: Str = Str { "xyz", 3 }; *(&t) = gt; var r = t.len; var t2: Str = Str { "xyz", 3 }; var a = str_from("abcde"); *(&t2) = a; a.len = 1; return r * 10 + t2.len; }
+fn amp_st_src(): i64 { var a = str_from("abcde"); var p: *Str = a; var t: Str = Str { "xyz", 3 }; *(&t) = *p; a.len = 1; var r = t.len; *((&t)) = mkamp(); r = r * 10 + t.len; var w: W = W { str_from("uvwxyz"), 1 }; *&t = w.s; r = r * 10 + t.len; var u: Str = Str { "q", 1 }; *(&t) = *(&u); return r * 10 + t.len; }
+fn amp_st_glob(): i64 { *(&gi) = gt; var r = gi.len; gi.len = 2; var i = 0; var t: Str = Str { "xyz", 3 }; for (i = 0; i < 1; *(&t) = gt) { i = i + 1; } return r * 10 + t.len; }
+# ── an inline `Str` returned from a fn returning `*Str` is its header's address, as into every other `*Str` slot (6.7.16):
+#    `return gt;` returned gt's data word; a frame's `return t;` is refused by name (the gate's X30 / X31) ─────────────
+fn rpg0(): *Str { return gt; }
+fn rpg1(): *Str { return ((gt)); }
+fn rpg2(): *Str { return *(&gt); }
+fn W_rpg(self: *W): *Str { return gt; }
+fn rp_ret(): i64 { var w: W = W { 0, 1 }; return (rpg0() == &gt) * 1000 + (rpg1() == &gt) * 100 + (rpg2() == &gt) * 10 + (w.rpg() == &gt); }
+fn rp_len(): i64 { var p: *Str = rpg0(); p.len = 3; var r = gt.len; gt.len = 7; return r * 10 + str_len(rpg1()); }
 
 fn z_bind(): i64 { HZ.len = 3; var r = gz.len; gz.len = 7; return r; }
 fn z_wrap(): i64 { return f(HZ2) * 10 + str_len(PZ); }
@@ -368,6 +479,35 @@ GWS.p = 0;
 var R_TOP14 = str_len(GPS);
 GPS = gt;                    # top level: `gg<Str>(*GPS)` / `gg(*GPS)` into a generic's `x: T` at T = Str (6.7.16)
 var R_TOP15 = gg<Str>(*GPS) * 10 + gg(*GPS);
+GW.s = *GPS;                 # top level: `*GPS` into a `Str` field of a global is GPS (6.7.16)
+var GWL: W = W { *GPS, 1 };  # ... and into a literal's `Str` field after a statement
+var R_TOP16 = (GW.s == GPS) * 100 + (GWL.s == GPS) * 10 + str_len(GW.s);
+GW.s = 0;
+var GWSL: WS = WS { gt, 1 };  # top level after a statement: a literal's `*Str` element takes gt's header (6.7.16, D19)
+var R_TOP17 = str_len(GWSL.p);
+var LUPP: Str = *GPPS;        # top level after a statement: a `Str` declaration from `*GPPS` is a copy (6.7.16, D74)
+var LVP: Str = (GPS);          # ... and from a `*Str` global's name (6.7.16, D18 (a))
+gt.len = 1;
+var R_TOP18 = LUPP.len * 10 + LVP.len;
+gt.len = 7;
+GPS = gt;                    # top level: `*GPS` into `*Str` slots is GPS (6.7.16, D73) — through a pointer, a global, a
+var bq: *Str = str_from("xy");   #   declaration after a statement
+GQS = bq;
+*GQS = *GPS;
+GXS = *GPS;
+var LYS: *Str = *GPS;
+var R_TOP19 = (load64(bq) == &gt) * 100 + (GXS == &gt) * 10 + (LYS == &gt);
+GQS = 0;
+GXS = 0;
+GPS = 0;
+var HAL: Str = *(&gt);       # top level after a statement: `*(&gt)` is gt (6.7.16, D71) — a declaration, an inline
+gi4 = *(&gt);                #   Str global's copy, a handle global
+GH = *&gt;
+var R_TOP20 = (HAL == &gt) * 100 + gi4.len * 10 + (GH == &gt);
+*(&gi3) = gt;                # top level: `*(&gi3) = gt` copies gt's header into the inline gi3, as `gi3 = gt` (6.7.16, D71)
+var R_TOP21 = gi3.len;
+gi4.len = 2;
+GH = 0;
 GPS = 0;
 
 assert_eq(t_call(), 7, "f(t) passes t's header (the filed repro)");
@@ -461,6 +601,69 @@ assert_eq(hd_step(), 233, "a for step h = *p");
 assert_eq(hd_chain(), 1111, "h = *GP (a *Str global), *gsp(), *w.p (a *Str field), *w.sp() (a `: *Str` method)");
 assert_eq(hd_cap(), 105, "a closure's own handle <- *p of a captured *Str");
 assert_eq(hd_inl(), 1, "h = *p with p bound to an inline Str's header: h is that header (h.len = 1 writes t.len)");
+assert_eq(hf_local(), 12, "w.s = *p into a Str field is p (6.7.16; the filed repro: the data word): w.s.len = 2 is seen through p");
+assert_eq(hf_global(), 15, "GW.s = *p into a Str field of a global");
+assert_eq(hf_ptr(), 15, "pw.s = *p through a *W");
+assert_eq(hf_nest(), 115, "o.w.s = *p (a nested struct's field), o.pw.s = (*p) (through a *W field)");
+assert_eq(hf_call(), 15, "mkw().s = *p, a `: *W` call's field");
+assert_eq(hf_wrap(), 1111, "w.s = (*p); *(p); *(p + 0); ((*p))");
+assert_eq(hf_step(), 13, "a for step w.s = *p");
+assert_eq(hf_chain(), 1111, "w.s = *GPS (a *Str global), *gsp(), *wp.p (a *Str field), *wp.sp() (a `: *Str` method)");
+assert_eq(hf_cap(), 15, "a closure's own field <- *p of a captured *Str");
+assert_eq(hf_pp(), 11, "w.s = **pp is p; the control w.s = *pp (already the *Str) unchanged");
+assert_eq(hf_inl(), 1, "w.s = *p with p bound to an inline Str's header: w.s is that header (w.s.len = 1 writes t.len)");
+assert_eq(hf_lit(), 1111, "W { *p, 1 }, W { (*p), 2 }, W { **pp, 3 } into a literal's Str field are p; W { *pp, 4 } unchanged");
+assert_eq(hf_litn(), 111, "W { *gsp(), 1 } and W { *wp.p, .. }, a literal's Str field");
+assert_eq(hf_ret(), 112, "return *p; / return ((*p)); from a fn returning Str is p: a change through the result is seen through p");
+assert_eq(hf_zone(), 17, "a zone W { *PZ, 1 } into a literal's Str field is PZ");
+assert_eq(pl_local(), 7, "WS { gt, 1 }: a literal's *Str element takes gt's header (D19; the filed repro: the data word)");
+assert_eq(pl_named(), 77, "WS { p: gt, n: 1 } and WS { n: 1, p: (gt) }, named");
+assert_eq(pl_nest(), 71, "OS2 { 5, 1, gt }: the *Str leaf of a nested struct");
+assert_eq(pl_bind(), 3, "WS { gt, 1 } is gt's header: w.p.len = 3 writes gt.len");
+assert_eq(pl_cap(), 33, "a closure: WS { t, 1 } / WS { p: t, n: 2 } of the captured copy");
+assert_eq(pl_zone(), 77, "zone WS { gz, 1 } / WS { n: 2, p: gz }");
+assert_eq(pl_untyped(), 1, "UWS { gt, 1 } into an untyped field keeps gt's first word (D18 (c))");
+assert_eq(pps_decl_local(), 55, "var u: Str = *pp; / (*pp) is u's own copy (D74; the filed repro: a handle, 1)");
+assert_eq(pps_decl_param_c(), 51, "var u: Str = *pp of a `pp: **Str` parameter; var p: *Str = *pp stays the pointer");
+assert_eq(pps_decl_cap(), 5, "a closure: var u: Str = *pp of a captured **Str");
+assert_eq(pps_decl_chain(), 5555, "var u: Str = *GPPS (a **Str global), *gpps(), *w.pp (a **Str field), **ppp (a ***Str)");
+assert_eq(pps_decl_inl(), 31, "var u: Str = *pp with *pp an inline Str's header: a copy (u.len = 1 leaves t)");
+assert_eq(pps_decl_ctl(), 11, "var q: *Str = *pp; and an untyped var h = *pp; stay the pointer");
+assert_eq(pps_decl_zone(), 77, "zone var U: Str = *PPZ; / var V: Str = PZ; are copies");
+assert_eq(ds_local(), 15, "*q = *p through a *Str stores p, the header's address (D73; the filed repro: the data word)");
+assert_eq(ds_wrap(), 111, "*q = (*p); *(q) = *(p); *q = *(p + 0)");
+assert_eq(ds_chain(), 11, "*GQS = *w.p (a *Str global), *gqs() = *w.p (a `: *Str` call)");
+assert_eq(ds_step(), 13, "a for step *q = *p");
+assert_eq(ds_param_c(), 1, "*q = *p through `q: *Str` / `p: *Str` parameters");
+assert_eq(ds_cap(), 1, "a closure: *q = *p of captured *Str");
+assert_eq(ds_pp(), 11, "**qq = *p through a **Str's *Str; *pp2 = *p into the *Str slot pp2 points at");
+assert_eq(ds_ctl(), 1, "the control *q = *pp (already the *Str) stores p, unchanged");
+assert_eq(ds_name(), 111, "x = *p / x = **pp into a *Str local, GXS = (*p) into a *Str global");
+assert_eq(ds_nparam(0, str_from("abc")), 1, "x = *p into a `x: *Str` parameter");
+assert_eq(ds_decl(), 111, "var y: *Str = *p; / ((*p)); / **pp");
+assert_eq(ds_fld(), 111, "w.p = *p into a *Str field, pw.p = (*p) through a *WP, a for step");
+assert_eq(ds_lit(), 11, "WP { *p, 1 } / WP { n: 2, p: (*p) }, a literal's *Str element");
+assert_eq(ds_arg(), 555, "fps2(*p) / fps2(**pp) into a `s: *Str` parameter pass p; fps2(*pp) unchanged");
+assert_eq(ds_ret(), 11, "return *p; / return ((*p)); from a fn returning *Str return p");
+assert_eq(ds_inl(), 11, "*q = *p / var x: *Str = *p with p an inline Str's header: &t (x.len = 1 writes t.len)");
+assert_eq(ds_zone(), 17, "zone var G: *Str = *PZ; is PZ");
+assert_eq(amp_decl(), 11, "var h: Str = *(&t); is a handle on t (D71; h.len = 1 writes t.len), the untyped var h2 = *(&t) too");
+assert_eq(amp_arg(), 3333, "f(*(&t)) into `s: Str`, fp(*(&t)) into `p: *Str`, gg<Str>(*(&t)), the inferred gg(*&t) (the filed repro: the data word)");
+assert_eq(amp_meth(), 11, "h.eq(*(&t)), h.contains(*&t): a Str method's operand");
+assert_eq(amp_copy(), 3, "u = *(&t) into an inline Str copies t's header, as u = t does");
+assert_eq(amp_rebind(), 11, "k = *(&t) / k2 = *((&t)) rebind a Str handle to t");
+assert_eq(amp_ptr(), 11, "p = *(&t) / var p2: *Str = *&t take t's header's address");
+assert_eq(amp_glob(), 1111, "GH = *(&gt), GPS = *(&gt), GW.s = *(&gt), return *(&gt) from `: Str`: gt's static address");
+assert_eq(amp_fld(), 1111, "w.s / wp.p = *(&gt), W { *(&gt), 1 }, WS { *&gt, 1 }");
+assert_eq(amp_dst(), 11, "*ps = *(&gt) through a *Str, *pp = *(&gt) through a **Str");
+assert_eq(amp_cap(), 3333, "a closure: var h: Str = *(&t), w.s = *(&t), GH = *(&t), f(*(&t)) of the captured copy");
+assert_eq(amp_untyped(), 11, "fncall1(&fu1, *(&t)) / fu1(*(&t)) into an untyped parameter keep t's first word, as t does");
+assert_eq(amp_zone(), 111, "zone var H: Str = *(&gz); / *((&gz)) / var P: *Str = *&gz;");
+assert_eq(amp_st(), 75, "*(&t) = gt / *(&t2) = a (a handle) copy the header into t, as t = gt does (it wrote the first word)");
+assert_eq(amp_st_src(), 5461, "*(&t) = *p, *((&t)) = mkamp(), *&t = w.s, *(&t) = *(&u): each copies, as t = <src> does");
+assert_eq(amp_st_glob(), 77, "*(&gi) = gt into an inline Str global, a for step *(&t) = gt");
+assert_eq(rp_ret(), 1111, "return gt; / ((gt)); / *(&gt); and a method's return gt; from a fn returning *Str: gt's address (the data word before)");
+assert_eq(rp_len(), 37, "the returned *Str is gt's header: p.len = 3 writes gt.len");
 assert_eq(pa_fld_local(), 7, "w.p = gt into a *Str field of a local takes gt's header (D19; the filed repro: the data word)");
 assert_eq(pa_fld_global(), 7, "GW.p = gt into a *Str field of a global");
 assert_eq(pa_fld_ptr(), 7, "pw.p = gt through a *W");
@@ -535,6 +738,12 @@ assert_eq(R_TOP13, 7, "top level: GW.p = gt into a *Str field of a global (6.7.1
 assert_eq(R_TOP14, 7, "top level: *GPP = gt through a **Str global (6.7.16, D19)");
 assert_eq(R_TOP15, 77, "top level: gg<Str>(*GPS) / gg(*GPS) pass the header GPS points at (6.7.16)");
 assert_eq(R_TOP12, 107, "top level: GH = *GP into a Str handle global rebinds it to gt's header (6.7.16, D20)");
+assert_eq(R_TOP16, 117, "top level: GW.s = *GPS into a Str field and W { *GPS, 1 } are GPS (6.7.16)");
+assert_eq(R_TOP17, 7, "top level after a statement: WS { gt, 1 } takes gt's header (6.7.16, D19)");
+assert_eq(R_TOP18, 77, "top level after a statement: var U: Str = *GPPS; / var V: Str = (GPS); are copies (6.7.16, D74 / D18 (a))");
+assert_eq(R_TOP19, 111, "top level: *GQS = *GPS, GXS = *GPS, var LYS: *Str = *GPS are GPS (6.7.16, D73)");
+assert_eq(R_TOP20, 171, "top level after a statement: var H: Str = *(&gt); gi4 = *(&gt) copies; GH = *&gt (6.7.16, D71)");
+assert_eq(R_TOP21, 7, "top level: *(&gi3) = gt copies the header (6.7.16, D71)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");

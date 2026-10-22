@@ -30,7 +30,8 @@
 # call (pass 1); a by-value struct of 8 B or less and a `Str` handle parameter (recorded since
 # 6.7.3); an operator's two operands (parameters 0 and 1 of the operator fn); a method's `self`
 # (parameter 0). STAYS ACCEPTED (no static struct): an untyped value or local, `&p` (as the receive
-# path accepts `var q: *Q = &p`), a literal, a call returning an integer or a pointer, a fn pointer.
+# path accepts `var q: *Q = &p`), a literal, a call returning an integer or a pointer, a fn pointer. (6.7.16, D97: a
+# pointer to another struct into a `*S` / `**S` is refused — the PD rows; into a by-value struct it still passes.)
 #
 # Refusal rows are checked on the MESSAGE, that it is the ONE `^error`, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL;
@@ -244,6 +245,35 @@
 #                                                          (the for step) never warned
 #   real tree                                           -> GREEN (153 refusal rows — floor 153 — and 41 acceptance rows)
 #
+# 6.7.16 (D97, the user's decision, 2026-10-20; issues/2026-10-20-pointer-to-other-struct-argument-unchecked.md) — A
+# POINTER TO ANOTHER STRUCT INTO A `*S` / `**S` PARAMETER IS REFUSED, in this gate's words, at the argument (`&y` named
+# `y`): 6.7.3's "a typed pointer converts freely" (the user's, 2026-10-08) now holds into a BY-VALUE struct parameter
+# only (R4b). `nc1(&y)` (`y: Box<Pt>`, `p: *Box<i64>`) read Pt's `y` as Box<i64>'s `n`, silently. PD1-PD3 the filed
+# repros verbatim; PD4-PD17 every argument source the compiler types as a pointer to a struct (a `*Qd` local,
+# parameter, global, capture, field, call, method, generic call, `pq + 0`, a wrap, `*ppq`, `&GQ`, `&q` of a capture,
+# an if-expression, `self`) into every parameter path (a call, a tail call, a method's argument, an untyped `self`
+# called by name, a named argument, an operator's right operand), `**` and `***`, generic instances both ways, a
+# callee below the call; R4a, R13b and A6 re-pinned (they were accepted); PDK1-PDK5 the declared struct, an untyped
+# pointer, `alloc()`, `0`, a generic's binding pass — PD / PDK on the x86_64, aarch64, cx and PE compilers.
+# Mutations (2026-10-21, each a scratch copy of the tree with the one change, its compiler built from it, the gate
+# run from the copy):
+#   the tree before it (0e392a6dd's src)                -> RED 40: R4a R13b A6 PD1-PD17 but PD7 (a captured `*Qd`:
+#                                                          6.7.3's capture arm refused it already)
+#   `_pa_chk` returning 0                               -> RED 40: the same
+#   `_pps_scan` recording nothing (pass 1)              -> RED 2: PD12b PD15d (a callee below its call)
+#   `_pps_scan` asking `_targs_resolvable` unbound      -> RED 1: PD15d (a generic's base below its call)
+#   `_pps_def_note` recording nothing (the definition)  -> RED 2: PD14 PD15e (a generic instance's `**T`)
+#   `_pps_uself` answering 0                            -> RED 1: PD11b (`Pt_m(&q)`)
+#   `_pa_amp` without its typed-pointer arm             -> RED 6: PD2 PD12 PD12b PD15c PD15d PD15e (`&q` of a `*S`)
+#   `_pa_ie` answering 0                                -> RED 2: PD16 PD16b
+#   `_op_rhs` without `_pa_chk`                         -> RED 1: PD11d
+#   `_pa_chk` without its same-struct test (refusing    -> RED 28: PDK1 PDK3 PDK4 A1 A5 A6b and 22 rows a pointer to
+#     every typed pointer of its depth)                    the declared struct reaches first (R13b R18g R18h B2 D3 D6
+#                                                          D10 D17 G2 FB1 DS1-DS3 DS4b DS5 DS7 DS17 PD5 PD9 PD9c PD9d
+#                                                          PD14); crossos/struct_arg_type_accepted.tcyr's D97 rows do
+#                                                          not build (12 errors)
+#   real tree                                           -> GREEN (194 refusal rows — floor 194 — and 44 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -396,8 +426,9 @@ echo "=== names: locals, globals, captures, calls, method results (address-passe
 refuse "R3 a pointer-mode local" "cannot pass 'p' $MA 'bq'" \
     "include \"lib/alloc.cyr\"
 ${T}fn go(): i64 { var p: Pt = alloc(16); p.x = 3; p.y = 4; return bq(p); } syscall(60, go());"
-# A typed POINTER converts freely, as `&p` and the receive path do (the user's decision, 2026-10-08).
-compiles "R4a a \`u: *Pt\` local into b: *Q (a typed pointer: accepted)" \
+# A typed POINTER into a by-value Q converts freely, as `&p` and the receive path do (the user's decision,
+# 2026-10-08); into a `*Q` it is a pointer to another struct, refused since 6.7.16 (the user's D97: the PD rows).
+refuse "R4a a \`u: *Pt\` local into b: *Q (6.7.16, D97)" "cannot pass 'u' $MA 'bqp'" \
     "${T}fn go(): i64 { ${PQ} var u: *Pt = &p; return bqp(u); } syscall(60, go());"
 compiles "R4b a \`u: *Pt\` local into b: Q (a typed pointer: accepted)" \
     "${T}fn go(): i64 { ${PQ} var u: *Pt = &p; return bq(u); } syscall(60, go());"
@@ -424,7 +455,7 @@ refuse "R12 Q_cc2(p), self: Q" "cannot pass 'p' $MA 'Q.cc2'" \
     "${T}fn go(): i64 { ${PQ} return Q_cc2(p); } syscall(60, go());"
 refuse "R13a a tail call, by value (8 B)" "cannot pass 't' $MA 'bs1'" \
     "${T}fn f(t: T1): i64 { return bs1(t); } fn go(): i64 { var t: T1; t.w = 9; return f(t); } syscall(60, go());"
-compiles "R13b a tail call, \`*Pt\` into b: *Q (a typed pointer: accepted)" \
+refuse "R13b a tail call, \`*Pt\` into b: *Q (6.7.16, D97)" "cannot pass 'u' $MA 'bqp'" \
     "${T}fn f(u: *Pt): i64 { return bqp(u); } fn go(): i64 { ${PQ} return f(&p); } syscall(60, go());"
 refuse "R14 a forwarded by-value parameter" "cannot pass 'p' $MA 'bq'" \
     "${T}fn f(p: Pt): i64 { var r = bq(p); return r; } fn go(): i64 { ${PQ} return f(p); } syscall(60, go());"
@@ -583,8 +614,14 @@ ${T}fn go(): i64 { ${PQ} var u = &q; return bq(u) + bqp(&q) + fncall1(&bq, &q); 
 syscall(60, go());" \
     21 \
     "${T}fn go(): i64 { return 7 * 3; } syscall(60, go());"
-compiles "A6 &p into b: *Q (an address expression)" \
+# A6: `&p` of a Pt into a `*Q` is a pointer to another struct — refused since 6.7.16 (the user's D97; it compiled);
+# A6b the declared Q's `&q` passes.
+refuse "A6 &p (a Pt) into b: *Q (6.7.16, D97)" "cannot pass 'p' $MA 'bqp'" \
     "${T}fn go(): i64 { ${PQ} return bqp(&p); } syscall(60, go());"
+accept "A6b &q (the declared Q) into b: *Q" \
+    "${T}fn go(): i64 { ${PQ} return bqp(&q); } syscall(60, go());" \
+    7 \
+    "${T}fn go(): i64 { return 7; } syscall(60, go());"
 accept "A7 Str handles: a local, a call, an untyped name" \
     "${TS}${T}fn sl(s: Str): i64 { return str_len(s); }
 fn go(): i64 { var s = str_from(\"abcd\"); var a: Q = alloc(24); a = str_from(\"xy\"); var u = a;
@@ -1265,9 +1302,169 @@ refuse4 "DSK2 l = GPQ (a *Q3 global, no dereference)" "cannot copy 'GPQ' into a 
 var GPQ: *Q3 = &GQ;
 fn go(): i64 { var l: P3; l = GPQ; return l.x; } syscall(60, go());"
 
+echo "=== 6.7.16 (D97): a pointer to another struct into a \`*S\` / \`**S\` parameter (x86_64, aarch64, cx, PE) ==="
+# issues/2026-10-20-pointer-to-other-struct-argument-unchecked.md — refused at the argument in 6.7.3's words (`_pa_chk`,
+# parse_fn.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
+accept4() {  # $1 label  $2 source  $3 expected x86_64 exit
+    printf '%s' "$2" > "$D/k4.cyr"
+    naccept=$((naccept+1))
+    bad=""
+    for leg in x86 a64 cx pe; do
+        rc=0
+        case $leg in
+            x86) "$CC" < "$D/k4.cyr" > "$D/k4.bin" 2> "$D/k4.err" || rc=$? ;;
+            a64) [ -n "$A64" ] || continue; "$A64" < "$D/k4.cyr" > "$D/k4.bin" 2> "$D/k4.err" || rc=$? ;;
+            cx)  [ -n "$CXC" ] || continue; "$CXC" < "$D/k4.cyr" > "$D/k4.bin" 2> "$D/k4.err" || rc=$? ;;
+            pe)  CYRIUS_TARGET_WIN=1 "$CC" < "$D/k4.cyr" > "$D/k4.bin" 2> "$D/k4.err" || rc=$? ;;
+        esac
+        if [ "$rc" != 0 ] || [ ! -s "$D/k4.bin" ] || grep -q '^error' "$D/k4.err"; then
+            bad="$bad $leg(rc=$rc: $(grep '^error' "$D/k4.err" | head -1))"
+        fi
+    done
+    got=$(_run "$D/k4.cyr")
+    [ "$got" = "$3" ] || bad="$bad x86-run(exit $got, want $3)"
+    if [ -z "$bad" ]; then printf '  ok(accepted x4): %-36s exit=%s\n' "$1" "$got"; pass=$((pass+1))
+    else printf '  FAIL: %-46s%s\n' "$1" "$bad"; fail=$((fail+1)); fi
+}
+refuse4 "PD1 the filed repro 1: nc1(&y), a Box<Pt> into *Box<i64>" "cannot pass 'y' $MA 'nc1'" \
+'include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn nc1(p: *Box<i64>): i64 { return p.n; }
+fn main(): i64 { var y: Box<Pt>; y.v.x = 1; y.v.y = 2; y.n = 9; return nc1(&y); }
+syscall(60, main());
+'
+refuse4 "PD2 the filed repro 2: nc2(&q), a **Box<Pt> into **Box<i64>" "cannot pass 'q' $MA 'nc2'" \
+'include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+fn nc2(pp: **Box<i64>): i64 { var p: *Box<i64> = *pp; return p.n; }
+fn main(): i64 { var y: Box<Pt>; y.v.x = 1; y.v.y = 2; y.n = 9; var q: *Box<Pt> = &y; return nc2(&q); }
+syscall(60, main());
+'
+refuse4 "PD3 the filed repro 3: nc4(&q), a Qd into *Pt" "cannot pass 'q' $MA 'nc4'" \
+'include "lib/syscalls.cyr"
+struct Pt { x; y; }
+struct Qd { a; b; c; }
+fn nc4(p: *Pt): i64 { return p.y; }
+fn main(): i64 { var q: Qd; q.a = 1; q.b = 2; q.c = 3; return nc4(&q); }
+syscall(60, main());
+'
+PD='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+struct Qd { a; b; c; }
+struct Box<T> { v: T; n; }
+struct W { pq: *Qd; ppq: **Qd; }
+var GQ = Qd { 1, 2, 3 };
+var GPQ: *Qd = &GQ;
+fn nc4(p: *Pt): i64 { return p.y; }
+fn n2(pp: **Pt): i64 { var p: *Pt = *pp; return p.y; }
+fn n3(ppp: ***Pt): i64 { return 3; }
+fn mkpq(q: *Qd): *Qd { return q; }
+fn gid<T>(p: *T): *T { return p; }
+fn gb<T>(p: *Box<T>): i64 { return p.n; }
+fn gt<T>(p: *T): i64 { return sizeof(T); }
+fn gpp<T>(pp: **Box<T>): i64 { var p: *Box<T> = *pp; return p.n; }
+fn nbp(p: *Box<Pt>): i64 { return p.n; }
+impl Pt { fn m(self): i64 { return self.y; } fn ad(self, o: *Pt): i64 { return self.y + o.y; } }
+impl Qd { fn gq(self): *Qd { return self; } }
+fn Pt_add(a: Pt, b: *Pt): i64 { return a.y + b.y; }
+'
+refuse4 "PD4 a \`*Qd\` local" "cannot pass 'pq' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; return nc4(pq); } syscall(60, go());"
+refuse4 "PD5 a \`*Qd\` parameter, a tail call" "cannot pass 'pq' $MA 'nc4'" \
+    "${PD}fn f(pq: *Qd): i64 { return nc4(pq); } fn go(): i64 { var q: Qd; return f(&q); } syscall(60, go());"
+refuse4 "PD6 &GQ of a struct global, in a fn" "cannot pass 'GQ' $MA 'nc4'" \
+    "${PD}fn go(): i64 { return nc4(&GQ); } syscall(60, go());"
+refuse4 "PD6b a \`*Qd\` global" "cannot pass 'GPQ' $MA 'nc4'" \
+    "${PD}fn go(): i64 { return nc4(GPQ); } syscall(60, go());"
+refuse4 "PD6c &GQ at top level" "cannot pass 'GQ' $MA 'nc4'" \
+    "${PD}var r0 = nc4(&GQ); syscall(60, r0);"
+refuse4 "PD7 a closure: a captured \`*Qd\`" "cannot pass 'pq' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; var f = || nc4(pq); return fncall0(f); } syscall(60, go());"
+refuse4 "PD7b a closure: &q of a captured Qd" "cannot pass 'q' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var f = || nc4(&q); return fncall0(f); } syscall(60, go());"
+refuse4 "PD8 a \`*Qd\` field" "cannot pass 'w\.pq' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var w: W; w.pq = &q; return nc4(w.pq); } syscall(60, go());"
+refuse4 "PD8b a \`**Qd\` field into **Pt" "cannot pass 'w\.ppq' $MA 'n2'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; var w: W; w.ppq = &pq; return n2(w.ppq); } syscall(60, go());"
+refuse4 "PD9 a \`: *Qd\` call" "cannot pass 'mkpq(&q)' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; return nc4(mkpq(&q)); } syscall(60, go());"
+refuse4 "PD9b a \`: *Qd\` method" "cannot pass 'q\.gq()' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; return nc4(q.gq()); } syscall(60, go());"
+refuse4 "PD9c a generic \`: *T\` call, explicit" "cannot pass 'gid<Qd>(&q)' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; return nc4(gid<Qd>(&q)); } syscall(60, go());"
+refuse4 "PD9d a generic \`: *T\` call, inferred" "cannot pass 'gid(&q)' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; return nc4(gid(&q)); } syscall(60, go());"
+refuse4 "PD10 pointer arithmetic pq + 0" "cannot pass 'pq + 0' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; return nc4(pq + 0); } syscall(60, go());"
+refuse4 "PD10b wrapped ((&q))" "cannot pass 'q' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; return nc4(((&q))); } syscall(60, go());"
+refuse4 "PD10c *ppq of a **Qd" "cannot pass '\*ppq' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; var ppq: **Qd = &pq; return nc4(*ppq); } syscall(60, go());"
+refuse4 "PD10d a **Qd local into **Pt" "cannot pass 'ppq' $MA 'n2'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; var ppq: **Qd = &pq; return n2(ppq); } syscall(60, go());"
+refuse4 "PD10e *(&ppq) into **Pt" "cannot pass '\*(&ppq)' $MA 'n2'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; var ppq: **Qd = &pq; return n2(*(&ppq)); } syscall(60, go());"
+refuse4 "PD11 a method's argument p.ad(&q)" "cannot pass 'q' $MA 'Pt\.ad'" \
+    "${PD}fn go(): i64 { var p = Pt { 1, 3 }; var q: Qd; return p.ad(&q); } syscall(60, go());"
+refuse4 "PD11b Pt_m(&q): an untyped self by name" "cannot pass 'q' $MA 'Pt\.m'" \
+    "${PD}fn go(): i64 { var q: Qd; return Pt_m(&q); } syscall(60, go());"
+refuse4 "PD11c a named argument nc4(p: &q)" "cannot pass 'q' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; return nc4(p: &q); } syscall(60, go());"
+refuse4 "PD11d an operator's right operand p + &q" "cannot pass 'q' $MA 'Pt_add'" \
+    "${PD}fn go(): i64 { var p = Pt { 1, 3 }; var q: Qd; return p + &q; } syscall(60, go());"
+refuse4 "PD11e self of another struct, in its method" "cannot pass 'self' $MA 'nc4'" \
+    "${PD}impl Qd { fn f(self): i64 { return nc4(self); } } fn go(): i64 { var q: Qd; return q.f(); } syscall(60, go());"
+refuse4 "PD12 &ppq, a ***Qd into ***Pt" "cannot pass 'ppq' $MA 'n3'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; var ppq: **Qd = &pq; return n3(&ppq); } syscall(60, go());"
+refuse4 "PD12b a **Pt callee below the call (pass 1)" "cannot pass 'pq' $MA 'later2'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; return later2(&pq); }
+fn later2(pp: **Pt): i64 { var p: *Pt = *pp; return p.y; } syscall(60, go());"
+refuse4 "PD13 the \`x: T\` binding over a *Box<i32> carrier" "cannot pass 'bi' $MA 'g4sz'" \
+    "${PD}fn g4sz<T>(b: *Box<T>, x: T): i64 { return sizeof(T); }
+fn go(): i64 { var bi: Box<i32>; bi.v = 7; bi.n = 8; return g4sz(&bi, 5); } syscall(60, go());"
+refuse4 "PD14 a *Bx<Q2> carrier's T, then a **P3" "cannot pass 'pps' $MA 'gi_both<Q2>'" \
+    "${PD}struct P3 { a; b; c; }
+struct Q2 { u; v; }
+struct Bx<T> { v: T; w: T; }
+fn gi_both<T>(b: *Bx<T>, pp: **T): i64 { return sizeof(T); }
+fn go(): i64 { var s: P3; var ps: *P3 = &s; var pps: **P3 = &ps; var bq: Bx<Q2>; return gi_both(&bq, pps); } syscall(60, go());"
+refuse4 "PD15 gb<i64>(&y): *Box<i64> against a Box<Pt>" "cannot pass 'y' $MA 'gb'" \
+    "${PD}fn go(): i64 { var y: Box<Pt>; y.n = 9; return gb<i64>(&y); } syscall(60, go());"
+refuse4 "PD15b gt<Pt>(&q)" "cannot pass 'q' $MA 'gt<Pt>'" \
+    "${PD}fn go(): i64 { var q: Qd; return gt<Pt>(&q); } syscall(60, go());"
+refuse4 "PD15c gpp<i64>(&py): **Box<i64> against a **Box<Pt>" "cannot pass 'py' $MA 'gpp'" \
+    "${PD}fn go(): i64 { var y: Box<Pt>; var py: *Box<Pt> = &y; return gpp<i64>(&py); } syscall(60, go());"
+refuse4 "PD15d a generic below its call: glater<i64>(&py)" "cannot pass 'py' $MA 'glater'" \
+    "${PD}fn go(): i64 { var y: Box<Pt>; var py: *Box<Pt> = &y; return glater<i64>(&py); }
+fn glater<T>(pp: **Box<T>): i64 { return 5; } syscall(60, go());"
+refuse4 "PD15e glater<Qd>(&py)" "cannot pass 'py' $MA 'glater<Qd>'" \
+    "${PD}fn go(): i64 { var y: Box<Pt>; var py: *Box<Pt> = &y; return glater<Qd>(&py); }
+fn glater<T>(pp: **Box<T>): i64 { return 5; } syscall(60, go());"
+refuse4 "PD16 an if-expression of \`*Qd\` branches" "cannot pass 'if (c == 1) { pq } else { pq }' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var pq: *Qd = &q; var c = 1; return nc4(if (c == 1) { pq } else { pq }); } syscall(60, go());"
+refuse4 "PD16b ... of &q branches, an elif" "cannot pass 'if (c == 1) { &q } elif (c == 2) { &q } else { (&q) }' $MA 'nc4'" \
+    "${PD}fn go(): i64 { var q: Qd; var c = 1; return nc4(if (c == 1) { &q } elif (c == 2) { &q } else { (&q) }); } syscall(60, go());"
+refuse4 "PD17 the reverse: a Box<i64> into *Box<Pt>" "cannot pass 'z' $MA 'nbp'" \
+    "${PD}fn go(): i64 { var z: Box<i64>; z.n = 9; return nbp(&z); } syscall(60, go());"
+accept4 "PDK1 the declared struct: &p, a *Pt, a **Pt" \
+    "${PD}fn go(): i64 { var p = Pt { 1, 7 }; var pp: *Pt = &p; return nc4(&p) + nc4(pp) + n2(&pp); } syscall(60, go());" 21
+accept4 "PDK2 an untyped pointer, alloc(), 0" \
+    "include \"lib/alloc.cyr\"
+${PD}fn ok3(p: *Pt): i64 { return 4; }
+fn go(): i64 { var p = Pt { 1, 7 }; var u = &p; var a = alloc(16); store64(a + 8, 2); return nc4(u) + nc4(a) + ok3(0) + n2(&u); } syscall(60, go());" 20
+accept4 "PDK3 generics bind: gb(&y), gt(&q), gpp(&py)" \
+    "${PD}fn go(): i64 { var y: Box<Pt>; y.n = 9; var py: *Box<Pt> = &y; var q: Qd; return gb(&y) + gt(&q) + gpp(&py); } syscall(60, go());" 42
+accept4 "PDK4 nbp(&y), gb<Pt>(&y), gid<Pt>(&p)" \
+    "${PD}fn go(): i64 { var y: Box<Pt>; y.n = 9; var p = Pt { 1, 7 }; return nbp(&y) + gb<Pt>(&y) + nc4(gid<Pt>(&p)); } syscall(60, go());" 25
+accept4 "PDK5 an if-expression with a 0 branch" \
+    "${PD}fn go(): i64 { var p = Pt { 1, 7 }; var c = 1; return nc4(if (c == 1) { &p } else { 0 }); } syscall(60, go());" 7
+
 # Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15
 # (the structs lane's FB rows and the vectors lane's DN rows together).
-[ "$nrefuse" -ge 153 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 153)"; fail=$((fail+1)); }
-[ "$naccept" -ge 41 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 41)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 194 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 194)"; fail=$((fail+1)); }
+[ "$naccept" -ge 44 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 44)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

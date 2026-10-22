@@ -1,0 +1,377 @@
+# method_receiver_chain_lookaheads.tcyr — 6.7.16 — a method ending a chain on ANY receiver the method arm takes is a
+# method call to every lookahead that recognises one, as `x.m(..)` on a single name is: a field chain `w.p.m2()` (through
+# an inline struct field, a `*P` field, three deep, from a `*W` parameter, `self`, a global, a closure's capture), a
+# method's result `w.gp().m2()`, a call's result `fc_mkw(1).p.m2()` / `fc_gpw(&w).p.m2()` / `callptr(&fc_gpw, &w).p.m2()`,
+# a parenthesised head `(*pw).p.m2()` / `(w).p.m2()` / `(w.p).m2()` — at a multi-value destructure and re-assignment, a
+# tuple capture, a 9-16 B struct destructured, a `: stack` pair's `?` / destructure / forward (the forwarding fn above
+# or below its caller), a `*T` method as a dyn source, a top-level zone. Through 6.7.15 those lookaheads typed a single-
+# name receiver only: `var c, d = w.p.m2();` was "multi-value destructure needs a call on the right-hand side",
+# `var v = w.p.rs(3)?;` took the boxed `?` and SIGSEGV'd (issues/2026-10-20-multi-value-method-on-field-chain-receiver-
+# refused-as-destructure-source.md). The refusals the same spellings meet (a pair bound to one name, a multi-value call
+# into a struct, ...) and the mixed-return warning are tests/gates/frontend/method_receiver_chain_lookaheads.sh.
+#
+# CROSS-HOST: frontend recognition, but the multi-value registers, the pair's `?` lowering and a dyn's two words are
+# each backend's. Run on ecb / ach (Mach-O), cass (PE) and pi (aarch64) by the release gate.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+enum FcRes: stack { FcOk(v); FcErr(e); }
+struct FcP { k; }
+struct FcQ16 { a; b; }
+struct FcW { p: FcP; q: *FcP; n; }
+struct FcH { w: FcW; }
+trait FcShow { fn show(self): i64; }
+struct FcD { a; b; }
+struct FcDW { d: FcD; }
+struct FcO { o: dyn FcShow; }
+impl FcShow for FcD { fn show(self): i64 { return self.a * 10 + self.b; } }
+impl FcD { fn me(self, k): *FcD { self.b = self.b + k; return self; } }
+impl FcP {
+    fn m2(self): (i64, i64) { return (3, 4); }
+    fn m3(self): (i64, i64, i64) { return (3, 4, 5); }
+    fn mm<V>(self, x: V): (V, i64) { return (x, 7); }
+    fn rs(self, x): i64 { if (x == 0) { return FcErr(9); } return FcOk(x + self.k); }
+    fn rg<V>(self, x: V): i64 { if (x == 0) { return FcErr(9); } return FcOk(x + self.k); }
+    fn q16(self): FcQ16 { var q: FcQ16; q.a = 3; q.b = 4; return q; }
+}
+impl FcW {
+    fn gp(self): *FcP { var a = self; return a; }   # p is at offset 0
+    fn sm(self): i64 { var c, d = self.p.m2(); return c * 10 + d; }
+}
+fn fc_mkw(k): FcW { var w: FcW; w.p.k = k; w.q = 0; w.n = 0; return w; }
+fn fc_gpw(w: *FcW): *FcW { return w; }
+fn fc_w(): FcW { var w: FcW; w.p.k = 1; w.q = 0; w.n = 0; return w; }
+
+# MD: destructures and captures
+fn fc_dt(): i64 { var w: FcW; var c, d = w.p.m2(); return c * 10 + d; }
+fn fc_dt3(): i64 { var w = fc_w(); var a, b, c = w.p.m3(); return a * 100 + b * 10 + c; }
+fn fc_ra(): i64 { var w = fc_w(); var a = 0; var b = 0; a, b = w.p.m2(); return a * 10 + b; }
+fn fc_gi(): i64 { var w = fc_w(); var a, b = w.p.mm(5); return a * 10 + b; }
+fn fc_gx(): i64 { var w = fc_w(); var a, b = w.p.mm<i64>(6); return a * 10 + b; }
+fn fc_gf(): i64 { var w = fc_w(); var h: f64 = 2.5; var a, b = w.p.mm<f64>(h); return f64_to(a * 2.0) + b; }
+fn fc_gfi(): i64 { var w = fc_w(); var h: f64 = 1.5; var a, b = w.p.mm(h); return f64_to(a * 2.0) + b; }
+fn fc_gfc(): i64 { var w = fc_w(); var h: f64 = 1.5; var t: (f64, i64) = w.p.mm(h); return f64_to(t.0 * 2.0) + t.1; }
+fn fc_gfd(): i64 { var w = fc_w(); var pw: *FcW = &w; var h: f64 = 2.5; var t: (f64, i64) = (*pw).p.mm(h); return f64_to(t.0 * 2.0) + t.1; }
+fn fc_pf(): i64 { var w: FcW; var p: FcP = FcP { 1 }; w.q = &p; var a, b = w.q.m2(); return a * 10 + b; }
+fn fc_deep(): i64 { var h: FcH; var a, b = h.w.p.m2(); return a * 10 + b; }
+fn fc_pw(pw: *FcW): i64 { var a, b = pw.p.m2(); return a * 10 + b; }
+fn fc_pwc(): i64 { var w = fc_w(); return fc_pw(&w); }
+fn fc_self(): i64 { var w = fc_w(); return w.sm(); }
+var FC_GP: FcP = FcP { 1 };
+var FC_GW: FcW = FcW { FC_GP, 0, 0 };
+fn fc_glob(): i64 { var a, b = FC_GW.p.m2(); return a * 10 + b; }
+fn fc_cap(): i64 { var w = fc_w(); var c = || { var a, b = w.p.m2(); return a * 10 + b; }; return fncall0(c); }
+fn fc_wrap(): i64 { var w = fc_w(); var a, b = (w.p.m2()); return a * 10 + b; }
+fn fc_tup(): i64 { var w = fc_w(); var t: (i64, i64) = w.p.m2(); return t.0 * 10 + t.1; }
+fn fc_tupa(): i64 { var w = fc_w(); var t: (i64, i64) = (1, 1); t = w.p.mm(8); return t.0 * 10 + t.1; }
+fn fc_fwd(w: FcW): (i64, i64) { return w.p.m2(); }
+fn fc_fwdc(): i64 { var w = fc_w(); var a, b = fc_fwd(w); return a * 10 + b; }
+fn fc_gen<T>(w: FcW, t: T): i64 { var a, b = w.p.mm<T>(t); return a * 10 + b; }
+fn fc_genc(): i64 { var w = fc_w(); return fc_gen(w, 9); }
+fn fc_for(): i64 {
+    var w = fc_w();
+    var a = 0;
+    var b = 0;
+    var i = 0;
+    for (i = 0; i < 2; a, b = w.p.mm(i)) { i = i + 1; }
+    return a * 10 + b;
+}
+fn fc_s16(): i64 { var w = fc_w(); var a, b = w.p.q16(); return a * 10 + b; }
+
+# MH: other receiver heads
+fn fc_mres(): i64 { var w = fc_w(); var a, b = w.gp().m2(); return a * 10 + b; }
+fn fc_call(): i64 { var a, b = fc_mkw(1).p.m2(); return a * 10 + b; }
+fn fc_pcall(): i64 { var w = fc_w(); var a, b = fc_gpw(&w).p.m2(); return a * 10 + b; }
+fn fc_icall(): i64 { var w = fc_w(); var a, b = callptr(&fc_gpw, &w).p.m2(); return a * 10 + b; }
+fn fc_deref(): i64 { var w = fc_w(); var pw: *FcW = &w; var a, b = (*pw).p.m2(); return a * 10 + b; }
+fn fc_paren(): i64 { var w = fc_w(); var a, b = (w).p.m2(); return a * 10 + b; }
+fn fc_pchain(): i64 { var w = fc_w(); var a, b = (w.p).m2(); return a * 10 + b; }
+fn fc_pwrap(): i64 { var w = fc_w(); var pw: *FcW = &w; var a, b = ((*pw).p.m2()); return a * 10 + b; }
+fn fc_ptup(): i64 { var w = fc_w(); var pw: *FcW = &w; var t: (i64, i64) = (*pw).p.mm(2); return t.0 * 10 + t.1; }
+fn fc_pfwd(pw: *FcW): (i64, i64) { return (*pw).p.m2(); }
+fn fc_pfwdc(): i64 { var w = fc_w(); var a, b = fc_pfwd(&w); return a * 10 + b; }
+
+# MP: a `: stack` pair through `?`, a destructure, a forward
+fn fc_q(w: FcW): i64 { var v = w.p.rs(3)?; return FcOk(v + 10); }
+fn fc_qs(w: FcW): i64 { w.p.rs(0)?; return FcOk(5); }
+fn fc_qw(w: FcW): i64 { var v = (w.p.rs(3))?; return FcOk(v); }
+fn fc_qfa(w: FcW): i64 { var v = fc_qfb(w)?; return FcOk(v + 1); }
+fn fc_qfb(w: FcW): i64 { return w.p.rs(3); }
+fn fc_qg(w: FcW): i64 { var v = w.p.rg(2)?; return FcOk(v); }
+fn fc_qx(w: FcW): i64 { var v = w.p.rg<i64>(5)?; return FcOk(v); }
+fn fc_qc(): i64 { var v = fc_mkw(1).p.rs(6)?; return FcOk(v); }
+fn fc_qd(w: FcW): i64 { var pw: *FcW = &w; var v = (*pw).p.rs(7)?; return FcOk(v); }
+fn fc_qdw(w: FcW): i64 { var pw: *FcW = &w; var v = ((*pw).p.rs(8))?; return FcOk(v); }
+fn fc_qm(w: FcW): i64 { var v = w.gp().rs(1)?; return FcOk(v); }
+fn fc_qmix(w: FcW, z): i64 { if (z == 1) { return FcErr(2); } return w.p.rs(4); }
+fn fc_qi(w: FcW): i64 { var v = callptr(&fc_gpw, &w).p.rs(9)?; return FcOk(v); }
+fn fc_qiw(w: FcW): i64 { var v = (callptr(&fc_gpw, &w).p.rs(10))?; return FcOk(v); }
+fn fc_pair(which): i64 {
+    var w = fc_w();
+    var t = 0;
+    var v = 0;
+    if (which == 0) { t, v = fc_q(w); }
+    if (which == 1) { t, v = fc_qs(w); }
+    if (which == 2) { t, v = fc_qw(w); }
+    if (which == 3) { t, v = fc_qfa(w); }
+    if (which == 4) { t, v = w.p.rs(5); }
+    if (which == 5) { t, v = fc_qg(w); }
+    if (which == 6) { t, v = fc_qx(w); }
+    if (which == 7) { t, v = fc_qc(); }
+    if (which == 8) { t, v = fc_qd(w); }
+    if (which == 9) { t, v = fc_qdw(w); }
+    if (which == 10) { t, v = fc_qm(w); }
+    if (which == 11) { t, v = fc_qmix(w, 0); }
+    if (which == 12) { t, v = fc_qmix(w, 1); }
+    if (which == 13) { t, v = fc_qi(w); }
+    if (which == 14) { t, v = fc_qiw(w); }
+    return t * 100 + v;
+}
+
+# MY: a `*T`-returning method on a chain as a dyn source
+fn fc_dk0(o: dyn FcShow): i64 { var w: FcO = FcO { o }; return callptr(load64(load64(&w + 8)), load64(&w)); }
+fn fc_d1(): i64 { var dw: FcDW; dw.d.a = 4; dw.d.b = 2; var o: dyn FcShow = dw.d.me(1); return fc_dk0(o); }
+fn fc_d2(): i64 { var dw: FcDW; dw.d.a = 4; dw.d.b = 2; var o: dyn FcShow = dw.d.me(1); o = dw.d.me(2); return fc_dk0(o); }
+fn fc_d3(): i64 { var dw: FcDW; dw.d.a = 4; dw.d.b = 2; return fc_dk0(dw.d.me(3)); }
+fn fc_dr(dw: *FcDW): dyn FcShow { return dw.d.me(4); }
+fn fc_d4(): i64 { var dw: FcDW; dw.d.a = 4; dw.d.b = 2; var o: dyn FcShow = fc_dr(&dw); return fc_dk0(o); }
+fn fc_d5(): i64 { var dw: FcDW; dw.d.a = 4; dw.d.b = 2; var pd: *FcDW = &dw; var o: dyn FcShow = (*pd).d.me(5); return fc_dk0(o); }
+
+# MC: a field compared, the `.m<..>(` token shape on a chain, stays a comparison
+struct FcN { n; }
+struct FcI { id; }
+impl FcI { fn id<V>(self, x: V): V { return x; } }
+struct FcWN { a: FcN; b: FcI; }
+fn fc_cmp(k, j): i64 {
+    var w: FcWN;
+    w.a.n = 1;
+    w.b.id = 3;
+    var a = w.a.n < k >> (j);
+    var b = w.b.id < k >> (j);
+    var c = 0;
+    c = w.a.n < k >> (j);
+    if (w.b.id < k >> (j)) { c = c + 10; }
+    return a + b * 2 + c * 4;
+}
+
+# MS: a chain on a `callptr(..)` result as a by-value struct argument, as on a direct call's: it pushed a word as the
+# struct's address (a crash on every target: SIGSEGV on x86_64 / aarch64, an access violation on PE, a guest address
+# fault on cx)
+struct FcWQ { q: FcQ16; n; }
+fn fc_gwq(w: *FcWQ): *FcWQ { return w; }
+fn fc_tq(q: FcQ16): i64 { return q.a * 10 + q.b; }
+fn fc_s1(): i64 { var w = fc_w(); return fc_tq(callptr(&fc_gpw, &w).p.q16()); }
+fn fc_s2(): i64 { var wq: FcWQ; wq.q.a = 5; wq.q.b = 6; wq.n = 0; return fc_tq(callptr(&fc_gwq, &wq).q); }
+fn fc_s3(): i64 { var w = fc_w(); return fc_tq((callptr(&fc_gpw, &w).p.q16())); }
+
+# MR: a struct over 8 B returned from a method ending a chain, as from a single name's (refused before: "returned in two
+# registers ... got `w`", "return must be a bare local identifier, or a call ...")
+struct FcQ24 { a; b; c; }
+impl FcP { fn q24(self): FcQ24 { var q: FcQ24; q.a = 3; q.b = 5; q.c = self.k; return q; } }
+fn fc_r16(w: FcW): FcQ16 { return w.p.q16(); }
+fn fc_r16d(pw: *FcW): FcQ16 { return (*pw).p.q16(); }
+fn fc_r16c(pw: *FcW): FcQ16 { return callptr(&fc_gpw, pw).p.q16(); }
+fn fc_r16m(w: FcW): FcQ16 { return w.gp().q16(); }
+fn fc_r24(w: FcW): FcQ24 { return w.p.q24(); }
+fn fc_r24k(): FcQ24 { return fc_mkw(2).p.q24(); }
+fn fc_ret(which): i64 {
+    var w = fc_w();
+    var pw: *FcW = &w;
+    var q: FcQ16 = FcQ16 { 0, 0 };
+    if (which == 0) { q = fc_r16(w); }
+    if (which == 1) { q = fc_r16d(pw); }
+    if (which == 2) { q = fc_r16c(pw); }
+    if (which == 3) { q = fc_r16m(w); }
+    return q.a * 10 + q.b;
+}
+fn fc_ret24(which): i64 {
+    var w = fc_w();
+    var q: FcQ24 = FcQ24 { 0, 0, 0 };
+    if (which == 0) { q = fc_r24(w); }
+    if (which == 1) { q = fc_r24k(); }
+    return q.a * 100 + q.b * 10 + q.c;
+}
+
+# MX: a generic method in the middle of a chain is typed without instantiating it (an explicit one was minted by the
+# lookahead — in the zone's pass 1 too, where the program then SIGSEGV'd under CYRIUS_COVERAGE=1)
+struct FcG1<T> { v: T; n; }
+impl FcP {
+    fn gq<V>(self, x: V): *FcP { return self; }
+    fn idv<V>(self, x: V): V { return x; }
+    fn mkg<V>(self, x: V): FcG1<V> { var g: FcG1<V>; g.v = x; g.n = 5; return g; }
+}
+fn fc_xq(): i64 { var w = fc_w(); var h: f64 = 2.5; var a, b = w.p.gq<f64>(h).m2(); return a * 10 + b; }
+fn fc_xv(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.idv<FcP>(q).m2(); return a * 10 + b; }
+fn fc_xg(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.mkg<FcP>(q).v.m2(); return a * 10 + b; }
+# ... an INFERRED one too, its `: V` / `: G<V>` the struct its argument binds (it was no struct: "needs a call")
+fn fc_xi(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.idv(q).m2(); return a * 10 + b; }
+fn fc_xs(): i64 { var q: FcP = FcP { 1 }; var a, b = q.idv(q).m2(); return a * 10 + b; }
+fn fc_xgi(): i64 { var w = fc_w(); var q: FcP = FcP { 1 }; var a, b = w.p.mkg(q).v.m2(); return a * 10 + b; }
+fn fc_xd(): i64 { var w = fc_w(); var pw: *FcW = &w; var q: FcP = FcP { 1 }; var t: (i64, i64) = (*pw).p.idv(q).mm(2); return t.0 * 10 + t.1; }
+fn fc_qv(w: FcW): i64 { var q: FcP = FcP { 1 }; var v = w.p.idv(q).rs(3)?; return FcOk(v + 30); }
+fn fc_qvs(w: FcW): i64 { var q: FcP = FcP { 1 }; var v = q.idv(q).rs(3)?; return FcOk(v + 30); }
+fn fc_qva(w: FcW): i64 { var v = fc_qvb(w)?; return FcOk(v + 1); }
+fn fc_qvb(w: FcW): i64 { var q: FcP = FcP { 1 }; return w.p.idv(q).rs(3); }
+# ... and a forwarder below its caller whose chain starts at a GENERIC call with a concrete `*W` return (the token pass
+# typed no generic head: the caller's `?` took the boxed lowering)
+fn fc_gw<V>(x: V): *FcW { var a = x; return a; }
+fn fc_qga(w: FcW): i64 { var v = fc_qgb(w)?; return FcOk(v + 1); }
+fn fc_qgb(w: FcW): i64 { return fc_gw(&w).p.rs(3); }
+fn fc_qxa(w: FcW): i64 { var v = fc_qxb(w)?; return FcOk(v + 2); }
+fn fc_qxb(w: FcW): i64 { return fc_gw<i64>(&w).p.rs(3); }
+# ... and a generic step or head returning `*T` — the struct T binds (the explicit step was typed only through its minted
+# instance, the inferred one and the token passes' not at all)
+impl FcW { fn gpx<T>(self, p: *T): *T { return p; } }
+fn fc_gwp<T>(p: *T): *T { return p; }
+fn fc_xt(): i64 { var w = fc_w(); var a, b = w.gpx(&w).p.m2(); return a * 10 + b; }
+fn fc_xu(): i64 { var w = fc_w(); var a, b = w.gpx<FcW>(&w).p.m2(); return a * 10 + b; }
+fn fc_qpa(w: FcW): i64 { var v = fc_qpb(w)?; return FcOk(v + 1); }
+fn fc_qpb(w: FcW): i64 { return fc_gwp(&w).p.rs(3); }
+fn fc_xpair(which): i64 {
+    var w = fc_w();
+    var q: FcP = FcP { 2 };
+    var t = 0;
+    var v = 0;
+    if (which == 0) { t, v = fc_qv(w); }
+    if (which == 1) { t, v = fc_qvs(w); }
+    if (which == 2) { t, v = fc_qva(w); }
+    if (which == 3) { t, v = w.p.idv(q).rs(5); }
+    if (which == 4) { t, v = fc_qga(w); }
+    if (which == 5) { t, v = fc_qxa(w); }
+    if (which == 6) { t, v = fc_qpa(w); }
+    return t * 100 + v;
+}
+
+# MT: a tuple RE-assignment from a call ending a chain on a parenthesised head is a capture, as the declaration's is
+# (it was refused "cannot assign a value that is not a tuple")
+var fc_gt2: (i64, i64) = (1, 1);
+fn fc_ta(which): i64 {
+    var w = fc_w();
+    var pw: *FcW = &w;
+    var p: FcP = FcP { 1 };
+    var t: (i64, i64) = (1, 1);
+    var i = 0;
+    if (which == 0) { t = (*pw).p.m2(); }
+    if (which == 1) { t = (w).p.mm(5); }
+    if (which == 2) { t = ((*pw).p.m2()); }
+    if (which == 3) { t = (p).mm(6); }
+    if (which == 4) { t = (w.p).mm(3); }
+    if (which == 5) { for (i = 0; i < 2; t = (*pw).p.mm(i)) { i = i + 1; } }
+    if (which == 6) { fc_gt2 = (w).p.mm(8); t = fc_gt2; }
+    if (which == 7) { fc_gt2 = (FC_GP).mm(2); t = fc_gt2; }
+    return t.0 * 10 + t.1;
+}
+
+# MZ: the top-level zone
+var fc_ga, fc_gb = FC_GW.p.m2();
+var fc_gt: (i64, i64) = FC_GW.p.mm<i64>(4);
+var fc_gx, fc_gy = FC_GW.p.mm<f64>(2.5);
+var fc_gz, fc_gw = (FC_GW).p.m2();
+var fc_gtp: (i64, i64) = (FC_GW).p.mm(5);
+var fc_gq1, fc_gq2 = FC_GW.p.gq<f64>(2.5).m2();
+var fc_gqt: (i64, i64) = FC_GW.p.gq<f64>(2.5).m2();
+var fc_gq3, fc_gq4 = FC_GP.gq<f64>(2.5).m2();
+
+assert_eq(fc_dt(), 34, "MD: the filed repro's shape, var c, d = w.p.m2() (refused: needs a call)");
+assert_eq(fc_dt3(), 345, "MD: three names, w.p.m3()");
+assert_eq(fc_ra(), 34, "MD: a re-assignment a, b = w.p.m2()");
+assert_eq(fc_gi(), 57, "MD: a generic method inferred, w.p.mm(5)");
+assert_eq(fc_gx(), 67, "MD: a generic method explicit, w.p.mm<i64>(6)");
+assert_eq(fc_gf(), 12, "MD: w.p.mm<f64>(h) binds an f64 first value");
+assert_eq(fc_gfi(), 10, "MD: w.p.mm(h) at V = f64 binds an f64 first value");
+assert_eq(fc_gfc(), 10, "MD: var t: (f64, i64) = w.p.mm(h) captures the instance's (f64, i64)");
+assert_eq(fc_gfd(), 12, "MD: var t: (f64, i64) = (*pw).p.mm(h), a dereference head");
+assert_eq(fc_pf(), 34, "MD: through a *P field, w.q.m2()");
+assert_eq(fc_deep(), 34, "MD: three deep, h.w.p.m2()");
+assert_eq(fc_pwc(), 34, "MD: from a *W parameter, pw.p.m2()");
+assert_eq(fc_self(), 34, "MD: self.p.m2() in a method");
+assert_eq(fc_glob(), 34, "MD: on a global, GW.p.m2()");
+assert_eq(fc_cap(), 34, "MD: on a closure's capture, w.p.m2()");
+assert_eq(fc_wrap(), 34, "MD: in parentheses, (w.p.m2())");
+assert_eq(fc_tup(), 34, "MD: a tuple capture, var t: (i64, i64) = w.p.m2()");
+assert_eq(fc_tupa(), 87, "MD: a tuple re-capture, t = w.p.mm(8)");
+assert_eq(fc_fwdc(), 34, "MD: forwarded, return w.p.m2() from a (i64, i64) fn");
+assert_eq(fc_genc(), 97, "MD: inside a generic, w.p.mm<T>(t)");
+assert_eq(fc_for(), 27, "MD: a for step, a, b = w.p.mm(i)");
+assert_eq(fc_s16(), 34, "MD: a 16-byte struct result destructured, w.p.q16()");
+assert_eq(fc_mres(), 34, "MH: a method's *P result, w.gp().m2()");
+assert_eq(fc_call(), 34, "MH: a call's struct result, mkw(1).p.m2()");
+assert_eq(fc_pcall(), 34, "MH: a call's *W result, gpw(&w).p.m2()");
+assert_eq(fc_icall(), 34, "MH: a known callptr's result, callptr(&gpw, &w).p.m2()");
+assert_eq(fc_deref(), 34, "MH: a dereference head, (*pw).p.m2()");
+assert_eq(fc_paren(), 34, "MH: a parenthesised name, (w).p.m2()");
+assert_eq(fc_pchain(), 34, "MH: a parenthesised chain, (w.p).m2()");
+assert_eq(fc_pwrap(), 34, "MH: wrapped, ((*pw).p.m2())");
+assert_eq(fc_ptup(), 27, "MH: a tuple capture, var t: (i64, i64) = (*pw).p.mm(2)");
+assert_eq(fc_pfwdc(), 34, "MH: forwarded, return (*pw).p.m2()");
+assert_eq(fc_pair(0), 14, "MP: var v = w.p.rs(3)?; (the boxed ? before: SIGSEGV)");
+assert_eq(fc_pair(1), 109, "MP: the statement w.p.rs(0)?; propagates the Err and its payload");
+assert_eq(fc_pair(2), 4, "MP: (w.p.rs(3))?");
+assert_eq(fc_pair(3), 5, "MP: return w.p.rs(3); forwards the pair to a caller ABOVE it");
+assert_eq(fc_pair(4), 6, "MP: t, v = w.p.rs(5)");
+assert_eq(fc_pair(5), 3, "MP: a generic method inferred, w.p.rg(2)?");
+assert_eq(fc_pair(6), 6, "MP: a generic method explicit, w.p.rg<i64>(5)?");
+assert_eq(fc_pair(7), 7, "MP: a call head, mkw(1).p.rs(6)?");
+assert_eq(fc_pair(8), 8, "MP: a dereference head, (*pw).p.rs(7)?");
+assert_eq(fc_pair(9), 9, "MP: wrapped, ((*pw).p.rs(8))?");
+assert_eq(fc_pair(10), 2, "MP: a method's result, w.gp().rs(1)?");
+assert_eq(fc_pair(11), 5, "MP: return w.p.rs(4) beside return FcErr(2): the Ok path");
+assert_eq(fc_pair(12), 102, "MP: ... and the Err path");
+assert_eq(fc_pair(13), 10, "MP: a callptr head, callptr(&gpw, &w).p.rs(9)?");
+assert_eq(fc_pair(14), 11, "MP: wrapped, (callptr(&gpw, &w).p.rs(10))?");
+assert_eq(fc_d1(), 43, "MY: var o: dyn Show = dw.d.me(1)");
+assert_eq(fc_d2(), 45, "MY: o = dw.d.me(2)");
+assert_eq(fc_d3(), 45, "MY: an argument, dk0(dw.d.me(3))");
+assert_eq(fc_d4(), 46, "MY: return dw.d.me(4) from a dyn fn");
+assert_eq(fc_d5(), 47, "MY: a dereference head, (*pd).d.me(5)");
+assert_eq(fc_cmp(5, 0), 47, "MC: w.a.n < k >> (j) and w.b.id < k >> (j) (id a field AND a generic method) compare");
+assert_eq(fc_s1(), 34, "MS: tq(callptr(&gpw, &w).p.q16()), a method's struct result (a crash before)");
+assert_eq(fc_s2(), 56, "MS: tq(callptr(&gwq, &wq).q), a struct field (a crash before)");
+assert_eq(fc_s3(), 34, "MS: tq((callptr(&gpw, &w).p.q16())), wrapped (a crash before)");
+assert_eq(fc_ret(0), 34, "MR: return w.p.q16(); from a : Q16 fn (refused before)");
+assert_eq(fc_ret(1), 34, "MR: return (*pw).p.q16();");
+assert_eq(fc_ret(2), 34, "MR: return callptr(&gpw, pw).p.q16();");
+assert_eq(fc_ret(3), 34, "MR: return w.gp().q16();");
+assert_eq(fc_ret24(0), 351, "MR: return w.p.q24(); from a : Q24 fn (refused before)");
+assert_eq(fc_ret24(1), 352, "MR: return mkw(2).p.q24();");
+assert_eq(fc_xq(), 34, "MX: an explicit generic step returning *P, w.p.gq<f64>(h).m2()");
+assert_eq(fc_xv(), 34, "MX: an explicit generic step returning its V, w.p.idv<P>(q).m2()");
+assert_eq(fc_xg(), 34, "MX: an explicit generic step returning G1<V>, w.p.mkg<P>(q).v.m2()");
+assert_eq(fc_xi(), 34, "MX: an inferred generic step returning its V, w.p.idv(q).m2() (needs a call before)");
+assert_eq(fc_xs(), 34, "MX: ... after a single name, q.idv(q).m2() (needs a call before)");
+assert_eq(fc_xgi(), 34, "MX: an inferred generic step returning G1<V>, w.p.mkg(q).v.m2() (needs a call before)");
+assert_eq(fc_xd(), 27, "MX: a tuple capture on a dereference head, (*pw).p.idv(q).mm(2) (not a tuple before)");
+assert_eq(fc_xpair(0), 34, "MX: var v = w.p.idv(q).rs(3)?; (the boxed ? before: SIGSEGV)");
+assert_eq(fc_xpair(1), 34, "MX: var v = q.idv(q).rs(3)?; (the boxed ? before: SIGSEGV)");
+assert_eq(fc_xpair(2), 5, "MX: return w.p.idv(q).rs(3); forwards the pair to a caller ABOVE it");
+assert_eq(fc_xpair(3), 7, "MX: t, v = w.p.idv(q).rs(5)");
+assert_eq(fc_xpair(4), 5, "MX: return gw(&w).p.rs(3); (gw generic, : *W) forwards the pair to a caller ABOVE it");
+assert_eq(fc_xpair(5), 6, "MX: return gw<i64>(&w).p.rs(3); forwards the pair to a caller ABOVE it");
+assert_eq(fc_xt(), 34, "MX: an inferred generic step returning *T, w.gpx(&w).p.m2() (needs a call before)");
+assert_eq(fc_xu(), 34, "MX: an explicit generic step returning *T, w.gpx<W>(&w).p.m2()");
+assert_eq(fc_xpair(6), 5, "MX: return gwp(&w).p.rs(3); (gwp generic, : *T) forwards the pair to a caller ABOVE it");
+assert_eq(fc_ta(0), 34, "MT: t = (*pw).p.m2(), a dereference head");
+assert_eq(fc_ta(1), 57, "MT: t = (w).p.mm(5), a parenthesised name");
+assert_eq(fc_ta(2), 34, "MT: t = ((*pw).p.m2()), wrapped");
+assert_eq(fc_ta(3), 67, "MT: t = (p).mm(6), a single name's parenthesised head");
+assert_eq(fc_ta(4), 37, "MT: t = (w.p).mm(3), a parenthesised chain");
+assert_eq(fc_ta(5), 27, "MT: a for step, t = (*pw).p.mm(i)");
+assert_eq(fc_ta(6), 87, "MT: a global, GT = (w).p.mm(8)");
+assert_eq(fc_ta(7), 27, "MT: a global, GT = (GP).mm(2)");
+assert_eq(fc_ga * 10 + fc_gb, 34, "MZ: a top-level var a, b = GW.p.m2()");
+assert_eq(fc_gt.0 * 10 + fc_gt.1, 47, "MZ: a top-level tuple capture, GW.p.mm<i64>(4)");
+assert_eq(fc_gy, 7, "MZ: a top-level var a, b = GW.p.mm<f64>(2.5): its second value");
+assert_eq(fc_gz * 10 + fc_gw, 34, "MZ: a top-level parenthesised head, var a, b = (GW).p.m2()");
+assert_eq(fc_gtp.0 * 10 + fc_gtp.1, 57, "MZ: ... and a tuple capture, var t: (i64, i64) = (GW).p.mm(5)");
+assert_eq(fc_gq1 * 10 + fc_gq2, 34, "MZ: an explicit generic step mid-chain, var a, b = GW.p.gq<f64>(2.5).m2()");
+assert_eq(fc_gqt.0 * 10 + fc_gqt.1, 34, "MZ: ... a tuple capture, var t: (i64, i64) = GW.p.gq<f64>(2.5).m2()");
+assert_eq(fc_gq3 * 10 + fc_gq4, 34, "MZ: ... after a single name, var a, b = GP.gq<f64>(2.5).m2()");
+fc_gt2 = (FC_GW).p.mm(9);
+assert_eq(fc_gt2.0 * 10 + fc_gt2.1, 97, "MT: a top-level statement, GT = (GW).p.mm(9)");
+var fc_gxok = 0;
+if (fc_gx == 2.5) { fc_gxok = 1; }
+assert_eq(fc_gxok, 1, "MZ: ... and its first value an f64");
+var r = assert_summary();

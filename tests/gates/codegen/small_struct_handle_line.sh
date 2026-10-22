@@ -89,6 +89,26 @@
 #      inline; `_gci_below`'s refusal); GC4 one global declared a value and a handle refused by name
 #      (two shapes), two handle declarations fold; GC5 the sweep repeats: a global bound to a handle
 #      declared below it binds, and an operator on such a handle is pointer arithmetic
+#   GC11-GC14 (6.7.16, issues/2026-10-20-small-struct-global-from-pointer-global-declared-below-faults-at-startup.md),
+#      on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine), each refusal the ONE error at its token: a struct global of
+#      8 B or less from a source a declaration below it stores at run time is refused by name, as over 8 B (GC3, GC9,
+#      GC10) — GC11 the filed repro's four forms (`*GP8` 2:14, `GP8`, `*GPP8`, `(*GP8)` 2:13; SIGSEGV at startup
+#      through 6.7.15, `GP8` 0) and their controls declared above (6); GC12 `(GP8)`, `*(GP8 + 0)`, `**GPPP`, `*GW.p`
+#      (named by its last name, as over 8 B), a 4 B struct; GC13 a whole struct global, wrapped, a field chain's
+#      global and a call's value declared below (each read 0), a G a later literal supersedes (its sink copy still
+#      ran at startup), a pass-1 constant then a run-time store below; GC14 controls: a literal of constants below is
+#      the value from program start (6.7.16's D14 (a): 6), a pointer global an entry above stored and one below
+#      redeclares (6: the earlier store), G declared twice — its second copy below the entry that stores GP8 (6), a
+#      call's field through a fn declared below (6)
+#   GC15-GC17 (6.7.16, the user's D87 (a), 2026-10-20;
+#      issues/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md), on the same four legs:
+#      a `*U` global's NAME into an `S` declaration (U another struct) is refused by name at every size, as the `*U`
+#      local, `*GU` and `t = GU` are ("cannot copy 'GU' into a variable of a different struct/vector type: 't'") —
+#      GC15 the filed repro VERBATIM: one error at each of its six declarations (it printed 0999962938166293816:
+#      handles reading U's objects, Z8 / T8 GU8's address); GC16 each of them alone (the zone at the name, after the
+#      first statement at the `=`, a fn at the `=`, 16 B and 8 B), wrapped, a `Str` declared from a `*U`, a `*Str`
+#      into a P, a 4 B struct, another generic instance; GC17 controls: `var t: U = GU;` copies, `var t: *U = GU;`
+#      aliases (zone, after, fn), the same instance copies
 #   GP (Linux x86_64 + aarch64) a 7 B handle GLOBAL onto the last 7 bytes of a mapping: by value,
 #      returned, an operator's right operand, an if-expression branch, `c = G`, and at TOP LEVEL
 #      (a hidden global, no frame) — exit 0, no byte past the object read
@@ -631,6 +651,19 @@
 #   MU2 `_scv_arm` without its untyped peel           -> RED 9: R8 does not build x7 (the `p` rows), B3 u3 and take(c)
 #   MU3 `_dyn_want` without its `_scv_un` test         -> RED 1: B3's dyn row (BUILT: a copy); dyn_checked.sh V4d and
 #                                                      struct_receive_inference_checked.sh D1 x4 RED too
+# 6.7.16 BELOW-DECLARED SOURCE MUTATION LEDGER (GC11-GC14; each a scratch copy of the tree with the one change, its
+# compilers built from that copy, this gate run from the copy):
+#   MY1 `_gvr_below` answering 0 (= the tree before it) -> RED 60: GC11 / GC12 / GC13 x4
+#                                                      (the 15 refusals: compiled; their programs SIGSEGV / read 0)
+#   MY2 `_gvr_writes` never answering 1 (an earlier entry's store not seen) -> RED 4: GC14's
+#                                                      G-declared-twice row x4 (refused)
+#   MY3 `_gvr_const` answering 0 (a literal of constants below treated as a run-time
+#                                                      store) -> RED 4: GC14's literal-of-constants row x4 (refused)
+# 6.7.16 OTHER-STRUCT `*U` NAME MUTATION LEDGER (GC15-GC17, D87 (a); the same method):
+#   MY4 `_sci_gpu_type` answering 0 in a fn (the tree before it there) -> RED 20: GC15 x4 (the fn's two declarations
+#                                                      compiled), GC16's five fn rows x4 (16 B, 8 B, wrapped, a `*Str`)
+#   MY5 `_gz_pnu` answering 0 (the tree before it at top level) -> RED 40: GC15 x4, GC16's nine zone / after rows x4
+#                                                      (16 B, 8 B, wrapped, a `Str` declared, 4 B, another instance)
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): B3's `S8_add(a: S8, b: i64)` row runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
@@ -891,7 +924,7 @@ done
 TB=tests/tcyr/crossos/struct_operator_result_binding.tcyr
 [ -f "$TB" ] || { echo "FAIL: $G: $TB is missing"; exit 1; }
 NB=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TB")
-BFLOOR=95
+BFLOOR=118
 if [ "$NB" -lt "$BFLOOR" ]; then echo "FAIL: $G: only $NB rows in $TB (floor $BFLOOR) — rows were lost"; exit 1; fi
 echo "R8. $TB ($NB rows: an untyped binding of a whole struct result takes the struct type)"
 for leg in $XLEGS $OTHER; do
@@ -1327,6 +1360,131 @@ crow "GC5 a global bound to a handle declared BELOW it binds (the sweep repeats)
 crow "GC5 a dispatch on a handle declared below it is pointer arithmetic (the sweep repeats)" 0 \
   'include "lib/alloc.cyr"\nstruct S8 { v; }\nfn S8_add(a: S8, b: S8): S8 { var r: S8; r.v = 77; return r; }\nvar G2: S8 = G1 + 8;\nvar G1: S8 = alloc(8);\nsyscall(60, load64(&G2) - 8);\n'
 
+# glrow ID WANT SRC — on every leg the box runs (x86_64, aarch64, cx, PE): WANT `err:LINE` = refused with exactly one
+# error, LINE its text (a fixed string, from `error:<source>:L:C:`); else the program exits WANT on each leg.
+glrow() {
+    printf '%b' "$3" > "$D/gl.cyr"
+    for leg in x86 $OTHER; do
+        run_leg "$leg" "$D/gl.cyr" "$D/gl_$leg"
+        case "$2" in
+            err:*)
+                # `|| true`: a grep counting no match exits 1, which `bash -eo pipefail` turns into the gate's exit
+                ne=$(grep -c '^error' "$D/gl_$leg.err" || true)
+                if [ "$RC" -eq -1 ] && [ "$ne" -eq 1 ] && grep -qF -- "${2#err:}" "$D/gl_$leg.err"; then ok "$1 $leg: the one error"
+                else bad "$1 $leg: want the one error '${2#err:}': exit $RC, $ne error(s): $(grep '^error' "$D/gl_$leg.err" | head -2 | tr '\n' '|')"; fi ;;
+            *)
+                if [ "$RC" = "$2" ]; then ok "$1 $leg: exit $RC"
+                else bad "$1 $leg: exit $RC, want $2 $(grep -m1 '^error' "$D/gl_$leg.err")"; fi ;;
+        esac
+    done
+}
+echo "GC11-GC14. a struct global of 8 B or less from a source a later entry stores: refused by name, as over 8 B (x86_64, aarch64, cx, PE)"
+GL1='struct P8 { v; }\nvar A: P8 = '
+GL2=';\nvar GS8 = P8 { 6 };\nvar GP8: *P8 = &GS8;\nvar GPP8: **P8 = &GP8;\nsyscall(60, A.v);\n'
+GA1='struct P8 { v; }\nvar GS8 = P8 { 6 };\nvar GP8: *P8 = &GS8;\nvar GPP8: **P8 = &GP8;\nvar A: P8 = '
+GA2=';\nsyscall(60, A.v);\n'
+GLB="cannot copy-init 'A' from a global declared below it (declare the source first): "
+GLD="cannot copy-init 'A' from a dereference of a global or fn declared below it (declare it first): "
+glrow "GC11 the filed repro: var A: P8 = *GP8; above GP8 (SIGSEGV at startup through 6.7.15)" "err:error:<source>:2:14: $GLB'GP8'" "$GL1*GP8$GL2"
+glrow "GC11 = GP8 (exit 139; 0 through 6.7.15)" "err:error:<source>:2:13: $GLB'GP8'" "${GL1}GP8$GL2"
+glrow "GC11 = *GPP8" "err:error:<source>:2:13: $GLD'GPP8'" "$GL1*GPP8$GL2"
+glrow "GC11 = (*GP8)" "err:error:<source>:2:13: $GLD'GP8'" "$GL1(*GP8)$GL2"
+glrow "GC11 control: *GP8 with the sources declared above copies" 6 "$GA1*GP8$GA2"
+glrow "GC11 control: GP8 above" 6 "${GA1}GP8$GA2"
+glrow "GC11 control: *GPP8 above" 6 "$GA1*GPP8$GA2"
+glrow "GC11 control: (*GP8) above" 6 "$GA1(*GP8)$GA2"
+glrow "GC12 = (GP8)" "err:error:<source>:2:13: $GLB'GP8'" "$GL1(GP8)$GL2"
+glrow "GC12 = *(GP8 + 0)" "err:error:<source>:2:13: $GLD'GP8'" "$GL1*(GP8 + 0)$GL2"
+glrow "GC12 = **GPPP (a ***P8 declared below)" "err:error:<source>:2:13: $GLD'GPPP'" "$GL1**GPPP;\nvar GPPP: ***P8 = &GPP8$GL2"
+glrow "GC12 = *GW.p (GW, a struct global holding a *P8, declared below: named by its last name, as over 8 B)" "err:error:<source>:3:13: $GLD'p'" \
+  'struct P8 { v; }\nstruct W { p: *P8; }\nvar A: P8 = *GW.p;\nvar GS8 = P8 { 6 };\nvar GW = W { &GS8 };\nsyscall(60, A.v);\n'
+glrow "GC12 a 4 B struct: var A: P4 = *GP4;" "err:error:<source>:2:14: $GLB'GP4'" \
+  'struct P4 { v: i32; }\nvar A: P4 = *GP4;\nvar GS4 = P4 { 6 };\nvar GP4: *P4 = &GS4;\nsyscall(60, A.v);\n'
+glrow "GC13 a whole struct global declared below, stored at run time (A.v read 0 through 6.7.15)" "err:error:<source>:3:13: $GLB'GS8'" \
+  'struct P8 { v; }\nfn f(): i64 { return 6; }\nvar A: P8 = GS8;\nvar GS8 = P8 { f() };\nsyscall(60, A.v);\n'
+glrow "GC13 = (GS8)" "err:error:<source>:3:13: $GLB'GS8'" \
+  'struct P8 { v; }\nfn f(): i64 { return 6; }\nvar A: P8 = (GS8);\nvar GS8 = P8 { f() };\nsyscall(60, A.v);\n'
+glrow "GC13 = GW.s, GW declared below" "err:error:<source>:5:13: $GLB'GW'" \
+  'struct P8 { v; }\nstruct W { s: P8; n; }\nfn f(): i64 { return 6; }\nvar GS = P8 { 6 };\nvar A: P8 = GW.s;\nvar GW = W { GS, f() };\nsyscall(60, A.v);\n'
+glrow "GC13 GS8 a call's value below" "err:error:<source>:3:13: $GLB'GS8'" \
+  'struct P8 { v; }\nfn mk(): P8 { var r: P8; r.v = 6; return r; }\nvar A: P8 = GS8;\nvar GS8: P8 = mk();\nsyscall(60, A.v);\n'
+glrow "GC13 a G a later literal supersedes still reads at startup (into a sink): refused" "err:error:<source>:2:14: $GLB'GP8'" \
+  'struct P8 { v; }\nvar A: P8 = *GP8;\nvar GS8 = P8 { 6 };\nvar GP8: *P8 = &GS8;\nvar A = P8 { 9 };\nsyscall(60, A.v);\n'
+glrow "GC13 a pass-1 constant then a run-time store, both below: refused" "err:error:<source>:2:14: $GLB'GP8'" \
+  'struct P8 { v; }\nvar A: P8 = *GP8;\nvar GS8 = P8 { 6 };\nvar GP8: *P8 = 0;\nvar GP8: *P8 = &GS8;\nsyscall(60, A.v);\n'
+glrow "GC14 control: a literal of constants below is the value from program start (6.7.16's D14 (a)): copied" 6 \
+  'struct P8 { v; }\nvar A: P8 = GS8;\nvar GS8 = P8 { 6 };\nsyscall(60, A.v);\n'
+glrow "GC14 control: GP8 stored by an entry above the copy, redeclared below: the earlier store is read" 6 \
+  'struct P8 { v; }\nvar GS8 = P8 { 6 };\nvar GT8 = P8 { 7 };\nvar GP8: *P8 = &GS8;\nvar A: P8 = *GP8;\nvar GP8: *P8 = &GT8;\nsyscall(60, A.v);\n'
+glrow "GC14 control: G declared twice, its second copy below the entry that stores GP8 (one below stores it again): 6" 6 \
+  'struct P8 { v; }\nvar GS8 = P8 { 6 };\nvar GT8 = P8 { 7 };\nvar A: P8 = GS8;\nvar GP8: *P8 = &GS8;\nvar A: P8 = *GP8;\nvar GP8: *P8 = &GT8;\nsyscall(60, A.v);\n'
+glrow "GC14 control: a call's field through a fn declared below (no global it reads) copies" 6 \
+  'struct P8 { v; }\nstruct W { s: P8; }\nvar GS = P8 { 6 };\nvar GW = W { GS };\nvar A: P8 = gw().s;\nfn gw(): *W { return &GW; }\nsyscall(60, A.v);\n'
+
+echo "GC15-GC17. a *U global's name into a struct S declaration: refused by name at every size (6.7.16's D87 (a); x86_64, aarch64, cx, PE)"
+# The filed repro, verbatim (docs/development/issues/2026-10-20-other-struct-pointer-global-name-into-struct-declaration-not-refused.md):
+# compiled and printed 0999962938166293816 through 6.7.15 (handles on U's objects; Z8 / T8 GU8's address).
+cat > "$D/d87.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+struct P { x; y; }
+struct U { a; b; }
+struct P8 { v; }
+struct U8 { w; }
+var GSU = U { 3, 4 };
+var GU: *U = &GSU;
+var GSU8 = U8 { 6 };
+var GU8: *U8 = &GSU8;
+var Z: P = GU;             # the declaration zone: a `*U` global's name into a P global
+var Z8: P8 = GU8;
+fmt_int(0);
+var T: P = GU;             # after the first statement
+var T8: P8 = GU8;
+fn f(): i64 { var t: P = GU; var t8: P8 = GU8; GSU.b = 9; GSU8.w = 9; return t.y * 10 + t8.v; }
+fmt_int(f()); fmt_int(Z.y); fmt_int(T.y); fmt_int(Z8.v); fmt_int(T8.v);
+syscall(60, 0);
+EOF
+D87W="11:12:GU:Z 12:14:GU8:Z8 14:10:GU:T 15:12:GU8:T8 16:24:GU:t 16:41:GU8:t8"
+for leg in x86 $OTHER; do
+    run_leg "$leg" "$D/d87.cyr" "$D/d87_$leg"
+    # `|| true`: a grep counting no match exits 1, which `bash -eo pipefail` turns into the gate's exit
+    ne=$(grep -c '^error' "$D/d87_$leg.err" || true)
+    miss=""
+    for w in $D87W; do
+        lc=${w%%:*}; r=${w#*:}; lc="$lc:${r%%:*}"; r=${r#*:}; sn=${r%%:*}; dn=${r#*:}
+        grep -qF "error:<source>:$lc: cannot copy '$sn' into a variable of a different struct/vector type: '$dn'" "$D/d87_$leg.err" || miss="$miss $lc"
+    done
+    if [ "$RC" -eq -1 ] && [ "$ne" -eq 6 ] && [ -z "$miss" ]; then ok "GC15 the filed repro verbatim $leg: refused at each of its six declarations, once"
+    else bad "GC15 the filed repro verbatim $leg: exit $RC, $ne error(s), missing:$miss: $(grep '^error' "$D/d87_$leg.err" | head -3 | tr '\n' '|')"; fi
+done
+GU1='struct P { x; y; }\nstruct U { a; b; }\nstruct P8 { v; }\nstruct U8 { w; }\nvar GSU = U { 3, 4 };\nvar GU: *U = &GSU;\nvar GSU8 = U8 { 6 };\nvar GU8: *U8 = &GSU8;\n'
+GUA='var k = 0;\nk = 1;\n'
+GUM="into a variable of a different struct/vector type: "
+glrow "GC16 the zone, 16 B: var t: P = GU;" "err:error:<source>:9:12: cannot copy 'GU' $GUM't'" "${GU1}var t: P = GU;\nsyscall(60, t.y);\n"
+glrow "GC16 the zone, 8 B: var t: P8 = GU8;" "err:error:<source>:9:13: cannot copy 'GU8' $GUM't'" "${GU1}var t: P8 = GU8;\nsyscall(60, t.v);\n"
+glrow "GC16 after the first statement, 16 B" "err:error:<source>:11:10: cannot copy 'GU' $GUM't'" "${GU1}${GUA}var t: P = GU;\nsyscall(60, t.y);\n"
+glrow "GC16 after the first statement, 8 B" "err:error:<source>:11:11: cannot copy 'GU8' $GUM't'" "${GU1}${GUA}var t: P8 = GU8;\nsyscall(60, t.v);\n"
+glrow "GC16 in a fn, 16 B" "err:error:<source>:9:24: cannot copy 'GU' $GUM't'" "${GU1}fn f(): i64 { var t: P = GU; return t.y; }\nsyscall(60, f());\n"
+glrow "GC16 in a fn, 8 B" "err:error:<source>:9:25: cannot copy 'GU8' $GUM't'" "${GU1}fn f(): i64 { var t: P8 = GU8; return t.v; }\nsyscall(60, f());\n"
+glrow "GC16 wrapped, the zone: (GU)" "err:error:<source>:9:12: cannot copy 'GU' $GUM't'" "${GU1}var t: P = (GU);\nsyscall(60, t.y);\n"
+glrow "GC16 wrapped, after the first statement: ((GU8))" "err:error:<source>:11:11: cannot copy 'GU8' $GUM't'" "${GU1}${GUA}var t: P8 = ((GU8));\nsyscall(60, t.v);\n"
+glrow "GC16 wrapped, in a fn: (GU)" "err:error:<source>:9:24: cannot copy 'GU' $GUM't'" "${GU1}fn f(): i64 { var t: P = (GU); return t.y; }\nsyscall(60, f());\n"
+glrow "GC16 a Str declared from a *U global" "err:error:<source>:10:14: cannot copy 'GU' $GUM't'" "include \"lib/str.cyr\"\n${GU1}var t: Str = GU;\nsyscall(60, 0);\n"
+glrow "GC16 a *Str global into a P, in a fn" "err:error:<source>:11:24: cannot copy 'GS' $GUM't'" "include \"lib/str.cyr\"\n${GU1}var GS: *Str = 0;\nfn f(): i64 { var t: P = GS; return 0; }\nsyscall(60, f());\n"
+glrow "GC16 a 4 B struct" "err:error:<source>:5:13: cannot copy 'GU4' $GUM't'" \
+  'struct P4 { v: i32; }\nstruct U4 { w: i32; }\nvar GS4 = U4 { 6 };\nvar GU4: *U4 = &GS4;\nvar t: P4 = GU4;\nsyscall(60, t.v);\n'
+glrow "GC16 another instance: a *Box<i32> into a Box<i64>" "err:error:<source>:4:19: cannot copy 'GBP' $GUM't'" \
+  'struct Box<T> { v: T; n; }\nvar GB = Box<i32> { 3, 4 };\nvar GBP: *Box<i32> = &GB;\nvar t: Box<i64> = GBP;\nsyscall(60, t.n);\n'
+glrow "GC17 control: var t: U = GU; copies in the zone (a later write to GSU leaves t)" 4 "${GU1}var t: U = GU;\nGSU.b = 9;\nsyscall(60, t.b);\n"
+glrow "GC17 control: ... after the first statement" 4 "${GU1}${GUA}var t: U = GU;\nGSU.b = 9;\nsyscall(60, t.b);\n"
+glrow "GC17 control: ... in a fn" 4 "${GU1}fn f(): i64 { var t: U = GU; GSU.b = 9; return t.b; }\nsyscall(60, f());\n"
+glrow "GC17 control: var t: U8 = GU8; copies (8 B)" 6 "${GU1}var t: U8 = GU8;\nGSU8.w = 9;\nsyscall(60, t.w);\n"
+glrow "GC17 control: var t: *U = GU; aliases in the zone" 9 "${GU1}var t: *U = GU;\nGSU.b = 9;\nsyscall(60, t.b);\n"
+glrow "GC17 control: ... after the first statement" 9 "${GU1}${GUA}var t: *U = GU;\nGSU.b = 9;\nsyscall(60, t.b);\n"
+glrow "GC17 control: ... in a fn" 9 "${GU1}fn f(): i64 { var t: *U = GU; GSU.b = 9; return t.b; }\nsyscall(60, f());\n"
+glrow "GC17 control: the same instance *Box<i32> into a Box<i32> copies" 4 \
+  'struct Box<T> { v: T; n; }\nvar GB = Box<i32> { 3, 4 };\nvar GBP: *Box<i32> = &GB;\nvar t: Box<i32> = GBP;\nsyscall(60, t.n);\n'
+
 echo "CP. struct copies through a *T of 8 B or less: another struct type refused by name, as over 8 B (x86)"
 crow "CP1 l = pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var l: S8; l.v = 1; l = pu; return l.v; }\nsyscall(60, f());\n'
@@ -1348,9 +1506,9 @@ crow "CP6 p = pu (a *U8 into a *S8) rebinds" 17 \
 echo "CQ. a struct copy through a *T global / : *T call / *T field: another struct type refused by name (x86)"
 crow "CQ1 l = GU (GU: *U8 a global) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nvar GU: *U8 = &XU;\nfn f() { var l: S8; l.v = 1; l = GU; return l.v; }\nsyscall(60, f());\n'
-crow "CQ2 l = gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu' into a variable of a different struct/vector type: 'l'" \
+crow "CQ2 l = gu() (a : *U8 fn) refused" "refuse:cannot copy 'gu()' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nvar XU = U8 { 4 };\nfn gu(): *U8 { return &XU; }\nfn f() { var l: S8; l.v = 1; l = gu(); return l.v; }\nsyscall(60, f());\n'
-crow "CQ3 l = w.pu (a *U8 field) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
+crow "CQ3 l = w.pu (a *U8 field) refused" "refuse:cannot copy 'w.pu' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nstruct WU { pu: *U8; }\nvar XU = U8 { 4 };\nfn f() { var w = WU { &XU }; var l: S8; l.v = 1; l = w.pu; return l.v; }\nsyscall(60, f());\n'
 crow "CQ4 G = GU at 16 B (GU: *UH) refused" "refuse:cannot copy 'GU' into a variable of a different struct/vector type: 'G'" \
   'struct H { v; w; }\nstruct UH { u; x; }\nvar XU = UH { 4, 0 };\nvar GU: *UH = &XU;\nvar G = H { 0, 0 };\nfn f() { G = GU; return G.v; }\nsyscall(60, f());\n'
@@ -2062,4 +2220,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15); **pp through a **S is the struct value (R16, the filed repros R16a-R16c); a top-level var G: S = *GPP copies, and var G: S = P from a *S global's name (R17, GC9, GC10)"
+echo "PASS: $G — a struct local or global of 8 B or less from a non-struct-value initialiser is a handle, as over 8 B: the filed repro (R0) and every initialiser / consumer / size row for locals (R1) and globals (R2) on x86_64 / IR / DCE / aarch64 / cx / PE, the compile rows (C, GC), no read past a 7 B object, local or global (P, GP), nor past a by-value receiver (PS) or a dereferenced source (PD), nor past a dereference of a 1..7 B struct in any value use (PX) or of a zero-size one (PZ), nor past a whole struct-typed field of 1..8 B in any value use, its padding 0 (PF, FP), an async body (AS); a pointer into a by-value struct parameter of 8 B or less passes its struct (R3, the filed repro R4, \`n + &x\` too: R4n, no read past it: PP); a struct copy through a *T of 8 B or less copies the struct (R5, CP, no byte past it: PM); a struct-typed field or a *T dereference as an operator's left operand dispatches (R6, the filed repro R7, F, GC8); an untyped binding of a struct-returning operator takes its type at every size (R8, B); a struct copy through a *T global, a : *T call or a *T field copies the struct (R9, CQ, no byte past it: PQ); a whole dereference of a *S as an address-passed argument or right operand passes its struct, a dereference of an address-of too (R10, the filed repros R10a, D); an assignment from a dereference of a *S copies the struct (R11); a generic call declared : *T is a struct source (R12); a *T returned by value from a struct fn is the struct it points at (R13), and return &s; is the struct (R13a); a struct value into a *S global copies into its pointee (R14); *p = v through a *S copies the struct (R15); **pp through a **S is the struct value (R16, the filed repros R16a-R16c); a top-level var G: S = *GPP copies, and var G: S = P from a *S global's name (R17, GC9, GC10); a struct global of 8 B or less from a source a declaration below it stores is refused by name, as over 8 B (GC11-GC14); a *U global's name into a struct S declaration is refused by name at every size (GC15-GC17)"

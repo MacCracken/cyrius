@@ -306,6 +306,69 @@ fn p_mchain_h() { var a: H = H { 5, 1 }; var c = (a.d().d()); return c.v + c.w; 
 fn p_scalar_8() { var a: S8 = S8 { 4 }; var b: S8 = S8 { 70 }; var c: i64 = (a + b); return c; }
 fn p_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = (a - b); return r + 1; }
 
+# ── 6.7.16 (the user's decision D85 (a), 2026-10-20): a GENERIC operator fn binds its type parameters as its call ──
+# does (issues/2026-10-20-generic-operator-fn-dispatched-at-its-i64-base.md). With `fn GB1_add<T>(l: GB1, r: T):
+# GG1<T>`, `b + p` (p a GPt) called the i64 base — `y.v` held p's address, `y.v.a` was refused — where `GB1_add(b, p)`
+# calls `GB1_add$GPt`. The left operand is argument 0, the right one argument 1, each read as the call reads it: in a
+# fn (GO1-GO17, GO21-GO23: a call result as the left operand, its 8 / 16 / 24 B value held while the instance is made),
+# in the declaration zone (GO18, GO19: a fn body reads it before the replay) and after the first statement (GO20, at the
+# end); a scalar right operand (GO2) and one the call binds nothing from (GO15) are the base.
+struct GG1<T> { v: T; }
+struct GBx<T> { v: T; }
+struct GPt { a; }
+struct GQ2 { a; b; }
+struct GQ3 { a; b; c; }
+struct GW1 { n; s: GPt; }
+struct GB1 { a; }
+struct GC1 { a; }
+struct GD1 { a; }
+struct GE1 { a; }
+struct GF1 { a; }
+fn GB1_add<T>(l: GB1, r: T): GG1<T> { var g: GG1<T>; g.v = r; return g; }
+fn GB1_sub<T>(l: GB1, r: T): GG1<T> { var g: GG1<T>; g.v = r; return g; }
+fn GB1_mul<T>(l: GB1, r: T): GG1<T> { var g: GG1<T>; g.v = r; return g; }
+fn GB1_div<T>(l: GB1, r: T): GG1<T> { var g: GG1<T>; g.v = r; return g; }
+fn GC1_add<T>(l: T, r: GPt): GG1<T> { var g: GG1<T>; g.v = l; return g; }
+fn GD1_add<T>(l: GD1, r: GBx<T>): GG1<T> { var g: GG1<T>; g.v = r.v; return g; }
+fn GE1_add<T>(l: GE1, r: T): T { return r; }
+fn GF1_add<T>(l: GF1, r: *T): GG1<T> { var g: GG1<T>; g.v = *r; return g; }
+fn gmkp(n): GPt { var p: GPt; p.a = n; return p; }
+fn gid<T>(x: T): T { return x; }
+fn gmkg<T>(v: T): GG1<T> { var g: GG1<T>; g.v = v; return g; }
+fn gtake(g: GG1<GPt>): i64 { return g.v.a; }
+fn gret(b: GB1, p: GPt): GG1<GPt> { return b + p; }
+fn go_repro() { var b = GB1 { 30 }; var p = GPt { 33 }; var y = b + p; var z = GB1_add(b, p); return y.v.a * 100 + z.v.a; }
+fn go_ctl() { var b = GB1 { 30 }; var p = 3; var y = b + p; var z = GB1_add(b, p); return y.v * 10 + z.v; }
+fn go_ann() { var b = GB1 { 30 }; var p = GPt { 33 }; var y: GG1<GPt> = b + p; return y.v.a; }
+fn go_left() { var c = GC1 { 33 }; var p = GPt { 1 }; var y = c + p; return y.v.a; }
+fn go_box() { var d = GD1 { 1 }; var p = GPt { 33 }; var x: GBx<GPt> = GBx<GPt> { p }; var xi: GBx<i32> = GBx<i32> { 33 }; var y = d + x; var y2 = d + xi; return y.v.a * 100 + y2.v; }
+fn go_f64() { var b = GB1 { 30 }; var y = b + 1.5; return f64_to(y.v * 22.0); }
+fn go_16() { var b = GB1 { 30 }; var q = GQ2 { 30, 3 }; var y = b + q; return y.v.a + y.v.b; }
+fn go_24() { var b = GB1 { 30 }; var q = GQ3 { 30, 2, 1 }; var y = b + q; return y.v.a + y.v.b + y.v.c; }
+fn go_t() { var e = GE1 { 1 }; var p = GPt { 33 }; var y = e + p; return y.a; }
+fn go_ptr() { var f = GF1 { 1 }; var p = GPt { 33 }; var y = f + &p; return y.v.a; }
+fn go_shapes() { var b = GB1 { 30 }; var p = GPt { 33 }; var q: *GPt = &p; var y1 = b + (p); var y2 = b + *q; var y3 = b + gmkp(33); var y4 = b + gid(p); var y5 = b + gmkg(p); return y1.v.a + y2.v.a + y3.v.a + y4.v.a + y5.v.v.a - 132; }
+fn go_ops() { var b = GB1 { 30 }; var p = GPt { 11 }; var x = b - p; var y = b * p; var z = b / p; return x.v.a + y.v.a + z.v.a; }
+fn go_arg() { var b = GB1 { 30 }; var p = GPt { 33 }; return gtake(b + p); }
+fn go_ret() { var b = GB1 { 30 }; var p = GPt { 33 }; var y = gret(b, p); return y.v.a; }
+fn go_field() { var b = GB1 { 30 }; var w: GW1; w.n = 1; w.s.a = 33; var y = b + w.s; var z = GB1_add(b, w.s); return y.v - z.v + 33; }
+fn go_wrap() { var b = GB1 { 30 }; var p = GPt { 33 }; return (b + p).v.a; }
+fn go_clos() { var b = GB1 { 30 }; var p = GPt { 33 }; var k = |n| { var y = b + p; return y.v.a + n; }; return callptr(k, 0); }
+struct GL2 { a; b; }
+struct GL3 { a; b; c; }
+fn GL2_add<T>(l: GL2, r: T): GG1<T> { var g: GG1<T>; g.v = r; return g; }
+fn GL3_add<T>(l: GL3, r: T): GG1<T> { var g: GG1<T>; g.v = r; return g; }
+fn gmkb(n): GB1 { var b: GB1; b.a = n; return b; }
+fn gmkl2(n): GL2 { var l: GL2; l.a = n; l.b = 1; return l; }
+fn gmkl3(n): GL3 { var l: GL3; l.a = n; l.b = 1; l.c = 2; return l; }
+fn go_lcall() { var p = GPt { 33 }; var y = gmkb(30) + p; return y.v.a; }
+fn go_lcall2() { var p = GPt { 33 }; var y = gmkl2(30) + p; var z = gmkl2(30) + gmkp(1); return y.v.a + z.v.a - 1; }
+fn go_lcall3() { var p = GPt { 33 }; var y = gmkl3(30) + p; return y.v.a; }
+var GOB = GB1 { 30 };
+var GOP = GPt { 33 };
+var GOY = GOB + GOP;
+fn go_zread() { return GOY.v.a; }
+
 # ── top level: an untyped global keeps the operator result's word, untyped, as over 8 B ──
 var GA = S8 { 4 };
 var GB = S8 { 70 };
@@ -413,4 +476,29 @@ assert_eq(p_mchain_h(), 24, "p: (a.d().d()) at 16 B");
 assert_eq(p_scalar_8(), 82, "p: var c: i64 = (a + b) at 8 B: a scalar annotation keeps the struct's one word");
 assert_eq(p_int_h(), 67, "p: (a - b) returning an integer stays an integer");
 assert_eq(TI, 7, "top level: an if-expression's untyped global keeps the word");
+assert_eq(go_repro(), 3333, "GO1 (D85 (a)): var y = b + p; calls GB1_add<GPt>, as GB1_add(b, p) does (y.v held p's address)");
+assert_eq(go_ctl(), 33, "GO2: var p = 3; b + p binds i64 and calls the base, as the call does");
+assert_eq(go_ann(), 33, "GO3: var y: GG1<GPt> = b + p;");
+assert_eq(go_left(), 33, "GO4: T on the left operand (GC1_add<T>(l: T, r: GPt)) binds the left struct");
+assert_eq(go_box(), 3333, "GO5: a struct carrier r: GBx<T> binds GPt from GBx<GPt>, i32 from GBx<i32>");
+assert_eq(go_f64(), 33, "GO6: b + 1.5 binds f64 (GG1<f64>)");
+assert_eq(go_16(), 33, "GO7: a 16 B instance result (GG1<GQ2>)");
+assert_eq(go_24(), 33, "GO8: a 24 B instance result (GG1<GQ3>, its retptr)");
+assert_eq(go_t(), 33, "GO9: a : T return is the struct T binds");
+assert_eq(go_ptr(), 33, "GO10: r: *T given &p binds GPt");
+assert_eq(go_shapes(), 33, "GO11: (p), *q, gmkp(33), gid(p), gmkg(p) bind as call arguments do");
+assert_eq(go_ops(), 33, "GO12: - * / dispatch their instances too");
+assert_eq(go_arg(), 33, "GO13: gtake(b + p) passes the GG1<GPt>");
+assert_eq(go_ret(), 33, "GO14: return b + p; from a fn returning GG1<GPt>");
+assert_eq(go_field(), 33, "GO15: a field right operand binds nothing (the base), as GB1_add(b, w.s) does");
+assert_eq(go_wrap(), 33, "GO16: (b + p).v.a");
+assert_eq(go_clos(), 33, "GO17: in a closure body");
+assert_eq(GOY.v.a, 33, "GO18: the declaration zone: var GOY = GOB + GOP; is GG1<GPt>");
+assert_eq(go_zread(), 33, "GO19: the zone: a fn body reads GOY.v.a before the replay");
+assert_eq(go_lcall(), 33, "GO21: a call result as the left operand (8 B, in rax while the instance is made)");
+assert_eq(go_lcall2(), 33, "GO22: a 16 B call result as the left operand (rax:rdx)");
+assert_eq(go_lcall3(), 33, "GO23: a 24 B call result as the left operand (its temp)");
+var GOA = GOB + GOP;
+var GOT: GG1<GPt> = GOB + GOP;
+assert_eq(GOA.v.a + GOT.v.a, 66, "GO20: after the first statement, untyped and annotated");
 var r = assert_summary();

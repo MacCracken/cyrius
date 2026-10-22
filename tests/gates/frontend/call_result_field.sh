@@ -50,6 +50,20 @@
 #          once); C7 `.tot()` on the result; C8 the statement form; C9 / C10 a known `&f` callee
 #          (`fncall1(&mk3, 5).b`, `callptr(&mk3, 5).tot()`: D16's rows, whose own skip in `_icall_chain`
 #          is now `_method_chain`'s).
+#   L1-L9  (6.7.16) the rest of a REFUSED value's chain is stepped whole, a method's explicit list `.m<..>(..)`
+#          too, so the refusal is the one error: a top-level struct result (`mk().mm<f64>(2.5)` and past a field
+#          L1 / L2, `_call_field`; a method's L3 and a generic method's L4, `_method_chain` -> `_mchain_skip`), a
+#          result with no struct in a fn (L5 a free call, L6 a method), a stray tuple literal (L7 `.m(3)`, L8
+#          `.mm<f64>(2.5)`, L9 `.a[0]`, `_tup_lit_stray`). Each added "undefined variable 'f64'" / "expected ';',
+#          got '>'" / "expected ';', got '('" / "cannot subscript field 'a'" (the chain skips stepped `.name` and
+#          `(..)` but no list; `_tup_lit_stray` `.name` alone) — met in the review of 6.7.16's s16b lane.
+#   N2/N3  (6.7.16) a method's result with no struct is named as the source spells it, `'P.sc'` (it printed the fn
+#          table's `P_sc`), and a multi-value one's hint spells the call as written, `var t: (i64, i64) =
+#          w.p.m2(..);` (it printed `P_m2(..)`) — `_call_fld_err` / `_mret_fld_err`, met with L6.
+#   N4/N5  (6.7.16) an instance minted inside a statement already in error leaves its panic latch set: the inner
+#          `q.idv(q)` / `w.p.idv(q)` cleared it (PARSE_FN_DEF, for the instance's own body) and the statement
+#          reported again, "cannot take a field of the result of 'P.idv'" after the destructure's refusal
+#          (`_inst_relatch`, met with the review's inferred-step probes).
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
 #   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
@@ -72,6 +86,12 @@
 # 6.7.14 (C4-C10):
 #   `_method_chain`'s top-level arm without its `_ret_agg_class` test (the tree before, less
 #     `_icall_chain`'s own skip)                            -> RED C4 C5 C7 C8 C9 C10 (two errors); C6 green
+# 6.7.16 (L1-L9):
+#   the tree before (b140b51a9: `_mchain_skip` no list, `_call_field` / `_tup_lit_stray` stepping `.name` and one
+#     `(..)`)                                               -> RED 9: L1-L9 (2 or 3 error lines each)
+#   the tree before the method's name (f04b87953)           -> RED 2: N2 (`P_sc`), N3 (`P_m2`, `P_m2(..)`); and
+#                                                              tuple_checked R15c, struct_value_codegen MP4 / MP5
+#   the tree before `_inst_relatch` (be2efe073)             -> RED 2: N4, N5 (2 error lines each)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -284,6 +304,68 @@ refuse R2 "is returned in two registers, so \`return\` takes a local of that str
 var r = 0; syscall(60, r);
 "
 
+echo "a refused value's chain is stepped whole, a method's explicit list too (6.7.16):"
+L='include "lib/syscalls.cyr"
+struct P { k; n; }
+impl P { fn idv<V>(self, x: V): V { return x; } fn q(self): P { return self; } fn mm<V>(self, x: V): (V, i64) { return (x, 7); } fn sc(self): i64 { return 1; } }
+fn mk(): P { var p: P; return p; }
+fn fs(): i64 { return 1; }
+var GP: P = P { 1, 2 };
+'
+refuse L1 "'mk' $MT" "${L}var gx = mk().mm<f64>(2.5);
+syscall(60, 0);
+" "" one
+refuse L2 "'mk' $MT" "${L}var gx = mk().k.mm<f64>(1).n;
+syscall(60, 0);
+" "" one
+refuse L3 "'P.q' $MT" "${L}var gx = GP.q().mm<f64>(2.5).k;
+syscall(60, 0);
+" "" one
+refuse L4 "'P.idv<P>' $MT" "${L}var gx = GP.idv(GP).mm<f64>(2.5);
+syscall(60, 0);
+" "" one
+refuse L5 "cannot take a field of the result of 'fs': it does not return a struct" "${L}fn main(): i64 { var x = fs().mm<f64>(2.5); return 0; }
+syscall(60, main());
+" "" one
+refuse L6 "cannot take a field of the result of" "${L}fn main(): i64 { var p: P; var x = p.sc().mm<f64>(2.5); return 0; }
+syscall(60, main());
+" "" one
+refuse L7 "a tuple \`( .. )\` is a value only as" "${L}fn main(): i64 { var x = (1, 2).m(3); return 0; }
+syscall(60, main());
+" "" one
+refuse L8 "a tuple \`( .. )\` is a value only as" "${L}fn main(): i64 { var x = (1, 2).mm<f64>(2.5); return 0; }
+syscall(60, main());
+" "" one
+refuse L9 "a tuple \`( .. )\` is a value only as" "${L}fn main(): i64 { var x = (1, 2).a[0]; return 0; }
+syscall(60, main());
+" "" one
+
+echo "a method's result with no struct is named as the source spells it (6.7.16):"
+NM='include "lib/syscalls.cyr"
+struct P { k; n; }
+struct W { p: P; }
+impl P { fn m2(self): (i64, i64) { return (3, 4); } fn sc(self): i64 { return 1; } }
+'
+refuse N2 "cannot take a field of the result of 'P\\.sc': it does not return a struct" "${NM}fn main(): i64 { var p: P; var x = p.sc().k; return 0; }
+syscall(60, main());
+" "" one
+refuse N3 "cannot take a field of the result of 'P\\.m2': it returns 2 values - bind them first, \`var t: (i64, i64) = w\\.p\\.m2(\\.\\.);\`" "${NM}fn main(): i64 { var w: W; var x = w.p.m2().k; return 0; }
+syscall(60, main());
+" "" one
+
+echo "an instance minted inside a statement already in error reports nothing more (6.7.16):"
+NL='include "lib/syscalls.cyr"
+struct P { k; }
+struct W { p: P; }
+impl P { fn idv<V>(self, x: V): V { return x; } fn m2(self): (i64, i64) { return (3, 4); } }
+'
+refuse N4 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var q: P = P { 1 }; var a, b = q.idv(q.idv(q)).m2(); return a * 10 + b; }
+syscall(60, main());
+" "" one
+refuse N5 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var w: W; var q: P = P { 1 }; var a, b = w.p.idv(w.p.idv(q)).m2(); return a * 10 + b; }
+syscall(60, main());
+" "" one
+
 echo "--syntax-only (the lint pre-pass):"
 printf '%s' 'fn main(): i64 {
     var r = other(3).y + mkq(1).v.w;
@@ -311,5 +393,5 @@ else
 fi
 
 echo "call_result_field: $pass passed, $fail failed"
-[ "$pass" -ge 28 ] || { echo "FAIL: call_result_field: only $pass of the 28 rows passed"; exit 1; }
+[ "$pass" -ge 41 ] || { echo "FAIL: call_result_field: only $pass of the 41 rows passed"; exit 1; }
 [ "$fail" -eq 0 ]

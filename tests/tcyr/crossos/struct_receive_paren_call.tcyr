@@ -206,12 +206,14 @@ fn tg_read2(): i64 { return TG3.v + TG4.v + zt4(TG8) + zt4(TG9) + zt4(TG11) + TG
 # --- 6.7.16: a generic method's generic struct result (issues/2026-10-18-zone-untyped-generic-method-generic-struct-result-binds-nothing.md) ---
 # `var y = b.mkg(P);` / `b.mkg<i32>(33)` with `fn mkg<T>(self, v: T): G1<T>` bound nothing in the zone (`y.v`: "no
 # struct type in scope for 'y'"); they are the instance the call reaches, as after the first statement (TN*, below). A
-# generic operator fn's result is its base (`ZB_add<T>`: the dispatch calls the base); TM9 an explicit generic method
+# generic operator fn bound to i64 (`GZB + 30`, `ZB_add<T>`) is its base, as its call's (6.7.16's D85 (a): a struct
+# binding is its instance, struct_operator_result_binding.tcyr's GO*); TM9 an explicit generic method
 # returning a plain struct.
 struct ZB { a; }
 impl ZB {
     fn zmkg<T>(self, v: T): G1<T> { var g: G1<T>; g.v = v; return g; }
     fn zmk<T>(self, v: T): P1 { var p: P1; p.a = v; return p; }
+    fn zidm<T>(self, v: T): T { return v; }
 }
 fn ZB_add<T>(l: ZB, r: T): G1<T> { var g: G1<T>; g.v = l.a + r; return g; }
 var GZB = ZB { 3 };
@@ -220,6 +222,16 @@ var TM7 = GZB.zmkg<i32>(33);
 var TM8 = GZB + 30;
 var TM9 = GZB.zmk<i32>(33);
 fn tm_read2(): i64 { return TM6.v.a + zt4(TM7) + TM8.v + TM9.a; }
+# 6.7.16 (issues/2026-10-20-zone-annotated-generic-method-instance-result-misread.md): ANNOTATED, the zone refused it
+# "the declaration zone misread whether the initializer of 'TM10' is a struct value"; TN10 / TN11 after a statement.
+var TM10: G1<P1> = GZB.zmkg(GP1);
+var TM11: G1<i32> = GZB.zmkg<i32>(33);
+fn tm_read3(): i64 { return TM10.v.a + zt4(TM11); }
+# 6.7.16 (issues/2026-10-20-zone-untyped-generic-method-t-return-binds-nothing.md): a generic method returning `: T` is the
+# struct T binds (TM12 bound nothing: "no struct type in scope for 'TM12'"; TM13 annotated was a misread refusal).
+var TM12 = GZB.zidm(GP1);
+var TM13: P1 = GZB.zidm(GP1);
+fn tm_read4(): i64 { return TM12.a + TM13.a; }
 # --- 6.7.16 (the user's decision D16 (a), 2026-10-19): an if-expression of struct branches binds the struct ---
 # `var G = if (c) { B1 } else { B1 };` at top level bound nothing: `G.a` was "no struct type in scope for 'G'", where in a fn
 # the line binds (issues/2026-10-18-top-level-untyped-if-expression-struct-result-binds-nothing.md). The zone here (read by
@@ -228,6 +240,10 @@ var TI1 = if (1 == 1) { GP1 } else { mk1() };
 var TI2 = (if (1 == 2) { GPM } else { GPM.dup() });
 var TI3 = TI2 + TI2;
 fn ti_read(): i64 { return TI1.a + TI2.a; }
+# 6.7.16 (issues/2026-10-20-zone-if-expression-generic-instance-branch-binds-nothing.md): branches that are a generic call's
+# or method's instance bind it (TI4 bound nothing: "no struct type in scope for 'TI4'").
+var TI4 = if (1 == 1) { mkg1(GP1) } else { GZB.zmkg(GP1) };
+fn ti_read2(): i64 { return TI4.v.a; }
 # --- 6.7.16: a `: Str` METHOD at top level routes its global as a Str (issues/2026-10-18-top-level-untyped-str-method-global-
 # prints-header-bytes.md) ---
 # `var s = BB.mks();` recorded no call (the record wanted `IDENT (`), so `println(s)` printed the header's bytes and
@@ -381,13 +397,23 @@ assert_eq(TH10.v.zshow() + zt4(TH11), 67, "after a statement: a bounded ZG, a st
 test_group("6.7.16: a zone generic method's generic struct result is the instance its call reaches");
 assert_eq(TM6.v.a, 33, "the zone: GZB.zmkg(GP1) is a G1<P1> (refused at TM6.v before)");
 assert_eq(TM7.v + zt4(TM7), 66, "the zone: GZB.zmkg<i32>(33) is a G1<i32>");
-assert_eq(TM8.v, 33, "the zone: GZB + 30, a generic operator fn's base G1");
+assert_eq(TM8.v, 33, "the zone: GZB + 30, a generic operator fn bound to i64: its base G1");
 assert_eq(TM9.a, 33, "the zone: GZB.zmk<i32>(33), an explicit generic method's plain struct");
 assert_eq(tm_read2(), 132, "a fn body reads them before the replay");
 var TN6 = GZB.zmkg(GP1);
 var TN7 = GZB.zmkg<i32>(33);
 var TN8 = GZB + 30;
 assert_eq(TN6.v.a + zt4(TN7) + TN8.v, 99, "after a statement: the same three");
+TM10.v.a = 30;
+assert_eq(TM10.v.a + GP1.a + zt4(TM11), 96, "the zone: annotated G1<P1> / G1<i32> from GZB.zmkg (a misread refusal before); TM10 its own copy");
+assert_eq(tm_read3(), 63, "a fn body reads TM10 / TM11 before the replay");
+var TN10: G1<P1> = GZB.zmkg(GP1);
+var TN11: G1<i32> = GZB.zmkg<i32>(33);
+assert_eq(TN10.v.a + zt4(TN11), 66, "after a statement: the same two annotated");
+assert_eq(TM12.a + d1(TM13), 66, "the zone: GZB.zidm(GP1), a generic method's : T bound to P1, untyped and annotated");
+assert_eq(tm_read4(), 66, "a fn body reads TM12 / TM13 before the replay");
+var TN12 = GZB.zidm(GP1);
+assert_eq(TN12.a, 33, "after a statement: the same");
 
 test_group("6.7.16 (D16): an untyped top-level if-expression of struct branches binds the struct");
 assert_eq(TI1.a, 33, "the zone: if (..) { GP1 } else { mk1() } is a P1 (refused at TI1.a before)");
@@ -400,6 +426,9 @@ var TJ3 = TJ2 + TJ2;
 TJ1.a = 30;
 assert_eq(TJ1.a + d1(TJ1) + GP1.a, 93, "after a statement: TJ1 is its own P1 (GP1 unchanged), d1(TJ1) by value");
 assert_eq(TJ3.a, 34, "after a statement: an elif chain, TJ2 + TJ2 dispatches PM_add");
+assert_eq(TI4.v.a + ti_read2(), 66, "the zone: if (..) { mkg1(GP1) } else { GZB.zmkg(GP1) } is a G1<P1>, read by a fn body too");
+var TJ4 = if (1 == 1) { mkg1(GP1) } else { GZB.zmkg(GP1) };
+assert_eq(TJ4.v.a, 33, "after a statement: the same");
 
 test_group("6.7.16: a top-level : Str method global routes as a Str");
 assert_eq(who(TQ1) * 100 + who(TQ2) * 10 + who(TQ3), 222, "the zone: GQB.qs(), (GQB.qs()), GQW.b.qs() route to who_str (111 before)");

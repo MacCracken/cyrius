@@ -105,6 +105,45 @@
 #   MTG5 no rescan at pass 1's end                      -> RED 1: TG10 (mkl declared below gl: pass 1 knew no return)
 #   MTG6 `_gs_sres_big` without the size test (`_rcv_big` -> sid > 0) -> RED 2: TA2 TA3 (an 8-byte struct, a `Str`: refused as stubs)
 #   MTG7 `_gs_asg_sres` without its `*` test (the review fix) -> RED 3: TA6 TA6b TA6c (`*p = mkp();` made the generic a stub)
+#     (historical: since 6.7.16's D99 the store through `p` IS a stub line, `_gs_dsr_stmt` — MDP4 below)
+# 6.7.16 — D1 AT A GENERIC CALLEE (TG13-TG22, TA7-TA10, TGX TG13 / TG17 on aarch64 / cx / PE): its result is read at the
+# binding its call, method or operator makes (`_gs_gcall`, `_gs_mret`, `_gs_opg` — the operator's since D85 (a) calls
+# that instance). (Each mutant: a scratch copy of the tree with the one change, its cycc built from it, this gate run
+# from the copy; 2026-10-21.)
+#   MTG8 the tree before (6bc8e2206)                    -> RED 16: TG13-TG22 (compiled, no diagnostic), TGX TG13 / TG17
+#                                                         on aarch64 / cx / PE
+#   MTG9 `_gs_gcall` answering `_tok_init_sid`'s        -> RED 8: TG13 TG14 TG19 TG20 TG22, TGX TG13 x3
+#   MTG10 `_gs_mret` answering `_gs_ret_sid`'s          -> RED 2: TG15 TG16
+#   MTG11 `_gs_opg` answering the base's GFRS           -> RED 6: TG17 TG18 TG21, TGX TG17 x3
+#   MTG12 `_gs_mtp` without `_cam_open` (parameter k read at position k) -> RED 2: TG15 TG16
+# 6.7.16 (D99, the user's decision, 2026-10-20; issues/2026-10-20-dereference-store-of-struct-result-keeps-first-word.md) —
+# A STRUCT RESULT OVER 8 B STORED THROUGH A POINTER TO A SCALAR is refused, "cannot assign '*p: i64' from 'mkp', which
+# returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_sres`, src/frontend/parse.cyr), and in a
+# generic a store through a name reading T is a stub line (`_gs_dsr_stmt`): DP0 the filed repro verbatim (its one error,
+# at 6:44), DP1-DP21 (DP18b), DPK1-DPK4; TA6 / TA6n / TA6b / TA6c re-pinned (they compiled: the review's R1 had taken the
+# line out of D1's), TA11 a carrier's `*T` field, TA12 `*(p + 0)`, TA13 the base parse judges no T-typed store (a chain
+# the scan reads no struct from); DPX DP0 / TA6 / DP9 / DP13 on aarch64 / cx / PE. (Each mutant: a scratch copy of the
+# tree with the one change, its cycc built from it, this gate run from the copy; 2026-10-21.)
+#   MDP1 the tree before (94a79ff72)                    -> RED 42: TA6 TA6n TA6b TA6c TA11 TA12, DP0-DP21 (24 rows,
+#                                                         compiled), DPX x12
+#   MDP2 `_dsr_sres` answering 0                        -> RED 33: DP0-DP21, DPX DP0 / DP9 / DP13 x3
+#   MDP3 `_dsr_tdep` answering 0 (no T skip in a base)  -> RED 1: TA13 (refused at the generic's definition)
+#   MDP4 `_gs_dsr_stmt` answering 0                     -> RED 9: TA6 TA6n TA6b TA6c TA11 TA12, DPX TA6 x3
+#   MDP5 `_gs_dsr_dep` reading no annotation's T        -> RED 1: TA11 (the carrier `w: Wt<T>`)
+#   MDP6 `_dsr_amp` answering 0                         -> RED 2: DP20 DP20b
+#   MDP7 `_dsr_call` answering -1 (records only)        -> RED 25: every free-call row (DP0-DP12 DP17-DP21), DPX x6
+# 6.7.16 (met beside D99) — THE STUB SCAN READS EVERY STRUCT RESULT THE PARSE TYPES: an operator chain `a + c + a`
+# (`_gs_top_op`: the operator applied last, its left side's struct `_gs_sres`), a receiver in parentheses `(a + c).mk()`
+# (`_gs_recv_wrap`), a generic call or method as a receiver (`_gs_rcall_g`, `_gs_mret`), a local from a generic call
+# (`_gs_recv_gvar`) — each generic compiled at i64 and kept the first word. TG23-TG25c, TA14 / TA14b. (2026-10-21, as above:)
+#   MDS1 the tree before (b86a3cb01)                    -> RED 8: TG23 TG23b TG23c TG24 TG24b TG25 TG25b TG25c
+#   MDS2 `_gs_top_op` taking one operator only          -> RED 3: TG23 TG23b TG23c
+#   MDS3 `_gs_recv_wrap` answering 0                    -> RED 2: TG24 TG24b
+#   MDS4 `_gs_rcall_g` answering 0                      -> RED 2: TG25b TG25c
+#   MDS5 `_gs_recv_gvar` answering 0                    -> RED 1: TG25c
+#   MDS6 `_gs_recv_call` without its generic method arm -> RED 1: TG25
+#   (MDP3 re-measured: GREEN — TA13's `gdo` is a stub now, its base not parsed; `_dsr_tdep` is the base parse's guard
+#   for a T-typed store the scan would read no struct from, and no row reaches it)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -357,26 +396,28 @@ var G2: Q = Q0.gmk(nope);
 syscall(60, G2.a);
 ' one
 
+# 6.7.16 (issues/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): the PU*b / PU*c rows name the `*U`
+# value as written — `gu8()`, `w.pu` (they named `gu8`, `pu`, the chain's last name); PU*a / PU*e keep the name.
 echo "6.7.11 — a *U of another struct returned from a struct fn is refused by name, at every size:"
 MU="takes a value of that struct, or a pointer to one — got"
 refuse "PU3a 3 B: return GU3;" "$MU \`GU3\` (a \`\\*U3\`)" "$(printf 'struct S3 { a: i8; b: i8; c: i8; }\nstruct U3 { x: i8; y: i8; z: i8; }\nstruct W3 { pu: *U3; }\nvar GU3: *U3 = 0;\nfn gu3(): *U3 { return GU3; }\nfn f(): S3 { return GU3; }\nfn main(): i64 { var r: S3 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU3b 3 B: return gu3();" "$MU \`gu3\` (a \`\\*U3\`)" "$(printf 'struct S3 { a: i8; b: i8; c: i8; }\nstruct U3 { x: i8; y: i8; z: i8; }\nstruct W3 { pu: *U3; }\nvar GU3: *U3 = 0;\nfn gu3(): *U3 { return GU3; }\nfn f(): S3 { return gu3(); }\nfn main(): i64 { var r: S3 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU3c 3 B: var w: W3; return w.pu;" "$MU \`pu\` (a \`\\*U3\`)" "$(printf 'struct S3 { a: i8; b: i8; c: i8; }\nstruct U3 { x: i8; y: i8; z: i8; }\nstruct W3 { pu: *U3; }\nvar GU3: *U3 = 0;\nfn gu3(): *U3 { return GU3; }\nfn f(): S3 { var w: W3; return w.pu; }\nfn main(): i64 { var r: S3 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU3b 3 B: return gu3();" "$MU \`gu3()\` (a \`\\*U3\`)" "$(printf 'struct S3 { a: i8; b: i8; c: i8; }\nstruct U3 { x: i8; y: i8; z: i8; }\nstruct W3 { pu: *U3; }\nvar GU3: *U3 = 0;\nfn gu3(): *U3 { return GU3; }\nfn f(): S3 { return gu3(); }\nfn main(): i64 { var r: S3 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU3c 3 B: var w: W3; return w.pu;" "$MU \`w.pu\` (a \`\\*U3\`)" "$(printf 'struct S3 { a: i8; b: i8; c: i8; }\nstruct U3 { x: i8; y: i8; z: i8; }\nstruct W3 { pu: *U3; }\nvar GU3: *U3 = 0;\nfn gu3(): *U3 { return GU3; }\nfn f(): S3 { var w: W3; return w.pu; }\nfn main(): i64 { var r: S3 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU3d 3 B: return *GU3;" "$MU \`\\*GU3\` (a \`U3\`)" "$(printf 'struct S3 { a: i8; b: i8; c: i8; }\nstruct U3 { x: i8; y: i8; z: i8; }\nstruct W3 { pu: *U3; }\nvar GU3: *U3 = 0;\nfn gu3(): *U3 { return GU3; }\nfn f(): S3 { return *GU3; }\nfn main(): i64 { var r: S3 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU3e 3 B: var pu: *U3 = GU3; return (pu);" "$MU \`pu\` (a \`\\*U3\`)" "$(printf 'struct S3 { a: i8; b: i8; c: i8; }\nstruct U3 { x: i8; y: i8; z: i8; }\nstruct W3 { pu: *U3; }\nvar GU3: *U3 = 0;\nfn gu3(): *U3 { return GU3; }\nfn f(): S3 { var pu: *U3 = GU3; return (pu); }\nfn main(): i64 { var r: S3 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU8a 8 B: return GU8;" "$MU \`GU8\` (a \`\\*U8\`)" "$(printf 'struct S8 { v; }\nstruct U8 { u; }\nstruct W8 { pu: *U8; }\nvar GU8: *U8 = 0;\nfn gu8(): *U8 { return GU8; }\nfn f(): S8 { return GU8; }\nfn main(): i64 { var r: S8 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU8b 8 B: return gu8();" "$MU \`gu8\` (a \`\\*U8\`)" "$(printf 'struct S8 { v; }\nstruct U8 { u; }\nstruct W8 { pu: *U8; }\nvar GU8: *U8 = 0;\nfn gu8(): *U8 { return GU8; }\nfn f(): S8 { return gu8(); }\nfn main(): i64 { var r: S8 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU8c 8 B: var w: W8; return w.pu;" "$MU \`pu\` (a \`\\*U8\`)" "$(printf 'struct S8 { v; }\nstruct U8 { u; }\nstruct W8 { pu: *U8; }\nvar GU8: *U8 = 0;\nfn gu8(): *U8 { return GU8; }\nfn f(): S8 { var w: W8; return w.pu; }\nfn main(): i64 { var r: S8 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU8b 8 B: return gu8();" "$MU \`gu8()\` (a \`\\*U8\`)" "$(printf 'struct S8 { v; }\nstruct U8 { u; }\nstruct W8 { pu: *U8; }\nvar GU8: *U8 = 0;\nfn gu8(): *U8 { return GU8; }\nfn f(): S8 { return gu8(); }\nfn main(): i64 { var r: S8 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU8c 8 B: var w: W8; return w.pu;" "$MU \`w.pu\` (a \`\\*U8\`)" "$(printf 'struct S8 { v; }\nstruct U8 { u; }\nstruct W8 { pu: *U8; }\nvar GU8: *U8 = 0;\nfn gu8(): *U8 { return GU8; }\nfn f(): S8 { var w: W8; return w.pu; }\nfn main(): i64 { var r: S8 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU8d 8 B: return *GU8;" "$MU \`\\*GU8\` (a \`U8\`)" "$(printf 'struct S8 { v; }\nstruct U8 { u; }\nstruct W8 { pu: *U8; }\nvar GU8: *U8 = 0;\nfn gu8(): *U8 { return GU8; }\nfn f(): S8 { return *GU8; }\nfn main(): i64 { var r: S8 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU8e 8 B: var pu: *U8 = GU8; return (pu);" "$MU \`pu\` (a \`\\*U8\`)" "$(printf 'struct S8 { v; }\nstruct U8 { u; }\nstruct W8 { pu: *U8; }\nvar GU8: *U8 = 0;\nfn gu8(): *U8 { return GU8; }\nfn f(): S8 { var pu: *U8 = GU8; return (pu); }\nfn main(): i64 { var r: S8 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU16a 16 B: return GU16;" "$MU \`GU16\` (a \`\\*U16\`)" "$(printf 'struct S16 { v; w; }\nstruct U16 { u; t; }\nstruct W16 { pu: *U16; }\nvar GU16: *U16 = 0;\nfn gu16(): *U16 { return GU16; }\nfn f(): S16 { return GU16; }\nfn main(): i64 { var r: S16 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU16b 16 B: return gu16();" "$MU \`gu16\` (a \`\\*U16\`)" "$(printf 'struct S16 { v; w; }\nstruct U16 { u; t; }\nstruct W16 { pu: *U16; }\nvar GU16: *U16 = 0;\nfn gu16(): *U16 { return GU16; }\nfn f(): S16 { return gu16(); }\nfn main(): i64 { var r: S16 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU16c 16 B: var w: W16; return w.pu;" "$MU \`pu\` (a \`\\*U16\`)" "$(printf 'struct S16 { v; w; }\nstruct U16 { u; t; }\nstruct W16 { pu: *U16; }\nvar GU16: *U16 = 0;\nfn gu16(): *U16 { return GU16; }\nfn f(): S16 { var w: W16; return w.pu; }\nfn main(): i64 { var r: S16 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU16b 16 B: return gu16();" "$MU \`gu16()\` (a \`\\*U16\`)" "$(printf 'struct S16 { v; w; }\nstruct U16 { u; t; }\nstruct W16 { pu: *U16; }\nvar GU16: *U16 = 0;\nfn gu16(): *U16 { return GU16; }\nfn f(): S16 { return gu16(); }\nfn main(): i64 { var r: S16 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU16c 16 B: var w: W16; return w.pu;" "$MU \`w.pu\` (a \`\\*U16\`)" "$(printf 'struct S16 { v; w; }\nstruct U16 { u; t; }\nstruct W16 { pu: *U16; }\nvar GU16: *U16 = 0;\nfn gu16(): *U16 { return GU16; }\nfn f(): S16 { var w: W16; return w.pu; }\nfn main(): i64 { var r: S16 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU16d 16 B: return *GU16;" "$MU \`\\*GU16\` (a \`U16\`)" "$(printf 'struct S16 { v; w; }\nstruct U16 { u; t; }\nstruct W16 { pu: *U16; }\nvar GU16: *U16 = 0;\nfn gu16(): *U16 { return GU16; }\nfn f(): S16 { return *GU16; }\nfn main(): i64 { var r: S16 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU16e 16 B: var pu: *U16 = GU16; return (pu);" "$MU \`pu\` (a \`\\*U16\`)" "$(printf 'struct S16 { v; w; }\nstruct U16 { u; t; }\nstruct W16 { pu: *U16; }\nvar GU16: *U16 = 0;\nfn gu16(): *U16 { return GU16; }\nfn f(): S16 { var pu: *U16 = GU16; return (pu); }\nfn main(): i64 { var r: S16 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU24a 24 B: return GU24;" "$MU \`GU24\` (a \`\\*U24\`)" "$(printf 'struct S24 { v; w; x; }\nstruct U24 { u; t; s; }\nstruct W24 { pu: *U24; }\nvar GU24: *U24 = 0;\nfn gu24(): *U24 { return GU24; }\nfn f(): S24 { return GU24; }\nfn main(): i64 { var r: S24 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU24b 24 B: return gu24();" "$MU \`gu24\` (a \`\\*U24\`)" "$(printf 'struct S24 { v; w; x; }\nstruct U24 { u; t; s; }\nstruct W24 { pu: *U24; }\nvar GU24: *U24 = 0;\nfn gu24(): *U24 { return GU24; }\nfn f(): S24 { return gu24(); }\nfn main(): i64 { var r: S24 = f(); return 0; }\nsyscall(60, main());\n')" one
-refuse "PU24c 24 B: var w: W24; return w.pu;" "$MU \`pu\` (a \`\\*U24\`)" "$(printf 'struct S24 { v; w; x; }\nstruct U24 { u; t; s; }\nstruct W24 { pu: *U24; }\nvar GU24: *U24 = 0;\nfn gu24(): *U24 { return GU24; }\nfn f(): S24 { var w: W24; return w.pu; }\nfn main(): i64 { var r: S24 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU24b 24 B: return gu24();" "$MU \`gu24()\` (a \`\\*U24\`)" "$(printf 'struct S24 { v; w; x; }\nstruct U24 { u; t; s; }\nstruct W24 { pu: *U24; }\nvar GU24: *U24 = 0;\nfn gu24(): *U24 { return GU24; }\nfn f(): S24 { return gu24(); }\nfn main(): i64 { var r: S24 = f(); return 0; }\nsyscall(60, main());\n')" one
+refuse "PU24c 24 B: var w: W24; return w.pu;" "$MU \`w.pu\` (a \`\\*U24\`)" "$(printf 'struct S24 { v; w; x; }\nstruct U24 { u; t; s; }\nstruct W24 { pu: *U24; }\nvar GU24: *U24 = 0;\nfn gu24(): *U24 { return GU24; }\nfn f(): S24 { var w: W24; return w.pu; }\nfn main(): i64 { var r: S24 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU24d 24 B: return *GU24;" "$MU \`\\*GU24\` (a \`U24\`)" "$(printf 'struct S24 { v; w; x; }\nstruct U24 { u; t; s; }\nstruct W24 { pu: *U24; }\nvar GU24: *U24 = 0;\nfn gu24(): *U24 { return GU24; }\nfn f(): S24 { return *GU24; }\nfn main(): i64 { var r: S24 = f(); return 0; }\nsyscall(60, main());\n')" one
 refuse "PU24e 24 B: var pu: *U24 = GU24; return (pu);" "$MU \`pu\` (a \`\\*U24\`)" "$(printf 'struct S24 { v; w; x; }\nstruct U24 { u; t; s; }\nstruct W24 { pu: *U24; }\nvar GU24: *U24 = 0;\nfn gu24(): *U24 { return GU24; }\nfn f(): S24 { var pu: *U24 = GU24; return (pu); }\nfn main(): i64 { var r: S24 = f(); return 0; }\nsyscall(60, main());\n')" one
 
@@ -1239,6 +1280,33 @@ fn gd<T>(x: T): i64 { var p: *T = &x; *p = mkp(); return 9; }
 fn gdd<T>(x: T): i64 { var p: *T = &x; var pp: **T = &p; **pp = mkp(); return 9; }
 fn gdq<T>(x: T): i64 { var p: *T = &x; *p = mkp(); return x.b - 400; }
 fn mkl(): Q { var q: Q; q.a = 1; q.b = 2; return q; }
+struct G1<U> { v: U; }
+struct B1 { a; }
+struct E1 { a; }
+fn mkg1<U>(v: U): G1<U> { var g: G1<U>; g.v = v; return g; }
+fn B1_add<U>(l: B1, r: U): G1<U> { var g: G1<U>; g.v = r; return g; }
+fn E1_add<U>(l: E1, r: U): U { return r; }
+impl B1 {
+    fn mkg<U>(self, v: U): G1<U> { var g: G1<U>; g.v = v; return g; }
+    fn idm<U>(self, v: U): U { return v; }
+}
+fn pk2<A, C>(a: A, c: C): G1<A> { var g: G1<A>; g.v = a; return g; }
+struct G2<A, C> { a: A; }
+fn pk3<A, C>(a: A, c: C): G2<A, C> { var g: G2<A, C>; g.a = a; return g; }
+fn gc3<T>(x: T): i64 { var q: Q; var y: T = pk3(q, 5); return 9; }
+fn gc<T>(x: T): i64 { var q: Q; q.a = 1; var y: T = mkg1(q); return 9; }
+fn gcx<T>(x: T): i64 { var q: Q; var y: T = mkg1<Q>(q); return 9; }
+fn gcm<T>(x: T): i64 { var b: B1; var q: Q; var y: T = b.mkg(q); return 9; }
+fn gct<T>(x: T): i64 { var b: B1; var q: Q; var y: T = b.idm(q); return 9; }
+fn gco<T>(x: T): i64 { var b: B1; var q: Q; var y: T = b + q; return 9; }
+fn gce<T>(x: T): i64 { var e: E1; var q: Q; var y: T = e + q; return 9; }
+fn gca<T>(x: T): i64 { var q: Q; var y: T = x; y = mkg1(q); return 9; }
+fn gc2<T>(x: T): i64 { var q: Q; var y: T = pk2(q, 5); return 9; }
+fn gck<T>(x: T): i64 { return gco(x); }
+fn gk1<T>(x: T): i64 { var y: T = mkg1(x); return 9; }
+fn gk2<T>(x: T): i64 { var b: B1; var y: T = b + x; return 9; }
+fn gk3<T>(x: T): i64 { var q: Q8; q.a = 21; var y: T = mkg1(q); return y; }
+fn gk4<T>(x: T): i64 { var q: Q; q.a = 3; q.b = 44; var y: T = mkg1(q); return y.v.b; }
 '
 TE='
 syscall(60, main());
@@ -1262,12 +1330,137 @@ accept "TA2 an 8 B result into y: T at i64 keeps its word" "$TH"'fn main(): i64 
 accept "TA3 a Str result into y: T at i64 keeps its word" "$TH"'fn main(): i64 { alloc_init(); return gs(5); }'"$TE" 9 'syscall(60, 9);'
 accept "TA4 y = mkp(); at T = Q copies" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gqa(q); }'"$TE" 44 'syscall(60, 44);'
 accept "TA5 p = mkp(); (p: *T) at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gqp(q); }'"$TE" 44 'syscall(60, 44);'
-# TA6-TA6d: a store THROUGH the pointer is not one of D1's lines — it compiled at every instance before the stub rule
-# (41ca7d41c: g(5) and g<i32>(5) rc 0) and still does; whether it is judged is its own question (the review's filing).
-accept "TA6 *p = mkp(); (p: *T) at i64: not a stub" "$TH"'fn main(): i64 { return gd(5); }'"$TE" 9 'syscall(60, 9);'
-accept "TA6b *p = mkp(); at gd<i32>(5)" "$TH"'fn main(): i64 { return gd<i32>(5); }'"$TE" 9 'syscall(60, 9);'
-accept "TA6c **pp = mkp(); (pp: **T) at i64" "$TH"'fn main(): i64 { return gdd(5); }'"$TE" 9 'syscall(60, 9);'
+# TA6-TA6c (6.7.16, the user's D99, 2026-10-20): a store THROUGH a `*T` / `**T` is a stub line too — at a scalar T it lands
+# in a scalar, refused in a plain fn (the DP rows) — so `gd(5)` / `gd<i32>(5)` / `gdd(5)` are refused, the note naming
+# the pointer (they compiled and kept Q's first word, 41ca7d41c through 94a79ff72); TA6d at T = Q copies.
+refuse "TA6 *p = mkp(); (p: *T) at i64: a stub (D99)" "generic 'gd' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gd(5); }'"$TE" one
+if grep -q "^  note: <source>:[0-9]*:[0-9]*: 'gd' stores a struct result over 8 bytes through 'p', a pointer to its type parameter\$" "$D/r.err"; then
+    printf '  ok(refused): %-28s\n' "TA6n the note names p"; pass=$((pass+1))
+else printf '  FAIL: %-34s %s\n' "TA6n the note" "$(grep '^  note' "$D/r.err" | head -1)"; fail=$((fail+1)); fi
+refuse "TA6b *p = mkp(); at gd<i32>(5)" "generic 'gd' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gd<i32>(5); }'"$TE" one
+refuse "TA6c **pp = mkp(); (pp: **T) at i64" "generic 'gdd' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gdd(5); }'"$TE" one
 accept "TA6d *p = mkp(); at T = Q copies through p" "$TH"'fn main(): i64 { var q: Q; q.a = 7; q.b = 8; return gdq(q); }'"$TE" 44 'syscall(60, 44);'
+refuse "TA12 *(p + 0) = mkp(); (p: *T) at i64" "generic 'gda' has no i64 (or other scalar) instance" "$TH"'fn gda<T>(x: T): i64 { var p: *T = &x; *(p + 0) = mkp(); return 9; }
+fn main(): i64 { return gda(5); }'"$TE" one
+accept "TA12b ... at T = Q copies (its base parse judges nothing)" "$TH"'fn gda<T>(x: T): i64 { var p: *T = &x; *(p + 0) = mkp(); return x.b - 400; }
+fn main(): i64 { var q: Q; return gda(q); }'"$TE" 44 'syscall(60, 44);'
+accept "TA13 *p = a + a + a; (p: *T) at T = Q copies: the base judges no T-typed store" "$TH"'fn gdo<T>(p: *T): i64 { var a: Q; a.a = 0; a.b = 0; *p = a + a + a; return 9; }
+fn main(): i64 { var q: Q; q.a = 5; q.b = 6; gdo(&q); return q.b; }'"$TE" 1 'syscall(60, 1);'
+# TG23-TG25 / TA14 (met beside D99): the stub scan's struct-result reader took one operator only (`_gs_top_op`), a
+# receiver in parentheses as none (`_gs_recv_wrap`) and a generic call or method receiver as its base (`_gs_recv_call`),
+# so each of these generics compiled at i64 and kept the result's first word, where the plain fn refuses the line.
+refuse "TG23 var y: T = a + c + a; (an operator chain)" "generic 'gch' has no i64 (or other scalar) instance" "$TH"'fn gch<T>(x: T): i64 { var a: Q; var c: Q; var y: T = a + c + a; return 9; }
+fn main(): i64 { return gch(5); }'"$TE" one
+refuse "TG23b y = a + c + a; (a chain, y: T)" "generic 'gch2' has no i64 (or other scalar) instance" "$TH"'fn gch2<T>(x: T): i64 { var a: Q; var c: Q; var y: T = x; y = a + c + a; return 9; }
+fn main(): i64 { return gch2(5); }'"$TE" one
+refuse "TG23c *p = a + c + a; (p: *T)" "generic 'gch3' has no i64 (or other scalar) instance" "$TH"'fn gch3<T>(p: *T): i64 { var a: Q; var c: Q; *p = a + c + a; return 9; }
+fn main(): i64 { var x = 5; return gch3(&x); }'"$TE" one
+refuse "TG24 var y: T = (a + c).mk(); (a wrapped receiver)" "generic 'gcw' has no i64 (or other scalar) instance" "$TH"'fn gcw<T>(x: T): i64 { var a: Q; var c: Q; var y: T = (a + c).mk(); return 9; }
+fn main(): i64 { return gcw(5); }'"$TE" one
+refuse "TG24b *p = (a + c).mk(); (p: *T)" "generic 'gcw2' has no i64 (or other scalar) instance" "$TH"'fn gcw2<T>(p: *T): i64 { var a: Q; var c: Q; *p = (a + c).mk(); return 9; }
+fn main(): i64 { var x = 5; return gcw2(&x); }'"$TE" one
+refuse "TG25 *p = b.idm(a).mk(); (a generic method receiver)" "generic 'gcg' has no i64 (or other scalar) instance" "$TH"'fn gcg<T>(p: *T): i64 { var a: Q; var b: B1; *p = b.idm(a).mk(); return 9; }
+fn main(): i64 { var x = 5; return gcg(&x); }'"$TE" one
+refuse "TG25b var y: T = mkg1(a).v.mk(); (a generic call receiver)" "generic 'gcf' has no i64 (or other scalar) instance" "$TH"'fn gcf<T>(x: T): i64 { var a: Q; var y: T = mkg1(a).v.mk(); return 9; }
+fn main(): i64 { return gcf(5); }'"$TE" one
+refuse "TG25c var g = mkg1(a); var y: T = g.v.mk(); (a local from a generic call)" "generic 'gcl' has no i64 (or other scalar) instance" "$TH"'fn gcl<T>(x: T): i64 { var a: Q; var g = mkg1(a); var y: T = g.v.mk(); return 9; }
+fn main(): i64 { return gcl(5); }'"$TE" one
+accept "TA14 var y: T = a + c + a; at T = Q copies" "$TH"'fn gch4<T>(x: T): i64 { var a: Q; a.a = 0; var c: Q; c.a = 0; var y: T = a + c + a; return y.b; }
+fn main(): i64 { var q: Q; return gch4(q); }'"$TE" 1 'syscall(60, 1);'
+accept "TA14b *p = (a + c).mk(); at T = Q copies through p" "$TH"'fn gcw3<T>(p: *T): i64 { var a: Q; var c: Q; *p = (a + c).mk(); return 9; }
+fn main(): i64 { var q: Q; q.b = 6; gcw3(&q); return q.b; }'"$TE" 2 'syscall(60, 2);'
+refuse "TA11 *w.p = mkp(); (a carrier's *T field) at i64" "generic 'gdw' has no i64 (or other scalar) instance" "$TH"'struct Wt<U> { p: *U; }
+fn gdw<T>(w: Wt<T>): i64 { *w.p = mkp(); return 9; }
+fn main(): i64 { var k = 5; var w: Wt<i64>; w.p = &k; return gdw(w); }'"$TE" one
+accept "TA11b ... at Wt<Q> copies through w.p" "$TH"'struct Wt<U> { p: *U; }
+fn gdw<T>(w: Wt<T>): i64 { *w.p = mkp(); return 9; }
+fn main(): i64 { var q: Q; var w: Wt<Q>; w.p = &q; gdw(w); return q.b - 400; }'"$TE" 44 'syscall(60, 44);'
+# 6.7.16 — D1 AT A GENERIC CALLEE: its result is read at the binding its call makes (`_gs_gcall`, `_gs_mret`, `_gs_opg`),
+# a generic operator fn's at its dispatch's (D85 (a)). Each compiled and kept the 16 B `G1<Q>`'s (or Q's) first word.
+refuse "TG13 var y: T = mkg1(q); (G1<Q>)" "generic 'gc' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc(5); }'"$TE" one
+refuse "TG14 var y: T = mkg1<Q>(q);" "generic 'gcx' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gcx(5); }'"$TE" one
+refuse "TG15 var y: T = b.mkg(q); (a method)" "generic 'gcm' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gcm(5); }'"$TE" one
+refuse "TG16 var y: T = b.idm(q); (a : U method)" "generic 'gct' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gct(5); }'"$TE" one
+refuse "TG17 var y: T = b + q; (B1_add<Q>)" "generic 'gco' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gco(5); }'"$TE" one
+refuse "TG18 var y: T = e + q; (a : U operator)" "generic 'gce' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gce(5); }'"$TE" one
+refuse "TG19 y = mkg1(q); (y: T)" "generic 'gca' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gca(5); }'"$TE" one
+refuse "TG20 var y: T = pk2(q, 5); (one name of two)" "generic 'gc2' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc2(5); }'"$TE" one
+refuse "TG21 gck(5): a generic forwarding its T to gco" "generic 'gck' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gck(5); }'"$TE" one
+refuse "TG22 var y: T = pk3(q, 5); (G2<Q, i64>)" "generic 'gc3' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc3(5); }'"$TE" one
+accept "TA7 var y: T = mkg1(x); (x: T) at i64: not a stub" "$TH"'fn main(): i64 { return gk1(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA8 var y: T = b + x; (x: T) at i64: not a stub" "$TH"'fn main(): i64 { return gk2(5); }'"$TE" 9 'syscall(60, 9);'
+accept "TA9 an 8 B G1<Q8> into y: T at i64 keeps its word" "$TH"'fn main(): i64 { return gk3(5); }'"$TE" 21 'syscall(60, 21);'
+accept "TA10 var y: T = mkg1(q); at T = G1<Q> copies" "$TH"'fn main(): i64 { var q: Q; q.a = 1; q.b = 2; return gk4(mkg1(q)); }'"$TE" 44 'syscall(60, 44);'
+
+echo "=== 6.7.16 (D99): a struct result over 8 B stored through a pointer to a scalar is refused, as its siblings ==="
+# issues/2026-10-20-dereference-store-of-struct-result-keeps-first-word.md — `*p = mkp();` (p: *i64) stored Q's first
+# word (the filed repro exited 77), silently, where `y = mkp();` (D27) and `p = mkp();` (D32) are refused. DP0 the
+# filed repro verbatim; DP1-DP19 every operand the compiler types as a pointer to no struct (a `*u8` / `*f64` / `*bool`
+# local, a parameter, a global, a field, a `: *i64` call, `p + n`, `**pp`, `*pp` of a `**i64` or of a `**Pt`, a capture)
+# and every struct result (a method, an operator, a known `&f`, wrapped, 24 B, a for step); DP20 `*(&x)` is x (D27 /
+# D33's words); DP21 a fixed `*i64` in a generic is refused at its definition; DPK1-DPK4 an 8 B result, a `Str`, a
+# field of the result, a `*Q` of the result's own struct keep their store. The generic twin is the stub rule (TA6-TA6c
+# re-pinned; TA11 a carrier's `*T` field).
+DQ='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+struct Q { a; b; }
+struct Q3 { a; b; c; }
+struct S8 { v; }
+struct Pt { x; y; }
+struct W { pi: *i64; n; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn mk3(): Q3 { var q: Q3; q.a = 333; q.b = 1; q.c = 2; return q; }
+fn mk8(): S8 { var s: S8; s.v = 9; return s; }
+fn mks(): Str { return str_from("abc"); }
+impl Q { fn dup(self): Q { return mkp(); } }
+fn Q_add(l: Q, r: Q): Q { return mkp(); }
+var GX = 5;
+var GP: *i64 = &GX;
+fn gpi(): *i64 { return GP; }
+'
+DM="cannot assign '\*p: i64' from 'mkp', which returns the struct 'Q' - store it through a '\*Q' or bind a field"
+DP0S='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+struct S8 { v; }
+struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn g(x: i64): i64 { var p: *i64 = &x; *p = mkp(); return x; }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+refuse_at "DP0 the filed repro verbatim (its one error, at the call)" "6:44: $(printf '%s' "$DM" | tr -d '\\')" "$DP0S"
+refuse "DP1 *p through a *u8" "cannot assign '\*p: u8' from 'mkp'" "$DQ"'fn main(): i64 { var x: u8 = 5; var p: *u8 = &x; *p = mkp(); return x; }'"$TE" one
+refuse "DP2 *p through a *f64" "cannot assign '\*p: f64' from 'mkp'" "$DQ"'fn main(): i64 { var x: f64 = 1.5; var p: *f64 = &x; *p = mkp(); return 0; }'"$TE" one
+refuse "DP3 *p through a *bool" "cannot assign '\*p: bool' from 'mkp'" "$DQ"'fn main(): i64 { var x: bool = false; var p: *bool = &x; *p = mkp(); return 0; }'"$TE" one
+refuse "DP4 a *i64 parameter" "$DM" "$DQ"'fn f(p: *i64): i64 { *p = mkp(); return 0; }
+fn main(): i64 { var x = 5; return f(&x); }'"$TE" one
+refuse "DP5 *GP, a *i64 global" "cannot assign '\*GP: i64' from 'mkp'" "$DQ"'fn main(): i64 { *GP = mkp(); return GX; }'"$TE" one
+refuse "DP6 *w.pi, a *i64 field" "cannot assign '\*w\.pi: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var w: W; w.pi = &x; *w.pi = mkp(); return x; }'"$TE" one
+refuse "DP7 *gpi(), a : *i64 call" "cannot assign '\*gpi(): i64' from 'mkp'" "$DQ"'fn main(): i64 { *gpi() = mkp(); return GX; }'"$TE" one
+refuse "DP8 *(p + 0)" "cannot assign '\*(p + 0): i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *(p + 0) = mkp(); return x; }'"$TE" one
+refuse "DP9 **pp of a **i64" "cannot assign '\*\*pp: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; var pp: **i64 = &p; **pp = mkp(); return x; }'"$TE" one
+refuse "DP10 *pp of a **i64 (a *i64 slot, D32's)" "cannot assign '\*pp: \*i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; var pp: **i64 = &p; *pp = mkp(); return x; }'"$TE" one
+refuse "DP11 *pp of a **Pt (another struct's slot)" "cannot assign '\*pp: \*Pt' from 'mkp'" "$DQ"'fn main(): i64 { var t: Pt; var p: *Pt = &t; var pp: **Pt = &p; *pp = mkp(); return 0; }'"$TE" one
+refuse "DP12 a closure's captured *i64" "$DM" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; var f = || { *p = mkp(); return 0; }; fncall0(f); return x; }'"$TE" one
+refuse "DP13 a method's result" "cannot assign '\*p: i64' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p: *i64 = &x; *p = q.dup(); return x; }'"$TE" one
+refuse "DP14 an operator's result" "cannot assign '\*p: i64' from 'Q_add'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p: *i64 = &x; *p = q + q; return x; }'"$TE" one
+refuse "DP15 fncall0(&mkp)" "$DM" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *p = fncall0(&mkp); return x; }'"$TE" one
+refuse "DP16 callptr(&mkp)" "$DM" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *p = callptr(&mkp); return x; }'"$TE" one
+refuse "DP17 ((mkp())), wrapped" "$DM" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *p = ((mkp())); return x; }'"$TE" one
+refuse "DP18 mk3(), 24 B" "cannot assign '\*p: i64' from 'mk3', which returns the struct 'Q3' - store it through a '\*Q3'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *p = mk3(); return x; }'"$TE" one
+refuse "DP18b an operator chain a + a + a" "cannot assign '\*p: i64' from 'Q_add'" "$DQ"'fn main(): i64 { var a: Q; var x = 5; var p: *i64 = &x; *p = a + a + a; return x; }'"$TE" one
+refuse "DP19 a for step" "$DM" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; for (var i = 0; i < 1; *p = mkp()) { i = i + 1; } return x; }'"$TE" one
+refuse "DP20 *(&x) is x: D27 / D33's words" "cannot assign 'x: i64' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field" "$DQ"'fn main(): i64 { var x: i64 = 5; *(&x) = mkp(); return x; }'"$TE" one
+refuse "DP20b *(&u) of an untyped u" "cannot assign 'u' from 'mkp', which returns the struct 'Q' - declare 'u: Q' or bind a field" "$DQ"'fn main(): i64 { var u = 5; *(&u) = mkp(); return u; }'"$TE" one
+refuse "DP21 a fixed *i64 in a generic, uncalled" "cannot assign '\*pk: i64' from 'mkp'" "$DQ"'fn g6<T>(x: T): i64 { var k = 5; var pk: *i64 = &k; *pk = mkp(); return k; }
+fn main(): i64 { return 0; }'"$TE" one
+accept "DPK1 an 8 B result keeps its word" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *p = mk8(); return x; }'"$TE" 9 'syscall(60, 9);'
+accept "DPK2 a Str result keeps its handle" "$DQ"'fn main(): i64 { alloc_init(); var x = 0; var p: *i64 = &x; *p = mks(); var s: Str = x; return s.len(); }'"$TE" 3 'syscall(60, 3);'
+accept "DPK3 a field of the result" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *p = mkp().a; return x - 300; }'"$TE" 33 'syscall(60, 33);'
+accept "DPK4 *pq of a *Q copies (6.7.11)" "$DQ"'fn main(): i64 { var q: Q; var pq: *Q = &q; *pq = mkp(); return q.b - 400; }'"$TE" 44 'syscall(60, 44);'
 
 # TV (6.7.16, the user's D102, 2026-10-20; issues/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
@@ -1469,6 +1662,12 @@ cross_rows() {  # $1 the leg's name
     refuse "TVX [$1] TV2" "$TGM" "$TV2" one
     refuse "TVX [$1] TV10" "$TGM" "$TV10" one
     refuse "TVX [$1] TV10b" "$TGM" "$TV10b" one
+    refuse "TGX [$1] TG13" "generic 'gc' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc(5); }'"$TE" one
+    refuse "TGX [$1] TG17" "generic 'gco' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gco(5); }'"$TE" one
+    refuse_at "DPX [$1] DP0" "6:44: $(printf '%s' "$DM" | tr -d '\\')" "$DP0S"
+    refuse "DPX [$1] TA6" "generic 'gd' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gd(5); }'"$TE" one
+    refuse "DPX [$1] DP9" "cannot assign '\*\*pp: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; var pp: **i64 = &p; **pp = mkp(); return x; }'"$TE" one
+    refuse "DPX [$1] DP13" "cannot assign '\*p: i64' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p: *i64 = &x; *p = q.dup(); return x; }'"$TE" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1482,11 +1681,11 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (6.7.16's D102 review, 2026-10-21: 320 refusals + 47 acceptances with CPX's UC / UCG / TVX rows on three legs;
-# 345 at D102, 327 at D96, 300 at the genbind review): a lost row block — a source variable emptied, a leg's loop
-# dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 367 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 367"; exit 1
+# FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 375 (s16),
+# each over the genbind review's 300 — 300 + 67 + 75; 345 at D102, 327 at D96): a lost row block — a source variable
+# emptied, a leg's loop dropped — is RED, not a shorter green.
+if [ $((nrefuse + naccept)) -lt 442 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 442"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -67,6 +67,9 @@
 # dereference as written, from its `*` — '*pu', '*PU', '*gu()', '*(&q)', '*&u', '*(&GQ)' (they named 'pu', 'PU', 'gu',
 # 'q', 'u', 'GQ'); every printer's rows: struct_arg_type_refused.sh DS.
 #   (struct_field_value_copy.tcyr: MG1-MG3 SIGSEGV at its first through-pointer row, x86 and cxvm)
+# 6.7.16 (issues/2026-10-19-pointer-struct-source-refusal-names-call-argument.md): R25 / R26 / R29 name the `*Q` source as
+# written — 'gu()', 'w.pu' (they named 'gu', 'pu', the chain's last name); R24 / R27 / R28 keep 'PU' (a name, and the
+# pointer operand of `PU + 0`). The whole surface: struct_copy_type_checked.sh PN1-PN10.
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -267,15 +270,15 @@ SW='struct WU { n; pu: *Q; }
 '
 refuse "R24 r.v = PU, a *Q global" "cannot copy 'PU' into a struct field of a different struct type: 'v'" \
     "${T}${SU}fn go(): i64 { var r: RB; r.v = PU; return r.v.x; } syscall(60, go());"
-refuse "R25 r.v = gu(), a : *Q call" "cannot copy 'gu' into a struct field of a different struct type: 'v'" \
+refuse "R25 r.v = gu(), a : *Q call" "cannot copy 'gu()' into a struct field of a different struct type: 'v'" \
     "${T}${SU}fn go(): i64 { var r: RB; r.v = gu(); return r.v.x; } syscall(60, go());"
-refuse "R26 r.v = w.pu, a *Q field" "cannot copy 'pu' into a struct field of a different struct type: 'v'" \
+refuse "R26 r.v = w.pu, a *Q field" "cannot copy 'w.pu' into a struct field of a different struct type: 'v'" \
     "${T}${SU}${SW}fn go(): i64 { var w = WU { 0, PU }; var r: RB; r.v = w.pu; return r.v.x; } syscall(60, go());"
 refuse "R27 r.v = (PU + 0), pointer arithmetic" "cannot copy 'PU' into a struct field of a different struct type: 'v'" \
     "${T}${SU}fn go(): i64 { var r: RB; r.v = (PU + 0); return r.v.x; } syscall(60, go());"
 refuse "R28 GR.v = PU at top level" "cannot copy 'PU' into a struct field of a different struct type: 'v'" \
     "${T}${SU}var GR = RB { 1, 2, 3, 4, 5, 6 }; GR.v = PU; syscall(60, GR.v.x);"
-refuse "R29 step r.v = gu()" "cannot copy 'gu' into a struct field of a different struct type: 'v'" \
+refuse "R29 step r.v = gu()" "cannot copy 'gu()' into a struct field of a different struct type: 'v'" \
     "${T}${SU}fn go(): i64 { var r: RB; var i = 0; for (i = 0; i < 1; r.v = gu()) { i = i + 1; } return 0; } syscall(60, go());"
 
 # ... and the same type compiles with NO warning (6.7.11: `l = *p` and `q = *p` warned "assigning non-pointer

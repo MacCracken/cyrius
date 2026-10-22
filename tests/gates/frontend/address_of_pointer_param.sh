@@ -31,10 +31,32 @@
 #      of a packed `i32` global reads GQ alone, at its width, as GQ itself — exit 5 (59 before: 8 bytes, GQ and
 #      the next global GR) on the same legs; the amp_narrow_* rows in T carry its shapes (stores, OP=, the
 #      widths and signs, a for step, top level) and its controls (`*(&GQ + 0)`, a capture, an i64)
+#   R5 6.7.16 (D70, the user's decision, 2026-10-20) — issues/2026-10-19-dereference-of-address-of-float-variable-is-
+#      untyped-word.md, the filed repro verbatim: `*(&f)` of an f64 / f32 variable is f, with f's type — prints `25 25 1`
+#      and compiles with no warning (`9223372036854775807 25 1` and "integer arithmetic with an f64 right operand"
+#      before) on x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine); T's amp_float_* rows carry its
+#      shapes. R5d (x86_64, compile only): through `*(&b)` of a bool the bool checks name b — `*(&b) = 5` "cannot assign
+#      a value that is not a bool to bool 'b'", `*(&b) += 1` "compound assignment to bool 'b' is refused" — and `*(&f) =
+#      3` of an f64 warns "an integer stored into an f64/f32 slot", as `b = 5`, `b += 1` and `f = 3` do (it built clean)
+#   R6 6.7.16 — issues/2026-10-19-signed-narrow-global-declared-after-top-level-statement-reads-zero-extended.md,
+#      the filed repro verbatim: a signed i16 / i32 / i8 global declared after the first top-level statement reads
+#      sign-extended, as one in the declaration zone — prints `-2 -2 -2` (`65534 4294967294 254` before) on x86_64,
+#      x86_64 CYRIUS_IR=3, aarch64 (qemu), cx (cxvm) and PE (wine); T's amp_narrow_after row and
+#      tests/tcyr/crossos/narrow_global_init_width.tcyr's ps_ rows carry its shapes
+#   R7 6.7.16 (D72, the user's decision, 2026-10-20) — issues/2026-10-19-narrow-parameter-holds-caller-word-unnarrowed.md,
+#      the filed repro verbatim: a narrow parameter is narrowed in the fn, like a narrow local — prints
+#      `255 -1 -32768 -32768` (`511 8589934591 32768 -32768` before) on x86_64, CYRIUS_IR=1, CYRIUS_IR=3,
+#      CYRIUS_DCE=1, aarch64 (qemu), cx (cxvm) and PE (wine); T2 carries its shapes. R7a (x86_64, CYRIUS_ASYNC=1):
+#      a non-suspending `async fn`'s `y: u8` given 0x1FF is 255 too (511 before; exit 1, 2 = not 255) — a suspending
+#      one's parameters live in the coroutine frame, where a narrow slot is refused by name, and keep the word (the
+#      user's call)
 #   T  tests/tcyr/crossos/address_of_pointer_param.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
 #      / cass / pi
+#   T2 tests/tcyr/crossos/narrow_param_width.tcyr (D72's rows: every width and sign, stack-passed, a fn pointer,
+#      `*(&y)`, `y = v` / `OP=`, a capture, #inline, a generic `x: T`, a method, a default, #regalloc; the controls) on
+#      the same 7 legs, N2 derived from the file the same way (floor FLOOR2)
 #
 # MUTATION LEDGER (2026-10-11; a scratch copy of the tree with the one change, this gate run from that
 # copy with CYCC=<the mutant built from it>):
@@ -54,6 +76,18 @@
 #   M4  (2026-10-19) `_deref_store` without its `_amp_ew` line (the read kept) -> RED 7: T on all 7 legs,
 #                                                    the 7 store / OP= rows on packed globals (a local's
 #                                                    8-byte slot hides a word store); R4 green (a read)
+#   M5  (2026-10-21) PARSE_VAR's top-level arm without its SVSGN line (the 6.7.16 fix reverted) -> RED 12: R6
+#                                                    (`65534 4294967294 254`) on all 5 legs; T the amp_narrow_after
+#                                                    row on all 7 legs
+#   M6  (2026-10-21) the parameter loop without its `_pnw_apply` line (the 6.7.16 D72 fix reverted) -> RED 15:
+#                                                    R7 (`511 8589934591 32768 -32768`) and T2 (48 of 59 rows) on all 7
+#                                                    legs, R7a (exit 2)
+#   M7  (2026-10-21) `_amp_lew` / `_amp_gew` without their D70 kinds (the 6.7.16 fix reverted) -> RED 13: R5
+#                                                    (`9223372036854775807 25 1`, warned) on all 5 legs; R5d (built
+#                                                    clean); T on all 7 legs (the bool rows refused: it did not build)
+#   M8  (2026-10-21) `_dyn_amp_name` answers -1 (`*(&b)` as a dyn source refused again) -> RED 7: T on all 7 legs
+#                                                    (row_amp_float_dyn's sources refused "cannot form dyn AfNum": it did
+#                                                    not build)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -85,8 +119,13 @@ R1=docs/development/issues/repros/2026-10-10-address-of-pointer-param-over-8b-is
 for f in "$TC" "$R1"; do [ -f "$f" ] || { echo "FAIL: $G: $f is missing"; exit 1; }; done
 # One row per `assert_eq(` call (the file defines none). The floor keeps a gutted file from passing.
 N=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC")
-FLOOR=57
+FLOOR=72
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
+TC2=tests/tcyr/crossos/narrow_param_width.tcyr
+[ -f "$TC2" ] || { echo "FAIL: $G: $TC2 is missing"; exit 1; }
+N2=$(awk '/^[[:space:]]*#/{next} /assert_eq\(/{n++} END{print n+0}' "$TC2")
+FLOOR2=59
+if [ "$N2" -lt "$FLOOR2" ]; then echo "FAIL: $G: only $N2 rows in $TC2 (floor $FLOOR2) — rows were lost"; exit 1; fi
 
 # The legs this box can run: aarch64 under qemu, cx under the tree's own cxvm, PE under wine.
 A64=""; CXCC=""; WINE=0
@@ -203,6 +242,138 @@ for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
     else bad "R4 $leg: exit $RC, want 5"; fi
 done
 
+echo "R5. 6.7.16 (D70): the filed repro verbatim — \`*(&f)\` of an f64 / f32 variable is f, with f's type (\`25 25 1\`, no warning; \`9223372036854775807 25 1\`, warned, before)"
+cat > "$D/famp.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+fn pr(x): i64 { fmt_int(x); syscall(SYS_WRITE, 1, " ", 1); return 0; }
+fn main(): i64 {
+    var f: f64 = 1.5;
+    var g: f64 = *(&f) + 1.0;
+    var h: f64 = f + 1.0;
+    pr(f64_to(g * 10.0)); pr(f64_to(h * 10.0));
+    var s: f32 = 2.5;
+    pr(*(&s) == s);
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return 0;
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'R5_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/famp.cyr" "$D/f_$n"
+    ef="$D/f_$n.err"
+    [ "$leg" = pe ] && ef="$D/f_$n.exe.err"
+    nw=$(grep -c 'warning' "$ef" 2>/dev/null || true)
+    if [ "$RC" -eq -1 ]; then bad "R5 $leg: did not build: $(grep -m1 'error' "$ef")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "25 25 1 " ] && [ "$nw" = 0 ]; then ok "R5 $leg: '$LAST', no warning"
+    else bad "R5 $leg: exit $RC, '$LAST' (want '25 25 1 '), $nw warning(s): $(grep -m1 'warning' "$ef")"; fi
+done
+
+echo "R5d. 6.7.16 (D70): through \`*(&b)\` / \`*(&f)\` the store checks of b / f (x86_64, compile only)"
+cat > "$D/fampd.cyr" <<'EOF'
+fn main(): i64 {
+    var b: bool = true;
+    var f: f64 = 1.5;
+    *(&b) = 5;
+    *(&b) += 1;
+    *(&f) = 3;
+    return 0;
+}
+syscall(60, main());
+EOF
+rc=0; "$CC" < "$D/fampd.cyr" > "$D/fampd" 2> "$D/fampd.err" || rc=$?
+if [ "$rc" -eq 0 ]; then bad "R5d: built (rc 0), want the two bool refusals"
+else
+    if grep -qF "4:13: cannot assign a value that is not a bool to bool 'b'" "$D/fampd.err"; then ok "R5d: *(&b) = 5 refused, naming b"
+    else bad "R5d: *(&b) = 5 not refused by name: $(grep -m1 '^error' "$D/fampd.err")"; fi
+    if grep -qF "5:14: compound assignment to bool 'b' is refused" "$D/fampd.err"; then ok "R5d: *(&b) += 1 refused, naming b"
+    else bad "R5d: *(&b) += 1 not refused by name: $(grep '^error' "$D/fampd.err" | sed -n 2p)"; fi
+    if grep -qF "6:14: an integer stored into an f64/f32 slot keeps its integer bits" "$D/fampd.err"; then ok "R5d: *(&f) = 3 warns as f = 3"
+    else bad "R5d: *(&f) = 3 did not warn: $(grep -m1 'warning' "$D/fampd.err")"; fi
+    ne=$(grep -c '^error' "$D/fampd.err" || true)
+    if [ "$ne" = 2 ]; then ok "R5d: exactly 2 errors"; else bad "R5d: $ne errors, want 2"; fi
+fi
+
+echo "R6. 6.7.16: the filed repro verbatim — a signed narrow global declared after a top-level statement reads sign-extended (\`-2 -2 -2\`; \`65534 4294967294 254\` before)"
+cat > "$D/sglob.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+fn pr(x): i64 { fmt_int(x); syscall(SYS_WRITE, 1, " ", 1); return 0; }
+var Z = 0;
+Z = 1;
+var GS: i16 = 0 - 2;
+var GI: i32 = 0;
+var GB: i8 = 0;
+fn main(): i64 {
+    GI = 0 - 2;
+    GB = 0 - 2;
+    pr(GS); pr(GI); pr(GB);
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return 0;
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+for leg in x86 x86:CYRIUS_IR=3 $OTHER; do
+    n=$(printf 'R6_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/sglob.cyr" "$D/g_$n"
+    if [ "$RC" -eq -1 ]; then bad "R6 $leg: did not build: $(grep -m1 'error' "$D/g_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "-2 -2 -2 " ]; then ok "R6 $leg: '$LAST'"
+    else bad "R6 $leg: exit $RC, '$LAST' (want '-2 -2 -2 ')"; fi
+done
+
+echo "R7. 6.7.16 (D72): the filed repro verbatim — a narrow parameter is narrowed in the fn (\`255 -1 -32768 -32768\`; \`511 8589934591 32768 -32768\` before)"
+cat > "$D/nparam.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+fn pr(x): i64 { fmt_int(x); syscall(SYS_WRITE, 1, " ", 1); return 0; }
+fn wid(y: u8): i64 { return y; }
+fn w32(y: i32): i64 { return y; }
+fn inc(y: i16): i64 { y += 1; return y; }
+fn inc_l(a: i16): i64 { var y: i16 = a; y += 1; return y; }
+fn main(): i64 {
+    pr(wid(0x1FF));          # a u8 holds 0..255
+    pr(w32(0x1FFFFFFFF));    # an i32 holds -2^31..2^31-1
+    pr(inc(0x7FFF));         # i16 32767 + 1
+    pr(inc_l(0x7FFF));       # the same through an i16 local
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return 0;
+}
+var r = main();
+syscall(SYS_EXIT, r);
+EOF
+for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
+    n=$(printf 'R7_%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/nparam.cyr" "$D/p_$n"
+    if [ "$RC" -eq -1 ]; then bad "R7 $leg: did not build: $(grep -m1 'error' "$D/p_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "255 -1 -32768 -32768 " ]; then ok "R7 $leg: '$LAST'"
+    else bad "R7 $leg: exit $RC, '$LAST' (want '255 -1 -32768 -32768 ')"; fi
+done
+
+echo "R7a. 6.7.16 (D72): a non-suspending async fn's narrow parameter is narrowed too (x86_64, CYRIUS_ASYNC=1; exit 1)"
+cat > "$D/nasync.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/syscalls.cyr"
+include "lib/async.cyr"
+async fn ns(y: u8): i64 { return y; }
+fn main(): i64 { alloc_init(); var f = ns(0x1FF); return future_force(f); }
+var rr = main();
+if (rr == 255) { syscall(60, 1); }
+syscall(60, 2);
+EOF
+rc=0; CYRIUS_ASYNC=1 "$CC" < "$D/nasync.cyr" > "$D/nasync" 2> "$D/nasync.err" || rc=$?
+if [ "$rc" -ne 0 ] || [ ! -s "$D/nasync" ]; then bad "R7a: did not build (rc $rc): $(grep -m1 'error' "$D/nasync.err")"
+else
+    chmod +x "$D/nasync"; got=0; timeout 30 "$D/nasync" > /dev/null 2>&1 || got=$?
+    if [ "$got" -eq 1 ]; then ok "R7a: async fn ns(y: u8) given 0x1FF reads 255 (exit 1)"
+    else bad "R7a: exit $got, want 1 (2: y was not 255)"; fi
+fi
+
 echo "N. a #naked fn (compile only): by-value \`&q\` stays the slot's content, a *P parameter's \`&q\` is the slot"
 # nk_src <param type> <initialiser> <out>: one #naked fn, kept by `&nk`, its asm a bare return.
 nk_src() {
@@ -249,6 +420,15 @@ for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
     else bad "T $leg: exit $RC, '$LAST' (want '$N passed, 0 failed ($N total)') $(grep -m3 'FAIL' "$D/t_$n.out" | tr '\n' ' ')"; fi
 done
 
+echo "T2. $TC2 ($N2 rows)"
+for leg in x86 x86:CYRIUS_IR=1 x86:CYRIUS_IR=3 x86:CYRIUS_DCE=1 $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TC2" "$D/t2_$n"
+    if [ "$RC" -eq -1 ]; then bad "T2 $leg: the values file did not build: $(grep -m1 'error' "$D/t2_$n.err")"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$N2 passed, 0 failed ($N2 total)" ]; then ok "T2 $leg: $LAST"
+    else bad "T2 $leg: exit $RC, '$LAST' (want '$N2 passed, 0 failed ($N2 total)') $(grep -m3 'FAIL' "$D/t2_$n.out" | tr '\n' ' ')"; fi
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), \`*(&pi) += 1\` steps the element (R3), \`*(&GQ)\` of a narrow global reads its width (R4), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — \`&q\` of a \`q: *P\` parameter is its slot: the filed repro (R1) and size probe (R2) on x86_64 / IR / aarch64 / cx / PE, the #naked halves (N), \`*(&pi) += 1\` steps the element (R3), \`*(&GQ)\` of a narrow global reads its width (R4), \`*(&f)\` of a float is f (R5 / R5d), a signed narrow global after a statement reads signed (R6), a narrow parameter is narrowed (R7), and $N + $N2 rows (T / T2) on x86_64 / IR / DCE / aarch64 / cx / PE"
