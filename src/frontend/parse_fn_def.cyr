@@ -5984,9 +5984,10 @@ fn _opp_unpark(S, k): i64 {
 # ⛔ 6.6.17 — A PENDING fn ATTRIBUTE BELONGS TO THE DEFINITION IT PRECEDES, NOT TO AN INSTANCE.
 # ⛔ 6.7.16 — AN INSTANCE MINTED INSIDE A STATEMENT ALREADY IN ERROR LEAVES ITS LATCH SET: PARSE_FN_DEF clears the panic
 # latch for the instance's own body (its errors are its own), and the enclosing statement then reported again —
-# `var a, b = q.idv(q.idv(q)).m2();` was "multi-value destructure needs a call on the right-hand side" and then, past
-# the inner call's instance, "cannot take a field of the result of 'P.idv'", where `q.idv(5).m2()` (no instance)
-# reports once. The latch the statement held before the instance is set again after it. CHANGELOG [6.7.16]
+# `var a, b = q.idv(gsz(q)).m2();` is "multi-value destructure needs a call on the right-hand side" and then, past the
+# inner call's instance `gsz$P`, was "cannot take a field of the result of 'P.idv'", where `q.idv(5).m2()` (no
+# instance) reports once. The latch the statement held before the instance is set again after it. CHANGELOG [6.7.16]
+# (6.7.16's example, `q.idv(q.idv(q))`, is a valid destructure since 6.7.17's D2.)
 fn _inst_relatch(sv): i64 {
     if (sv == 1) { _panic = 1; }
     return 0;

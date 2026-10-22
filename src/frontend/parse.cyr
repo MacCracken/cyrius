@@ -663,10 +663,19 @@ fn _tok_gen_tp_dep(S, a, i, at, fi, w): i64 {
 # argument wrap (D12). Anything else answers 0 — a missed flag, never a false one. CHANGELOG [6.7.15]
 # 6.7.15 (D23 A): through `p: *T`, pointer arithmetic on one of those pointers too (`_tok_ta_arith`), as the parser
 # binds it (`_ic_parith`).
+# ⛔ 6.7.17 (D2): a whole field or method chain on any receiver head, from the unit's tokens (`_acv_bind`), as the
+# parser binds it — `var r = id(w.p); return r.b;` typed `r`. CHANGELOG [6.7.17]
 fn _tok_ta_arg(S, a, i, at, ptr): i64 {
     if (ptr == 1) {
         var ae = _ic_arith_end(S, at);
         if (ae > 0) { return _tok_ta_arith(S, a, i, at, ae); }
+    }
+    var ta = a;
+    if (ta < 0) { ta = 0; }
+    var cv = _acv_bind(S, at, ta, ptr);
+    if (_acv_is == 1) {
+        if (cv > 0) { return cv; }
+        return 0;
     }
     at = _pwrap_in(S, at);
     if (at < 0) { return 0; }

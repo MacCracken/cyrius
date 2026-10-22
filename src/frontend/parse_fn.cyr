@@ -16182,12 +16182,16 @@ fn _gen_addr_check(S, fi, noff): i64 {
 # ⛔ 6.7.15 — THROUGH `p: *T` A TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER (the user's decision D23 A,
 # 2026-10-18): `g(ps + 1)`, `g(1 + ps)`, `g((ps) - 1)` bind what ps points at (`_ic_parith`) — they ran the i64 base
 # (`p + 1` stepped 8 for a 24-byte S). Through `x: T` no pointer binds, so the arithmetic is read through `p: *T` only.
+# ⛔ 6.7.17 — a whole field or method chain on any receiver head binds as the struct value it is (the user's D2,
+# 2026-10-22): `sz(w.p)`, `sz(b.mp2())`, `sz(w.gp().m())`, `sz((*pw).p)` — `_acv_bind` (parse_decl.cyr). CHANGELOG [6.7.17]
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
     if (ptr == 1) {
         var e = _ic_arith_end(S, a);
         if (e > 0) { return _ic_parith(S, a, e); }
     }
+    var cv = _acv_bind(S, a, 0 - 1, ptr);
+    if (_acv_is == 1) { return cv; }
     a = _pwrap_in(S, a);
     if (a < 0) { return 0 - 8; }
     if (ptr == 1) {

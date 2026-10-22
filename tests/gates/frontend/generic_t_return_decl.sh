@@ -14,13 +14,17 @@
 # declaration — while a word (its base, a scalar or f64 instance) keeps the annotation, a handle.
 # Filed: docs/development/issues/archived/2026-10-17-generic-t-return-scalar-instance-into-struct-local-reported-at-use.md
 #
-#   R1  the filed repro 1, verbatim (`gid(w.v)`, then `a.z`): compiles (refused at `a.z` before), and runs as its
-#       non-generic twin `wid(w.v)` does — the handle holds w.v's first word, so `a.z` faults on every leg alike
+#   R1  the filed repro 1, verbatim (`gid(w.v)`, then `a.z`): compiles (refused at `a.z` before). Through 6.7.16 the
+#       field bound i64 (the whole-argument rule) and it ran as its non-generic twin `wid(w.v)` (a handle holding
+#       w.v's first word: `a.z` faulted on every leg); since 6.7.17 a struct-typed field binds its struct (the user's
+#       D2, 2026-10-22), so it runs as the explicit `gid<P3>(w.v)` does — a copy of w.v
 #   R2  the filed repro 2, verbatim (`gid(5)`, `return a;`): 5, the word the handle holds (5 before, untyped)
 #   T1  `gid(alloc(24))` with a field write and read: 4 (refused before)
 #   T2  `gid(5)` then `a.z`: compiles, and exits as `wid(5)`'s twin does (the read of address 5 + 16)
 #   T3  `gid<i32>(0 - 3)`, its word: 7 (+ 10), as `fn wi(x: i32): i32`'s twin; T4 `gid(h)` with h: f64, its word's top
-#       byte: 63, as `fn wf(x: f64): f64`'s twin; T5 `gid(w.v)`'s word: 7 (w.v.x), as `wid(w.v)`'s twin
+#       byte: 63, as `fn wf(x: f64): f64`'s twin. (6.7.15's T5, `gid(w.v)`'s word as `wid(w.v)`'s twin, is K5 since
+#       6.7.17's D2: the field binds P3.)
+#   K5  (6.7.17, D2) `gid(w.v)` with `v: P3` binds P3 and receives the struct, a copy: 3, as `gid<P3>(w.v)` does
 #   K1  `gid(p3)` with p3: P3 receives the struct, a copy: 9 (unchanged); K2 `gid(q)` with q: Pt is refused at the
 #       declaration, once (unchanged); K3 `gid<P3>(p3)`: a copy, 8 (unchanged); K4 a refused call — a stub's scalar
 #       binding, `gs(5)` — keeps the annotation too: its one refusal, no "no struct type in scope for 'a'" at `a.z`
@@ -37,6 +41,8 @@
 #   MT2 `_gen_decl_reset` answering 0 throughout -> GREEN here: K1-K3 take the struct by value from gid's struct
 #       instance either way (the reset re-derives an explicit instance annotation's receive, 6.6.11 / 6.7.14 — the
 #       gates of those releases carry it)
+# 6.7.17 (2026-10-22, CYCC= each): the tree before D2 (3e8756f2a, `gid(w.v)` bound i64) -> RED R1 (a handle: `a.z`
+#   faults where `gid<P3>(w.v)` copies) and K5; R1 no longer reaches `_gen_decl_reset`'s handle arm (it binds P3).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -144,11 +150,11 @@ XEOF
 cat > "$D/r1t.cyr" <<'XEOF'
 struct P3 { x; y; z; }
 struct W { n; v: P3; }
-fn wid(x): i64 { return x; }
-fn f(): i64 { var w: W; var a: P3 = wid(w.v); return a.z; }
+fn gid<T>(x: T): T { return x; }
+fn f(): i64 { var w: W; var a: P3 = gid<P3>(w.v); return a.z; }
 syscall(60, f());
 XEOF
-twin R1 "$D/r1.cyr" "$D/r1t.cyr" "var a: P3 = gid(w.v); return a.z; (refused at a.z before)"
+twin R1 "$D/r1.cyr" "$D/r1t.cyr" "var a: P3 = gid(w.v); return a.z; (refused at a.z before; 6.7.17 D2: as gid<P3>(w.v))"
 cat > "$D/r2.cyr" <<'XEOF'
 struct P3 { x; y; z; }
 fn gid<T>(x: T): T { return x; }
@@ -169,15 +175,14 @@ twin T3 "$D/t3.cyr" "$D/t3t.cyr" "gid<i32>(0 - 3)'s word"
 prog "$D/t4.cyr" 'var h: f64 = 1.5; var a: P3 = gid(h); var k: i64 = a; return k >> 56;'
 prog "$D/t4t.cyr" 'var h: f64 = 1.5; var a: P3 = wf(h); var k: i64 = a; return k >> 56;'
 twin T4 "$D/t4.cyr" "$D/t4t.cyr" "gid(h) with h: f64, its word's top byte"
-prog "$D/t5.cyr" 'var w: W; w.v.x = 7; w.v.z = 3; var a: P3 = gid(w.v); var k: i64 = a; return k;'
-prog "$D/t5t.cyr" 'var w: W; w.v.x = 7; w.v.z = 3; var a: P3 = wid(w.v); var k: i64 = a; return k;'
-twin T5 "$D/t5.cyr" "$D/t5t.cyr" "gid(w.v)'s word (w.v.x, 7)"
 
 echo "K. a struct binding of T: unchanged"
 prog "$D/k1.cyr" 'var p3: P3; p3.z = 9; var a: P3 = gid(p3); p3.z = 1; return a.z;'
 xrow K1 "$D/k1.cyr" 9 "gid(p3) receives the struct: a copy"
 prog "$D/k3.cyr" 'var p3: P3; p3.y = 8; var a: P3 = gid<P3>(p3); p3.y = 2; return a.y;'
 xrow K3 "$D/k3.cyr" 8 "gid<P3>(p3): a copy"
+prog "$D/k5.cyr" 'var w: W; w.v.x = 7; w.v.z = 3; var a: P3 = gid(w.v); w.v.z = 1; return a.z;'
+xrow K5 "$D/k5.cyr" 3 "gid(w.v) binds P3 (6.7.17, D2): a copy"
 prog "$D/k2.cyr" 'var q: Pt; var a: P3 = gid(q); return 0;'
 k2rc=0; "$CC" < "$D/k2.cyr" > "$D/k2" 2> "$D/k2.err" || k2rc=$?
 ne=$(grep -c '^error' "$D/k2.err" || true)
@@ -225,4 +230,4 @@ done
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a \`: T\` generic whose T binds no struct is a handle in a struct-annotated local (the user's D13 (a)): the filed repros (R1 R2), gid(alloc(24)) read and written (T1), each scalar binding as its non-generic twin (T2-T5), the struct bindings unchanged (K1-K3), and the tcyr (TV) on x86_64 / IR / aarch64 / cx / PE; Mach-O compiles (MO)"
+echo "PASS: $G — a \`: T\` generic whose T binds no struct is a handle in a struct-annotated local (the user's D13 (a)): the filed repros (R1 R2), gid(alloc(24)) read and written (T1), each scalar binding as its non-generic twin (T2-T4), the struct bindings (K1-K3, and K5: a struct field, 6.7.17's D2), and the tcyr (TV) on x86_64 / IR / aarch64 / cx / PE; Mach-O compiles (MO)"

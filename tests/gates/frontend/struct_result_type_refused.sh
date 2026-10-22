@@ -13,9 +13,9 @@
 #       register (1/2/4/8 B) struct FIELD skipped every check, the free call `h.p = mkq8()` too:
 #       `_fsc_src` (src/frontend/parse_decl.cyr) returned 0 before its call and expression arms.
 #   L5  A struct destination ASSIGNED from a FREE call returning a DIFFERENT struct stored one
-#       word: `p = mkq()` (24 B), `p = mkr()` (16 B), `z = mkod2()` (3 B), generic `s = mk(r.v)`
-#       (the field argument infers T = i64, so the call reaches Box<i64>, not Box<Pt>). The
-#       declarations `var z: Odd = mkod2()` and `var s: Box<Pt> = mk(r.v)` were not refused by
+#       word: `p = mkq()` (24 B), `p = mkr()` (16 B), `z = mkod2()` (3 B), generic `s = mk(r.n)`
+#       (the scalar field infers T = i64, so the call reaches Box<i64>, not Box<Pt>). The
+#       declarations `var z: Odd = mkod2()` and `var s: Box<Pt> = mk(r.n)` were not refused by
 #       name either — only the retptr / rax:rdx receives compared the sid. Root cause:
 #       `_try_struct_call_assign` (src/frontend/parse.cyr) exited at `cls == 0`, `n <= 1` and
 #       the sid test with `return 0` = the scalar store.
@@ -24,6 +24,9 @@
 #       and the LEADING declaration block — replayed by EMIT_GVAR_INITS, not PARSE_VAR — checked
 #       nothing at any size. Fixed in `_scv_call_check` (9-16 B at top level),
 #       `_sc_global_mismatch` (-3 and -1) and `_gvi_ann` / `_gvi_expr` (the leading block).
+#       (6.6.11's rows read `mk(r.v)`, the inline Pt field, which inferred i64 then; since 6.7.17 a struct-typed field
+#       binds its struct — the user's D2, 2026-10-22 — so `mk(r.v)` reaches Box<Pt> and is accepted: AGa / DGa, its
+#       value 7. The tree before D2 (3e8756f2a) -> RED AGa DGa, refused "a different struct type".)
 #   L1  (refusal half) `var p: Pt = h.q` / `p = h.q` from a field of a DIFFERENT struct type
 #       SIGSEGV'd / copied a word; now a named refusal like every other struct copy.
 #
@@ -283,7 +286,7 @@ refuse "A3c z = mkod2()  (3 B free call)" "$MA" "$T"'fn main(): i64 { var z: Odd
 refuse "A16m p = y.mr()  (16 B method)" "$MA" "$T"'fn main(): i64 { var y: Q; var p: Pt; p.x = 9; p.y = 9; p = y.mr(); return p.x; }'"$E"
 refuse "A16 p = mkr()  (16 B rax:rdx)" "$MA" "$T"'fn main(): i64 { var p: Pt; p.x = 9; p.y = 9; p = mkr(); return p.x; }'"$E"
 refuse "A24 p = mkq()  (24 B retptr)" "$MA" "$T"'fn main(): i64 { var p: Pt; p.x = 9; p.y = 9; p = mkq(); return p.x; }'"$E"
-refuse "AG  s = mk(r.v)  (generic)" "$MA" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt>; s.n = 0; s = mk(r.v); return s.n; }'"$E"
+refuse "AG  s = mk(r.n)  (generic)" "$MA" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt>; s.n = 0; s = mk(r.n); return s.n; }'"$E"
 refuse "D3m var z: Odd = y.same()" "$MD" "$T"'fn main(): i64 { var y: Od2; var z: Odd = y.same(); return 0; }'"$E"
 refuse "D3o var z: Odd = y + y" "$MD" "$T"'fn main(): i64 { var y: Od2; var z: Odd = y + y; return 0; }'"$E"
 refuse "D8m var z: P8 = y.mq()" "$MD" "$T"'fn main(): i64 { var y: Q8; var z: P8 = y.mq(); return 0; }'"$E"
@@ -291,7 +294,10 @@ refuse "D3c var z: Odd = mkod2()" "$MD" "$T"'fn main(): i64 { var z: Odd = mkod2
 refuse "D8c var z: P8 = mkq8()" "$MD" "$T"'fn main(): i64 { var z: P8 = mkq8(); return 0; }'"$E"
 refuse "D16 var p: Pt = mkr()" "$MD" "$T"'fn main(): i64 { var p: Pt = mkr(); return p.x; }'"$E"
 refuse "D24 var p: Pt = mkq()" "$MD" "$T"'fn main(): i64 { var p: Pt = mkq(); return p.x; }'"$E"
-refuse "DG  var s: Box<Pt> = mk(r.v)" "$MD" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt> = mk(r.v); return s.n; }'"$E"
+refuse "DG  var s: Box<Pt> = mk(r.n)" "$MD" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt> = mk(r.n); return s.n; }'"$E"
+# 6.7.17 (D2): the inline Pt field binds Pt, so mk(r.v) reaches Box<Pt> — the same struct, accepted.
+accept "AGa s = mk(r.v)  (D2, 6.7.17)" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt>; s.n = 0; s = mk(r.v); return s.v.y * 10 + s.n; }'"$E" 75 "$G"'fn main(): i64 { var s: Box<Pt>; s.v.x = 2; s.v.y = 7; s.n = 5; return s.v.y * 10 + s.n; }'"$E"
+accept "DGa var s: Box<Pt> = mk(r.v)  (D2)" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt> = mk(r.v); return s.v.y * 10 + s.n; }'"$E" 75 "$G"'fn main(): i64 { var s: Box<Pt>; s.v.x = 2; s.v.y = 7; s.n = 5; return s.v.y * 10 + s.n; }'"$E"
 # G3m — a top-level declaration AFTER the first top-level statement (PARSE_VAR's global arm,
 # `_sc_global_receive`); the leading declaration block is replayed by EMIT_GVAR_INITS instead.
 refuse "G3m var GZ: Odd = GY.same()  (top)" "$MD" "$T"'var GY = Od2 { 1, 2 };
@@ -1895,9 +1901,9 @@ echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals,
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
 # + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green. 6.7.17 (D1, the genr lane): 468 + 42
-# (RB: 30 rows on x86_64, RBX 4 on each of three legs).
-if [ $((nrefuse + naccept)) -lt 510 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 510"; exit 1
+# (RB: 30 rows on x86_64, RBX 4 on each of three legs). 6.7.17 (D2, the genr lane): 510 + 2 (AGa, DGa).
+if [ $((nrefuse + naccept)) -lt 512 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 512"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

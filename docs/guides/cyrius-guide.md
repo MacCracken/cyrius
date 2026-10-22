@@ -7523,11 +7523,19 @@ it reaches, 6.7.11: `g(id(p))`, `g(mk1(p))` bind `Pt` and `Box<Pt>`) — binds `
 on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `return g(p);`, an argument, a struct receive), exactly as the explicit
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
-every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
+every other path ran the i64 base). A struct-typed **field** and a **method** declared to return
+a struct are whole struct values too, and bind `T` as a struct local or a free call does — on every
+receiver head the method arm takes and every call path: `g(w.p)` (`p: P2`), a nested `g(w.v.p)`, one
+through a pointer `g(pw.p)`, `g(mk().p)`, `g((*pw).p)`, `g(b.mp2())`, a chain's method `g(w.gp().m())`,
+a generic method's `: U` at what its argument binds (`g(b.idv(q))`), a `Str` field (6.7.17, the user's
+D2, 2026-10-22: through 6.7.16 each ran the i64 base — `sizeof(T)` 8 for a 16-byte `P2` — and a body
+reading `v.b` was refused as having no i64 instance; a program passing such a value now calls the
+struct's instance, and a 9+ byte one at the top level is refused "call it inside a fn" as `g(q)` of a
+struct global is). Only a WHOLE argument binds `T`: `g(p.y)`, a scalar field (an `f64` one too),
 `g(p.x + p.y)` and `g(p + 1)` infer `i64` (through a `p: *T`, a typed pointer plus or
 minus `n` is still that pointer — below), and through an `x: T` parameter so does
 every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
-field or call (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
+field, call or method (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
 this rule). Parentheses around the WHOLE argument carry what they wrap — a scalar's type too:
 `g((h))` with `h: f64` is the `f64` instance, as `g(h)` is — and through an
 `x: T` a whole dereference of a `*Pt` is the struct value `Pt` — `g((p))`, `g(*q)`,
@@ -7584,9 +7592,10 @@ argument infers `i64`, or the width a scalar-returning call declares.
 **Through a pointer parameter** (6.7.14). A `p: *T` parameter binds `T` to what its
 argument POINTS AT: a `*S` local, parameter (an untyped impl `self` included), closure
 capture or global, a field declared `*S` reached through a chain (`w.p`, `wp.p`,
-`G.p`), a call returning `*S` (a generic one at the instance it reaches: `gsz(gpi(gp))`
-with `fn gpi<T>(x: *T): *T`), and `&G` / `&l` of a struct — as a struct value already
-does (its address is passed, 6.6.20) and as a `*Box<T>` carrier does. With
+`G.p`, and since 6.7.17 through a method or a call head: `o.gw().p`), a call returning `*S` (a generic one at the instance it reaches: `gsz(gpi(gp))`
+with `fn gpi<T>(x: *T): *T`; since 6.7.17 a method `b.mpp()` too), and `&G` / `&l` of a struct — as a struct value already
+does (its address is passed, 6.6.20; since 6.7.17, D2, a struct field `gsz(w.s)` or method result `gsz(b.ms())` as well,
+which were refused "a struct value is no address") and as a `*Box<T>` carrier does. With
 `fn gsz<T>(x: *T): i64 { return sizeof(T); }`, `gsz(&gs)`, `gsz(gp)`, `gsz(w.p)` and
 `gsz(mkp())` call `gsz$S` (24 for a 24-byte `S`), exactly as `gsz<S>(&gs)` does, and a
 generic that uses `T` as a struct through the pointer (`return x.a;`) is called at the

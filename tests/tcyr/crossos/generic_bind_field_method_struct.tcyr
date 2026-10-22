@@ -1,0 +1,174 @@
+# generic_bind_field_method_struct.tcyr — 6.7.17 (the user's D2, 2026-10-22): a struct-typed FIELD and a
+# struct-returning METHOD call bind a generic's `x: T` to that struct, as a struct local or a free call does — on every
+# receiver head the method arm takes (a name, a field through a pointer, a nested field, a call, a parenthesised value,
+# a chain's method), on every call path, through `p: *T` too (a struct value binds there; a `*S` field or method its S),
+# and inside a generic (the token scans type `var r = idt(w.p);` as the parser binds it). Through 6.7.16 each ran the
+# i64 base: `sz(w.p)` and `sz(b.mp2())` were 8 for a 16-byte P2, and `rdb(w.p)` (`v.b`) was refused "has no i64 (or
+# other scalar) instance". A scalar field still binds i64, and through `x: T` no pointer binds (6.7.14's D8).
+# Filed: docs/development/issues/2026-10-21-generic-struct-field-or-method-argument-binds-t-i64.md
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct P1 { a; }
+struct P2 { a; b; }
+struct P3 { a; b; c; }
+struct C4 { r: u8; g: u8; b: u8; x: u8; }
+struct Box<T> { v: T; n; }
+struct G1<T> { v: T; k; }
+struct W { p: P2; n; q: *P2; p1: P1; p3: P3; c4: C4; s: Str; bx: Box<P2>; }
+struct V { w: W; }
+struct O { p: P2; p1: P1; }
+struct B { k; }
+struct K { n; }
+
+var GP2: P2 = P2 { 11, 12 };
+var GW: O = O { 31, 32, 33 };
+
+impl B {
+    fn mp2(self): P2 { var q: P2; q.a = 1; q.b = 2; return q; }
+    fn mp1(self): P1 { var q: P1; q.a = 21; return q; }
+    fn mp3(self): P3 { var q: P3; q.a = 24; q.b = 25; q.c = 26; return q; }
+    fn mc4(self): C4 { var q: C4; q.r = 1; q.g = 27; return q; }
+    fn ms(self): Str { return str_from("hello"); }
+    fn mpp(self): *P2 { return &GP2; }
+    fn mw(self, w: *W): *W { return w; }
+    fn mwv(self): W { var w: W; w.p.a = 41; w.p.b = 42; return w; }
+    fn idv<U>(self, x: U): U { return x; }
+}
+impl P2 {
+    fn me(self): P2 { var q: P2; q.a = self.a + 100; q.b = self.b + 100; return q; }
+    fn m2(self): (i64, i64) { return (self.a, self.b); }
+}
+impl K { fn pick<V>(self, x: V): i64 { return x.b + self.n; } }
+impl W { fn szp(self): i64 { return sz(self.p); } }
+
+fn sz<T>(v: T): i64 { return sizeof(T); }
+fn psz<T>(p: *T): i64 { return sizeof(T); }
+fn rdb<T>(v: T): i64 { return v.b; }
+fn rda<T>(v: T): i64 { return v.a; }
+fn rdc<T>(v: T): i64 { return v.c; }
+fn rdg<T>(v: T): i64 { return v.g; }
+fn rdl<T>(v: T): i64 { return v.len; }
+fn pdb<T>(p: *T): i64 { return p.b; }
+fn pdc<T>(p: *T): i64 { return p.c; }
+fn idt<T>(x: T): T { return x; }
+fn mkg1<T>(v: T): G1<T> { var g: G1<T>; g.v = v; g.k = sizeof(T); return g; }
+fn mkw(): W { var w: W; w.p.a = 51; w.p.b = 52; return w; }
+fn take(p: P2): i64 { return p.a * 100 + p.b; }
+fn retp(w: *W): P2 { return idt(w.p); }
+fn retm(b: B): P2 { return idt(b.mp2()); }
+# Inside a generic: `r` is typed by the token scans as the parser binds `idt(..)`, so the forward of T into the stub
+# method `K.pick` makes `o*` a stub (its i64 base is not emitted) and `o*(q)` calls the P2 instance.
+fn o1<T>(t: T): i64 { var w: O; w.p.a = 3; w.p.b = 4; var r = idt(w.p); var k = K { r.b }; return k.pick(t); }
+fn o2<T>(t: T): i64 { var b = B { 0 }; var r = idt(b.mp2()); var k = K { r.b }; return k.pick(t); }
+fn o3<T>(t: T): i64 { var r = idt(GW.p); var k = K { r.b }; return k.pick(t); }
+
+# The declaration zone: the sweep and the replay bind alike — an 8-byte struct result types the global (a 16-byte one
+# is refused there, "call it inside a fn", as `idt(q)` of a struct global is).
+var GZ = sz(GW.p);
+var GZR = idt(GW.p1);
+
+fn run(): i64 {
+    var w: W;
+    w.p.a = 1; w.p.b = 2; w.n = 9; w.q = &GP2;
+    w.p1.a = 5; w.p3.a = 6; w.p3.b = 7; w.p3.c = 8; w.c4.g = 9; w.s = str_from("abcd"); w.bx.n = 3;
+    var b = B { 0 };
+    var q = b.mp2();
+    var v: V; v.w.p.a = 61; v.w.p.b = 62;
+    var pw: *W = &w;
+    var kk = K { 100 };
+
+    # the filed repros' shapes
+    assert_eq(sz(w.p), 16, "F1: sz(w.p), an inline P2 field, binds P2 (8 before)");
+    assert_eq(sz(b.mp2()), 16, "F2: sz(b.mp2()), a method returning P2, binds P2 (8 before)");
+    assert_eq(sz(q), 16, "F3: sz(q), the method's result through a local (control, unchanged)");
+    assert_eq(rdb(w.p), 2, "F4: rdb(w.p) reads v.b (refused 'no i64 instance' before)");
+    assert_eq(rdb(b.mp2()), 2, "F4m: rdb(b.mp2())");
+
+    # every receiver head the method arm takes
+    assert_eq(sz(v.w.p) * 100 + rdb(v.w.p), 1662, "F5: a nested field v.w.p");
+    assert_eq(sz(pw.p) * 100 + rdb(pw.p), 1602, "F6: a field through a pointer pw.p");
+    assert_eq(rdb(w.p.me()), 102, "F7: a chain's method w.p.me()");
+    assert_eq(rdb(b.mw(&w).p), 2, "F7b: a field after a method b.mw(&w).p");
+    assert_eq(rdb(b.mwv().p.me()), 142, "F7c: a method, a field, a method b.mwv().p.me()");
+    assert_eq(rdb(mkw().p), 52, "F8a: a call head mkw().p");
+    assert_eq(rdb((*pw).p), 2, "F8b: a parenthesised head (*pw).p");
+    assert_eq(rdb((w.p)), 2, "F8c: a wrapped chain (w.p)");
+    assert_eq(rdb(((b.mp2()))), 2, "F8d: a wrapped method ((b.mp2()))");
+    assert_eq(rdb(GW.p), 32, "F8e: a struct global's field GW.p");
+    assert_eq(w.szp(), 16, "F8f: an impl's self.p");
+    var cl = || { return sz(w.p) * 100 + rdb(w.p); };
+    assert_eq(fncall0(cl), 1602, "F8g: a closure's captured w.p");
+
+    # the generic method's own argument, a generic method's `: U` result, an explicit one
+    assert_eq(kk.pick(w.p), 102, "F9: a generic method's argument kk.pick(w.p) binds P2, as K_pick(kk, w.p)");
+    assert_eq(K_pick(kk, b.mp2()), 102, "F9b: the free spelling K_pick(kk, b.mp2())");
+    assert_eq(sz(b.idv(q)), 16, "F9c: a generic method's : U result b.idv(q) at P2");
+    assert_eq(rdb(b.idv(w.p)), 2, "F9d: b.idv(w.p): its U binds P2, its result binds P2");
+    assert_eq(rdb(b.idv<P2>(q)), 2, "F9e: the explicit b.idv<P2>(q)");
+
+    # every call path
+    assert_eq(idt(w.p).b, 2, "F10a: an expression idt(w.p).b");
+    var r1 = idt(w.p);
+    assert_eq(r1.b, 2, "F10b: a declaration var r1 = idt(w.p);");
+    var r2: P2 = idt(b.mp2());
+    assert_eq(r2.a * 10 + r2.b, 12, "F10c: an annotated receive var r2: P2 = idt(b.mp2());");
+    r2 = idt(v.w.p);
+    assert_eq(r2.b, 62, "F10d: an assignment r2 = idt(v.w.p);");
+    var o: O;
+    o.p = idt(pw.p);
+    assert_eq(o.p.b, 2, "F10e: a field store o.p = idt(pw.p);");
+    assert_eq(retp(&w).b, 2, "F10f: return idt(w.p); in a fn returning P2");
+    assert_eq(retm(b).b, 2, "F10g: return idt(b.mp2());");
+    assert_eq(take(idt(w.p)), 102, "F10h: an argument take(idt(w.p))");
+    var g = mkg1(b.mp2());
+    assert_eq(g.k * 100 + g.v.b, 1602, "F11: mkg1(b.mp2()) is G1<P2>");
+    var g2 = mkg1(w.p);
+    assert_eq(g2.k * 100 + g2.v.b, 1602, "F11b: mkg1(w.p) is G1<P2>");
+
+    # sizes: 8, 24, a packed 4-byte struct, a Str, a generic struct instance
+    assert_eq(sz(w.p1) * 100 + rda(w.p1), 805, "F12a: an 8-byte P1 field");
+    assert_eq(sz(w.p3) * 100 + rdc(w.p3), 2408, "F12b: a 24-byte P3 field");
+    assert_eq(sz(w.c4) * 100 + rdg(w.c4), 409, "F12c: a packed 4-byte C4 field");
+    assert_eq(sz(w.s) * 100 + rdl(w.s), 1604, "F12d: a Str field binds Str");
+    assert_eq(sz(w.bx), 24, "F12e: a Box<P2> field binds Box<P2>");
+    assert_eq(rda(b.mp1()) * 100 + rdc(b.mp3()), 2126, "F12f: 8- and 24-byte method results");
+    assert_eq(rdg(b.mc4()) * 100 + rdl(b.ms()), 2705, "F12g: a packed and a Str method result");
+
+    # through `p: *T`: a struct value binds its struct (its address passed), a `*S` field or method S
+    assert_eq(psz(w.p) * 100 + pdb(w.p), 1602, "F13a: psz(w.p) / pdb(w.p) through p: *T (refused before)");
+    assert_eq(pdc(w.p3), 8, "F13b: pdc(w.p3)");
+    assert_eq(psz(b.mpp()) * 100 + pdb(b.mpp()), 1612, "F13c: a : *P2 method b.mpp() (8 before)");
+    assert_eq(pdb(b.mp2()), 2, "F13d: a P2 method result through p: *T (refused before)");
+    assert_eq(psz(b.mw(&w).q) * 100 + pdb(b.mw(&w).q), 1612, "F13e: a *P2 field after a method");
+    assert_eq(pdb(w.q), 12, "F13f: a *P2 field (6.7.14's D8, unchanged)");
+
+    # controls: a scalar field and, through x: T, a pointer bind i64
+    assert_eq(sz(w.n), 8, "FK1: a scalar field w.n binds i64");
+    assert_eq(sz(w.q), 8, "FK2: a *P2 field through x: T binds no pointer (6.7.14's D8)");
+    assert_eq(sz(b.mpp()), 8, "FK3: a : *P2 method through x: T binds no pointer");
+    assert_eq(sz(w.p.a), 8, "FK4: a scalar field of a struct field");
+
+    # a method-chain lookahead whose head is a generic call bound by a chain (the destructure's `_mch_open`)
+    var da, db = idt(w.p).m2();
+    assert_eq(da * 10 + db, 12, "F16a: var da, db = idt(w.p).m2();");
+    var dc, dd = idt(b.mp2()).m2();
+    assert_eq(dc * 10 + dd, 12, "F16b: var dc, dd = idt(b.mp2()).m2();");
+    var de, df = idt(GW.p).me().m2();
+    assert_eq(de * 1000 + df, 131132, "F16c: var de, df = idt(GW.p).me().m2();");
+
+    # inside a generic, and the declaration zone
+    assert_eq(o1(q), 6, "F14a: in a generic, var r = idt(w.p); is typed (the stub forward seen)");
+    assert_eq(o2(q), 4, "F14b: in a generic, var r = idt(b.mp2());");
+    assert_eq(o3(q), 34, "F14c: in a generic, var r = idt(GW.p);");
+    assert_eq(GZ, 16, "F15a: the zone: var GZ = sz(GW.p);");
+    assert_eq(GZR.a, 33, "F15b: the zone: var GZR = idt(GW.p1); is a P1");
+    return 0;
+}
+alloc_init();
+var r0 = run();
+var r = assert_summary();
