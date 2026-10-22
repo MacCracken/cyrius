@@ -60,7 +60,10 @@
 #       before a `var` — the declaration after it is parsed, its error reported
 #   A   an `asm { }` body missing its `}`: A1 before the next `asm`, A2 before a `return`, A3 at the end of file —
 #       "expected '}'" once, and what follows parsed
-#   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
+#   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block; B3 a stray `{`
+#       with no `}` of its own (`a = g(1, {` then a `return`): the fn's `}` is not taken as its close (it was, and
+#       the next fn was "defined inside" this one — the review, RED on l6717-integ 3011c4b59); B4 the control, a
+#       stray block over three lines ending `};` is still the statement's
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
 #       the fn's
@@ -594,6 +597,27 @@ row B2 "the same in an if block, two statements inside the braces" 'fn f(): i64 
 syscall(60, f());
 ' "error:<source>:3:25: expected ';', got '{'
 error:<source>:4:12: $UZ"
+row B3 "a stray { with no } of its own, then a return and the fn's }" 'fn g(a, b): i64 { return a; }
+fn f(): i64 {
+    var a = 1;
+    a = g(1, {
+    return zz;
+}
+fn h(): i64 { return zz; }
+syscall(60, f() + h());
+' "error:<source>:4:14: unexpected '{'
+error:<source>:5:12: $UZ
+error:<source>:7:22: $UZ"
+row B4 "control: a stray block over three lines, ending };" 'fn f(): i64 {
+    var a = 1;
+    a = 2 {
+        3
+    };
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:3:11: expected ';', got '{'
+error:<source>:6:12: $UZ"
 
 # ---- K: the S22 control
 row K1 "S22 verbatim: var P = 3; P { 5 };" 'struct P { a; }
