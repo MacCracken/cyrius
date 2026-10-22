@@ -2258,6 +2258,7 @@ fn _eb_begin(): i64 {
     if (e != 0) { if (load8(e) == 49 && load8(e + 1) == 0) { return 0; } }
     _eb_on = 1;
     _eb_arm();
+    _vec_die_hook = &_eb_end;   # a vec abort mid-parse writes them first (lib/vec.cyr `_vec_abort`)
     return 0;
 }
 # A FAULT IN THE COMPILER WRITES WHAT IS HELD, THEN DIES OF THE FAULT. Held diagnostics a crash would lose printed

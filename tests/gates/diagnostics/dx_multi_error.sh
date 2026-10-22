@@ -233,7 +233,7 @@ cascade_legs Z12 3 'fn h(): i64 { return 1; }\nvar a = 1;\nvar c, b = h();\nsysc
 KENV=CYRIUS_ELF64_KERNEL=1
 cascade Z13 3 'kernel;\n'"$ZG"'var p = g(1 2);\nsyscall(60 0);\nsyscall(60 1);\n' "3:13: expected ')', got number 2" "4:12: expected ')', got number 0" "5:12: expected ')', got number 1"
 KENV=
-# ZO1-ZO9 (6.7.17, issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md) — THE PARSE'S DIAGNOSTICS PRINT
+# ZO1-ZO10 (6.7.17, issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md) — THE PARSE'S DIAGNOSTICS PRINT
 #     IN SOURCE ORDER. The parse is several walks — pass 1 refuses a declaration as it registers it, pass 2 parses the fn
 #     bodies, the declaration zone's initializers are parsed by the replay after both (a `kernel;` build's after the
 #     program) — and each printed as it went: `var p = g(1 2);` then `const X;` printed 3:8 before 2:13. The parse now
@@ -294,6 +294,20 @@ for _lg in x86 a64 cx pe; do
     elif ! grep -q "^error:<source>:1:8: expected '=', got ';'" "$E"; then echo "FAIL: ZO9 $_lg: the held error was lost at the fault:"; cat "$E"; kfail=$((kfail + 1)); fi
 done
 KCC=
+# ZO10 — a vec abort mid-parse (an index out of range: a compiler bug) runs lib/vec.cyr's `_vec_die_hook` first, which the
+#     parse window sets to the writer of what it holds (util.cyr `_eb_begin`): the hook's output, then the abort's line,
+#     rc 1. The compiler's own abort has no input that reaches it, so the row runs the hook in a program and checks the
+#     window sets it. RED: `_vec_abort` not calling the hook (the "held" line missing); `_eb_begin` not setting it.
+printf 'include "lib/vec.cyr"\nfn hk(): i64 { syscall(1, 2, "held\\n", 5); return 0; }\nvar v = vec_new();\nvec_push(v, 7);\n_vec_die_hook = &hk;\nvar x = vec_get(v, 3);\nsyscall(60, 0);\n' > "$T"
+rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
+if [ "$rc" -ne 0 ]; then echo "FAIL: ZO10: the hook program did not compile:"; cat "$E"; kfail=$((kfail + 1))
+else
+    chmod +x "$O"; rc=0; "$O" > /dev/null 2>"$E" || rc=$?
+    if [ "$rc" -ne 1 ] || [ "$(tr '\n' '|' < "$E")" != "held|vec: index out of bounds|" ]; then
+        echo "FAIL: ZO10: a vec abort: rc $rc, stderr '$(tr '\n' '|' < "$E")' (want rc 1, the hook's line, then the abort's)"; kfail=$((kfail + 1))
+    fi
+fi
+grep -q '^    _vec_die_hook = &_eb_end;' "$ROOT/src/common/util.cyr" || { echo "FAIL: ZO10: the parse window no longer sets lib/vec.cyr's abort hook"; kfail=$((kfail + 1)); }
 # G1-G2 (6.7.16, met beside issues/archived/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md) —
 #     AN UNINITIALIZED VECTOR GLOBAL IN THE ZONE IS ONE ERROR. G1 `var V: f64v2;` was two errors at 1:13: pass 1's
 #     "vector global 'V' takes no initializer but 0" (for no initializer at all) and the replay's "uninitialized
@@ -371,12 +385,12 @@ else chmod +x "$O"; rc=0; "$O" || rc=$?; [ "$rc" -eq 33 ] || { echo "FAIL: F13: 
 printf 'struct W { p: Other; n; }\nfn f(): i64 { var w: W; return w.p.a.b + w.p.c; }\nvar r = f();\n' > "$T"
 rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
 grep -q "is not a struct: it has no field" "$E" && { echo "FAIL: F14: --syntax-only refused a sibling struct's field chain:"; cat "$E"; kfail=$((kfail + 1)); }
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, ZO1-ZO9, G1-G2, L1-L13, F1-F14, D1-D11)"; exit 1; }
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, ZO1-ZO10, G1-G2, L1-L13, F1-F14, D1-D11)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), the parse's diagnostics in source order, held through an exit and a fault (ZO1-ZO9), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), the parse's diagnostics in source order, held through an exit, a fault and a vec abort (ZO1-ZO10), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), valid emits"
 exit 0
