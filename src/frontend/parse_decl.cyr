@@ -13906,11 +13906,6 @@ fn _gz_pnu(S, b, sid): i64 {
     _gz_pnu_ti = a;
     return u;
 }
-# ⛔ 6.7.16 (D99, the s16 review) — THE D1 STUB SCAN READS A SUBSCRIPT STORE `p[i] = R;` (p's name at token i, opening a
-# statement or a for step) as `_gs_dsr_stmt` reads `*p = R;`: p declared a pointer (`p: *T`, `pp: **T`; an array `a:
-# T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
-# lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
-# the line. 1 = such a store. CHANGELOG [6.7.16]
 # ⛔ 6.7.17 (D16) — A FIELD STORE `b.v = R;` (b at token i opening a statement or a for step, the `=` after a field
 # name) whose base reads a name typed by T (`_gs_dsr_dep`: `b: Box<T>`, `*Wt<T>`, a T-typed name) and whose R is a
 # struct result over 8 B: at a scalar T the field is a word (`_dsr_fld` refuses it in a plain fn), so the generic has
@@ -13971,6 +13966,11 @@ fn _gs_lit_els(S, fi, i, nm): i64 {
     }
     return 0;
 }
+# ⛔ 6.7.16 (D99, the s16 review) — THE D1 STUB SCAN READS A SUBSCRIPT STORE `p[i] = R;` (p's name at token i, opening a
+# statement or a for step) as `_gs_dsr_stmt` reads `*p = R;`: p declared a pointer (`p: *T`, `pp: **T`; an array `a:
+# T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
+# lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
+# the line. 1 = such a store. CHANGELOG [6.7.16]
 fn _gs_sub_sres(S, fi, i): i64 {
     var pt = TOKTYP(S, i - 1);
     if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
