@@ -6958,8 +6958,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
 # match). An unowned break was never patched: its rel32 kept the chain link, a wild jump.
 fn _PARSE_BREAK(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     if (_brk_depth == 0) {
         if (_in_defer == 1) { ERR_MSG(S, "break cannot leave a defer body", 31); return 0; }
         ERR_MSG(S, "break outside a loop or switch", 30);
@@ -6978,8 +6977,7 @@ fn _PARSE_BREAK(S): i64 {
 # fn last had a loop (SIGSEGV), or into the enclosing fn's loop from a closure.
 fn _PARSE_CONTINUE(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     if (_loop_depth == 0) {
         if (_in_defer == 1) { ERR_MSG(S, "continue cannot leave a defer body", 34); return 0; }
         ERR_MSG(S, "continue outside a loop", 23);
@@ -7237,8 +7235,7 @@ fn _stmt_explicit_generic(S, noff): i64 {
     _explicit_generic_call(S, noff, fi);
     _cfo = 0;
     _stmt_qmark(S, pair);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # ⛔ 6.7.16 — `nofn<i64>(1);` AS A STATEMENT, the name nothing in any scope, took the assignment path: "expected '=', got
@@ -7259,8 +7256,7 @@ fn _stmt_undef_gcall(S, noff): i64 {
     _ugc_call(S, noff);
     if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
     if (_asg_pair_at(S) == 1) { _synonly_fld_tail(S, 5); return 1; }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 
@@ -7535,8 +7531,7 @@ fn _stmt_method_call(S, noff): i64 {
     if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { if (_tsc_n != tn) { _cst_skip_decl(S); return 0; } _asg_temp_refused(S); return 0; } }
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 0;
 }
 
@@ -7937,8 +7932,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         STI(S, GTI(S) + 1);                         # consume NUM
         if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }  # need ']'
         STI(S, GTI(S) + 1);                         # consume ']'
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }    # need ';'
-        STI(S, GTI(S) + 1);                         # consume ';'
+        _expect_step(S, 5);                         # consume ';'
         if (stk_size <= 0) {
             ERR_MSG(S, "stack var size must be > 0", 26);
         }
@@ -8243,8 +8237,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # `_threads_active = 1;` (a global declared in a sibling module) and
                 # therefore on all 74 repos that vendor it. See _syntax_only.
                 if (_syntax_only == 1) {
-                    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                    STI(S, GTI(S) + 1);
+                    _expect_step(S, 5);
                     return 0;
                 }
                 _asg_undef_report(S, noff);   # 6.7.9: shared with the for step
@@ -8258,8 +8251,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11
             _asg_store_slot(S, idx, 1);             # 6.6.12: shared with the for step
         }
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, 5);
         return 0;
     }
     if (_refuse_nested_fn(S) == 1) { return 0; }   # 6.6.16: a `fn` / `async fn` in a fn body
