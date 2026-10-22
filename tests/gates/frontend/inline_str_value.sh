@@ -1240,8 +1240,8 @@ row SP7 "$HQ"'
 fn go(): i64 { var q: Q1; var ps: *Str = new_slot(); *ps = q; return 0; }'
 refused SP7 "cannot copy 'q' into a variable of a different struct/vector type: 'ps'" "\`*ps = q;\` through a \`*Str\`"
 row SP8 "$HQ"'
-fn go(): i64 { var h: Str = str_from("x"); var p: *Str = &h; var pp: **Str = &p; **pp = mkq(); return 0; }'
-refused SP8 "cannot copy 'mkq' into a variable of a different struct/vector type: 'pp'" "\`**pp = mkq();\` through a \`**Str\`"
+fn go(): i64 { var h: Str = str_from("x"); var p: *Str = h; var pp: **Str = &p; **pp = mkq(); return 0; }'
+refused SP8 "cannot copy 'mkq' into a variable of a different struct/vector type: 'pp'" "\`**pp = mkq();\` through a \`**Str\` (6.7.17: \`p = h\`, the handle's word — its \`&h\` is a \`**Str\`, D107)"
 row SP9 "$HQ"'
 fn r(): Str { return mkq(); }
 fn go(): i64 { return f(r()); }'
@@ -1252,8 +1252,8 @@ fn go(): i64 { var q: Q1; return f(r(&q)); }'
 refused SP10 "a fn returning the struct \`Str\` takes a value of that struct, or a pointer to one — got \`*pq\` (a \`Q1\`)" "\`return (*pq);\` from a fn returning \`Str\`"
 row SPK1 "$HQ"'
 fn r(): Str { return str_from("abcd"); }
-fn go(): i64 { var w: W = W { str_from("ab"), 1 }; w.s = str_from("abc"); var w2: W = W { w.s, 2 }; var h: Str = str_from("x"); var p: *Str = &h; *p = r(); var q: Q1; var pq: *Q1 = &q; w.s = pq; var a = 0; if (w.s == pq) { a = 1; } return a * 100 + str_len(w2.s) * 10 + str_len(h); }'
-runs SPK1 134 "controls: a \`: Str\` call / field into a \`Str\` field and a literal, through a \`*Str\`, a \`*Q1\` rebinding a field"
+fn go(): i64 { var w: W = W { str_from("ab"), 1 }; w.s = str_from("abc"); var w2: W = W { w.s, 2 }; var h: Str = str_from("x"); var p: **Str = &h; *p = r(); var q: Q1; var pq: *Q1 = &q; w.s = pq; var a = 0; if (w.s == pq) { a = 1; } return a * 100 + str_len(w2.s) * 10 + str_len(h); }'
+runs SPK1 134 "controls: a \`: Str\` call / field into a \`Str\` field and a literal, through a \`**Str\` (6.7.17: \`&h\` of the handle is one, D107), a \`*Q1\` rebinding a field"
 # --- NS: 6.7.17 (the user's D19, 2026-10-22) `*p` of a `*Str` as a nested struct field's element reaching a `Str` first
 # leaf is p, as the direct literal `WS { *p, 1 }` stores it; it stored the header's data word (exit 50 on every target).
 # A `Str` value off the field's first-leaf chain is refused by name, as a `Str` name there is (NS2). ---
