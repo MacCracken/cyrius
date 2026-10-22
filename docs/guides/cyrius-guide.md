@@ -7079,7 +7079,7 @@ tag and the payload separately (or use a struct).
 📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
 being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.
 
-Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today); a use's list is held to them (6.7.16, the user's D88): `Result<i64, Pt>` reads its two, `Tri<..>` with four is *'Tri' takes 3 type arguments, 4 given*, and an enum declared without `<..>` given one is *'Color' takes no type arguments* ([Generic Functions](#generic-functions)). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
+Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today); a use's list is held to them (6.7.16, the user's D88): `Result<i64, Pt>` reads its two, `Tri<..>` with four is *'Tri' takes 3 type arguments, 4 given*, and an enum declared without `<..>` given one is *'Color' takes no type arguments* ([Generic Functions](#generic-functions)). A bound on one of its parameters is looked up as a fn's or a struct's is: `enum E<T: Nope> { A }` is *unknown trait 'Nope' in the bound on type parameter 'T'* at `Nope`, a malformed bound (`T: 5`, `T: Show<i64>`) the fn's line — once, in source order; `CYRIUS_MONOMORPH=0` reads no bound, an enum's as a fn's (6.7.17, the user's D101; it compiled). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
 
 Helper API:
 
@@ -8077,7 +8077,9 @@ type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]` (a gen
 the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
 rest compiled with the list ignored). A tuple element is too — `(i64<u8>, i64)`, `(f64<i32>, ..)`, `(bool<u8>, ..)` in a
 local, a global, a parameter or a field is *'i64' takes no type arguments* at the element's name (6.7.16, the user's
-D93; it compiled with the list ignored). An enum, `Result`, `Option`, `Tagged` and `cstring` take a list by what they
+D93; it compiled with the list ignored). Each of these refusals holds under `CYRIUS_MONOMORPH=0` as well — every
+position, a name inside a generic's own list (`Box<Pt<i64>>`) included, the same line at the same name (6.7.17, the
+user's D102; the flag stepped every list unread, so they compiled there). An enum, `Result`, `Option`, `Tagged` and `cstring` take a list by what they
 declare (6.7.16, the user's D88): one that declares no type parameters — an enum written without `<..>` (declared above
 or below the use), `Option` and `Tagged` (lib/tagged.cyr declares `enum Option: stack`), `cstring`, a program's own
 `enum Result` written without one — given a list (`var e: Color<i64>`, `fn f(p: Option<i64>)`, `s: cstring<i64>`) is

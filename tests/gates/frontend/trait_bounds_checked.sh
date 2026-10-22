@@ -227,6 +227,16 @@
 #      legs are generic_tparam_count_refused.sh A [a64] / [cx] / [pe] / [macho] TM1. Issue row 2. Mutant (2026-10-22):
 #      the compiler before (8cdae35c6) -> RED TM1 (both rows: built) TM2 (an inherited default's line, Foo's and `1 2`'s
 #      alone); generic_tparam_count_refused.sh T6 and A [pe] / [macho] TM1.
+#   EB (6.7.17, the user's D101, 2026-10-22: "refuse it by name, as a fn's / struct's unknown bound") AN ENUM'S
+#      BOUNDS ARE LOOKED UP: `enum E<T: Nope> { A }` compiled (exit 3) — the list was stepped and no bound read, where
+#      `struct B<T: Nope>` / `fn f<T: Nope>` are "unknown trait 'Nope' in the bound on type parameter 'T'". Each
+#      parameter's bound is read by the fn's own reader (`_enum_tp_bounds`: `_ctp_bounds` + `_bnd_make`) in pass 1, in
+#      source order. EB1 the decided repro, plain and --syntax-only; EB2 a second bound, a third parameter's, a malformed
+#      (`X: 5`) and an argument-taking (`Y: Show<i64>`) bound, then the next declaration's and fn's own errors; EB3
+#      CYRIUS_MONOMORPH=0 reads no bound — the enum's, the struct's and the fn's spelling build alike (exit 3); EBK
+#      control: declared bounds (one declared below), three parameters, a `: stack` enum (exit 5). The cross legs are
+#      generic_tparam_count_refused.sh A [a64] / [cx] / [pe] / [macho] EB1. Mutant (2026-10-22): the compiler before
+#      (l6717-integ 6de749e04) -> RED EB1 (both rows: built) EB2 (the field's and the fn's lines alone).
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_capture_tparams` not reading a bound
 #   (every identifier a type parameter again) -> D1 builds, D2-D4 refused only by the cascade;
@@ -1002,6 +1012,37 @@ else chmod +x "$T/tm4.bin"; got=0; "$T/tm4.bin" || got=$?
     if [ "$got" -eq 3 ]; then ok "TM4: CYRIUS_MONOMORPH=0 reads no bound — the fn's and the member's spelling alike (exit 3)"; else bad "TM4: exit $got, want 3"; fi
 fi
 
+# EB — 6.7.17 (the user's D101): an enum's bounds are looked up (`_enum_tp_bounds`)
+printf 'enum E<T: Nope> { A }\nsyscall(60, 3);\n' > "$T/eb1.cyr"
+EB1="error:<source>:1:11: unknown trait 'Nope' in the bound on type parameter 'T'"
+errs eb1 1 "EB1: enum E<T: Nope> { A } (it built: exit 3)" "$EB1"
+src=0; "$CC" --syntax-only < "$T/eb1.cyr" > /dev/null 2> "$T/eb1.so" || src=$?
+if [ "$src" -ne 0 ] && [ "$(grep -c '^error' "$T/eb1.so" || true)" -eq 1 ] && grep -qF "$EB1" "$T/eb1.so"; then ok "EB1: --syntax-only reports it, as a struct's"
+else bad "EB1: --syntax-only: rc $src: $(grep '^error' "$T/eb1.so" | tr '\n' '|')"; fi
+cat > "$T/eb2.cyr" <<'EOF'
+trait Show { fn show(self): i64; }
+trait Eq { fn eq(self, o): i64; }
+enum E1<T: Show + Eq, U: Show + Nope2> { A1 }
+enum E2<A: Show, B, C: Nope3> { A2 }
+enum E3<X: 5> { A3 }
+enum E4<Y: Show<i64>> { A4 }
+struct Q { a: Foo; }
+fn main(): i64 { var y = 1 2; return 3; }
+syscall(60, main());
+EOF
+errs eb2 6 "EB2: a second bound, a third parameter's, a malformed and an argument-taking bound — then the next declaration's and fn's own" \
+    "error:<source>:3:33: unknown trait 'Nope2' in the bound on type parameter 'U'" "error:<source>:4:24: unknown trait 'Nope3' in the bound on type parameter 'C'" \
+    "error:<source>:5:12: expected a trait name in a type parameter's bound" "error:<source>:6:12: a trait in a bound takes no type arguments: 'Show'" \
+    "error:<source>:7:15: unknown type 'Foo' for struct field 'a'" "error:<source>:8:28: expected ';', got number 2"
+printf 'enum E<T: Nope> { A }\nstruct B<T: Nope> { a; }\nfn f<T: Nope>(x: T): i64 { return 1; }\nfn main(): i64 { return f(2) + 2; }\nsyscall(60, main());\n' > "$T/eb3.cyr"
+rc=0; CYRIUS_MONOMORPH=0 "$CC" < "$T/eb3.cyr" > "$T/eb3.bin" 2> "$T/eb3.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "EB3: CYRIUS_MONOMORPH=0: rc $rc: $(grep '^error' "$T/eb3.err" | head -1)"
+else chmod +x "$T/eb3.bin"; got=0; "$T/eb3.bin" || got=$?
+    if [ "$got" -eq 3 ]; then ok "EB3: CYRIUS_MONOMORPH=0 reads no bound — the enum's, the struct's and the fn's alike (exit 3)"; else bad "EB3: exit $got, want 3"; fi
+fi
+printf 'trait Show { fn show(self): i64; }\nenum E1<T: Show + Later, U, V: Show> { A1, B1 }\nenum E2<T>: stack { P(x); N; }\ntrait Later { fn la(self): i64; }\nfn main(): i64 { return A1 + B1 + 4; }\nsyscall(60, main());\n' > "$T/ebk.cyr"
+exits ebk 5 "EBK: declared bounds (one declared below), three parameters, a : stack enum"
+
 # RB — 6.7.17 (the user's D1): a bounded site on a rebound receiver is no site
 RBH='include "lib/syscalls.cyr"
 include "lib/fnptr.cyr"
@@ -1028,4 +1069,4 @@ rb rbk 'fn g<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; return x.other
 errs rbk 1 "RBK: g's own x.other() past the closure — the contract's refusal" "error:<source>:10:68: $BDM"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
-echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); a trait member's bounds looked up with a fn's words (TM, 6.7.17's D4); well-formed bounded code runs (C)"
+echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); a trait member's bounds looked up with a fn's words (TM, 6.7.17's D4), an enum's (EB, 6.7.17's D101); well-formed bounded code runs (C)"

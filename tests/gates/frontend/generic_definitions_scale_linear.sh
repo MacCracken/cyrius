@@ -79,7 +79,7 @@ for shape in param ptr two chain called mono0; do
         NFAIL=$((NFAIL + 1)); continue
     fi
     chmod +x "$D/$shape.2.cyr.bin"
-    "$D/$shape.2.cyr.bin"; rc=$?
+    rc=0; "$D/$shape.2.cyr.bin" || rc=$?   # its exit is the value checked (bash -eo pipefail)
     if [ "$rc" != 7 ]; then
         echo "  FAIL: [$shape] the $((N * 2))-definition program exited $rc, want 7"
         NFAIL=$((NFAIL + 1)); continue
