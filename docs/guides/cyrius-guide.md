@@ -8974,7 +8974,7 @@ never fired and `file_close_r` was never `Err`.
 | `sys_truncate(dir, n)` | -21 | -1 | -1; -21 since 6.7.16 |
 | `file_open(dir, O_WRONLY, 0)` | -21 | -1 | -13; -21 since 6.7.16 |
 | `file_rename` / `sys_rename` of a directory onto an existing file | -20 (the file kept) | 0, and the file is gone | 0, and the file is gone; -20 since 6.7.17 (the file kept) |
-| `file_rename` / `sys_rename` of a file onto a directory | -21 | -1 | -13; -21 since 6.7.17 |
+| `file_rename` / `sys_rename` of a file onto a directory | -21 | -1 | -1; -13 since 6.7.16; -21 since 6.7.17 |
 | `xflock(fd, LOCK_EX)` of a closed fd, `xflock(-4, LOCK_EX)` | -9 | -1 | -1; -9 since 6.7.17 |
 | `xflock(h + 1, 3)` (a bad op on an fd never opened, beside the open `h`) | -22 (-9 macOS) | -1; -22 since 6.7.12 | -22; -9 since 6.7.16; -22 since 6.7.17 |
 
