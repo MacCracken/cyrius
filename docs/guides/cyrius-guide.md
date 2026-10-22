@@ -1982,7 +1982,9 @@ D22, 2026-10-22): `var bb = str_from("xyz");` — a method `h.clone()`, a generi
 inferred `gg(h)`), wrapped — is a `Str` handle global holding the header's address (its value unchanged), in the
 declaration zone and after the first statement, so `bb.len` reads 3 as in a fn (through 6.7.16 *no struct type in scope
 for 'bb'*). A name keeps the word at top level (`var H = gt;`, below), and so do a field read and an if-expression of
-handles; the overload dispatcher routes an untyped `Str` global by the one call that initialised it, wrapped or not: `var s = (mks());` / `((mks()))` sends
+handles. A global initialised by a `Str` call goes to the `Str` overload, wrapped or not — since 6.7.17 it is a `Str`;
+from 6.7.15 the dispatcher routed the then-untyped global by the one call that initialised it: `var s = (mks());` /
+`((mks()))` sends
 `println(s)` to `println_str` as `var s = mks();` does (6.7.15; it took the cstring base and printed the header's
 bytes), and since 6.7.16 a method call is such a call — `var s = BB.mks();` with `fn mks(self): Str`, `(BB.mks())`, a
 chain ending in one (`W.b.mks()`), a `*B` receiver or `.m<..>(..)`, in the declaration zone or after the first
