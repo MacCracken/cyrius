@@ -295,6 +295,16 @@
 #   `_pa_bv` without its dyn test                       -> RED 1: PVK6 (crossos/dyn_objects.tcyr does not build)
 #   real tree                                           -> GREEN (230 refusal rows — floor 230 — and 48 acceptance rows)
 #
+# 6.7.17 (D107, the user's decision, 2026-10-22: the vala review's blocked item) — A POINTER OF ANOTHER DEPTH INTO A
+# STRUCT-POINTER DECLARATION is refused as the argument is, naming both types: "cannot initialise 'u: *Pt' from '&h', a
+# '**Pt' - a pointer of another depth" (`_ppd_val` from `_vin_decl`, in a fn and after the first statement; the zone's
+# `_ppd_zval`), both ways, every source `_pa_sid` types. PY1 the review's repro verbatim, PY2-PY12, PYK1, x86_64 /
+# aarch64 / cx / PE. Mutations (2026-10-22, scratch copies, each compiler built from its copy):
+#   the tree before it (D106's commit)                  -> RED 12: PY1-PY12 (compiled; PY1 exited 0 where 3 is right)
+#   `_ppd_val` answering 0                              -> RED 12: PY1-PY12
+#   `_ppd_zval` answering 0                             -> RED 1: PY8
+#   real tree                                           -> GREEN (242 refusal rows — floor 242 — and 49 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -1615,9 +1625,54 @@ fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return dk(&p) + dk(u); } sy
 accept4 "PVK5 an untyped pointer, alloc(), 0" \
     "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u = &p; var a = alloc(16); store64(a + 8, 3); return nc4(u) + nc4(a) + bp(u) + n2(&u) + n2(0); } syscall(60, go());" 11
 
+# 6.7.17 (D107, the user's decision, 2026-10-22: "refuse it, naming both pointer types, as an argument of another depth
+# is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION (`_ppd_val`, parse_types.cyr; the zone's
+# `_ppd_zval`): "cannot initialise 'u: *Pt' from '&h', a '**Pt' - a pointer of another depth". PY1 the vala review's
+# blocked repro verbatim (`u.x` read the handle's slot as the Pt: exit 0 where 3 is right); PY2-PY12 every source and
+# path, both ways; PYK1 what stays: the annotation's depth (to any struct), `*pp`, `&h` into `**Pt`, untyped, `0`,
+# `alloc`, an inline struct (D17's address).
+PYW="a pointer of another depth"
+refuse4 "PY1 the review's repro verbatim: var u: *Pt = &h;" "cannot initialise 'u: \*Pt' from '&h', a '\*\*Pt' - $PYW" \
+'include "lib/alloc.cyr"
+struct Pt { x; y; }
+fn nc4(p: *Pt): i64 { return p.x; }
+fn main(): i64 { alloc_init(); var h: Pt = alloc(16); h.x = 3; h.y = 4; var u: *Pt = &h; if (u.x == 3) { return 3; } return nc4(u) & 1; }
+syscall(60, main());
+' 1 nowarn
+refuse4 "PY2 var v: *Pt = pp; a **Pt local" "cannot initialise 'v: \*Pt' from 'pp', a '\*\*Pt' - $PYW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var v: *Pt = pp; return v.y; } syscall(60, go());" 1 nowarn
+refuse4 "PY3 var pp: **Pt = u; a *Pt into **Pt" "cannot initialise 'pp: \*\*Pt' from 'u', a '\*Pt' - $PYW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = u; return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PY4 a **Pt field w.pp" "cannot initialise 'v: \*Pt' from 'w.pp', a '\*\*Pt' - $PYW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var w: W; w.pp = &u; var v: *Pt = w.pp; return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PY5 a : **Pt call" "cannot initialise 'v: \*Pt' from 'mpp(&u)', a '\*\*Pt' - $PYW" \
+    "${PV}fn mpp(x: **Pt): **Pt { return x; }
+fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var v: *Pt = mpp(&u); return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PY6 *ppp of a ***Pt" "cannot initialise 'v: \*Pt' from '\*ppp', a '\*\*Pt' - $PYW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var ppp: ***Pt = &pp; var v: *Pt = *ppp; return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PY7 wrapped ((&u))" "cannot initialise 'v: \*Pt' from '&u', a '\*\*Pt' - $PYW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var v: *Pt = ((&u)); return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PY8 the declaration zone: var GV: *Pt = GPP;" "cannot initialise 'GV: \*Pt' from 'GPP', a '\*\*Pt' - $PYW" \
+    "${PV}var GPP: **Pt = &GU;
+var GV: *Pt = GPP;
+syscall(60, 0);" 1 nowarn
+refuse4 "PY9 after the first statement: var GV: *Pt = &GH;" "cannot initialise 'GV: \*Pt' from '&GH', a '\*\*Pt' - $PYW" \
+    "${PV}alloc_init();
+GH = alloc(16);
+var GV: *Pt = &GH;
+syscall(60, 0);" 1 nowarn
+refuse4 "PY10 a closure's captured **Pt" "cannot initialise 'v: \*Pt' from 'pp', a '\*\*Pt' - $PYW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var f = || { var v: *Pt = pp; return 0; }; return fncall0(f); } syscall(60, go());" 1 nowarn
+refuse4 "PY11 another struct at another depth: var v: *Q = pp;" "cannot initialise 'v: \*Q' from 'pp', a '\*\*Pt' - $PYW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var v: *Q = pp; return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PY12 a Str handle's &s into *Str" "cannot initialise 'ps: \*Str' from '&s', a '\*\*Str' - $PYW" \
+    "${PV}fn go(): i64 { alloc_init(); var s: Str = str_from(\"ab\"); var ps: *Str = &s; return 0; } syscall(60, go());" 1 nowarn
+accept4 "PYK1 the annotation's depth, *pp, &h into **Pt, untyped, 0, alloc, an inline Pt" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var a: *Pt = u; var b: **Pt = &u; var c: *Pt = *pp; var d: *Q = &p; var h: Pt = alloc(16); h.y = 3; var e: **Pt = &h; var x = &u; var f: **Pt = x; var g: *Pt = 0; var k: *Pt = alloc(16); var m: *Pt = p; var hh: *Pt = *e; return a.y + c.y + m.y + hh.y; } syscall(60, go());" 9
+
 # Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15
 # (the structs lane's FB rows and the vectors lane's DN rows together).
-[ "$nrefuse" -ge 230 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 230)"; fail=$((fail+1)); }
-[ "$naccept" -ge 48 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 48)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 242 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 242)"; fail=$((fail+1)); }
+[ "$naccept" -ge 49 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 49)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

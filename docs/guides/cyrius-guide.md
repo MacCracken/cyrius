@@ -2606,7 +2606,13 @@ address, a `**Pt`; a `Str` handle's `&s` a `**Str`) — the argument named as th
 written out, at every source and path the pointee check above reads. A pointer of the parameter's depth passes, as do
 `*pp` (a `*Pt`) and `**pp` (the struct value, whose address a `*Pt` takes), an untyped pointer and `0`. Through
 6.7.16 a pointer of another depth passed: `nc4(&pq)` read pq's slot as the Pt (`p.x` was p's address) and `nc2(pz)`
-read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows).
+read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows). A DECLARATION of a
+pointer to a struct is judged the same (6.7.17; the user's decision D107, 2026-10-22): `var u: *Pt = &h;` with h a
+handle, `var u: *Pt = pp;` with `pp: **Pt`, `var pp: **Pt = u;` with `u: *Pt` — a field, a call, `*ppp`, wrapped, a
+capture, in a fn, the declaration zone and after the first statement — reports `cannot initialise 'u: *Pt' from '&h',
+a '**Pt' - a pointer of another depth`; through 6.7.16 `u` held the handle's slot and `u.x` read its word as the Pt.
+A pointer of the annotation's depth still converts (to any struct, `var q: *Q = &p;`), and `*pp`, an untyped
+pointer, `0` and an inline struct (its address, D17) pass.
 
 ⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
 (a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is

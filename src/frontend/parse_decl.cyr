@@ -12266,6 +12266,9 @@ fn _vin_decl(S, pscale, sty, ann): i64 {
     if (PEEKT(S) != 4) { return pscale; }
     _vin_vval(S, pscale, ann);   # 6.7.17 (D24): `var x: i64 = w;`
     _svin_val(S, pscale, ann);   # 6.7.17 (D106): `var x: i64 = q;`, q a struct value
+    if (ann > 0) { if (pscale > 0) { if (TOKTYP(S, ann - 1) == 49) {   # 6.7.17 (D107): `var u: *Pt = &h;`
+                _ppd_val(S, GTI(S) + 1, _hl_dx_end(S, GTI(S) + 1, 5), ann, TOKVAL(S, ann - 2));
+            } } }
     if (GINFN(S) != 1) {
         _vin_top(S, pscale, ann);
         return pscale;
@@ -12364,6 +12367,7 @@ fn _vin_zone(S, gi, noff): i64 {
     if (_gu_untyped(S, st) == 1) { ann = 0; }
     if (ann == 1) { if (_vin_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D24): `var X: i64 = *GP;`
     if (ann == 1) { if (_svin_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D106): `var X: i64 = GQ;`
+    if (ann == 1) { if (_ppd_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D107): `var GU: *Pt = GPP;`
     return _vtop_ref(S, st, ann);
 }
 # ⛔ 6.7.17 (D106, the user's decision, 2026-10-22) — A DECLARATION ANNOTATED A SCALAR OR A POINTER TO NO STRUCT
@@ -12396,6 +12400,14 @@ fn _svin_judge(S, ti, e, ann, noff): i64 {
     _rcv_isv = 0;
     if (r == 1) { if (ps == 1) { _ptr_refd_ti = ann; } }
     return r;
+}
+# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse_types.cyr): `var GU: *Pt = GPP;`. 1 = refused.
+fn _ppd_zval(S, st): i64 {
+    var i = _vrcv_dbeg(S, st);
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    if (TOKTYP(S, i + 3) != 8) { return 0; }
+    return _ppd_val(S, st, _hl_dx_end(S, st, 5), i + 3, TOKVAL(S, i + 1));
 }
 # ... the declaration zone's replay (`_vin_zone`, the initialiser at `st`): `var X: i64 = GQ;`. 1 = refused.
 fn _svin_zval(S, st): i64 {
