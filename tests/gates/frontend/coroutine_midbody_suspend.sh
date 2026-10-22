@@ -26,11 +26,13 @@ set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || { echo "FAIL: coroutine_midbody_suspend: cannot cd to $R"; exit 1; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: coroutine_midbody_suspend: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-WP="$T/wine"   # axis 12's PE leg: a private prefix, its wineserver stopped on exit
+WP="$T/wine"   # axis 12's PE leg: a private prefix — its wineserver stopped and its server dir removed on exit
 _wine_down() {
   [ -d "$WP" ] || return 0
+  _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
   WINEPREFIX="$WP" wineserver -k >/dev/null 2>&1 || true
   WINEPREFIX="$WP" wineserver -w >/dev/null 2>&1 || true
+  rm -rf "$_ws" || true
 }
 trap '_wine_down; rm -rf "$T"' EXIT
 CC="$R/build/cycc"
