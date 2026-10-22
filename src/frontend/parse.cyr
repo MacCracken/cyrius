@@ -5225,11 +5225,11 @@ fn _dsr_earr(S, s, lb, eq, ed): i64 {
 }
 # ⛔ 6.7.17 (D16) — A STRUCT RESULT OVER 8 B INTO A SCALAR OR POINTER FIELD is refused, as every sibling store is:
 # `w.n = mkp();`, `GW.n = mkp();`, through a `*W` (`pw.n`), a chain (`v.w.n`), a capture, a for step, at top level, a
-# narrow / float / `*i64` / `*Pt` / `**Q` field — stored Q's first word (77; the globals 154), silently. `_fst_on`'s value
-# [ti, cursor), its field `lfd` (`(si + 1) << 16 | fi`, read before the value can re-resolve a field): "cannot assign
-# 'w.n: i64' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field". A struct-typed field
-# is `_fsc_src`'s, a bool its own refusal, a `*Q` field of the result's own struct D14's copy. In a generic's base parse
-# a destination typed by its type parameter is the stub rule's (`_gs_fst_sres`). CHANGELOG [6.7.17]
+# narrow / float / `*i64` / `*Pt` / `**Q` field — stored Q's first word (77; the globals 154), silently. `_fst_on`'s
+# value [ti, cursor), its field `lfd` (`(si + 1) << 16 | fi`, read before the value can re-resolve a field):
+# "cannot assign 'w.n: i64' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field". A
+# struct-typed field is `_fsc_src`'s, a bool its own refusal, a `*Q` field of the result's own struct D14's copy. In a
+# generic's base parse a destination typed by its type parameter is the stub rule's (`_gs_fst_sres`). CHANGELOG [6.7.17]
 fn _dsr_fld(S, ti, lfd): i64 {
     if (_syntax_only == 1) { return 0; }
     if (lfd <= 0) { return 0; }
@@ -5258,11 +5258,19 @@ fn _dsr_lit(S, ti, si, fi): i64 {
     if (GFBOOL(S, si, fi) == 1) { return 0; }
     if (_dsr_rec(S, ti) == 0) { return 0; }
     if (_fld_ptr_sid(S, si, fi) == _dsr_sid) { return 0; }
-    if (_inst_name == 0) { if (GSTP(S, si) != 0) { if (GINFN(S) == 1) { if (GFTP(S, _cur_fn_ix) != 0) { return 0; } } } }
+    if (_dsr_lit_tp(S, si) == 1) { return 0; }
     _dsr_tm = 2;
     _dsr_tk = ((si + 1) << 16) | fi;
     _dsr_tnm = GETFNAME(S, si, fi);
     return _dsr_err(S, ti, ti, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# 1 = in a generic fn's base parse, struct `si` is a generic struct's base: its elements are each instance's.
+fn _dsr_lit_tp(S, si): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (GSTP(S, si) == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (GFTP(S, _cur_fn_ix) == 0) { return 0; }
+    return 1;
 }
 # ... a slice's `.ptr` / `.len` (`s.len = mkp();`), its value [ti, cursor): 's.len: i64'. CHANGELOG [6.7.17]
 fn _dsr_slf(S, ti): i64 {
