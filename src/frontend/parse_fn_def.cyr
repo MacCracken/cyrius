@@ -1043,7 +1043,7 @@ fn _dl_quiet(S, a, e): i64 {
         i = i + 1;
     }
     if (TOKTYP(S, a) == 73) { a = a + 1; }   # 6.7.16: `pub use m.f;` too
-    if (TOKTYP(S, a) == 74) { if (_use_bad(S, a) < 0) { _dl_fn_quiet(S, TOKVAL(S, a + 3), a, 0); } }   # `use m.f` (6.7.17: its `;` or not)
+    if (TOKTYP(S, a) == 74) { if (_use_named(S, a) == 1) { _dl_fn_quiet(S, TOKVAL(S, a + 3), a, 0); } }   # `use m.f` (6.7.17)
     return 0;
 }
 fn _dl_fn_at(S, i, d, isid): i64 {
@@ -1589,7 +1589,9 @@ fn _tl_mod(S): i64 {
 # `use modname.funcname;` — register the alias funcname -> modname_funcname (pass 1).
 fn _tl_use(S): i64 {
     var ti = GTI(S);
-    if (_use_step(S, 1, 0) == 0) { return 0; }
+    var named = _use_named(S, ti);
+    _use_step(S, 1, 0);
+    if (named == 0) { return 0; }
     var e = GTI(S);
     var ufn = TOKVAL(S, ti + 3);
     # 6.6.20: `use m.mulh64;` binds the BARE name, so it is a declaration of it —
@@ -1602,12 +1604,15 @@ fn _tl_use(S): i64 {
 }
 # ⛔ 6.7.17 — A `use` IS ONE LINE: `use module.name;`, or with no `;` ending at its line, as an #assert does. Pass 1 read
 # `use IDENT . IDENT [;]` and pass 2 stepped to the next `;`, so `use m.f` with no `;` silently dropped the line after it
-# (`syscall(60, 3);` never compiled: exit 0), and any other shape bound nothing, silently: `use 5;`, `use m.;`, `use m;`,
-# `use m.f g;`. Now one rule steps it in every reader (pass 1, pass 2, a refused one after the first statement or in a
-# body: `_dl_skip_at`), and a line that is not that form is "expected `use module.name;`" at its first wrong token (the
-# `use` when its line ends early), reported once (pass 1, `rep` 1), its line stepped whole (`_ln_rest`, `blk` 1 below
-# module scope) — the user's D30, 2026-10-22. 1 = the form (the cursor past it: the alias is the caller's), 0 = refused.
-# CHANGELOG [6.7.17]
+# (`syscall(60, 3);` never compiled: exit 0), and any other shape compiled silently: `use 5;`, `use m.;`, `use m;` bound
+# nothing, `use m.f g;` bound `f` and dropped the `g`. Now one rule steps it in every reader (pass 1, pass 2, a refused
+# one after the first statement or in a body: `_dl_skip_at`), and a line that is not that form is "expected `use
+# module.name;`" at its first wrong token (the `use` when its line ends early), reported once (pass 1, `rep` 1), its
+# line stepped whole (`_ln_rest`, `blk` 1 below module scope) — the user's D30, 2026-10-22. 1 = the form (the cursor
+# past it: the alias is the caller's), 0 = refused. CHANGELOG [6.7.17]
+# A refused line whose `use module.name` is whole — the wrong token after the name, `use m.f g;`, `use m.f(1)` — still
+# binds the name (`_use_named`; `_dl_quiet` enters it for a late or body one), so a call of it adds no "undefined
+# function" + "refusing to emit binary" to D30's one error; the refusal alone fails the build. CHANGELOG [6.7.17]
 fn _use_step(S, rep, blk): i64 {
     var ti = GTI(S);
     var b = _use_bad(S, ti);
@@ -1643,6 +1648,13 @@ fn _use_bad(S, ti): i64 {
     if (t2 == 5 || t2 == 12) { return 0 - 1; }
     if (GTLINE(S, k) != ln) { return 0 - 1; }
     return k;
+}
+# 1 = the `use` at `ti` names its fn whole (`use IDENT . IDENT`), refused or not: what it binds (see `_use_step`).
+fn _use_named(S, ti): i64 {
+    var b = _use_bad(S, ti);
+    if (b < 0) { return 1; }
+    if (b == ti + 4) { return 1; }
+    return 0;
 }
 
 # Append the mangled `mod_fn` to tok_names (NPOS is stable after lexing) and record the alias

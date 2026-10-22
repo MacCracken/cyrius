@@ -621,8 +621,10 @@ var r = add(20, 22);   # r = 42
           ^
   ```
 
-  Through 6.7.16 `use 5;`, `use m.;`, `use m;` and `use m.f g;` compiled and bound nothing, and `use
-  m.f` with no `;` silently dropped the line after it — that line was never compiled.
+  When the name is whole and only what follows it is wrong (`use m.f g;`), the name is still bound, so
+  its calls add nothing to that one error. Through 6.7.16 `use 5;`, `use m.;` and `use m;` compiled and
+  bound nothing, `use m.f g;` bound `f` and dropped the `g`, and `use m.f` with no `;` silently dropped
+  the line after it — that line was never compiled.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
