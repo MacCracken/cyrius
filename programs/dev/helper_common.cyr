@@ -960,6 +960,28 @@ fn _hc_open_out(pathc, append): i64 {
     return sys_open(pathc, fl, 0x1A4);
 }
 
+# A child's redirect of `fd` onto std fd `target`, closing `fd` only when it is not `target`: a
+# helper started with that std fd closed opens the redirect's file AT it, and dup2(N, N) followed
+# by close(N) closes the redirect just made. cbt/core.cyr's _cbt_redirect twin.
+fn _hc_redirect(fd, target): i64 {
+    sys_dup2(fd, target);
+    if (fd != target) { sys_close(fd); }
+    return 0;
+}
+
+# In a CHILD, before its first redirect onto 0 / 1 / 2: move `fd` — one the helper opened for
+# this child (a capture pipe) — above 2 when it is one of them, and answer its number now. A
+# helper started with fd 0 closed opens its capture pipe AT 0, and closing the pipe's read end
+# closed the child's stdin redirect. F_DUPFD answers the lowest free fd >= 3; if even that is
+# refused, the child carries on with `fd` as it is. cbt/core.cyr's _cbt_lift_fd twin.
+fn _hc_lift_fd(fd): i64 {
+    if (fd < 0 || fd > 2) { return fd; }
+    var nfd = sys_fcntl(fd, F_DUPFD, 3);
+    if (nfd < 0) { return fd; }
+    sys_close(fd);
+    return nfd;
+}
+
 var _hc_run_append = 0;
 
 # Run argv (a vec of C strings; argv[0] looked up on PATH) and wait for it.
@@ -996,18 +1018,18 @@ fn hc_run(argv, env, cwd, inp, outp, errp, tmo_ms): i64 {
         if (inp != 0) {
             var fi = _hc_open_in(inp);
             if (fi < 0) { sys_exit(1); }
-            if (fi != 0) { sys_dup2(fi, 0); sys_close(fi); }
+            _hc_redirect(fi, 0);
         }
         if (outp != 0) {
             var fo = _hc_open_out(outp, append);
             if (fo < 0) { sys_exit(1); }
-            if (fo != 1) { sys_dup2(fo, 1); sys_close(fo); }
+            _hc_redirect(fo, 1);
         }
         if (errp == HC_SAME) { sys_dup2(1, 2); }
         elif (errp != 0) {
             var fe = _hc_open_out(errp, append);
             if (fe < 0) { sys_exit(1); }
-            if (fe != 2) { sys_dup2(fe, 2); sys_close(fe); }
+            _hc_redirect(fe, 2);
         }
         if (prog != 0) {
             var xr = sys_execve(prog, av, ev);
@@ -1132,19 +1154,23 @@ fn hc_capture_full(argv, env, cwd, inp, errmode, tmo_ms): i64 {
     }
     if (pid == 0) {
         if (cwd != 0) { if (sys_chdir(cwd) != 0) { sys_exit(127); } }
+        var cor = _hc_lift_fd(or_);
+        var cow = _hc_lift_fd(ow);
+        var cer = _hc_lift_fd(er);
+        var cew = _hc_lift_fd(ew);
         if (inp != 0) {
             var fi = _hc_open_in(inp);
             if (fi < 0) { sys_exit(1); }
-            if (fi != 0) { sys_dup2(fi, 0); sys_close(fi); }
+            _hc_redirect(fi, 0);
         }
-        sys_close(or_);
-        if (er >= 0) { sys_close(er); }
-        if (ow != 1) { sys_dup2(ow, 1); sys_close(ow); }
+        sys_close(cor);
+        if (cer >= 0) { sys_close(cer); }
+        _hc_redirect(cow, 1);
         if (errmode == 1) { sys_dup2(1, 2); }
-        if (errmode == 2) { if (ew != 2) { sys_dup2(ew, 2); sys_close(ew); } }
+        if (errmode == 2) { _hc_redirect(cew, 2); }
         if (errmode == 3) {
             var dn = sys_open("/dev/null", O_WRONLY, 0);
-            if (dn >= 0) { if (dn != 2) { sys_dup2(dn, 2); sys_close(dn); } }
+            if (dn >= 0) { _hc_redirect(dn, 2); }
         }
         if (prog != 0) {
             var xr = sys_execve(prog, av, ev);
