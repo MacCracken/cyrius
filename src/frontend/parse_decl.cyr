@@ -12232,8 +12232,9 @@ fn _dt_zone_check(S, n, k): i64 {
 # (pass 1, `_prescan_ret_single`, GFLG bit 1024) is refused by name: `var a, b = one(1);` bound b
 # to whatever rdx held, silently, at fn scope and at top level (6.6.0's destructure). A struct callee
 # is judged by its register words (`_dt_struct_check`) — its DECLARED return, ahead of a recorded
-# `return (..)` count (a `: P` fn's crossing arms). Not refused: a `: stack` pair (bit 256) bound to two names (6.7.17:
-# three are refused, `_dt_icall_pair`), Result / Option / Tagged — any of which can carry a second word. CHANGELOG [6.6.17]
+# `return (..)` count (a `: P` fn's crossing arms). Not refused: a `: stack` pair (bit 256) bound to two names
+# (6.7.17: three are refused, `_dt_icall_pair`), Result / Option / Tagged — any of which can carry a second word.
+# CHANGELOG [6.6.17]
 # A vector is refused since 6.7.16 (`_dt_vec_err`).
 fn _dt_arity_check(S, fi, n): i64 {
     var rs = GFRS(S, fi);
@@ -12469,6 +12470,7 @@ fn _dt_mfn(S, o, mf, mt, rs): i64 {
 fn _vin_decl(S, pscale, sty, ann): i64 {
     if (PEEKT(S) != 4) { return pscale; }
     _vin_vval(S, pscale, ann);   # 6.7.17 (D24): `var x: i64 = w;`
+    _vin_avv(S, pscale, sty, ann);   # 6.7.17 (D108): `var x = wa;`, an array of vectors
     if (GINFN(S) != 1) {
         _vin_top(S, pscale, ann);
         return pscale;
@@ -12541,8 +12543,9 @@ fn _vtop_ref(S, st, ann): i64 {
 # value that is no call (`_vval_at`): refused at the value, naming it as written, in the call's shape. 1 = refused.
 # CHANGELOG [6.7.17]
 fn _vtop_vval(S, st): i64 {
-    if (_vval_at(S, st, _hl_dx_end(S, st, 5)) == 0) { return 0; }
-    if (_vvl_arr == 1) { return 0; }   # D103: `var X = GA;` of an array of vectors is unchanged
+    var vt = _vval_at(S, st, _hl_dx_end(S, st, 5));
+    if (vt == 0) { return 0; }
+    if (_vvl_arr == 1) { return _vavv_err(S, vt); }   # 6.7.17 (D108): `var X = GA;`, an array of vectors
     _vop_done = _vvl_a;   # its one refusal (D100 / D24's readers stand down)
     if (_panic == 1) { return 1; }
     if (_derr_seen(_vvl_a, "_vtop_vval", 0, 0) == 1) { return 1; }
@@ -12553,6 +12556,47 @@ fn _vtop_vval(S, st): i64 {
     PRSTR(": '");
     _vval_pnm(S);
     PRSTR("' is a vector, and a vector value needs storage in a fn's frame - copy it inside a fn\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.17 (D108, the user's decision, 2026-10-22: "refuse it naming the array of vectors, as D103") — AN UNTYPED
+# DECLARATION FROM AN ARRAY OF VECTORS IS REFUSED. `var wa: f64v2[2]; var x = wa;` bound one word, element 0's lane 0
+# (exit 4 with wa[0] = (4, 7)), in a fn and at top level (`var X = GA;`), on every target, where D103 refuses the same
+# name in every word slot and D95 copies a vector (an array is no vector to copy). In a fn, PARSE_VAR's untyped
+# declaration (cursor on the `=`, `_vin_avv`); at top level, the zone and after the first statement (`_vtop_vval`):
+# the whole initialiser an array of vectors (`_vval_at`, `_vvl_arr`) — "'wa' is an array of vectors - an untyped
+# declaration binds one word, its element 0's lane 0; take its address: `var p: *f64v2 = &wa;`". Once, in sync.
+# CHANGELOG [6.7.17]
+fn _vin_avv(S, pscale, sty, ann): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (ann != 0) { return 0; }
+    if (pscale != 0) { return 0; }
+    if (sty != 0) { return 0; }
+    var ti = GTI(S) + 1;
+    var vt = _vval_at(S, ti, _hl_dx_end(S, ti, 5));
+    if (vt == 0) { return 0; }
+    if (_vvl_arr == 0) { return 0; }
+    return _vavv_err(S, vt);
+}
+fn _vavv_err(S, vt): i64 {
+    _vop_done = _vvl_a;   # its one refusal
+    if (_panic == 1) { return 1; }
+    if (_derr_seen(_vvl_a, "_vavv_err", 0, 0) == 1) { return 1; }
+    var sv = GTI(S);
+    STI(S, _vvl_a);
+    _refuse_in_sync(S);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    _vval_pnm(S);
+    PRSTR("' is an array of vectors - an untyped declaration binds one word, its element 0's lane 0; ");
+    PRSTR("take its address: `var p: *");
+    _vty_pr(vt);
+    PRSTR(" = &");
+    _vval_pnm(S);
+    PRSTR(";`\n");
     _err_excerpt(S);
     _had_error = 1;
     STI(S, sv);

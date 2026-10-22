@@ -2464,7 +2464,10 @@ An ARRAY of vectors is refused in the same slots (6.7.17, the user's decision D1
 read as a word is its element 0, so `var wa: f64v2[2]; take(wa)` passed element 0's lane 0 — `take(wa)`, `return wa;`,
 `var x: i64 = wa;`, `if (wa)`, `1 + wa`, `x = wa`, `syscall(60, wa)`, a tuple or multi-value element, a local or a
 global, in a fn or at top level — and each is *… - 'wa' is an array of vectors* now. Pass its address (`rd(&wa)`,
-`&wa + 16` is element 1) or read a lane (`load64(&wa)`).
+`&wa + 16` is element 1) or read a lane (`load64(&wa)`). So is an UNTYPED declaration from one (the user's decision
+D108, 2026-10-22): `var x = wa;` in a fn, a closure, and `var X = GA;` at top level bound that lane 0 and are *'wa' is
+an array of vectors - an untyped declaration binds one word, its element 0's lane 0; take its address: `var p:
+*f64v2 = &wa;`* (an array is no vector for D95 to copy; an `i64` array's `var x = a;` is its element 0, unchanged).
 
 **An untyped declaration from a vector value copies it in a fn (6.7.17, the user's decision D95, 2026-10-22).** `var x
 = w;` with `w` a vector local, a by-value vector parameter or a closure's captured vector — `(w)` too — declares a
