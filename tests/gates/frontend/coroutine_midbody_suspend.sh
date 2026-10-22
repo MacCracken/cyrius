@@ -782,19 +782,21 @@ chmod +x "$T/a11"; g11=0; timeout 30 "$T/a11" || g11=$?
 # held the caller's whole word where 6.7.16's D72 narrows every other parameter: the filed repro
 # printed `98304 511 255 -32768`. D27 (2026-10-22): narrowed, as D72 — the ladder addresses
 # `[r11 + disp32]` (`_ECORO_LOAD_W` / `_ECORO_STORE_W`), so the repro prints `-32768 255 255 -32768`
-# and a narrow local compiles. The same refusal fired on every read and assignment of an 8-byte
-# typed-pointer local (`var q: *i64` / `*u64` / `*f64` / `**i64`: its load / store also goes through
-# EFLLOAD_W / EFLSTORE_W, at width 8), so those compile since D27 too — N28.
+# and a narrow local compiles. The same refusal fired on every read and assignment of a typed-pointer
+# local whose pointee is a word — `*i64` / `*u64` / `*f64` / `*bool` / an enum's `*E`, and every
+# pointer to a pointer (`**T`, `***T`): its slot type is 8, so its load / store also goes through
+# EFLLOAD_W / EFLSTORE_W, at width 8 (a `*i8` .. `*u32`, `*f32`, `*u128` or struct pointer never took
+# that path) — so those compile since D27 too; N28 pins that one shared path.
 # Rows: R the filed repro verbatim (its stdout); N1-N28 (stdout "N<row>" for each red row) every
 # width's parameter read after a suspend, every width's `+= 1` wrap, every width's local (stored
 # before or after the suspend), and the other spellings — a narrow param into a narrow local, `*(&y)`
 # (6.7.16's D21), a stack-passed parameter, a closure's capture of a narrow param / local, two
-# suspends, a `u8` loop counter across suspends, a defer, `<<=`, an 8-byte typed-pointer local (N28:
-# `*i64` `+= 1`, `*u64` `= q + 2`, `*f64`, `**i64` through `&p`). Each async row is compared with its
-# literal value AND a plain-fn control with the same body (D72's answer); `trash()` runs between
-# forces. Legs: x86_64, CYRIUS_IR=3 (its LASE / DCE / DSE see the narrow coroutine nodes), PE (wine,
-# a private prefix). aarch64 and cx refuse a suspending `async fn` (axis 4's x86 guard); x86 Mach-O
-# shares this emitter and ran on ach by hand (6.7.17).
+# suspends, a `u8` loop counter across suspends, a defer, `<<=`, a typed-pointer local whose pointee is
+# a word (N28: `*i64` `+= 1`, `*u64` `= q + 2`, `*f64`, `**i64` through `&p`). Each async row is
+# compared with its literal value AND a plain-fn control with the same body (D72's answer); `trash()`
+# runs between forces. Legs: x86_64, CYRIUS_IR=3 (its LASE / DCE / DSE see the narrow coroutine
+# nodes), PE (wine, a private prefix). aarch64 and cx refuse a suspending `async fn` (axis 4's x86
+# guard); x86 Mach-O shares this emitter and ran on ach by hand (6.7.17).
 # MUTATION LEDGER (2026-10-22, a copy of src/ mutated, stage1 rebuilt from it; every leg alike):
 #   the pre-fix src (e65604d5d)                      -> R prints `98304 511 255 -32768`; the rows
 #     probe refused ("a sub-word local in an `async fn` is not supported yet"), N28's a28 alone too
@@ -979,8 +981,8 @@ else echo "  SKIP coroutine_midbody_suspend axis12: the PE leg (wine not install
   echo "FAIL coroutine_midbody_suspend axis12: $a12_red leg(s) red — a coroutine's narrow parameter or local"
   echo "  does not hold its type's value (N<row>: 1-6 a parameter of each width, 7-12 each width's += 1 wrap,"
   echo "  13-18 a local of each width, 19 a param into a narrow local, 20 *(&y), 21 stack-passed, 22 / 23 a"
-  echo "  closure's capture, 24 two suspends, 25 a u8 loop counter, 26 a defer, 27 <<=, 28 an 8-byte"
-  echo "  typed-pointer local: *i64 / *u64 / *f64 / **i64)."
+  echo "  closure's capture, 24 two suspends, 25 a u8 loop counter, 26 a defer, 27 <<=, 28 a typed-pointer"
+  echo "  local whose pointee is a word: *i64 / *u64 / *f64 / **i64)."
   exit 1; }
 
 if [ "$a12_skip" -eq 1 ]; then echo "SKIP coroutine_midbody_suspend: every axis that ran passed, but axis 12's PE leg could not run (exit 77: a SKIP, not a PASS)"; exit 77; fi

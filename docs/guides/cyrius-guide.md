@@ -8153,9 +8153,10 @@ in its heap frame at its width, as it does on the stack (6.7.17, D27): `var y: i
 reads 5 after it, a store wraps (`y += 1` of an `i16` 32767 is -32768), and `*(&y)` and a closure's capture
 read its value. ⚠ Through 6.7.16 a narrow local in a coroutine was refused ("a sub-word local in an `async fn`
 is not supported yet") and a narrow parameter held the caller's whole word. The same message also refused every
-read or assignment of an 8-byte typed-pointer local (`var q: *i64` / `*u64` / `*f64` / `**i64`) in a coroutine;
-since 6.7.17 (D27: the refusal goes) those compile too, and `p += 1` / `q = q + 2` step by the pointee as they
-do in any fn.
+read or assignment of a typed-pointer local whose pointee is a word — `*i64` / `*u64` / `*f64` / `*bool` / an
+enum's `*E`, and every pointer to a pointer (`**T`, `***T`) — in a coroutine (a `*i8` .. `*u32`, `*f32`, `*u128`
+or struct pointer never took that path); since 6.7.17 (D27: the refusal goes) those compile too, and `p += 1` /
+`q = q + 2` step by the pointee as they do in any fn.
 
 **Other limits.** `async` generic fns are not yet supported, nor is a value-form vector
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
