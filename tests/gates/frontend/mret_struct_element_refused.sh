@@ -242,7 +242,7 @@ fn h(): i64 { return zz; }
 fn main(): i64 { var a, c = mv(); return c + h(); }
 syscall(60, main());
 ' "error:<source>:8:51: 'mv' $PT
-error:<source>:9:24: undefined variable 'zz' (missing include or enum?)"
+error:<source>:9:22: undefined variable 'zz' (missing include or enum?)"
 quiet M11 "--syntax-only says nothing (M1, M5, M6c)" "$(hm3 'fn mv(): (i64, i64, i64) { var w: W; w.v.x = 9; var b: Pt; var pp: *Pt = &b; return (w.v, *pp, mk()); }')"
 row M12a "control: a tuple t keeps its own line alone" "$(hm 'fn mv(): (i64, i64) { var t = (1, 2); return (t, 5); }')" "error:<source>:8:47: tuple 't' used as a value - take an element (\`t.0\`) or copy it whole into a tuple"
 row M12b "control: a tuple field w.t keeps its own line alone" "$(hm 'fn mv(): (i64, i64) { var w: W; w.k = 1; return (w.t, 5); }')" "error:<source>:8:52: tuple field 't' used as a value - take an element (\`.0\`) or copy it whole into a tuple"
@@ -298,7 +298,7 @@ fn h(): i64 { return zz; }
 fn main(): i64 { var a, c = mv(); return c + h(); }
 syscall(60, main());
 ' "error:<source>:5:58: 'mv' returns vector 'f64v2' (16 bytes) $EV
-error:<source>:6:24: undefined variable 'zz' (missing include or enum?)"
+error:<source>:6:22: undefined variable 'zz' (missing include or enum?)"
 row V7 "control: a vector CALL as the element keeps D100's words (6.7.16's VO54)" "$VH"'fn mv(): (i64, i64) { return (mk2(41, 7), 3); }
 fn main(): i64 { var a, c = mv(); return c; }
 syscall(60, main());

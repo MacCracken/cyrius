@@ -8873,13 +8873,16 @@ Reading, writing or taking the address of a block-scoped name after its block is
 compile error that names the variable and says where to declare it instead:
 
 ```
-error:<source>:5:14: undefined variable 't' (missing include or enum?)
+error:<source>:5:13: undefined variable 't' (missing include or enum?)
     syscall(60, t);
-                 ^
+                ^
 note: 't' was declared inside a top-level block and goes out of scope at its '}'
       (since 6.6.6 a top-level block scopes its `var`s like a fn body does)
       declare it at top level, before the block, to use it after the block
 ```
+
+The line and column are the name's own, and the caret sits under it (6.7.17, the user's D34; through 6.7.16 an
+undefined name was reported at the token after it — here the `)` at 5:14, in `return zq + 1;` the `+`).
 
 The note accompanies **every** form of the reference — a plain read, an assignment,
 `&t`, an index `t[0]`, and a struct-field read or write (`t.a`, `t.a = 1`).

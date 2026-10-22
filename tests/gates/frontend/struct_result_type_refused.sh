@@ -1930,7 +1930,7 @@ refuse "TV10c g(5): id(..) nested 9 deep" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var
 fn main(): i64 { return g(5); }
 syscall(60, main());
 ' one
-refuse_at "TV10s var z = z; ends: the two errors" "7:31: undefined variable 'z' (missing include or enum?)|7:43: $SN 'z'$SA" "$TVH"'fn g<T>(x: T): i64 { var z = z; return z.b; }
+refuse_at "TV10s var z = z; ends: the two errors" "7:30: undefined variable 'z' (missing include or enum?)|7:43: $SN 'z'$SA" "$TVH"'fn g<T>(x: T): i64 { var z = z; return z.b; }
 fn main(): i64 { return 0; }
 syscall(60, main());
 '

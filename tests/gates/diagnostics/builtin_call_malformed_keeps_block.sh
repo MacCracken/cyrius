@@ -73,7 +73,7 @@ comp() {
     esac
     CERR=$(grep -E '^(error|warning)' "$3.err" | tr '\n' '|')
 }
-ZE="error:<source>:6:24: undefined variable 'zz' (missing include or enum?)|"
+ZE="error:<source>:6:22: undefined variable 'zz' (missing include or enum?)|"
 NAMES=$( (sed -n '/^fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr | sed -n 's/.*return "\([a-z0-9_]*\)".*/\1/p'; \
     echo f64_sqrt; echo callptr; echo sizeof; echo mulh64) | grep -vxE 'union|u128|defer|secret|async|await')
 echo "X — every builtin's malformed call as a fn's last statement is one error; the next fn is its own ($LEGS):"
@@ -128,12 +128,12 @@ echo "N — a bare name as a statement is its one error; the next statement is i
 vrow n_local  'p;'      "error:<source>:4:6: expected '=', got ';'|$ZE"
 vrow n_undef  'zq;'     "error:<source>:4:7: expected '=', got ';'|$ZE"
 vrow n_brace  'p'       "error:<source>:5:1: expected '=', got '}'|$ZE"
-vrow n_next   'p; zq2 = 1;' "error:<source>:4:6: expected '=', got ';'|error:<source>:4:15: undefined variable 'zq2'|$ZE"
+vrow n_next   'p; zq2 = 1;' "error:<source>:4:6: expected '=', got ';'|error:<source>:4:8: undefined variable 'zq2'|$ZE"
 vrow n_kw     'p
-    return zq2;' "error:<source>:5:5: expected '=', got return|error:<source>:5:15: undefined variable 'zq2' (missing include or enum?)|error:<source>:7:24: undefined variable 'zz' (missing include or enum?)|"
+    return zq2;' "error:<source>:5:5: expected '=', got return|error:<source>:5:12: undefined variable 'zq2' (missing include or enum?)|error:<source>:7:22: undefined variable 'zz' (missing include or enum?)|"
 vrow n_for    'for (p; p < 3; p = p + 1) { }' "error:<source>:4:11: expected '=', got ';'|$ZE"
-vrow n_junk   'p 5; zq2 = 1;' "error:<source>:4:7: expected '=', got number 5|error:<source>:4:17: undefined variable 'zq2'|$ZE"
-vrow n_brk    'p { 5 }; zq2 = 1;' "error:<source>:4:7: expected '=', got '{'|error:<source>:4:21: undefined variable 'zq2'|$ZE"
+vrow n_junk   'p 5; zq2 = 1;' "error:<source>:4:7: expected '=', got number 5|error:<source>:4:10: undefined variable 'zq2'|$ZE"
+vrow n_brk    'p { 5 }; zq2 = 1;' "error:<source>:4:7: expected '=', got '{'|error:<source>:4:14: undefined variable 'zq2'|$ZE"
 # The floor: 77 names x 4 shapes on four legs; 8 V + 8 N rows on four legs.
 X_FLOOR=1232
 V_FLOOR=64

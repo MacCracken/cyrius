@@ -294,9 +294,9 @@ error:<source>:3:5: $PI
 error:<source>:5:5: $PI
 error:<source>:6:26: $PI
 error:<source>:11:1: $PI
-error:<source>:6:66: $ZZ
-error:<source>:7:26: $ZZ
-error:<source>:12:25: $ZZ"
+error:<source>:6:64: $ZZ
+error:<source>:7:24: $ZZ
+error:<source>:12:23: $ZZ"
 pirow PI5 "a fn where a fn is defined: defined (after code, called before it, in a block)" 'var a = 1;
 a = 2;
 a = g(1) + h();
@@ -307,8 +307,8 @@ syscall(60, h(7) + a);
 ' "error:<source>:4:1: $PI
 error:<source>:5:1: $PI
 error:<source>:6:15: $PI
-error:<source>:4:37: $ZZ
-error:<source>:6:46: undefined variable 'qq' (missing include or enum?)
+error:<source>:4:35: $ZZ
+error:<source>:6:44: undefined variable 'qq' (missing include or enum?)
 error:<source>:7: 'h' expects 0 arguments, got 1"
 pirow PI6 "a fn in a fn body: stepped, its call quiet, the body parses on" 'fn f(): i64 {
     private fn g(): i64 { return qq; }
@@ -318,7 +318,7 @@ pirow PI6 "a fn in a fn body: stepped, its call quiet, the body parses on" 'fn f
 syscall(60, f());
 ' "error:<source>:2:5: $PI
 error:<source>:3:5: $PI
-error:<source>:4:27: $ZZ"
+error:<source>:4:25: $ZZ"
 pirow PI7 "a declaration after the marker: stepped, its names used quietly" 'fn h(q: *Q): i64 { return q.y; }
 fn f(): i64 {
     private struct S { y; }
@@ -338,9 +338,9 @@ error:<source>:4:5: $PI
 error:<source>:5:5: $PI
 error:<source>:11:15: $PI
 error:<source>:12:1: $PI
-error:<source>:7:30: $ZZ
-error:<source>:11:68: $ZZ
-error:<source>:14:35: $ZZ"
+error:<source>:7:28: $ZZ
+error:<source>:11:66: $ZZ
+error:<source>:14:33: $ZZ"
 pirow PI8 "a generic fn at two instances: once" 'fn f<T>(v: T): i64 {
     private var x = 1;
     private fn g(): i64 { return 1; }
@@ -349,7 +349,7 @@ pirow PI8 "a generic fn at two instances: once" 'fn f<T>(v: T): i64 {
 syscall(60, f<i64>(1) + f<i32>(2));
 ' "error:<source>:2:5: $PI
 error:<source>:3:5: $PI
-error:<source>:4:18: $ZZ"
+error:<source>:4:16: $ZZ"
 mkdir -p "$T/pi9"
 printf 'fn pa(): i64 { return 1; }\nprivate struct PQ { y; }\nfn pf(): i64 { return 2; }\n' > "$T/pi9/pq.cyr"
 CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1; export CYRIUS_ALLOW_ABSOLUTE_INCLUDES   # the included file lives in the scratch dir
@@ -362,7 +362,7 @@ error:<source>:3:1: an include of a file that declares a \`struct\` ($T/pi9/pq.c
 unset CYRIUS_ALLOW_ABSOLUTE_INCLUDES
 pirow PC1 "control: the zone's private var (one error, as before)" "$(printf 'private var x = 1;\nsyscall(60, x + zz);\n')
 " "error:<source>:1:1: $PI
-error:<source>:2:19: $ZZ"
+error:<source>:2:17: $ZZ"
 piok PC2 "control: the file-level private line" "$(printf 'private\nfn helper(): i64 { return 7; }\nsyscall(60, helper());\n')
 " 7
 # ── PL: THE FILE-LEVEL LINE AFTER THE FIRST STATEMENT (6.7.17, the user's D31, 2026-10-22: "Accept it") ──────────────
@@ -387,7 +387,7 @@ piok PC2 "control: the file-level private line" "$(printf 'private\nfn helper():
 piok PC3 "D31: the file-level line after the first statement compiles" "$(printf 'var a = 1;\na = 2;\nprivate\nsyscall(60, a);\n')
 " 2
 pirow PL1 "row 5 verbatim: the next line's zz is the one error" "$(printf 'var a = 1;\na = 2;\nprivate\nsyscall(60, a + zz);\n')
-" "error:<source>:4:19: $ZZ"
+" "error:<source>:4:17: $ZZ"
 piok PL2 "private; after the first statement, a statement after it on the line" "$(printf 'var a = 1;\na = 2;\nprivate;\na = a + 1; private; a = a + 1;\nsyscall(60, a);\n')
 " 4
 mkdir -p "$T/pl3"
@@ -413,18 +413,18 @@ private
 b = zz3; }
 syscall(60, f() + b);
 ' "error:<source>:2:1: unexpected private
-error:<source>:3:7: $ZZ
+error:<source>:3:5: $ZZ
 error:<source>:5:1: unexpected private
-error:<source>:6:8: undefined variable 'zz2' (missing include or enum?)
+error:<source>:6:5: undefined variable 'zz2' (missing include or enum?)
 error:<source>:10:1: unexpected private
-error:<source>:11:8: undefined variable 'zz3' (missing include or enum?)"
+error:<source>:11:5: undefined variable 'zz3' (missing include or enum?)"
 pirow PL5 "a generic fn at two instances: once" 'fn g<T>(x: T): i64 { var a = 1;
 private
 a = zz;
 return a; }
 syscall(60, g<i64>(1) + g<i32>(2));
 ' "error:<source>:2:1: unexpected private
-error:<source>:3:7: $ZZ"
+error:<source>:3:5: $ZZ"
 # The corpus floor (6.7.16): 12 rows on five legs; 6.7.17: 18. A row or a leg lost reads RED, never green.
 [ "$PIN" -ge 90 ] || { echo "FAIL private_per_item_rejected: the PI / PL rows ran $PIN row-legs (floor 90) - rows or legs were lost"; fail=1; }
 

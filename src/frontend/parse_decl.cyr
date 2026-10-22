@@ -1877,7 +1877,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
-                _undef_var_report(S, noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF)
+                _undef_var_report(S, _nm_ti(S, GTI(S) - 3, noff), noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF); 6.7.17: at the base
                 _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
                 return 0;
             }
@@ -2904,7 +2904,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
-                _undef_var_report(S, noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF)
+                _undef_var_report(S, _nm_ti(S, GTI(S) - 3, noff), noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF); 6.7.17: at the base
                 _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
                 return 0;
             }

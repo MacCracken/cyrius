@@ -233,7 +233,7 @@ else fail "F9b $n checks across a change on disk: $(tr '\n' ';' < "$W/r9.shim")"
 { trap '' PIPE; start; open_msg Open "$P/src/solo.cyr"; open_msg Open "$P/tools/asm.cyr"; open_msg Open "$P/src/only_tested.cyr"
   stop; true; } 2> /dev/null | serve "$W/r6"
 P6=$(pub "$W/r6" p1/src/solo.cyr)
-if printf '%s' "$P6" | grep -qF '"start":{"line":1,"character":18}' && printf '%s' "$P6" | grep -qF "undefined variable 'nope_solo'" \
+if printf '%s' "$P6" | grep -qF '"start":{"line":1,"character":8}' && printf '%s' "$P6" | grep -qF "undefined variable 'nope_solo'" \
    && grep -q '^run: check --with-deps --no-redirect src/solo.cyr ' "$W/r6.shim"; then
     ok "F6 a file nothing includes is checked itself: its own error at line 1"
 else fail "F6 src/solo.cyr: ${P6:-none} / runs: $(tr '\n' ';' < "$W/r6.shim")"; fi
@@ -253,9 +253,9 @@ printf 'include "src/a.cyr"\ninclude "src/b.cyr"\ninclude "src/d.cyr"\nvar m = n
 printf 'var d1 = 1;\nvar d2 = 2;\nvar bad = nope_d + 1;\n' > "$P/src/d.cyr"
 { trap '' PIPE; start; open_msg Open "$P/src/d.cyr"; open_msg Open "$P/src/b.cyr"; stop; true; } 2> /dev/null | serve "$W/r3"
 PD=$(pub "$W/r3" p2/src/d.cyr | head -1)
-if printf '%s' "$PD" | grep -qF '"start":{"line":2,"character":17}' && printf '%s' "$PD" | grep -qF "undefined variable 'nope_d'" \
+if printf '%s' "$PD" | grep -qF '"start":{"line":2,"character":10}' && printf '%s' "$PD" | grep -qF "undefined variable 'nope_d'" \
    && ! printf '%s' "$PD" | grep -q 'nope_main'; then
-    ok "F3 a real error in the fragment src/d.cyr: at its own line 2, character 17 (cycc's column)"
+    ok "F3 a real error in the fragment src/d.cyr: at its own line 2, character 10 (cycc's column: the name, 6.7.17)"
 else fail "F3 src/d.cyr: ${PD:-none}"; fi
 PB=$(pub "$W/r3" p2/src/b.cyr)
 if [ "$(printf '%s' "$PB" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' ')" = '"severity":3 ' ] \
@@ -264,7 +264,7 @@ if [ "$(printf '%s' "$PB" | { grep -o '"severity":[0-9]' || true; } | tr '\n' ' 
     ok "F4 src/b.cyr (clean) gets one Information note naming its unit; d.cyr gets its error again"
 else fail "F4 src/b.cyr: ${PB:-none} / d.cyr: $(pub "$W/r3" p2/src/d.cyr | wc -l) publishes"; fi
 PM=$(pub "$W/r3" p2/src/main.cyr | tail -1)
-if printf '%s' "$PM" | grep -qF '"start":{"line":3,"character":18}' && printf '%s' "$PM" | grep -qF "undefined variable 'nope_main'"; then
+if printf '%s' "$PM" | grep -qF '"start":{"line":3,"character":8}' && printf '%s' "$PM" | grep -qF "undefined variable 'nope_main'"; then
     ok "F5 the entry's own error (<source>) is published on src/main.cyr, line 3"
 else fail "F5 src/main.cyr: ${PM:-none}"; fi
 
@@ -365,7 +365,7 @@ mkdir -p "$W/srv/loose"
 printf 'var x = 1;\nvar y = nope_loose + 2;\n' > "$W/srv/loose/col.cyr"
 { trap '' PIPE; start; open_msg Open "$W/srv/loose/col.cyr"; stop; true; } 2> /dev/null | serve "$W/r7"
 P7=$(pub "$W/r7" srv/loose/col.cyr)
-if printf '%s' "$P7" | grep -qF '"start":{"line":1,"character":19}' && grep -q '^run: check loose/col.cyr | cwd='"$W"'/srv |$' "$W/r7.shim"; then
+if printf '%s' "$P7" | grep -qF '"start":{"line":1,"character":8}' && grep -q '^run: check loose/col.cyr | cwd='"$W"'/srv |$' "$W/r7.shim"; then
     ok "F7 a loose file: \`check loose/col.cyr\` from the server's directory, its own error"
 else fail "F7 loose/col.cyr: ${P7:-none} / runs: $(tr '\n' ';' < "$W/r7.shim")"; fi
 
@@ -457,7 +457,7 @@ printf 'var f1 = 1;\nvar f2 = nope_frag + 1;\n' > "$P/src/frag.cyr"
 { trap '' PIPE; start; open_msg Open "$P/src/frag.cyr"; stop; true; } 2> /dev/null | serve "$W/r16"
 P16=$(pub "$W/r16" p5/src/frag.cyr)
 NW=$(pub "$W/r16" p5/src/main.cyr | { grep -o 'duplicate fn' || true; } | wc -l)
-if printf '%s' "$P16" | grep -qF '"start":{"line":1,"character":19}' && printf '%s' "$P16" | grep -qF "nope_frag" && [ "$NW" -ge 150 ]; then
+if printf '%s' "$P16" | grep -qF '"start":{"line":1,"character":9}' && printf '%s' "$P16" | grep -qF "nope_frag" && [ "$NW" -ge 150 ]; then
     ok "F16 src/frag.cyr's error after $NW duplicate-fn warnings (> 8 KB) of its entry is published"
 else fail "F16 src/frag.cyr: ${P16:-none} / main.cyr warnings: $NW"; fi
 

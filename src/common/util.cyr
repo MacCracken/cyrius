@@ -525,6 +525,7 @@ var _tp_term = 5;
 # 6.6.10 — the first token of a plain assignment's RHS (-1 for a compound one), so an integer
 # constant stored into an f64 / f32 variable warns (_IFS_CHECK, src/frontend/parse_expr.cyr).
 var _asg_ti = 0 - 1;
+var _asg_nti = 0 - 1;   # 6.7.17: an assignment's name token (PARSE_STMT, the for step), for its undefined-name report
 # 6.6.11 — whether a plain assignment's RHS was a float (_UFV_IS_FLOAT, captured right after its
 # PCMPE); -1 when there is no plain RHS to judge. Re-judges an untyped variable's kind-3 flag
 # at the store (_asg_rejudge, src/frontend/parse.cyr).
@@ -3178,8 +3179,10 @@ fn _err_head_at(S, ti): i64 {
 # crash). Byte column — tabs count as 1 (documented caveat). Format:
 #     <source line>
 #         ^
-fn _err_excerpt(S): i64 {
-    var off = GTOFF(S, _err_ti(S, GTI(S)));
+fn _err_excerpt(S): i64 { return _err_excerpt_at(S, GTI(S)); }
+# 6.7.17 — ... for token `ti` (`_err_head_at`'s twin): a diagnostic about a token the parser has walked past. CHANGELOG [6.7.17]
+fn _err_excerpt_at(S, ti): i64 {
+    var off = GTOFF(S, _err_ti(S, ti));
     var bl = GBL(S);
     if (off == 0) { return 0; }
     if (off > bl) { return 0; }   # == bl is the EOF token of a source with no final newline (6.6.17)
@@ -3464,22 +3467,48 @@ fn ERR_MSG(S, msg, len): i64 {
 }
 
 # The undefined-name report the read, the assignment, `&x` and a `.field` base share: "undefined variable
-# 'x'" + `tail` at the cursor, and its excerpt. No panic latch (each undefined name of a statement is
+# 'x'" + `tail`, and its excerpt. No panic latch (each undefined name of a statement is
 # reported, as before); once per token (`_err_dup`). 1 = printed. CHANGELOG [6.7.14]
-fn ERR_UNDEF(S, noff, tail): i64 {
+# ⛔ 6.7.17 (the user's D34) — AT THE NAME, token `ti`: its line and column, the caret under it, and its once-per-token
+# record. It was the cursor's — the token after the name: `return zq + 1;` reported 1:28 (the `+`), `return zz;` the
+# `;`, an assignment's name the end of its value. Every "undefined variable" report is at the name's token (the
+# undefined-name writers pass it; `_nm_ti`), which is also the token zone-replay keys its record on. CHANGELOG [6.7.17]
+fn ERR_UNDEF(S, ti, noff, tail): i64 {
     _had_error = 1;
     _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
-    if (_err_dup(S, (noff * 31 + tail) * 8 + 6) == 1) { _err_quiet = 1; return 0; }
+    if (_err_dup_at(ti, (noff * 31 + tail) * 8 + 6) == 1) { _err_quiet = 1; return 0; }
     _err_quiet = 0;
     syscall(SYS_WRITE, 2, "error:", 6);
-    _err_head(S);
+    _err_head_at(S, ti);
     syscall(SYS_WRITE, 2, ": undefined variable '", 22);
     PRSTR(S + 0xEC00000 + noff);
     syscall(SYS_WRITE, 2, "'", 1);
     PRSTR(tail);
     syscall(SYS_WRITE, 2, "\n", 1);
-    _err_excerpt(S);
+    _err_excerpt_at(S, ti);
     return 1;
+}
+# The token of name `noff` for its report: `ti` when it is that name, else the nearest one at most 4 tokens before it
+# (a wrap's `)`: `(x).f`), else `ti` — the cursor when `ti` is unset (< 0). CHANGELOG [6.7.17]
+fn _nm_ti(S, ti, noff): i64 {
+    if (ti < 0) { return GTI(S); }
+    var k = ti;
+    var lo = ti - 4;
+    if (lo < 0) { lo = 0; }
+    while (k >= lo) {
+        if (TOKTYP(S, k) == 2) { if (TOKVAL(S, k) == noff) { return k; } }
+        k = k - 1;
+    }
+    return ti;
+}
+# ERR_IDENT's "undefined variable 'x'" + `tail` at token `ti` (its head, excerpt and once-per-token record), the
+# cursor put back: the subscript base's and the multi-value target's. CHANGELOG [6.7.17]
+fn _undef_ident_at(S, ti, noff, tail): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_IDENT(S, "undefined variable ", noff, tail, 0 - 1);
+    STI(S, sv);
+    return 0;
 }
 
 # ⛔ 6.7.14 — AN ERROR IS PRINTED ONCE PER TOKEN AND MESSAGE. A generic fn's body is parsed for its base and

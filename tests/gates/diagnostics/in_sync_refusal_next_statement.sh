@@ -111,7 +111,7 @@ row F1 "latch4 verbatim: y = pa[0]; y = zz9; pa[0] = 1;" "${PA}    y = pa[0];
     y = zz9;
     pa[0] = 1;
 ${TAIL}" "error:<source>:5:11: cannot subscript 'pa$U
-error:<source>:6:12: $Z
+error:<source>:6:9: $Z
 error:<source>:7:7: cannot subscript 'pa$U"
 
 row F2 "latch5 verbatim: y = *pa; *pa = 1; y = *pa;" "${PA}    y = *pa;
@@ -130,7 +130,7 @@ row B1 "an untyped n[0]" 'fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:4:10: cannot subscript 'n': it is not a typed array, a *T or a slice local - declare \`var a: T[N]\` or \`p: *T\` (T an integer, f64, f32 or bool), or load / store at an explicit byte offset
-error:<source>:5:12: $Z"
+error:<source>:5:9: $Z"
 
 row B2 "g()[0], g not returning *T" 'fn g(): i64 { return 0; }
 fn main(): i64 {
@@ -141,7 +141,7 @@ fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:4:12: cannot subscript the result of 'g': it does not return a *T
-error:<source>:5:12: $Z"
+error:<source>:5:9: $Z"
 
 row B3 "an undefined base qq[0]" 'fn main(): i64 {
     var y = 0;
@@ -150,8 +150,8 @@ row B3 "an undefined base qq[0]" 'fn main(): i64 {
     return 0;
 }
 syscall(60, main());
-' "error:<source>:3:11: undefined variable 'qq' (missing include or enum?)
-error:<source>:4:12: $Z"
+' "error:<source>:3:9: undefined variable 'qq' (missing include or enum?)
+error:<source>:4:9: $Z"
 
 row B4 "a field that is not a *T" 'struct H { f; }
 fn main(): i64 {
@@ -163,7 +163,7 @@ fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:5:12: cannot subscript field 'f': it is not a *T field
-error:<source>:6:12: $Z"
+error:<source>:6:9: $Z"
 
 row B5 "&a[0]" 'fn main(): i64 {
     var a: i64[4];
@@ -174,7 +174,7 @@ row B5 "&a[0]" 'fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:4:11: &a[i] is not supported - write &a + i * sizeof(T) (or p + i)
-error:<source>:5:12: $Z"
+error:<source>:5:9: $Z"
 
 row B6 "a[0][1]" 'fn main(): i64 {
     var a: i64[4];
@@ -185,17 +185,17 @@ row B6 "a[0][1]" 'fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:4:13: a subscript's result is an element, not an array - a second [..] is not supported
-error:<source>:5:12: $Z"
+error:<source>:5:9: $Z"
 
 row B7 "a var initializer var z = pa[0];" "${PA}    var z = pa[0];
     y = zz9;
 ${TAIL}" "error:<source>:5:15: cannot subscript 'pa$U
-error:<source>:6:12: $Z"
+error:<source>:6:9: $Z"
 
 row B8 "a classic-for step *pa = 1" "${PA}    for (var i = 0; i < 2; *pa = 1) { y = 1; }
     y = zz9;
 ${TAIL}" "error:<source>:5:28: cannot dereference 'pa$U
-error:<source>:6:12: $Z"
+error:<source>:6:9: $Z"
 
 row B9 "a generic fn at two instances" 'fn gg<T>(x: T): i64 {
     var a: u128 = 0;
@@ -208,7 +208,7 @@ row B9 "a generic fn at two instances" 'fn gg<T>(x: T): i64 {
 fn main(): i64 { gg<i64>(1); gg<i32>(2); return 0; }
 syscall(60, main());
 ' "error:<source>:5:11: cannot subscript 'pa$U
-error:<source>:6:12: $Z"
+error:<source>:6:9: $Z"
 
 row B10 "top level, after the first statement" 'var a: u128 = 0;
 var pa: *u128 = &a;
@@ -219,7 +219,7 @@ y = zz9;
 pa[0] = 1;
 syscall(60, 0);
 ' "error:<source>:5:7: cannot subscript 'pa$U
-error:<source>:6:8: $Z
+error:<source>:6:5: $Z
 error:<source>:7:3: cannot subscript 'pa$U"
 
 B11="${PA}    y = pa[0];
@@ -239,7 +239,7 @@ ${TAIL}" "error:<source>:5:11: cannot subscript 'pa$U"
 row M2 "mid-statement, then y = zz9;" "${PA}    y = pa[0 qq1 qq2;
     y = zz9;
 ${TAIL}" "error:<source>:5:11: cannot subscript 'pa$U
-error:<source>:6:12: $Z"
+error:<source>:6:9: $Z"
 
 row P "control: the pair refusal y = f(); then y = zz9;" 'enum R: stack { ROk(v); RErr(e); }
 fn f() { return ROk(7); }
@@ -251,7 +251,7 @@ fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:5:9: a \`: stack\` enum returns two values — bind both: \`var tag, val = f();\`
-error:<source>:6:12: $Z"
+error:<source>:6:9: $Z"
 
 # okrow <id> <what> <source> <exit>: compiles on every leg (rc 0, no error / warning line, a binary), runs <exit> on x86
 okrow() {
@@ -299,7 +299,7 @@ a = 2;
 #assert zz9 == 1
 syscall(60, zz);
 ' "error:<source>:3:9: $A9
-error:<source>:4:15: $ZZ"
+error:<source>:4:13: $ZZ"
 
 row AS2 "in a fn body" 'fn f(): i64 {
     var y = 0;
@@ -309,14 +309,14 @@ row AS2 "in a fn body" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:13: $A9
-error:<source>:4:11: $ZZ"
+error:<source>:4:9: $ZZ"
 
 row AS3 "with its ';' (unchanged)" 'var a = 1;
 a = 2;
 #assert zz9 == 1;
 syscall(60, zz);
 ' "error:<source>:3:9: $A9
-error:<source>:4:15: $ZZ"
+error:<source>:4:13: $ZZ"
 
 row AS4 "two refused #asserts on consecutive lines, then a statement" 'var a = 1;
 a = 2;
@@ -325,13 +325,13 @@ a = 2;
 syscall(60, zz);
 ' "error:<source>:3:9: $A9
 error:<source>:4:9: unknown name 'zz8' in a const context
-error:<source>:5:15: $ZZ"
+error:<source>:5:13: $ZZ"
 
 row AS5 "a refused #assert as the last line, after a statement's error" 'var a = 1;
 a = 2;
 syscall(60, zz);
 #assert zz9 == 1
-' "error:<source>:3:15: $ZZ
+' "error:<source>:3:13: $ZZ
 error:<source>:4:9: $A9"
 
 row AS6 "junk after the expression, no ';'" 'fn f(): i64 {
@@ -342,7 +342,7 @@ row AS6 "junk after the expression, no ';'" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:20: #assert: expected \`,\` or \`;\` after the expression
-error:<source>:4:11: $ZZ"
+error:<source>:4:9: $ZZ"
 
 row AS7 "a wrapped expression refused on its first line" 'fn f(): i64 {
     var y = 0;
@@ -353,7 +353,7 @@ row AS7 "a wrapped expression refused on its first line" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:14: $A9
-error:<source>:5:11: $ZZ"
+error:<source>:5:9: $ZZ"
 
 row AS8 "a wrapped message" 'fn f(): i64 {
     var y = 0;
@@ -364,7 +364,7 @@ row AS8 "a wrapped message" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:13: $A9
-error:<source>:5:11: $ZZ"
+error:<source>:5:9: $ZZ"
 
 row AS9 "with a message, no ';'" 'fn f(): i64 {
     var y = 0;
@@ -374,7 +374,7 @@ row AS9 "with a message, no ';'" 'fn f(): i64 {
 }
 syscall(60, f());
 ' "error:<source>:3:13: $A9
-error:<source>:4:11: $ZZ"
+error:<source>:4:9: $ZZ"
 
 row AS10 "the last line alone" 'var a = 1;
 a = 2;
@@ -389,7 +389,7 @@ row AS11 "a refused #assert in a generic fn at two instances (once)" 'fn g<T>(x:
 }
 syscall(60, g(1) + g<i32>(2));
 ' "error:<source>:3:13: $A9
-error:<source>:4:11: $ZZ"
+error:<source>:4:9: $ZZ"
 
 row AS12 "control: an unclosed ( still resyncs, nothing invented" 'fn f(x): i64 {
     var y = 0;
@@ -411,25 +411,25 @@ syscall(60, f(1));
 row AS15 "a refused #assert before a block's }" 'fn f(x): i64 { if (x == 1) { #assert zz9 == 1 } return zz; }
 syscall(60, f(1));
 ' "error:<source>:1:38: $A9
-error:<source>:1:58: $ZZ"
+error:<source>:1:56: $ZZ"
 
 row AS16 "a top-level block's }" 'var c = 1;
 if (c == 1) { #assert 1 == 1, "m" }
 syscall(60, zz);
 ' "error:<source>:2:35: $AB
-error:<source>:3:15: $ZZ"
+error:<source>:3:13: $ZZ"
 
 row AS17 "an impl body's }" 'struct S { a; }
 impl S { #assert 1 == 1 }
 syscall(60, zz);
 ' "error:<source>:2:25: #assert: expected \`,\` or \`;\` after the expression
-error:<source>:3:15: $ZZ"
+error:<source>:3:13: $ZZ"
 
 row AS18 "an impl body's } after the message" 'struct S { a; }
 impl S { #assert 1 == 1, "m" }
 syscall(60, zz);
 ' "error:<source>:2:30: $AB
-error:<source>:3:15: $ZZ"
+error:<source>:3:13: $ZZ"
 
 row AS19 "a switch arm's }" 'fn f(x): i64 { switch (x) { case 1: #assert 1 == 1, "m" } return 7; }
 syscall(60, f(1));
@@ -468,7 +468,7 @@ row AS21 "6.7.17 (D28): a } at module scope after the message is refused, as any
 #assert 1 == 1, "m" }
 syscall(60, f(zz));
 ' "error:<source>:2:21: #assert: expected \`;\` or the end of the line after the message
-error:<source>:3:17: $ZZ"
+error:<source>:3:15: $ZZ"
 
 # H — 6.7.16 (issues/archived/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md): A REFUSAL
 # LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`. The header of an `if` / `elif` / `while` /
@@ -485,39 +485,39 @@ row H1 "the filing's program verbatim: an if header's u128 subscript" "${PA}    
         y = zz7;
     }
 ${TAIL}" "error:<source>:5:11: cannot subscript 'pa$U
-error:<source>:7:16: undefined variable 'zz8' (missing include or enum?)
-error:<source>:8:16: undefined variable 'zz7' (missing include or enum?)"
+error:<source>:7:13: undefined variable 'zz8' (missing include or enum?)
+error:<source>:8:13: undefined variable 'zz7' (missing include or enum?)"
 
 row H2 "while (qq[0] == 1)" "${PA}    while (qq[0] == 1) { y = 1; y = zz8; }
-${TAIL}" "error:<source>:5:14: undefined variable 'qq' (missing include or enum?)
-error:<source>:5:40: undefined variable 'zz8' (missing include or enum?)"
+${TAIL}" "error:<source>:5:12: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:37: undefined variable 'zz8' (missing include or enum?)"
 
 row H3 "a syntax error in the header: if (y == 0 +)" "${PA}    if (y == 0 +) { y = 1; y = zz8; }
 ${TAIL}" "error:<source>:5:17: unexpected ')'
-error:<source>:5:35: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:5:32: undefined variable 'zz8' (missing include or enum?)"
 
 row H4 "elif (qq[0] == 1)" "${PA}    if (y == 1) { y = 2; } elif (qq[0] == 1) { y = 1; y = zz8; }
-${TAIL}" "error:<source>:5:36: undefined variable 'qq' (missing include or enum?)
-error:<source>:5:62: undefined variable 'zz8' (missing include or enum?)"
-
-row H5 "a classic for's condition" "${PA}    for (var i = 0; i < qq[0]; i = i + 1) { y = 1; y = zz8; }
-${TAIL}" "error:<source>:5:27: undefined variable 'qq' (missing include or enum?)
+${TAIL}" "error:<source>:5:34: undefined variable 'qq' (missing include or enum?)
 error:<source>:5:59: undefined variable 'zz8' (missing include or enum?)"
 
+row H5 "a classic for's condition" "${PA}    for (var i = 0; i < qq[0]; i = i + 1) { y = 1; y = zz8; }
+${TAIL}" "error:<source>:5:25: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:56: undefined variable 'zz8' (missing include or enum?)"
+
 row H6 "for i in 0..qq[0]" "${PA}    for i in 0..qq[0] { y = 1; y = zz8; }
-${TAIL}" "error:<source>:5:19: undefined variable 'qq' (missing include or enum?)
-error:<source>:5:39: undefined variable 'zz8' (missing include or enum?)"
+${TAIL}" "error:<source>:5:17: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:36: undefined variable 'zz8' (missing include or enum?)"
 
 row H7 "switch (qq[0])" "${PA}    switch (qq[0]) { case 1: y = 1; y = zz8; }
-${TAIL}" "error:<source>:5:15: undefined variable 'qq' (missing include or enum?)
-error:<source>:5:44: undefined variable 'zz8' (missing include or enum?)"
+${TAIL}" "error:<source>:5:13: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:41: undefined variable 'zz8' (missing include or enum?)"
 
 row H8 "a top-level if after the first statement" 'var y = 0;
 y = 1;
 if (qq[0] == 1) { y = 1; y = zz8; }
 syscall(60, 0);
-' "error:<source>:3:7: undefined variable 'qq' (missing include or enum?)
-error:<source>:3:33: undefined variable 'zz8' (missing include or enum?)"
+' "error:<source>:3:5: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:30: undefined variable 'zz8' (missing include or enum?)"
 
 row H9 "control: a header left mid-way keeps the latch" "${PA}    if (y b) { y = 1; y = zz8; }
 ${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'"
@@ -532,11 +532,11 @@ fn main(): i64 {
 }
 syscall(60, main());
 ' "error:<source>:5:15: cannot subscript 'pa$U
-error:<source>:6:12: undefined variable 'zz7' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz7' (missing include or enum?)"
 
 row H11 "match (qq[0])" "${PA}    match (qq[0]) { 1 => { y = 1; y = zz8; } _ => { y = 2; } }
-${TAIL}" "error:<source>:5:14: undefined variable 'qq' (missing include or enum?)
-error:<source>:5:42: undefined variable 'zz8' (missing include or enum?)"
+${TAIL}" "error:<source>:5:12: undefined variable 'qq' (missing include or enum?)
+error:<source>:5:39: undefined variable 'zz8' (missing include or enum?)"
 
 row H12 "a collection for x in qq[0]" 'include "lib/vec.cyr"
 fn main(): i64 {
@@ -545,8 +545,8 @@ fn main(): i64 {
     return 0;
 }
 syscall(60, main());
-' "error:<source>:4:16: undefined variable 'qq' (missing include or enum?)
-error:<source>:4:36: undefined variable 'zz8' (missing include or enum?)"
+' "error:<source>:4:14: undefined variable 'qq' (missing include or enum?)
+error:<source>:4:33: undefined variable 'zz8' (missing include or enum?)"
 
 row H13 "nested heads, each its own" 'fn main(): i64 {
     var y = 0;
@@ -554,10 +554,10 @@ row H13 "nested heads, each its own" 'fn main(): i64 {
     return 0;
 }
 syscall(60, main());
-' "error:<source>:3:11: undefined variable 'qq' (missing include or enum?)
-error:<source>:3:29: undefined variable 'pp' (missing include or enum?)
-error:<source>:3:55: undefined variable 'zz8' (missing include or enum?)
-error:<source>:3:66: undefined variable 'zz7' (missing include or enum?)"
+' "error:<source>:3:9: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:27: undefined variable 'pp' (missing include or enum?)
+error:<source>:3:52: undefined variable 'zz8' (missing include or enum?)
+error:<source>:3:63: undefined variable 'zz7' (missing include or enum?)"
 
 row H14 "a generic fn at two instances (once)" 'fn gg<T>(x: T): i64 {
     var y = 0;
@@ -566,8 +566,8 @@ row H14 "a generic fn at two instances (once)" 'fn gg<T>(x: T): i64 {
 }
 fn main(): i64 { gg<i64>(1); gg<i32>(2); return 0; }
 syscall(60, main());
-' "error:<source>:3:14: undefined variable 'qq' (missing include or enum?)
-error:<source>:3:40: undefined variable 'zz8' (missing include or enum?)"
+' "error:<source>:3:12: undefined variable 'qq' (missing include or enum?)
+error:<source>:3:37: undefined variable 'zz8' (missing include or enum?)"
 
 row H15 "a syntax error in the header and the block, --syntax-only" 'fn main(): i64 {
     var y = 0;
@@ -585,7 +585,7 @@ y = 1;
 while (pa[0] == 1) { y = 1; y = zz8; }
 syscall(60, 0);
 ' "error:<source>:5:10: cannot subscript 'pa$U
-error:<source>:5:36: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:5:33: undefined variable 'zz8' (missing include or enum?)"
 
 # R — 6.7.16 (met with H, the same `{` step): A HEAD WHOSE `{` IS NOT WHERE THE PARSER STANDS KEEPS ITS BRACES. The
 # `{` check stepped one token whatever it was, so the block's `}` closed the enclosing body and "expected '}', got end
@@ -601,82 +601,82 @@ error:<source>:5:36: undefined variable 'zz8' (missing include or enum?)"
 row R1 "a mid-way header, then a statement" "${PA}    if (y b) { y = 1; }
     y = zz8;
 ${TAIL}" "error:<source>:5:11: expected ')', got identifier 'b'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R2 "if (c) y = 1; with no braces" "${PA}    if (y == 1) y = 1;
     y = zz8;
 ${TAIL}" "error:<source>:5:17: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R3 "if and else with no braces" "${PA}    if (y == 1) y = 1; else y = 2;
     y = zz8;
 ${TAIL}" "error:<source>:5:17: expected '{', got identifier 'y'
 error:<source>:5:29: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R4 "an elif with no braces" "${PA}    if (y == 1) { y = 1; } elif (y == 2) y = 3;
     y = zz8;
 ${TAIL}" "error:<source>:5:42: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R5 "a while with no braces" "${PA}    while (y == 1) y = 1;
     y = zz8;
 ${TAIL}" "error:<source>:5:20: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R6 "a classic for with no braces" "${PA}    for (var i = 0; i < 3; i = i + 1) y = i;
     y = zz8;
 ${TAIL}" "error:<source>:5:39: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R7 "a for .. in with no braces" "${PA}    for i in 0..3 y = i;
     y = zz8;
 ${TAIL}" "error:<source>:5:19: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R8 "a do with no braces" "${PA}    do y = 2; while (y == 1);
     y = zz8;
 ${TAIL}" "error:<source>:5:8: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R9 "a switch with no {" "${PA}    switch (y) case 1: y = 2;
     y = zz8;
 ${TAIL}" "error:<source>:5:16: expected '{', got case
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R10 "a match with no {" "${PA}    match y 1 => { y = 2; }
     y = zz8;
 ${TAIL}" "error:<source>:5:13: expected '{', got number 1
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R11 "a for .. in range with junk before its {" "${PA}    for i in 0..3 junk { y = 1; }
     y = zz8;
 ${TAIL}" "error:<source>:5:19: expected '{', got identifier 'junk'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R12 "a match subject with junk before its {" "${PA}    match y junk { 1 => { y = 2; } }
     y = zz8;
 ${TAIL}" "error:<source>:5:13: expected '{', got identifier 'junk'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R13 "nested ifs with no braces" "${PA}    if (y == 1) if (y == 2) y = 1;
     y = zz8;
 ${TAIL}" "error:<source>:5:17: expected '{', got if
 error:<source>:5:29: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 row R14 "a top-level if with no braces, after the first statement" 'var y = 0;
 y = 1;
 if (y == 1) y = 2;
 syscall(60, zz8);
 ' "error:<source>:3:13: expected '{', got identifier 'y'
-error:<source>:4:16: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:4:13: undefined variable 'zz8' (missing include or enum?)"
 
 row R15 "a refused header and no braces" "${PA}    if (qq[0] == 1) y = 1;
     y = zz8;
-${TAIL}" "error:<source>:5:11: undefined variable 'qq' (missing include or enum?)
+${TAIL}" "error:<source>:5:9: undefined variable 'qq' (missing include or enum?)
 error:<source>:5:21: expected '{', got identifier 'y'
-error:<source>:6:12: undefined variable 'zz8' (missing include or enum?)"
+error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 
 # U — 6.7.16 (issues/archived/2026-10-19-top-level-uninitialized-struct-refusal-leaves-name-unregistered.md): `var c: S;` AT
 # TOP LEVEL after the first statement (an uninitialized struct or vector, which only a fn's frame holds) IS REFUSED
@@ -698,7 +698,7 @@ var d = 9;
 c = 4;
 syscall(60, zz);
 ' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
-error:<source>:7:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:7:13: undefined variable 'zz' (missing include or enum?)"
 
 row U2 "c = 4; directly after the declaration" 'struct Str { p; n; }
 var q = 0;
@@ -707,7 +707,7 @@ var c: Str;
 c = 4;
 syscall(60, zz);
 ' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
-error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:6:13: undefined variable 'zz' (missing include or enum?)"
 
 row U3 "every use of c stands down" 'struct Str { p; n; }
 impl Str { fn m(self): i64 { return 1; } }
@@ -726,14 +726,14 @@ q, c = two();
 fn h(): i64 { var w: Str = c; return w.p + c.n; }
 syscall(60, zz);
 ' "error:<source>:7:11: uninitialized struct locals only allowed inside a function
-error:<source>:16:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:16:13: undefined variable 'zz' (missing include or enum?)"
 
 row U4 "a vector type at top level" 'var q = 0;
 q = 1;
 var c: f64v2;
 syscall(60, zz);
 ' "error:<source>:3:13: uninitialized struct locals only allowed inside a function
-error:<source>:4:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:4:13: undefined variable 'zz' (missing include or enum?)"
 
 row U8 "the next statement's own error, directly after" 'struct Str { p; n; }
 var q = 0;
@@ -742,7 +742,7 @@ var c: Str;
 q = zz5;
 syscall(60, 0);
 ' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
-error:<source>:5:8: undefined variable 'zz5' (missing include or enum?)"
+error:<source>:5:5: undefined variable 'zz5' (missing include or enum?)"
 
 okrow U5 "control: the declaration in a fn compiles and runs" 'struct Str { p; n; }
 fn f(): i64 { var c: Str; c.p = 3; c.n = 4; return c.p + c.n; }
@@ -758,7 +758,7 @@ enum F { C; }
 y = C[0];
 syscall(60, zz);
 ' "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)
-error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:6:13: undefined variable 'zz' (missing include or enum?)"
 
 row U7 "control: a type annotation spelled c is still refused" 'struct Str { p; n; }
 var q = 0;
@@ -768,7 +768,7 @@ var x: c = 5;
 syscall(60, zz);
 ' "error:<source>:4:11: uninitialized struct locals only allowed inside a function
 error:<source>:5:8: unknown type 'c' for variable 'x'
-error:<source>:6:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:6:13: undefined variable 'zz' (missing include or enum?)"
 
 # BB — 6.7.16 (f16 FG2, met with issues/archived/2026-10-20-fn-pointer-return-type-refused-as-reserved-keyword-identifier.md):
 # A FN SIGNATURE WITH NO BODY (`fn h(): i64;`, a trait member's shape) IS ONE ERROR, "expected '{', got ';'". PARSE_FN_DEF
@@ -791,26 +791,26 @@ row BB1 "a fn with no body, then main's own error" 'fn h(): i64;
 fn main(): i64 { return 3 + zz; }
 syscall(60, main());
 ' "error:<source>:1:12: expected '{', got ';'
-error:<source>:2:31: undefined variable 'zz' (missing include or enum?)"
+error:<source>:2:29: undefined variable 'zz' (missing include or enum?)"
 
 row BB2 "an impl method with no body, then the next method's own error" 'struct P { x; }
 impl P { fn h(self): i64; fn k(self): i64 { return 1 + yy; } }
 fn main(): i64 { var p = P { 1 }; return p.k(); }
 syscall(60, main());
 ' "error:<source>:2:25: expected '{', got ';'
-error:<source>:2:58: undefined variable 'yy' (missing include or enum?)"
+error:<source>:2:56: undefined variable 'yy' (missing include or enum?)"
 
 row BB3 "a generic with no body, called (replayed inline)" 'fn g<T>(x: T): T;
 fn main(): i64 { return g(3) + zz; }
 syscall(60, main());
 ' "error:<source>:1:17: expected '{', got ';'
-error:<source>:2:34: undefined variable 'zz' (missing include or enum?)"
+error:<source>:2:32: undefined variable 'zz' (missing include or enum?)"
 
 row BB4 "below its caller; the fn after it registered in pass 1" 'fn main(): i64 { return h() + zz; }
 fn h(): i64;
 fn k(): i64 { return 2; }
 syscall(60, main() + k());
-' "error:<source>:1:33: undefined variable 'zz' (missing include or enum?)
+' "error:<source>:1:31: undefined variable 'zz' (missing include or enum?)
 error:<source>:2:12: expected '{', got ';'"
 
 row BB4b "a forward call past it reads pass 1's facts (mk's struct return: no \"no struct type in scope for 'p'\")" 'struct Pt { x; y; z; }
@@ -819,7 +819,7 @@ fn h(): i64;
 fn mk(): Pt { var p: Pt; p.z = 3; return p; }
 syscall(60, main() + zz);
 ' "error:<source>:3:12: expected '{', got ';'
-error:<source>:5:24: undefined variable 'zz' (missing include or enum?)"
+error:<source>:5:22: undefined variable 'zz' (missing include or enum?)"
 
 row BB5 "no return type, and parameters" 'fn h();
 fn j(a, b);
@@ -827,7 +827,7 @@ fn main(): i64 { return zz; }
 syscall(60, main());
 ' "error:<source>:1:7: expected '{', got ';'
 error:<source>:2:11: expected '{', got ';'
-error:<source>:3:27: undefined variable 'zz' (missing include or enum?)"
+error:<source>:3:25: undefined variable 'zz' (missing include or enum?)"
 
 row BB6 "BB1 under --syntax-only" 'fn h(): i64;
 fn main(): i64 { return 3 + zz; }
@@ -838,14 +838,14 @@ row BB7 "control: a body whose first token is a \`;\` is read as a body (refused
 fn main(): i64 { return h() + zz; }
 syscall(60, main());
 ' "error:<source>:1:15: unexpected ';'
-error:<source>:2:33: undefined variable 'zz' (missing include or enum?)"
+error:<source>:2:31: undefined variable 'zz' (missing include or enum?)"
 
 row BB9 "a bounded generic with no body (its i64 base a skipped stub: the skip ran into main's body)" 'trait Show { fn show(self): i64; }
 fn g<T: Show>(x: T): i64;
 fn main(): i64 { return 3 + zz; }
 syscall(60, main());
 ' "error:<source>:2:25: expected '{', got ';'
-error:<source>:3:31: undefined variable 'zz' (missing include or enum?)"
+error:<source>:3:29: undefined variable 'zz' (missing include or enum?)"
 
 okrow BB8 "control: the shapes beside it build — a one-statement fn, an impl method, a generic" 'struct P { x; }
 impl P { fn k(self): i64 { return self.x; } }

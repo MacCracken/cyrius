@@ -236,12 +236,12 @@ UV="uninitialized variable not allowed"
 refused bare_repro    'fn f(): i64 {\n    var c;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:10: $UV"
 refused bare_late     'syscall(39);\nvar c;\nvar d = 9;\nsyscall(60, d);\n' "2:6: $UV"
 refused bare_ann      'fn f(): i64 {\n    var c: ;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:12: $VA 'c', got ';'"
-refused bare_reg      'fn f(): i64 {\n    var c;\n    c = 4;\n    return zz;\n}\nsyscall(60, f());\n' "4:14: undefined variable 'zz'" 2
+refused bare_reg      'fn f(): i64 {\n    var c;\n    c = 4;\n    return zz;\n}\nsyscall(60, f());\n' "4:12: undefined variable 'zz'" 2
 rows=$((rows + 1))
 check "bare_reg: names 2:10" yes "$(grep -qF -- "2:10: $UV" "$T/bare_reg.err" && echo yes || echo no)"
-refused bare_next     'fn f(): i64 {\n    var c;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:11: undefined variable 'zz'" 2
-refused bare_late_next 'syscall(39);\nvar c;\nc = zz;\nsyscall(60, c);\n' "3:7: undefined variable 'zz'" 2
-refused bare_ann_next 'fn f(): i64 {\n    var c: ;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:11: undefined variable 'zz'" 2
+refused bare_next     'fn f(): i64 {\n    var c;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:9: undefined variable 'zz'" 2
+refused bare_late_next 'syscall(39);\nvar c;\nc = zz;\nsyscall(60, c);\n' "3:5: undefined variable 'zz'" 2
+refused bare_ann_next 'fn f(): i64 {\n    var c: ;\n    c = zz;\n    return c;\n}\nsyscall(60, f());\n' "3:9: undefined variable 'zz'" 2
 refused bare_gen      'fn g<T>(a: T): i64 {\n    var c;\n    var d = 9;\n    return d + a + c;\n}\nsyscall(60, g(1) + g(2));\n' "2:10: $UV"
 refused bare_ptr      'fn f(): i64 {\n    var c: *i64;\n    var d = 9;\n    return d;\n}\nsyscall(60, f());\n' "2:16: $UV"
 rows=$((rows + 1))

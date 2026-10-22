@@ -1789,7 +1789,7 @@ var e = nope;
 var x = mkg1<*Pt>(33);
 syscall(60, x.v);
 EOF
-order2 GZO0 "5:13: undefined variable 'nope'" "6:14: a type argument is a type name, got '*'" "the filed repro verbatim: line 5's error, then line 6's"
+order2 GZO0 "5:9: undefined variable 'nope'" "6:14: a type argument is a type name, got '*'" "the filed repro verbatim: line 5's error, then line 6's"
 GZOH='include "lib/syscalls.cyr"
 trait Show { fn show(self): i64; }
 struct G1<T> { v: T; }
@@ -1806,7 +1806,7 @@ var b = B1 { 1 };'
 # rowo <name> <initialiser of x> <second error>: line 14 `var e = nope;`, line 15 `var x = <initialiser>;`
 rowo() {
     printf '%s\nvar e = nope;\nvar x = %s;\nsyscall(60, 0);\n' "$GZOH" "$2" > "$T/$1.cyr"
-    order2 "$1" "14:13: undefined variable 'nope'" "$3" "the zone: \`var x = $2;\` is refused after line 14's error"
+    order2 "$1" "14:9: undefined variable 'nope'" "$3" "the zone: \`var x = $2;\` is refused after line 14's error"
 }
 rowo GZO1 'mkg1<1>(33)' "15:14: a type argument is a type name, got number 1"
 rowo GZO2 'mkg1<Pt<i32>>(33)' "15:14: 'Pt' is not a generic struct: it takes no type arguments"

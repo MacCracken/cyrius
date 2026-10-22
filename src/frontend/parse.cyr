@@ -5179,7 +5179,7 @@ fn _asg_store_slot(S, idx, g): i64 {
 # Inside a closure, a name of the enclosing scope is a capture, and the report says so (`_asg_cap_name`).
 fn _asg_undef_report(S, noff): i64 {
     if (_asg_cap_name(S, noff) == 1) { return 0; }
-    _undef_var_report(S, noff, "");   # 6.7.14: a const fn's check (`_ce_name_said`), once per token (ERR_UNDEF), the block-scope note
+    _undef_var_report(S, _nm_ti(S, _asg_nti, noff), noff, "");   # 6.7.14: a const fn's check (`_ce_name_said`), once per token (ERR_UNDEF), the block-scope note
     return 0;
 }
 # 6.7.11 — A WRITE TO A CAPTURED NAME in a closure (`x += d`, `x = x + d`, a `for` init or step, `a, x =
@@ -7415,7 +7415,7 @@ fn _masg_resolve(S, nm, ti, t0, i): i64 {
     if (gi < 0) {
         if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
         if (_sub_undef_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it; 6.7.16: a refused declaration declared it
-        ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
+        _undef_ident_at(S, ti, nm, 0);   # 6.7.17: at the name
         _gv_note_blockscoped(S, nm);
         _panic = p0;
         return 0 - 1;
@@ -8123,6 +8123,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             return 0;
         }
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=, >>>=
+        _asg_nti = GTI(S) - 1;   # 6.7.17: the name, for its undefined-name report
         var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
         _asg_ufv = 0 - 1;

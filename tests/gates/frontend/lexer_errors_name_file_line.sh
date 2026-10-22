@@ -152,14 +152,14 @@ echo "axis 6 — a newline INSIDE a string literal is a line (6.6.11):"
 # bare `error:4:12:`), and FM_FILEID — which reads the line — attributed a call to the
 # wrong file, so a `private` fn was callable from outside it. src/frontend/parse_expr.cyr
 # carried such a literal, which put every diagnostic in backend/x86/fixup.cyr one line high.
-refused ml_undef   'var s = "a\nb\nc";\nvar t = 1;\nvar u = zzz_undefined;\n'       "error:<source>:5:22: undefined variable 'zzz_undefined'"
+refused ml_undef   'var s = "a\nb\nc";\nvar t = 1;\nvar u = zzz_undefined;\n'       "error:<source>:5:9: undefined variable 'zzz_undefined'"
 refused ml_dollar  'var s = "a\nb";\nvar b = $;\n'                                    'error:<source>:3:9: unexpected character (0x24)'
-refused ml_bslf    'var s = "a\\\nb";\nvar u = zzz;\n'                              "error:<source>:3:12: undefined variable 'zzz'"
+refused ml_bslf    'var s = "a\\\nb";\nvar u = zzz;\n'                              "error:<source>:3:9: undefined variable 'zzz'"
 refused ml_esc     'var s = "a\nb\\q";\n'                                          'error:<source>:2:2: unknown string escape'
 # the string token itself keeps its OPENING line, matching the column the head prints
 refused ml_strtok  'var s = 1 "a\nb";\n'                                             "error:<source>:1:11: expected ';', got string"
 printf 'var q = zzq;\n' > "$T/inc/ml_one.cyr"
-refused ml_inc1    'var s = "a\nb";\ninclude "inc/ml_one.cyr"\n'                      "error:inc/ml_one.cyr:1:12: undefined variable 'zzq'"
+refused ml_inc1    'var s = "a\nb";\ninclude "inc/ml_one.cyr"\n'                      "error:inc/ml_one.cyr:1:9: undefined variable 'zzq'"
 printf 'private\nvar ms = "1\n2\n3\n4\n5";\nfn sec(): i64 { return 7; }\n' > "$T/inc/ml_priv.cyr"
 printf 'var got = sec();\n' > "$T/inc/ml_user.cyr"
 refused ml_private 'include "inc/ml_priv.cyr"\ninclude "inc/ml_user.cyr"\nsyscall(60, got);\n' "error:inc/ml_user.cyr:1:15: 'sec' is private to its file"

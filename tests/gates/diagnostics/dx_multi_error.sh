@@ -126,7 +126,7 @@ KF='fn main() { return 0; }\nvar r = main();\n'
 cascade K1 1 'const fn f(n) {\n    if (n > 0) { var t = 1; }\n    return t;\n}\n'"$KF" "3:12: unknown name 't' in a const context"
 cascade K2 1 'const fn f(n) {\n    return n + nosuch;\n}\n'"$KF" "2:16: unknown name 'nosuch' in a const context"
 cascade K3 1 'const fn f(n) {\n    t = 1;\n    return 0;\n}\n'"$KF" "2:5: 't' is not a local of this const fn"
-cascade K4 2 'const fn f(n) {\n    return n + t + u;\n}\n'"$KF" "2:16: unknown name 't' in a const context" "2:21: undefined variable 'u'"
+cascade K4 2 'const fn f(n) {\n    return n + t + u;\n}\n'"$KF" "2:16: unknown name 't' in a const context" "2:20: undefined variable 'u'"
 KG='fn g(a, b) { return a + b; }\nfn main() {\n    var x = 0;\n'
 KL='    for (var i = 0; i < 3; i = i + 1) { x = x + 1; }\n    return x;\n}\nvar r = main();\n'
 KW='    while (x < 3) { x = x + 1; }\n    return x;\n}\nvar r = main();\n'
@@ -149,9 +149,9 @@ grep -q "note: a for step" "$E" && { echo "FAIL: K13: a bare-name step got the c
 #     (missing include?)" for the same base. The next statement still reports its own (K15's `u`).
 #     RED on 90883a62: K14-K16.
 KU='struct P { x; }\nfn main() {\n'
-cascade K14 1 "$KU"'    t.x = 1;\n    return 0;\n}\nvar r = main();\n' "3:9: undefined variable 't'"
-cascade K15 2 "$KU"'    t.x += 1;\n    var v = u.x;\n    return v;\n}\nvar r = main();\n' "3:9: undefined variable 't'" "4:16: undefined variable 'u'"
-cascade K16 1 "$KU"'    t.m(1);\n    return 0;\n}\nvar r = main();\n' "3:8: undefined variable 't'"
+cascade K14 1 "$KU"'    t.x = 1;\n    return 0;\n}\nvar r = main();\n' "3:5: undefined variable 't'"
+cascade K15 2 "$KU"'    t.x += 1;\n    var v = u.x;\n    return v;\n}\nvar r = main();\n' "3:5: undefined variable 't'" "4:13: undefined variable 'u'"
+cascade K16 1 "$KU"'    t.m(1);\n    return 0;\n}\nvar r = main();\n' "3:5: undefined variable 't'"
 # KT (6.7.17, the review of genb) a list ending `,)` — a call's `h(1,)` is "unexpected ')'" and a definition's `fn h(a,)`
 #    "expected identifier, got ')'"; the arity check then counted the empty entry: "'h' expects 1 argument, got 2" at
 #    the call, "'h' expects 2 arguments, got 1" at each call of the definition. It stands down there (`_ar_trail`, as
@@ -256,16 +256,16 @@ cascade_legs G2 1 'var V: f64v2 = 5;\nsyscall(60, 0);\n' "1:14: vector global 'V
 #     struct's literal compiles. L13 --syntax-only (a sibling file's struct): no error — it was a false "expected ';',
 #     got '{'". RED on the lane before this bite: L1-L9 (L2: five errors), L13.
 SQ="undefined variable 'Q' (missing include or enum?)"
-cascade_legs L1 2 'struct P { a; }\nvar x = Q { 1 };\nvar y = R { 2 };\nsyscall(60, 0);\n' "2:11: $SQ" "3:11: undefined variable 'R'"
-cascade_legs L2 2 'struct P { a; b; }\nfn f(): i64 {\n    var x = Q { 1 };\n    var y = P { 2 };\n    return 0;\n}\nsyscall(60, f());\n' "3:15: $SQ" "4:19: missing struct field in initializer"
-cascade_legs L3 1 'var z = 1;\nz = 2;\nvar x = Q { 1 };\nsyscall(60, x.a);\n' "3:11: $SQ"
-cascade_legs L4 1 'fn f(): i64 {\n    var x = (Q<i64> { a: 1, b: 2 });\n    x.a = 2;\n    x.m();\n    return x.a;\n}\nsyscall(60, f());\n' "2:15: $SQ"
-cascade_legs L5 1 'fn f(): i64 { var x = 0; x = Q { 1 }; return x; }\nsyscall(60, f());\n' "1:32: $SQ"
-cascade_legs L6 1 'fn f(): i64 { return Q { 1 }; }\nsyscall(60, f());\n' "1:24: $SQ"
-cascade_legs L7 1 'fn g(a, b): i64 { return a; }\nfn f(): i64 { return g(Q { 1 }, 2); }\nsyscall(60, f());\n' "2:26: $SQ"
-cascade_legs L8 1 'var x = Q { 1 };\nfn f(): i64 { return x.a; }\nsyscall(60, f() + x.a);\n' "1:11: $SQ"
+cascade_legs L1 2 'struct P { a; }\nvar x = Q { 1 };\nvar y = R { 2 };\nsyscall(60, 0);\n' "2:9: $SQ" "3:9: undefined variable 'R'"
+cascade_legs L2 2 'struct P { a; b; }\nfn f(): i64 {\n    var x = Q { 1 };\n    var y = P { 2 };\n    return 0;\n}\nsyscall(60, f());\n' "3:13: $SQ" "4:19: missing struct field in initializer"
+cascade_legs L3 1 'var z = 1;\nz = 2;\nvar x = Q { 1 };\nsyscall(60, x.a);\n' "3:9: $SQ"
+cascade_legs L4 1 'fn f(): i64 {\n    var x = (Q<i64> { a: 1, b: 2 });\n    x.a = 2;\n    x.m();\n    return x.a;\n}\nsyscall(60, f());\n' "2:14: $SQ"
+cascade_legs L5 1 'fn f(): i64 { var x = 0; x = Q { 1 }; return x; }\nsyscall(60, f());\n' "1:30: $SQ"
+cascade_legs L6 1 'fn f(): i64 { return Q { 1 }; }\nsyscall(60, f());\n' "1:22: $SQ"
+cascade_legs L7 1 'fn g(a, b): i64 { return a; }\nfn f(): i64 { return g(Q { 1 }, 2); }\nsyscall(60, f());\n' "2:24: $SQ"
+cascade_legs L8 1 'var x = Q { 1 };\nfn f(): i64 { return x.a; }\nsyscall(60, f() + x.a);\n' "1:9: $SQ"
 cascade_legs L9 1 'fn f(): i64 { var x: Q = Q { 1 }; return x.a; }\nsyscall(60, f());\n' "1:22: unknown type 'Q' for variable 'x'"
-cascade_legs L10 1 'fn f(): i64 {\n    match nn { 5 => { return 1; } _ => { return 2; } }\n    return 0;\n}\nsyscall(60, f());\n' "2:14: undefined variable 'nn'"
+cascade_legs L10 1 'fn f(): i64 {\n    match nn { 5 => { return 1; } _ => { return 2; } }\n    return 0;\n}\nsyscall(60, f());\n' "2:11: undefined variable 'nn'"
 cascade_legs L11 1 'var x = 5;\nfn f(): i64 { return x.a; }\nsyscall(60, f());\n' "2:25: no struct type in scope for 'x'"
 printf 'struct Q { a; }\nfn f(): i64 { var x = Q { 41 }; return x.a + 1; }\nsyscall(60, f());\n' > "$T"
 rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
@@ -302,7 +302,7 @@ cascade_legs F8 1 'struct V { n; }\nvar GV = V { 4 };\nsyscall(60, GV.n.q);\n' "
 cascade_legs F9 1 'struct V { n; }\nvar z = 1;\nz = 2;\nvar GV = V { 4 };\nsyscall(60, GV.n.q);\n' "5:18: field 'n' $FNS 'q'"
 cascade_legs F10 1 "$FH"'fn f(pw: *W): i64 { return pw.n.b.c; }\nsyscall(60, 0);\n' "3:33: field 'n' $FNS 'b'"
 cascade_legs F11 1 'struct W { p: Later; }\nstruct Later { a; }\nfn f(): i64 { var w: W; w.p.a = 33; return w.p.a; }\nsyscall(60, f());\n' "1:15: struct field type 'Later' is declared after its use"
-cascade_legs F12 2 "$FH"'fn f(): i64 { var w: W; var t = w.n.b; return u; }\nsyscall(60, f());\n' "3:37: field 'n' $FNS 'b'" "3:48: undefined variable 'u'"
+cascade_legs F12 2 "$FH"'fn f(): i64 { var w: W; var t = w.n.b; return u; }\nsyscall(60, f());\n' "3:37: field 'n' $FNS 'b'" "3:47: undefined variable 'u'"
 printf 'struct Pt { a; }\nstruct W { p: Pt; n; }\nfn f(): i64 { var w: W; w.p.a = 30; w.n = 2; var s = 0; for i in w.n..4 { s = s + i; } return w.p.a + s - 2; }\nsyscall(60, f());\n' > "$T"
 rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$O" ]; then echo "FAIL: F13: a struct field's chain / a range after a scalar field did not compile:"; cat "$E"; kfail=$((kfail + 1))

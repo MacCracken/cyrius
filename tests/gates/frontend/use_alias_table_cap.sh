@@ -204,7 +204,7 @@ ulrun UL5 "use m.f with no ';': the next line runs" 'use m.f
 syscall(60, 3);' 3
 ulrefuse UL6 "use 5 with no ';': its error and the next line's" 'use 5
 syscall(60, zz);' "error:<source>:1:5: $UM
-error:<source>:2:15: $ZZ"
+error:<source>:2:13: $ZZ"
 ulrefuse UL7 "use m: the line ends before the name" 'use m
 syscall(60, 3);' "error:<source>:1:1: $UM"
 ulrefuse UL8 "a ';'-less use after the first statement and in a fn body: the next line's zz too" 'var a = 1;
@@ -214,9 +214,9 @@ a = a + zz;
 fn f(): i64 { use m.g
 return zz; }
 syscall(60, f());' "error:<source>:3:1: a \`use\` declaration must come before the first top-level statement (line 2)
-error:<source>:4:11: $ZZ
+error:<source>:4:9: $ZZ
 error:<source>:5:15: a \`use\` declaration belongs to the declaration section at top level, not inside a fn body
-error:<source>:6:10: $ZZ"
+error:<source>:6:8: $ZZ"
 ulrefuse UL9 "a ';'-less use in a body, then a block's refused struct used above it" 'fn h(q: *Q): i64 { return q.y; }
 fn f(): i64 {
     use m.f
