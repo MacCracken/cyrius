@@ -54,6 +54,15 @@
 #       cascades), TPX on tp3 / tp_sf (lint's own parse errors there) and A [pe] (both) / [macho] TP1. TP5: the D6 commit
 #       without `_ty_rd_shape`'s arm (3e9a46cff) -> RED TP5a (the impl's line beside the member's), TP5b (the impl's line
 #       in place of the method's own refusal), both legs.
+#
+#   AD  (6.7.17, met in genb's GB1, no decision: the shape was refused already, as a cascade) `&` OF A FN WRITTEN WITH A
+#       TYPE-ARGUMENT LIST: `&nf<i64>` / `&gg<i32>` were "undefined variable 'i64'" + "expected ';', got '>'" (the `&`
+#       factor took the name and left the list to the expression as comparisons). `_amp_targs` (parse_expr.cyr): a fn
+#       that is not generic gets 6.7.16's line, the list stepped and its address taken; a generic fn's instance one line
+#       by name, "cannot take the address of a generic instance: 'gg' - ...", the list and a call's `( .. )` stepped.
+#       AD1-AD5 plain and under the flag (a local, a global's initializer, a callptr argument, `&gg<i32>(3)`); ADK the
+#       controls (`&gg < a` a comparison, `&gg` / `&nf` taken and called: exit 10). Mutant (2026-10-22): the compiler
+#       before (dd2ac95fc) -> RED 12: AD1-AD5 on both legs, A [pe] / [macho] AD2 (A [a64] / [cx] build from the tree).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -284,22 +293,61 @@ for leg in plain mono0; do
     if [ "$got" -eq "$want" ]; then ok "TPK [$leg]: U, *U, [U], sizeof(U), Box<U>, Vec<U> in a generic, unchanged: exit $got"; else bad "TPK [$leg]: exit $got, want $want"; fi
 done
 
+# ── AD: `&` of a fn written with a type-argument list (6.7.17, met in genb's GB1) ────────────────────────────
+# `&nf<i64>` / `&gg<i32>` were "undefined variable 'i64'" + "expected ';', got '>'" (the `&` factor took the name and
+# left the list to the expression as comparisons). A fn that is not generic: 6.7.16's line, the list stepped, nf's
+# address taken; a generic one's instance: one line by name, the list (and a call's `( .. )`) stepped.
+AW="cannot take the address of a generic instance: 'gg'"
+mk ad1 'fn go(): i64 { var f = &nf<i64>; return callptr(f, 6); }'
+mk ad2 'fn gg<T>(x: T): i64 { return 1; }
+fn go(): i64 { var f = &gg<i32>; return 3; }'
+mk ad3 'fn gg<T>(x: T): i64 { return 1; }
+var GF = &gg<i32>;
+fn go(): i64 { return 3; }'
+mk ad4 'fn gg<T>(x: T): i64 { return 1; }
+fn go(): i64 { return callptr(&gg<Pt>, 3); }'
+mk ad5 'fn gg<T>(x: T): i64 { return 1; }
+fn go(): i64 { var f = &gg<i32>(3); return 3; }'
+for leg in plain mono0; do
+    C="$CC"; [ "$leg" = mono0 ] && C="CYRIUS_MONOMORPH=0 $CC"
+    one ad1 "11:25: $FN" "AD1 [$leg]: &nf<i64> — the list stepped, nf's address taken" "$C"
+    one ad2 "12:25: $AW" "AD2 [$leg]: var f = &gg<i32>;" "$C"
+    one ad3 "12:11: $AW" "AD3 [$leg]: a global's initializer" "$C"
+    one ad4 "12:32: $AW" "AD4 [$leg]: a callptr argument, &gg<Pt>" "$C"
+    one ad5 "12:25: $AW" "AD5 [$leg]: &gg<i32>(3) — the call's ( .. ) stepped too" "$C"
+done
+# controls: `&gg < a` stays a comparison; `&gg` (the base) and `&nf` are taken and called
+mk adk 'fn gg<T>(x: T): i64 { return x + 1; }
+fn go(): i64 { var a = 1; var c = &gg < a; var f = &gg; var h = &nf; return callptr(f, 6) + callptr(h, 3) + c; }'
+for leg in plain mono0; do
+    rc=0
+    if [ "$leg" = mono0 ]; then CYRIUS_MONOMORPH=0 "$CC" < "$D/adk.cyr" > "$D/adk_$leg" 2> "$D/adk_$leg.err" || rc=$?
+    else "$CC" < "$D/adk.cyr" > "$D/adk_$leg" 2> "$D/adk_$leg.err" || rc=$?; fi
+    if [ "$rc" -ne 0 ]; then bad "ADK [$leg]: rc $rc: $(grep '^error' "$D/adk_$leg.err" | head -2 | tr '\n' '|')"; continue; fi
+    chmod +x "$D/adk_$leg"; got=0; "$D/adk_$leg" || got=$?
+    if [ "$got" -eq 10 ]; then ok "ADK [$leg]: &gg < a a comparison, &gg and &nf taken and called: exit 10"; else bad "ADK [$leg]: exit $got, want 10"; fi
+done
+
 # ── A: the refusal from every cross compiler ─────────────────────────────────────────────────────────────────
 A64="$D/cc_a64"; CXCC="$D/cc_cx"
 if "$CC" < src/main_aarch64.cyr > "$A64" 2> /dev/null && [ -s "$A64" ]; then chmod +x "$A64"
     one r1 "11:23: $FN" "A [a64]: R1" "$A64"; one m1 "11:45: $MT" "A [a64]: M1" "$A64"
     tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [a64]: TP1" "$A64"
+    one ad2 "12:25: $AW" "A [a64]: AD2" "$A64"
 else bad "aarch64: src/main_aarch64.cyr did not build"; fi
 if "$CC" < src/main_cx.cyr > "$CXCC" 2> /dev/null && [ -s "$CXCC" ]; then chmod +x "$CXCC"
     one r1 "11:23: $FN" "A [cx]: R1" "$CXCC"; one m1 "11:45: $MT" "A [cx]: M1" "$CXCC"
     tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [cx]: TP1" "$CXCC"
+    one ad2 "12:25: $AW" "A [cx]: AD2" "$CXCC"
 else bad "cx: src/main_cx.cyr did not build"; fi
 one r1 "11:23: $FN" "A [pe]: R1" "CYRIUS_TARGET_WIN=1 $CC"
 one m1 "11:45: $MT" "A [pe]: M1" "CYRIUS_TARGET_WIN=1 $CC"
 tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [pe]: TP1" "CYRIUS_TARGET_WIN=1 $CC"
 tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [pe]: TP1 under the flag" "CYRIUS_MONOMORPH=0 CYRIUS_TARGET_WIN=1 $CC"
 tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [macho]: TP1" "CYRIUS_MACHO=1 $CC"
+one ad2 "12:25: $AW" "A [pe]: AD2" "CYRIUS_TARGET_WIN=1 $CC"
+one ad2 "12:25: $AW" "A [macho]: AD2" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a type-argument list on a fn or method that is not generic is refused once, at its name, and the call parsed as its plain spelling: a fn (R), a method (M), a bounded T's member (B), no such method / an untyped receiver as the plain spelling (U), silent under --syntax-only (X), comparisons and generic callees unchanged (K), a type parameter written with arguments refused in every position (TP, 6.7.17's D6), every cross compiler (A)"
+echo "PASS: $G — a type-argument list on a fn or method that is not generic is refused once, at its name, and the call parsed as its plain spelling: a fn (R), a method (M), a bounded T's member (B), no such method / an untyped receiver as the plain spelling (U), silent under --syntax-only (X), comparisons and generic callees unchanged (K), a type parameter written with arguments refused in every position (TP, 6.7.17's D6), &-of a fn written with a type-argument list (AD, 6.7.17), every cross compiler (A)"
 exit 0

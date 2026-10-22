@@ -7733,7 +7733,10 @@ name — *'nf' is not a generic fn: it takes no type arguments*, *'Pt.m' is not 
 arguments* — and the call parses as `nf(6)` / `p.m(1)` (6.7.16; the `<` was read as less-than: *undefined variable
 'nf'* or *unknown field 'm'*, then *undefined variable 'i64'*); an intrinsic or a builtin the same (`mulh64<i64>(2, 3)`,
 `load64<i64>(p)`: *'mulh64' is not a generic fn: ...*). Only a list of type names is read so: `p.n < a, b >
-(c)` stays two comparisons. On a receiver with no struct — an untyped variable or parameter, a const, a variable whose
+(c)` stays two comparisons. An address takes no list either: `&nf<i64>` is that line, the address `&nf`'s; a generic
+fn's instance has none to take — `&g<i32>` (a local's or a global's initializer, a `callptr` argument) is refused once
+at the name, *cannot take the address of a generic instance: 'g' - wrap the call in a fn that is not generic and take its
+address* (6.7.17; both were *undefined variable 'i32'* + *expected ';', got '>'*); `&g` is the base's address. On a receiver with no struct — an untyped variable or parameter, a const, a variable whose
 annotation was refused, an undefined name, an enum's name — `x.m<i64>(1)` is refused as `x.m(1)` is, the list stepped
 (6.7.16; a const said *has no fields*, and each went on to *undefined variable 'i64'*). A token that is no name at all
 (`Box<1 + 2>`, `id<"s">(3)`, `id<*Pt>(p)`, `Box<>`) is refused once, at the token, by what
