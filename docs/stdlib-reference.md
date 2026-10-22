@@ -235,8 +235,8 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 |----------|-----------|-------------|
 | `file_write_atomic` | `file_write_atomic(path, buf, len) → 0/-errno` | Write a unique sibling temp → fsync → close → rename over `path`. On any failure the temp is unlinked and `path` is left intact |
 | `file_create_exclusive` | `file_create_exclusive(path, mode) → fd/-17` | No-clobber create, kernel-atomic on every target: `O_CREAT\|O_EXCL` on Linux/macOS, `CREATE_NEW` + `FILE_FLAG_OPEN_REPARSE_POINT` on Windows, `AO_CREAT\|AO_EXCL` on agnos (v6.6.9 — it was a non-atomic `file_exists` pre-check there). A name that exists as a file, a directory or a symlink — **even a dangling one** — is -17 everywhere (before 6.6.9 Windows followed a dangling link and created its target) |
-| `file_lock` / `file_unlock` | `(fd) → 0/-errno` | Exclusive lock / release (blocking on Linux+macOS; agnos flock is **non-blocking** — a contended `LOCK_EX` returns -1) |
-| `file_trylock` | `file_trylock(fd) → 0/-1` | Non-blocking exclusive lock |
+| `file_lock` / `file_unlock` | `(fd) → 0/-errno` | Exclusive lock / release (blocking on Linux, macOS and Windows; agnos flock is **non-blocking** — a contended `LOCK_EX` returns -1) |
+| `file_trylock` | `file_trylock(fd) → 0/-errno` | Non-blocking exclusive lock: -11 when another holder has it (Linux and Windows; Darwin -35, agnos -1) |
 | `file_lock_shared` | `file_lock_shared(fd) → 0/-errno` | Shared (read) lock |
 | `file_append_locked` | `file_append_locked(path, buf, len) → n/-errno` | Append under an exclusive lock (kernel `O_APPEND` off agnos; explicit SEEK_END under the lock on agnos) |
 

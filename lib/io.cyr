@@ -1429,8 +1429,9 @@ fn _io_name_exists(path): i64 {
 }
 
 # File-lock helpers — portable via xflock, which centralizes the per-target
-# flock number (agnos #59 / macOS BSD #92 / Linux x86 #73 / aarch64 #32; Windows
-# unsupported → -1). These were CYRIUS_TARGET_LINUX-only + raw `syscall(73)`
+# flock number (agnos #59 / macOS BSD flock 131, issued as 73 and renumbered by ESYSXLAT /
+# Linux x86 #73 / aarch64 #32; Windows LockFileEx on a sentinel byte since 6.7.12 — see
+# _xflock_win). These were CYRIUS_TARGET_LINUX-only + raw `syscall(73)`
 # (CHANGELOG [5.5.16]: 73 is flock only on x86-Linux), so they were undefined →
 # ud2/SIGILL stubs on agnos + macOS, AND wrong-numbered on aarch64-Linux. That
 # trapped descent's persist_init at boot on agnos (libro FileStore →
@@ -1440,7 +1441,7 @@ fn _io_name_exists(path): i64 {
 # blocking poll-spin is the caller's job if it ever runs multi-process.
 # (issue 2026-06-21-agnos-io-flock-helpers.md.)
 
-# Exclusive file lock (blocking on Linux/macOS; non-blocking on agnos — see note).
+# Exclusive file lock (blocking on Linux, macOS and Windows; non-blocking on agnos — see note).
 fn file_lock(fd): i64 {
     return xflock(fd, LOCK_EX);
 }
@@ -1450,7 +1451,8 @@ fn file_unlock(fd): i64 {
     return xflock(fd, LOCK_UN);
 }
 
-# Non-blocking exclusive lock. Returns 0 on success, -1 if already locked.
+# Non-blocking exclusive lock. Returns 0 on success; when another holder has the lock -11 (EAGAIN,
+# Linux and Windows; Darwin's is -35, agnos's -1); another failure's -errno (a closed fd -9).
 fn file_trylock(fd): i64 {
     return xflock(fd, LOCK_EX | LOCK_NB);
 }
