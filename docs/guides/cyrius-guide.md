@@ -7624,8 +7624,10 @@ that pointer (6.7.15, the user's decision D23 A, 2026-10-18): through `p: *T`, `
 parameter and no generic struct carries is carried by the first parameter declared
 `pp: **T` (or deeper, below): a `**S` argument binds `T` to `S`, the struct it points through to — a `**S`
 local, parameter, closure capture or global, a field declared `**S` reached through a chain
-(`w.pp`, `pw.pp`, `h.w.pp`), a call returning `**S` (a generic one at the instance it
-reaches), and `&p` / `&G` of a `*S` local, parameter or global. With
+(`w.pp`, `pw.pp`, `h.w.pp`, and since 6.7.17 through a method or a call head: `o.mw().pp`), a call
+returning `**S` (a generic one at the instance it reaches; since 6.7.17 a method `o.mpp()` too, and
+a generic method's `: **U` — through 6.7.16 a method result ran the i64 base, `sizeof(T)` 8, beside the
+user's D2 of 2026-10-22), and `&p` / `&G` of a `*S` local, parameter or global. With
 `fn st<T>(pp: **T): i64 { var a = *pp + 1; var b = *pp; return a - b; }` and a 24-byte
 `P3`, `st(pps)` calls `st$P3` and steps 24, exactly as `st<P3>(pps)` does, and
 `fn tg<T>(pp: **T): i64 { return take(**pp); }` hands `take(p: *P3)` the struct — on a free
@@ -7651,7 +7653,8 @@ is that struct: `nb<i64>(&p)` / `nb(&p)` with `p: *Box<i64>`, `nb<Pt>(&q)` with 
 (through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). It
 carries `T` as `p: *Box<T>` does (6.7.16): a call reads its whole argument through its pointers,
 as a `pp: **T` reads its own — `&q` of a `*Box<Pt>`, a `**Box<Pt>` local, parameter, global,
-field or `: **Box<Pt>` call, wrapped — and the `Box<Pt>` there binds `Pt`, so `nb(&q)` calls
+field or `: **Box<Pt>` call, wrapped, and since 6.7.17 a `: **Box<Pt>` method or a field after one
+(`nb(o.mbb())`, `nb(o.mw().bb)`, refused "a different struct type" before) — and the `Box<Pt>` there binds `Pt`, so `nb(&q)` calls
 `nb$Pt` as `nb<Pt>(&q)` does; a `ppp: ***Box<T>` reads one pointee down per extra star, a
 `Pair<i64, T>` its slot, a `Box<i32>` its scalar, on a free call and a generic method alike.
 Through 6.7.15 `nb(&q)` ran the `i64` base and read `Box<Pt>.n` at `Box<i64>`'s offset. Anything

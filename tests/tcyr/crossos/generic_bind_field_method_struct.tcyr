@@ -9,6 +9,10 @@
 # The G rows (6.7.17, met beside D2): a struct CARRIER `b: Box<T>` / `b: *Box<T>` given an inline `Box<P2>` field or a
 # method returning `Box<P2>` / `*Box<P2>`, on any head, binds T = P2 as a Box<P2> local or a free call does — each was
 # refused "a different struct type" against the i64 base (`_gsc_arg`; the token scans' `_tok_sc_arg` likewise).
+# The H rows (6.7.17, met beside D2): through `pp: **T` (and deeper) and a `pp: **Box<T>` carrier, a method returning
+# `**P2` / `***P2` / `**Box<P2>` and a `**P2` field after a method bind as a free call and a field chain do — the method
+# ran the i64 base (`sizeof(T)` 8; `ppb(b.mqq())` refused "has no i64 instance"), the carrier was refused "a different
+# struct type" (`_ic_pp_arg`; the token scans' `_tok_pp_arg` likewise).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -29,11 +33,19 @@ struct B { k; }
 struct K { n; }
 struct HB { k; b: Box<P2>; pb: *Box<P2>; bi: Box<i32>; }
 struct HW { h: HB; }
+struct WQ { k; qq: **P2; bb: **Box<P2>; }
 
 var GP2: P2 = P2 { 11, 12 };
 var GW: O = O { 31, 32, 33 };
 var GBX: Box<P2> = Box<P2> { 71, 72, 73 };
 var GHH: HB = HB { 0, 1, 2, 6, 0, 4, 5 };
+var GI4: i32 = 5;
+var GPI4: *i32 = &GI4;
+var GPP2: *P2 = &GP2;
+var GPPP2: **P2 = &GPP2;
+var GPBX: *Box<P2> = &GBX;
+var GWQ: WQ = WQ { 0, &GPP2, &GPBX };
+var GB0: B = B { 0 };
 
 impl B {
     fn mp2(self): P2 { var q: P2; q.a = 1; q.b = 2; return q; }
@@ -48,6 +60,13 @@ impl B {
     fn mkb(self): Box<P2> { var x: Box<P2>; x.v.b = 9; x.n = 5; return x; }
     fn mpb(self): *Box<P2> { return &GBX; }
     fn mh(self): HB { var h: HB; h.b.v.b = 8; h.b.n = 6; return h; }
+    fn mqq(self): **P2 { return &GPP2; }
+    fn mqqq(self): ***P2 { return &GPPP2; }
+    fn mqi(self): **i32 { return &GPI4; }
+    fn mbb2(self): **Box<P2> { return &GPBX; }
+    fn mwq(self): WQ { var x: WQ; x.qq = &GPP2; x.bb = &GPBX; return x; }
+    fn mwqp(self): *WQ { return &GWQ; }
+    fn mqu<U>(self, x: **U): **U { return x; }
 }
 impl P2 {
     fn me(self): P2 { var q: P2; q.a = self.a + 100; q.b = self.b + 100; return q; }
@@ -72,6 +91,15 @@ fn mkhb(): HB { var h: HB; h.b.v.b = 7; h.b.n = 4; return h; }
 fn gx<T>(b: Box<T>): i64 { return sizeof(T) * 100 + b.n; }
 fn gpx<T>(b: *Box<T>): i64 { return sizeof(T) * 100 + b.n; }
 fn gvb<T>(b: Box<T>): T { var r: T = b.v; return r; }
+fn ppsz<T>(pp: **T): i64 { return sizeof(T); }
+fn ppb<T>(pp: **T): i64 { var p: *T = *pp; return p.b; }
+fn p3sz<T>(ppp: ***T): i64 { return sizeof(T); }
+fn bbsz<T>(pp: **Box<T>): i64 { var x: *Box<T> = *pp; return sizeof(T) * 100 + x.n; }
+fn gd2<T>(pp: **T): T { var t: T = **pp; return t; }
+fn unb2<T>(pp: **Box<T>): T { var x: *Box<T> = *pp; var r: T = x.v; return r; }
+fn two<A, C>(x: A, y: C): i64 { return sizeof(A) * 100 + sizeof(C); }
+fn tcw(w: W): i64 { return sz(w.p); }
+fn tcm(b: B): i64 { return sz(b.mp2()); }
 fn take(p: P2): i64 { return p.a * 100 + p.b; }
 fn retp(w: *W): P2 { return idt(w.p); }
 fn retm(b: B): P2 { return idt(b.mp2()); }
@@ -80,12 +108,17 @@ fn retm(b: B): P2 { return idt(b.mp2()); }
 fn o1<T>(t: T): i64 { var w: O; w.p.a = 3; w.p.b = 4; var r = idt(w.p); var k = K { r.b }; return k.pick(t); }
 fn o2<T>(t: T): i64 { var b = B { 0 }; var r = idt(b.mp2()); var k = K { r.b }; return k.pick(t); }
 fn o3<T>(t: T): i64 { var r = idt(GW.p); var k = K { r.b }; return k.pick(t); }
+fn o4<T>(t: T): i64 { var b = B { 0 }; var r = gd2(b.mqq()); var k = K { r.b }; return k.pick(t); }
+fn o5<T>(t: T): i64 { var b = B { 0 }; var r = unb2(b.mbb2()); var k = K { r.b }; return k.pick(t); }
+fn o6<T>(t: T): i64 { var b = B { 0 }; var r = gd2(b.mwq().qq); var k = K { r.b }; return k.pick(t); }
 
 # The declaration zone: the sweep and the replay bind alike — an 8-byte struct result types the global (a 16-byte one
 # is refused there, "call it inside a fn", as `idt(q)` of a struct global is).
 var GZ = sz(GW.p);
 var GZR = idt(GW.p1);
 var GZB = gx(GHH.b);
+var GZQ = ppsz(GB0.mqq());
+var GZQB = bbsz(GB0.mbb2());
 
 fn run(): i64 {
     var w: W;
@@ -144,6 +177,9 @@ fn run(): i64 {
     assert_eq(g.k * 100 + g.v.b, 1602, "F11: mkg1(b.mp2()) is G1<P2>");
     var g2 = mkg1(w.p);
     assert_eq(g2.k * 100 + g2.v.b, 1602, "F11b: mkg1(w.p) is G1<P2>");
+    assert_eq(two(w.p, b.mp1()), 1608, "F10i: two type parameters, two(w.p, b.mp1())");
+    assert_eq(sz(v: w.p), 16, "F10j: a named argument sz(v: w.p)");
+    assert_eq(tcw(w) * 100 + tcm(b), 1616, "F10k: a tail call return sz(w.p); / return sz(b.mp2());");
 
     # sizes: 8, 24, a packed 4-byte struct, a Str, a generic struct instance
     assert_eq(sz(w.p1) * 100 + rda(w.p1), 805, "F12a: an 8-byte P1 field");
@@ -193,6 +229,23 @@ fn run(): i64 {
     assert_eq(gx(ph.b), 1603, "G11: gx(ph.b), a field through a pointer");
     assert_eq(gpx(h.b), 1603, "G12: gpx(h.b), an inline Box<P2> field into b: *Box<T> (its address passed)");
     assert_eq(GZB, 1606, "G13: the zone: var GZB = gx(GHH.b);");
+
+    # through `pp: **T` and a `pp: **Box<T>` carrier (met beside D2)
+    assert_eq(ppsz(b.mqq()), 16, "H1: ppsz(b.mqq()), a method returning **P2, binds P2 (8 before)");
+    assert_eq(ppb(b.mqq()), 12, "H2: ppb(b.mqq()) reads p.b (refused 'no i64 instance' before)");
+    assert_eq(ppsz(b.mwq().qq), 16, "H3: ppsz(b.mwq().qq), a **P2 field after a method (8 before)");
+    assert_eq(ppsz(b.mwqp().qq), 16, "H4: ppsz(b.mwqp().qq), after a *WQ method");
+    assert_eq(ppsz((b.mqq())), 16, "H5: ppsz((b.mqq())), wrapped");
+    assert_eq(p3sz(b.mqqq()), 16, "H6: p3sz(b.mqqq()), a ***P2 method into ppp: ***T");
+    assert_eq(ppsz(b.mqu(&GPP2)), 16, "H7: ppsz(b.mqu(&GPP2)), a generic method's : **U");
+    assert_eq(ppsz(b.mqi()), 4, "H8: ppsz(b.mqi()), a **i32 method binds i32 (6.7.15's D11)");
+    assert_eq(bbsz(b.mbb2()), 1673, "H9: bbsz(b.mbb2()), a **Box<P2> method into pp: **Box<T> (refused before)");
+    assert_eq(bbsz(b.mwq().bb), 1673, "H10: bbsz(b.mwq().bb), a **Box<P2> field after a method (refused before)");
+    assert_eq(gd2(b.mqq()).b, 12, "H11: gd2(b.mqq()) returns the P2 its T binds");
+    assert_eq(GZQ * 10000 + GZQB, 161673, "H12: the zone: ppsz(GB0.mqq()), bbsz(GB0.mbb2())");
+    assert_eq(o4(q) * 10000 + o5(q) * 100 + o6(q), 147414, "H13: in a generic, var r = gd2(b.mqq()); / unb2(b.mbb2()); / gd2(b.mwq().qq); typed");
+    assert_eq(ppsz(b.mpp()), 8, "HK1: a : *P2 method into pp: **T binds nothing (as a *P2 call)");
+    assert_eq(p3sz(b.mqq()), 8, "HK2: a : **P2 method into ppp: ***T binds nothing (as a **P2 call)");
 
     # inside a generic, and the declaration zone
     assert_eq(o1(q), 6, "F14a: in a generic, var r = idt(w.p); is typed (the stub forward seen)");

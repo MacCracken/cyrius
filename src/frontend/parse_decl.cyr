@@ -9537,10 +9537,11 @@ fn _mch_hop(S, sid, k): i64 {
 # argument at token `at` — inside any wrap — when it is a receiver head the method arm takes (`_mch_head`: a name, a call,
 # a parenthesised value) and at least one `.field` / `.m(..)` step, each typed as the arm types it (`_mch_hop`,
 # `_mch_mres`): `_acv_is` 1 and the binding through `x: T` (`ptr` 0) or `p: *T` (1) in the parser's encoding (a struct
-# > 0, a scalar < 0, i64 -8) — or (2) the struct a carrier `b: G<T>` / `b: *G<T>` reads, held or pointed at; `_acv_is`
-# 0 when it is no such chain (its readers' own arms decide). `ta` >= 0: from the tokens of the unit starting at token
-# ta (a token pass, `_mch_tok`), struct answers only. Its readers: `_ic_arg`, `_tok_ta_arg`, `_gsc_arg`, `_tok_sc_arg`.
-# CHANGELOG [6.7.17]
+# > 0, a scalar < 0, i64 -8) — or (2) the struct a carrier `b: G<T>` / `b: *G<T>` reads, held or pointed at, or (2 + d)
+# what a `*..*T` of d >= 2 stars (or a `**G<T>` carrier) reads through them (`_acv_pp`); `_acv_is` 0 when it is no such
+# chain (its readers' own arms decide). `ta` >= 0: from the tokens of the unit starting at token ta (a token pass,
+# `_mch_tok`), struct answers only. Its readers: `_ic_arg`, `_tok_ta_arg`, `_gsc_arg`, `_tok_sc_arg`, `_ic_pp_arg`,
+# `_tok_pp_arg`. CHANGELOG [6.7.17]
 var _acv_is = 0;
 var _acv_k = 0;   # the last step: 1 a field (`_acv_s` its struct, `_acv_f` its index), 2 a method
 var _acv_s = 0;
@@ -9566,7 +9567,8 @@ fn _acv_bind(S, at, ta, ptr): i64 {
     var r = 0 - 8;
     var is = _acv_walk(S, b);
     if (is == 1) {
-        if (_acv_k == 1) { r = _acv_fld(S, ptr, ta); }
+        if (ptr >= 4) { r = _acv_pp(S, ptr - 2, ta); }
+        elif (_acv_k == 1) { r = _acv_fld(S, ptr, ta); }
         else { r = _acv_meth(S, ptr, ta); }
     }
     _acv_is = is;   # set last: a binding read above may run a nested `_acv_bind`
@@ -9647,6 +9649,42 @@ fn _acv_meth(S, ptr, ta): i64 {
     if (ta >= 0) { return 0 - 8; }
     if (GFTP(S, mf) != 0) { return 0 - 8; }
     return _ic_pscalar(_fn_ret_ps(mf));
+}
+# A leaf through a `*..*T` of d stars (`ptr` 2 + d — a `pp: **T` or a `**G<T>` carrier): the word its field is declared
+# with or its method returns, read d stars down (`_ic_pp_deep`), as a field chain (`_ic_pp_chain`, `_tpl_chain`) and a
+# free call (`_ic_pp_arg`) are read there; a generic method's `: *..*U` (d stars) the struct U binds at the step. A token
+# pass answers structs only. CHANGELOG [6.7.17]
+fn _acv_pp(S, d, ta): i64 {
+    var w = 0;
+    if (_acv_k == 1) { w = _fld_ps_get(S, _acv_s - 1, _acv_f); }
+    else {
+        var rs = _acv_s;
+        var nt = _acv_f;
+        var o = _acv_o;
+        var mf = _meth_fn_at(S, rs, TOKVAL(S, nt), nt);
+        if (mf < 0) { return 0 - 8; }
+        if (GFTP(S, mf) != 0) { return _acv_ppg(S, mf, rs, nt, o, d); }
+        w = _fn_ret_ps(mf);
+    }
+    var r = _ic_pp_deep(S, w, d);
+    if (ta >= 0) { if (r <= 0) { return 0 - 8; } }
+    return r;
+}
+# ... a generic method's `: *..*U` of exactly d stars (as `_tpl_call` reads a free one): the struct U binds there.
+fn _acv_ppg(S, mf, rs, nt, o, d): i64 {
+    var k = _tok_ret_ann(S, mf);
+    if (k < 0) { return 0 - 8; }
+    var n = 0;
+    while (TOKTYP(S, k) == 8) {
+        n = n + 1;
+        k = k + 1;
+    }
+    if (n != d) { return 0 - 8; }
+    var w = _tok_tp_which(S, mf, k);
+    if (w < 0) { return 0 - 8; }
+    var c = _gu_okc(_mch_bind(S, mf, rs, nt, o, w));
+    if (c <= 0) { return 0 - 8; }
+    return c;
 }
 # The struct method mf returns by value at the step whose name is token nt (its `(` at o, on struct rs) — a generic's
 # `: T` the struct T binds there, its `: G<..>` the instance that binding names (`_mch_bind`, `_mch_gres`: read, never

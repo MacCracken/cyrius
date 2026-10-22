@@ -512,9 +512,18 @@ fn _tok_pp_tp(S, a, i, j, fi, w): i64 {
 # field chain whose leaf is declared with d (its word), a call declared with d (a generic's `: *..*U` at what U binds
 # here), wrapped (6.7.15's D22 A), or pointer arithmetic on one of them (D23 A). 0 = none — a missed flag, never a
 # false one. CHANGELOG [6.7.16]
+# 6.7.17: a field / method chain on any receiver head as the parser reads it (`_acv_bind` mode 2 + d), so the scan types
+# `var r = gd2(b.mpp());` as `_ic_pp_arg` binds it. CHANGELOG [6.7.17]
 fn _tok_pp_arg(S, a, i, at, d): i64 {
     var ae = _ic_arith_end(S, at);
     if (ae > 0) { return _tok_pp_arith(S, a, i, at, ae, d); }
+    var ta = a;
+    if (ta < 0) { ta = 0; }
+    var cv = _acv_bind(S, at, ta, 2 + d);   # 6.7.17 (D2): a field / method chain on any head, as `_ic_pp_arg` reads it
+    if (_acv_is == 1) {
+        if (cv > 0) { return cv; }
+        return 0;
+    }
     at = _pwrap_in(S, at);
     if (at < 0) { return 0; }
     var t = TOKTYP(S, at);

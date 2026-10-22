@@ -90,6 +90,13 @@
 #      PG2 local, PG6 nested, PG7 a call head, PG8 after a method) and a `: Box<P>` / `: *Box<P>` method (PG4, PG5) were
 #      refused "a different struct type" against the i64 base; PG3, a `*Box<P>` field, the parser bound (6.7.8) and the
 #      scan did not (`_tok_sc_arg` had no chain arm), so o's base was refused naming P.pick — each 4 (x86_64)
+#   PH (6.7.17, met beside D2) THROUGH `pp: **T` (OR DEEPER) AND A `pp: **Box<T>` CARRIER A METHOD RESULT AND A FIELD AFTER
+#      A METHOD BIND AS A FREE CALL AND A FIELD CHAIN DO, IN THE PARSER AND THE SCAN ALIKE (`_acv_bind` mode 2 + d from
+#      `_ic_pp_arg` and `_tok_pp_arg`): PH1 a `: **P` method, PH2 / PH3 a `**P` field after a `: W2` / `: *W2` method, PH4
+#      a `: ***P` method into `***T`, PH5 / PH6 a `: **Box<P>` method and a `**Box<P>` field after a method into
+#      `**Box<T>`, PH7 a generic method's `: **U`, PH8 wrapped — the parser bound i64 (o's base: "no struct type in scope
+#      for 'r'"; the carrier "a different struct type"); each 4 (x86_64). PHK1 a `: *P` method into `**T`, PHK2 a
+#      `: **P` method into `***T` bind nothing in either: `o(5)` meets the parser's own error once
 #   L  (6.7.15) THE EXPLICIT SPELLING IN THE METHOD-CALL LOOKAHEADS: every lookahead that keys a method call on the
 #      tokens `x . m (` (`_tok_method_open`, its `(` at ti + 3) missed `x.m<..>(` — `var a, b = p.mm<i64>(3);` was
 #      "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?`
@@ -223,6 +230,13 @@
 #   MG2 `_tok_sc_arg` without its `_acv_bind` arm      -> RED 8: PG1-PG8 (the parser bound P, the scan nothing)
 #   MG3 `_gsc_arg` without its `_acv_bind` arm         -> RED 7: PG1 PG2 PG4-PG8 ("a different struct type"); PG3 green
 #                                                         (6.7.8's `_gsc_chain`)
+#   MH1 the tree before the pp arm (504f2e47f)         -> RED 8: PH1-PH8 (PH1-PH4 PH7 PH8 "no struct type in scope for
+#                                                         'r'", PH5 PH6 "a different struct type")
+#   MH2 `_tok_pp_arg` without its `_acv_bind` arm      -> RED 8: PH1-PH8 (the parser bound P, the scan nothing: o's base
+#                                                         refused naming P.pick)
+#   MH3 `_ic_pp_arg` without its `_acv_bind` arm       -> RED 8: PH1-PH8 (the parser bound nothing: PH1-PH4 PH7 PH8 "no
+#                                                         struct type in scope for 'r'", PH5 PH6 "a different struct type")
+#   MH4 `_acv_pp` reading no generic method (`_acv_ppg`) -> RED 1: PH7
 # 6.7.15 (the P8 rows; 2026-10-18, CYCC= the mutant):
 #   MP0 the fix reverted (the lane's previous compiler) -> RED P8a-P8g (the parser bound nothing: "no struct type in
 #                                                         scope for 'r'"); P8K green
@@ -932,6 +946,59 @@ pgrow PG6 'var r = unv(GHW.h.b); return r.pick(t);' "unv(GHW.h.b), a nested fiel
 pgrow PG7 'var r = unv(mkh().b); return r.pick(t);' "unv(mkh().b), a call head"
 pgrow PG8 'var b = B { 0 }; var r = unv(b.mh().b); return r.pick(t);' "unv(b.mh().b), a field after a method"
 
+echo "PH. through pp: **T and a pp: **Box<T> carrier a method result binds as a free call does, in the parser and the scan (6.7.17, met beside D2)"
+PHH='include "lib/syscalls.cyr"
+struct P { n; }
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+struct W2 { k; pp: **P; bb: **Box<P>; }
+struct B { k; }
+impl P { fn pick<V>(self, w: V): i64 { return w.b; } }
+var GP0 = P { 1 };
+var GPP: *P = &GP0;
+var GPPP: **P = &GPP;
+var GBUF[32];
+var GBP: *Box<P> = &GBUF;
+var GW2 = W2 { 0, &GPP, &GBP };
+impl B {
+    fn mpp(self): **P { return &GPP; }
+    fn mppp(self): ***P { return &GPPP; }
+    fn mw(self): W2 { var w: W2; w.pp = &GPP; w.bb = &GBP; return w; }
+    fn mwp(self): *W2 { return &GW2; }
+    fn mbb(self): **Box<P> { return &GBP; }
+    fn mgu<U>(self, x: **U): **U { return x; }
+    fn mp(self): *P { return &GP0; }
+}
+fn gd2<T>(pp: **T): T { var t: T = **pp; return t; }
+fn gd3<T>(ppp: ***T): T { var t: T = ***ppp; return t; }
+fn unb2<T>(pp: **Box<T>): T { var b: *Box<T> = *pp; return b.v; }'
+# phrow <id> <body of the generic o<T>(t: T)> <what>: `o(q)` on a Q { 3, 4 } exits 4 (x86_64)
+phrow() {
+    printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { var q = Q { 3, 4 }; return o(q); }\nsyscall(60, m());\n' "$PHH" "$2" > "$D/$1.cyr"
+    run_leg x86 "$D/$1.cyr" "$D/$1"
+    if [ "$RC" -eq -1 ]; then bad "$1: $3 did not build: $(grep -m1 'error' "$D/$1.err")"
+    elif [ "$RC" -eq 4 ]; then ok "$1: $3 exits 4"
+    else bad "$1: $3 exits $RC, want 4"; fi
+}
+phrow PH1 'var b = B { 0 }; var r = gd2(b.mpp()); return r.pick(t);' "gd2(b.mpp()), a \`: **P\` method"
+phrow PH2 'var b = B { 0 }; var r = gd2(b.mw().pp); return r.pick(t);' "gd2(b.mw().pp), a \`**P\` field after a \`: W2\` method"
+phrow PH3 'var b = B { 0 }; var r = gd2(b.mwp().pp); return r.pick(t);' "gd2(b.mwp().pp), after a \`: *W2\` method"
+phrow PH4 'var b = B { 0 }; var r = gd3(b.mppp()); return r.pick(t);' "gd3(b.mppp()), a \`: ***P\` method into \`***T\`"
+phrow PH5 'var b = B { 0 }; var r = unb2(b.mbb()); return r.pick(t);' "unb2(b.mbb()), a \`: **Box<P>\` method into \`**Box<T>\`"
+phrow PH6 'var b = B { 0 }; var r = unb2(b.mw().bb); return r.pick(t);' "unb2(b.mw().bb), a \`**Box<P>\` field after a method"
+phrow PH7 'var b = B { 0 }; var r = gd2(b.mgu(&GPP)); return r.pick(t);' "gd2(b.mgu(&GPP)), a generic method's \`: **U\`"
+phrow PH8 'var b = B { 0 }; var r = gd2((b.mpp())); return r.pick(t);' "gd2((b.mpp())), wrapped"
+# phk <id> <body> <what>: binds nothing in the parser and the scan alike — `o(5)` meets the parser's own error at r.pick, once
+phk() {
+    printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { return o(5); }\nsyscall(60, m());\n' "$PHH" "$2" > "$D/$1.cyr"
+    erc=0; "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || erc=$?
+    ne=$(grep -c '^error' "$D/$1.err" || true)
+    if [ "$erc" -ne 0 ] && [ "$ne" -eq 1 ] && grep -qF "no struct type in scope for 'r'" "$D/$1.err"; then ok "$1: $3 binds nothing: the parser's own error at r.pick, once"
+    else bad "$1: $3: rc $erc, $ne errors (want the parser's one 'no struct type in scope for 'r''): $(grep '^error' "$D/$1.err" | tr '\n' ' ')"; fi
+}
+phk PHK1 'var b = B { 0 }; var r = gd2(b.mp()); return r.pick(t);' "gd2(b.mp()), a \`: *P\` method into \`**T\`"
+phk PHK2 'var b = B { 0 }; var r = gd3(b.mpp()); return r.pick(t);' "gd3(b.mpp()), a \`: **P\` method into \`***T\`"
+
 echo "L. the explicit spelling x.m<..>(..) in the method-call lookaheads (6.7.15)"
 # The filed repro, verbatim (the issue's text).
 cat > "$D/l0.cyr" <<'X'
@@ -1188,4 +1255,4 @@ nrow N7 "$D/n7.cyr" "6:65: generic 'P.bm': its type argument does not implement 
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15) and its pp: **T / generic : *T call binding (PQ, 6.7.16), a struct-typed field / struct-returning method (PF, 6.7.17) and a struct carrier given one (PG), the explicit spelling in every method-call lookahead (L, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"
+echo "PASS: $G — a generic method call reaches the instance its arguments bind: the filed repro (R1), a chain and a trait member (C), a scalar into an i64 base (K) on x86_64 / IR / aarch64 / cx / PE, the refusals by name (S) on x86_64 and through every cross compiler, a forwarder through a field chain or a call receiver (F), explicit type arguments on the method spelling (E, 6.7.14), the stub scan's pointer binding (P, 6.7.15) and its pp: **T / generic : *T call binding (PQ, 6.7.16), a struct-typed field / struct-returning method (PF, 6.7.17), a struct carrier given one (PG) and a pp: **T / **Box<T> method result (PH), the explicit spelling in every method-call lookahead (L, 6.7.15), and $N rows (T) on x86_64 / IR / DCE / aarch64 / cx / PE"

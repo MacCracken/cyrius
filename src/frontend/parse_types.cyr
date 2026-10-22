@@ -3688,9 +3688,15 @@ fn _pp_is_tp(S, tn): i64 {
 # `tg(pps)` does — they ran the i64 base (`take(**pp)` faulted: 139, cx 254, PE 5). The arithmetic is read by its
 # typed-pointer operand's step word (`_hl_pw`: `pps + n`, `n + pps`, `(pps) - n`); `&ps + n` is a byte pointer
 # (6.7.11's D15) and binds nothing. `d` the parameter's stars (D24): `_ic_pp_deep`. CHANGELOG [6.7.15]
+# ⛔ 6.7.17 — A METHOD RESULT BINDS AS A FREE CALL DOES (beside the user's D2, 2026-10-22): `gd2(b.mpp())` with `: **P`,
+# `gd2(b.mw().pp)` (a `**P` field after a method) and a `**Box<P>` one into a `pp: **Box<T>` carrier ran the i64 base
+# (`sizeof(T)` 8) or were refused "a different struct type" — the chain arm walked fields only. `_acv_bind` (mode 2 + d)
+# reads any receiver head and step first. CHANGELOG [6.7.17]
 fn _ic_pp_arg(S, a, d): i64 {
     var e = _ic_arith_end(S, a);
     if (e > 0) { return _ic_pp_deep(S, _hl_pw(S, a, e), d); }
+    var cv = _acv_bind(S, a, 0 - 1, 2 + d);   # 6.7.17 (D2): a field / method chain on any receiver head
+    if (_acv_is == 1) { return cv; }
     a = _pwrap_in(S, a);
     if (a < 0) { return 0 - 8; }
     var t = TOKTYP(S, a);
