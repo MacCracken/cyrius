@@ -229,7 +229,13 @@ whole`). A type with no place at a site is refused once, its `<..>` with it
 `.field` reads, field stores and `.m()` calls are the annotation's one error (`var x: Foo = 5; return x.a;`, `fn f(q:
 *Foo) { return q.a; }` — through 6.7.14 each use was also *no struct type in scope for 'x'*). Only that variable: a
 same-named one declared in a nested or a sibling block is another variable, and its own errors are reported (6.7.16;
-through 6.7.15 the inner `x` of `var x: Foo = 5; if (1) { var x = 7; return x.a; }` said nothing). A top-level `var P:
+through 6.7.15 the inner `x` of `var x: Foo = 5; if (1) { var x = 7; return x.a; }` said nothing). The same for an
+untyped variable whose initializer was refused when that initializer is what would type it (6.7.17) — a name, a call,
+a field, a method call or a subscript, inside any parentheses, and a copy of such a variable: `var y = QQ; return
+y.a;` is QQ's one error, as is the declaration zone's `var y = mkw().p;` ("needs storage in a fn's frame") at `y.a`,
+in a fn body compiled before the zone's initializers too (through 6.7.16 each use added *no struct type in scope for
+'y'*). An operator's value is an integer — `var y = QQ + 1; return y.a;` reports `y.a` too — and so is one whole call
+of a non-generic fn whose declared return types the variable, whatever its arguments (`var y = foo(QQ);`). A top-level `var P:
 *Foo` global's uses too (6.7.16; through 6.7.15 they added an error naming a struct it never had, or read the program's
 first struct), and a `*T` global whose `T` is no struct — `var x: *i64 = &g;` — takes no `.field`, as a local does: *no
 struct type in scope for 'x'* (it compiled and read through the first struct). Nor does a scalar global (6.7.16, the

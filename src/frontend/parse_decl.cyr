@@ -1926,14 +1926,25 @@ fn _mlist_step(S): i64 {
 # CHANGELOG [6.7.15]
 fn _meth_sid0_said(S, noff, pfl_beg, idx): i64 {
     if (_cst_fld_at(S, noff, 2, pfl_beg + 1) == 1) { return 1; }
-    return _fld_sid0_said(S, noff, idx);
+    return _fld_sid0_said(S, noff, idx, 2);
 }
 # The `sid == 0` arms' stand-downs (the method call, the `.field` read and store; out of their cybs-ceiling fns): a
 # refused const fn's run-time body (`_ce_fld_said`, 6.7.14), and 6.7.15 a variable `noff` (resolved to `idx`)
 # whose annotation named a type a refused declaration declared (`_ann_refd_said`, parse_fn_def.cyr). 1 = said.
-fn _fld_sid0_said(S, noff, idx): i64 {
+# 6.7.17: and a zone global the sweep judged refused, before the replay has said (`_gu_phold`, report `kind`).
+fn _fld_sid0_said(S, noff, idx, kind): i64 {
     if (_ce_fld_said(S) == 1) { return 1; }
-    return _ann_refd_said(S, noff, idx);
+    if (_ann_refd_said(S, noff, idx) == 1) { return 1; }
+    return _gu_phold(S, noff, idx, kind);
+}
+# The `sid == 0` arms' report at the cursor, `kind` 0 a `.field` read, 1 a `.field` store, 2 a method call (and the
+# held one's, `_gu_presolve`).
+fn _s0_err(S, noff, kind): i64 {
+    var t = "; a '.field' access needs its struct declaration (missing include?)";
+    if (kind == 1) { t = "; a '.field' assignment needs its struct declaration (missing include?)"; }
+    if (kind == 2) { t = "; a method call needs its struct declaration (missing include?)"; }
+    ERR_IDENT(S, "no struct type in scope for ", noff, t, 0 - 1);
+    return 0;
 }
 fn _mchain_at(S, k): i64 {
     if (TOKTYP(S, k) != 41) { return 0; }
@@ -2517,7 +2528,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
             # and the chain on its result: `a.m(1).g`, `a.m(1).k(2)` were "expected ';', got '.'". CHANGELOG [6.7.16]
             if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }
             if (_meth_sid0_said(S, noff, pfl_beg, idx) == 1) { return 0; }   # 6.7.15: a const; a refused const fn
-            ERR_IDENT(S, "no struct type in scope for ", noff, "; a method call needs its struct declaration (missing include?)", 0 - 1);
+            _s0_err(S, noff, 2);
             return 0;
         }
         var mname = 0;
@@ -2606,8 +2617,8 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
         if (_meth_ngt0(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)` / `C.m<i64>(1)`, as `.m(1)`
         if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
-        if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }           # 6.7.14 a refused const fn, 6.7.15 type
-        ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1);
+        if (_fld_sid0_said(S, noff, idx, 0) == 1) { return 0; }        # 6.7.14 a refused const fn, 6.7.15 type
+        _s0_err(S, noff, 0);
         return 0;
     }
     var fi = FINDFIELD(S, si, fnoff);
@@ -2916,8 +2927,8 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
         # below does or the leftover `=` becomes an INVENTED syntax error.
         if (_syntax_only == 1) { return _synonly_fld_tail(S, term); }
         if (_cst_fld_at(S, noff, 1, GTI(S) - 2) == 1) { return 0; }   # 6.7.14: a top-level const
-        if (_fld_sid0_said(S, noff, idx) == 1) { return 0; }          # 6.7.14 a refused const fn, 6.7.15 type
-        ERR_IDENT(S, "no struct type in scope for ", noff, "; a '.field' assignment needs its struct declaration (missing include?)", 0 - 1);
+        if (_fld_sid0_said(S, noff, idx, 1) == 1) { return 0; }       # 6.7.14 a refused const fn, 6.7.15 type
+        _s0_err(S, noff, 1);
         return 0;
     }
     return _fst_on(S, noff, fnoff, idx, sid, term);
@@ -6279,9 +6290,119 @@ fn _var_value(S): i64 {
 fn _var_value_pc(S): i64 {
     var p0 = _panic;
     var st = GTI(S);
+    var en = _err_n;
+    var he = _had_error;
+    var tn = _tsc_n;
     PCMPE(S);
     if (p0 == 0) { if (_var_val_refd(S) == 1) { _var_paren_refd(S, st); } }
+    if (p0 == 0) { _ini_refd(S, st, en, he, tn); }   # 6.7.17: any refusal of a type-deciding initializer
     return 0;
+}
+# ⛔ 6.7.17 — A REFUSED INITIALIZER THAT DECIDED ITS VARIABLE'S TYPE MARKS THE VARIABLE, so its uses stand down as
+# a refused annotation's do (the guide's 6.7.15 rule: a use of what the refused declaration names adds no error of its
+# own). `var y = QQ; return y.a;` added "no struct type in scope for 'y'" after "undefined variable 'QQ'", and the
+# zone's `var y = mkw().p;` (refused: "needs storage in a fn's frame") the same at `y.a`
+# (issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B3). The value parsed from token `st` (inside
+# any wrap the untyped peel stepped into) reported an error of its own (`_own_err` since `en` / `he`, the latch, or a
+# frameless struct call's refusal, which counts only `_tsc_n` since `tn`), it is an untyped `var NAME =`'s, and its
+# shape is one that types a variable — a postfix chain (`_ini_chain`: a name, a call, a field, a method, a subscript,
+# inside any parentheses): NAME is marked (`_ann_refd_mark`: the registration binds it to its slot, so a same-named
+# variable elsewhere still reports). An operator or a literal fixes the value as no struct (`var y = QQ + 1; y.a`
+# keeps y's own error), and so does one whole call of a non-generic fn — its declared return types y whatever its
+# arguments (`_ini_fixed_call`). A copy of a marked variable is marked too (`_ini_copy_refd`). Shared by PARSE_VAR (a
+# fn, after the first statement) and the declaration-zone replay (`_gvi_scalar`). CHANGELOG [6.7.17]
+fn _ini_refd(S, st, en, he, tn): i64 {
+    var rf = 0;
+    if (_own_err(en, he) == 1 || _panic == 1 || _tsc_n != tn) { rf = 1; }
+    elif (_dlv == 0) { return 0; }
+    var b = st;
+    while (TOKTYP(S, b - 1) == 10) { b = b - 1; }
+    if (_gu_untyped(S, b) == 0) { return 0; }
+    var e = _gz_end(S, b);
+    if (_ini_chain(S, b, e) == 0) { return 0; }
+    if (rf == 0) { if (_ini_copy_refd(S, b, e) == 0) { return 0; } }
+    if (_ini_fixed_call(S, b, e) == 1) { return 0; }
+    return _ann_refd_mark(S, TOKVAL(S, b - 2));
+}
+# 1 = the chain [b, e) is, inside any parentheses, one name whose variable is marked (`_ann_refd_q`): `var z = y;` after
+# `var y = QQ;` copies the refusal, so `z.a` stands down too.
+fn _ini_copy_refd(S, b, e): i64 {
+    var a = _ini_lone(S, b, e);
+    if (a < 0) { return 0; }
+    var n = TOKVAL(S, a);
+    var idx = 0 - 1;
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, n);
+        if (li >= 0) { idx = 0 - 2 - li; }
+    }
+    if (idx == 0 - 1) {
+        idx = FINDVAR(S, n);
+        if (idx < 0) { return 0; }
+    }
+    return _ann_refd_q(S, n, idx);
+}
+# 1 = the tokens [a, e) are one postfix chain: a name (`f<..>(`: a call's explicit list) or a parenthesised chain,
+# then any run of `.name` (`.m<..>(`), `( .. )` and `[ .. ]`. Anything else at its level (an operator, a literal, a
+# keyword) fixes the value as no struct: 0.
+fn _ini_chain(S, a, e): i64 {
+    var i = a + 1;
+    var t = TOKTYP(S, a);
+    if (t == 10) {
+        var c = _gz_close(S, a, e);
+        if (c >= e) { return 0; }
+        if (_ini_chain(S, a + 1, c) == 0) { return 0; }
+        i = c + 1;
+    } elif (t == 2) { i = _ini_targs(S, i); }
+    else { return 0; }
+    while (i >= 0 && i < e) {
+        t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0; }
+            i = _ini_targs(S, i + 2);
+        } elif (t == 10 || t == 28) {
+            var c2 = _gz_close(S, i, e);
+            if (c2 >= e) { return 0; }
+            i = c2 + 1;
+        } else { return 0; }
+    }
+    if (i != e) { return 0; }
+    return 1;
+}
+# The name token the value [b, e) is, inside any parentheses; -1 when it is no lone name.
+fn _ini_lone(S, b, e): i64 {
+    while (TOKTYP(S, b) == 10) {
+        if (_gz_close(S, b, e) != e - 1) { break; }
+        b = b + 1;
+        e = e - 1;
+    }
+    if (b + 1 != e) { return 0 - 1; }
+    if (TOKTYP(S, b) != 2) { return 0 - 1; }
+    return b;
+}
+# Token `i` past an explicit list `<..>` that a call's `(` follows (`f<i32>(`, `.m<T>(`); `i` when no `<` opens there;
+# -1 when one does that closes no such list (a comparison).
+fn _ini_targs(S, i): i64 {
+    if (TOKTYP(S, i) != 19) { return i; }
+    var c = _tok_targs_close(S, i + 1);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 10) { return 0 - 1; }
+    return c + 1;
+}
+# 1 = the chain [b, e) is, inside any parentheses, one whole call `f(..)` of a known non-generic fn: its declared return
+# types the variable, so a refused argument decided nothing.
+fn _ini_fixed_call(S, b, e): i64 {
+    while (TOKTYP(S, b) == 10) {
+        if (_gz_close(S, b, e) != e - 1) { break; }
+        b = b + 1;
+        e = e - 1;
+    }
+    if (TOKTYP(S, b) != 2) { return 0; }
+    if (TOKTYP(S, b + 1) != 10) { return 0; }
+    if (_gz_close(S, b + 1, e) != e - 1) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, b));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }
+    return 1;
 }
 # 1 = the value just parsed was refused: the latch is up, or the wrap the untyped peel stepped into (`_scv_peel`, in
 # a fn) is not closed where the value stopped — its close (`_scv_disarm`'s `_pw_close`) will refuse it there:
@@ -7665,11 +7786,13 @@ fn _gvi_scalar(S): i64 {
     var st = GTI(S);
     var he = _had_error;
     var en = _err_n;
+    var tn = _tsc_n;
     var ps = _gvi_ptr_ann(S, st);
     _scv_top_ann(S, ps);   # 6.7.13: D24 in the declaration zone; 6.7.14: D14 (D28 (a))
     _sc_beg = 0 - 1;
     PCMPE(S);
     _scv_err = _own_err(en, he);   # 6.7.17: after an earlier error too
+    _ini_refd(S, st, en, he, tn);   # 6.7.17: a refused type-deciding initializer marks its global
     _scv_rec_ann(S, ps, st);   # 6.7.13 (D13)
     if (_gu_untyped(S, st) == 1) { _gu_zref(S, st); }   # 6.7.14 (D30): `var x = mk2(30);`; 6.7.15 (D35): `= B2.mk();`
     return 0;
@@ -8050,6 +8173,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         }
         gi = gi + 1;
     }
+    _gu_presolve(S);   # 6.7.17: the reports held for a global the sweep judged refused
     _panic = p_in;
     if (_gvr_n > 0) { _gvr_hide(S, GTCNT(S)); }
     _gv_hide_program(S, 0);
@@ -15767,6 +15891,7 @@ fn _gu_zsid(S, ti): i64 {
     _gu_hdl = 0;
     _gu_iebig(S, ti);   # 6.7.16: a refused branch's global stands down at its uses
     _gu_slit0(S, ti);   # 6.7.16: and one whose literal names nothing
+    _gu_ini0(S, ti);   # 6.7.17: and a chain the replay will refuse (provisionally)
     var c = _gu_call(S, ti);
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
             var sid = _gu_okz(S, _gz_call_rs(S, c));   # 6.7.17 (D22): a `: Str` call too
@@ -15870,6 +15995,154 @@ fn _gu_slit0(S, ti): i64 {
     if (_findvar_core(S, n) >= 0) { return 0; }
     if (FINDFN(S, n) >= 0) { return 0; }
     return _ann_refd_mark(S, _slit_decl_name(S, ti - 1));
+}
+# ⛔ 6.7.17 — THE SWEEP'S TWIN OF `_ini_refd` (the replay's mark), for a fn body compiled before the replay: the
+# noted global's untyped initialiser at `ti` is a postfix chain (`_ini_chain`, not one whole call of a non-generic fn)
+# that the replay will refuse, read from its tokens (`_gu_ini_refused`): a name read as a value — the chain's head, or
+# what follows a call's `(` / `,` or a subscript's `[` — that is nothing (no variable, fn, struct, enum or type, and
+# not a refused declaration's, whose use the replay stands down), a struct-valued call the chain goes on from ("needs
+# storage in a fn's frame"), a `.field` its struct does not have ("unknown field"), or a copy of a global marked so.
+# The global is marked PROVISIONALLY (`_gu_pmark`): a `sid == 0` report on it before the replay is held
+# (`_gu_phold`), and at the replay's end (`_gu_presolve`) each held report whose global the replay did not mark is
+# printed, so a reading that disagrees with the replay costs only the report's place, never the report.
+# CHANGELOG [6.7.17]
+fn _gu_ini0(S, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    var e = _gz_end(S, ti);
+    if (_ini_chain(S, ti, e) == 0) { return 0; }
+    if (_ini_fixed_call(S, ti, e) == 1) { return 0; }
+    if (_gu_ini_refused(S, ti, e) == 0) { return 0; }
+    return _gu_pmark(S, ti);
+}
+fn _gu_ini_refused(S, b, e): i64 {
+    var a = _ini_lone(S, b, e);
+    if (a >= 0) { if (_gu_pin(S, TOKVAL(S, a)) == 1) { return 1; } }   # a copy of a global marked above
+    var i = b;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 2) { if (_gu_ini_name(S, i, b) == 1) { return 1; } }
+        if (t == 11) { if (TOKTYP(S, i + 1) == 41) { if (_gu_ini_scall(S, b, i) == 1) { return 1; } } }
+        if (t == 41) { if (_gu_ini_ufld(S, b, i) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 = the name at token `i` of the chain starting at `b` is read as a value and is nothing.
+fn _gu_ini_name(S, i, b): i64 {
+    if (i != b) {
+        var p = TOKTYP(S, i - 1);
+        if (p != 10 && p != 31 && p != 28) { return 0; }
+    }
+    var nx = TOKTYP(S, i + 1);
+    if (nx == 10 || nx == 19 || nx == 13 || nx == 49) { return 0; }
+    var n = TOKVAL(S, i);
+    if (_findvar_core(S, n) >= 0) { return 0; }
+    if (FINDFN(S, n) >= 0) { return 0; }
+    if (FINDSTRUCT(S, n) > 0) { return 0; }
+    if (_is_enum_name(S, n) == 1) { return 0; }
+    if (_tn_resolve_at(S, i) != 0) { return 0; }
+    var he = _had_error;
+    var rf = _dl_name_refd(S, n);
+    _had_error = he;   # a reader here: the replay's stand-down counts it
+    if (rf == 1) { return 0; }
+    return 1;
+}
+# 1 = the call whose `)` is token `c` (its `(` after a name or a list's `>`) has a struct value, read as the replay
+# types it (`_gz_ty` of [b, c], kind 1), and the chain goes on past it.
+fn _gu_ini_scall(S, b, c): i64 {
+    var o = c;
+    while (o > b) {
+        if (_gz_close(S, o, c + 1) == c) { break; }
+        o = o - 1;
+    }
+    var pt = TOKTYP(S, o - 1);
+    if (pt != 2 && pt != 20) { return 0; }
+    var k = _gz_k;
+    var gb = _gz_gb;
+    var mf = _gz_mfi;
+    var t = _gz_ty(S, b, c + 1);
+    var r = 0;
+    if (t > 0) { if (_gz_k == 1) { r = 1; } }
+    _gz_k = k;
+    _gz_gb = gb;
+    _gz_mfi = mf;
+    return r;
+}
+# 1 = the `.name` at token `d` (no call follows) reads a field the struct of [b, d) (`_gz_ty`) does not have.
+fn _gu_ini_ufld(S, b, d): i64 {
+    if (TOKTYP(S, d + 1) != 2) { return 0; }
+    var nx = TOKTYP(S, d + 2);
+    if (nx == 10 || nx == 19) { return 0; }
+    var k = _gz_k;
+    var gb = _gz_gb;
+    var mf = _gz_mfi;
+    var t = _gz_ty(S, b, d);
+    _gz_k = k;
+    _gz_gb = gb;
+    _gz_mfi = mf;
+    if (t <= 0) { return 0; }
+    if (FINDFIELD(S, t - 1, TOKVAL(S, d + 1)) >= 0) { return 0; }
+    return 1;
+}
+var _gup = 0;      # the globals `_gu_ini0` marked provisionally (name offsets), a vec made at the first
+var _guh = 0;      # the reports held for them: (token, kind, name, slot) per report
+var _gup_on = 0;   # 1 from the first provisional mark to the replay's end
+fn _gu_pmark(S, ti): i64 {
+    var n = _slit_decl_name(S, ti - 1);
+    if (n < 0) { return 0; }
+    if (_gu_pin(S, n) == 1) { return 0; }
+    if (_gup == 0) { _gup = vec_new(); }
+    vec_push(_gup, n);
+    _gup_on = 1;
+    return 0;
+}
+# 1 = global `noff` is marked provisionally.
+fn _gu_pin(S, noff): i64 {
+    if (_gup == 0) { return 0; }
+    var n = vec_len(_gup);
+    var i = 0;
+    while (i < n) {
+        if (STREQ(S, vec_get(_gup, i), noff) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# A `sid == 0` report of `kind` on global `idx` (`noff`) that the sweep marked provisionally, before the replay: held,
+# counted as the report would be (`_had_error`, the latch). 1 = held.
+fn _gu_phold(S, noff, idx, kind): i64 {
+    if (_gup_on == 0) { return 0; }
+    if (idx < 0) { return 0; }
+    if (_gu_pin(S, noff) == 0) { return 0; }
+    if (_guh == 0) { _guh = vec_new(); }
+    vec_push(_guh, GTI(S));
+    vec_push(_guh, kind);
+    vec_push(_guh, noff);
+    vec_push(_guh, idx);
+    _had_error = 1;
+    _panic = 1;
+    return 1;
+}
+# The replay's end: a held report whose global the replay did not mark (`_ann_refd_said`) is printed at its token.
+fn _gu_presolve(S): i64 {
+    if (_gup_on == 0) { return 0; }
+    _gup_on = 0;
+    if (_guh == 0) { return 0; }
+    var sv = GTI(S);
+    var p = _panic;
+    var n = vec_len(_guh);
+    var i = 0;
+    while (i < n) {
+        var noff = vec_get(_guh, i + 2);
+        if (_ann_refd_said(S, noff, vec_get(_guh, i + 3)) == 0) {
+            STI(S, vec_get(_guh, i));
+            _panic = 0;
+            _s0_err(S, noff, vec_get(_guh, i + 1));
+        }
+        i = i + 4;
+    }
+    STI(S, sv);
+    _panic = p;
+    return 0;
 }
 # 1 = the branch value [a, b) is one `_ie_kind` refuses as over 8 bytes, read from its tokens with the sweep's own readers
 # (no fn instanced, no parse state): a struct over 8 B (`_gz_bty`; a `Str` is a handle; 6.7.16: a generic call's or

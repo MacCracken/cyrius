@@ -1553,6 +1553,13 @@ fn _ann_refd_rec(S, i, sc, noff, idx): i64 {
 # printed. 6.7.16: a closure's capture (`idx` in the capture band) is the variable it reads, in the fn that
 # declared it (`_cl_cap_origin`) — a nested closure's capture of a capture too. CHANGELOG [6.7.16]
 fn _ann_refd_said(S, noff, idx): i64 {
+    if (_ann_refd_q(S, noff, idx) == 0) { return 0; }
+    _had_error = 1;
+    _panic = 1;
+    return 1;
+}
+# ... the test alone, nothing counted: 1 = marked. 6.7.17: a refused initializer's copy (`var z = y;`) asks it.
+fn _ann_refd_q(S, noff, idx): i64 {
     if (_dlv == 0) { return 0; }
     var sc = 0 - 2;
     if (idx <= 0 - 1000000) {
@@ -1566,11 +1573,7 @@ fn _ann_refd_said(S, noff, idx): i64 {
     var n = vec_len(_dlv);
     var i = 0;
     while (i < n) {
-        if (_ann_refd_rec(S, i, sc, noff, idx) == 1) {
-            _had_error = 1;
-            _panic = 1;
-            return 1;
-        }
+        if (_ann_refd_rec(S, i, sc, noff, idx) == 1) { return 1; }
         i = i + 3;
     }
     return 0;

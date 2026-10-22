@@ -1911,7 +1911,8 @@ syscall(60, main());
 # 10-copy chain (TV10), a chain of 9 mixing copies and `id(..)` (TV10b) and `id(..)` 9 deep (TV10c) stayed untyped:
 # "no struct type in scope for 'y10'" at the definition at T = Q (tests/tcyr/crossos/generic_struct_only_lines.tcyr
 # V16-V18 run them), and at 5 instead of the stub's refusal. A declaration whose own initializer holds the use is no T
-# value, and the walk ends there (TV10s: `var z = z;`, the same two errors as the tree before D102).
+# value, and the walk ends there (TV10s: `var z = z;`, the undefined name alone — 6.7.17: z, its refused initializer's,
+# stands down at `z.b`, issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md; it was two errors).
 #   MTV6 the lane head before the fix (0ae54834c)           -> RED 11: TV10 TV10n TV10b TV10bn TV10c, TVX TV10 TV10b x3
 #   MTV7 `_gs_vkind` without the `e > u` guard              -> TV10s never ends (the walk re-reads `var z = z;`)
 TV10="$TVH"'fn g<T>(x: T): i64 { var y1 = x; var y2 = y1; var y3 = y2; var y4 = y3; var y5 = y4; var y6 = y5; var y7 = y6; var y8 = y7; var y9 = y8; var y10 = y9; return y10.b; }
@@ -1930,7 +1931,7 @@ refuse "TV10c g(5): id(..) nested 9 deep" "$TGM" "$TVH"'fn g<T>(x: T): i64 { var
 fn main(): i64 { return g(5); }
 syscall(60, main());
 ' one
-refuse_at "TV10s var z = z; ends: the two errors" "7:30: undefined variable 'z' (missing include or enum?)|7:43: $SN 'z'$SA" "$TVH"'fn g<T>(x: T): i64 { var z = z; return z.b; }
+refuse_at "TV10s var z = z; ends: the one error" "7:30: undefined variable 'z' (missing include or enum?)" "$TVH"'fn g<T>(x: T): i64 { var z = z; return z.b; }
 fn main(): i64 { return 0; }
 syscall(60, main());
 '
