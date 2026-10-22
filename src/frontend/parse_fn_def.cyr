@@ -1889,7 +1889,7 @@ fn _tl_scan2_def(S, t, objok): i64 {
         _cst_skip_decl(S);
         return 1;
     }
-    if (t == 3) { _skip_gvar_decl(S); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
+    if (t == 3) { _skip_gvar_decl(S, GTI(S)); return 1; }   # 6.6.6: a `;` inside a closure body is not the end
     if (t == 77) { return _tl_impl2(S); }   # 6.7.16: its refusal ends at its `}`
     if (t == 167) { _tl_trait2(S); return 1; }   # 6.7.0 (A1)
     if (t == 78) { _tl_skip_mode(S); return 1; }

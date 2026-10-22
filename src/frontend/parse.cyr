@@ -2229,7 +2229,36 @@ fn _stmt_resync(S, before): i64 {
             var t = TOKTYP(S, GTI(S) - 1);
             if (t == 5 || t == 14) { _panic = 0; return 0; }
         } }
+    _resync_close(S, before);
     _sync_skip(S);
+    return 0;
+}
+# ... first through the `}` of each `{` the statement opened (tokens [before, cursor)) and left unclosed: an error
+# stepped it as a stray token (`a = 2 { 3 };`: "expected ';', got '{'"), so its `}` is the statement's, not the
+# block's end — taken as the block's end, the rest of the fn parsed at top level ("unexpected ';'", "return outside a
+# fn body"). Everything inside is the broken statement's. Not when the statement ended at its own `;`: then the open
+# `{` is one a construct reported unclosed (`var p = P { 1, 2;`: "expected '}', got ';'"), and the `}` after is the
+# block's. Never past EOF. CHANGELOG [6.7.17]
+fn _resync_close(S, before): i64 {
+    var d = 0;
+    var i = before;
+    var c = GTI(S);
+    var n = GTCNT(S) - 1;   # the EOF token
+    if (c > n) { c = n; }
+    if (c > before) { if (TOKTYP(S, c - 1) == 5) { return 0; } }
+    while (i < c) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { d = d + 1; }
+        elif (t == 14) { if (d > 0) { d = d - 1; } }
+        i = i + 1;
+    }
+    while (d > 0 && i < n) {
+        var u = TOKTYP(S, i);
+        if (u == 13) { d = d + 1; }
+        elif (u == 14) { d = d - 1; }
+        i = i + 1;
+    }
+    if (i > c) { STI(S, i); }
     return 0;
 }
 
@@ -4732,8 +4761,7 @@ fn _try_struct_call_assign(S, noff, term): i64 {
     if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
     var t = _struct_call_into_temp(S);
     _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -4794,8 +4822,7 @@ fn _hl_psrc_copy(S, noff, st, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # ⛔ 6.7.11 — AN ASSIGNMENT FROM A STRUCT DEREFERENCE COPIES THE STRUCT (6.7.10 decision 6: `*p` is a struct
@@ -4834,8 +4861,7 @@ fn _asg_dstar(S, noff, term): i64 {
     if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
     else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
     if (dgv >= 0) { SLVAR(S, dgv); }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # 1 = the source `_hl_dstar_x` just read is `*pp` (a `*S`) and the destination `_agc_operand` just resolved a handle
@@ -4861,8 +4887,7 @@ fn _hl_val_into(S, term, sid, dli, dgv): i64 {
     else { tg = _hl_gtemp(S); EVSTORE(S, tg); }   # 6.7.10 (B7-1g): top level, a hidden global
     if (dgv == 0 - 1) { dli = _AGC_DREF(dli); }
     _agc_copy_bytes(S, dli, dgv, t, tg, STRUCTSZ(S, sid - 1));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 # `a = mk(..);` — a free call returning a struct of 8 B or less (class 0, in rax) into a HANDLE `a` of
@@ -5346,8 +5371,7 @@ fn _dst_struct(S, term, d): i64 {
     _HTSTORE(S, h);
     if (_dst_arms(S, term, sid, h, nm) == 1) { return 1; }
     _dst_word(S, h, STRUCTSZ(S, sid - 1));
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # ⛔ 6.7.17 (D14, the user's decision, 2026-10-22: "copy through the slot") — A STRUCT VALUE STORED INTO A `*S` SLOT
@@ -5384,8 +5408,7 @@ fn _psl_store(S, term, sid, nm): i64 {
     _agc_ovr_pp = sv;
     if (r == 1) { return 1; }
     _dst_word(S, hs, 8);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # 1 = the value [st, its `term`) is provably no struct value, by its tokens: empty, an address `&x`, a literal, a name
@@ -5459,8 +5482,7 @@ fn _dst_vec(S, term, d): i64 {
     var h = _HTEMP(S);
     _HTSTORE(S, h);
     if (_dvec_rcv(S, term, 0 - vd, h, nm) == 1) { return 1; }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # `*pv OP= v` through a pointer to a vector, refused by name as `w OP= v` is (`_asg_wide_refused`): `*(&w)` is w; else
@@ -6165,8 +6187,7 @@ fn _deref_store(S, term): i64 {
     }
     if (_ek_fk(ed) == 2) { SEXW(S, 0); }   # a float has no integer width to narrow from
     _asg_store_w(S, _ek_lw(ed));   # rcx = the address, rax = the value; a word when ed is 0
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 0;
 }
 
@@ -6381,8 +6402,7 @@ fn _pcmpe_struct_assign(S, noff, term): i64 {
     var pdli = _agc_li;
     if (_agc_pp != 0) { pdli = _AGC_DREF(pdli); }   # 6.6.16 (C2): a handle too
     _agc_from_temp(S, t, pdli, _agc_gvi, n, _sc_sid);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);   # consume the terminator
+    _expect_step(S, term);   # consume the terminator
     return 1;
 }
 
@@ -6460,8 +6480,7 @@ fn _asa_rec(S, noff, st, term): i64 {
     return _asa_term(S, term);
 }
 fn _asa_term(S, term): i64 {
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
@@ -6696,8 +6715,7 @@ fn _asg_paren(S, noff, term, which): i64 {
     else { r = _pcmpe_struct_assign(S, noff, 11); }
     if (r == 1) {   # the inside consumed its own `)`
         _pw_close(S, k - 1);
-        if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, term);
         return 1;
     }
     if (which == 2) { _pw_close(S, k); return 0; }
@@ -6763,8 +6781,7 @@ fn _tup_asg(S, noff, term): i64 {
     _tup_elems(S, sid, 0, t, 0);
     _pw_close(S, lp - st);
     _agc_from_temp(S, t, dli, dgv, n, sid);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # ⛔ 6.7.7 (B4, T5) — `t = f();` / `G = f();` (a for step too, `term` 11): a multi-value call CAPTURED
@@ -6794,8 +6811,7 @@ fn _tup_asg_call(S, noff, term): i64 {
             if (gv >= 0) { SLVAR(S, gv); }
         }
     }
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # The tuple a destination name holds, else 0 — lookups only, nothing reported: a local (in a fn)
@@ -6929,8 +6945,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
 # match). An unowned break was never patched: its rel32 kept the chain link, a wild jump.
 fn _PARSE_BREAK(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     if (_brk_depth == 0) {
         if (_in_defer == 1) { ERR_MSG(S, "break cannot leave a defer body", 31); return 0; }
         ERR_MSG(S, "break outside a loop or switch", 30);
@@ -6949,8 +6964,7 @@ fn _PARSE_BREAK(S): i64 {
 # fn last had a loop (SIGSEGV), or into the enclosing fn's loop from a closure.
 fn _PARSE_CONTINUE(S): i64 {
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     if (_loop_depth == 0) {
         if (_in_defer == 1) { ERR_MSG(S, "continue cannot leave a defer body", 34); return 0; }
         ERR_MSG(S, "continue outside a loop", 23);
@@ -7208,8 +7222,7 @@ fn _stmt_explicit_generic(S, noff): i64 {
     _explicit_generic_call(S, noff, fi);
     _cfo = 0;
     _stmt_qmark(S, pair);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # ⛔ 6.7.16 — `nofn<i64>(1);` AS A STATEMENT, the name nothing in any scope, took the assignment path: "expected '=', got
@@ -7230,8 +7243,7 @@ fn _stmt_undef_gcall(S, noff): i64 {
     _ugc_call(S, noff);
     if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
     if (_asg_pair_at(S) == 1) { _synonly_fld_tail(S, 5); return 1; }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 
@@ -7312,8 +7324,7 @@ fn _masg_store(S, x): i64 {
     return 0;
 }
 fn _masg_end(S, term): i64 {
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # The targets after the first, cursor on its `,`: their count (2..3), the cursor left on `=`; 0 = a
@@ -7507,8 +7518,7 @@ fn _stmt_method_call(S, noff): i64 {
     if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { if (_tsc_n != tn) { _cst_skip_decl(S); return 0; } _asg_temp_refused(S); return 0; } }
     if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
     _stmt_qmark(S, pair);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 0;
 }
 
@@ -7637,6 +7647,24 @@ fn _refuse_nested_fn(S): i64 {
     var e = _skip_nested_body(S, kw);
     if (TOKTYP(S, e) != 12) { e = e + 1; }
     STI(S, e);
+    return 1;
+}
+
+# 6.7.17 — a token an `asm { }` body cannot hold. A statement keyword, `asm` or the end of file: the block's `}` is
+# missing — "expected '}'" there, nothing stepped, and the block ends in sync (the latch as it was), so the next
+# statement is parsed; anything else is reported and stepped. 0 = the block ended. The body loop stepped nothing after
+# its report: `asm { 0x90;` then `asm { .. }` printed "unexpected asm" and spun to "parser recovery aborted (desync —
+# too many errors)", nothing after it parsed. CHANGELOG [6.7.17]
+fn _asm_bad(S): i64 {
+    var p0 = _panic;
+    var t = PEEKT(S);
+    if (t == 12 || t == 48 || _sync_kw(S, t) == 1) {   # 48: the next `asm`
+        ERR_EXPECT(S, 14);
+        if (p0 == 0) { _panic = 0; }
+        return 0;
+    }
+    ERR(S);
+    STI(S, GTI(S) + 1);
     return 1;
 }
 
@@ -7909,8 +7937,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         STI(S, GTI(S) + 1);                         # consume NUM
         if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }  # need ']'
         STI(S, GTI(S) + 1);                         # consume ']'
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }    # need ';'
-        STI(S, GTI(S) + 1);                         # consume ';'
+        _expect_step(S, 5);                         # consume ';'
         if (stk_size <= 0) {
             ERR_MSG(S, "stack var size must be > 0", 26);
         }
@@ -7990,10 +8017,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 }
                 # `in` lexes as the for-in keyword: the backend's ASM_KW_IN (6.7.14)
                 elif (PEEKT(S) == 76) { ASM_KW_IN(S); }
-                else { ERR(S); }
+                else { ago = _asm_bad(S); }
             }
         }
-        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
         # aarch64 requires every instruction 4-byte aligned. Existing
         # lib/*.cyr asm blocks are x86-specific byte sequences that the
         # aarch64 backend pastes verbatim; if the length isn't a multiple
@@ -8216,8 +8243,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # therefore on all 74 repos that vendor it. See _syntax_only.
                 if (_syntax_only == 1) {
                     if (_unp_names == 1) { _asg_undef_report(S, noff); }   # 6.7.17 (D110): a never-parsed body's read
-                    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                    STI(S, GTI(S) + 1);
+                    _expect_step(S, 5);
                     return 0;
                 }
                 _asg_undef_report(S, noff);   # 6.7.9: shared with the for step
@@ -8231,8 +8257,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11
             _asg_store_slot(S, idx, 1);             # 6.6.12: shared with the for step
         }
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, 5);
         return 0;
     }
     if (_refuse_nested_fn(S) == 1) { return 0; }   # 6.6.16: a `fn` / `async fn` in a fn body

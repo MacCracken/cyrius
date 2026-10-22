@@ -2571,7 +2571,24 @@ fn TOKNAME(typ): i64 {
     if (bn != 0) { return bn; }
     bn = TOKNAME_BUILTIN(typ);
     if (bn != 0) { return bn; }
+    bn = TOKNAME_ATTR(typ);
+    if (bn != 0) { return bn; }
     return "unknown";
+}
+# 6.7.17 — the `#` attribute tokens (LEXATTRWORD, src/frontend/lex_attr.cyr; `#deprecated` is 124, `?`'s, named there):
+# `var g = 1` then `#assert ..` said "expected ';', got unknown". A fn of its own (cybs's per-fn string-literal
+# ceiling). CHANGELOG [6.7.17]
+fn TOKNAME_ATTR(typ): i64 {
+    if (typ == 107) { return "#assert"; }
+    if (typ == 109) { return "#regalloc"; }
+    if (typ == 110) { return "#pe_import"; }
+    if (typ == 122) { return "#must_use"; }
+    if (typ == 125) { return "#pure"; }
+    if (typ == 126) { return "#io"; }
+    if (typ == 127) { return "#alloc"; }
+    if (typ == 133) { return "#naked"; }
+    if (typ == 163) { return "#inline"; }
+    return 0;
 }
 
 # v5.8.45: returns 1 iff the current token is the bare ident "kernel".
@@ -3128,10 +3145,14 @@ fn _sync_skip(S): i64 {
 # statement loop read it as a nested fn — `h(1 *fn(i64): i64;` added "a fn is defined inside fn 'f'" and "unexpected
 # '('" to its one error. CHANGELOG [6.7.17]
 fn _sync_kw(S, t): i64 {
-    if (t == 32) { return _tok_fn_kw(S, GTI(S)); }
+    return _sync_kw_at(S, GTI(S), t);
+}
+# ... at token `k` (type `t`). CHANGELOG [6.7.17]
+fn _sync_kw_at(S, k, t): i64 {
+    if (t == 32) { return _tok_fn_kw(S, k); }
     if (t == 3 || t == 15 || t == 16 || t == 172 || t == 55) { return 1; }
     if (t == 33 || t == 57 || t == 75 || t == 40 || t == 60) { return 1; }
-    if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 1; }
+    if (_TOK_IS_LOOP_AT(S, k) == 1) { return 1; }
     return 0;
 }
 # 1 = the cursor is a recovery point `_sync_skip` stops at: EOF, `}`, `;` or a statement keyword.

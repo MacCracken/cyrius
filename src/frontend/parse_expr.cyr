@@ -4034,8 +4034,7 @@ fn _stmt_call_field(S): i64 {
         if (_cf_unres == st) { _synonly_fld_tail(S, 5); return 1; }   # 6.7.15: a sibling's call, not known
         return _asg_temp_refused(S);
     }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # ⛔ 6.7.14 — `callptr(&gp, 5).b = 40;` WAS "expected ';', got '='": a `callptr` statement went to PCMPE, which reads
@@ -4542,8 +4541,7 @@ fn _esub_assign(S, ed, nm): i64 {
 # The statement arm (_PARSE_STMT_IMPL): the assignment and its `;`.
 fn _arr_sub_stmt(S, noff): i64 {
     if (_arr_sub_assign(S, noff) == 0) { return 0; }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 
