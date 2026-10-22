@@ -207,10 +207,11 @@ AFAIL=0
 ATN=0
 abad() { echo "  FAIL: $1"; AFAIL=$((AFAIL + 1)); }
 AT_LEGS="x86 pe"
-if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$WORK/cc_a64" 2> /dev/null && [ -s "$WORK/cc_a64" ]; then chmod +x "$WORK/cc_a64"; AT_LEGS="$AT_LEGS a64"
+# Built from $ROOT, where their `include "src/.."` lines resolve (check.sh runs a gate from elsewhere).
+if ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$WORK/cc_a64" 2> /dev/null ) && [ -s "$WORK/cc_a64" ]; then chmod +x "$WORK/cc_a64"; AT_LEGS="$AT_LEGS a64"
 else abad "axis 8: src/main_aarch64.cyr did not build"; fi
-if "$CC" < "$ROOT/src/main_cx.cyr" > "$WORK/cc_cx" 2> /dev/null && [ -s "$WORK/cc_cx" ] \
-   && "$CC" < "$ROOT/programs/cxvm.cyr" > "$WORK/cxvm" 2> /dev/null && [ -s "$WORK/cxvm" ]; then chmod +x "$WORK/cc_cx" "$WORK/cxvm"; AT_LEGS="$AT_LEGS cx"
+if ( cd "$ROOT" && "$CC" < src/main_cx.cyr > "$WORK/cc_cx" 2> /dev/null && "$CC" < programs/cxvm.cyr > "$WORK/cxvm" 2> /dev/null ) \
+   && [ -s "$WORK/cc_cx" ] && [ -s "$WORK/cxvm" ]; then chmod +x "$WORK/cc_cx" "$WORK/cxvm"; AT_LEGS="$AT_LEGS cx"
 else abad "axis 8: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 AT_QEMU=0; command -v qemu-aarch64 > /dev/null 2>&1 && AT_QEMU=1
 AT_WINE=0; command -v wine > /dev/null 2>&1 && AT_WINE=1
