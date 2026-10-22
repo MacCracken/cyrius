@@ -1241,7 +1241,8 @@ row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\
 # beside an inherited one, a refused nested fn's body, a refused late impl's method; a default inherited by two impls:
 # once; DI8_8-DI8_10, the review's: a refused inner trait's / `pub trait`'s default, in a fn body and a block); DI9 a
 # `#derive`d enum: the enum, never the derive's `public fn` codecs; DI10 --syntax-only; DI11 a kernel build
-# (x86_64 ELF): the flush waits for the global replay, so a global's closure is said in the replay's words, once.
+# (x86_64 ELF): the flush waits for the global replay, so a global's closure is said in the replay's words, once. DI12
+# (the review's): a fn header whose `(` never closes — the `{` after it opens the fn's body, not a block.
 # MUTATION LEDGER (2026-10-22, measured: a scratch copy of the tree with the one change, its 2-stage cycc, this gate):
 #   the lane before it (e65604d5d)                   -> RED 111: DI1 DI2 DI7 (all ten) DI8_1-DI8_6 DI9a DI10 DI11a UP8
 #                                                       UP10 (rc 0, or the unparsed declaration unsaid)
@@ -1255,6 +1256,8 @@ row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\
 #     skipping from the declaration's keyword)            DI8_9 DI8_10, the inner trait's default's struct unsaid
 #   `_dl_pw_end` flushing before the replay          -> RED 1: DI11b ("not inside a block": the walk's words)
 #   `_dl_pw_late` returns at once                    -> RED 2: UP12 DI11a (a kernel build never flushes: rc 0)
+#   the merged tree's `_dl_inner_fill` (a fn header's -> RED 3 (its compiler on the x86_64 / PE / Mach-O legs): DI12
+#     `{` matched only at its `(`'s depth)                 ("... not inside a block")
 row5 DI1 "filed: a trait default no impl inherits" 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }
 fn main(): i64 { return 3; }
 var r = main();
@@ -1344,6 +1347,9 @@ syscall(60, a);
 " "error:<source>:10:1: an \`enum\` declaration $IR a block"
 row5 DI10 "--syntax-only: the filed repro" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body" --syntax-only
+row5 DI12 "review: a fn header whose ( never closes: its body is a fn body" "$(printf 'fn f(: i64 { struct Q { y; } return 1; }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:6: expected identifier, got ':'
+error:<source>:1:14: a \`struct\` declaration $IR a fn body"
 one "DI11a a kernel build (x86_64 ELF): an unparsed default" "$(printf 'kernel;\ntrait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 0; }\n')
 " "error:<source>:2:29: a \`struct\` declaration $IR a fn body"
 one "DI11b a kernel build: a global's closure, in the replay's words" "$(printf 'kernel;\nvar g = |x| { struct Q { y; } return x; };\nfn main(): i64 { return 3; }\n')
@@ -1378,7 +1384,7 @@ error:<source>:1:35: $ZZ"
 
 # The five-leg rows' floor: a row or a leg lost reads RED, never green. (6.7.17's merge of lanes fea and feg left two
 # assignments, 330 then 220; the later one ruled, so 130 lost row-legs read green.)
-F5FLOOR=365
+F5FLOOR=370
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"

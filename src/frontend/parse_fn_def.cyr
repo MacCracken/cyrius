@@ -1212,7 +1212,9 @@ fn _dl_inner_fill(S): i64 {
         elif (k == 11 || k == 29) { if (pd > 0) { pd = pd - 1; } }
         elif (k == 13) {
             var c = _dl_brace_in(stk);
-            if (pend == 1) { if (pd == ppd) { c = 3; pend = 0; } }
+            # A `{` met before a fn header's `(` closes is that fn's body (a malformed header, `fn f(: i64 {`): valid
+            # code holds none in a parameter list. It read as a block. CHANGELOG [6.7.17]
+            if (pend == 1) { if (pd >= ppd) { c = 3; pend = 0; } }
             if (pend == 2) { if (pd == ppd) { c = 0; pend = 0; } }
             vec_push(stk, c);
         }
