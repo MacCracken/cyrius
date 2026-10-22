@@ -5909,3 +5909,40 @@ fn _targ_at_name(S, noff): i64 {
     STI(S, sv);
     return 0;
 }
+
+# ⛔ 6.7.17 — THE BY-VALUE COPY MISSED AN OPERATOR ON A STRUCT REACHED THROUGH A TYPED POINTER. A later argument that
+# dispatches a struct's operator fn may write the earlier by-value argument (`_span_may_write`), but its struct-value
+# test read only a struct-typed name and a chain of struct-typed fields: `rd(G, *pw + 1)`, `rd(G, pw.x + 1)` and
+# `rd(G, o.p.x + 1)` (`pw: *W`, a `*Mid` field `p`) dispatched an operator fn that wrote G after G's address was
+# pushed, and `rd` read 11 where 1 is right — silent, every target. A typed pointer now types the chain from its base
+# and through a `*T` field (`_name_struct_val`), and a dereference whose operand may be one is a struct value. The
+# operator half counts a BINARY `+ - * /` only (`_tok_binop_at`): a lone `*p` or `-w` dispatches nothing, so
+# `a - *p` and `rd(b, -w)` take no copy. CHANGELOG [6.7.17]
+# 1 = token type `t` ends an operand, so an operator token after it is binary: a name, a literal, `)`, `]`, a `?`.
+fn _tok_opnd_end(t): i64 {
+    if (t == 2 || t == 11 || t == 29 || t == 1 || t == 30) { return 1; }
+    if (t == 61 || t == 169 || t == 170 || t == 124) { return 1; }
+    return 0;
+}
+# The struct a typed-pointer name at token `i` points at when a `.field` follows it (`pw.x`), else 0.
+fn _nsv_ptr_base(S, i): i64 {
+    if (TOKTYP(S, i + 1) != 41) { return 0; }
+    var sid = _hl_psid(S, i, i + 1);
+    if (sid <= 0) { return 0; }
+    return sid;
+}
+# 1 = the operator token at `i` (in a span from `q`) is binary: an operand ends just before it. Only a binary `+ - * /`
+# dispatches a struct's operator fn; a unary `-` reads none (`-s` is an integer) and a unary `*` is a dereference.
+fn _tok_binop_at(S, q, i): i64 {
+    if (i <= q) { return 0; }
+    return _tok_opnd_end(TOKTYP(S, i - 1));
+}
+# 1 = the unary `*` at token `d` is a dereference that may read a struct value: its operand is anything but one name
+# `_hl_dpsid` — the reader the dereference's own dispatch asks (`_dlo_park`) — types as no struct pointer.
+fn _deref_struct_at(S, d): i64 {
+    if (TOKTYP(S, d + 1) != 2) { return 1; }
+    var t = TOKTYP(S, d + 2);
+    if (t == 41 || t == 28 || t == 10 || t == 19) { return 1; }   # `.f`, `[i]`, a call: not one name
+    if (_hl_dpsid(S, d + 1, d + 2) > 0) { return 1; }
+    return 0;
+}

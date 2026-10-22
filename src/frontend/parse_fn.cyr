@@ -18586,17 +18586,25 @@ fn _tok_pure(t): i64 {
 # 1 = the name at token `i` with its `.field` chain reads a STRUCT value — an operand `+ - * /`
 # dispatches on: a struct-typed name with no chain, or a chain ending at a struct-typed field.
 # `acc + p.c` reads an integer field: 0 (a copy there cost a self tail call its `jmp`). A chain
-# this does not follow (`t.0`, an unknown field) answers 1.
+# this does not follow (`t.0`, an unknown field) answers 1. 6.7.17: a chain goes on through a typed
+# pointer — its base (`pw.x`, `pw: *Mid`) and a `*T` field (`o.p.x`) — where it stopped and read
+# `pw.x + w` / `o.p.x + w` as integers, so the copy was missed (`_nsv_ptr_base`). CHANGELOG [6.7.17]
 fn _name_struct_val(S, i): i64 {
     var sid = _sarg_name_sid(S, i);
+    if (sid <= 0) { sid = _nsv_ptr_base(S, i); }
     if (sid <= 0) { return 0; }
     var j = i + 1;
     while (TOKTYP(S, j) == 41) {
         if (TOKTYP(S, j + 1) != 2) { return 1; }
         var fi = FINDFIELD(S, sid - 1, TOKVAL(S, j + 1));
         if (fi < 0) { return 1; }
-        sid = GETFTYPE(S, sid - 1, fi);
-        if (sid <= 0) { return 0; }
+        var ft = GETFTYPE(S, sid - 1, fi);
+        if (ft <= 0) {
+            if (TOKTYP(S, j + 2) != 41) { return 0; }
+            ft = _fld_ptr_sid(S, sid - 1, fi);
+            if (ft <= 0) { return 1; }
+        }
+        sid = ft;
         j = j + 2;
     }
     return 1;
@@ -18604,8 +18612,8 @@ fn _name_struct_val(S, i): i64 {
 # 1 = evaluating the tokens [q, e) — one argument (its `name:` label skipped) or an operand — may
 # write memory: a call (`_tok_calls` before a `(`), any token `_tok_pure` does not name (an
 # assignment, a block or struct literal, a builtin, `?`, `if`, ...), or `+ - * /` beside a struct
-# value (`_name_struct_val`), which dispatches that struct's operator fn. Conservative: a 1 costs a
-# copy.
+# value (`_name_struct_val`; 6.7.17: a dereference of a typed struct pointer, `_deref_struct_at`),
+# which dispatches that struct's operator fn. Conservative: a 1 costs a copy.
 fn _span_may_write(S, q, e): i64 {
     if (_pd_label_at(S, q) == 1) { q = q + 2; }
     var op = 0;
@@ -18617,7 +18625,10 @@ fn _span_may_write(S, q, e): i64 {
             if (i > q) { if (_tok_calls(TOKTYP(S, i - 1)) == 1) { return 1; } }
         } elif (t == 2) {
             if (TOKTYP(S, i - 1) != 41) { if (_name_struct_val(S, i) == 1) { sn = 1; } }
-        } elif (t >= 6 && t <= 9) { op = 1; }
+        } elif (t >= 6 && t <= 9) {
+            if (_tok_binop_at(S, q, i) == 1) { op = 1; }   # 6.7.17: a unary `-` / `*` dispatches nothing
+            elif (t == 8) { if (_deref_struct_at(S, i) == 1) { sn = 1; } }
+        }
         elif (t == 113 || t == 116) { op = 1; }   # `+%` / `-%` are `+` / `-`
         elif (_tok_pure(t) == 0) { return 1; }
         i = i + 1;

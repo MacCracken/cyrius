@@ -17,7 +17,11 @@
 #   K  ... and `pN` is LARGER — the copy — for one that may write: a call, a call inside an
 #      expression, a method call, a builtin store, an operator a struct dispatches (`w + w2`), and
 #      one on struct-typed fields (`h.w + h.v` — struct values, though today only a NAME on the left
-#      dispatches: the rule does not depend on that)
+#      dispatches: the rule does not depend on that); 6.7.17: C12-C14 a typed pointer that reaches no
+#      struct value (`*pn + 1`, `pn: *i64`; `pw + 1`, pointer arithmetic; `pq.n + 1`, an integer field), C15
+#      `- w` and C16 `*pw` (no BINARY operator: a unary `-` / `*` dispatches nothing; C15 copied before) —
+#      and K7-K9 one that does: a dereference (`*pw + 1`), a typed pointer's struct field (`pq.w + 1`)
+#      and a `*HW` field's (`o2.p.w + 1`), each dispatching W's operator fn (no copy before 6.7.17)
 #   T  objdump: `return rd(G, gbump())` (no `&`, which diverts any tail call) is an ordinary call —
 #      its copy is in the frame the `jmp` would free — and `return rd(G, n)` keeps its `jmp`
 #   TS the copy costs ONLY its own call the `jmp` (`_tc_snap_div`, never the per-fn
@@ -80,6 +84,13 @@
 #                                                              (its value taken for an address)
 #   (a definition's copies row replaced whole, and none written for a redefined fn, is
 #   fn_redefinition_binds_last.sh's)
+# 6.7.17 (the struct-operator rule through a typed pointer; each mutant's cycc built from a scratch src copy, this gate
+# run with CYCC= it):
+#   M17 `_deref_struct_at` answers 0                            -> K7; the tcyr's `rd(G, *pv + 1)` (11) on x86 /
+#                                                              IR3 / DCE / PE
+#   M18 `_nsv_ptr_base` answers 0                               -> K8; the tcyr's `rd(G, ph.v + 1)`
+#   M19 `_name_struct_val` stops at a `*T` field (the pre-fix line) -> K9; the tcyr's `rd(G, o.p.v + 1)`
+#   M20 `_tok_binop_at` answers 1 (a unary `-` / `*` an operator)  -> C15 (a copy for `- w`), K7
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -123,9 +134,17 @@ K2@n + bump(&b)@K
 K3@o.touch(&b)@K
 K4@store64(&b, 5)@K
 K5@w + w2@K
-K6@h.w + h.v@K'
+K6@h.w + h.v@K
+C12@*pn + 1@C
+C13@pw + 1@C
+C14@pq.n + 1@C
+C15@- w@C
+C16@*pw@C
+K7@*pw + 1@K
+K8@pq.w + 1@K
+K9@o2.p.w + 1@K'
 {
-    printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\n'
+    printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\nstruct OP2 { n: i64; p: *HW; }\n'
     printf 'fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\n'
     printf 'fn W_add(x: *W, y: *W): i64 { x.p = x.p + 10; return 0; }\n'
     printf 'fn Big_touch(self, p): i64 { return bump(p); }\n'
@@ -133,7 +152,7 @@ K6@h.w + h.v@K'
     echo "$ROWS" | while IFS='@' read -r id arg kind; do
         for f in rd rp; do
             nm=p; [ "$f" = rp ] && nm=q
-            printf 'fn %s%s(): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var c: Big = Big { 4, 5, 6 };\n    var o: Big = Big { 0, 0, 0 };\n    var w: W = W { 1, 2, 3 };\n    var w2: W = W { 0, 0, 0 };\n    var h: HW;\n    h.n = 0;\n    h.w.p = 1;\n    h.v.p = 2;\n    var n = 3;\n    var a: i64[4];\n    a[1] = 7;\n    var r = %s(b, %s);\n    return r + n + c.a + o.a + w.p + w2.p + h.w.p + a[1];\n}\n' "$nm" "$id" "$f" "$arg"
+            printf 'fn %s%s(): i64 {\n    var b: Big = Big { 1, 2, 3 };\n    var c: Big = Big { 4, 5, 6 };\n    var o: Big = Big { 0, 0, 0 };\n    var w: W = W { 1, 2, 3 };\n    var w2: W = W { 0, 0, 0 };\n    var h: HW;\n    h.n = 0;\n    h.w.p = 1;\n    h.v.p = 2;\n    var n = 3;\n    var a: i64[4];\n    a[1] = 7;\n    var pw: *W = &w;\n    var pq: *HW = &h;\n    var pn: *i64 = &n;\n    var o2: OP2;\n    o2.n = 0;\n    o2.p = &h;\n    var r = %s(b, %s);\n    return r + n + c.a + o.a + w.p + w2.p + h.w.p + a[1];\n}\n' "$nm" "$id" "$f" "$arg"
         done
     done
     printf 'fn zend(): i64 { return 0; }\nsyscall(60, zend());\n'
@@ -160,7 +179,7 @@ else
     cat "$T/c.out"
     nf=$(grep -c '^  FAIL' "$T/c.out" || true); fails=$((fails + nf))
     nr=$(grep -c '^  ok' "$T/c.out" || true)
-    [ $((nr + nf)) -eq 17 ] || bad "C/K: $((nr + nf)) rows judged, want 17"
+    [ $((nr + nf)) -eq 25 ] || bad "C/K: $((nr + nf)) rows judged, want 25"
 fi
 
 # ── T: the tail form (objdump) ──────────────────────────────────────────────────────────────────

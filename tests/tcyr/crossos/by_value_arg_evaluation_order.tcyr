@@ -12,7 +12,8 @@
 # arguments (in order and reordered), a tail call (the ordinary path and the tail arm), an
 # operator's left operand (an i64 and a struct result), a later argument that writes through an
 # operator fn, and f64v2 / f64v4 arguments (an `async fn`'s frame is by_value_arg_copy.sh's AS1);
-# 6.7.9: the same shapes at parameter 62 and later, past the 62-bit copies mask.
+# 6.7.9: the same shapes at parameter 62 and later, past the 62-bit copies mask. 6.7.17: an operator fn
+# reached through a typed pointer — a dereference, a typed pointer's struct field, a `*T` field's.
 # On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls,
 # the first-position f64v2 (PE only) and the three 1,000,000-deep tail rows (controls too). Now an
 # argument a later argument may write (`_span_may_write`: a call, a builtin, an operator a struct
@@ -38,6 +39,9 @@ struct Sm { a: i64; }
 struct Odd { a: i64; b: i32; }
 struct H { n: i64; big: Big; }
 struct W { p: i64; q: i64; r: i64; }
+struct V { p: i64; q: i64; r: i64; }
+struct HV { n: i64; v: V; }
+struct OV { n: i64; p: *HV; }
 
 fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }
 fn bump32(p): i64 { store32(p + 8, load32(p + 8) + 10); return 0; }
@@ -53,6 +57,7 @@ fn rdg<T>(s: T, z): i64 { return s.a; }
 fn mkb(s: Big, z): Big { var r: Big = s; return r; }
 fn rw(s: W, z): i64 { return s.p; }
 fn W_add(x: *W, y: *W): i64 { x.p = x.p + 10; return 0; }
+fn V_add(x: *V, y): i64 { G.a = G.a + 10; return 0; }
 fn Big_add(x: Big, y: *Big): i64 { return x.a * 100 + y.a; }
 fn Big_sub(x: Big, y: *Big): Big { var r: Big = x; r.b = y.a; return r; }
 fn Big_get(self: Big, z): i64 { return self.a; }
@@ -90,6 +95,20 @@ fn src_generic(): i64 { var b: Big = Big { 1, 2, 3 }; return rdg(b, bump(&b)); }
 fn src_forward(): i64 { var b: Big = Big { 1, 2, 3 }; return fwd(b, bump(&b)); }
 fn src_receive(): i64 { var b: Big = Big { 1, 2, 3 }; var r: Big = mkb(b, bump(&b)); return r.a; }
 fn src_opwrite(): i64 { var w: W = W { 1, 2, 3 }; var w2: W = W { 0, 0, 0 }; return rw(w, w + w2); }
+# 6.7.17: ... an operator fn (`V_add` writes G) on a struct reached through a typed pointer — a dereference
+# (`*pv + 1`), a typed pointer's field (`ph.v + 1`, `ph: *HV`) and a `*HV` field's (`o.p.v + 1`): read as integers,
+# they took no copy of G (11)
+fn src_opwrite_deref(): i64 { var v: V = V { 1, 2, 3 }; var pv: *V = &v; G.a = 1; return rd(G, *pv + 1); }
+fn src_opwrite_ptr_base(): i64 { var h: HV; h.n = 0; var ph: *HV = &h; G.a = 1; return rd(G, ph.v + 1); }
+fn src_opwrite_ptr_field(): i64 {
+    var h: HV;
+    h.n = 0;
+    var o: OV;
+    o.n = 0;
+    o.p = &h;
+    G.a = 1;
+    return rd(G, o.p.v + 1);
+}
 # ── call forms ──────────────────────────────────────────────────────────────────────────────────
 fn form_method_arg(): i64 { var b: Big = Big { 1, 2, 3 }; var o: Big = Big { 0, 0, 0 }; return o.arg(b, bump(&b)); }
 fn form_self(): i64 { var b: Big = Big { 1, 2, 3 }; return b.get(bump(&b)); }
@@ -309,6 +328,9 @@ assert_eq(src_generic(), 1, "a generic instance: rdg(b, bump(&b))");
 assert_eq(src_forward(), 1, "a fn defined after the call: fwd(b, bump(&b))");
 assert_eq(src_receive(), 1, "a struct-valued receive: var r: Big = mkb(b, bump(&b))");
 assert_eq(src_opwrite(), 1, "a later operator fn writes it: rw(w, w + w2) with W_add(x: *W, ..)");
+assert_eq(src_opwrite_deref(), 1, "... an operator on a dereference of a typed pointer: rd(G, *pv + 1)");
+assert_eq(src_opwrite_ptr_base(), 1, "... on a typed pointer's struct field: rd(G, ph.v + 1)");
+assert_eq(src_opwrite_ptr_field(), 1, "... through a `*HV` field: rd(G, o.p.v + 1)");
 assert_eq(form_method_arg(), 1, "a method's argument: o.arg(b, bump(&b))");
 assert_eq(form_self(), 1, "a method's by-value self: b.get(bump(&b))");
 assert_eq(form_named(), 1, "named, in order: rd(s: b, z: bump(&b))");
