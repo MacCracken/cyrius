@@ -2025,20 +2025,20 @@ fn main(): i64 { var v = callptr(&f, 4); return v; }
 syscall(60, main());
 EOF
 qf_refuse "the issue's second repro verbatim: var v = callptr(&f, 4);" axisIC3 "5:24"
-printf '%s\nfn main(): i64 { var v = fncall1(&f, 4); return v; }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC4 "= fncall1"
-printf '%s\nfn t(): i64 { var v: i64 = callptr(&f, 4); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5a "= callptr"
-printf '%s\nfn t(): i64 { var v = 0; v = fncall1(&f, 4); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5b "fncall1(&f"
-printf '%s\nvar s = 0;\nfn t(): i64 { store64(&s, callptr(&f, 4)); return s; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5c "callptr(&f"
-printf '%s\nfn t(): i64 { var h = H { 0, 0 }; h.a = fncall1(&f, 4); return h.a; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5d "fncall1(&f"
-printf '%s\nfn t(): i64 { var w: i64[2]; w[0] = callptr(&f, 4); return w[0]; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5e "callptr(&f"
-printf '%s\nfn t(): i64 { var x = 0; var p = &x; *p = fncall1(&f, 4); return x; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5f "fncall1(&f"
-printf '%s\nfn t(): i64 { var x = 0; x += callptr(&f, 4); return x; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5g "callptr(&f"
-printf '%s\nfn t(): i64 { var q = H { fncall1(&f, 4), 3 }; return q.a; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5h "fncall1(&f"
-printf '%s\nfn t(): i64 { var v = (callptr((&f), 4) + 1); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5i "= (callptr"
-printf '%s\nfn t(): i64 { var x = 0; for (var i = 0; i < 1; x = fncall1(&f, 4)) { i = i + 1; } return x; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5j "fncall1(&f"
-printf '%s\nvar V = callptr(&f, 4);\nsyscall(60, V);\n' "$ICH" | ic_refuse axisIC5k "= callptr"
-printf '%s\nsyscall(1, 1, "", 0);\nvar V = fncall1(&f, 4);\nsyscall(60, V);\n' "$ICH" | ic_refuse axisIC5l "= fncall1"
-printf '%s\nfn t(): i64 { var v = fncall2(&f2, 1, 2); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5m "= fncall2"
+printf '%s\nfn main(): i64 { var v = fncall1(&f, 4); return v; }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC4 "= fncall1" || exit 1
+printf '%s\nfn t(): i64 { var v: i64 = callptr(&f, 4); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5a "= callptr" || exit 1
+printf '%s\nfn t(): i64 { var v = 0; v = fncall1(&f, 4); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5b "fncall1(&f" || exit 1
+printf '%s\nvar s = 0;\nfn t(): i64 { store64(&s, callptr(&f, 4)); return s; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5c "callptr(&f" || exit 1
+printf '%s\nfn t(): i64 { var h = H { 0, 0 }; h.a = fncall1(&f, 4); return h.a; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5d "fncall1(&f" || exit 1
+printf '%s\nfn t(): i64 { var w: i64[2]; w[0] = callptr(&f, 4); return w[0]; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5e "callptr(&f" || exit 1
+printf '%s\nfn t(): i64 { var x = 0; var p = &x; *p = fncall1(&f, 4); return x; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5f "fncall1(&f" || exit 1
+printf '%s\nfn t(): i64 { var x = 0; x += callptr(&f, 4); return x; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5g "callptr(&f" || exit 1
+printf '%s\nfn t(): i64 { var q = H { fncall1(&f, 4), 3 }; return q.a; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5h "fncall1(&f" || exit 1
+printf '%s\nfn t(): i64 { var v = (callptr((&f), 4) + 1); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5i "= (callptr" || exit 1
+printf '%s\nfn t(): i64 { var x = 0; for (var i = 0; i < 1; x = fncall1(&f, 4)) { i = i + 1; } return x; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5j "fncall1(&f" || exit 1
+printf '%s\nvar V = callptr(&f, 4);\nsyscall(60, V);\n' "$ICH" | ic_refuse axisIC5k "= callptr" || exit 1
+printf '%s\nsyscall(1, 1, "", 0);\nvar V = fncall1(&f, 4);\nsyscall(60, V);\n' "$ICH" | ic_refuse axisIC5l "= fncall1" || exit 1
+printf '%s\nfn t(): i64 { var v = fncall2(&f2, 1, 2); return v; }\nsyscall(60, t());\n' "$ICH" | ic_refuse axisIC5m "= fncall2" || exit 1
 # The destructure binds both, an Err's payload too (unchanged): (1, 9) and (0, 3).
 printf '%s\nfn t(): i64 { var t, v = callptr(&f, 9); var a, b = fncall1(&f, 2); return t * 100 + v + a * 10 + b; }\nsyscall(60, t());\n' "$ICH" > "$T/q.cyr"
 qf_run "var t, v = callptr(&f, 9); and fncall1(&f, 2) bind both" axisIC6 112
@@ -2049,11 +2049,11 @@ qf_run "callptr(fp, 4) / fncall1(fp, 4), the callee in a variable, are one word"
 printf '%s\nfn g(x): i64 { callptr(&f, x)?; return SOk(1); }\nfn h(x): i64 { fncall1(&f, x)?; return SOk(2); }\nfn t(): i64 { var a, b = g(9); var c, d = h(8); var e, k = g(1); var m, n = h(1); return (a + c + e + m) * 100 + b + d + k + n; }\nsyscall(60, t());\n' "$ICH" > "$T/q.cyr"
 qf_run "the statements callptr(&f, x)?; and fncall1(&f, x)?; propagate" axisIC8 220
 # Defined below their caller: a forwarder through `&f` and a fn whose only pair route is a `?` through `&f`.
-printf '%s\nfn main(): i64 { var v = w(4); return v; }\nfn w(x) { return callptr(&f, x); }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC9 "= w(4)"
+printf '%s\nfn main(): i64 { var v = w(4); return v; }\nfn w(x) { return callptr(&f, x); }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC9 "= w(4)" || exit 1
 printf '%s\nfn g(x): i64 { var v = w(x)?; var u = w2(x)?; return SOk(v * 10 + u); }\nfn t(): i64 { var a, b = g(3); var c, d = g(8); return a * 100 + b + c * 50 + d; }\nfn w(x) { return fncall1(&f, x); }\nfn w2(x) { var v = callptr(&f, x)?; return SOk(v + 1); }\nsyscall(60, t());\n' "$ICH" > "$T/q.cyr"
 qf_run "w(x)? and w2(x)? above the fns forwarding / propagating through &f" axisIC10 103
-printf '%s\nfn main(): i64 { var v = w2(4); return v; }\nfn w2(x) { var v = fncall1(&f, x)?; return v; }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC11 "= w2(4)"
-printf '%s\nfn main(): i64 { var v = w2(4); return v; }\nfn w2(x) { var v = callptr(&f, x)?; return v; }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC11b "= w2(4)"
+printf '%s\nfn main(): i64 { var v = w2(4); return v; }\nfn w2(x) { var v = fncall1(&f, x)?; return v; }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC11 "= w2(4)" || exit 1
+printf '%s\nfn main(): i64 { var v = w2(4); return v; }\nfn w2(x) { var v = callptr(&f, x)?; return v; }\nsyscall(60, main());\n' "$ICH" | ic_refuse axisIC11b "= w2(4)" || exit 1
 # No dropped-tag warning on a forwarder through `&f` beside `return SOk(..)`, in a fn and a closure: (0, 5) + (1, 9).
 printf '%s\nfn w3(x) { if (x > 0) { return callptr(&f, x); } return SOk(0); }\nfn t(): i64 { var c = |x| { if (x > 0) { return fncall1(&f, x); } return SOk(0); }; var a, b = w3(4); var d, e = fncall1(c, 9); return a * 100 + b + d * 10 + e; }\nsyscall(60, t());\n' "$ICH" > "$T/q.cyr"
 qf_run "return callptr(&f, x); beside return SOk(0); in a fn and a closure" axisIC12 24
@@ -2104,7 +2104,7 @@ fn mk3(x): P3 { var r: P3 = P3 { x, x + 1, x + 2 }; return r; }
 impl P3 { fn dv(self, d) { if (d == 0) { return SErr(9); } return SOk(self.b / d); } }'
 printf '%s\n%s\nfn g(d): i64 { var v = callptr(&mk3, 5).dv(d)?; var u = fncall1(&mk3, 7).dv(d)?; return SOk(v * 10 + u); }\nfn t(): i64 { var a, b = g(2); var c, e = g(0); return a * 100 + b + c * 50 + e; }\nsyscall(60, t());\n' "$ICH" "$ICM" > "$T/q.cyr"
 qf_run "callptr(&mk3, 5).dv(d)? and fncall1(&mk3, 7).dv(d)?: the method's pair" axisIC17 93
-printf '%s\n%s\nfn t(): i64 { var v = callptr(&mk3, 5).dv(2); return v; }\nsyscall(60, t());\n' "$ICH" "$ICM" | ic_refuse axisIC17b "= callptr"
+printf '%s\n%s\nfn t(): i64 { var v = callptr(&mk3, 5).dv(2); return v; }\nsyscall(60, t());\n' "$ICH" "$ICM" | ic_refuse axisIC17b "= callptr" || exit 1
 # ── axis RQ — 6.7.17 (met reviewing D26): `return f(x)?;` RETURNS THE UNWRAPPED VALUE, ONE WORD ─────────────────────
 # The `?` makes the fn a pair (its Err path returns f's pair), and its Ok path returns the unwrapped value — ONE word,
 # which a caller's `var t, v = g();` reads as the TAG. The every-path rule warns for `var v = f(x)?; return v;` (the
