@@ -7649,6 +7649,24 @@ fn _refuse_nested_fn(S): i64 {
     return 1;
 }
 
+# 6.7.17 — a token an `asm { }` body cannot hold. A statement keyword, `asm` or the end of file: the block's `}` is
+# missing — "expected '}'" there, nothing stepped, and the block ends in sync (the latch as it was), so the next
+# statement is parsed; anything else is reported and stepped. 0 = the block ended. The body loop stepped nothing after
+# its report: `asm { 0x90;` then `asm { .. }` printed "unexpected asm" and spun to "parser recovery aborted (desync —
+# too many errors)", nothing after it parsed. CHANGELOG [6.7.17]
+fn _asm_bad(S): i64 {
+    var p0 = _panic;
+    var t = PEEKT(S);
+    if (t == 12 || t == 48 || _sync_kw(S, t) == 1) {   # 48: the next `asm`
+        ERR_EXPECT(S, 14);
+        if (p0 == 0) { _panic = 0; }
+        return 0;
+    }
+    ERR(S);
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
 fn PARSE_STMT(S): i64 {
     if (_decl_late(S) == 1) { return 0; }   # 6.7.14 (D13 (a)): a declaration after the first statement
     var before = GTI(S);
@@ -7998,10 +8016,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 }
                 # `in` lexes as the for-in keyword: the backend's ASM_KW_IN (6.7.14)
                 elif (PEEKT(S) == 76) { ASM_KW_IN(S); }
-                else { ERR(S); }
+                else { ago = _asm_bad(S); }
             }
         }
-        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
         # aarch64 requires every instruction 4-byte aligned. Existing
         # lib/*.cyr asm blocks are x86-specific byte sequences that the
         # aarch64 backend pastes verbatim; if the length isn't a multiple

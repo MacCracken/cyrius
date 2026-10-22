@@ -44,6 +44,8 @@
 #       entries (a closure body, a `*fn` type, continued initializers) compile and run unchanged
 #   C   a const missing its `;`: C1 a top-level `const C = 1` before two fns, C2 a refused `N = 2` (N a const)
 #       before a `var` — the declaration after it is parsed, its error reported
+#   A   an `asm { }` body missing its `}`: A1 before the next `asm`, A2 before a `return`, A3 at the end of file —
+#       "expected '}'" once, and what follows parsed
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -63,6 +65,8 @@
 # On 82bef3a5b (before `_gv_entry_cut`) RED: S3 Z1 Z2 Z4-Z7 (the entry ran to the next depth-0 `;`: the fns, the
 # struct, `var h` swallowed, their errors never reported); Z3 ZA green. On 1094715eb (before `_cst_skip_decl`'s cut)
 # RED: C1 C2. On bd7abcdb4 (before `_for_empty`) RED: F7-F11 ("unexpected ';'" twice, "expected '=', got '{'").
+# On 0896f7c7b (before `_asm_bad`) RED: A1-A3 ("unexpected asm" / "unexpected return", then "parser recovery aborted
+# (desync — too many errors)").
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -519,6 +523,26 @@ row C2 "a refused const assignment N = 2 before a var" 'fn f(): i64 {
 syscall(60, f());
 ' "error:<source>:4:7: cannot assign to const 'N' - a const has no storage (declare it \`var\` to change it)
 error:<source>:5:15: $UZ"
+
+# ---- A: an `asm { }` body missing its `}` (`_asm_bad`, src/frontend/parse.cyr)
+row A1 "asm { 0x90; then the next asm block" 'fn f(): i64 {
+    asm { 0x90;
+    asm { 0x90; }
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:3:5: expected '}', got asm
+error:<source>:4:14: $UZ"
+row A2 "asm { 0x90 then a return" 'fn f(): i64 {
+    asm { 0x90
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:3:5: expected '}', got return
+error:<source>:3:14: $UZ"
+row A3 "asm { 0x90; at the end of file" 'fn f(): i64 {
+    asm { 0x90;
+' "error:<source>:2:16: expected '}', got end of file"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
