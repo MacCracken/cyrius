@@ -4,8 +4,9 @@ The steps of a cyrius release run as lanes that edit the checkout: `place` and `
 open, `assemble`, `archive` and `roadmap_state` at the close. They are cyrius programs (6.7.17: they
 replaced `scripts/release`'s Python, each with the same output on the same input —
 [`tests/gates/toolchain/dev_helpers_match_golden.sh`](../../tests/gates/toolchain/dev_helpers_match_golden.sh)),
-run from the checkout with `cyrius run programs/release/<step>.cyr`. Development tools: nothing ships
-them.
+run from the checkout's root with `cyrius run programs/release/<step>.cyr` (their includes resolve from
+there). Development tools: nothing ships them. `--repo` defaults to `$CYRIUS_REPO`, else the cyrius
+checkout the current directory is in (the Python steps used the checkout they lived in).
 
 The flow, every step's options, inputs and outputs, and the input files' schemas are in
 [`scripts/release/README.md`](../../scripts/release/README.md), beside the Workflow scripts

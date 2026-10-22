@@ -7,7 +7,9 @@ None ships (the tarball builders copy named files, never this folder). Run them 
 with `cyrius run programs/dev/<name>.cyr` (their includes resolve from there); in this checkout `cyrius run`
 builds each with `./build/cycc` (cbt/core.cyr's in-repo rule). They share
 [`helper_common.cyr`](helper_common.cyr), which is no program of its own. Each takes the checkout
-from `CYRIUS_REPO`, else the checkout the current directory is in, and keeps its scratch under
+from `CYRIUS_REPO`, else the cyrius checkout the current directory is in (the nearest directory up
+holding `src/main.cyr` whose `cyrius.cyml` has `[package] name = "cyrius"`, as `cyrius` itself decides;
+the scripts used the checkout they lived in), and keeps its scratch under
 `CYRIUS_SCRATCH` (default `${XDG_CACHE_HOME:-$HOME/.cache}/c6`); each file's header says what it
 reads and writes.
 

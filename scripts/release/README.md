@@ -12,7 +12,8 @@ named in `cyrius.cyml`'s `[release] scripts`).
 - The steps that edit the checkout are cyrius programs in [`programs/release/`](../../programs/release/)
   (6.7.17: they replaced this folder's Python, each with the same output on the same input —
   [`tests/gates/toolchain/dev_helpers_match_golden.sh`](../../tests/gates/toolchain/dev_helpers_match_golden.sh)).
-  Run each from the checkout with `cyrius run programs/release/<step>.cyr`. `common.cyr` holds the
+  Run each from the checkout's root with `cyrius run programs/release/<step>.cyr` (their includes
+  resolve from there). `common.cyr` holds the
   options they share; `pyre.cyr` (Python's `re`), `pyfmt.cyr` (Python's `str.format`) and
   `pydiff.cyr` (`difflib`'s unified diff) are what roadmap_state's template reads and prints with.
   None of them is a program of its own.
@@ -25,7 +26,7 @@ named in `cyrius.cyml`'s `[release] scripts`).
 |---|---|
 | `<c6>` | the release scratch directory. The steps take it as `--c6`, default `$CYRIUS_SCRATCH`, else `${XDG_CACHE_HOME:-$HOME/.cache}/c6`. The Workflow scripts take it as `args.c6`. |
 | `<tag>` | the version without dots (`X.Y.Z` → `XYZ`). Every per-release file is `<c6>/<tag>_<name>`. |
-| `--repo` | the checkout a step reads and edits. Default `$CYRIUS_REPO`, else the checkout the current directory is in. |
+| `--repo` | the checkout a step reads and edits. Default `$CYRIUS_REPO`, else the cyrius checkout the current directory is in (the nearest directory up holding `src/main.cyr` whose `cyrius.cyml` has `[package] name = "cyrius"`; the Python steps used the checkout they lived in). |
 | `--ver` | the release, `X.Y.Z`. Required by every step. |
 | `--date` | `YYYY-MM-DD` for the step's dated lines. Required where the step writes dated text. |
 | `--dry` | report what would change and write nothing. Offered by every step that writes. |

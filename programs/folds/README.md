@@ -5,7 +5,8 @@ Release helpers for the **folded stdlibs** — the language's own stdlib repos t
 tarball or installer copies this folder. They are cyrius programs (6.7.17: they replaced
 `scripts/folds`' shell and Python, each with the same output on the same input —
 [`tests/gates/toolchain/dev_helpers_match_golden.sh`](../../tests/gates/toolchain/dev_helpers_match_golden.sh)),
-run from the cyrius checkout with `cyrius run`, over [`../dev/helper_common.cyr`](../dev/helper_common.cyr).
+run from the cyrius checkout's root with `cyrius run` (their includes resolve from there), over
+[`../dev/helper_common.cyr`](../dev/helper_common.cyr).
 
 | File | What it does |
 |---|---|
@@ -74,7 +75,9 @@ status is 0 and the summary line is the verdict.
   on GitHub. The workflow, job and step `env:` apply (each over the one before), and a step runs
   in its `working-directory` (else the job's or the workflow's `defaults.run` one). Values are read
   as YAML reads them — quoted, commented, and block scalars with their folding and chomping (since
-  6.7.17; run-ci.py misread each). `if:` is **not** evaluated: every step runs.
+  6.7.17; run-ci.py misread each). `if:` is **not** evaluated: every step runs. `--list`'s
+  `(N lines)` is a step's own script lines: run-ci.py also counted the blank line before the next
+  key, so a block step on a real fold reads one lower than it did.
 - **Not isolated:** `/tmp`, network ports, background processes and the caller's other
   environment variables (an exported `CYRIUS_BOUNDS` / `CYRIUS_POISON` / `CYRIUS_COVERAGE`
   reaches every step's compile, which GitHub never sees). yantra's browser jobs write fixed
