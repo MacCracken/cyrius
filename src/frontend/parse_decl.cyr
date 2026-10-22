@@ -3783,8 +3783,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     _sl_base_li = 0 - 1;
     _STRUCT_INIT_BODY(S, vcnt, sid);
     _sl_base_li = _ps_sv;
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);
+    _slit_rbrace(S);   # 6.7.17: elements past the last field, one error
     _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
     SLVAR(S, vcnt);
     _GVAR_VIS(S, vcnt, _ps_decl_ti);   # v6.6.4: PARSE_PROG-path struct-literal global (see PARSE_ARRAY)
@@ -3886,8 +3885,7 @@ fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
     _sl_base_li = named;
     _STRUCT_INIT_BODY(S, 0, sid);
     _sl_base_li = sv_base;
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);                          # consume '}'
+    _slit_rbrace(S);                             # consume '}' (6.7.17: elements past the last field, one error)
     _slit_unwrap(S);                             # 6.7.14: a wrap's `)`s
     S64(S + 0x5D9D000 + named * 8, noff);
     SLDEP(S, named, GSDEP(S));
@@ -6038,6 +6036,28 @@ fn _slit_wrap_k(S, st): i64 {
     if (_slit_close(S, o) != e - k - 1) { return 0; }
     return k;
 }
+# ⛔ 6.7.17 — A STRUCT LITERAL WITH ELEMENTS PAST ITS LAST FIELD IS ONE ERROR (met in issues/2026-10-21-str-shapes-beyond-
+# d19-d20-d71-d73.md, D98's probes): `P2 { 1, 2, 3, 4 }` was "expected '}', got number 3" and then, the close having
+# taken the `3` for its `}` and the declaration the `,` for its `;`, the literal's own `}` closed the fn — "unexpected
+# ';'" and "return outside a fn body" (one element too many happened to land on the `}`; a refused element ahead of
+# them, `OP { q, 1, 2, 3 }`, the same two). The literal's body parsed, the cursor on its `}`: consumed. Else the report,
+# and a skip to the `}` that closes the literal (nesting counted, never past a `;` at depth 0), consumed. CHANGELOG [6.7.17]
+fn _slit_rbrace(S): i64 {
+    if (PEEKT(S) != 14) {
+        ERR_EXPECT(S, 14);
+        var d = 0;
+        while (PEEKT(S) != 12) {
+            var t = PEEKT(S);
+            if (d == 0) { if (t == 14 || t == 5) { break; } }
+            if (t == 10 || t == 13) { d = d + 1; }
+            if (t == 11 || t == 14) { d = d - 1; }
+            STI(S, GTI(S) + 1);
+        }
+        if (PEEKT(S) != 14) { return 0; }
+    }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
 # The literal's body was parsed: its wrap's `)`s, before the declaration's `;`.
 fn _slit_unwrap(S): i64 {
     var k = _slit_pk;
@@ -7989,8 +8009,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 if (dq == 1) { _gvs_mark(S); }
                 _gvi_struct_body(S, idx, sid);   # 6.7.14: named or positional
                 if (dq == 1) { _gvs_undo(S); }
-                if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-                STI(S, GTI(S) + 1);
+                _slit_rbrace(S);   # 6.7.17: elements past the last field, one error
                 _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
                 _gv_slvar(S, idx);
                 _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
