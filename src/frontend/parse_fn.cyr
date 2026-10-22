@@ -14096,9 +14096,9 @@ fn _tpl_skip(S): i64 {
 
 # v6.3.9 (F-fns): capture a generic param list `<T, U>` at a fn signature, returning
 # the names PACKED as (off0+1) | ((off1+1) << 32) (0 = no `<...>`). Consumes EXACTLY
-# the tokens SKIP_GENERICS would (`<` through `>`), so the cursor advances identically.
-# Default path (_MONOMORPH_OK == 0): delegates to SKIP_GENERICS verbatim and returns 0
-# — byte-identical to the pre-v6.3.9 skip. Only ≤2 params are captured (the inline
+# the tokens `_tpl_skip` would (`<` through `>`, nested; 6.7.17: a closer that closes more
+# than the list left on), so the cursor advances identically in both modes.
+# Default path (_MONOMORPH_OK == 0): delegates to `_tpl_skip` and returns 0. Only ≤2 params are captured (the inline
 # replay's pc≤2 ceiling); extra params are consumed but not recorded.
 # ⛔ 6.7.16 (D8) — and a third is REFUSED, once, at its name (`_ctp_third`): it was consumed and bound nothing, so
 # `fn g3<A, B, C>` read `sizeof(C)` as 8 for a 24-byte struct argument and `struct Three<A, B, C>` laid C out as i64,
@@ -14115,9 +14115,9 @@ fn _capture_tparams(S): i64 {
     var go = 1;
     while (go == 1) {
         if (PEEKT(S) == 20) { go = 0; }
-        # v6.5.19: EOF guard — the monomorph twin of SKIP_GENERICS above, same hang.
-        # It must consume EXACTLY what SKIP_GENERICS does (see the comment on this fn),
-        # so the two guards have to stay in lockstep.
+        # v6.5.19: EOF guard — the monomorph twin of `_tpl_skip`'s (`_skip_targ_list`), same hang.
+        # It must consume EXACTLY what `_tpl_skip` does (see the comment on this fn),
+        # so the two have to stay in lockstep.
         elif (PEEKT(S) == 12) { go = 0; }
         elif (_targ_gt_n(PEEKT(S)) > 1) { return off0 | (off1 << 32); }   # 6.7.17: `<T>>` — left for the header (`_tpl_skip`)
         else {
