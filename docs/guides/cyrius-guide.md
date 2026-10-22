@@ -6709,6 +6709,18 @@ then the comment's neighbour failed with an error naming a word from the middle 
 `include ` had the same shape and now reports `include expects a quoted filename` instead of
 passing mangled bytes on.
 
+A `#ref` is a whole line, as an include is: after the file name only blanks, one `;` and a `#`
+comment may follow. Anything else is refused at its first character (6.7.17, the user's D92,
+2026-10-22):
+
+```text
+error:<source>:1:16: expected the end of the line after a #ref's file name
+```
+
+for `#ref "f.toml"; var y = 2; syscall(60, ka + y);` — through 6.7.16 the rest of the line was
+dropped unread (with `ka = 5` in f.toml that program exited 5, not 7). Put each statement on its
+own line.
+
 ## Inline Assembly
 
 ```
