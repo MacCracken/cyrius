@@ -30,6 +30,15 @@
 #           pinned (6.7.13): 0 for a byte this handle held, 1 for ERROR_NOT_LOCKED — axis 6's
 #           re-lock probe reads that 0 as "held in this mode", so a helper answering otherwise
 #           silently restores 6.7.12's unlock-first re-lock while axis 6 still sees its call site.
+#           6.7.17 (D37: "Linux's errno via the Windows error table"): a NEGATIVE fd is -9 in
+#           _xflock_win before any helper reaches Windows (-1 is the current-process pseudo-handle);
+#           each helper answers a failure it does not read itself (contention -11, ERROR_NOT_LOCKED)
+#           with `syscall(0xF04F)` — the code through the one Win32 table, a closed handle -9 — and
+#           _xflock_win / _xflock_win_release pass that errno on: neither has a `return 0 - 1;`
+#           (every such failure answered -1). The op is checked before both fd checks, as Linux
+#           checks it: a bad op is -22 whatever the fd (D37: "a bad op stays -22"). The behaviour
+#           rows are unopened_fd_ebadf.tcyr's (wine: axis 5 does not run it;
+#           pe_last_error_reroute.sh axis 6d pins 0xF04F's -9).
 #   axis 5  BEHAVIOUR under wine (skipped without wine — NOT hardware; the cass cross-OS leg of
 #           the release gate runs the same .tcyr): the filed repro exits 11 (xflock LOCK_EX -> 0;
 #           10 before), tests/tcyr/crossos/xflock_two_handle.tcyr's PE build reports 0 failed
@@ -79,7 +88,18 @@
 #                                                                catch it either)
 #   _xflock_win_unlock answers 0 for ERROR_NOT_LOCKED (158)      axis 4 FAIL; axis 5 FAILS by HANGING
 #                                                                (an unheld mode byte reads as held)
-# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.12] [6.7.13]
+# 6.7.17 (plat lane, PL3) — every mutant BUILT AND RUN 2026-10-22 (x86_64 Linux + wine 11.20):
+#   _xflock_win's `fd < 0` check removed                         axis 4 FAIL (under wine LockFileEx
+#                                                                of -4 / -1 answers -9 anyway: only
+#                                                                this axis holds "never handed to
+#                                                                Windows")
+#   _xflock_win_lock's last line back to `return 0 - 1;`         axis 4 FAIL; unopened_fd_ebadf.tcyr
+#                                                                under wine 2 rows (-1 for -9)
+#   _xflock_win_release folds to `return 0 - 1;` again           axis 4 FAIL; unopened_fd_ebadf.tcyr
+#                                                                under wine 1 row (LOCK_UN -1)
+#   the op check moved back below the two fd checks (review fix) axis 4 FAIL; unopened_fd_ebadf.tcyr
+#                                                                under wine 3 rows (-9 for -22)
+# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.12] [6.7.13] [6.7.17]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: pe_lockfileex_reroute: build/cycc missing"; exit 77; }
@@ -115,6 +135,9 @@ build() {  # $1 = file stem, $2 = the syscall's argument list
 }
 
 # axis 1: routed at argc 7 / 6, reported one argument short.
+# Every step a failure path takes ends `|| true` (a build, a FAIL listing) or answers 0 (lno): the
+# row after it names the failure, and under `set -e` (GitHub's run: shell) a failed step ended the
+# gate first, red but with no FAIL line (gates_verdict_under_pipefail.sh axis 4). CHANGELOG [6.7.17]
 rc=0; build lk "0xF04C, 0, 2, 0, 1, 0, &ov" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/lk.exe" ]; then bad "axis 1: syscall(0xF04C, 6 args) did not build for PE (rc $rc)"
 elif grep -q "syscall 61516 with" "$D/lk.err"; then bad "axis 1: syscall(0xF04C, 6 args) is reported as not routed"
@@ -123,10 +146,10 @@ rc=0; build un "0xF04D, 0, 0, 1, 0, &ov" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/un.exe" ]; then bad "axis 1: syscall(0xF04D, 5 args) did not build for PE (rc $rc)"
 elif grep -q "syscall 61517 with" "$D/un.err"; then bad "axis 1: syscall(0xF04D, 5 args) is reported as not routed"
 else ok; fi
-build lks "0xF04C, 0, 2, 0, 1, &ov"
+build lks "0xF04C, 0, 2, 0, 1, &ov" || true
 if grep -q "syscall 61516 with 5 argument" "$D/lks.err"; then ok
 else bad "axis 1: syscall(0xF04C, 5 args) (one argument short) was not reported"; fi
-build uns "0xF04D, 0, 0, 1, &ov"
+build uns "0xF04D, 0, 0, 1, &ov" || true
 if grep -q "syscall 61517 with 4 argument" "$D/uns.err"; then ok
 else bad "axis 1: syscall(0xF04D, 4 args) (one argument short) was not reported"; fi
 
@@ -151,22 +174,44 @@ fi
 if [ -s "$D/lk.exe" ] && objdump -p "$D/lk.exe" > "$D/imp.txt" 2>/dev/null && grep -q 'DLL Name' "$D/imp.txt"; then
     if grep -qE '[[:space:]]LockFileEx$' "$D/imp.txt"; then ok
     else bad "axis 3: the syscall(0xF04C) build does not import kernel32!LockFileEx"; fi
-    if [ -s "$D/un.exe" ] && objdump -p "$D/un.exe" 2>/dev/null | grep -qE '[[:space:]]UnlockFileEx$'; then ok
+    if [ -s "$D/un.exe" ] && objdump -p "$D/un.exe" > "$D/impu.txt" 2>/dev/null \
+        && grep -qE '[[:space:]]UnlockFileEx$' "$D/impu.txt"; then ok
     else bad "axis 3: the syscall(0xF04D) build does not import kernel32!UnlockFileEx"; fi
 else
     echo "  SKIP: axis 3 (no objdump that reads PE)"
 fi
 
 # axis 4: static, over the tree's lib/io.cyr.
-code() { grep -vE '^[[:space:]]*#' "$1"; }
+# No reader below a pipe exits before its input ends: the writer would die of SIGPIPE, which
+# `bash -eo pipefail` (GitHub's run: shell) reads as the pipeline failing — the gate stopped with
+# rc 141 and no verdict (fnbody behind `grep -v`: 4 of 100 runs), and a `grep -q` match read as
+# a miss (axis 3's objdump listing). A file is grepped where it lies, a body in a variable through
+# a here-document (has / lno), and gates_verdict_under_pipefail.sh axis 3 scans this file for the
+# shape. CHANGELOG [6.7.17]
 xarm=$(awk '/^fn xflock\(/ { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO" \
-    | awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { w = 1; next } w == 1 { print; exit }')
+    | awk 'w < 2 && /^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { w = 1; next } w == 1 { print; w = 2 }')
 case "$xarm" in
     *'return _xflock_win(fd, op);'*) ok ;;
     *) bad "axis 4: xflock's CYRIUS_TARGET_WIN arm does not call _xflock_win (it reads: $(printf '%s' "$xarm" | tr -s ' '))" ;;
 esac
-# One fn of lib/io.cyr, comments dropped: from `fn NAME(` to its closing brace.
-fnbody() { code "$IO" | awk -v n="fn $1(" 'index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
+# One fn of lib/io.cyr, comment lines dropped: from `fn NAME(` to its closing brace (awk reads the
+# file itself).
+fnbody() { awk -v n="fn $1(" '/^[[:space:]]*#/ { next } index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO"; }
+# has TEXT PATTERN: TEXT has a line matching PATTERN. lno TEXT PATTERN: the first such line's
+# number. grep reads a here-document, so its stop at the first match leaves no writer to kill. lno
+# answers 0 with no line when nothing matches: under `set -e` a failing `neg=$(lno …)` ended the
+# gate there, before the row that names the missing line (gates_verdict_under_pipefail.sh axis 4
+# runs a mutant). CHANGELOG [6.7.17]
+has() {
+    grep -q -e "$2" <<EOF
+$1
+EOF
+}
+lno() {
+    grep -n -m1 -e "$2" <<EOF | cut -d: -f1 || :
+$1
+EOF
+}
 body=$(fnbody _xflock_win)
 lbody=$(fnbody _xflock_win_lock)
 ubody=$(fnbody _xflock_win_unlock)
@@ -174,25 +219,47 @@ f4=$fail
 if [ -z "$body" ] || [ -z "$lbody" ] || [ -z "$ubody" ]; then
     bad "axis 4: lib/io.cyr lacks _xflock_win, _xflock_win_lock or _xflock_win_unlock"
 else
-    printf '%s\n' "$body" | grep -q '_xflock_win_lock(fd, 0x7FFFFFFFFFFFFFFF, fl);' \
+    has "$body" '_xflock_win_lock(fd, 0x7FFFFFFFFFFFFFFF, fl);' \
         || bad "axis 4: _xflock_win does not lock the sentinel 2^63 - 1 (a lock on real bytes fails other handles' reads and writes)"
-    printf '%s\n' "$lbody" | grep -q 'store64(&ov + 16, off);' \
+    has "$lbody" 'store64(&ov + 16, off);' \
         || bad "axis 4: _xflock_win_lock does not put the byte's offset in the OVERLAPPED"
-    printf '%s\n' "$lbody" | grep -q 'syscall(0xF04C, fd, fl, 0, 1, 0, &ov)' \
+    has "$lbody" 'syscall(0xF04C, fd, fl, 0, 1, 0, &ov)' \
         || bad "axis 4: _xflock_win_lock does not LockFileEx one byte (0xF04C, argc 7)"
-    printf '%s\n' "$ubody" | grep -q 'store64(&ov + 16, off);' \
+    has "$ubody" 'store64(&ov + 16, off);' \
         || bad "axis 4: _xflock_win_unlock does not put the byte's offset in the OVERLAPPED"
-    printf '%s\n' "$ubody" | grep -q 'syscall(0xF04D, fd, 0, 1, 0, &ov)' \
+    has "$ubody" 'syscall(0xF04D, fd, 0, 1, 0, &ov)' \
         || bad "axis 4: _xflock_win_unlock does not UnlockFileEx one byte (0xF04D, argc 6)"
-    printf '%s\n' "$lbody" | grep -q 'e == 33' \
+    has "$lbody" 'e == 33' \
         || bad "axis 4: _xflock_win_lock does not map ERROR_LOCK_VIOLATION (33) to -EAGAIN"
-    printf '%s\n' "$ubody" | grep -q '== 158) { return 1; }' \
+    has "$ubody" '== 158) { return 1; }' \
         || bad "axis 4: _xflock_win_unlock does not answer 1 for ERROR_NOT_LOCKED (158) (nothing held must not read as held)"
     # 6.7.13: the re-lock probe (axis 6) reads this helper's 0 as "this handle held the byte"; a
     # helper that answers anything else for a granted unlock never fires the probe, and every
     # re-lock silently goes back to 6.7.12's unlock-first gap. CHANGELOG [6.7.13]
-    printf '%s\n' "$ubody" | grep -q 'if (u > 0) { return 0; }' \
+    has "$ubody" 'if (u > 0) { return 0; }' \
         || bad "axis 4: _xflock_win_unlock does not answer 0 for a lock this handle held (the re-lock probe would never fire: 6.7.12's unlock-first re-lock)"
+    # 6.7.17 (D37): a negative fd never reaches Windows; every other failure answers its errno
+    # through the one Win32 table (0xF04F), and nothing folds it back to -1. CHANGELOG [6.7.17]
+    neg=$(lno "$body" 'if (fd < 0) { return 0 - 9; }')
+    hlp=$(lno "$body" '_xflock_win_\(unlock\|lock\|release\)(')
+    if [ -z "$neg" ] || [ -z "$hlp" ] || [ "$neg" -ge "$hlp" ]; then
+        bad "axis 4: _xflock_win does not answer a negative fd -9 before its first lock call (6.7.17's D37: line '${neg}', first helper '${hlp}')"
+    fi
+    # The op is checked before both fd checks, as Linux's flock(2) checks it: a bad op is -22 for
+    # every fd (D37: "a bad op stays -22"); with an fd check first a negative or an aliasing fd
+    # answered -9. CHANGELOG [6.7.17]
+    opl=$(lno "$body" 'if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }')
+    al=$(lno "$body" 'if (_win_fd_aliases(fd) == 1) { return 0 - 9; }')
+    if [ -z "$opl" ] || [ -z "$neg" ] || [ -z "$al" ] || [ "$opl" -ge "$neg" ] || [ "$opl" -ge "$al" ]; then
+        bad "axis 4: _xflock_win does not refuse a bad op -22 before its fd checks (Linux answers -22 for every fd): op check line '${opl}', fd < 0 '${neg}', alias '${al}'"
+    fi
+    has "$lbody" 'return syscall(0xF04F);' \
+        || bad "axis 4: _xflock_win_lock does not answer a failure's errno through the Win32 table (syscall(0xF04F); 6.7.17's D37)"
+    has "$ubody" 'return syscall(0xF04F);' \
+        || bad "axis 4: _xflock_win_unlock does not answer a failure's errno through the Win32 table (syscall(0xF04F); 6.7.17's D37)"
+    if has "$body" 'return 0 - 1;' || has "$(fnbody _xflock_win_release)" 'return 0 - 1;'; then
+        bad "axis 4: _xflock_win or _xflock_win_release folds a failure to -1 (6.7.17's D37: pass the errno on)"
+    fi
     [ "$fail" = "$f4" ] && ok
 fi
 
@@ -204,18 +271,18 @@ if [ -z "$body" ] || [ -z "$mbody" ] || [ -z "$rbody" ]; then
     bad "axis 6: lib/io.cyr lacks _xflock_win, _xflock_win_mode or _xflock_win_release"
 else
     # The mode bytes: 2^63 - 2 for LOCK_EX, 2^63 - 3 otherwise; never the sentinel.
-    printf '%s\n' "$mbody" | grep -q 'if (cmd == 2) { return 0x7FFFFFFFFFFFFFFE; }' \
+    has "$mbody" 'if (cmd == 2) { return 0x7FFFFFFFFFFFFFFE; }' \
         || bad "axis 6: _xflock_win_mode does not record LOCK_EX on byte 2^63 - 2"
-    printf '%s\n' "$mbody" | grep -q 'return 0x7FFFFFFFFFFFFFFD;' \
+    has "$mbody" 'return 0x7FFFFFFFFFFFFFFD;' \
         || bad "axis 6: _xflock_win_mode does not record LOCK_SH on byte 2^63 - 3"
-    if printf '%s\n' "$mbody" | grep -q '0x7FFFFFFFFFFFFFFF'; then
+    if has "$mbody" '0x7FFFFFFFFFFFFFFF'; then
         bad "axis 6: _xflock_win_mode names the sentinel 2^63 - 1 (the mode record must be its own byte)"
     fi
     # The probe and its no-op return come before the first release of the sentinel.
-    lp=$(printf '%s\n' "$body" | grep -n 'if (_xflock_win_unlock(fd, mode) == 0) {' | head -1 | cut -d: -f1)
-    lk=$(printf '%s\n' "$body" | grep -n 'r = _xflock_win_lock(fd, mode, cmd & 2);' | head -1 | cut -d: -f1)
-    l0=$(printf '%s\n' "$body" | grep -n 'if (r == 0) { return 0; }' | head -1 | cut -d: -f1)
-    lr=$(printf '%s\n' "$body" | grep -n '_xflock_win_release(fd)' | head -1 | cut -d: -f1)
+    lp=$(lno "$body" 'if (_xflock_win_unlock(fd, mode) == 0) {')
+    lk=$(lno "$body" 'r = _xflock_win_lock(fd, mode, cmd & 2);')
+    l0=$(lno "$body" 'if (r == 0) { return 0; }')
+    lr=$(lno "$body" '_xflock_win_release(fd)')
     if [ -z "$lp" ] || [ -z "$lk" ] || [ -z "$l0" ] || [ -z "$lr" ]; then
         bad "axis 6: _xflock_win does not probe the handle's mode byte and return 0 when it is held (probe '${lp}', relock '${lk}', return '${l0}', release '${lr}')"
     elif [ "$lp" -lt "$lk" ] && [ "$lk" -lt "$l0" ] && [ "$l0" -lt "$lr" ]; then :
@@ -223,15 +290,15 @@ else
         bad "axis 6: _xflock_win releases the sentinel before its held-mode no-op (probe line $lp, relock $lk, return $l0, first release $lr)"
     fi
     # The mode is recorded only after the sentinel is granted.
-    ls=$(printf '%s\n' "$body" | grep -n '_xflock_win_lock(fd, 0x7FFFFFFFFFFFFFFF, fl);' | head -1 | cut -d: -f1)
-    lm=$(printf '%s\n' "$body" | grep -n '_xflock_win_lock(fd, _xflock_win_mode(cmd), cmd & 2)' | head -1 | cut -d: -f1)
+    ls=$(lno "$body" '_xflock_win_lock(fd, 0x7FFFFFFFFFFFFFFF, fl);')
+    lm=$(lno "$body" '_xflock_win_lock(fd, _xflock_win_mode(cmd), cmd & 2)')
     if [ -z "$ls" ] || [ -z "$lm" ] || [ "$lm" -le "$ls" ]; then
         bad "axis 6: _xflock_win does not record the mode after the sentinel is granted (sentinel line '${ls}', record '${lm}')"
     fi
     # Release: both mode bytes before the sentinel.
-    re=$(printf '%s\n' "$rbody" | grep -n '_xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFE)' | head -1 | cut -d: -f1)
-    rs=$(printf '%s\n' "$rbody" | grep -n '_xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFD)' | head -1 | cut -d: -f1)
-    rx=$(printf '%s\n' "$rbody" | grep -n '_xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFF)' | head -1 | cut -d: -f1)
+    re=$(lno "$rbody" '_xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFE)')
+    rs=$(lno "$rbody" '_xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFD)')
+    rx=$(lno "$rbody" '_xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFF)')
     if [ -z "$re" ] || [ -z "$rs" ] || [ -z "$rx" ]; then
         bad "axis 6: _xflock_win_release does not unlock both mode bytes and the sentinel"
     elif [ "$re" -lt "$rx" ] && [ "$rs" -lt "$rx" ]; then :
@@ -264,7 +331,7 @@ EOF
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$1" > "$2" 2>&1 )
     }
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/fl.cyr" > "$D/w/fl.exe" 2> "$D/fl.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/fl.cyr" > "$D/w/fl.exe" 2> "$D/fl.err" ) || true
     if [ ! -s "$D/w/fl.exe" ]; then
         bad "axis 5: the PE build of the filed repro produced no binary: $(grep -m2 '^error' "$D/fl.err" | tr '\n' ' ')"
     else
@@ -272,7 +339,7 @@ EOF
         if [ "$frc" = 11 ]; then ok
         else bad "axis 5: the filed repro exits $frc under wine (want 11: xflock(fd, LOCK_EX) -> 0; 10 is the old -1)"; fi
     fi
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/t.exe" 2> "$D/t.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/t.exe" 2> "$D/t.err" ) || true
     if [ ! -s "$D/w/t.exe" ]; then
         bad "axis 5: the PE build of xflock_two_handle.tcyr produced no binary: $(grep -m2 '^error' "$D/t.err" | tr '\n' ' ')"
     else
@@ -283,12 +350,12 @@ EOF
             bad "axis 5: the PE run under wine printed no summary (exit $wrc)"
         elif [ "$wrc" != 0 ] || [ "$nf" != 0 ]; then
             bad "axis 5: xflock_two_handle.tcyr under wine: $np passed, $nf failed (exit $wrc)"
-            tr -d '\r' < "$D/t.out" | grep -m6 'FAIL:' | sed 's/^/      /'
+            grep -m6 'FAIL:' "$D/t.out" | tr -d '\r' | sed 's/^/      /' || true
         elif [ "$np" -lt 30 ]; then
             bad "axis 5: xflock_two_handle.tcyr under wine ran only $np rows (floor 30)"
         else ok; fi
     fi
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TR" > "$D/w/r.exe" 2> "$D/r.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TR" > "$D/w/r.exe" 2> "$D/r.err" ) || true
     if [ ! -s "$D/w/r.exe" ]; then
         bad "axis 5: the PE build of xflock_relock_keeps_lock.tcyr produced no binary: $(grep -m2 '^error' "$D/r.err" | tr '\n' ' ')"
     else
@@ -299,7 +366,7 @@ EOF
             bad "axis 5: the relock .tcyr's PE run under wine printed no summary (exit $rrc)"
         elif [ "$rrc" != 0 ] || [ "$nf" != 0 ]; then
             bad "axis 5: xflock_relock_keeps_lock.tcyr under wine: $np passed, $nf failed (exit $rrc)"
-            tr -d '\r' < "$D/r.out" | grep -m6 'FAIL:' | sed 's/^/      /'
+            grep -m6 'FAIL:' "$D/r.out" | tr -d '\r' | sed 's/^/      /' || true
         elif [ "$np" -lt 50 ]; then
             bad "axis 5: xflock_relock_keeps_lock.tcyr under wine ran only $np rows (floor 50)"
         else ok; fi

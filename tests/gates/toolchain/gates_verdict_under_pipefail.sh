@@ -30,6 +30,17 @@
 #     already stopped (ESRCH, rc 1 after 107 of 166 rows), and behind it the same kill at axis 7's
 #     real-clone row, a killed FIFO holder's `wait` (143) and `k9k=$(ls <dir not made yet> | … |
 #     head -1)` (rc 2): each now `|| true`.
+#   * embed_link_race_pe.sh, pe_lockfileex_reroute.sh, pe_reroute_failure_errno.sh (6.7.17) — a
+#     fn-body helper `code FILE | awk '… { exit }'`: awk exits at the fn's closing brace while
+#     `grep -v` is still writing the rest of a large file (cbt/manifest.cyr 123 KB, lib/io.cyr,
+#     lib/syscalls_windows.cyr), grep dies of SIGPIPE, and `eo=$(fnbody …)` stopped the gate with
+#     rc 141 and NO output — embed_link_race_pe on 89 of 100 runs, the other two on 3-4 of 100.
+#     awk now reads the file itself, and no reader below a pipe exits before its input ends —
+#     anywhere in the three (the 6.7.17 review): `objdump -p X | grep -qE …` under `if` read a
+#     present import as missing (a 15.5 KB listing: 49 of 300 runs), a `tr … | grep -q` could miss
+#     a SKIP line, `printf "$body" | grep -q` / `| grep -n … | head -1` and a failing run's
+#     `tr … | grep -m6 'FAIL:'` stopped or lied once their input outgrew one write. Axis 3 scans
+#     them for the shape.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -42,11 +53,28 @@
 #   axis 2  each gate in GATES, run as `bash -eo pipefail <gate>`, exits 0 with a last line
 #           starting PASS (or 77 with a last line starting SKIP: a gate that could not run says
 #           so by name). check.sh runs each of them under `sh` as its own row.
+#   axis 3  STATIC, over NOPIPE: no early-exiting reader below a pipe — `grep` with -q / -m / -l /
+#           -L, head, read, cmp, an awk whose script exits, a sed whose script quits — on any
+#           command line (comments skipped, `\` continuations joined). Its latent cases pass axis 2
+#           (a writer whose output fits one write never meets the early exit), so only a scan holds
+#           them. The scanner proves it sees on two fixtures: every early spelling is reported, and
+#           the safe ones (a file grepped where it lies, a here-document, grep -c / -n, tail, an awk
+#           that stops printing, `||`, a `while read` loop) are not.
+#   axis 4  a RED gate reaches its own FAIL verdict under bash -eo pipefail: STATIC, no
+#           assignment in a NOPIPE gate runs grep without `|| true` / `|| :` (fixtures: 4 failing,
+#           6 safe); and pe_lockfileex_reroute.sh with _xflock_win's negative-fd check deleted and
+#           embed_link_race_pe.sh with _embed_open's Windows arm renamed, each run from a scratch
+#           root where every build fails, end with their own `FAIL: <gate>` line naming that row.
 # Mutation (6.7.15): any gate's fix reverted (axis 2's `|| true` dropped, the census's
 # `for-each-ref` back to `git tag … | head -1`, axis 5's `prc=0; ( … ) || prc=$?` back to
 # `( … ); prc=$?`) -> RED here naming the gate, its rc and its last lines; 6.7.16: the
-# agnos-crossbuild-gate.sh server-probe greps back to `echo "$sdis" | grep -q` -> RED (FAIL, rc 1).
-# Add a gate to GATES when its pipefail stop or false verdict is fixed.
+# agnos-crossbuild-gate.sh server-probe greps back to `echo "$sdis" | grep -q` -> RED (FAIL, rc 1);
+# 6.7.17: embed_link_race_pe.sh's fnbody back behind `code "$1" |` -> RED (STOPPED, rc 141, no
+# output); pe_lockfileex_reroute.sh's UnlockFileEx import check back to `objdump … | grep -qE` ->
+# axis 3 RED naming the line; the scanner's grep-option test dropped -> axis 3 RED (the early
+# fixture's grep rows unreported); lno's `|| :` dropped -> axis 4 RED (the mutant stops at
+# `neg=$(lno …)`); a build's `|| true` dropped -> axis 4 RED (the mutant stops at that build).
+# Add a gate to GATES when its pipefail stop or false verdict is fixed. CHANGELOG [6.7.17]
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -63,7 +91,10 @@ tests/gates/platform/io_rdwr_agnos.sh
 tests/gates/toolchain/gates_read_only_the_tree.sh
 scripts/agnos-crossbuild-gate.sh
 tests/gates/frontend/redefinition_layout_and_enum_over_var.sh
-tests/gates/toolchain/cli_temp_dir_no_leak.sh"
+tests/gates/toolchain/cli_temp_dir_no_leak.sh
+tests/gates/toolchain/embed_link_race_pe.sh
+tests/gates/platform/pe_lockfileex_reroute.sh
+tests/gates/platform/pe_reroute_failure_errno.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
@@ -122,5 +153,187 @@ for g in $GATES; do
 done
 [ "$N" -ge 3 ] || _fail "axis 2: only $N gates listed (floor 3) — the list was emptied"
 
+# ── axis 3: no early-exiting reader below a pipe in the NOPIPE gates ────────────────────
+NOPIPE="tests/gates/toolchain/embed_link_race_pe.sh
+tests/gates/platform/pe_lockfileex_reroute.sh
+tests/gates/platform/pe_reroute_failure_errno.sh"
+# _early FILE: "LINE: text" for each command line with a reader below a single `|` that can stop
+# before its input ends.
+_early() {
+    awk '
+    function word_after(s, i,    t) { t = substr(s, i); sub(/^[[:space:]]+/, "", t); return t }
+    function script(t,    a, b, n, k, w) {   # the first single-quoted script, else the first operand
+        a = index(t, "\047")
+        if (a > 0) { b = index(substr(t, a + 1), "\047"); if (b > 0) return substr(t, a + 1, b - 1) }
+        n = split(t, w, /[[:space:]]+/)
+        for (k = 1; k <= n; k++) if (w[k] != "" && substr(w[k], 1, 1) != "-") return w[k]
+        return ""
+    }
+    function early(t,    cmd, rest, n, k, tok) {
+        if (!match(t, /^[A-Za-z_][A-Za-z_0-9]*/)) return 0
+        cmd = substr(t, 1, RLENGTH); rest = substr(t, RLENGTH + 1)
+        if (cmd == "head" || cmd == "read" || cmd == "cmp" || cmd == "line") return 1
+        if (cmd == "grep") {
+            n = split(rest, tok, /[[:space:]]+/)
+            for (k = 1; k <= n; k++) {
+                if (tok[k] == "") continue
+                if (substr(tok[k], 1, 1) != "-") break
+                if (tok[k] ~ /^-[A-Za-z0-9]*[qlLm]/ || tok[k] ~ /^--(quiet|silent|max-count|files-with)/) return 1
+            }
+            return 0
+        }
+        if (cmd == "awk") return script(rest) ~ /(^|[^A-Za-z_0-9])exit([^A-Za-z_0-9]|$)/
+        if (cmd == "sed") return script(rest) ~ /(^|[;{}[:space:]0-9$\/])[qQ][0-9]*[[:space:]]*($|[;}])/
+        return 0
+    }
+    !cont && /^[[:space:]]*#/ { next }
+    {
+        if (!cont) { start = FNR; buf = "" }
+        if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1) " "; cont = 1; next }
+        buf = buf $0; cont = 0
+        L = length(buf)
+        for (i = 1; i <= L; i++) {
+            if (substr(buf, i, 1) != "|") continue
+            if (i > 1 && substr(buf, i - 1, 1) == "|") continue
+            if (i < L && substr(buf, i + 1, 1) == "|") continue
+            if (early(word_after(buf, i + 1))) { printf "%d: %s\n", start, buf; break }
+        }
+    }' "$1"
+}
+# The scanner sees: each of the 15 early spellings (one command line each) is reported ...
+cat > "$D/early.fx" <<'XEOF'
+x=$(printf '%s\n' "$b" | grep -q 'p')
+printf '%s\n' "$b" | grep -qE 'p' || bad x
+objdump -p f | grep -E -q 'p'
+tr -d '\r' < f | grep -m6 'FAIL:' | sed 's/^/ /'
+cat f | grep -m 2 '^error'
+cat f | grep -l x
+cat f | grep --quiet x
+a=$(printf '%s\n' "$b" | grep -n 'p' | head -1 | cut -d: -f1)
+awk '{ print }' f \
+    | awk '/x/ { print; exit }'
+yes | sed 1q
+yes | sed -n '/x/{p;q}'
+cmd | read v
+cmd | cmp -s - f
+bad "it reads: $(cat a b | grep -m2 '^error' | tr '\n' ' ')"
+yes | sed -n 5q
+XEOF
+# ... and none of the safe ones is.
+cat > "$D/safe.fx" <<'XEOF'
+grep -q 'p' f
+grep -m6 'FAIL:' f | tr -d '\r' | sed 's/^/ /'
+n=$(printf '%s\n' "$b" | grep -c 'p' || true)
+x=$(tr -d '\r' < f | sed -n 's/^\([0-9][0-9]*\) passed, \([0-9][0-9]*\) failed.*/\1 \2/p' | tail -1)
+fnbody "$1" | awk 'w < 2 && /^#ifdef/ { w = 1; next } w == 1 { print; w = 2 }'
+awk '/^fn x\(/ { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO" \
+    | awk 'w == 1 { print }'
+cmd || head -1 f
+printf '%s' "$x" | tr -s ' '
+cmd | while read l; do :; done
+    # a comment | grep -q x
+awk '/^error/ && n++ < 2' f1 f2 | tr '\n' ' '
+    grep -n -m1 -e "$2" <<EOF | cut -d: -f1
+od -An -v -tx4 -w4 f | tr -d ' ' > g
+BEGIN { np = split("^cmp +\\$0x2,%rax|^ja |G|^cmp +\\$0x1,%rax", pat, "|") }
+XEOF
+f3=$FAILS
+ne=$(_early "$D/early.fx" | wc -l | tr -d ' ')
+[ "$ne" = 15 ] || _fail "axis 3: the scanner reports $ne of the fixture's 15 early readers (the lines it saw: $(_early "$D/early.fx" | cut -d: -f1 | tr '\n' ' ')) — it is blind to the rest"
+if [ -n "$(_early "$D/safe.fx")" ]; then
+    _fail "axis 3: the scanner reports a safe spelling: $(_early "$D/safe.fx" | tr '\n' ' ')"
+fi
+ng=0
+for g in $NOPIPE; do
+    ng=$((ng + 1))
+    if [ ! -f "$g" ]; then _fail "axis 3: $g is listed but missing"; continue; fi
+    _early "$g" > "$D/early.out"
+    if [ -s "$D/early.out" ]; then
+        _fail "axis 3: $g has a reader below a pipe that can stop before its input ends (its writer dies of SIGPIPE, which pipefail reads as the pipeline failing):"
+        sed 's/^/        /' "$D/early.out"
+    fi
+done
+[ "$ng" -ge 3 ] || _fail "axis 3: only $ng gates listed in NOPIPE (floor 3)"
+[ "$FAILS" = "$f3" ] && echo "  ok: axis 3: no early-exiting reader below a pipe in the $ng NOPIPE gates (the scanner reports all 15 early spellings and none of the safe ones)"
+
+# ── axis 4: a RED gate reaches its own FAIL verdict under bash -eo pipefail ─────────────
+# Axis 2 runs the passing path only. A failure path meets `-e` too: a grep assignment that finds
+# nothing, a build that fails, an empty FAIL listing ended the gate before the row naming the
+# failure — red, but with no FAIL line. (a) STATIC over NOPIPE: an assignment from a command
+# substitution that runs grep ends `|| true` or `|| :`. (b) Two mutants run under bash -eo pipefail
+# in a scratch root holding only what their static axes read (so every build there fails), and each
+# must reach its own last line `FAIL: <gate>` with the mutated row named.
+_grep_assign() {  # $1 = a shell file -> "LINE: text" for each grep assignment that can fail
+    awk '
+    !cont && /^[[:space:]]*#/ { next }
+    {
+        if (!cont) { start = FNR; buf = "" }
+        if ($0 ~ /\\$/) { buf = buf substr($0, 1, length($0) - 1) " "; cont = 1; next }
+        buf = buf $0; cont = 0
+        if (buf !~ /^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z_0-9]*=\$\(/) next
+        if (buf !~ /(^|[|(;&[:space:]])grep([[:space:]]|$)/) next
+        if (buf ~ /\|\|[[:space:]]*(true|:)([[:space:])]|$)/) next
+        printf "%d: %s\n", start, buf
+    }' "$1"
+}
+cat > "$D/gassign.fx" <<'XEOF'
+n=$(grep -c x f)
+x=$(printf '%s\n' "$b" | grep -n y | cut -d: -f1)
+w=$(grep -A2 'p' <<EOF
+    export Z=$(grep q f)
+XEOF
+cat > "$D/gsafe.fx" <<'XEOF'
+n=$(grep -c x f || true)
+F=$(grep -o y f | tr '\n' ' ' || true)
+w=$(grep -A2 'p' <<EOF || true
+s=$(awk '{ print }' f)
+if x=$(grep a f); then :; fi
+nsym=$(printf '%s\n' "$s" | grep -c 'syscall(61502,' || :)
+XEOF
+f4=$FAILS
+na=$(_grep_assign "$D/gassign.fx" | wc -l | tr -d ' ')
+[ "$na" = 4 ] || _fail "axis 4: the assignment scanner reports $na of the fixture's 4 failing grep assignments"
+if [ -n "$(_grep_assign "$D/gsafe.fx")" ]; then
+    _fail "axis 4: the assignment scanner reports a safe spelling: $(_grep_assign "$D/gsafe.fx" | tr '\n' ' ')"
+fi
+for g in $NOPIPE; do
+    [ -f "$g" ] || continue
+    _grep_assign "$g" > "$D/gassign.out"
+    if [ -s "$D/gassign.out" ]; then
+        _fail "axis 4: $g assigns a grep's output with no \`|| true\` (with nothing found, \`-e\` ends the gate there):"
+        sed 's/^/        /' "$D/gassign.out"
+    fi
+done
+# _mutant <name> <gate path> <mutated row's text>: run the scratch root's copy of the gate.
+_mutant() {
+    mrc=0
+    CYCC="${CYCC:-$ROOT/build/cycc}" bash -eo pipefail "$D/m_$1/$2" > "$D/m_$1.out" 2>&1 < /dev/null || mrc=$?
+    mlast=$(grep -v '^[[:space:]]*$' "$D/m_$1.out" | tail -1 || true)
+    case "$mrc:$mlast" in
+        "1:FAIL: $1"*) ;;
+        *) _fail "axis 4: the mutant $1 under bash -eo pipefail exited $mrc without its own verdict (last line: '$mlast')"; return 0 ;;
+    esac
+    grep -qF "$3" "$D/m_$1.out" || _fail "axis 4: the mutant $1 reached FAIL but never named the mutated row ('$3')"
+}
+L4="$D/m_pe_lockfileex_reroute"
+mkdir -p "$L4/tests/gates/platform" "$L4/lib" "$L4/tests/tcyr/crossos"
+cp tests/gates/platform/pe_lockfileex_reroute.sh "$L4/tests/gates/platform/"
+grep -vF 'if (fd < 0) { return 0 - 9; }' lib/io.cyr > "$L4/lib/io.cyr" || true
+printf 'not cyrius\n' > "$L4/tests/tcyr/crossos/xflock_two_handle.tcyr"
+printf 'not cyrius\n' > "$L4/tests/tcyr/crossos/xflock_relock_keeps_lock.tcyr"
+_mutant pe_lockfileex_reroute tests/gates/platform/pe_lockfileex_reroute.sh \
+    'axis 4: _xflock_win does not answer a negative fd -9 before its first lock call'
+E4="$D/m_embed_link_race_pe"
+mkdir -p "$E4/tests/gates/toolchain" "$E4/cbt" "$E4/lib" "$E4/tests/tcyr/crossos"
+cp tests/gates/toolchain/embed_link_race_pe.sh "$E4/tests/gates/toolchain/"
+cp lib/fs_win.cyr "$E4/lib/"
+awk 'index($0, "fn _embed_open(") == 1 { s = 1 }
+     s == 1 && $0 == "    #ifdef CYRIUS_TARGET_WIN" { $0 = "    #ifdef MUTANT_CYRIUS_TARGET_WIN" }
+     { print } s == 1 && /^}/ { s = 0 }' cbt/manifest.cyr > "$E4/cbt/manifest.cyr"
+printf 'not cyrius\n' > "$E4/tests/tcyr/crossos/embed_open_under_root.tcyr"
+_mutant embed_link_race_pe tests/gates/toolchain/embed_link_race_pe.sh \
+    "axis 4: _embed_open's CYRIUS_TARGET_WIN arm does not return _embed_open_win(path, fl)"
+[ "$FAILS" = "$f4" ] && echo "  ok: axis 4: no grep assignment can end a NOPIPE gate; two mutants reach their own FAIL verdict under bash -eo pipefail, naming the mutated row"
+
 if [ "$FAILS" != 0 ]; then echo "FAIL: $NAME ($FAILS)"; exit 1; fi
-echo "PASS: $NAME ($N gates reach their verdict under bash -eo pipefail; the checker tells a stop from a verdict)"
+echo "PASS: $NAME ($N gates reach their verdict under bash -eo pipefail; the checker tells a stop from a verdict; no early-exiting reader below a pipe in the $ng NOPIPE gates; a red one reaches its own FAIL verdict)"

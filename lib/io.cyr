@@ -345,12 +345,14 @@ fn xlink(oldpath, newpath): i64 {
 # file_open bridges sys_open: POSIX (Linux/macOS/aarch64) is 2-arg
 # sys_rename(old,new) (the backend ESYSXLAT handles aarch64 82→renameat 38+AT_FDCWD
 # and macho 82→BSD 128); AGNOS is length-carrying 4-arg sys_rename(old,ol,new,nl);
-# Windows has no POSIX rename — route to a MoveFileExW(old,new,
-# MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) reroute (syscall 0xF034;
-# backend/x86/emit.cyr EMOVEFILEEX_PE; write-through since 6.6.7, so the rename is
+# Windows has no POSIX rename — its sys_rename (lib/syscalls_windows.cyr `_win_rename`) makes a
+# MoveFileExW(old,new, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) reroute (syscall
+# 0xF034; backend/x86/emit.cyr EMOVEFILEEX_PE; write-through since 6.6.7, so the rename is
 # on disk when it returns). Returns 0 on success / negative errno on every target (Windows
 # through its Win32 error table since 6.7.16's D94 — a missing source -2; it was -1 for every
-# failure). See issue 2026-07-12-thoth-portable-atomic-file-write.md.
+# failure; a directory onto a file -20 and a file onto a directory -21 since 6.7.17's D35 / D36 —
+# the directory replaced the file, and the file answered -13). See issue
+# 2026-07-12-thoth-portable-atomic-file-write.md.
 fn file_rename(oldpath, newpath): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     var ol = 0;
@@ -360,7 +362,7 @@ fn file_rename(oldpath, newpath): i64 {
     return sys_rename(oldpath, ol, newpath, nl);
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return syscall(0xF034, oldpath, newpath);   # kernel32!MoveFileExW (REPLACE_EXISTING|WRITE_THROUGH)
+    return sys_rename(oldpath, newpath);        # _win_rename: MoveFileExW (REPLACE_EXISTING|WRITE_THROUGH)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
@@ -542,16 +544,23 @@ fn xflock(fd, op): i64 {
 
 #ifdef CYRIUS_TARGET_WIN
 # xflock's Windows arm: flock emulated with kernel32 byte-range locks (LockFileEx 0xF04C,
-# UnlockFileEx 0xF04D, GetLastError 0xF04B). Windows byte locks are MANDATORY: locking the
-# file's real bytes would fail every read and write through another handle (patra's own), so
-# the lock is ONE sentinel byte at 2^63 - 1, past any data a file can hold — it excludes other
-# lockers only. Returns 0; -11 (EAGAIN on PE) when LOCK_NB finds the lock held
-# (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an overlapped handle); -22 for an op that
-# is not LOCK_SH, LOCK_EX or LOCK_UN (+LOCK_NB), as on Linux; -1 for any other failure. LOCK_UN
-# of an unheld lock is 0 (ERROR_NOT_LOCKED 158), as on Linux. Measured on cass. CHANGELOG [6.7.12]
+# UnlockFileEx 0xF04D, GetLastError 0xF04B, and 0xF04F: the last error as -errno, through the
+# Win32 table). Windows byte locks are MANDATORY: locking the file's real bytes would fail every
+# read and write through another handle (patra's own), so the lock is ONE sentinel byte at
+# 2^63 - 1, past any data a file can hold — it excludes other lockers only. Returns 0; -11 (EAGAIN
+# on PE) when LOCK_NB finds the lock held (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an
+# overlapped handle); -22 for an op that is not LOCK_SH, LOCK_EX or LOCK_UN (+LOCK_NB), whatever
+# the fd, as on Linux (the op is checked before the fd since 6.7.17: an aliasing fd answered -9).
+# LOCK_UN of an unheld lock is 0 (ERROR_NOT_LOCKED 158), as on Linux. Measured on cass.
+# CHANGELOG [6.7.12]
 # An fd above 2 with a low bit set is -9 (EBADF), as on Linux: LockFileEx ignores a handle's two
 # low bits, so `xflock(h + 1, LOCK_EX)` locked `h`'s file and answered 0 (`_win_fd_aliases`).
 # CHANGELOG [6.7.16]
+# Any other failure answers its errno through the one Win32 table (0xF04F), as the fd reroutes do —
+# a closed handle -9 (ERROR_INVALID_HANDLE); a code with no row -1 — and a NEGATIVE fd is -9 before
+# any Win32 call (-1 / -2 are the current-process / -thread pseudo-handles): 6.7.17's D37 (the user,
+# 2026-10-22: "Linux's errno via the Windows error table"); every such failure answered -1.
+# CHANGELOG [6.7.17]
 #
 # ⛔ A RE-LOCK TO THE MODE THE HANDLE HOLDS IS A NO-OP, as under flock(2) — the sentinel is never
 # let go. A held range relocked on the same handle blocks (exclusive) or stacks (shared), so a
@@ -569,9 +578,12 @@ fn xflock(fd, op): i64 {
 # the new one is taken (a pending locker may get in between, and LOCK_NB may then fail -11).
 # CHANGELOG [6.7.13]
 fn _xflock_win(fd, op): i64 {
-    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }   # never a descriptor: it locks `fd & ~3` (6.7.16)
+    # The op before the fd, as Linux's flock(2) checks it: a bad op is -22 for every fd, a negative
+    # or an aliasing one too (with the fd checks first they answered -9). CHANGELOG [6.7.17]
     var cmd = op & (0 - 5);                    # drop LOCK_NB (4)
     if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }
+    if (fd < 0) { return 0 - 9; }              # never a descriptor, and never handed to Windows (6.7.17)
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }   # never a descriptor: it locks `fd & ~3` (6.7.16)
     var r = 0;
     if (cmd != 8) {
         var mode = _xflock_win_mode(cmd);
@@ -580,7 +592,7 @@ fn _xflock_win(fd, op): i64 {
             r = _xflock_win_lock(fd, mode, cmd & 2);
             if (r == 0) { return 0; }
             _xflock_win_release(fd);           # unreachable while the bytes are ours: hold nothing
-            return 0 - 1;
+            return r;
         }
     }
     r = _xflock_win_release(fd);               # the mode bytes, then the sentinel
@@ -591,9 +603,10 @@ fn _xflock_win(fd, op): i64 {
     if (r != 0) { return r; }
     # Record the mode. Blocking: the byte's last holder released it before the sentinel (a closing
     # handle's locks may go in either order, so this waits out that cleanup rather than fail).
-    if (_xflock_win_lock(fd, _xflock_win_mode(cmd), cmd & 2) == 0) { return 0; }
+    var m = _xflock_win_lock(fd, _xflock_win_mode(cmd), cmd & 2);
+    if (m == 0) { return 0; }
     _xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFF);
-    return 0 - 1;
+    return m;
 }
 
 # The byte whose lock records that a handle holds `cmd` (LOCK_SH 1 / LOCK_EX 2) on the sentinel.
@@ -602,22 +615,23 @@ fn _xflock_win_mode(cmd): i64 {
     return 0x7FFFFFFFFFFFFFFD;
 }
 
-# Drop everything this handle holds, the mode bytes before the sentinel. 0, or -1 when an
-# unlock failed for any reason but ERROR_NOT_LOCKED.
+# Drop everything this handle holds, the mode bytes before the sentinel. 0, or the first unlock's
+# -errno that failed for any reason but ERROR_NOT_LOCKED (-1 for every one before 6.7.17's D37).
 fn _xflock_win_release(fd): i64 {
     var e = _xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFE);
     var s = _xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFD);
     var x = _xflock_win_unlock(fd, 0x7FFFFFFFFFFFFFFF);
-    if (e < 0) { return 0 - 1; }
-    if (s < 0) { return 0 - 1; }
-    if (x < 0) { return 0 - 1; }
+    if (e < 0) { return e; }
+    if (s < 0) { return s; }
+    if (x < 0) { return x; }
     return 0;
 }
 
 # UnlockFileEx of the one byte at `off`: 0 when this handle held a lock on it, 1 when it held none
-# (ERROR_NOT_LOCKED 158), -1 for any other failure (-38: a compiler without the reroute).
+# (ERROR_NOT_LOCKED 158), the -errno of any other failure through the Win32 table (0xF04F; 6.7.17's
+# D37), -1 from a compiler without the reroute.
 fn _xflock_win_unlock(fd, off): i64 {
-    if (_win_fd_aliases(fd) == 1) { return 0 - 1; }   # never a descriptor (_xflock_win answered -9)
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }   # never a descriptor (_xflock_win answered -9)
     var ov[32];                                # OVERLAPPED: Internal, InternalHigh, Offset:OffsetHigh, hEvent
     store64(&ov, 0);
     store64(&ov + 8, 0);
@@ -625,16 +639,19 @@ fn _xflock_win_unlock(fd, off): i64 {
     store64(&ov + 24, 0);
     var u = syscall(0xF04D, fd, 0, 1, 0, &ov);    # UnlockFileEx
     if (u > 0) { return 0; }
-    if (u < 0) { return 0 - 1; }
-    if ((syscall(0xF04B) & 0xFFFFFFFF) == 158) { return 1; }
-    return 0 - 1;
+    if (u < 0) { return 0 - 1; }               # -38: a compiler without the reroute
+    var e = syscall(0xF04B) & 0xFFFFFFFF;
+    if (e == 158) { return 1; }                # ERROR_NOT_LOCKED
+    return syscall(0xF04F);                    # the same code through the table: -9, -13, ...
 }
 
 # LockFileEx of the one byte at `off` with flags `fl` (LOCKFILE_EXCLUSIVE_LOCK 2,
 # LOCKFILE_FAIL_IMMEDIATELY 1): 0 granted; -11 when it is held elsewhere and `fl` asked not to
-# wait (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an overlapped handle); -1 otherwise.
+# wait (ERROR_LOCK_VIOLATION 33, or ERROR_IO_PENDING 997 on an overlapped handle); otherwise the
+# failure's -errno through the Win32 table (0xF04F; 6.7.17's D37), -1 from a compiler without the
+# reroute.
 fn _xflock_win_lock(fd, off, fl): i64 {
-    if (_win_fd_aliases(fd) == 1) { return 0 - 1; }   # never a descriptor (_xflock_win answered -9)
+    if (_win_fd_aliases(fd) == 1) { return 0 - 9; }   # never a descriptor (_xflock_win answered -9)
     var ov[32];
     store64(&ov, 0);
     store64(&ov + 8, 0);
@@ -646,7 +663,7 @@ fn _xflock_win_lock(fd, off, fl): i64 {
     var e = syscall(0xF04B) & 0xFFFFFFFF;
     if (e == 33) { return 0 - 11; }            # ERROR_LOCK_VIOLATION
     if (e == 997) { return 0 - 11; }           # ERROR_IO_PENDING
-    return 0 - 1;
+    return syscall(0xF04F);                    # the same code through the table: -9, -13, ...
 }
 #endif
 
@@ -1416,8 +1433,9 @@ fn _io_name_exists(path): i64 {
 }
 
 # File-lock helpers — portable via xflock, which centralizes the per-target
-# flock number (agnos #59 / macOS BSD #92 / Linux x86 #73 / aarch64 #32; Windows
-# unsupported → -1). These were CYRIUS_TARGET_LINUX-only + raw `syscall(73)`
+# flock number (agnos #59 / macOS BSD flock 131, issued as 73 and renumbered by ESYSXLAT /
+# Linux x86 #73 / aarch64 #32; Windows LockFileEx on a sentinel byte since 6.7.12 — see
+# _xflock_win). These were CYRIUS_TARGET_LINUX-only + raw `syscall(73)`
 # (CHANGELOG [5.5.16]: 73 is flock only on x86-Linux), so they were undefined →
 # ud2/SIGILL stubs on agnos + macOS, AND wrong-numbered on aarch64-Linux. That
 # trapped descent's persist_init at boot on agnos (libro FileStore →
@@ -1427,7 +1445,7 @@ fn _io_name_exists(path): i64 {
 # blocking poll-spin is the caller's job if it ever runs multi-process.
 # (issue 2026-06-21-agnos-io-flock-helpers.md.)
 
-# Exclusive file lock (blocking on Linux/macOS; non-blocking on agnos — see note).
+# Exclusive file lock (blocking on Linux, macOS and Windows; non-blocking on agnos — see note).
 fn file_lock(fd): i64 {
     return xflock(fd, LOCK_EX);
 }
@@ -1437,7 +1455,8 @@ fn file_unlock(fd): i64 {
     return xflock(fd, LOCK_UN);
 }
 
-# Non-blocking exclusive lock. Returns 0 on success, -1 if already locked.
+# Non-blocking exclusive lock. Returns 0 on success; when another holder has the lock -11 (EAGAIN,
+# Linux and Windows; Darwin's is -35, agnos's -1); another failure's -errno (a closed fd -9).
 fn file_trylock(fd): i64 {
     return xflock(fd, LOCK_EX | LOCK_NB);
 }

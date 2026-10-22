@@ -18,10 +18,11 @@
 # THE AXES
 #   axis 1  `syscall(0xF04E, h, buf, cch, flags)` (argc 5) builds with CYRIUS_TARGET_WIN=1 and is
 #           not reported as unrouted; one argument short, it IS reported (literal-and-arity).
-#   axis 2  the routed-number note names `0xF04E (kernel32: GetFinalPathNameByHandleW)` and ENDS
-#           with it: the note is one literal with a hand-counted byte length, and a length left at
-#           its old value silently cuts the newest entries off the end. (This gate pins the END;
-#           pe_lockfileex_reroute.sh now checks 0xF04C-0xF04D is present and followed.)
+#   axis 2  the routed-number note names `0xF04E (kernel32: GetFinalPathNameByHandleW)` and is
+#           printed WHOLE past it: the note is one literal with a hand-counted byte length, and a
+#           length left at its old value silently cuts the newest entries off the end. (6.7.17:
+#           0xF04F follows it, and the END is pinned by the newest reroute's gate,
+#           pe_last_error_reroute.sh axis 6b; here the entry must be present and followed.)
 #   axis 3  the axis-1 build IMPORTS GetFinalPathNameByHandleW (objdump -p; skipped by name
 #           without an objdump that reads PE).
 #   axis 4  STATIC: `_embed_open`'s CYRIUS_TARGET_WIN arm calls `_embed_open_win`, which asks
@@ -94,20 +95,25 @@ build() {  # $1 = file stem, $2 = the syscall's argument list
 }
 
 # axis 1: routed at argc 5, reported one argument short.
+# Every step a failure path takes ends `|| true` (a build, a FAIL listing, the Windows-arm grep): the
+# row after it names the failure, and under `set -e` (GitHub's run: shell) a failed step ended the
+# gate first, red but with no FAIL line (gates_verdict_under_pipefail.sh axis 4). CHANGELOG [6.7.17]
 rc=0; build fp "0xF04E, 0, &b, 32, 0" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/fp.exe" ]; then bad "axis 1: syscall(0xF04E, 4 args) did not build for PE (rc $rc)"
 elif grep -q "syscall 61518 with" "$D/fp.err"; then bad "axis 1: syscall(0xF04E, 4 args) is reported as not routed"
 else ok; fi
-build fps "0xF04E, 0, &b, 32"
+build fps "0xF04E, 0, &b, 32" || true
 if grep -q "syscall 61518 with 3 argument" "$D/fps.err"; then ok
 else bad "axis 1: syscall(0xF04E, 3 args) (one argument short) was not reported"; fi
 
-# axis 2: the note names 0xF04E and ENDS with it.
+# axis 2: the note names 0xF04E and is printed whole past it (6.7.17: 0xF04F is the newest entry,
+# so pe_last_error_reroute.sh axis 6b pins the END). CHANGELOG [6.7.17]
 if grep -q '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/fps.err"; then
     note=$(grep '^  note: CYRIUS_TARGET_WIN=1 routes' "$D/fps.err" || true)
     case "$note" in
+        *'+ 0xF04E (kernel32: GetFinalPathNameByHandleW) + '*) ok ;;
         *'+ 0xF04E (kernel32: GetFinalPathNameByHandleW).') ok ;;
-        *'0xF04E (kernel32: GetFinalPathNameByHandleW)'*) bad "axis 2: the note names 0xF04E but does not END with it — its byte count is wrong" ;;
+        *'0xF04E (kernel32: GetFinalPathNameByHandleW)'*) bad "axis 2: the note names 0xF04E but is cut short after it — its byte count is wrong" ;;
         *) bad "axis 2: the routed-number note does not name 0xF04E (kernel32: GetFinalPathNameByHandleW) — or it is cut short: ...$(printf '%s' "$note" | tail -c 60)" ;;
     esac
 else
@@ -123,11 +129,24 @@ else
 fi
 
 # axis 4: static, over the tree's cbt/manifest.cyr and lib/fs_win.cyr.
-code() { grep -vE '^[[:space:]]*#' "$1"; }
-fnbody() { code "$1" | awk -v f="$2" 'index($0, "fn " f "(") == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }'; }
+# One fn, comment lines dropped: from `fn NAME(` to its closing brace. awk reads the file itself:
+# behind a `grep -v` pipe, its exit at the brace killed grep (still writing the rest of the file)
+# with SIGPIPE, and under `bash -eo pipefail` (GitHub's run: shell) `eo=$(fnbody …)` stopped the
+# gate with rc 141 and no verdict on 89 of 100 runs. No reader below a pipe exits before its input
+# ends anywhere in this gate: has greps a body through a here-document, and a file is grepped where
+# it lies (gates_verdict_under_pipefail.sh axis 3 scans for the shape). CHANGELOG [6.7.17]
+fnbody() { awk -v f="$2" '/^[[:space:]]*#/ { next } index($0, "fn " f "(") == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$1"; }
+# has TEXT PATTERN: TEXT has a line matching PATTERN (grep stops at the first match, with no writer
+# left to kill).
+has() {
+    grep -q -e "$2" <<EOF
+$1
+EOF
+}
 f4=$fail
 eo=$(fnbody "$MF" _embed_open)
-warm=$(grep -A2 '^    #ifdef CYRIUS_TARGET_WIN' <<EOF
+# `|| true`: with no Windows arm, `-e` ended the gate here, before the row that says so. CHANGELOG [6.7.17]
+warm=$(grep -A2 '^    #ifdef CYRIUS_TARGET_WIN' <<EOF || true
 $(awk 'index($0, "fn _embed_open(") == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$MF")
 EOF
 )
@@ -136,16 +155,16 @@ case "$warm" in
     *'return _embed_open_win(path, fl);'*) ;;
     *) bad "axis 4: _embed_open's CYRIUS_TARGET_WIN arm does not return _embed_open_win(path, fl) (it reads: $(printf '%s' "$warm" | tr -s ' \n' ' '))" ;;
 esac
-printf '%s\n' "$eo" | grep -q 'walk = 0' && bad "axis 4: _embed_open still skips the walk somewhere (walk = 0 — the arm64-macOS whole-path open)"
+has "$eo" 'walk = 0' && bad "axis 4: _embed_open still skips the walk somewhere (walk = 0 — the arm64-macOS whole-path open)"
 eow=$(fnbody "$MF" _embed_open_win)
 if [ -z "$eow" ]; then
     bad "axis 4: cbt/manifest.cyr has no _embed_open_win"
 else
-    printf '%s\n' "$eow" | grep -q 'var under = win_handle_under(fd, rh);' \
+    has "$eow" 'var under = win_handle_under(fd, rh);' \
         || bad "axis 4: _embed_open_win does not ask win_handle_under(fd, rh)"
-    printf '%s\n' "$eow" | grep -q 'if (under != 1)' \
+    has "$eow" 'if (under != 1)' \
         || bad "axis 4: _embed_open_win does not refuse every answer but 1 (a -1 'cannot tell' must refuse too)"
-    printf '%s\n' "$eow" | grep -q 'return 0 - 40;' \
+    has "$eow" 'return 0 - 40;' \
         || bad "axis 4: _embed_open_win does not refuse with -ELOOP (0 - 40)"
 fi
 whu=$(fnbody "$FW" win_handle_under)
@@ -153,23 +172,23 @@ fhp=$(fnbody "$FW" _fs_handle_under_path)
 if [ -z "$whu" ] || [ -z "$fhp" ]; then
     bad "axis 4: lib/fs_win.cyr lacks win_handle_under or _fs_handle_under_path"
 else
-    printf '%s\n' "$whu" | grep -q 'syscall(0xF04E, root_h, &a, 32768, 0)' \
+    has "$whu" 'syscall(0xF04E, root_h, &a, 32768, 0)' \
         || bad "axis 4: win_handle_under does not ask GetFinalPathNameByHandleW (0xF04E, argc 5) for the root"
-    printf '%s\n' "$fhp" | grep -q 'syscall(0xF04E, h, &b, 32768, 0)' \
+    has "$fhp" 'syscall(0xF04E, h, &b, 32768, 0)' \
         || bad "axis 4: _fs_handle_under_path does not ask GetFinalPathNameByHandleW (0xF04E, argc 5) for the file"
-    printf '%s\n' "$fhp" | grep -q 'if (load16(&b + na \* 2) == 92) { return 1; }' \
+    has "$fhp" 'if (load16(&b + na \* 2) == 92) { return 1; }' \
         || bad "axis 4: _fs_handle_under_path does not require a separator after the root's prefix (C:\\proj would hold C:\\project)"
-    printf '%s\n' "$whu$fhp" | grep -q 'return 1; }' || bad "axis 4: win_handle_under never answers 1"
+    has "$whu$fhp" 'return 1; }' || bad "axis 4: win_handle_under never answers 1"
 fi
 [ "$fail" = "$f4" ] && ok
 
 # axis 5: the arm64-macOS openat route, on the binary.
-( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> "$D/cc_a64.err" )   # includes resolve from the root
+( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> "$D/cc_a64.err" ) || true   # includes resolve from the root
 if [ ! -s "$D/cc_a64" ]; then
     bad "axis 5: the aarch64 cross compiler did not build from this tree: $(head -2 "$D/cc_a64.err" | tr '\n' ' ')"
 else
     chmod +x "$D/cc_a64"
-    ( cd "$ROOT" && CYRIUS_MACHO_ARM=1 "$D/cc_a64" < "$TC" > "$D/eo_ma" 2> "$D/eo_ma.err" )
+    ( cd "$ROOT" && CYRIUS_MACHO_ARM=1 "$D/cc_a64" < "$TC" > "$D/eo_ma" 2> "$D/eo_ma.err" ) || true
     if [ ! -s "$D/eo_ma" ]; then
         bad "axis 5: the arm64-macOS build of embed_open_under_root.tcyr produced no binary: $(grep -m2 '^error' "$D/eo_ma.err" | tr '\n' ' ')"
     else
@@ -191,11 +210,11 @@ grade() {  # $1 = label, $2 = output file, $3 = exit code, $4 = floor
     if [ -z "$s" ]; then bad "axis 6 ($1): no summary (exit $3)"
     elif [ "$3" != 0 ] || [ "$nf" != 0 ]; then
         bad "axis 6 ($1): $np passed, $nf failed (exit $3)"
-        tr -d '\r' < "$2" | grep -m6 'FAIL:' | sed 's/^/      /'
+        grep -m6 'FAIL:' "$2" | tr -d '\r' | sed 's/^/      /' || true
     elif [ "$np" -lt "$4" ]; then bad "axis 6 ($1): only $np rows ran (floor $4)"
     else ok; fi
 }
-( cd "$ROOT" && "$CC" < "$TC" > "$D/eo" 2> "$D/eo.err" )
+( cd "$ROOT" && "$CC" < "$TC" > "$D/eo" 2> "$D/eo.err" ) || true
 if [ ! -s "$D/eo" ]; then
     bad "axis 6: the native build of embed_open_under_root.tcyr produced no binary: $(grep -m2 '^error' "$D/eo.err" | tr '\n' ' ')"
 else
@@ -204,7 +223,7 @@ else
     grade native "$D/n.out" "$nrc" 25
 fi
 if command -v qemu-aarch64 > /dev/null 2>&1 && [ -s "$D/cc_a64" ]; then
-    ( cd "$ROOT" && "$D/cc_a64" < "$TC" > "$D/eo_a" 2> "$D/eo_a.err" )
+    ( cd "$ROOT" && "$D/cc_a64" < "$TC" > "$D/eo_a" 2> "$D/eo_a.err" ) || true
     if [ ! -s "$D/eo_a" ]; then bad "axis 6: the aarch64 build of the .tcyr produced no binary"
     else
         chmod +x "$D/eo_a"; mkdir -p "$D/a"
@@ -220,7 +239,7 @@ if ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP: axis 6 wine (wine absent — the cass cross-OS leg runs embed_open_under_root.tcyr on real Windows)"
 else
     mkdir -p "$D/w"
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/eo.exe" 2> "$D/eo_w.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/eo.exe" 2> "$D/eo_w.err" ) || true
     if [ ! -s "$D/w/eo.exe" ]; then
         bad "axis 6: the PE build of embed_open_under_root.tcyr produced no binary: $(grep -m2 '^error' "$D/eo_w.err" | tr '\n' ' ')"
     else
@@ -228,7 +247,7 @@ else
         ( cd "$D/w" && ulimit -c 0; LANG=C.UTF-8 WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDEBUG=-all \
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             wine eo.exe > "$D/w.out" 2>&1 ) || wrc=$?
-        if tr -d '\r' < "$D/w.out" | grep -q 'SKIP: the directory-link rows'; then
+        if grep -q 'SKIP: the directory-link rows' "$D/w.out"; then
             bad "axis 6 (PE): this wine refused to create the directory link, so the race rows did not run"
         else
             grade "PE" "$D/w.out" "$wrc" 30

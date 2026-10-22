@@ -53,6 +53,22 @@
 #   W4     E1 through tls_native_accept: a fatal illegal_parameter on the wire. A named SKIP where
 #          socketpair is refused.
 # On the lib before D83: E1-E4 and W4 are answered with a ServerHello; E5 is refused by D81.
+#
+# issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md (CYRIUS-2026-0037). The
+# key_share loop checked each share against supported_groups with _tn_sg_has — a re-validation and
+# a walk of the whole list per share, ~21 ms of CPU for a 16 KB hello (x86_64). Now the list is
+# validated once and a list of more than 32 groups answers membership from a one-pass bitmap
+# (_tn_sg_set / _tn_sg_member); the refusals are unchanged. The timing is
+# tests/gates/platform/tls13_key_share_scan_linear.sh; these rows pin the answers on every target.
+#   K1     the 16,166-byte hello (4,025 groups, 1,610 one-byte shares on the last of them, none of
+#          ours): still refused, handshake_failure (no shared group).
+#   K2     40 groups and a share for a group not on them: illegal_parameter (the bitmap's refusal).
+#   K3     40 groups ending in x25519, an x25519 share: negotiates.
+#   K4-K5  32 groups (the scan, no bitmap): an unlisted share refused; x25519 last negotiates.
+#   K6     33 groups (the first list that takes the bitmap), x25519 last: negotiates.
+#   K7-K8  the bitmap's edge bits — 40 groups 0xFFE0-0xFFFF, 0x0000-0x0006, x25519: shares on
+#          0xFFFF and 0x0000 negotiate; one on 0x0007 (unlisted, the same byte as 0x0000-0x0006)
+#          is illegal_parameter.
 include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
@@ -278,6 +294,103 @@ fn _cm13(a, b): i64 {
     return n + 1;
 }
 
+# The K rows' ClientHello: the groups K_G[0..K_GN) and the shares on K_S[0..K_SN) (a 32-byte x25519
+# share — the base point, u = 9 — on TLS_GROUP_X25519, one byte on any other group).
+var K_BUF = 0;
+var K_G = 0;
+var K_GN = 0;
+var K_S = 0;
+var K_SN = 0;
+
+# K_G := `n` groups, (`base` + i) & 0xFFFF; no shares.
+fn _kg_seq(base, n): i64 {
+    if (K_G == 0) { K_G = alloc(8 * 4096); K_S = alloc(8 * 2048); K_BUF = alloc(17000); }
+    var i = 0;
+    while (i < n) {
+        store64(K_G + 8 * i, (base + i) & 0xFFFF);
+        i = i + 1;
+    }
+    K_GN = n;
+    K_SN = 0;
+    return n;
+}
+
+fn _ks_add(g): i64 {
+    store64(K_S + 8 * K_SN, g);
+    K_SN = K_SN + 1;
+    return K_SN;
+}
+
+# K_G := `n` groups 0x1000 + i, the last replaced by x25519; one share, on x25519.
+fn _kg_x25519(n): i64 {
+    _kg_seq(0x1000, n);
+    store64(K_G + 8 * (n - 1), TLS_GROUP_X25519);
+    _ks_add(TLS_GROUP_X25519);
+    return n;
+}
+
+# Build the K ClientHello in K_BUF (supported_versions [1.3], supported_groups K_G, key_share K_S;
+# cipher TLS_AES_256_GCM_SHA384, the null compression method). Its length, header included.
+fn _kch(): i64 {
+    var p = K_BUF + 4;
+    _tn_be16_w(p, 0x0303);
+    memset(p + 2, 0x5A, 32);
+    store8(p + 34, 0);                                # no legacy_session_id
+    _tn_be16_w(p + 35, 2);
+    _tn_be16_w(p + 37, TLS_AES_256_GCM_SHA384);
+    store8(p + 39, 1);
+    store8(p + 40, 0);
+    var et = p + 41;
+    p = p + 43;
+    var e0 = p;
+    _tn_be16_w(p, TLS_EXT_SUPPORTED_VERSIONS);
+    _tn_be16_w(p + 2, 3);
+    store8(p + 4, 2);
+    _tn_be16_w(p + 5, 0x0304);
+    p = p + 7;
+    _tn_be16_w(p, TLS_EXT_SUPPORTED_GROUPS);
+    _tn_be16_w(p + 2, 2 + 2 * K_GN);
+    _tn_be16_w(p + 4, 2 * K_GN);
+    p = p + 6;
+    var i = 0;
+    while (i < K_GN) {
+        _tn_be16_w(p, load64(K_G + 8 * i));
+        p = p + 2;
+        i = i + 1;
+    }
+    var kh = p;
+    _tn_be16_w(p, TLS_EXT_KEY_SHARE);
+    p = p + 6;
+    i = 0;
+    while (i < K_SN) {
+        var g = load64(K_S + 8 * i);
+        var kl = 1;
+        if (g == TLS_GROUP_X25519) { kl = 32; }
+        _tn_be16_w(p, g);
+        _tn_be16_w(p + 2, kl);
+        memset(p + 4, 0, kl);
+        store8(p + 4, 0x09);
+        p = p + 4 + kl;
+        i = i + 1;
+    }
+    _tn_be16_w(kh + 2, p - kh - 4);
+    _tn_be16_w(kh + 4, p - kh - 6);
+    _tn_be16_w(et, p - e0);
+    var n = p - K_BUF;
+    tls_native_handshake_write_header(K_BUF, TLS_HS_CLIENT_HELLO, n - 4);
+    return n;
+}
+
+# The 1.3 server's answer to the K ClientHello (`n` bytes); the server in G_CL.
+fn _kresp(n): i64 {
+    var srv = tls_native_new_server(_h(CERT23), _hn(CERT23), _h(KEY23), _hn(KEY23));
+    tls_native_server_load_creds(srv);
+    var sh = alloc(1024);
+    var r = tls_native_server_respond_hello(srv, K_BUF, n, sh, 1024);
+    G_CL = srv;
+    return r;
+}
+
 # Print a wire row's SKIP: a SKIP is never read as coverage (Windows refuses socketpair).
 fn _skip(row): i64 {
     var a = "  SKIP: ";
@@ -419,6 +532,66 @@ if (w == 0 - 999) {
     assert_eq(w, TLS_ERR_HANDSHAKE_FAILED, "W4: accept refuses [1]");
     assert_eq(G_W1, (TLS_ALERT_FATAL << 8) | TLS_AD_ILLEGAL_PARAMETER,
       "W4: the server sent a fatal illegal_parameter, in the clear");
+}
+
+test_group("K: each key_share's group looked up in the validated supported_groups (CYRIUS-2026-0037)");
+var kn = 1;
+var kl = 0;
+while (kn <= 8) {
+    if (kn == 1) {
+        _kg_seq(0x1000, 4025);
+        var ki = 0;
+        while (ki < 1610) { _ks_add(0x1000 + 4025 - 1610 + ki); ki = ki + 1; }
+        nm = "K1: 4,025 groups, 1,610 one-byte shares on the last, none of ours";
+    }
+    if (kn == 2) {
+        _kg_seq(0x1000, 40);
+        _ks_add(0x1000);
+        _ks_add(0x2000);
+        nm = "K2: 40 groups, a share for one not on them";
+    }
+    if (kn == 3) { _kg_x25519(40); nm = "K3: 40 groups ending in x25519, an x25519 share"; }
+    if (kn == 4) {
+        _kg_seq(0x1000, 32);
+        _ks_add(0x2000);
+        nm = "K4: 32 groups (no bitmap), a share for one not on them";
+    }
+    if (kn == 5) { _kg_x25519(32); nm = "K5: 32 groups ending in x25519, an x25519 share"; }
+    if (kn == 6) { _kg_x25519(33); nm = "K6: 33 groups (the first bitmap) ending in x25519, an x25519 share"; }
+    if (kn == 7) {
+        _kg_seq(0xFFE0, 40);
+        store64(K_G + 8 * 39, TLS_GROUP_X25519);
+        _ks_add(0xFFFF);
+        _ks_add(0);
+        _ks_add(TLS_GROUP_X25519);
+        nm = "K7: shares on 0xFFFF and 0x0000 (the bitmap's last and first bits), then x25519";
+    }
+    if (kn == 8) {
+        _kg_seq(0xFFE0, 40);
+        store64(K_G + 8 * 39, TLS_GROUP_X25519);
+        _ks_add(0xFFFF);
+        _ks_add(7);
+        nm = "K8: a share on 0x0007, not listed (0x0000-0x0006 are, the same byte)";
+    }
+    kl = _kch();
+    if (kn == 1) { assert_eq(kl, 16166, "K1: the ClientHello is 16,166 bytes"); }
+    var kr = _kresp(kl);
+    if (kn == 1) {
+        assert_eq(kr, TLS_ERR_HANDSHAKE_FAILED, nm);
+        assert_eq(_alert(), TLS_AD_HANDSHAKE_FAILURE, "  ... handshake_failure: no shared group");
+        assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "  ... the ctx failed");
+    }
+    if (kn == 2 || kn == 4 || kn == 8) {
+        assert_eq(kr, TLS_ERR_HANDSHAKE_FAILED, nm);
+        assert_eq(_alert(), TLS_AD_ILLEGAL_PARAMETER, "  ... illegal_parameter");
+        assert_eq(tls_native_get_state(G_CL), TLS_STATE_ERROR, "  ... the ctx failed");
+    }
+    if (kn == 3 || kn == 5 || kn == 6 || kn == 7) {
+        assert_eq(kr > 0, 1, nm);
+        assert_eq(_alert(), 0, "  ... no alert recorded");
+        assert_eq(tls_native_get_group(G_CL), TLS_GROUP_X25519, "  ... on x25519");
+    }
+    kn = kn + 1;
 }
 
 var r = assert_summary();

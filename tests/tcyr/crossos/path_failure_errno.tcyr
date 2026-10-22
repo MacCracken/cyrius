@@ -42,6 +42,18 @@
 # (Linux unlinks it: 0). Darwin answers an unlink of a directory EPERM (-1), its own errno (measured
 # on ecb and ach); its open and truncate say EISDIR. A read-only open of a directory opens on Linux
 # and macOS and stays -13 on Windows (it takes O_DIRECTORY there).
+#
+# A rename onto the other kind (issues/2026-10-21-pe-rename-onto-other-kind-and-xflock-answers-beyond-
+# d79-d94-d95.md; 6.7.17's D35 / D36, the user, 2026-10-22: "Refuse with -20, as Linux"; "-21, as
+# Linux"). MoveFileExW's MOVEFILE_REPLACE_EXISTING let a directory replace an existing file: the filed
+# rename answered 0 on cass and wine and the file's bytes were gone (Linux -20, the file kept). A file
+# onto a directory answered -13 there (Linux -21). The Windows peer (`_win_rename`) now asks the
+# target before a directory's move and answers -20, and on a -13 asks whether the target is a
+# directory: -21. macOS answers the same two errnos (measured on ecb and ach). A directory onto a
+# directory keeps Windows' -13 (it cannot replace one); a sharing refusal stays -13. CHANGELOG [6.7.17]
+#
+# A cx guest on a Windows host's cxvm reads Windows' answers where they differ (`cx_win`), and one on
+# a Darwin host its no-op ftruncate of the null device (6.7.17).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -58,12 +70,25 @@ var notempty = 0 - 39;
 notempty = 0 - 66;
 #endif
 
+# 1 for a cx guest on a WINDOWS host's cxvm: its file calls answer Windows' errnos, so the rows
+# whose Windows answer differs take it there, as the native PE build does (a Darwin host's are mapped
+# back to Linux's by cxvm). That host has no fcntl route (-38); every other host answers F_GETFD.
+# Until 6.7.17 the read-only fsync, the read-only open of a directory, the held-open unlink and the
+# 0444 file failed on wine's and cass's cxvm.exe (the Windows host makes that file writable: its
+# descriptor stayed open, so the final rmdir failed -39 too), and on cass the null-device rows (no
+# /dev/null there: the guest names NUL now). CHANGELOG [6.7.17]
+var cx_win = 0;
+#ifdef CYRIUS_TARGET_CX
+if (sys_fcntl(1, 1, 0) == 0 - 38) { cx_win = 1; }
+#endif
+
 # The null device by this target's name, and what its ftruncate answers (see the header).
 var nulname = "/dev/null";
 var nul_ftrunc = 0 - 22;
 #ifdef CYRIUS_TARGET_WIN
 nulname = "NUL";
 #endif
+if (cx_win == 1) { nulname = "NUL"; }
 #ifdef CYRIUS_TARGET_MACOS
 nul_ftrunc = 0;
 #endif
@@ -79,6 +104,7 @@ var ro_fsync = 0;
 #ifdef CYRIUS_TARGET_WIN
 ro_fsync = 0 - 13;
 #endif
+if (cx_win == 1) { ro_fsync = 0 - 13; }
 
 # The NUL-terminated `a` followed by `b`, in a fresh allocation.
 fn _pfe_join(a, b): i64 {
@@ -143,7 +169,11 @@ if (ro >= 0) { sys_close(ro); }
 assert_eq(sys_ftruncate(0 - 999, 3), 0 - 9, "ftruncate of a non-descriptor is -9 (Windows answered -1)");
 var nul = file_open(nulname, O_WRONLY, 0);
 assert_eq(nul >= 0, 1, "the null device opens for writing");
-assert_eq(sys_ftruncate(nul, 3), nul_ftrunc, "ftruncate of the null device is -22 (Windows answered -1; macOS truncates it: 0)");
+var nft = sys_ftruncate(nul, 3);
+#ifdef CYRIUS_TARGET_CX
+if (nft == 0) { nft = nul_ftrunc; }          # a Darwin host truncates its null device as a no-op
+#endif
+assert_eq(nft, nul_ftrunc, "ftruncate of the null device is -22 (Windows answered -1; macOS truncates it: 0)");
 if (nul >= 0) { sys_close(nul); }
 assert_eq(sys_truncate(nulname, 3), 0 - 22, "truncate of the null device is -22 (Windows answered -1)");
 assert_eq(sys_truncate(m, 3), 0 - 2, "truncate of a missing path is -2 (Windows answered -1)");
@@ -204,7 +234,12 @@ var rdd = file_open(d, O_RDONLY, 0);
 assert_eq(rdd, 0 - 13, "a read-only open of a directory stays -13 on Windows (O_DIRECTORY opens one)");
 #endif
 #ifndef CYRIUS_TARGET_WIN
-assert_eq(rdd >= 0, 1, "a read-only open of a directory opens");
+if (cx_win == 1) {
+    assert_eq(rdd, 0 - 13, "a read-only open of a directory stays -13 on a Windows host");
+}
+if (cx_win == 0) {
+    assert_eq(rdd >= 0, 1, "a read-only open of a directory opens");
+}
 if (rdd >= 0) { sys_close(rdd); }
 #endif
 # A refusal of what is no directory stays -13.
@@ -216,19 +251,77 @@ var hu = sys_unlink(held);
 assert_eq(hu, 0 - 13, "unlink of a file another handle holds open stays -13 on Windows (a sharing refusal, no directory)");
 #endif
 #ifndef CYRIUS_TARGET_WIN
-assert_eq(hu, 0, "unlink of a file held open is 0");
+var hu_want = 0;
+if (cx_win == 1) { hu_want = 0 - 13; }      # a Windows host refuses it, as Windows does
+assert_eq(hu, hu_want, "unlink of a file held open is 0 (a Windows host: -13)");
 #endif
 if (hf >= 0) { sys_close(hf); }
 xunlink(held);
 #ifndef CYRIUS_TARGET_WIN
-var rof = _pfe_join(d, "/ro");
-var rc0 = file_open(rof, O_WRONLY | O_CREAT | O_TRUNC, 292);   # 0444
-if (rc0 >= 0) { sys_close(rc0); }
-if (sys_getuid() != 0) {
-    assert_eq(file_open(rof, O_WRONLY, 0), 0 - 13, "open of a read-only file for writing stays -13");
+# A Windows host makes no read-only file from a mode (the native PE build skips this row too).
+if (cx_win == 0) {
+    var rof = _pfe_join(d, "/ro");
+    var rc0 = file_open(rof, O_WRONLY | O_CREAT | O_TRUNC, 292);   # 0444
+    if (rc0 >= 0) { sys_close(rc0); }
+    if (sys_getuid() != 0) {
+        var rw0 = file_open(rof, O_WRONLY, 0);
+        assert_eq(rw0, 0 - 13, "open of a read-only file for writing stays -13");
+        if (rw0 >= 0) { sys_close(rw0); }
+    }
+    xunlink(rof);
 }
-xunlink(rof);
 #endif
+
+test_group("a rename onto the other kind is -ENOTDIR / -EISDIR (6.7.17's D35 / D36)");
+var rd = _pfe_join(d, "/rd");
+var rt = _pfe_join(d, "/rt");
+assert_eq(sys_mkdir(rd, 448), 0, "a directory to rename is made");
+var rtf = file_open(rt, O_WRONLY | O_CREAT | O_TRUNC, 420);
+assert_eq(file_write(rtf, "data", 4), 4, "a 4-byte file to rename onto is made");
+file_close(rtf);
+assert_eq(sys_rename(rd, rt), 0 - 20, "sys_rename of a directory onto a file is -20 (Windows replaced the file: 0)");
+assert_eq(file_rename(rd, rt), 0 - 20, "file_rename of a directory onto a file is -20 (Windows replaced the file: 0)");
+var rtb[16];
+var rtr = file_open(rt, O_RDONLY, 0);
+assert_eq(file_read(rtr, &rtb, 16), 4, "the file is kept: it still reads its 4 bytes");
+assert_eq(load8(&rtb + 3), 97, "...the 'a' of \"data\" at offset 3");
+file_close(rtr);
+assert_eq(sys_rename(rt, rd), 0 - 21, "sys_rename of a file onto a directory is -21 (Windows answered -13)");
+assert_eq(file_rename(rt, rd), 0 - 21, "file_rename of a file onto a directory is -21 (Windows answered -13)");
+# A directory onto a non-empty directory: Linux and macOS -ENOTEMPTY; Windows cannot replace a
+# directory and keeps -13 (D36). A file onto a file another handle holds open: Linux and macOS
+# replace it (0); Windows refuses it with a sharing violation, which stays -13 (no directory). A cx
+# guest reads its host's answer.
+var rk = _pfe_join(rd, "/k");
+var rkf = file_open(rk, O_WRONLY | O_CREAT | O_TRUNC, 420);
+if (rkf >= 0) { file_close(rkf); }
+var rd2 = _pfe_join(d, "/rd2");
+assert_eq(sys_mkdir(rd2, 448), 0, "a second directory is made");
+var dd = sys_rename(rd2, rd);
+var dd_want = notempty;
+var hs_want = 0;
+#ifdef CYRIUS_TARGET_WIN
+dd_want = 0 - 13;
+hs_want = 0 - 13;
+#endif
+if (cx_win == 1) {                           # a Windows host answers as Windows does
+    dd_want = 0 - 13;
+    hs_want = 0 - 13;
+}
+assert_eq(dd, dd_want, "a directory onto a non-empty directory is -ENOTEMPTY (Windows keeps -13)");
+var hs = _pfe_join(d, "/hs");
+var hsf = file_open(hs, O_WRONLY | O_CREAT | O_TRUNC, 420);
+if (hsf >= 0) { file_close(hsf); }
+var htf = file_open(rt, O_RDONLY, 0);
+assert_eq(htf >= 0, 1, "the 4-byte file is held open");
+var hr = file_rename(hs, rt);
+assert_eq(hr, hs_want, "a file onto a file held open replaces it (Windows: a sharing refusal, -13, never -21)");
+if (htf >= 0) { file_close(htf); }
+xunlink(hs);
+xunlink(rt);
+xunlink(rk);
+assert_eq(sys_rmdir(rd2), 0, "the second directory is still where it was");
+assert_eq(sys_rmdir(rd), 0, "the renamed-onto directory is still a directory");
 
 test_group("cleanup succeeds");
 assert_eq(sys_unlink(f), 0, "unlink of the file is 0");

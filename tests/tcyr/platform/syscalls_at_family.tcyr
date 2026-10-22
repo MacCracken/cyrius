@@ -11,6 +11,13 @@
 # cross-compile ratchet, tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). The round-trip is
 # compiled only on Linux/macOS; PE asserts its documented decline, agnos prints a named SKIP.
 # CHANGELOG [6.6.10]
+#
+# On cx (6.7.16's D75 shape, the user, 2026-10-20: a named not-run where the target is known): cxvm
+# serves none of the *at() calls nor access — openat, fstatat, lstat, link, mkdirat, unlinkat,
+# utimensat and access answer -38 on every host (6.7.14's D55: a number it does not list never
+# reaches the host) — so the round-trip below (18 rows) is not run there; it failed 14 of its 18
+# rows on every cxvm. The -38 itself is asserted: a cxvm that grows a route turns this group red
+# until the rows run on cx. CHANGELOG [6.7.17]
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -64,8 +71,17 @@ var ska = "  SKIP: the agnos peer has no *at() family\n";
 sys_write(1, ska, strlen(ska));
 assert(sys_getpid() > 0, "SKIP arm ran (getpid) — no *at() family on agnos");
 #endif
+#ifdef CYRIUS_TARGET_CX
+test_group("*at() family — cx: no route");
+var cxo = sys_openat(AT_FDCWD, "/", O_RDONLY, 0);
+assert_eq(cxo, 0 - 38, "sys_openat answers -38 on cx (cxvm has no openat route)");
+assert_eq(sys_access("/", 0), 0 - 38, "sys_access answers -38 on cx (cxvm has no access route)");
+var cnr = "  not run: this host has no openat / access route: the *at() round-trip (18 rows)\n";
+sys_write(1, cnr, strlen(cnr));
+#endif
 #ifndef CYRIUS_TARGET_WIN
 #ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_CX
 
 # Clean any leftovers from a prior run (ignore errors).
 sys_unlinkat(AT_FDCWD, _scratch("cyr_at_a", ""), 0);
@@ -118,6 +134,7 @@ assert_eq(sys_unlinkat(AT_FDCWD, _scratch("cyr_at_a", ""), 0), 0, "sys_unlinkat 
 assert_eq(sys_unlink(_scratch("cyr_at_c", "")), 0, "sys_unlink removes the hard-linked name");
 assert_neq(sys_access(_scratch("cyr_at_a", ""), 0), 0, "a gone");
 assert_neq(sys_access(_scratch("cyr_at_c", ""), 0), 0, "c gone");
+#endif
 #endif
 #endif
 

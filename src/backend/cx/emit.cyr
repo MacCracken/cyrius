@@ -1994,6 +1994,7 @@ fn EGETLASTERR_PE(S): i64 { return 0; }  # 6.6.12 kernel32!GetLastError (0xF04B)
 fn ELOCKFILEEX_PE(S): i64 { return 0; }   # 6.7.12 kernel32!LockFileEx (0xF04C)
 fn EUNLOCKFILEEX_PE(S): i64 { return 0; } # 6.7.12 kernel32!UnlockFileEx (0xF04D)
 fn EGETFINALPATH_PE(S): i64 { return 0; } # 6.7.12 kernel32!GetFinalPathNameByHandleW (0xF04E)
+fn ELASTERRNO_PE(S): i64 { return 0; }    # 6.7.17 the last error as -errno (0xF04F)
 fn EINITSRW_PE(S): i64 { return 0; }
 fn ELOCALFREE_PE(S): i64 { return 0; }
 fn ELSEEK_PE(S): i64 { return 0; }
