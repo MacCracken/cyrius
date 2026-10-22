@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Version** | **6.7.16 — released 2026-10-22** (tagged at `bbb771d26`; the store slot refreshed from the tag, `SOURCE_COMMIT` matches). 6.7.16: Break 2 repair 6, what 6.7.15 filed and what its own waves found — 188 issues closed in sixteen lanes over five waves, 23 left unplaced, CYRIUS-2026-0037 recorded, the folds sigil 3.13.13, patra 1.16.6, yukti 2.3.18, sandhi 1.13.3. |
-| **cycc** | x86 **2,848,336 B** (`.text` **176**) at the 6.7.17 wave-1 integration (6.7.16 released at 2,822,280 B). `build/cycc-native-aarch64` **3,086,160 B** (6.7.16: 3,084,584 B). Dead-code floor **51 fns / 10,408 B** (x86). |
+| **cycc** | x86 **2,848,336 B** (`.text` **2,682,888**) at the 6.7.17 wave-1 integration (6.7.16 released at 2,822,280 B). `build/cycc-native-aarch64` **3,086,160 B** (6.7.16: 3,084,584 B). Dead-code floor **51 fns / 10,408 B** (x86). |
 | **Bootstrap / cross-OS** | 6.7.16: ecb · ach · cass · pi `SELFHOST_OK` + `LIBTEST_OK` on the FULL corpus, REAL hardware through `scripts/release-gate.sh` (on `571f1a600`). seed **29,024 B** → cybs → cycc byte-identical. |
 | **Gates** | 6.7.16 `release-gate.sh` GREEN (2026-10-21, on `571f1a600`): check.sh 582 / 582 shell gates, the driver 128 / 128, 0 SKIPs (`RG_SKIP_ALLOW` empty since 6.7.16's wave 0); all four hosts on the full corpus. self_compile 1,385 ms (A/B 6.7.15 1,215 → 6.7.16 1,382 ms, +13.7 %; on the same input +3.2 %, the input +9.8 %). |
 | **Corpus** | **680** `.tcyr` (**369** in `crossos/`) · **106** `lib/*.cyr` · **578** shell gates under `tests/gates/<bucket>/` · api-surface **5,892**. |
