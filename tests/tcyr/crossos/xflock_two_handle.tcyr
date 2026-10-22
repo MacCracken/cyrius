@@ -20,6 +20,11 @@
 # exclusive lock, 17 with 0 and the shared one, 9, 10 and 24 with 0 and the lock let go, and 0, 4
 # and 16 with -9 (measured on ecb and ach). The macOS arm, and cxvm's flock on a Darwin host, check
 # the op first since 6.7.17. CHANGELOG [6.7.17]
+# Linux's own flock(2) took two kinds of bad op (6.7.17's D104, the user, 2026-10-22: "validate the op
+# in the Linux arm too — a bad op is -22 on every OS"): an op carrying LOCK_MAND (32) is ignored, 0
+# with nothing locked, whatever the fd; and only the op's low 32 bits are read, so 0x100000002 locked
+# exclusive and 0x100000008 unlocked, each answering 0. The Linux arm (x86_64 and aarch64), and cxvm's
+# flock on a Linux host, check the whole op first since 6.7.17. CHANGELOG [6.7.17]
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -119,7 +124,7 @@ if (xf_route == 1) {
     assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
     assert_eq(xflock(a, 0) < 0, 1, "an op that is none of LOCK_SH / LOCK_EX / LOCK_UN is refused");
 
-    test_group("a bad op on an open fd is -EINVAL and changes no lock (6.7.17's D97)");
+    test_group("a bad op on an open fd is -EINVAL and changes no lock (6.7.17's D97 / D104)");
     var nolk = "  B: LOCK_EX|LOCK_NB -> 0 after it: A took no lock";
     xf_badop(a, b, 0, 0, "A: op 0 -> -22 (macOS -9)", nolk);
     xf_badop(a, b, 4, 0, "A: op 4 (LOCK_NB alone) -> -22 (macOS -9)", nolk);
@@ -128,11 +133,16 @@ if (xf_route == 1) {
     xf_badop(a, b, 7, 0, "A: op 7 (LOCK_SH | LOCK_EX | LOCK_NB) -> -22 (macOS 0, locked exclusive)", nolk);
     xf_badop(a, b, 18, 0, "A: op 18 (LOCK_EX | 16) -> -22 (macOS 0, locked exclusive)", nolk);
     xf_badop(a, b, 17, 0, "A: op 17 (LOCK_SH | 16) -> -22 (macOS 0, locked shared)", nolk);
+    xf_badop(a, b, 32, 0, "A: op 32 (LOCK_MAND) -> -22 (Linux 0, ignored)", nolk);
+    xf_badop(a, b, 34, 0, "A: op 34 (LOCK_MAND | LOCK_EX) -> -22 (Linux 0, ignored)", nolk);
+    xf_badop(a, b, 0x100000002, 0, "A: op 0x100000002 (LOCK_EX + bit 32) -> -22 (Linux 0, locked exclusive)", nolk);
     assert_eq(xflock(a, XF_EX), 0, "A: LOCK_EX -> 0");
     var kept = "  B: LOCK_EX|LOCK_NB -> -EAGAIN after it: A kept its lock";
     xf_badop(a, b, 9, XF_EX, "A: op 9 (LOCK_UN | LOCK_SH) -> -22 (macOS 0, unlocked)", kept);
     xf_badop(a, b, 10, XF_EX, "A: op 10 (LOCK_UN | LOCK_EX) -> -22 (macOS 0, unlocked)", kept);
     xf_badop(a, b, 24, XF_EX, "A: op 24 (LOCK_UN | 16) -> -22 (macOS 0, unlocked)", kept);
+    xf_badop(a, b, 40, XF_EX, "A: op 40 (LOCK_MAND | LOCK_UN) -> -22 (Linux 0, ignored)", kept);
+    xf_badop(a, b, 0x100000008, XF_EX, "A: op 0x100000008 (LOCK_UN + bit 32) -> -22 (Linux 0, unlocked)", kept);
     assert_eq(xflock(a, XF_UN | XF_NB), 0, "A: op 12 (LOCK_UN | LOCK_NB) is a good op -> 0, unlocked");
     assert_eq(xflock(b, XF_EX | XF_NB), 0, "B: LOCK_EX|LOCK_NB -> 0 once A let go");
     assert_eq(xflock(b, XF_UN), 0, "B: LOCK_UN -> 0");
