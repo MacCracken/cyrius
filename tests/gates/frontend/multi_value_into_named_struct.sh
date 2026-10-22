@@ -432,9 +432,9 @@ srow ST5 'fn r(): Str { return mk(3); }
 fn f(): i64 { r(); return 3; }
 syscall(60, f());'
 refused ST5 "a multi-value call 'mk' is not returned as struct 'Str' - bind it first: \`var a, b = mk(..);\`" "\`return mk(3);\` from a fn returning \`Str\` (a tail call)"
-srow ST6 'fn f(): i64 { var h = str_from("a"); var ps: *Str = &h; *ps = mk(3); return 3; }
+srow ST6 'fn f(): i64 { var h = str_from("a"); var ps: *Str = h; *ps = mk(3); return 3; }
 syscall(60, f());'
-refused ST6 "a multi-value call 'mk' $SASG" "\`*ps = mk(3);\` through a \`*Str\`"
+refused ST6 "a multi-value call 'mk' $SASG" "\`*ps = mk(3);\` through a \`*Str\` (6.7.17: \`ps = h\`, h's word — \`&h\` of the handle is a \`**Str\`, D107)"
 srow ST7 'fn f(): i64 { var o = O { mk(3), 1, 2 }; return o.m; }
 syscall(60, f());'
 refused ST7 "a multi-value call 'mk' $SFLD" "\`O { mk(3), 1, 2 }\`: a nested literal's \`Str\` leaf"

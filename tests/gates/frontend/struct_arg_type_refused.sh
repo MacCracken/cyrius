@@ -304,6 +304,12 @@
 #   `_ppd_val` answering 0                              -> RED 12: PY1-PY12
 #   `_ppd_zval` answering 0                             -> RED 1: PY8
 #   real tree                                           -> GREEN (242 refusal rows — floor 242 — and 49 acceptance rows)
+# 6.7.17 (D107's ASSIGNMENT twin, covered by D107) — `u = &h;` / `v = pp;` / `pp = u;` into a name declared a struct
+# pointer of another depth (`_ppd_asg`, parse_types.cyr), "cannot assign 'u: *Pt' from '&h', a '**Pt' - a pointer of
+# another depth": PZ1-PZ7, PZK1. Mutations (2026-10-22, the same method):
+#   the tree before it (the integration head)           -> RED 7: PZ1-PZ7 (compiled; PZ1 exited 88 where 6 is right)
+#   `_ppd_asg` answering 0                              -> RED 7: PZ1-PZ7
+#   real tree                                           -> GREEN (249 refusal rows — floor 249 — and 50 acceptance rows)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1669,10 +1675,41 @@ refuse4 "PY12 a Str handle's &s into *Str" "cannot initialise 'ps: \*Str' from '
     "${PV}fn go(): i64 { alloc_init(); var s: Str = str_from(\"ab\"); var ps: *Str = &s; return 0; } syscall(60, go());" 1 nowarn
 accept4 "PYK1 the annotation's depth, *pp, &h into **Pt, untyped, 0, alloc, an inline Pt" \
     "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var a: *Pt = u; var b: **Pt = &u; var c: *Pt = *pp; var d: *Q = &p; var h: Pt = alloc(16); h.y = 3; var e: **Pt = &h; var x = &u; var f: **Pt = x; var g: *Pt = 0; var k: *Pt = alloc(16); var m: *Pt = p; var hh: *Pt = *e; return a.y + c.y + m.y + hh.y; } syscall(60, go());" 9
+# 6.7.17 (D107's assignment twin, the same decision) — `u = &h;`, `v = pp;`, `pp = u;` into a name declared a pointer
+# to a struct at another depth (`_ppd_asg` from `_try_aggregate_copy_assign`: the statement's own `NAME =`): "cannot
+# assign 'u: *Pt' from '&h', a '**Pt' - a pointer of another depth". PZ1 the vala review's twin repro (two lines;
+# `u.x + v.x` exited 88 where 6 is right), PZ2-PZ7 every destination and path; PZK1 a dereference or field store
+# through such a name and the annotation's depth are unchanged.
+PZW="a pointer of another depth"
+refuse4 "PZ1 the review's twin: u = &h; v = pp; (its two lines)" "cannot assign 'u: \*Pt' from '&h', a '\*\*Pt' - $PZW" \
+'include "lib/alloc.cyr"
+struct Pt { x; y; }
+fn main(): i64 { alloc_init(); var p = Pt { 3, 4 }; var h: Pt = alloc(16); h.x = 3; var u: *Pt = &p; u = &h; var pq: *Pt = &p; var pp: **Pt = &pq; var v: *Pt = &p; v = pp; return u.x + v.x; }
+syscall(60, main());
+' 2 nowarn
+refuse4 "PZ2 pp = u; a *Pt into a **Pt name" "cannot assign 'pp: \*\*Pt' from 'u', a '\*Pt' - $PZW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; pp = u; return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PZ3 a *Pt parameter = a **Pt parameter" "cannot assign 'u: \*Pt' from 'pp', a '\*\*Pt' - $PZW" \
+    "${PV}fn f(u: *Pt, pp: **Pt): i64 { u = pp; return 0; }
+fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return f(u, &u); } syscall(60, go());" 1 nowarn
+refuse4 "PZ4 GU = GPP; globals in a fn" "cannot assign 'GU: \*Pt' from 'GPP', a '\*\*Pt' - $PZW" \
+    "${PV}var GPP: **Pt = &GU;
+fn go(): i64 { GU = GPP; return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PZ5 after the first top-level statement" "cannot assign 'GU: \*Pt' from 'GPP', a '\*\*Pt' - $PZW" \
+    "${PV}var GPP: **Pt = &GU;
+syscall(1, 1, \"\", 0);
+GU = GPP;
+syscall(60, 0);" 1 nowarn
+refuse4 "PZ6 a for step" "cannot assign 'v: \*Pt' from 'pp', a '\*\*Pt' - $PZW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var v: *Pt = u; for (var i = 0; i < 1; v = pp) { i = 1; } return 0; } syscall(60, go());" 1 nowarn
+refuse4 "PZ7 wrapped ((&h)) of a handle" "cannot assign 'v: \*Pt' from '&h', a '\*\*Pt' - $PZW" \
+    "${PV}fn go(): i64 { var h: Pt = alloc(16); var p = Pt { 1, 2 }; var v: *Pt = &p; v = ((&h)); return 0; } syscall(60, go());" 1 nowarn
+accept4 "PZK1 a store through the name, the annotation's depth" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var r = Pt { 5, 6 }; var u: *Pt = &p; var pp: **Pt = &u; var v: *Pt = &r; pp = &v; u = *pp; **pp = p; *pp = &p; var w: W; w.pt = u; w.pp = pp; v = &r; return u.y + v.y + r.y; } syscall(60, go());" 6
 
 # Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15
 # (the structs lane's FB rows and the vectors lane's DN rows together).
-[ "$nrefuse" -ge 242 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 242)"; fail=$((fail+1)); }
-[ "$naccept" -ge 49 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 49)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 249 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 249)"; fail=$((fail+1)); }
+[ "$naccept" -ge 50 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 50)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]

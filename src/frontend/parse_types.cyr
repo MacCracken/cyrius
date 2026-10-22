@@ -3587,6 +3587,7 @@ fn _pa_derr(S, fi, sa, sp, dp): i64 {
 # an untyped pointer, `0` and an inline struct (D17's address) are unchanged. PARSE_VAR in a fn and at top level
 # after the first statement (cursor on the `=`), the zone replay (`_vin_zone`). 1 = refused. CHANGELOG [6.7.17]
 var _ppd_d = 0;
+var _ppd_asgm = 0;   # 1: an assignment's words, "cannot assign" (`_ppd_asg`)
 fn _ppd_val(S, ti, e, ann, noff): i64 {
     if (_syntax_only == 1) { return 0; }
     if (e <= ti) { return 0; }
@@ -3602,7 +3603,7 @@ fn _ppd_val(S, ti, e, ann, noff): i64 {
     STI(S, _pa_b);
     _ew("error:", 6);
     _err_head(S);
-    PRSTR(": cannot initialise '");
+    if (_ppd_asgm == 1) { PRSTR(": cannot assign '"); } else { PRSTR(": cannot initialise '"); }
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(": ");
     _pa_tyname(S, ds, dd);
@@ -3616,6 +3617,30 @@ fn _ppd_val(S, ti, e, ann, noff): i64 {
     _had_error = 1;
     _ptr_refd_ti = ann;
     return 1;
+}
+# 6.7.17 (D107, its assignment twin: the same decision) — `u = &h;`, `v = pp;`, `pp = u;` into a name declared a
+# pointer to a struct (a local, a parameter, a global, a capture: `_asa_ann` finds its annotation) at another depth
+# held the wrong pointer silently (`u.x + v.x` read 88 where 6 is right): "cannot assign 'u: *Pt' from '&h', a '**Pt' -
+# a pointer of another depth". `_try_aggregate_copy_assign`, the cursor on the value ending at `term`, the statement's
+# own `NAME =` (a dereference or field store reaches it with its operand's name: not judged); reports only, the
+# statement parses on. 0. CHANGELOG [6.7.17]
+fn _ppd_asg(S, noff, term): i64 {
+    if (_syntax_only == 1) { return 0; }
+    var ti = GTI(S);
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    if (TOKTYP(S, ti - 2) != 2) { return 0; }
+    if (STREQ(S, TOKVAL(S, ti - 2), noff) == 0) { return 0; }
+    var pt = TOKTYP(S, ti - 3);
+    if (pt == 8 || pt == 41) { return 0; }   # `**qq = ..`, `w.pq = ..`: a store through the name, not into it
+    var a = _asa_ann(S, noff, ti - 1);
+    if (a <= 0) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    _ppd_asgm = 1;
+    _ppd_val(S, ti, e, a, noff);
+    _ppd_asgm = 0;
+    return 0;
 }
 # The struct the pointer annotation at `ann` points through to — `*S`, `**S`, `***S` (S a plain struct or an instance;
 # a bound T's at one star) — `_ppd_d` its stars; else 0.

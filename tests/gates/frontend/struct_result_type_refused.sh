@@ -207,6 +207,16 @@
 #   M-SV4 `_svin_val` answering 0                       -> RED 7: SV0 SV3 SV15 SV17, SVX SV0 x3
 #   M-SV5 `_svin_zval` answering 0                      -> RED 1: SV16
 #   M-SV6 `_gs_sval_big` answering 0                    -> RED 3: SV20-SV22
+# 6.7.17 (D111, AGENT DEFAULT: the struct twin of D24 / D101 where no written rule decides the slot) — A STRUCT VALUE
+# OR CALL OVER 8 B into a parameter declared an integer or a float (`_ssc_arg`), a builtin's argument, the left operand
+# of an operator that does not dispatch, a condition, an index, a range bound, a `match` subject (`_sop_rchk` from
+# PARSE_FACTOR, `_sop_ctx`), a `return` from a fn declared a scalar (`_ssc_ret`): SW0 the item's repro verbatim, SW1-
+# SW19, SWK1-SWK4 (an untyped parameter and fncall keep the word — guide § D5; an operand after an integer one and a
+# unary `-` / `!` — 6.7.11; a fn with no declared return forwards its pair), SWX SW0 / SW6 / SW9 on aarch64 / cx / PE.
+#   M-SW1 the tree before it (D107's assignment twin)   -> RED 29: SW0-SW19 (compiled: the first word), SWX x9
+#   M-SW2 `_sop_rchk` answering 0                       -> RED 13: SW4 SW5 SW9-SW16, SWX SW9 x3
+#   M-SW3 `_ssc_arg` answering 0                        -> RED 10: SW0-SW3 SW17-SW19, SWX SW0 x3
+#   M-SW4 `_ssc_ret` answering 0                        -> RED 6: SW6-SW8, SWX SW6 x3
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1814,6 +1824,54 @@ accept "SVK4 a field of the value keeps its word" "$SQ"'fn g(): i64 { var q = Q 
 accept "SVK5 y = q; (y: T) at T = Q copies" "$SQ"'fn gv<T>(x: T): i64 { var y: T = x; var q = Q { 3, 4 }; y = q; return y.a * 10 + y.b; }
 fn g(): i64 { var q = Q { 1, 2 }; return gv(q); }'"$FTE" 34 'syscall(60, 34);'
 
+echo "=== 6.7.17 (D111, agent default): a struct value or call over 8 B in the word slots no written rule decides ==="
+# The vala review's second blocked item (D111, AGENT DEFAULT, the struct twin of D24 / D101): `take(q)`,
+# `take(mkp())` (x: i64), `syscall(60, q)`, `return q;` from `: i64`, `if (q)`, `b[q]`, `q == r` passed the first
+# word, silently. SW0 the item's repro verbatim (its first error: the panic latch), SW1-SW19 every slot and source;
+# SWK1-SWK4 what a written rule keeps: an untyped parameter and an indirect call's argument take the word (guide § D5),
+# an operand after an integer one and a unary `-` / `~` / `!` is word arithmetic (6.7.11; the user's 2026-10-13), a fn
+# with no declared return forwards; 8 B, a handle, a field of the value, `+ - * /` dispatch.
+SW0S='struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn take(x: i64): i64 { return x; }
+fn main(): i64 { var q = Q { 333, 444 }; return take(q) + take(mkp()) + (1 + q) - 999; }
+syscall(60, main());
+'
+refuse_at "SW0 the item's repro verbatim (its first error)" "4:54: a struct value cannot be passed to an integer parameter - 'q' is the struct 'Q', passed to parameter 'x' of 'take'" "$SW0S"
+WQ="$SQ"'fn take(x: i64): i64 { return x; }
+fn tf(x: f64): i64 { return 0; }
+fn tu(x): i64 { return x; }
+'
+SWP="a struct value cannot be passed to an integer parameter"
+SWU="a struct value cannot be used as an integer"
+SWR="a struct value cannot be returned as i64"
+refuse "SW1 take(mkp()), a call into x: i64" "$SWP - 'mkp' returns the struct 'Q', passed to parameter 'x' of 'take'" "$WQ"'fn g(): i64 { return take(mkp()); }'"$FTE" one
+refuse "SW2 tf(q), an f64 parameter" "a struct value cannot be passed to an f64 parameter - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; return tf(q); }'"$FTE" one
+refuse "SW3 take(q.dup()), a method's result" "$SWP - 'Q.dup' returns the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; return take(q.dup()); }'"$FTE" one
+refuse "SW4 syscall(60, q)" "$SWP - 'q' is the struct 'Q', passed to 'syscall'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; return syscall(60, q); }'"$FTE" one
+refuse "SW5 store64(p, q)" "$SWP - 'q' is the struct 'Q', passed to 'store64'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; var x = 0; store64(&x, q); return x; }'"$FTE" one
+refuse "SW6 return q; from an : i64 fn" "$SWR - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; return q; }'"$FTE" one
+refuse "SW7 return mkp(); from an : i64 fn" "$SWR - 'mkp' returns the struct 'Q'" "$WQ"'fn g(): i64 { return mkp(); }'"$FTE" one
+refuse "SW8 return (w.q); a struct-typed field" "$SWR - 'w\.q' is the struct 'Q'" "$WQ"'fn g(): i64 { var w: WF; return (w.q); }'"$FTE" one
+refuse "SW9 if (q)" "$SWU - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; if (q) { return 1; } return 0; }'"$FTE" one
+refuse "SW10 while (mkp())" "$SWU - 'mkp' returns the struct 'Q'" "$WQ"'fn g(): i64 { while (mkp()) { return 1; } return 0; }'"$FTE" one
+refuse "SW11 b[q], an index" "$SWU - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; var b: i64[4]; return b[q]; }'"$FTE" one
+refuse "SW12 q == r, a left operand" "$SWU - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; var r = q; if (q == r) { return 1; } return 0; }'"$FTE" one
+refuse "SW13 *pq % 2" "$SWU - '\*pq' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; var pq: *Q = &q; return *pq % 2; }'"$FTE" one
+refuse "SW14 a range bound 0..q" "$SWU - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; var s = 0; for x in 0..q { s = s + 1; } return s; }'"$FTE" one
+refuse "SW15 match q { .. }" "$SWU - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; match q { 3 => { return 1; } _ => { return 2; } } return 0; }'"$FTE" one
+refuse "SW16 a for condition" "$SWU - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; for (var i = 0; q; i = i + 1) { return 1; } return 0; }'"$FTE" one
+refuse "SW17 a by-value parameter into x: i64" "$SWP - 'q' is the struct 'Q', passed to parameter 'x' of 'take'" "$WQ"'fn f(q: Q): i64 { return take(q); }
+fn g(): i64 { var q = Q { 3, 4 }; return f(q); }'"$FTE" one
+refuse "SW18 a global into x: i64" "$SWP - 'GQ' is the struct 'Q'" "$WQ"'fn g(): i64 { return take(GQ); }'"$FTE" one
+refuse "SW19 at top level: take(GQ)" "$SWP - 'GQ' is the struct 'Q'" "$WQ"'var r0 = take(GQ);
+fn g(): i64 { return r0; }'"$FTE" one
+accept "SWK1 an untyped parameter and fncall1 take the word" "$WQ"'fn g(): i64 { var q = Q { 333, 444 }; return tu(q) - 333 + fncall1(&tu, q) - 333 + tu(mkp()) - 330; }'"$FTE" 3 'syscall(60, 3);'
+accept "SWK2 an operand after an integer one, a unary - / !" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; var s = 1 + q; var n = -q; var z = !q; return s * 10 + n + 3 + z; }'"$FTE" 40 'syscall(60, 40);'
+accept "SWK3 8 B, a handle, a field of the value keep their word" "$WQ"'fn g(): i64 { var s = S8 { 5 }; var h: Q = alloc(16); h.a = 1; var q = Q { 3, 4 }; var b: i64[8]; b[s] = 1; if (s) { if (h) { return take(s) + take(q.a) + b[5] + (h != 0); } } return 0; }'"$FTE" 10 'syscall(60, 10);'
+accept "SWK4 q + r dispatches, a fn with no declared return forwards its pair" "$WQ"'fn fw() { return mkp(); }
+fn g(): i64 { var q = Q { 3, 4 }; var r = q + q; var a, b = fw(); return r.b - 400 + b - 444 + a - 333; }'"$FTE" 44 'syscall(60, 44);'
+
 # TV (6.7.16, the user's D102, 2026-10-20; issues/archived/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
 # so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
@@ -2369,6 +2427,9 @@ fn main(): i64 { return gds(5); }'"$TE" one
 fn g(): i64 { var z = 1; return gc(&z); }'"$FTE" one
     refuse_at "SVX [$1] SV0" "2:62: cannot assign 'y: i64' from 'q', which is the struct 'Q' - declare 'y: Q' or bind a field|2:78: cannot initialise 'z: i64' from 'q', which is the struct 'Q' - declare 'z: Q' or bind a field" "$SV0S"
     refuse "SVX [$1] SV4" "cannot assign 'w\.n: i64' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var w = W { 1, 0 }; w.n = q; return w.n; }'"$FTE" one
+    refuse_at "SWX [$1] SW0" "4:54: a struct value cannot be passed to an integer parameter - 'q' is the struct 'Q', passed to parameter 'x' of 'take'" "$SW0S"
+    refuse "SWX [$1] SW6" "$SWR - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; return q; }'"$FTE" one
+    refuse "SWX [$1] SW9" "$SWU - 'q' is the struct 'Q'" "$WQ"'fn g(): i64 { var q = Q { 3, 4 }; if (q) { return 1; } return 0; }'"$FTE" one
     refuse "FEX [$1] FE1" "cannot assign 'pw\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; var pw: *W = &w; pw.n = mkp(); return w.n; }'"$FTE" one
     refuse "FEX [$1] FE15b" "cannot assign 'b\[1\]: u8' from 'mkp'" "$FQ"'fn g(): i64 { var b: u8[4]; b[1] = mkp(); return b[1]; }'"$FTE" one
     refuse "FEX [$1] FE17" "cannot assign 'n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { mkp(), 0 }; return w.n; }'"$FTE" one
@@ -2388,10 +2449,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review), D106 + 34; D1 (genr) + 44; the genr review's WR + 8, CF + 5; the genr finish's RBN + 30): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review), D106 + 34, D111 + 33; D1 (genr) + 44; the genr review's WR + 8, CF + 5; the genr finish's RBN + 30): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 702 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 702"; exit 1
+if [ $((nrefuse + naccept)) -lt 735 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 735"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

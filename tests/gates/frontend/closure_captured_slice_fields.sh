@@ -136,7 +136,7 @@ QK2|v|3|var G: P = P { 3, 4 };\nalloc_init();\nvar H = G;\nsyscall(60, H);\n
 QK3|v|14|fn main(): i64 { var p: P = P { 3, 4 }; var pp: *P = &p; var q = pp; return (q == &p) * 10 + load64(q + 8); }\nsyscall(60, main());\n
 QK4|v|4|impl P { fn sy(self): i64 { var q = self; return load64(q + 8); } }\nfn main(): i64 { var p: P = P { 3, 4 }; return p.sy(); }\nsyscall(60, main());\n
 QK5|v|14|fn f(pp: *P): i64 { var c = |k| { var q = pp; return (q == pp) * 10 + load64(q + 8) + k; }; return fncall1(c, 0); }\nfn main(): i64 { alloc_init(); var p: P = P { 3, 4 }; return f(&p); }\nsyscall(60, main());\n
-QK6|v|3|fn main(): i64 { var p: P = P { 3, 4 }; var q = p; return q; }\nsyscall(60, main());\n
+QK6|v|3|fn main(): i64 { var p: P = P { 3, 4 }; var q = p; return q.x; }\nsyscall(60, main());\n
 Q10|v|4|var G: P = P { 3, 4 };\nfn main(): i64 {\n    var q = G;\n    return q.y;\n}\nsyscall(60, main());\n
 Q11|v|4|var G: P = P { 3, 4 };\nfn tk(a: P): i64 { return a.y; }\nfn main(): i64 {\n    var q = G;\n    return tk(q);\n}\nsyscall(60, main());\n
 Q12|v|49|var G: P = P { 3, 4 };\nfn main(): i64 { var q = G; q.y = 9; return G.y * 10 + q.y; }\nsyscall(60, main());\n

@@ -5890,7 +5890,10 @@ fn _ssv_at(S, a0, e): i64 {
     var t = TOKTYP(S, a);
     var sid = 0;
     if (t == 2) {
-        if (pe == a + 1) { sid = _hl_amp_sid(S, TOKVAL(S, a)); }
+        if (pe == a + 1) {
+            if (_ssv_scal(S, a) == 1) { return 0; }   # declared a scalar: its own line's refusal stands alone
+            sid = _hl_amp_sid(S, TOKVAL(S, a));
+        }
         else { sid = _ssv_fld(S, a, pe); }
     } elif (t == 8) {
         if (pe - a >= 2) { if (_gz_split(S, a, pe) == 0 - 1) { sid = _hl_dpsid(S, a + 1, pe); } }
@@ -5902,6 +5905,16 @@ fn _ssv_at(S, a0, e): i64 {
     _ssv_a = a;
     _ssv_e = pe;
     return sid;
+}
+# 1 = the name at token `a` is declared with a scalar or `bool` annotation (`var b: bool = P { 7, true };`, refused
+# at its own line, leaves b a P): it is no struct value here, so its uses add no refusal of their own.
+# CHANGELOG [6.7.17]
+fn _ssv_scal(S, a): i64 {
+    var an = _asa_ann(S, TOKVAL(S, a), a);
+    if (an <= 0) { return 0; }
+    if (_asa_scalar(S, an) == 1) { return 1; }
+    if (TOKTYP(S, an) != 2) { return 0; }
+    return _tn_bool(_tn_resolve_at(S, an));
 }
 # ... a chain [a, pe) whose last step is a struct-typed FIELD (no call after it): that field's struct, else 0.
 fn _ssv_fld(S, a, pe): i64 {
@@ -5931,6 +5944,186 @@ fn _dsr_val(S, ti): i64 {
     _dsr_at = _ssv_a;
     _dsr_afi = 0 - 1;
     _dsr_isv = 1;
+    return 1;
+}
+# ⛔ 6.7.17 (D111, AGENT DEFAULT — the struct twin of D24 / 6.7.16's D101, where no written rule decides the slot) — A
+# STRUCT VALUE OR CALL OVER 8 B IS NO WORD THERE EITHER. As an argument to a parameter declared an integer or a float
+# (`take(q)`, `take(mkp())` with `x: i64`), a builtin's argument (`syscall(60, q)`, `store64(p, q)`), a `return` from
+# a fn declared a scalar (`: i64`, `: f64`, an enum), the LEFT operand of an operator that does not dispatch (`q == r`,
+# `q % 2`; `+ - * /` call its operator fn), a condition (`if (q)`, `while`, a `for` condition, a `match` subject), an
+# index (`b[q]`) or a range bound, a struct value (`_ssv_at`) or a whole struct call (`_dsr_rec`; by tokens at a
+# `return`, `_ssc_tok`) passed its first word, silently (`take(q) + take(mkp()) + (1 + q) - 999` exited 1). Refused at
+# the value, naming it, in D101's shape: "a struct value cannot be passed to an integer parameter - 'q' is the struct
+# 'Q', passed to parameter 'x' of 'take'" (a call: "'mkp' returns the struct 'Q'"), ".. passed to 'syscall'", ".. cannot
+# be returned as i64 - ..", "a struct value cannot be used as an integer - ..". UNCHANGED, each by a written rule: an
+# untyped parameter and an indirect call's argument (`fncall1(&f, q)`, `callptr(f, q)`) take the word (guide § D5: "an
+# untyped parameter the word"); a fn with no declared return hands back both words (`var a, b = f();` of a struct
+# pair, crossos/struct_pair_multi_value_crossing.tcyr); an operand after an integer one or under a unary `-` / `~` /
+# `!` is word arithmetic (guide § "An integer operator's result is an integer", 6.7.11; unary minus the user's
+# decision of 2026-10-13). D106's carve-outs: 8 B or less, a `Str`, a handle, a `*T`, a field of the value; a struct,
+# pointer (D5's), bool (its own) or generic parameter. `_ssc_err` reports with the panic latch, the statement in sync,
+# as `_vsc_err` does. CHANGELOG [6.7.17]
+var _sop_rti = 0 - 1;   # the first token of a dispatching operator's right operand (EMIT_OP_DISPATCH)
+var _sop_bo = 0 - 1;    # the `(` of the builtin / indirect call whose argument `_sop_ctx` found
+fn _ssc_err(S, kind, x, y): i64 {
+    var sv = GTI(S);
+    STI(S, _dsr_at);
+    _refuse_in_sync(S);
+    var tg = "_ssc_err";
+    if (_err_once(S, (tg * 31 + kind) * 8 + 4) == 1) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        if (kind == 0) {
+            PRSTR(": a struct value cannot be returned as ");
+            _vsc_rtype(S);
+        } elif (kind == 3) {
+            PRSTR(": a struct value cannot be used as an integer");
+        } else {
+            PRSTR(": a struct value cannot be passed to ");
+            PRSTR(_vsc_pkind(x, y, kind));
+            PRSTR(" parameter");
+        }
+        PRSTR(" - '");
+        if (_dsr_isv == 1) {
+            _ssv_pr(S);
+            PRSTR("' is the struct '");
+        } else {
+            PRSTR(S + 0xEC00000 + _fn_src_name(S, _dsr_afi, _dsr_fno));
+            PRSTR("' returns the struct '");
+        }
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_dsr_sid - 1) * 8));
+        PRSTR("'");
+        if (kind == 1) { _vsc_pof(S, x, y); }
+        if (kind == 2) { _vsc_bname(S, x); }
+        PRSTR("\n");
+        _err_excerpt(S);
+        _had_error = 1;
+        _panic = 1;
+    }
+    STI(S, sv);
+    return 1;
+}
+# PARSE_FACTOR, the factor [ti0, cursor) just parsed: refused when it is a struct value or call over 8 B in a word
+# slot `_sop_ctx` finds. 0 / 1.
+fn _sop_rchk(S, ti0): i64 {
+    if (_panic == 1) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (ti0 < 2) { return 0; }
+    var e = GTI(S);
+    if (e <= ti0) { return 0; }
+    var k = _sop_ctx(S, ti0, e);
+    if (k == 0) { return 0; }
+    if (_dsr_rec(S, ti0) == 0) { return 0; }
+    if (_ssc_rown(S, ti0) == 1) { return 0; }
+    if (k == 2) { return _ssc_err(S, 2, _sop_bo, 0); }
+    return _ssc_err(S, 3, 0, 0);
+}
+# 1 = the factor at `ti0` is in a `return`'s value (`_vop_ctx` 3) of a fn whose return judges it in its own words: a
+# struct fn (the 9-16 B pair's "takes a local of that struct or a call returning it - got `mk2`", 6.7.11's R16-R22),
+# a vector, multi-value or refused return (`_vsc_rskip`).
+fn _ssc_rown(S, ti0): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (_vop_ctx(S, ti0) != 3) { return 0; }
+    if (_cur_fn_ret_sid != 0) { return 1; }
+    return _vsc_rskip(S);
+}
+# The word slot the factor [ti0, e) fills, by its tokens: 3 the left operand of an operator that does not dispatch (all
+# but `+ - * /`), a condition, an index, a range bound, a `match` subject, a `for` condition; 2 a builtin's whole
+# argument (`_sop_bo` its `(`; not `callptr` / fncallN, whose callee's parameter takes it); else 0.
+fn _sop_ctx(S, ti0, e): i64 {
+    if (ti0 == _sop_rti) { return 0; }
+    var n = TOKTYP(S, e);
+    if (_tal_binop(n) == 1) {
+        if (n >= 6) { if (n <= 9) { return 0; } }
+        return 3;
+    }
+    var p = TOKTYP(S, ti0 - 1);
+    if (p == 28) {
+        if (n == 29) { return 3; }
+        return 0;
+    }
+    if (p == 75) { return 3; }
+    if (_vsl_range(S, ti0, e) == 1) { return 3; }
+    if (p == 10) { if (n == 11) { if (_vsl_cond(S, ti0 - 1) == 1) { return 3; } } }
+    if (p == 5) { if (n == 5) { if (_vsl_forc(S, ti0 - 1) == 1) { return 3; } } }
+    if (p == 10 || p == 31) {
+        var bo = _vsl_bopen(S, ti0, e);
+        if (bo < 1) { return 0; }
+        var h = TOKTYP(S, bo - 1);
+        if (h == 137) { return 0; }
+        if (h == 2) { return 0; }   # fncallN: the callee's parameter
+        _sop_bo = bo;
+        return 2;
+    }
+    return 0;
+}
+# `_bx_pcmpe_arg`, the argument [t, cursor) for parameter `ord` of fn `fi` just parsed: a struct value or call over 8
+# B into a parameter declared an integer or a float (`_pbool_get` 2 / 3 / 4; an untyped one takes the word). 0 / 1.
+fn _ssc_arg(S, fi, ord, t): i64 {
+    if (_panic == 1) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (fi < 0) { return 0; }
+    if (GFDS(S, fi) == 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }   # a generic's base: T binds at the call
+    var pk = _pbool_get(fi, ord);
+    if (pk < 2) { return 0; }   # untyped (the word, guide § D5) or bool (its own refusal)
+    if (pk > 4) { return 0; }
+    if (GFPSID(S, fi, ord) != 0) { return 0; }   # a struct, `Str`, tuple, dyn parameter
+    if (_pptr_param(S, fi, ord) == 1) { return 0; }
+    if (_pps_param(S, fi, ord) > 0) { return 0; }
+    if (_pps_uself(S, fi, ord) == 1) { return 0; }
+    if (_vk_param(S, fi, ord) != 0) { return 0; }
+    if (_pvec_param(S, fi, ord) != 0) { return 0; }
+    if (_pvf_param(S, fi, ord) != 0) { return 0; }
+    if (_dsr_rec(S, t) == 0) { return 0; }
+    return _ssc_err(S, 1, fi, ord);
+}
+# PARSE_RETURN (`st` the value's first token, nothing parsed yet): the whole value a struct value or call over 8 B in
+# a fn DECLARED to return a scalar (no struct, `Str`, pointer, vector, bool, multi-value or generic return; a fn with
+# no declared return, a closure, forwards what it returns). 0 / 1.
+fn _ssc_ret(S, st): i64 {
+    if (_panic == 1) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (_vsc_rskip(S) == 1) { return 0; }
+    if (_bx_cur_is_bool(S) == 1) { return 0; }
+    if (_cur_fn_ret_sid != 0) { return 0; }
+    if (_cur_fn_ix >= 0) { if (GFTP(S, _cur_fn_ix) != 0) { return 0; } }
+    var c = _vsc_rt_at(S);
+    if (c < 0) { return 0; }
+    if (TOKTYP(S, c + 1) == 8) { return 0; }
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var e = _hl_dx_end(S, st, 5);
+    if (e < 0) { return 0; }
+    if (_ssc_tok(S, st, e) == 0) { return 0; }
+    return _ssc_err(S, 0, 0, 0);
+}
+# ... [a0, e) by its tokens: a struct value (`_ssv_at`), or a whole call or method chain ending in a by-value struct
+# result (`_hl_pchain`): 1 with `_dsr_*` set as `_dsr_rec` sets them; else 0.
+fn _ssc_tok(S, a0, e): i64 {
+    var sid = _ssv_at(S, a0, e);
+    if (sid > 0) {
+        _dsr_sid = sid;
+        _dsr_at = _ssv_a;
+        _dsr_afi = 0 - 1;
+        _dsr_isv = 1;
+        return 1;
+    }
+    var a = _ie_unparen(S, a0, e);
+    var pe = _ie_pe;
+    if (pe <= a) { return 0; }
+    if (TOKTYP(S, pe - 1) != 11) { return 0; }
+    var t = _hl_pchain(S, a, pe);
+    if (t <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    if (_dx_plain(S, t) == 0) { return 0; }
+    if (_rcv_big(S, t) == 0) { return 0; }
+    _dsr_sid = t;
+    _dsr_at = a;
+    _dsr_fno = _hl_lastnm(S, a, pe, TOKVAL(S, a));
+    _dsr_afi = 0 - 1;
+    _dsr_isv = 0;
     return 1;
 }
 # `y = q;` (`_pcmpe_struct_assign`, the value [st, cursor) just parsed, `noff` no struct): refused as `y = mkp();` is
@@ -6841,6 +7034,7 @@ fn _tup_asg_known(S, noff): i64 {
     return 0;
 }
 fn _try_aggregate_copy_assign(S, noff, term): i64 {
+    _ppd_asg(S, noff, term);   # 6.7.17 (D107): `u = &h;` into a `*S` of another depth
     if (_dyn_asg(S, noff, term) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
     if (_tup_asg(S, noff, term) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
     if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 0) == 1) { return 1; } return 0; }   # 6.7.6
