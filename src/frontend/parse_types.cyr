@@ -4767,7 +4767,7 @@ fn _tn_slice_ptr_el(S, noff): i64 {
         STI(S, _ptr_fnp_end(S, GTI(S) - 1, noff, 0, " for variable "));
         return 0;
     }
-    if (PEEKT(S) == 10) {   # 6.7.17: `[*( .. )]` is R3's refusal, as `var p: *(i64, i64)` is (it was "expected ']', got '('")
+    if (PEEKT(S) == 10) {   # 6.7.17: `[*( .. )]` is R3's refusal, as `var p: *(i64, i64)` is ("expected ']'" before)
         _tup_pos_refuse(S, "a pointer target `*( .. )`");
         return 0;
     }
