@@ -1669,7 +1669,7 @@ fn GFRS(S, fi): i64 { if (_fnret_base == 0) { return 0; } return L64(_fnret_base
 # 6.7.16 (D100 / D101): 1 = some fn returns a vector by value (a descriptor, <= -2048) — the scans that refuse a vector
 # call read as a word (`_vop_rchk`, `_vsc_arg`, `_vsc_ret`) run only then. CHANGELOG [6.7.16]
 var _vret_any = 0;
-var _vty_any = 0;   # 6.7.17: some local, parameter or pointer is typed a vector (`SLTYPE`, `_ps_vw`)
+var _vty_any = 0;   # 6.7.17: a local, parameter, pointer or global is typed a vector (SLTYPE, _ps_vw, _gv_*vd_set)
 fn SFRS(S, fi, v): i64 {
     if (_fnret_base == 0) { _fnret_base = alloc(131072 * 8); }
     if (v <= 0 - 2048) { _vret_any = 1; }
