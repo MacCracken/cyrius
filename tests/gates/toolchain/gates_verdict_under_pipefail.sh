@@ -45,6 +45,8 @@
 #     refusal row's build `"$T/$1" < .. 2> ..; BRC=$?` (and `rc=$?`, a run's `RRC=$?`) and a zero-count
 #     `n=$(grep -c ..)`: `-e` ended each gate on its first refused build or silent fixture, rc 1 and NO output. Each is
 #     `X=0; cmd || X=$?` / `|| true` now.
+#   * coroutine_midbody_suspend.sh (6.7.17) — a probe run `timeout 30 "$T/a1"; got=$?`: the probe exits 42 when it
+#     passes, so `-e` ended the gate on its first passing probe with rc 42; each is `got=0; .. || got=$?` now.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -100,7 +102,8 @@ tests/gates/toolchain/embed_link_race_pe.sh
 tests/gates/platform/pe_lockfileex_reroute.sh
 tests/gates/platform/pe_reroute_failure_errno.sh
 tests/gates/frontend/stack_enum_closure_return_scope.sh
-tests/gates/frontend/stack_enum_mixed_return_warning.sh"
+tests/gates/frontend/stack_enum_mixed_return_warning.sh
+tests/gates/frontend/coroutine_midbody_suspend.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
