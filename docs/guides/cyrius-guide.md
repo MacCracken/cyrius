@@ -2453,6 +2453,11 @@ an operand, a condition, an index, a range bound, a literal's field (*vector typ
 `return`'s D25's, a bool's, a struct's and a pointer of another kind's their own, a vector global its own. Read a lane
 through the vector's address (`load64(&w)`, `load64(&w + 8)`). ⚠ Through 6.7.16 each compiled and read lane 0, the same
 on every target (`take(w)`, `return w;`, `var x: i64 = w;` and `if (w)` 4, `1 + w` 5 with `w` = (4, 7); `*w` crashed).
+An ARRAY of vectors is refused in the same slots (6.7.17, the user's decision D103, 2026-10-22): a typed array's name
+read as a word is its element 0, so `var wa: f64v2[2]; take(wa)` passed element 0's lane 0 — `take(wa)`, `return wa;`,
+`var x: i64 = wa;`, `if (wa)`, `1 + wa`, `x = wa`, `syscall(60, wa)`, a tuple or multi-value element, a local or a
+global, in a fn or at top level — and each is *… - 'wa' is an array of vectors* now. Pass its address (`rd(&wa)`,
+`&wa + 16` is element 1) or read a lane (`load64(&wa)`).
 
 **An untyped declaration from a vector value copies it in a fn (6.7.17, the user's decision D95, 2026-10-22).** `var x
 = w;` with `w` a vector local, a by-value vector parameter or a closure's captured vector — `(w)` too — declares a

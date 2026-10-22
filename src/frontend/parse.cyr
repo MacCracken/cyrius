@@ -5509,7 +5509,9 @@ fn _dvec_rcv(S, term, vt, h, nm): i64 {
         return 0;
     }
     if (_vval_at(S, ti, _hl_dx_end(S, ti, term)) != 0) {   # a vector name, wrapped too: copied, or refused by name
-        if (_dvec_name(S, term, vt, h, nm) == 1) { return 1; }
+        if (_vvl_arr == 0) {   # 6.7.17 (D103): an array of vectors is the receive's own refusal
+            if (_dvec_name(S, term, vt, h, nm) == 1) { return 1; }
+        }
     }
     _vrcv_bad(S, ti, vt, term, 1);   # a call of another vector, wrapped or not
     if (_vrcv_other(S, term, vt) == 1) { return 1; }
