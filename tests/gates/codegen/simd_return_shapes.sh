@@ -3149,7 +3149,7 @@ vtw_msg() {  # the lines, one per line
     VTW2) echo "error:<source>:3:38: vector return type does not match the assigned variable";;
     VTW3) echo "error:<source>:5:30: vector type does not match the declared type - '*GP' is a vector";;
     VTW4) echo "error:<source>:3:16: vector type does not match the declared type - '*GP' is a vector";;
-    VTW5) echo "error:<source>:3:40: undefined variable 'zz9'";;
+    VTW5) echo "error:<source>:3:36: undefined variable 'zz9'";;
     VTW6) echo "warning:<source>:3:30: assigning non-pointer to typed pointer"; echo "warning:<source>:3:37: assigning non-pointer to typed pointer";;
     esac
 }

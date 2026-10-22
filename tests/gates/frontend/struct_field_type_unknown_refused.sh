@@ -456,7 +456,7 @@ UF="for struct field 'a'"
 printf '%s\n' "error:<source>:2:15: unknown type 'Zt' $UF" "error:<source>:2:27: unknown type 'Zq' for struct field 'b'" \
     "error:<source>:3:14: unknown type 'Zt' $UF" "error:<source>:4:15: unknown type 'Zt' $UF" \
     "error:<source>:5:15: unknown type 'Zt' $UF" "error:<source>:5:23: expected ';' between struct fields" \
-    "error:<source>:6:24: undefined variable 'zz' (missing include or enum?)" > "$T/ul.want"
+    "error:<source>:6:22: undefined variable 'zz' (missing include or enum?)" > "$T/ul.want"
 for leg in x86 pe macho aarch64 cx; do
     rc=0
     case "$leg" in
@@ -488,7 +488,7 @@ printf '%s\n' "error:<source>:1:16: unknown type 'Zt' $UF" "error:<source>:2:15:
     "error:<source>:7:16: struct field type 'A8' is declared after its use; declare it before 'A7'" \
     "error:<source>:9:16: vector type 'f64v4' cannot be a struct field type; field 'a'" \
     "error:<source>:10:16: unknown type 'Zt' $UF" \
-    "error:<source>:12:24: undefined variable 'zz' (missing include or enum?)" > "$T/uc.want"
+    "error:<source>:12:22: undefined variable 'zz' (missing include or enum?)" > "$T/uc.want"
 for leg in x86 pe macho aarch64 cx; do
     rc=0
     case "$leg" in

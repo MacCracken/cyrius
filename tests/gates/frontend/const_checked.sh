@@ -323,7 +323,7 @@ refusedn() {   # <name> <want error lines> <what> <source> <fragment>... : exact
 }
 refusedn lc5 2 "LC5: a refused value beside the annotation: its own error, no undefined variable" 'fn f(): i64 { const k: i64 = zz + 1; return k; }\nsyscall(60, f());\n' "1:22: $AN" "1:30: unknown name 'zz' in a const context"
 refusedn lc5t 2 "LC5t: the top-level form, read above and below" 'fn f(): i64 { return K; }\nconst K: i64 = zz + 1;\nfn g(): i64 { return K + 1; }\nsyscall(60, f() + g());\n' "2:8: $AN" "2:16: unknown name 'zz' in a const context"
-refusedn lc5n 2 "LC5n: the next statement still reports its own error" 'fn f(): i64 { const k: i64 = 3; var y = nope; return k; }\nsyscall(60, f());\n' "1:22: $AN" "1:45: undefined variable 'nope'"
+refusedn lc5n 2 "LC5n: the next statement still reports its own error" 'fn f(): i64 { const k: i64 = 3; var y = nope; return k; }\nsyscall(60, f());\n' "1:22: $AN" "1:41: undefined variable 'nope'"
 exits lc6 3 "LC6: the unannotated local const, unchanged" 'fn f(): i64 { const k = 3; return k; }\nsyscall(60, f());\n'
 exits lc6t 7 "LC6t: the unannotated top-level const read above and below, unchanged" 'fn f(): i64 { return K; }\nconst K = 3;\nfn g(): i64 { return K + 1; }\nsyscall(60, f() + g());\n'
 # S (6.7.14) — a refused const does not hold the cascade latch: each evaluation prints its own error,
@@ -332,7 +332,7 @@ cp "$ROOT/docs/development/issues/repros/2026-10-09-const-sweep-swallows-later-c
 build s0
 n=$(grep -c '^error' "$T/s0.err")
 if [ "$rc" -eq 0 ]; then bad "S0: the filed repro BUILT"
-elif [ "$n" -ne 3 ] || ! grep -qF "3:11: unknown name 'xx'" "$T/s0.err" || ! grep -qF "4:11: unknown name 'yy'" "$T/s0.err" || ! grep -qF "5:24: undefined variable 'zz'" "$T/s0.err"; then
+elif [ "$n" -ne 3 ] || ! grep -qF "3:11: unknown name 'xx'" "$T/s0.err" || ! grep -qF "4:11: unknown name 'yy'" "$T/s0.err" || ! grep -qF "5:22: undefined variable 'zz'" "$T/s0.err"; then
     bad "S0: the filed repro: $n error lines (want xx 3:11, yy 4:11, zz 5:24): $(grep '^error' "$T/s0.err" | tr '\n' '|')"
 else ok "S0: the filed repro: xx, yy and zz, once each"; fi
 CU="unknown name"
@@ -498,7 +498,7 @@ refusedn cm5 1 "CM5: a[0] in a const fn a const runs and run time calls" "const 
 refusedn cm6 1 "CM6: a const fn body's own const, k.m() (was a second \"undefined variable 'k'\")" "const fn f(n) {\n    const k = 3;\n    return k.m();\n}\n$FM" "3:13: const 'k' has no methods - $FS"
 refusedn cm7 1 "CM7: a const context, const K = C.m(); (was \"expected ';' after a const's value\")" "const C = 5;\nconst K = C.m();\nsyscall(60, K);\n" "2:12: const 'C' has no methods - $FS"
 refusedn cm8 1 "CM8: an array size, i64[C.m()] (was \"expected ']', got '.'\")" "const C = 5;\nfn main(): i64 {\n    var a: i64[C.m()];\n    return 0;\n}\nsyscall(60, main());\n" "3:17: const 'C' has no methods - $FS"
-refusedn sc4 2 "SC4: L.m(); as a statement — the next statement reports its own error" "fn main(): i64 {\n    const L = 5;\n    L.m();\n    var y = nope;\n    return 0;\n}\nsyscall(60, main());\n" "3:6: const 'L' has no methods - $FS" "4:17: undefined variable 'nope'"
+refusedn sc4 2 "SC4: L.m(); as a statement — the next statement reports its own error" "fn main(): i64 {\n    const L = 5;\n    L.m();\n    var y = nope;\n    return 0;\n}\nsyscall(60, main());\n" "3:6: const 'L' has no methods - $FS" "4:13: undefined variable 'nope'"
 refusedn sc5 1 "SC5: var x = C.m(); in the declaration zone" 'const C = 3;\nvar x = C.m();\nsyscall(60, 0);\n' "2:10: const 'C' has no methods - $FS"
 refusedn sc6 1 "SC6: var v = L.m(1, 2); — the const Q after it is still declared (no \"undefined variable 'Q'\")" 'fn main(): i64 { const L = 5; var v = L.m(1, 2); const Q = 4; return Q; }\nsyscall(60, main());\n' "1:40: const 'L' has no methods - $FS"
 exits km1 5 "KM1: control — a method call on a struct local in an ordinary fn" 'struct P { x; }\nimpl P { fn m(self) { return self.x + 1; } }\nfn main(): i64 { var p = P { 4 }; return p.m(); }\nsyscall(60, main());\n'
@@ -530,7 +530,7 @@ refusedn x3 1 "X3: const k = 1; k = 2; as the first statement (no run-time \"...
 refusedn x4 1 "X4: var y = n +; as the first statement" "const fn f(n) {\n    var y = n +;\n    return 1;\n}\n$FM" "2:16: not a compile-time expression"
 refusedn x5 1 "X5: the same after a var (was + \"unexpected ';'\" at the same token)" "const fn f(n) {\n    var q = 1;\n    var y = n +;\n    return q;\n}\n$FM" "3:16: not a compile-time expression"
 refusedn x6 1 "X6: a const after a refused first statement is bound (was a FALSE \"undefined variable 'k'\")" "const fn f(n) {\n    var y = load64(n);\n    const k = 3;\n    return k;\n}\nfn main() { return f(0); }\nvar r = main();\n" "2:13: not a compile-time expression"
-refusedn x7 2 "X7: control — a later statement's own error, which the check never reached, is reported" "const fn f(n) {\n    var y = n +;\n    var z = nope2;\n    return 1;\n}\n$FM" "2:16: not a compile-time expression" "3:18: undefined variable 'nope2'"
+refusedn x7 2 "X7: control — a later statement's own error, which the check never reached, is reported" "const fn f(n) {\n    var y = n +;\n    var z = nope2;\n    return 1;\n}\n$FM" "2:16: not a compile-time expression" "3:13: undefined variable 'nope2'"
 refusedn x8 2 "X8: a local const after the check's refusal reports its own value's error (was a FALSE \"undefined variable 'L'\")" "const fn f(n) {\n    var y = zz;\n    const L = ww;\n    return L;\n}\n$FM" "2:13: $CU 'zz'" "3:15: $CU 'ww'"
 refusedn x9 1 "X9: const k: i64; with no value, once" 'const fn cf(): i64 { const k: i64; return 1; }\nfn main() { return cf(); }\nvar r = main();\n' "1:29: $AN"
 # P (6.7.15) — a refused const context evaluated in place (an enum value, a global array size, `#assert`) holds no
@@ -635,13 +635,13 @@ refusedf qr3 1 "Q5: the filed repro r3, a.m<i64>(1) on a const fn's local (was \
 refusedn q6 1 "Q6: C.m<i64>(1) on a top-level const in a const fn (was \"has no fields\" + \"undefined variable 'i64'\")" "const C = 5;\nconst fn f(n) {\n    return C.m<i64>(1);\n}\n$FM" "3:13: const 'C' has no methods - $QS"
 refusedn q7 1 "Q7: const K = C.m<i64>(1); (was \"has no fields\")" 'const C = 5;\nconst K = C.m<i64>(1);\nsyscall(60, K);\n' "2:12: const 'C' has no methods - $QS"
 refusedn q8 1 "Q8: two type arguments and a parenthesised argument, var b = a.m<i64, i32>(1, (2));" "const fn f(n) {\n    var a = n;\n    var b = a.m<i64, i32>(1, (2));\n    return b;\n}\n$FM" "3:14: $KM"
-refusedn q9 2 "Q9: the call is stepped whole, a later undefined name is still the run-time body's own" "const fn f(n) {\n    var a = n;\n    return a.m<i64>(1) + zz9;\n}\n$FM" "3:13: $KM" "3:29: undefined variable 'zz9'"
+refusedn q9 2 "Q9: the call is stepped whole, a later undefined name is still the run-time body's own" "const fn f(n) {\n    var a = n;\n    return a.m<i64>(1) + zz9;\n}\n$FM" "3:13: $KM" "3:26: undefined variable 'zz9'"
 refusedn q10 1 "Q10: a parameter, n.m<i64>(1)" "const fn f(n) {\n    return n.m<i64>(1);\n}\n$FM" "2:13: $KM"
 refusedn q11 1 "Q11: a store C[0] = 5; (was \"it is not a typed array, ...\")" 'const C = 5;\nfn main(): i64 { C[0] = 5; return 0; }\nsyscall(60, main());\n' "2:19: cannot subscript const 'C' - $QS"
 refusedn q12 1 "Q12: a local const's store L[0] += 5; (was \"undefined variable 'L'\")" 'fn main(): i64 { const L = 5; L[0] += 5; return 0; }\nsyscall(60, main());\n' "1:32: cannot subscript const 'L' - $QS"
-refusedn q13 2 "Q13: in sync — the statement after var y = L[0]; reports its own error" 'fn main(): i64 { const L = 5; var y = L[0]; y = zz9; return y; }\nsyscall(60, main());\n' "1:40: cannot subscript const 'L' - $QS" "1:52: undefined variable 'zz9'"
-refusedn q14 2 "Q14: in sync at top level, after the first statement" 'const C = 5;\nvar y = 1;\ny = C[0];\ny = zz9;\nsyscall(60, y);\n' "3:6: cannot subscript const 'C' - $QS" "4:8: undefined variable 'zz9'"
-refusedn q15 2 "Q15: a top-level block's local const, then the next statement" 'var y = 1;\nif (1) { const L = 5; y = L[0]; }\ny = zz9;\nsyscall(60, y);\n' "2:28: cannot subscript const 'L' - $QS" "3:8: undefined variable 'zz9'"
+refusedn q13 2 "Q13: in sync — the statement after var y = L[0]; reports its own error" 'fn main(): i64 { const L = 5; var y = L[0]; y = zz9; return y; }\nsyscall(60, main());\n' "1:40: cannot subscript const 'L' - $QS" "1:49: undefined variable 'zz9'"
+refusedn q14 2 "Q14: in sync at top level, after the first statement" 'const C = 5;\nvar y = 1;\ny = C[0];\ny = zz9;\nsyscall(60, y);\n' "3:6: cannot subscript const 'C' - $QS" "4:5: undefined variable 'zz9'"
+refusedn q15 2 "Q15: a top-level block's local const, then the next statement" 'var y = 1;\nif (1) { const L = 5; y = L[0]; }\ny = zz9;\nsyscall(60, y);\n' "2:28: cannot subscript const 'L' - $QS" "3:5: undefined variable 'zz9'"
 refusedn q16 1 "Q16: a local const's value, const M = L[0]; (was \"expected ';', got '['\")" 'fn main(): i64 { const L = 5; const M = L[0]; return M; }\nsyscall(60, main());\n' "1:42: cannot subscript const 'L' - $QS"
 refusedn q17 2 "Q17: a global array size, then the next one (was \"expected ']'\" and the next swallowed)" 'const C = 5;\nvar a: i64[C[0]];\nvar b: i64[zz];\nsyscall(60, 0);\n' "2:13: cannot subscript const 'C' - $QS" "3:12: $CU 'zz'"
 refusedn q18 2 "Q18: an enum value, then the next member (was \"expected identifier, got '['\" + two duplicate-symbol warnings)" 'const C = 5;\nenum E { A = C[0], B = zz }\nsyscall(60, 0);\n' "2:15: cannot subscript const 'C' - $QS" "2:24: $CU 'zz'"
@@ -672,14 +672,14 @@ WH='fn f(v): i64 {\n    switch (v) {\n'
 WT='        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, f(1));\n'
 refusedn w2 2 "W2: a good label between them, case 2: (was \"5:14: expected ':'\")" "${WH}        case yy: return 1;\n        case 2: return 3;\n        case ww: return 2;\n${WT}" "3:14: $CU 'yy'" "5:14: $CU 'ww'"
 refusedn w3 1 "W3: a single refused label stays one error" "${WH}        case yy: return 1;\n${WT}" "3:14: $CU 'yy'"
-refusedn w4 2 "W4: a refused label's body reports its own error, as before" "${WH}        case yy: return zz9;\n${WT}" "3:14: $CU 'yy'" "3:28: undefined variable 'zz9'"
+refusedn w4 2 "W4: a refused label's body reports its own error, as before" "${WH}        case yy: return zz9;\n${WT}" "3:14: $CU 'yy'" "3:25: undefined variable 'zz9'"
 refusedn w5 2 "W5: the jump-table switch (was + \"expected ':', got identifier 'yy'\" and ww's misreport)" "${WH}        case 1: return 1;\n        case 2: return 2;\n        case yy: return 3;\n        case 3: return 4;\n        case ww: return 5;\n        case 4: return 6;\n${WT}" "5:14: $CU 'yy'" "7:14: $CU 'ww'"
 refusedn w6 2 "W6: refusals inside a label's expression, case 1 + yy: / case ww * 2:" "${WH}        case 1 + yy: return 1;\n        case ww * 2: return 2;\n${WT}" "3:18: $CU 'yy'" "4:14: $CU 'ww'"
 refusedn w7 3 "W7: an ordinary fn's call, a string and an f64 label, each its own (was \"expected ':', got identifier 'h'\" alone)" "fn h(): i64 { return 1; }\n${WH}        case h(): return 2;\n        case \"a\": return 3;\n        case 1.5: return 4;\n${WT}" "4:14: 'h' is not a \`const fn\`" "5:14: a case label must be an integer" "6:14: a case label must be an integer"
 refusedn w8 2 "W8: a generic fn's two instances, each label once" 'fn g<T>(v: T): i64 {\n    switch (v) {\n        case yy: return 1;\n        case ww: return 2;\n        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, g<i64>(1) + g<i32>(2));\n' "3:14: $CU 'yy'" "4:14: $CU 'ww'"
 refusedn w9 3 "W9: a nested switch's labels after the outer's refused one (was yy lost, two \"expected ':'\")" "${WH}        case 1: {\n            switch (v) { case yy: return 1; case ww: return 2; default: return 0; }\n        }\n        case vv: return 3;\n${WT}" "6:14: $CU 'vv'" "4:31: $CU 'yy'" "4:50: $CU 'ww'"
 refusedn w10 2 "W10: a top-level switch" 'var y = 1;\nswitch (y) {\n    case yy: y = 2;\n    case ww: y = 3;\n    default: y = 4;\n}\nsyscall(60, y);\n' "3:10: $CU 'yy'" "4:10: $CU 'ww'"
-refusedn w11 3 "W11: the statement after the switch still reports its own error" "${WH}        case yy: return 1;\n        case ww: return 2;\n        default: return 0;\n    }\n    var q = zz9;\n    return 0;\n}\nsyscall(60, f(1));\n" "3:14: $CU 'yy'" "4:14: $CU 'ww'" "7:16: undefined variable 'zz9'"
+refusedn w11 3 "W11: the statement after the switch still reports its own error" "${WH}        case yy: return 1;\n        case ww: return 2;\n        default: return 0;\n    }\n    var q = zz9;\n    return 0;\n}\nsyscall(60, f(1));\n" "3:14: $CU 'yy'" "4:14: $CU 'ww'" "7:13: undefined variable 'zz9'"
 refusedn w12 3 "W12: the labels after a refused subject report their own (yy was swallowed, ww misreported)" 'fn f(v): i64 {\n    var a: i64[2];\n    switch (a[0][1]) {\n        case yy: return 1;\n        case ww: return 2;\n        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, f(1));\n' "3:17: a subscript's result is an element" "4:14: $CU 'yy'" "5:14: $CU 'ww'"
 exits w13 80 "W13: control — const, enum constant, qualified, expression and literal labels run" 'const A = 1;\nenum E { P = 2, Q = 3 }\nfn f(v): i64 {\n    switch (v) {\n        case A: return 10;\n        case P: return 20;\n        case E.Q: return 30;\n        case A + 3: return 40;\n        case 5: return 50;\n        default: return 0;\n    }\n    return 0;\n}\nsyscall(60, f(3) + f(4) + f(1));\n'
 exits w14 46 "W14: control — a jump-table switch of const labels runs" 'const B = 10;\nfn f(v): i64 {\n    switch (v) {\n        case B: return 1;\n        case B + 1: return 2;\n        case B + 2: return 4;\n        case B + 3: return 8;\n        case B + 4: return 16;\n        default: return 32;\n    }\n    return 0;\n}\nsyscall(60, f(11) + f(12) + f(13) + f(99));\n'
@@ -777,11 +777,11 @@ var r = g(1);
 error:<source>:9:22: no struct type in scope for 'n'; $MXN
 error:<source>:10:26: no struct type in scope for 'a'; $MXN
 error:<source>:11:15: const 'L' has no methods - a const has no storage
-error:<source>:12:23: undefined variable 'zq'
+error:<source>:12:14: undefined variable 'zq'
 error:<source>:13:20: 'm' is not a variant of 'Color'
 error:<source>:14:23: no struct type in scope for 'gg'; $MXN
 error:<source>:16:18: const 'C' has no methods - a const has no storage
-error:<source>:17:14: $MXZ"
+error:<source>:17:12: $MXZ"
 mxrow MX5 "as statements, the next statement's error kept" 'const C = 5;
 enum Color { RED, BLUE }
 fn g(n) {
@@ -797,9 +797,9 @@ var r = g(1);
 ' "error:<source>:5:13: no struct type in scope for 'n'; $MXN
 error:<source>:6:6: const 'L' has no methods - a const has no storage
 error:<source>:7:6: const 'C' has no methods - a const has no storage
-error:<source>:8:14: undefined variable 'zq'
+error:<source>:8:5: undefined variable 'zq'
 error:<source>:9:11: 'm' is not a variant of 'Color'
-error:<source>:10:14: $MXZ"
+error:<source>:10:12: $MXZ"
 mxrow MX6 "at top level, in the zone and after the first statement" 'const C = 5;
 enum Color { RED, BLUE }
 var t = 1;
@@ -813,7 +813,7 @@ var w = zz;
 error:<source>:6:17: no struct type in scope for 't'; $MXN
 error:<source>:7:15: 'm' is not a variant of 'Color'
 error:<source>:8:9: no struct type in scope for 't'; $MXN
-error:<source>:9:11: $MXZ"
+error:<source>:9:9: $MXZ"
 mxsyn MX7a "--syntax-only: filed p.id<f64>(1.5) on a parameter (was \"expected ';', got '>'\")" 'fn g(p) { return p.id<f64>(1.5); }
 '
 mxsyn MX7b "--syntax-only: the const, the refused annotation, the undefined name, two type arguments" 'const C = 5; fn main(): i64 { var x: Foo = 5; var a = C.m<i64>(1); return x.m<i64>(1) + zq.m<i64, u8>(1, 2) + a; }

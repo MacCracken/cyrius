@@ -171,11 +171,11 @@
 #      compiled (exit 5) — only minting names `Box<R>`, so the outer list was marked unjudgeable — while
 #      `var b: Box<Box<R>>;` is refused: no `impl Show for Box<R>` can be written. The inner list, judged in its turn,
 #      now stands in the outer slot as a PENDING instance (`_pn_of`, nothing minted) that no impl names, its note
-#      spelled as `_mint_generic_name` would. VN0 the filed repro verbatim (once at 7:16, the note `impl Show for
-#      Box$R`); VN1 `Vec<SB<UB<R>>>` (outer bounded, inner unbounded); VN2 an unbounded outer over an instance builds;
+#      spelled as the source would write it (6.7.17: `Box<R>`; it was the table name `Box$R`). VN0 the filed repro
+#      verbatim (once at 7:16, the note `impl Show for Box<R>`); VN1 `Vec<SB<UB<R>>>` (outer bounded, inner unbounded); VN2 an unbounded outer over an instance builds;
 #      VN3 `Vec<Box<Box<i64>>>`'s inner base judged as 6.7.15 judged it (its two lines); VN4 a field, a parameter, a
 #      global; VN5 deeper — the first refused list alone (`Vec<Box<Box<Box<R>>>>`), a pending argument's own pending
-#      argument named whole (`UB$UB$R`); VN6 a generic's `Vec<Box<Box<T>>>` per instance; VN7 once per (struct,
+#      argument named whole (`UB<UB<R>>`); VN6 a generic's `Vec<Box<Box<T>>>` per instance; VN7 once per (struct,
 #      arguments), the by-value form among them (`_pn_canon`); VN8 an `impl Show for Box` names no instance.
 #      Filed: docs/development/issues/archived/2026-10-18-vec-element-nested-instance-argument-bound-unjudged.md
 #      Mutants (2026-10-20; MVN1 / MVN2 a one-edit scratch copy of the tree each, CYCC= its cycc): the lane's previous
@@ -775,7 +775,7 @@ note() {   # <name> <instance> <what>
     if grep -qF "needs \`impl Show for $2\`" "$T/$1.err"; then ok "$3: the note names $2"
     else bad "$3: no note naming $2: $(grep note "$T/$1.err" | tr '\n' ' ')"; fi
 }
-note vn0 'Box$R' "VN0"
+note vn0 'Box<R>' "VN0"
 VNH='include "lib/vec.cyr"
 trait Show { fn show(self): i64; }
 struct R { r; }
@@ -787,7 +787,7 @@ vn() { printf '%s\n%s\nsyscall(60, 7);\n' "$VNH" "$2" > "$T/$1.cyr"; }
 SBE="generic 'SB': its type argument does not implement trait 'Show'"
 vn vn1 'fn f(): i64 { var w: Vec<SB<UB<R>>> = 0; return 5; }'
 errs vn1 1 "VN1: Vec<SB<UB<R>>>, an unbounded inner instance" "error:<source>:8:26: $SBE"
-note vn1 'UB$R' "VN1"
+note vn1 'UB<R>' "VN1"
 printf '%s\n%s\nsyscall(60, f());\n' "$VNH" 'fn f(): i64 { var w: Vec<UB<Box<R>>> = 0; var u: Vec<UB<UB<R>>> = 0; return 5; }' > "$T/vn2.cyr"
 exits vn2 5 "VN2: an unbounded outer struct over an instance builds"
 vn vn3 'fn f(): i64 { var w: Vec<Box<Box<i64>>> = 0; return 5; }'
@@ -801,10 +801,10 @@ vn vn4c 'var GW: Vec<Box<Box<R>>> = 0;'
 errs vn4c 1 "VN4c: a global" "error:<source>:8:13: $VBE"
 vn vn5 'fn f(): i64 { var w: Vec<Box<Box<Box<R>>>> = 0; return 5; }'
 errs vn5 1 "VN5: Vec<Box<Box<Box<R>>>> — the first refused list alone, as by value" "error:<source>:8:30: $VBE"
-note vn5 'Box$R' "VN5"
+note vn5 'Box<R>' "VN5"
 vn vn5b 'fn f(): i64 { var w: Vec<Box<UB<UB<R>>>> = 0; return 5; }'
 errs vn5b 1 "VN5b: Vec<Box<UB<UB<R>>>>" "error:<source>:8:26: $VBE"
-note vn5b 'UB$UB$R' "VN5b"
+note vn5b 'UB<UB<R>>' "VN5b"
 vn vn6 'fn g<T>(x: T): i64 { var w: Vec<Box<Box<T>>> = 0; return 5; }
 fn f(): i64 { var r = R { 1 }; return g(r) + g<R>(r); }'
 errs vn6 1 "VN6: a generic's Vec<Box<Box<T>>> — per instance (R once), not in its base" "error:<source>:8:33: $VBE"
@@ -813,7 +813,7 @@ errs vn7 1 "VN7: once per (struct, arguments), the by-value form among them" "er
 vn vn8 'impl Show for Box { fn show(self): i64 { return 1; } }
 fn f(): i64 { var w: Vec<Box<Box<R>>> = 0; return 5; }'
 errs vn8 2 "VN8: impl Show for Box names no instance — the element refused (the impl's own i64 line apart)" "error:<source>:9:26: $VBE"
-note vn8 'Box$R' "VN8"
+note vn8 'Box<R>' "VN8"
 
 # NS — 6.7.16: every contract refusal of a compile prints (`_bnd_site_refuse` reports without the panic latch; the site
 # scan is a pre-scan nothing resyncs, so the first refusal's latch swallowed the rest)

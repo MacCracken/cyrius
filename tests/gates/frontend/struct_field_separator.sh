@@ -148,7 +148,7 @@ row S2 "a union, union U { a: i64 b: i32 }" 'union U { a: i64 b: i32 }
 fn f(): i64 { var u: U; u.a = 5; return u.a + zz; }
 syscall(60, f());
 ' "error:<source>:1:18: $UF
-error:<source>:2:49: $ZZ"
+error:<source>:2:47: $ZZ"
 row S3 "one field per line with no ';'" 'struct Q {
     x: i64
     y: i64
@@ -156,7 +156,7 @@ row S3 "one field per line with no ';'" 'struct Q {
 fn f(): i64 { var q = Q { 5, 6 }; return q.y + zz; }
 syscall(60, f());
 ' "error:<source>:3:5: $SF
-error:<source>:5:50: $ZZ"
+error:<source>:5:48: $ZZ"
 row S4 "a generic struct at two instances in one expression: once, the expression's own error kept" 'struct B<T> { a: T b: i64 }
 fn f(): i64 { return sizeof(B<i32>) + sizeof(B<i64>) + (1 2); }
 syscall(60, f());
@@ -169,14 +169,14 @@ fn f(): i64 { var r = R { 1, 2 }; return r.y + zz; }
 syscall(60, f());
 ' "error:<source>:1:14: $SF
 error:<source>:3:18: $SF
-error:<source>:4:50: $ZZ"
+error:<source>:4:48: $ZZ"
 row S6 "two missing separators in one struct and in one union: once each" 'struct P { a b c }
 union V { p q r }
 fn f(): i64 { return zz; }
 syscall(60, f());
 ' "error:<source>:1:14: $SF
 error:<source>:2:13: $UF
-error:<source>:3:24: $ZZ"
+error:<source>:3:22: $ZZ"
 row S7 "after every kind of field: a pointer, a Vec, a tuple, a narrow scalar, a struct, a generic instance" 'struct Pt { x; y; }
 struct Bx<T> { v: T; }
 struct P1 { a: *i64 b }
@@ -197,7 +197,7 @@ error:<source>:7:19: $SF
 error:<source>:8:24: $SF
 error:<source>:9:20: $UF
 error:<source>:10:19: $UF
-error:<source>:11:24: $ZZ"
+error:<source>:11:22: $ZZ"
 row S8a "--syntax-only: S1's lines" 'struct P { a b }
 struct Q { x: i64 y: i64 }
 fn f(): i64 { var p = P { 3, 4 }; var q = Q { 5, 6 }; return p.b * 10 + q.y; }
@@ -214,7 +214,7 @@ row S9 "control: a ',' between fields stays the loop's own error" 'struct P { a,
 fn f(): i64 { return zz; }
 syscall(60, f());
 ' "error:<source>:1:13: expected identifier, got ','
-error:<source>:2:24: $ZZ"
+error:<source>:2:22: $ZZ"
 row S10 "a #derive(Serialize) struct: the one error, nothing from the derive" 'include "lib/string.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -226,7 +226,7 @@ struct P { a: i64 b: i64 }
 fn f(): i64 { return zz; }
 syscall(60, f());
 ' "error:<source>:8:19: $SF
-error:<source>:9:24: $ZZ"
+error:<source>:9:22: $ZZ"
 
 echo "A — the separated forms compile and keep their offsets, run on every leg with a runner:"
 runs A1 "the filed values, separated, the last field without its ';'" 'struct P { a; b }

@@ -423,7 +423,7 @@ var r = run();
 syscall(60, G.a);
 ' "error:<source>:3:21: $MS" --syntax-only
 # S17 — a name that is no struct keeps its own error (the arm needs a declared struct).
-refuse "S17 control: an undefined name before {" "error:<source>:1:34: undefined variable 'Q'" 'fn run(): i64 { var x = 0; x = Q { 5 }; return x; }
+refuse "S17 control: an undefined name before {" "error:<source>:1:32: undefined variable 'Q'" 'fn run(): i64 { var x = 0; x = Q { 5 }; return x; }
 syscall(60, run());
 '
 # S18 — the struct's own name is printed.
@@ -795,7 +795,7 @@ printf '%s' "${SHP}fn f(): i64 { var y = P { 2 }; return zz; }
 syscall(60, f());
 " > "$D/r.cyr"
 cat "$D/r.cyr" | "$CC" > "$D/r.bin" 2>"$D/r.err" || true
-if [ "$(grep '^error' "$D/r.err" | sed 's/: .*//; s/^error:<source>://' | tr '\n' ' ')" = "4:29 4:41 " ] && grep -q "$MSH" "$D/r.err" && grep -q "undefined variable 'zz'" "$D/r.err"; then
+if [ "$(grep '^error' "$D/r.err" | sed 's/: .*//; s/^error:<source>://' | tr '\n' ' ')" = "4:29 4:39 " ] && grep -q "$MSH" "$D/r.err" && grep -q "undefined variable 'zz'" "$D/r.err"; then
     printf '  ok(refused): %-34s\n' "SH9 in sync: the next statement reports"; pass=$((pass+1))
 else
     printf '  FAIL: %-40s %s\n' "SH9 in sync: the next statement reports" "$(grep '^error' "$D/r.err" | tr '\n' '|')"; fail=$((fail+1))

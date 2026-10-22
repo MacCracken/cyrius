@@ -3304,6 +3304,7 @@ fn PP_DERIVE_TSZ(tn): i64 {
 fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
     # v6.5.20 — the generated block goes onto the ONE expanded line PP_PARSE_STRUCT_DEF
     # left open (the struct's closing-`}` line), then the user's tail, then that line is
     # terminated. Every synthesized fn therefore reports the line of the construct that
@@ -3315,6 +3316,7 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
         op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
     }
     _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
     op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
     store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
@@ -3346,6 +3348,7 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
 fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
     # v6.5.20 — see PP_DERIVE_SERIALIZE: bodies flattened onto the open closing-`}` line,
     # then the user's tail, then the single newline.
     _pp_flatten = 1;
@@ -3368,6 +3371,7 @@ fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
         op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
     }
     _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
     op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
     store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
@@ -3697,6 +3701,7 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
 fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
     # v6.5.20 — see PP_DERIVE_SERIALIZE: flattened onto the open closing-`}` line.
     _pp_flatten = 1;
     op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
@@ -3716,6 +3721,7 @@ fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
         op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     }
     _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
     op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
     store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
@@ -4513,7 +4519,131 @@ fn PP_PKGVER_AT(out, op, at): i64 {
     return 1;
 }
 
+# 6.7.17 — the expansion map's write side (its read side and the record layout: `_err_col`, util.cyr). PP_PASS starts
+# it (`_xm_reset`); each pass that rewrites the buffer opens with `_xm_begin`, translates the records it inherits as it
+# copies (`_xm_adv`, at its byte copy: a record whose first byte is copied moves to that byte's output offset; one
+# consumed by a directive or an expansion is gone), adds its own in-line expansions (`_xm_add`: a `#derive`'s generated
+# fns, a macro call), and closes with `_xm_end`, which merges the two. CHANGELOG [6.7.17]
+fn _xm_reset(): i64 {
+    _xm_n = 0;
+    _xm_nb = 0;
+    _xm_tn = 0;
+    _xm_c = 0;
+    _xm_next = 0x7FFFFFFFFFFF;
+    return 0;
+}
+fn _xm_begin(): i64 {
+    _xm_c = 0;
+    _xm_nb = 0;
+    _xm_next = 0x7FFFFFFFFFFF;
+    if (_xm_n > 0) { _xm_next = L64(_xm); }
+    return 0;
+}
+# The pass copies input byte `ip` to output offset `op` (`skip` 0), or drops it (`skip` nonzero: a skipped #ifdef arm).
+fn _xm_adv(ip, op, skip): i64 {
+    while (_xm_c < _xm_n) {
+        var e = _xm + _xm_c * 48;
+        var o = L64(e);
+        if (o > ip) { break; }
+        S64(e + 32, o);
+        S64(e + 40, L64(e + 8));
+        if (o == ip) { if (skip == 0) { S64(e, op); } else { S64(e, 0 - 1); } }
+        else { S64(e, 0 - 1); }
+        _xm_c = _xm_c + 1;
+    }
+    _xm_next = 0x7FFFFFFFFFFF;
+    if (_xm_c < _xm_n) { _xm_next = L64(_xm + _xm_c * 48); }
+    return 0;
+}
+# An in-line expansion: output [oo, oo + ol) replaced input [ii, ii + il), whose text is at `src`. Inside an expansion
+# a record already holds (a macro call in a derive's generated fns), that record grows by the difference instead.
+fn _xm_add(oo, ol, ii, il, src): i64 {
+    if (_xm_c > 0) {
+        var e = _xm + (_xm_c - 1) * 48;
+        if (L64(e) >= 0) {
+            var io = L64(e + 32);
+            var iend = io + L64(e + 40);
+            if (ii >= io) { if (ii < iend) { if (ii + il <= iend) {
+                        S64(e + 8, L64(e + 8) + ol - il);
+                        return 0;
+                    } } }
+        }
+    }
+    if (_xm_nb >= _xm_bcap) {
+        var nc = _xm_bcap * 2;
+        if (nc < 64) { nc = 64; }
+        var nb = alloc(nc * 48);
+        if (nb == 0) { return 0; }
+        var i = 0;
+        while (i < _xm_nb * 48) { S64(nb + i, L64(_xm_b + i)); i = i + 8; }
+        _xm_b = nb;
+        _xm_bcap = nc;
+    }
+    if (_xm_tn + il > _xm_tcap) {
+        var tc = _xm_tcap * 2 + il;
+        if (tc < 4096) { tc = 4096; }
+        var nt = alloc(tc);
+        if (nt == 0) { return 0; }
+        var j = 0;
+        while (j < _xm_tn) { store8(nt + j, load8(_xm_tb + j)); j = j + 1; }
+        _xm_tb = nt;
+        _xm_tcap = tc;
+    }
+    var k = 0;
+    while (k < il) { store8(_xm_tb + _xm_tn + k, load8(src + k)); k = k + 1; }
+    var r = _xm_b + _xm_nb * 48;
+    S64(r, oo);
+    S64(r + 8, ol);
+    S64(r + 16, il);
+    S64(r + 24, _xm_tn);
+    _xm_tn = _xm_tn + il;
+    _xm_nb = _xm_nb + 1;
+    return 0;
+}
+# The pass's end: the inherited records it never reached are gone; the live ones and its own, merged by offset.
+fn _xm_end(): i64 {
+    _xm_next = 0x7FFFFFFFFFFF;
+    var n = _xm_n + _xm_nb;
+    if (n == 0) { return 0; }
+    if (n > _xm_cap) {
+        var na = alloc(n * 2 * 48);
+        if (na == 0) { _xm_n = 0; _xm_nb = 0; return 0; }
+        var i = 0;
+        while (i < _xm_n * 48) { S64(na + i, L64(_xm + i)); i = i + 8; }
+        _xm = na;
+        _xm_cap = n * 2;
+    }
+    # live inherited records (a translated offset; those past `_xm_c` were never reached) packed in place
+    var w = 0;
+    var a = 0;
+    while (a < _xm_n) {
+        var e = _xm + a * 48;
+        if (a < _xm_c) { if (L64(e) >= 0) {
+                if (w != a) { var q = 0; while (q < 48) { S64(_xm + w * 48 + q, L64(e + q)); q = q + 8; } }
+                w = w + 1;
+            } }
+        a = a + 1;
+    }
+    # merged from the back into the table, the new records after the live ones
+    var ia = w - 1;
+    var ib = _xm_nb - 1;
+    var o = w + _xm_nb - 1;
+    while (ib >= 0) {
+        var src = _xm_b + ib * 48;
+        if (ia >= 0) { if (L64(_xm + ia * 48) > L64(src)) { src = _xm + ia * 48; ia = ia - 1; } else { ib = ib - 1; } }
+        else { ib = ib - 1; }
+        var q2 = 0;
+        while (q2 < 48) { S64(_xm + o * 48 + q2, L64(src + q2)); q2 = q2 + 8; }
+        o = o - 1;
+    }
+    _xm_n = w + _xm_nb;
+    _xm_nb = 0;
+    _xm_c = 0;
+    return 0;
+}
+
 fn PP_PASS(S): i64 {
+    _xm_reset();   # 6.7.17: the expansion map starts here (`_xm`, util.cyr)
     var bl = GBL(S);
     var out = S + 0x459D000;
     var op = 0;
@@ -4955,6 +5085,7 @@ fn PP_PASS(S): i64 {
     # PP_RESOLVE_PKGVER, now run by PREPROCESS once every pass is done.
     # No copy-back — data stays at S+0x459D000.
     # PP_IFDEF_PASS reads from 0x459D000 (via its tmp copy) and writes back there.
+    _xm_end();   # 6.7.17
     SBL(S, op);
     return had_include;
 }
@@ -4972,6 +5103,7 @@ fn PP_MACRO_PASS(S): i64 {
     # consumed by an expansion are skipped: they are an invocation, i.e. code, so the
     # state is unchanged by them. See PP_MACRO_START. CHANGELOG [6.6.6]
     var lst = 0;
+    _xm_begin();   # 6.7.17: the expansion map (`_xm`)
     while (ip < bl) {
         var c = load8(S + _SRCB + ip);
         var expanded = 0;
@@ -4984,8 +5116,11 @@ fn PP_MACRO_PASS(S): i64 {
                 # same-line bound that keeps an invocation opened inside a `#`
                 # comment from swallowing the code after it. See PP_MACRO_CALLABLE.
                 if (PP_MACRO_CALLABLE(S, ip, bl, lst) == 1) {
+                    var xi = ip;
+                    var xo = op;
                     ip = PP_EXPAND(S, mmi, ip, bl, out, op);
                     op = load64(S + 0x190700);
+                    _xm_add(xo, op - xo, xi, ip - xi, S + _SRCB + xi);   # 6.7.17: the call's source text
                     expanded = 1;
                 }
             }
@@ -5000,6 +5135,7 @@ fn PP_MACRO_PASS(S): i64 {
         # at the two ENTRY points (PP_NEUT_PASS over the raw source, and each include's
         # READFILE), which covers this pass without a guard in it. CHANGELOG [6.6.6]
         if (expanded == 0) {
+            if (ip >= _xm_next) { _xm_adv(ip, op, 0); }   # 6.7.17
             store8(out + op, c);
             op = op + 1;
             if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
@@ -5007,6 +5143,7 @@ fn PP_MACRO_PASS(S): i64 {
         }
     }
     # No copy-back — output stays at S+0x459D000. LEX reads from there.
+    _xm_end();   # 6.7.17
     SBL(S, op);
     return 0;
 }
@@ -5119,6 +5256,7 @@ fn PP_IFDEF_PASS(S): i64 {
         var lst = 0;
         var in_string = 0;
         var open0 = 0;   # 6.6.20: see PP_PASS
+        _xm_begin();   # 6.7.17: the expansion map (`_xm`), translated per iteration
         while (ip < bl) {
             var c = load8(tmp + ip);
             var handled = 0;
@@ -5306,6 +5444,7 @@ fn PP_IFDEF_PASS(S): i64 {
             }
             if (d0 == 0) { if (pp_depth > 0) { open0 = dip; } }
             if (handled == 0) {
+                if (ip >= _xm_next) { _xm_adv(ip, op, skip_depth); }   # 6.7.17
                 if (skip_depth == 0) { store8(out + op, c); op = op + 1; }
                 # v6.5.19 — keep a skipped line's newline; see the PP_PASS twin.
                 elif (c == 10) { store8(out + op, 10); op = op + 1; }
@@ -5337,6 +5476,7 @@ fn PP_IFDEF_PASS(S): i64 {
             _ew("\n", 1);
             syscall(SYS_EXIT, 1);
         }
+        _xm_end();   # 6.7.17
         SBL(S, op);
         iter = iter + 1;
     }

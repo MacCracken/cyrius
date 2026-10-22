@@ -283,12 +283,12 @@ atrefuse AT4 "a ',' with no message, then junk" '#assert 1 == 1, junk
 syscall(60, 9);' "error:<source>:1:17: $AK"
 atrefuse AT5 "the next line reports its own" '#assert 1 == 1, "m" junk
 syscall(60, zz);' "error:<source>:1:21: $AM
-error:<source>:2:15: $AZ"
+error:<source>:2:13: $AZ"
 atrefuse AT6 "a { on the line stepped through its } on a later line" 'fn f(): i64 { #assert 1 == 1, "m" if (1 == 1) {
 return 4; }
 return zz; }
 syscall(60, f());' "error:<source>:1:35: $AM
-error:<source>:3:10: $AZ"
+error:<source>:3:8: $AZ"
 atrefuse AT7 "a failing assertion with a tail: both" '#assert 1 == 2, "m" junk
 syscall(60, 9);' "error:<source>:1:17: #assert failed: m
 error:<source>:1:21: $AM"
@@ -297,7 +297,7 @@ a = 2;
 #assert 1 == 1, "m" junk
 a = a + zz;
 syscall(60, a);' "error:<source>:3:21: $AM
-error:<source>:4:11: $AZ"
+error:<source>:4:9: $AZ"
 atrefuse AT9 "a message spanning two lines, junk on its last" '#assert 1 == 1, "multi
 line" junk
 syscall(60, 9);' "error:<source>:2:7: $AM"

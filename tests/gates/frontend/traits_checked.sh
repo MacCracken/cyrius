@@ -836,35 +836,35 @@ impl A { struct Q { z; } fn m(self): i64 { return 1; } }
 var a: A = A { 1 };
 syscall(60, a.m() + zz);
 ' "error:<source>:2:10: $IM 'A'
-error:<source>:4:23: $IZ"
+error:<source>:4:21: $IZ"
 ibrow IB2 "a var member, a stray number after the last method" 'struct A { y; }
 impl A { var x = 1; fn m(self): i64 { return 1; } 5 }
 var a: A = A { 1 };
 syscall(60, a.m() + zz);
 ' "error:<source>:2:10: $IM 'A'
 error:<source>:2:51: $IM 'A'
-error:<source>:4:23: $IZ"
+error:<source>:4:21: $IZ"
 ibrow IB3 "an enum member of a trait impl" 'struct A { y; }
 trait Tr { fn m(self): i64; }
 impl Tr for A { enum E { X } fn m(self): i64 { return 1; } }
 var a: A = A { 1 };
 syscall(60, a.m() + zz);
 ' "error:<source>:3:17: $IM 'Tr' for 'A'
-error:<source>:5:23: $IZ"
+error:<source>:5:21: $IZ"
 ibrow IB4 "the refused member's name used before and after the impl" 'struct A { y; }
 fn g(q: *Q): i64 { return q.z; }
 impl A { struct Q { z; } fn m(self): i64 { return 1; } }
 fn h(): i64 { var q = Q { 1 }; return q.z; }
 syscall(60, g(0) + h() + zz);
 ' "error:<source>:3:10: $IM 'A'
-error:<source>:5:28: $IZ"
+error:<source>:5:26: $IZ"
 ibrow IB7 "a mistake in the method after a member is its own error" 'struct A { y; }
 impl A { var x = 1; fn m(self): i64 { return 1 2; } }
 var a: A = A { 1 };
 syscall(60, a.m() + zz);
 ' "error:<source>:2:10: $IM 'A'
 error:<source>:2:48: expected ';', got number 2
-error:<source>:4:23: $IZ"
+error:<source>:4:21: $IZ"
 ibrow IB5 "--syntax-only: IB1's shape" 'struct A { y; }
 impl A { struct Q { z; } fn m(self): i64 { return 1; } }
 var a: A = A { 1 };
@@ -917,14 +917,14 @@ fn main(): i64 { var b = Bx { 1 }; return b.get() + Bx_get(&b) + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:3:5: expected identifier, got '<'
-error:<source>:4:68: $IZ"
+error:<source>:4:66: $IZ"
 ihrow IH2 "impl P Q: its method called" 'struct P { v; }
 impl P Q { fn m(self): i64 { return 1; } }
 fn main(): i64 { var p = P { 1 }; return p.m() + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:2:8: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:3:52: $IZ"
+error:<source>:3:50: $IZ"
 ihrow IH3 "impl Tr for P<i64>: its method called" 'trait Tr { fn m(self): i64; }
 struct P { v; }
 impl Tr for P<i64> { fn m(self): i64 { return 1; } }
@@ -932,35 +932,35 @@ fn main(): i64 { var p = P { 1 }; return p.m() + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:3:14: expected '{', got '<'
-error:<source>:4:52: $IZ"
+error:<source>:4:50: $IZ"
 ihrow IH4 "impl Tr for {: pass 1 steps the block too" 'trait Tr { fn m(self): i64; }
 impl Tr for { fn m(self): i64 { return 1; } }
 fn main(): i64 { return 3 + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:2:13: expected identifier, got '{'
-error:<source>:3:31: $IZ"
+error:<source>:3:29: $IZ"
 ihrow IH5 "impl P;: the program after it is its own" 'struct P { v; }
 impl P;
 fn main(): i64 { return 3 + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:2:7: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:3:31: $IZ"
+error:<source>:3:29: $IZ"
 ihrow IH6 "impl P with no block: fn main is not its body" 'struct P { v; }
 impl P
 fn main(): i64 { return 3 + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:3:31: $IZ"
+error:<source>:3:29: $IZ"
 ihrow IH7 "a >> closing the impl's list" 'struct Bx { v; }
 impl<T: Sh<i64>> Bx<T> { fn get(self): i64 { return 1; } }
 fn main(): i64 { var b = Bx { 1 }; return b.get() + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:2:5: expected identifier, got '<'
-error:<source>:3:55: $IZ"
+error:<source>:3:53: $IZ"
 ihrow IH8 "a late impl<T> P: its method called" 'struct P { v; }
 var a = 1;
 a = 2;
@@ -968,7 +968,7 @@ impl<T> P { fn m(self): i64 { return 1; } }
 var p = P { 1 };
 syscall(60, p.m() + zz);
 ' "error:<source>:4:1: an \`impl\` declaration must come before the first top-level statement (line 3)
-error:<source>:6:23: $IZ"
+error:<source>:6:21: $IZ"
 ihrow IH9 "--syntax-only: IH1's header" 'trait Show { fn s(self): i64; }
 struct Bx { v; }
 impl<T: Show> Bx<T> { fn get(self): i64 { return 1; } }
@@ -981,52 +981,52 @@ fn main(): i64 { return 3 + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:1:6: expected identifier, got number 5
-error:<source>:2:31: $IZ"
+error:<source>:2:29: $IZ"
 ihrow IH11 "review: impl P then a call statement: its zz" 'struct P { v; }
 impl P
 syscall(60, zz);
 ' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:3:15: $IZ"
+error:<source>:3:13: $IZ"
 ihrow IH12 "review: impl P then an if statement: its block is not the impl's" 'struct P { v; }
 impl P
 if (zz == 1) { syscall(60, 1); }
 syscall(60, 0);
 ' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:3:8: $IZ"
+error:<source>:3:5: $IZ"
 ihrow IH13 "review: impl P then a while statement" 'struct P { v; }
 impl P
 while (zz == 1) { }
 syscall(60, 0);
 ' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:3:11: $IZ"
+error:<source>:3:8: $IZ"
 ihrow IH14 "impl P then a compound assignment" 'struct P { v; }
 var a = 0;
 impl P
 a += zz;
 syscall(60, a);
 ' "error:<source>:4:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:4:8: $IZ"
+error:<source>:4:6: $IZ"
 ihrow IH15 "impl P then a *p store" 'struct P { v; }
 var a = 0;
 impl P
 *(&a) = zz;
 syscall(60, a);
 ' "error:<source>:4:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:4:11: $IZ"
+error:<source>:4:9: $IZ"
 ihrow IH16 "impl P then loop {" 'struct P { v; }
 var a = 0;
 impl P
 loop { a = zz; break; }
 syscall(60, a);
 ' "error:<source>:4:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:4:14: $IZ"
+error:<source>:4:12: $IZ"
 ihrow IH17 "control: impl P Q.R { on one line: the block stepped" 'struct P { v; }
 impl P Q.R { fn m(self): i64 { return 1; } }
 fn main(): i64 { return 3 + zz; }
 var r = main();
 syscall(60, r);
 ' "error:<source>:2:8: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
-error:<source>:3:31: $IZ"
+error:<source>:3:29: $IZ"
 [ "$IHN" -ge 85 ] || bad "IH: the rows ran $IHN row-legs (floor 85) - rows or legs were lost"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi

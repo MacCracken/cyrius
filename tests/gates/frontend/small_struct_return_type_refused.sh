@@ -818,52 +818,52 @@ errs4 "P1 the filed repro verbatim (pr2): return zz;" 'struct Q { v; w; }
 fn mk(q: *Q): Q { return zz; }
 fn main(): i64 { var s: Q; var r: Q = mk(&s); return r.v; }
 syscall(60, main());
-' "error:<source>:2:28: $UZ"
+' "error:<source>:2:26: $UZ"
 errs4 "P2 return &(q);" "$PQ"'fn mk(q: *Q): Q { return &(q); }'"$PM" "error:<source>:2:27: expected identifier, got '('"
 errs4 "P3 return 5 + ;" "$PQ"'fn mk(q: *Q): Q { return 5 + ; }'"$PM" "error:<source>:2:30: unexpected ';'"
-errs4 "P4 return (zz);" "$PQ"'fn mk(q: *Q): Q { return (zz); }'"$PM" "error:<source>:2:29: $UZ"
-errs4 "P5 return *zz;" "$PQ"'fn mk(q: *Q): Q { return *zz; }'"$PM" "error:<source>:2:29: $UZ"
+errs4 "P4 return (zz);" "$PQ"'fn mk(q: *Q): Q { return (zz); }'"$PM" "error:<source>:2:27: $UZ"
+errs4 "P5 return *zz;" "$PQ"'fn mk(q: *Q): Q { return *zz; }'"$PM" "error:<source>:2:27: $UZ"
 errs4 "P6 return q.zz; (no such field)" "$PQ"'fn mk(q: *Q): Q { return q.zz; }'"$PM" "error:<source>:2:30: unknown field 'zz' on struct 'Q'"
-errs4 "P7 return zz.v;" "$PQ"'fn mk(q: *Q): Q { return zz.v; }'"$PM" "error:<source>:2:30: undefined variable 'zz'"
-errs4 "P8 return &zz;" "$PQ"'fn mk(q: *Q): Q { return &zz; }'"$PM" "error:<source>:2:29: undefined variable 'zz'"
-errs4 "P9 return q.v + zz;" "$PQ"'fn mk(q: *Q): Q { return q.v + zz; }'"$PM" "error:<source>:2:34: $UZ"
+errs4 "P7 return zz.v;" "$PQ"'fn mk(q: *Q): Q { return zz.v; }'"$PM" "error:<source>:2:26: undefined variable 'zz'"
+errs4 "P8 return &zz;" "$PQ"'fn mk(q: *Q): Q { return &zz; }'"$PM" "error:<source>:2:27: undefined variable 'zz'"
+errs4 "P9 return q.v + zz;" "$PQ"'fn mk(q: *Q): Q { return q.v + zz; }'"$PM" "error:<source>:2:32: $UZ"
 errs4 "P10 return (5 + );" "$PQ"'fn mk(q: *Q): Q { return (5 + ); }'"$PM" "error:<source>:2:31: unexpected ')'"
 errs4 "P11 a generic's return zz; at three types: once" "$PQ"'fn mk<T>(q: T): Q { return zz; }
 fn main(): i64 { var s: Q; var r: Q = mk(&s); var r2: Q = mk(5); var r3: Q = mk<i32>(5); return r.v; }
 syscall(60, main());
-' "error:<source>:2:30: $UZ"
+' "error:<source>:2:28: $UZ"
 errs4 "P12 an error in a closure body inside the value" 'include "lib/fnptr.cyr"
-'"$PQ"'fn mk(q: *Q): Q { return fncall1(|x| { return x + zz; }, 5); }'"$PM" "error:<source>:3:53: $UZ"
+'"$PQ"'fn mk(q: *Q): Q { return fncall1(|x| { return x + zz; }, 5); }'"$PM" "error:<source>:3:51: $UZ"
 errs4 "P13 a closure's return, then the value's own error" "$PQ"'fn ap(f, x) { return x; }
-fn mk(q: *Q): Q { return ap(|x| { return x; }, zz); }'"$PM" "error:<source>:3:50: $UZ"
+fn mk(q: *Q): Q { return ap(|x| { return x; }, zz); }'"$PM" "error:<source>:3:48: $UZ"
 errs4 "P14 an #inline replay's return, then the value's own error" "$PQ"'#inline
 fn one(x): i64 { return x + 1; }
 fn ap(a, b) { return a; }
-fn mk(q: *Q): Q { return ap(one(5), zz); }'"$PM" "error:<source>:5:39: $UZ"
+fn mk(q: *Q): Q { return ap(one(5), zz); }'"$PM" "error:<source>:5:37: $UZ"
 errs4 "P15 an earlier statement in error: one error per statement" "$PQ"'fn mk(q: *Q): Q { var a = yy; return zz; }'"$PM" \
-    "error:<source>:2:29: undefined variable 'yy' (missing include or enum?)" "error:<source>:2:40: $UZ"
+    "error:<source>:2:27: undefined variable 'yy' (missing include or enum?)" "error:<source>:2:38: $UZ"
 # Unchanged: a value that parses keeps the class's refusal — after an earlier statement's error too, beside a closure's
 # or an #inline replay's own return, at a generic's every instance once — and the 8 B / 24 B classes their own error.
 errs4 "PC1 control: return 5; keeps the refusal" "$PQ"'fn mk(q: *Q): Q { return 5; }'"$PM" "error:<source>:2:26: $PR \`5\`"
 errs4 "PC2 control: return t; (a scalar local) keeps it" "$PQ"'fn mk(q: *Q): Q { var t = 3; return t; }'"$PM" \
     "error:<source>:2:37: $PR \`t\`"
 errs4 "PC3 control: an earlier statement in error, then return 5;" "$PQ"'fn mk(q: *Q): Q { var a = yy; return 5; }'"$PM" \
-    "error:<source>:2:29: undefined variable 'yy' (missing include or enum?)" "error:<source>:2:38: $PR \`5\`"
+    "error:<source>:2:27: undefined variable 'yy' (missing include or enum?)" "error:<source>:2:38: $PR \`5\`"
 errs4 "PC4 control: a closure's own return inside the value" "$PQ"'fn ap(f, x) { return x; }
 fn mk(q: *Q): Q { return ap(|x| { return x; }, 5); }'"$PM" "error:<source>:3:26: $PR \`ap\`"
 errs4 "PC5 control: an #inline replay's return inside the value" "$PQ"'#inline
 fn one(x): i64 { return x + 1; }
 fn mk(q: *Q): Q { return one(5); }
-fn mk2(q: *Q): Q { return one(zz); }'"$PM" "error:<source>:4:26: $PR \`one\`" "error:<source>:5:33: $UZ"
+fn mk2(q: *Q): Q { return one(zz); }'"$PM" "error:<source>:4:26: $PR \`one\`" "error:<source>:5:31: $UZ"
 errs4 "PC6 control: a generic's return 5; at three types: once" "$PQ"'fn mk<T>(q: T): Q { return 5; }
 fn main(): i64 { var s: Q; var r: Q = mk(&s); var r2: Q = mk(5); var r3: Q = mk<i32>(5); return r.v; }
 syscall(60, main());
 ' "error:<source>:2:28: $PR \`5\`"
 errs4 "PC7 control: three statements, three errors" "$PQ"'fn mk(q: *Q): Q { if (q.v == 1) { return zz; } return 5; }
-fn mk2(q: *Q): Q { return 6 + ; }'"$PM" "error:<source>:2:44: $UZ" "error:<source>:2:55: $PR \`5\`" \
+fn mk2(q: *Q): Q { return 6 + ; }'"$PM" "error:<source>:2:42: $UZ" "error:<source>:2:55: $PR \`5\`" \
     "error:<source>:3:31: unexpected ';'"
 errs4 "PC8 control: the 8 B class's return zz;" 'struct Q { v; }
-fn mk(q: *Q): Q { return zz; }'"$PM" "error:<source>:2:28: $UZ"
+fn mk(q: *Q): Q { return zz; }'"$PM" "error:<source>:2:26: $UZ"
 errs4 "PC9 control: the 24 B class's return zz;" 'struct Q { v; w; x; }
 fn mk(q: *Q): Q { return zz; }'"$PM" "error:<source>:2:26: struct-return: identifier is not a local"
 
@@ -877,11 +877,11 @@ SR='struct-return fn: return must be a bare local identifier, or a call to a fn 
 for sxz in 16 24; do
     if [ "$sxz" = 16 ]; then SQ="$PQ$SX"; else SQ='struct Q { v; w; x; }
 '"$SX"; fi
-    errs4 "SX1 return zz + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return zz + 1; }'"$PM" "error:<source>:4:29: $UZ"
-    errs4 "SX2 return zz - q; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return zz - q; }'"$PM" "error:<source>:4:29: $UZ"
-    errs4 "SX3 return (zz) + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return (zz) + 1; }'"$PM" "error:<source>:4:29: $UZ"
-    errs4 "SX4 return q.e(zz); ($sxz B, a scalar method)" "$SQ"'fn mk(q: *Q): Q { return q.e(zz); }'"$PM" "error:<source>:4:32: $UZ"
-    errs4 "SX5 return mk2(zz) + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return mk2(zz) + 1; }'"$PM" "error:<source>:4:32: $UZ"
+    errs4 "SX1 return zz + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return zz + 1; }'"$PM" "error:<source>:4:26: $UZ"
+    errs4 "SX2 return zz - q; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return zz - q; }'"$PM" "error:<source>:4:26: $UZ"
+    errs4 "SX3 return (zz) + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return (zz) + 1; }'"$PM" "error:<source>:4:27: $UZ"
+    errs4 "SX4 return q.e(zz); ($sxz B, a scalar method)" "$SQ"'fn mk(q: *Q): Q { return q.e(zz); }'"$PM" "error:<source>:4:30: $UZ"
+    errs4 "SX5 return mk2(zz) + 1; ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return mk2(zz) + 1; }'"$PM" "error:<source>:4:30: $UZ"
     errs4 "SXC1 control: return q.e(1); keeps the refusal ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return q.e(1); }'"$PM" \
         "error:<source>:4:32: $SR"
     errs4 "SXC2 control: return mk2(1) + 1; keeps it ($sxz B)" "$SQ"'fn mk(q: *Q): Q { return mk2(1) + 1; }'"$PM" \
@@ -909,26 +909,26 @@ for vt in f64v2 f64v4; do
 fn main(): i64 { var s: '"$vt"'; var r: '"$vt"' = mk(&s); return load64(&r); }
 syscall(60, main());
 '
-    errs4 "VE1 return zz; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return zz; }'"$VM" "error:<source>:1:36: $UZ"
+    errs4 "VE1 return zz; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return zz; }'"$VM" "error:<source>:1:34: $UZ"
     errs4 "VE2 return &(q); ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return &(q); }'"$VM" "error:<source>:1:35: expected identifier, got '('"
     errs4 "VE3 return 5 + ; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return 5 + ; }'"$VM" "error:<source>:1:38: unexpected ';'"
-    errs4 "VE4 return zz + 1; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return zz + 1; }'"$VM" "error:<source>:1:37: $UZ"
-    errs4 "VE5 return (zz); ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return (zz); }'"$VM" "error:<source>:1:37: $UZ"
+    errs4 "VE4 return zz + 1; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return zz + 1; }'"$VM" "error:<source>:1:34: $UZ"
+    errs4 "VE5 return (zz); ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return (zz); }'"$VM" "error:<source>:1:35: $UZ"
     errs4 "VE6 return q.zz; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return q.zz; }'"$VM" \
         "error:<source>:1:38: no struct type in scope for 'q'; a '.field' access needs its struct declaration (missing include?)"
     errs4 "VE7 a closure's return, then the value's own error ($vt)" 'fn ap(f, x) { return x; }
-fn mk(q: *'"$vt"'): '"$vt"' { return ap(|x| { return x; }, zz); }'"$VM" "error:<source>:2:58: $UZ"
+fn mk(q: *'"$vt"'): '"$vt"' { return ap(|x| { return x; }, zz); }'"$VM" "error:<source>:2:56: $UZ"
     errs4 "VE9 an earlier statement in error: one error per statement ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { var a = yy; return zz; }'"$VM" \
-        "error:<source>:1:37: undefined variable 'yy' (missing include or enum?)" "error:<source>:1:48: $UZ"
+        "error:<source>:1:35: undefined variable 'yy' (missing include or enum?)" "error:<source>:1:46: $UZ"
     errs4 "VE10 a generic's return zz; at three types: once ($vt)" 'fn mk<T>(q: T): '"$vt"' { return zz; }
 fn main(): i64 { var s: '"$vt"'; var r: '"$vt"' = mk(&s); var r2: '"$vt"' = mk(5); var r3: '"$vt"' = mk<i32>(5); return load64(&r); }
 syscall(60, main());
-' "error:<source>:1:34: $UZ"
+' "error:<source>:1:32: $UZ"
     errs4 "VEC1 control: return 5; keeps the refusal ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { return 5; }'"$VM" "error:<source>:1:34: $VR \`5\`"
     errs4 "VEC2 control: return t; (a scalar local) keeps it ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { var t = 3; return t; }'"$VM" \
         "error:<source>:1:45: $VR \`t\`"
     errs4 "VEC3 control: an earlier statement in error, then return 5; ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { var a = yy; return 5; }'"$VM" \
-        "error:<source>:1:37: undefined variable 'yy' (missing include or enum?)" "error:<source>:1:46: $VR \`5\`"
+        "error:<source>:1:35: undefined variable 'yy' (missing include or enum?)" "error:<source>:1:46: $VR \`5\`"
     errs4 "VEC4 control: a closure's own return inside the value ($vt)" 'fn ap(f, x) { return x; }
 fn mk(q: *'"$vt"'): '"$vt"' { return ap(|x| { return x; }, 5); }'"$VM" "error:<source>:2:34: $VR \`ap\`"
     errs4 "VEC6 control: a generic's return 5; at three types: once ($vt)" 'fn mk<T>(q: T): '"$vt"' { return 5; }
@@ -938,13 +938,13 @@ syscall(60, main());
     errs4 "VE8 an #inline replay's return, then the value's own error ($vt)" '#inline
 fn one(x): i64 { return x + 1; }
 fn ap(a, b) { return a; }
-fn mk(q: *'"$vt"'): '"$vt"' { return ap(one(5), zz); }'"$VM" "error:<source>:4:47: $UZ"
+fn mk(q: *'"$vt"'): '"$vt"' { return ap(one(5), zz); }'"$VM" "error:<source>:4:45: $UZ"
     errs4 "VEC5 control: an #inline replay's return inside the value is the callee's ($vt)" '#inline
 fn one(x): i64 { return x + 1; }
 fn mk(q: *'"$vt"'): '"$vt"' { return one(5); }
-fn mk2(q: *'"$vt"'): '"$vt"' { return one(zz); }'"$VM" "error:<source>:3:34: $VR \`one\`" "error:<source>:4:41: $UZ"
+fn mk2(q: *'"$vt"'): '"$vt"' { return one(zz); }'"$VM" "error:<source>:3:34: $VR \`one\`" "error:<source>:4:39: $UZ"
     errs4 "VEC7 control: three statements, three errors ($vt)" 'fn mk(q: *'"$vt"'): '"$vt"' { if (load64(q) == 1) { return zz; } return 5; }
-fn mk2(q: *'"$vt"'): '"$vt"' { return 6 + ; }'"$VM" "error:<source>:1:58: $UZ" "error:<source>:1:69: $VR \`5\`" \
+fn mk2(q: *'"$vt"'): '"$vt"' { return 6 + ; }'"$VM" "error:<source>:1:56: $UZ" "error:<source>:1:69: $VR \`5\`" \
         "error:<source>:2:39: unexpected ';'"
 done
 
@@ -963,13 +963,13 @@ fn main(): i64 { return 0; }
 syscall(60, main());
 '
 errs4 "TU1 return (zz, 1); (16 B)" 'struct Q { v; w; }
-fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:29: $UZ"
+fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:27: $UZ"
 errs4 "TU2 return (zz, 1); (8 B)" 'struct Q { v; }
-fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:29: $UZ"
+fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:27: $UZ"
 errs4 "TU3 return (zz, 1); (24 B)" 'struct Q { v; w; x; }
-fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:29: $UZ"
+fn mk(q: *Q): Q { return (zz, 1); }'"$TM" "error:<source>:2:27: $UZ"
 errs4 "TU4 return (1, 5 + ); (f64v2)" 'fn mk(q: *f64v2): f64v2 { return (1, 5 + ); }'"$TM" "error:<source>:1:42: unexpected ')'"
-errs4 "TU5 return (zz, 1, 2); (f64v4)" 'fn mk(q: *f64v4): f64v4 { return (zz, 1, 2); }'"$TM" "error:<source>:1:37: $UZ"
+errs4 "TU5 return (zz, 1, 2); (f64v4)" 'fn mk(q: *f64v4): f64v4 { return (zz, 1, 2); }'"$TM" "error:<source>:1:35: $UZ"
 errs4 "TU6 return (1, 2, 3, 4); (16 B): the class's refusal once" 'struct Q { v; w; }
 fn mk(q: *Q): Q { return (1, 2, 3, 4); }'"$TM" "error:<source>:2:26: $TT\`(a, b, c)\` is a tuple, another type"
 errs4 "TU7 return (1, 2, 3, 4); (f64v2): the class's refusal once" 'fn mk(q: *f64v2): f64v2 { return (1, 2, 3, 4); }'"$TM" \
@@ -981,7 +981,7 @@ errs4 "TUC2 control: return (1, 2); keeps the refusal (f64v2)" 'fn mk(q: *f64v2)
 errs4 "TUC3 control: a scalar fn's return (1, 2, 3, 4); keeps the arity error" 'fn mk(q): i64 { return (1, 2, 3, 4); }'"$TM" \
     "error:<source>:1:24: multi-value return needs 2 or 3 types"
 errs4 "TUC4 control: an earlier statement in error, then return (1, 2);" 'struct Q { v; w; }
-fn mk(q: *Q): Q { var a = yy; return (1, 2); }'"$TM" "error:<source>:2:29: undefined variable 'yy' (missing include or enum?)" \
+fn mk(q: *Q): Q { var a = yy; return (1, 2); }'"$TM" "error:<source>:2:27: undefined variable 'yy' (missing include or enum?)" \
     "error:<source>:2:38: $TT\`(a, b)\` is a tuple, another type"
 
 # 6.7.16 (met with them) — AND `ret2(a, b)`'s refusals (`_ret2_late`): in a struct fn (6.7.13's D22), a vector fn (6.7.14's
@@ -993,12 +993,12 @@ fn mk(q: *Q): Q { var a = yy; return (1, 2); }'"$TM" "error:<source>:2:29: undef
 #       legs
 RQ='struct Q { v; w; }
 '
-errs4 "R2E1 return ret2(zz, 1); (16 B)" "$RQ"'fn mk(q: *Q): Q { return ret2(zz, 1); }'"$TM" "error:<source>:2:33: $UZ"
-errs4 "R2E2 ret2(zz, 1); (16 B)" "$RQ"'fn mk(q: *Q): Q { ret2(zz, 1); }'"$TM" "error:<source>:2:26: $UZ"
-errs4 "R2E3 ret2(zz, 1); (f64v2)" "$RQ"'fn mk(q: *f64v2): f64v2 { ret2(zz, 1); }'"$TM" "error:<source>:2:34: $UZ"
+errs4 "R2E1 return ret2(zz, 1); (16 B)" "$RQ"'fn mk(q: *Q): Q { return ret2(zz, 1); }'"$TM" "error:<source>:2:31: $UZ"
+errs4 "R2E2 ret2(zz, 1); (16 B)" "$RQ"'fn mk(q: *Q): Q { ret2(zz, 1); }'"$TM" "error:<source>:2:24: $UZ"
+errs4 "R2E3 ret2(zz, 1); (f64v2)" "$RQ"'fn mk(q: *f64v2): f64v2 { ret2(zz, 1); }'"$TM" "error:<source>:2:32: $UZ"
 errs4 "R2E4 ret2(zz, 1); in a 3-value fn" "$RQ"'fn mk(q): (i64, i64, i64) { if (q == 1) { ret2(zz, 1); } return (1, 2, 3); }'"$TM" \
-    "error:<source>:2:50: $UZ"
-errs4 "R2E5 ret2(zz, 1); outside a fn" "$RQ"'ret2(zz, 1);'"$TM" "error:<source>:2:8: $UZ"
+    "error:<source>:2:48: $UZ"
+errs4 "R2E5 ret2(zz, 1); outside a fn" "$RQ"'ret2(zz, 1);'"$TM" "error:<source>:2:6: $UZ"
 errs4 "R2C1 control: ret2(1, 2); keeps the refusal (16 B)" "$RQ"'fn mk(q: *Q): Q { ret2(1, 2); }'"$TM" \
     "error:<source>:2:19: $TT\`ret2\` writes two values"
 errs4 "R2C2 control: ret2(1, 2); keeps it (f64v2)" "$RQ"'fn mk(q: *f64v2): f64v2 { ret2(1, 2); }'"$TM" "error:<source>:2:27: $VR \`ret2\`"

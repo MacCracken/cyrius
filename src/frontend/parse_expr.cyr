@@ -4329,7 +4329,7 @@ fn _arr_sub_addr(S, noff): i64 {
     if (k == 0) {
         if (_syntax_only == 0) { if (_cst_sub_at(S, noff) == 0) { if (_sub_undef_said(S, noff) == 0) {   # 6.7.14
                     _refuse_in_sync(S);   # 6.7.16: each refusal here is in sync — the brackets are parsed on
-                    ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
+                    _undef_ident_at(S, _nm_ti(S, GTI(S) - 1, noff), noff, " (missing include or enum?)");   # 6.7.17: at the name
                     _gv_note_blockscoped(S, noff);
                 } } }   # 6.7.16: a local const (`_cst_sub_at`)
         aw = 0;
@@ -4379,8 +4379,7 @@ fn _sub_refuse(S, noff, k, ix, d, pw): i64 {
     if (pw > 0) {
         var sid = _sub_ptr_sid(S, noff, k, ix);
         if (sid > 0) {
-            return _sub_err(S, noff, el, " - step with p + i to an element of struct ",
-              L64(S + 0x1A6018 + (sid - 1) * 8));
+            return _sub_err(S, noff, el, " - step with p + i to an element of struct ", _ei_sid(sid));
         }
         return _sub_err(S, noff, el, " - its element is a pointer, string, enum or vector; load at p + i", 0 - 1);
     }
@@ -4412,9 +4411,9 @@ fn _sub_err(S, noff, a, b, n2): i64 {
     PRSTR("'");
     PRSTR(a);
     PRSTR(b);
-    if (n2 >= 0) {
+    if (n2 >= 0 || n2 <= 0 - 1000) {   # 6.7.17: or a struct (`_ei_sid`)
         PRSTR("'");
-        PRSTR(S + 0xEC00000 + n2);
+        _ei_pr(S, n2);
         PRSTR("'");
     }
     _ew("\n", 1);
@@ -4668,7 +4667,7 @@ fn _psub_err(S, hd, nt, a, b, n2): i64 {
     PRSTR(b);
     if (n2 != 0) {
         PRSTR("'");
-        PRSTR(n2);
+        if (n2 <= 0 - 1000) { _ei_pr(S, n2); } else { PRSTR(n2); }   # 6.7.17: a struct (`_ei_sid`)
         PRSTR("'");
     }
     _ew("\n", 1);
@@ -4705,7 +4704,7 @@ fn _psub_ed(S, w, h, nt): i64 {
     else { sid = _sub_ret_sid(S); }
     var el = ": a subscript takes an integer, f64, f32 or bool element";
     if (sid > 0) {
-        return _psub_err(S, hd, nt, el, " - its element is struct ", S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+        return _psub_err(S, hd, nt, el, " - its element is struct ", _ei_sid(sid));
     }
     return _psub_err(S, hd, nt, el, " - its element is a pointer, string, enum or vector", 0);
 }
@@ -5824,7 +5823,7 @@ fn _slit_undecl(S, ti, noff): i64 {
     var eq = _slit_wrap_eq(S, ti, o);
     if (_syntax_only == 0 || _unp_names == 1) {   # 6.7.17 (D110): the never-parsed body's read (`_unp_names`) too
         if (_slit_ann_said(S, eq, noff) == 1) { _had_error = 1; }
-        else { _undef_var_report(S, noff, " (missing include or enum?)"); }
+        else { _undef_var_report(S, ti, noff, " (missing include or enum?)"); }
     }
     if (eq > 0) { _ann_refd_mark(S, _slit_decl_name(S, eq)); }
     return o;
@@ -6082,11 +6081,12 @@ fn _sub_undef_said(S, noff): i64 {
     if (_ce_name_said(S, noff) == 1) { return 1; }
     return _dl_name_refd(S, noff);
 }
-fn _undef_var_report(S, noff, tail): i64 {
+# At the name's token `ti` (6.7.17, D34; `_nm_ti`); the note reads the cursor.
+fn _undef_var_report(S, ti, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
     if (_dl_name_refd(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr); 6.7.16: a variable
     if (_unp_on == 1) { _ew_say = 1; }   # 6.7.17 (D110): said by a never-parsed body's read too (`_unp_run`)
-    if (ERR_UNDEF(S, noff, tail) == 1) { if (_unp_on == 1) { _unp_said = _unp_said + 1; } }   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
+    if (ERR_UNDEF(S, ti, noff, tail) == 1) { if (_unp_on == 1) { _unp_said = _unp_said + 1; } }   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
     _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
     _ew_say = 0;
     return 0;
@@ -6095,7 +6095,7 @@ fn _undef_var_report(S, noff, tail): i64 {
 # is the constant 0 of a sibling file's name), its value 0; or the call `_ugc_call` takes.
 fn _undef_read(S, noff): i64 {
     if (_ugc_call(S, noff) == 1) { return 0; }
-    if (_syntax_only == 0 || _unp_names == 1) { _undef_var_report(S, noff, " (missing include or enum?)"); _undef_tlist(S); }
+    if (_syntax_only == 0 || _unp_names == 1) { _undef_var_report(S, _nm_ti(S, GTI(S) - 1, noff), noff, " (missing include or enum?)"); _undef_tlist(S); }
     EMOVI(S, 0);
     return 0;
 }
@@ -6634,7 +6634,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         }
         # Nothing of this name exists in any scope.
         if (_syntax_only == 1) { if (_unp_names == 0) { EMOVI(S, 0); return 0; } }   # v6.5.19: see _syntax_only; 6.7.17 (D110)
-        _undef_var_report(S, anoff, "");   # 6.7.14: once per token (ERR_UNDEF)
+        _undef_var_report(S, _nm_ti(S, GTI(S) - 1, anoff), anoff, "");   # 6.7.14: once per token (ERR_UNDEF)
         EMOVI(S, 0); return 0;
     }
     if (typ == 30) {

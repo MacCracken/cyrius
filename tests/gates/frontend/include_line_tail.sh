@@ -150,7 +150,7 @@ refuse IT5 "a second ';' is a tail" 'include "lib/syscalls.cyr";;
 syscall(60, 3);' "error:<source>:1:28: $IM"
 refuse IT6 "the file is still included: a later line's own error, nothing invented" 'include "lib/syscalls.cyr" junk
 syscall(60, zz);' "error:<source>:1:28: $IM
-error:<source>:2:15: $ZZ"
+error:<source>:2:13: $ZZ"
 runs IC1 'control: include "x"' 'include "lib/syscalls.cyr"
 syscall(60, 3);' 3
 runs IC2 'control: include "x";' 'include "lib/syscalls.cyr";
@@ -191,7 +191,7 @@ syscall(60, ka);' "error:<source>:1:15: $RM_"
 refuse RT3 "the file is still read: a later line's own error, nothing invented" 'var a = 1;
 #ref "f.toml" junk
 syscall(60, ka + zz);' "error:<source>:2:15: $RM_
-error:<source>:3:20: $ZZ"
+error:<source>:3:18: $ZZ"
 refuse RT4 "under cbt's #@incdir line: the user's own line" "#@incdir $D/ref
 #ref \"f.toml\" x
 syscall(60, ka);" "error:<source>:1:15: $RM_"
@@ -215,14 +215,14 @@ runs RC5 'control: CRLF line ends' "$(printf '#ref "f.toml"\r\nsyscall(60, ka + 
 printf 'kb = 6\n# c\nkc = 7\nkd = 8\n' > "$D/ref/f3k.toml"
 printf '# no key\n[sec]\n' > "$D/ref/f0k.toml"
 refuse RL1 "a three-key file: the next line is line 2" '#ref "f3k.toml"
-syscall(60, zz);' "error:<source>:2:15: $ZZ"
+syscall(60, zz);' "error:<source>:2:13: $ZZ"
 refuse RL2 "a file with no key: the next line is line 2" '#ref "f0k.toml"
-syscall(60, zz);' "error:<source>:2:15: $ZZ"
+syscall(60, zz);' "error:<source>:2:13: $ZZ"
 refuse RL3 "two #ref lines, then a later line" 'var a = 1;
 #ref "f3k.toml"
 #ref "f.toml"
 var b = 2;
-syscall(60, a + zz);' "error:<source>:5:19: $ZZ"
+syscall(60, a + zz);' "error:<source>:5:17: $ZZ"
 runs RL4 "control: every key of both files is declared" '#ref "f.toml"
 #ref "f3k.toml"
 syscall(60, ka + kb + kc + kd);' 26
@@ -254,9 +254,9 @@ runs RI2 "a nested include's #ref, its path as its includes resolve" 'include "m
 syscall(60, km());' 14
 refuse RI3 "a tail on an included #ref line: refused at that file's line" 'include "inc_tail.cyr"
 syscall(60, kt());' "error:inc_tail.cyr:1:15: $RM_
-error:inc_tail.cyr:2:30: $ZZ"
+error:inc_tail.cyr:2:28: $ZZ"
 refuse RI4 "an included #ref of three keys: the next line keeps its number" 'include "inc_ln.cyr"
-syscall(60, kz());' "error:inc_ln.cyr:3:25: $ZZ"
+syscall(60, kz());' "error:inc_ln.cyr:3:23: $ZZ"
 runs RI5 "control: a #ref in a skipped #ifdef arm of an included file is not read" 'include "inc_skip.cyr"
 syscall(60, kq());' 4
 runs RI6 "control: the entry's #ref and an included one, each once" '#ref "f.toml"

@@ -922,7 +922,7 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
         # v6.5.19: a resolution failure, not a syntax one — see ERR_IDENT in
         # src/common/util.cyr for why the message class is load-bearing.
         if (ifi < 0) {
-            ERR_IDENT(S, "unknown field ", ifnoff, " on struct ", L64(S + 0x1A6018 + isi * 8));
+            ERR_IDENT(S, "unknown field ", ifnoff, " on struct ", _ei_sid(isi + 1));
             _rlf_off = off;
             return ft;
         }
@@ -1875,7 +1875,8 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
-                _undef_var_report(S, noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF)
+                _undef_var_report(S, _nm_ti(S, GTI(S) - 3, noff), noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF); 6.7.17: at the base
+                _refuse_in_sync(S);   # 6.7.17: the read parses on to its own end — the latch is this statement's (`_stmt_resync`)
                 _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
                 return 0;
             }
@@ -2466,7 +2467,7 @@ fn _store_hop(S, noff, idx, sid, off): i64 {
     }
     var fi = FINDFIELD(S, ps - 1, fnoff);
     if (fi < 0) {
-        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + (ps - 1) * 8));
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", _ei_sid(ps));
         return 0 - 1000;
     }
     return _resolve_leaf_field(S, ps - 1, fi, FIELDOFF(S, ps - 1, fi));
@@ -2616,7 +2617,7 @@ fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
         # v6.5.19 --syntax-only: a wrong field NAME is not a grammar error, so stay
         # silent and do not _panic (which would swallow the next real syntax error).
         if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain
-        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", _ei_sid(si + 1));
         return 0;
     }
     var off = FIELDOFF(S, si, fi);
@@ -2900,7 +2901,7 @@ fn PARSE_FIELD_STORE(S, noff, term): i64 {
                 # block-scope note into three of the five and the CHANGELOG said "all three", so
                 # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
                 # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
-                _undef_var_report(S, noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF)
+                _undef_var_report(S, _nm_ti(S, GTI(S) - 3, noff), noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF); 6.7.17: at the base
                 _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
                 return 0;
             }
@@ -2932,7 +2933,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
         # v6.5.19 --syntax-only: silent, no _panic — and consume the `= expr` tail, or
         # the leftover `=` is reported as a syntax error this file does not have.
         if (_syntax_only == 1) { return _synonly_fld_tail(S, term); }
-        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", L64(S + 0x1A6018 + si * 8));
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", _ei_sid(si + 1));
         return 0;
     }
     var off = FIELDOFF(S, si, fi);
@@ -3950,7 +3951,7 @@ fn _tup_arity_err(S, ti, sid, n): i64 {
     _ew("error:", 6);
     _err_head(S);
     PRSTR(": tuple ");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     PRSTR(" has ");
     PRNUM(GETFCOUNT(S, sid - 1));
     PRSTR(" elements - this literal has ");
@@ -3992,7 +3993,7 @@ fn _tup_elem_bad(S, t0, asid): i64 {
             var nm = L64(S + 0x1A6018 + (asid - 1) * 8);
             var c = _classify_param_type(S, nm);
             if (c == 1 || c == 3 || c == 4 || c == 5) { return 0; }
-            _tup_err(S, t0, "a tuple element is i64, f64 or bool, not struct ", nm, 0);
+            _tup_err(S, t0, "a tuple element is i64, f64 or bool, not struct ", _ei_sid(asid), 0);   # 6.7.17: as written
             return 1;
         }
     }
@@ -4378,12 +4379,12 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
         PRSTR(": cannot capture '");
         _tcap_callee_pr(S, ct);
         PRSTR("' into tuple ");
-        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+        _sn_pr(S, sid);
     }
     if (kind == 1) { PRSTR(" - a call returns at most 3 values (its return registers)"); }
     elif (kind == 2) {
         PRSTR(" - it returns struct '");
-        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (GFRS(S, fi) - 1) * 8));
+        _sn_pr(S, GFRS(S, fi));
         PRSTR("', not ");
         PRSTR(w);
     }
@@ -11996,11 +11997,11 @@ fn _rcv_say(S, ti, fnoff, sid, pscale, ann, noff): i64 {
         PRSTR(S + 0xEC00000 + _fn_src_name(S, _rcv_fi, fnoff));
         PRSTR("', which returns the struct '");
     }
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     PRSTR("' - declare '");
     PRSTR(S + 0xEC00000 + noff);
     PRSTR(": ");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     _rcv_ann_tail(S, pscale, noff);
     _err_excerpt(S);
     _had_error = 1;
@@ -12437,7 +12438,7 @@ fn _dt_struct_err(S, fi, w): i64 {
     PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
     if (w == 0) { PRSTR("' - it returns struct '"); }
     else { PRSTR("' into 3 names - it returns struct '"); }
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (GFRS(S, fi) - 1) * 8));
+    _sn_pr(S, GFRS(S, fi));
     if (w == 0) { PRSTR("', which is not in registers - bind it to one name: `var x = "); }
     else { PRSTR("', whose 2 words are its return registers - bind 2 names: `var a, b = "); }
     PRSTR(S + 0xEC00000 + TOKVAL(S, ct));

@@ -6725,6 +6725,13 @@ so a program with both `myID` and `my` defined silently CALLED THE WRONG ONE, an
 lost two bytes of its own data. Both are fixed; a name that merely ends an identifier, and a name
 inside a string, are now left alone.
 
+**A diagnostic past an expansion points into the source (6.7.17).** A macro call and a `#derive`'s generated fns
+(written onto the line of the declaration's closing `}`) are expanded in-line, and an error later on that line reports
+the column as the source has it, with the source line as its excerpt: `var x = ADD(1, 2) + zz;` is `2:21` under `zz`,
+and `struct Q { y; } var w = zz;` after `#derive(accessors)` is `2:25`. A token the expansion itself produced is
+reported at the call (or just past the declaration's `}`). Through 6.7.16 the column was the expanded line's — `2:39`
+and `2:258` — and the excerpt showed the expansion.
+
 ⛔ **And an invocation opened in a `#` comment used to delete your code.** A `#define` body
 stops at the newline, but that covers only what an expansion *writes*. What it *reads* ran to the
 matching `)` wherever that was, so with `#define M(a) 0` in scope the comment
@@ -8455,7 +8462,7 @@ describe<i32>(7);   # needs impl Show for i32
   minted for it: `var w: Vec<Box<Pt>> = 0;` (a local, a field, a parameter, a global, nested) is refused as `var b:
   Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked),
   and an element whose argument is itself an instance — `Vec<Box<Box<R>>>`, `Vec<SB<UB<R>>>` — as `var b: Box<Box<R>>;`
-  is, its note naming `impl Show for Box$R`: no impl can name an instance, so a bound on one never holds (6.7.16, the
+  is, its note naming `impl Show for Box<R>` (the instance as written, 6.7.17): no impl can name an instance, so a bound on one never holds (6.7.16, the
   user's D10; through 6.7.15 that element compiled).
   An instance is judged at its own type
   alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused
@@ -8895,13 +8902,16 @@ Reading, writing or taking the address of a block-scoped name after its block is
 compile error that names the variable and says where to declare it instead:
 
 ```
-error:<source>:5:14: undefined variable 't' (missing include or enum?)
+error:<source>:5:13: undefined variable 't' (missing include or enum?)
     syscall(60, t);
-                 ^
+                ^
 note: 't' was declared inside a top-level block and goes out of scope at its '}'
       (since 6.6.6 a top-level block scopes its `var`s like a fn body does)
       declare it at top level, before the block, to use it after the block
 ```
+
+The line and column are the name's own, and the caret sits under it (6.7.17, the user's D34; through 6.7.16 an
+undefined name was reported at the token after it — here the `)` at 5:14, in `return zq + 1;` the `+`).
 
 The note accompanies **every** form of the reference — a plain read, an assignment,
 `&t`, an index `t[0]`, and a struct-field read or write (`t.a`, `t.a = 1`).

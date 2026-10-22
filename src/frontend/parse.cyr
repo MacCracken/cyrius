@@ -5031,7 +5031,7 @@ fn _asg_compound_load(S, noff): i64 {
     _asg_cstep = 0;
     _bx_compound(S, noff);   # 6.7.3 (B2): refused into a bool
     if (_cur_iself_sid > 0) { if (_noff_is(S, noff, "self", 4) == 1) {   # 6.7.0 (A4): `self += n`
-            ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", L64(S + 0x1A6018 + (_cur_iself_sid - 1) * 8), ": declare `self: *T` to step whole elements", 0 - 1);
+            ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", _ei_sid(_cur_iself_sid), ": declare `self: *T` to step whole elements", 0 - 1);
         } }
     var li = FINDLOCAL(S, noff);
     _asg_struct_refused(S, noff, li);   # 6.7.5 (B8): `a += b` on a struct value
@@ -5204,7 +5204,7 @@ fn _asg_store_slot(S, idx, g): i64 {
 # Inside a closure, a name of the enclosing scope is a capture, and the report says so (`_asg_cap_name`).
 fn _asg_undef_report(S, noff): i64 {
     if (_asg_cap_name(S, noff) == 1) { return 0; }
-    _undef_var_report(S, noff, "");   # 6.7.14: a const fn's check (`_ce_name_said`), once per token (ERR_UNDEF), the block-scope note
+    _undef_var_report(S, _nm_ti(S, _asg_nti, noff), noff, "");   # 6.7.14: a const fn's check (`_ce_name_said`), once per token (ERR_UNDEF), the block-scope note
     return 0;
 }
 # 6.7.11 — A WRITE TO A CAPTURED NAME in a closure (`x += d`, `x = x + d`, a `for` init or step, `a, x =
@@ -6063,9 +6063,9 @@ fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
         PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
         PRSTR("', which returns the struct '");
     }
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     PRSTR("' - store it through a '*");
-    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    _sn_pr(S, sid);
     PRSTR("' or bind a field\n");
     _err_excerpt(S);
     STI(S, sv);
@@ -6117,7 +6117,7 @@ fn _dsr_tn(S, w, lead): i64 {
         if (ps <= 0) { if (iw <= 0) { return 0; } }
         if (lead == 1) { PRSTR(": "); }
         PRSTR("*");
-        if (ps > 0) { PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (ps - 1) * 8)); return 0; }
+        if (ps > 0) { _sn_pr(S, ps); return 0; }
         return _dsr_tn(S, iw, 0);
     }
     var ed = (w >> 40) & 0xFF;
@@ -7427,7 +7427,7 @@ fn _masg_resolve(S, nm, ti, t0, i): i64 {
     if (gi < 0) {
         if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
         if (_sub_undef_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it; 6.7.16: a refused declaration declared it
-        ERR_IDENT(S, "undefined variable ", nm, 0, 0 - 1);
+        _undef_ident_at(S, ti, nm, 0);   # 6.7.17: at the name
         _gv_note_blockscoped(S, nm);
         _panic = p0;
         return 0 - 1;
@@ -8151,6 +8151,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             return 0;
         }
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=, >>>=
+        _asg_nti = GTI(S) - 1;   # 6.7.17: the name, for its undefined-name report
         var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
         _asg_ufv = 0 - 1;

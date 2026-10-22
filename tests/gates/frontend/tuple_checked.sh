@@ -1402,13 +1402,13 @@ lines5 ct2 "CT2: after the first statement" 'var a = 1;\na = 2;\nvar t = (1 2);\
 lines5 ct3 "CT3: \`var t = (1 + );\` then \`t.1\`" 'fn f(): i64 { var t = (1 + ); return t.1; }\nsyscall(60, f());\n' "error:<source>:1:28: unexpected ')'"
 lines5 ct4 "CT4: every use — \`t.0 = 5;\`, \`t.m();\`, \`t.1 += 1;\`, \`t.1\`" 'fn f(): i64 {\n    var t = (1 2);\n    t.0 = 5;\n    t.m();\n    t.1 += 1;\n    return t.1;\n}\nsyscall(60, f());\n' "error:<source>:2:16: expected ')', got number 2"
 lines5 ct5 "CT5: a following \`return zz;\` is still reported" 'fn f(): i64 {\n    var t = (1 2);\n    var k = t.1;\n    return zz;\n}\nsyscall(60, f());\n' "error:<source>:2:16: expected ')', got number 2
-error:<source>:4:14: undefined variable 'zz' (missing include or enum?)"
+error:<source>:4:12: undefined variable 'zz' (missing include or enum?)"
 lines5 ct6 "CT6: a generic at two instances: once" 'fn g<T>(x: T): i64 { var t = (1 2); return t.1; }\nsyscall(60, g(1) + g<i32>(2));\n' "error:<source>:1:33: expected ')', got number 2"
 lines5 ct7 "CT7: control — \`var t = 5; return t.1;\` keeps its error" 'fn f(): i64 { var t = 5; return t.1; }\nsyscall(60, f());\n' "error:<source>:1:36: $NS"
 lines5 ct8 "CT8: two wraps, \`((1 2))\`" 'fn f(): i64 { var t = ((1 2)); return t.1; }\nsyscall(60, f());\n' "error:<source>:1:27: expected ')', got number 2"
 lines5 ct9 "CT9: an inner \`var t = 7;\` is its own variable: its \`t.a\` is reported" 'fn f(): i64 { var t = (1 2); if (1) { var t = 7; return t.a; } return t.1; }\nsyscall(60, f());\n' "error:<source>:1:26: expected ')', got number 2
 error:<source>:1:60: $NS"
-lines5 ct10 "CT10: control — \`var t = zz;\` (no \`(\`) keeps its use's error" 'fn f(): i64 { var t = zz; return t.1; }\nsyscall(60, f());\n' "error:<source>:1:25: undefined variable 'zz' (missing include or enum?)
+lines5 ct10 "CT10: control — \`var t = zz;\` (no \`(\`) keeps its use's error" 'fn f(): i64 { var t = zz; return t.1; }\nsyscall(60, f());\n' "error:<source>:1:23: undefined variable 'zz' (missing include or enum?)
 error:<source>:1:37: $NS"
 # AS2 — a capture and a multi-value assignment in a SUSPENDING `async fn`, across awaits: the block's span
 # recorded before the call, every value pushed before any store, the stores addressed (the coroutine's heap

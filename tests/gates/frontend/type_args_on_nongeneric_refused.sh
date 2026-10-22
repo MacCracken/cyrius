@@ -351,11 +351,11 @@ mk bv5 'fn gg<T>(x: T): i64 { return 1; }
 fn go(): i64 { return callptr(gg<Box<i64>>, 3) + zq; }'
 for leg in plain mono0; do
     C="$CC"; [ "$leg" = mono0 ] && C="CYRIUS_MONOMORPH=0 $CC"
-    tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "BV1 [$leg]: var f = gg<i32>; — the generic fn's name, one line" "$C"
-    tpl bv2 "11:25: $UV 'nf' (missing include or enum?)" "BV2 [$leg]: nf<i64> + 1 — a fn that is not generic" "$C"
-    tpl bv3 "12:12: $UV 'gg' (missing include or enum?)" "BV3 [$leg]: a global's initializer" "$C"
-    tpl bv4 "11:25: $UV 'zz' (missing include or enum?)" "BV4 [$leg]: zz<Pt, i64> — a name that is nothing" "$C"
-    tpl bv5 "12:33: $UV 'gg' (missing include or enum?)|12:52: $UV 'zq' (missing include or enum?)" "BV5 [$leg]: callptr(gg<Box<i64>>, 3) + zq — then the program's own" "$C"
+    tpl bv1 "12:24: $UV 'gg' (missing include or enum?)" "BV1 [$leg]: var f = gg<i32>; — the generic fn's name, one line" "$C"
+    tpl bv2 "11:23: $UV 'nf' (missing include or enum?)" "BV2 [$leg]: nf<i64> + 1 — a fn that is not generic" "$C"
+    tpl bv3 "12:10: $UV 'gg' (missing include or enum?)" "BV3 [$leg]: a global's initializer" "$C"
+    tpl bv4 "11:23: $UV 'zz' (missing include or enum?)" "BV4 [$leg]: zz<Pt, i64> — a name that is nothing" "$C"
+    tpl bv5 "12:31: $UV 'gg' (missing include or enum?)|12:50: $UV 'zq' (missing include or enum?)" "BV5 [$leg]: callptr(gg<Box<i64>>, 3) + zq — then the program's own" "$C"
 done
 
 # ── A: the refusal from every cross compiler ─────────────────────────────────────────────────────────────────
@@ -364,13 +364,13 @@ if "$CC" < src/main_aarch64.cyr > "$A64" 2> /dev/null && [ -s "$A64" ]; then chm
     one r1 "11:23: $FN" "A [a64]: R1" "$A64"; one m1 "11:45: $MT" "A [a64]: M1" "$A64"
     tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [a64]: TP1" "$A64"
     one ad2 "12:25: $AW" "A [a64]: AD2" "$A64"
-    tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "A [a64]: BV1" "$A64"
+    tpl bv1 "12:24: $UV 'gg' (missing include or enum?)" "A [a64]: BV1" "$A64"
 else bad "aarch64: src/main_aarch64.cyr did not build"; fi
 if "$CC" < src/main_cx.cyr > "$CXCC" 2> /dev/null && [ -s "$CXCC" ]; then chmod +x "$CXCC"
     one r1 "11:23: $FN" "A [cx]: R1" "$CXCC"; one m1 "11:45: $MT" "A [cx]: M1" "$CXCC"
     tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [cx]: TP1" "$CXCC"
     one ad2 "12:25: $AW" "A [cx]: AD2" "$CXCC"
-    tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "A [cx]: BV1" "$CXCC"
+    tpl bv1 "12:24: $UV 'gg' (missing include or enum?)" "A [cx]: BV1" "$CXCC"
 else bad "cx: src/main_cx.cyr did not build"; fi
 one r1 "11:23: $FN" "A [pe]: R1" "CYRIUS_TARGET_WIN=1 $CC"
 one m1 "11:45: $MT" "A [pe]: M1" "CYRIUS_TARGET_WIN=1 $CC"
@@ -378,7 +378,7 @@ tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [pe]: TP1" "CYRIUS_TARGET_WIN=1 $CC"
 tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [pe]: TP1 under the flag" "CYRIUS_MONOMORPH=0 CYRIUS_TARGET_WIN=1 $CC"
 tpl tp1 "1:12: $TPW 'U'|1:35: $TPW 'U'" "A [macho]: TP1" "CYRIUS_MACHO=1 $CC"
 one ad2 "12:25: $AW" "A [pe]: AD2" "CYRIUS_TARGET_WIN=1 $CC"
-tpl bv1 "12:26: $UV 'gg' (missing include or enum?)" "A [pe]: BV1" "CYRIUS_TARGET_WIN=1 $CC"
+tpl bv1 "12:24: $UV 'gg' (missing include or enum?)" "A [pe]: BV1" "CYRIUS_TARGET_WIN=1 $CC"
 one ad2 "12:25: $AW" "A [macho]: AD2" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
