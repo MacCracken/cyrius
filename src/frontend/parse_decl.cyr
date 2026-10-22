@@ -3569,6 +3569,19 @@ fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
     return 0;
 }
 
+# ⛔ 6.7.16 — AN INLINE LITERAL GLOBAL HOLDS ITS INDEX WHILE ITS ELEMENTS ARE PARSED. A struct or tuple literal global
+# after the first statement registered its slot at the next index and bumped the count only after its elements, so the
+# name stayed hidden from them (`var cfg = P { cfg, 2 };` reads the outer cfg) — but an element that made a hidden
+# global temporary (`_HTEMP`: on PE a vector call's result storage, 6.7.12) took that same index and overwrote the
+# slot, and the literal's own count bump then cut the temporary off: `var GP = Pt { mk2(41, 7), 1 };`, `var GT = (3, 1 +
+# mk2(41, 7));` printed their refusal and then "undefined variable 'GP'" at the next use (through 6.7.15 that wrong
+# error alone, the refusal never printed). Now the slot is counted at once, marked dead — invisible to every lookup
+# (`_findvar_core`), so the outer name still answers inside — and made live after the elements. CHANGELOG [6.7.16]
+fn _glit_hold(S, vcnt): i64 {
+    SVDEAD(S, vcnt, 1);
+    SVCNT(S, vcnt + 1);
+    return 0;
+}
 fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     var si = sid - 1;
     var _ps_decl_ti = GTI(S);   # v6.6.4: the type-name token, for the visibility stamp (see PARSE_ARRAY)
@@ -3581,6 +3594,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     S64(_vars_base + vcnt * 8, sz);
     SVTYPE(S, vcnt, sid);
     SVPM(S, vcnt, 2);   # 6.6.5: a top-level literal is INLINE — STRUCTSZ bytes of .bss
+    _glit_hold(S, vcnt);   # 6.7.16: its index held, its name withheld, while the fields are parsed
     var _ps_sv = _sl_base_li;
     _sl_base_li = 0 - 1;
     _STRUCT_INIT_BODY(S, vcnt, sid);
@@ -3590,7 +3604,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
     SLVAR(S, vcnt);
     _GVAR_VIS(S, vcnt, _ps_decl_ti);   # v6.6.4: PARSE_PROG-path struct-literal global (see PARSE_ARRAY)
-    SVCNT(S, vcnt + 1);
+    SVDEAD(S, vcnt, 0);   # 6.7.16: the name visible from here (`_glit_hold`)
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
     return 0;
@@ -3920,10 +3934,11 @@ fn _tup_greg(S, noff, sid): i64 {
 # after the elements); `dti` the declaration's token, for its visibility.
 fn _tup_lit_global(S, noff, sid, infer, dti): i64 {
     var vcnt = _tup_greg(S, noff, sid);
+    _glit_hold(S, vcnt);   # 6.7.16: held while the elements are parsed (an element's hidden temporary)
     _tup_elems(S, sid, vcnt, 0 - 1, infer);
     SLVAR(S, vcnt);
     _GVAR_VIS(S, vcnt, dti);
-    SVCNT(S, vcnt + 1);
+    SVDEAD(S, vcnt, 0);
     return 0;
 }
 # PARSE_VAR's arm, where its `: stack` pair refusal stood (cursor on `=`): a literal initializer —
@@ -4161,6 +4176,7 @@ fn _tup_cap_err(S, sid, fi, kind, k): i64 {
     if (_syntax_only == 1) { return 2; }
     if (_panic == 1) { return 2; }
     var st = GTI(S);
+    if (sid != 0) { if (_vrcv_annbad(S, st) == 1) { return 2; } }   # 6.7.16: a refused annotation's one error
     if (_tn_once(S, st) == 0) { return 2; }
     var ct = st;
     if (_mcall_open(S, st, 0 - 1) >= 0) { ct = _mco_mt; }   # 6.7.15: `x.m<..>(` names m too; 6.7.16: a chain's
@@ -7643,6 +7659,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         # Each entry starts with the panic latch clear, as a fn's statement does (the cursor is re-seated at
         # its `var`, so no resync): an earlier entry's error latched through every later one. CHANGELOG [6.7.16]
         _panic = 0;
+        _flt_en = _err_n;   # 6.7.16: and its own errors counted from here (`_FLT_TYPE_WARN`)
         STI(S, GTI(S) + 1);  # consume VAR
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume IDENT
@@ -8186,6 +8203,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header; 6.7.14 (D21 (a)): at top level too
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
     if (_sci_dpp(S, pscale) == 1) { return _sci_dexpr(S, noff, pscale); }   # 6.7.15: `*pp` of a `**S`
+    if (_sci_pnu(S, noff, pscale) == 1) { return 0; }   # 6.7.16 (D87 (a)): a `*U` call, field, `p + n`, by name
     var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
     var ci_dr = 0;   # 6.7.10 (B7-1): `var q: T = *p;` — the `*` before the name
     if (ci_pk < 0) {
@@ -9098,6 +9116,7 @@ fn _try_vector_call_assign(S, noff, term): i64 {
     # Destination is not the vector the callee returns. Diagnose rather than fall through to
     # the 8-byte store, which is what made every form of this silent (see the header above).
     if (lt != vrs) {
+        _refuse_in_sync(S);   # 6.7.16: the statement parses on; the next one keeps its errors
         ERR_MSG(S, "vector return type does not match the assigned variable", 55);
         return 0;
     }
@@ -9775,10 +9794,54 @@ fn _vmc_vfi(S, ti): i64 {
     if (GFRS(S, _vmc_mf) > 0 - 2048) { return 0 - 1; }
     return _vmc_fi(S, ti);
 }
-# The mismatch at token `ti`: `verb` 0 "declared type", 1 "assigned variable" — the by-name call's words. 1.
+# ⛔ 6.7.16 — A REFUSED ANNOTATION IS ITS DECLARATION'S ONE ERROR. `var x: zz = mk2(41, 7);` printed "unknown type 'zz'
+# for variable 'x'" and then "vector return type does not match the declared type": the refused annotation parses on as
+# a plain i64 (`_tn_refuse`: each bad name reported once, with no cascade), and the vector refusals compared the call
+# with that i64 — `var x: Q<i64> = mk2(..)`, `var x: zz = 1 + mk2(..)`, `var t: (f64v2, i64) = (1 + mk2(41, 7), 3);`
+# (the tuple element's refusal), a method, a top-level global the same. 1 = token `ti` (the declaration's `=`, or a
+# token of its initialiser) is in a declaration whose annotation holds a token a type refusal reported (`_tn_seen_at`).
+# CHANGELOG [6.7.16]
+fn _vrcv_annbad(S, ti): i64 {
+    if (_had_error == 0) { return 0; }
+    var i = _vrcv_dbeg(S, ti);
+    if (i < 0) { return 0; }
+    i = i + 1;
+    while (i < ti) {
+        if (TOKTYP(S, i) == 4) { return 0; }
+        if (_tn_seen_at(S, i) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# The `var` / `const` of the declaration whose value token `ti` is in, else -1: walking back over balanced groups and out
+# of the parentheses that group (`_vop_gparen`: a tuple literal's too), the first `var` / `const` at their depth. A `;`,
+# a call's or a condition's `(`, a `[` or a `{` around `ti` first = none: what `ti` is in is no declaration's value (an
+# argument, an index, a struct literal's field, a block's statement).
+fn _vrcv_dbeg(S, ti): i64 {
+    var i = ti - 1;
+    var d = 0;
+    while (i >= 0) {
+        var t = TOKTYP(S, i);
+        if (t == 11 || t == 29 || t == 14) { d = d + 1; }
+        elif (t == 10 || t == 28 || t == 13) {
+            if (d > 0) { d = d - 1; }
+            elif (t != 10) { return 0 - 1; }
+            elif (_vop_gparen(S, i) == 0) { return 0 - 1; }
+        } elif (d == 0) {
+            if (t == 3 || t == 168) { return i; }
+            if (t == 5) { return 0 - 1; }
+        }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+# The mismatch at token `ti`: `verb` 0 "declared type", 1 "assigned variable" — the by-name call's words. Made in sync
+# (`_refuse_in_sync`, 6.7.16): the statement parses on to its own end, and the next statement keeps its own errors. 1.
 fn _vrcv_tyerr(S, ti, verb): i64 {
+    if (verb == 0) { if (_vrcv_annbad(S, ti) == 1) { return 1; } }
     var sv = GTI(S);
     STI(S, ti);
+    _refuse_in_sync(S);
     if (verb == 0) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
     else { ERR_MSG(S, "vector return type does not match the assigned variable", 55); }
     STI(S, sv);
@@ -9825,6 +9888,547 @@ fn _vcv_more(S): i64 {
     var x = _call_close(S, _vcv_o) + 1;
     while (TOKTYP(S, x) == 11) { x = x + 1; }
     return _vcall_more(S, x, 5);
+}
+# ⛔ 6.7.16 (D101 A, the user's decision, 2026-10-20) — A WHOLE VECTOR CALL IS NO SCALAR FN'S RETURN VALUE AND NO WORD
+# ARGUMENT, as it is no integer declaration's (6.7.11). `fn r(): i64 { return mk2(41, 7); }` handed back x86_64 / aarch64
+# rax's leftover (0), cx lane 0 (41), and faulted on PE (exit 5: the tail call passed mk2 no hidden result pointer);
+# `return s.m2();`, a closure's expression body (`|k| mk2(41, 7)`), `takei(mk2(41, 7))` into `n: i64`, `take(mk2(41,
+# 7))` into an untyped parameter and a builtin's or an indirect call's argument (`syscall(60, mk2(..))`, `store64(&x,
+# mk2(..))`, `fncall1(f, mk2(..))`) the same word
+# (issues/2026-10-20-whole-vector-call-returned-as-scalar-or-passed-to-integer-parameter.md). Refused by name at the call
+# (any spelling `_vcall_vt` reads: by name, an explicit instance, a method on any head, `&f` through fncallN / callptr,
+# inside any parentheses wrapping it whole), once, the panic latch set (`_vsc_err`). A vector fn's own `return`, a `*V`
+# or value-form vector parameter, a bool parameter or return and a struct or pointer parameter (6.7.13's D31) keep their
+# own rules and words. CHANGELOG [6.7.16]
+var _vsc_nt = 0;   # the token naming the call `_vop_call` found (the fn's, the method's, `&f`'s)
+# The refusal at token `a`: `kind` 0 "a vector value cannot be returned as i64 - 'mk2' returns a vector" (the fn's return
+# type as written), 1 ".. cannot be passed to an integer parameter - 'mk2' returns a vector, passed to parameter 'n' of
+# 'takei'" (fn `x`'s parameter `y`; an `f64` / `f32` one named so), 2 ".. passed to 'syscall'" (the builtin's or the
+# indirect call's argument list opening at token `x`). Made in sync (`_refuse_in_sync`): the statement parses on to its
+# own end, and the next statement keeps its own errors. 1.
+fn _vsc_err(S, a, kind, x, y): i64 {
+    var sv = GTI(S);
+    STI(S, a);
+    _refuse_in_sync(S);
+    var tg = "_vsc_err";
+    if (_err_once(S, (tg * 31 + kind) * 8 + 4) == 1) {
+        syscall(SYS_WRITE, 2, "error:", 6);
+        _err_head(S);
+        if (kind == 0) {
+            PRSTR(": a vector value cannot be returned as ");
+            _vsc_rtype(S);
+        } else {
+            PRSTR(": a vector value cannot be passed to ");
+            PRSTR(_vsc_pkind(x, y, kind));
+            PRSTR(" parameter");
+        }
+        PRSTR(" - '");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _vsc_nt));
+        PRSTR("' returns a vector");
+        if (kind == 1) { _vsc_pof(S, x, y); }
+        if (kind == 2) { _vsc_bname(S, x); }
+        PRSTR("\n");
+        _err_excerpt(S);
+        _had_error = 1;
+        _panic = 1;
+    }
+    STI(S, sv);
+    return 1;
+}
+# "an integer", or for parameter `ord` of fn `fi` (`kind` 1) declared `f64` / `f32` "an f64" / "an f32".
+fn _vsc_pkind(fi, ord, kind): i64 {
+    if (kind != 1) { return "an integer"; }
+    var pk = _pbool_get(fi, ord);
+    if (pk == 4) { return "an f64"; }
+    if (pk == 3) { return "an f32"; }
+    return "an integer";
+}
+# ", passed to parameter 'n' of 'takei'" (the parameter's name when its definition gives one).
+fn _vsc_pof(S, fi, ord): i64 {
+    PRSTR(", passed to ");
+    var pn = _bx_pname(S, fi, ord);
+    if (pn >= 0) {
+        PRSTR("parameter '");
+        PRSTR(S + 0xEC00000 + pn);
+        PRSTR("' of ");
+    }
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("'");
+    return 0;
+}
+# ", passed to 'syscall'": the builtin, `callptr` or fncallN whose argument list opens at token `o`.
+fn _vsc_bname(S, o): i64 {
+    PRSTR(", passed to '");
+    var t = TOKTYP(S, o - 1);
+    if (t == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, o - 1)); }
+    else { PRSTR(TOKNAME(t)); }
+    PRSTR("'");
+    return 0;
+}
+# The return type of the fn being parsed as its definition writes it (`i64`, `f64`, `*i64`, `P1`); "i64" when it has
+# no annotation (or none can be read: a closure, a replay).
+fn _vsc_rtype(S): i64 {
+    var c = _vsc_rt_at(S);
+    if (c >= 0) {
+        var nm = _src_span_nm(S, c + 1, _vsc_rt_end(S, c), 0 - 1);
+        if (nm >= 0) {
+            PRSTR(S + 0xEC00000 + nm);
+            return 0;
+        }
+    }
+    PRSTR("i64");
+    return 0;
+}
+# The `:` before the return type in the definition of the fn being parsed, else -1 (none, a closure, a replay).
+fn _vsc_rt_at(S): i64 {
+    if (GIDEP(S) != 0) { return 0 - 1; }
+    if (_cur_fn_ix < 0) { return 0 - 1; }
+    var o = _gen_def_open(S, _cur_fn_ix);
+    if (o < 0) { return 0 - 1; }
+    var c = _call_close(S, o) + 1;
+    if (TOKTYP(S, c) != 49) { return 0 - 1; }
+    return c;
+}
+# The token after the return type whose `:` is token `c` (the body's `{`).
+fn _vsc_rt_end(S, c): i64 {
+    var e = c + 1;
+    var t = TOKTYP(S, e);
+    while (t != 13 && t != 5 && t != 12) {
+        e = e + 1;
+        t = TOKTYP(S, e);
+    }
+    return e;
+}
+# 1 = the return type (`:` at token `c`) was refused at its definition (a type name reported there, `_tn_seen_at`):
+# that refusal is the line's (`fn r(): u8 { return mk2(..); }` is not refused twice).
+fn _vsc_rt_bad(S, c): i64 {
+    var e = _vsc_rt_end(S, c);
+    var i = c + 1;
+    while (i < e) {
+        if (_tn_seen_at(S, i) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# 1 = the fn being parsed refuses a vector `return` value in words of its own — a vector fn (the 6.6.6 rule), a struct
+# over 8 B (the struct-return rules), a multi-value fn, a return type refused at its definition — or this is an inline
+# replay's `return` (the callee's, judged at its own definition).
+fn _vsc_rskip(S): i64 {
+    if (GIDEP(S) != 0) { return 1; }
+    if (_cur_fn_ret_scalar <= 0 - 2048) { return 1; }
+    if (_cur_fn_ret_sid > 0) { if (STRUCTSZ(S, _cur_fn_ret_sid - 1) > 8) { return 1; } }
+    if (_cur_fn_ix >= 0) { if (GFRS(S, _cur_fn_ix) == MULTIRET_SID) { return 1; } }
+    var c = _vsc_rt_at(S);
+    if (c >= 0) { if (_vsc_rt_bad(S, c) == 1) { return 1; } }
+    return 0;
+}
+# PARSE_RETURN, `st` the value's first token: a call declared to return a vector (`_vcall_vt`: any spelling, any wrap)
+# that is the whole value or starts it with an operator after it (`return mk2(41, 7) + 1;`, `return (mk2(41, 7) + 1) *
+# 2;`), in a fn that returns none, refused before the tail-call arm takes it. A call that a `.`, `[` or a stray token
+# follows is left to its own refusal; a bool fn keeps its own words.
+fn _vsc_ret(S, st): i64 {
+    if (_vret_any == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (_vsc_rskip(S) == 1) { return 0; }
+    if (_bx_cur_is_bool(S) == 1) { return 0; }
+    if (_vcall_vt(S, st, 5, 1) == 0) { return 0; }
+    var x = _call_close(S, _vcv_o) + 1;
+    while (TOKTYP(S, x) == 11) { x = x + 1; }
+    var t = TOKTYP(S, x);
+    if (t != 5) { if (_tal_binop(t) == 0) { return 0; } }
+    _vsc_nt = _vcv_nt;
+    return _vsc_err(S, _vcv_a, 0, 0, 0);
+}
+# `_bx_pcmpe_arg`, the argument [t, cursor) for parameter `ord` of fn `fi` just parsed: one whole call declared to
+# return a vector into a parameter that takes a word. A bool parameter keeps its own words; a pointer of another kind, a
+# struct, a `*V` and a value-form vector theirs (6.7.13's D27, D30, D31); a callee with no definition the
+# undefined-function path's.
+fn _vsc_arg(S, fi, ord, t): i64 {
+    if (_vret_any == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (fi < 0) { return 0; }
+    var a = _vop_call(S, t, GTI(S));
+    if (a < 0) { return 0; }
+    if (GFDS(S, fi) == 0) { return 0; }
+    if (_pbool_get(fi, ord) == 1) { return 0; }
+    if (_vk_param(S, fi, ord) != 0) { return 0; }
+    if (_pvec_param(S, fi, ord) != 0) { return 0; }
+    if (_pvf_param(S, fi, ord) != 0) { return 0; }
+    return _vsc_err(S, a, 1, fi, ord);
+}
+# ⛔ 6.7.16 (D100 A, the user's decision, 2026-10-20) — A VECTOR CALL IS NO OPERAND, WHEREVER IT SITS. 6.7.11 and D24-D26
+# refuse a call declared to return a vector that IS or STARTS a declaration's or assignment's source; one further right
+# (`var x: i64 = 1 + mk2(41, 7);`, `x = 1 + mk2(..)`, an untyped `var w = 1 + mk2(..)`, a top-level `var X = 1 +
+# mk2(..)`), the right side of a compound assignment (`x += mk2(..)`, `s.a += ..`, `*p += ..`), one under a unary
+# operator (`-mk2(..)`, `!mk2(..)`, `~mk2(..)`, `*mk2(..)`: 139), an operand inside an argument (`take(mk2(41, 7) + 1)`;
+# `rd(mk2(41, 7) + 1)` into a `*f64v2`: 139, cx 221, PE 5), in a condition or a `return` (`return 1 + mk2(41, 7);`)
+# reached the scalar path, which read the result register as an integer — x86_64 / aarch64 rax's leftover, cx / PE the
+# vector's lane 0 — silently (issues/2026-10-20-vector-call-as-later-operand-or-compound-right-side-uses-first-word.md).
+# The call (`_vop_call`) with an operator on either side (`_vop_opnd`) is refused at the call in D24-D26's words by what
+# receives the value (`_vop_ctx`): a declaration's initialiser "vector return type does not match the declared type", an
+# assignment's ".. the assigned variable", a `return` (a closure's expression body too) D101's words (`_vsc_err`),
+# anything else (an argument, a condition) the declaration's. Once; the panic latch set. A source a value-form vector
+# destination takes is that destination's refusal (`_vop_vd`), a vector fn's `return` the 6.6.6 rule's, a call a
+# top-level declaration refused its (`_vop_done`). CHANGELOG [6.7.16]
+var _vop_vd = 0;
+var _vop_done = 0 - 1;
+# 1 = the factor [ti0, e) is an operand: a binary operator after it, or before it a binary or unary operator (`-` `!`
+# `~` `*`) or a compound assignment's `op =`. The `|` / `||` before a closure's expression body is no operator.
+fn _vop_opnd(S, ti0, e): i64 {
+    if (_tal_binop(TOKTYP(S, e)) == 1) { return 1; }
+    if (ti0 < 1) { return 0; }
+    if (ti0 == _vop_clb) { return 0; }
+    var p = TOKTYP(S, ti0 - 1);
+    if (_tal_binop(p) == 1) { return 1; }
+    if (p == 171 || p == 37) { return 1; }
+    if (p != 4) { return 0; }
+    if (ti0 < 2) { return 0; }
+    return _is_cop_tok(TOKTYP(S, ti0 - 2));
+}
+# What receives the operand that begins at token `a`, walked back over balanced groups and the parentheses that group:
+# 1 a declaration's initialiser, 2 an assignment's right-hand side (`=`, `op =`), 3 a `return` value or a closure's
+# expression body, 0 anything else (an argument, a condition, an index, a literal's element, a statement).
+fn _vop_ctx(S, a): i64 {
+    var j = a - 1;
+    var d = 0;
+    while (j >= 0) {
+        if (j + 1 == _vop_clb) { return 3; }
+        var t = TOKTYP(S, j);
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d > 0) { d = d - 1; }
+            elif (t == 28) { return 0; }
+            elif (_vop_gparen(S, j) == 0) { return 0; }
+        } elif (d == 0) {
+            if (t == 4) { return _vop_eq(S, j); }
+            if (t == 33) { return 3; }
+            if (t == 5 || t == 13 || t == 14) { return 0; }
+        }
+        j = j - 1;
+    }
+    return 0;
+}
+# 1 = the `(` at token `j` groups an expression: it opens no call (after a name, a type-argument list's `>`, `callptr`,
+# a builtin, `)` or `]`) and no condition (`if` `elif` `while` `for` `switch` `match`).
+fn _vop_gparen(S, j): i64 {
+    if (j < 1) { return 1; }
+    var t = TOKTYP(S, j - 1);
+    if (t == 2 || t == 20 || t == 137 || t == 11 || t == 29) { return 0; }
+    if (t == 15 || t == 50 || t == 16 || t == 55 || t == 57 || t == 75) { return 0; }
+    if (TOKNAME_BUILTIN(t) != 0) { return 0; }
+    return 1;
+}
+# The `=` at token `j`: 2 an assignment's (an `op =` pair, or no `var` / `const` before it in its statement), 1 a
+# declaration's.
+fn _vop_eq(S, j): i64 {
+    if (j < 1) { return 2; }
+    if (_is_cop_tok(TOKTYP(S, j - 1)) == 1) { return 2; }
+    var i = j - 1;
+    var d = 0;
+    while (i >= 0) {
+        var t = TOKTYP(S, i);
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d == 0) { return 2; }
+            d = d - 1;
+        } elif (d == 0) {
+            if (t == 3 || t == 168) { return 1; }
+            if (t == 5 || t == 13 || t == 14) { return 2; }
+        }
+        i = i - 1;
+    }
+    return 2;
+}
+# ⛔ 6.7.16 (D100: wherever it sits) — AND A WHOLE VECTOR CALL IN EVERY OTHER WORD SLOT. Stored into a field, an element
+# or through a pointer to no vector (`s.a = mk2(41, 7);`, `a[0] = mk2(..)`, `*p = mk2(..)` with `p: *i64` or untyped,
+# `*(&x) = mk2(..)` of a scalar x), and as a condition (`if (mk2(..))`, `elif`, `while`, `switch`, a `for` condition,
+# `match mk2(..) {`), an index (`a[mk2(..)]`), a range bound (`0..mk2(..)`), a struct literal's field (`Pt { mk2(..),
+# 1 }`) or a tuple literal's element (`(mk2(..), 3)` as a declaration's, an assignment's, an argument's or a multi-value
+# `return`'s value, in a fn or at top level), it was read as a word (x86_64 / aarch64 0, cx / PE 41), where a
+# declaration and a name's assignment refuse it (6.7.11, 6.7.14's D38, 6.7.15). The slot the whole factor [ti0, e) fills
+# (no operator beside it), by its tokens: 1 a store (refused "vector return type does not match the assigned
+# variable"), 2 any of the others (".. the declared type"), 3 a tuple literal's element (an assignment's: 1's words,
+# else 2's); 0 a slot its own reader judges (a declaration, a name's assignment, a `return`, a call's argument, a
+# statement, an if-expression branch, a store through a `*V`) or none read here. CHANGELOG [6.7.16]
+fn _vsl_slot(S, ti0, e): i64 {
+    var p = TOKTYP(S, ti0 - 1);
+    var n = TOKTYP(S, e);
+    if (p == 4) { return _vsl_store(S, ti0 - 1); }
+    if (p == 28) {
+        if (n == 29) { return 2; }
+        return 0;
+    }
+    if (p == 75) { return 2; }   # `match mk2(..) {`
+    if (_vsl_range(S, ti0, e) == 1) { return 2; }
+    if (p == 10) { if (n == 11) { if (_vsl_cond(S, ti0 - 1) == 1) { return 2; } } }
+    if (p == 13 || p == 31 || p == 49) { if (_vsl_lit(S, ti0 - 1, n) == 1) { return 2; } }
+    if (p == 5) { if (n == 5) { if (_vsl_forc(S, ti0 - 1) == 1) { return 2; } } }
+    if (p == 10 || p == 31) { if (n == 31 || n == 11) { if (_vsl_tup(S, ti0 - 1) == 1) { return 3; } } }
+    return 0;
+}
+# Token `j` (`(` or `,`) is in a tuple literal `(a, b)`: the `(` that opens its group groups an expression
+# (`_vop_gparen`: no call's, no condition's) and has a comma at its own depth (`_tup_commas`). 1.
+fn _vsl_tup(S, j): i64 {
+    var o = _vsl_open(S, j);
+    if (o < 0) { return 0; }
+    if (_vop_gparen(S, o) == 0) { return 0; }
+    if (_tup_commas(S, o) == 0) { return 0; }
+    return 1;
+}
+# The `(` at token `o` opens a condition: `if` `elif` `while` `switch`.
+fn _vsl_cond(S, o): i64 {
+    if (o < 1) { return 0; }
+    var h = TOKTYP(S, o - 1);
+    if (h == 15 || h == 50 || h == 16 || h == 57) { return 1; }
+    return 0;
+}
+# The factor [ti0, e) is a range bound: `..` just before or after it.
+fn _vsl_range(S, ti0, e): i64 {
+    if (ti0 >= 2) { if (TOKTYP(S, ti0 - 1) == 41) { if (TOKTYP(S, ti0 - 2) == 41) { return 1; } } }
+    if (TOKTYP(S, e) == 41) { if (TOKTYP(S, e + 1) == 41) { return 1; } }
+    return 0;
+}
+# Token `j` (`{`, `,` or `:`) is inside a struct literal `Name { .. }` / `Name<..> { .. }`, the value ending at `n`
+# (`,` or `}`): 1.
+fn _vsl_lit(S, j, n): i64 {
+    if (n != 31) { if (n != 14) { return 0; } }
+    var d = 0;
+    while (j >= 0) {
+        var t = TOKTYP(S, j);
+        if (t == 11 || t == 29 || t == 14) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d == 0) { return 0; }
+            d = d - 1;
+        } elif (t == 13) {
+            if (d == 0) {
+                if (j < 1) { return 0; }
+                var h = TOKTYP(S, j - 1);
+                if (h == 2 || h == 20) { return 1; }
+                return 0;
+            }
+            d = d - 1;
+        } elif (d == 0) { if (t == 5) { return 0; } }
+        j = j - 1;
+    }
+    return 0;
+}
+# The `;` at token `j` ends a `for (..;` header's first part: the factor after it is the loop's condition.
+fn _vsl_forc(S, j): i64 {
+    var i = j - 1;
+    var d = 0;
+    while (i >= 0) {
+        var t = TOKTYP(S, i);
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d == 0) {
+                if (t != 10) { return 0; }
+                if (i < 1) { return 0; }
+                if (TOKTYP(S, i - 1) == 55) { return 1; }
+                return 0;
+            }
+            d = d - 1;
+        } elif (d == 0) { if (t == 5 || t == 13 || t == 14) { return 0; } }
+        i = i - 1;
+    }
+    return 0;
+}
+# The store whose `=` is token `eq`: 1 = its destination is a field (`s.a`, `p.x.y`), an element (`a[i]`) or a
+# dereference of a pointer to no vector (`_vsl_dst`); 0 = a declaration, a name (the receives'), `a, b = ..`, or none of
+# these.
+fn _vsl_store(S, eq): i64 {
+    if (eq < 1) { return 0; }
+    var s = _vsl_sbeg(S, eq);
+    if (s < 0) { return 0; }
+    if (s + 1 >= eq) { return 0; }
+    var t = TOKTYP(S, s);
+    if (t == 3 || t == 168) { return 0; }
+    if (_vsl_comma(S, s, eq) == 1) { return 0; }
+    if (t == 8) { return _vsl_dst(S, s, eq); }
+    if (_vsl_cstore(S, s, eq) == 1) { return 1; }
+    if (t != 2) { return 0; }
+    var t1 = TOKTYP(S, s + 1);
+    if (t1 == 41 || t1 == 28) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.16 (D100, the s16 review) — AND A FIELD OR AN ELEMENT OF A CALL'S RESULT. `gp().b = mk2(41, 7);` (gp `: *P`, a
+# store destination since 6.7.14's call_ptr_field_store), `callptr(&gp).b = ..`, `gi()[0] = ..` (gi `: *i64`) and a
+# generic's `gpg<i64>().b = ..` stored one word (x86_64 / aarch64 0, cx / PE 41): the store arm above reads only a
+# destination that starts NAME `.` / NAME `[`. 1 = the statement at token `s` (`=` at `eq`) starts with a call — by
+# name, an explicit instance, `callptr` / fncallN — whose `)` a `.` or `[` follows before the `=`. CHANGELOG [6.7.16]
+fn _vsl_cstore(S, s, eq): i64 {
+    var o = 0 - 1;
+    var t = TOKTYP(S, s);
+    if (t == 137) { if (TOKTYP(S, s + 1) == 10) { o = s + 1; } }
+    if (t == 2) { o = _gcall_open(S, s); }
+    if (o < 0) { return 0; }
+    var x = _call_close(S, o) + 1;
+    if (x >= eq) { return 0; }
+    var tx = TOKTYP(S, x);
+    if (tx == 41 || tx == 28) { return 1; }
+    return 0;
+}
+# The first token of the statement whose `=` is token `eq` (after `;` `{` `}`, or a `for (`), else -1.
+fn _vsl_sbeg(S, eq): i64 {
+    var i = eq - 1;
+    var d = 0;
+    while (i >= 0) {
+        var t = TOKTYP(S, i);
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d == 0) {
+                if (t != 10) { return 0 - 1; }
+                if (i < 1) { return 0 - 1; }
+                if (TOKTYP(S, i - 1) == 55) { return i + 1; }
+                return 0 - 1;
+            }
+            d = d - 1;
+        } elif (d == 0) { if (t == 5 || t == 13 || t == 14) { return i + 1; } }
+        i = i - 1;
+    }
+    return 0;
+}
+# 1 = a `,` at the depth of [s, eq) (`a, b = f()`).
+fn _vsl_comma(S, s, eq): i64 {
+    var d = 0;
+    var i = s;
+    while (i < eq) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        if (d == 0) { if (t == 31) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The dereference store `*E = ..` (`*` at token `d`, `=` at `eq`): 1 = E is no pointer to a vector — a typed pointer to
+# a scalar, a struct or a pointer (`_hl_pw`), `&x` of a variable that is no vector (`*(&x)` is x), an untyped word (8
+# bytes are stored through it); 0 = a `*V` or `&w` of a vector (the vector's own store).
+fn _vsl_dst(S, d, eq): i64 {
+    var b = _ie_unparen(S, d + 1, eq);
+    if (_ie_pe == b + 2) { if (TOKTYP(S, b) == 27) { if (TOKTYP(S, b + 1) == 2) {
+                if (_vsl_vname(S, TOKVAL(S, b + 1)) == 1) { return 0; }
+                return 1;
+            } } }
+    if (_ps_vdesc(_hl_pw(S, d + 1, eq)) != 0) { return 0; }
+    return 1;
+}
+# 1 = the variable `noff` is a vector (a local, a closure's capture, a global).
+fn _vsl_vname(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLTYPE(S, li) <= 0 - 2048) { return 1; }
+            return 0;
+        }
+        if (_cl_cap_vec(S, noff) != 0) { return 1; }
+    }
+    var gi = _findvar_core(S, noff);
+    if (gi >= 0) { if (GVVEC(S, gi) != 0) { return 1; } }
+    return 0;
+}
+# PARSE_FACTOR, the factor [ti0, cursor) just parsed: when it is one call declared to return a vector (`_vop_call`), an
+# operand (`_vop_opnd`, 6.7.16's D100) refused in the words of what receives it (`_vop_ctx`), or the whole of a word slot
+# that reads it — a builtin's or an indirect call's argument (`_vsl_bopen`), a closure's expression body (`_vop_clb`,
+# its return value), and (D100) a store, a condition, an index, a range bound, a literal's field (`_vsl_slot`) —
+# refused (`_vop_whole`). 0.
+fn _vop_rchk(S, ti0): i64 {
+    if (_vret_any == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    var e = GTI(S);
+    var a = _vop_call(S, ti0, e);
+    if (a < 0) { return 0; }
+    if (a == _vop_done) { return 0; }
+    if (_vop_opnd(S, ti0, e) == 0) { return _vop_whole(S, ti0, e, a); }
+    if (_vop_vd == 1) { return 0; }
+    var k = _vop_ctx(S, ti0);
+    if (k == 3) {
+        if (_vsc_rskip(S) == 1) { return 0; }
+        return _vsc_err(S, a, 0, 0, 0);
+    }
+    if (k == 2) { return _vrcv_tyerr(S, a, 1); }
+    return _vrcv_tyerr(S, a, 0);
+}
+# The whole call [ti0, e) (its first token `a`) in the slot around it, refused when the slot takes a word. 1 = refused.
+fn _vop_whole(S, ti0, e, a): i64 {
+    if (ti0 == _vop_clb) {
+        if (_vop_bend(TOKTYP(S, e)) == 1) {
+            if (_vsc_rskip(S) == 1) { return 0; }
+            return _vsc_err(S, a, 0, 0, 0);
+        }
+    }
+    var bo = _vsl_bopen(S, ti0, e);
+    if (bo >= 0) { return _vsc_err(S, a, 2, bo, 0); }
+    var sk = _vsl_slot(S, ti0, e);
+    if (sk == 1) { return _vrcv_tyerr(S, a, 1); }   # a store into a field, an element, through a pointer to no vector
+    if (sk == 2) { return _vrcv_tyerr(S, a, 0); }   # a condition, an index, a range bound, a literal's field
+    if (sk == 3) {   # a tuple literal's element: in the words of what receives the literal
+        if (_vop_ctx(S, ti0) == 2) { return _vrcv_tyerr(S, a, 1); }
+        return _vrcv_tyerr(S, a, 0);
+    }
+    return 0;
+}
+# 1 = token type `t` ends a closure's expression body (`;` `,` `)` `]` `}`).
+fn _vop_bend(t): i64 {
+    if (t == 5 || t == 31 || t == 11 || t == 29 || t == 14) { return 1; }
+    return 0;
+}
+# The first token of the one call declared to return a vector that [ti0, e) is, inside any parentheses wrapping it
+# whole (`_vcv_at`'s spellings), else -1; `_vsc_nt` the token naming it. The lookahead's records are put back (it runs
+# inside the parse of a source another reader may have looked ahead at).
+fn _vop_call(S, ti0, e): i64 {
+    if (_vcv_maybe(S, ti0) == 0) { return 0 - 1; }
+    var sa = _vcv_a;
+    var sn = _vcv_nt;
+    var so = _vcv_o;
+    var sc = _vcall_o;
+    var sp = _ie_pe;
+    var a = _ie_unparen(S, ti0, e);
+    var r = 0 - 1;
+    if (_vcv_at(S, a) != 0) { if (_call_close(S, _vcv_o) + 1 == _ie_pe) { r = a; } }
+    if (r >= 0) { _vsc_nt = _vcv_nt; }
+    _vcv_a = sa;
+    _vcv_nt = sn;
+    _vcv_o = so;
+    _vcall_o = sc;
+    _ie_pe = sp;
+    return r;
+}
+# The `(` of a builtin's or an indirect call's argument list (`syscall`, `store64`, `callptr`, fncallN), every argument
+# a word, whose whole argument is the factor [ti0, e); else -1.
+fn _vsl_bopen(S, ti0, e): i64 {
+    if (ti0 < 2) { return 0 - 1; }
+    var nx = TOKTYP(S, e);
+    if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    var p = TOKTYP(S, ti0 - 1);
+    if (p != 31) { if (p != 10) { return 0 - 1; } }
+    var o = _vsl_open(S, ti0 - 1);
+    if (o < 1) { return 0 - 1; }
+    var h = TOKTYP(S, o - 1);
+    if (h == 137) { return o; }
+    if (h == 2) {
+        if (_IS_FNCALL_NAME(S, TOKVAL(S, o - 1)) == 1) { return o; }
+        return 0 - 1;
+    }
+    if (TOKNAME_BUILTIN(h) != 0) { return o; }
+    return 0 - 1;
+}
+# The `(` that opens the argument list token `j` (a `(` or a `,`) is in, at its depth; -1 = none in the statement.
+fn _vsl_open(S, j): i64 {
+    var d = 0;
+    while (j >= 0) {
+        var t = TOKTYP(S, j);
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d == 0) {
+                if (t == 10) { return j; }
+                return 0 - 1;
+            }
+            d = d - 1;
+        } elif (d == 0) { if (t == 5 || t == 13 || t == 14) { return 0 - 1; } }
+        j = j - 1;
+    }
+    return 0 - 1;
 }
 # The accepted source of kind `k` (`_vrcv_src`; cursor on it) into the vector at slot `dst` of type
 # `ty`: inside its parentheses, the call — on PE passing `dst`'s address as its hidden result pointer,
@@ -9938,6 +10542,8 @@ fn _vrcv_mscal(S, pscale, ann): i64 {
     var mt = _vcall_vt(S, GTI(S) + 1, 5, 1);
     if (mt == 0) { return 0; }
     if (mt == pscale) { return 0; }
+    if (_vrcv_annbad(S, GTI(S)) == 1) { return 0; }   # 6.7.16: a refused annotation's one error
+    _refuse_in_sync(S);   # 6.7.16: the statement parses on; the next one keeps its errors
     ERR_MSG(S, "vector return type does not match the declared type", 51);
     return 0;
 }
@@ -10035,7 +10641,10 @@ fn _vrcv_other(S, term, lt): i64 {
     if (_vrcv_vcall(S, ti, lt, term) == 1) { return 0 - 1; }
     if (_vrcv_nofn(S, ti) == 1) { return 0 - 1; }   # 6.7.13: the undefined-function path names it
     var he = _had_error;
+    var vd = _vop_vd;
+    _vop_vd = 1;   # 6.7.16 (D100): a vector call operand in it is this refusal's
     PCMPE(S);
+    _vop_vd = vd;
     if (he == 0) { if (_had_error == 1) { he = 2; } }
     if (_vrcv_nofnw(S, ti, GTI(S)) == 1) { he = 2; }   # 6.7.14: wrapped, the parse registered it
     if (he != 2) { _vrcv_err(S, ti, "assigned", _vrcv_fptr(S, ti, GTI(S))); }
@@ -10559,6 +11168,7 @@ fn _dt_zone_check(S, n, k): i64 {
     if (_panic == 1) { return 0; }
     _dt_rhs_check_t(S, _dt_wterm(k, 5));   # 6.7.14: `k` wrapping parentheses stepped (`_dt_wrap_in`)
     var fi = _dt_call_fn(S);
+    if (_dt_icall_vec(S, 0) == 1) { return _panic; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
     if (fi >= 0) { _dt_arity_check(S, fi, n); }
     return _panic;
 }
@@ -10569,12 +11179,14 @@ fn _dt_zone_check(S, n, k): i64 {
 # to whatever rdx held, silently, at fn scope and at top level (6.6.0's destructure). A struct callee
 # is judged by its register words (`_dt_struct_check`) — its DECLARED return, ahead of a recorded
 # `return (..)` count (a `: P` fn's crossing arms). Not refused: a `: stack` pair (bit 256),
-# Result / Option / Tagged, a vector — any of which can carry a second word. CHANGELOG [6.6.17]
+# Result / Option / Tagged — any of which can carry a second word. CHANGELOG [6.6.17]
+# A vector is refused since 6.7.16 (`_dt_vec_err`).
 fn _dt_arity_check(S, fi, n): i64 {
     var rs = GFRS(S, fi);
     if (_dyn_is(S, rs) == 1) {   # 6.7.8 (V6): a dyn is one value, its words opaque
         return _dyn_err(S, GTI(S), "multi-value destructure of a ", rs, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " result - a dyn is one value: bind it to one name");
     }
+    if (rs <= 0 - 2048) { return _dt_vec_err(S, fi); }   # 6.7.16: a vector is no multiple values
     if (rs == MULTIRET_SID) {
         if (GFRN(S, fi) != n) {
             ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 75);
@@ -10640,6 +11252,42 @@ fn _dt_struct_err(S, fi, w): i64 {
     _had_error = 1;
     _panic = 1;
     return 0;
+}
+# ⛔ 6.7.16 (met landing 6.7.16's D100) — A VECTOR CALL IS NO MULTIPLE VALUES: `var a, b = mk2(41, 7);` (a method, an
+# explicit instance, wrapped, `var a, b, c = mk4(1);`, in the declaration zone and after the first statement) bound the
+# names to the integer return registers a vector return does not write — x86_64 / IR=3 / aarch64 0 and 0, Windows
+# garbage (195 where 161 is the lanes), cx its lanes by accident — where the assignment `a, b = mk2(..)` is refused (6.7.11,
+# `_tup_cap_class`) and 6.7.14's D27 (a) sets one rule for a declaration and an assignment. Refused by name in the
+# assignment's words, cursor on the call (`name(`, `name<..>(` or `x.m(`). CHANGELOG [6.7.16]
+fn _dt_vec_err(S, fi): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_dt_vec_err", fi, 1) == 1) { return 0; }
+    var ct = GTI(S);
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = ct + 2; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot destructure '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    PRSTR("' - it returns a vector, not multiple values\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# ... and through `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` (the cursor on the call; `masg` 1:
+# the assignment `a, b = ..`, in its words, `_tup_cap_err`): refused at `f` when f returns a vector. 1 = refused.
+fn _dt_icall_vec(S, masg): i64 {
+    var ft = _icall_fti(S, GTI(S));
+    if (ft < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ft));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) > 0 - 2048) { return 0; }
+    var sv = GTI(S);
+    STI(S, ft);
+    if (masg == 1) { _tup_cap_err(S, 0, fi, 3, 0); }
+    else { _dt_vec_err(S, fi); }
+    STI(S, sv);
+    return 1;
 }
 # ⛔ 6.7.11 — `n` names bound from undeclared fn `fi`, which returns `ar` values (pass 1,
 # `_prescan_ret_arity`): `var q, r, z = dm(17, 5);` bound z to whatever r8 held, silently, as the
@@ -10754,7 +11402,10 @@ fn _vin_decl(S, pscale, sty, ann): i64 {
     if (fi < 0) { return _vin_ustart(S, pscale, sty, ann); }   # 6.7.16 (D24): a method / `&f` / a wrap starting it
     var rs = GFRS(S, fi);
     if (pscale == 0) { if (sty == 0) { if (ann == 0) { pscale = rs; } } }
-    if (pscale != rs) { ERR_MSG(S, "vector return type does not match the declared type", 51); }
+    if (pscale != rs) { if (_vrcv_annbad(S, GTI(S)) == 0) {   # 6.7.16: a refused annotation's one error
+            _refuse_in_sync(S);   # 6.7.16: the statement parses on; the next one keeps its errors
+            ERR_MSG(S, "vector return type does not match the declared type", 51);
+        } }
     return pscale;
 }
 # ⛔ 6.7.16 (D24 A, the user's decision, 2026-10-19) — AN UNTYPED DECLARATION WHOSE INITIALISER A VECTOR CALL STARTS
@@ -10796,6 +11447,7 @@ fn _vtop_ref(S, st, ann): i64 {
     var rs = _vcall_vt(S, st, 5, 1);
     if (rs == 0) { return 0; }
     if (ann == 0) { return _svc_toplevel_at(S, _vcv_a, _vcv_nt); }
+    if (_vrcv_annbad(S, st - 1) == 1) { return 1; }   # 6.7.16: a refused annotation's one error
     var sv = GTI(S);
     STI(S, st - 1);
     ERR_MSG(S, "vector return type does not match the declared type", 51);
@@ -10861,6 +11513,7 @@ fn PARSE_VAR(S): i64 {
         # 6.7.14 (D45): inside parentheses that wrap the whole call (`_dt_peel`), closed after it.
         var _dt_wk = _dt_peel(S, 5);
         var _dt_fi = _dt_call_fn(S);
+        if (_dt_icall_vec(S, 0) == 1) { _dt_fi = 0 - 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
         if (_dt_fi >= 0) {
             var _dt_rs = GFRS(S, _dt_fi);
             if (_dt_rs == 0 - 9) { _dt_ftype = F64_TYID; _dt_t1 = F64_TYID; _dt_t2 = F64_TYID; _dt_t3 = F64_TYID; }
@@ -12342,12 +12995,14 @@ fn _gz_pname(S, b): i64 {
 # `*U` global, U a struct other than the declared `sid` (a struct or a `Str`; a tuple or dyn keeps its own rules): U,
 # its name's token in `_gz_pnu_ti`; else 0. CHANGELOG [6.7.16]
 var _gz_pnu_ti = 0;
+var _gz_pnu_sp = 0;   # 1 = the source is a span `_hl_psrc` typed (its spelling in `_hl_psa` / `_hl_pse`), not a name
 fn _gz_pnu(S, b, sid): i64 {
+    _gz_pnu_sp = 0;
     if (sid <= 0) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
     var a = _ie_unparen(S, b, _gz_end(S, b));
-    if (_ie_pe != a + 1) { return 0; }
+    if (_ie_pe != a + 1) { return _gz_pnu_span(S, a, _ie_pe, sid); }
     if (TOKTYP(S, a) != 2) { return 0; }
     var gvi = _findvar_core(S, TOKVAL(S, a));
     if (gvi < 0) { return 0; }
@@ -12357,12 +13012,61 @@ fn _gz_pnu(S, b, sid): i64 {
     _gz_pnu_ti = a;
     return u;
 }
+# ⛔ 6.7.16 (D99, the s16 review) — THE D1 STUB SCAN READS A SUBSCRIPT STORE `p[i] = R;` (p's name at token i, opening a
+# statement or a for step) as `_gs_dsr_stmt` reads `*p = R;`: p declared a pointer (`p: *T`, `pp: **T`; an array `a:
+# T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
+# lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
+# the line. 1 = such a store. CHANGELOG [6.7.16]
+fn _gs_sub_sres(S, fi, i): i64 {
+    var pt = TOKTYP(S, i - 1);
+    if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
+    var eq = _gs_dsr_eq(S, i);
+    if (eq < 0) { return 0; }
+    if (TOKTYP(S, eq - 1) != 29) { return 0; }
+    var d = _tok_name_decl(S, _gs_open, i, TOKVAL(S, i));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d + 1) != 49) { return 0; }
+    if (TOKTYP(S, d + 2) != 8) { return 0; }
+    if (_gs_dsr_dep(S, fi, i) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
+    _gsw_k = 5;
+    _gsw_ti = i;
+    return 1;
+}
+# ⛔ 6.7.16 (D87 (a), the s16 review) — AND A `*U` CALL, FIELD OR POINTER ARITHMETIC, as the assignment refuses them
+# (`_hl_psrc_copy`): `var l: P3 = gq(&q);` (gq `: *Q3`), `= h.pq`, `= w.mq()`, `= pq + 0`, wrapped, at every size, in a
+# fn (`_sci_pnu`), the declaration zone and after the first statement (`_gz_pnu_span`), bound a handle reading U's object
+# as an S (at top level at 8 B or less held the pointer word) — only a `*U` NAME was refused. The source [a, e), no
+# single name (the name arms keep theirs), typed by `_hl_psrc`: U when it is a struct other than `sid` (named as
+# spelled, 'gq(&q)', 'h.pq'), else 0 — a `*S` of the declared struct keeps its handle bind / copy. CHANGELOG [6.7.16]
+fn _gz_pnu_span(S, a, e, sid): i64 {
+    var u = _hl_psrc(S, a, e);
+    if (u <= 0) { return 0; }
+    if (u == sid) { return 0; }
+    _gz_pnu_sp = 1;
+    return u;
+}
+# The fn's arm (`_try_struct_copy_init`, cursor on the `=`): 1 = refused.
+fn _sci_pnu(S, noff, pscale): i64 {
+    if (pscale <= 0 - 2048) { return 0; }
+    var b = GTI(S) + 1;
+    var a = _ie_unparen(S, b, _gz_end(S, b));
+    if (_ie_pe == a + 1) { return 0; }
+    var u = _gz_pnu(S, b, 0 - pscale);
+    if (u <= 0) { return 0; }
+    return _gz_pnu_err(S, pscale, u, noff);
+}
+# The refusal of `_gz_pnu`'s source `u` into `dnoff` (declared `gps`): the span as spelled, or the name. 1.
+fn _gz_pnu_err(S, gps, u, dnoff): i64 {
+    if (_gz_pnu_sp == 1) { return _hl_psrc_err(S, gps, 0 - u, dnoff); }
+    return _AGG_ASSIGN_TYPE_ERR(S, gps, 0 - u, dnoff, TOKVAL(S, _gz_pnu_ti));
+}
 # The replay's refusal of it (cursor on the initialiser): by name, as the fn's (`_sci_gsrc_type`), the cursor left on
 # the `;` (1); 0 = not one.
 fn _gz_pnu_init(S, gps, dnoff): i64 {
     var u = _gz_pnu(S, GTI(S), 0 - gps);
     if (u <= 0) { return 0; }
-    _AGG_ASSIGN_TYPE_ERR(S, gps, 0 - u, dnoff, TOKVAL(S, _gz_pnu_ti));
+    _gz_pnu_err(S, gps, u, dnoff);
     STI(S, _gz_end(S, GTI(S)));
     return 1;
 }
@@ -12371,7 +13075,7 @@ fn _gz_pnu_init(S, gps, dnoff): i64 {
 fn _gci_pnu_top(S, noff, pscale): i64 {
     var u = _gz_pnu(S, GTI(S) + 1, 0 - pscale);
     if (u <= 0) { return 0; }
-    return _AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - u, noff, TOKVAL(S, _gz_pnu_ti));
+    return _gz_pnu_err(S, pscale, u, noff);
 }
 # ⛔ 6.7.16 (D18 (a)) — A TOP-LEVEL `var G: S = P;` WITH P A `*S` GLOBAL'S NAME IS A COPY, AT EVERY SIZE (the user's
 # decision, 2026-10-19), in the declaration zone and after the first statement, as the same line in a fn is (6.7.0):

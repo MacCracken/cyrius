@@ -1,0 +1,84 @@
+# vector_call_accepted_slots.tcyr — 6.7.16 (D100 / D101): a vector call where a vector goes runs on every target, and the
+# bound vector's lanes take part in every operator and word slot.
+#
+# The refusals of 6.7.16's D100 (a vector call as an operand anywhere, or as the whole of a word slot: "vector return
+# type does not match the declared type / the assigned variable") and D101 (a whole vector call returned from a fn that
+# returns no vector, or passed where a word goes: "a vector value cannot be returned as i64 / passed to an integer
+# parameter") are compile-time, and tests/gates/codegen/simd_return_shapes.sh rows VO / VOS / VA / VAS hold them on
+# x86_64 / IR=3 / aarch64 / cx / PE. This file holds the other side on the four hardware hosts: every destination that
+# TAKES the vector — a vector fn's own `return`, a value-form and a `*V` parameter, a parameter declared the vector that
+# its callee ignores, a discarded call, a receive (`var w = mk2(..)`, `var v: f64v2 = s.m2()`), a closure that passes it
+# to a value-form parameter — still carries both lanes, and the spelling the refusals point to (bind the vector, read
+# its lanes with load64) computes in an operator, a compound assignment, a field store, an element store and a
+# condition. Built standalone by the release gate's cross-OS leg (ecb / ach / cass / pi).
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+include "lib/fnptr.cyr"
+
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); store64(&v + 8, a + 1); store64(&v + 16, a + 2); store64(&v + 24, a + 3); return v; }
+fn mkg<T>(a: T, b: T): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct Mv { k; }
+impl Mv { fn m2(self): f64v2 { return mk2(40 + self.k, 7); } }
+struct Pt { a; b; }
+
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn lanes4(x: f64v4): i64 { return load64(&x) + load64(&x + 8) + load64(&x + 16) + load64(&x + 24); }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn takev(x: f64v2): i64 { return 3; }
+
+# --- a vector call where a vector goes (D101's untouched destinations) ----------------------------------------------
+fn f2(a): f64v2 { return mk2(a, 7); }               # a vector fn's own return of a call
+fn g2(s: Mv): f64v2 { return s.m2(); }              # ... of a method
+fn h2(a): f64v2 { return mkg<i64>(a, 7); }          # ... of an explicit instance
+fn i4(a): f64v4 { return mk4(a); }                  # ... of a 32-byte vector
+fn run_returns(): i64 {
+    var s: Mv = Mv { 1 };
+    var a: f64v2 = f2(41);
+    var b: f64v2 = g2(s);
+    var c: f64v2 = h2(41);
+    var d: f64v4 = i4(10);
+    return lanes(a) + lanes(b) + lanes(c) + lanes4(d);   # 417 * 3 + 46
+}
+fn run_params(): i64 {
+    var s: Mv = Mv { 1 };
+    var n = lanes(mk2(41, 7)) + lanes(s.m2()) + lanes(callptr(&mk2, 41, 7)) + lanes4(mk4(1));   # 417 * 3 + 10
+    n = n + rd(mk2(41, 7)) + takev(mk2(1, 2));                                                   # + 41 + 3
+    return n;
+}
+fn run_discard(): i64 {
+    var s: Mv = Mv { 1 };
+    var k = 5;
+    mk2(41, 7);
+    s.m2();
+    callptr(&mk2, 41, 7);
+    fncall2(&mk2, 41, 7);
+    return k + s.k;
+}
+fn run_closure(): i64 {
+    var f = |k| lanes(mk2(k, 7)) + 1;
+    return fncall1(f, 41);
+}
+
+# --- the spelling the refusals point to: bind the vector, read its lanes (D100's shapes, written right) -----------
+fn run_lanes(): i64 {
+    var s: Mv = Mv { 1 };
+    var w = mk2(41, 7);
+    var v: f64v2 = s.m2();
+    var x = 1 + load64(&w);          # was `1 + mk2(41, 7)`
+    x += load64(&v + 8);             # was `x += s.m2()`
+    var p: Pt = Pt { 0, 0 };
+    p.a = load64(&w);                # was `p.a = mk2(41, 7)`
+    var a: i64[2];
+    a[0] = load64(&v + 8);           # was `a[0] = mk2(..)`
+    a[1] = 0;
+    if (load64(&w) == 41) { a[1] = 1; }   # was `if (mk2(41, 7))`
+    return x * 1000 + p.a * 10 + a[0] + a[1] * 100000;
+}
+
+assert_eq(run_returns(), 1297, "a vector fn returns a call, a method, an explicit instance, an f64v4 call");
+assert_eq(run_params(), 1305, "a vector call into a value-form, *V and ignored vector parameter, by name, method, callptr, f64v4");
+assert_eq(run_discard(), 6, "a discarded vector call (by name, a method, callptr, fncall2) leaves the frame intact");
+assert_eq(run_closure(), 418, "a closure passes a vector call to a value-form parameter");
+assert_eq(run_lanes(), 149417, "the bound vector's lanes in an operator, a compound assignment, a field, an element, a condition");
+var r = assert_summary();

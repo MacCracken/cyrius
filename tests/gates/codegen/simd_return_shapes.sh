@@ -425,6 +425,85 @@
 # calls, 161) on five legs. Mutations (2026-10-20, measured):
 #   M-RV1 `_simd_ret_call_ok` taking a call that starts the value (the tree before) -> RED 15: RV1-RV3 on five legs
 #   M-RV2 `_ret_vwcall` reading the call's `(` only (the tree before) -> RED 3: RV1-RV3 on win64 (a second error)
+# 6.7.16 (D101 A, the user's decision, 2026-10-20; issues/2026-10-20-whole-vector-call-returned-as-scalar-or-passed-to-
+# integer-parameter.md) — a whole vector call returned from a fn that returns no vector (PARSE_RETURN's `_vsc_ret`: the
+# whole value, or a call starting it with an operator after it; a closure's expression body, `_vop_clb`), passed to a
+# parameter that takes a word (`_bx_pcmpe_arg`'s `_vsc_arg`), or to a builtin's or an indirect call's argument
+# (PARSE_FACTOR's `_vop_rchk` -> `_vsl_bopen`) is refused "a vector value cannot be returned as i64 / passed to an
+# integer parameter - 'mk2' returns a vector, ..". Before (re-measured on this lane): `return mk2(41, 7);` from `: i64`
+# gave x86_64 / IR=3 / aarch64 0, cx 41, PE exit 5 (a page fault: no hidden result pointer); `return s.m2();`,
+# `takei(mk2(41, 7))`, `take(mk2(41, 7))`, `syscall(60, mk2(..))`, `|k| mk2(k, 7)` 0 / cx / PE 41; `return mk2(41, 7) +
+# 1;` 1 / cx / PE 42. Rows VA (refused once; VA1-VA5 the filed rows verbatim), VAS (the refusal made in sync: the next
+# statement keeps its own error) and VAC1 (the vector's own destinations, 161) on host / host IR=3 / cx / aarch64 /
+# win64. Mutations (2026-10-21, measured):
+#   M-VA0 the tree before                              -> RED 171: VA1-VA29 VAS1-VAS5 on five legs, and the message self-check
+#   M-VA1 `_vsc_ret` judging nothing                   -> RED 70: VA1 VA2 VA5-VA14 VA25 VA28 on five legs
+#   M-VA2 `_vsc_arg` judging nothing                   -> RED 45: VA3 VA4 VA15-VA19 VA27 VA29 on five legs
+#   M-VA3 `_vop_whole` without the builtin / indirect argument (`_vsl_bopen`) -> RED 25: VA20-VA23 VA26 on five legs
+#   M-VA4 the closure body never marked (`_vop_clb`)   -> RED 5: VA24 on five legs
+#   M-VA5 `_vsc_ret` asking a whole call (`start` 0)   -> RED 15: VA5 VA13 VA14 on five legs
+#   M-VA6 `_vsc_err` not marked in sync (`_refuse_in_sync`) -> RED 5: VAS1 on five legs (the declaration's resync skipped
+#       the next statement, `x = zz9;` unreported)
+# 6.7.16 (D100 A, the user's decision, 2026-10-20; issues/2026-10-20-vector-call-as-later-operand-or-compound-right-side-
+# uses-first-word.md) — a vector call as an OPERAND anywhere (`_vop_opnd`: a binary operator beside it, a unary one or a
+# compound `op =` before it), refused in the words of what receives it (`_vop_ctx`: a declaration "vector return type
+# does not match the declared type", an assignment ".. the assigned variable", a `return` or a closure's expression body
+# D101's, anything else the declaration's), and as the whole of a word slot (`_vsl_slot`: a store into a field, an
+# element, through a pointer to no vector; a condition, an index, a range bound, a literal's field, `match`'s subject).
+# A value-form vector destination's source keeps its own refusal (`_vop_vd`), a call a top-level declaration refused
+# keeps that one (`_vop_done`); every refusal is made in sync (`_vrcv_tyerr`). Before (re-measured on this lane):
+# `var x: i64 = 1 + mk2(41, 7);`, `x = 1 + mk2(..)`, `var w = 1 + mk2(..)`, `take(mk2(41, 7) + 1)` x86_64 / IR=3 /
+# aarch64 1, cx / PE 42; `x += mk2(41, 7)`, `x += s.m2()`, `p.a = mk2(..)`, `*q = mk2(..)` 0 / 41; the filed row 6 0 /
+# 82; `rd(mk2(41, 7) + 1)` and `var q = *mk2(41, 7);` 139 / 139 / 139, cx 0 / 1, PE 5; `if (mk2(41, 7))` took the
+# branch on cx / PE only. Rows VO (refused once; VO1-VO7 the filed rows verbatim), VOS (VOF the filed row 6's two
+# statements, each refused; the next statement's error kept) and VOC1 (161) on host / host IR=3 / cx / aarch64 / win64.
+# Mutations (2026-10-21, measured):
+#   M-VO0 the tree before                              -> RED 260: VO1-VO47 VOF VOS1-VOS5 on five legs (VO48 the parse's
+#       one error before too)
+#   M-VO1 `_vop_opnd` reading no operand               -> RED 155: VO1-VO5 VO7-VO14 VO18-VO31 VOF VOS1 VOS2 VOS5 on five
+#       legs (VO15-VO17, a compound store through a field, a `*T`, an element, are the slot's store, same words)
+#   M-VO2 `_vsl_slot` reading no slot                  -> RED 90: VO32-VO47 VOS3 VOS4 on five legs
+#   M-VO3 `_vop_ctx` answering "anything else" always  -> RED 115: VO2 VO4 VO5 VO9-VO11 VO13 VO15-VO20 VO23 VO26 VO27
+#       VO30 VOF VOS2, and RV1-RV4 (a vector fn's own `return`: the 6.6.6 rule's words) on five legs
+#   M-VO4 the refusal not marked in sync (then a wrapper, `_vop_tyerr`; `_vrcv_tyerr` marks itself since the WS bite
+#       below, M-WS1) -> RED 20: VOF VOS1-VOS3 on five legs
+#   M-VO5 no `_vop_vd` exemption                       -> RED 85: OP1-OP5 OP7-OP15 OP19 OP22 OP23 on five legs (a second
+#       error in front of the value-form refusal)
+#   M-VO6 no `_vop_done` exemption                     -> RED 25: OP6 OP17 OP18 OP24 OP25 on five legs (two errors)
+#   M-VO7 `_vsl_dst` exempting an untyped pointer      -> RED 5: VO36 on five legs
+#   M-VO8 the `|` before a closure's body an operator  -> RED 5: VO48 on five legs (a second error before the parse's)
+#   M-VO9 `_vop_ctx` past a closure's body start       -> RED 5: VO20 on five legs (the declaration's words)
+# The s16 review (2026-10-21, measured): a whole call as a tuple literal's element (`_vsl_tup`; rows VO49-VO60, VOC2 the
+# controls) — the tree before RED 60: VO49-VO60 on five legs (x86_64 / aarch64 0, cx 41: one word stored);
+#   M-VO10 `_vsl_tup` reading no tuple literal         -> RED 60: VO49-VO60 on five legs
+#   M-VO11 a tuple element always the declaration's words -> RED 10: VO51 VO60 on five legs
+# and a whole call stored into a field or an element of a call's result (`_vsl_cstore`; rows VO61-VO67, VOC3 the
+# controls) — the tree before RED 35: VO61-VO67 on five legs;
+#   M-VO12 `_vsl_cstore` reading no call               -> RED 35: VO61-VO67 on five legs
+#   M-VO13 `_vsl_cstore` by name only (no `callptr`)   -> RED 5: VO62 on five legs
+# 6.7.16 (met landing D100) — the vector receives' refusals are made in sync (`_refuse_in_sync`): the by-name call's
+# mismatch into a local (`_try_vector_call_assign`), `_vrcv_tyerr` (the starting call, a method, `&f`, a global, another
+# vector; D100's operands and slots), `_vrcv_mscal` (a method starting a declaration) and `_vin_decl` (`var x: i64 =
+# mk2(..)`). Each latched the panic mid-statement, the statement parsed on to its own `;`, and PARSE_STMT's resync then
+# skipped the NEXT statement: `x = mk2(1, 2); x = zz9;` reported no `zz9`, and a `for` header's init (`for (a = mk2(1,
+# 2); a < 3; a = a + 1)`) lost its condition — "expected ';', got '='" second. Rows WS (two errors: the refusal, the next
+# statement's) and WF (a `for` init, one error) on host / host IR=3 / cx / aarch64 / win64. Mutations (2026-10-21,
+# measured):
+#   M-WS0 the tree before                              -> RED 50: WS1-WS6 WF1-WF4 on five legs
+#   M-WS1 `_vrcv_tyerr` not marked                     -> RED 35: WS4 WS6 WF4, VOF VOS1-VOS3 (D100's) on five legs
+#   M-WS2 `_try_vector_call_assign`'s mismatch not marked -> RED 20: WS1 WS3 WF1 WF3 on five legs
+#   M-WS3 `_vin_decl` not marked                       -> RED 10: WS2 WF2 on five legs
+#   M-WS4 `_vrcv_mscal` not marked                     -> RED 5: WS5 on five legs
+# 6.7.16 (met landing D100) — a refused statement prints no float-type warning (`_FLT_TYPE_WARN` says nothing while the
+# panic latch its error holds is up): D100's `var x: f64 = 1.0 + mk2(41, 7);` printed the refusal and then "f64
+# arithmetic with a non-f64 right operand" about the refused operand (f32, a comparison, an int-left `+` the same). Rows
+# FW (one error, no warning; FW5 the next statement's own warning kept) on host / host IR=3 / cx / aarch64 / win64.
+# Mutation (2026-10-21, measured): M-FW0 the tree before -> RED 25: FW1-FW5 on five legs (FW5 two warnings).
+# The s16 review (2026-10-21, measured): a statement that reported an error that does not latch prints no float-type
+# warning either (`_FLT_TYPE_WARN` asks `_err_n` against `_flt_en`, set by PARSE_STMT and each zone replay entry; a tuple's
+# refusal, `_dyn_ebeg`, now counted) — rows FW6-FW13. The tree before -> RED 40: FW6-FW13 on five legs (a warning after
+# the error); M-FW1 the count not asked -> RED 40 (the same rows); M-FW2 `_dyn_ebeg` not counting -> RED 10: FW6 FW11 on
+# five legs; M-FW3 no zone entry reset -> RED 5: FW9 on five legs (C's own warning lost).
 
 set -eu
 
@@ -2301,6 +2380,812 @@ sx_msg() {
 }
 
 
+# ---- 6.7.16 (D101 A, the user's decision, 2026-10-20; issues/2026-10-20-whole-vector-call-returned-as-scalar-or-passed-to-
+# integer-parameter.md): a whole vector call returned from a fn that returns no vector, or passed where a word goes, is
+# refused by name (rows VA refused once; VAC1 the vector's own destinations, 161) ----------------------------------------
+# VA1-VA5 the filed rows verbatim (VA5 `return mk2(41, 7) + 1;`); VA6-VA12 the return's spellings and types (a wrap, `&f`
+# through callptr, an explicit instance, a chain's method, `: f64` / f64v4, an untyped fn, `: *i64`, a multiplied
+# method, a wrapped start); VA13-VA18 the parameter's kinds and call paths (`f64`, a method's, a named argument, the 7th
+# (stack) argument, a callee below its call, an #inline callee); VA19-VA22 a builtin's or an indirect call's argument;
+# VA23 / VA24 a closure's value (an expression body, a block's `return`); VA25 / VA26 at top level; VA27 a generic's
+# body at two instances (once); VA28 f32v4.
+VAH="$OPH"'fn take(t): i64 { return t; }
+fn takei(n: i64): i64 { return n; }
+fn takef(x: f64): i64 { return 3; }
+fn take7(a, b, c, d, e, f, g): i64 { return g; }
+impl W { fn ti(self, n: i64): i64 { return n; } }
+'
+va_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VA1) printf '%s' "$OPF"'fn r(): i64 { return mk2(41, 7); }
+syscall(60, r() % 256);
+' ;;
+    VA2) printf '%s' "$OPF"'fn r(): i64 { var s: Mv = Mv { 1 }; return s.m2(); }
+syscall(60, r() % 256);
+' ;;
+    VA3) printf '%s' "$OPF"'fn takei(x: i64): i64 { return x; }
+fn r(): i64 { return takei(mk2(41, 7)); }
+syscall(60, r() % 256);
+' ;;
+    VA4) printf '%s' "$OPF"'fn take(x): i64 { return x; }
+fn r(): i64 { return take(mk2(41, 7)); }
+syscall(60, r() % 256);
+' ;;
+    VA5) printf '%s' "$OPF"'fn r(): i64 { return mk2(41, 7) + 1; }
+syscall(60, r() % 256);
+' ;;
+    VA6) printf '%s' "$VAH"'fn r(): i64 { return ((mk2(41, 7))); }
+syscall(60, r() % 256);
+' ;;
+    VA7) printf '%s' "$VAH"'fn r(): i64 { return callptr(&mk2, 41, 7); }
+syscall(60, r() % 256);
+' ;;
+    VA8) printf '%s' "$VAH"'fn r(): i64 { return mkg<i64>(41, 7); }
+syscall(60, r() % 256);
+' ;;
+    VA9) printf '%s' "$VAH"'fn r(): i64 { var x: W; return x.s.m2(); }
+syscall(60, r() % 256);
+' ;;
+    VA10) printf '%s' "$VAH"'fn r(): f64 { return mk4(41); }
+syscall(60, 0);
+' ;;
+    VA11) printf '%s' "$VAH"'fn r() { return mk2(41, 7); }
+syscall(60, r() % 256);
+' ;;
+    VA12) printf '%s' "$VAH"'fn r(): *i64 { return fncall2(&mk2, 41, 7); }
+syscall(60, 0);
+' ;;
+    VA13) printf '%s' "$VAH"'fn r(): i64 { var s: Mv = Mv { 1 }; return s.m2() * 2; }
+syscall(60, r() % 256);
+' ;;
+    VA14) printf '%s' "$VAH"'fn r(): i64 { return (mk2(41, 7) + 1) * 2; }
+syscall(60, r() % 256);
+' ;;
+    VA15) printf '%s' "$VAH"'fn r(): i64 { return takef(mk2(41, 7)); }
+syscall(60, r() % 256);
+' ;;
+    VA16) printf '%s' "$VAH"'fn r(): i64 { var w: W; return w.ti(n: mk2(41, 7)); }
+syscall(60, r() % 256);
+' ;;
+    VA17) printf '%s' "$VAH"'fn r(): i64 { return take7(1, 2, 3, 4, 5, 6, (mk2(41, 7))); }
+syscall(60, r() % 256);
+' ;;
+    VA18) printf '%s' "$VAH"'fn r(): i64 { var s: Mv = Mv { 1 }; return later(s.m2()); }
+fn later(n): i64 { return n; }
+syscall(60, r() % 256);
+' ;;
+    VA19) printf '%s' "$VAH"'#inline
+fn il(n): i64 { return n; }
+fn r(): i64 { return il(mkg<i64>(41, 7)); }
+syscall(60, r() % 256);
+' ;;
+    VA20) printf '%s' "$VAH"'fn r(): i64 { syscall(60, mk2(41, 7)); return 0; }
+syscall(60, r() % 256);
+' ;;
+    VA21) printf '%s' "$VAH"'fn r(): i64 { var x = 0; store64(&x, (mk2(41, 7))); return x; }
+syscall(60, r() % 256);
+' ;;
+    VA22) printf '%s' "$VAH"'fn r(): i64 { var f = |k| k; return fncall1(f, mk4(41)); }
+syscall(60, r() % 256);
+' ;;
+    VA23) printf '%s' "$VAH"'fn r(): i64 { return callptr(&takei, callptr(&mk2, 41, 7)); }
+syscall(60, r() % 256);
+' ;;
+    VA24) printf '%s' "$VAH"'fn r(): i64 { var f = |k| mk2(k, 7); return fncall1(f, 41); }
+syscall(60, r() % 256);
+' ;;
+    VA25) printf '%s' "$VAH"'fn r(): i64 { var f = |k| { return (mk2(k, 7)); }; return fncall1(f, 41); }
+syscall(60, r() % 256);
+' ;;
+    VA26) printf '%s' "$VAH"'syscall(60, mk2(41, 7));
+' ;;
+    VA27) printf '%s' "$VAH"'var X = take(mk2(41, 7));
+syscall(60, X % 256);
+' ;;
+    VA28) printf '%s' "$VAH"'fn g<T>(x: T): i64 { return mk2(41, 7); }
+fn r(): i64 { return g(1) + g<i32>(2); }
+syscall(60, r() % 256);
+' ;;
+    VA29) printf '%s' "$VAH"'fn r(): i64 { return take(mkf(1, 2, 3, 4)); }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+VA_ROWS="VA1 VA2 VA3 VA4 VA5 VA6 VA7 VA8 VA9 VA10 VA11 VA12 VA13 VA14 VA15 VA16 VA17 VA18 VA19 VA20 VA21 VA22 VA23 VA24 VA25 VA26 VA27 VA28 VA29"
+VAM="a vector value cannot be"
+va_msg() {
+    case "$1" in
+    VA1|VA5|VA6|VA7|VA8|VA11|VA14|VA24|VA25|VA28) echo "$VAM returned as i64 - '$(va_nm "$1")' returns a vector";;
+    VA2|VA9|VA13) echo "$VAM returned as i64 - 'm2' returns a vector";;
+    VA10) echo "$VAM returned as f64 - 'mk4' returns a vector";;
+    VA12) echo "$VAM returned as *i64 - 'mk2' returns a vector";;
+    VA3) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to parameter 'x' of 'takei'";;
+    VA4) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to parameter 'x' of 'take'";;
+    VA15) echo "$VAM passed to an f64 parameter - 'mk2' returns a vector, passed to parameter 'x' of 'takef'";;
+    VA16) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to parameter 'n' of 'W.ti'";;
+    VA17) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to parameter 'g' of 'take7'";;
+    VA18) echo "$VAM passed to an integer parameter - 'm2' returns a vector, passed to parameter 'n' of 'later'";;
+    VA19) echo "$VAM passed to an integer parameter - 'mkg' returns a vector, passed to parameter 'n' of 'il'";;
+    VA20|VA26) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to 'syscall'";;
+    VA21) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to 'store64'";;
+    VA22) echo "$VAM passed to an integer parameter - 'mk4' returns a vector, passed to 'fncall1'";;
+    VA23) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to 'callptr'";;
+    VA27) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to parameter 't' of 'take'";;
+    VA29) echo "$VAM passed to an integer parameter - 'mkf' returns a vector, passed to parameter 't' of 'take'";;
+    esac
+}
+va_nm() { case "$1" in VA8) echo mkg;; *) echo mk2;; esac; }
+# VAS: the refusal is made in sync — the statement parses on to its own end and the NEXT statement keeps its own error
+# (two errors: the refusal, then "undefined variable 'zz9'"): after a declaration's argument (VAS1), a builtin's
+# argument (VAS2), a `return` (VAS3), a closure's value (VAS4), at top level (VAS5).
+vas_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VAS1) printf '%s' "$VAH"'fn r(): i64 { var x = take(mk2(41, 7)); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    VAS2) printf '%s' "$VAH"'fn r(): i64 { syscall(60, mk2(41, 7)); var y = zz9; return y; }
+syscall(60, r() % 256);
+' ;;
+    VAS3) printf '%s' "$VAH"'fn r(): i64 { var c = 1; if (c == 1) { return mk2(41, 7); } return zz9; }
+syscall(60, r() % 256);
+' ;;
+    VAS4) printf '%s' "$VAH"'fn r(): i64 { var f = |k| mk2(k, 7); var y = zz9; return y; }
+syscall(60, r() % 256);
+' ;;
+    VAS5) printf '%s' "$VAH"'syscall(60, mk2(41, 7));
+var Y = zz9;
+syscall(60, Y);
+' ;;
+    esac
+}
+VAS_ROWS="VAS1 VAS2 VAS3 VAS4 VAS5"
+vas_msg() {  # the two errors, one per line
+    case "$1" in
+    VAS1) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to parameter 't' of 'take'";;
+    VAS2|VAS5) echo "$VAM passed to an integer parameter - 'mk2' returns a vector, passed to 'syscall'";;
+    VAS3|VAS4) echo "$VAM returned as i64 - 'mk2' returns a vector";;
+    esac
+    echo "undefined variable 'zz9'"
+}
+# The controls: the vector's own destinations — a vector fn's return, a value-form and a `*V` parameter, a discarded
+# call, a parameter its callee ignores, a closure's value-form argument, a bool's own refusal stays out (161).
+vac_src() {  # $1 row id -> source on stdout; exits 161 when right
+    case "$1" in
+    VAC1) printf '%s' "$VAH"'fn f(a): f64v2 { return mk2(a, 7); }
+fn g(s: Mv): f64v2 { return s.m2(); }
+fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn rd(p: *f64v2): i64 { return load64(p); }
+fn takev(x: f64v2): i64 { return 3; }
+fn r(): i64 { var s: Mv = Mv { 1 };
+  mk2(1, 2); s.m2(); callptr(&mk2, 1, 2);
+  if (lanes(mk2(41, 7)) != 417) { return 1; } if (rd(mk2(41, 7)) != 41) { return 2; } if (lanes(s.m2()) != 417) { return 3; }
+  if (takev(mk2(1, 2)) != 3) { return 4; } var v: f64v2 = f(41); var w: f64v2 = g(s); if (lanes(v) + lanes(w) != 834) { return 5; }
+  var h = |k| lanes(mk2(k, 7)); if (fncall1(h, 41) != 417) { return 6; } return 161; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+VAC_ROWS="VAC1"
+
+
+# ---- 6.7.16 (D100 A, the user's decision, 2026-10-20; issues/2026-10-20-vector-call-as-later-operand-or-compound-right-
+# side-uses-first-word.md): a vector call as an operand anywhere, or as the whole of a word slot, is refused by name (rows
+# VO refused once; VOF the filed repro's two-statement row, refused once per statement; VOS the next statement's error
+# kept; VOC1 the controls, 161) -----------------------------------------------------------------------------------------
+# VO1-VO7 the filed rows verbatim (the issue's repro file, `r`'s body per row; VO6's two statements are VOF); VO8 `rd(mk2(41,
+# 7) + 1)` into a `*f64v2` (139 / cx 221 / PE 5 before); VO9-VO12 unary operators (`-` `!` `~` `*`); VO13 / VO14 a
+# `return`'s and a condition's later operand; VO15-VO18 a compound right side through a field, a `*T`, an element, `-=`;
+# VO19 a wrapped later operand; VO20 a closure's expression body; VO21-VO24 at top level (the zone, after the first
+# statement, a compound assignment, a builtin's argument expression); VO25-VO28 an explicit instance, a chain's method,
+# f64v4, f32v4; VO29 into an `f64`; VO30 inside a term; VO31 `&&`; VO32-VO36 a whole call stored into a field, through a
+# `*i64`, an element, `*(&x)`, an untyped pointer; VO37-VO46 a whole call as a condition (`if`, `while`, a `for`'s,
+# `elif`, `switch`), an index, a range bound, a struct literal's field (positional, named), `match`'s subject; VO47 a
+# top-level field store; VO48 a closure's expression body followed by a stray token (the parse's one error, as SX);
+# VO49-VO60 (the s16 review) a whole call as a tuple literal's element — an untyped and an annotated declaration's, an
+# assignment's, a tuple argument's, the second element, a multi-value fn's and a method's `return`, a method's call as a
+# middle element, a wrapped explicit instance, the declaration zone, after the first statement (`callptr(&mk2, ..)`), a
+# tuple field's store (f64v4); VO61-VO67 (the s16 review) a whole call stored into a field or an element of a CALL's
+# result — `gp().b`, `callptr(&gp).b`, `gi()[0]`, an explicit instance's `gpg<i64>(1).b`, an inferred generic's (f64v4),
+# `fncall0(&gp).b` from a method, after the first statement.
+VOH="$OPH"'fn take(t): i64 { return t; }
+fn rd(p: *f64v2): i64 { return load64(p); }
+struct Pt { a; b; }
+'
+VOG="$VOH"'var GP: Pt = Pt { 1, 2 };
+var GX: i64[2];
+fn gp(): *Pt { return &GP; }
+fn gi(): *i64 { return &GX; }
+fn gpg<T>(x: T): *Pt { return &GP; }
+'
+vo_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VO1|VO2|VO3|VO4|VO5|VO7) printf '%s' 'include "lib/fnptr.cyr"
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct Mv { k; }
+impl Mv { fn m2(self): f64v2 { return mk2(41, 7); } }
+'"$(vo_filed "$1")"'
+syscall(60, r() % 256);
+' ;;
+    VO8) printf '%s' "$VOH"'fn r(): i64 { return rd(mk2(41, 7) + 1); }
+syscall(60, r() % 256);
+' ;;
+    VO9) printf '%s' "$VOH"'fn r(): i64 { var x = 0; x = -mk2(41, 7); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO10) printf '%s' "$VOH"'fn r(): i64 { var x = 0; x = !mk2(41, 7); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO11) printf '%s' "$VOH"'fn r(): i64 { return ~mk2(41, 7); }
+syscall(60, r() % 256);
+' ;;
+    VO12) printf '%s' "$VOH"'fn r(): i64 { var q = *mk2(41, 7); return q; }
+syscall(60, r() % 256);
+' ;;
+    VO13) printf '%s' "$VOH"'fn r(): i64 { return 1 + mk2(41, 7); }
+syscall(60, r() % 256);
+' ;;
+    VO14) printf '%s' "$VOH"'fn r(): i64 { if (1 + mk2(41, 7) > 0) { return 1; } return 2; }
+syscall(60, r() % 256);
+' ;;
+    VO15) printf '%s' "$VOH"'fn r(): i64 { var p: Pt = Pt { 1, 2 }; p.a += mk2(41, 7); return p.a; }
+syscall(60, r() % 256);
+' ;;
+    VO16) printf '%s' "$VOH"'fn r(): i64 { var x = 1; var p: *i64 = &x; *p += mk2(41, 7); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO17) printf '%s' "$VOH"'fn r(): i64 { var a: i64[4]; a[0] = 1; a[0] += mk2(41, 7); return a[0]; }
+syscall(60, r() % 256);
+' ;;
+    VO18) printf '%s' "$VOH"'fn r(): i64 { var x = 50; x -= mk2(41, 7); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO19) printf '%s' "$VOH"'fn r(): i64 { var x = 0; x = 2 * ((mk2(41, 7))); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO20) printf '%s' "$VOH"'fn r(): i64 { var f = |k| k + mk2(k, 7); return fncall1(f, 41); }
+syscall(60, r() % 256);
+' ;;
+    VO21) printf '%s' "$VOH"'var X = 1 + mk2(41, 7);
+syscall(60, X % 256);
+' ;;
+    VO22) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var X = 1 + mk2(41, 7);
+syscall(60, X % 256);
+' ;;
+    VO23) printf '%s' "$VOH"'var X = 0;
+syscall(1, 1, "", 0);
+X += mk2(41, 7);
+syscall(60, X % 256);
+' ;;
+    VO24) printf '%s' "$VOH"'syscall(60, mk2(41, 7) % 256);
+' ;;
+    VO25) printf '%s' "$VOH"'fn r(): i64 { var x: i64 = 1 + mkg<i64>(41, 7); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO26) printf '%s' "$VOH"'fn r(): i64 { var w: W; var x = 0; x = 1 + w.s.m2(); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO27) printf '%s' "$VOH"'fn r(): i64 { var x = 0; x += mk4(41); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO28) printf '%s' "$VOH"'fn r(): i64 { var x = 1 + mkf(1, 2, 3, 4); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO29) printf '%s' "$VOH"'fn r(): i64 { var x: f64 = 1.0 + mk2(41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    VO30) printf '%s' "$VOH"'fn r(): i64 { var x = 0; x = 1 + mk2(41, 7) * 2; return x; }
+syscall(60, r() % 256);
+' ;;
+    VO31) printf '%s' "$VOH"'fn r(): i64 { if (1 && callptr(&mk2, 41, 7)) { return 1; } return 2; }
+syscall(60, r() % 256);
+' ;;
+    VO32) printf '%s' "$VOH"'fn r(): i64 { var p: Pt = Pt { 1, 2 }; p.a = mk2(41, 7); return p.a; }
+syscall(60, r() % 256);
+' ;;
+    VO33) printf '%s' "$VOH"'fn r(): i64 { var x = 1; var p: *i64 = &x; *p = mk2(41, 7); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO34) printf '%s' "$VOH"'fn r(): i64 { var a: i64[4]; a[1] = mk2(41, 7); return a[1]; }
+syscall(60, r() % 256);
+' ;;
+    VO35) printf '%s' "$VOH"'fn r(): i64 { var x = 1; *(&x) = mk2(41, 7); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO36) printf '%s' "$VOH"'fn r(): i64 { var x = 1; var q = &x; *q = (mk2(41, 7)); return x; }
+syscall(60, r() % 256);
+' ;;
+    VO37) printf '%s' "$VOH"'fn r(): i64 { if (mk2(41, 7)) { return 1; } return 2; }
+syscall(60, r() % 256);
+' ;;
+    VO38) printf '%s' "$VOH"'fn r(): i64 { var s: Mv = Mv { 1 }; var n = 0; while (s.m2()) { n = n + 1; break; } return n; }
+syscall(60, r() % 256);
+' ;;
+    VO39) printf '%s' "$VOH"'fn r(): i64 { var n = 0; for (var i = 0; mk2(1, 0); i = i + 1) { n = n + 1; break; } return n; }
+syscall(60, r() % 256);
+' ;;
+    VO40) printf '%s' "$VOH"'fn r(): i64 { var c = 0; if (c == 1) { return 1; } elif (mk2(41, 7)) { return 2; } return 3; }
+syscall(60, r() % 256);
+' ;;
+    VO41) printf '%s' "$VOH"'fn r(): i64 { switch (mk2(41, 7)) { case 41: return 1; default: return 2; } return 3; }
+syscall(60, r() % 256);
+' ;;
+    VO42) printf '%s' "$VOH"'fn r(): i64 { var a: i64[4]; return a[mk2(0, 7)]; }
+syscall(60, r() % 256);
+' ;;
+    VO43) printf '%s' "$VOH"'fn r(): i64 { var n = 0; for i in 0..mk2(3, 7) { n = n + 1; } return n; }
+syscall(60, r() % 256);
+' ;;
+    VO44) printf '%s' "$VOH"'fn r(): i64 { var p: Pt = Pt { mk2(41, 7), 1 }; return p.a; }
+syscall(60, r() % 256);
+' ;;
+    VO45) printf '%s' "$VOH"'fn r(): i64 { var p: Pt = Pt { a: 1, b: mkg<i64>(41, 7) }; return p.b; }
+syscall(60, r() % 256);
+' ;;
+    VO46) printf '%s' "$VOH"'fn r(): i64 { match mk2(41, 7) { 41 => { return 1; } _ => { return 2; } } return 3; }
+syscall(60, r() % 256);
+' ;;
+    VO47) printf '%s' "$VOH"'var GP: Pt = Pt { 1, 2 };
+syscall(1, 1, "", 0);
+GP.a = mk2(41, 7);
+syscall(60, GP.a % 256);
+' ;;
+    VO48) printf '%s' "$VOH"'fn r(): i64 { var f = |k| mk2(k, 7) 5; return 1; }
+syscall(60, r() % 256);
+' ;;
+    VO49) printf '%s' "$VOH"'fn r(): i64 { var t = (mk2(41, 7), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO50) printf '%s' "$VOH"'fn r(): i64 { var t: (i64, i64) = (mk2(41, 7), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO51) printf '%s' "$VOH"'fn r(): i64 { var t: (i64, i64) = (1, 2); t = (mk2(41, 7), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO52) printf '%s' "$VOH"'fn tk(t: (i64, i64)): i64 { return t.0; }
+fn r(): i64 { return tk((mk2(41, 7), 3)); }
+syscall(60, r() % 256);
+' ;;
+    VO53) printf '%s' "$VOH"'fn r(): i64 { var t = (3, mk2(41, 7)); return t.1; }
+syscall(60, r() % 256);
+' ;;
+    VO54) printf '%s' "$VOH"'fn two(): (i64, i64) { return (mk2(41, 7), 3); }
+fn r(): i64 { var a, b = two(); return a; }
+syscall(60, r() % 256);
+' ;;
+    VO55) printf '%s' "$VOH"'impl Pt { fn tw(self): (i64, i64) { return (3, mk2(41, 7)); } }
+fn r(): i64 { var p = Pt { 1, 2 }; var a, b = p.tw(); return b; }
+syscall(60, r() % 256);
+' ;;
+    VO56) printf '%s' "$VOH"'fn r(): i64 { var s: Mv = Mv { 1 }; var t = (1, s.m2(), 3); return t.1; }
+syscall(60, r() % 256);
+' ;;
+    VO57) printf '%s' "$VOH"'fn r(): i64 { var t = ((mkg<i64>(41, 7)), 3); return t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO58) printf '%s' "$VOH"'var GT = (mk2(41, 7), 3);
+syscall(60, GT.0 % 256);
+' ;;
+    VO59) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GT: (i64, i64) = (3, callptr(&mk2, 41, 7));
+syscall(60, GT.1 % 256);
+' ;;
+    VO60) printf '%s' "$VOH"'struct St { t: (i64, i64); }
+fn r(): i64 { var s: St; s.t = (mk4(41), 3); return s.t.0; }
+syscall(60, r() % 256);
+' ;;
+    VO61) printf '%s' "$VOG"'fn r(): i64 { gp().b = mk2(41, 7); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO62) printf '%s' "$VOG"'fn r(): i64 { callptr(&gp).b = mk2(41, 7); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO63) printf '%s' "$VOG"'fn r(): i64 { gi()[0] = mk2(41, 7); return GX[0]; }
+syscall(60, r() % 256);
+' ;;
+    VO64) printf '%s' "$VOG"'fn r(): i64 { gpg<i64>(1).b = mk2(41, 7); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO65) printf '%s' "$VOG"'fn r(): i64 { gpg(1).a = mk4(41); return GP.a; }
+syscall(60, r() % 256);
+' ;;
+    VO66) printf '%s' "$VOG"'fn r(): i64 { var s: Mv = Mv { 1 }; fncall0(&gp).b = s.m2(); return GP.b; }
+syscall(60, r() % 256);
+' ;;
+    VO67) printf '%s' "$VOG"'syscall(1, 1, "", 0);
+gp().b = mk2(41, 7);
+syscall(60, GP.b % 256);
+' ;;
+    esac
+}
+vo_filed() {  # the issue's `r` per row
+    case "$1" in
+    VO1) printf '%s' 'fn r(): i64 { var x: i64 = 1 + mk2(41, 7); return x; }' ;;
+    VO2) printf '%s' 'fn r(): i64 { var x = 0; x = 1 + mk2(41, 7); return x; }' ;;
+    VO3) printf '%s' 'fn r(): i64 { var w = 1 + mk2(41, 7); return w; }' ;;
+    VO4) printf '%s' 'fn r(): i64 { var x = 0; x += mk2(41, 7); return x; }' ;;
+    VO5) printf '%s' 'fn r(): i64 { var s: Mv = Mv { 1 }; var x = 0; x += s.m2(); return x; }' ;;
+    VO6) printf '%s' 'fn r(): i64 { var x = 0; x += callptr(&mk2, 41, 7); x += (mk2(41, 7)); return x; }' ;;
+    VO7) printf '%s' 'fn take(t): i64 { return t; }
+fn r(): i64 { return take(mk2(41, 7) + 1); }' ;;
+    esac
+}
+VO_ROWS="VO1 VO2 VO3 VO4 VO5 VO7 VO8 VO9 VO10 VO11 VO12 VO13 VO14 VO15 VO16 VO17 VO18 VO19 VO20 VO21 VO22 VO23 VO24 VO25 VO26 VO27 VO28 VO29 VO30 VO31 VO32 VO33 VO34 VO35 VO36 VO37 VO38 VO39 VO40 VO41 VO42 VO43 VO44 VO45 VO46 VO47 VO48 VO49 VO50 VO51 VO52 VO53 VO54 VO55 VO56 VO57 VO58 VO59 VO60 VO61 VO62 VO63 VO64 VO65 VO66 VO67"
+VOD="vector return type does not match the declared type"
+VOA="vector return type does not match the assigned variable"
+vo_msg() {
+    case "$1" in
+    VO2|VO4|VO5|VO9|VO10|VO15|VO16|VO17|VO18|VO19|VO23|VO26|VO27|VO30|VO32|VO33|VO34|VO35|VO36|VO47|VO51|VO60|VO61|VO62|VO63|VO64|VO65|VO66|VO67) echo "$VOA";;
+    VO11|VO13|VO20) echo "a vector value cannot be returned as i64 - 'mk2' returns a vector";;
+    VO48) echo "12:37: expected ';', got number 5";;
+    *) echo "$VOD";;
+    esac
+}
+# VOF: the filed table's row 6 verbatim — two statements, each refused at its own call (two errors); VOS: the refusal is
+# made in sync — the NEXT statement keeps its own error (two errors: the refusal, then "undefined variable 'zz9'"): after a
+# declaration's later operand (VOS1), a compound assignment (VOS2), a field store (VOS3), a condition (VOS4), at top
+# level (VOS5).
+vos_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VOF) printf '%s' 'include "lib/fnptr.cyr"
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct Mv { k; }
+impl Mv { fn m2(self): f64v2 { return mk2(41, 7); } }
+'"$(vo_filed VO6)"'
+syscall(60, r() % 256);
+' ;;
+    VOS1) printf '%s' "$VOH"'fn r(): i64 { var x: i64 = 1 + mk2(41, 7); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    VOS2) printf '%s' "$VOH"'fn r(): i64 { var x = 0; x += mk2(41, 7); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    VOS3) printf '%s' "$VOH"'fn r(): i64 { var p: Pt = Pt { 1, 2 }; p.a = mk2(41, 7); p.b = zz9; return p.b; }
+syscall(60, r() % 256);
+' ;;
+    VOS4) printf '%s' "$VOH"'fn r(): i64 { if (mk2(41, 7)) { return 1; } return zz9; }
+syscall(60, r() % 256);
+' ;;
+    VOS5) printf '%s' "$VOH"'var X = 1 + mk2(41, 7);
+var Y = zz9;
+syscall(60, X + Y);
+' ;;
+    esac
+}
+VOS_ROWS="VOF VOS1 VOS2 VOS3 VOS4 VOS5"
+vos_msg() {  # the two errors, one per line
+    case "$1" in
+    VOF) echo "5:31: $VOA"; echo "5:59: $VOA"; return 0;;
+    VOS2|VOS3) echo "$VOA";;
+    *) echo "$VOD";;
+    esac
+    echo "undefined variable 'zz9'"
+}
+# The controls: a vector call where a vector goes, and the bound vector's lanes in every operator and slot (161); VOC2 a
+# vector call inside a tuple literal element's argument, a multi-value fn's element from a vector parameter (161); VOC3
+# a call result's field and element from a vector's lane (161).
+voc_src() {  # $1 row id -> source on stdout; exits 161 when right
+    case "$1" in
+    VOC1) printf '%s' "$VOH"'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn r(): i64 { var s: Mv = Mv { 1 }; var p: Pt = Pt { 1, 2 }; var a: i64[4]; a[0] = 0;
+  mk2(1, 2); s.m2(); var w = mk2(41, 7); var v: f64v2 = s.m2(); var x = 0;
+  x = 1 + load64(&w); x += load64(&v + 8); p.a = load64(&w); a[0] += load64(&v + 8); a[1] = lanes(mk2(41, 7)) - lanes(s.m2());
+  if (x != 49 || p.a != 41 || a[0] != 7 || a[1] != 0) { return 1; }
+  if (lanes(mk2(4, 1)) + rd(mk2(41, 7)) != 82) { return 2; }
+  var f = |k| lanes(mk2(k, 7)) + 1; if (fncall1(f, 41) != 418) { return 3; } return 161; }
+syscall(60, r() % 256);
+' ;;
+    VOC2) printf '%s' "$VOH"'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn two(w: f64v2): (i64, i64) { return (lanes(w), load64(&w + 8)); }
+fn r(): i64 { var t = (lanes(mk2(4, 1)), 3); var a, b = two(mk2(41, 7)); var u: (i64, i64) = (1, 2); u = (lanes(mk2(1, 6)), b);
+  if (t.0 != 41 || t.1 != 3 || a != 417 || b != 7 || u.0 != 16 || u.1 != 7) { return 1; } return 161; }
+syscall(60, r() % 256);
+' ;;
+    VOC3) printf '%s' "$VOG"'fn lanes(x: f64v2): i64 { return load64(&x) * 10 + load64(&x + 8); }
+fn r(): i64 { var w = mk2(41, 7); gp().b = load64(&w); gi()[1] = lanes(mk2(1, 6)); callptr(&gp).a = load64(&w + 8);
+  if (GP.b != 41 || GX[1] != 16 || GP.a != 7) { return 1; } return 161; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+VOC_ROWS="VOC1 VOC2 VOC3"
+
+
+# ---- 6.7.16 (met landing D100): the vector receives' refusals are made in sync — the statement parses on to its own end,
+# so the NEXT statement keeps its own error (rows WS: two errors, the refusal then "undefined variable 'zz9'") and a
+# `for` header's init is one error (rows WF; the condition was read as consumed: "expected ';', got '='" second) ---------
+# WS1 `x = mk2(..)` (a by-name call into a local), WS2 `var x: i64 = mk2(..)`, WS3 `x = mk2(..) + 1` (a call starting
+# it), WS4 `x = s.m2()`, WS5 `var x: i64 = s.m2() + 1`, WS6 a top-level global assignment, WS7 a top-level annotated
+# declaration after the first statement, WS8 a vector of another type into a vector local (WS7 / WS8 kept the next error
+# before too: their paths resync on their own); WF1-WF4 the `for` init's assignment, annotated declaration, starting
+# call, method.
+WSH="$OPH"'struct Pt { a; b; }
+'
+ws_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    WS1) printf '%s' "$WSH"'fn r(): i64 { var x = 0; x = mk2(1, 2); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS2) printf '%s' "$WSH"'fn r(): i64 { var x: i64 = mk2(1, 2); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS3) printf '%s' "$WSH"'fn r(): i64 { var x = 0; x = mk2(1, 2) + 1; x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS4) printf '%s' "$WSH"'fn r(): i64 { var s: Mv = Mv { 1 }; var x = 0; x = s.m2(); x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS5) printf '%s' "$WSH"'fn r(): i64 { var s: Mv = Mv { 1 }; var x: i64 = s.m2() + 1; x = zz9; return x; }
+syscall(60, r() % 256);
+' ;;
+    WS6) printf '%s' "$WSH"'var G = 0;
+syscall(1, 1, "", 0);
+G = mk2(1, 2);
+G = zz9;
+syscall(60, G);
+' ;;
+    WS7) printf '%s' "$WSH"'syscall(1, 1, "", 0);
+var X: i64 = mk2(1, 2) + 1;
+var Y = zz9;
+syscall(60, X + Y);
+' ;;
+    WS8) printf '%s' "$WSH"'fn r(): i64 { var w: f64v4 = mk4(1); w = mk2(1, 2); var y = zz9; return y; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+WS_ROWS="WS1 WS2 WS3 WS4 WS5 WS6 WS7 WS8"
+ws_msg() {  # the two errors, one per line
+    case "$1" in
+    WS2|WS5|WS7) echo "vector return type does not match the declared type";;
+    *) echo "vector return type does not match the assigned variable";;
+    esac
+    echo "undefined variable 'zz9'"
+}
+wf_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    WF1) printf '%s' "$WSH"'fn r(): i64 { var a = 0; for (a = mk2(1, 2); a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    WF2) printf '%s' "$WSH"'fn r(): i64 { var a = 0; for (var b: i64 = mk2(1, 2); a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    WF3) printf '%s' "$WSH"'fn r(): i64 { var a = 0; for (a = mk2(1, 2) + 1; a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    WF4) printf '%s' "$WSH"'fn r(): i64 { var s: Mv = Mv { 1 }; var a = 0; for (a = s.m2(); a < 3; a = a + 1) { } return a; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+WF_ROWS="WF1 WF2 WF3 WF4"
+wf_msg() { case "$1" in WF2) echo "vector return type does not match the declared type";; *) echo "vector return type does not match the assigned variable";; esac; }
+
+
+# ---- 6.7.16 (met landing D100): a refused statement prints no float-type warning — the panic latch its error holds is
+# the statement's (`_FLT_TYPE_WARN`): `var x: f64 = 1.0 + mk2(41, 7);` printed D100's refusal and then "f64 arithmetic with
+# a non-f64 right operand" about the same operand (rows FW: one error, no warning; FW1 f64, FW2 f32, FW3 a comparison,
+# FW4 an int-left `+` with an f64 right; FW5 the next statement's own warning still printed) ---------------------------
+# FW6-FW13 (the s16 review): an error that does not latch — a tuple used as a value (FW6, FW11 f32), an undefined name
+# (FW7, FW10 a comparison, FW13 a generic's body at two instances) — stands the warning down too (`_err_n` since the
+# statement began, `_flt_en`); the next statement's own warning prints (FW8, FW9 the declaration zone's next entry,
+# FW12 after the first statement, FW13).
+FWH='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+'
+fw_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    FW1) printf '%s' "$FWH"'fn r(): i64 { var x: f64 = 1.0 + mk2(41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW2) printf '%s' "$FWH"'fn r(): i64 { var y: f32 = 1.0; var x: f32 = y * mk2(41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW3) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; if (y < mk2(41, 7)) { return 1; } return 2; }
+syscall(60, r() % 256);
+' ;;
+    FW4) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; var x = 0; x = 1 + mk2(41, 7) + y; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW5) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; var x: f64 = y - mk2(41, 7); var z: f64 = y + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW6) printf '%s' "$FWH"'fn r(): i64 { var t = (1, 2); var f: f64 = 1.0 + t; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW7) printf '%s' "$FWH"'fn r(): i64 { var f: f64 = 1.0 + undefined_q; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW8) printf '%s' "$FWH"'fn r(): i64 { var f: f64 = 1.0 + undefined_q; var g = 1; var h: f64 = 1.0 + g; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW9) printf '%s' "$FWH"'var A: f64 = 1.0 + undefined_q;
+var B = 1;
+var C: f64 = 1.0 + B;
+syscall(60, 1);
+' ;;
+    FW10) printf '%s' "$FWH"'fn r(): i64 { var y: f64 = 1.5; if (y < undefined_q) { return 1; } return 2; }
+syscall(60, r() % 256);
+' ;;
+    FW11) printf '%s' "$FWH"'fn r(): i64 { var t = (1, 2); var y: f32 = 1.0; var x: f32 = y * t; return 1; }
+syscall(60, r() % 256);
+' ;;
+    FW12) printf '%s' "$FWH"'syscall(1, 1, "", 0);
+var A: f64 = 1.0 + undefined_q;
+var B = 1;
+var C: f64 = 1.0 + B;
+syscall(60, 1);
+' ;;
+    FW13) printf '%s' "$FWH"'fn g<T>(x: T): i64 { var f: f64 = 1.0 + undefined_q; var h: f64 = 1.0 + x; return 1; }
+fn r(): i64 { return g(1) + g(2); }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+FW_ROWS="FW1 FW2 FW3 FW4 FW5 FW6 FW7 FW8 FW9 FW10 FW11 FW12 FW13"
+fw_msg() {
+    case "$1" in
+    FW4) echo "vector return type does not match the assigned variable";;
+    FW6|FW11) echo "tuple 't' used as a value";;
+    FW7|FW8|FW9|FW10|FW12|FW13) echo "undefined variable 'undefined_q'";;
+    *) echo "vector return type does not match the declared type";;
+    esac
+}
+fw_warn() {
+    case "$1" in
+    FW5) echo "2:80: f64 arithmetic with a non-f64 right operand";;
+    FW8) echo "2:78: f64 arithmetic with a non-f64 right operand";;
+    FW9) echo "4:21: f64 arithmetic with a non-f64 right operand";;
+    FW12) echo "5:21: f64 arithmetic with a non-f64 right operand";;
+    FW13) echo "2:74: f64 arithmetic with a non-f64 right operand";;
+    *) echo "";;
+    esac
+}
+refuse_fw_all() {  # $1 leg label  $2 compiler  [$3 VAR=value]: one error (`fw_msg`), and only `fw_warn`'s warning (or none)
+    for row in $FW_ROWS; do
+        fw_src "$row" > "$W/fw.cyr"
+        rc=0
+        if [ -n "${3:-}" ]; then env "$3" "$2" < "$W/fw.cyr" > "$W/fw.out" 2>"$W/fw.err" || rc=$?
+        else "$2" < "$W/fw.cyr" > "$W/fw.out" 2>"$W/fw.err" || rc=$?; fi
+        nrefuse=$((nrefuse+1))
+        ne=$(grep -c '^error' "$W/fw.err" 2>/dev/null || true)
+        nw=$(grep -c '^warning' "$W/fw.err" 2>/dev/null || true)
+        ww=$(fw_warn "$row")
+        if [ "$ne" != 1 ] || ! grep '^error' "$W/fw.err" | grep -qF -- "$(fw_msg "$row")"; then bad "$1 $row: $ne error lines, want 1 '$(fw_msg "$row")' (rc=$rc)"
+        elif [ -z "$ww" ] && [ "$nw" != 0 ]; then bad "$1 $row: $nw warning lines after the refusal: $(grep '^warning' "$W/fw.err" | tr '\n' ' ')"
+        elif [ -n "$ww" ] && { [ "$nw" != 1 ] || ! grep '^warning' "$W/fw.err" | grep -qF -- "$ww"; }; then bad "$1 $row: want the one warning '$ww', got $nw: $(grep '^warning' "$W/fw.err" | tr '\n' ' ')"
+        elif [ -s "$W/fw.out" ]; then bad "$1 $row: reported but still emitted an artifact"
+        else good "$1 $row refused once, no warning of its own"; fi
+    done
+}
+
+
+# ---- 6.7.16 (met landing the review's D100 fixes): a refused annotation is its declaration's one error — the
+# annotation parses on as a plain i64 (`_tn_refuse`), and the vector refusals compared the call with that i64: `var x: zz =
+# mk2(41, 7);` printed "unknown type 'zz' for variable 'x'" and then "vector return type does not match the declared type"
+# (`_vin_decl`, `_vrcv_mscal`, `_vrcv_tyerr`, `_vtop_ref` now ask `_vrcv_annbad`). Rows VN (one error, the annotation's):
+# VN1 a by-name call, VN2 a later operand (D100), VN3 wrapped, VN4 a method, VN5 a method starting it into `Q<i64>`, VN6
+# `callptr(&mk2, ..)`, VN7 a `for` init, VN8 the declaration zone, VN9 after the first statement, VN10 a tuple element's
+# refusal (`(f64v2, i64)`) before a later operand; rows VNS (two errors: another declaration's own mismatch is kept) on
+# host / host IR=3 / cx / aarch64 / win64. Mutations (2026-10-21, measured; per-site on host):
+#   M-VN0 the tree before                              -> RED 55: VN1-VN10 VNS1 on five legs
+#   M-VN1 `_vin_decl` not asking                       -> RED 3: VN1 VN7 VNS1
+#   M-VN2 `_vrcv_tyerr` not asking                     -> RED 4: VN2 VN5 VN9 VN10
+#   M-VN3 `_vrcv_mscal` not asking                     -> RED 7: VN1 VN3-VN7 VNS1
+#   M-VN4 `_vtop_ref` not asking                       -> RED 2: VN8 VN9
+#   M-VN5 `_vrcv_dbeg` stopping at a grouping `(`      -> RED 1: VN10
+vn_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VN1) printf '%s' "$OPH"'fn r(): i64 { var x: zz = mk2(41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    VN2) printf '%s' "$OPH"'fn r(): i64 { var x: zz = 1 + mk2(41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    VN3) printf '%s' "$OPH"'fn r(): i64 { var x: zz = (mk2(41, 7)); return 1; }
+syscall(60, r() % 256);
+' ;;
+    VN4) printf '%s' "$OPH"'fn r(): i64 { var s: Mv = Mv { 1 }; var x: zz = s.m2(); return 1; }
+syscall(60, r() % 256);
+' ;;
+    VN5) printf '%s' "$OPH"'fn r(): i64 { var s: Mv = Mv { 1 }; var x: Q<i64> = s.m2() + 1; return 1; }
+syscall(60, r() % 256);
+' ;;
+    VN6) printf '%s' "$OPH"'fn r(): i64 { var x: zz = callptr(&mk2, 41, 7); return 1; }
+syscall(60, r() % 256);
+' ;;
+    VN7) printf '%s' "$OPH"'fn r(): i64 { for (var i: zz = mk2(41, 7); i < 3; i = i + 1) { } return 1; }
+syscall(60, r() % 256);
+' ;;
+    VN8) printf '%s' "$OPH"'var X: zz = mk2(41, 7);
+syscall(60, 1);
+' ;;
+    VN9) printf '%s' "$OPH"'syscall(1, 1, "", 0);
+var X: zz = mk2(41, 7) + 1;
+syscall(60, 1);
+' ;;
+    VN10) printf '%s' "$OPH"'fn r(): i64 { var t: (f64v2, i64) = (1 + mk2(41, 7), 3); return 1; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+VN_ROWS="VN1 VN2 VN3 VN4 VN5 VN6 VN7 VN8 VN9 VN10"
+vn_msg() {
+    case "$1" in
+    VN5) echo "unknown type 'Q' for variable 'x'";;
+    VN7) echo "unknown type 'zz' for variable 'i'";;
+    VN8|VN9) echo "unknown type 'zz' for variable 'X'";;
+    VN10) echo "a tuple element is i64, f64 or bool, not 'f64v2'";;
+    *) echo "unknown type 'zz' for variable 'x'";;
+    esac
+}
+vns_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VNS1) printf '%s' "$OPH"'fn r(): i64 { var x: zz = mk2(41, 7); var y: i64 = mk2(1, 2); return 1; }
+syscall(60, r() % 256);
+' ;;
+    VNS2) printf '%s' "$OPH"'fn r(): i64 { var t: (zz, i64) = (3, 4); var x: i64 = 1 + mk2(1, 2); return 1; }
+syscall(60, r() % 256);
+' ;;
+    esac
+}
+VNS_ROWS="VNS1 VNS2"
+vns_msg() {  # the two errors, one per line
+    case "$1" in
+    VNS1) echo "unknown type 'zz' for variable 'x'";;
+    VNS2) echo "unknown type 'zz' as a tuple element";;
+    esac
+    echo "vector return type does not match the declared type"
+}
+
+
+# ---- 6.7.16 (met landing the review's D100 fixes): an inline literal global after the first statement holds its index
+# while its elements are parsed (`_glit_hold`) — on PE an element's vector call made a hidden global temporary for its
+# result (6.7.12) at the index the literal had registered without counting, overwrote the slot, and the literal's count
+# bump cut the temporary off: the refusal was followed by "undefined variable 'GP'" at the next use (through 6.7.15 that
+# wrong error alone). Rows VG (one error: the refusal) — VG1 a struct literal's whole-call field, VG2 an operand in an
+# annotated literal, VG3 a tuple literal's operand, VG4 a named field's method call — and VGS1 / VGS2 (the name is
+# still not visible inside its own literal: "undefined variable") on host / host IR=3 / cx / aarch64 / win64.
+# Mutations (2026-10-21, measured): M-VG0 the tree before -> RED 4: VG1-VG4 on win64 (the other legs make no temporary);
+# M-VG1 the held slot not marked dead -> RED 10: VGS1 VGS2 on five legs (the literal read its own uninitialised slot).
+vg_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VG1) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GP = Pt { mk2(41, 7), 1 };
+syscall(60, GP.b % 256);
+' ;;
+    VG2) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GP: Pt = Pt { 1, 1 + mk2(41, 7) };
+syscall(60, GP.b % 256);
+' ;;
+    VG3) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GT = (3, 1 + mk2(41, 7));
+syscall(60, GT.1 % 256);
+' ;;
+    VG4) printf '%s' "$VOH"'var GM: Mv = Mv { 1 };
+syscall(1, 1, "", 0);
+var GP = Pt { a: 1, b: GM.m2() };
+syscall(60, GP.a % 256);
+' ;;
+    VGS1) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GP = Pt { GP.a, 1 };
+syscall(60, GP.b % 256);
+' ;;
+    VGS2) printf '%s' "$VOH"'syscall(1, 1, "", 0);
+var GT = (GT.0, 1);
+syscall(60, GT.1 % 256);
+' ;;
+    esac
+}
+VG_ROWS="VG1 VG2 VG3 VG4 VGS1 VGS2"
+vg_msg() {
+    case "$1" in
+    VGS1) echo "undefined variable 'GP'";;
+    VGS2) echo "undefined variable 'GT'";;
+    *) echo "vector return type does not match the declared type";;
+    esac
+}
+
+
 # ---- 6.7.13 (issues/archived/2026-10-14-vector-local-refusal-hint-every-source.md): the refusal's own words (rows H) ----------
 # The out-pointer hint only for a callee held in a variable; a call naming no fn left to the undefined-function path;
 # the accepted list naming `*p` (D34). Each row compiles to no artifact with exactly one `error` line.
@@ -2695,6 +3580,25 @@ refuse_tab_all() {  # $1 leg label  $2 compiler  $3 source fn  $4 rows  $5 messa
     done
 }
 dk_msg() { echo "$MSG in a fixed register pair, so \`return\` takes a local of that vector type or a call to a fn declared to return the same one — got \`$(dk_got "$1")\`"; }
+# 6.7.16: a table's rows refused with exactly two error lines — the first holding line 1 of `$5 <row>`, the second line 2 —
+# and no artifact (a refusal made in sync, and the next statement's own error).
+refuse2_tab_all() {  # $1 leg label  $2 compiler  $3 source fn  $4 rows  $5 message fn  [$6 VAR=value]
+    for row in $4; do
+        "$3" "$row" > "$W/d2.cyr"
+        rc=0
+        if [ -n "${6:-}" ]; then env "$6" "$2" < "$W/d2.cyr" > "$W/d2.out" 2>"$W/d2.err" || rc=$?
+        else "$2" < "$W/d2.cyr" > "$W/d2.out" 2>"$W/d2.err" || rc=$?; fi
+        nrefuse=$((nrefuse+1))
+        m1=$("$5" "$row" | sed -n 1p)
+        m2=$("$5" "$row" | sed -n 2p)
+        ne=$(grep -c '^error' "$W/d2.err" 2>/dev/null || true)
+        if [ "$ne" != 2 ]; then bad "$1 $row: $ne error lines (want 2; rc=$rc: $(grep '^error' "$W/d2.err" | tr '\n' ' '))"
+        elif ! grep '^error' "$W/d2.err" | sed -n 1p | grep -qF -- "$m1"; then bad "$1 $row: first error not '$m1'"
+        elif ! grep '^error' "$W/d2.err" | sed -n 2p | grep -qF -- "$m2"; then bad "$1 $row: second error not '$m2'"
+        elif [ -s "$W/d2.out" ]; then bad "$1 $row: reported but still emitted an artifact"
+        else good "$1 $row refused, the next statement's error kept"; fi
+    done
+}
 
 # 6.7.13: rows H — the refusal's words, or (H5 H9) the undefined-function path alone; one `error` line, no artifact.
 refuse_h_all() {  # $1 leg label  $2 compiler
@@ -2853,6 +3757,30 @@ accept_tab_all host "$CC" hostr rvc_src "$RVC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr rvc_src "$RVC_ROWS" CYRIUS_IR=3
 refuse_tab_all host "$CC" sx_src "$SX_ROWS" sx_msg
 refuse_tab_all host-ir3 "$CC" sx_src "$SX_ROWS" sx_msg CYRIUS_IR=3
+refuse_tab_all host "$CC" va_src "$VA_ROWS" va_msg
+refuse_tab_all host-ir3 "$CC" va_src "$VA_ROWS" va_msg CYRIUS_IR=3
+refuse2_tab_all host "$CC" vas_src "$VAS_ROWS" vas_msg
+refuse2_tab_all host-ir3 "$CC" vas_src "$VAS_ROWS" vas_msg CYRIUS_IR=3
+refuse_tab_all host "$CC" vo_src "$VO_ROWS" vo_msg
+refuse_tab_all host-ir3 "$CC" vo_src "$VO_ROWS" vo_msg CYRIUS_IR=3
+refuse2_tab_all host "$CC" vos_src "$VOS_ROWS" vos_msg
+refuse2_tab_all host-ir3 "$CC" vos_src "$VOS_ROWS" vos_msg CYRIUS_IR=3
+accept_tab_all host "$CC" hostr voc_src "$VOC_ROWS"
+accept_tab_all host-ir3 "$CC" hostr voc_src "$VOC_ROWS" CYRIUS_IR=3
+refuse2_tab_all host "$CC" ws_src "$WS_ROWS" ws_msg
+refuse2_tab_all host-ir3 "$CC" ws_src "$WS_ROWS" ws_msg CYRIUS_IR=3
+refuse_tab_all host "$CC" wf_src "$WF_ROWS" wf_msg
+refuse_tab_all host-ir3 "$CC" wf_src "$WF_ROWS" wf_msg CYRIUS_IR=3
+refuse_fw_all host "$CC"
+refuse_fw_all host-ir3 "$CC" CYRIUS_IR=3
+refuse_tab_all host "$CC" vn_src "$VN_ROWS" vn_msg
+refuse_tab_all host-ir3 "$CC" vn_src "$VN_ROWS" vn_msg CYRIUS_IR=3
+refuse2_tab_all host "$CC" vns_src "$VNS_ROWS" vns_msg
+refuse2_tab_all host-ir3 "$CC" vns_src "$VNS_ROWS" vns_msg CYRIUS_IR=3
+refuse_tab_all host "$CC" vg_src "$VG_ROWS" vg_msg
+refuse_tab_all host-ir3 "$CC" vg_src "$VG_ROWS" vg_msg CYRIUS_IR=3
+accept_tab_all host "$CC" hostr vac_src "$VAC_ROWS"
+accept_tab_all host-ir3 "$CC" hostr vac_src "$VAC_ROWS" CYRIUS_IR=3
 accept_tab_all host "$CC" hostr gc_src "$GC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr gc_src "$GC_ROWS" CYRIUS_IR=3
 refuse_h_all host "$CC"
@@ -2897,6 +3825,18 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_tab_all cx "$W/cycc_cx" rv_src "$RV_ROWS" rv_msg
     accept_tab_all cx "$W/cycc_cx" cxr rvc_src "$RVC_ROWS"
     refuse_tab_all cx "$W/cycc_cx" sx_src "$SX_ROWS" sx_msg
+    refuse_tab_all cx "$W/cycc_cx" va_src "$VA_ROWS" va_msg
+    refuse2_tab_all cx "$W/cycc_cx" vas_src "$VAS_ROWS" vas_msg
+    refuse_tab_all cx "$W/cycc_cx" vo_src "$VO_ROWS" vo_msg
+    refuse2_tab_all cx "$W/cycc_cx" vos_src "$VOS_ROWS" vos_msg
+    accept_tab_all cx "$W/cycc_cx" cxr voc_src "$VOC_ROWS"
+    refuse2_tab_all cx "$W/cycc_cx" ws_src "$WS_ROWS" ws_msg
+    refuse_tab_all cx "$W/cycc_cx" wf_src "$WF_ROWS" wf_msg
+    refuse_fw_all cx "$W/cycc_cx"
+    refuse_tab_all cx "$W/cycc_cx" vn_src "$VN_ROWS" vn_msg
+    refuse2_tab_all cx "$W/cycc_cx" vns_src "$VNS_ROWS" vns_msg
+    refuse_tab_all cx "$W/cycc_cx" vg_src "$VG_ROWS" vg_msg
+    accept_tab_all cx "$W/cycc_cx" cxr vac_src "$VAC_ROWS"
     accept_tab_all cx "$W/cycc_cx" cxr gc_src "$GC_ROWS"
     refuse_h_all cx "$W/cycc_cx"
 undef_ret_all cx "$W/cycc_cx"
@@ -2943,6 +3883,18 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_tab_all aarch64 "$W/cycc_a64" rv_src "$RV_ROWS" rv_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r rvc_src "$RVC_ROWS"
         refuse_tab_all aarch64 "$W/cycc_a64" sx_src "$SX_ROWS" sx_msg
+        refuse_tab_all aarch64 "$W/cycc_a64" va_src "$VA_ROWS" va_msg
+        refuse2_tab_all aarch64 "$W/cycc_a64" vas_src "$VAS_ROWS" vas_msg
+        refuse_tab_all aarch64 "$W/cycc_a64" vo_src "$VO_ROWS" vo_msg
+        refuse2_tab_all aarch64 "$W/cycc_a64" vos_src "$VOS_ROWS" vos_msg
+        accept_tab_all aarch64 "$W/cycc_a64" a64r voc_src "$VOC_ROWS"
+        refuse2_tab_all aarch64 "$W/cycc_a64" ws_src "$WS_ROWS" ws_msg
+        refuse_tab_all aarch64 "$W/cycc_a64" wf_src "$WF_ROWS" wf_msg
+        refuse_fw_all aarch64 "$W/cycc_a64"
+        refuse_tab_all aarch64 "$W/cycc_a64" vn_src "$VN_ROWS" vn_msg
+        refuse2_tab_all aarch64 "$W/cycc_a64" vns_src "$VNS_ROWS" vns_msg
+        refuse_tab_all aarch64 "$W/cycc_a64" vg_src "$VG_ROWS" vg_msg
+        accept_tab_all aarch64 "$W/cycc_a64" a64r vac_src "$VAC_ROWS"
         accept_tab_all aarch64 "$W/cycc_a64" a64r gc_src "$GC_ROWS"
         refuse_h_all aarch64 "$W/cycc_a64"
 undef_ret_all aarch64 "$W/cycc_a64"
@@ -2994,6 +3946,18 @@ if command -v wine > /dev/null 2>&1; then
         refuse_tab_all win64 "$W/cycc_win" rv_src "$RV_ROWS" rv_msg
         accept_tab_all win64 "$W/cycc_win" wr_ rvc_src "$RVC_ROWS"
         refuse_tab_all win64 "$W/cycc_win" sx_src "$SX_ROWS" sx_msg
+        refuse_tab_all win64 "$W/cycc_win" va_src "$VA_ROWS" va_msg
+        refuse2_tab_all win64 "$W/cycc_win" vas_src "$VAS_ROWS" vas_msg
+        refuse_tab_all win64 "$W/cycc_win" vo_src "$VO_ROWS" vo_msg
+        refuse2_tab_all win64 "$W/cycc_win" vos_src "$VOS_ROWS" vos_msg
+        accept_tab_all win64 "$W/cycc_win" wr_ voc_src "$VOC_ROWS"
+        refuse2_tab_all win64 "$W/cycc_win" ws_src "$WS_ROWS" ws_msg
+        refuse_tab_all win64 "$W/cycc_win" wf_src "$WF_ROWS" wf_msg
+        refuse_fw_all win64 "$W/cycc_win"
+        refuse_tab_all win64 "$W/cycc_win" vn_src "$VN_ROWS" vn_msg
+        refuse2_tab_all win64 "$W/cycc_win" vns_src "$VNS_ROWS" vns_msg
+        refuse_tab_all win64 "$W/cycc_win" vg_src "$VG_ROWS" vg_msg
+        accept_tab_all win64 "$W/cycc_win" wr_ vac_src "$VAC_ROWS"
         accept_tab_all win64 "$W/cycc_win" wr_ gc_src "$GC_ROWS"
         refuse_h_all win64 "$W/cycc_win"
 undef_ret_all win64 "$W/cycc_win"
@@ -3011,7 +3975,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW, VN, VNS, VG (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -3035,11 +3999,13 @@ na_floor=$((na_floor + $(set -- $WR_ROWS; echo $#) * 3))   # 6.7.15 (D28): every
 na_floor=$((na_floor + $(set -- $GC_ROWS; echo $#) * 3))   # 6.7.15: every GC row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $OPC_ROWS; echo $#) * 3))   # 6.7.16 (D24): every OPC row on host + host IR=3 + cx
 na_floor=$((na_floor + $(set -- $RVC_ROWS; echo $#) * 3))   # 6.7.16: every RVC row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $VAC_ROWS; echo $#) * 3))   # 6.7.16 (D101): every VAC row on host + host IR=3 + cx
+na_floor=$((na_floor + $(set -- $VOC_ROWS; echo $#) * 3))   # 6.7.16 (D100): every VOC row on host + host IR=3 + cx
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row"; vg_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
@@ -3048,6 +4014,8 @@ n=$(grep -c "$MSGV" src/frontend/parse_decl.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$MSGV' — reworded?"
 n=$(grep -c "$HINT" src/frontend/parse_decl.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$HINT' — reworded?"
+n=$(grep -c "$VAM" src/frontend/parse_decl.cyr || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse_decl.cyr no longer spells '$VAM' — reworded?"
 
 echo "simd_return_shapes: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.

@@ -5189,6 +5189,48 @@ fn _dst_amp_nm(S, d): i64 {
 # instance, `_gs_asg_sres`); each instance judges its own. CHANGELOG [6.7.16]
 fn _dsr_sres(S, d, oe, ti): i64 {
     if (_syntax_only == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_dsr_amp(S, d, oe, ti, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid) == 1) { return 1; }
+    return _dsr_judge(S, d + 1, oe, d, d, oe);
+}
+# ⛔ 6.7.16 (D99, the s16 review) — AND A SUBSCRIPT STORE `p[i] = mkp();` THROUGH A TYPED POINTER TO A SCALAR, as
+# `*(p + i) = mkp();` is refused: `p[0] = mkp();` (p `*i64`), `w.pi[0] = ..` (a `*i64` field), `gi()[0] = ..` (gi `:
+# *i64`) stored Q's first word silently (exit 77). `_esub_assign`, the `=` at token `eq` and the value [ti, cursor): the
+# destination is the statement's `B[..]` (its `[` at `lb`), B a typed pointer by its declared word (`_hl_pw`; an array
+# has none — a local array's element is no store through a pointer); judged as `*B = ..` is, named as spelled ('p[0]:
+# i64'). CHANGELOG [6.7.16]
+fn _dsr_esub(S, eq, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (TOKTYP(S, eq - 1) != 29) { return 0; }
+    var s = _vsl_sbeg(S, eq);
+    if (s < 0) { return 0; }
+    var lb = _dsr_lbr(S, eq - 1);
+    if (lb <= s) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    return _dsr_judge(S, s, lb, s, s, eq);
+}
+# The `[` matching the `]` at token j.
+fn _dsr_lbr(S, j): i64 {
+    var d = 0;
+    while (j >= 0) {
+        var t = TOKTYP(S, j);
+        if (t == 29 || t == 11) { d = d + 1; }
+        if (t == 28 || t == 10) {
+            d = d - 1;
+            if (d == 0) { return j; }
+        }
+        j = j - 1;
+    }
+    return 0 - 1;
+}
+# The value [ti, cursor) when it is one whole struct result over 8 B (a free or generic call, a method, an operator, a
+# known `&f` call, wrapped; not a `Str`, a dyn, 8 B or less): 1, its struct `_dsr_sid`, the call's name `_dsr_fno`, token
+# `_dsr_at` and fn `_dsr_afi`; else 0.
+var _dsr_sid = 0;
+var _dsr_fno = 0;
+var _dsr_at = 0;
+var _dsr_afi = 0;
+fn _dsr_rec(S, ti): i64 {
     var sid = 0;
     var fno = 0;
     var at = ti;
@@ -5209,17 +5251,26 @@ fn _dsr_sres(S, d, oe, ti): i64 {
         at = c;
     }
     if (_rcv_big(S, sid) == 0) { return 0; }
-    if (_dsr_amp(S, d, oe, ti, at, fno, afi, sid) == 1) { return 1; }
-    var w = _hl_pw(S, d + 1, oe);
+    _dsr_sid = sid;
+    _dsr_fno = fno;
+    _dsr_at = at;
+    _dsr_afi = afi;
+    return 1;
+}
+# The store through the pointer [a, e) (`from` the destination's first token, for `_dsr_tdep`), spelled [na, ne), of
+# `_dsr_rec`'s result: refused when the pointer reaches no struct of its own (a scalar, a pointer slot of another
+# struct). 1 = refused.
+fn _dsr_judge(S, a, e, from, na, ne): i64 {
+    var w = _hl_pw(S, a, e);
     if (w <= 0) { return 0; }
     if (_ps_pinned(w) == 1) {
-        if (_pp_sid(S, _ps_pin(w)) == sid) { return 0; }   # a `*Q` slot of Q itself: B7-1c's copy, not this rule
+        if (_pp_sid(S, _ps_pin(w)) == _dsr_sid) { return 0; }   # a `*Q` slot of Q itself: B7-1c's copy, not this rule
     } else {
-        if (_hl_dpsid(S, d + 1, oe) > 0) { return 0; }   # a struct pointee: `_dst_struct`'s
+        if (_hl_dpsid(S, a, e) > 0) { return 0; }   # a struct pointee: `_dst_struct`'s
         if (_ps_vdesc(w) != 0) { return 0; }
     }
-    if (_dsr_tdep(S, d + 1, oe, d) == 1) { return 0; }
-    return _dsr_err(S, d, oe, w, at, fno, afi, sid);
+    if (_dsr_tdep(S, a, e, from) == 1) { return 0; }
+    return _dsr_err(S, na, ne, w, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
 }
 # The whole free call (`f(..)` / `g<..>(..)`, not dotted) the value at token ti is, inside any parentheses that wrap
 # all of it up to the cursor: its name token, else -1.
@@ -6443,6 +6494,7 @@ fn _masg_stmt(S, term): i64 {
 # arity check. 1 = refused.
 # CHANGELOG [6.7.7] (B4 review)
 fn _masg_callee(S, fi, n): i64 {
+    if (_dt_icall_vec(S, 1) == 1) { return 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs > 0) {
@@ -6803,7 +6855,10 @@ fn PARSE_STMT(S): i64 {
     var _xd0 = _xdepth;
     var ov = _agc_ovr;   # 6.7.11: a statement nested in a `*p = v` source is no `*p` destination (`_dst_arms`)
     _agc_ovr = 0;
+    var fe = _flt_en;   # 6.7.16: this statement's errors are counted from here (`_FLT_TYPE_WARN`)
+    _flt_en = _err_n;
     _PARSE_STMT_IMPL(S);
+    _flt_en = fe;
     _agc_ovr = ov;
     _rd_exit();
     _xd_check(S, _xd0, "statement");

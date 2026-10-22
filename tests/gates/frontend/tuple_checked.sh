@@ -1180,6 +1180,39 @@ refused r19k "${RA}mp' - it returns struct 'P', not multiple values" "R19k: a me
 refused r19l "${RA}vf' - it returns a vector, not multiple values" "R19l: a vector callee" "fn vf(): f64v2 { var v: f64v2; return v; }\n${F5V}    a, b = vf();${E5}"
 refused r19n "${RA}mkg' - it returns struct 'P', not multiple values" "R19n: an explicit generic \`mkg<i64>(5)\`" "${P}fn mkg<T>(x: T): P { var p: P; p.a = x; p.b = 9; return p; }\n${F5V}    a, b = mkg<i64>(5);${E5}"
 refused r19o "${RA}mkp' - it returns struct 'P', not multiple values" "R19o: a classic-for step" "${P}${SPP}${F5V}    for (var i = 0; i < 2; a, b = mkp()) { i = i + 1; }${E5}"
+# R19p-R19y (6.7.16, met landing 6.7.16's D100) — THE DECLARATION IS REFUSED AS THE ASSIGNMENT IS (6.7.14's D27 (a): one
+# rule): `var a, b = vf();` from a vector callee bound the names to integer return registers a vector return does not
+# write — x86_64 / aarch64 0 and 0, PE garbage (195 where the lanes give 161), cx the lanes by accident — where R19l's
+# `a, b = vf();` is refused. A method, an explicit instance, three names from an f64v4, the declaration zone, after the
+# first statement, wrapped, and `callptr(&vf)` / `fncall0(&vf)` (the assignment's too, R19y: it compiled), on every
+# target. Mutations (2026-10-21, measured, the gate run from a scratch copy of the tree with the one change): the tree
+# before -> RED 40 (R19p-R19y on four legs); `_dt_arity_check` without its vector arm -> RED 28 (R19p-R19v);
+# `_dt_icall_vec` judging nothing -> RED 12 (R19w-R19y).
+RD="cannot destructure '"
+VF='include "lib/fnptr.cyr"\nfn vf(): f64v2 { var v: f64v2; store64(&v, 41); store64(&v + 8, 7); return v; }\n'
+refused4 r19p "${RD}vf' - it returns a vector, not multiple values" "R19p: \`var a, b = vf();\`" "${VF}fn f(): i64 {\n    var a, b = vf();\n    return a * 10 + b;\n}\nsyscall(60, f());\n"
+refused4 r19q "${RD}mv' - it returns a vector, not multiple values" "R19q: a method \`var a, b = o.mv();\`" "${VF}struct O { k; }\nimpl O { fn mv(self): f64v2 { return vf(); } }\nfn f(): i64 {\n    var o: O;\n    var a, b = o.mv();\n    return a;\n}\nsyscall(60, f());\n"
+refused4 r19r "${RD}vg' - it returns a vector, not multiple values" "R19r: an explicit instance \`vg<i64>(1)\`" "${VF}fn vg<T>(x: T): f64v2 { return vf(); }\nfn f(): i64 {\n    var a, b = vg<i64>(1);\n    return a;\n}\nsyscall(60, f());\n"
+refused4 r19s "${RD}v4' - it returns a vector, not multiple values" "R19s: three names from an f64v4" "fn v4(): f64v4 { var v: f64v4; return v; }\nfn f(): i64 {\n    var a, b, c = v4();\n    return a;\n}\nsyscall(60, f());\n"
+refused4 r19t "${RD}vf' - it returns a vector, not multiple values" "R19t: in the declaration zone" "${VF}var A, B = vf();\nsyscall(60, A);\n"
+refused4 r19u "${RD}vf' - it returns a vector, not multiple values" "R19u: after the first statement" "${VF}syscall(1, 1, \"\", 0);\nvar A, B = vf();\nsyscall(60, A);\n"
+refused4 r19v "${RD}vf' - it returns a vector, not multiple values" "R19v: wrapped \`var a, b = (vf());\`" "${VF}fn f(): i64 {\n    var a, b = (vf());\n    return a;\n}\nsyscall(60, f());\n"
+refused4 r19w "${RD}vf' - it returns a vector, not multiple values" "R19w: \`var a, b = callptr(&vf);\`" "${VF}fn f(): i64 {\n    var a, b = callptr(&vf);\n    return a;\n}\nsyscall(60, f());\n"
+refused4 r19x "${RD}vf' - it returns a vector, not multiple values" "R19x: \`var A, B = fncall0((&vf));\` in the zone" "${VF}var A, B = fncall0((&vf));\nsyscall(60, A);\n"
+refused4 r19y "${RA}vf' - it returns a vector, not multiple values" "R19y: \`a, b = fncall0(&vf);\` (it compiled)" "${VF}${F5V}    a, b = fncall0(&vf);${E5}"
+# TN (6.7.16, met landing the s16 review's D100 fixes) — A REFUSED TUPLE ANNOTATION IS ITS DECLARATION'S ONE ERROR:
+# `var x: (f64v2, i64) = vf();` printed the element's refusal and then "cannot capture 'vf' into tuple (i64, i64) - it
+# returns a vector" — the refused element read as i64, a type the source never wrote (`_tup_cap_err` asks
+# `_vrcv_annbad`, as the vector refusals do). A vector, three values and a struct into a tuple whose element was refused,
+# in a fn, the declaration zone and after the first statement, on every leg; TN6 another declaration's capture error
+# kept. Mutation (2026-10-21, measured): the tree before -> RED 20 (TN1-TN5 on four legs, TN6 green — 3 errors;
+# `_tup_cap_err` not asking is the tree before).
+TNF='include "lib/fnptr.cyr"\nfn vf(): f64v2 { var v: f64v2; store64(&v, 41); store64(&v + 8, 7); return v; }\nstruct P { a; b; }\nfn mkp(): P { var p: P; p.a = 1; p.b = 2; return p; }\nfn f3(): (i64, i64, i64) { return (1, 2, 3); }\nfn f2(): (i64, i64) { return (1, 2); }\n'
+refused4 tn1 "a tuple element is i64, f64 or bool, not 'f64v2'" "TN1: \`var x: (f64v2, i64) = vf();\`: the element's refusal alone" "${TNF}fn f(): i64 {\n    var x: (f64v2, i64) = vf();\n    return 0;\n}\nsyscall(60, f());\n"
+refused4 tn2 "unknown type 'zz' as a tuple element" "TN2: \`var x: (zz, i64) = f3();\` (three values)" "${TNF}fn f(): i64 {\n    var x: (zz, i64) = f3();\n    return 0;\n}\nsyscall(60, f());\n"
+refused4 tn3 "unknown type 'zz' as a tuple element" "TN3: \`var x: (zz, i64) = mkp();\` (a struct)" "${TNF}fn f(): i64 {\n    var x: (zz, i64) = mkp();\n    return 0;\n}\nsyscall(60, f());\n"
+refused4 tn4 "a tuple element is i64, f64 or bool, not 'f64v2'" "TN4: in the declaration zone" "${TNF}var X: (f64v2, i64) = f3();\nsyscall(60, 0);\n"
+refused4 tn5 "unknown type 'zz' as a tuple element" "TN5: after the first statement" "${TNF}syscall(1, 1, \"\", 0);\nvar X: (zz, i64) = mkp();\nsyscall(60, 0);\n"
 # R20 — unchanged: `(a, b) = f();` and `var (q, r) = f();` keep their errors.
 refused r20a "unexpected '('" "R20a: \`(a, b) = f();\` (unchanged)" "${MK}${F5V}    (a, b) = mk(1);${E5}"
 refused r20b "expected identifier, got '('" "R20b: \`var (q, r) = f();\` (unchanged)" "${MK}fn f(): i64 {\n    var (q, r) = mk(1);\n    return 0;\n}\nsyscall(60, f());\n"
@@ -1211,6 +1244,8 @@ cascade() {   # <name> <errors> <what> <source> <want>..: exactly <errors> error
     done
     ok "$_cw: $_ce error(s), each at its place"
 }
+# TN6 (with the TN rows above, after `cascade`'s definition).
+cascade tn6 3 "TN6: another declaration's capture errors kept" "${TNF}fn f(): i64 {\n    var x: (i64, i64) = f3();\n    var y: (zz, i64) = f2();\n    var z: (i64, i64) = vf();\n    return 0;\n}\nsyscall(60, f());\n" "8:25: cannot capture 'f3'" "9:13: unknown type 'zz'" "10:25: cannot capture 'vf'"
 TUV="tuple 't' used as a value"
 cascade cs1 1 "CS1: \`t == u\` (the filed repro): one error, the left operand" 'fn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    if (t == u) { return 1; }\n    return 0;\n}\nsyscall(60, main());\n' "4:9: $TUV"
 cascade cs1b 1 "CS1b: \`t + u + v\`: one error" 'fn main(): i64 {\n    var t = (1, 2);\n    var u = (3, 4);\n    var v = (5, 6);\n    var k = t + u + v;\n    return k;\n}\nsyscall(60, main());\n' "5:13: $TUV"

@@ -1,6 +1,9 @@
 # vector_call_result_discarded.tcyr — 6.7.12: a vector-returning call whose result goes nowhere (a statement,
-# an untyped receive through a fn pointer, an argument to an untyped parameter, a method call, an operator fn
+# an untyped receive through a fn pointer, an argument its callee ignores, a method call, an operator fn
 # returning a vector, at top level too) runs and leaves everything else as it was, on every target.
+# 6.7.16 (D101): the argument rows pass the vector to a value-form parameter its callee ignores — into an untyped
+# one (`take(mkv(41, 7))`, which handed the callee a word) it is refused (tests/gates/codegen/simd_return_shapes.sh
+# rows VA), and the top-level row is a discarded `fncall2(&mkv, ..)` beside a canary global.
 #
 # ⛔ THE DEFECT (PE only, through 6.7.11). On Win64 a value-form vector comes back through a hidden result pointer
 # the CALLER passes as int arg 0, and only the vector receives passed one: anywhere else the callee took its first
@@ -37,8 +40,8 @@ fn run3(): i64 {
 }
 
 # --- the class -------------------------------------------------------------------------------------------
-fn take(x): i64 { return 3; }
-fn run_arg(): i64 { return take(mkv(41, 7)); }
+fn takev(x: f64v2): i64 { return 3; }
+fn run_arg(): i64 { return takev(mkv(41, 7)); }
 fn run_fn2(): i64 { fncall2(&mkv, 41, 7); return 3; }
 fn run_32(): i64 { mkv4(41); return 3; }
 fn run_f32(): i64 { mkf(41); mki(41); return 3; }
@@ -92,12 +95,13 @@ mkv(41, 7);
 callptr(&mkv, 41, 7);
 gs.mv(41, 7);
 var gr = gx + gy;
-var gw = take(mkv(41, 7));
+var gw = 9;
+fncall2(&mkv, 41, 7);
 
 assert_eq(run1(), 3, "filed repro 1: mkv(41, 7); as a statement");
 assert_eq(run2(), 3, "filed repro 2: callptr(&mkv, 41, 7); as a statement");
 assert_eq(run3(), 3, "filed repro 3: var x = callptr(&mkv, 41, 7);");
-assert_eq(run_arg(), 3, "an argument to an untyped parameter: take(mkv(41, 7))");
+assert_eq(run_arg(), 3, "an argument its callee ignores: takev(mkv(41, 7))");
 assert_eq(run_fn2(), 3, "fncall2(&mkv, 41, 7); as a statement");
 assert_eq(run_32(), 3, "a 32-byte result discarded (f64v4)");
 assert_eq(run_f32(), 3, "f32v4 / i32v4 results discarded");
@@ -108,5 +112,5 @@ assert_eq(run_method_ptr(), 2, "p.mv(41, 7); through a *Sv leaves the struct int
 assert_eq(run_op(), 34, "an operator fn returning a vector, its result an untyped word");
 assert_eq(gs.k, 5, "top level: gs.mv(41, 7); leaves gs intact");
 assert_eq(gx.k * 10 + gy.k, 68, "top level: gx + gy leaves its operands intact");
-assert_eq(gw, 3, "top level: take(mkv(41, 7))");
+assert_eq(gw, 9, "top level: fncall2(&mkv, 41, 7); leaves the globals intact");
 var r = assert_summary();

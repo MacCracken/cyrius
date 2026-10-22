@@ -132,6 +132,12 @@
 #   MDP5 `_gs_dsr_dep` reading no annotation's T        -> RED 1: TA11 (the carrier `w: Wt<T>`)
 #   MDP6 `_dsr_amp` answering 0                         -> RED 2: DP20 DP20b
 #   MDP7 `_dsr_call` answering -1 (records only)        -> RED 25: every free-call row (DP0-DP12 DP17-DP21), DPX x6
+# 6.7.16 (the s16 review) — D99'S SUBSCRIPT STORE `p[i] = mkp();` (`_dsr_esub`, `_esub_assign`) and its stub line
+# (`_gs_sub_sres`): DS1-DS11, DSK1-DSK3, TA15 / TA15n / TA15b / TA15c, DSX DS1 / DS3 / TA15 on aarch64 / cx / PE.
+# (2026-10-21, measured as above:)
+#   MDS7 the tree before (75e50e3cf)                    -> RED 23: DS1-DS11 TA15 TA15n TA15b, DSX x3 x3
+#   MDS8 `_dsr_esub` answering 0                        -> RED 17: DS1-DS11, DSX DS1 / DS3 x3
+#   MDS9 `_gs_sub_sres` answering 0                     -> RED 6: TA15 TA15n TA15b, DSX TA15 x3
 # 6.7.16 (met beside D99) — THE STUB SCAN READS EVERY STRUCT RESULT THE PARSE TYPES: an operator chain `a + c + a`
 # (`_gs_top_op`: the operator applied last, its left side's struct `_gs_sres`), a receiver in parentheses `(a + c).mk()`
 # (`_gs_recv_wrap`), a generic call or method as a receiver (`_gs_rcall_g`, `_gs_mret`), a local from a generic call
@@ -1461,6 +1467,37 @@ accept "DPK1 an 8 B result keeps its word" "$DQ"'fn main(): i64 { var x = 5; var
 accept "DPK2 a Str result keeps its handle" "$DQ"'fn main(): i64 { alloc_init(); var x = 0; var p: *i64 = &x; *p = mks(); var s: Str = x; return s.len(); }'"$TE" 3 'syscall(60, 3);'
 accept "DPK3 a field of the result" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; *p = mkp().a; return x - 300; }'"$TE" 33 'syscall(60, 33);'
 accept "DPK4 *pq of a *Q copies (6.7.11)" "$DQ"'fn main(): i64 { var q: Q; var pq: *Q = &q; *pq = mkp(); return q.b - 400; }'"$TE" 44 'syscall(60, 44);'
+# DS (the s16 review, D99 carried to a subscript store): `p[i] = mkp();` through a typed pointer to a scalar is refused as
+# `*(p + i) = mkp();` is, named as spelled ('p[0]: i64'): a `*i64` local, a `*i64` field, a `: *i64` call, a `*i64` global,
+# a `*f64` / `*u8` with a method's and an operator's result, wrapped, `fncall0(&mkp)`, a for step, after the first
+# top-level statement (each compiled and kept Q's first word: 77); DSK1 `pp[0][0]` is the subscript's own one error;
+# DSK2 / DSK3 a field of the result, an 8 B result keep their word; TA15 / TA15b / TA15n the generic's `p[0] = mkp();`
+# (p: *T) is a stub line (`_gs_sub_sres`), TA15c a scalar store through `p[0]` in a generic is no stub.
+refuse "DS1 p[0] through a *i64" "cannot assign 'p\[0\]: i64' from 'mkp', which returns the struct 'Q'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; p[0] = mkp(); return x; }'"$TE" one
+refuse "DS2 w.pi[0], a *i64 field" "cannot assign 'w\.pi\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var w: W; w.pi = &x; w.pi[0] = mkp(); return x; }'"$TE" one
+refuse "DS3 gpi()[0], a : *i64 call" "cannot assign 'gpi()\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { gpi()[0] = mkp(); return GX; }'"$TE" one
+refuse "DS4 GP[0], a *i64 global" "cannot assign 'GP\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { GP[0] = mkp(); return GX; }'"$TE" one
+refuse "DS5 p[0] through a *f64, a method's result" "cannot assign 'p\[0\]: f64' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x: f64 = 1.5; var p: *f64 = &x; p[0] = q.dup(); return 0; }'"$TE" one
+refuse "DS6 p[1] through a *u8, an operator's result" "cannot assign 'p\[1\]: u8' from 'Q_add'" "$DQ"'fn main(): i64 { var q: Q; var b: u8[2]; var p: *u8 = &b; p[1] = q + q; return 0; }'"$TE" one
+refuse "DS7 ((mkp())), wrapped" "cannot assign 'p\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; p[0] = ((mkp())); return x; }'"$TE" one
+refuse "DS8 fncall0(&mkp)" "cannot assign 'p\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; p[0] = fncall0(&mkp); return x; }'"$TE" one
+refuse "DS9 a for step" "cannot assign 'p\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; for (var i = 0; i < 1; p[0] = mkp()) { i = i + 1; } return x; }'"$TE" one
+refuse "DS10 mk3(), 24 B" "cannot assign 'p\[0\]: i64' from 'mk3', which returns the struct 'Q3'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; p[0] = mk3(); return x; }'"$TE" one
+refuse "DS11 after the first top-level statement" "cannot assign 'GP\[0\]: i64' from 'mkp'" "$DQ"'syscall(1, 1, "", 0);
+GP[0] = mkp();
+fn main(): i64 { return GX; }'"$TE" one
+refuse "DSK1 pp[0][0] of a **i64: the subscript's own one error" "cannot subscript 'pp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; var pp: **i64 = &p; pp[0][0] = mkp(); return x; }'"$TE" one
+accept "DSK2 p[0] = mkp().a, a field of the result" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; p[0] = mkp().a; return x - 300; }'"$TE" 33 'syscall(60, 33);'
+accept "DSK3 p[0] = mk8(), an 8 B result keeps its word" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; p[0] = mk8(); return x; }'"$TE" 9 'syscall(60, 9);'
+refuse "TA15 p[0] = mkp(); (p: *T) at i64: a stub (D99)" "generic 'gds' has no i64 (or other scalar) instance" "$TH"'fn gds<T>(x: T): i64 { var p: *T = &x; p[0] = mkp(); return 9; }
+fn main(): i64 { return gds(5); }'"$TE" one
+if grep -q "^  note: <source>:[0-9]*:[0-9]*: 'gds' stores a struct result over 8 bytes through 'p', a pointer to its type parameter\$" "$D/r.err"; then
+    printf '  ok(refused): %-28s\n' "TA15n the note names p"; pass=$((pass+1))
+else printf '  FAIL: %-34s %s\n' "TA15n the note" "$(grep '^  note' "$D/r.err" | head -1)"; fail=$((fail+1)); fi
+refuse "TA15b ... at gds<i32>(5)" "generic 'gds' has no i64 (or other scalar) instance" "$TH"'fn gds<T>(x: T): i64 { var p: *T = &x; p[0] = mkp(); return 9; }
+fn main(): i64 { return gds<i32>(5); }'"$TE" one
+accept "TA15c p[0] = 7; (p: *T) at i64 is no stub" "$TH"'fn gdk<T>(x: T): i64 { var p: *T = &x; p[0] = 7; return x + 7; }
+fn main(): i64 { return gdk(5); }'"$TE" 14 'syscall(60, 14);'
 
 # TV (6.7.16, the user's D102, 2026-10-20; issues/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
@@ -1668,6 +1705,10 @@ cross_rows() {  # $1 the leg's name
     refuse "DPX [$1] TA6" "generic 'gd' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gd(5); }'"$TE" one
     refuse "DPX [$1] DP9" "cannot assign '\*\*pp: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; var pp: **i64 = &p; **pp = mkp(); return x; }'"$TE" one
     refuse "DPX [$1] DP13" "cannot assign '\*p: i64' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p: *i64 = &x; *p = q.dup(); return x; }'"$TE" one
+    refuse "DSX [$1] DS1" "cannot assign 'p\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { var x = 5; var p: *i64 = &x; p[0] = mkp(); return x; }'"$TE" one
+    refuse "DSX [$1] DS3" "cannot assign 'gpi()\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { gpi()[0] = mkp(); return GX; }'"$TE" one
+    refuse "DSX [$1] TA15" "generic 'gds' has no i64 (or other scalar) instance" "$TH"'fn gds<T>(x: T): i64 { var p: *T = &x; p[0] = mkp(); return 9; }
+fn main(): i64 { return gds(5); }'"$TE" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1681,11 +1722,11 @@ cross_rows pe
 unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
-# FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 375 (s16),
-# each over the genbind review's 300 — 300 + 67 + 75; 345 at D102, 327 at D96): a lost row block — a source variable
-# emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 442 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 442"; exit 1
+# FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96): a lost row block —
+# a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
+if [ $((nrefuse + naccept)) -lt 468 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 468"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -1207,6 +1207,7 @@ fn PARSE_RETURN(S): i64 {
     var pn = _prr_en;
     var pk = _prr_k;
     _prr_ti = 0 - 1;
+    _vsc_ret(S, st);   # 6.7.16 (D101): a whole vector call returned by a fn that returns none
     _PARSE_RETURN_ARMS(S);
     _pair_ret_late(S);   # 6.7.16: the pair / vector class's refusal, after the value's own parse
     _prr_ti = pt;
@@ -2765,6 +2766,7 @@ fn _svc_toplevel_at(S, ti, nt): i64 {
     var sv = GTI(S);
     STI(S, ti);
     _svc_nm = TOKVAL(S, nt);
+    _vop_done = ti;   # 6.7.16 (D100): the call's one refusal
     _svc_toplevel_err(S);
     STI(S, sv);
     return 1;
@@ -7329,6 +7331,7 @@ fn _scv_save(): i64 {
     vec_push(_scv_vec, _had_error);
     vec_push(_scv_vec, _scv_un);
     vec_push(_scv_vec, _dvi_want);   # 6.7.14 (D36)
+    vec_push(_scv_vec, _vop_vd);     # 6.7.16 (D100)
     return d;
 }
 fn _scv_restore(d): i64 {
@@ -7338,6 +7341,7 @@ fn _scv_restore(d): i64 {
     _fla_want = vec_get(_scv_vec, d + 3);
     _scv_un = vec_get(_scv_vec, d + 5);
     _dvi_want = vec_get(_scv_vec, d + 6);
+    _vop_vd = vec_get(_scv_vec, d + 7);
     vec_truncate(_scv_vec, d);
     return 0;
 }
@@ -7350,6 +7354,7 @@ fn _scv_restore(d): i64 {
 fn _scv_arm(S, pscale, ext): i64 {
     var d = _scv_save();
     _scv_top_ann(S, pscale);   # 6.7.12 (D28): `var n: i64 = fncall1(&mk3, 5);`; 6.7.13: + top level
+    _vop_vd = _vrcv_vec(S, pscale);   # 6.7.16 (D100): a vector declaration's source is its own refusal's
     _scv_pk = 0;
     _scv_term = 5;
     if (pscale < 0) { if (pscale > 0 - 2048) {
@@ -16253,6 +16258,7 @@ fn _gs_use(S, fi, i, mode): i64 {
     var nx = TOKTYP(S, i + 1);
     if (mode == 0) {
         if (nx == 4) { return _gs_asg_sres(S, fi, i); }   # 6.7.16 (D1): `y = mkp();`, y typed by T
+        if (nx == 28) { return _gs_sub_sres(S, fi, i); }   # 6.7.16 (D99): `p[i] = mkp();`, p a `*T`
         if (nx != 41) { return 0; }
         if (TOKTYP(S, i + 2) == 41) { return 0; }
         # 6.7.16: a FIELD name (`g.v` of `g.v.v`, `q.a` of `q.a.k`) is no T-typed name or carrier, whatever

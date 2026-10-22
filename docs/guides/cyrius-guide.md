@@ -1742,7 +1742,11 @@ decision D87 (a) of 2026-10-20): `var t: P = GU;` — in a fn, in the declaratio
 every size, wrapped `(GU)` too, a `Str` declared from a `*U` and a `*Str` into a `P` alike — is *cannot copy 'GU' into
 a variable of a different struct/vector type: 't'*. Through 6.7.15 it compiled: in a fn (and at top level over 8
 bytes) `t` was a handle reading U's object as a P, and at top level at 8 bytes or less `t.v` held GU's address.
-`var t: U = GU;` copies and `var t: *U = GU;` aliases.
+`var t: U = GU;` copies and `var t: *U = GU;` aliases. So is every other `*U` source the assignment refuses — a call or
+method declared `: *U`, a `*U` field, pointer arithmetic on one, wrapped, a generic instance's (`var t: P = gu(&q);`,
+`= h.pu`, `= h.mu()`, `= pu + 0`, `= gg<U>(&q)`), in a fn, the zone and after the first statement, at every size —
+named as spelled: *cannot copy 'gu(&q)' into a variable of a different struct/vector type: 't'* (pointer arithmetic by
+its pointer operand). A `*U` source into a `U` keeps its handle bind, into a `*U` it aliases.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
@@ -1973,7 +1977,9 @@ the same way (6.7.16; the user's decision D99, 2026-10-20): `*p = mkp();` with `
 a local, parameter, global, capture, field or `: *i64` call, `*(p + n)`, `**pp` of a `**i64`, and `*pp` of a `**i64`
 or a `**Q` of another struct (a pointer slot, D32's own) — from a call, a method, an operator, a known `&f`, in
 parentheses, in a `for` step, is *cannot assign '\*p: i64' from 'mkp', which returns the struct 'P2' - store it
-through a '\*P2' or bind a field* (through 6.7.15 it stored the struct's first word, silently); `*(&x) = mkp();` is `x =
+through a '\*P2' or bind a field* (through 6.7.15 it stored the struct's first word, silently); so is the subscript
+store `p[i] = mkp();` through the same pointers (`w.pi[0] = ..`, `gi()[0] = ..`, a `*i64` global, at top level too:
+*cannot assign 'p[0]: i64' …*), and a generic's `p[0] = mkp();` with `p: *T` has no scalar instance (D1); `*(&x) = mkp();` is `x =
 mkp();`, judged as that assignment; 8 bytes or less and a `Str` keep their word, a field of the result (`*p =
 mkp().a`) stores it, and through a `*P2` of the result's own struct the store copies (6.7.11). A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
@@ -2260,11 +2266,44 @@ vector annotation is now never dropped: `var v: f64v2 = idg<i64>(5)`, a generic 
 scalar, meets the refusal above.
 
 A vector-returning call that nothing receives — a statement `mkv(41, 7);` or `callptr(&mkv, 41,
-7);`, an argument to an untyped parameter, a statement `s.mv(..);`, an operator fn declared to
+7);`, a statement `s.mv(..);`, an operator fn declared to
 return a vector, at top level too — runs, and its vector is discarded, on every target (6.7.12;
 since 6.7.13 an unannotated `var x = callptr(&mkv, ..)` receives it, above). ⚠ Through 6.7.11 on Windows such a call passed no hidden
 result pointer, so the callee wrote the vector through its first argument: a page fault, or
 `s.mv(..)` overwriting `s`.
+
+**A whole vector call is no scalar fn's return value and no word argument** (6.7.16, the user's decision D101,
+2026-10-20), as it is no integer declaration's: `return mkv(41, 7);` from a fn declared `: i64` (or `: f64`, `: *T`, a
+struct of 8 bytes or less, `cstring`, or no annotation), `return s.mv();`, `return mkv(41, 7) + 1;` (a call that starts
+the value), a closure's value (`|k| mkv(k, 7)`, `|k| { return mkv(k, 7); }`), an argument to a parameter that takes a
+word — untyped (`take(mkv(41, 7))`), an integer of any width, `cstring`, `f64` / `f32` — and an argument to a builtin
+or an indirect call (`syscall(60, mkv(..))`, `store64(&x, mkv(..))`, `fncall1(f, mkv(..))`, `callptr(&g, mkv(..))`) are
+refused by name, at the call, in every spelling the receives read (by name, an explicit instance, a method on any head,
+`&f` through fncallN / callptr, inside parentheses): *a vector value cannot be returned as i64 - 'mkv' returns a
+vector*, *a vector value cannot be passed to an integer parameter - 'mkv' returns a vector, passed to parameter 'n' of
+'takei'* (*an f64 parameter* for an `f64` one), *… passed to 'syscall'*. A vector fn's own `return`, a value-form or
+`*V` parameter and a parameter its callee ignores that is declared the vector (`fn takev(x: f64v2)`) are unchanged;
+a bool parameter or return and a struct or pointer parameter keep their own refusals. ⚠ Through 6.7.15 each handed
+over one word — x86_64 / aarch64 rax's leftover (0), cx / Windows lane 0 (41), `return mkv(41, 7) + 1;` 1 / 42 —
+and `return mkv(41, 7);` faulted on Windows (exit 5: the tail call passed `mkv` no hidden result pointer); 6.7.12
+listed the untyped argument among the discarded results.
+
+**A vector call is no operand anywhere, and no word slot's whole value** (6.7.16, the user's decision D100, 2026-10-20:
+A) — wherever it sits, not only where it IS or STARTS an integer declaration's or assignment's source (6.7.11, D24-D26
+above): a later operand (`var x: i64 = 1 + mkv(41, 7);`, `x = 1 + mkv(..)`, an untyped `var w = 1 + mkv(..)`, a
+top-level `var X = 1 + mkv(..)`, `return 1 + mkv(..)`), the right side of a compound assignment (`x += mkv(..)`, `s.a +=
+..`, `*p += ..`), a unary operator's operand (`-mkv(..)`, `!`, `~`, `*`), an operand inside an argument or a condition
+(`take(mkv(41, 7) + 1)`, `if (mkv(..) == 1)`, `1 && mkv(..)`), a closure's (`|k| k + mkv(k, 7)`), and a whole call stored
+into a field, an element or through a pointer to no vector (`s.a = mkv(..)`, `a[0] = ..`, a call result's `gp().b = ..`
+/ `gi()[0] = ..`, `*p = ..` with `p: *i64` or an untyped `p`, `*(&x) = ..`), used as a condition (`if`, `elif`, `while`, `switch`, a `for` condition, `match`), an
+index (`a[mkv(..)]`), a range bound (`0..mkv(..)`), a struct literal's field (`Pt { mkv(..), 1 }`) or a tuple literal's
+element (`var t = (mkv(..), 3);`, `t = (3, mkv(..));`, `tk((mkv(..), 3))`, a multi-value `return (mkv(..), 3);`) is
+refused at the call, once, in the words of what receives it: *vector return type does not match the declared type* (a
+declaration, an argument, a condition, an index, a bound, a field or element of a literal, a multi-value `return`), *…
+the assigned variable* (an assignment or a store, a tuple literal assigned), and a `return`'s D101's. Bind the vector first and read its lanes (`var w = mkv(41, 7); x += load64(&w);`). ⚠ Through
+6.7.15 each compiled and used one word — x86_64 / aarch64 rax's leftover (`1 + mkv(41, 7)` gave 1, `x += mkv(..)` 0),
+cx / Windows lane 0 (42, 41) — and `rd(mkv(41, 7) + 1)` into a `*f64v2` and `*mkv(41, 7)` crashed (139; cx a wrong
+word; Windows exit 5).
 
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
@@ -4086,6 +4125,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64) = mk();` (`mk` returns `P`) | `cannot capture 'mk' into tuple (i64, i64) - it returns struct 'P', not a tuple` |
 | `a, b = mk();` (`mk` returns `P`) | `cannot re-assign from 'mk' - it returns struct 'P', not multiple values` |
 | `var a, b = mk();` (`mk` returns a 24 B `Q`), `var a, b, c = mk();` (a 16 B `P`; 6.7.11) | `cannot destructure 'mk' - it returns struct 'Q', which is not in registers …` / `cannot destructure 'mk' into 3 names - it returns struct 'P', whose 2 words are its return registers …` |
+| `var a, b = mkv(41, 7);` / `a, b = mkv(41, 7);` (`mkv` returns a vector: a method, an explicit instance, wrapped, `callptr(&mkv, ..)` / `fncallN(&mkv, ..)`, three names, in the declaration zone too; the declaration and the `&f` spellings 6.7.16 — they bound the integer return registers a vector return does not write: x86_64 / aarch64 0, Windows garbage) | `cannot destructure 'mkv' - it returns a vector, not multiple values` / `cannot re-assign from 'mkv' - it returns a vector, not multiple values` |
 | `var t: (i64, i64) = f();` (`f` is `: (i64, f64)`) | `cannot capture 'f' into tuple (i64, i64) - it returns 2 values, (i64, f64)` |
 | `var t: (i64, i64, i64) = dm(17, 5);` (`dm` undeclared, every `return` is `(a, b)`; 6.7.11) | `cannot capture 'dm' into tuple (i64, i64, i64) - it returns 2 values` |
 | `var t: (i64, i64) = one(1)` (or `(one(1))`), `= f() + 1`, `= 5` | `cannot initialize tuple 't' with a value that is not a tuple` |
