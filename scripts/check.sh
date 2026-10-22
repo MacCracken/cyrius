@@ -3042,6 +3042,11 @@ _chk_gate "$ROOT/tests/gates/frontend/param_type_grammar.sh"
 # once with the declaration's words, the token scans (a `*fn`'s `fn` is no fn's own) and the rows of
 # tests/tcyr/crossos/fn_pointer_typed_holders.tcyr, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/fn_pointer_holders.sh"
+# 6.7.17 — a pointer type behind any number of `*` is a slice's pointer element (the user's D93): `[**i64]`,
+# `slice<**i64>`, `[**fn( .. )]` compile with no error or warning, a refusal behind two `*` is the one-star line, and the
+# rows of tests/tcyr/crossos/slice_pointer_element_stars.tcyr, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the
+# header.
+_chk_gate "$ROOT/tests/gates/frontend/pointer_type_positions.sh"
 # 6.7.7 — a whole-struct store into a packed global of 3 / 5 / 6 / 7 bytes wrote 8 (EVSTORE_W stored
 # exactly only 1 / 2 / 4), over the next global: the filed repro and every size 1..16 x every store
 # form, x86 / IR / DCE / aarch64 / cx / PE. Mutation ledger in the header.

@@ -1,0 +1,87 @@
+# slice_pointer_element_stars.tcyr — 6.7.17 (the user's D93, 2026-10-22). A SLICE'S POINTER ELEMENT TAKES ANY NUMBER OF
+# `*`: `[**i64]`, `[***i64]`, `[**fn( .. )]`, `slice<**T>` declare the 8-byte pointer element `[*T]` does, as `var p:
+# **i64` is a pointer elsewhere.
+#
+# ⛔ THE DEFECT, every release through 6.7.16. The element reader stepped one `*` and took the next token for T:
+# `var s: [**i64] = 0;` was "expected ']', got '*'" (a `[**fn(i64): i64]` added "undefined variable 'i64'"), and
+# `slice<**i64>` "expected '=', got '*'" — so a slice of pointers to pointers could only be held untyped.
+#
+# ⚠ WHY crossos/: each element is read and stored through the target's slice sequence (the bounds check, the 8-byte
+# load); tests/gates/frontend/pointer_type_positions.sh runs this file on x86_64 / aarch64 (qemu) / cx / PE (wine), the
+# release gate on pi, ecb, ach and cass.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/slice.cyr"
+include "lib/assert.cyr"
+
+fn _sps_dbl(x) { return x * 2; }
+
+fn _sps_two(): i64 {
+    var a = 5;
+    var b = 7;
+    var pa: *i64 = &a;
+    var pb: *i64 = &b;
+    var buf: i64[2];
+    store64(&buf, &pa);
+    store64(&buf + 8, &pb);
+    var s: [**i64] = 0;
+    slice_of(&s, &buf, 2);
+    assert_eq(slice_len(&s), 2, "a [**i64] slice's length");
+    assert_eq(load64(load64(s[1])), 7, "a [**i64] element is the 8-byte word it points through");
+    s[0] = &pb;
+    assert_eq(load64(load64(s[0])), 7, "... stored through s[i]");
+    var t: slice<**i64> = 0;
+    slice_of(&t, &buf, 2);
+    assert_eq(load64(load64(t[0])), 7, "a slice<**i64> element");
+    var ppa: **i64 = &pa;
+    var qb: i64[1];
+    store64(&qb, &ppa);
+    var q: [***i64] = 0;
+    slice_of(&q, &qb, 1);
+    assert_eq(load64(load64(load64(q[0]))), 5, "a [***i64] element");
+    return 0;
+}
+
+fn _sps_fnp(): i64 {
+    var c: *fn(i64): i64 = &_sps_dbl;
+    var fb: i64[1];
+    store64(&fb, &c);
+    var f: [**fn(i64): i64] = 0;
+    slice_of(&f, &fb, 1);
+    assert_eq(fncall1(load64(f[0]), 4), 8, "a [**fn(i64): i64] element");
+    var g: slice<**fn> = 0;
+    slice_of(&g, &fb, 1);
+    assert_eq(fncall1(load64(g[0]), 5), 10, "a slice<**fn> element (bare)");
+    return 0;
+}
+
+fn _sps_gen<T>(x: T): T {
+    var p: *T = &x;
+    var b: i64[1];
+    store64(&b, &p);
+    var s: [**T] = 0;
+    slice_of(&s, &b, 1);
+    return load64(load64(s[0]));
+}
+
+fn _sps_loop(): i64 {
+    var a = 3;
+    var pa: *i64 = &a;
+    var b: i64[1];
+    store64(&b, &pa);
+    var n = 0;
+    for (var s: [**i64] = 0; n < 1; n = n + 1) {
+        slice_of(&s, &b, 1);
+        assert_eq(load64(load64(s[0])), 3, "a for-init's [**i64]");
+    }
+    var f = |x| { var w: [**i64] = 0; slice_of(&w, &b, 1); return load64(load64(w[0])) + x; };
+    assert_eq(fncall1(f, 1), 4, "a closure body's [**i64]");
+    return 0;
+}
+
+var _a = _sps_two();
+var _b = _sps_fnp();
+assert_eq(_sps_gen(21), 21, "a generic fn's [**T] at T = i64");
+var _c = _sps_loop();
+var r = assert_summary();

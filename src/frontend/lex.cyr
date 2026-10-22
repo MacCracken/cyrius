@@ -2269,29 +2269,34 @@ fn _lex_ix_grow(): i64 {
 }
 # 1 when string token `tc` is a directive's message: `#deprecated ( STRING`, or the message slot of
 # an `#assert ATOM [OP ATOM] [,] STRING` (the grammar `_tl_assert` / PARSE_STMT's arm consume).
+# ⛔ 6.7.17 — A `sizeof ( .. )` ATOM IS ITS WHOLE PARENTHESES, and the `#assert` is looked for 64 tokens back (it was
+# 12): the atom stepped one name inside, so `#assert sizeof(Box<i64>) == 16, "m"` (6.6.17's `T<..>`) and 6.7.17's
+# `sizeof(*i64)` / `sizeof(*fn( .. ))` (the user's D94) missed their message, which went into the program's string pool
+# — the binary carried every such message's bytes. CHANGELOG [6.7.17]
 fn _lex_is_dir_msg(S, tc): i64 {
     if (tc >= 2) { if (TOKTYP(S, tc - 1) == 10) { if (TOKTYP(S, tc - 2) == 124) { return 1; } } }
     var a = tc - 1;
-    var lo = tc - 12;
+    var lo = tc - 64;
     if (lo < 0) { lo = 0; }
     while (a >= lo) {
         if (TOKTYP(S, a) == 107) {
-            if (_lex_assert_msg_at(S, a) == tc) { return 1; }
+            if (_lex_assert_msg_at(S, a, tc) == tc) { return 1; }
             return 0;
         }
         a = a - 1;
     }
     return 0;
 }
-fn _lex_assert_msg_at(S, a): i64 {
-    var i = _lex_assert_atom(S, a + 1);
+fn _lex_assert_msg_at(S, a, tc): i64 {
+    var i = _lex_assert_atom(S, a + 1, tc);
     var op = TOKTYP(S, i);
-    if (op >= 17) { if (op <= 22) { i = _lex_assert_atom(S, i + 1); } }
+    if (op >= 17) { if (op <= 22) { i = _lex_assert_atom(S, i + 1, tc); } }
     if (TOKTYP(S, i) == 31) { i = i + 1; }
     return i;
 }
-# `_assert_skip_atom` over token indices: a number, `sizeof ( [T] )`, `E.N`, or a name.
-fn _lex_assert_atom(S, i): i64 {
+# `_assert_skip_atom` over token indices: a number, `sizeof ( .. )` (to its balancing `)`, never past `e`, the string
+# being judged), `E.N`, or a name.
+fn _lex_assert_atom(S, i, e): i64 {
     var t = TOKTYP(S, i);
     if (t == 1) { return i + 1; }
     if (t != 2) { return i; }
@@ -2299,11 +2304,19 @@ fn _lex_assert_atom(S, i): i64 {
         if (TOKTYP(S, i + 1) == 41) { if (TOKTYP(S, i + 2) == 2) { return i + 3; } }
         return i + 1;
     }
-    var j = i + 2;
-    var tj = TOKTYP(S, j);
-    if (tj == 2) { j = j + 1; }
-    elif (tj == 105) { j = j + 1; }
-    return j + 1;
+    if (TOKTYP(S, i + 1) != 10) { return i + 1; }
+    var j = i + 1;
+    var d = 0;
+    while (j < e) {
+        var tj = TOKTYP(S, j);
+        if (tj == 10) { d = d + 1; }
+        elif (tj == 11) {
+            d = d - 1;
+            if (d == 0) { return j + 1; }
+        }
+        j = j + 1;
+    }
+    return j;
 }
 # A string token value's bytes: the pool, or the side table for a directive message (bit 30).
 fn _lit_ptr(S, v): i64 {

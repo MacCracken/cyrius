@@ -1,0 +1,61 @@
+# sizeof_pointer_type.tcyr — 6.7.17 (the user's D94, 2026-10-22). `sizeof` OF A POINTER TYPE IS 8: `sizeof(*i64)`,
+# `sizeof(**T)`, `sizeof(*Pt)`, `sizeof(*Box<i64>)`, `sizeof(*fn( .. ))` (a bare `*fn` too) — in an expression, a
+# const, an array size, an enum value, a case label and `#assert`, in a fn and at top level.
+#
+# ⛔ THE DEFECT, every release through 6.7.16. sizeof read a type NAME only: `sizeof(*i64)` was "expected identifier,
+# got '*'" (a `*fn(i64): i64` added a cascade), though the guide's type-name rule lists `sizeof(T)` among the places
+# that name a type and `*T` is one everywhere else.
+#
+# ⚠ WHY crossos/: the value is a compile-time constant, but each row's arithmetic, const, array and switch run on the
+# target; tests/gates/frontend/pointer_type_positions.sh runs this file on x86_64 / aarch64 (qemu) / cx / PE (wine), the
+# release gate on pi, ecb, ach and cass.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+struct SzpP3 { a; b; c; }
+struct SzpBox<T> { v: T; w: T; }
+enum SzpE { SzpA = sizeof(*i64), SzpB = sizeof(*fn(i64): i64) + 1 }
+
+const SZP_C = sizeof(**i64);
+var _szp_arr: i64[sizeof(*u8)];
+#assert sizeof(*i64) == 8, "a pointer is 8 bytes"
+#assert sizeof(*fn(i64, i64): i64) == sizeof(**SzpP3), "every pointer type is 8 bytes"
+
+fn _szp_gen<T>(x: T): i64 { return sizeof(*T) * 100 + sizeof(T); }
+
+fn _szp_case(x): i64 {
+    switch (x) {
+        case sizeof(*i64): return 1;
+        default: return 0;
+    }
+    return 0;
+}
+
+fn _szp_fn(): i64 {
+    const L = sizeof(*fn);
+    var b: i64[sizeof(***i64)];
+    #assert sizeof(*u128) == 8, "a *u128 is 8 bytes"
+    assert_eq(L, 8, "a local const of sizeof(*fn)");
+    b[7] = 5;
+    assert_eq(b[7] + b[0] * 0, 5, "a local array sized by sizeof(***i64): its slot 7");
+    assert_eq(sizeof(*SzpP3) + sizeof(SzpP3), 32, "sizeof(*Pt) is 8 beside sizeof(Pt)");
+    assert_eq(sizeof(*SzpBox<i64>) + sizeof(SzpBox<i64>), 24, "sizeof(*Box<i64>) is 8 beside the instance's");
+    return 0;
+}
+
+assert_eq(sizeof(*i64), 8, "sizeof(*i64)");
+assert_eq(sizeof(**i64), 8, "sizeof(**i64)");
+assert_eq(sizeof(*u8), 8, "sizeof(*u8): the pointer, not the pointee");
+assert_eq(sizeof(*f64), 8, "sizeof(*f64)");
+assert_eq(sizeof(*fn(i64): i64), 8, "sizeof(*fn(i64): i64)");
+assert_eq(sizeof(*fn), 8, "sizeof(*fn) (bare)");
+assert_eq(sizeof(**fn(i64, i64): i64), 8, "sizeof(**fn( .. ))");
+assert_eq(SZP_C, 8, "a top-level const");
+_szp_arr[7] = 6;
+assert_eq(_szp_arr[7], 6, "a top-level array sized by sizeof(*u8): its slot 7");
+assert_eq(SzpE.SzpA + SzpE.SzpB, 17, "enum values");
+assert_eq(_szp_gen(1), 808, "a generic fn's sizeof(*T) at T = i64");
+assert_eq(_szp_gen(1.5), 808, "... at T = f64");
+assert_eq(_szp_case(8), 1, "a case label");
+var _f = _szp_fn();
+var r = assert_summary();

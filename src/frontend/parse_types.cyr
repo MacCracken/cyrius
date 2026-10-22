@@ -4022,11 +4022,18 @@ fn _tn_ptr(S, ti, vnoff): i64 {
     if (TOKTYP(S, ti) != 2) { return 8; }
     var c = _tn_resolve_at(S, ti);
     if (c == 0) {
-        _tn_refuse_var(S, ti, " as the target of pointer ", vnoff);
+        _tn_refuse_var(S, ti, _tn_ptr_tail(vnoff), vnoff);
         return 8;
     }
     if (_tn_class(c) == 1) { return _tn_val(c); }
     return 8;
+}
+# The words after "unknown type 'Nope'" in a `*T`: "as the target of pointer 'p'" names its variable; with none (a
+# return `fn f(): *Nope`, a multi-value element: `vnoff` -1) "as the target of a pointer" — the line ended "as the
+# target of pointer " with nothing after it (6.6.17 - 6.7.16). CHANGELOG [6.7.17]
+fn _tn_ptr_tail(vnoff): i64 {
+    if (vnoff < 0) { return " as the target of a pointer"; }
+    return " as the target of pointer ";
 }
 
 # 6.6.17 — sizeof(T) for the pointer annotation `*T` at token `ti` (T, the token after the `*`):
@@ -4042,7 +4049,7 @@ fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
     else {
         var c = _tn_resolve_at(S, ti);
         if (c == 0) {
-            if (quiet == 0) { _tn_refuse_var(S, ti, " as the target of pointer ", vnoff); }
+            if (quiet == 0) { _tn_refuse_var(S, ti, _tn_ptr_tail(vnoff), vnoff); }
             return 8;
         }
         w = _tn_bytes(S, c);
@@ -4746,7 +4753,11 @@ fn _sl_err_ptr(S, ti): i64 {
 }
 # A slice's pointer element `[*T]` / `slice<*T>`, cursor past its `*`: T checked by name and
 # consumed; `*[U]` / `*slice<U>` refused by name and consumed whole.
+# ⛔ 6.7.17 (the user's D93, 2026-10-22) — ANY NUMBER OF `*`: `[**i64]`, `[**fn( .. )]`, `slice<**T>` (deeper too) read
+# the rest as `[*T]` reads T, an 8-byte element (a pointer's), as `var p: **i64` is a pointer elsewhere. The second `*`
+# was taken for T: "expected ']', got '*'" (`slice<**T>`: "expected '=', got '*'") and a cascade. CHANGELOG [6.7.17]
 fn _tn_slice_ptr_el(S, noff): i64 {
+    while (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }
     if (_sl_ann_at(S, GTI(S)) == 1) {
         _sl_err_ptr(S, GTI(S));
         _sl_ann_skip(S);
@@ -4754,6 +4765,10 @@ fn _tn_slice_ptr_el(S, noff): i64 {
     }
     if (PEEKT(S) == 32) {   # 6.7.17 (D8): `[*fn( .. )]`, an 8-byte element (`_ptr_fnp_end`)
         STI(S, _ptr_fnp_end(S, GTI(S) - 1, noff, 0, " for variable "));
+        return 0;
+    }
+    if (PEEKT(S) == 10) {   # 6.7.17: `[*( .. )]` is R3's refusal, as `var p: *(i64, i64)` is ("expected ']'" before)
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
         return 0;
     }
     if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
@@ -4829,6 +4844,7 @@ fn _tn_sizeof(S, ti, asrt): i64 {
 # declares (`_gen_ann_sid`), so `sizeof(Box<i32>)` is what that variable occupies; any other
 # `T<..>` (`Vec<i64>`, a handle) is T's own size. `asrt` as _tn_sizeof's.
 fn _sizeof_type(S, asrt): i64 {
+    if (PEEKT(S) == 8) { return _sizeof_ptr(S, asrt); }   # 6.7.17 (D94): `sizeof(*T)`
     if (PEEKT(S) == 10) {                         # 6.7.7 (R3): `sizeof(( .. ))`
         _tup_pos_refuse(S, "a sizeof operand");
         if (asrt == 1) { _panic = 1; }            # as _tn_sizeof's #assert operand: no "#assert failed"
@@ -4844,6 +4860,36 @@ fn _sizeof_type(S, asrt): i64 {
     var g = _gen_ann_sid(S, sid);
     if (g > 0) { if (g != sid) { sz = STRUCTSZ(S, g - 1); } }
     return sz;
+}
+# ⛔ 6.7.17 (the user's D94, 2026-10-22) — sizeof(*T) IS 8: a pointer type — `*i64`, `**T`, `*Pt`, `*Box<i64>`, a
+# `*fn( .. )` (a bare `*fn` too) — is the one 8-byte word it declares everywhere else. sizeof read a name only:
+# `sizeof(*i64)` was "expected identifier, got '*'" (and `*fn(..)` a cascade). Cursor on the first `*`: the `*`s and
+# T stepped, T read as its own position reads it — a name as `sizeof(T)` does (an unknown one "unknown type 'Nope' in
+# sizeof", a `<..>` read), a `*fn( .. )` by the parameter grammar with sizeof's words (`_ptr_fnp_end`), `*[T]` / `*( ..
+# )` refused as a pointer annotation's are, no type at all "expected identifier". 8, or 0 after a refusal (an `#assert`
+# operand's latch set, as `_tn_sizeof`'s). CHANGELOG [6.7.17]
+fn _sizeof_ptr(S, asrt): i64 {
+    var ti0 = GTI(S);
+    while (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }
+    var t = PEEKT(S);
+    if (_sl_ann_at(S, GTI(S)) == 1) {
+        _sl_err_ptr(S, GTI(S));
+        _sl_ann_skip(S);
+    } elif (t == 2 || t == 105) {
+        _sizeof_type(S, asrt);
+    } elif (t == 32) {
+        var w = " in sizeof";
+        if (asrt == 1) { w = " in #assert sizeof"; }
+        STI(S, _ptr_fnp_end(S, ti0, 0 - 1, 0, w));
+    } elif (t == 10) {
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
+    } else {
+        ERR_EXPECT(S, 2);
+        return 0;
+    }
+    if (_ann_said(S, ti0, GTI(S)) == 0) { return 8; }
+    if (asrt == 1) { _panic = 1; }
+    return 0;
 }
 
 # A parameter's type name at the cursor (PARSE_FN_DEF; `ptc` its _classify_param_type class).

@@ -11983,7 +11983,8 @@ fn _ce_sizeof(S): i64 {
     STI(S, _ce_ti);
     var sz = 0;
     var p0 = _panic;
-    if (PEEKT(S) == 2 || PEEKT(S) == 105 || PEEKT(S) == 10) { sz = _sizeof_type(S, _ce_asrt); }   # its own refusal, by name (6.7.7: + a tuple)
+    var t0 = PEEKT(S);   # its own refusal, by name (6.7.7: + a tuple; 6.7.17: + a pointer `*T`, the user's D94)
+    if (t0 == 2 || t0 == 105 || t0 == 10 || t0 == 8) { sz = _sizeof_type(S, _ce_asrt); }
     if (_panic != p0) { _ce_err = 1; }
     _ce_ti = GTI(S);
     STI(S, sv);
