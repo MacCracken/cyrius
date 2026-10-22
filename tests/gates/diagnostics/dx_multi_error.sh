@@ -274,6 +274,8 @@ done
 #     `_field_load_on` and the store's `_fst_on`). F1 a read, F2 a store, F3 a compound store, F4 F5 one hop down
 #     (`w.p.a.b`), F6 an f64 / u8 / bool field (the statement's one error), F7 a condition, F8 F9 a global in the zone and
 #     after the first statement, F10 through a `*W` and two names on; F11 a field whose type its declaration refused
+#     (F11's refusal is at the type's name, 1:15, since f16's 3482cd42e; s16 wrote it at the token after, 1:20 — the
+#     wave-4 integration)
 #     (`p: Later`, Later below) stands down: the declaration's one error (it added three); F12 the next name still reports
 #     its own. Controls (run): F13 a struct field's chain (`w.p.a`) and a range after a scalar field (`w.n..5`); F14
 #     --syntax-only (a sibling file's struct) stays silent. RED on the lane before this bite: F1-F12 x4 legs;
@@ -290,7 +292,7 @@ cascade_legs F7 1 "$FH"'fn f(): i64 { var w: W; if (w.n.b == 1) { return 1; } re
 cascade_legs F8 1 'struct V { n; }\nvar GV = V { 4 };\nsyscall(60, GV.n.q);\n' "3:18: field 'n' $FNS 'q'"
 cascade_legs F9 1 'struct V { n; }\nvar z = 1;\nz = 2;\nvar GV = V { 4 };\nsyscall(60, GV.n.q);\n' "5:18: field 'n' $FNS 'q'"
 cascade_legs F10 1 "$FH"'fn f(pw: *W): i64 { return pw.n.b.c; }\nsyscall(60, 0);\n' "3:33: field 'n' $FNS 'b'"
-cascade_legs F11 1 'struct W { p: Later; }\nstruct Later { a; }\nfn f(): i64 { var w: W; w.p.a = 33; return w.p.a; }\nsyscall(60, f());\n' "1:20: struct field type 'Later' is declared after its use"
+cascade_legs F11 1 'struct W { p: Later; }\nstruct Later { a; }\nfn f(): i64 { var w: W; w.p.a = 33; return w.p.a; }\nsyscall(60, f());\n' "1:15: struct field type 'Later' is declared after its use"
 cascade_legs F12 2 "$FH"'fn f(): i64 { var w: W; var t = w.n.b; return u; }\nsyscall(60, f());\n' "3:37: field 'n' $FNS 'b'" "3:48: undefined variable 'u'"
 printf 'struct Pt { a; }\nstruct W { p: Pt; n; }\nfn f(): i64 { var w: W; w.p.a = 30; w.n = 2; var s = 0; for i in w.n..4 { s = s + i; } return w.p.a + s - 2; }\nsyscall(60, f());\n' > "$T"
 rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?

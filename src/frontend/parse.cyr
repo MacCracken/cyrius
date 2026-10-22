@@ -4010,7 +4010,7 @@ fn _enum_qual_resolve(S, bti): i64 {
         STI(S, bti);
         _refuse_in_sync(S);   # 6.7.16: the caller parses on, so the statement after it is parsed (and reported)
         ERR_IDENT(S, "", bnoff, " is not an enum", 0 - 1);
-    } else {
+    } elif (_dl_refd_at(S, bnoff) == 0) {   # 6.7.16: an enum whose body was refused answers nothing more
         STI(S, bti + 2);
         _refuse_in_sync(S);
         ERR_IDENT(S, "", vn, " is not a variant of ", bnoff);
@@ -4035,6 +4035,7 @@ fn _enum_qual_bad(S, bnoff, vn, mti): i64 {
 # ... under --syntax-only too: a const context names every unknown name there (`_ce_qual_unk`).
 fn _enum_qual_bad_any(S, bnoff, vn, mti): i64 {
     if (_enum_id_of(S, bnoff) == 0) { return 0; }
+    if (_dl_refd_at(S, bnoff) == 1) { return 1; }   # 6.7.16: its body was refused (`_enum_mem_name`) — stood down, counted
     var sv = GTI(S);
     STI(S, mti);
     _refuse_in_sync(S);   # every caller steps the member (and the statement) on: in sync

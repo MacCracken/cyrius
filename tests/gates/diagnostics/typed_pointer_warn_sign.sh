@@ -531,12 +531,15 @@ tp5 FS3 "top level: a step G = 7 into a *P global warns, G = 0 does not" 'struct
 # A `Str` HANDLE's name into a `*Str` is quiet too: a handle holds the header's address, as a `*Str` does. A `Str` handle
 # GLOBAL (`var p: *Str = GA;`, `GQ = GA;`, `((GA))`, in a fn, after a statement, in the zone) and a closure's captured
 # handle (`var y: *Str = h;`, `GQ = h;`) warned "assigning non-pointer to typed pointer" — a handle LOCAL was already quiet
-# (TH1: 0 warnings, 8 before). These still warn (TH2): an untyped top-level global (`var bb = str_from(..)` is no typed
-# handle at top level) into a `*Str`, a `Str` handle into a `*Q1`. Mutation: `_tp_call_pointee` without its
-# `_tp_hdl_name` arm -> RED TH1 (8 warnings).
+# (TH1: 0 warnings, 8 before). A `Str` handle into a `*Q1` still warns (TH2). An untyped top-level global from a `: Str`
+# call (`var bb = str_from(..)`) into a `*Str` is quiet (TH3): f16's reader (`_tpv_sid`, bccbc3318) takes the name's
+# recorded `: Str` result, though `bb.len` stays "no struct type in scope" (s16 pinned it warning; f16 made it quiet;
+# the wave-4 integration keeps the quiet one — the value IS a header's address). Mutation: `_tp_call_pointee` without
+# its `_tp_hdl_name` arm -> RED TH1 (8 warnings).
 AX=18
 tpx TH1 0 0 54 "a Str handle global / a captured handle into a *Str declaration or global: in a fn, a closure, after a statement, the zone (8 warnings before)" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nvar GA: Str = 0;\nvar GQ: *Str = 0;\nvar GZ: *Str = GA;\nvar GZ2: *Str = (GA);\nfn f(h: Str): i64 {\n    var y: *Str = GA;\n    GQ = ((GA));\n    var c = || { var y3: *Str = h; GQ = h; return str_len(y3); };\n    return str_len(y) + callptr(c) + str_len(GQ);\n}\nvar _ai = alloc_init();\nGA = str_from("ab");\nvar LY: *Str = GA;\nGQ = (GA);\nvar r = str_len(LY) * 10 + str_len(GQ) + f(str_from("xyz")) * 100;\nsyscall(60, r % 256);\n'
-tpx TH2 2 0 - "controls: an untyped top-level global into a *Str, a Str handle into a *Q1 still warn" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct Q1 { a; }\nvar GA: Str = 0;\nvar GQ: *Str = 0;\nvar _ai = alloc_init();\nvar bb = str_from("x");\nGQ = bb;\nvar q: *Q1 = GA;\nsyscall(60, 0);\n'
+tpx TH2 1 0 - "control: a Str handle global into a *Q1 still warns" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nstruct Q1 { a; }\nvar GA: Str = 0;\nvar _ai = alloc_init();\nvar q: *Q1 = GA;\nsyscall(60, 0);\n'
+tpx TH3 0 0 - "an untyped top-level global from a : Str call into a *Str is quiet" 'include "lib/syscalls.cyr"\ninclude "lib/str.cyr"\nvar GQ: *Str = 0;\nvar _ai = alloc_init();\nvar bb = str_from("x");\nGQ = bb;\nsyscall(60, 0);\n'
 
 [ "$fail" -eq 0 ] || { echo "FAIL: typed-pointer-warn-sign"; exit 1; }
 echo "PASS: typed-pointer-warn-sign — warns on typed pointers only, not on width/float-annotated locals; at every *T site (the declaration zone, a *T local / parameter of a scalar T), the literal 0 exempt (D18), a string literal into a byte pointer exempt and a refused &a[i] not warned beside (6.7.14); a string literal into any *T exempt (D59, 6.7.15), plus or minus one integer operand and under parentheses (6.7.15); a : Str call into a *Str, a call into a *T local only of T (6.7.16); a classic-for step warns as the statement does (6.7.16); a Str handle's name (6.7.16)"
