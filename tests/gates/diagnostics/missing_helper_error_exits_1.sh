@@ -99,10 +99,11 @@ EOF
 
 # exits1 <compiler> <fixture> <async 0|1> <needle> — rc exactly 1, exactly one error line, the needle
 exits1() {
-  if [ "$3" = 1 ]; then CYRIUS_ASYNC=1 "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
-  else env -u CYRIUS_ASYNC "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?; fi
+  rc=0
+  if [ "$3" = 1 ]; then CYRIUS_ASYNC=1 "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e" || rc=$?
+  else env -u CYRIUS_ASYNC "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e" || rc=$?; fi
   if [ "$rc" -ne 1 ]; then _bad "$1 $2 (CYRIUS_ASYNC=$3): rc $rc, expected 1 (139 = the crash after the diagnostic)"; grep '^error' "$T/e" | head -2 | sed 's/^/      /'; return; fi
-  n=$(grep -c '^error' "$T/e")
+  n=$(grep -c '^error' "$T/e" || true)
   if [ "$n" -ne 1 ]; then _bad "$1 $2 (CYRIUS_ASYNC=$3): $n error lines, expected exactly 1 (a refused site fell through to a second error)"; grep '^error' "$T/e" | head -3 | sed 's/^/      /'; return; fi
   if ! grep -q "$4" "$T/e"; then _bad "$1 $2 (CYRIUS_ASYNC=$3): '$4' not reported"; grep '^error' "$T/e" | head -2 | sed 's/^/      /'; return; fi
   pass=$((pass + 1))
@@ -126,17 +127,17 @@ done
 
 # multi-error parity: rc 1, the undefined variable AND the undefined-call refusal
 for c in x86 aarch64 win cx; do
-  env -u CYRIUS_ASYNC "$T/$c" < "$T/multi_err.cyr" > "$T/o" 2>"$T/e"; rc=$?
-  n=$(grep -c '^error' "$T/e")
+  rc=0; env -u CYRIUS_ASYNC "$T/$c" < "$T/multi_err.cyr" > "$T/o" 2>"$T/e" || rc=$?
+  n=$(grep -c '^error' "$T/e" || true)
   if [ "$rc" -ne 1 ] || [ "$n" -ne 2 ] || ! grep -q "undefined variable 'undefined_var_q'" "$T/e" || ! grep -q '^error.*undefined function' "$T/e"; then
     _bad "$c multi_err: rc $rc, $n error line(s) — expected rc 1 with the undefined variable AND the undefined-call refusal"; grep '^error' "$T/e" | head -3 | sed 's/^/      /'
   else pass=$((pass + 1)); fi
 done
 
 # ── anti-vacuous ────────────────────────────────────────────────────────────────────────────
-"$T/aarch64" < "$T/pf_ok.cyr" > "$T/o" 2>"$T/e"; rc=$?
+rc=0; "$T/aarch64" < "$T/pf_ok.cyr" > "$T/o" 2>"$T/e" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then _bad "aarch64 pf_ok: rc $rc — f64_exp WITH lib/math.cyr must build"; else pass=$((pass + 1)); fi
-CYRIUS_ASYNC=1 "$T/x86" < "$T/async_ok.cyr" > "$T/o" 2>"$T/e"; rc=$?
+rc=0; CYRIUS_ASYNC=1 "$T/x86" < "$T/async_ok.cyr" > "$T/o" 2>"$T/e" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then _bad "x86 async_ok: rc $rc — await/async WITH their libs must build"; grep '^error' "$T/e" | head -2; else pass=$((pass + 1)); fi
 
 # ── structural: the two generic backstops stay in place ─────────────────────────────────────
@@ -146,7 +147,9 @@ for f in src/backend/x86/emit.cyr src/backend/aarch64/emit.cyr src/backend/cx/em
 done
 if awk '/^fn FIXUP\(S\)/{f=1} f && /if \(ftype > 5 && _had_error == 1\) \{ fi = fi \+ 1; continue; \}/{ok=1; exit} END{exit ok?0:1}' src/backend/aarch64/fixup.cyr; then pass=$((pass + 1))
 else _bad "src/backend/aarch64/fixup.cyr: FIXUP's relocation walk no longer skips an undecodable entry on a failed compile"; fi
-if grep -B2 '^var fcnt = GFCNT(S);' src/main_cx.cyr | grep -q '^if (_had_error == 1)'; then pass=$((pass + 1))
+# The guard is the nearest top-level `if` above the walk — a fixed `grep -B2` window read the `}` of a guard that grew a
+# line (6.7.17's `_unp_run` call in it) and reported the guard gone (met by ZR1). Mutation: the guard's test changed -> RED.
+if awk '/^if \(/{last=$0} /^var fcnt = GFCNT\(S\);/{found=1; exit} END{exit (found && last ~ /^if \(_had_error == 1\)/)?0:1}' src/main_cx.cyr; then pass=$((pass + 1))
 else _bad "src/main_cx.cyr: the fixup walk is no longer guarded by _had_error"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL missing_helper_error_exits_1: $fail row(s) red, $pass green"; exit 1; fi
