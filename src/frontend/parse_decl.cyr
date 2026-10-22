@@ -3560,6 +3560,16 @@ fn _spi_store_rax(S, tidx, li, off, nb): i64 {
     return 0;
 }
 
+# ⛔ 6.7.17 — A NAMED `Str` FIELD IS ONE HANDLE SLOT, NOT A NESTED STRUCT (the user's D21, 2026-10-22): `V { s: a, n: 1
+# }` was "named init not supported for nested struct fields — use positional", where the positional `V { a, 1 }`
+# compiles. The element goes through the positional `Str` field's checks (EMIT_STRUCT_FIELD_W): an inline `Str`'s header
+# address (`_istr_lit`; a frame's refused as would-dangle), `*p` of a `*Str` is p (`_istr_ldx`), another struct refused
+# (`_istr_lsv`). 1 = field type `ft` is a struct the named form cannot take (a nested one). CHANGELOG [6.7.17]
+fn _sl_named_nest(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    return 1;
+}
 # 6.6.5 — the initialiser body of a struct literal, EXTRACTED so the top-level form and the
 # new fn-local form share one parser. Writes through `target_idx` (a global slot) or, when
 # `_sl_base_li >= 0`, through that frame slot. CHANGELOG [6.6.5]
@@ -3592,7 +3602,7 @@ fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
             }
             if (found < 0) { ERR_MSG(S, "unknown struct field in initializer", 35); }
             var ft = GETFTYPE(S, si, found);
-            if (ft > 0) { ERR_MSG(S, "named init not supported for nested struct fields — use positional", 68); }
+            if (_sl_named_nest(S, ft) == 1) { ERR_MSG(S, "named init not supported for nested struct fields — use positional", 68); }
             var bit = 1 << found;
             if ((initialized & bit) != 0) { ERR_MSG(S, "struct field initialized twice", 30); }
             initialized = initialized | bit;

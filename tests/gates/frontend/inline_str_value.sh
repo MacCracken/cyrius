@@ -171,6 +171,13 @@
 # `Str` field, `*p`, an inline global, a method, another inline `Str`, a for step; the enclosing fn's t unchanged). An
 # untyped value keeps the one-word store into t.data, as `t = x` does; another struct is refused (CA2).
 #
+# 6.7.17 (the user's decision D21, 2026-10-22; the same issue's row 4): a struct literal's NAMED `Str` field — `V { s: a,
+# n: 1 }` — compiles, as the positional `V { a, 1 }` does: a `Str` field is one handle slot, not a nested struct. It was
+# "named init not supported for nested struct fields — use positional" (NM1, the filed repro verbatim: 4). The element
+# takes the positional field's checks: a frame's inline `Str` refused as would-dangle (NM2), another struct refused
+# (NM3), `*p` of a `*Str` is p, a global's header its address (the tcyr's nm_* rows, in a fn, the zone, after a
+# statement).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -188,7 +195,8 @@
 # `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
 # repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
 # `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
-# refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); CMP a handle into the retyped methods builds
+# refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); NM1 the D21 filed repro verbatim (4
+# on every leg), NM2 / NM3 the named element keeps the `Str` field's refusals (6.7.17, D21); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -318,6 +326,9 @@
 #                                                     one word)
 #   z3 `_istr_amp_dst` returning 0 for a capture's  -> RED 4: CA3 x4 (compiled)
 #      compound operator (the fix reverted)
+#   2026-10-22 (6.7.17, D21 a named `Str` field; the same scratch-copy method):
+#   n1 `_sl_named_nest` answering 1 for `Str`      -> RED 22: R1 x7 (the file stops compiling: the nm_* rows),
+#      (the fix reverted)                             NM1 x7 (refused), NM2 x4 / NM3 x4 (the named-init refusal first)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1271,6 +1282,21 @@ refused CA2 "cannot copy 'mkq' into a variable of a different struct/vector type
 row CA3 'include "lib/fnptr.cyr"
 fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var f = |k| { *(&t) += 1; return t.len + k; }; return fncall1(f, 0); }'
 refused CA3 "compound assignment to struct 't' is refused - a struct value is not an integer or a float (write \`a = a + b\`)" "a closure's \`*(&t) += 1\` of its captured t"
+# --- NM: 6.7.17 (the user's D21, 2026-10-22) a `Str` field's NAMED initialiser compiles, as the positional `V { a, 1 }`
+# does, with the same `Str` field checks; it was "named init not supported for nested struct fields — use positional". ---
+cat > "$T/NM1.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+struct V { s: Str; n; }
+fn main(): i64 { alloc_init(); var a = str_from("abc"); var v = V { s: a, n: 1 }; return str_len(v.s) + v.n; }
+syscall(60, main());
+EOF
+runs NM1 4 "the D21 filed repro, verbatim (was refused)" "$XLEGS $OLEGS"
+row NM2 'fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var w: W = W { n: 1, s: t }; return f(w.s); }'
+refused NM2 "$MF" "\`W { n: 1, s: t }\` of a frame's t: refused as would-dangle, as \`W { t, 1 }\` is"
+row NM3 "$HQ"'
+fn go(): i64 { var w: W = W { s: mkq(), n: 1 }; return f(w.s); }'
+refused NM3 "$MSF" "\`W { s: mkq(), n: 1 }\`: another struct refused, as positionally (D18)"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1329,7 +1355,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=122   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3; 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=125   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

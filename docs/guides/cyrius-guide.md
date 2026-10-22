@@ -1456,7 +1456,10 @@ with no `;` are `expected ';' between struct fields` (`... union fields`), once 
 
 Both forms initialise a global anywhere at top level and a local in a fn. Before 6.7.14 the **named**
 form was refused in the declaration section (top level, before the first top-level statement):
-`undefined variable 'x'`.
+`undefined variable 'x'`. The named form takes no nested struct field (*named init not supported for nested struct
+fields — use positional*), but a `Str` field is one handle slot, not a nested struct: `V { s: a, n: 1 }` compiles as
+`V { a, 1 }` does, with the same `Str` field checks (6.7.17, the user's decision D21, 2026-10-22; through 6.7.16 it
+was refused as a nested field).
 
 The elements are separated by commas; a trailing comma is allowed (`Point { 10, 20, }`). A missing
 comma is one error at the second element, in either form and every position (6.7.15, the user's

@@ -466,6 +466,15 @@ fn ca_meth(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var h = str
 fn ca_inl(): i64 { var t: Str = Str { "abcdefg", 7 }; var u: Str = Str { "abcdefghi", 9 }; var c = |k| { *(&t) = u; return t.len + k; }; return fncall1(c, 0); }
 fn ca_step(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { var i = 0; for (i = 0; i < 1; *(&t) = ca_sx()) { i = i + 1; } return t.len + k; }; return fncall1(c, 0); }
 fn ca_word(): i64 { var t: Str = Str { "abcdefg", 7 }; var c = |k| { *(&t) = 0; return t.len + k; }; return fncall1(c, 0); }
+# 6.7.17 (the user's D21, 2026-10-22): a `Str` field's NAMED initialiser compiles, as the positional one does, with the
+# same `Str` field checks; it was "named init not supported for nested struct fields" (the nm_* rows).
+struct NmV { s: Str; n; }
+var GNM = NmV { n: 2, s: gt };   # the declaration zone: gt's header
+fn nm_filed(): i64 { var a = str_from("abc"); var v = NmV { s: a, n: 1 }; return str_len(v.s) + v.n; }
+fn nm_order(): i64 { var a = str_from("abcd"); var v = NmV { n: 3, s: a }; return (v.s == a) * 100 + str_len(v.s) * 10 + v.n; }
+fn nm_glob(): i64 { var v = NmV { s: gt, n: 1 }; return (v.s == &gt) * 10 + v.n; }
+fn nm_dx(): i64 { var a = str_from("abc"); var p: *Str = a; var v = NmV { s: *p, n: 1 }; return (v.s == a) * 10 + v.n; }
+fn nm_call(): i64 { var v = NmV { s: str_from("abcde"), n: 1 }; return str_len(v.s) + v.n; }
 alloc_init();
 var R_TOP = f(gt);   # at top level, a global inline `Str`
 GA = str_from("abcde");
@@ -534,6 +543,8 @@ var R_TOP21 = gi3.len;
 var nsp: *Str = &gt;          # top level after a statement: `*nsp` into a nested `Str` leaf is nsp (6.7.17, D19)
 var GNSO = NsO { *nsp, 4, 5 };
 var R_TOP22 = (GNSO.v.s == &gt) * 100 + str_len(GNSO.v.s) * 10 + GNSO.v.n;
+var GNM2 = NmV { s: gt, n: 4 };   # after a statement: a named `Str` field (6.7.17, D21)
+var R_TOP23 = (GNM.s == &gt) * 1000 + (GNM2.s == &gt) * 100 + GNM.n * 10 + GNM2.n;
 gi4.len = 2;
 GH = 0;
 GPS = 0;
@@ -783,6 +794,12 @@ assert_eq(ca_meth(), 4, "*(&t) = h.clone(): a method's");
 assert_eq(ca_inl(), 9, "*(&t) = u: another captured inline Str");
 assert_eq(ca_step(), 3, "a for step's *(&t) = sx()");
 assert_eq(ca_word(), 7, "*(&t) = 0: an untyped value keeps the one-word store into t.data (t.len 7)");
+assert_eq(nm_filed(), 4, "NmV { s: a, n: 1 }: a named Str field (6.7.17, D21; was refused)");
+assert_eq(nm_order(), 143, "NmV { n: 3, s: a }: in any order, the handle itself");
+assert_eq(nm_glob(), 11, "NmV { s: gt, n: 1 }: an inline Str global's header address");
+assert_eq(nm_dx(), 11, "NmV { s: *p, n: 1 }: *p of a *Str is p");
+assert_eq(nm_call(), 6, "NmV { s: str_from(..), n: 1 }: a `: Str` call");
+assert_eq(R_TOP23, 1124, "top level: a named Str field in the zone and after a statement takes gt's header (6.7.17, D21)");
 assert_eq(ns_filed(), 10, "NsO { *p, 1, 2 }: the nested Str leaf is p, the header's address (6.7.17, D19; was 50, the data word)");
 assert_eq(ns_deep(), 1123, "NsX { *p, 1, 2, 3 }: two levels deep");
 assert_eq(ns_wrap(), 74, "NsO { (*gp(p)), 4, 5 }: a wrapped call's dereference");
