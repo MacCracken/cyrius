@@ -98,7 +98,7 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dev_helpers_match_golden: cannot cd to $ROOT"; exit 1; }
 NAME=dev_helpers_match_golden
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 F="$ROOT/tests/fixtures/helpers"
 G="$F/golden"
 [ -x "$CC" ] || { echo "FAIL: $NAME: $CC missing"; exit 1; }
