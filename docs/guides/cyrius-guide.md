@@ -822,7 +822,8 @@ var t5 = tag(c: 9, a: 4, b: 5);   # 459 — any order: placed as tag(4, 5, 9)
   not a `jmp` (as in a fn with a `defer`). A `return f(..)` that passes every argument by
   position keeps its `jmp`, so write deep recursion that way — unless a by-value struct argument
   is copied because a later argument may write memory (*A by-value argument is its value where it
-  is written*, below; since 6.7.17 a call to a fn that writes nothing does not count).
+  is written*, below; since 6.7.17 a call to a fn the compiler reads as writing nothing does not
+  count).
 - **`#inline`.** A fn with defaults is never inlined: `#inline` on one warns `#inline ignored:
   fn has parameter defaults`. A named call to an inlinable fn is an ordinary call, because the
   inlined body binds by position.
@@ -2493,14 +2494,21 @@ would free, so `return f(b, .., bump(&b))` is an ordinary call (the 6.7.7 ruling
 as a write, so `return f(G, n - 1, g(acc))` with `fn g(x) { return x + 1; }` lost its `jmp` and a
 3,000,000-deep recursion overflowed the stack. Since 6.7.17 a call counts only when its callee may
 write memory — a direct call, a generic one (`g<i64>(..)` or inferred) and a method on a struct or
-typed-pointer receiver are judged by the callee's body: it writes nothing when it is declared to
-return nothing or one scalar (`i64`, `u8`, `f64`, `bool`, ...), declares no parameter default,
-assigns only its own scalar variables and parameters, stores nothing (no field, element, `*p` or
-global store, no store builtin, `syscall` or `asm`), makes no indirect call and no closure, applies
-`+ - * /` to no operand that may be a struct, and calls only fns that write nothing, directly or
-generically (a method call inside it, and a recursive or mutually recursive helper, count as
-writes). Such a call keeps the tail call's `jmp`. To keep it past a helper that writes, bind the
-argument first: `var a2 = w(acc); return f(G, n - 1, a2);`.
+typed-pointer receiver are judged by the callee's body. The compiler reads that body
+conservatively: a callee counts as writing nothing only when it is declared to return nothing or
+one scalar (`i64`, `u8`, `f64`, `bool`, ...), declares no parameter default, assigns only its own
+scalar variables and parameters, stores nothing (no field, element, `*p` or global store, no store
+builtin, `syscall` or `asm`), makes no indirect call and no closure, applies `+ - * /` to no
+operand that may be a struct (an if-expression's value may be one), and calls only fns that write
+nothing, directly or generically. That is necessary, not sufficient: anything else the body holds
+counts as a write — among them a method call, a recursive or mutually recursive helper, a `match`,
+`?`, `for .. in`, `defer`, a struct literal, a local `const` / `stack` / `secret`, a `*T` local or
+parameter that is assigned or is an operator's left operand, a builtin other than the loads and
+`f64_add` .. `f64_neg`, and a call that names an argument — as does an `async` / `#naked` callee,
+one defined twice, a `private` name split across files, a base with `_str` / `_int` / `_ptr`
+overload siblings, and a chain of helpers summarised more than 4096 deep. A call whose callee
+writes nothing keeps the tail call's `jmp`. To keep it past any other helper, bind the argument
+first: `var a2 = w(acc); return f(G, n - 1, a2);`.
 
 From v6.6.6 to v6.6.15 every path that copied or returned such a parameter went through that
 address: `q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a
