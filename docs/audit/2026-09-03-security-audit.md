@@ -2482,3 +2482,23 @@ rows, wine and cass) and `tests/gates/toolchain/regression_capture_exclusive.sh`
 the TMPDIR rules, and a static axis over `lib/` refusing a `/tmp` literal outside its allowlist and pinning the
 capture open's flags), mutation-proven.
 
+## CYRIUS-2026-0037 — the native TLS 1.3 server checked each ClientHello key_share against supported_groups by a linear scan, so a peer's hello cost the server CPU quadratic in counts it chose
+
+*Appended 2026-10-21 (cyrius 6.7.16). Found by: the 6.7.16 p16 lane (unit PP3), in passing, while making the 1.3
+servers' extension walk linear; reported in one line in its handoff and judged against the ledger rule at the 6.7.16
+close (the release-docs pass found it neither fixed nor filed). Filed as
+[issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md](../development/issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md).*
+
+| | |
+|---|---|
+| **Severity** | P3 |
+| **Attacker / boundary** | any network peer that can open a connection and send a ClientHello / the network, into the server's CPU |
+| **Files** | `lib/tls_native_hs13.cyr` — the 1.3 server's key_share loop and `_tn_sg_has` |
+| **Fixed** | not yet — tracked (the issue's proposed fix) |
+
+**Vector and impact.** RFC 8446 § 4.2.8 refuses a key_share for a group the client did not list in supported_groups;
+the server answered that by calling `_tn_sg_has` — a re-validation and a linear walk of the whole supported_groups list —
+once per share. A ClientHello filling its 16 KB record with 1,610 one-byte shares on groups listed at the end of a
+4,025-group list cost the server ~24 ms of CPU (x86_64, the p16 lane's measurement) before the handshake was refused,
+so a peer repeating such hellos keeps server cores busy at a small fraction of the bandwidth. No memory is corrupted and
+nothing is disclosed; the cost per hello is bounded by the record size, hence P3.
