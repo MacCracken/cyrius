@@ -15983,6 +15983,7 @@ fn _gu_zsid(S, ti): i64 {
     if (c >= 0) { if (_icall_open_at(S, c) < 0) {
             var sid = _gu_okz(S, _gz_call_rs(S, c));   # 6.7.17 (D22): a `: Str` call too
             if (_gz_gb > 0) { sid = _gu_ok(S, _gu_gen(S, c)); }   # 6.7.15: `: G<T>`, the instance the call makes
+            if (_gu_hdl == 1) { return _gu_refd_list(S, ti); }   # 6.7.17: a refused list types nothing
             return sid;
         } }
     return _gu_wsid(S, ti);
@@ -16350,7 +16351,18 @@ fn _gu_wfree(S, a, e): i64 {
 # the call reaches its base (`_gen_resolve_call`), whose result the parse records as no struct value (`_gz_late`). The
 # global stayed untyped, so its `x.v` added "no struct type in scope for 'x'" after the type argument's own refusal.
 # `_gu_hdl` tells the sweep (`_gu_set`). CHANGELOG [6.7.16]
+# ⛔ 6.7.17 — NOW AS THE LINE AFTER THE FIRST STATEMENT TAKES IT AGAIN: there the refused list answers no callee
+# (`_targs_refused`) and the receiver stays untyped, marked as a refused initializer's (`_ini_refd`), so its uses stand
+# down. A handle of the base G was still a type: `var x = stb<*Pt>(33);` then `x.v.a` in a fn body said "field 'v' is
+# not a struct: it has no field 'a'" (T read as i64). A whole call whose list is refused (`_gu_hdl` from `_gu_gen`)
+# leaves the global untyped and marks it provisionally (`_gu_refd_list`, the sweep's twin of the replay's mark).
+# CHANGELOG [6.7.17]
 var _gu_hdl = 0;
+fn _gu_refd_list(S, ti): i64 {
+    _gu_hdl = 0;
+    _gu_pmark(S, ti);
+    return 0;
+}
 fn _gu_gen(S, c): i64 {
     var fi = FINDFN(S, TOKVAL(S, c));
     if (fi < 0) { return 0; }
