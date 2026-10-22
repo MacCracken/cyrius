@@ -7007,6 +7007,8 @@ a[i] = f();              # ✗ an element                (6.7.7)
 *p = f();                # ✗ through a pointer         (6.7.7)
 x += f();                # ✗ any compound `OP=`        (6.7.7)
 var p = P { f(), 3 };    # ✗ a struct-literal element  (6.7.11) — named, a global's, a nested leaf too
+var t, v, w = f();       # ✗ three names (6.7.17): "binds 3 names, but 'f' returns 2 values" — a
+                         #   variant holds one payload; `callptr(&f, ..)` / `fncallN(&f, ..)` too
 
 var t, v = f();          # ✓ bind both halves
 t, v = f();              # ✓ re-assign both halves     (6.7.7)

@@ -2152,6 +2152,46 @@ qf_run "return f(f(x)?); / return SOk(f(x)?); / var v = f(x)?; return SOk(v); fo
 for leg in $QLEGS; do
     if grep -q '^warning' "$T/q.$leg.err"; then echo "FAIL stack_enum_lossy_context axisRQ5 ($leg): a pair forward drew a warning:"; grep '^warning' "$T/q.$leg.err" | head -2 | sed 's/^/    /'; exit 1; fi
 done
+# ── axis DT — 6.7.17 (met reviewing D26): A `: stack` PAIR IS TWO VALUES — THREE NAMES ARE REFUSED ─────────────────────
+# A stack enum's variant takes 0 or 1 fields, so its fn returns exactly the tag and one payload; `var a, b, c = f(4);`
+# compiled and c read whatever the third return register held, where three names over a multi-value fn's two values
+# are refused ("multi-value destructure binds 3 names, but 'f' returns 2 values"). Refused the same now
+# (`_dt_arity_check`; through a known `&f`, `_dt_icall_pair`, D26 making it f's pair): DT1 a declaration, DT2 / DT3
+# `callptr(&f, 4)` / `fncall1(&f, 4)`, DT4 / DT5 an assignment `a, b, c = ..`, DT6 / DT7 top level (the zone, after
+# the first statement), DT8 wrapped, DT9 a pair method, DT10 a generic pair fn. DTC the controls: two names bind the
+# tag and the payload (unchanged), a callee held in a variable stays unknown. Mutation (measured): the tree before ->
+# RED DT1-DT10 (each compiled) on every leg; `_dt_icall_pair` not called -> RED DT2 DT3 DT5 DT7.
+dt_refuse() {   # <axis> <needle> <fn> — $T/q.cyr from stdin: ONE "binds 3 names" error on every leg, at the needle
+    cat > "$T/q.cyr"
+    _dtat=$(awk -v n="$2" 'index($0, n) { print NR ":" index($0, n); exit }' "$T/q.cyr")
+    for leg in $QLEGS; do
+        if _qf_cc "$leg"; then echo "FAIL stack_enum_lossy_context $1 ($leg): three names over a pair COMPILED"; exit 1; fi
+        _n=$(grep -c '^error' "$T/q.$leg.err" || true)
+        if [ "$_n" -ne 1 ] || ! grep -q "^error:<source>:$_dtat: multi-value destructure binds 3 names, but '$3' returns 2 values" "$T/q.$leg.err"; then
+            echo "FAIL stack_enum_lossy_context $1 ($leg): want ONE 'binds 3 names, but '$3' returns 2 values' error at $_dtat, got $_n:"
+            grep -E '^error' "$T/q.$leg.err" | head -3 | sed 's/^/    /'; exit 1
+        fi
+    done
+}
+DTH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn f(x): i64 { if (x > 5) { return SErr(x); } return SOk(x + 1); }
+struct P { a; }
+impl P { fn m(self): i64 { return SOk(self.a); } }
+fn g<T>(x: T): i64 { return SOk(x); }'
+printf '%s\nfn t(): i64 { var a, b, c = f(4); return a + b + c; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT1 "f(4)" f || exit 1
+printf '%s\nfn t(): i64 { var a, b, c = callptr(&f, 4); return a + b + c; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT2 "callptr(&f, 4)" f || exit 1
+printf '%s\nfn t(): i64 { var a, b, c = fncall1(&f, 4); return a + b + c; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT3 "fncall1(&f, 4)" f || exit 1
+printf '%s\nfn t(): i64 { var a = 0; var b = 0; var c = 0; a, b, c = f(4); return a + b + c; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT4 "f(4)" f || exit 1
+printf '%s\nfn t(): i64 { var a = 0; var b = 0; var c = 0; a, b, c = callptr(&f, 4); return a; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT5 "callptr(&f, 4)" f || exit 1
+printf '%s\nvar A, B, C = f(4);\nsyscall(60, A + B + C);\n' "$DTH" | dt_refuse axisDT6 "f(4)" f || exit 1
+printf '%s\nsyscall(1, 1, "", 0);\nvar A, B, C = fncall1(&f, 4);\nsyscall(60, A + B + C);\n' "$DTH" | dt_refuse axisDT7 "fncall1(&f, 4)" f || exit 1
+printf '%s\nfn t(): i64 { var a, b, c = ((f(4))); return a; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT8 "f(4)))" f || exit 1
+printf '%s\nfn t(): i64 { var p: P; p.a = 3; var a, b, c = p.m(); return a; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT9 "p.m()" P.m || exit 1
+printf '%s\nfn t(): i64 { var a, b, c = g(4); return a; }\nsyscall(60, t());\n' "$DTH" | dt_refuse axisDT10 "g(4)" g || exit 1
+printf '%s\nvar FP = &f;\nfn t(): i64 { var a, b = f(4); var c, d = callptr(&f, 9); var e, k = fncall1(&f, 2); var u = callptr(FP, 4); return a + b + c * 10 + d + e + k + u; }\nsyscall(60, t());\n' "$DTH" > "$T/q.cyr"
+qf_run "two names bind the tag and the payload; a callee in a variable stays one word" axisDTC 27
 if [ "$qskips" -gt 0 ]; then echo "SKIP stack_enum_lossy_context: $qskips leg(s) of axis QF could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 
 echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11) · a fn or method whose only pair route is a `?` is a pair above its definition too — `?` propagates, the single bind is refused, in either order, on x86_64 / aarch64 / cx / PE (6.7.14) · parentheses around the whole value are transparent to the first-call rule: each wrapped store refused, `(f()? + 1)` propagating, an operand keeping the tag (6.7.14) · a `: stack` fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` is the direct call'"'"'s pair — `?` propagates, the destructure binds both, every one-wide bind and store is refused, a forwarder or a `?`-only fn through `&f` is a pair above its definition, a callee in a variable stays a word, on x86_64 / aarch64 / cx / PE (6.7.17)'
