@@ -5509,7 +5509,12 @@ of the line after `,`* (`#assert 1 == 1, junk`). A message that spans lines ends
 last line. Through 6.7.16 the rest of the line was skipped unread up to its next `;`:
 `#assert 1 == 1, "m" junk` compiled, a `}` after the message at module scope was taken,
 and in an impl body the example above ate the method — the impl then ended at the
-method's `}`, and every statement after it was silently never compiled.
+method's `}`, and every statement after it was silently never compiled. What the skipped
+rest declares adds no error of its own (the refused-declaration rule): after
+`#assert 1 == 1, "m" var z = 5;` a use of `z` — or of a `fn`, `struct` or enum member
+declared there — stands down, the one error standing for it (6.7.17; it was *undefined
+variable 'z'* at each use). A name the tail declares inside a fn body stands down in that
+fn only.
 
 ```
 enum Wire { HDR = 16; }
