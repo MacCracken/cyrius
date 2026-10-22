@@ -1586,12 +1586,12 @@ fn _tl_skip_use(S): i64 {
 }
 
 # A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`.
+# ⛔ 6.7.17 — the list is stepped NESTED, as pass 1 reads it (`_skip_targ_list`, its EOF guard): it stopped at the
+# first `>`, so `struct B<T: Show<i64>>` (one `>>` token) ran pass 2 to the end of the file — every later fn unparsed,
+# "undefined function 'main'" — and `<T: Show<i64> >` left a `>` for "expected '{', got '>'". CHANGELOG [6.7.17]
 fn _tl_skip_struct(S): i64 {
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 19) {
-        while (PEEKT(S) != 20) { if (PEEKT(S) == 12) { return 0; } STI(S, GTI(S) + 1); }   # 6.7.16: EOF
-        STI(S, GTI(S) + 1);
-    }
+    SKIP_GENERICS(S);
     _tl_skip_body(S);
     return 0;
 }

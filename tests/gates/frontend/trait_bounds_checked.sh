@@ -184,6 +184,11 @@
 #      (two lines); MVN2 `_tck_nest` keeping a refused list's enclosing list judgeable -> RED 1: VN5 (a second line)
 #   C  ANTI-VACUOUS: the same shapes with the impl present build and run; an unbounded `T` keeps
 #      per-instance method resolution; a program with no bound is untouched
+#   DS (6.7.17, met in genb GB1) PASS 2 STEPS A STRUCT'S `<..>` NESTED: `_tl_skip_struct` stopped at the first `>`, so
+#      `struct B<T: Show<i64>>` (one `>>` token) ran pass 2 to the end of the file — D5's line, then "undefined
+#      function 'main'" with the later fn bodies never parsed — and `<T: Show<i64> >` added "expected '{', got '>'".
+#      DS1 / DS2 D5's line and the next fn's own error, both spellings; DS3 (control) bounded structs, then a bounded
+#      generic below them (exit 4). Mutant (2026-10-22): the compiler before (e65604d5d) -> RED DS1 DS2.
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_capture_tparams` not reading a bound
 #   (every identifier a type parameter again) -> D1 builds, D2-D4 refused only by the cascade;
@@ -886,6 +891,16 @@ for b in bx5 bx6 bx7; do
     if [ "$src" -eq 0 ] && [ "$(grep -c '^error' "$T/$b.so")" -eq 0 ]; then ok "BXS: --syntax-only on $b is silent (rc 0)"
     else bad "BXS: --syntax-only on $b: rc $src: $(grep '^error' "$T/$b.so" | head -2 | tr '\n' '|')"; fi
 done
+
+# DS — 6.7.17: pass 2 steps a struct's `<..>` nested (`_tl_skip_struct`)
+printf 'trait Show { fn show(self): i64; }\nstruct B<T: Show<i64>> { a; }\nfn main(): i64 { var x = 1 2; return 0; }\nsyscall(60, main());\n' > "$T/ds1.cyr"
+errs ds1 2 "DS1: struct B<T: Show<i64>> — D5's line, and the next fn's own (it was \"undefined function 'main'\")" \
+    "error:<source>:2:13: a trait in a bound takes no type arguments: 'Show'" "error:<source>:3:28: expected ';', got number 2"
+printf 'trait Show { fn show(self): i64; }\nstruct B<T: Show<i64> > { a; }\nfn main(): i64 { var x = 1 2; return 0; }\nsyscall(60, main());\n' > "$T/ds2.cyr"
+errs ds2 2 "DS2: struct B<T: Show<i64> > — no \"expected '{', got '>'\"" \
+    "error:<source>:2:13: a trait in a bound takes no type arguments: 'Show'" "error:<source>:3:28: expected ';', got number 2"
+printf 'trait Show { fn show(self): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nstruct B<T: Show> { a: T; }\nstruct C<T, U: Show> { a: T; b: U; }\nfn g<T: Show>(v: T): i64 { return v.show(); }\nfn main(): i64 { var c: C<i8, i64>; c.b = 3; return c.b + g(1); }\nsyscall(60, main());\n' > "$T/ds3.cyr"
+exits ds3 4 "DS3: bounded structs, then a bounded generic below them"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"
