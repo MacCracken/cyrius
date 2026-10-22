@@ -194,7 +194,7 @@
 # refused as would-dangle (ND3, NS3), and a `Str` name whose nested field opens with no `Str` leaf keeps its refusal (ND4).
 #
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
-# floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
+# floor 275) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
 # warning, no binary) on the x86_64, aarch64, cx and PE compilers; K1-K8 controls that compile and run on every
 # leg (K9 the untyped positions of D18 (c)); U1-U2 a bare `var t: Str;` assigned a handle reads its own header on
@@ -473,7 +473,7 @@ runs R0 7 "the filed repro: f(t) into \`s: Str\`" "$XLEGS $OLEGS"
 TC=tests/tcyr/crossos/inline_str_value.tcyr
 [ -f "$TC" ] || { echo "FAIL: $G: $TC is missing"; exit 1; }
 N=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TC")
-FLOOR=239   # 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19; + the amp_* rows, R_TOP20 / R_TOP21; + the rp_* rows
+FLOOR=275   # 6.7.17: + the ns_*, ca_*, nm_*, zs_* rows, R_TOP22-R_TOP24 (D19-D22; 264 — the lane left 239), + the nd_* rows, R_TOP25 (D98); 6.7.16: + the pps_* rows, R_TOP11; + the hd_* rows, R_TOP12 (D20); + the pa_fld_* / pa_pp_* rows, R_TOP13 / R_TOP14 (D19); + the sd_g* rows, R_TOP15; + the hf_* rows, R_TOP16; + the pl_* rows, R_TOP17; + the pps_decl_* rows, R_TOP18; + the ds_* rows, R_TOP19; + the amp_* rows, R_TOP20 / R_TOP21; + the rp_* rows
 if [ "$N" -lt "$FLOOR" ]; then echo "FAIL: $G: only $N rows in $TC (floor $FLOOR) — rows were lost"; exit 1; fi
 cp "$TC" "$T/R1.cyr"
 rows=$((rows + 1))
