@@ -785,6 +785,8 @@ fn _fld_compound(S, idx, sid, off, hop, cop): i64 {
     _fld_addr_ra(S, idx, sid, off, hop);
     EPUSHR(S);                  # the field's address
     _arr_sub_load(S, w);        # rax = the field (clears the flags tracker)
+    _cop_dst = 1;               # 6.7.17 (D15): a field, for `_cop_sres`
+    _cop_fd = ((si + 1) << 16) | fi;
     _asg_cstep = ps;            # last, right before the op that reads it
     _asg_compound_op(S, cop, lt);
     return _asg_store_w(S, w);
@@ -1019,6 +1021,7 @@ fn _var_rhs_msid(S, ti): i64 {
 fn _var_rhs_post(S, sid0, pscale, sl, start, ann): i64 {
     if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
     _istr_decl(S, pscale, start, ann);   # 6.7.13 (D7 (1)): `var h: Str = t;` binds t's header; 6.7.14: `*Str`
+    _spd_decl(S, pscale, start, ann);   # 6.7.17 (D17): `var p: *P = s;` takes s's address
     _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
     if (pscale != 0) { return sid0; }
     if (sl != 0) { return sid0; }
@@ -2756,6 +2759,20 @@ fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
     return _fst_end(S, term);
 }
 # The field store's end: its terminator — `;`, or a classic-for step's `)` — consumed. 6.7.5
+# 6.7.17 (D14): `w.pq = v` with pq a `*S` field (one `*`, S a plain struct) and v no provable non-struct (`_psv_not`)
+# nor another struct's whole call (`_psv_other`): the field's address in rax, then `_psl_store` (parse.cyr) — a struct
+# value of S copies into the S pq points at, a handle or a `*S` rebinds pq. The leaf field `_rlf_si` / `_rlf_fi` (read
+# before the value), the cursor past the `=`. 1 = done (`term` consumed). CHANGELOG [6.7.17]
+fn _fst_pslot(S, idx, sid, off, hop, term): i64 {
+    var ps = _fld_ptr_sid(S, _rlf_si, _rlf_fi);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (_psv_not(S, GTI(S), term) == 1) { return 0; }
+    if (_psv_other(S, GTI(S), term, ps) == 1) { return 0; }
+    var nm = GETFNAME(S, _rlf_si, _rlf_fi);
+    _fld_addr_ra(S, idx, sid, off, hop);
+    return _psl_store(S, term, ps, nm);
+}
 fn _fst_end(S, term): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
@@ -2792,6 +2809,7 @@ fn _slice_fld_store(S, lli, fnoff, term): i64 {
         if (fld_off > 0) { EADDRA_IMM(S, fld_off); }
         EPUSHR(S);
         _arr_sub_load(S, 8);
+        _cop_dst = 2;   # 6.7.17 (D15): a slice's field, for `_cop_sres`
         _asg_compound_op(S, cop, 0);
         _asg_store_w(S, 8);
         return _fst_end(S, term);
@@ -2800,7 +2818,9 @@ fn _slice_fld_store(S, lli, fnoff, term): i64 {
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     _refuse_lossy_pair(S);   # 6.7.7 (T5b): `s.len = f();` stored the tag
+    var ti = GTI(S);
     PCMPE(S);
+    _dsr_slf(S, ti, ti - 1);   # 6.7.17 (D16): a struct result over 8 B into `.ptr` / `.len`
     EPUSHR(S);
     EFLADDR_X1(S, lli);
     if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
@@ -2922,12 +2942,14 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
     var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
     var lps = _istr_pfs(S, _rlf_si, _rlf_fi);   # 6.7.16 (D19): a `*Str` field, read before the RHS too
+    var lfd = ((_rlf_si + 1) << 16) | _rlf_fi;   # 6.7.17 (D16): the field, for `_dsr_fld`
     var fcop = _asg_compound_tok(S);   # 6.7.5 (B8): `x.f OP= e`, the address first (_fld_compound)
     if (fcop != 0) { _fld_compound(S, idx, sid, off, hop, fcop); return _fst_end(S, term); }
     if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5): `h.x, b = f();`
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     _refuse_lossy_pair(S);   # 6.7.7 (T5b): `h.n = f();` stored the tag, into any field type
+    if (_fst_pslot(S, idx, sid, off, hop, term) == 1) { return 0; }   # 6.7.17 (D14): `w.pq = r` copies through pq
     # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
     var fsrc = GTI(S);   # 6.7.7: the source's first token (where a tuple field's refusal points)
     var fsc = _fsc_src(S, ft, lfn, term);   # 6.7.5: `term` — a for step's source ends at `)`
@@ -2941,6 +2963,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
             PCMPE(S);
             _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
             _istr_pfld(S, lps, fst_ti);   # 6.7.16 (D19): an inline `Str` into a `*Str` field
+            _dsr_fld(S, fst_ti, fst_ti - 1, lfd);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
         }
     }
     _tup_fst_chk(S, ft, lfn, fsrc);   # 6.7.7 (R12): a value in rax is never a tuple
@@ -2989,7 +3012,11 @@ var _sfw_fk = 0;
 var _sfw_fn = 0;   # 6.7.3: that field's name (a bool field's refusal names it); _sfw_fk + 16 = a bool
 var _sfw_ft = 0;   # 6.7.13: the field's type, for an inline `Str` element (`_istr_lit`)
 var _sfw_pf = 0;   # 6.7.16: 1 = the field is a `*Str` (`_istr_pfs`), for an inline `Str` element (`_istr_pfld`)
+var _sfw_si = 0 - 1;   # 6.7.17 (D16): the field's struct and index, for `_dsr_lit`
+var _sfw_fi = 0;
 fn _sfw_set(S, si, fi): i64 {
+    _sfw_si = si;
+    _sfw_fi = fi;
     _sfw_fk = _fk_bx(S, si, fi);
     _sfw_fn = GETFNAME(S, si, fi);
     _sfw_ft = GETFTYPE(S, si, fi);
@@ -3006,6 +3033,8 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     _sfw_ft = 0;
     var pf = _sfw_pf;
     _sfw_pf = 0;
+    var lsi = _sfw_si;   # 6.7.17 (D16)
+    _sfw_si = 0 - 1;
     if (_sfw_have == 1) { _sfw_have = 0; }
     else {
         # An element is a one-slot store: a `: stack` pair here kept the tag and dropped the payload
@@ -3018,6 +3047,7 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
             _ifs_bx(S, fk, t0, _sfw_fn);
             _istr_lit(S, ft, t0);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` field
             _istr_pfld(S, pf, t0);   # 6.7.16 (D19): ... and into a `*Str` field (`W { gt, 1 }`)
+            _dsr_lit(S, t0, lsi, _sfw_fi);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
         }
     }
     EPUSHR(S);
@@ -8135,8 +8165,13 @@ fn _gci_take_in(S, sid, k): i64 {
 # value store. CHANGELOG [6.6.12]
 fn _gci_init(S, dgv, gps, dnoff): i64 {
     if (_istr_gz(S, dgv, gps) == 1) { return 1; }   # 6.7.14 (D21 (a), D18 (c)): an inline `Str` global's address
+    if (_spd_gz(S, dgv, gps, dnoff) == 1) { return 1; }   # 6.7.17 (D17): `var GP: *P = GS;`, GS's address
     if (gps >= 0) { return 0; }
     if (gps <= 0 - 2048) { return 0; }
+    if (_sci_ppsrc(S, GTI(S), dnoff, gps) == 1) {   # 6.7.17 (D12): a `**S`, by name
+        STI(S, _gz_end(S, GTI(S)));
+        return 1;
+    }
     var ss = _gci_src(S, GTI(S));
     if (ss == 0) {
         if (_gz_pn_init(S, dgv, gps, dnoff) == 1) { return 1; }   # 6.7.16 (D18 (a)): a `*T` global's name
@@ -8174,6 +8209,7 @@ fn _gci_below(S, dnoff): i64 {
 # value store. Registered AFTER the source, in PARSE_VAR's own order.
 fn _gci_toplevel(S, noff, pscale): i64 {
     if (pscale <= 0 - 2048) { return 0; }
+    if (_sci_ppsrc(S, GTI(S) + 1, noff, pscale) == 1) { return 0; }   # 6.7.17 (D12): a `**S`, by name
     var sid = 0 - pscale;
     var ss = _gci_src(S, GTI(S) + 1);
     var pg = 0 - 1;   # 6.7.10 (B7-1g): `var G: T = *p;` — p's slot (`*p` is a struct value)
@@ -8249,6 +8285,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (PEEKT(S) != 4) { return 0; }
     if (_istr_src(S, pscale) == 1) { return 0; }   # 6.7.13 (D7 (1)): an inline `Str` binds its header; 6.7.14 (D21 (a)): at top level too
     if (GINFN(S) != 1) { return _gci_toplevel(S, noff, pscale); }   # 6.6.12
+    if (_sci_ppsrc(S, GTI(S) + 1, noff, pscale) == 1) { return 0; }   # 6.7.17 (D12): a `**S`, by name
     if (_sci_dpp(S, pscale) == 1) { return _sci_dexpr(S, noff, pscale); }   # 6.7.15: `*pp` of a `**S`
     if (_sci_pnu(S, noff, pscale) == 1) { return 0; }   # 6.7.16 (D87 (a)): a `*U` call, field, `p + n`, by name
     var ci_pk = _sci_pname(S, GTI(S) + 1);   # 6.7.6: `var v: K = (j);` — the name inside a wrap
@@ -8593,6 +8630,70 @@ fn _istr_pdecl(S, ps, start, ann): i64 {
     _istr_ra(S, k);
     SPSC(S, ps);
     return 0;
+}
+# ⛔ 6.7.17 (D17, the user's decision, 2026-10-22) — `var p: *P = s;` WITH s AN INLINE P TAKES s's ADDRESS, as passing s
+# to a `p: *P` parameter does (6.6.20) and `var p: *Str = t;` does for an inline `Str` (6.7.14's D18 (c)): p held s's
+# first field as an address (the filed repro: 139 on x86_64 / aarch64, a cx guest fault, PE 5), and a top-level
+# `var GP: *P = GS;` warned "assigning non-pointer to typed pointer" beside the same crash. The annotation at `ann` a
+# `*S` (one `*`, S a plain struct — a bound T's too; `Str` is `_istr_pdecl`'s), the initialiser just parsed from
+# `start` one name, inside any parentheses, that `&` takes as the struct itself (`_hl_amp_sid`: an inline local, a
+# by-value parameter, a captured copy, an inline global): rax = its address, as `&s` (`_spd_ra`), typed as the
+# declaration's pointer (`ps`). Another struct's is refused by name, as `p = u` and `f(u)` into a `*P` are: "cannot
+# copy 'u' into a variable of a different struct/vector type: 'p'". A handle, a `*P` and a capture already hold the
+# address. CHANGELOG [6.7.17]
+fn _spd_decl(S, ps, start, ann): i64 {
+    if (ps <= 0) { return 0; }
+    var sid = _ptr_ann_sid_tp(S, ann);
+    if (sid <= 0) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    var b = _ie_unparen(S, start, GTI(S));
+    if (_ie_pe != b + 1) { return 0; }
+    if (TOKTYP(S, b) != 2) { return 0; }
+    var t = _hl_amp_sid(S, TOKVAL(S, b));
+    if (t <= 0) { return 0; }
+    if (t != sid) { return _AGG_ASSIGN_TYPE_ERR(S, 0 - sid, 0 - t, TOKVAL(S, ann - 2), TOKVAL(S, b)); }
+    _spd_ra(S, TOKVAL(S, b));
+    SPSC(S, ps);
+    return 0;
+}
+# rax = the address of the inline struct `noff` names, as the `&` factor emits it: a local's frame slot (escaped: no
+# tail call, `_fn_local_addr`), an address-passed parameter's slot content, an inline global's static address; a
+# captured copy is already its environment words' address (6.6.5).
+fn _spd_ra(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (_addr_is_slot_content(S, li) == 1) { EFLLOAD(S, li); return 0; }
+            _fn_local_addr = 1;
+            EFLADDR(S, li);
+            return 0;
+        }
+        if (_hl_capn(S, noff) == 1) { return 0; }
+    }
+    EVADDR(S, _findvar_core(S, noff));
+    return 0;
+}
+# The zone replay's twin (`_gci_init`, cursor on the initialiser; `dgv` a `*S` global, no `**S`): `var GP: *P = GS;`
+# stores GS's static address (1, the cursor on the `;`), another struct refused by name as in a fn; else 0.
+fn _spd_gz(S, dgv, gps, dnoff): i64 {
+    if (gps != 0) { return 0; }
+    if (dgv < 0) { return 0; }
+    var sid = _gv_ptr_sid(S, dgv);
+    if (sid <= 0) { return 0; }
+    if (_ps_pinned(_gv_ptr_word(S, dgv)) == 1) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    var b = _ie_unparen(S, GTI(S), _gz_end(S, GTI(S)));
+    if (_ie_pe != b + 1) { return 0; }
+    if (TOKTYP(S, b) != 2) { return 0; }
+    var t = _hl_amp_sid(S, TOKVAL(S, b));
+    if (t <= 0) { return 0; }
+    if (t != sid) { _AGG_ASSIGN_TYPE_ERR(S, 0 - sid, 0 - t, dnoff, TOKVAL(S, b)); }
+    else {
+        EVADDR(S, _findvar_core(S, TOKVAL(S, b)));
+        _gvi_store(S, dgv);
+    }
+    STI(S, _gz_end(S, GTI(S)));
+    return 1;
 }
 # 1 = the annotation at token `ann` is `*Str` (one `*`, then the name of the `Str` struct).
 fn _istr_pann(S, ann): i64 {
@@ -12646,6 +12747,27 @@ fn _sci_star(S, ti): i64 {
     if (TOKTYP(S, ti + 2) != 5) { return 0; }
     return 1;
 }
+# ⛔ 6.7.17 (D12, the user's decision, 2026-10-22) — A POINTER OF ANOTHER DEPTH INTO A STRUCT DECLARATION IS REFUSED BY
+# NAME. `var g: P3 = pp;` with `pp: **P3` copied 24 bytes through pp's `*P3` slot (g.x was s's address, the rest read
+# past the slot), in a fn and at top level (the zone and after the first statement), as did a `**P3` parameter,
+# global, capture, field, `: **P3` call, `pp + n` and `*ppp` of a `***P3`: no decision makes a `**T` name a struct
+# value (6.7.10's handle line makes a `*T` one; 6.7.16's D17 (a) makes `*pp` one). The initialiser at token `b`, up
+# to its `;`, one whole pointer whose pointee is itself a pointer to a struct (`_hl_pw`'s pin, `_pps_of_pin`), into
+# a struct `pscale`: "cannot copy 'pp' into a variable of a different struct/vector type: 'g'", named as spelled
+# inside any parentheses. `= *pp` (a copy) and `= ps` are unchanged. 1 = refused. CHANGELOG [6.7.17]
+fn _sci_ppsrc(S, b, dnoff, pscale): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    var e = _gz_end(S, b);
+    var w = _hl_pw(S, b, e);
+    if (_ps_pinned(w) == 0) { return 0; }
+    if (_pps_of_pin(S, _ps_pin(w)) <= 0) { return 0; }
+    var a = _ie_unparen(S, b, e);
+    var pe = _ie_pe;
+    ERR_IDENT(S, "cannot copy ", _src_span_nm(S, a, pe, TOKVAL(S, pe - 1)),
+      " into a variable of a different struct/vector type: ", dnoff);
+    return 1;
+}
 # A local source of another struct, the name at token `ti` (`dr` 1: after a `*`, `var q: T = *p;`) — refused by name
 # (`_AGG_ASSIGN_TYPE_ERR`); a dereference is named from its `*`, as the source spells it ('*p'; it was 'p', 6.7.16).
 fn _sci_lsrc_err(S, td, ts, dnoff, ti, dr): i64 {
@@ -13139,6 +13261,66 @@ fn _gz_pnu(S, b, sid): i64 {
 # T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
 # lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
 # the line. 1 = such a store. CHANGELOG [6.7.16]
+# ⛔ 6.7.17 (D16) — A FIELD STORE `b.v = R;` (b at token i opening a statement or a for step, the `=` after a field
+# name) whose base reads a name typed by T (`_gs_dsr_dep`: `b: Box<T>`, `*Wt<T>`, a T-typed name) and whose R is a
+# struct result over 8 B: at a scalar T the field is a word (`_dsr_fld` refuses it in a plain fn), so the generic has
+# no scalar instance, as `*p = R` (D99) and `y = R` (D1); at T a struct it copies. CHANGELOG [6.7.17]
+fn _gs_fst_sres(S, fi, i): i64 {
+    var pt = TOKTYP(S, i - 1);
+    if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
+    var eq = _gs_dsr_eq(S, i);
+    if (eq < 0) { return 0; }
+    if (TOKTYP(S, eq - 1) != 2) { return 0; }
+    if (TOKTYP(S, eq - 2) != 41) { return 0; }
+    if (_gs_dsr_dep(S, fi, i) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
+    _gsw_k = 3;
+    _gsw_ti = i;
+    return 1;
+}
+# ⛔ 6.7.17 (D16) — A GENERIC STRUCT'S LITERAL `Box<T> { R, .. }` (its `{` at token i, after the type-argument list's
+# `>` / `>>`, an argument naming one of fi's type parameters) with an element R that is a struct result over 8 B: at a
+# scalar T a T-typed field is a word (`_dsr_lit` refuses a word field's in a plain fn; the base parse leaves a generic
+# struct's to each instance), so the generic has no scalar instance; at T a struct the field copies. CHANGELOG [6.7.17]
+fn _gs_lit_sres(S, fi, i): i64 {
+    var c = TOKTYP(S, i - 1);
+    if (c != 20) { if (c != 39) { return 0; } }
+    var j = i - 2;
+    var d = 1;
+    if (c == 39) { d = 2; }
+    var tp = 0;
+    while (d > 0) {
+        if (j <= _gs_open) { return 0; }
+        var t = TOKTYP(S, j);
+        if (t == 20) { d = d + 1; }
+        if (t == 39) { d = d + 2; }
+        if (t == 19) { d = d - 1; }
+        if (t == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) { tp = 1; } }
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        j = j - 1;
+    }
+    if (tp == 0) { return 0; }
+    if (TOKTYP(S, j) != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, j)) <= 0) { return 0; }
+    return _gs_lit_els(S, fi, i, j);
+}
+# ... the elements of the literal whose `{` is at token i (its struct's name at token nm): 1 at the first struct result
+# over 8 B, a named element's `name:` stepped over.
+fn _gs_lit_els(S, fi, i, nm): i64 {
+    var k = i + 1;
+    while (TOKTYP(S, k) != 14) {
+        if (TOKTYP(S, k) == 2) { if (TOKTYP(S, k + 1) == 49) { k = k + 2; } }
+        if (_gs_sres_big(S, fi, k) == 1) {
+            _gsw_k = 3;
+            _gsw_ti = nm;
+            return 1;
+        }
+        k = _gs_expr_end(S, k);
+        if (TOKTYP(S, k) != 31) { return 0; }
+        k = k + 1;
+    }
+    return 0;
+}
 fn _gs_sub_sres(S, fi, i): i64 {
     var pt = TOKTYP(S, i - 1);
     if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }

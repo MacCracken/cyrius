@@ -76,7 +76,9 @@
 #      x86_64; PQK1-PQK9 what the parser binds no struct from (`&px` of a `*i64`, a `*P` global into `**T`, a distance,
 #      a `**P` global into `***T`, a `*Box<P>` global into `**Box<T>`, a pointer T, a `*P` / `**P` / `*Box<P>` local one
 #      star short) binds none in the scan: `o(5)` meets the parser's
-#      own "no struct type in scope for 'r'" once, not a stub refusal naming o — x86_64
+#      own "no struct type in scope for 'r'" once, not a stub refusal naming o — x86_64; since 6.7.17 (the user's D11,
+#      2026-10-22) PQK5 / PQK9's `*Box<P>` into `**Box<T>` is a pointer of another depth, refused at the argument
+#      first (`qkd`), the scan still binding nothing
 #   L  (6.7.15) THE EXPLICIT SPELLING IN THE METHOD-CALL LOOKAHEADS: every lookahead that keys a method call on the
 #      tokens `x . m (` (`_tok_method_open`, its `(` at ti + 3) missed `x.m<..>(` — `var a, b = p.mm<i64>(3);` was
 #      "multi-value destructure needs a call on the right-hand side", `var v = p.rs<i64>(3)?;` took the boxed `?`
@@ -198,6 +200,8 @@
 #   MQ8 `_tok_pp_arith` reading a `-`'s right side     -> RED 1: PQK3 (as MQ7)
 #   MQ9 `_tpl_chain` answering 0                       -> RED 2: PQ7 PQ8
 #   MQ10 `_tpl_call` without its generic arm            -> RED 2: PQ13 PQ14
+# 6.7.17 (D11's PQK5 / PQK9; 2026-10-22, CYCC= the 6.7.16 compiler): MQD the depth refusal absent -> RED 2: PQK5
+#   PQK9 (the parser's "no struct type in scope for 'r'" alone)
 # 6.7.15 (the P8 rows; 2026-10-18, CYCC= the mutant):
 #   MP0 the fix reverted (the lane's previous compiler) -> RED P8a-P8g (the parser bound nothing: "no struct type in
 #                                                         scope for 'r'"); P8K green
@@ -800,11 +804,26 @@ qk PQK1 'var x = 5; var px: *i64 = &x; var r = gd2(&px); return r.pick(t);' "gd2
 qk PQK2 'var r = gd2(GPP); return r.pick(t);' "gd2(GPP), a \`*P\` into \`**T\`"
 qk PQK3 'var pp: **P = &GPP; var r = gd2(pp - pp); return r.pick(t);' "gd2(pp - pp), a distance"
 qk PQK4 'var r = gd3(GPPP); return r.pick(t);' "gd3(GPPP), a \`**P\` into \`***T\`"
-qk PQK5 'var r = unb2(GBP); return r.pick(t);' "unb2(GBP), a \`*Box<P>\` into \`**Box<T>\`"
 qk PQK6 'var r = gd(gpi(GPPP)); return r.pick(t);' "gd(gpi(GPPP)): gpi binds \`*P\`, gd's T a pointer"
 qk PQK7 'var pl: *P = &GP0; var r = gd2(pl); return r.pick(t);' "gd2(pl), a \`*P\` local into \`**T\`"
 qk PQK8 'var pp: **P = &GPP; var r = gd3(pp); return r.pick(t);' "gd3(pp), a \`**P\` local into \`***T\`"
-qk PQK9 'var qb: *Box<P> = GBP; var r = unb2(qb); return r.pick(t);' "unb2(qb), a \`*Box<P>\` local into \`**Box<T>\`"
+# PQKD <id> <body> <what> <arg>: 6.7.17 (the user's D11, 2026-10-22) — a pointer one star short of a `**Box<T>` is a
+# pointer of another depth, refused at the argument: its FIRST error is D11's, naming the argument and both types, and
+# the scan still binds nothing (no stub refusal naming o). The parser's "no struct type in scope for 'r'" may follow:
+# a refused initializer leaves r untyped (issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md row 2,
+# the fec lane's stand-down) — the one other error accepted. CHANGELOG [6.7.17]
+qkd() {
+    printf '%s\nfn o<T>(t: T): i64 { %s }\nfn m(): i64 { return o(5); }\nsyscall(60, m());\n' "$PQH" "$2" > "$D/$1.cyr"
+    erc=0; "$CC" < "$D/$1.cyr" > "$D/$1" 2> "$D/$1.err" || erc=$?
+    e1=$(grep -m1 '^error' "$D/$1.err" || true)
+    nx=$(grep '^error' "$D/$1.err" | sed 1d | grep -vcF "no struct type in scope for 'r'" || true)
+    want="cannot pass '$4', a '*Box<P>', to a '**Box<i64>' parameter in a call to 'unb2' - a pointer of another depth"
+    if [ "$erc" -ne 0 ] && printf '%s' "$e1" | grep -qF "$want" && [ "$nx" -eq 0 ] && ! grep -qF "generic 'o'" "$D/$1.err"; then
+        ok "$1: $3 refused at the argument (D11), binds nothing in the scan"
+    else bad "$1: $3: rc $erc, want D11's \"$want\" first and no stub refusal naming o: $(grep '^error' "$D/$1.err" | tr '\n' ' ')"; fi
+}
+qkd PQK5 'var r = unb2(GBP); return r.pick(t);' "unb2(GBP), a \`*Box<P>\` into \`**Box<T>\`" GBP
+qkd PQK9 'var qb: *Box<P> = GBP; var r = unb2(qb); return r.pick(t);' "unb2(qb), a \`*Box<P>\` local into \`**Box<T>\`" qb
 
 echo "L. the explicit spelling x.m<..>(..) in the method-call lookaheads (6.7.15)"
 # The filed repro, verbatim (the issue's text).

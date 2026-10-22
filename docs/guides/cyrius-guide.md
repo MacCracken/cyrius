@@ -1800,6 +1800,12 @@ method declared `: *U`, a `*U` field, pointer arithmetic on one, wrapped, a gene
 `= h.pu`, `= h.mu()`, `= pu + 0`, `= gg<U>(&q)`), in a fn, the zone and after the first statement, at every size —
 named as spelled: *cannot copy 'gu(&q)' into a variable of a different struct/vector type: 't'* (pointer arithmetic by
 its pointer operand). A `*U` source into a `U` keeps its handle bind, into a `*U` it aliases.
+A pointer of another DEPTH is refused the same way (6.7.17, the user's decision D12 of 2026-10-22): `var g: P3 = pp;`
+with `pp: **P3` — a local, a parameter, a global, a capture, a `**P3` field, a `: **P3` call, `pp + n`, `*ppp` of a
+`***P3`, wrapped, through a generic's `T`, a `**Str` into a `Str` — in a fn, in the declaration zone and after the
+first statement, at every size, is *cannot copy 'pp' into a variable of a different struct/vector type: 'g'*. Through
+6.7.16 it copied `sizeof(P3)` bytes through pp's `*P3` slot (`g.x` was the struct's address, the rest read past the
+slot). Write `var g: P3 = *pp;` (a copy of the struct, 6.7.16's D17 (a)) or `= ps`; `var g: *P3 = *pp;` aliases.
 
 ⚠ **An assignment between a pointer and a struct copies the struct (v6.6.16).** Call a variable
 whose slot holds a struct's ADDRESS a *handle*: a pointer-mode local (`var a: P3 = alloc(24);`),
@@ -1815,6 +1821,18 @@ For a struct of any size (6.7.10; through 6.7.9 only over 8 bytes):
   was. So is a handle assigned something that is not a struct value: an untyped pointer
   (`a = alloc(24)`, `a = p`) or a call returning `Str`. Between two `*P3` parameters `a = b`
   rebinds too; before v6.6.16 it copied `*b` into `*a`.
+* `*ppq = r` / `w.pq = r` — a struct value stored into a `*Q` SLOT reached through a dereference (`ppq` a `**Q`, a
+  global's too) or a field (`pq: *Q`) — copies into the Q the slot points at, as `pq = r` does; the slot is not
+  rebound (6.7.17; the user's decision D14, 2026-10-22). Every struct-value source copies (a variable, a call, a
+  method, an operator, `fncall0(&f)`, `*pr`, in parentheses), in a fn, a `for` step or at top level; a value of another
+  struct is refused by name (another struct's whole call with D99's words); `&r`, a `*Q`, a handle, `alloc(..)` still
+  rebind the slot. Through 6.7.16 the slot was pointed at the value's own storage and the old pointee never changed.
+* `var p: *P3 = s;` — a `*P3` DECLARED from an inline `P3` value (a local, a by-value parameter, a captured copy,
+  an inline global, in parentheses or not; in a fn, in the declaration zone or after the first statement) takes
+  s's ADDRESS, as passing s to a `p: *P3` parameter does (6.7.17; the user's decision D17, 2026-10-22: a
+  declaration has no pointee to copy into yet). Through 6.7.16 p held s's first field as an address and the first
+  `p.x` faulted (and a top-level one warned *assigning non-pointer to typed pointer*). A value of another struct
+  type is refused by name there, as `p = u` and `f(u)` are.
 
 A struct value of a different type assigned into a handle is refused
 (`cannot copy 'r' into a variable of a different struct/vector type: 'a'`), as into an inline
@@ -2034,7 +2052,24 @@ through a '\*P2' or bind a field* (through 6.7.15 it stored the struct's first w
 store `p[i] = mkp();` through the same pointers (`w.pi[0] = ..`, `gi()[0] = ..`, a `*i64` global, at top level too:
 *cannot assign 'p[0]: i64' …*), and a generic's `p[0] = mkp();` with `p: *T` has no scalar instance (D1); `*(&x) = mkp();` is `x =
 mkp();`, judged as that assignment; 8 bytes or less and a `Str` keep their word, a field of the result (`*p =
-mkp().a`) stores it, and through a `*P2` of the result's own struct the store copies (6.7.11). A global declaration is judged the same (6.7.14; the user's decision D28,
+mkp().a`) stores it, and through a `*P2` of the result's own struct the store copies (6.7.11). Through an UNTYPED
+pointer too (6.7.17; the user's decision D13, 2026-10-22): `*p = mkp();` with `var p = &x;` — `alloc(..)`, `*(p + 8)`,
+an untyped parameter, global or capture, at top level, in a `for` step, every result above — is *cannot assign '\*p'
+from 'mkp', which returns the struct 'P2' - store it through a '\*P2' or bind a field* (D99's words without the type;
+through 6.7.16 it stored the struct's first word, silently). And into a scalar or pointer FIELD or an array ELEMENT
+(6.7.17; the user's decision D16, 2026-10-22): `w.n = mkp();`, `GW.n = mkp();`, `pw.n` through a `*W`, a chain
+`v.w.n`, a captured struct's field, a `u8` / `i32` / `f64` / `*i64` / `*Pt` field, `buf[i] = mkp();` of a local or
+global `i64[N]` / `u8[N]`, a slice's `.len`, a struct literal's element (`W { mkp(), 0 }`, `W { n: mkp(), .. }`, a
+global's) — in a fn, a `for` step or at top level — is *cannot assign 'w.n: i64' from 'mkp', which returns the struct
+'P2' - store it through a '\*P2' or bind a field* (the literal's element named by its field, `'n: i64'`); through
+6.7.16 each stored the first word. In a generic, a field or literal element typed by `T` (`b.v = mkp();` with `b:
+Box<T>`, `Box<T> { mkp(), 1 }`) has no scalar instance (D1's rule) and copies at a struct `T`. A struct-typed field
+takes the copy (or its own refusal), a `bool` field its own, and a field of the result (`w.n = mkp().a`), 8 bytes or
+less and a `Str` keep their word. A COMPOUND assignment is judged as its `=` form is (6.7.17; the user's decision D15,
+2026-10-22): `y += mk3();`, `*p += mk3();`, `w.n -= mk3();`, `b[0] |= mk3();`, `p += mk3();` into a `*i64`, a slice's
+`.len`, in a `for` step or at top level, are refused with that destination's words (*cannot assign 'y: i64' from 'mk3',
+which returns the struct 'P2' - declare 'y: P2' or bind a field*; through 6.7.16 they combined the struct's first
+word, silently). A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was
@@ -2450,7 +2485,8 @@ is read the same way: `((p), 1)` is refused as `(p, 1)` is, and since 6.7.13 so 
 — `(*pp, 1)`, `((*pp), 1)`, `(*gp(), 1)`, `(*w.pp, 1)`, `(*(&p), 1)` — a struct value (the user's decision D2 (a),
 2026-10-15; through 6.7.12 it stored P's first word); `(pp, 1)` and `(pp.a, 1)` are i64s. An argument with NO
 struct type stays accepted: `&p` (an address, as
-`var q: *Q = &p;` is — into a `*S` parameter, since 6.7.16, a pointer to another struct: below), an
+`var q: *Q = &p;` is — into a `*S` parameter since 6.7.16, and into a by-value struct since 6.7.17, a pointer to
+another struct: below), an
 untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the
@@ -2466,10 +2502,25 @@ reports `cannot pass 'y' to a parameter of a different struct type in a call to 
 an if-expression whose every branch is one, `self` — through a call, a tail call, a method's arguments, a method
 called by its fn name (`Pt_m(&q)`: an untyped `self` is a `*Pt`), a named argument and an operator's right operand,
 at every depth (`**S`, `***S`) and for a generic instance either way (`gb<i64>(&y)` with `p: *Box<T>`). A pointer
-to the declared struct, an untyped pointer (`var u = &p;`, `alloc(..)`), `0` and a pointer of another depth pass.
+to the declared struct, an untyped pointer (`var u = &p;`, `alloc(..)`) and `0` pass.
 Through 6.7.15 every such pointer was passed unchecked and the callee read the other struct at its own offsets
-(`nc1(&y)` returned `y.v.y`, 2, for `y.n`, 9). Into a BY-VALUE struct parameter a typed pointer still converts
-freely (it is copied through, 6.7.10's B7-1b; the user's decision of 2026-10-08).
+(`nc1(&y)` returned `y.v.y`, 2, for `y.n`, 9). Since 6.7.17 (the user's decision D10, 2026-10-22) the same holds
+into a BY-VALUE struct parameter — of any size, a tuple or a `Str` handle: `bq(u)` with `u: *Pt` and `bq(&p)` into
+`fn bq(b: Q)` report `cannot pass 'u' to a parameter of a different struct type in a call to 'bq'`; a pointer to Q
+itself (`bq(&q)`, a `*Q`) is still copied through (6.7.10's B7-1b). From 6.7.3 through 6.7.16 a typed pointer
+converted freely there (the user's decision of 2026-10-08) and the callee read Pt's bytes as a Q (the filed repro:
+68).
+
+⚠ **A pointer of another DEPTH into a struct parameter is refused (6.7.17; the user's decision D11, 2026-10-22).**
+A by-value struct takes a pointer of one star to its struct, a `*S` parameter one star, a `**S` two: `nc4(&pq)` or
+`nc4(pp)` (a `**Pt`) into `p: *Pt` reports `cannot pass '&pq', a '**Pt', to a '*Pt' parameter in a call to 'nc4' - a
+pointer of another depth`, and so do `nc2(pz)` (a `*Box<i64>`) into `pp: **Box<i64>`, `bv(&pq)` into a by-value
+`Pt` (`to a 'Pt' parameter`) and `&h` of a handle (`var h: Pt = alloc(16);` — its `&` is the slot holding the
+address, a `**Pt`; a `Str` handle's `&s` a `**Str`) — the argument named as the source spells it, both types
+written out, at every source and path the pointee check above reads. A pointer of the parameter's depth passes, as do
+`*pp` (a `*Pt`) and `**pp` (the struct value, whose address a `*Pt` takes), an untyped pointer and `0`. Through
+6.7.16 a pointer of another depth passed: `nc4(&pq)` read pq's slot as the Pt (`p.x` was p's address) and `nc2(pz)`
+read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows).
 
 ⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
 (a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is
@@ -2494,8 +2545,8 @@ address is no struct value: `ri(&w + 0)`, a `*Pt` field `ri(w.p)`, a `: *Pt` cal
 (6.7.10).** `bs1(&s)`, `bs1(sp)` with `sp: *S1`, `bs1(gp())` with `fn gp(): *S1`, `bs1(h.p)` with a
 `*S1` field, `bs1(sp + i)`, and an operator's right operand (`o + sp`, `o + &s`) give `fn bs1(b:
 S1)` a copy of the struct — a `*T` local, parameter, global or capture, in a fn and at top level;
-the callee's writes never reach the pointee. A `*U` of another struct converts, as it always did,
-and is read with the parameter's layout. Since 6.7.11 so do an if-expression whose every branch is a
+the callee's writes never reach the pointee. A `*U` of another struct is refused by name since 6.7.17
+(D10, above; it converted through 6.7.16 and was read with the parameter's layout). Since 6.7.11 so do an if-expression whose every branch is a
 pointer, whatever their steps (`t7(if (c == 1) { py } else { &s })`, `py` beside a `*B4`), and an
 integer on the LEFT of a struct pointer (`t1(m + pb)`, `t1(n + pb)` with `n: i32`, `bs1(n + sp)`) —
 through 6.7.10 those passed the address as the struct; an if-expression of a pointer and a value is

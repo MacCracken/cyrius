@@ -115,6 +115,25 @@
 #      a fn (`_sci_pnu`), the zone and after the first statement (`_gz_pnu_span`), 16 B and 8 B (each compiled and read
 #      U's object as a P: t.y 4, t.v 6); GC19 controls: a `*U` source into a `U` keeps its handle bind, into a `*U`
 #      aliases (9: a later write shows)
+#   R18 (6.7.17, the user's D17, 2026-10-22; the same issue, row B5) tests/tcyr/crossos/struct_value_pointer_slot.tcyr on
+#      the same legs as R1 (floor 17): `var p: *P = s;` with s an inline P takes s's address (`_spd_decl`; the zone's
+#      `_spd_gz`) — a local of 8 / 16 B, wrapped, a by-value parameter of each size, an inline global, a captured copy, a
+#      generic's `*T`, top level in the zone and after the first statement; R18a the filed repro VERBATIM (exit 7; 139
+#      through 6.7.16: p held s's first field); GC22 a U of another struct refused by name, as `p = u` / `f(u)` are
+#   R18 also runs the file's b_* rows (6.7.17, the user's D14, 2026-10-22: "copy through the slot"; the same issue, row
+#      B2): a struct VALUE stored into a `*Q` slot reached through a dereference (`*ppq = r`, ppq a `**Q`) or a field
+#      (`w.pq = r`) is copied into the Q the slot points at (`_dst_pslot` / `_fst_pslot` -> `_psl_store`: the assignment
+#      arms against the slot's pointee as a handle), at every source, 8 B and 16 B, a global, top level, a for step, a
+#      capture, a generic's `**T` / `*T` field — through 6.7.16 the slot was rebound to the value (113); `&r`, a `*Q`,
+#      `alloc(..)`, another pointer field and an if-expression of pointers still rebind (floor 42); GC23 a value of
+#      another struct refused by name, another struct's call keeping D99's words
+#   GC20-GC21 (6.7.17, the user's D12, 2026-10-22; issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-
+#      word.md row A3), on the same four legs: a pointer of another DEPTH (a `**S`) into an `S` declaration is refused
+#      by name (`_sci_ppsrc`: "cannot copy 'pp' into a variable of a different struct/vector type: 'g'") — GC20 the
+#      filed repro VERBATIM (exit 1 through 6.7.16: 24 bytes copied through pp's `*P3` slot, g.x the struct's address),
+#      the zone, after the first statement, a fn, wrapped, a parameter, a capture, a field, a `: **P3` call, `pp + 0`,
+#      `*ppp` of a `***P3`, 8 B, a generic's `T`, a `**Str` into a `Str`; GC21 controls: `= *pp` and `= ps` copy (zone,
+#      after, fn), `var g: *P3 = *pp;` aliases
 #   GP (Linux x86_64 + aarch64) a 7 B handle GLOBAL onto the last 7 bytes of a mapping: by value,
 #      returned, an operator's right operand, an if-expression branch, `c = G`, and at TOP LEVEL
 #      (a hidden global, no frame) — exit 0, no byte past the object read
@@ -673,6 +692,22 @@
 #   (the s16 review, GC18-GC19, measured 2026-10-21) the tree before -> RED 68: GC18's seventeen rows x4
 #   MY6 `_sci_pnu` answering 0 (no fn arm)             -> RED 32: GC18's eight fn rows x4
 #   MY7 `_gz_pnu_span` answering 0 (no span typed)     -> RED 68: GC18's seventeen rows x4 (the fn arm asks it too)
+# 6.7.17 ANOTHER-DEPTH DECLARATION MUTATION LEDGER (GC20-GC21, D12; the same method, measured 2026-10-22):
+#   MY8 `_sci_ppsrc` answering 0 (the tree before it)  -> RED 60: GC20's fifteen rows x4 (each compiled: a **S read as
+#                                                      the struct; GC21 stays green)
+# 6.7.17 INLINE-VALUE `*P` DECLARATION MUTATION LEDGER (R18 / R18a / GC22, D17; the same method, measured 2026-10-22):
+#   MY9 the tree before it (D15's commit)               -> RED 30: R18 x7 (139 / a cx guest fault / PE 5), R18a x7, GC22 x16
+#                                                      (each compiled, then faulted reading U through p)
+#   MY10 `_spd_decl` answering 0 (no fn / after arm)    -> RED 26: R18 x7, R18a x7, GC22's three fn / after rows x4
+#   MY11 `_spd_gz` answering 0 (no zone arm)            -> RED 11: R18 x7 (GZ / GZ8 faulted), GC22's zone row x4
+# 6.7.17 `*S` SLOT COPY-THROUGH MUTATION LEDGER (R18's b_* rows / GC23, D14; the same method, measured 2026-10-22):
+#   MY12 the tree before it (D17's commit)              -> RED 15: R18 x7 (19 b_* rows: the slot rebound, 113), GC23's
+#                                                      two another-struct rows x4 (they compiled)
+#   MY13 `_dst_pslot` answering 0 (no dereference arm)  -> RED 11: R18 x7 (12 rows), GC23 `*ppq = u` x4
+#   MY14 `_fst_pslot` answering 0 (no field arm)        -> RED 11: R18 x7 (8 rows), GC23 `w.pq = u` x4
+#   MY15 `_psl_store` arming the pointee as a value (`_agc_ovr_pp` 1) -> RED 7: R18 x7 (the two 8 B rows rebound)
+#   MY16 `_psv_other` answering 0                       -> RED 4: GC23's D99 row x4 (the arms' "cannot copy" words);
+#                                                      struct_result_type_refused.sh DP11 / FE9 too
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): B3's `S8_add(a: S8, b: i64)` row runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
@@ -715,7 +750,7 @@ if [ "$NG" -lt "$GFLOOR" ]; then echo "FAIL: $G: only $NG rows in $TG (floor $GF
 TP=tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 [ -f "$TP" ] || { echo "FAIL: $G: $TP is missing"; exit 1; }
 NP=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TP")
-PFLOOR=102   # 6.7.14: + the `n + &x` rows
+PFLOOR=100   # 6.7.14: + the `n + &x` rows; 6.7.17 (D10): a_other_8 / a_other_h are refusals (struct_arg_type_refused.sh PV)
 if [ "$NP" -lt "$PFLOOR" ]; then echo "FAIL: $G: only $NP rows in $TP (floor $PFLOOR) — rows were lost"; exit 1; fi
 TQ=tests/tcyr/crossos/small_struct_pointer_copy.tcyr
 [ -f "$TQ" ] || { echo "FAIL: $G: $TQ is missing"; exit 1; }
@@ -1263,6 +1298,31 @@ for leg in $XLEGS $OTHER; do
     else bad "R17 $leg: exit $RC, printed '$LAST', want 0464646 and exit 9"; fi
 done
 
+# R18 (6.7.17, the user's D17, 2026-10-22: "s's address"): `var p: *P = s;` with s an inline P takes s's address.
+TPV=tests/tcyr/crossos/struct_value_pointer_slot.tcyr
+[ -f "$TPV" ] || { echo "FAIL: $G: $TPV is missing"; exit 1; }
+NPV=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPV")
+PVFLOOR=42   # 6.7.17: 17 a_* rows (D17) + 25 b_* rows (D14)
+if [ "$NPV" -lt "$PVFLOOR" ]; then echo "FAIL: $G: only $NPV rows in $TPV (floor $PVFLOOR) — rows were lost"; exit 1; fi
+echo "R18. $TPV ($NPV rows: an inline struct value meeting a *S slot)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$TPV" "$D/pv_$n"
+    if [ "$RC" -eq -1 ]; then bad "R18 $leg: the values file did not build: $(grep '^error' "$D/pv_$n.err" | head -1)"
+    elif [ "$RC" -eq 0 ] && [ "$LAST" = "$NPV passed, 0 failed ($NPV total)" ]; then ok "R18 $leg: $LAST"
+    else bad "R18 $leg: exit $RC, '$LAST' (want '$NPV passed, 0 failed ($NPV total)') $(grep -m3 'FAIL' "$D/pv_$n.out" | tr '\n' ' ')"; fi
+done
+# The filed repro B5, verbatim (139 on x86_64 / aarch64, a cx guest fault, PE 5 through 6.7.16: p held 7).
+printf '%s\n' 'include "lib/syscalls.cyr"' 'struct P { a; b; }' \
+  'fn main(): i64 { var s: P; s.a = 7; s.b = 2; var p: *P = s; return p.a; }' 'syscall(60, main());' > "$D/repro_b5.cyr"
+echo "R18a. the filed var p: *P = s; repro, verbatim (exit 7)"
+for leg in $XLEGS $OTHER; do
+    n=$(printf '%s' "$leg" | tr -c 'a-zA-Z0-9' '_')
+    run_leg "$leg" "$D/repro_b5.cyr" "$D/rb5_$n"
+    if [ "$RC" -eq -1 ]; then bad "R18a $leg: did not build: $(grep '^error' "$D/rb5_$n.err" | head -1)"
+    elif [ "$RC" -eq 7 ]; then ok "R18a $leg: exit 7"
+    else bad "R18a $leg: exit $RC, want 7"; fi
+done
 # crow <label> <want-exit | refuse:<text>> <program> — an x86 compile (and run) row.
 crow() {
     printf '%b' "$3" > "$D/c.cyr"
@@ -1520,6 +1580,42 @@ glrow "GC19 control: ... 8 B, a field after the first statement" 9 "${GV1}${GUA}
 glrow "GC19 control: a *U call into a *U declaration aliases (the zone)" 9 "${GV1}var t: *U = gu(&GSU);\nGSU.b = 9;\nsyscall(60, t.b);\n"
 glrow "GC19 control: pointer arithmetic into a *U aliases (a fn)" 9 "${GV1}fn f(): i64 { var t: *U = GH.pu + 0; GSU.b = 9; return t.b; }\nsyscall(60, f());\n"
 
+echo "GC20-GC21. a pointer of another depth (a **S) into a struct S declaration: refused by name (6.7.17's D12; x86_64, aarch64, cx, PE)"
+# The filed repro, verbatim (issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row A3): exit 1
+# through 6.7.16 (24 bytes copied through pp's `*P3` slot: g.x was s's address).
+glrow "GC20 the filed repro A3 verbatim: var g: P3 = pp;" "err:cannot copy 'pp' $GUM'g'" \
+  'struct P3 { x; y; z; }\nfn main(): i64 { var s: P3; s.x = 7; s.y = 8; s.z = 9; var ps: *P3 = &s; var pp: **P3 = &ps; var g: P3 = pp; if (g.x == &s) { return 1; } if (g.x == 7) { return 7; } return 2; }\nsyscall(60, main());\n'
+GW1='include "lib/fnptr.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/str.cyr"\nstruct P3 { x; y; z; }\nstruct S1 { u; }\nstruct W { pp: **P3; n; }\nvar GS = P3 { 7, 8, 9 };\nvar GPS: *P3 = &GS;\nvar GPP: **P3 = &GPS;\nvar GS1 = S1 { 7 };\nvar GPS1: *S1 = &GS1;\nvar GPP1: **S1 = &GPS1;\nfn mkpp(pp: **P3): **P3 { return pp; }\n'
+GWM='var s: P3; s.x = 7; s.y = 8; s.z = 9; var ps: *P3 = &s; var pp: **P3 = &ps;'
+glrow "GC20 the zone: var G: P3 = GPP; (the filed top-level form)" "err:error:<source>:14:13: cannot copy 'GPP' $GUM'G'" "${GW1}var G: P3 = GPP;\nsyscall(60, G.x);\n"
+glrow "GC20 the zone, wrapped, 8 B: var G: S1 = (GPP1);" "err:cannot copy 'GPP1' $GUM'G'" "${GW1}var G: S1 = (GPP1);\nsyscall(60, G.u);\n"
+glrow "GC20 after the first statement: var G: P3 = GPP;" "err:cannot copy 'GPP' $GUM'G'" "${GW1}${GUA}var G: P3 = GPP;\nsyscall(60, G.x);\n"
+glrow "GC20 after the first statement, 8 B: GPP1 + 0" "err:cannot copy 'GPP1 + 0' $GUM'G'" "${GW1}${GUA}var G: S1 = GPP1 + 0;\nsyscall(60, G.u);\n"
+glrow "GC20 in a fn: a **P3 global" "err:cannot copy 'GPP' $GUM'g'" "${GW1}fn f(): i64 { var g: P3 = GPP; return g.x; }\nsyscall(60, f());\n"
+glrow "GC20 in a fn: wrapped ((pp))" "err:cannot copy 'pp' $GUM'g'" "${GW1}fn f(): i64 { ${GWM} var g: P3 = ((pp)); return g.x; }\nsyscall(60, f());\n"
+glrow "GC20 in a fn: a **P3 parameter" "err:cannot copy 'pp' $GUM'g'" "${GW1}fn h(pp: **P3): i64 { var g: P3 = pp; return g.x; }\nfn f(): i64 { var ps: *P3 = &GS; return h(&ps); }\nsyscall(60, f());\n"
+glrow "GC20 in a closure: a captured **P3" "err:cannot copy 'pp' $GUM'g'" "${GW1}fn f(): i64 { ${GWM} var c = || { var g: P3 = pp; return g.x; }; return fncall0(c); }\nsyscall(60, f());\n"
+glrow "GC20 in a fn: a **P3 field" "err:cannot copy 'w.pp' $GUM'g'" "${GW1}fn f(): i64 { ${GWM} var w: W; w.pp = pp; var g: P3 = w.pp; return g.x; }\nsyscall(60, f());\n"
+glrow "GC20 in a fn: a : **P3 call" "err:cannot copy 'mkpp(pp)' $GUM'g'" "${GW1}fn f(): i64 { ${GWM} var g: P3 = mkpp(pp); return g.x; }\nsyscall(60, f());\n"
+glrow "GC20 in a fn: *ppp of a ***P3" "err:cannot copy '*ppp' $GUM'g'" "${GW1}fn f(): i64 { ${GWM} var ppp: ***P3 = &pp; var g: P3 = *ppp; return g.x; }\nsyscall(60, f());\n"
+glrow "GC20 in a fn, 8 B: a **S1 local" "err:cannot copy 'pp' $GUM'g'" "${GW1}fn f(): i64 { var s: S1; s.u = 7; var ps: *S1 = &s; var pp: **S1 = &ps; var g: S1 = pp; return g.u; }\nsyscall(60, f());\n"
+glrow "GC20 a generic's T: var v: T = pp; with pp: **T, T = P3" "err:cannot copy 'pp' $GUM'v'" "${GW1}fn gg<T>(pp: **T): i64 { var v: T = pp; return 0; }\nfn f(): i64 { ${GWM} return gg(pp); }\nsyscall(60, f());\n"
+glrow "GC20 a **Str into a Str declaration" "err:cannot copy 'pps' $GUM't'" "${GW1}fn f(): i64 { var s: Str = str_from(\"ab\"); var ps: *Str = s; var pps: **Str = &ps; var t: Str = pps; return 0; }\nalloc_init();\nsyscall(60, f());\n"
+glrow "GC21 control: var g: P3 = *pp; copies (7), = ps too" 14 "${GW1}fn f(): i64 { ${GWM} var g: P3 = *pp; var h: P3 = ps; return g.x + h.x; }\nsyscall(60, f());\n"
+glrow "GC21 control: the zone, var G: P3 = *GPP; and = GPS" 14 "${GW1}var G: P3 = *GPP;\nvar H: P3 = GPS;\nsyscall(60, G.x + H.x);\n"
+glrow "GC21 control: after the first statement, 8 B: *GPP1, GPS1" 14 "${GW1}${GUA}var G: S1 = *GPP1;\nvar H: S1 = GPS1;\nsyscall(60, G.u + H.u);\n"
+glrow "GC21 control: var g: *P3 = *pp; aliases (a later write shows)" 5 "${GW1}fn f(): i64 { ${GWM} var g: *P3 = *pp; s.x = 5; return g.x; }\nsyscall(60, f());\n"
+echo "GC22. var p: *P = u; with u an inline U (another struct): refused by name, as p = u and f(u) are (6.7.17; x86_64, aarch64, cx, PE)"
+GV2='struct P { a; b; }\nstruct U { c; d; }\nstruct P8 { v; }\nstruct U8 { w; }\nvar GU = U { 7, 2 };\nvar GU8 = U8 { 7 };\n'
+glrow "GC22 in a fn, 16 B" "err:cannot copy 'u' $GUM'p'" "${GV2}fn f(): i64 { var u: U; u.c = 7; var p: *P = u; return p.a; }\nsyscall(60, f());\n"
+glrow "GC22 in a fn, 8 B, wrapped" "err:cannot copy 'u' $GUM'p'" "${GV2}fn f(): i64 { var u: U8; u.w = 7; var p: *P8 = (u); return p.v; }\nsyscall(60, f());\n"
+glrow "GC22 the declaration zone" "err:error:<source>:7:14: cannot copy 'GU' $GUM'GP'" "${GV2}var GP: *P = GU;\nsyscall(60, GP.a);\n"
+glrow "GC22 after the first statement, 8 B" "err:cannot copy 'GU8' $GUM'GP'" "${GV2}${GUA}var GP: *P8 = GU8;\nsyscall(60, GP.v);\n"
+echo "GC23. a struct value of another struct into a *Q slot through a dereference or a field: refused by name (6.7.17's D14; x86_64, aarch64, cx, PE)"
+GV3='struct Q { a; b; }\nstruct Pt { x; y; }\nstruct W { pq: *Q; n; }\nfn mkpt(): Pt { var p: Pt; return p; }\n'
+glrow "GC23 *ppq = u (u a Pt)" "err:cannot copy 'u' $GUM'ppq'" "${GV3}fn f(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var u: Pt; *ppq = u; return 0; }\nsyscall(60, f());\n"
+glrow "GC23 w.pq = u (a *Q field)" "err:cannot copy 'u' $GUM'pq'" "${GV3}fn f(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var u: Pt; w.pq = u; return 0; }\nsyscall(60, f());\n"
+glrow "GC23 *ppq = mkpt(): D99's words (a *Q slot of another struct's call)" "err:cannot assign '*ppq: *Q' from 'mkpt', which returns the struct 'Pt' - store it through a '*Pt' or bind a field" "${GV3}fn f(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; *ppq = mkpt(); return 0; }\nsyscall(60, f());\n"
 echo "CP. struct copies through a *T of 8 B or less: another struct type refused by name, as over 8 B (x86)"
 crow "CP1 l = pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var l: S8; l.v = 1; l = pu; return l.v; }\nsyscall(60, f());\n'

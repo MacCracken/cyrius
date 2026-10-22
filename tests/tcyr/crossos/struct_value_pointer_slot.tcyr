@@ -1,0 +1,145 @@
+# struct_value_pointer_slot.tcyr — 6.7.17 (issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md,
+# rows B5 and B2): an inline struct VALUE meeting a `*S` slot.
+#
+# D17 (the user's decision, 2026-10-22: "s's address") — `var p: *P = s;` with s an inline P takes s's address, as
+# passing s to a `p: *P` parameter does (6.6.20) and `var p: *Str = t;` does for an inline `Str` (6.7.14's D18 (c)).
+# Through 6.7.16 p held s's FIRST FIELD as an address: the filed repro faulted on every target (x86_64 / aarch64 139,
+# cx "guest address out of range: 7", PE an access violation, exit 5). The a_* rows: a local (8 B and 16 B), wrapped, a
+# by-value parameter of each size, an inline global in a fn, a closure's captured copy, a generic's `*T` at T = P, a
+# write through p reaching s, and at top level (the declaration zone and after the first statement); the controls a
+# handle, a `*P`, `&s`.
+#
+# D14 (the user's decision, 2026-10-22: "copy through the slot") — a struct VALUE stored into a `*Q` slot reached
+# through a dereference or a field is copied into the Q the slot points at, as `pq = r` into a `*Q` name is (6.7.10's
+# decision 6): `*ppq = r;` / `*ppq = mkp();` (ppq a `**Q`) and `w.pq = r;` (a `*Q` field) REBOUND the slot to the
+# value's own storage through 6.7.16 (the filed repro exited 113). The b_* rows: a local, a call, a method, an operator,
+# `fncall0(&f)`, wrapped, `*pr`, 8 B, a global `**Q`, top level, a for step, through a `*W`, a captured struct's field, a
+# generic's `**T` / `*T` field; the controls `&r`, a `*Q`, `alloc(..)`, another field's pointer and an if-expression of
+# pointers still rebind.
+#
+# CROSS-HOST: a frame address, a static address and a parameter's slot on every backend — run by
+# tests/gates/codegen/small_struct_handle_line.sh R18 on x86_64 (plain, IR=1, IR=3, DCE=1), aarch64, cx and PE, and
+# on ecb / ach / cass / pi by the cross-OS leg.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+struct P { a; b; }
+struct P8 { v; }
+struct Q { a; b; }
+struct Q8 { v; }
+struct W { pq: *Q; n; }
+struct W8 { p8: *Q8; }
+struct Wt<T> { p: *T; n; }
+fn mkq(): Q { var q: Q; q.a = 3; q.b = 4; return q; }
+impl Q { fn dup(self): Q { var r: Q; r.a = self.a + 1; r.b = self.b + 1; return r; } }
+fn Q_add(l: Q, r: Q): Q { var o: Q; o.a = l.a + r.a; o.b = l.b + r.b; return o; }
+var GQ = Q { 1, 1 };
+var GPQ: *Q = &GQ;
+var GPPQ: **Q = &GPQ;
+var GW = W { 0, 0 };
+
+var GS = P { 7, 2 };
+var GS8 = P8 { 7 };
+var GZ: *P = GS;          # the declaration zone: GS's address
+var GZ8: *P8 = (GS8);
+
+fn a_local(): i64 { var s: P; s.a = 7; s.b = 2; var p: *P = s; return p.a * 10 + p.b; }
+fn a_small(): i64 { var s: P8; s.v = 7; var p: *P8 = s; return p.v; }
+fn a_wrap(): i64 { var s = P { 7, 2 }; var p: *P = ((s)); return p.a; }
+fn a_param_in(s: P): i64 { var p: *P = s; return p.a * 10 + p.b; }
+fn a_param(): i64 { var s = P { 7, 2 }; return a_param_in(s); }
+fn a_param8_in(s: P8): i64 { var p: *P8 = s; return p.v; }
+fn a_param8(): i64 { var s = P8 { 7 }; return a_param8_in(s); }
+fn a_global(): i64 { var p: *P = GS; return p.a; }
+fn a_global8(): i64 { var p: *P8 = GS8; return p.v; }
+fn a_cap(): i64 { var s = P { 7, 2 }; var f = || { var p: *P = s; return p.a; }; return fncall0(f); }
+fn a_gen<T>(x: T): i64 { var s: T = x; var p: *T = s; return p.a; }
+fn a_write(): i64 { var s = P { 1, 2 }; var p: *P = s; p.a = 7; return s.a; }
+fn a_same(): i64 { var s = P { 7, 2 }; var p: *P = s; if (p == &s) { return 1; } return 0; }
+fn a_handle(): i64 { var h: P = alloc(16); h.a = 7; var p: *P = h; return p.a; }
+fn a_ptr(): i64 { var s = P { 7, 2 }; var q: *P = &s; var p: *P = q; return p.a; }
+
+# 1 when the slot still points at q (no rebind), times q's fields.
+fn b_chk(pq: *Q, q: *Q): i64 { if (pq == q) { return q.a * 10 + q.b; } return 113; }
+fn b_local(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 3, 4 }; *ppq = r; return b_chk(pq, &q); }
+fn b_call(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; *ppq = mkq(); return b_chk(pq, &q); }
+fn b_meth(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 2, 3 }; *ppq = r.dup(); return b_chk(pq, &q); }
+fn b_op(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 1, 2 }; *ppq = r + r; return b_chk(pq, &q); }
+fn b_fnc(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; *ppq = fncall0(&mkq); return b_chk(pq, &q); }
+fn b_wrap(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 3, 4 }; *ppq = ((r)); return b_chk(pq, &q); }
+fn b_deref(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 3, 4 }; var pr: *Q = &r; *ppq = *pr; return b_chk(pq, &q); }
+fn b_small(): i64 { var q = Q8 { 1 }; var pq: *Q8 = &q; var ppq: **Q8 = &pq; var r = Q8 { 9 }; *ppq = r; if (pq == &q) { return q.v; } return 113; }
+fn b_glob(): i64 { GQ.a = 1; GQ.b = 1; var r = Q { 3, 4 }; *GPPQ = r; return b_chk(GPQ, &GQ); }
+fn b_for(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 3, 4 }; for (var i = 0; i < 1; *ppq = r) { i = 1; } return b_chk(pq, &q); }
+fn b_fld(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var r = Q { 3, 4 }; w.pq = r; return b_chk(w.pq, &q); }
+fn b_fcall(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; w.pq = mkq(); return b_chk(w.pq, &q); }
+fn b_fpw(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var pw: *W = &w; var r = Q { 3, 4 }; pw.pq = r; return b_chk(w.pq, &q); }
+fn b_fsmall(): i64 { var q = Q8 { 1 }; var w = W8 { &q }; var r = Q8 { 9 }; w.p8 = r; if (w.p8 == &q) { return q.v; } return 113; }
+fn b_fglob(): i64 { GQ.a = 1; GQ.b = 1; GW.pq = &GQ; var r = Q { 3, 4 }; GW.pq = r; return b_chk(GW.pq, &GQ); }
+fn b_fcap(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var f = || { var r = Q { 3, 4 }; w.pq = r; return 0; }; fncall0(f); return q.a * 10 + q.b; }
+fn b_ffor(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var r = Q { 3, 4 }; for (var i = 0; i < 1; w.pq = r) { i = 1; } return b_chk(w.pq, &q); }
+fn b_gs<T>(pp: **T, r: T): i64 { *pp = r; return 0; }
+fn b_gf<T>(w: *Wt<T>, r: T): i64 { w.p = r; return 0; }
+fn b_gen(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var r = Q { 3, 4 }; b_gs(&pq, r); var w: Wt<Q>; w.p = &q; var r2 = Q { 5, 6 }; b_gf(&w, r2); return b_chk(pq, &q); }
+fn b_amp(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 3, 4 }; *ppq = &r; if (pq == &r) { return q.a * 10 + q.b; } return 113; }
+fn b_ptr(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var r = Q { 3, 4 }; var pr: *Q = &r; w.pq = pr; if (w.pq == &r) { return q.a * 10 + q.b; } return 113; }
+fn b_pptr(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var r = Q { 3, 4 }; var pr: *Q = &r; *ppq = pr; if (pq == &r) { return q.a * 10 + q.b; } return 113; }
+fn b_alloc(): i64 { var w = W { 0, 0 }; w.pq = alloc(16); w.pq.a = 5; return w.pq.a; }
+fn b_ie(): i64 { var c = 1; var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var w = W { &q, 0 }; var r = Q { 3, 4 }; var pr: *Q = &r; *ppq = if (c == 1) { pr } else { pr }; w.pq = if (c == 1) { pr } else { pr }; if (pq == &r) { if (w.pq == &r) { return q.a * 10 + q.b; } } return 113; }
+fn b_wptr(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var w2 = W { 0, 0 }; w2.pq = w.pq; if (w2.pq == &q) { return 7; } return 113; }
+
+alloc_init();
+syscall(1, 1, "", 0);
+var GA: *P = GS;          # after the first statement
+var GA8: *P8 = GS8;
+
+assert_eq(a_local(), 72, "a: var p: *P = s; points at s (16 B)");
+assert_eq(a_small(), 7, "a: ... at 8 B");
+assert_eq(a_wrap(), 7, "a: wrapped ((s))");
+assert_eq(a_param(), 72, "a: a by-value parameter over 8 B");
+assert_eq(a_param8(), 7, "a: a by-value parameter of 8 B");
+assert_eq(a_global(), 7, "a: an inline global in a fn");
+assert_eq(a_global8(), 7, "a: ... at 8 B");
+assert_eq(a_cap(), 7, "a: a closure's captured copy");
+var gs = P { 7, 2 };
+assert_eq(a_gen(gs), 7, "a: a generic's *T at T = P");
+assert_eq(a_write(), 7, "a: a write through p reaches s");
+assert_eq(a_same(), 1, "a: p == &s");
+assert_eq(GZ.a, 7, "a: the declaration zone, GZ: *P = GS");
+assert_eq(GZ8.v, 7, "a: ... GZ8: *P8 = (GS8)");
+assert_eq(GA.a, 7, "a: after the first statement, GA: *P = GS");
+assert_eq(GA8.v, 7, "a: ... GA8: *P8 = GS8");
+assert_eq(a_handle(), 7, "a control: a handle holds the address");
+assert_eq(a_ptr(), 7, "a control: a *P aliases");
+assert_eq(b_local(), 34, "b: *ppq = r; copies into q, pq not rebound");
+assert_eq(b_call(), 34, "b: *ppq = mkq();");
+assert_eq(b_meth(), 34, "b: *ppq = r.dup();");
+assert_eq(b_op(), 24, "b: *ppq = r + r;");
+assert_eq(b_fnc(), 34, "b: *ppq = fncall0(&mkq);");
+assert_eq(b_wrap(), 34, "b: *ppq = ((r));");
+assert_eq(b_deref(), 34, "b: *ppq = *pr;");
+assert_eq(b_small(), 9, "b: ... at 8 B");
+assert_eq(b_glob(), 34, "b: *GPPQ = r; a global **Q");
+var GR = Q { 3, 4 };
+GQ.a = 1; GQ.b = 1;
+*GPPQ = GR;
+assert_eq(b_chk(GPQ, &GQ), 34, "b: *GPPQ = GR; at top level");
+assert_eq(b_for(), 34, "b: a for step");
+assert_eq(b_fld(), 34, "b: w.pq = r; copies into q, w.pq not rebound");
+assert_eq(b_fcall(), 34, "b: w.pq = mkq();");
+assert_eq(b_fpw(), 34, "b: pw.pq = r; through a *W");
+assert_eq(b_fsmall(), 9, "b: a *Q8 field at 8 B");
+assert_eq(b_fglob(), 34, "b: GW.pq = r; a global's field");
+assert_eq(b_fcap(), 34, "b: a captured struct's *Q field");
+assert_eq(b_ffor(), 34, "b: a field's for step");
+assert_eq(b_gen(), 56, "b: a generic's **T and *T field at T = Q");
+assert_eq(b_amp(), 11, "b control: *ppq = &r rebinds");
+assert_eq(b_ptr(), 11, "b control: w.pq = pr (a *Q) rebinds");
+assert_eq(b_pptr(), 11, "b control: *ppq = pr rebinds");
+assert_eq(b_alloc(), 5, "b control: w.pq = alloc(16) rebinds");
+assert_eq(b_wptr(), 7, "b control: w2.pq = w.pq rebinds");
+assert_eq(b_ie(), 11, "b control: an if-expression of *Q pointers rebinds the slot and the field");
+
+var r = assert_summary();

@@ -31,7 +31,8 @@
 # 6.7.3); an operator's two operands (parameters 0 and 1 of the operator fn); a method's `self`
 # (parameter 0). STAYS ACCEPTED (no static struct): an untyped value or local, `&p` (as the receive
 # path accepts `var q: *Q = &p`), a literal, a call returning an integer or a pointer, a fn pointer. (6.7.16, D97: a
-# pointer to another struct into a `*S` / `**S` is refused — the PD rows; into a by-value struct it still passes.)
+# pointer to another struct into a `*S` / `**S` is refused — the PD rows; 6.7.17, D10 / D11: into a by-value struct,
+# and a pointer of another depth — the PV / PX rows.)
 #
 # Refusal rows are checked on the MESSAGE, that it is the ONE `^error`, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL;
@@ -274,6 +275,26 @@
 #                                                          not build (12 errors)
 #   real tree                                           -> GREEN (194 refusal rows — floor 194 — and 44 acceptance rows)
 #
+# 6.7.17 (D10 / D11, the user's decisions, 2026-10-22; issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-
+# a-word.md rows A1 / A2) — A POINTER TO ANOTHER STRUCT INTO A BY-VALUE STRUCT PARAMETER (of any size, a tuple, a `Str`
+# handle; not a dyn, whose `&p` forms its object) IS REFUSED in this gate's words, and A POINTER OF ANOTHER DEPTH into
+# any struct parameter is refused naming both types ("cannot pass '&pq', a '**Pt', to a '*Pt' parameter in a call to
+# 'nc4' - a pointer of another depth"): `bq(u)` copied Pt's bytes as a Q (68), `nc4(&pq)` read pq's slot as the Pt (1),
+# `nc2(pz)` read a Box as a pointer (139). `&h` of a handle is a `**S` (its `&` is the slot). R4b, B4 and D11 re-derived
+# (they accepted a typed pointer of another struct, 6.7.3 - 6.7.16); small_struct_pointer_arg.tcyr's a_other rows
+# dropped. PV1 / PX1 / PX2 the filed repros verbatim; PV2-PV13 every source and path into a by-value struct; PX3-PX11b
+# every depth, source and path; PVK1-PVK6 the parameter's own struct and depth, `*pp` / `**pp`, a handle's `&h` into
+# `**S`, a `*Str` into a `Str`, untyped, `0`, a dyn — PV / PX / PVK on the x86_64, aarch64, cx and PE compilers; the
+# runtime half is crossos/struct_arg_type_accepted.tcyr's d10_* / d11_* rows. Mutations (2026-10-22, each a scratch
+# copy of the tree with the one change, its compiler built from it, the gate run from the copy):
+#   the tree before it (e65604d5d's parse_types.cyr)    -> RED 35: R4b B4 D11 PV1-PV13 but PV12 (a captured `*Pt`:
+#                                                          6.7.3's capture arm refused it already) PX1-PX11b
+#   `_pa_bv` answering 0 (no by-value arm)              -> RED 19: R4b B4 D11 PV1-PV13 but PV12, PX4 PX5 PX7b PX8
+#   the depth test returning 0 (no `_pa_derr`)          -> RED 20: PX1-PX11b
+#   `_pa_amp` without `_pa_hamp` (no handle arm)        -> RED 4: PX7 PX7b PX7c PX8
+#   `_pa_bv` without its dyn test                       -> RED 1: PVK6 (crossos/dyn_objects.tcyr does not build)
+#   real tree                                           -> GREEN (230 refusal rows — floor 230 — and 48 acceptance rows)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
 
@@ -426,11 +447,11 @@ echo "=== names: locals, globals, captures, calls, method results (address-passe
 refuse "R3 a pointer-mode local" "cannot pass 'p' $MA 'bq'" \
     "include \"lib/alloc.cyr\"
 ${T}fn go(): i64 { var p: Pt = alloc(16); p.x = 3; p.y = 4; return bq(p); } syscall(60, go());"
-# A typed POINTER into a by-value Q converts freely, as `&p` and the receive path do (the user's decision,
-# 2026-10-08); into a `*Q` it is a pointer to another struct, refused since 6.7.16 (the user's D97: the PD rows).
+# A typed POINTER to another struct: into a `*Q` refused since 6.7.16 (the user's D97: the PD rows), into a by-value Q
+# since 6.7.17 (the user's D10, 2026-10-22: the PV rows; 6.7.3 - 6.7.16 it converted freely, the user's of 2026-10-08).
 refuse "R4a a \`u: *Pt\` local into b: *Q (6.7.16, D97)" "cannot pass 'u' $MA 'bqp'" \
     "${T}fn go(): i64 { ${PQ} var u: *Pt = &p; return bqp(u); } syscall(60, go());"
-compiles "R4b a \`u: *Pt\` local into b: Q (a typed pointer: accepted)" \
+refuse "R4b a \`u: *Pt\` local into b: Q (6.7.17, D10)" "cannot pass 'u' $MA 'bq'" \
     "${T}fn go(): i64 { ${PQ} var u: *Pt = &p; return bq(u); } syscall(60, go());"
 refuse "R4c a named Pt into b: *Q (implicit &)" "cannot pass 'p' $MA 'bqp'" \
     "${T}fn go(): i64 { ${PQ} return bqp(p); } syscall(60, go());"
@@ -679,12 +700,10 @@ fn go(): i64 { var w: W1<i32>; w.v = 6; var wp: *W1<i32> = &w; return gw(wp) * 1
     66 \
     "struct W1<T> { v: T; } fn gw<T>(w: W1<T>): i64 { return w.v; }
 fn go(): i64 { var w: W1<i32>; w.v = 6; return gw(w) * 10 + gw<i32>(w); } syscall(60, go());"
-# A typed pointer of ANOTHER struct converts, as over 8 B (6.7.3, the user's decision of 2026-10-08):
-# its bytes are read with the parameter's layout.
-accept "B4 a *T1 into b: S1 is read as an S1, as over 8 B" \
-    "${T}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(tp) * 10 + bs1(&t); } syscall(60, go());" \
-    99 \
-    "${T}fn go(): i64 { var s: S1; s.u = 9; return bs1(s) * 10 + bs1(s); } syscall(60, go());"
+# A typed pointer of ANOTHER struct is refused, as over 8 B (6.7.17, the user's D10; through 6.7.16 it converted and
+# its bytes were read with the parameter's layout, 99).
+refuse "B4 a *T1 into b: S1 (6.7.17, D10)" "cannot pass 'tp' $MA 'bs1'" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(tp) * 10 + bs1(&t); } syscall(60, go());"
 # An UNTYPED value is still the struct's word — only a typed pointer or `&x` is copied through.
 accept "B5 the untyped boundary: an untyped local holding &s is its word" \
     "${T}fn go(): i64 { var s: S1; s.u = 5; var u = &s; if (bs1(u) == u) { return 7; } return 1; } syscall(60, go());" \
@@ -785,11 +804,14 @@ fn go(): i64 { var s: S1; s.u = 2; var sp: *S1 = &s; var hp: HP; hp.ps = &s; var
 syscall(60, go());" \
     16 \
     "${T}fn go(): i64 { return 2 + 2 + 2 + 2 + 2 + 6; } syscall(60, go());"
-# The pointer itself still converts (the user's decision, 2026-10-08); an untyped `*x` is the word it reads.
-accept "D11 bs1(tp) with tp: *T1 converts; bs1(*x) with x untyped is its word" \
-    "${T}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; var x = &t; return bs1(tp) * 10 + bs1(*x); } syscall(60, go());" \
+# The pointer itself is refused since 6.7.17 (the user's D10; it converted through 6.7.16); an untyped `*x` is the word
+# it reads.
+refuse "D11 bs1(tp) with tp: *T1 (6.7.17, D10)" "cannot pass 'tp' $MA 'bs1'" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(tp); } syscall(60, go());"
+accept "D11b bs1(*x) with x untyped is its word" \
+    "${T}fn go(): i64 { var t: T1; t.w = 9; var x = &t; return bs1(*x) * 11; } syscall(60, go());" \
     99 \
-    "${T}fn go(): i64 { var s: S1; s.u = 9; return bs1(s) * 10 + bs1(s); } syscall(60, go());"
+    "${T}fn go(): i64 { var s: S1; s.u = 9; return bs1(s) * 11; } syscall(60, go());"
 # Not one whole dereference: an operator on it is its operator fn's result (6.7.10, decision 11), an i64 here.
 accept "D12 bs1(*tp + 1) with T1_add returning i64: a value" \
     "${T}fn T1_add(a: T1, b): i64 { return a.w + b; } fn go(): i64 { var t: T1; t.w = 9; var tp: *T1 = &t; return bs1(*tp + 1); } syscall(60, go());" \
@@ -1462,9 +1484,140 @@ accept4 "PDK4 nbp(&y), gb<Pt>(&y), gid<Pt>(&p)" \
 accept4 "PDK5 an if-expression with a 0 branch" \
     "${PD}fn go(): i64 { var p = Pt { 1, 7 }; var c = 1; return nc4(if (c == 1) { &p } else { 0 }); } syscall(60, go());" 7
 
+echo "=== 6.7.17 (D10 / D11): a pointer to another struct into a by-value struct, a pointer of another depth (x86_64, aarch64, cx, PE) ==="
+# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md rows A1 / A2 — `_pa_chk` (parse_types.cyr)
+# now reads a BY-VALUE struct parameter as depth 0 (it takes a `*S` of its own struct: B7-1b's copy) and refuses a
+# pointer whose stars differ from the parameter's (`_pa_derr`, both types named); `&h` of a handle is a `**S`
+# (`_pa_hamp`). PV1 / PX1 / PX2 the filed repros verbatim.
+DX="cannot pass"
+refuse4 "PV1 the filed repro A1: bq(u) + bq(&p), a *Pt into b: Q" "cannot pass 'u' $MA 'bq'" \
+'struct Pt { x; y; }
+struct Q { a; b; }
+fn bq(b: Q): i64 { return b.a * 10 + b.b; }
+fn main(): i64 { var p = Pt { 3, 4 }; var u: *Pt = &p; return bq(u) + bq(&p); }
+syscall(60, main());
+'
+PX1W="cannot pass '&pq', a '\*\*Pt', to a '\*Pt' parameter in a call to 'nc4' - a pointer of another depth"
+refuse4 "PX1 the filed repro A2: nc4(&pq), a **Pt into *Pt" "$PX1W" \
+'struct Pt { x; y; }
+fn nc4(p: *Pt): i64 { return p.x; }
+fn main(): i64 { var p = Pt { 3, 4 }; var pq: *Pt = &p; if (nc4(&pq) == &p) { return 1; } return 2; }
+syscall(60, main());
+'
+PX2W="cannot pass 'pz', a '\*Box<i64>', to a '\*\*Box<i64>' parameter in a call to 'nc2' - a pointer of another depth"
+refuse4 "PX2 the filed repro A2: nc2(pz), a *Box<i64> into **Box<i64>" "$PX2W" \
+'struct Box<T> { v: T; n; }
+fn nc2(pp: **Box<i64>): i64 { var p: *Box<i64> = *pp; return p.v; }
+fn main(): i64 { var b: Box<i64>; b.v = 5; b.n = 6; var pz: *Box<i64> = &b; if (nc2(pz) == 5) { return 5; } return 2; }
+syscall(60, main());
+'
+PV='include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+struct Q { a; b; c; }
+struct S1 { u; }
+struct T1 { w; }
+struct Box<T> { v: T; n; }
+struct W { pp: **Pt; pt: *Pt; }
+var GP = Pt { 1, 2 };
+var GU: *Pt = &GP;
+var GH: Pt = 0;
+fn bq(b: Q): i64 { return b.c; }
+fn bp(b: Pt): i64 { return b.y; }
+fn bs1(b: S1): i64 { return b.u; }
+fn sl(s: Str): i64 { return 1; }
+fn tp(t: (i64, i64)): i64 { return t.0; }
+fn nc4(p: *Pt): i64 { return p.y; }
+fn n2(pp: **Pt): i64 { return 2; }
+fn gx<T>(b: Box<T>): i64 { return b.n; }
+fn gpp<T>(pp: **Box<T>): i64 { return 5; }
+fn mkpp(pp: **Pt): **Pt { return pp; }
+impl Pt { fn takeq(self, b: Q): i64 { return b.c; } fn take4(self, o: *Pt): i64 { return o.y; } }
+impl Q { fn cc2(self: Q): i64 { return self.c; } }
+fn Q_add(a: Q, b: Q): i64 { return a.c + b.c; }
+fn Pt_add(a: Pt, b: *Pt): i64 { return a.y + b.y; }
+'
+refuse4 "PV2 bq(&p), &p of a Pt into b: Q" "cannot pass 'p' $MA 'bq'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; return bq(&p); } syscall(60, go());"
+refuse4 "PV3 8 B or less: bs1(&t), a T1 into b: S1" "cannot pass 't' $MA 'bs1'" \
+    "${PV}fn go(): i64 { var t: T1; t.w = 9; return bs1(&t); } syscall(60, go());"
+refuse4 "PV4 a Str handle: sl(u), a *Pt into s: Str" "cannot pass 'u' $MA 'sl'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return sl(u); } syscall(60, go());"
+refuse4 "PV5 a tuple: tp(&p) into t: (i64, i64)" "cannot pass 'p' $MA 'tp'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; return tp(&p); } syscall(60, go());"
+refuse4 "PV6 a method's argument p.takeq(u)" "cannot pass 'u' $MA 'Pt\.takeq'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return p.takeq(u); } syscall(60, go());"
+refuse4 "PV7 an operator's right operand q + u" "cannot pass 'u' $MA 'Q_add'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var q: Q; return q + u; } syscall(60, go());"
+refuse4 "PV8 a by-value self by name: Q_cc2(&p)" "cannot pass 'p' $MA 'Q\.cc2'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; return Q_cc2(&p); } syscall(60, go());"
+refuse4 "PV9 a tail call, a *Pt parameter forwarded" "cannot pass 'u' $MA 'bq'" \
+    "${PV}fn f(u: *Pt): i64 { return bq(u); } fn go(): i64 { var p = Pt { 1, 2 }; return f(&p); } syscall(60, go());"
+refuse4 "PV10 a named argument bq(b: u)" "cannot pass 'u' $MA 'bq'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return bq(b: u); } syscall(60, go());"
+refuse4 "PV11 a *Pt global at top level" "cannot pass 'GU' $MA 'bq'" \
+    "${PV}var r0 = bq(GU); syscall(60, r0);"
+refuse4 "PV12 a closure's captured *Pt" "cannot pass 'u' $MA 'bq'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var f = || bq(u); return fncall0(f); } syscall(60, go());"
+refuse4 "PV13 gx<i64>(bp): a *Box<Pt> into b: Box<i64>" "cannot pass 'bp' $MA 'gx" \
+    "${PV}fn go(): i64 { var b: Box<Pt>; b.n = 3; var bp: *Box<Pt> = &b; return gx<i64>(bp); } syscall(60, go());"
+PXW="to a '\*Pt' parameter in a call to 'nc4' - a pointer of another depth"
+refuse4 "PX3 a **Pt local into *Pt" "cannot pass 'pp', a '\*\*Pt', $PXW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; return nc4(pp); } syscall(60, go());"
+refuse4 "PX4 bp(&u): a **Pt into by-value Pt" "cannot pass '&u', a '\*\*Pt', to a 'Pt' parameter in a call to 'bp' - a pointer of another depth" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return bp(&u); } syscall(60, go());"
+refuse4 "PX5 bp(pp): a **Pt local into by-value Pt" "cannot pass 'pp', a '\*\*Pt', to a 'Pt' parameter" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; return bp(pp); } syscall(60, go());"
+refuse4 "PX6 n2(&p) / n2(u): a *Pt into **Pt" "cannot pass '&p', a '\*Pt', to a '\*\*Pt' parameter in a call to 'n2'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; return n2(&p); } syscall(60, go());"
+refuse4 "PX6b n2(u)" "cannot pass 'u', a '\*Pt', to a '\*\*Pt' parameter in a call to 'n2'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return n2(u); } syscall(60, go());"
+refuse4 "PX7 &h of a handle into *Pt" "cannot pass '&h', a '\*\*Pt', $PXW" \
+    "${PV}fn go(): i64 { var h: Pt = alloc(16); h.x = 3; h.y = 4; return nc4(&h); } syscall(60, go());"
+refuse4 "PX7b &h of a handle into by-value Pt" "cannot pass '&h', a '\*\*Pt', to a 'Pt' parameter" \
+    "${PV}fn go(): i64 { var h: Pt = alloc(16); h.x = 3; h.y = 4; return bp(&h); } syscall(60, go());"
+refuse4 "PX7c &GH of a handle global into *Pt" "cannot pass '&GH', a '\*\*Pt', $PXW" \
+    "${PV}fn go(): i64 { GH = alloc(16); return nc4(&GH); } syscall(60, go());"
+refuse4 "PX8 &s of a Str handle into s: Str" "cannot pass '&s', a '\*\*Str', to a 'Str' parameter in a call to 'sl'" \
+    "${PV}fn go(): i64 { var s: Str = str_from(\"abc\"); return sl(&s); } syscall(60, go());"
+refuse4 "PX9 a ***Pt into **Pt: n2(&pp)" "cannot pass '&pp', a '\*\*\*Pt', to a '\*\*Pt' parameter in a call to 'n2'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; return n2(&pp); } syscall(60, go());"
+refuse4 "PX10 a method's argument p.take4(&u)" "cannot pass '&u', a '\*\*Pt', to a '\*Pt' parameter in a call to 'Pt\.take4'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return p.take4(&u); } syscall(60, go());"
+refuse4 "PX10b an operator's right operand p + &u" "cannot pass '&u', a '\*\*Pt', to a '\*Pt' parameter in a call to 'Pt_add'" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return p + &u; } syscall(60, go());"
+refuse4 "PX10c a named argument nc4(p: pp)" "cannot pass 'pp', a '\*\*Pt', $PXW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; return nc4(p: pp); } syscall(60, go());"
+refuse4 "PX10d a tail call of a **Pt parameter" "cannot pass 'pp', a '\*\*Pt', $PXW" \
+    "${PV}fn f(pp: **Pt): i64 { return nc4(pp); } fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return f(&u); } syscall(60, go());"
+refuse4 "PX10e at top level: nc4(&GU)" "cannot pass '&GU', a '\*\*Pt', $PXW" \
+    "${PV}var r0 = nc4(&GU); syscall(60, r0);"
+refuse4 "PX10f a generic: gpp<i64>(bp), a *Box<i64> into **Box<T>" "cannot pass 'bp', a '\*Box<i64>', to a '\*\*Box<i64>' parameter in a call to 'gpp'" \
+    "${PV}fn go(): i64 { var b: Box<i64>; var bp: *Box<i64> = &b; return gpp<i64>(bp); } syscall(60, go());"
+refuse4 "PX11 a : **Pt call, a **Pt field into *Pt" "cannot pass 'mkpp(&u)', a '\*\*Pt', $PXW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return nc4(mkpp(&u)); } syscall(60, go());"
+refuse4 "PX11b a **Pt field into *Pt" "cannot pass 'w\.pp', a '\*\*Pt', $PXW" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var w: W; w.pp = &u; return nc4(w.pp); } syscall(60, go());"
+accept4 "PVK1 the own struct: &q, a *Q, pq + 0 into b: Q; Q_cc2(&q)" \
+    "${PV}fn go(): i64 { var q: Q; q.c = 3; var pq: *Q = &q; return bq(&q) + bq(pq) + bq(pq + 0) + Q_cc2(&q); } syscall(60, go());" 12
+accept4 "PVK2 the same depth: *Pt, &p, **Pt, &u" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; return nc4(u) + nc4(&p) + n2(pp) + n2(&u) + bp(u) + bp(&p); } syscall(60, go());" 12
+accept4 "PVK3 *pp and **pp: a *Pt and a Pt value" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; var pp: **Pt = &u; var ppp: ***Pt = &pp; return nc4(*pp) + nc4(**pp) + bp(**pp) + n2(*ppp) + nc4(**ppp); } syscall(60, go());" 10
+accept4 "PVK4 a handle's &h into **Pt, h into *Pt, a *Str into s: Str" \
+    "${PV}fn go(): i64 { var h: Pt = alloc(16); h.x = 3; h.y = 4; GH = h; var s: Str = str_from(\"ab\"); var ps: *Str = s; return n2(&h) + n2(&GH) + nc4(h) + sl(ps); } syscall(60, go());" 9
+accept4 "PVK6 a dyn parameter: &p and a *Pt form its object" \
+    "${PV}trait Sh { fn sh(self): i64; } impl Sh for Pt { fn sh(self): i64 { return self.y; } }
+fn dk(o: dyn Sh): i64 { return o.sh(); }
+fn go(): i64 { var p = Pt { 1, 2 }; var u: *Pt = &p; return dk(&p) + dk(u); } syscall(60, go());" 4
+accept4 "PVK5 an untyped pointer, alloc(), 0" \
+    "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u = &p; var a = alloc(16); store64(a + 8, 3); return nc4(u) + nc4(a) + bp(u) + n2(&u) + n2(0); } syscall(60, go());" 11
+
 # Floors (6.7.15): every gate carries one, so a gutted row list cannot pass — the counts this file runs at 6.7.15
 # (the structs lane's FB rows and the vectors lane's DN rows together).
-[ "$nrefuse" -ge 194 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 194)"; fail=$((fail+1)); }
-[ "$naccept" -ge 44 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 44)"; fail=$((fail+1)); }
+[ "$nrefuse" -ge 230 ] || { echo "FAIL: only $nrefuse refusal rows ran (floor 230)"; fail=$((fail+1)); }
+[ "$naccept" -ge 48 ] || { echo "FAIL: only $naccept acceptance rows ran (floor 48)"; fail=$((fail+1)); }
 echo "  $pass passed, $fail failed ($nrefuse refusal rows, $naccept acceptance rows)"
 [ "$fail" -eq 0 ]
