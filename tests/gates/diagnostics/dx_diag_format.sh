@@ -160,6 +160,9 @@ xm CR8 "error:<source>:3:14: undefined variable 'zw'" '    var p = &zw;' 14 "$FB
 xm CR9 "error:<source>:3:13: undefined variable 'zw'$MI" '    var r = zw[0];' 13 "$FB"'    var r = zw[0];\n'"$FE"
 xm CR10 "error:<source>:3:28: undefined variable 'zw'" '    for (var i = 0; i < 3; zw = i + 1) { }' 28 "$FB"'    for (var i = 0; i < 3; zw = i + 1) { }\n'"$FE"
 xm CR11 "error:<source>:4:8: undefined variable 'zw'" '    x, zw = two();' 8 'fn two(): (i64, i64) { return (1, 2); }\n'"$FB"'    x, zw = two();\n'"$FE"
+# An assignment whose value holds a statement (a closure body's): at the assignment's name, not the inner `t` (the
+# review of FD1: the inner statement overwrote the name token the report reads).
+xm CR13 "error:<source>:3:5: undefined variable 'zw'" '    zw = |a| { var t = 1; t = t + 1; return a; };' 5 "$FB"'    zw = |a| { var t = 1; t = t + 1; return a; };\n'"$FE"
 # A generic body parsed once per instance reports its undefined name once, at the name.
 xm CR12 "error:<source>:1:29: undefined variable 'zq'$MI" 'fn g<T>(a: T): i64 { return zq + 1; }' 29 'fn g<T>(a: T): i64 { return zq + 1; }\nfn main(): i64 { return g(1) + g(2.0); }\nsyscall(60, main());\n'
 [ "$(grep -c '^error:' "$E")" = 1 ] || { echo "FAIL: CR12: the instance's report is not once:"; cat "$E"; exit 1; }
@@ -198,5 +201,5 @@ printf '#define ADD(a, b) ((a) + (b) + (a) + (b))\nvar x = ADD(1, 2) + 1; var y 
 if "$CC" < "$T" > /dev/null 2>"$E"; then echo "FAIL: XM11 compiled clean"; exit 1; fi
 grep -q '^error:<source>:2:34: ' "$E" || { echo "FAIL: XM11: the lexer's column is not the source's (want 2:34):"; cat "$E"; exit 1; }
 
-echo "PASS: dx diagnostics — column (:L:C:) + source excerpt + caret; no at-fail noise; a struct named as written (MN1-MN20); an undefined name at the name (CR1-CR12); every struct-return refusal with its excerpt (EX1-EX4); past an in-line expansion the source column and line (XM1-XM11)"
+echo "PASS: dx diagnostics — column (:L:C:) + source excerpt + caret; no at-fail noise; a struct named as written (MN1-MN20); an undefined name at the name (CR1-CR13); every struct-return refusal with its excerpt (EX1-EX4); past an in-line expansion the source column and line (XM1-XM11)"
 exit 0

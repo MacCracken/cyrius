@@ -7876,7 +7876,11 @@ fn PARSE_STMT(S): i64 {
     _agc_ovr = 0;
     var fe = _flt_en;   # 6.7.16: this statement's errors are counted from here (`_FLT_TYPE_WARN`)
     _flt_en = _err_n;
+    # 6.7.17: a statement nested in an assignment's value (a closure body) keeps the assignment's name token: `zq =
+    # |a| { var t = 1; t = t + 1; return a; };` reported 'zq' under the inner `t`. CHANGELOG [6.7.17]
+    var an = _asg_nti;
     _PARSE_STMT_IMPL(S);
+    _asg_nti = an;
     _flt_en = fe;
     _agc_ovr = ov;
     _rd_exit();
