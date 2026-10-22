@@ -588,8 +588,13 @@ var r = add(20, 22);   # r = 42
 
   (`... not inside a block` in a top-level block). Through 6.7.14 it was `unexpected struct` and up to
   four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by
-  the recovery. Either way, a use of what the refused declaration names adds no error of its own
-  (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
+  the recovery. It is refused wherever it sits, whether or not its body is ever compiled (6.7.17, the
+  user's decision D33): in a trait default no impl inherits, in a bounded generic fn or method that is
+  never instantiated (`fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }`), in the body of a
+  refused nested fn or a refused `impl`'s method. Through 6.7.16 such a declaration compiled — said only
+  once a use of its name stood down. Those bodies are not parsed, so their declarations are said at the
+  end of the parse, after its other errors. Either way, a use of what the refused declaration names
+  adds no error of its own (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
   `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
   6.7.14 each was "undefined variable 'Q'", "unknown type 'Q' for parameter 'q'", "no struct type in
   scope for 'q'", ...). So do (6.7.16) `E.B` / `B` in a const context (a `case` label, a const, an array
@@ -3400,6 +3405,13 @@ fn demo(): i64 {
   for 'A'`), and the body reads on: the methods after it are defined (6.7.16; through 6.7.15 it was
   "expected '}', got struct" and the rest of the body was read as top-level code, two or three invented
   errors, the methods after it lost).
+- **An impl header is `impl Type {` or `impl Trait for Type {`.** Anything else where a name, `for` or the
+  `{` belongs — `impl<T: Show> Bx<T> {` (a generic method takes its own list: `fn m<T: Show>(self, v: T)`),
+  `impl P Q {`, `impl Tr for P<i64> {`, `impl P;` — is one error at that token; the header is stepped to
+  its `{` and the block through its `}`, a call of a method it would have defined adds nothing, and the
+  program after it reads on (6.7.17; through 6.7.16 the program after it was read as the impl's body —
+  "an impl body holds only `fn` definitions - in impl 'trait'" per line — or, for `impl Tr for {`,
+  "unmatched '}' at module scope" with the header's own error never printed).
 - **A member's signature is parsed (6.7.8)** where the trait declares it, with a `fn` definition's
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type

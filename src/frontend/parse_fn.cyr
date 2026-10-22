@@ -13971,20 +13971,23 @@ fn PARSE_IMPL(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
     # `impl Trait for Type {` or (6.7.0, A3) the inherent `impl Type {` — methods with no trait.
     if (PEEKT(S) == 10) { return _impl_tup_refuse(S); }   # 6.7.7 (R3): `impl ( .. ) {`
-    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); return _impl_hdr_bad(S, impl_ti); }   # 6.7.17: the block stepped (parse_fn_def.cyr)
     var trait_noff = PEEKV(S);
     STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
     var type_noff = trait_noff;
     if (PEEKT(S) == 13) { trait_noff = 0; }
     else {
-        if (PEEKT(S) != 55) { ERR_MSG(S, "expected '{' (an inherent `impl Type {`) or 'for' (`impl Trait for Type {`)", 75); }
+        if (PEEKT(S) != 55) {
+            ERR_MSG(S, "expected '{' (an inherent `impl Type {`) or 'for' (`impl Trait for Type {`)", 75);
+            return _impl_hdr_bad(S, impl_ti);
+        }
         STI(S, GTI(S) + 1);  # consume FOR
         if (PEEKT(S) == 10) { return _impl_tup_refuse(S); }   # 6.7.7 (R3): `impl Tr for ( .. ) {`
-        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); return _impl_hdr_bad(S, impl_ti); }
         type_noff = PEEKV(S);
         STI(S, GTI(S) + 1);  # consume type name
     }
-    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); return _impl_hdr_bad(S, impl_ti); }
     STI(S, GTI(S) + 1);  # consume {
     # Parse methods inside the impl block
     # Temporarily set module to the type name so methods get mangled

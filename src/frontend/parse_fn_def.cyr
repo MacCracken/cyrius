@@ -264,11 +264,12 @@ fn _fn_def_find(S, noff, ti): i64 {
 # byte-identical to before.
 fn _prescan_skip_impl(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
-    _impl_name_skip(S);  # consume the trait (or, inherent, the type) name
+    if (_impl_hdr_name(S) == 0) { return _impl_hdr_skip(S); }   # the trait (or, inherent, the type) name; 6.7.17
     if (PEEKT(S) == 55) {   # 6.7.0 (A3): absent in an inherent `impl Type {`
         STI(S, GTI(S) + 1);  # consume FOR
-        _impl_name_skip(S);  # consume type name
+        if (_impl_hdr_name(S) == 0) { return _impl_hdr_skip(S); }   # the type name
     }
+    if (PEEKT(S) != 13) { return _impl_hdr_skip(S); }   # 6.7.17
     if (PEEKT(S) == 13) {
         STI(S, GTI(S) + 1);
         var idep = 0;
@@ -282,6 +283,51 @@ fn _prescan_skip_impl(S): i64 {
         }
     }
     return 0;
+}
+
+# ⛔ 6.7.17 — A MALFORMED impl HEADER IS ONE ERROR, ITS BLOCK STEPPED (met in passing by the feg lane). PARSE_IMPL took
+# whatever stood where a name, `for` or the `{` belonged (`impl<T: Show> Bx<T> {`, `impl P Q {`, `impl Tr for P<i64> {`,
+# `impl P;`) as that token and read on, so the program after it was the impl's body: "an impl body holds only `fn`
+# definitions - in impl 'trait'" per statement and "expected '}', got end of file", or every later error hidden. Pass 1
+# stepped one token for each name, so `impl Tr for {` took the `{` as the type and met the body's `}` as "unmatched '}'
+# at module scope", the header's own error never printed. Now, after the header's one error (PARSE_IMPL) or at the same
+# token (pass 1: `_impl_hdr_name` takes only what PARSE_IMPL takes), both step the rest of the header to its `{` and the
+# block through its `}`. A `;` ends the header (stepped), and a `}`, a declaration keyword, `fn`, `var` or `const` at
+# depth 0 ends it before that token, so the program after a header with no block is its own. CHANGELOG [6.7.17]
+fn _impl_hdr_skip(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) {
+            if (t == 13) { return _skip_refused_body(S); }
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (_impl_hdr_end(t) == 1) { return 0; }
+        }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { if (d > 0) { d = d - 1; } }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# PARSE_IMPL's malformed header at `impl` token `ti`, its one error said: the block stepped, and the methods it would
+# have defined entered as reported (`_dl_quiet`), so a call of one adds no "undefined function" / "refusing to emit".
+fn _impl_hdr_bad(S, ti): i64 {
+    _impl_hdr_skip(S);
+    _dl_quiet(S, ti, GTI(S));
+    return 0;
+}
+# 1 = token kind `t` ends a malformed impl header before it: a `}`, `fn`, `var`, `const` or a declaration keyword.
+fn _impl_hdr_end(t): i64 {
+    if (t == 14 || t == 32 || t == 3 || t == 168) { return 1; }
+    return _dl_kind(t);
+}
+# Pass 1's step over an impl header's name, as PARSE_IMPL reads it: a tuple type's `( .. )` (PARSE_IMPL refuses it,
+# `_impl_tup_refuse`) or an identifier. 1 = stepped, 0 = neither (the cursor left on it).
+fn _impl_hdr_name(S): i64 {
+    if (PEEKT(S) == 10) { _impl_name_skip(S); return 1; }
+    if (PEEKT(S) != 2) { return 0; }
+    STI(S, GTI(S) + 1);
+    return 1;
 }
 
 # 6.6.5 — pass-1 impl scan. Registers and stamps each method (`Type_method`) exactly as a
@@ -989,14 +1035,34 @@ fn _dl_fn_at(S, i, d, isid): i64 {
     if (mn == GNPOS(S)) { var l = 0; while (load8(S + 0xEC00000 + mn + l) != 0) { l = l + 1; } SNPOS(S, mn + l + 1); }
     return _dl_fn_quiet(S, mn, i, ((L64(S + 0x1A6018 + (isid - 1) * 8) + 1) << 32) | n);
 }
-# `impl T {` / `impl Tr for T {` at token `i`: T's struct id, 0 when T names none.
+# `impl T {` / `impl Tr for T {` at token `i`: T's struct id, 0 when T names none. 6.7.17: a refused
+# `impl<T: B> Bx<T> {` (PARSE_IMPL's malformed header, `_impl_hdr_bad`) names Bx: a `<..>` list after `impl` is
+# stepped.
 fn _dl_impl_sid(S, i): i64 {
-    var n = i + 1;
-    if (TOKTYP(S, i + 2) == 55) { n = i + 3; }
+    var n = _dl_after_angles(S, i + 1);
+    if (TOKTYP(S, n + 1) == 55) { n = n + 2; }
     if (TOKTYP(S, n) != 2) { return 0; }
     var sid = FINDSTRUCT(S, TOKVAL(S, n));
     if (sid < 0) { return 0; }
     return sid;
+}
+# The token after the `<..>` list that opens at token `j` (a `>>` / `>>>` closes two / three; a `{`, `;` or the end of
+# input ends it), or `j` when none opens there.
+fn _dl_after_angles(S, j): i64 {
+    if (TOKTYP(S, j) != 19) { return j; }
+    var d = 0;
+    var n = GTCNT(S);
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 13 || t == 5 || t == 12) { return j; }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        j = j + 1;
+        if (d <= 0) { return j; }
+    }
+    return j;
 }
 fn _dl_fn_quiet(S, noff, kw, meth): i64 {
     var fi = FINDFN(S, noff);
@@ -1079,7 +1145,7 @@ fn _dl_refd_at(S, noff): i64 {
     var n = vec_len(_dlr);
     var i = 0;
     while (i < n) {
-        if (STREQ(S, vec_get(_dlr, i), noff) == 1) { _had_error = 1; _dl_pw_used(i); return 1; }
+        if (STREQ(S, vec_get(_dlr, i), noff) == 1) { _had_error = 1; return 1; }
         i = i + 1;
     }
     return 0;
@@ -1103,9 +1169,10 @@ fn _dl_refd_at(S, noff): i64 {
 # is registered yet, so no fn). The stand-downs ask only after resolution failed, so a valid top-level declaration of
 # the same name still resolves. CHANGELOG [6.7.16]
 var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
-var _dlpn = 0;     # `_dlr`'s first `_dlpn` entries are the pre-walk's (`_dl_inner_fill`)
-var _dlpk = 0;     # per pre-walk entry: its declaration's keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words)
-var _dlpu = 0;     # per pre-walk entry: 1 once a stand-down answered through it (`_dl_refd_at`), 2 once flushed
+# Per declaration the walk met (`_dl_pw_rec`): its keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words). None is
+# recorded before `_dl_pw_skip` (`_dl_inner_at`: a derive's fns).
+var _dlpd = 0;
+var _dl_pw_skip = 0;
 fn _dl_inner_fill(S): i64 {
     var n = GTCNT(S);
     var sv = GTI(S);
@@ -1135,7 +1202,6 @@ fn _dl_inner_fill(S): i64 {
         i = i + 1;
     }
     _dl_pre = 0;
-    if (_dlr != 0) { _dlpn = vec_len(_dlr); }
     STI(S, sv);
     return 0;
 }
@@ -1146,79 +1212,69 @@ fn _dl_brace_in(stk): i64 {
     if (l == 0) { return 1; }
     return vec_get(stk, l - 1);
 }
-# A declaration keyword at token `i` in a body: at a statement start, a `struct` / `enum` / `union` / `trait` (`pub`
-# before it or not) — what `_decl_inner` refuses and `_dl_names` names — its names entered.
-# Each name entered is recorded with the keyword (`_dlpk`, the body's kind `bk`: 3 a fn's) for `_dl_pw_flush`.
+# A declaration keyword at token `i` in a body, at a statement start: what `_decl_inner` refuses there (any `_dl_kind`),
+# recorded for `_dl_pw_flush` with the body's kind `bk` (3 a fn's); a `struct` / `enum` / `union` / `trait` (`pub`
+# before it or not) — what `_dl_names` names — its names entered.
 fn _dl_inner_at(S, i, bk): i64 {
     var b = TOKTYP(S, i - 1);
     if (b != 13 && b != 14 && b != 5 && b != 49) { return 0; }
+    _dl_pw_rec(i, bk);
     var k = TOKTYP(S, i);
     if (k == 73) { k = TOKTYP(S, i + 1); }
     if (k != 40 && k != 60 && k != 101 && k != 167) { return 0; }
     STI(S, i);
     _dl_skip_in(S);
-    var n0 = 0;
-    if (_dlr != 0) { n0 = vec_len(_dlr); }
-    _dl_names(S, i, GTI(S));
-    if (_dlpk == 0) { _dlpk = vec_new(); _dlpu = vec_new(); }
+    var e = GTI(S);
+    _dl_names(S, i, e);
+    STI(S, e);
+    _dl_derived(S, i);
+    _dl_pw_skip = GTI(S);   # a `#derive`'s fns there (`public fn E_to_json`) are the compiler's, stepped with it
+    return 0;
+}
+# ⛔ 6.7.17 — AN INNER DECLARATION IS REFUSED WHEREVER IT SITS, ITS BODY COMPILED OR NOT (the user's decision D33,
+# 2026-10-22). Pass 2 refuses one where it parses the body (`_decl_inner`); a trait member's default no impl inherits,
+# a bounded generic's base (fn or method: a stub until instantiated) and a stepped body (a refused nested fn's, a
+# refused impl's method) are never parsed, so `trait T { fn d(self): i64 { struct Q { y; } return 1; } }` compiled,
+# and since 6.7.16 a declaration there was reported only once a use of its name stood down. The walk above records
+# every declaration it meets in a body (`_dl_pw_rec`), and once everything is parsed — the top-level PARSE_PROG and the
+# global replay both ended (`_dl_pw_end`, `_dl_pw_late`: a kernel build replays after the program) — each is said at
+# its keyword in `_decl_inner`'s words, in source order, after the parse's other errors: `_dl_in_say` says a TOKEN
+# once (`_ce_err_dup`), so one pass 2 reported stays one line, and two bodies declaring one name are two.
+# CHANGELOG [6.7.17]
+fn _dl_pw_rec(i, bk): i64 {
+    if (i < _dl_pw_skip) { return 0; }
+    if (_dlpd == 0) { _dlpd = vec_new(); }
     var f = 0;
     if (bk == 3) { f = 1; }
-    if (_dlr != 0) {
-        while (n0 < vec_len(_dlr)) { vec_push(_dlpk, i * 2 + f); vec_push(_dlpu, 0); n0 = n0 + 1; }
-    }
+    vec_push(_dlpd, i * 2 + f);
     return 0;
 }
-# ⛔ 6.7.16 — A PRE-WALK NAME STANDS DOWN ONLY FOR A DECLARATION THAT IS REPORTED. The walk above enters the names of
-# every declaration at a statement start in ANY body, and pass 2 refuses one only where it parses the body: a trait
-# member's default no impl inherits, a bounded generic's base (a stub until instantiated) and a refused nested fn's
-# stepped body are never parsed. A use standing down for such a name (`_dl_refd_at`: the annotation, the variable, the
-# const context, the bound, `dyn`, `impl .. for`) counted an error no line said — rc 1 and nothing printed, or the
-# use's own report lost. So the entry a stand-down answers through is marked (`_dl_pw_used`), and once everything is
-# parsed (`_dl_pw_end`: the top-level PARSE_PROG's end; a kernel build's global replay after it) each marked name no
-# reported declaration entered (an entry past `_dlpn`: `_decl_inner`, a late or a private declaration's refusal) has
-# its declaration reported at the keyword, in `_decl_inner`'s words — one line per declaration (`_ce_err_dup`). A name
-# nothing used is untouched: nothing that compiled changes. CHANGELOG [6.7.16]
-fn _dl_pw_used(i): i64 {
-    if (i >= _dlpn) { return 0; }
-    if (vec_get(_dlpu, i) == 0) { vec_set(_dlpu, i, 1); }
-    return 0;
-}
-var _pp_done = 0;   # 1 once the top-level PARSE_PROG has ended
+var _pp_done = 0;    # 1 once the top-level PARSE_PROG has ended
+var _gvi_done = 0;   # 1 once the global replay (EMIT_GVAR_INITS) has ended: before it, or a kernel build's after it
 fn _dl_pw_end(S): i64 {
     if (_pp_depth != 0) { return 0; }
     if (GINFN(S) != 0) { return 0; }
     if (PEEKT(S) != 12) { return 0; }
     _pp_done = 1;
+    if (_gvi_done == 0) { return 0; }
     return _dl_pw_flush(S);
 }
 fn _dl_pw_late(S): i64 {
+    _gvi_done = 1;
     if (_pp_done == 0) { return 0; }
     return _dl_pw_flush(S);
 }
 fn _dl_pw_flush(S): i64 {
-    if (_dlpn == 0) { return 0; }
+    if (_dlpd == 0) { return 0; }
     var sv = GTI(S);
     var p0 = _panic;
     var i = 0;
-    while (i < _dlpn) {
-        if (vec_get(_dlpu, i) == 1) {
-            vec_set(_dlpu, i, 2);
-            if (_dl_rep_has(S, vec_get(_dlr, i)) == 0) { _dl_pw_say(S, vec_get(_dlpk, i)); }
-        }
+    while (i < vec_len(_dlpd)) {
+        _dl_pw_say(S, vec_get(_dlpd, i));
         i = i + 1;
     }
     _panic = p0;
     STI(S, sv);
-    return 0;
-}
-# 1 = a reported declaration (an entry of `_dlr` past the pre-walk's) declared name `noff`.
-fn _dl_rep_has(S, noff): i64 {
-    var n = vec_len(_dlr);
-    var i = _dlpn;
-    while (i < n) {
-        if (STREQ(S, vec_get(_dlr, i), noff) == 1) { return 1; }
-        i = i + 1;
-    }
     return 0;
 }
 fn _dl_pw_say(S, k): i64 {

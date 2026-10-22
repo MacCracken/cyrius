@@ -879,5 +879,102 @@ for leg in $IL; do
 done
 [ "$IBN" -ge 35 ] || bad "IB: the rows ran $IBN row-legs (floor 35) - rows or legs were lost"
 
+# ── IH (6.7.17, met in passing by the feg lane) — a malformed impl header is one error, its block stepped ──
+# PARSE_IMPL took whatever stood where a name, `for` or the `{` belonged as that token and read on: `impl<T: Show> Bx<T> {`
+# made the rest of the program the impl's body ("an impl body holds only `fn` definitions - in impl 'trait'" per line,
+# "expected '}', got end of file"), `impl P;` hid every later error, `impl P` above `fn main` took main as a method; pass 1
+# stepped one token per name, so `impl Tr for {` met the body's `}` as "unmatched '}' at module scope" and the header's
+# own error was never printed; a call of the refused impl's method added "undefined function" + "refusing to emit
+# binary". Now both passes step the header to its `{` (`_impl_hdr_skip`; a `;` ends it, a `}`, `fn`, `var`, `const` or
+# declaration keyword ends it before that token) and the block through its `}`, and the methods it would have defined
+# are entered as reported (`_impl_hdr_bad` -> `_dl_quiet`; `_dl_impl_sid` steps an `impl<..>` list, which also quiets a
+# refused late / inner `impl<T> P`'s). Each row on five legs: the header's one error, then `zz`'s (the program after it
+# parses on). IH1 `impl<T: Show> Bx<T>`, its method called both ways; IH2 `impl P Q`; IH3 `impl Tr for P<i64>`; IH4
+# `impl Tr for {`; IH5 `impl P;`; IH6 `impl P` with no block above `fn main`; IH7 a `>>` closing the list; IH8 a late
+# `impl<T> P` (the late arm), its method called; IH9 --syntax-only of IH1; IH10 `impl 5 {` (one error before too).
+# Mutants (2026-10-22, measured: a scratch copy of the tree with the one change, its 2-stage cycc, this gate):
+#   the lane before it (0a93fa8b9)                     -> RED 45: IH1-IH9
+#   `_impl_hdr_skip` stepping nothing (both passes)   -> RED 25: IH1 IH2 IH3 IH7 IH10
+#   `_prescan_skip_impl` stepping one token per name  -> RED 30: IH1-IH5 IH7 (pass 1 out of step with pass 2)
+#   `_impl_hdr_bad` without its `_dl_quiet`           -> RED 20: IH1 IH2 IH3 IH7 ("undefined function" + "refusing to
+#                                                        emit")
+#   `_dl_impl_sid` without `_dl_after_angles`         -> RED 15: IH1 IH7 IH8
+#   `_impl_hdr_end` answering 0 (no early end)        -> RED 5: IH6 (main taken as the block)
+IHN=0
+ihrow() { n0=$IBN; ibrow "$@"; IHN=$((IHN + IBN - n0)); }
+ihrow IH1 "impl<T: Show> Bx<T>: its method called" 'trait Show { fn s(self): i64; }
+struct Bx { v; }
+impl<T: Show> Bx<T> { fn get(self): i64 { return 1; } }
+fn main(): i64 { var b = Bx { 1 }; return b.get() + Bx_get(&b) + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:3:5: expected identifier, got '<'
+error:<source>:4:68: $IZ"
+ihrow IH2 "impl P Q: its method called" 'struct P { v; }
+impl P Q { fn m(self): i64 { return 1; } }
+fn main(): i64 { var p = P { 1 }; return p.m() + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:2:8: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:3:52: $IZ"
+ihrow IH3 "impl Tr for P<i64>: its method called" 'trait Tr { fn m(self): i64; }
+struct P { v; }
+impl Tr for P<i64> { fn m(self): i64 { return 1; } }
+fn main(): i64 { var p = P { 1 }; return p.m() + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:3:14: expected '{', got '<'
+error:<source>:4:52: $IZ"
+ihrow IH4 "impl Tr for {: pass 1 steps the block too" 'trait Tr { fn m(self): i64; }
+impl Tr for { fn m(self): i64 { return 1; } }
+fn main(): i64 { return 3 + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:2:13: expected identifier, got '{'
+error:<source>:3:31: $IZ"
+ihrow IH5 "impl P;: the program after it is its own" 'struct P { v; }
+impl P;
+fn main(): i64 { return 3 + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:2:7: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:3:31: $IZ"
+ihrow IH6 "impl P with no block: fn main is not its body" 'struct P { v; }
+impl P
+fn main(): i64 { return 3 + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:3:31: $IZ"
+ihrow IH7 "a >> closing the impl's list" 'struct Bx { v; }
+impl<T: Sh<i64>> Bx<T> { fn get(self): i64 { return 1; } }
+fn main(): i64 { var b = Bx { 1 }; return b.get() + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:2:5: expected identifier, got '<'
+error:<source>:3:55: $IZ"
+ihrow IH8 "a late impl<T> P: its method called" 'struct P { v; }
+var a = 1;
+a = 2;
+impl<T> P { fn m(self): i64 { return 1; } }
+var p = P { 1 };
+syscall(60, p.m() + zz);
+' "error:<source>:4:1: an \`impl\` declaration must come before the first top-level statement (line 3)
+error:<source>:6:23: $IZ"
+ihrow IH9 "--syntax-only: IH1's header" 'trait Show { fn s(self): i64; }
+struct Bx { v; }
+impl<T: Show> Bx<T> { fn get(self): i64 { return 1; } }
+fn main(): i64 { return 3 + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:3:5: expected identifier, got '<'" --syntax-only
+ihrow IH10 "impl 5 {" 'impl 5 { fn m(self): i64 { return 1; } }
+fn main(): i64 { return 3 + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:1:6: expected identifier, got number 5
+error:<source>:2:31: $IZ"
+[ "$IHN" -ge 50 ] || bad "IH: the rows ran $IHN row-legs (floor 50) - rows or legs were lost"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a fn's fn-pointer return is that line too, once, the body read on (FP, 6.7.16) — a member's multi-value *fn( .. ) element too (FP9, 6.7.17, D9) — and a member takes a bare *fn parameter (BF, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"
