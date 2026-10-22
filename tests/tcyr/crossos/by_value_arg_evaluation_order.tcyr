@@ -15,7 +15,8 @@
 # 6.7.9: the same shapes at parameter 62 and later, past the 62-bit copies mask. 6.7.17: an operator fn
 # reached through a typed pointer — a dereference, a typed pointer's struct field, a `*T` field's; and a later
 # argument's call, which writes only through a callee that may (`_fn_nowrite`): the callees that write in their
-# bodies, and the ones that write nothing (no copy, a tail walk in constant stack).
+# bodies, and the ones that write nothing (no copy, a tail walk in constant stack) — as a read-only builtin written
+# inline (`load64`, `f64_add`) writes nothing.
 # On the merged 6.7.7 compiler every row failed on x86, aarch64, cx and PE but the two controls,
 # the first-position f64v2 (PE only) and the three 1,000,000-deep tail rows (controls too). Now an
 # argument a later argument may write (`_span_may_write`: a call whose callee may write — 6.7.17,
@@ -202,12 +203,15 @@ fn nw_vals(): i64 {
     var b: Big = Big { 1, 2, 3 };
     var h: HV;
     h.n = 4;
+    var k = 4;
     var e = 0;
     if (rd(b, nw_add(5)) != 1) { e = e | 1; }
     if (rd(b, nw_field(&h)) != 1) { e = e | 2; }
     if (rd(b, G.nwm(5)) != 1) { e = e | 4; }
     if (rd(b, nw_gen<i64>(0, 5)) != 1) { e = e | 8; }
     if (rd(b, nw_gen(0, 5)) != 1) { e = e | 16; }
+    if (rd(b, load64(&k) + 1) != 1) { e = e | 32; }
+    if (rd(b, f64_to(f64_add(f64_from(k), f64_from(1)))) != 1) { e = e | 64; }
     return e;
 }
 fn nwalk(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk(G, n - 1, nw_add(acc)); }
@@ -215,6 +219,11 @@ fn nwalk_m(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk
 fn nwalk_g(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk_g(G, n - 1, nw_gen<i64>(0, acc)); }
 fn nwalk_b(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk_b(G, n - 1, nw_below(acc)); }
 fn nw_below(x): i64 { return x + 1; }
+# ... and a read-only builtin written inline: `acc + load64(PONE)` is no write (a copy, and so a call per level, before
+# the review fix — where a helper wrapping the load kept the `jmp`)
+var ONE = 1;
+var PONE = 0;
+fn nwalk_l(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return nwalk_l(G, n - 1, acc + load64(PONE)); }
 # ── value-form vectors ──────────────────────────────────────────────────────────────────────────
 fn vec_first(): i64 {
     var v: f64v2 = f64v2(f64_from(1), f64_from(2));
@@ -421,12 +430,14 @@ assert_eq(eff_cycle(), 1, "... a mutual recursion that stores to G: rd(G, cyc_a(
 assert_eq(eff_ife_sub(), 1, "... an operator fn on an if-expression (`.. else { w } - 1`): rd(G, w_ife_sub(1, s, s))");
 assert_eq(eff_ife_mul(), 1, "... the `* 1` twin: rd(G, w_ife_mul(1, s, s))");
 assert_eq(eff_ife_ran(), 5621, "control: the if-expression's S1_sub / S1_mul run (5, 6; G.a 1 + 20)");
-assert_eq(nw_vals(), 0, "a callee that writes nothing (direct, a field read, a method, a generic both ways): the value as written");
+assert_eq(nw_vals(), 0, "a callee that writes nothing (direct, a field read, a method, a generic both ways; a load and f64_add inline): the value as written");
 G.a = 1;
 assert_eq(nwalk(G, 1000000, 0), 1000001, "the issue's shape: return nwalk(G, n - 1, nw_add(acc)) 1,000,000 deep (its jmp)");
 assert_eq(nwalk_m(G, 1000, 0), 1001, "... through a method: G.nwm(acc)");
 assert_eq(nwalk_g(G, 1000, 0), 1001, "... through a generic: nw_gen<i64>(0, acc)");
 assert_eq(nwalk_b(G, 1000, 0), 1001, "... through a helper defined below the walk");
+PONE = &ONE;
+assert_eq(nwalk_l(G, 1000000, 0), 1000001, "... a read-only builtin inline: return nwalk_l(G, n - 1, acc + load64(PONE)) 1,000,000 deep (its jmp)");
 assert_eq(vec_first(), 0, "an f64v2 argument: rv(v, bump(&v)) reads the low lane as written");
 assert_eq(vec_mid(), 0, "an f64v2 between two arguments: rv2(0, v, bump(&v))");
 assert_eq(vec_wide(), 0, "an f64v4 argument: rv4(0, v, bump(&v))");

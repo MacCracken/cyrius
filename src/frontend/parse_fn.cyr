@@ -18615,7 +18615,9 @@ fn _name_struct_val(S, i): i64 {
 # 1 = evaluating the tokens [q, e) — one argument (its `name:` label skipped) or an operand — may
 # write memory: a call (`_tok_calls` before a `(`; 6.7.17: one whose callee may write — a fn that writes
 # no memory, `_fn_nowrite`, costs no copy, so its tail call keeps its `jmp`), any token `_tok_pure` does not name (an
-# assignment, a block or struct literal, a builtin, `?`, `if`, ...), or `+ - * /` beside a struct
+# assignment, a block or struct literal, a builtin, `?`, `if`, ...) but the read-only builtins the summary
+# allows (`_fnw_builtin_tok`: `load8` .. `load64`, `f64_add` .. `f64_neg` — written inline they cost the `jmp` that
+# a helper wrapping them kept), or `+ - * /` beside a struct
 # value (`_name_struct_val`; 6.7.17: a dereference of a typed struct pointer, `_deref_struct_at`),
 # which dispatches that struct's operator fn. Conservative: a 1 costs a copy. CHANGELOG [6.7.17]
 fn _span_may_write(S, q, e): i64 {
@@ -18634,7 +18636,9 @@ fn _span_may_write(S, q, e): i64 {
             elif (t == 8) { if (_deref_struct_at(S, i) == 1) { sn = 1; } }
         }
         elif (t == 113 || t == 116) { op = 1; }   # `+%` / `-%` are `+` / `-`
-        elif (_tok_pure(t) == 0) { return 1; }
+        elif (_tok_pure(t) == 0) {   # a builtin's `(` is no call: its arguments are scanned token by token
+            if (_fnw_builtin_tok(t) == 0) { return 1; }
+        }
         i = i + 1;
     }
     if (op == 1) { if (sn == 1) { return 1; } }

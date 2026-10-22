@@ -2488,7 +2488,11 @@ was evaluated — so when a LATER argument may write memory, the argument is cop
 first: `rd(b, bump(&b))` passes `b` as it was before `bump` ran. A later argument may write when it
 stores, assigns, applies `+ - * /` to a struct value (that struct's operator fn runs: a struct
 variable, a field, and since 6.7.17 one reached through a typed pointer — `*p + 1`, `p.v + 1`,
-`o.p.v + 1`), or calls a fn that may write. In a tail call that copy lives in the frame the `jmp`
+`o.p.v + 1`), or calls a fn that may write; it is also read as writing when it holds an
+if-expression, a block or struct literal, a `?`, or a builtin other than the loads (`load8` ..
+`load64`) and `f64_add` .. `f64_neg` (`f64_add`, `f64_sub`, `f64_mul`, `f64_div`, `f64_from`,
+`f64_to`, `f64_eq`, `f64_lt`, `f64_gt`, `f64_neg` — since 6.7.17 those take no copy, as a helper
+wrapping them takes none). In a tail call that copy lives in the frame the `jmp`
 would free, so `return f(b, .., bump(&b))` is an ordinary call (the 6.7.7 ruling, the user,
 2026-10-09: "accept the TCO loss"). ⚠ Through 6.7.16 EVERY call among the later arguments counted
 as a write, so `return f(G, n - 1, g(acc))` with `fn g(x) { return x + 1; }` lost its `jmp` and a

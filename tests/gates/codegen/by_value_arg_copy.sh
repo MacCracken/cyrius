@@ -28,7 +28,9 @@
 #      on a struct parameter (`hop(w)`, `v + 1`), a call to a writer (`hw2`), a writing method
 #      (`o.wm`), a writing generic (`gw<i64>`), a recursive helper (`rr`, conservatively); K16 / K17 a
 #      helper whose if-expression `if (c) { v } else { w } - 1` (`* 1`) runs S1's operator fn (its `}` read
-#      as ending no operand, the `-` / `*` was a unary one: no copy before the review fix)
+#      as ending no operand, the `-` / `*` was a unary one: no copy before the review fix); C21 a read-only
+#      builtin written inline (`load64(&n) + 1`) takes no copy, as the summary's allow-list reads one
+#      (`_fnw_builtin_tok`; a copy before the review fix, where a helper wrapping it took none)
 #   T  objdump: `return rd(G, gbump())` (no `&`, which diverts any tail call) is an ordinary call —
 #      its copy is in the frame the `jmp` would free — and `return rd(G, n)` keeps its `jmp`
 #   TS the copy costs ONLY its own call the `jmp` (`_tc_snap_div`, never the per-fn
@@ -48,6 +50,7 @@
 #      stores to a global keeps the copy and the call; TU4 a helper defined BELOW the caller, TU5 a
 #      method (`G.m6(acc)`), TU6 / TU6B a generic called with and without `<i64>` keep the `jmp`;
 #      TU7 a recursive helper is a call (a summary in progress reads as a write: conservative);
+#      TU8 a read-only builtin inline, `return f13(G, n - 1, acc + load64(P))`, keeps its `jmp`;
 #      TU2 every `jmp` form run 3,000,000 deep (the issue's tco2 verbatim among them), the call
 #      forms 1,000 deep, each with its value: exit 193
 #   TD a 60,000-deep chain of helpers that declare nothing, reached from a later argument, compiles and runs
@@ -122,6 +125,9 @@
 #   M30 `_tok_opnd_end` without `}` (the pre-fix line)        -> K16, K17; the tcyr's `w_ife_sub` / `w_ife_mul`
 #                                                              rows (11) on x86 / IR3 / DCE / aarch64 / cx / PE
 #   M31 `_fn_nowrite` without its depth bound (the pre-fix line) -> TD (rc 139: cycc's SIGSEGV)
+#   M38 `_span_may_write` reads every builtin as a write (the pre-fix line) -> C21, TU8, TU2 (SIGSEGV); the tcyr's
+#                                                              1,000,000-deep `nwalk_l` on x86 / IR3 / DCE (SIGSEGV)
+#                                                              and PE (wine: exit 1)
 #   (`_fnw_brace_ok` answering 1 kills no row: a struct literal builds in the callee's own frame — the rule is the
 #   allow-list's, for a `{` the scan does not read)
 set -u
@@ -187,7 +193,8 @@ K13@o.wm(n)@K
 K14@gw<i64>(n)@K
 K15@rr(n)@K
 K16@ife(1, s1, s1)@K
-K17@ifm(1, s1, s1)@K'
+K17@ifm(1, s1, s1)@K
+C21@load64(&n) + 1@C'
 {
     printf 'struct Big { a: i64; b: i64; c: i64; }\nstruct W { p: i64; q: i64; r: i64; }\nstruct HW { n: i64; w: W; v: W; }\nstruct OP2 { n: i64; p: *HW; }\n'
     printf 'fn bump(p): i64 { store64(p, load64(p) + 10); return 0; }\n'
@@ -229,7 +236,7 @@ else
     cat "$T/c.out"
     nf=$(grep -c '^  FAIL' "$T/c.out" || true); fails=$((fails + nf))
     nr=$(grep -c '^  ok' "$T/c.out" || true)
-    [ $((nr + nf)) -eq 37 ] || bad "C/K: $((nr + nf)) rows judged, want 37"
+    [ $((nr + nf)) -eq 38 ] || bad "C/K: $((nr + nf)) rows judged, want 38"
 fi
 
 # ── T: the tail form (objdump) ──────────────────────────────────────────────────────────────────
@@ -310,9 +317,13 @@ fn f12(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f12(G, n 
 fn b6(x): i64 { return x + 1; }
 fn g(x): i64 { return x + 1; }
 fn f(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f(G, n - 1, g(acc)); }
+var ONE = 1;
+var P = 0;
+fn f13(s: Big, n, acc): i64 { if (n == 0) { return acc + s.a; } return f13(G, n - 1, acc + load64(P)); }
 fn uend(): i64 { return 0; }
 fn uchk(): i64 {
     var e = 0;
+    P = &ONE;
     if (f7(G, 1000, 0) != 1001) { e = e + 1; }
     if (f8(G, 3000000, 0) != 3000001) { e = e + 2; }
     if (f9(G, 3000000, 0) != 3000001) { e = e + 4; }
@@ -320,6 +331,7 @@ fn uchk(): i64 {
     if (f11(G, 3000000, 0) != 3000001) { e = e + 16; }
     if (f12(G, 1000, 0) != 1001) { e = e + 32; }
     if (f(G, 3000000, 0) != 3000001) { e = e + 64; }
+    if (f13(G, 3000000, 0) != 3000001) { e = e + 128; }
     return e;
 }
 syscall(60, (f6(G, 3000000, 0) & 255) + uchk() + uend());
@@ -328,7 +340,7 @@ rc=0; CYRIUS_SYMS="$T/tu.syms" "$CC" < "$T/tu.cyr" > "$T/tu.bin" 2> "$T/tu.err" 
 if [ "$rc" -ne 0 ]; then bad "TU: the probe did not build: $(grep '^error' "$T/tu.err" | head -1)"
 else
     chmod +x "$T/tu.bin"; got=0; timeout 30 "$T/tu.bin" || got=$?
-    [ "$got" -eq 193 ] && ok "TU2: f6 / f / f8-f11 run 3,000,000 deep (f7 / f12 1,000), every value right: exit 193" || bad "TU2: exit $got, want 193 (139: a tail call lost its jmp; 194..: a walk's value is wrong)"
+    [ "$got" -eq 193 ] && ok "TU2: f6 / f / f8-f11 / f13 run 3,000,000 deep (f7 / f12 1,000), every value right: exit 193" || bad "TU2: exit $got, want 193 (139: a tail call lost its jmp; any other: a walk's value is wrong)"
     if command -v objdump > /dev/null 2>&1; then
         sort "$T/tu.syms" > "$T/tu.sorted"
         # tu_n <op> <fn>: how many <op>s to <fn> itself in [fn, the next symbol)
@@ -352,7 +364,8 @@ else
         tu_row TU6 f10 1 0 "a generic that writes nothing, gg6<i64>(0, acc): a jmp"
         tu_row TU6B f11 1 0 "... called without its type argument, gg6(0, acc): a jmp"
         tu_row TU7 f12 0 1 "a recursive helper (r6) reads as a writer: the copy and the call"
-    else echo "  SKIP TU1-TU7: no objdump"; skips=$((skips + 1)); fi
+        tu_row TU8 f13 1 0 "a read-only builtin inline, acc + load64(P), writes nothing: a jmp"
+    else echo "  SKIP TU1-TU8: no objdump"; skips=$((skips + 1)); fi
 fi
 
 # ── TD: a deep chain of helpers that declare nothing (6.7.17 review fix) ─────────────────────────
