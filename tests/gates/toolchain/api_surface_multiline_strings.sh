@@ -18,7 +18,10 @@
 # removal or missed a real one. The fix carries ONE lexical state (_asf_lexst_at, the
 # preprocessor's PP_LEXST_AT) across the whole file; a line that starts inside a string gets no
 # declaration test, and a column-0 `include "..."` line is consumed whole, as the preprocessor
-# consumes it (a stray quote after its path opens no string).
+# consumes it (a stray quote after its path opens no string). 6.7.17 (the user's D29): the
+# compiler refuses source after an include's file name by name, so the ms_include module (whose
+# include line carries that tail) is no longer in the oracle program: the compiler's refusal of it
+# is checked instead, and the tool's listing of it by its axis-3 row, as before.
 #
 # ⭐ THE ORACLE IS THE COMPILER. Every shape sits in its own module, compiled into one program
 # with CYRIUS_DCE_VERBOSE=1 (nothing is called, so every emitted fn is listed as dead). Then:
@@ -37,12 +40,12 @@
 # The tool under test is BUILT HERE from programs/cyrius_api_surface.cyr (API_SRC=<file> builds a
 # different source — how the mutants below were run).
 #
-# MUTATION PROOF (6.7.9, run with API_SRC=<mutant>; checks failed of 21, every one RED):
+# MUTATION PROOF (6.7.9, run with API_SRC=<mutant>; checks failed of 21 — 22 since 6.7.17 — every one RED):
 #   M0  the 6.7.8 tool (each line restarts in code)                          13
 #   M1  no line-start guard: the declaration test runs on string lines         8
 #   M2  the carried state reset to code at every line start                  13
 #   M3  braces counted inside strings too                                      6
-#   M4  the column-0 `include` line lexed (its stray quote opens a string)     3
+#   M4  the column-0 `include` line lexed (its stray quote opens a string)     3 (2 since 6.7.17)
 #   M5  a strings-only lexer (no char-literal, no comment state)               4
 #   M6  no comment state (a `#` that is not an attribute is code)              3
 #   M7  _asf_lexst instead of _asf_lexst_at (an attribute line a comment)      3
@@ -173,7 +176,7 @@ fn ms_after_comment(a) { return a; }
 EOF
 {
     for m in ms_brace ms_fnline ms_body ms_bodyopen ms_escapes ms_derive ms_reopen ms_attr \
-      ms_include ms_char ms_comment; do
+      ms_char ms_comment; do
         printf 'include "src/%s.cyr"\n' "$m"
     done
     printf 'fn main(): i64 { return 0; }\nvar r = main();\nsyscall(60, r);\n'
@@ -191,7 +194,12 @@ crc=0
 ( cd "$P" && CYRIUS_DCE_VERBOSE=1 "$CC" < prog.cyr > "$T/prog" 2> "$T/dce.txt" ) || crc=$?
 check "the fixture project compiles (rc 0)" 0 "$crc"
 sed -n 's/^  dead: \(ms_[A-Za-z0-9_]*\)$/\1/p' "$T/dce.txt" | sort > "$T/E.txt"
-check "  (floor: the compiler emitted 15 fixture fns)" 15 "$(wc -l < "$T/E.txt" | tr -d ' ')"
+check "  (floor: the compiler emitted 14 fixture fns)" 14 "$(wc -l < "$T/E.txt" | tr -d ' ')"
+# 6.7.17 (D29): the ms_include module's tail is refused by name, and the line after it still read
+irc=0
+( cd "$P" && printf 'include "src/ms_include.cyr"\nsyscall(60, ms_after_include(0));\n' | "$CC" > "$T/inc.bin" 2> "$T/inc.err" ) || irc=$?
+check "  (the compiler refuses ms_include's tail by name, nothing else)" "1|error:src/ms_include.cyr:1:28: expected the end of the line after an include's file name" "$irc|$(grep -E '^(error|warning)' "$T/inc.err" | tr '\n' '|' | sed 's/|$//')"
+grep -v '^ms_after_include$' "$T/A.txt" > "$T/A2.txt" && mv "$T/A2.txt" "$T/A.txt"
 check "  (the compiler emitted no ms_ghost / ms_fake fn)" 0 "$(grep -c 'ghost\|fake' "$T/E.txt")"
 
 echo "axis 2 — the tool lists exactly what the compiler emitted"

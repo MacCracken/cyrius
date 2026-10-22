@@ -114,8 +114,11 @@ check "vet real.cyr: MISSING, rc 1" "1|MISSING lib/gone.cyr" "$ARC|$(rows)"
 echo "axis 2 — column 0 only, the directive's line consumed"
 printf '    include "lib/indented.cyr"\ninclude "lib/ok.cyr" trailing "quote\ninclude "lib/ok2.cyr"\n' > "$W/col.cyr"
 printf 'include "lib/ok.cyr" trailing "quote\ninclude "lib/ok2.cyr"\nsyscall(60, ok_a() + ok_b());\n' > "$W/colp.cyr"
-prc=0; ( cd "$W" && "$ROOT/build/cycc" < colp.cyr > "$T/colp" 2> /dev/null && chmod +x "$T/colp" && timeout 10 "$T/colp" ) || prc=$?
-check "  (oracle: the compiler takes BOTH includes — the directive swallows its line's stray quote; exit 1+2)" 3 "$prc"
+# 6.7.17 (the user's D29): the compiler refuses the tail after the file name by name, and still reads the NEXT line's
+# include — the stray quote opens no string (a lost `lib/ok2.cyr` would add "undefined function 'ok_b'"). Through 6.7.16
+# the tail was swallowed and the program ran (exit 1+2).
+prc=0; ( cd "$W" && "$ROOT/build/cycc" < colp.cyr > "$T/colp" 2> "$T/colp.err" ) || prc=$?
+check "  (oracle: the compiler refuses the stray quote's tail and reads BOTH includes)" "1|error:<source>:1:22: expected the end of the line after an include's file name" "$prc|$(grep -E '^(error|warning)' "$T/colp.err" | tr '\n' '|' | sed 's/|$//')"
 au vet col.cyr
 check "an indented include is not a directive; a quote after the path does not hide the next line" "0|OK lib/ok.cyr|OK lib/ok2.cyr" "$ARC|$(rows)"
 printf '# see include "../shared/x.cyr"\ninclude "lib/ok.cyr"\n' > "$W/cmt.cyr"

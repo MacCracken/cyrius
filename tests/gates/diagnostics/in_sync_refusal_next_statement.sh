@@ -281,7 +281,9 @@ okrow() {
 # the block: it ate it, so `{ #assert 1 == 1 }` added "expected '}', got end of file" to its one refusal (AS13), and
 # `{ #assert 1 == 1, "m" }` was that invented error alone — now "#assert: expected `;` or a line break before `}`"
 # (AS14), in a fn's block, a top-level block (AS16), an impl body (AS17, AS18) and a switch arm (AS19). At module
-# scope a `}` on the line closes nothing and the tail takes it as before.
+# scope a `}` on the line closes nothing; the tail took it through 6.7.16 (ASV3 pinned that), and since 6.7.17 it is
+# refused as any token after the message is (the user's D28, 2026-10-22: AS21; the rows of that decision are
+# resolution_excerpt_and_assert_skip.sh's axis 8).
 # MUTATION LEDGER (2026-10-20, f16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
 # from that copy with CYCC= it, so every leg's compiler carries the mutant):
 #   `_asrt_synced` back to the `;`-only rule (6.7.15's)  -> RED AS1 AS2 AS4 AS6 AS7 AS8 AS9 AS11 on every leg, 40 (the
@@ -455,13 +457,18 @@ fn main(): i64 { var s = S { 1 }; return s.m() + s.n(); }
 syscall(60, main());
 ' 9
 
-okrow ASV3 "control: a message holding braces, and a } at module scope on the line (taken by the tail)" 'fn f(x): i64 {
+okrow ASV3 "control: a message holding braces" 'fn f(x): i64 {
     #assert 1 == 1, "a { b }"
     return 7;
 }
-#assert 1 == 1, "m" }
 syscall(60, f(1));
 ' 7
+
+row AS21 "6.7.17 (D28): a } at module scope after the message is refused, as any token there" 'fn f(x): i64 { return 7; }
+#assert 1 == 1, "m" }
+syscall(60, f(zz));
+' "error:<source>:2:21: #assert: expected \`;\` or the end of the line after the message
+error:<source>:3:17: $ZZ"
 
 # H — 6.7.16 (issues/archived/2026-10-19-refusal-in-compound-statement-header-swallows-blocks-second-statement.md): A REFUSAL
 # LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`. The header of an `if` / `elif` / `while` /
@@ -848,9 +855,9 @@ fn main(): i64 { var p = P { 1 }; return h() + p.k() + g(1); }
 syscall(60, main());
 ' 3
 
-# The corpus floor (6.7.16): 89 rows on five legs. The gate had none, so a row lost from the list, or a leg that
-# stopped running, read green.
-FLOOR=445
+# The corpus floor (6.7.16): 89 rows on five legs, 90 with 6.7.17's AS21. The gate had none, so a row lost from the
+# list, or a leg that stopped running, read green.
+FLOOR=450
 if [ $((pass + fail)) -lt "$FLOOR" ]; then bad "$G ran $((pass + fail)) row-legs (floor $FLOOR) - rows or legs were lost"; fi
 echo "$G: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

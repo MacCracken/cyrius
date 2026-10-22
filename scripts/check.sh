@@ -1095,11 +1095,14 @@ _chk_gate "$ROOT/tests/gates/frontend/sizeof_whole_name.sh"
 # compiled and every call got the intrinsic, `fn fncall1(a, b)` compiled and its call jumped
 # through `a` (SIGSEGV), and `var sizeof` declared with every read a parse error. Every
 # declaration form is refused by name; only a file named fnptr.cyr may declare fncall0..8.
+# 6.7.17 (D32): axis 5 also refuses a value builtin as a whole statement (`load8(p);`, `f64_sqrt(x);`) in D11's words.
 _chk_gate "$ROOT/tests/gates/frontend/intrinsic_names_reserved.sh"
 
 # v6.5.56: `private fn h()` must be rejected rather than silently privatising the whole file
 # (twelve releases live, no diagnostic). Axes 2-3 keep the fix honest: the own-line and
-# `private;` forms are the legitimate spellings and must keep working.
+# `private;` forms are the legitimate spellings and must keep working. 6.7.17 (the user's D31): the file-level line
+# after the first top-level statement compiles (the PL rows; "unexpected private" before, its latch swallowing the
+# next statement's error), and in a body it is "unexpected private" in sync.
 _chk_gate "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
 
 # 6.6.5: `private` was enforced only against definitions PASS 1 REGISTERED, and pass 1 skipped
@@ -1619,6 +1622,10 @@ _chk_gate "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
 # entry to the alloc'd spelling. The filed repro (128 / 127), 308 and 766 characters, two spellings sharing
 # 250, the count's edge; x86 / aarch64 / cx / PE / cycc_win. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/frontend/include_once_long_spelling.sh"
+# 6.7.17 (the user's D29) — an include line ends at its file name: source after the name on the line (`include "x"; var
+# y = 1;`, a second include) was dropped unread; now refused by name in both preprocessor copies (PP_PASS, PP_IFDEF_PASS:
+# PP_INCLUDE_TAIL). 12 rows on x86 / aarch64 / cx / PE. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/frontend/include_line_tail.sh"
 
 # v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
 # ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes
@@ -2405,6 +2412,12 @@ _chk_gate "$ROOT/tests/gates/diagnostics/decl_after_statement_named.sh"
 # latch: the NEXT statement is parsed and its own error reported (`y = pa[0]; y = zz9;` lost zz9's). x86_64,
 # aarch64, cx, PE and Mach-O. Mutation in the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/in_sync_refusal_next_statement.sh"
+# 6.7.17 — a builtin's or an identifier intrinsic's malformed call (`var y = load8;`, `store8(p;`, `iv_add(p, p;`) is
+# one error: its arm's `(` / `,` / `)` checks never step a `;` or `}`, so the block still closes and the next fn's
+# own error is reported (it was "fn 'g' is defined inside fn 'main'"). Every builtin, four shapes, x86_64 /
+# aarch64 / cx / PE; and a bare name as a statement (`p;`): one "expected '='", the next statement its own. Mutation in
+# the header.
+_chk_gate "$ROOT/tests/gates/diagnostics/builtin_call_malformed_keeps_block.sh"
 
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
 # from the WHOLE environment: both orders, empty = unset, no fall-through to HOME, past 4 KB / 8 KB

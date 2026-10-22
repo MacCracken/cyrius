@@ -328,9 +328,112 @@ for leg in $LEGS; do
     if [ "$XRC" = -1 ]; then echo "  not run: st_val $leg — $NOTE"
     else check "st_val $leg: mulh64(2, 3) + sizeof(H) exits 16" 16 "$XRC"; fi
 done
-# The corpus floor: 25 rows (10 D11 refusals, 14 st_fld / st_sz_fld rows, st_val) on all six legs. A leg that did not
-# build is RED above; this catches rows lost from the list.
-A5_FLOOR=150
+# ⛔ 6.7.17 (the user's D32, 2026-10-22: "Refuse every one in D11's words") — A VALUE BUILTIN AS A WHOLE STATEMENT is one
+# error at the name in D11's words: "the value of 'load8(..)' is discarded - a statement is an assignment or a call", no
+# binary, with or without --allow-undef / --syntax-only (issues/2026-10-21-value-builtin-statement-load8-compiles-load16-
+# unexpected.md). Through 6.7.16 `load8(p);` and the f64 / bit / dot builtins compiled with the value dropped (PARSE_STMT's
+# builtin bands: the filed repro exited 3) while `load16(p);` `load32(p);` `load64(p);` `f32_from(x);` `f32_to(x);` were
+# "unexpected load16". vb_filed is the filed repro verbatim; vb_all every member of IS_VALUE_BUILTIN (util.cyr), one a
+# line, each its own error (the statement ends in sync) and the next statement's `zz` still reported; vb_top top level,
+# vb_gen a generic body at two instances (once), vb_expr a value builtin that heads a longer value (`load8(p) + 1;`,
+# `f64_add(x, 1) += 1;`), vb_for a classic-for init (a statement); vb_targs a type list is the one error at the name
+# (6.7.16's `_ngt_callee_lt`), vb_fld a `.` after the call is "expected ';', got '.'" (as for mulh64), vb_bare no `(`
+# (`load16;`) is "expected '('" alone, the next statement's error reported; vb_bare2 whatever follows the name in the
+# `(`'s place (`load16.x = 1;`, `load16 { 5 };`, `load16<i64>;`) — nothing read as a value, the statement stepped whole
+# (`_stmt_no_paren`); st_bare the same for the identifier intrinsics (`mulh64;`, `sizeof = 1;`, `mulh64.x = 1;` were the
+# assignment arm's "expected '='" / "undefined variable 'mulh64'"). Controls: vb_eff
+# every effect builtin as a statement — a store through a destination, `syscall`, `callptr`, `ret2` — compiles and runs
+# (exit 1, ret2's first value), vb_ctl the value forms (`var v = load8(&a);`, `rethi()`, `bitget(..)`) beside the effect
+# statements run 70. vb_cover: every builtin TOKNAME_BUILTIN names (less its keywords) and TOKNAME's f64_sqrt / callptr
+# sits in exactly one of the two lists, so a new builtin is classified here before it ships.
+# MUTATION LEDGER (2026-10-22, fea FA2; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
+# from the copy with CYCC= it, so every leg's compiler carries the mutant):
+#   the lane before it (the src of 0d291492b)               -> RED every vb_* refusal row on all six legs, 95 assertions
+#   `_stmt_value_builtin` without its `_refuse_in_sync`  -> RED vb_all vb_top vb_expr vb_for, 24 (the next statement lost)
+#   IS_VALUE_BUILTIN without bitset / bitclr              -> RED vb_all, 6 (they compiled, value dropped)
+#   IS_VALUE_BUILTIN with f64v_add (89), an effect        -> RED vb_eff vb_ctl, 24 (`f64v_add(dst, ..);` refused)
+#   D11's words said with a type list refused at the name -> RED vb_targs, 6 (two errors for the statement)
+#   without the stand-down at a `.` after the call        -> RED vb_fld, 6 (D11's words, not "expected ';', got '.'")
+#   the no-`(` path without its `_refuse_in_sync`        -> RED vb_bare, 6 (zz / zz2 never reported)
+#   the no-`(` path through the value parse again (dce149274's `_stmt_intrinsic_dot`) -> RED vb_bare2, 6
+#      (`.x` / `<i64>` read as the argument: "undefined variable 'x'"; `{ 5 }` closed the fn)
+#   `_stmt_intr_bare` dropped (the intrinsics to the assignment arm)                  -> RED st_bare, 6
+VBQ=" is discarded - a statement is an assignment or a call"
+VZE="undefined variable 'zz' (missing include or enum?)"
+VBN="load8:p load16:p load32:p load64:p f64_add:x,y f64_sub:x,y f64_mul:x,y f64_div:x,y f64_from:x f64_to:x f64_eq:x,y f64_lt:x,y f64_gt:x,y f64_neg:x f64_abs:x f64_floor:x f64_ceil:x f64_sin:x f64_cos:x f64_exp:x f64_ln:x f64_log2:x f64_exp2:x f64_round:x rethi: f64_atan:x bitget:x,0,4 bitset:x,0,4,1 bitclr:x,0,4 f64v_dot:p,p,n f32_from:x f32_to:x f64_sqrt:x f32v_dot:p,p,n iv_dp8:p,p,n f32v8_dot:p,p,n f64v256_dot:p,p,n f64_le:x,y f64_ge:x,y f64_trunc:x"
+VEF="syscall store8 store16 store32 store64 f64v_add f64v_sub f64v_mul f64v_div f64v_sqrt f64v_abs f64v_fmadd f64v_scale f64v_axpy f32v_add f32v_sub f32v_mul f32v_fmadd iv_add iv_sub iv_mul f32v8_add f32v8_sub f32v8_mul f32v8_fma f64v256_add f64v256_sub f64v256_mul f64v256_div f64v256_fmadd f64v256_scale f64v256_abs f64v256_sqrt callptr ret2"
+echo "axis 5 (D32) — a value builtin as a whole statement is refused in D11's words, on every leg ($LEGS):"
+stmt vb_filed 'var b: i64 = 7;\nfn main(): i64 { var p = &b; load8(p); return 3; }\nsyscall(60, main());\n' "error:<source>:2:30: the value of 'load8(..)'$VBQ|"
+stmt vb_undef 'var b: i64 = 7;\nfn main(): i64 { var p = &b; load8(p); return 3; }\nsyscall(60, main());\n' "error:<source>:2:30: the value of 'load8(..)'$VBQ|" --allow-undef
+stmt vb_syn   'var b: i64 = 7;\nfn main(): i64 { var p = &b; load8(p); return 3; }\nsyscall(60, main());\n' "error:<source>:2:30: the value of 'load8(..)'$VBQ|" --syntax-only
+VBS='var gb: i64 = 7;\nfn go(): i64 {\n    var p = &gb;\n    var x = 3;\n    var y = 4;\n    var n = 1;\n'
+VBW=""
+vln=7
+vbn=0
+for e in $VBN; do
+    nm=${e%%:*}
+    ar=$(printf '%s' "${e#*:}" | sed 's/,/, /g')
+    VBS="$VBS    $nm($ar);\n"
+    VBW="${VBW}error:<source>:$vln:5: the value of '$nm(..)'$VBQ|"
+    vln=$((vln + 1)); vbn=$((vbn + 1))
+done
+VBS="$VBS    x = zz;\n    return x;\n}\nsyscall(60, go());\n"
+VBW="${VBW}error:<source>:$vln:11: $VZE|"
+check "vb_all: every value builtin is listed (40)" 40 "$vbn"
+stmt vb_all "$VBS" "$VBW"
+stmt vb_top 'var b: i64 = 7;\nload8(&b);\nf64_sqrt(2.0);\nvar q = 1;\nq = zz;\n' "error:<source>:2:1: the value of 'load8(..)'$VBQ|error:<source>:3:1: the value of 'f64_sqrt(..)'$VBQ|error:<source>:5:7: $VZE|"
+stmt vb_gen 'fn g<T>(a: T): i64 { load64(&a); return 0; }\nsyscall(60, g(1) + g<i32>(2));\n' "error:<source>:1:22: the value of 'load64(..)'$VBQ|"
+stmt vb_expr 'var b: i64 = 7;\nfn go(): i64 {\n    var p = &b;\n    var x = 3;\n    load8(p) + 1;\n    f64_add(x, 1) += 1;\n    load16(p) = 1;\n    x = zz;\n    return x;\n}\nsyscall(60, go());\n' "error:<source>:5:5: the value of 'load8(..)'$VBQ|error:<source>:6:5: the value of 'f64_add(..)'$VBQ|error:<source>:7:5: the value of 'load16(..)'$VBQ|error:<source>:8:11: $VZE|"
+stmt vb_for 'var b: i64 = 7;\nfn go(): i64 {\n    var x = 0;\n    for (load32(&b); x < 3; x += 1) { }\n    x = zz;\n    return x;\n}\nsyscall(60, go());\n' "error:<source>:4:10: the value of 'load32(..)'$VBQ|error:<source>:5:11: $VZE|"
+stmt vb_targs 'var b: i64 = 7;\nfn go(): i64 {\n    var x = 0;\n    load16<i64>(&b);\n    f32_to<f32>(x);\n    x = zz;\n    return x;\n}\nsyscall(60, go());\n' "error:<source>:4:5: 'load16' is not a generic fn: it takes no type arguments|error:<source>:5:5: 'f32_to' is not a generic fn: it takes no type arguments|error:<source>:6:11: $VZE|"
+stmt vb_fld 'struct H { n; m; }\nvar b: i64 = 7;\nfn go(): i64 {\n    var x = 0;\n    load16(&b).n = 5;\n    f64_sqrt(2.0).n;\n    x = zz;\n    return x;\n}\nsyscall(60, go());\n' "error:<source>:5:15: expected ';', got '.'|error:<source>:6:18: expected ';', got '.'|error:<source>:7:11: $VZE|"
+# vb_bare: with no `(` the statement is "expected '('" alone, ended at its `;` in sync — the next statement's error is
+# reported (`load16;` was "unexpected load16" and the next reported; through the PCMPE path it was lost)
+stmt vb_bare 'var b: i64 = 7;\nfn go(): i64 {\n    var x = 0;\n    load16;\n    x = zz;\n    f64_sqrt 2.0;\n    x = zz2;\n    return x;\n}\nsyscall(60, go());\n' "error:<source>:4:11: expected '(', got ';'|error:<source>:5:11: $VZE|error:<source>:6:14: expected '(', got float literal|error:<source>:7:12: undefined variable 'zz2' (missing include or enum?)|"
+# vb_bare2 / st_bare: any other token in the `(`'s place is the one error, the statement stepped to its `;` (its `{ }`
+# balanced) in sync. Through the value parse `load16.x = 1;` added "undefined variable 'x'", `load16<i64>;` "undefined
+# variable 'i64'", and `load16 { 5 };` closed the fn at the `}` ("unexpected ';'", "return outside a fn body").
+stmt vb_bare2 'var b: i64 = 7;\nfn go(): i64 {\n    var x = 0;\n    load16.x = 1;\n    x = zz;\n    load16 { 5 };\n    x = zz2;\n    load16<i64>;\n    x = zz3;\n    return x;\n}\nsyscall(60, go());\n' "error:<source>:4:11: expected '(', got '.'|error:<source>:5:11: $VZE|error:<source>:6:12: expected '(', got '{'|error:<source>:7:12: undefined variable 'zz2' (missing include or enum?)|error:<source>:8:11: expected '(', got '<'|error:<source>:9:12: undefined variable 'zz3' (missing include or enum?)|"
+stmt st_bare 'fn go(): i64 {\n    var x = 0;\n    mulh64;\n    x = zz;\n    sizeof = 1;\n    x = zz2;\n    mulh64.x = 1;\n    x = zz3;\n    return x;\n}\nsyscall(60, go());\n' "error:<source>:3:11: expected '(', got ';'|error:<source>:4:11: $VZE|error:<source>:5:12: expected '(', got '='|error:<source>:6:12: undefined variable 'zz2' (missing include or enum?)|error:<source>:7:11: expected '(', got '.'|error:<source>:8:12: undefined variable 'zz3' (missing include or enum?)|"
+# vb_cover: the two lists cover the builtin set, each name once
+VALL=$( (sed -n '/^fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr | sed -n 's/.*return "\([a-z0-9_]*\)".*/\1/p'; echo f64_sqrt; echo callptr) \
+    | grep -vxE 'union|u128|defer|secret|async|await' | sort)
+VLIST=$( (for e in $VBN; do echo "${e%%:*}"; done; for e in $VEF; do echo "$e"; done) | sort)
+check "vb_cover: the value and effect lists are the builtin set, each name once" "$(echo $VALL)" "$(echo $VLIST)"
+# vb_eff / vb_ctl: compile on every leg and run wherever a runner is
+VEP='fn cb(k): i64 { return k; }\nfn go(): i64 {\n    var a: i64[8];\n    var b: i64[8];\n    var c: i64[8];\n    var d: i64[8];\n    var n = 1;\n'
+for e in $VEF; do
+    case $e in
+        syscall) VEP="$VEP    syscall(1, 1, \"\", 0);\n" ;;
+        store8|store16|store32|store64) VEP="$VEP    $e(&a, 1);\n" ;;
+        f64v_sqrt|f64v_abs|f64v256_abs|f64v256_sqrt) VEP="$VEP    $e(&a, &b, n);\n" ;;
+        f64v_fmadd|f32v_fmadd|f32v8_fma|f64v256_fmadd) VEP="$VEP    $e(&a, &b, &c, &d, n);\n" ;;
+        f64v_scale|f64v_axpy|f64v256_scale) VEP="$VEP    $e(&a, &b, 0, n);\n" ;;
+        iv_add|iv_sub|iv_mul) VEP="$VEP    $e(&a, &b, &c, n, 8);\n" ;;
+        callptr) VEP="$VEP    callptr(&cb, 1);\n" ;;
+        ret2) ;;
+        *) VEP="$VEP    $e(&a, &b, &c, n);\n" ;;
+    esac
+done
+VEP="$VEP    ret2(1, 2);\n}\nsyscall(60, go());\n"
+printf '%b' "$VEP" > "$T/vb_eff.cyr"
+printf '%b' 'var g: i64 = 0;\nfn cb(k): i64 { g = g + k; return 0; }\nfn two(): i64 { ret2(5, 6); }\nfn go(): i64 {\n    var a: i64 = 0;\n    store8(&a, 7);\n    store64(&g, 3);\n    var v = load8(&a);\n    var w = f64_to(f64_sqrt(f64_from(16)));\n    var xs: i64[2];\n    var ys: i64[2];\n    var ds: i64[2];\n    xs[0] = f64_from(1);\n    xs[1] = f64_from(2);\n    ys[0] = f64_from(10);\n    ys[1] = f64_from(20);\n    f64v_add(&ds, &xs, &ys, 2);\n    callptr(&cb, 2);\n    two();\n    var hi = rethi();\n    var bg = bitget(0xF0, 4, 4);\n    return v + w + hi + load64(&g) + f64_to(ds[0]) + f64_to(ds[1]) + bg;\n}\nsyscall(60, go());\n' > "$T/vb_ctl.cyr"
+for vr in "vb_eff 1" "vb_ctl 70"; do
+    vn=${vr% *}; vw=${vr#* }
+    for leg in $LEGS; do
+        A5=$((A5 + 1))
+        comp "$leg" "$T/$vn.cyr" "$T/$vn.$leg"
+        check "$vn $leg: compiles" 0 "$CRC"
+        check "$vn $leg: no value-discarded line" 0 "$(grep -c "$VBQ" "$T/$vn.$leg.err")"
+        [ "$CRC" = 0 ] && [ -s "$T/$vn.$leg" ] || continue
+        execute "$leg" "$T/$vn.$leg"
+        if [ "$XRC" = -1 ]; then echo "  not run: $vn $leg — $NOTE"
+        else check "$vn $leg: exits $vw" "$vw" "$XRC"; fi
+    done
+done
+# The corpus floor: 40 rows (10 D11 refusals, 14 st_fld / st_sz_fld rows, st_val; 6.7.17's D32: 12 vb_* refusals,
+# st_bare, vb_eff, vb_ctl) on all six legs. A leg that did not build is RED above; this catches rows lost from the list.
+A5_FLOOR=240
 [ "$A5" -ge "$A5_FLOOR" ] || { echo "  FAIL: axis 5 ran $A5 row-legs (floor $A5_FLOOR) — rows or legs were lost"; fails=$((fails + 1)); }
 echo "  axis 5: $A5 row-legs on $LEGS; $skips skipped"
 

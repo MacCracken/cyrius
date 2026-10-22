@@ -610,6 +610,19 @@ var r = add(20, 22);   # r = 42
   report is held until the late declarations are (6.7.16) and dropped for one of them. ⚠ So a zone array
   size naming an enum declared LATER IN THE ZONE (valid, but declared after its use) still says "unknown
   name 'E' in a const context", now after the other pass-1 reports above the first statement.
+- **`use mod.NAME;` is one line** (6.7.17, the user's D30, 2026-10-22). It binds the bare `NAME` to the
+  `mod`-scoped fn (`mod m;` above its fns, then `use m.f;`: `f()` calls `m_f`). The `;` is optional:
+  without it the `use` ends at its line, as an `#assert` does. Any other shape of the line is one error,
+  at its first wrong token (at the `use` when its line ends before the name):
+
+  ```text
+  error:<source>:1:5: expected `use module.name;`
+      use 5;
+          ^
+  ```
+
+  Through 6.7.16 `use 5;`, `use m.;`, `use m;` and `use m.f g;` compiled and bound nothing, and `use
+  m.f` with no `;` silently dropped the line after it — that line was never compiled.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /
@@ -746,6 +759,22 @@ name, with a fn's words — *'mulh64' is not a generic fn: it takes no type argu
 call parses on, so its arguments' errors and the next statement's are reported; the statement
 `mulh64<i64>(2, 3);` is that one error. Before 6.7.16 each was *expected '(', got '<'* with the
 list read as comparisons (*undefined variable 'i64'*), the statement *undefined function 'mulh64'*.
+
+A **value builtin** is a value too, and a statement made of one is refused the same way (6.7.17, the user's D32,
+2026-10-22): `load8(p);` is *the value of 'load8(..)' is discarded - a statement is an assignment or a call*, once at
+the name, no binary — use the value (`var v = load8(p);`). The value builtins are the loads (`load8` .. `load64`), the
+scalar float ops (`f64_add` .. `f64_div`, `f64_from`, `f64_to`, `f64_eq` / `f64_lt` / `f64_gt` / `f64_le` / `f64_ge`,
+`f64_neg`, `f64_abs`, `f64_sqrt`, `f64_floor` / `f64_ceil` / `f64_round` / `f64_trunc`, `f64_sin` .. `f64_exp2`,
+`f64_atan`), `f32_from` / `f32_to`, `bitget` / `bitset` / `bitclr` (each RETURNS the changed word; nothing is stored),
+`rethi`, and the dot products `f64v_dot`, `f32v_dot`, `f32v8_dot`, `f64v256_dot`, `iv_dp8` (`IS_VALUE_BUILTIN` in
+`src/common/util.cyr`). A builtin with an effect stays a statement: the stores (`store8(p, v);` ..), every vector op
+that writes its `dst` (`f64v_add(dst, a, b, n);`, `f32v8_fma(..)`, `iv_add(..)`, `f64v256_scale(..)`, ..),
+`syscall(..)`, `callptr(..)` and `ret2(a, b);`. As for `mulh64`, a `.` after the call (`load16(p).n = 5;`) is
+*expected ';', got '.'* and a type-argument list is the one error at the name. A value builtin or an intrinsic named
+with no `(` (`load16;`, `mulh64;`, `sizeof = 1;`, `load16.x = 1;`) is *expected '(', got ..* alone, the statement
+skipped to its `;` and the next one parsed. Before 6.7.17 `load8(p);` and the f64,
+bit and dot builtins compiled with the value dropped, while `load16(p);`, `load32(p);`, `load64(p);`, `f32_from(x);`
+and `f32_to(x);` were *unexpected load16*.
 
 ### Default and named arguments (6.7.7)
 
@@ -1185,6 +1214,9 @@ var v = load16(&buf);          # Corresponding reads
 var v = load32(&buf);
 var v = load64(&buf);
 ```
+
+A load is a value: `load64(&buf);` alone is refused, *the value of 'load64(..)' is discarded* (6.7.17; see the
+value builtins under [Functions](#functions), after the reserved intrinsics).
 
 ### Where globals land: natural alignment (6.6.13)
 
@@ -4809,6 +4841,19 @@ include "lib/string.cyr"
 # Textual inclusion — file contents replace the include line
 ```
 
+An include is a whole line: after the file name only blanks, one `;` and a `#` comment may
+follow (`include "x.cyr"`, `include "x.cyr";`, `include "x.cyr"  # note`). Anything else is
+refused at its first character (6.7.17, the user's D29, 2026-10-22):
+
+```text
+error:<source>:1:29: expected the end of the line after an include's file name
+```
+
+for `include "lib/syscalls.cyr"; var x = 42; syscall(60, x);` — through 6.7.16 the rest of
+the line was dropped unread (that program exited 0), and a second include on the line
+(`include "a.cyr"; include "b.cyr";`) was never read. Put each include, and each statement,
+on its own line.
+
 Includes are **include-once by spelling**: a second `include` of the same spelling is skipped, so a
 file's top-level statements run once and its fns are defined once. The key is the spelling as
 written, whole, at any length (`"./a.cyr"` and `"a.cyr"` are two spellings). A compilation unit
@@ -4914,6 +4959,12 @@ Rules:
   in**, not to the files that file includes, and not to the file that includes it —
   and to the WHOLE file, wherever in it the marker sits (6.6.5; before that a
   definition written above the marker was stamped as if the file were public).
+  That includes a line after the file's first top-level statement (6.7.17, the user's
+  D31, 2026-10-22): it compiles and the file is private, exactly as with the line on
+  top. Through 6.7.16 it was *unexpected private*, and with no `;` the next statement's
+  own error was never reported. Inside a fn body or a block the line is still *unexpected
+  private* (it is no file-level marker there), and the next statement's error is
+  reported after it (through 6.7.16 it was skipped).
 - There is **no per-item `private`**. `private fn h()` on one line is a hard error naming
   the file-level form (v6.5.56) — `private` alone on its own line, or `private;`, which
   closes the statement and lets an item follow on the same line. ⚠ Until 6.6.5 that
@@ -5219,6 +5270,24 @@ is refused once, *#assert: expected `;` or a line break before `}`* (through
 end of file*); write `{ #assert 1 == 1, "m"; }`. A failing `#assert` no longer stops the
 compile on the spot: every failing assert and any other error in the file is
 reported, and no binary is written.
+
+After the message the same rule holds as after the expression: only `;` or the end of
+the line (6.7.17, the user's D28, 2026-10-22). Anything else on the line is one error at
+its first token, and the rest of the line is skipped whole (a `{` through its `}`), so the
+next line reports its own errors:
+
+```text
+error:<source>:2:30: #assert: expected `;` or the end of the line after the message
+    impl S { #assert 1 == 1, "m" fn m(self): i64 { return 5; } }
+                                 ^
+```
+
+After a `,` with no message it is *#assert: expected the message string, `;` or the end
+of the line after `,`* (`#assert 1 == 1, junk`). A message that spans lines ends on its
+last line. Through 6.7.16 the rest of the line was skipped unread up to its next `;`:
+`#assert 1 == 1, "m" junk` compiled, a `}` after the message at module scope was taken,
+and in an impl body the example above ate the method — the impl then ended at the
+method's `}`, and every statement after it was silently never compiled.
 
 ```
 enum Wire { HDR = 16; }

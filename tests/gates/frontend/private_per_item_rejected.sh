@@ -15,7 +15,16 @@
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || { echo "FAIL: private_per_item_rejected: cannot cd to $R"; exit 1; }
-T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: private_per_item_rejected: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: private_per_item_rejected: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+# 6.7.17: the piok rows also run under wine, in a PRIVATE prefix under $T (never ~/.wine), torn down with its server dir.
+_wine_down() {
+  [ -d "$T/wine" ] || return 0
+  _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$T/wine" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$T/wine" 2>/dev/null || echo 0)")"
+  WINEPREFIX="$T/wine" wineserver -k >/dev/null 2>&1 || true
+  WINEPREFIX="$T/wine" wineserver -w >/dev/null 2>&1 || true
+  rm -rf "$_ws" || true
+}
+trap '_wine_down; rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL private_per_item_rejected: no build/cycc"; exit 1; }
 "$CC" < "$R/src/main.cyr" > "$T/cc" 2>/dev/null || { echo "FAIL private_per_item_rejected: stage1 build failed"; exit 1; }
@@ -181,8 +190,8 @@ fi
 #        `private struct Q` used before (an earlier fn's `q: *Q`) and after (`Q { 5 }`, `q.y`) — one error + `zz`
 #   PI8  a generic fn at two instances: once
 #   PI9  a late include whose file holds `private struct Q`: the per-item error and the include line's (two sites)
-#   PC1-PC3 controls: the zone's `private var x = 1;` one error; the file-level `private` line (compiles, runs 7);
-#        the file-level line after the first statement keeps its "unexpected private"
+#   PC1-PC2 controls: the zone's `private var x = 1;` one error; the file-level `private` line (compiles, runs 7);
+#        PC3 (6.7.17, D31) is in the PL section below
 # MUTATION LEDGER (2026-10-21, f16; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
 # from that copy, so every leg's compiler carries the mutant):
 #   the lane before it (448601b3d)                    -> RED PI1-PI9, 45 row-legs (PI9: "unexpected private" too)
@@ -223,6 +232,8 @@ pirow() {
   done
 }
 # piok <id> <what> <source> <exit>: compiles clean on every leg (no error / warning line, a binary), runs <exit> on x86_64
+# and (6.7.17) on aarch64 under qemu-aarch64, cx under the tree's cxvm and PE under wine (a private prefix) where the box
+# has the runner — each missing one said by name below; Mach-O compiles only
 piok() {
   printf '%s' "$3" > "$T/$1.cyr"
   for leg in $LEGS; do
@@ -231,12 +242,32 @@ piok() {
     PIN=$((PIN + 1))
     if [ "$PRC" -ne 0 ] || [ ! -s "$o" ] || grep -qE '^(error|warning)' "$o.err"; then
       echo "FAIL private_per_item_rejected $1 $leg: $2: rc $PRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"; fail=1
-    elif [ "$leg" = x86 ]; then
-      chmod +x "$o"; x=0; timeout 30 "$o" > /dev/null 2>&1 || x=$?
+    elif pexec "$leg" "$o"; then
       if [ "$x" = "$4" ]; then echo "  ok $1 $leg: $2 (exit $4)"; else echo "FAIL private_per_item_rejected $1 $leg: $2: exit $x, want $4"; fail=1; fi
     else echo "  ok $1 $leg: $2"; fi
   done
 }
+# pexec <leg> <binary>: x = its exit code; 1 = this leg is not run here (Mach-O; a runner this box lacks)
+pexec() {
+  x=0
+  case "$1" in
+    x86) chmod +x "$2"; timeout 30 "$2" > /dev/null 2>&1 || x=$? ;;
+    a64) [ "$PQEMU" = 1 ] || return 1; chmod +x "$2"; timeout 300 qemu-aarch64 "$2" > /dev/null 2>&1 || x=$? ;;
+    cx)  [ -s "$T/cxvm" ] || return 1; timeout 300 "$T/cxvm" < "$2" > /dev/null 2>&1 || x=$? ;;
+    pe)  [ "$PWINE" = 1 ] || return 1
+         cp "$2" "$2.exe"
+         (cd "$T" && WINEPREFIX="$T/wine" HOME="$T/whome" XDG_CACHE_HOME="$T/whome/.cache" WINEDEBUG=-all \
+             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' timeout 300 wine "$2.exe" > /dev/null 2>&1) || x=$? ;;
+    *)   return 1 ;;
+  esac
+  return 0
+}
+PQEMU=0; command -v qemu-aarch64 > /dev/null 2>&1 && PQEMU=1
+PWINE=0; command -v wine > /dev/null 2>&1 && PWINE=1
+[ "$PQEMU" = 1 ] || echo "  SKIP: the piok rows' aarch64 RUNS (qemu-aarch64 not installed; the compiles still run)"
+[ "$PWINE" = 1 ] || echo "  SKIP: the piok rows' PE RUNS (wine not installed; the compiles still run)"
+"$T/cc" < "$R/programs/cxvm.cyr" > "$T/cxvm" 2> /dev/null && [ -s "$T/cxvm" ] && chmod +x "$T/cxvm" \
+  || { echo "FAIL private_per_item_rejected: programs/cxvm.cyr did not build"; fail=1; }
 PI='per-item `private` is not supported; put `private` alone on a line to make the file private'
 ZZ="undefined variable 'zz' (missing include or enum?)"
 
@@ -334,10 +365,68 @@ pirow PC1 "control: the zone's private var (one error, as before)" "$(printf 'pr
 error:<source>:2:19: $ZZ"
 piok PC2 "control: the file-level private line" "$(printf 'private\nfn helper(): i64 { return 7; }\nsyscall(60, helper());\n')
 " 7
-pirow PC3 "control: the file-level line after the first statement" "$(printf 'var a = 1;\na = 2;\nprivate\nsyscall(60, a);\n')
-" "error:<source>:3:1: unexpected private"
-# The corpus floor (6.7.16): 12 rows on five legs. A row or a leg lost reads RED, never green.
-[ "$PIN" -ge 60 ] || { echo "FAIL private_per_item_rejected: the PI rows ran $PIN row-legs (floor 60) - rows or legs were lost"; fail=1; }
+# ── PL: THE FILE-LEVEL LINE AFTER THE FIRST STATEMENT (6.7.17, the user's D31, 2026-10-22: "Accept it") ──────────────
+# issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (row 5). `_PRIV_PRESCAN` already marked
+# the file from the line wherever it sits (the guide: "the WHOLE file, wherever in it the marker sits"); only PARSE_STMT
+# refused it — "unexpected private", and with no `;` the refusal's latch swallowed the next statement's own error
+# (`zz` never reported). `_dl_priv_file` (src/frontend/parse_fn_def.cyr) steps the marker and an optional `;` at module
+# scope, as `_TL_VIS` does in the declaration zone; in a fn body or a block it stays "unexpected private", now in sync.
+#   PC3  re-pinned: the line after the first statement compiles and runs (exit 2; "unexpected private" through 6.7.16)
+#   PL1  row 5 verbatim: its one error is the next line's `zz`
+#   PL2  `private;` after the first statement, and a statement after the `;` on its line: both run
+#   PL3  a late line in an INCLUDED file makes that whole file private: a caller of its fn is refused, a fn above the
+#        line included ('bh' is private to its file), and PL3b its `public fn` is reachable (exit 6)
+#   PL4  a fn body, a top-level block and a switch arm (where the line is no file-level marker): "unexpected private"
+#        as before, and now the next statement's own `zz` too (the resync skipped it)
+#   PL5  a generic fn at two instances: once
+# MUTATION LEDGER (2026-10-22, lane fea FA1; a scratch copy of the tree with the one change, its 2-stage cycc run, this
+# gate run from that copy, so every leg's compiler carries the mutant):
+#   `_dl_priv` answering 0 for the file-level line again (6.7.16) -> RED PC3 PL1-PL5 PL3b, 35 row-legs ("unexpected
+#                                                                    private", `zz` swallowed)
+#   the body refusal without its in-sync step and latch release    -> RED PL4 PL5, 10 (the next statement's `zz` lost)
+piok PC3 "D31: the file-level line after the first statement compiles" "$(printf 'var a = 1;\na = 2;\nprivate\nsyscall(60, a);\n')
+" 2
+pirow PL1 "row 5 verbatim: the next line's zz is the one error" "$(printf 'var a = 1;\na = 2;\nprivate\nsyscall(60, a + zz);\n')
+" "error:<source>:4:19: $ZZ"
+piok PL2 "private; after the first statement, a statement after it on the line" "$(printf 'var a = 1;\na = 2;\nprivate;\na = a + 1; private; a = a + 1;\nsyscall(60, a);\n')
+" 4
+mkdir -p "$T/pl3"
+printf 'public fn bp(): i64 { return bh() + 1; }\nfn bh(): i64 { return 5; }\nvar bx = 1;\nbx = 2;\nprivate\n' > "$T/pl3/b.cyr"
+CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1; export CYRIUS_ALLOW_ABSOLUTE_INCLUDES   # the included file lives in the scratch dir
+pirow PL3 "a late line in an included file: the whole file private" "include \"$T/pl3/b.cyr\"
+syscall(60, bh());
+" "error:<source>:2:16: 'bh' is private to its file"
+piok PL3b "... its public fn is reachable" "include \"$T/pl3/b.cyr\"
+syscall(60, bp());
+" 6
+unset CYRIUS_ALLOW_ABSOLUTE_INCLUDES
+pirow PL4 "a fn body, a top-level block, a switch arm: unexpected private, then the next statement's zz" 'fn f(): i64 { var a = 1;
+private
+a = zz;
+switch (a) { case 1:
+private
+a = zz2; }
+return a; }
+var b = 1;
+if (b == 1) {
+private
+b = zz3; }
+syscall(60, f() + b);
+' "error:<source>:2:1: unexpected private
+error:<source>:3:7: $ZZ
+error:<source>:5:1: unexpected private
+error:<source>:6:8: undefined variable 'zz2' (missing include or enum?)
+error:<source>:10:1: unexpected private
+error:<source>:11:8: undefined variable 'zz3' (missing include or enum?)"
+pirow PL5 "a generic fn at two instances: once" 'fn g<T>(x: T): i64 { var a = 1;
+private
+a = zz;
+return a; }
+syscall(60, g<i64>(1) + g<i32>(2));
+' "error:<source>:2:1: unexpected private
+error:<source>:3:7: $ZZ"
+# The corpus floor (6.7.16): 12 rows on five legs; 6.7.17: 18. A row or a leg lost reads RED, never green.
+[ "$PIN" -ge 90 ] || { echo "FAIL private_per_item_rejected: the PI / PL rows ran $PIN row-legs (floor 90) - rows or legs were lost"; fail=1; }
 
 [ $fail -eq 0 ] || exit 1
 echo "PASS private_per_item_rejected: per-item form errors ONCE, does not privatise the file, and the own-line / 'private;' / at-EOF forms still work (lib resolved from a CYRIUS_HOME staged from the tree); below module scope and after the first statement it is the one error, $PIN row-legs on $LEGS"

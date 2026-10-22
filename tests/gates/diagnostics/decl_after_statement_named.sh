@@ -1337,8 +1337,36 @@ one "DI11a a kernel build (x86_64 ELF): an unparsed default" "$(printf 'kernel;\
 one "DI11b a kernel build: a global's closure, in the replay's words" "$(printf 'kernel;\nvar g = |x| { struct Q { y; } return x; };\nfn main(): i64 { return 3; }\n')
 " "error:<source>:2:15: a \`struct\` declaration $IR a fn body"
 
+# UM — 6.7.17 (met in lane fea FA1 while making a `use` one line, the same class; issues/2026-10-21-directive-line-tails-
+# unread-use-without-path-late-private.md): A REFUSED `mod` STEPS WHAT `_tl_mod` READS, `mod [NAME] [;]`. `_dl_skip_at`
+# stepped it to the next `;`, so a `;`-less `mod m` after the first statement or in a fn body took the next line with
+# it, that line's own error unreported; and the inner-declaration pre-walk held its header open to the next `;`, so a
+# refused `struct Q` in the next block went unfilled ("type 'Q' is declared after its use"). UM1 / UM2 the refusal and
+# the next line's `zz`; UM3 the pre-walk; UM4 `pub mod m;` in a fn body (the `pub` refusal, then `zz`).
+#   `_dl_skip_at` without `_dl_skip_mod` (to the next `;`)          -> RED UM1 UM2, 10 (the `zz` lost)
+#   `_dl_inner_fill` holding a `mod` header open again               -> RED UM3, 5 ("type 'Q' is declared after its use")
+row5 UM1 "a ';'-less mod after the first statement: the next line's zz" "$(printf 'var a = 1;\na = 2;\nmod m\na = a + zz;\nsyscall(60, a);\n')
+" "error:<source>:3:1: a \`mod\` declaration must come before the first top-level statement (line 2)
+error:<source>:4:11: $ZZ"
+row5 UM2 "a ';'-less mod in a fn body: the next line's zz" "$(printf 'fn f(): i64 { mod m\nreturn zz; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`mod\` declaration $IR a fn body
+error:<source>:2:10: $ZZ"
+row5 UM3 "a ';'-less mod in a body, then a block's refused struct used above it" 'fn h(q: *Q): i64 { return q.y; }
+fn f(): i64 {
+    mod m
+    if (1 == 1) { struct Q { y; } var q = Q { 5 }; return q.y + h(&q); }
+    return 0;
+}
+syscall(60, f());
+' "error:<source>:3:5: a \`mod\` declaration $IR a fn body
+error:<source>:4:19: a \`struct\` declaration $IR a fn body"
+row5 UM4 "pub mod m; in a fn body: the pub refusal, then zz" "$(printf 'fn f(): i64 { pub mod m; return zz; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:35: $ZZ"
+
 # The five-leg rows' floor: a row or a leg lost reads RED, never green.
 F5FLOOR=330
+F5FLOOR=220
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"

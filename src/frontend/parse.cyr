@@ -3893,28 +3893,78 @@ fn _assert_open(S): i64 {
 fn _assert_end(S, pw): i64 {
     var e = 0 - 1;
     if (_panic == 1) { e = _asrt_ext(S); }
-    var bs = _assert_tail(S);
+    var p1 = _panic;
+    var bs = _assert_tail(S, 1);
     if (bs == 1) { _asrt_brace_err(S); }
+    if (p1 == 0) { if (_panic == 1) { e = GTI(S); } }   # 6.7.17: the tail's own refusal, its line stepped: in sync
     if (_panic == 1) { if (_asrt_synced(S, e, bs) == 0) { return 0; } }
     _panic = pw;
     return 0;
 }
 # 1 = the tail stopped at the enclosing block's `}` (left for the block), else 0.
-fn _assert_tail(S): i64 {
+# ⛔ 6.7.17 — ONLY `;` OR THE LINE'S END MAY FOLLOW THE MESSAGE (the user's D28, 2026-10-22). The tail skipped whatever
+# followed the message to the next `;` or the line's end, unread: `#assert 1 == 1, "m" junk` compiled, and in an impl
+# body `#assert 1 == 1, "m" fn m(self): i64 { return 5; }` ate the method up to its `;`, pass 2 ended the impl at the
+# method's `}`, and the program's statements after it were never compiled (exit 0, not 9). Now a token there — or
+# after a `,` with no message — is one error (`rep` 1: PARSE_STMT's arm; pass 1 steps silently), and the rest of the
+# line is stepped whole (`_ln_rest`: a `{` through its `}`), so the next line reports its own. Both passes stop on the
+# same token. CHANGELOG [6.7.17]
+fn _assert_tail(S, rep): i64 {
     var ln = GTLINE(S, GTI(S) - 1);
-    if (PEEKT(S) == 30) { ln = GTLINE(S, GTI(S)); }
-    var bd = 0;
+    var m = 0;
+    if (PEEKT(S) == 30) { ln = _str_end_line(S, GTI(S)); STI(S, GTI(S) + 1); m = 1; }
     var blk = _asrt_in_blk(S);
-    while (PEEKT(S) != 5 && PEEKT(S) != 12) {
-        if (GTLINE(S, GTI(S)) != ln) { break; }
-        if (PEEKT(S) == 13) { bd = bd + 1; }
-        if (PEEKT(S) == 14) {
-            if (bd == 0) { if (blk == 1) { return 1; } }
-            else { bd = bd - 1; }
+    var t = PEEKT(S);
+    if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+    if (t == 12) { return 0; }
+    if (GTLINE(S, GTI(S)) != ln) { return 0; }
+    if (t == 14) { if (blk == 1) { return 1; } }
+    if (rep == 1) { _asrt_tail_err(S, m); }
+    return _ln_rest(S, ln, blk);
+}
+# The line the string token `ti` ends on: its first line (the token's) plus the line breaks inside it, a raw LF or
+# `\<LF>`. A message spanning lines ends on its last: `"multi<LF>line" junk` has `junk` on the message's line.
+fn _str_end_line(S, ti): i64 {
+    var p = GTOFF(S, ti) + 1;
+    var bl = GBL(S);
+    var ln = GTLINE(S, ti);
+    while (p < bl) {
+        var c = load8(S + 0x459D000 + p);
+        if (c == 34) { return ln; }
+        if (c == 10) { ln = ln + 1; }
+        if (c == 92) {
+            p = p + 1;
+            if (load8(S + 0x459D000 + p) == 10) { ln = ln + 1; }
         }
+        p = p + 1;
+    }
+    return ln;
+}
+# The tail's refusal at the cursor: after the message (`m` 1), or after a `,` that has none.
+fn _asrt_tail_err(S, m): i64 {
+    if (m == 1) { ERR_MSG(S, "#assert: expected `;` or the end of the line after the message", 62); }
+    else { ERR_MSG(S, "#assert: expected the message string, `;` or the end of the line after `,`", 74); }
+    return 0;
+}
+# A refused directive line's rest, from the cursor, stepped whole: each `(` / `[` / `{` through its match wherever that
+# sits, the walk then going on along the line the match closes on. Stops at EOF, at a token on a later line and, `blk`
+# 1, at a `}` at depth 0, which closes the enclosing body: 1 = stopped there, else 0. An #assert's refused tail
+# (`_assert_tail`) and a refused `use` (`_use_step`): both passes step the same tokens through it. CHANGELOG [6.7.17]
+fn _ln_rest(S, ln, blk): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) {
+            if (GTLINE(S, GTI(S)) != ln) { return 0; }
+            if (t == 14) { if (blk == 1) { return 1; } }
+        }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { if (d > 0) {
+                d = d - 1;
+                if (d == 0) { ln = GTLINE(S, GTI(S)); }
+            } }
         STI(S, GTI(S) + 1);
     }
-    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 0;
 }
 # 1 = the #assert sits in a braced body: a fn's, a nested block's (`_pp_depth` > 1) or an impl's.
@@ -4165,32 +4215,79 @@ fn _stmt_intr_at(S, noff, nt): i64 {
     if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
     STI(S, nt);   # the name
     _refuse_in_sync(S);
-    if (_tn_seen_at(S, nt) == 0) { _stmt_intr_say(S, noff); }
+    if (_tn_seen_at(S, nt) == 0) { _stmt_val_say(S, "_stmt_intrinsic", noff, S + 0xEC00000 + noff); }
     PCMPE(S);
     _expect_step(S, 5);
     return 1;
 }
 
-# ⛔ 6.7.16 — `mulh64(2, 3).n = 5;` / `sizeof(H).n;`: a `.` after the intrinsic's `)` is no D11 shape, and the call
-# statement's field arm (`_stmt_call_field`) took it as a call to a fn that cannot exist: "expected ';', got '.'" and
-# then "undefined function 'mulh64'" twice and "refusing to emit binary" (`sizeof(H)` also read H as a variable). The
-# statement is parsed as the value position parses it (`var x = mulh64(2, 3).n;`): the factor lowers the intrinsic by
-# name and stops at the `.`, one "expected ';', got '.'". Not marked in sync: the statement is left mid-way, so the
-# resync steps to its `;`. Cursor on the `(`; 1. CHANGELOG [6.7.16]
-# D11's words for the statement at the cursor (the name `noff`): once, latched.
-fn _stmt_intr_say(S, noff): i64 {
-    var tg = "_stmt_intrinsic";
-    if (_err_once(S, (tg * 31 + noff) * 8 + 7) == 0) { return 0; }
+# ⛔ 6.7.17 — A VALUE BUILTIN AS A WHOLE STATEMENT IS REFUSED IN D11'S WORDS (the user's D32, 2026-10-22): `load8(p);`,
+# `load64(p);`, `f32_to(x);`, `f64_sqrt(x);`, `f64_add(a, b);`, `bitget(v, 0, 4);`, `rethi();`, `f64v_dot(a, b, n);`
+# (IS_VALUE_BUILTIN, util.cyr). Like mulh64 (6.7.16's D11) each is lowered inline and has no fn to call, so its value
+# is discarded: "the value of 'load8(..)' is discarded - a statement is an assignment or a call", once at the name, no
+# binary; the value is then parsed under the latch and the statement ends at its `;` in sync, so the next statement is
+# parsed. Through 6.7.16 `load8` and the f64 / bit / dot builtins compiled with the value dropped (PARSE_STMT's builtin
+# bands) while `load16` `load32` `load64` `f32_from` `f32_to` were "unexpected load16". A builtin that stores through a
+# destination (`store8`, `f64v_add(dst, ..)`), returns (`ret2`) or calls (`syscall`, `callptr`) stays a statement. As
+# for mulh64: a type-argument list is the one error at the name (6.7.16's `_ngt_callee_lt`), a `.` after the call's
+# `)` is parsed as the value position parses it (`_stmt_intrinsic_dot`), and with no `(` the statement is "expected
+# '('" alone (`_stmt_no_paren`). Cursor on the builtin token `typ`; 1 = consumed. CHANGELOG [6.7.17]
+fn _stmt_value_builtin(S, typ): i64 {
+    if (IS_VALUE_BUILTIN(typ) == 0) { return 0; }
+    var nt = GTI(S);
+    STI(S, nt + 1);
+    _ngt_callee_lt(S);   # `load8<i64>(p);`: the list refused at the name and stepped
+    if (PEEKT(S) != 10) { return _stmt_no_paren(S); }   # `load16;`
+    var c = _call_close(S, GTI(S)) + 1;
+    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
+    STI(S, nt);   # the name
+    _refuse_in_sync(S);
+    if (_tn_seen_at(S, nt) == 0) { _stmt_val_say(S, "_stmt_value_builtin", typ, TOKNAME(typ)); }
+    PCMPE(S);
+    _expect_step(S, 5);
+    return 1;
+}
+
+# A value builtin or an identifier intrinsic named as a statement with no `(` — `load16;`, `mulh64;`, `f64_sqrt 2.0;`,
+# `load16.x = 1;`, `sizeof = 1;` (cursor on the token after the name): "expected '('" there, once, and the statement
+# ends in sync with nothing read as a value (`_stmt_rest_skip`), so the next statement is parsed with its own errors.
+# Parsed as the value position parses it, the token was stepped and the rest read as the argument: `load16.x = 1;`
+# added "undefined variable 'x'", `load16 { 5 };` closed the block at the `}` ("unexpected ';'", "return outside a fn
+# body"); `mulh64;` was the assignment arm's "expected '='" with "undefined variable 'mulh64'". 1. CHANGELOG [6.7.17]
+fn _stmt_no_paren(S): i64 {
+    _refuse_in_sync(S);
+    ERR_EXPECT(S, 10);
+    _stmt_rest_skip(S);
+    return 1;
+}
+# `mulh64;` / `sizeof = 1;` — an identifier intrinsic named as a statement with no `(` (cursor after the name `noff`):
+# as a value builtin's (`_stmt_no_paren`). 1 = consumed. CHANGELOG [6.7.17]
+fn _stmt_intr_bare(S, noff): i64 {
+    if (PEEKT(S) == 10) { return 0; }
+    if (_is_ident_intrinsic(S, noff) == 0) { return 0; }
+    return _stmt_no_paren(S);
+}
+
+# D11's words for the statement at the cursor, naming `nm` — `mulh64`, `load8` — (the report's identity: the tag `tg`
+# and the key `k`): once, latched. CHANGELOG [6.7.16] [6.7.17]
+fn _stmt_val_say(S, tg, k, nm): i64 {
+    if (_err_once(S, (tg * 31 + k) * 8 + 7) == 0) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": the value of '");
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(nm);
     PRSTR("(..)' is discarded - a statement is an assignment or a call\n");
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
     return 0;
 }
+# ⛔ 6.7.16 — `mulh64(2, 3).n = 5;` / `sizeof(H).n;`: a `.` after the intrinsic's `)` is no D11 shape, and the call
+# statement's field arm (`_stmt_call_field`) took it as a call to a fn that cannot exist: "expected ';', got '.'" and
+# then "undefined function 'mulh64'" twice and "refusing to emit binary" (`sizeof(H)` also read H as a variable). The
+# statement is parsed as the value position parses it (`var x = mulh64(2, 3).n;`): the factor lowers the intrinsic by
+# name and stops at the `.`, one "expected ';', got '.'". Not marked in sync: the statement is left mid-way, so the
+# resync steps to its `;`. The name at token nt; 1. CHANGELOG [6.7.16]
 fn _stmt_intrinsic_dot(S, nt): i64 {
     STI(S, nt);   # the name
     PCMPE(S);
@@ -4717,6 +4814,36 @@ fn _asg_compound_tok(S): i64 {
         if (tn < GTCNT(S)) {
             if (TOKTYP(S, tn) == 4) { STI(S, GTI(S) + 2); return ct; }
         }
+    }
+    return 0;
+}
+# The plain assignment's `=` (cursor after the name): stepped, 0. Missing — `p;`, `p 5;`, `P { 5 };`, `p` before the
+# block's `}` — it is "expected '='" once and the statement ends in sync, nothing read as a value (`_stmt_rest_skip`),
+# so the next statement is parsed with its own errors: 1. The token was stepped whatever it was and a value parsed
+# from the next: `p;` as a block's last statement took its `;`, the value read the `}` and the next fn was "defined
+# inside" this one; `p 5;` lost the next statement's error to the resync. CHANGELOG [6.7.17]
+fn _asg_eq_step(S): i64 {
+    if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
+    _refuse_in_sync(S);
+    ERR_EXPECT(S, 4);
+    _stmt_rest_skip(S);
+    return 1;
+}
+# The rest of a statement refused at the cursor: stepped to its `;` (stepped), brackets balanced — a `{ 5 }` in it is
+# stepped whole — stopping at a `}` that closes the enclosing block, a statement keyword or EOF, as `_sync_skip`
+# stops (its caller marked the refusal `_refuse_in_sync`, so the statement ends in sync). CHANGELOG [6.7.17]
+fn _stmt_rest_skip(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) {
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (t == 14) { return 0; }
+            if (_sync_kw(S, t) == 1) { return 0; }
+        }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) { if (d > 0) { d = d - 1; } }
+        STI(S, GTI(S) + 1);
     }
     return 0;
 }
@@ -7222,49 +7349,46 @@ fn _PARSE_STMT_IMPL(S): i64 {
         return 0;
     }
     if (typ == 8) { _deref_store(S, 5); return 0; }   # `*expr = v;` / `*expr OP= v;`
-    # Expression statements: syscall(...); store8(...); load8(...);
+    # 6.7.17 (D32): a value builtin as the statement — `load8(p);`, `f64_sqrt(x);` — is refused by name. The arms
+    # below are the effect builtins: a store through a destination, a call, `ret2`'s return.
+    if (_stmt_value_builtin(S, typ) == 1) { return 0; }
+    # Expression statements: syscall(...); store8(...);
     # 6.7.14: their `;` through `_expect_step` — an unclosed `syscall(60, 0;` then a `for` stepped the `for`.
     if (typ == 24) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 26) { PCMPE(S); _expect_step(S, 5); return 0; }
-    if (typ == 25) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 45) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 46) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 47) { PCMPE(S); _expect_step(S, 5); return 0; }
-    # f64/SIMD builtins as statements
+    # f64/SIMD builtins as statements: this band's effect members, f64v_add .. f64v_fmadd (89-96, `dst`) and ret2
     if (typ >= 62) { if (typ <= 105) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v5.10.17: f64v_dot/scale/axpy as statements (out-of-range from
+    # v5.10.17: f64v_scale/axpy as statements (out-of-range from
     # the existing 62-105 SIMD band; share the same PCMPE-then-`;` shape).
-    if (typ >= 128) { if (typ <= 130) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    if (typ >= 129) { if (typ <= 130) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.3+ (SIMD Phase 1): f32v_add/sub/mul as statements (138-140).
     if (typ >= 138) { if (typ <= 140) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v6.4.5 (SIMD Phase 2): f32v_fmadd/f32v_dot as statements (141-142).
-    if (typ >= 141) { if (typ <= 142) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.5 (SIMD Phase 2): f32v_fmadd as a statement (141).
+    if (typ == 141) { PCMPE(S); _expect_step(S, 5); return 0; }
     # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul as statements (143-145).
-    if (typ >= 143) { if (typ <= 146) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    if (typ >= 143) { if (typ <= 145) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.8 (SIMD Phase 4 R1): f32v8_add/sub/mul as statements (147-149).
     if (typ >= 147) { if (typ <= 149) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v6.4.9 (SIMD Phase 4 R2): f32v8_fma/f32v8_dot as statements (150-151).
-    if (typ >= 150) { if (typ <= 151) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.9 (SIMD Phase 4 R2): f32v8_fma as a statement (150).
+    if (typ == 150) { PCMPE(S); _expect_step(S, 5); return 0; }
     # v6.5.24 (ymm widening): f64v256_add/sub/mul/div as statements (154-157). The lib
     # wrappers call these in STATEMENT position (`f64v256_add(&r, a_ptr, b_ptr, 4);`), so
     # without this band the builtin lexes and emits fine yet is a syntax error at every
-    # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range.
+    # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range; f64v256_dot (159) is a value.
     if (typ >= 154) { if (typ <= 162) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v6.6.2 — f64_sqrt (136) and callptr (137), renumbered out of their collisions.
-    # ⚠ f64_sqrt WAS inside the 62..105 band above, so moving it without this entry would
-    # silently regress `f64_sqrt(x);` as a statement, and no test in the tree covered that form.
-    # callptr GAINS statement position here: at 111 it hit the `stack var` parser and was a hard
-    # error, which the filing recorded as diagnostics-only and was not.
+    # v6.6.2 — callptr (137), renumbered out of its collision with `stack` (111), GAINS statement position here: at
+    # 111 it hit the `stack var` parser and was a hard error, which the filing recorded as diagnostics-only and was not.
     if (typ == 137) { if (_stmt_callptr_field(S) == 1) { return 0; } }   # 6.7.14: `callptr(&gp, 5).b = 40;`
-    if (typ >= 136) { if (typ <= 137) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # 6.6.13 — f64_le / f64_ge / f64_trunc (164-166). As lib calls they were legal statements;
-    # without this band the builtins would make `f64_trunc(x);` a syntax error (the f64_sqrt lesson).
-    if (typ >= 164) { if (typ <= 166) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    if (typ == 137) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);
         if (_stmt_explicit_generic(S, noff) == 1) { return 0; }   # 6.6.12: `id<i32>(4);`
+        if (_stmt_intr_bare(S, noff) == 1) { return 0; }   # 6.7.17: `mulh64;` is "expected '('", as `load16;`
         if (PEEKT(S) == 10) {
             if (_stmt_intrinsic(S, noff) == 1) { return 0; }   # 6.7.16 (D11): `mulh64(a, b);` refused by name
             if (_stmt_call_field(S) == 1) { return 0; }   # 6.6.12: `mk(3).total();`
@@ -7346,8 +7470,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         _asg_ufv = 0 - 1;
         _asg_tup_refd = 0;
         if (compound_op == 0) {
-            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-            STI(S, GTI(S) + 1);
+            if (_asg_eq_step(S) == 1) { return 0; }   # 6.7.17: a bare `p;` is one error, in sync
             _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
         }
         if (compound_op != 0) {

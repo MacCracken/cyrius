@@ -146,7 +146,7 @@ fn _tl_assert(S, arm): i64 {
     STI(S, GTI(S) + 1);
     STI(S, _ce_extent(S, GTI(S)));   # 6.7.4: a const expression, by the evaluator's grammar
     if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-    _assert_tail(S);
+    _assert_tail(S, 0);   # 6.7.17: silent here, PARSE_STMT's arm reports
     return 0;
 }
 
@@ -745,11 +745,11 @@ fn _decl_inner(S): i64 {
 # variable"); a `fn` where a fn is defined (module scope, a top-level block: GINFN 0) is left to PARSE_PROG, which
 # defines it; a `fn` in a fn body, or a declaration the declaration-section rule refuses (`_dl_kind`), is stepped as
 # that refusal steps it, its names and fns entered as reported (`_dl_names`, `_dl_quiet`), the per-item error standing
-# for it. The file-level marker (alone on its line) is not this arm's. 1 = consumed (PARSE_STMT returns), 0 = parse on
-# at the cursor. CHANGELOG [6.7.16]
+# for it. The file-level marker (alone on its line) is `_dl_priv_file`'s (6.7.17). 1 = consumed (PARSE_STMT returns),
+# 0 = parse on at the cursor. CHANGELOG [6.7.16]
 fn _dl_priv(S): i64 {
     while (PEEKT(S) == 153) {
-        if (_priv_is_item(S, GTI(S)) == 0) { return 0; }
+        if (_priv_is_item(S, GTI(S)) == 0) { return _dl_priv_file(S); }
         STI(S, GTI(S) + 1);
     }
     var ti = GTI(S);
@@ -762,6 +762,26 @@ fn _dl_priv(S): i64 {
     _dl_derived(S, ti);
     _dl_names(S, ti, GTI(S));
     _dl_quiet(S, ti, GTI(S));
+    return 1;
+}
+# ⛔ 6.7.17 — THE FILE-LEVEL `private` LINE AFTER THE FIRST TOP-LEVEL STATEMENT IS ACCEPTED (the user's D31, 2026-10-22):
+# the file is private, exactly as when the line sits above the first statement — `_PRIV_PRESCAN` marked it already, from
+# the line wherever it sits (the guide: "the WHOLE file, wherever in it the marker sits"). Only the statement parser
+# refused it: "unexpected private", and with no `;` the refusal's latch swallowed the next statement's own error. At
+# module scope (GINFN 0, `_pp_depth` <= 1) the marker and an optional `;` are stepped, as `_TL_VIS` steps them in the
+# declaration zone. In a fn body or a block it is still "unexpected private", now made in sync: the marker (and its
+# `;`) stepped and the latch it set released, so the next statement reports its own error (with no `;` the resync
+# skipped it: `private` then `a = zz;` reported the `private` alone). 1 = consumed. CHANGELOG [6.7.17]
+fn _dl_priv_file(S): i64 {
+    if (GINFN(S) == 0) { if (_pp_depth <= 1) { return _dl_priv_mark(S); } }
+    var p0 = _panic;
+    ERR(S);
+    if (p0 == 0) { _panic = 0; }
+    return _dl_priv_mark(S);
+}
+fn _dl_priv_mark(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
     return 1;
 }
 # ... a refused declaration after the first statement (`_decl_late`'s arm, `rep` 2: an include line is still reported,
@@ -1023,7 +1043,7 @@ fn _dl_quiet(S, a, e): i64 {
         i = i + 1;
     }
     if (TOKTYP(S, a) == 73) { a = a + 1; }   # 6.7.16: `pub use m.f;` too
-    if (TOKTYP(S, a) == 74) { if (TOKTYP(S, e - 2) == 2) { _dl_fn_quiet(S, TOKVAL(S, e - 2), a, 0); } }   # `use m.f;`
+    if (TOKTYP(S, a) == 74) { if (_use_bad(S, a) < 0) { _dl_fn_quiet(S, TOKVAL(S, a + 3), a, 0); } }   # `use m.f` (6.7.17: its `;` or not)
     return 0;
 }
 fn _dl_fn_at(S, i, d, isid): i64 {
@@ -1162,12 +1182,15 @@ fn _dl_refd_at(S, noff): i64 {
 # a `dyn Tr` "'Tr' is not a trait", an `impl Tr for P` "impl of undeclared trait" (pass 2's check of pass 1's impl).
 # This walk runs before every pass-1 scan (`_tl_pass1`, after `_dyn_fold`). It follows the braces: a `{` after a `fn
 # NAME` header (`_IS_FN_KW`'s definition, not a `*fn(..)` type) opens a body, one after a declaration's header
-# (struct, enum, union, trait, impl, mod) a declaration's body — never a body itself, though a method's in it is — and
+# (struct, enum, union, trait, impl) a declaration's body — never a body itself, though a method's in it is — and
 # any other `{` is its enclosing one's kind (a block, a closure; at module scope a top-level block). At a statement
 # start in a body (after `{`, `}`, `;` or a case's `:`) a declaration `_decl_inner` always refuses is stepped as it
 # steps it (`_dl_skip_in`; the cursor put back) and its names entered (`_dl_names`, `_dl_pre`: names only — nothing
 # is registered yet, so no fn). The stand-downs ask only after resolution failed, so a valid top-level declaration of
 # the same name still resolves. CHANGELOG [6.7.16]
+# 6.7.17: a `use` or a `mod` opens no `{` — it held the header open to the next `;`, so after a `;`-less `use m.f` or
+# `mod m` in a body the next block read as a declaration's and a refused `struct Q` in it went unfilled ("type 'Q' is
+# declared after its use"). CHANGELOG [6.7.17]
 var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
 # Per declaration the walk met (`_dl_pw_rec`): its keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words). None is
 # recorded before `_dl_pw_skip` (`_dl_inner_at`: a derive's fns).
@@ -1197,7 +1220,7 @@ fn _dl_inner_fill(S): i64 {
         elif (k == 32) { if (TOKTYP(S, i + 1) == 2) { pend = 1; ppd = pd; } }
         elif (_dl_kind(k) == 1) {
             if (vec_len(stk) > 0) { if (_dl_brace_in(stk) != 0) { _dl_inner_at(S, i, _dl_brace_in(stk)); } }   # in a body, not module scope
-            if (k != 73) { pend = 2; ppd = pd; }
+            if (k != 72 && k != 73 && k != 74) { pend = 2; ppd = pd; }   # `pub` marks the next keyword; no `{` after a `mod` / `use`
         }
         i = i + 1;
     }
@@ -1387,18 +1410,20 @@ fn _ann_refd_said(S, noff, idx): i64 {
     return 0;
 }
 # Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes
-# first at depth 0 (`mod m;`, `use m.f;`, `pub var x = ..;`, `pub const ..;`). A `pub` steps what it marks.
+# first at depth 0 (`pub var x = ..;`, `pub const ..;`; a `use` and a `mod` their own way, `_dl_skip_use` /
+# `_dl_skip_mod`). A `pub` steps what it marks.
 # 6.7.16: a `pub const fn` ends at its body's `}` — it stepped on to the NEXT statement's `;`. CHANGELOG [6.7.16]
 fn _dl_skip(S): i64 { return _dl_skip_at(S, 0); }
 # Below module scope (`_decl_inner`): a `}` met at depth 0 closes the enclosing fn body or block — left for it.
 fn _dl_skip_in(S): i64 { return _dl_skip_at(S, 1); }
 fn _dl_skip_at(S, inner): i64 {
+    if (_dl_skip_use(S, inner) == 1) { return 0; }
+    if (_dl_skip_mod(S) == 1) { return 0; }
     var semi = 0;
     var t = PEEKT(S);
-    if (t == 72 || t == 74) { semi = 1; }
     if (t == 73) {
         var t2 = TOKTYP(S, GTI(S) + 1);
-        if (t2 == 3 || t2 == 168 || t2 == 72 || t2 == 74) { semi = 1; }
+        if (t2 == 3 || t2 == 168) { semi = 1; }
         if (t2 == 168) { if (TOKTYP(S, GTI(S) + 2) == 32) { semi = 0; } }   # `pub const fn`
     }
     var d = 0;
@@ -1414,6 +1439,28 @@ fn _dl_skip_at(S, inner): i64 {
         }
     }
     return 0;
+}
+# A `use` (`pub` before it or not): the tokens `_use_step` reads. The walk above ran on to the next `;`, so a refused
+# `use m.f` with none took the next line with it, that line's own error unreported. CHANGELOG [6.7.17]
+fn _dl_skip_use(S, inner): i64 {
+    var k = GTI(S);
+    if (TOKTYP(S, k) == 73) { k = k + 1; }
+    if (TOKTYP(S, k) != 74) { return 0; }
+    STI(S, k);
+    _use_step(S, 0, inner);
+    return 1;
+}
+# A `mod` (`pub` before it or not): the tokens `_tl_mod` reads, `mod [NAME] [;]`. The walk above ran on to the next `;`,
+# so a refused `mod m` with none took the next line with it, that line's own error unreported. CHANGELOG [6.7.17]
+fn _dl_skip_mod(S): i64 {
+    var k = GTI(S);
+    if (TOKTYP(S, k) == 73) { k = k + 1; }
+    if (TOKTYP(S, k) != 72) { return 0; }
+    k = k + 1;
+    if (TOKTYP(S, k) == 2) { k = k + 1; }
+    if (TOKTYP(S, k) == 5) { k = k + 1; }
+    STI(S, k);
+    return 1;
 }
 
 # One pass-1 step: consume one top-level declaration and return 1, or return 0 at the first
@@ -1541,24 +1588,61 @@ fn _tl_mod(S): i64 {
 
 # `use modname.funcname;` — register the alias funcname -> modname_funcname (pass 1).
 fn _tl_use(S): i64 {
-    STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 2) {
-        var umod = PEEKV(S);
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) == 41) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 2) {
-                var ufn = PEEKV(S);
-                # 6.6.20: `use m.mulh64;` binds the BARE name, so it is a declaration of it —
-                # the call would lower to the intrinsic. No fnptr.cyr exemption (isfn 0).
-                _RSV_INTRINSIC_DECL(S, ufn, GTI(S), 0);
-                STI(S, GTI(S) + 1);
-                _tl_use_alias(S, umod, ufn);
-            }
-        }
-    }
-    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    var ti = GTI(S);
+    if (_use_step(S, 1, 0) == 0) { return 0; }
+    var e = GTI(S);
+    var ufn = TOKVAL(S, ti + 3);
+    # 6.6.20: `use m.mulh64;` binds the BARE name, so it is a declaration of it —
+    # the call would lower to the intrinsic. No fnptr.cyr exemption (isfn 0).
+    _RSV_INTRINSIC_DECL(S, ufn, ti + 3, 0);
+    STI(S, ti + 4);
+    _tl_use_alias(S, TOKVAL(S, ti + 1), ufn);
+    STI(S, e);
     return 0;
+}
+# ⛔ 6.7.17 — A `use` IS ONE LINE: `use module.name;`, or with no `;` ending at its line, as an #assert does. Pass 1 read
+# `use IDENT . IDENT [;]` and pass 2 stepped to the next `;`, so `use m.f` with no `;` silently dropped the line after it
+# (`syscall(60, 3);` never compiled: exit 0), and any other shape bound nothing, silently: `use 5;`, `use m.;`, `use m;`,
+# `use m.f g;`. Now one rule steps it in every reader (pass 1, pass 2, a refused one after the first statement or in a
+# body: `_dl_skip_at`), and a line that is not that form is "expected `use module.name;`" at its first wrong token (the
+# `use` when its line ends early), reported once (pass 1, `rep` 1), its line stepped whole (`_ln_rest`, `blk` 1 below
+# module scope) — the user's D30, 2026-10-22. 1 = the form (the cursor past it: the alias is the caller's), 0 = refused.
+# CHANGELOG [6.7.17]
+fn _use_step(S, rep, blk): i64 {
+    var ti = GTI(S);
+    var b = _use_bad(S, ti);
+    if (b < 0) {
+        STI(S, ti + 4);
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+        return 1;
+    }
+    STI(S, b);
+    if (rep == 1) {
+        var p0 = _panic;
+        ERR_MSG(S, "expected `use module.name;`", 27);
+        if (p0 == 0) { _panic = 0; }   # stepped in sync: the next declaration reports its own
+    }
+    if (b == ti) { STI(S, ti + 1); }
+    _ln_rest(S, GTLINE(S, ti), blk);
+    return 0;
+}
+# The first token of the `use` at `ti` that breaks `use IDENT . IDENT` + `;` / EOF / its line's end: the `use` itself when
+# its line ends before the name, -1 for none.
+fn _use_bad(S, ti): i64 {
+    var ln = GTLINE(S, ti);
+    var k = ti + 1;
+    while (k < ti + 4) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return ti; }
+        if (GTLINE(S, k) != ln) { return ti; }
+        if (k == ti + 2) { if (t != 41) { return k; } }
+        elif (t != 2) { return k; }
+        k = k + 1;
+    }
+    var t2 = TOKTYP(S, k);
+    if (t2 == 5 || t2 == 12) { return 0 - 1; }
+    if (GTLINE(S, k) != ln) { return 0 - 1; }
+    return k;
 }
 
 # Append the mangled `mod_fn` to tok_names (NPOS is stable after lexing) and record the alias
@@ -1635,9 +1719,9 @@ fn _tl_scan2_def(S, t, objok): i64 {
     return 0;
 }
 
+# Pass 2: the tokens pass 1 read (`_use_step`, silent). CHANGELOG [6.7.17]
 fn _tl_skip_use(S): i64 {
-    while (PEEKT(S) != 5) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); }
-    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    _use_step(S, 0, 0);
     return 0;
 }
 
