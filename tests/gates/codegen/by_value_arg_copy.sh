@@ -268,11 +268,14 @@ for mode in plain IR3 DCE; do
     chmod +x "$T/tc_$mode"; got=0; timeout 60 "$T/tc_$mode" > "$T/tc_$mode.out" 2>&1 || got=$?
     tcyr_ok "$lbl" "$T/tc_$mode.out" "$got"
 done
+# 6.7.17 — the emulated legs' deadline is 300 s, as the other gates' (param_type_grammar.sh): cxvm interprets the
+# tcyr's 3,000,000-deep tail-call rows in ~86 s on a loaded box (load ~55, base 6.7.16's own cxvm and bytecode), so
+# 120 s killed a correct run (A5 "exit 124") under check.sh's parallel pool.
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && [ -s "$T/cc_a64" ]; then
         chmod +x "$T/cc_a64"
         if "$T/cc_a64" < "$TC" > "$T/tc.a" 2> "$T/tc.aerr"; then
-            chmod +x "$T/tc.a"; got=0; (cd "$T" && timeout 120 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || got=$?
+            chmod +x "$T/tc.a"; got=0; (cd "$T" && timeout 300 qemu-aarch64 ./tc.a > "$T/tc.aout" 2>&1) || got=$?
             tcyr_ok "A4: aarch64 (qemu)" "$T/tc.aout" "$got"
         else bad "A4: aarch64: the tcyr did not compile: $(grep '^error' "$T/tc.aerr" | head -1)"; fi
     else bad "A4: could not build src/main_aarch64.cyr"; fi
@@ -281,7 +284,7 @@ if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx" ]
    "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && [ -s "$T/cxvm" ]; then
     chmod +x "$T/cc_cx" "$T/cxvm"
     if "$T/cc_cx" < "$TC" > "$T/tc.cyx" 2> "$T/tc.cxerr" && [ -s "$T/tc.cyx" ]; then
-        got=0; timeout 120 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?
+        got=0; timeout 300 "$T/cxvm" < "$T/tc.cyx" > "$T/tc.cxout" 2>&1 || got=$?
         tcyr_ok "A5: cx (cxvm)" "$T/tc.cxout" "$got"
     else bad "A5: cx: the tcyr did not compile: $(grep '^error' "$T/tc.cxerr" | head -1)"; fi
 else bad "A5: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
