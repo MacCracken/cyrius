@@ -4522,7 +4522,7 @@ fn _hl_small_copy(S, noff, src_noff, dt): i64 {
     _agc_src_operand(S, src_noff);
     var sh = _agc_hdl();
     if (dh == 1) { if (sh == 1) { return 0; } }
-    if (_AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff) == 1) { return 0; }
+    if (_asg_type_err(S, dt, _agc_t, noff, src_noff) == 1) { return 0; }   # 6.7.17: no warning beside it
     # A CAPTURED handle or `*T` (B7-1c) is a source the copy goes through (its word is the address),
     # never a rebind — as over 8 B, where `_agc_src_operand` answers a capture as a value.
     if (_agc_li == 0 - 2) { sh = _hl_cap_addr(S, src_noff); }
@@ -4660,7 +4660,7 @@ fn _sca_mismatch(S, fi, noff): i64 {
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
     if (_agc_hdl() == 1) { if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, rs - 1) > 8) { return 0; } } }
-    return _AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - rs, noff, PEEKV(S));
+    return _asg_type_err(S, _agc_t, 0 - rs, noff, PEEKV(S));   # 6.7.17: no warning beside it
 }
 
 # The copy both struct-call assignments end with: temp `t` (field-0 slot, `n` slots of struct
@@ -5587,6 +5587,17 @@ fn _asg_rhs_steps(S, di, rsid): i64 {
 # 1 after that refusal, for the statement: its typed-pointer warning is not given about the tuple
 # (its slot type is `0 - sid`, the pointer form). Cleared by each statement assignment. CHANGELOG [6.7.11]
 var _asg_tup_refd = 0;
+# ⛔ 6.7.17 — AN ASSIGNMENT REFUSED FOR ITS STRUCT TYPE IS ONE DIAGNOSTIC. `pp = mkq();` into a `*P`, `h = GQ;` into a `P`
+# handle from an inline struct global of another type and `l = w.q;` from a struct-typed field of another type each
+# gave "assigning non-pointer to typed pointer" beside the refusal "cannot copy .. into a variable of a different
+# struct/vector type": the statement went on to judge the value the refusal had already named. `_AGG_ASSIGN_TYPE_ERR`
+# at an assignment's arm, and the statement's warning withheld (as R12's and the dereference's refusals withhold it).
+# 1 = refused. CHANGELOG [6.7.17]
+fn _asg_type_err(S, td, ts, dnoff, snoff): i64 {
+    if (_AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff) == 0) { return 0; }
+    _asg_tup_refd = 1;
+    return 1;
+}
 fn _tup_asg_chk(S, noff, st): i64 {
     _agc_operand(S, noff);
     if (_agc_t >= 0) { return 0; }
@@ -6083,7 +6094,7 @@ fn _try_aggregate_copy_assign(S, noff, term): i64 {
     if (dh == 1) { if (_agc_hdl() == 1) { return 0; } }
     # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
     # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
-    if (_AGG_ASSIGN_TYPE_ERR(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }
+    if (_asg_type_err(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }   # 6.7.17: no warning beside it
     if (snslots != nslots) { return 0; }
     if (_agc_t != lt) { return 0; }
     var src_li = _agc_li;
