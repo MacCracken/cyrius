@@ -25,6 +25,11 @@
 #   ZG  a refusal inside a sizeof operand behind a `*` is one line, sizeof's words: an unknown name (an expression, a
 #       const, `#assert` — no "#assert failed" beside it), a fn-pointer type's unknown name, `*( .. )`, `*[T]`, no type
 #       at all; ZG8 a control (a false `#assert` on the value 8 is "#assert failed", once)
+#   ZM  (met landing D94) an `#assert`'s message is filed aside by the lexer (`_lex_is_dir_msg`, src/frontend/lex.cyr),
+#       never the program's string pool — but its `sizeof ( .. )` atom stepped ONE name inside, so `sizeof(*T)`,
+#       `sizeof(*fn( .. ))` and 6.6.17's `sizeof(Box<i64>)` missed the message (and the 12-token look-back missed a long
+#       operand): each output carried the message's bytes. ZM1-ZM3 build on every leg with no marker in the output;
+#       ZM4 a control
 #   T   each values file on x86_64 (default, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine):
 #       "N passed, 0 failed (N total)", N derived from the file (one row per `assert_eq(`):
 #       tests/tcyr/crossos/slice_pointer_element_stars.tcyr (P), tests/tcyr/crossos/sizeof_pointer_type.tcyr (Z)
@@ -42,6 +47,8 @@
 #   MZ1 `_ce_sizeof` not passing a `*` on               -> RED 20: Z4 Z5 on every leg and Z4L Z5L (a const, an array
 #                                                         size, an #assert: "expected ')', got '*'"), ZG2 ZG3 ZG7 ZG8,
 #                                                         T sizeof_pointer_type on every leg
+#   MM0 the tree before the ZM fix (9314c587e)         -> RED 12: ZM1-ZM3 on every leg (the message in the output)
+#   MM1 the look-back kept at 12 tokens                 -> RED 4: ZM2 on every leg (a 15-token operand)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -186,6 +193,29 @@ refused ZG6 "1:21: a pointer to a slice is not a type (6.7.8: slices are fn-loca
     "ZG6 sizeof(*[u8])" 'syscall(60, sizeof(*[u8]));\n'
 refused ZG7 "1:17: expected identifier, got '+'" "ZG7 #assert sizeof(*+): no type after the \`*\`" '#assert sizeof(*+) == 8, "m"\nsyscall(60, 3);\n'
 refused ZG8 "1:28: #assert failed: m" "ZG8 control: a false #assert on sizeof(*i64) is its one line" '#assert sizeof(*i64) == 4, "m"\nsyscall(60, 3);\n'
+
+echo "ZM. an #assert's message stays out of the binary when its operand is sizeof(*T) or sizeof(T<..>)"
+# nomsg <name> <what> <assert-operands>: an #assert at top level and in a fn, each with a 40-byte marker message, builds
+# on every leg and no output carries the marker (the lexer files a directive's message aside); the program's own
+# string literal (a second marker) is in each output — the control that the search can see a string
+MK=ZMSGZMSGZMSGZMSGZMSGZMSGZMSGZMSGZMSGZMSG
+nomsg() {
+    printf 'struct Box<T> { v: T; w: T; }\n#assert %s, "%s";\nfn f(): i64 {\n#assert %s, "%s"\nvar s = "KEEPKEEPKEEP";\nreturn load8(s) - 72; }\nsyscall(60, f());\n' \
+        "$3" "$MK" "$3" "$MK" > "$D/$1.cyr"
+    for leg in x86 $OTHER; do
+        o="$D/m_$1_$leg"; [ "$leg" = pe ] && o="$o.exe"
+        if ! build_leg "$leg" "$D/$1.cyr" "$o" || [ ! -s "$o" ]; then bad "$2 $leg: did not build: $(grep -h -m1 '^error' "$o.err" 2>/dev/null)"; continue; fi
+        n=$(LC_ALL=C grep -a -c "$MK" "$o" || true)
+        k=$(LC_ALL=C grep -a -c KEEPKEEPKEEP "$o" || true)
+        if [ "$n" -ne 0 ]; then bad "$2 $leg: the message is in the output ($n line(s))"
+        elif [ "$k" -eq 0 ]; then bad "$2 $leg: control: the program's own string is not in the output either"
+        else ok "$2 $leg: the message is not in the output, the program's string is"; fi
+    done
+}
+nomsg zm1 "ZM1 sizeof(*i64)" 'sizeof(*i64) == 8'
+nomsg zm2 "ZM2 sizeof(*fn(i64, i64): i64) == sizeof(**fn(i64): i64)" 'sizeof(*fn(i64, i64): i64) == sizeof(**fn(i64): i64)'
+nomsg zm3 "ZM3 sizeof(Box<i64>) (6.6.17's form)" 'sizeof(Box<i64>) == 16'
+nomsg zm4 "ZM4 control: sizeof(i64)" 'sizeof(i64) == 8'
 
 for tc in $TCS; do
     TC=${tc%%:*}; FLOOR=${tc##*:}
