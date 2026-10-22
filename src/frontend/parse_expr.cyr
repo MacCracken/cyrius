@@ -2481,8 +2481,8 @@ fn _mret_sval(S, t): i64 {
     if (_syntax_only == 1) { PCMPE(S); return 0; }
     var asid = _expr_struct_sid(S, t);
     if (asid == 0) { asid = _ess_deref(S, t); }
-    if (asid <= 0) { return 0; }
-    if (asid >= 2048) { return 0; }
+    if (asid <= 0) { return _mret_vval(S, t); }   # 6.7.17 (D25): a vector value
+    if (asid >= 2048) { return _mret_vval(S, t); }
     if (_dx_plain(S, asid) == 0) { return _mret_fld_rchk(S, asid); }
     if (STRUCTSZ(S, asid - 1) <= 8) { return 0; }
     if (_mret_hdl(S, t) == 1) { return 0; }
@@ -2547,6 +2547,40 @@ fn _mret_sval_err(S, t, asid): i64 {
     PRSTR("' (");
     PRNUM(STRUCTSZ(S, asid - 1));
     PRSTR(" bytes) as a multi-value element - return its pointer, or its fields as elements\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+# ⛔ 6.7.17 (D25 A, the user's decision, 2026-10-22) — A VECTOR VALUE IS NO MULTI-VALUE ELEMENT, as a struct over 8 B
+# is not (6.7.16's D90): `return (v, 3);` with v a vector local handed back its lane 0 — `fn two(): (f64v2, i64) { var v
+# = mk2(41, 7); return (v, 3); }` bound a = 41 (exit 44) on every target, a parameter, a capture and `*pv` the same.
+# Refused once at the element, in D90's shape: "'two' returns vector 'f64v2' (16 bytes) as a multi-value element -
+# return its pointer, or its lanes as elements". The declaration `fn two(): (f64v2, i64)` still compiles, as D90 left
+# `(P, i64)`; a vector call as the element keeps D100's words (`_vsl_tup`). The element [t, cursor) just parsed: a
+# vector value that is no call (`_vval_at`). No latch, as D90's. CHANGELOG [6.7.17]
+fn _mret_vval(S, t): i64 {
+    var vt = _vval_at(S, t, GTI(S));
+    if (vt == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(t, "_mret_vval", 0 - vt, 0) == 1) { return 0; }
+    var fi = _mret_fn(S);
+    var sv = GTI(S);
+    STI(S, t);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    if (_fn_is_closure(S, fi) == 1) { PRSTR(": a closure"); }
+    else {
+        PRSTR(": '");
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+        PRSTR("'");
+    }
+    PRSTR(" returns vector '");
+    _vty_pr(vt);
+    PRSTR("' (");
+    _vec_desc(S, vt);
+    PRNUM(GVEC_NSLOTS(S) * 8);
+    PRSTR(" bytes) as a multi-value element - return its pointer, or its lanes as elements\n");
     _err_excerpt(S);
     STI(S, sv);
     _had_error = 1;

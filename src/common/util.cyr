@@ -1669,6 +1669,7 @@ fn GFRS(S, fi): i64 { if (_fnret_base == 0) { return 0; } return L64(_fnret_base
 # 6.7.16 (D100 / D101): 1 = some fn returns a vector by value (a descriptor, <= -2048) — the scans that refuse a vector
 # call read as a word (`_vop_rchk`, `_vsc_arg`, `_vsc_ret`) run only then. CHANGELOG [6.7.16]
 var _vret_any = 0;
+var _vty_any = 0;   # 6.7.17: some local, parameter or pointer is typed a vector (`SLTYPE`, `_ps_vw`)
 fn SFRS(S, fi, v): i64 {
     if (_fnret_base == 0) { _fnret_base = alloc(131072 * 8); }
     if (v <= 0 - 2048) { _vret_any = 1; }
@@ -2068,7 +2069,14 @@ fn SCOPE_POP(S): i64 {
 fn GPSC(S): i64 { return L64(S + 0x18F890); }
 fn SPSC(S, v): i64 { S64(S + 0x18F890, v); return 0; }
 fn GLTYPE(S, li): i64 { return L64(S + 0x5DDD000 + li * 8); }
-fn SLTYPE(S, li, v): i64 { S64(S + 0x5DDD000 + li * 8, v); return 0; }
+# 6.7.17 (D24 / D25): a local or parameter typed a vector (a descriptor, <= -2048) marks `_vty_any`, as a `*V` step word
+# does (`_ps_vw`) and a vector or `*V` global (`_gv_vvd_set`, `_gv_pvd_set`) — the scans for a vector value that is no
+# call (`_vval_at`) run only then. CHANGELOG [6.7.17]
+fn SLTYPE(S, li, v): i64 {
+    if (v <= 0 - 2048) { _vty_any = 1; }
+    S64(S + 0x5DDD000 + li * 8, v);
+    return 0;
+}
 
 # v5.8.14 §6 — TYPE_SLICE element-type tracking.
 # Parallel-array stash for slice-typed locals: 576 entries × 8B,
@@ -3511,6 +3519,17 @@ fn _warn_seen(ti, tag, a): i64 { return _err_dup_at(ti, 0 - ((tag * 31 + a) * 8 
 # (`tag` its name, `a` what its text names): 1 = printed at `ti` already — print nothing: `_had_error` (and, `latch`
 # 1, the panic latch) set as the print would have, `_err_quiet` 1 (a note the caller prints after it stays quiet).
 # Else it is recorded, `_err_quiet` 0: 0. A writer keeps its own `_panic` test. CHANGELOG [6.7.15]
+# ⛔ 6.7.17 (met landing D23) — "THE PARSE REPORTED AN ERROR OF ITS OWN" IS A REPORT MADE DURING IT. The readers that keep
+# a refusal from following a construct's own error (a vector receive's `got ..`, `_scv_err`) took `_had_error` 0 before
+# and 1 after — but `_had_error` is sticky, so after any earlier error in the file every such parse looked clean and the
+# refusal followed its own error: `var y = zz8; .. w = zz9;` printed "undefined variable 'zz9'" and then "a value-form
+# vector local is assigned only from .. - got `zz9`". 1 = a report since the snapshot `en` (`_err_n`) / `he`
+# (`_had_error`) was taken: the count moved, or `_had_error` went 0 -> 1 (a writer that counts nothing). CHANGELOG [6.7.17]
+fn _own_err(en, he): i64 {
+    if (_err_n != en) { return 1; }
+    if (he == 0) { if (_had_error == 1) { return 1; } }
+    return 0;
+}
 fn _derr_seen(ti, tag, a, latch): i64 {
     _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
     if (_err_dup_at(ti, (tag * 31 + a) * 8 + 7) == 1) {

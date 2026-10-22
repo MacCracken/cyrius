@@ -2359,6 +2359,17 @@ through `p`, as `var v = mkv(..);` is the vector — `(*p)`, `**pp`, `*gp(p)` to
 unannotated declaration bound one word, lane 0, silently (x86_64 114, aarch64 26, cx 98, Windows 146 where 161 is
 right), and `return *p;` was refused.
 
+**A store through a `*V` copies the vector (6.7.17; the user's decision D23, 2026-10-22: A),** as `w = u` does and
+as a store through a `*S` copies the struct: `*pv = u;`, `*pv = mkv(4, 7);` (a by-name call, an explicit instance, a
+method, `callptr(&f, ..)` / `fncallN(&f, ..)`, wrapped), `*pv = *q;` and `*(&w) = ..` (which is `w = ..`) write all 16 /
+32 bytes, with `pv` any pointer to the vector — a local, a parameter, a field, `**ppv`, `*gp(pv)`, `pv + n` — in a fn,
+a closure or at top level (a vector call there is refused: no frame). The source rules are `w = <src>`'s: another
+vector is *cannot copy 'u4' into a variable of a different struct/vector type: 'pv'*, a word *a value-form vector
+local is assigned only from .. - got `5`*, and `*pv OP= v` is refused as `w OP= v` is (*compound assignment to the
+vector 'pv' points at is refused - a vector value is not an integer or a float ..*). ⚠ Through 6.7.16 the store wrote
+one word: from a local its lane 0 (`*pv = u;` 42 on every target where 47 is right), from a call whatever word its
+result register held (x86_64 / aarch64 2, cx / Windows 42), and `*pv += 1` added to lane 0.
+
 **An explicit instance is a call by name (6.7.13).** With `fn mkg<T>(a: T, b: T): f64v2`,
 `mkg<i64>(41, 7)` and `mkg<i32>(41, 7)` are calls declared to return `f64v2`, exactly as
 `mkg(41, 7)` is: `var v: f64v2 = mkg<i64>(41, 7);`, `v = mkg<i64>(41, 7);`, an untyped `var v =
@@ -2412,7 +2423,25 @@ declaration, an argument, a condition, an index, a bound, a field or element of 
 the assigned variable* (an assignment or a store, a tuple literal assigned), and a `return`'s D101's. Bind the vector first and read its lanes (`var w = mkv(41, 7); x += load64(&w);`). ⚠ Through
 6.7.15 each compiled and used one word — x86_64 / aarch64 rax's leftover (`1 + mkv(41, 7)` gave 1, `x += mkv(..)` 0),
 cx / Windows lane 0 (42, 41) — and `rd(mkv(41, 7) + 1)` into a `*f64v2` and `*mkv(41, 7)` crashed (139; cx a wrong
-word; Windows exit 5).
+word; Windows exit 5). An operand in a multi-value `return`'s element (`return (mkv(41, 7) + 1, 3);`, `return (3,
+-s.mv());`) is that element's, *… does not match the declared type*, in a declared and an undeclared multi-value fn alike
+(6.7.17): through 6.7.16 it compiled in a declared one (x86_64 / aarch64 4, cx / Windows 45) and an undeclared one said
+D101's *… cannot be returned as i64*.
+
+**A vector value that is no call follows the call** (6.7.17, the user's decision D24, 2026-10-22: refuse them): a
+vector local, a by-value vector parameter, a closure's captured vector and a dereference of a pointer to a vector
+(`*pv`, `**ppv`, `*(&w)`) are refused in every word slot above, at the value, naming it as written — an argument to a
+parameter that takes a word (`take(w)`: *a vector value cannot be passed to an integer parameter - 'w' is a vector,
+passed to parameter 't' of 'take'*; *… passed to 'syscall'*), a `return` from a fn that returns no vector (`return w;`,
+`return 1 + w;`, a closure's value: *a vector value cannot be returned as i64 - 'w' is a vector*), a declaration
+annotated no vector, struct or bool (`var x: i64 = w;`, `: f64`, `: *T`, `: u128`, at top level `var X: i64 = *GP;`),
+an operand, a condition, an index, a range bound, a literal's field (*vector type does not match the declared type -
+'w' is a vector*), an assignment or a store to anything that is no vector (`x = w;`, `x += w`, `p.a = w`, `*pi = w`:
+*vector type does not match the assigned variable - 'w' is a vector*). A tuple literal's element keeps its own words
+(*a tuple element is i64, f64 or bool, not a vector* — `((w), 3)` and `(*pv, 3)` too, which compiled), a multi-value
+`return`'s D25's, a bool's, a struct's and a pointer of another kind's their own, a vector global its own. Read a lane
+through the vector's address (`load64(&w)`, `load64(&w + 8)`). ⚠ Through 6.7.16 each compiled and read lane 0, the same
+on every target (`take(w)`, `return w;`, `var x: i64 = w;` and `if (w)` 4, `1 + w` 5 with `w` = (4, 7); `*w` crashed).
 
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
@@ -3995,6 +4024,13 @@ var hi, lo, bexp = dd_pow10(k);
 # An 8-byte struct is one word and is returned whole; the declaration `(Pt, i64)` stays as it is. A
 # HANDLE named whole is its pointer and stays an element: `var q: Pt = alloc(16); return (q, 5);` (a
 # struct local initialised from an address, or a pointer-mode global) hands back the address, as before.
+# A VECTOR value is no element either (6.7.17, the user's D25) — a vector local, parameter or closure
+# capture, `*pv`, `**ppv`, `*(&w)` — refused at the element in the same shape (it handed back lane 0):
+#   fn two(): (f64v2, i64) { var v = mk2(41, 7); return (v, 3); }  # 'two' returns vector 'f64v2' (16
+#                                     # bytes) as a multi-value element - return its pointer, or its
+#                                     # lanes as elements
+#   return (load64(&v), load64(&v + 8), 3);   fn lp(pv: *f64v2): (*f64v2, i64) { return (pv, 2); }
+# The declaration `(f64v2, i64)` stays as it is; a vector CALL as the element is refused in D100's words.
 # A body that reaches its closing `}` returns 0 for every value (6.7.13, the user's decision of
 # 2026-10-15), as running off the end of a bool fn returns `false` — every `return` is untouched,
 # and nothing is refused. Through 6.7.12 the caller read whatever an earlier call left in the

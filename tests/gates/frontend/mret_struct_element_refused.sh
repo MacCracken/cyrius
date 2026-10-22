@@ -49,6 +49,20 @@
 #   `_mret_sval` refusing an 8-byte struct            -> RED K1 on every leg, 5
 #   `_mret_sval` without `_mret_hdl` (the D90 bite)   -> RED K4 on every leg, 5 (and small_struct_handle_line.sh C5)
 #
+# ⛔ 6.7.17 (D25 A, the user's decision, 2026-10-22: "Refuse it at the element") — A VECTOR VALUE IS NO ELEMENT EITHER.
+# `fn two(): (f64v2, i64) { var v = mk2(41, 7); return (v, 3); }` handed back v's lane 0 — the filed repro exited 44 (a
+# = 41) on x86_64, aarch64, cx and PE — and a parameter, a capture and `*pv` the same. Now one line at the element in
+# D90's shape (`_mret_vval`, parse_expr.cyr; the vector value read by `_vval_at`, parse_decl.cyr): "'two' returns vector
+# 'f64v2' (16 bytes) as a multi-value element - return its pointer, or its lanes as elements". Rows V1 (the filed repro
+# verbatim) - V6, V7 the control (a vector CALL as the element keeps 6.7.16's D100 words), V9 a `*V` global's
+# dereference in a program with no vector local (the scan's mark, `_gv_pvd_set`), V8 --syntax-only, K5 the
+# declaration `(f64v2, i64)` still compiling and a vector's lanes / pointer as elements (92). Mutations (2026-10-22, a
+# scratch copy of the tree, this gate run from it):
+#   `_mret_sval` without `_mret_vval` (the tree before) -> RED V1-V6 on every leg, 30 (each compiled, rc 0; V6 the next
+#                                                        fn's line alone)
+#   `_vval_at` without its dereference arm              -> RED V3 on every leg, 5
+#   `_vnm_lty` without its capture arm                  -> RED V4 on every leg, 5 (the closure's line missing)
+#
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -242,6 +256,65 @@ syscall(60, main());
 ' "error:<source>:11:62: dyn Sh 'd' used as a value - call one of its methods, or copy it whole into a dyn
 error:<source>:12:39: dyn Sh 'd' (a field) used as a value - call one of its methods, or copy it whole into a dyn"
 
+EV="as a multi-value element - return its pointer, or its lanes as elements"
+VH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn mk4(a): f64v4 { var v: f64v4; store64(&v, a); return v; }
+'
+echo "V — (6.7.17, D25) a vector value as a return element is one line at the element, in D90's shape, on every leg ($LEGS):"
+row V1 "the filed repro verbatim (it ran 44: a = lane 0, 41)" 'fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn rd(p): i64 { return load64(p) * 10 + load64(p + 8); }
+fn take(t): i64 { return t; }
+fn two(): (f64v2, i64) { var v = mk2(41, 7); return (v, 3); }
+fn r(): i64 { var a, b = two(); return a + b; }
+syscall(60, r());
+' "error:<source>:4:54: 'two' returns vector 'f64v2' (16 bytes) $EV"
+row V2 "a fn declared : (i64, i64), a by-value vector parameter; an undeclared fn, an f32v4 local" "$VH"'fn mv(x: f64v2): (i64, i64) { return (3, x); }
+fn mu() { var w: f32v4; return (1, w, 3); }
+fn main(): i64 { var a, c = mv(mk2(1, 2)); var d, e, f = mu(); return c + d; }
+syscall(60, main());
+' "error:<source>:5:42: 'mv' returns vector 'f64v2' (16 bytes) $EV
+error:<source>:6:36: 'mu' returns vector 'f32v4' (16 bytes) $EV"
+row V3 "a dereference of a pointer to a vector: *pv, **ppv, *(&w) of an f64v4" "$VH"'fn mv(pv: *f64v2, ppv: **f64v2): (i64, i64, i64) { var w: f64v4 = mk4(1); return (*pv, **ppv, *(&w)); }
+fn main(): i64 { var v: f64v2 = mk2(1, 2); var pv: *f64v2 = &v; var a, c, d = mv(pv, &pv); return c; }
+syscall(60, main());
+' "error:<source>:5:83: 'mv' returns vector 'f64v2' (16 bytes) $EV
+error:<source>:5:88: 'mv' returns vector 'f64v2' (16 bytes) $EV
+error:<source>:5:95: 'mv' returns vector 'f64v4' (32 bytes) $EV"
+row V4 "wrapped ((w)) of an i16v8, a method P.mv and a closure's capture, named as written" "$VH"'struct P { k; }
+impl P { fn mv(self): (i64, i64) { var w: i16v8; return (((w)), 5); } }
+fn cl(): i64 { var b: f64v2 = mk2(1, 2); var f = |k| { return (b, k); }; return 1; }
+fn main(): i64 { var o: P; var a, c = o.mv(); return c + cl(); }
+syscall(60, main());
+' "error:<source>:6:58: 'P.mv' returns vector 'i16v8' (16 bytes) $EV
+error:<source>:7:64: a closure returns vector 'f64v2' (16 bytes) $EV"
+row V5 "a generic g<T> called at two types — once, naming g" "$VH"'fn g<T>(x: T): (i64, i64) { var w: f64v2 = mk2(x, 1); return (w, 5); }
+fn main(): i64 { var a, c = g(1); var d, e = g<i32>(2); return c + e; }
+syscall(60, main());
+' "error:<source>:5:63: 'g' returns vector 'f64v2' (16 bytes) $EV"
+row V6 "the statement reads on: the next fn's own error is reported" "$VH"'fn mv(): (i64, i64) { var w: f64v2 = mk2(41, 7); return (w, 5); }
+fn h(): i64 { return zz; }
+fn main(): i64 { var a, c = mv(); return c + h(); }
+syscall(60, main());
+' "error:<source>:5:58: 'mv' returns vector 'f64v2' (16 bytes) $EV
+error:<source>:6:24: undefined variable 'zz' (missing include or enum?)"
+row V7 "control: a vector CALL as the element keeps D100's words (6.7.16's VO54)" "$VH"'fn mv(): (i64, i64) { return (mk2(41, 7), 3); }
+fn main(): i64 { var a, c = mv(); return c; }
+syscall(60, main());
+' "error:<source>:5:31: vector return type does not match the declared type"
+row V9 "a dereference of a *V global in a program with no vector local (6.7.17: the scan's mark)" 'include "lib/syscalls.cyr"
+var GW: f64v2 = 0;
+var GP: *f64v2 = &GW;
+fn two(): (i64, i64) { return (*GP, 3); }
+fn main(): i64 { var a, b = two(); return b; }
+syscall(60, main());
+' "error:<source>:4:32: 'two' returns vector 'f64v2' (16 bytes) $EV"
+quiet V8 "--syntax-only says nothing (V1, V3)" "$VH"'fn mv(pv: *f64v2): (i64, i64) { var w: f64v2 = mk2(41, 7); return (w, *pv); }
+fn main(): i64 { var v: f64v2 = mk2(1, 2); var a, c = mv(&v); return c; }
+syscall(60, main());
+'
+
 echo "K — what computes correctly keeps compiling and running, on every leg ($LEGS):"
 runs K1 "an 8-byte struct element is one word: passed on whole (9)" 'include "lib/syscalls.cyr"
 struct P8 { v; }
@@ -295,6 +368,14 @@ fn mv(): (Box<i64>, i64) { return (3, 4); }
 fn main(): i64 { var a, b = mv(); return a + b; }
 syscall(60, main());
 ' 7
+runs K5 "(6.7.17, D25) the declaration (f64v2, i64) still compiles; a vector's pointer and its lanes as elements pass on (41 + 7 + 41 + 3 = 92)" 'include "lib/syscalls.cyr"
+fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn two(): (f64v2, i64) { var v = mk2(41, 7); return (load64(&v), 3); }
+fn lanes(p): (i64, i64) { return (load64(p), load64(p + 8)); }
+fn ptr(pv: *f64v2): (*f64v2, i64) { return (pv, 2); }
+fn main(): i64 { var w: f64v2 = mk2(41, 7); var a, b = two(); var c, d = lanes(&w); var p, k = ptr(&w); return c + d + load64(p) + b + k - 2; }
+syscall(60, main());
+' 92
 runs K4b "a 16-byte handle element is its word: a local, wrapped, a handle global (6.7.16)" 'include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 struct Pt { x; y; }
@@ -312,8 +393,9 @@ fn main(): i64 {
 syscall(60, main());
 ' 31
 
-# The floor: 19 refusal rows, 1 quiet row and 4 acceptance rows on five legs. A leg that did not build is RED above.
-FLOOR=120
+# The floor: 27 refusal rows, 2 quiet rows and 7 acceptance rows on five legs (6.7.17: + V1-V7, V9, V8, K5). A leg that did
+# not build is RED above.
+FLOOR=180
 [ "$N" -ge "$FLOOR" ] || bad "the rows ran $N row-legs (floor $FLOOR) — rows or legs were lost"
 echo "$G: $pass passed, $fail failed, $skips skipped"
 [ "$fail" -eq 0 ] || exit 1

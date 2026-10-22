@@ -6647,12 +6647,13 @@ fn _sar_dsrc(S, fi): i64 {
     if (_gz_split(S, a, e) != 0 - 1) { return 0 - 1; }
     var ti = _sar_ti;
     var he = _had_error;
+    var en = _err_n;
     STI(S, a + 1);
     PARSE_FACTOR(S);
     var vd = 0;
     if (GTI(S) == e) { vd = _dop_vd(S, a + 1, e); }
     if (vd != 0) { return vd; }
-    if (he == 0) { if (_had_error == 1) { he = 2; } }
+    if (_own_err(en, he) == 1) { he = 2; }   # 6.7.17: after an earlier error too
     if (he != 2) { _sar_err(S, ti, fi); }
     STI(S, e);
     return 0;
@@ -7270,8 +7271,8 @@ var _scv_term = 5;   # ... and the token that ends the initialiser inside them (
 var _scv_vec = 0;
 # 6.7.9 — 1 = the initialiser the last `_scv_disarm` closed reported an error of its own (`_had_error`
 # 0 at its arm, 1 at its disarm): its whole-result refusal (`_sc_global_pair`) would be a second
-# report of a line already refused — `var G: Pt = mk2(3) + H;` (the left operand). A file with an
-# earlier error cannot tell, and may report both.
+# report of a line already refused — `var G: Pt = mk2(3) + H;` (the left operand). 6.7.17: a report
+# made inside it (`_own_err`: `_err_n` at its arm too), so a file with an earlier error tells as well.
 var _scv_err = 0;
 fn _scv_save(): i64 {
     if (_scv_vec == 0) { _scv_vec = vec_new(); }
@@ -7284,6 +7285,7 @@ fn _scv_save(): i64 {
     vec_push(_scv_vec, _scv_un);
     vec_push(_scv_vec, _dvi_want);   # 6.7.14 (D36)
     vec_push(_scv_vec, _vop_vd);     # 6.7.16 (D100)
+    vec_push(_scv_vec, _err_n);      # 6.7.17
     return d;
 }
 fn _scv_restore(d): i64 {
@@ -7334,8 +7336,7 @@ fn _scv_un_peel(S): i64 {
 fn _scv_disarm(S, w): i64 {
     _sc_want = (w & 0xFFFFFFFF) - 1;
     if (_scv_pk > 0) { _pw_close(S, _scv_pk); }   # 6.7.6: the wrap `_scv_peel` stepped into
-    _scv_err = 0;
-    if (vec_get(_scv_vec, (w >> 32) + 4) == 0) { _scv_err = _had_error; }   # 6.7.9
+    _scv_err = _own_err(vec_get(_scv_vec, (w >> 32) + 8), vec_get(_scv_vec, (w >> 32) + 4));   # 6.7.9; 6.7.17
     _scv_restore(w >> 32);
     return 0;
 }
