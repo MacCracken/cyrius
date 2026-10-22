@@ -3580,8 +3580,7 @@ fn PARSE_SWITCH(S): i64 {
     STI(S, GTI(S) + 1);
     PCMPE(S);
     var swh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);
+    _hdr_rparen(S);   # 6.7.17: a `{` there is the body's (parse_ctrl.cyr)
     if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
     # Pre-scan: collect case values to decide chain vs jump table
     var save_ti = GTI(S);
@@ -5974,7 +5973,7 @@ fn _ssc_err(S, kind, x, y): i64 {
     _refuse_in_sync(S);
     var tg = "_ssc_err";
     if (_err_once(S, (tg * 31 + kind) * 8 + 4) == 1) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
         if (kind == 0) {
             PRSTR(": a struct value cannot be returned as ");

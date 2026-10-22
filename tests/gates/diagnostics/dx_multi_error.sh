@@ -233,7 +233,7 @@ cascade_legs Z12 3 'fn h(): i64 { return 1; }\nvar a = 1;\nvar c, b = h();\nsysc
 KENV=CYRIUS_ELF64_KERNEL=1
 cascade Z13 3 'kernel;\n'"$ZG"'var p = g(1 2);\nsyscall(60 0);\nsyscall(60 1);\n' "3:13: expected ')', got number 2" "4:12: expected ')', got number 0" "5:12: expected ')', got number 1"
 KENV=
-# ZO1-ZO10 (6.7.17, issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md) — THE PARSE'S DIAGNOSTICS PRINT
+# ZO1-ZO13 (6.7.17, issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md) — THE PARSE'S DIAGNOSTICS PRINT
 #     IN SOURCE ORDER. The parse is several walks — pass 1 refuses a declaration as it registers it, pass 2 parses the fn
 #     bodies, the declaration zone's initializers are parsed by the replay after both (a `kernel;` build's after the
 #     program) — and each printed as it went: `var p = g(1 2);` then `const X;` printed 3:8 before 2:13. The parse now
@@ -308,6 +308,42 @@ else
     fi
 fi
 grep -q '^    _vec_die_hook = &_eb_end;' "$ROOT/src/common/util.cyr" || { echo "FAIL: ZO10: the parse window no longer sets lib/vec.cyr's abort hook"; kfail=$((kfail + 1)); }
+# ZO11-ZO12 (6.7.17 review) — THE PARSE WINDOW ENDS WHERE THE FORK'S PARSE ENDS, not only at the end of file. The window
+#     closed only when the top-level PARSE_PROG stopped AT the end of file (`_dl_pw_end`); one that recovery left at a
+#     module-scope `}` kept it open past the parse, into FIXUP, which writes raw and exits raw: every held error was LOST
+#     (`if (1 {`: stderr was "note:  unreachable fns (" + the refusal, its count held too), and the cx fork printed its
+#     undefined-function header before them. Each fork now ends the window after its last parse (`_eb_end`). ZO11 that
+#     program on every leg, now its two errors in source order (the header fix below, KH1-KH6, took away the `}` that
+#     stopped the top level: no recovery shape that reaches FIXUP with the window open is known now, so ZO12 is the
+#     guard); ZO12 each fork's driver ends the window between its last parse and what follows it. RED before the fix:
+#     ZO11 on every leg (stderr: the FIXUP lines alone), ZO12 on every fork.
+ZW='var p = zz;\nfn f(): i64 { if (1 { return 0; } return 1; }\nfn main(): i64 { return f(); }\nvar r = main();\n'
+ordered_legs ZO11 1 "$ZW" "error:<source>:1:9: $UV 'zz'" "error:<source>:2:21: expected ')', got '{'"
+KCC=
+for _fk in main main_win main_aarch64 main_aarch64_native main_x86_macho main_aarch64_macho main_cx; do
+    awk '/^ *(PARSE_PROG|EMIT_GVAR_INITS)\(S\);/ { p = NR } /^ *_eb_end\(\);/ { if (p) e = NR }
+         /^(FIXUP\(S\);|if \(_cx_mode_refused)/ { if (!f) f = NR }
+         END { exit !(p && e > p && f > e) }' "$ROOT/src/$_fk.cyr" ||
+        { echo "FAIL: ZO12: src/$_fk.cyr does not end the parse window (_eb_end) between its last parse and FIXUP"; kfail=$((kfail + 1)); }
+done
+# ZO13 (6.7.17 review) — A DIAGNOSTIC'S `error:` GOES THROUGH THE WRITER THAT HOLDS IT. D111's struct-value refusal
+#     (parse.cyr `_ssc_err`) wrote its `error:` raw: printed at once while the rest of its line was held, its record opened
+#     by the line's tail and never keyed (FM_LOOKUP ran before it), so it sorted FIRST — a fn body's 4:55 before the zone's
+#     3:9. RED before the fix (and diagnostic_writer_census.sh).
+ordered_legs ZO13 1 'struct Q { a; b; }\nfn take(x: i64): i64 { return x; }\nvar p = zz;\nfn f(): i64 { var q: Q; q.a = 1; q.b = 2; return take(q); }\nvar r = f();\nsyscall(60, r);\n' "error:<source>:3:9: $UV 'zz'" "error:<source>:4:55: a struct value cannot be passed to an integer parameter - 'q' is the struct 'Q'"
+# KH1-KH6 (6.7.17 review, met) — A BLOCK HEAD'S MISSING `)` IS ONE ERROR. The `)` check stepped one token whatever it
+#     was, so `if (x {` stepped the block's `{`: its `}` closed the enclosing fn, then "return outside a fn body", every
+#     later fn unparsed ("undefined function 'main'", "refusing to emit binary"). A `{` there is the block's now
+#     (parse_ctrl.cyr `_hdr_rparen`). KH1 `if`, KH2 `elif`, KH3 `while`, KH4 `switch`, KH5 an if expression; KH6 the
+#     statement after the block still reports its own. RED before the fix: KH1-KH6 (2-3 errors and the warning).
+KM='}\nfn main(): i64 { return f(1); }\nvar r = main();\n'
+KP="expected ')', got '{'"
+cascade_legs KH1 1 'fn f(x): i64 {\n    if (x { return 0; }\n    return 1;\n'"$KM" "2:11: $KP"
+cascade_legs KH2 1 'fn f(x): i64 {\n    if (x == 1) { return 0; } elif (x == 2 { return 1; }\n    return 2;\n'"$KM" "2:44: $KP"
+cascade_legs KH3 1 'fn f(x): i64 {\n    while (x < 3 { x = x + 1; }\n    return x;\n'"$KM" "2:18: $KP"
+cascade_legs KH4 1 'fn f(x): i64 {\n    switch (x { case 1: return 0; }\n    return 1;\n'"$KM" "2:15: $KP"
+cascade_legs KH5 1 'fn f(x): i64 {\n    var y = if (x { 1 } else { 2 };\n    return y;\n'"$KM" "2:19: $KP"
+cascade_legs KH6 2 'fn f(x): i64 {\n    if (x { return 0; }\n    return QQ;\n'"$KM" "2:11: $KP" "3:12: $UV 'QQ'"
 # G1-G2 (6.7.16, met beside issues/archived/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md) —
 #     AN UNINITIALIZED VECTOR GLOBAL IN THE ZONE IS ONE ERROR. G1 `var V: f64v2;` was two errors at 1:13: pass 1's
 #     "vector global 'V' takes no initializer but 0" (for no initializer at all) and the replay's "uninitialized
@@ -420,12 +456,12 @@ cascade_legs RI15 2 'struct Q { a; b; }\nfn f(): i64 { var y = QQ; var z = y + 0
 printf 'fn f(): i64 { var y = QQ; return y.a; }\nvar y2 = QQ2;\nfn g(): i64 { return y2.a; }\nvar r = f() + g();\n' > "$T"
 rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
 if [ "$rc" -ne 0 ] || grep -q '^error' "$E"; then echo "FAIL: RI16: --syntax-only refused a sibling file's names:"; cat "$E"; kfail=$((kfail + 1)); fi
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, ZO1-ZO10, G1-G2, L1-L13, F1-F14, D1-D11, RI1-RI16)"; exit 1; }
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, ZO1-ZO13, KH1-KH6, G1-G2, L1-L13, F1-F14, D1-D11, RI1-RI16)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), the parse's diagnostics in source order, held through an exit, a fault and a vec abort (ZO1-ZO10), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), a refused initializer that decided its variable's type silences the variable's \`.field\` / method uses, in a fn, the zone (a fn body before the replay too) and after the first statement, by slot (RI1-RI16), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), the parse's diagnostics in source order, held through an exit, a fault and a vec abort, ended where the parse ends, every head through the writer (ZO1-ZO13), a block head's missing `)` one error (KH1-KH6), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), a refused initializer that decided its variable's type silences the variable's \`.field\` / method uses, in a fn, the zone (a fn body before the replay too) and after the first statement, by slot (RI1-RI16), valid emits"
 exit 0

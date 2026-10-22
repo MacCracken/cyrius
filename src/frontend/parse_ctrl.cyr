@@ -131,6 +131,17 @@ fn PATCHXP(S): i64 {
 # `{` opens the block, the latch kept; with no `{` there the one statement is the body (refused where it starts,
 # that latch cleared: nothing was stepped); and a `switch` / `match` with no `{` is refused and skipped to its
 # statement's end. 1 = a `{` was stepped. CHANGELOG [6.7.16]
+# ⛔ 6.7.17 — A BLOCK HEAD'S MISSING `)` LEAVES THE `{` FOR THE BLOCK. The `)` check stepped one token whatever it was,
+# so `if (x { return 0; }` stepped the block's `{`: the body became the one statement `return 0;`, the block's `}`
+# closed the ENCLOSING fn, and the rest cascaded — "return outside a fn body", every later fn unparsed ("undefined
+# function 'main'", "refusing to emit binary"). The same in `elif`, `while`, `switch` and an if expression. A `{`
+# where the `)` belongs is refused there and NOT stepped; anything else is stepped as before. CHANGELOG [6.7.17]
+fn _hdr_rparen(S): i64 {
+    if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); return 0; }
+    ERR_EXPECT(S, 11);
+    if (PEEKT(S) != 13) { STI(S, GTI(S) + 1); }
+    return 0;
+}
 fn _blk_open(S, p0, he): i64 {
     if (GTI(S) == he) { if (p0 == 0) { _panic = 0; } }
     elif (_hdr_skip_ok(S, he) == 1) {
@@ -230,8 +241,7 @@ fn PARSE_ELIF(S, cond_patch): i64 {
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     var patch = ECOND(S);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);
+    _hdr_rparen(S);
     var bb = _blk_open(S, p0, he);
     SCOPE_PUSH(S);
     _blk_body(S, bb);
@@ -269,8 +279,7 @@ fn PARSE_IF(S): i64 {
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);  # consume (
     var patch = ECOND(S);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);  # consume )
+    _hdr_rparen(S);  # consume )
     var bb = _blk_open(S, p0, he);  # consume {
     SCOPE_PUSH(S);
     _blk_body(S, bb);
@@ -341,8 +350,7 @@ fn _ie_arm(S, st): i64 {
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     var patch = ECONDOP(S, ECONDCMP(S));
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);
+    _hdr_rparen(S);
     _ie_branch(S, st);
     var skip = EJMP0(S);
     EPATCH(S, patch);
@@ -781,8 +789,7 @@ fn PARSE_WHILE(S): i64 {
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     var patch = ECOND(S);
-    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-    STI(S, GTI(S) + 1);
+    _hdr_rparen(S);
     var bb = _blk_open(S, p0, he);
     _loop_body_b(S, 1, bb);   # 6.6.7: counts the loop for break/continue
     _blk_close(S, bb);
