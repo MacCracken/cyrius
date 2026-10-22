@@ -3289,7 +3289,8 @@ fn _spi_src(S, ft, fnm): i64 {
 # handle's word, an inline `Str`'s header address (`*(&t)` is t, 6.7.16's D71), a frame's inline `Str` refused as
 # would-dangle (D7 (1)). A `*Str` name is a pointer, no `Str` value: it keeps its refusal. CHANGELOG [6.7.17]
 # 1 = the element at the cursor is such a name (a `Str` handle local, parameter, capture or global; an inline `Str`, or
-# `*(&NAME)` of one) and nested struct `ft`'s first leaf is a `Str`.
+# `*(&NAME)` of one) — or a whole multi-value call, which the leaf refuses (D99) — and nested struct `ft`'s first leaf
+# is a `Str`.
 fn _spi_strnm(S, ft): i64 {
     var ss = _STR_SID(S);
     if (ss <= 0) { return 0; }
@@ -3299,6 +3300,7 @@ fn _spi_strnm(S, ft): i64 {
     if (e < 0) { return 0; }
     if (_istr_at(S, st, e) != 0) { return 1; }
     var a = _ie_unparen(S, st, e);
+    if (_spi_mvc(S, a, _ie_pe) == 1) { return 1; }   # D99: a multi-value call, refused by the leaf (`_istr_lsv`)
     if (_ie_pe != a + 1) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var noff = TOKVAL(S, a);
@@ -3306,6 +3308,38 @@ fn _spi_strnm(S, ft): i64 {
     _fsc_reset();
     if (_spi_nptr(S, noff) == 1) { return 0; }
     return 1;
+}
+# ⛔ 6.7.17 — A MULTI-VALUE CALL INTO A `Str` PARAMETER IS REFUSED AS INTO A STRUCT PARAMETER (the user's D99,
+# 2026-10-22: a `Str` slot refuses it as a struct slot; `_mv_named` admits `Str`): `fs(two())` with `s: Str` passed the
+# first value as the header's address. A `Str` parameter is a handle the callee does not copy in (`_pm_copies` 0), yet
+# no `*P` — and a generic's `x: T` at `T = Str` is address-passed — so it is judged here: 1 = parameter `argc` of `fi`
+# is a `Str` by value (`GFPSID` the `Str`, not declared a pointer). A `*Str` / `**Str` parameter takes the first
+# value as a pointer, as a `*P` does (`_mv_pstr` 1). CHANGELOG [6.7.17]
+fn _mv_sarg(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    if (_pptr_param(S, fi, argc) == 1) { return 0; }
+    return 1;
+}
+fn _mv_pstr(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    return _pptr_param(S, fi, argc);
+}
+# 1 = [a, pe) is a whole call (free or method, `_dt_call_open`'s reading) of a fn returning several values (6.7.17, the
+# user's D99: a multi-value call into a `Str` slot is refused as into a struct slot — the leaf's `Str` field refuses it).
+fn _spi_mvc(S, a, pe): i64 {
+    var sv = GTI(S);
+    STI(S, a);
+    var fi = 0 - 1;
+    var o = _dt_call_open(S);
+    if (o >= 0) { fi = _dt_call_fn(S); }
+    STI(S, sv);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    return _mv_callee(S, fi);
 }
 # 1 = name `noff`, resolved as the factor resolves it (a local, a capture, a global), is declared a pointer (`*Str`,
 # `**Str`): its word is no `Str` value.
@@ -9368,6 +9402,7 @@ fn _istr_fsrc(S, fnoff, term): i64 {
     var e = _hl_dx_end(S, st, term);
     if (e < 0) { return 0; }
     if (_istr_vsid(S, st, e) != 0) { _istr_verr_f(S, fnoff); }
+    else { _mv_span(S, st, GTI(S), _STR_SID(S), 1); }   # 6.7.17 (D99): a multi-value call, as into a struct field
     return 2;
 }
 # A literal's `Str` element at `t0` (EMIT_STRUCT_FIELD_W, `ft` its field's type, `fnoff` the field): parsed, D18's
@@ -9377,6 +9412,7 @@ fn _istr_lsv(S, ft, t0, fnoff): i64 {
         var e = _slit_eend(S, t0);
         if (e > t0) {
             if (_istr_vsid(S, t0, e) != 0) { _istr_verr_f(S, fnoff); }
+            else { _mv_span(S, t0, GTI(S), _STR_SID(S), 1); }   # 6.7.17 (D99): a multi-value call
             return 0;
         }
     }
@@ -9392,7 +9428,7 @@ fn _istr_dsvc(S, d, ti, term): i64 {
     if (ss <= 0 || e < 0) { PCMPE(S); return 0; }
     if (_hl_dpsid(S, d + 1, ti - 1) != ss) { PCMPE(S); return 0; }
     var u = _istr_vsid(S, ti, e);
-    if (u == 0) { return 0; }
+    if (u == 0) { return _mv_span(S, ti, GTI(S), ss, 3); }   # 6.7.17 (D99): a multi-value call, as through a `*P`
     var pn = _hl_lastnm(S, d + 1, ti - 1, TOKVAL(S, d + 1));
     if (_istr_vk == 2) { _agg_dx_err(S, 0 - ss, 0 - u, pn); return 0; }
     _err_ident_fn(S, "cannot copy ", _ess_nm, _ess_fi, " into a variable of a different struct/vector type: ", pn);
@@ -9406,7 +9442,7 @@ fn _istr_rsv(S, st): i64 {
     if (ss <= 0 || e < 0) { PCMPE(S); return 0; }
     if (_cur_fn_ret_sid != ss || GIDEP(S) != 0) { PCMPE(S); return 0; }
     var u = _istr_vsid(S, st, e);
-    if (u == 0) { return 0; }
+    if (u == 0) { return _mv_span(S, st, GTI(S), ss, 4); }   # 6.7.17 (D99): a multi-value call, as from a fn returning a struct
     if (_istr_vk == 2) { return _ret_sid_refuse_d(S, st, _hl_dna, _hl_dne, _hl_dnm, u); }
     return _ret_sid_refuse(S, st, _ess_nm, _ess_fi, u, 0);
 }
@@ -9417,6 +9453,7 @@ fn _istr_tcd(S, cfi): i64 {
     if (ss <= 0) { return 0; }
     if (_cur_fn_ret_sid != ss) { return 0; }
     if (GIDEP(S) != 0) { return 0; }
+    if (_mv_callee(S, cfi) == 1) { return 1; }   # 6.7.17 (D99): a multi-value callee, refused there too
     if (_istr_vok(S, GFRS(S, cfi)) == 0) { return 0; }
     return 1;
 }

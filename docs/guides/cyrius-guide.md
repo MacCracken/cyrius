@@ -4140,8 +4140,12 @@ argument - bind it first: `var a, b = mk(..);` `` (and `does not initialize stru
 into a struct 'P' field`, `is not assigned to struct 'P'`). It used to hand over its FIRST value as the
 struct's address (a crash) or as one field. Bind the values and build the struct: `var a, b = mk(3);
 var p = P { a, b }; take(p);`. A callee declared `: P` returns a `P` and is accepted everywhere a `P` is (its
-`return (x, y);` is refused since 6.7.11: a tuple is not the struct). A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
-does — and are not refused.
+`return (x, y);` is refused since 6.7.11: a tuple is not the struct). A `*P` (a `*Str` too) takes a word — the call's
+first value, as `var x = mk(3);` does — and is not refused. A `Str` slot is a struct slot here (6.7.17, the user's
+decision D99, 2026-10-22; through 6.7.16 it took the first value as the header's address): `var h: Str = mk(3);`, `h =
+mk(3);`, `w.s = mk(3);`, `W { mk(3), 1 }` (a nested literal's `Str` leaf too), `*ps = mk(3);` through a `*Str`, a `Str`
+argument (a generic's `x: T` at `T = Str` too) and `return mk(3);` from a fn returning `Str` are refused with the same
+words naming `Str` (``a multi-value call 'mk' does not initialize struct 'Str' - bind it first: `var a, b = mk(..);` ``).
 A `return` is the fifth such destination (6.7.13, the user's decision of 2026-10-15): in a fn returning a
 struct of 8 bytes or less, `return mk(3);` (`(mk(3))`, `b.mk(3)` too) returned the call's first value as
 the struct's word, and is refused as ``a multi-value call 'mk' is not returned as struct 'P1' - bind it
@@ -4375,7 +4379,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64) = u;` (`u` a struct value, or a tuple of another type — `(i64, i64, i64)`; a global in the declaration zone too, 6.7.16: it also said "… not a tuple" first) | `cannot copy 'u' into a variable of a different struct/vector type: 't'` |
 | `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
 | `take(5)` into a tuple parameter (an integer literal; 6.7.14), or any argument made only of literals and operators, `take(-5)`, `take(5 + 0)` (6.7.15) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` (`take(true)`, and a boolean value — `take(1 == 1)`, `take(!0)`, 6.7.16: `cannot pass a bool …`; an f64, `take(1.5)`, `take(-1.5)`, `take(1.5 + 1)`, 6.7.16: `cannot pass an f64 …`) |
-| `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
+| `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11; a `Str` slot too, 6.7.17) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` (wrapped, `h.p = (f());`, too: this one error, 6.7.15) | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
 | `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |
