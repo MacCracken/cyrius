@@ -322,8 +322,52 @@ var s = S { 1 };
 syscall(60, s.m());' 5
 atrun AC6 "control: a # comment after the message" '#assert 1 == 1, "m"  # note
 syscall(60, 9);' 9
-# The corpus floor: 17 rows on four legs. A row or a leg lost reads RED, never green.
-[ "$ATN" -ge 68 ] || abad "axis 8 floor: $ATN row-legs ran (floor 68) - rows or legs were lost"
+# AT12-AT18 (6.7.17, FC1 — issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md's class, met by the
+# fea review): what the refused tail declares is entered as reported (`_asrt_tail_names`, parse_fn_def.cyr), so a use
+# of it adds no error of its own (the guide's 6.7.15 rule) — each was "undefined variable 'z'" at every use, a fn "undefined
+# function 'g'" + "refusing to emit binary", a struct "unknown type 'S'", an enum's members "undefined variable". AT12 a
+# var at module scope; AT13 in a fn body; AT14 a fn; AT15 a struct (its annotation and fields); AT16 an enum's members;
+# AT17 a fn body above the line reads it (pass 1 enters the names); AT18 after the first statement, a var and a const.
+# Controls AC7-AC9: the refused local's name in ANOTHER fn is still undefined there; a local inside the tail's fn body
+# is not entered; a name declared nowhere is still reported. RED with l6717-integ's build/cycc as CYCC (the x86 / PE legs;
+# a64 / cx build from the tree): AT12-AT18, and AC7 / AC9 (the cascade beside the control's own line). Mutant:
+# `_dl_vr_scope` answering 1 for any scope -> RED AC7.
+atrefuse AT12 "a refused tail's var: its uses stand down" '#assert 1 == 1, "m" var z = 5;
+syscall(60, z + z);' "error:<source>:1:21: $AM"
+atrefuse AT13 "... in a fn body" 'fn f(): i64 {
+    #assert 1 == 1, "m" var z = 5;
+    return z + z;
+}
+syscall(60, f());' "error:<source>:2:25: $AM"
+atrefuse AT14 "a refused tail's fn: no undefined-function line" '#assert 1 == 1, "m" fn g(): i64 { return 3; }
+syscall(60, g() + g());' "error:<source>:1:21: $AM"
+atrefuse AT15 "a refused tail's struct" '#assert 1 == 1, "m" struct S { a; }
+fn f(): i64 { var s: S; s.a = 1; return s.a; }
+syscall(60, f());' "error:<source>:1:21: $AM"
+atrefuse AT16 "a refused tail's enum members" '#assert 1 == 1, "m" enum E { EA, EB }
+syscall(60, EA + EB);' "error:<source>:1:21: $AM"
+atrefuse AT17 "a fn body above the line reads them" 'fn f(): i64 { return z + g(); }
+#assert 1 == 1, "m" var z = 5; fn g(): i64 { return 1; }
+syscall(60, f());' "error:<source>:2:21: $AM"
+atrefuse AT18 "after the first statement, a var and a const" 'var a = 1;
+a = 2;
+#assert 1 == 1, "m" var z = 5; const K = 3;
+syscall(60, z + K);' "error:<source>:3:21: $AM"
+atrefuse AC7 "control: the refused local's name in another fn" 'fn f(): i64 {
+    #assert 1 == 1, "m" var z = 5;
+    return z;
+}
+fn g(): i64 { return z; }
+syscall(60, f() + g());' "error:<source>:2:25: $AM
+error:<source>:5:22: undefined variable 'z' (missing include or enum?)"
+atrefuse AC8 "control: a local of the tail's fn body is not entered" '#assert 1 == 1, "m" fn g(): i64 { var w = 1; return w; }
+syscall(60, w);' "error:<source>:1:21: $AM
+error:<source>:2:13: undefined variable 'w' (missing include or enum?)"
+atrefuse AC9 "control: a name declared nowhere is still reported" '#assert 1 == 1, "m" var z = 5;
+syscall(60, z + qq);' "error:<source>:1:21: $AM
+error:<source>:2:17: undefined variable 'qq' (missing include or enum?)"
+# The corpus floor: 27 rows on four legs. A row or a leg lost reads RED, never green.
+[ "$ATN" -ge 108 ] || abad "axis 8 floor: $ATN row-legs ran (floor 108) - rows or legs were lost"
 [ "$AFAIL" -eq 0 ] || fail "axis 8: $AFAIL check(s) failed (the #assert tail, D28)"
 
 echo "PASS: resolution_excerpt_and_assert_skip (resolution errors carry excerpt+caret, all are reported, and #assert no longer eats the following statement; only \`;\` or the line's end follows its message, $ATN row-legs on $AT_LEGS)"

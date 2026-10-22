@@ -4076,7 +4076,10 @@ fn _assert_tail(S, rep): i64 {
     if (GTLINE(S, GTI(S)) != ln) { return 0; }
     if (t == 14) { if (blk == 1) { return 1; } }
     if (rep == 1) { _asrt_tail_err(S, m); }
-    return _ln_rest(S, ln, blk);
+    var a = GTI(S);
+    var r = _ln_rest(S, ln, blk);
+    _asrt_tail_names(S, a, GTI(S), rep);   # 6.7.17: what it declares, as reported (parse_fn_def.cyr)
+    return r;
 }
 # The line the string token `ti` ends on: its first line (the token's) plus the line breaks inside it, a raw LF or
 # `\<LF>`. A message spanning lines ends on its last: `"multi<LF>line" junk` has `junk` on the message's line.
@@ -7467,15 +7470,18 @@ fn _masg_stmt(S, term): i64 {
     var x1 = _masg_target(S, t0, 1);
     var x2 = 0 - 1;
     if (n == 3) { x2 = _masg_target(S, t0, 2); }
+    var d0 = _dt_dfr_n();   # 6.7.17: a refusal the chain's own error may stand for (`_dt_dfr_say`)
     var wk = _dt_peel(S, term);   # 6.7.14 (D45): `a, b = (f());`, closed after the call
-    var fi = _dt_call_fn(S);
+    var fi = _dt_call_fn_d(S);
     if (_masg_callee(S, fi, n) == 1) {
         _masg_skip(S);
+        _dt_dfr_say(S, d0);
         _pw_close(S, wk);
         return _masg_end(S, term);
     }
     _masg_bools(S, t0, n, fi);
     PCMPE(S);
+    _dt_dfr_say(S, d0);
     _pw_close(S, wk);
     _tup_drain_push(S, n);
     if (n == 3) {

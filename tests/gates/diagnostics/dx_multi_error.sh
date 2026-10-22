@@ -385,12 +385,47 @@ else chmod +x "$O"; rc=0; "$O" || rc=$?; [ "$rc" -eq 33 ] || { echo "FAIL: F13: 
 printf 'struct W { p: Other; n; }\nfn f(): i64 { var w: W; return w.p.a.b + w.p.c; }\nvar r = f();\n' > "$T"
 rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
 grep -q "is not a struct: it has no field" "$E" && { echo "FAIL: F14: --syntax-only refused a sibling struct's field chain:"; cat "$E"; kfail=$((kfail + 1)); }
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, ZO1-ZO10, G1-G2, L1-L13, F1-F14, D1-D11)"; exit 1; }
+# RI1-RI16 (6.7.17, issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B3) — A REFUSED INITIALIZER THAT
+#     DECIDED ITS VARIABLE'S TYPE MARKS THE VARIABLE (`_ini_refd`, by its slot): its `.field` read, store and method call
+#     stand down, the initializer's one error standing for them. `var y = QQ; return y.a;` added "no struct type in scope
+#     for 'y'", and the zone's `var y = mkw().p;` (refused "needs storage in a fn's frame") the same at `y.a`. RI1 / RI2
+#     the filed repros verbatim (the zone, a fn); RI3 after the first statement (a fn reading it and the program); RI4 /
+#     RI5 the zone with a fn body compiled before the replay (the sweep's twin, `_gu_ini0`: a struct call the chain goes
+#     on from, a name that is nothing); RI6 a store and a method call; RI7 a copy `var z = (y);`; RI8 a field of a refused
+#     generic call's argument `idf(QQ)`; RI9 an unknown field in the zone (the twin). Controls — each keeps its own
+#     error: RI10 `var y = QQ + 1; y.a` (an operator fixes an integer: two errors); RI11 a same-named `var y = 5;` in
+#     another fn; RI12 an inner block's same-named `var y = 5;`; RI13 one whole call of a non-generic `: i64` fn
+#     (`foo(QQ)`: its return types y); RI14 the zone's valid `var y = PP.a;` (`y.a` before the replay and after it: two); RI15 `var z =
+#     y + 0;` of a marked y. RI16 --syntax-only stays silent. RED with l6717-integ 1578711db's build/cycc as CYCC (the x86 leg;
+#     the others build from the tree): RI1-RI9, RI11 / RI12 (three errors). Mutants (x86 leg): `_ini_refd` marking
+#     nothing -> RED RI1-RI9 RI11 RI12 (RI4 / RI5 / RI9: the sweep's held reports printed by `_gu_presolve`); `_gu_ini0`
+#     marking nothing -> RED RI4 RI5 RI9; `_ini_refd` and `_gu_presolve` both off -> RI5's two held reports are lost
+#     (one error printed, none for `y.a` / `y.b`): the net is what keeps a twin the replay disagrees with from hiding one.
+RIW='struct P { a; b; }\nstruct W { p: P; n; }\nfn mkw(): W { var w: W; w.p.a = 1; return w; }\n'
+cascade_legs RI1 1 "$RIW"'var y = mkw().p;\nsyscall(60, y.a);\n' "4:12: 'mkw' returns a struct by value"
+cascade_legs RI2 1 'struct Q { a; b; }\nfn f(): i64 { var y = QQ; return y.a; }\nsyscall(60, f());\n' "2:23: undefined variable 'QQ'"
+cascade_legs RI3 1 'struct Q { a; b; }\nvar z = 0;\nz = 1;\nvar y = QQ;\nfn f(): i64 { return y.a; }\nsyscall(60, f() + y.b);\n' "4:9: undefined variable 'QQ'"
+cascade_legs RI4 1 "$RIW"'var y = mkw().p;\nfn g(): i64 { return y.a; }\nsyscall(60, g() + y.b);\n' "4:12: 'mkw' returns a struct by value"
+cascade_legs RI5 1 'struct Q { a; b; }\nvar y = (QQ);\nfn g(): i64 { y.a = 3; return y.b; }\nsyscall(60, g());\n' "2:10: undefined variable 'QQ'"
+cascade_legs RI6 1 'struct Q { a; b; }\nfn f(): i64 { var y = QQ.b; y.a = 1; y.m(); return y.b; }\nsyscall(60, f());\n' "2:23: undefined variable 'QQ'"
+cascade_legs RI7 1 'struct Q { a; b; }\nfn f(): i64 { var y = QQ; var z = (y); return z.a; }\nsyscall(60, f());\n' "2:23: undefined variable 'QQ'"
+cascade_legs RI8 1 'struct Q { a; b; }\nfn idf<T>(v: T): T { return v; }\nfn f(): i64 { var y = idf(QQ); return y.a; }\nsyscall(60, f());\n' "3:27: undefined variable 'QQ'"
+cascade_legs RI9 1 'struct Q { a; b; }\nvar PP = Q { 1, 2 };\nvar y = PP.zz;\nfn g(): i64 { return y.a; }\nsyscall(60, g());\n' "3:14: unknown field 'zz' on struct 'Q'"
+cascade_legs RI10 2 'struct Q { a; b; }\nfn f(): i64 { var y = QQ + 1; return y.a; }\nsyscall(60, f());\n' "2:23: undefined variable 'QQ'" "2:41: no struct type in scope for 'y'"
+cascade_legs RI11 2 'struct Q { a; b; }\nfn f(): i64 { var y = QQ; return y.a; }\nfn g(): i64 { var y = 5; return y.a; }\nsyscall(60, f() + g());\n' "2:23: undefined variable 'QQ'" "3:36: no struct type in scope for 'y'"
+cascade_legs RI12 2 'struct Q { a; b; }\nfn f(): i64 { var y = QQ; if (1 == 1) { var y = 5; return y.a; } return y.a; }\nsyscall(60, f());\n' "2:23: undefined variable 'QQ'" "2:62: no struct type in scope for 'y'"
+cascade_legs RI13 2 'struct Q { a; b; }\nfn foo(x): i64 { return x; }\nfn f(): i64 { var y = foo(QQ); return y.a; }\nsyscall(60, f());\n' "3:27: undefined variable 'QQ'" "3:42: no struct type in scope for 'y'"
+cascade_legs RI14 2 'struct Q { a; b; }\nvar PP = Q { 1, 2 };\nvar y = PP.a;\nfn g(): i64 { return y.a; }\nsyscall(60, g() + y.b);\n' "4:25: no struct type in scope for 'y'" "5:22: no struct type in scope for 'y'"
+cascade_legs RI15 2 'struct Q { a; b; }\nfn f(): i64 { var y = QQ; var z = y + 0; return z.a; }\nsyscall(60, f());\n' "2:23: undefined variable 'QQ'" "2:52: no struct type in scope for 'z'"
+printf 'fn f(): i64 { var y = QQ; return y.a; }\nvar y2 = QQ2;\nfn g(): i64 { return y2.a; }\nvar r = f() + g();\n' > "$T"
+rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
+if [ "$rc" -ne 0 ] || grep -q '^error' "$E"; then echo "FAIL: RI16: --syntax-only refused a sibling file's names:"; cat "$E"; kfail=$((kfail + 1)); fi
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, ZO1-ZO10, G1-G2, L1-L13, F1-F14, D1-D11, RI1-RI16)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), the parse's diagnostics in source order, held through an exit, a fault and a vec abort (ZO1-ZO10), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), the parse's diagnostics in source order, held through an exit, a fault and a vec abort (ZO1-ZO10), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), a refused initializer that decided its variable's type silences the variable's \`.field\` / method uses, in a fn, the zone (a fn body before the replay too) and after the first statement, by slot (RI1-RI16), valid emits"
 exit 0

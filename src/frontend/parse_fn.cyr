@@ -16668,6 +16668,7 @@ fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
 }
 fn _refuse_gen_inst(S, fi, noff, spec): i64 {
     if (spec == 0 - 4) { return 0; }   # 6.7.1: a bound refusal, already reported
+    if (spec == 0 - 5) { return 0; }   # 6.7.17: a refused list, the call's own error (`_targs_refused`)
     _gen_ident_err(S, fi, noff, ": no definition to instantiate for a struct type argument", 0 - 1);
     return 0;
 }
@@ -16690,6 +16691,7 @@ fn _gen_resolve_call(S, ti): i64 {
     if (TOKTYP(S, ti + 1) == 19) {
         # A list naming anything but a declared struct / plain scalar / bound type parameter is
         # left to the call's own parse, which reports it — once.
+        if (_targs_refused(S, ti + 2) == 1) { return _grc_refd(fi); }   # 6.7.17: no callee to judge
         if (_targs_resolvable(S, ti + 2) == 0) { return fi; }
         var sv = GTI(S);
         var sv_gt = _ta_pending_gt;
@@ -16732,6 +16734,7 @@ fn _gcall_open(S, ti): i64 {
     if (fi < 0) { return 0 - 1; }
     if (GFTP(S, fi) == 0) { return 0 - 1; }
     if (_targs_resolvable(S, ti + 2) == 0) { return 0 - 1; }
+    if (_targs_refused(S, ti + 2) == 1) { return 0 - 1; }   # 6.7.17: the call's own parse refuses it
     var e = _targs_end(S, ti + 2);
     if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
     return e + 1;
@@ -16769,6 +16772,39 @@ fn _targs_resolvable(S, i): i64 {
         i = i + 1;
     }
     return 0;
+}
+# ⛔ 6.7.17 — A REFUSED TYPE-ARGUMENT LIST IS A STATE OF ITS OWN (issues/2026-10-21-refused-source-cascades-or-names-
+# the-wrong-error.md, B1). The lookaheads (`_gcall_open`, `_gen_resolve_call`) read `stb<*Pt>(33)` and
+# `mkg1<Pt<i32>>(33)` as calls of the base (a `*`'s list "resolved": only its names were checked) or of the instance
+# D6's reading of `Pt<i32>` as Pt mints, while the call's own parse refuses the list and calls the base, arguments
+# consumed (`_gen_call_refd`): the judges then said what the refused call is not — "generic 'stb' has no i64 (or other
+# scalar) instance", "cannot pass 'stb' to a parameter of a different struct type", "cannot copy 'stb' into a variable
+# of a different struct/vector type", and x typed `G1<Pt>` sent `x.v + 1` to an undefined `Pt_add`. 1 = the list from
+# token `i` (past its `<`, closing as a list does: `_tok_targs_close`) is one the call's parse refuses — a token that is
+# no name, `,` or angle (`*Pt`, `1`, `[u8]`, `dyn ..`), or a name given type arguments it takes none of (`_ngt_tail`:
+# `Pt<i32>` of a non-generic Pt, `i64<u8>`; `_tp_targs_at`: a type parameter's `T<..>`). `_gcall_open` opens no call
+# there and `_gen_resolve_call` answers no callee, the state recorded (`_grc_refd`, -5) so an emitting path's
+# `_gen_own_call_check` stands down; the call is the factor's, whose refusal is the one error, and the receiving
+# variable stays untyped and marked (`_ini_refd`). CHANGELOG [6.7.17]
+fn _targs_refused(S, i): i64 {
+    var e = _tok_targs_close(S, i);
+    if (e < 0) { return 0; }
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 2) {
+            if (TOKTYP(S, i + 1) == 19) {
+                if (_ngt_tail(S, i) != 0) { return 1; }
+                if (_tp_targs_at(S, i) == 1) { return 1; }
+            }
+        } elif (t != 31 && t != 19 && t != 20 && t != 39 && t != 152) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _grc_refd(fi): i64 {
+    _grc_err = 0 - 5;
+    _grc_fi = fi;
+    return 0 - 1;
 }
 # 6.6.16 (C8): the lookup is the one type-name resolver's; the subset is unchanged — a struct,
 # i8..i64 or f64 (what _type_arg_leaf instantiates), or a bound type parameter.
