@@ -996,6 +996,9 @@ error:<source>:1:68: $ZZ"
 # one's), an enum's `E_from_json` (an enum codec writes none), `T_w` (no field w).
 #   the lane before it (f33107668)                   -> RED DV7 DV7b DV7c DV7d DV7e, 25
 #   `_dl_dname` without its PP_DERIVE_FAM tests      -> RED DV7c DV7e, 10 (`Q_y` and `_cy_json_skipval` stepped)
+# DV7c / DV7e pin a column past a `#derive(Serialize)` expansion on the same line, which is the EXPANDED line's
+# column (issues/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md, row 1): 6.7.17's bayan 1.11.0
+# refold makes the expansion emit `bayan_json_get_by_str` (7 characters longer), so 2096 -> 2103 and 1587 -> 1594.
 #   `_dl_derived_fn` without `_dl_dv_once`           -> RED DV7d, 5 (the user's duplicate stepped)
 row5 DV7 "review: a user's fn Q_h on a derived refused struct's line" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return zz; }\nsyscall(60, Q_h(4));\n')
 " "error:<source>:4:1: a \`struct\` declaration $L
@@ -1011,7 +1014,7 @@ a = 2;
 struct Q { y; } fn Q_y(): i64 { return zz; }
 syscall(60, Q_y(4));
 " "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:10:2096: $ZZ
+error:<source>:10:2103: $ZZ
 error:<source>:11: 'Q_y' expects 0 arguments, got 1"
 row5 DV7d "a second fn Q_set_y (the user's duplicate) is the user's" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_set_y(): i64 { return zz; }\nsyscall(60, 0);\n')
 " "error:<source>:4:1: a \`struct\` declaration $L
@@ -1029,7 +1032,7 @@ struct T { y; } fn T_w(): i64 { return zz3; }
 syscall(60, 0);
 " "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
 error:<source>:12:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:12:1587: $ZZ
+error:<source>:12:1594: $ZZ
 error:<source>:14:1: an \`enum\` declaration must come before the first top-level statement (line 8)
 error:<source>:14:685: undefined variable 'zz2' (missing include or enum?)
 error:<source>:16:1: a \`struct\` declaration must come before the first top-level statement (line 8)

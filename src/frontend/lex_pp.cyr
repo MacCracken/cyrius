@@ -2784,7 +2784,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     op = op + PP_EMIT_STR(out, op, ");\nvar v = 0;\n");
     fi = 0;
     while (fi < field_count) {
-        op = op + PP_EMIT_STR(out, op, "v = bayan_json_get(pairs, str_from(\"");
+        op = op + PP_EMIT_STR(out, op, "v = bayan_json_get_by_str(pairs, str_from(\"");   # 6.7.17: bayan 1.11.0 deprecates the bare name (the same answer). CHANGELOG [6.7.17]
         op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
         op = op + PP_EMIT_STR(out, op, "\"));\n");
         if (load8(S + 0x1FE000 + fi * 32) != 0) {
@@ -2795,13 +2795,13 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             # non-Str typed field was taken for a nested struct: `i64_from_json` undefined). The
             # store truncates to the field's width. PP_DFIELD_INT, as Serialize (6.7.10: u8..u32).
             var fj_prim = PP_DFIELD_INT(S, fi);
-            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): `v` is a Str (bayan_json_get),
+            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): `v` is a Str (bayan_json_get_by_str),
             # parsed from str_data(v) (PP_DFLT_PAIRS).
             var fj_f64 = PP_DFIELD_FLT(S, fi);
             var _vk_p = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
             if (_pp_vec_ok(_vk_p) == 1) {
                 if (_vk_p == 300) {
-                    # v6.4.x R3 — Vec<struct> (pairs form): bayan_json_get truncates an
+                    # v6.4.x R3 — Vec<struct> (pairs form): bayan_json_get_by_str truncates an
                     # array-of-objects value at the first inner comma, so the borrowed-pointer
                     # re-scan R2 relies on cannot safely reconstruct the objects. The pairs form
                     # decodes a Vec<struct> field to an EMPTY vec — use <Name>_from_json_str for
@@ -2811,7 +2811,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
                     op = op + PP_EMIT_STR(out, op, ", vec_new());\n");
                 } else {
-                    # v6.4.x R2 — Vec<int/f64> field (pairs form): bayan_json_get returns the
+                    # v6.4.x R2 — Vec<int/f64> field (pairs form): bayan_json_get_by_str returns the
                     # array TEXT as a Str; re-scan it with the shared decoder, else empty vec.
                     op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
                     op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
@@ -2824,7 +2824,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
             } else { if (fj_f64 > 0) {
                     op = PP_DFLT_PAIRS(out, op, fj_f64, load64(S + 0x200000 + fi * 8));
                 } else { if (fj_str == 1) {
-                        # v6.3.24: `bayan_json_get(pairs, key)` returns the value **Str
+                        # v6.3.24: `bayan_json_get_by_str(pairs, key)` returns the value **Str
                         # directly** (bayan_json_parse builds a vec of key→val pairs where
                         # each val is `str_new`'d), NOT a cstr and NOT a JTAG_STR value
                         # node. The old `str_from(v)` fed that Str pointer to a cstr ctor,

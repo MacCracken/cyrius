@@ -28,7 +28,7 @@ alloc_init();
 
 # ── Helper: find a key's raw value string in a TOML doc ──
 # Returns the Str value for `key` in the first (unnamed) section,
-# or str_from("MISSING") if not found. Uses bayan_toml_get which does
+# or str_from("MISSING") if not found. Uses bayan_toml_get_by_cstr (`key` is a literal) which does
 # Str-to-cstr equality via str_eq_cstr (streq on str_data would
 # walk off the non-NUL-terminated Str backing).
 fn find_value(doc, key) {
@@ -37,7 +37,7 @@ fn find_value(doc, key) {
     if (vec_len(sections) == 0) { return str_from("MISSING"); }
     var sec = vec_get(sections, 0);
     var pairs = bayan_toml_section_pairs(sec);
-    var v = bayan_toml_get(pairs, key);
+    var v = bayan_toml_get_by_cstr(pairs, key);
     if (v == 0) { return str_from("MISSING"); }
     return v;
 }

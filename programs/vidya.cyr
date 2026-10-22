@@ -146,16 +146,16 @@ fn vidya_count(r): i64 {
 # Load a single TOML file with [[entries]] format (cyrius content)
 fn vidya_load_entries(r, path): i64 {
     var sections = toml_parse_file(path);
-    var entries = toml_get_sections(sections, str_from("entries"));
+    var entries = bayan_toml_get_sections_by_str(sections, str_from("entries"));
     var count = vec_len(entries);
     var i = 0;
     while (i < count) {
         var sec = vec_get(entries, i);
         var pairs = toml_section_pairs(sec);
-        var name = toml_get(pairs, str_from("name"));
-        var desc = toml_get(pairs, str_from("description"));
-        var cat = toml_get(pairs, str_from("category"));
-        var content = toml_get(pairs, str_from("content"));
+        var name = bayan_toml_get_by_str(pairs, str_from("name"));
+        var desc = bayan_toml_get_by_str(pairs, str_from("description"));
+        var cat = bayan_toml_get_by_str(pairs, str_from("category"));
+        var content = bayan_toml_get_by_str(pairs, str_from("content"));
         if (name != 0) {
             vidya_register(r, vidya_entry_new(name, desc, cat, content));
         }
@@ -171,10 +171,10 @@ fn vidya_load_concept(r, path): i64 {
     # Top-level section has id, title, topic, description
     var top = vec_get(sections, 0);
     var pairs = toml_section_pairs(top);
-    var name = toml_get(pairs, str_from("id"));
-    var desc = toml_get(pairs, str_from("description"));
-    var cat = toml_get(pairs, str_from("topic"));
-    if (name == 0) { name = toml_get(pairs, str_from("title")); }
+    var name = bayan_toml_get_by_str(pairs, str_from("id"));
+    var desc = bayan_toml_get_by_str(pairs, str_from("description"));
+    var cat = bayan_toml_get_by_str(pairs, str_from("topic"));
+    if (name == 0) { name = bayan_toml_get_by_str(pairs, str_from("title")); }
     if (name != 0) {
         vidya_register(r, vidya_entry_new(name, desc, cat, str_from("")));
     }
