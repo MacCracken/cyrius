@@ -1239,8 +1239,10 @@ row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\
 # unchanged; DI6 a bodied default and a bounded generic (fn and method) with no inner declaration still compile; DI7
 # every kind; DI8 every never-parsed body (a bounded generic method, a closure and a block in one, an overridden default
 # beside an inherited one, a refused nested fn's body, a refused late impl's method; a default inherited by two impls:
-# once); DI9 a `#derive`d enum: the enum, never the derive's `public fn` codecs; DI10 --syntax-only; DI11 a kernel build
-# (x86_64 ELF): the flush waits for the global replay, so a global's closure is said in the replay's words, once.
+# once; DI8_8-DI8_10, the review's: a refused inner trait's / `pub trait`'s default, in a fn body and a block); DI9 a
+# `#derive`d enum: the enum, never the derive's `public fn` codecs; DI10 --syntax-only; DI11 a kernel build
+# (x86_64 ELF): the flush waits for the global replay, so a global's closure is said in the replay's words, once. DI12
+# (the review's): a fn header whose `(` never closes — the `{` after it opens the fn's body, not a block.
 # MUTATION LEDGER (2026-10-22, measured: a scratch copy of the tree with the one change, its 2-stage cycc, this gate):
 #   the lane before it (e65604d5d)                   -> RED 111: DI1 DI2 DI7 (all ten) DI8_1-DI8_6 DI9a DI10 DI11a UP8
 #                                                       UP10 (rc 0, or the unparsed declaration unsaid)
@@ -1250,8 +1252,12 @@ row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\
 #                                                       NM, NC, UI, DV, UP9, DI4, DI5, DI8_7, DI9b, DI11b, ...)
 #   `_dl_inner_at` recording the four named kinds    -> RED 30: DI7 impl, mod, use, pub-var, pub-fn, public-fn
 #   `_dl_pw_rec` without its `_dl_pw_skip` test      -> RED 15: DV5 DI9a DI9b (the derive's `public fn` codecs said)
+#   the merged tree before the window (`_dl_pw_rec`  -> RED 9 (its compiler on the x86_64 / PE / Mach-O legs): DI8_8
+#     skipping from the declaration's keyword)            DI8_9 DI8_10, the inner trait's default's struct unsaid
 #   `_dl_pw_end` flushing before the replay          -> RED 1: DI11b ("not inside a block": the walk's words)
 #   `_dl_pw_late` returns at once                    -> RED 2: UP12 DI11a (a kernel build never flushes: rc 0)
+#   the merged tree's `_dl_inner_fill` (a fn header's -> RED 3 (its compiler on the x86_64 / PE / Mach-O legs): DI12
+#     `{` matched only at its `(`'s depth)                 ("... not inside a block")
 row5 DI1 "filed: a trait default no impl inherits" 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }
 fn main(): i64 { return 3; }
 var r = main();
@@ -1316,6 +1322,15 @@ row5 DI8_6 "a refused late impl's method" "$(printf 'struct P { k; }\nvar a = 1;
 error:<source>:4:28: a \`struct\` declaration $IR a fn body"
 row5 DI8_7 "a default inherited by two impls: once" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nstruct P { k; }\nstruct P2 { k; }\nimpl T for P { }\nimpl T for P2 { }\nfn main(): i64 { var p = P { 1 }; var q = P2 { 2 }; return p.d() + q.d(); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
+row5 DI8_8 "review: a refused inner trait's default (fn body)" "$(printf 'fn f(): i64 { trait T2 { fn d(self): i64 { struct Q { y; } return 1; } } return 0; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`trait\` declaration $IR a fn body
+error:<source>:1:44: a \`struct\` declaration $IR a fn body"
+row5 DI8_9 "review: a refused inner trait's default (top-level block)" "$(printf 'var a = 1;\nif (a == 1) { trait T2 { fn d(self): i64 { struct Q { y; } return 1; } } }\nsyscall(60, a);\n')
+" "error:<source>:2:15: a \`trait\` declaration $IR a block
+error:<source>:2:44: a \`struct\` declaration $IR a fn body"
+row5 DI8_10 "review: a refused inner pub trait's default" "$(printf 'fn f(): i64 { pub trait T2 { fn d(self): i64 { struct Q { y; } return 1; } } return 0; }\nsyscall(60, f());\n')
+" "error:<source>:1:15: a \`pub\` declaration $IR a fn body
+error:<source>:1:48: a \`struct\` declaration $IR a fn body"
 row5 DI9a "a derived enum in an unparsed default: the enum, not its codecs" "${DH}trait T { fn d(self): i64 {
 #derive(Serialize)
 enum E { A; B; }
@@ -1332,6 +1347,9 @@ syscall(60, a);
 " "error:<source>:10:1: an \`enum\` declaration $IR a block"
 row5 DI10 "--syntax-only: the filed repro" "$(printf 'trait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body" --syntax-only
+row5 DI12 "review: a fn header whose ( never closes: its body is a fn body" "$(printf 'fn f(: i64 { struct Q { y; } return 1; }\nfn main(): i64 { return 3; }\nvar r = main();\nsyscall(60, r);\n')
+" "error:<source>:1:6: expected identifier, got ':'
+error:<source>:1:14: a \`struct\` declaration $IR a fn body"
 one "DI11a a kernel build (x86_64 ELF): an unparsed default" "$(printf 'kernel;\ntrait T { fn d(self): i64 { struct Q { y; } return 1; } }\nfn main(): i64 { return 0; }\n')
 " "error:<source>:2:29: a \`struct\` declaration $IR a fn body"
 one "DI11b a kernel build: a global's closure, in the replay's words" "$(printf 'kernel;\nvar g = |x| { struct Q { y; } return x; };\nfn main(): i64 { return 3; }\n')
@@ -1364,9 +1382,9 @@ row5 UM4 "pub mod m; in a fn body: the pub refusal, then zz" "$(printf 'fn f(): 
 " "error:<source>:1:15: a \`pub\` declaration $IR a fn body
 error:<source>:1:35: $ZZ"
 
-# The five-leg rows' floor: a row or a leg lost reads RED, never green.
-F5FLOOR=330
-F5FLOOR=220
+# The five-leg rows' floor: a row or a leg lost reads RED, never green. (6.7.17's merge of lanes fea and feg left two
+# assignments, 330 then 220; the later one ruled, so 130 lost row-legs read green.)
+F5FLOOR=370
 [ "$N5" -ge "$F5FLOOR" ] || { printf '  FAIL: %-46s\n' "the five-leg rows ran $N5 row-legs (floor $F5FLOOR)"; fail=$((fail+1)); }
 
 echo "decl_after_statement_named: $pass passed, $fail failed"

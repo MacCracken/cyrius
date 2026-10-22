@@ -588,15 +588,17 @@ var r = add(20, 22);   # r = 42
   ```
 
   (`... not inside a block` in a top-level block). Through 6.7.14 it was `unexpected struct` and up to
-  four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by
-  the recovery. It is refused wherever it sits, whether or not its body is ever compiled (6.7.17, the
-  user's decision D33): in a trait default no impl inherits, in a bounded generic fn or method that is
-  never instantiated (`fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }`), in the body of a
-  refused nested fn or a refused `impl`'s method. Through 6.7.16 such a declaration compiled — said only
-  once a use of its name stood down. Those bodies are not parsed, so their declarations are said at the
-  end of the parse, after its other errors. Either way, a use of what the refused declaration names
-  adds no error of its own (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
-  `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
+  four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by the
+  recovery. It is refused wherever it sits, whether or not its body is ever compiled (6.7.17, the user's
+  decision D33): in a trait default no impl inherits (or every impl overrides), in a bounded generic fn
+  or method that is never instantiated (`fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }`), in
+  the body of a refused nested fn, a refused `impl`'s method or a refused `trait`'s default. Through
+  6.7.16 a declaration in a never-compiled default or generic compiled, and one in a refused fn's, impl's
+  or trait's body went unsaid beside that refusal — each said only once a use of its name stood down.
+  Those bodies are not parsed, so their declarations are said at the end of the parse, after its other
+  errors. Either way, a use of what the refused declaration names adds no error of its own (6.7.15):
+  `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` / `.m()`, a payload
+  member's constructor `Ok2(5)` — the declaration's one error stands for them (through
   6.7.14 each was "undefined variable 'Q'", "unknown type 'Q' for parameter 'q'", "no struct type in
   scope for 'q'", ...). So do (6.7.16) `E.B` / `B` in a const context (a `case` label, a const, an array
   size), a refused trait as a bound (`fn g<T: Tr>`), `var q: Q;` with no initializer (any refused

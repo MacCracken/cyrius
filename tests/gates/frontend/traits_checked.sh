@@ -894,6 +894,9 @@ done
 # parses on). IH1 `impl<T: Show> Bx<T>`, its method called both ways; IH2 `impl P Q`; IH3 `impl Tr for P<i64>`; IH4
 # `impl Tr for {`; IH5 `impl P;`; IH6 `impl P` with no block above `fn main`; IH7 a `>>` closing the list; IH8 a late
 # `impl<T> P` (the late arm), its method called; IH9 --syntax-only of IH1; IH10 `impl 5 {` (one error before too).
+# IH11-IH16 (the review's): `impl P` with no block, then a statement on the next line — a call, an `if` (its `{ .. }`
+# not the impl's block), a `while`, a compound assignment, a `*p` store, `loop {` — each its own zz; IH17 the control:
+# `impl P Q.R {` on one line is the header's mistake, its block stepped (a statement starts a LATER line).
 # Mutants (2026-10-22, measured: a scratch copy of the tree with the one change, its 2-stage cycc, this gate):
 #   the lane before it (0a93fa8b9)                     -> RED 45: IH1-IH9
 #   `_impl_hdr_skip` stepping nothing (both passes)   -> RED 25: IH1 IH2 IH3 IH7 IH10
@@ -902,6 +905,9 @@ done
 #                                                        emit")
 #   `_dl_impl_sid` without `_dl_after_angles`         -> RED 15: IH1 IH7 IH8
 #   `_impl_hdr_end` answering 0 (no early end)        -> RED 5: IH6 (main taken as the block)
+#   the merged tree's compiler (only the declarations -> RED 18 (x86_64 / PE / Mach-O legs): IH11-IH16 (zz unsaid:
+#     end a header with no block)                         the statement stepped as the header)
+#   `_impl_hdr_stmt` without its later-line test      -> RED 5: IH17 (`Q.R` read as a statement, the block's cascade)
 IHN=0
 ihrow() { n0=$IBN; ibrow "$@"; IHN=$((IHN + IBN - n0)); }
 ihrow IH1 "impl<T: Show> Bx<T>: its method called" 'trait Show { fn s(self): i64; }
@@ -976,7 +982,52 @@ var r = main();
 syscall(60, r);
 ' "error:<source>:1:6: expected identifier, got number 5
 error:<source>:2:31: $IZ"
-[ "$IHN" -ge 50 ] || bad "IH: the rows ran $IHN row-legs (floor 50) - rows or legs were lost"
+ihrow IH11 "review: impl P then a call statement: its zz" 'struct P { v; }
+impl P
+syscall(60, zz);
+' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:3:15: $IZ"
+ihrow IH12 "review: impl P then an if statement: its block is not the impl's" 'struct P { v; }
+impl P
+if (zz == 1) { syscall(60, 1); }
+syscall(60, 0);
+' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:3:8: $IZ"
+ihrow IH13 "review: impl P then a while statement" 'struct P { v; }
+impl P
+while (zz == 1) { }
+syscall(60, 0);
+' "error:<source>:3:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:3:11: $IZ"
+ihrow IH14 "impl P then a compound assignment" 'struct P { v; }
+var a = 0;
+impl P
+a += zz;
+syscall(60, a);
+' "error:<source>:4:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:4:8: $IZ"
+ihrow IH15 "impl P then a *p store" 'struct P { v; }
+var a = 0;
+impl P
+*(&a) = zz;
+syscall(60, a);
+' "error:<source>:4:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:4:11: $IZ"
+ihrow IH16 "impl P then loop {" 'struct P { v; }
+var a = 0;
+impl P
+loop { a = zz; break; }
+syscall(60, a);
+' "error:<source>:4:1: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:4:14: $IZ"
+ihrow IH17 "control: impl P Q.R { on one line: the block stepped" 'struct P { v; }
+impl P Q.R { fn m(self): i64 { return 1; } }
+fn main(): i64 { return 3 + zz; }
+var r = main();
+syscall(60, r);
+' "error:<source>:2:8: expected '{' (an inherent \`impl Type {\`) or 'for' (\`impl Trait for Type {\`)
+error:<source>:3:31: $IZ"
+[ "$IHN" -ge 85 ] || bad "IH: the rows ran $IHN row-legs (floor 85) - rows or legs were lost"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: traits_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: traits_checked — impl X for T is checked against trait X (8 refusals, each named), an ambiguous plain name is refused at a method call and explained on a direct call, well-formed traits build (declared below their impls too), trait is reserved, lib/trait.cyr is the run-time vtable pattern, and every trait member's signature is parsed (TS1-TS9 with the filed repro verbatim; V1-V4 still build); a member's \`: Vec<..>\` return is refused at the trait, once (TV, 6.7.15); an impl method's return type must be its member's, one type however it is spelled (TR, TRS, 6.7.15), and a return refusal does not end the impl's check (TRC, 6.7.16); a generic member's own <U> reads after a *fn(..) (TP, 6.7.16); a member's return is held to a fn's whole return set (TM, 6.7.16), and a reader-refused side is judged by the names a reader reads (TRR, 6.7.16); a fn's fn-pointer return is that line too, once, the body read on (FP, 6.7.16) — a member's multi-value *fn( .. ) element too (FP9, 6.7.17, D9) — and a member takes a bare *fn parameter (BF, 6.7.16); a non-fn member of an impl body is one error, the body read on (IB, 6.7.16)"
