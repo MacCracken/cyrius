@@ -2763,6 +2763,20 @@ fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
     return _fst_end(S, term);
 }
 # The field store's end: its terminator — `;`, or a classic-for step's `)` — consumed. 6.7.5
+# 6.7.17 (D14): `w.pq = v` with pq a `*S` field (one `*`, S a plain struct) and v no provable non-struct (`_psv_not`)
+# nor another struct's whole call (`_psv_other`): the field's address in rax, then `_psl_store` (parse.cyr) — a struct
+# value of S copies into the S pq points at, a handle or a `*S` rebinds pq. The leaf field `_rlf_si` / `_rlf_fi` (read
+# before the value), the cursor past the `=`. 1 = done (`term` consumed). CHANGELOG [6.7.17]
+fn _fst_pslot(S, idx, sid, off, hop, term): i64 {
+    var ps = _fld_ptr_sid(S, _rlf_si, _rlf_fi);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (_psv_not(S, GTI(S), term) == 1) { return 0; }
+    if (_psv_other(S, GTI(S), term, ps) == 1) { return 0; }
+    var nm = GETFNAME(S, _rlf_si, _rlf_fi);
+    _fld_addr_ra(S, idx, sid, off, hop);
+    return _psl_store(S, term, ps, nm);
+}
 fn _fst_end(S, term): i64 {
     if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
     STI(S, GTI(S) + 1);
@@ -2939,6 +2953,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     _refuse_lossy_pair(S);   # 6.7.7 (T5b): `h.n = f();` stored the tag, into any field type
+    if (_fst_pslot(S, idx, sid, off, hop, term) == 1) { return 0; }   # 6.7.17 (D14): `w.pq = r` copies through pq
     # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
     var fsrc = GTI(S);   # 6.7.7: the source's first token (where a tuple field's refusal points)
     var fsc = _fsc_src(S, ft, lfn, term);   # 6.7.5: `term` — a for step's source ends at `)`

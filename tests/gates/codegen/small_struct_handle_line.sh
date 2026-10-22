@@ -120,6 +120,13 @@
 #      `_spd_gz`) — a local of 8 / 16 B, wrapped, a by-value parameter of each size, an inline global, a captured copy, a
 #      generic's `*T`, top level in the zone and after the first statement; R18a the filed repro VERBATIM (exit 7; 139
 #      through 6.7.16: p held s's first field); GC22 a U of another struct refused by name, as `p = u` / `f(u)` are
+#   R18 also runs the file's b_* rows (6.7.17, the user's D14, 2026-10-22: "copy through the slot"; the same issue, row
+#      B2): a struct VALUE stored into a `*Q` slot reached through a dereference (`*ppq = r`, ppq a `**Q`) or a field
+#      (`w.pq = r`) is copied into the Q the slot points at (`_dst_pslot` / `_fst_pslot` -> `_psl_store`: the assignment
+#      arms against the slot's pointee as a handle), at every source, 8 B and 16 B, a global, top level, a for step, a
+#      capture, a generic's `**T` / `*T` field — through 6.7.16 the slot was rebound to the value (113); `&r`, a `*Q`,
+#      `alloc(..)`, another pointer field and an if-expression of pointers still rebind (floor 42); GC23 a value of
+#      another struct refused by name, another struct's call keeping D99's words
 #   GC20-GC21 (6.7.17, the user's D12, 2026-10-22; issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-
 #      word.md row A3), on the same four legs: a pointer of another DEPTH (a `**S`) into an `S` declaration is refused
 #      by name (`_sci_ppsrc`: "cannot copy 'pp' into a variable of a different struct/vector type: 'g'") — GC20 the
@@ -693,6 +700,14 @@
 #                                                      (each compiled, then faulted reading U through p)
 #   MY10 `_spd_decl` answering 0 (no fn / after arm)    -> RED 26: R18 x7, R18a x7, GC22's three fn / after rows x4
 #   MY11 `_spd_gz` answering 0 (no zone arm)            -> RED 11: R18 x7 (GZ / GZ8 faulted), GC22's zone row x4
+# 6.7.17 `*S` SLOT COPY-THROUGH MUTATION LEDGER (R18's b_* rows / GC23, D14; the same method, measured 2026-10-22):
+#   MY12 the tree before it (D17's commit)              -> RED 15: R18 x7 (19 b_* rows: the slot rebound, 113), GC23's
+#                                                      two another-struct rows x4 (they compiled)
+#   MY13 `_dst_pslot` answering 0 (no dereference arm)  -> RED 11: R18 x7 (12 rows), GC23 `*ppq = u` x4
+#   MY14 `_fst_pslot` answering 0 (no field arm)        -> RED 11: R18 x7 (8 rows), GC23 `w.pq = u` x4
+#   MY15 `_psl_store` arming the pointee as a value (`_agc_ovr_pp` 1) -> RED 7: R18 x7 (the two 8 B rows rebound)
+#   MY16 `_psv_other` answering 0                       -> RED 4: GC23's D99 row x4 (the arms' "cannot copy" words);
+#                                                      struct_result_type_refused.sh DP11 / FE9 too
 # 6.7.12 (issues/archived/2026-10-14-6711-rows-not-run-on-hardware.md item 4): B3's `S8_add(a: S8, b: i64)` row runs on ecb / ach / cass / pi in
 # tests/tcyr/crossos/struct_operator_controls.tcyr.
 set -u
@@ -1287,7 +1302,7 @@ done
 TPV=tests/tcyr/crossos/struct_value_pointer_slot.tcyr
 [ -f "$TPV" ] || { echo "FAIL: $G: $TPV is missing"; exit 1; }
 NPV=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TPV")
-PVFLOOR=17
+PVFLOOR=42   # 6.7.17: 17 a_* rows (D17) + 25 b_* rows (D14)
 if [ "$NPV" -lt "$PVFLOOR" ]; then echo "FAIL: $G: only $NPV rows in $TPV (floor $PVFLOOR) — rows were lost"; exit 1; fi
 echo "R18. $TPV ($NPV rows: an inline struct value meeting a *S slot)"
 for leg in $XLEGS $OTHER; do
@@ -1596,6 +1611,11 @@ glrow "GC22 in a fn, 16 B" "err:cannot copy 'u' $GUM'p'" "${GV2}fn f(): i64 { va
 glrow "GC22 in a fn, 8 B, wrapped" "err:cannot copy 'u' $GUM'p'" "${GV2}fn f(): i64 { var u: U8; u.w = 7; var p: *P8 = (u); return p.v; }\nsyscall(60, f());\n"
 glrow "GC22 the declaration zone" "err:error:<source>:7:14: cannot copy 'GU' $GUM'GP'" "${GV2}var GP: *P = GU;\nsyscall(60, GP.a);\n"
 glrow "GC22 after the first statement, 8 B" "err:cannot copy 'GU8' $GUM'GP'" "${GV2}${GUA}var GP: *P8 = GU8;\nsyscall(60, GP.v);\n"
+echo "GC23. a struct value of another struct into a *Q slot through a dereference or a field: refused by name (6.7.17's D14; x86_64, aarch64, cx, PE)"
+GV3='struct Q { a; b; }\nstruct Pt { x; y; }\nstruct W { pq: *Q; n; }\nfn mkpt(): Pt { var p: Pt; return p; }\n'
+glrow "GC23 *ppq = u (u a Pt)" "err:cannot copy 'u' $GUM'ppq'" "${GV3}fn f(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; var u: Pt; *ppq = u; return 0; }\nsyscall(60, f());\n"
+glrow "GC23 w.pq = u (a *Q field)" "err:cannot copy 'u' $GUM'pq'" "${GV3}fn f(): i64 { var q = Q { 1, 1 }; var w = W { &q, 0 }; var u: Pt; w.pq = u; return 0; }\nsyscall(60, f());\n"
+glrow "GC23 *ppq = mkpt(): D99's words (a *Q slot of another struct's call)" "err:cannot assign '*ppq: *Q' from 'mkpt', which returns the struct 'Pt' - store it through a '*Pt' or bind a field" "${GV3}fn f(): i64 { var q = Q { 1, 1 }; var pq: *Q = &q; var ppq: **Q = &pq; *ppq = mkpt(); return 0; }\nsyscall(60, f());\n"
 echo "CP. struct copies through a *T of 8 B or less: another struct type refused by name, as over 8 B (x86)"
 crow "CP1 l = pu (pu: *U8) refused" "refuse:cannot copy 'pu' into a variable of a different struct/vector type: 'l'" \
   'struct S8 { v; }\nstruct U8 { u; }\nfn f() { var u: U8; u.u = 4; var pu: *U8 = &u; var l: S8; l.v = 1; l = pu; return l.v; }\nsyscall(60, f());\n'

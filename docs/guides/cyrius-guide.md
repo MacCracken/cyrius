@@ -1768,6 +1768,12 @@ For a struct of any size (6.7.10; through 6.7.9 only over 8 bytes):
   was. So is a handle assigned something that is not a struct value: an untyped pointer
   (`a = alloc(24)`, `a = p`) or a call returning `Str`. Between two `*P3` parameters `a = b`
   rebinds too; before v6.6.16 it copied `*b` into `*a`.
+* `*ppq = r` / `w.pq = r` — a struct value stored into a `*Q` SLOT reached through a dereference (`ppq` a `**Q`, a
+  global's too) or a field (`pq: *Q`) — copies into the Q the slot points at, as `pq = r` does; the slot is not
+  rebound (6.7.17; the user's decision D14, 2026-10-22). Every struct-value source copies (a variable, a call, a
+  method, an operator, `fncall0(&f)`, `*pr`, in parentheses), in a fn, a `for` step or at top level; a value of another
+  struct is refused by name (another struct's whole call with D99's words); `&r`, a `*Q`, a handle, `alloc(..)` still
+  rebind the slot. Through 6.7.16 the slot was pointed at the value's own storage and the old pointee never changed.
 * `var p: *P3 = s;` — a `*P3` DECLARED from an inline `P3` value (a local, a by-value parameter, a captured copy,
   an inline global, in parentheses or not; in a fn, in the declaration zone or after the first statement) takes
   s's ADDRESS, as passing s to a `p: *P3` parameter does (6.7.17; the user's decision D17, 2026-10-22: a

@@ -4383,6 +4383,7 @@ var _agc_ovr = 0;
 var _agc_ovr_nm = 0;
 var _agc_ovr_h = 0;
 var _agc_ovr_t = 0;
+var _agc_ovr_pp = 1;   # 6.7.17 (D14): 2 = the parked pointer is a `*S` slot's pointee, a handle (`_psl_store`)
 fn _agc_ovr_is(onoff): i64 {
     if (_agc_ovr != 1) { return 0; }
     if (_agc_src == 1) { return 0; }
@@ -4392,7 +4393,7 @@ fn _agc_ovr_is(onoff): i64 {
 fn _agc_ovr_ans(S): i64 {
     var h = _agc_ovr_h;
     if (h >= 0) { _agc_li = h; } else { _agc_gvi = 0 - 1000 - (0 - 2 - h); }
-    _agc_pp = 1;
+    _agc_pp = _agc_ovr_pp;
     _agc_t = _agc_ovr_t;
     return AGG_NSLOTS(S, _agc_t);
 }
@@ -5079,6 +5080,94 @@ fn _dst_struct(S, term, d): i64 {
     STI(S, GTI(S) + 1);
     return 1;
 }
+# ⛔ 6.7.17 (D14, the user's decision, 2026-10-22: "copy through the slot") — A STRUCT VALUE STORED INTO A `*S` SLOT
+# REACHED THROUGH A DEREFERENCE OR A FIELD IS COPIED INTO THE S THE SLOT POINTS AT, as `pq = r` into a `*Q` name copies
+# (6.7.10's decision 6, B7-1c): `*ppq = r;` / `*ppq = mkp();` (ppq a `**Q`) and `w.pq = r;` (a `*Q` field) REBOUND the
+# slot to the value's own storage and left q unchanged (the filed repro exited 113 where 34 is right). The slot's
+# address in rax (the operand of the `*`, typed `**S` by its pin, `_pp_sid`; or the field's), the cursor on the `=`:
+# the value, unless it is provably no struct value (`_psv_not`) or another struct's whole call (D99's refusal,
+# `_psv_other`), runs the statement's assignment arms against the slot's pointee as a HANDLE (`_agc_ovr_pp` 2) — a
+# struct value of S is copied in (another struct's refused by name), a handle or a `*S` rebinds the slot, as for a
+# `*Q` name; anything else is stored into the slot as before. 1 = done (`term` consumed). CHANGELOG [6.7.17]
+fn _dst_pslot(S, term, d): i64 {
+    if (PEEKT(S) != 4) { return 0; }
+    var sid = _pp_sid(S, _ps_pin(_hl_pw(S, d + 1, GTI(S))));
+    if (sid <= 0) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    if (_psv_not(S, GTI(S) + 1, term) == 1) { return 0; }
+    if (_psv_other(S, GTI(S) + 1, term, sid) == 1) { return 0; }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    STI(S, GTI(S) + 1);   # `=`
+    return _psl_store(S, term, sid, nm);
+}
+# rax = the `*S` slot's address, the cursor past the `=`: the slot and its pointee parked, the arms run against the
+# pointee (a handle: `_agc_ovr_pp` 2) named `nm`; a value they leave in rax is stored into the slot. 1.
+fn _psl_store(S, term, sid, nm): i64 {
+    var hs = _HTEMP(S);
+    _HTSTORE(S, hs);
+    ELOAD64(S);
+    var ho = _HTEMP(S);
+    _HTSTORE(S, ho);
+    var sv = _agc_ovr_pp;
+    _agc_ovr_pp = 2;
+    var r = _dst_arms(S, term, sid, ho, nm);
+    _agc_ovr_pp = sv;
+    if (r == 1) { return 1; }
+    _dst_word(S, hs, 8);
+    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+# 1 = the value [st, its `term`) is provably no struct value, by its tokens: empty, an address `&x`, a literal, a name
+# that is no inline struct (a handle, a `*T`, an untyped or scalar name), a typed pointer (`_hl_pw`: a `*T` field,
+# call, `p + n`), or a whole call of a fn that returns no struct (not a known `&f` through fncallN / callptr).
+# CHANGELOG [6.7.17]
+fn _psv_not(S, st, term): i64 {
+    var e = _hl_dx_end(S, st, term);
+    if (e < 0) { return 1; }
+    var a = _ie_unparen(S, st, e);
+    var pe = _ie_pe;
+    if (pe <= a) { return 1; }
+    var t = TOKTYP(S, a);
+    if (t == 27) { return 1; }
+    if (pe == a + 1) {
+        if (t != 2) { return 1; }
+        if (_hl_amp_sid(S, TOKVAL(S, a)) > 0) { return 0; }
+        return 1;
+    }
+    if (_hl_pw(S, a, pe) > 0) { return 1; }
+    if (t != 2) { return 0; }
+    if (_icall_sid_at(S, a) > 0) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    if (_icall_open_at(S, a) >= 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }
+    if (GFRS(S, fi) != 0) { return 0; }
+    return 1;
+}
+# 1 = the value [st, its `term`) is a whole free call returning ANOTHER struct than `sid` by value: D99's refusal
+# (`_dsr_sres`), in its words, not the arms'. CHANGELOG [6.7.17]
+fn _psv_other(S, st, term, sid): i64 {
+    var e = _hl_dx_end(S, st, term);
+    if (e < 0) { return 0; }
+    var a = _ie_unparen(S, st, e);
+    var pe = _ie_pe;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    if (_icall_open_at(S, a) >= 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (rs >= 2048) { return 0; }
+    if (rs == sid) { return 0; }
+    return 1;
+}
 # `*p OP= v` through a `*S` refused by name. ⛔ 6.7.14 — `*(&s) OP= v` (the `&` arm, `_hl_damp`) is the struct value
 # s (6.7.13), so it is refused as `s OP= v` is (the user's D17 (a), 2026-10-16): it kept 6.7.5's word op, on s's
 # first word, through 6.7.13. CHANGELOG [6.7.14]
@@ -5567,6 +5656,7 @@ fn _deref_store(S, term): i64 {
     PARSE_FACTOR(S);
     var oe = GTI(S);   # 6.7.16 (D99): the operand's end, for `_dsr_sres`
     if (_dst_struct(S, term, d) == 1) { return 0; }
+    if (_dst_pslot(S, term, d) == 1) { return 0; }   # 6.7.17 (D14): a struct value into a `*S` slot copies through it
     _deref_u128(S, d);   # 6.7.15 (D20): `*pu = v` through a `*u128` refused by name; the statement parses on
     var ed = _deref_ed(S);   # before the push: the operand's own kind
     if (ed == 0) { ed = _amp_ew(S, d + 1, GTI(S)); }   # 6.7.16 (D21): `*(&x)` of a narrow x, at x's width
