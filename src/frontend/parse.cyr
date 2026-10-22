@@ -4797,6 +4797,36 @@ fn _asg_compound_tok(S): i64 {
     }
     return 0;
 }
+# The plain assignment's `=` (cursor after the name): stepped, 0. Missing — `p;`, `p 5;`, `P { 5 };`, `p` before the
+# block's `}` — it is "expected '='" once and the statement ends in sync, nothing read as a value (`_stmt_rest_skip`),
+# so the next statement is parsed with its own errors: 1. The token was stepped whatever it was and a value parsed
+# from the next: `p;` as a block's last statement took its `;`, the value read the `}` and the next fn was "defined
+# inside" this one; `p 5;` lost the next statement's error to the resync. CHANGELOG [6.7.17]
+fn _asg_eq_step(S): i64 {
+    if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
+    _refuse_in_sync(S);
+    ERR_EXPECT(S, 4);
+    _stmt_rest_skip(S);
+    return 1;
+}
+# The rest of a statement refused at the cursor: stepped to its `;` (stepped), brackets balanced — a `{ 5 }` in it is
+# stepped whole — stopping at a `}` that closes the enclosing block, a statement keyword or EOF, as `_sync_skip`
+# stops (its caller marked the refusal `_refuse_in_sync`, so the statement ends in sync). CHANGELOG [6.7.17]
+fn _stmt_rest_skip(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) {
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (t == 14) { return 0; }
+            if (_sync_kw(S, t) == 1) { return 0; }
+        }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) { if (d > 0) { d = d - 1; } }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
 # 1 = an assignment follows the cursor, `=` or an `op =` pair (nothing consumed). CHANGELOG [6.7.5]
 fn _asg_pair_at(S): i64 {
     if (PEEKT(S) == 4) { return 1; }
@@ -7418,8 +7448,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         _asg_ufv = 0 - 1;
         _asg_tup_refd = 0;
         if (compound_op == 0) {
-            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-            STI(S, GTI(S) + 1);
+            if (_asg_eq_step(S) == 1) { return 0; }   # 6.7.17: a bare `p;` is one error, in sync
             _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
         }
         if (compound_op != 0) {

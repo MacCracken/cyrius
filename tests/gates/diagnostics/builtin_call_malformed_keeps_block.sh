@@ -13,13 +13,22 @@
 #
 # THE FIX. Every `(`, `,` and `)` check in those arms is `_expect_step` (a miss reported, a recovery point — `;`, `}`, a
 # statement keyword, EOF — never stepped); the iv width literal steps only a non-recovery token; `sizeof` reads no
-# type when its `(` is missing. (A bare `sizeof;` / `mulh64;` statement is the bare-name assignment arm's, not here.)
+# type when its `(` is missing.
+#
+# THE SAME STEP IN THE ASSIGNMENT ARM (met with these rows). A bare name as a statement — `p;`, `zq;` — is the
+# assignment arm's "expected '='"; the arm then stepped the `;`, its value read the block's `}`, and the next fn was
+# "defined inside fn 'main'" (`zq;` added "undefined variable" at the next line). Now `_asg_eq_step` (src/frontend/
+# parse.cyr): a missing `=` is one error and the statement ends in sync — nothing read as a value, the rest stepped to
+# its `;` with its brackets balanced (`_stmt_rest_skip`) — so the next statement is parsed with its own errors (`p 5;`
+# lost the next statement's error to the resync).
 #
 #   X   the matrix: every builtin TOKNAME_BUILTIN names (less its keywords) and f64_sqrt / callptr / sizeof / mulh64, in
 #       four shapes — `var y = NAME;`, `var y = NAME(A;`, `var y = NAME(A, A;` and the statement `NAME;` — as a fn's
 #       last statement, then `fn g(): i64 { return zz; }`: exactly two error lines, the second g's "undefined variable
 #       'zz'", nothing "defined inside" and no "end of file"
 #   V   verbatim: the measured repros' exact lines
+#   N   a bare name as a statement (`p;`, `zq;`, `p 5;`, `p { 5 };`, `p` before the `}` or the next line's `return`): its
+#       one error, then the next statement's own (`zq2`) and g's
 # Every row on the x86_64, aarch64, cx and PE-cross compilers built from this tree: rc 1, no binary.
 #
 # MUTATION LEDGER (2026-10-22, fea FA2; a scratch copy of the tree with the one change, its 2-stage cycc, this gate run
@@ -28,6 +37,10 @@
 #   the `,` checks back to the stepping form                -> RED 516 X row-legs + V store8 ret2
 #   the one-line f64 arms' `(` back to the stepping form    -> RED 72 X row-legs (18 builtins x 4 legs)
 #   `sizeof` reading a type with its `(` missing            -> RED X sizeof.a + V sizeof on every leg (8)
+#   the assignment arm's `=` back to the stepping form      -> RED N n_local n_undef n_next n_for n_junk on every leg (20)
+#   `_asg_eq_step` without its `_refuse_in_sync`            -> RED N n_next n_for n_junk n_brk on every leg (16: zq2
+#                                                              lost to the resync; the for header misread)
+#   `_stmt_rest_skip` with no bracket balance               -> RED N n_brk on every leg (4)
 #
 # Exit 77 = could not run (no compiler); never 0 for that.
 set -u
@@ -108,9 +121,22 @@ vrow v_ret2    'var y = ret2;'       "error:<source>:4:17: expected '(', got ';'
 vrow v_ivadd   'var y = iv_add(p, p;' "error:<source>:4:24: expected ',', got ';'|$ZE"
 vrow v_callptr 'callptr;'            "error:<source>:4:12: expected '(', got ';'|$ZE"
 vrow v_mulh64  'var y = mulh64(p;'   "error:<source>:4:21: expected ',', got ';'|$ZE"
-# The floor: 77 names x 4 shapes less the two bare-name rows, on four legs; 8 V rows on four legs.
+echo "N — a bare name as a statement is its one error; the next statement is its own, the block still closes ($LEGS):"
+# The assignment arm stepped the token after a missing `=`: `p;` took the `;`, the value then read the `}` and the next
+# fn was "defined inside fn 'main'" (`zq;` added "undefined variable" at the next line's first token). A missing `=` at
+# a recovery point now ends the statement in sync: one error, the next statement (`zq2`) and fn (g) report their own.
+vrow n_local  'p;'      "error:<source>:4:6: expected '=', got ';'|$ZE"
+vrow n_undef  'zq;'     "error:<source>:4:7: expected '=', got ';'|$ZE"
+vrow n_brace  'p'       "error:<source>:5:1: expected '=', got '}'|$ZE"
+vrow n_next   'p; zq2 = 1;' "error:<source>:4:6: expected '=', got ';'|error:<source>:4:15: undefined variable 'zq2'|$ZE"
+vrow n_kw     'p
+    return zq2;' "error:<source>:5:5: expected '=', got return|error:<source>:5:15: undefined variable 'zq2' (missing include or enum?)|error:<source>:7:24: undefined variable 'zz' (missing include or enum?)|"
+vrow n_for    'for (p; p < 3; p = p + 1) { }' "error:<source>:4:11: expected '=', got ';'|$ZE"
+vrow n_junk   'p 5; zq2 = 1;' "error:<source>:4:7: expected '=', got number 5|error:<source>:4:17: undefined variable 'zq2'|$ZE"
+vrow n_brk    'p { 5 }; zq2 = 1;' "error:<source>:4:7: expected '=', got '{'|error:<source>:4:21: undefined variable 'zq2'|$ZE"
+# The floor: 77 names x 4 shapes less the two bare-name rows, on four legs; 8 V + 8 N rows on four legs.
 X_FLOOR=1224
-V_FLOOR=32
+V_FLOOR=64
 [ "$nx" -ge "$X_FLOOR" ] || { echo "  FAIL: X ran $nx row-legs (floor $X_FLOOR) — names or legs were lost"; fails=$((fails + 1)); }
 [ "$nv" -ge "$V_FLOOR" ] || { echo "  FAIL: V ran $nv row-legs (floor $V_FLOOR)"; fails=$((fails + 1)); }
 if [ "$fails" = 0 ]; then

@@ -2411,7 +2411,8 @@ _chk_gate "$ROOT/tests/gates/diagnostics/in_sync_refusal_next_statement.sh"
 # 6.7.17 — a builtin's or an identifier intrinsic's malformed call (`var y = load8;`, `store8(p;`, `iv_add(p, p;`) is
 # one error: its arm's `(` / `,` / `)` checks never step a `;` or `}`, so the block still closes and the next fn's
 # own error is reported (it was "fn 'g' is defined inside fn 'main'"). Every builtin, four shapes, x86_64 /
-# aarch64 / cx / PE. Mutation in the header.
+# aarch64 / cx / PE; and a bare name as a statement (`p;`): one "expected '='", the next statement its own. Mutation in
+# the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/builtin_call_malformed_keeps_block.sh"
 
 # 6.6.16 (C10) — cycc's `lib/...` include fallback reads CYRIUS_HOME's store slot, else HOME's,
