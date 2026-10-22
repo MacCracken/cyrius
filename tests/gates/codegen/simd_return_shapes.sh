@@ -4140,9 +4140,14 @@ vyds_msg() {
 # a)` / `fncall1(&tp, a)`, AP6-AP8 a fn pointer declared `*fn(*i64): i64` (a local, a parameter, a global), AP9 the
 # second parameter (fncall2 through `*fn(i64, *i64)`), AP10 a callee defined below, AP11 a struct-element array into
 # `*Pt`, AP12 an array of vectors into `*f64v2`, AP13 a global array, AP14 a closure's capture, AP15 a bare `var b[16]`,
-# AP16 wrapped, AP17 an array of pointers (`*i64[4]` into `*i64`: its element 0 is a `*i64` and through 6.7.16 ran
-# right, 7; the name is refused whatever the element — the review's reading of D109, an agent default). APC1: `&a`, an untyped parameter's `take(a)` (its element 0, unchanged), a callee held in an untyped
-# variable. Mutation (measured): the tree before -> RED AP1-AP16 (each compiled) on five legs; `_bx_pcmpe_arg` without
+# AP16 wrapped, AP17 an array of pointers of ANOTHER type (`*Pt[4]` into `*i64`), AP18 of more stars (`**i64[2]` into
+# `*i64`). ⛔ D109 NARROWED (the user, 2026-10-22: "refuse only when the array's element isn't the parameter's pointer
+# type; an array of matching pointers passes element 0 as in 6.7.16"): APC2 runs an array whose element IS the
+# parameter's type — `*i64[4]` into `*i64` (direct, a method, callptr / fncall1, a `*fn(*i64)` local, a global, a
+# closure's capture, a generic's `*T`) and `*Pt[2]` into `*Pt` — each element 0, as 6.7.16 ran them (the first D109
+# refused them all, an agent default the user reversed). AP19 the depth hole met with it: `tpt(&pa)` (`pa: *Pt[2]`, a
+# `**Pt`) into `p: *Pt` read element 0's address as the Pt (40) — refused now as D11 refuses `&hp`. APC1: `&a`, an
+# untyped parameter's `take(a)` (its element 0, unchanged), a callee held in an untyped variable. Mutation (measured): the tree before -> RED AP1-AP16 (each compiled) on five legs; `_bx_pcmpe_arg` without
 # `_arr_parg` -> RED AP1-AP3 AP10-AP16 (AP4 AP5 are `_arr_iarg`'s); `_fpt_ptr_param` answering 0 -> RED AP6-AP9.
 APH='include "lib/fnptr.cyr"
 include "lib/alloc.cyr"
@@ -4211,12 +4216,18 @@ syscall(60, r());
     AP16) printf '%s' "$APH"'fn r(): i64 { var a: i64[4]; a[0] = 5; return tp(&a) + tp(((a))); }
 syscall(60, r());
 ' ;;
-    AP17) printf '%s' "$APH"'fn r(): i64 { var x = 7; var ap: *i64[4]; store64(&ap, &x); return tp(ap); }
+    AP17) printf '%s' "$APH"'fn r(): i64 { var p = Pt { 7, 0 }; var pq: *Pt[4]; store64(&pq, &p); return tp(pq); }
+syscall(60, r());
+' ;;
+    AP18) printf '%s' "$APH"'fn r(): i64 { var x = 7; var q = &x; var ppa: **i64[2]; store64(&ppa, &q); return tp(ppa); }
+syscall(60, r());
+' ;;
+    AP19) printf '%s' "$APH"'fn r(): i64 { var h = Pt { 7, 0 }; var pa: *Pt[2]; store64(&pa, &h); return tpt(&pa); }
 syscall(60, r());
 ' ;;
     esac
 }
-AP_ROWS="AP1 AP2 AP3 AP4 AP5 AP6 AP7 AP8 AP9 AP10 AP11 AP12 AP13 AP14 AP15 AP16 AP17"
+AP_ROWS="AP1 AP2 AP3 AP4 AP5 AP6 AP7 AP8 AP9 AP10 AP11 AP12 AP13 AP14 AP15 AP16 AP17 AP18 AP19"
 APT="- an array's name is its first element; pass"
 ap_msg() {
     case "$1" in
@@ -4231,7 +4242,9 @@ ap_msg() {
     AP12) echo "cannot pass array 'wa' to pointer parameter 'p' of 'rv' $APT &wa for its address";;
     AP13) echo "cannot pass array 'GA' to pointer parameter 'p' of 'tp' $APT &GA for its address";;
     AP15) echo "cannot pass array 'b' to pointer parameter 'p' of 'tp' $APT &b for its address";;
-    AP17) echo "cannot pass array 'ap' to pointer parameter 'p' of 'tp' $APT &ap for its address";;
+    AP17) echo "cannot pass array 'pq' to pointer parameter 'p' of 'tp' $APT &pq for its address";;
+    AP18) echo "cannot pass array 'ppa' to pointer parameter 'p' of 'tp' $APT &ppa for its address";;
+    AP19) echo "cannot pass '&pa', a '**Pt', to a '*Pt' parameter in a call to 'tpt' - a pointer of another depth";;
     esac
 }
 apc_src() {  # $1 row id -> source on stdout; exits 161 when right
@@ -4245,9 +4258,23 @@ apc_src() {  # $1 row id -> source on stdout; exits 161 when right
 }
 syscall(60, r());
 ' ;;
+    APC2) printf '%s' "$APH"'var GAP: *i64[2];
+fn r(): i64 {
+    var x = 7; var ap: *i64[4]; store64(&ap, &x); store64(&GAP, &x);
+    var h = Pt { 9, 0 }; var pa: *Pt[2]; store64(&pa, &h);
+    var o: O;
+    var fp: *fn(*i64): i64 = &tp;
+    var f = |k| tp(ap) + k;
+    var t = tp(ap) + o.m(ap) + callptr(&tp, ap) + fncall1(fp, ap) + tp(GAP) + fncall1(f, 0) + gp(ap) + tpt(pa);
+    if (t == 58) { return 161; }
+    return t % 251 + 1;
+}
+alloc_init();
+syscall(60, r());
+' ;;
     esac
 }
-APC_ROWS="APC1"
+APC_ROWS="APC1 APC2"
 # 6.7.17: a table's rows built by the leg's compiler (`$7` an env assignment, or none) and run, each exiting `$6 <row>`.
 accept_want_all() {  # $1 leg label  $2 compiler  $3 runner fn name  $4 source fn  $5 rows  $6 want fn  [$7 VAR=value]
     for row in $5; do

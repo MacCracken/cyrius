@@ -135,7 +135,7 @@ _expect "A: CHANGELOG.md copy does not have exactly one \`## [$NEXT]\` header" '
 _expect "A: roadmap.md copy's stamp is not \`**Current head: v$NEXT** ($TODAY)\`" 'grep -qE "^\*\*Current head: v${NEXT_RE}\*\* \(${TODAY}\)" "$L/docs/development/roadmap.md"'
 _expect "A: a \`**Current head: v$V**\` stamp survived the bump" '! grep -qE "\*\*Current head: v${V_RE}\*\*" "$L/docs/development/roadmap.md"'
 for _f in CLAUDE.md cyrius.cyml CHANGELOG.md docs/development/roadmap.md; do
-    _d=$(diff "$ROOT/$_f" "$L/$_f" | grep -c '^[<>]')
+    _d=$(diff "$ROOT/$_f" "$L/$_f" | grep -c '^[<>]' || true)   # diff exits 1 on the expected change: pipefail-safe (6.7.17)
     _expect "A: $_f copy changed $_d diff lines, expected exactly 2 (one anchor)" '[ "$_d" = 2 ]'
 done
 for _f in VERSION CLAUDE.md cyrius.cyml CHANGELOG.md docs/development/roadmap.md; do
