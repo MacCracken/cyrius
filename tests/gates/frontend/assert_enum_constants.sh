@@ -318,7 +318,7 @@ error:<source>:8:11: $NC
 error:<source>:9:20: $NC
 error:<source>:10:11: expected ';', got number 3
 error:<source>:11:11: $NC
-error:<source>:12:14: undefined variable 'zz' (missing include or enum?)"
+error:<source>:12:12: undefined variable 'zz' (missing include or enum?)"
 eq EQ6 "the value forms: a chain, a call, a range bound; each then the next statement" 'enum Color { RED, GREEN }
 fn f(): i64 {
     var a = Color.NOPE.x;
@@ -375,7 +375,7 @@ error:<source>:5:11: 'NOPE2' is not a variant of 'Color'
 error:<source>:6:18: 'NOPE2' is not a variant of 'Color'"
 eq EQC1 "control: a base that is no enum keeps its report" 'fn f(): i64 { return Nope.NOPE; }
 syscall(60, f());
-' "error:<source>:1:31: undefined variable 'Nope'"
+' "error:<source>:1:22: undefined variable 'Nope'"
 # EQC2 control: Color.RED runs, on every target's compiler (x86 run).
 printf '%s' 'enum Color { RED, GREEN }
 const K = Color.GREEN;

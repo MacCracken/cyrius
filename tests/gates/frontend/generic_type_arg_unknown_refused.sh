@@ -1097,13 +1097,13 @@ errs uc5 1 "UC5: a nested Box<i64> (the >> close) and a .field" "error:<source>:
 uc uc6 'return nofn<u8>(1);'
 errs uc6 1 "UC6: return nofn<u8>(1); (u8: a type, if no type argument)" "error:<source>:4:25: $UF"
 uc uc7 'var x = nofn<i64>(1) + yy;'
-errs uc7 2 "UC7: an error after the call is its own" "error:<source>:4:26: $UF" "error:<source>:4:43: undefined variable 'yy' (missing include or enum?)"
+errs uc7 2 "UC7: an error after the call is its own" "error:<source>:4:26: $UF" "error:<source>:4:41: undefined variable 'yy' (missing include or enum?)"
 printf 'fn gen<T>(x: T): i64 { return nofn<T>(x); }\nfn main(): i64 { return gen(1) + gen<i32>(2); }\nsyscall(60, main());\n' > "$T/uc8.cyr"
 errs uc8 1 "UC8: nofn<T>(x) in a generic body parsed three times — once" "error:<source>:1:31: $UF"
 uc uc9 'var x = zz < 2 >> (3);'
-errs uc9 1 "UC9 control: zz < 2 >> (3) is a shift — the variable, as before" "error:<source>:4:29: undefined variable 'zz' (missing include or enum?)"
+errs uc9 1 "UC9 control: zz < 2 >> (3) is a shift — the variable, as before" "error:<source>:4:26: undefined variable 'zz' (missing include or enum?)"
 uc uc10 'var b = 1; var c = 2; var x = take2(zz < b, c > (3));'
-errs uc10 1 "UC10 control: two comparisons of values — the variable, as before" "error:<source>:4:57: undefined variable 'zz' (missing include or enum?)"
+errs uc10 1 "UC10 control: two comparisons of values — the variable, as before" "error:<source>:4:54: undefined variable 'zz' (missing include or enum?)"
 for f in uc1 uc2 uc3 uc4 uc5 uc6 uc8; do
     rc=0; "$CC" --syntax-only < "$T/$f.cyr" > /dev/null 2> "$T/$f.sx" || rc=$?
     if [ "$rc" -eq 0 ] && ! grep -q '^error' "$T/$f.sx"; then ok "UCX $f: --syntax-only (a sibling module's generic) says nothing"

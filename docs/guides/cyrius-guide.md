@@ -473,8 +473,10 @@ element as `store8/16/32` do. There is **no bounds check** — unless the progra
 [**bounds-checked mode**](#the-bounds-checked-mode-678) (6.7.8: `#bounds`, `--bounds`), where `a[i]`
 is checked against the array's N and `p[i]` for a negative index only (`slice<T>` is the checked
 spelling of a pointer with a length). Inside a capturing closure an
-array's subscript reads and writes the closure's captured COPY, as `&a` there does; a
-captured pointer's subscript reaches the memory it points at.
+array's subscript reads and writes the closure's captured COPY, as `&a` there does, and its
+name read as a word is the copy's first word — a typed array's element 0, as in its frame
+(6.7.17; through 6.7.16 it was the copy's ADDRESS: `take(a)` 8 on x86_64, 248 on cx, where 4
+was right); a captured pointer's subscript reaches the memory it points at.
 
 The element is a value of its declared type, as a variable of `T` would be (6.7.8): an `f64`
 is an f64 (`p[1] * 2.0`, `p[1] < 3.0` are float operations); an `f32` is its 4 bytes, in
@@ -1203,6 +1205,17 @@ is not parsed (6.7.11: a `: stack` pair there was refused a second time).
 A plain assignment to a whole **typed array** is refused by name too (6.7.6): `var a: i64[4];
 a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] = v`. A bare array's
 `b = v` still writes its first word.
+
+An array's name passed to a POINTER parameter is refused by name (6.7.17, the user's decision
+D109, 2026-10-22): read as a word the name is its first element, so `fn tp(p: *i64)`, `var a:
+i64[4]; a[0] = 5; tp(a)` passed 5 as the address (a fault on every target: 139 on Linux, cxvm's guest
+fault, an access violation on Windows). Into any parameter
+declared a pointer — a fn's, a method's, a generic's `*T`, a known `&f` through `callptr` /
+`fncallN`, a fn pointer declared `*fn( .. )` — from a local, a global, a closure's capture or a
+bare `var b[N]`, it is *cannot pass array 'a' to pointer parameter 'p' of 'tp' - an array's name
+is its first element; pass &a for its address*, whatever the element — an array of pointers too
+(`var ap: *i64[4]; tp(ap)`, whose element 0 is a `*i64` and ran right through 6.7.16: write
+`tp(load64(&ap))` for that element). An untyped parameter still takes the first element (`take(a)`).
 
 ## Memory
 
@@ -2484,7 +2497,10 @@ An ARRAY of vectors is refused in the same slots (6.7.17, the user's decision D1
 read as a word is its element 0, so `var wa: f64v2[2]; take(wa)` passed element 0's lane 0 — `take(wa)`, `return wa;`,
 `var x: i64 = wa;`, `if (wa)`, `1 + wa`, `x = wa`, `syscall(60, wa)`, a tuple or multi-value element, a local or a
 global, in a fn or at top level — and each is *… - 'wa' is an array of vectors* now. Pass its address (`rd(&wa)`,
-`&wa + 16` is element 1) or read a lane (`load64(&wa)`).
+`&wa + 16` is element 1) or read a lane (`load64(&wa)`). So is an UNTYPED declaration from one (the user's decision
+D108, 2026-10-22): `var x = wa;` in a fn, a closure, and `var X = GA;` at top level bound that lane 0 and are *'wa' is
+an array of vectors - an untyped declaration binds one word, its element 0's lane 0; take its address: `var p:
+*f64v2 = &wa;`* (an array is no vector for D95 to copy; an `i64` array's `var x = a;` is its element 0, unchanged).
 
 **An untyped declaration from a vector value copies it in a fn (6.7.17, the user's decision D95, 2026-10-22).** `var x
 = w;` with `w` a vector local, a by-value vector parameter or a closure's captured vector — `(w)` too — declares a
@@ -3633,7 +3649,8 @@ fn demo(): i64 {
   grammar and messages, whether or not an impl uses it: the parameters (`name`, `name: Type`, `...`),
   their types, the return type, then `;` or the body. Junk (`fn sh(self, n + foo bar): i64;`), a type
   name that names nothing, or a stray token before the `;` is an error — in a required member and in
-  a default every impl overrides alike (a default an impl inherits is parsed as that impl's method).
+  a default every impl overrides alike (a default an impl inherits is parsed as that impl's method; the body of one
+  no impl inherits is read for its syntax, 6.7.17 — see *Generic Functions*).
   ⚠ Before 6.7.8 only the parameter count was read; the rest compiled unread. The impl's own check
   compares its parameter count and its return type (above). A member's return is held to a fn's return set: `fn a(self):
   Vec<i64>;` (or a bare `: Vec`) is *type 'Vec' cannot be a fn return type* and `fn n(self): u128;` is *`u128` is
@@ -6722,6 +6739,13 @@ so a program with both `myID` and `my` defined silently CALLED THE WRONG ONE, an
 lost two bytes of its own data. Both are fixed; a name that merely ends an identifier, and a name
 inside a string, are now left alone.
 
+**A diagnostic past an expansion points into the source (6.7.17).** A macro call and a `#derive`'s generated fns
+(written onto the line of the declaration's closing `}`) are expanded in-line, and an error later on that line reports
+the column as the source has it, with the source line as its excerpt: `var x = ADD(1, 2) + zz;` is `2:21` under `zz`,
+and `struct Q { y; } var w = zz;` after `#derive(accessors)` is `2:25`. A token the expansion itself produced is
+reported at the call (or just past the declaration's `}`). Through 6.7.16 the column was the expanded line's — `2:39`
+and `2:258` — and the excerpt showed the expansion.
+
 ⛔ **And an invocation opened in a `#` comment used to delete your code.** A `#define` body
 stops at the newline, but that covers only what an expansion *writes*. What it *reads* ran to the
 matching `)` wherever that was, so with `#define M(a) 0` in scope the comment
@@ -7036,6 +7060,8 @@ a[i] = f();              # ✗ an element                (6.7.7)
 *p = f();                # ✗ through a pointer         (6.7.7)
 x += f();                # ✗ any compound `OP=`        (6.7.7)
 var p = P { f(), 3 };    # ✗ a struct-literal element  (6.7.11) — named, a global's, a nested leaf too
+var t, v, w = f();       # ✗ three names (6.7.17): "binds 3 names, but 'f' returns 2 values" — a
+                         #   variant holds one payload; `callptr(&f, ..)` / `fncallN(&f, ..)` too
 
 var t, v = f();          # ✓ bind both halves
 t, v = f();              # ✓ re-assign both halves     (6.7.7)
@@ -8257,7 +8283,13 @@ a destructure's right-hand side the enclosing `x` (`var q, x = pr(x.b);`). `g`'s
 loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A generic
 whose `i64` base is not parsed — a bounded one with no `impl` of its bound for `i64`, or a stub — refuses its first
 such use at the definition all the same, never called included, with the same words at the same place (its other
-lines are judged in each instance).
+lines are judged in each instance). A base no call ever instantiates — like a trait default no impl inherits, or every
+impl overrides — is still read once for its syntax (6.7.17; every fn body is parsed, called or not): a syntax error in
+it is refused at its token in a plain fn's words (`return 1 +;` is *unexpected ';'*), and so is a name undefined in
+every instance, one that does not depend on `T` (`return zz;` is *undefined variable 'zz'*, as in a plain fn nothing
+calls; not under `--syntax-only`, where a name is a sibling file's — the agent default D110, 2026-10-22). A global
+declared after the first top-level statement, below the generic, is in scope there, as it is in an instance a call
+below that declaration mints (a plain fn above it refuses the name); nothing else in it is judged. Through 6.7.16 such a body compiled unread.
 
 ```
 struct Pt { x; y; }
@@ -8445,7 +8477,7 @@ describe<i32>(7);   # needs impl Show for i32
   minted for it: `var w: Vec<Box<Pt>> = 0;` (a local, a field, a parameter, a global, nested) is refused as `var b:
   Box<Pt>;` is when `Pt` has no impl (6.7.15, the user's D10; through 6.7.14 only the element's names were checked),
   and an element whose argument is itself an instance — `Vec<Box<Box<R>>>`, `Vec<SB<UB<R>>>` — as `var b: Box<Box<R>>;`
-  is, its note naming `impl Show for Box$R`: no impl can name an instance, so a bound on one never holds (6.7.16, the
+  is, its note naming `impl Show for Box<R>` (the instance as written, 6.7.17): no impl can name an instance, so a bound on one never holds (6.7.16, the
   user's D10; through 6.7.15 that element compiled).
   An instance is judged at its own type
   alone: `describe(h)` with `h: f64` needs `impl Show for f64` and nothing for `i64`, and a refused
@@ -8885,13 +8917,16 @@ Reading, writing or taking the address of a block-scoped name after its block is
 compile error that names the variable and says where to declare it instead:
 
 ```
-error:<source>:5:14: undefined variable 't' (missing include or enum?)
+error:<source>:5:13: undefined variable 't' (missing include or enum?)
     syscall(60, t);
-                 ^
+                ^
 note: 't' was declared inside a top-level block and goes out of scope at its '}'
       (since 6.6.6 a top-level block scopes its `var`s like a fn body does)
       declare it at top level, before the block, to use it after the block
 ```
+
+The line and column are the name's own, and the caret sits under it (6.7.17, the user's D34; through 6.7.16 an
+undefined name was reported at the token after it — here the `)` at 5:14, in `return zq + 1;` the `+`).
 
 The note accompanies **every** form of the reference — a plain read, an assignment,
 `&t`, an index `t[0]`, and a struct-field read or write (`t.a`, `t.a = 1`).
@@ -8998,8 +9033,9 @@ to answer -1 for every lock. Every other failure answers its errno through the W
 reroutes use — a closed fd -9 (`ERROR_INVALID_HANDLE`), a code with no row -1 — and a negative fd
 is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). A bad op — one that is
 not `LOCK_SH`, `LOCK_EX` or `LOCK_UN`, with or without `LOCK_NB`, the op read whole — is -22 whatever
-the fd and takes, drops or changes no lock, on every target (6.7.17's D37 / D97 / D104): each arm
-checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host. Through
+the fd and takes, drops or changes no lock, on Linux, macOS and Windows (6.7.17's D37 / D97 / D104): each
+arm checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host (a Windows
+host's cxvm routes no flock: -38 for every op; agnos's arm hands the op to its kernel). Through
 6.7.16 Linux and macOS passed the op to the kernel. Linux's flock(2) answers an op carrying
 `LOCK_MAND` (32) 0 with nothing locked, whatever the fd, and reads only the op's low 32 bits —
 0x100000002 took the exclusive lock and 0x100000008 let it go, each answering 0 (D104). Darwin's

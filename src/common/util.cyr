@@ -151,7 +151,7 @@ fn _grow_g2(): i64 { _vars_base = _grow_one(_vars_base, _var_cap); _grow_g3(); r
 fn _grow_g1(): i64 { _varn_base = _grow_one(_varn_base, _var_cap); _grow_g2(); return 0; }
 fn _var_grow(S): i64 {
     if (_var_cap * 2 > 1048576) {
-        syscall(SYS_WRITE, 2, "error: variable table exceeds 1048576 entries (too many globals+enums+arrays)\n", 78);
+        _ew("error: variable table exceeds 1048576 entries (too many globals+enums+arrays)\n", 78);
         syscall(SYS_EXIT, 1);
     }
     _grow_g1();
@@ -189,7 +189,7 @@ fn SVENUMID(S, vi, v): i64 { S64(_venid_base + vi * 8, v); return 0; }
 fn GENUMC(S): i64 { return L64(S + 0x214000); }
 fn SENUMC(S, v): i64 {
     if (v >= 1024) {
-        syscall(SYS_WRITE, 2, "error: enum table full (1024) — too many enum decls\n", 54);
+        _ew("error: enum table full (1024) — too many enum decls\n", 54);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x214000, v);
@@ -229,7 +229,7 @@ fn _fixup_grow(S): i64 {
     # 64M entries = 1 GiB; no real program reaches it, but a pathological input
     # can't grow unbounded into OOM).
     if (nc > 67108864) {
-        syscall(SYS_WRITE, 2, "error: fixup table exceeds 64M entries\n", 39);
+        _ew("error: fixup table exceeds 64M entries\n", 39);
         syscall(SYS_EXIT, 1);
     }
     var nb = alloc(nc * 16);
@@ -525,6 +525,7 @@ var _tp_term = 5;
 # 6.6.10 — the first token of a plain assignment's RHS (-1 for a compound one), so an integer
 # constant stored into an f64 / f32 variable warns (_IFS_CHECK, src/frontend/parse_expr.cyr).
 var _asg_ti = 0 - 1;
+var _asg_nti = 0 - 1;   # 6.7.17: an assignment's name token (PARSE_STMT, the for step), for its undefined-name report
 # 6.6.11 — whether a plain assignment's RHS was a float (_UFV_IS_FLOAT, captured right after its
 # PCMPE); -1 when there is no plain RHS to judge. Re-judges an untyped variable's kind-3 flag
 # at the store (_asg_rejudge, src/frontend/parse.cyr).
@@ -844,7 +845,7 @@ var _output_cap = 0;
 fn _codebuf_grow(S): i64 {
     var nc = _codebuf_cap + 8388608;   # v6.4.49: +8 MiB linear steps (was *2)
     if (nc > 67108864) {
-        syscall(SYS_WRITE, 2, "error: codebuf exceeds 64 MiB (program too large)\n", 50);
+        _ew("error: codebuf exceeds 64 MiB (program too large)\n", 50);
         syscall(SYS_EXIT, 1);
     }
     var nb = alloc(nc);
@@ -882,47 +883,47 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
         # until v6.5.40), so `tests/gates/memory/capacity_meter_denominators.sh` derives all
         # six from the caps rather than trusting these literals.
         if (GFNC(S) * 100 / 131072 >= 85) {
-            syscall(SYS_WRITE, 2, "warning: fn_table at ", 21);
+            _ew("warning: fn_table at ", 21);
             PRNUM(GFNC(S) * 100 / 131072);
-            syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFNC(S));
-            syscall(SYS_WRITE, 2, "/131072) — approaching the hard fn limit; split into compilation units\n", 73);
+            _ew("% (", 3); PRNUM(GFNC(S));
+            _ew("/131072) — approaching the hard fn limit; split into compilation units\n", 73);
         }
         if (GNPOS(S) * 100 / 8388608 >= 85) {
-            syscall(SYS_WRITE, 2, "warning: identifier buffer at ", 30);
+            _ew("warning: identifier buffer at ", 30);
             PRNUM(GNPOS(S) * 100 / 8388608);
-            syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GNPOS(S));
-            syscall(SYS_WRITE, 2, "/8388608 bytes) — reduce includes or split soon\n", 50);
+            _ew("% (", 3); PRNUM(GNPOS(S));
+            _ew("/8388608 bytes) — reduce includes or split soon\n", 50);
         }
         if (GVCNT(S) * 100 / 1048576 >= 85) {
-            syscall(SYS_WRITE, 2, "warning: var_table at ", 22);
+            _ew("warning: var_table at ", 22);
             PRNUM(GVCNT(S) * 100 / 1048576);
-            syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GVCNT(S));
-            syscall(SYS_WRITE, 2, "/1048576) — too many globals + locals\n", 40);
+            _ew("% (", 3); PRNUM(GVCNT(S));
+            _ew("/1048576) — too many globals + locals\n", 40);
         }
         if (GFCNT(S) * 100 / 1048576 >= 85) {
-            syscall(SYS_WRITE, 2, "warning: fixup_table at ", 24);
+            _ew("warning: fixup_table at ", 24);
             PRNUM(GFCNT(S) * 100 / 1048576);
-            syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GFCNT(S));
-            syscall(SYS_WRITE, 2, "/1048576) — too many cross-fn refs\n", 37);
+            _ew("% (", 3); PRNUM(GFCNT(S));
+            _ew("/1048576) — too many cross-fn refs\n", 37);
         }
         if (GSPOS(S) * 100 / 2097152 >= 85) {
-            syscall(SYS_WRITE, 2, "warning: string_data at ", 24);
+            _ew("warning: string_data at ", 24);
             PRNUM(GSPOS(S) * 100 / 2097152);
-            syscall(SYS_WRITE, 2, "% (", 3); PRNUM(GSPOS(S));
-            syscall(SYS_WRITE, 2, "/2097152 bytes)\n", 16);
+            _ew("% (", 3); PRNUM(GSPOS(S));
+            _ew("/2097152 bytes)\n", 16);
         }
         if (GCP(S) * 100 / codebuf_cap >= 75) {
-            syscall(SYS_WRITE, 2, "warning: code buffer at ", 24);
+            _ew("warning: code buffer at ", 24);
             PRNUM(GCP(S) * 100 / codebuf_cap);
             if (codebuf_growable != 0) {
-                syscall(SYS_WRITE, 2, "% of 64 MiB ceiling (", 21); PRNUM(GCP(S));
-                syscall(SYS_WRITE, 2, " bytes, +8 MiB/grow)\n", 21);
+                _ew("% of 64 MiB ceiling (", 21); PRNUM(GCP(S));
+                _ew(" bytes, +8 MiB/grow)\n", 21);
             } else {
                 # The fixed cx code region: the cap is main_cx.cyr's, never a size named here
                 # (this read "512 KiB" after the region moved). CHANGELOG [6.7.12]
-                syscall(SYS_WRITE, 2, "% of the cx code region (", 25); PRNUM(GCP(S));
-                syscall(SYS_WRITE, 2, "/", 1); PRNUM(codebuf_cap);
-                syscall(SYS_WRITE, 2, " bytes)\n", 8);
+                _ew("% of the cx code region (", 25); PRNUM(GCP(S));
+                _ew("/", 1); PRNUM(codebuf_cap);
+                _ew(" bytes)\n", 8);
             }
         }
     }
@@ -1045,7 +1046,7 @@ fn GVW128(S, vi): i64 {
 # 16384th-slot write overflows the table.
 fn SFLC(S, v): i64 {
     if (v >= 16384) {
-        syscall(SYS_WRITE, 2, "error: too many stack slots in one function (max 16384)\n", 56);
+        _ew("error: too many stack slots in one function (max 16384)\n", 56);
         syscall(SYS_EXIT, 1);
     }
     if (_lfi_base != 0) { _lfi_clear(S, v); }
@@ -1824,7 +1825,7 @@ fn SXPC(S, v): i64 { S64(S + 0x18F888, v); return 0; }
 fn ADDXP(S, p): i64 {
     var c = GXPC(S);
     if (c >= 8) {
-        syscall(SYS_WRITE, 2, "error: too many && conditions (max 8)\n", 38);
+        _ew("error: too many && conditions (max 8)\n", 38);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x18F848 + c * 8, p);
@@ -2193,6 +2194,32 @@ fn _fn_has_simd_param(S, pc): i64 {
 fn GEXW(S): i64 { return L64(S + 0x1903F0); }
 fn SEXW(S, v): i64 { S64(S + 0x1903F0, v); return 0; }
 
+# ⛔ 6.7.17 — EVERY DIAGNOSTIC BYTE THE PARSER AND THE EMITTERS WRITE GOES THROUGH `_ew` (stderr, fd 2): the parse*
+# files, util, ir and the backends' emit / jump / common files (diagnostic_writer_census.sh holds them to it). One
+# writer is what lets a read be MUTED: a trait default no impl inherits and a generic base pass 2 steps are parsed once
+# for their syntax after the image is built (`_unp_run`, parse_fn_def.cyr), every report but a syntax error's or an
+# undefined name's silent (`_ew_say`). Bytes written are unchanged. CHANGELOG [6.7.17]
+var _ew_mute = 0;   # 1: nothing is written ...
+var _ew_say = 0;    # ... but the report being printed while this is 1
+var _unp_on = 0;    # 1 while a body pass 2 never parsed is read (`_unp_run`, parse_fn_def.cyr)
+var _unp_said = 0;  # the reports that read said (a syntax error, an undefined name)
+var _unp_names = 0; # 1: the read says an undefined name too (D110; not under --syntax-only, whose names are a sibling's)
+var _unp_v = 0;     # per body pass 2 stepped: kind (0 a generic base, 1 a trait default), fi, its `(`, its first token, its `fn`
+var _unp_iv = 0;    # the generics an instance was minted of (their bases' bodies parsed)
+var _unp_dv = 0;    # the trait defaults an impl inherited (their `fn` tokens: parsed as its methods)
+# A report the read says (ERR's, ERR_EXPECT's): printed through the mute, and counted.
+fn _unp_say(): i64 {
+    if (_unp_on == 1) {
+        _ew_say = 1;
+        _unp_said = _unp_said + 1;
+    }
+    return 0;
+}
+fn _ew(b, n): i64 {
+    if (_ew_mute == 1) { if (_ew_say == 0) { return n; } }
+    return syscall(SYS_WRITE, 2, b, n);
+}
+
 # Print a number to stderr (decimal)
 fn PRNUM(n): i64 {
     var buf[24];
@@ -2212,7 +2239,7 @@ fn PRNUM(n): i64 {
         n = n / 10;
     }
     if (neg == 1) { store8(&buf + i, 45); i = i - 1; }
-    syscall(SYS_WRITE, 2, &buf + i + 1, 23 - i);
+    _ew(&buf + i + 1, 23 - i);
     return 0;
 }
 
@@ -2220,7 +2247,7 @@ fn PRNUM(n): i64 {
 fn PRSTR(s): i64 {
     var i = 0;
     while (load8(s + i) != 0) { i = i + 1; }
-    syscall(SYS_WRITE, 2, s, i);
+    _ew(s, i);
     return 0;
 }
 
@@ -2264,13 +2291,13 @@ fn _write_out_all(base, len): i64 {
 # reported a short count rather than an error (a full disk yields both, in that
 # order). CHANGELOG [6.6.6]
 fn _write_out_failed(written, len, eno): i64 {
-    syscall(SYS_WRITE, 2, "error: could not write the output (", 35);
+    _ew("error: could not write the output (", 35);
     PRNUM(written);
-    syscall(SYS_WRITE, 2, " of ", 4);
+    _ew(" of ", 4);
     PRNUM(len);
-    syscall(SYS_WRITE, 2, " bytes): errno ", 15);
+    _ew(" bytes): errno ", 15);
     PRNUM(eno);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -2545,7 +2572,24 @@ fn TOKNAME(typ): i64 {
     if (bn != 0) { return bn; }
     bn = TOKNAME_BUILTIN(typ);
     if (bn != 0) { return bn; }
+    bn = TOKNAME_ATTR(typ);
+    if (bn != 0) { return bn; }
     return "unknown";
+}
+# 6.7.17 — the `#` attribute tokens (LEXATTRWORD, src/frontend/lex_attr.cyr; `#deprecated` is 124, `?`'s, named there):
+# `var g = 1` then `#assert ..` said "expected ';', got unknown". A fn of its own (cybs's per-fn string-literal
+# ceiling). CHANGELOG [6.7.17]
+fn TOKNAME_ATTR(typ): i64 {
+    if (typ == 107) { return "#assert"; }
+    if (typ == 109) { return "#regalloc"; }
+    if (typ == 110) { return "#pe_import"; }
+    if (typ == 122) { return "#must_use"; }
+    if (typ == 125) { return "#pure"; }
+    if (typ == 126) { return "#io"; }
+    if (typ == 127) { return "#alloc"; }
+    if (typ == 133) { return "#naked"; }
+    if (typ == 163) { return "#inline"; }
+    return 0;
 }
 
 # v5.8.45: returns 1 iff the current token is the bare ident "kernel".
@@ -2761,9 +2805,9 @@ var _RD_STACK = 6291456;
 fn _rd_enter(S): i64 {
     _rdepth = _rdepth + 1;
     if (_rdepth > 256) {
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
-        syscall(SYS_WRITE, 2, ": nesting too deep (over 256 levels — truncated or hostile source)\n", 69);
+        _ew(": nesting too deep (over 256 levels — truncated or hostile source)\n", 69);
         syscall(SYS_EXIT, 1);
     }
     var m[8];
@@ -2780,7 +2824,7 @@ fn _rd_exit(): i64 {
 
 # The stack bound's refusal. Past it only a chain of generic instances can be (each body is held to 256 levels).
 fn _rd_stack_refuse(S): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
     if (_rd_inst > 0) {
         PRSTR(": nesting too deep (");
@@ -2861,16 +2905,16 @@ var _tcp_base = 0;
 fn _xd_check(S, d0, tag): i64 {
     if (_xdepth != d0) {
         if (_xd_bad < 200) {
-            syscall(SYS_WRITE, 2, "internal: expression-stack depth desync at ", 43);
+            _ew("internal: expression-stack depth desync at ", 43);
             PRSTR(tag);
             # `_err_head` opens straight into `<file>:<line>:<col>` with no leading
             # separator, so without this space the tag runs into the path — measured:
             # "...desync at expressionfactorlib/string.cyr:58:40". CHANGELOG [6.6.5]
-            syscall(SYS_WRITE, 2, " in ", 4);
+            _ew(" in ", 4);
             _err_head(S);
-            syscall(SYS_WRITE, 2, " (entered ", 10); PRNUM(d0);
-            syscall(SYS_WRITE, 2, ", left ", 7); PRNUM(_xdepth);
-            syscall(SYS_WRITE, 2, ")\n", 2);
+            _ew(" (entered ", 10); PRNUM(d0);
+            _ew(", left ", 7); PRNUM(_xdepth);
+            _ew(")\n", 2);
         }
         _xd_bad = _xd_bad + 1;
         _xdepth = d0;
@@ -3002,7 +3046,7 @@ fn _wd_tick(S): i64 {
     if (g == _wd_last) {
         _wd_stall = _wd_stall + 1;
         if (_wd_stall > 500000) {
-            syscall(SYS_WRITE, 2, "error: parser recovery aborted (desync — too many errors)\n", 60);
+            _ew("error: parser recovery aborted (desync — too many errors)\n", 60);
             syscall(SYS_EXIT, _had_error);
         }
     } else {
@@ -3053,9 +3097,9 @@ fn _wd_eof_tick(S): i64 {
         # clobber GTI: the next statement exits.
         var _wn = GTCNT(S);
         if (_wn > 0) { STI(S, _wn - 1); }
-        syscall(SYS_WRITE, 2, "error:", 6);
+        _ew("error:", 6);
         _err_head(S);
-        syscall(SYS_WRITE, 2, ": unexpected end of input (truncated or unbalanced source)\n", 59);
+        _ew(": unexpected end of input (truncated or unbalanced source)\n", 59);
         syscall(SYS_EXIT, 1);
     }
     return 0;
@@ -3102,10 +3146,14 @@ fn _sync_skip(S): i64 {
 # statement loop read it as a nested fn — `h(1 *fn(i64): i64;` added "a fn is defined inside fn 'f'" and "unexpected
 # '('" to its one error. CHANGELOG [6.7.17]
 fn _sync_kw(S, t): i64 {
-    if (t == 32) { return _tok_fn_kw(S, GTI(S)); }
+    return _sync_kw_at(S, GTI(S), t);
+}
+# ... at token `k` (type `t`). CHANGELOG [6.7.17]
+fn _sync_kw_at(S, k, t): i64 {
+    if (t == 32) { return _tok_fn_kw(S, k); }
     if (t == 3 || t == 15 || t == 16 || t == 172 || t == 55) { return 1; }
     if (t == 33 || t == 57 || t == 75 || t == 40 || t == 60) { return 1; }
-    if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 1; }
+    if (_TOK_IS_LOOP_AT(S, k) == 1) { return 1; }
     return 0;
 }
 # 1 = the cursor is a recovery point `_sync_skip` stops at: EOF, `}`, `;` or a statement keyword.
@@ -3127,12 +3175,140 @@ fn _expect_step(S, t): i64 {
     return 0;
 }
 
+# ⛔ 6.7.17 — THE EXPANSION MAP: A DIAGNOSTIC'S COLUMN AND EXCERPT ARE THE SOURCE'S. `_err_col` counted the column on
+# the EXPANDED line, which equals the source's only where nothing was expanded in-line before the token: past a
+# `#derive`'s generated fns (flattened onto the struct's closing-`}` line) `struct Q { y; } var w = zz;` reported
+# 2:258 with the generated fns as the excerpt, and past a macro call `var x = ADD(1, 2) + zz;` 2:39 with the expansion
+# as the excerpt. Each in-line expansion is recorded (lex_pp.cyr `_xm_add`): where its output sits in the final
+# buffer, its output length, and the source text it replaced (a derive's appended fns replaced none). A column is
+# counted back from the token to its SOURCE line's start, an expansion's output read as its source text; a token inside
+# an expansion is at the expansion's start (the macro call). The excerpt is that source line, rebuilt the same way.
+# The records are alloc'd (no heap region moves); a unit with no in-line expansion keeps the expanded-line path.
+# Each record is 48 B: [0] its offset in the buffer (the final one once PREPROCESS is done), [8] its output length,
+# [16] its source length, [24] its source text (an offset in `_xm_tb`), [32] / [40] scratch for a pass translating it
+# (its input offset and length). Sorted by offset, none overlapping. CHANGELOG [6.7.17]
+var _xm = 0;         # the records
+var _xm_n = 0;       # their count
+var _xm_cap = 0;
+var _xm_b = 0;       # the records the running pass adds, merged at its end (`_xm_end`)
+var _xm_nb = 0;
+var _xm_bcap = 0;
+var _xm_c = 0;       # the running pass's next record to translate
+var _xm_next = 0x7FFFFFFFFFFF;   # that record's offset (the input of the running pass), or past every buffer
+var _xm_tb = 0;      # the source texts
+var _xm_tn = 0;
+var _xm_tcap = 0;
+var _xm_lb = 0;      # the excerpt's rebuilt line
+var _xm_lcap = 0;
+# The last record at or before `x`, or -1.
+fn _xm_find(x): i64 {
+    var lo = 0;
+    var hi = _xm_n - 1;
+    var r = 0 - 1;
+    while (lo <= hi) {
+        var mid = (lo + hi) / 2;
+        if (L64(_xm + mid * 48) <= x) { r = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return r;
+}
+# 1 when buffer offset `off` lies inside record `r`'s output.
+fn _xm_in(r, off): i64 {
+    if (r < 0) { return 0; }
+    var e = _xm + r * 48;
+    if (off < L64(e) + L64(e + 8)) { return 1; }
+    return 0;
+}
+# The source bytes from the start of the source line holding buffer offset `off` to it — its column, less one. With
+# `dst`, also written there, the n of them ending at dst + n.
+fn _xm_back(S, off, dst, n): i64 {
+    var p = off;
+    var r = _xm_find(off);
+    if (_xm_in(r, off) == 1) { p = L64(_xm + r * 48); r = r - 1; }
+    var c = 0;
+    var go = 1;
+    while (go == 1) {
+        var lim = 0;
+        if (r >= 0) { lim = L64(_xm + r * 48) + L64(_xm + r * 48 + 8); }
+        while (p > lim) {
+            var ch = load8(S + 0x459D000 + p - 1);
+            if (ch == 10) { return c; }
+            if (dst != 0) { store8(dst + n - 1 - c, ch); }
+            c = c + 1;
+            p = p - 1;
+        }
+        if (r < 0) { return c; }
+        var e = _xm + r * 48;
+        var t = _xm_tb + L64(e + 24);
+        var k = L64(e + 16);
+        while (k > 0) {
+            var ch2 = load8(t + k - 1);
+            if (ch2 == 10) { return c; }
+            if (dst != 0) { store8(dst + n - 1 - c, ch2); }
+            c = c + 1;
+            k = k - 1;
+        }
+        p = L64(e);
+        r = r - 1;
+    }
+    return c;
+}
+# ... and from it to the line's end (its newline, or the buffer's), written at `dst` when given.
+fn _xm_fwd(S, off, dst): i64 {
+    var bl = GBL(S);
+    var p = off;
+    var r = _xm_find(off);
+    var nr = r + 1;
+    if (_xm_in(r, off) == 1) { p = L64(_xm + r * 48); nr = r; }
+    var c = 0;
+    var go = 1;
+    while (go == 1) {
+        var lim = bl;
+        if (nr < _xm_n) { if (L64(_xm + nr * 48) < lim) { lim = L64(_xm + nr * 48); } }
+        while (p < lim) {
+            var ch = load8(S + 0x459D000 + p);
+            if (ch == 10) { return c; }
+            if (dst != 0) { store8(dst + c, ch); }
+            c = c + 1;
+            p = p + 1;
+        }
+        if (nr >= _xm_n) { return c; }
+        if (p >= bl) { return c; }
+        var e = _xm + nr * 48;
+        var t = _xm_tb + L64(e + 24);
+        var k = 0;
+        while (k < L64(e + 16)) {
+            var ch2 = load8(t + k);
+            if (ch2 == 10) { return c; }
+            if (dst != 0) { store8(dst + c, ch2); }
+            c = c + 1;
+            k = k + 1;
+        }
+        p = L64(e) + L64(e + 8);
+        nr = nr + 1;
+    }
+    return c;
+}
+# The excerpt of buffer offset `off` from the map: its source line rebuilt, the caret at its column. 0 = none (no room).
+fn _xm_excerpt(S, off): i64 {
+    var n0 = _xm_back(S, off, 0, 0);
+    var n1 = _xm_fwd(S, off, 0);
+    if (n0 + n1 + 1 > _xm_lcap) {
+        _xm_lcap = n0 + n1 + 256;
+        _xm_lb = alloc(_xm_lcap);
+        if (_xm_lb == 0) { _xm_lcap = 0; return 0; }
+    }
+    _xm_back(S, off, _xm_lb, n0);
+    _xm_fwd(S, off, _xm_lb + n0);
+    return _err_excerpt_ln(_xm_lb, n0 + n1, n0);
+}
+
 # v6.4.60 (DX diagnostics): derive the 1-based BYTE column of a token from its
 # packed start offset (GTOFF) by back-scanning preprocess_out (S+0x459D000) to
 # the preceding newline. off==0 (unpacked token / buffer start) → column 1. The
 # expanded-buffer column equals the original-source column (the preprocessor
 # copies source lines verbatim, inserting only whole #@file marker lines).
 fn _err_col(S, off): i64 {
+    if (_xm_n > 0) { return _xm_back(S, off, 0, 0) + 1; }   # 6.7.17: past an in-line expansion (see `_xm`)
     var ls = off;
     while (ls > 0) {
         if (load8(S + 0x459D000 + ls - 1) == 10) { break; }
@@ -3166,7 +3342,7 @@ fn _err_ti(S, ti): i64 {
 fn _err_head_at(S, ti): i64 {
     ti = _err_ti(S, ti);
     FM_LOOKUP(S, GTLINE(S, ti));
-    syscall(SYS_WRITE, 2, ":", 1);
+    _ew(":", 1);
     PRNUM(_err_col(S, GTOFF(S, ti)));
     return 0;
 }
@@ -3178,11 +3354,14 @@ fn _err_head_at(S, ti): i64 {
 # crash). Byte column — tabs count as 1 (documented caveat). Format:
 #     <source line>
 #         ^
-fn _err_excerpt(S): i64 {
-    var off = GTOFF(S, _err_ti(S, GTI(S)));
+fn _err_excerpt(S): i64 { return _err_excerpt_at(S, GTI(S)); }
+# 6.7.17 — ... for token `ti` (`_err_head_at`'s twin): a diagnostic about a token the parser has walked past. CHANGELOG [6.7.17]
+fn _err_excerpt_at(S, ti): i64 {
+    var off = GTOFF(S, _err_ti(S, ti));
     var bl = GBL(S);
     if (off == 0) { return 0; }
     if (off > bl) { return 0; }   # == bl is the EOF token of a source with no final newline (6.6.17)
+    if (_xm_n > 0) { return _xm_excerpt(S, off); }   # 6.7.17: the source line, rebuilt (see `_xm`)
     var ls = off;
     while (ls > 0) {
         if (load8(S + 0x459D000 + ls - 1) == 10) { break; }
@@ -3199,36 +3378,41 @@ fn _err_excerpt(S): i64 {
     # whole that was ~19 KB of stderr for ONE diagnostic — the line, then one space per
     # column for the caret. Lines up to 200 bytes take the ORIGINAL path byte-for-byte:
     # `lead`/`trail` stay 0, `ws`/`we` stay `ls`/`le`, and the writes are identical.
-    var ws = ls;
-    var we = le;
+    return _err_excerpt_ln(S + 0x459D000 + ls, le - ls, off - ls);
+}
+# The excerpt of the `len`-byte line at `lp`, the caret under byte `ci` (6.7.17: shared with the expansion map's
+# rebuilt line, `_xm_excerpt`).
+fn _err_excerpt_ln(lp, len, ci): i64 {
+    var ws = 0;
+    var we = len;
     var lead = 0;
     var trail = 0;
-    if (le - ls > 200) {
-        ws = off - 60;
-        if (ws < ls) { ws = ls; }
+    if (len > 200) {
+        ws = ci - 60;
+        if (ws < 0) { ws = 0; }
         we = ws + 160;
-        if (we > le) { we = le; }
-        if (ws > ls) { lead = 1; }
-        if (we < le) { trail = 1; }
+        if (we > len) { we = len; }
+        if (ws > 0) { lead = 1; }
+        if (we < len) { trail = 1; }
     }
-    syscall(SYS_WRITE, 2, "    ", 4);
-    if (lead == 1) { syscall(SYS_WRITE, 2, "...", 3); }
-    syscall(SYS_WRITE, 2, S + 0x459D000 + ws, we - ws);
-    if (trail == 1) { syscall(SYS_WRITE, 2, "...", 3); }
-    syscall(SYS_WRITE, 2, "\n    ", 5);
-    var nsp = off - ws;
+    _ew("    ", 4);
+    if (lead == 1) { _ew("...", 3); }
+    _ew(lp + ws, we - ws);
+    if (trail == 1) { _ew("...", 3); }
+    _ew("\n    ", 5);
+    var nsp = ci - ws;
     if (lead == 1) { nsp = nsp + 3; }
     var sp = 0;
-    while (sp < nsp) { syscall(SYS_WRITE, 2, " ", 1); sp = sp + 1; }
-    syscall(SYS_WRITE, 2, "^\n", 2);
+    while (sp < nsp) { _ew(" ", 1); sp = sp + 1; }
+    _ew("^\n", 2);
     return 0;
 }
 
 fn ERRDUPVAR(S): i64 {
     if (_err_once(S, 5) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat (`_err_dup`)
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": duplicate variable\n", 21);
+    _ew(": duplicate variable\n", 21);
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
@@ -3237,11 +3421,11 @@ fn ERRDUPVAR(S): i64 {
 
 fn WARN(S, msg, len): i64 {
     if (_warn_seen(GTI(S), msg, len) == 1) { return 0; }   # 6.7.15: once per token and message
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
-    syscall(SYS_WRITE, 2, msg, len);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew(": ", 2);
+    _ew(msg, len);
+    _ew("\n", 1);
     _err_excerpt(S);
     return 0;
 }
@@ -3263,22 +3447,24 @@ fn WARN_AT(S, ti, msg, len): i64 {
 
 fn ERR(S): i64 {
     if (_err_once(S, 1) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat (`_err_dup`)
+    _unp_say();   # 6.7.17: a syntax error, said by a never-parsed body's read too
     var typ = PEEKT(S);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": unexpected ", 13);
+    _ew(": unexpected ", 13);
     PRSTR(TOKNAME(typ));
     if (typ == 2) {
-        syscall(SYS_WRITE, 2, " '", 2);
+        _ew(" '", 2);
         PRSTR(S + 0xEC00000 + PEEKV(S));
-        syscall(SYS_WRITE, 2, "'", 1);
+        _ew("'", 1);
     }
     if (typ == 1) {
-        syscall(SYS_WRITE, 2, " ", 1);
+        _ew(" ", 1);
         PRNUM(PEEKV(S));
     }
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
+    _ew_say = 0;
     _had_error = 1;
     _panic = 1;
     return 0;
@@ -3327,12 +3513,13 @@ fn _find_fn_by_name(S, name_cstr, name_len): i64 {
 fn ERR_EXPECT(S, expected_type): i64 {
     if (expected_type == 10) { if (_ngt_callee_lt(S) == 1) { return 0; } }   # 6.7.16: `load64<i64>(p)` (parse.cyr)
     if (_err_once(S, expected_type * 8 + 2) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat
+    _unp_say();   # 6.7.17: a syntax error, said by a never-parsed body's read too
     var got = PEEKT(S);
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": expected ", 11);
+    _ew(": expected ", 11);
     PRSTR(TOKNAME(expected_type));
-    syscall(SYS_WRITE, 2, ", got ", 6);
+    _ew(", got ", 6);
     # v5.5.26: when the expected token is an identifier and the got
     # token is a reserved keyword, make the diagnostic unambiguous.
     # Previously a user writing `var match = 1;` got "expected
@@ -3341,11 +3528,12 @@ fn ERR_EXPECT(S, expected_type): i64 {
     # them unsure whether the keyword name was misspelled or reserved.
     if (expected_type == 2) {
         if (IS_KEYWORD_TOK(got) == 1) {
-            syscall(SYS_WRITE, 2, "reserved keyword '", 18);
+            _ew("reserved keyword '", 18);
             PRSTR(TOKNAME(got));
-            syscall(SYS_WRITE, 2, "' (cannot be used as an identifier; rename the variable/field/fn)", 65);
-            syscall(SYS_WRITE, 2, "\n", 1);
+            _ew("' (cannot be used as an identifier; rename the variable/field/fn)", 65);
+            _ew("\n", 1);
             _err_excerpt(S);
+            _ew_say = 0;
             _had_error = 1;
             _panic = 1;
             return 0;
@@ -3353,15 +3541,15 @@ fn ERR_EXPECT(S, expected_type): i64 {
     }
     PRSTR(TOKNAME(got));
     if (got == 2) {
-        syscall(SYS_WRITE, 2, " '", 2);
+        _ew(" '", 2);
         PRSTR(S + 0xEC00000 + PEEKV(S));
-        syscall(SYS_WRITE, 2, "'", 1);
+        _ew("'", 1);
     }
     if (got == 1) {
-        syscall(SYS_WRITE, 2, " ", 1);
+        _ew(" ", 1);
         PRNUM(PEEKV(S));
     }
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     # v5.11.28: when fn-arg parsing surfaces "expected ')' / ',', got string"
     # the underlying cause is often a nested 2-arg call inside another fn-call
     # confusing the parser's arg-list state machine. Stage the inner call
@@ -3369,13 +3557,14 @@ fn ERR_EXPECT(S, expected_type): i64 {
     # 2.7.1 filing.
     if (got == 30) {
         if (expected_type == 11) {
-            syscall(SYS_WRITE, 2, "  hint: a string literal where ')' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
+            _ew("  hint: a string literal where ')' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
         }
         if (expected_type == 31) {
-            syscall(SYS_WRITE, 2, "  hint: a string literal where ',' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
+            _ew("  hint: a string literal where ',' is expected often means a nested call inside a fn argument confused the parser; stage the inner call into a `var` first.\n", 156);
         }
     }
     _err_excerpt(S);
+    _ew_say = 0;
     _had_error = 1;
     _panic = 1;
     return 0;
@@ -3402,35 +3591,111 @@ fn ERR_EXPECT(S, expected_type): i64 {
 # caller hand-count bytes, and a miscount silently truncates or over-reads.
 # `tail` = 0 for none; `noff2` = -1 for none (else a second name, quoted).
 # CHANGELOG [6.5.19].
+# 6.7.17: either name may be a struct, `_ei_sid(sid)`, printed as the source spells it (`_sn_pr`).
 fn ERR_IDENT(S, msg, noff, tail, noff2): i64 {
     if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }   # 6.7.14
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
+    _ew(": ", 2);
     PRSTR(msg);
-    syscall(SYS_WRITE, 2, "'", 1);
-    PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "'", 1);
+    _ew("'", 1);
+    _ei_pr(S, noff);
+    _ew("'", 1);
     if (tail != 0) { PRSTR(tail); }
-    if (noff2 >= 0) {
-        syscall(SYS_WRITE, 2, "'", 1);
-        PRSTR(S + 0xEC00000 + noff2);
-        syscall(SYS_WRITE, 2, "'", 1);
+    if (noff2 >= 0 || noff2 <= 0 - 1000) {
+        _ew("'", 1);
+        _ei_pr(S, noff2);
+        _ew("'", 1);
     }
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
     return 0;
 }
 
+# ⛔ 6.7.17 — A STRUCT IS NAMED AS THE SOURCE SPELLS IT. The struct table holds a generic instance by its minted name
+# (`B$i32`), and every diagnostic that printed a struct's table name said so: "unknown field 'zq' on struct 'B$i32'".
+# `_sn_pr` prints struct `sid` (1-based; or any type code `_fsn_conc` spells) as written — `B<i32>`, `Box<Pt>`, a
+# plain struct its name —
+# at once, from the name pool's scratch at GNPOS + 2048: past `_fn_src_name`'s (GNPOS) and `_src_span_nm`'s
+# (GNPOS + 1024), which a message may hold while it prints a struct. A refusal that keys its once-only record on the
+# name keys it on `_ei_sid(sid)`, never on a scratch offset, which moves as names are minted: an instance's refusal
+# still prints once. CHANGELOG [6.7.17]
+fn _sn_pr(S, sid): i64 {
+    NPOS_GUARD(S, 3072);
+    var b = GNPOS(S) + 2048;
+    var wp = _fsn_conc(S, b, sid, b + 960, 0);
+    store8(S + 0xEC00000 + wp, 0);
+    PRSTR(S + 0xEC00000 + b);
+    return 0;
+}
+# 6.7.17 — A FN NAME MINTED FROM AN INSTANCE'S TABLE NAME IS SPELLED WITH THE INSTANCE AS WRITTEN. An operator fn of
+# `B<i32>` is looked up as `B$i32_add`, and the undefined-function warnings of every backend's fixup (and the cx
+# backend's refusal) printed that: "undefined function 'B$i32_add'". The longest struct-instance table name that begins
+# the name at pool offset `nm` and is followed by `_` or its end: its 1-based id, its length in `_sn_plen`; else 0.
+# `_fn_src_name` writes the instance through `_fsn_conc` (`B<i32>_add`), and a method record's type the same
+# (`B<i32>.nope`, where the `$` cut said `B.nope`). CHANGELOG [6.7.17]
+var _sn_plen = 0;
+fn _sn_prefix(S, nm): i64 {
+    var sc = GSTC(S);
+    var best = 0;
+    _sn_plen = 0;
+    var i = 0;
+    while (i < sc) {
+        if (_sinst_base(i + 1) > 0) {
+            var sn = S + 0xEC00000 + L64(S + 0x1A6018 + i * 8);
+            var q = S + 0xEC00000 + nm;
+            var k = 0;
+            var go = 1;
+            while (go == 1) {
+                if (load8(sn + k) == 0) { go = 0; }
+                elif (load8(sn + k) != load8(q + k)) { go = 2; }
+                else { k = k + 1; }
+            }
+            if (go == 0) { if (k > _sn_plen) { if (load8(q + k) == 0 || load8(q + k) == 95) { best = i + 1; _sn_plen = k; } } }
+        }
+        i = i + 1;
+    }
+    return best;
+}
+# `_fsn_spell`'s type name at pool offset `tn` written at `wp`: a struct instance as written (`B<i32>`), anything else up
+# to its first `$`. CHANGELOG [6.7.17]
+fn _fsn_tn(S, wp, tn, lim): i64 {
+    var c = _sn_prefix(S, tn);
+    if (c > 0) { if (load8(S + 0xEC00000 + tn + _sn_plen) == 0) { return _fsn_conc(S, wp, c, lim, 0); } }
+    return _fsn_put(S, wp, tn, lim, 1);
+}
+# `_fsn_spell`'s plain name `nm` (no method record, no instance record): its instance prefix as written and the rest
+# as is (`B<i32>_add`), at GNPOS uncommitted; `nm` itself when it begins with no instance. CHANGELOG [6.7.17]
+fn _fsn_dm(S, nm): i64 {
+    var c = _sn_prefix(S, nm);
+    if (c == 0) { return nm; }
+    var pl = _sn_plen;
+    NPOS_GUARD(S, 1024);
+    var b = GNPOS(S);
+    var lim = b + 960;
+    var wp = _fsn_conc(S, b, c, lim, 0);
+    wp = _fsn_put(S, wp, nm + pl, lim, 0);
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
+# Struct `sid` (1-based) as an ERR_IDENT name (or `_psub_err`'s): below every pool offset and every "none".
+fn _ei_sid(sid): i64 { return 0 - 1000 - sid; }
+# An ERR_IDENT name: a pool offset, or a struct (`_ei_sid`).
+fn _ei_pr(S, x): i64 {
+    if (x <= 0 - 1000) { return _sn_pr(S, 0 - 1000 - x); }
+    PRSTR(S + 0xEC00000 + x);
+    return 0;
+}
+
 fn ERR_MSG(S, msg, len): i64 {
     if (_err_once(S, (msg * 31 + len) * 8 + 4) == 0) { return 0; }   # 6.7.14: the panic latch, or a repeat
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     _err_head(S);
-    syscall(SYS_WRITE, 2, ": ", 2);
-    syscall(SYS_WRITE, 2, msg, len);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew(": ", 2);
+    _ew(msg, len);
+    _ew("\n", 1);
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
@@ -3438,22 +3703,48 @@ fn ERR_MSG(S, msg, len): i64 {
 }
 
 # The undefined-name report the read, the assignment, `&x` and a `.field` base share: "undefined variable
-# 'x'" + `tail` at the cursor, and its excerpt. No panic latch (each undefined name of a statement is
+# 'x'" + `tail`, and its excerpt. No panic latch (each undefined name of a statement is
 # reported, as before); once per token (`_err_dup`). 1 = printed. CHANGELOG [6.7.14]
-fn ERR_UNDEF(S, noff, tail): i64 {
+# ⛔ 6.7.17 (the user's D34) — AT THE NAME, token `ti`: its line and column, the caret under it, and its once-per-token
+# record. It was the cursor's — the token after the name: `return zq + 1;` reported 1:28 (the `+`), `return zz;` the
+# `;`, an assignment's name the end of its value. Every "undefined variable" report is at the name's token (the
+# undefined-name writers pass it; `_nm_ti`), which is also the token zone-replay keys its record on. CHANGELOG [6.7.17]
+fn ERR_UNDEF(S, ti, noff, tail): i64 {
     _had_error = 1;
     _err_n = _err_n + 1;   # 6.7.16: a report or a repeat
-    if (_err_dup(S, (noff * 31 + tail) * 8 + 6) == 1) { _err_quiet = 1; return 0; }
+    if (_err_dup_at(ti, (noff * 31 + tail) * 8 + 6) == 1) { _err_quiet = 1; return 0; }
     _err_quiet = 0;
-    syscall(SYS_WRITE, 2, "error:", 6);
-    _err_head(S);
-    syscall(SYS_WRITE, 2, ": undefined variable '", 22);
+    _ew("error:", 6);
+    _err_head_at(S, ti);
+    _ew(": undefined variable '", 22);
     PRSTR(S + 0xEC00000 + noff);
-    syscall(SYS_WRITE, 2, "'", 1);
+    _ew("'", 1);
     PRSTR(tail);
-    syscall(SYS_WRITE, 2, "\n", 1);
-    _err_excerpt(S);
+    _ew("\n", 1);
+    _err_excerpt_at(S, ti);
     return 1;
+}
+# The token of name `noff` for its report: `ti` when it is that name, else the nearest one at most 4 tokens before it
+# (a wrap's `)`: `(x).f`), else `ti` — the cursor when `ti` is unset (< 0). CHANGELOG [6.7.17]
+fn _nm_ti(S, ti, noff): i64 {
+    if (ti < 0) { return GTI(S); }
+    var k = ti;
+    var lo = ti - 4;
+    if (lo < 0) { lo = 0; }
+    while (k >= lo) {
+        if (TOKTYP(S, k) == 2) { if (TOKVAL(S, k) == noff) { return k; } }
+        k = k - 1;
+    }
+    return ti;
+}
+# ERR_IDENT's "undefined variable 'x'" + `tail` at token `ti` (its head, excerpt and once-per-token record), the
+# cursor put back: the subscript base's and the multi-value target's. CHANGELOG [6.7.17]
+fn _undef_ident_at(S, ti, noff, tail): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_IDENT(S, "undefined variable ", noff, tail, 0 - 1);
+    STI(S, sv);
+    return 0;
 }
 
 # ⛔ 6.7.14 — AN ERROR IS PRINTED ONCE PER TOKEN AND MESSAGE. A generic fn's body is parsed for its base and
@@ -3513,7 +3804,7 @@ fn _err_dup_at(ti, id): i64 {
 # token, still prints. 1 = printed at `ti` already (print nothing), else it is recorded: 0. A warning's identities
 # are negative, apart from every error's. CHANGELOG [6.7.15]
 fn _warn_seen(ti, tag, a): i64 { return _err_dup_at(ti, 0 - ((tag * 31 + a) * 8 + 7)); }
-# ... and an ERROR printed by a writer of its own (`syscall(SYS_WRITE, 2, "error:", 6)` and its text, outside the
+# ... and an ERROR printed by a writer of its own (`_ew("error:", 6)` and its text, outside the
 # emitters above: an arity mismatch, a second subscript, an argument or a return of the wrong shape): `h(1, 2)` in a
 # generic called at two types printed "'h' expects 1 argument, got 2" three times. Its head, keyed as a warning's
 # (`tag` its name, `a` what its text names): 1 = printed at `ti` already — print nothing: `_had_error` (and, `latch`

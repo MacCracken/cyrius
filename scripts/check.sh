@@ -2410,10 +2410,18 @@ _chk_gate "$ROOT/tests/gates/diagnostics/tokname_every_emitted_token.sh"
 # top-level statement is ONE error naming the rule and the statement's line (D13 (a)), an include of a file declaring
 # one at the include's line; an `async fn` there is a function (D14 (a)). Mutation in the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/decl_after_statement_named.sh"
+# 6.7.17 — every diagnostic byte the parser and the emitters write goes through `_ew` (util.cyr), the writer a muted
+# read of a never-parsed body relies on: no raw `syscall(SYS_WRITE, 2, ..)` in the files a parse reaches. Mutation in
+# the header.
+_chk_gate "$ROOT/tests/gates/diagnostics/diagnostic_writer_census.sh"
 # 6.7.16 — a refusal made in sync (a subscript or `*p` refusal whose statement parses on to its `;`) clears only its
 # latch: the NEXT statement is parsed and its own error reported (`y = pa[0]; y = zz9;` lost zz9's). x86_64,
 # aarch64, cx, PE and Mach-O. Mutation in the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/in_sync_refusal_next_statement.sh"
+# 6.7.17 — a statement missing its `;` is one error and what follows is parsed: the next fn is not "inside" the last,
+# the next statement's own error is reported, a zone `var` entry ends where its `;` is missing (issues/2026-10-21-
+# statement-missing-semicolon-loses-what-follows.md). x86_64, PE, aarch64, cx. Mutation in the header.
+_chk_gate "$ROOT/tests/gates/diagnostics/missing_semicolon_recovers.sh"
 # 6.7.17 — a builtin's or an identifier intrinsic's malformed call (`var y = load8;`, `store8(p;`, `iv_add(p, p;`) is
 # one error: its arm's `(` / `,` / `)` checks never step a `;` or `}`, so the block still closes and the next fn's
 # own error is reported (it was "fn 'g' is defined inside fn 'main'"). Every builtin, four shapes, x86_64 /

@@ -15,9 +15,9 @@
 #
 # ROWS (the server driven over stdio JSON-RPC as in the filed repro, in a throwaway HOME whose
 # .cyrius/bin holds this tree's cycc and CLI):
-#   R1  col.cyr (error at 2:14): line 1, characters 13 to 17 (the line's end), message stripped
-#   R2  main.cyr including inc.cyr (error at inc.cyr:7:24): main.cyr's list is EMPTY and inc.cyr's
-#       own URI gets line 6, character 23
+#   R1  col.cyr (error at 2:9, the name — 6.7.17, D34): line 1, characters 8 to 17 (the line's end), message stripped
+#   R2  main.cyr including inc.cyr (error at inc.cyr:7:9): main.cyr's list is EMPTY and inc.cyr's
+#       own URI gets line 6, character 8
 #   R3  t.tcyr, and a .bcyr / .fcyr / .scyr / .smcyr, each get their own diagnostic
 #   R4  in a project, the include-free src/col.cyr gets its OWN line-2 error, not src/inc.cyr's,
 #       and no `(compiler exit 1)` verdict beside it (`cyrius check --with-deps --no-redirect`)
@@ -177,17 +177,17 @@ else echo "  note: R0 not run: this shell is not bash (no bash on PATH, or CY_LS
 { trap '' PIPE; start; open_msg Open "$W/loose/col.cyr"; open_msg Open "$W/loose/main.cyr"; open_msg Open "$W/loose/t.tcyr"
   for x in bcyr fcyr scyr smcyr; do open_msg Open "$W/loose/e.$x"; done; stop; true; } | serve "$W/loose" "$W/h" > "$W/r1"
 P=$(pub "$W/r1" loose/col.cyr)
-if printf '%s' "$P" | grep -qF '"start":{"line":1,"character":13},"end":{"line":1,"character":17}' \
+if printf '%s' "$P" | grep -qF '"start":{"line":1,"character":8},"end":{"line":1,"character":17}' \
    && printf '%s' "$P" | grep -qF '"message":"undefined variable '"'"'nope'"'"' (missing include or enum?)"'; then
-    ok "R1 col.cyr: line 1, characters 13-17, the column stripped from the message"
+    ok "R1 col.cyr: line 1, characters 8-17, the column stripped from the message"
 else fail "R1 col.cyr: $P"; fi
 PM=$(pub "$W/r1" loose/main.cyr); PI=$(pub "$W/r1" loose/inc.cyr)
 if [ "$PM" = '"uri":"loose/main.cyr","diagnostics":[]}}' ] \
-   && printf '%s' "$PI" | grep -qF '"start":{"line":6,"character":23}'; then
+   && printf '%s' "$PI" | grep -qF '"start":{"line":6,"character":8}'; then
     ok "R2 main.cyr's list is empty; inc.cyr's error is on inc.cyr's URI, line 6"
 else fail "R2 main.cyr: ${PM:-none} / inc.cyr: ${PI:-none}"; fi
 n3=0
-pub "$W/r1" loose/t.tcyr | grep -qF '"start":{"line":1,"character":13}' && n3=1
+pub "$W/r1" loose/t.tcyr | grep -qF '"start":{"line":1,"character":8}' && n3=1
 for x in bcyr fcyr scyr smcyr; do
     pub "$W/r1" "loose/e.$x" | grep -F '"start":{"line":1,' | grep -qF "undefined variable 'nope_$x'" && n3=$((n3 + 1))
 done
@@ -197,7 +197,7 @@ else fail "R3 only $n3 of 5 extensions got their diagnostic: $(grep -c . "$W/r1"
 # ── R4: inside a project (cyrius check --with-deps --no-redirect) ──────────────────────────────
 { trap '' PIPE; start; open_msg Open "$W/proj/src/col.cyr"; stop; true; } | serve "$W/proj" "$W/h" > "$W/r4"
 P=$(pub "$W/r4" proj/src/col.cyr)
-if printf '%s' "$P" | grep -qF '"start":{"line":1,"character":13}' \
+if printf '%s' "$P" | grep -qF '"start":{"line":1,"character":8}' \
    && ! printf '%s' "$P" | grep -q 'undefined_name\|compiler exit' && ! pub "$W/r4" proj/src/inc.cyr | grep -q .; then
     ok "R4 the project's include-free src/col.cyr gets its own line-2 error, nothing of src/inc.cyr's, no verdict"
 else fail "R4 src/col.cyr: $P / src/inc.cyr: $(pub "$W/r4" proj/src/inc.cyr)"; fi
@@ -253,7 +253,7 @@ else fail "R9 cyrius check --help does not name --no-redirect"; fi
 # ── R10: the CLI half, direct ───────────────────────────────────────────────────────────────
 ( cd "$W/proj" && env -i HOME="$W/h" CYRIUS_HOME="$W/h/.cyrius" PATH=/usr/bin:/bin "$W/h/.cyrius/bin/cyrius" check --with-deps --no-redirect src/col.cyr > "$W/r10a" 2>&1 ) || true   # the check fails (rc 1): the file has an error
 ( cd "$W/proj" && env -i HOME="$W/h" CYRIUS_HOME="$W/h/.cyrius" PATH=/usr/bin:/bin "$W/h/.cyrius/bin/cyrius" check --with-deps src/col.cyr > "$W/r10b" 2>&1 ) || true   # the check fails (rc 1): the file has an error
-if grep -q "^error:<source>:2:14: undefined variable 'nope'" "$W/r10a" && ! grep -q 'check via\|undefined_name' "$W/r10a" \
+if grep -q "^error:<source>:2:9: undefined variable 'nope'" "$W/r10a" && ! grep -q 'check via\|undefined_name' "$W/r10a" \
    && grep -q 'check via src/main.cyr' "$W/r10b"; then
     ok "R10 cyrius check --with-deps --no-redirect checks src/col.cyr itself; without the flag the redirect stays"
 else fail "R10 with the flag: $(tr '\n' ' ' < "$W/r10a") / without: $(head -1 "$W/r10b")"; fi
@@ -374,8 +374,8 @@ case "$F20" in
 esac
 { trap '' PIPE; start; open_msg Open "$W/loose/col.cyr"; stop; true; } 2> /dev/null | serve_closed "$W/loose" "$W/h" 2 > "$W/r21"
 P=$(pub "$W/r21" loose/col.cyr)
-if printf '%s' "$P" | grep -qF '"start":{"line":1,"character":13},"end":{"line":1,"character":17}'; then
-    ok "R21 server fd 2 closed: col.cyr's error is still published (line 1, characters 13-17)"
+if printf '%s' "$P" | grep -qF '"start":{"line":1,"character":8},"end":{"line":1,"character":17}'; then
+    ok "R21 server fd 2 closed: col.cyr's error is still published (line 1, characters 8-17)"
 else fail "R21 server fd 2 closed: ${P:-none}"; fi
 
 [ "$FAIL" = 0 ] || { echo "FAIL: $G"; exit 1; }

@@ -51,11 +51,11 @@ fn PP_REF_EMIT(rfn, rfi, buf, out, op, nl): i64 {
     var rnr = READFILE(rfn, buf, 16384);
     if (rnr < 0) {
         PP_FNAME_UNCLOSED(rfn, rfi, "#ref");
-        syscall(SYS_WRITE, 2, "error: cannot open #ref file: ", 30);
+        _ew("error: cannot open #ref file: ", 30);
         var n = 0;
         while (load8(rfn + n) != 0) { n = n + 1; }
-        syscall(SYS_WRITE, 2, rfn, n);
-        syscall(SYS_WRITE, 2, "\n", 1);
+        _ew(rfn, n);
+        _ew("\n", 1);
         syscall(SYS_EXIT, 1);
     }
     var ri = 0;
@@ -1058,7 +1058,7 @@ fn _pp_lineno_at(S, base, upto): i64 {
 fn _pp_err_at(S, base, pos, msg): i64 {
     _pp_err_head(S, base, pos);
     PRSTR(msg);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _had_error = 1;
     return 0;
 }
@@ -1071,7 +1071,7 @@ fn _pp_err_name_at(S, base, pos, pre, npos, post): i64 {
     PRSTR(pre);
     _pp_write_ident(base + npos);
     PRSTR(post);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _had_error = 1;
     return 0;
 }
@@ -1083,14 +1083,14 @@ fn _pp_write_ident(p): i64 {
         if (PP_IDBYTE(load8(p + n)) == 0) { break; }
         n = n + 1;
     }
-    syscall(SYS_WRITE, 2, p, n);
+    _ew(p, n);
     return n;
 }
 
 # `error:<file>:<line>:<col>: ` — or a bare `error: ` for `base` 0. See _pp_err_at.
 fn _pp_err_head(S, base, pos): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
-    if (base == 0) { syscall(SYS_WRITE, 2, " ", 1); }
+    _ew("error:", 6);
+    if (base == 0) { _ew(" ", 1); }
     else {
         var ln = 0;
         if (base == S + _SRCB) {
@@ -1100,13 +1100,13 @@ fn _pp_err_head(S, base, pos): i64 {
             PRSTR(_pp_curfile_ptr());
             ln = _pp_curfile_base + _pp_count_nl(base, _pp_curfile_anchor, pos);
         }
-        syscall(SYS_WRITE, 2, ":", 1);
+        _ew(":", 1);
         PRNUM(ln);
         var ls = pos;
         while (ls > 0) { if (load8(base + ls - 1) == 10) { break; } ls = ls - 1; }
-        syscall(SYS_WRITE, 2, ":", 1);
+        _ew(":", 1);
         PRNUM(pos - ls + 1);
-        syscall(SYS_WRITE, 2, ": ", 2);
+        _ew(": ", 2);
     }
     return 0;
 }
@@ -1210,7 +1210,7 @@ fn PP_REANCHOR_CUR(S, out, op, tmp, ip): i64 {
 # every sibling under ~/Repos found ZERO such lines — so a clear error is strictly better
 # than passing mangled bytes to the lexer. CHANGELOG [6.6.6]
 fn PP_INCLUDE_NEEDS_QUOTE(): i64 {
-    syscall(SYS_WRITE, 2, "error: include expects a quoted filename: include \"name.cyr\"\n", 61);
+    _ew("error: include expects a quoted filename: include \"name.cyr\"\n", 61);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1243,7 +1243,7 @@ fn PP_REF_TAIL(S, base, ip, bl, rfn, rfi): i64 {
 # The offset of the first byte after a directive's file name (`ip`, just past its closing quote) that may not end its
 # line — anything but blanks, one `;`, a `#` comment, CR / LF / EOF — or `bl` when the line ends clean, or when the name
 # ran past its line (an unclosed name: its own report, PP_FNAME_UNCLOSED). One rule for an include (PP_INCLUDE_TAIL)
-# and a #ref (PP_REF_PASS, the user's D92). CHANGELOG [6.7.17]
+# and a #ref (PP_REF_TAIL, at both #ref sites: the user's D92 / D100). CHANGELOG [6.7.17]
 fn PP_FNAME_TAIL_AT(base, ip, bl, fname, fi): i64 {
     if (_pp_has_eol(fname, fi) == 1) { return bl; }
     var p = _pp_blanks(base, ip, bl);
@@ -1264,7 +1264,7 @@ fn _pp_blanks(base, p, bl): i64 {
 
 fn PP_FNAME_TOO_LONG(name, n, what): i64 {
     PP_FNAME_UNCLOSED(name, n, what);
-    syscall(SYS_WRITE, 2, "error: include/#ref filename exceeds 767 bytes\n", 47);
+    _ew("error: include/#ref filename exceeds 767 bytes\n", 47);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1277,11 +1277,11 @@ fn PP_FNAME_UNCLOSED(name, n, what): i64 {
     if (_pp_has_eol(name, n) == 0) { return 0; }
     var i = 0;
     while (load8(name + i) != 10 && load8(name + i) != 13) { i = i + 1; }
-    syscall(SYS_WRITE, 2, "error: ", 7);
+    _ew("error: ", 7);
     PRSTR(what);
-    syscall(SYS_WRITE, 2, " \"", 2);
-    syscall(SYS_WRITE, 2, name, i);
-    syscall(SYS_WRITE, 2, ": the file name has no closing quote on its line\n", 49);
+    _ew(" \"", 2);
+    _ew(name, i);
+    _ew(": the file name has no closing quote on its line\n", 49);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1300,16 +1300,16 @@ fn PP_INCLUDE_OPEN_FAIL(fname): i64 {
     var n = 0;
     while (load8(fname + n) != 0) { n = n + 1; }
     PP_FNAME_UNCLOSED(fname, n, "include");
-    syscall(SYS_WRITE, 2, "error: cannot open include file: ", 33);
-    syscall(SYS_WRITE, 2, fname, n);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("error: cannot open include file: ", 33);
+    _ew(fname, n);
+    _ew("\n", 1);
     syscall(SYS_EXIT, 1);
     return 0;
 }
 # Refuse a #define whose body would run past the macro text pool (the define-body copy overflow bug). Mirrors
 # PP_FNAME_TOO_LONG: an honest hard error beats a silent wrong compile.
 fn PP_MACRO_TEXT_FULL(): i64 {
-    syscall(SYS_WRITE, 2, "error: #define bodies exceed the 16 KB macro text pool\n", 55);
+    _ew("error: #define bodies exceed the 16 KB macro text pool\n", 55);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1334,7 +1334,7 @@ fn PP_PUSH_LEVEL(S, base, pos, d, st): i64 {
 fn PP_MARK_INCLUDED(S, fname): i64 {
     var cnt = L64(S + 0x197F00);
     if (cnt >= 256) {
-        syscall(SYS_WRITE, 2, "error: include-once table full (256 files) — split compilation unit\n", 70);
+        _ew("error: include-once table full (256 files) — split compilation unit\n", 70);
         syscall(SYS_EXIT, 1);
     }
     var n = 0;
@@ -1682,35 +1682,35 @@ fn PP_DDIRCHK(base, p, end): i64 {
     if (PP_DISDIR(base, p, end) == 0) { return 0; }
     var n = 1;
     while (p + n < end) { if (PP_IDC(load8(base + p + n)) == 0) { break; } n = n + 1; }
-    syscall(SYS_WRITE, 2, "error: #derive: a preprocessor directive (", 42);
-    syscall(SYS_WRITE, 2, base + p, n);
-    syscall(SYS_WRITE, 2, ") inside the declaration of ", 28);
+    _ew("error: #derive: a preprocessor directive (", 42);
+    _ew(base + p, n);
+    _ew(") inside the declaration of ", 28);
     var S = _pp_dS;
     var k = 0;
     while (load8(S + 0x197020 + k) != 0) { k = k + 1; }
-    syscall(SYS_WRITE, 2, S + 0x197020, k);
+    _ew(S + 0x197020, k);
     var hint = "; the derived code cannot follow a conditional field -- put the conditional around the whole #derive and declaration\n";
-    syscall(SYS_WRITE, 2, hint, 117);
+    _ew(hint, 117);
     syscall(SYS_EXIT, 1);
     return 0;
 }
 
 # Refuse a byte the declaration grammar has no place for, naming it and the declaration.
 fn PP_DERIVE_BAD(S, c, msg, mlen): i64 {
-    syscall(SYS_WRITE, 2, "error: #derive: unexpected ", 27);
+    _ew("error: #derive: unexpected ", 27);
     if (c > 32 && c < 127) {
         _pp_dbadc = c;
-        syscall(SYS_WRITE, 2, "'", 1);
-        syscall(SYS_WRITE, 2, &_pp_dbadc, 1);
-        syscall(SYS_WRITE, 2, "'", 1);
+        _ew("'", 1);
+        _ew(&_pp_dbadc, 1);
+        _ew("'", 1);
     } else {
-        syscall(SYS_WRITE, 2, "end of input", 12);
+        _ew("end of input", 12);
     }
-    syscall(SYS_WRITE, 2, msg, mlen);
+    _ew(msg, mlen);
     var n = 0;
     while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
-    syscall(SYS_WRITE, 2, S + 0x197020, n);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew(S + 0x197020, n);
+    _ew("\n", 1);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1730,10 +1730,10 @@ fn PP_DERIVE_FLAG(S, base, q, bl): i64 {
 fn PP_DERIVE_PREDIR(base, q, bl): i64 {
     var n = 1;
     while (q + n < bl) { if (PP_IDC(load8(base + q + n)) == 0) { break; } n = n + 1; }
-    syscall(SYS_WRITE, 2, "error: #derive: a preprocessor directive (", 42);
-    syscall(SYS_WRITE, 2, base + q, n);
+    _ew("error: #derive: a preprocessor directive (", 42);
+    _ew(base + q, n);
     var m = ") between #derive(...) and the declaration it applies to -- put the conditional around both\n";
-    syscall(SYS_WRITE, 2, m, 92);
+    _ew(m, 92);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -1772,7 +1772,7 @@ fn PP_DERIVE_SKIPDIRS(S, base, ip, bl): i64 {
 # name. The name is already in S+0x197020.
 fn PP_DERIVE_HEADER(S, base, p, bl, is_enum): i64 {
     if (load8(S + 0x197020) == 0) {
-        syscall(SYS_WRITE, 2, "error: #derive: expected a name after `struct` / `enum`\n", 56);
+        _ew("error: #derive: expected a name after `struct` / `enum`\n", 56);
         syscall(SYS_EXIT, 1);
     }
     p = PP_DTRIV(base, p, bl);
@@ -1795,7 +1795,7 @@ fn PP_DERIVE_HEADER(S, base, p, bl, is_enum): i64 {
 # that, print `msg` and stop, rather than run into the next slot.
 fn PP_DPUT(dst, c, msg, mlen): i64 {
     if (_pp_dlen >= 31) {
-        syscall(SYS_WRITE, 2, msg, mlen);
+        _ew(msg, mlen);
         syscall(SYS_EXIT, 1);
     }
     store8(dst + _pp_dlen, c);
@@ -2056,16 +2056,16 @@ fn PP_DDYN(S, base, q, end, fc): i64 {
 }
 # "error: #derive reads named field types; '<field>'<what><struct>)" and exit 1.
 fn PP_DREFUSE(S, fc, what, wn): i64 {
-    syscall(SYS_WRITE, 2, "error: #derive reads named field types; '", 41);
+    _ew("error: #derive reads named field types; '", 41);
     var f = S + 0x1FC000 + fc * 32;
     var n = 0;
     while (load8(f + n) != 0) { n = n + 1; }
-    syscall(SYS_WRITE, 2, f, n);
-    syscall(SYS_WRITE, 2, what, wn);
+    _ew(f, n);
+    _ew(what, wn);
     n = 0;
     while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
-    syscall(SYS_WRITE, 2, S + 0x197020, n);
-    syscall(SYS_WRITE, 2, ")\n", 2);
+    _ew(S + 0x197020, n);
+    _ew(")\n", 2);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -2091,7 +2091,7 @@ fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
         # wrong accessor offsets → CR3=0x2 page-fault on first kernel context switch.
         if (fc >= 256) {
             var cm = "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n";
-            syscall(SYS_WRITE, 2, cm, 95);
+            _ew(cm, 95);
             syscall(SYS_EXIT, 1);
         }
         # ⛔ v6.5.47 (the derive name-capture overflow bug) — bounded at 31 bytes, into a 32-byte stride (PP_DPUT).
@@ -2256,7 +2256,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     _pp_decl_is_enum = is_enum;
     if (kwlen == 0) {
         # Neither struct nor enum. Still rejected loudly, naming nothing we cannot name.
-        syscall(SYS_WRITE, 2, "error: #derive(...) applies to a struct or an enum; the following declaration is neither\n", 89);
+        _ew("error: #derive(...) applies to a struct or an enum; the following declaration is neither\n", 89);
         syscall(SYS_EXIT, 1);
     }
     ip = PP_DTRIV(src_base, ip + kwlen, bl);
@@ -2273,7 +2273,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         var c = load8(src_base + ip);
         if (PP_IDC(c) == 0) { break; }
         if (sni >= 31) {
-            syscall(SYS_WRITE, 2, "error: #derive struct name too long (max 31 bytes)\n", 51);
+            _ew("error: #derive struct name too long (max 31 bytes)\n", 51);
             syscall(SYS_EXIT, 1);
         }
         store8(S + 0x197020 + sni, c); sni = sni + 1; ip = ip + 1;
@@ -2350,7 +2350,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         fi = fi + 1;
     }
     if (_pp_derive_count >= 512) {
-        syscall(SYS_WRITE, 2, "error: too many #derive structs in one file (max 512)\n", 54);
+        _ew("error: too many #derive structs in one file (max 512)\n", 54);
         syscall(SYS_EXIT, 1);
     }
     # v6.0.53: lazily alloc the sizes/names tables from the heap (post-brk, no
@@ -2688,7 +2688,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         # an HONEST diagnostic rather than letting the raw "Vec<Str>" string reach
         # `Str_to_json` (undefined → a misleading re-parse error).
         if (_vek == 201) {
-            syscall(SYS_WRITE, 2, "error: #derive Vec<Str> field not yet supported (use Vec<int>/Vec<f64>/Vec<#derive-struct>)\n", 92);
+            _ew("error: #derive Vec<Str> field not yet supported (use Vec<int>/Vec<f64>/Vec<#derive-struct>)\n", 92);
             syscall(SYS_EXIT, 1);
         }
         _vqi = _vqi + 1;
@@ -3304,6 +3304,7 @@ fn PP_DERIVE_TSZ(tn): i64 {
 fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
     # v6.5.20 — the generated block goes onto the ONE expanded line PP_PARSE_STRUCT_DEF
     # left open (the struct's closing-`}` line), then the user's tail, then that line is
     # terminated. Every synthesized fn therefore reports the line of the construct that
@@ -3315,6 +3316,7 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
         op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
     }
     _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
     op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
     store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
@@ -3346,6 +3348,7 @@ fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
 fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
     # v6.5.20 — see PP_DERIVE_SERIALIZE: bodies flattened onto the open closing-`}` line,
     # then the user's tail, then the single newline.
     _pp_flatten = 1;
@@ -3368,6 +3371,7 @@ fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
         op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
     }
     _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
     op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
     store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
@@ -3619,12 +3623,12 @@ fn PP_DLOAD_EXPR(out, op, pname, fbits, off, zx): i64 {
 # both stacked call sites (PP_DERIVE_SERIALIZE / PP_DERIVE_DESER with accessors stacked)
 # refuse alike. programs/cyrius_api_surface.cyr mirrors the refusal. CHANGELOG [6.6.10]
 fn PP_DERIVE_ACC_ENUM(S): i64 {
-    syscall(SYS_WRITE, 2, "error: #derive(accessors) applies to a struct; ", 47);
+    _ew("error: #derive(accessors) applies to a struct; ", 47);
     var n = 0;
     while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
-    syscall(SYS_WRITE, 2, S + 0x197020, n);
+    _ew(S + 0x197020, n);
     var m = " is an enum (its members are constants, not fields -- derive Serialize / Deserialize for an enum)\n";
-    syscall(SYS_WRITE, 2, m, 98);
+    _ew(m, 98);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -3697,6 +3701,7 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
 fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
     op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
     # v6.5.20 — see PP_DERIVE_SERIALIZE: flattened onto the open closing-`}` line.
     _pp_flatten = 1;
     op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
@@ -3716,6 +3721,7 @@ fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
         op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     }
     _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
     op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
     store8(out + op, 10); op = op + 1;
     store64(S + 0x197008, op);
@@ -3929,7 +3935,7 @@ fn PP_MACRO_REFUSE(def, why): i64 {
     _pp_write_ident(def);
     PRSTR("': ");
     PRSTR(why);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -3964,7 +3970,7 @@ fn PP_MACRO_ARGCHECK(def, pcnt, acnt, args, closed): i64 {
     if (pcnt == 1) { PRSTR(" argument, given "); }
     else { PRSTR(" arguments, given "); }
     PRNUM(given);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -4513,7 +4519,131 @@ fn PP_PKGVER_AT(out, op, at): i64 {
     return 1;
 }
 
+# 6.7.17 — the expansion map's write side (its read side and the record layout: `_err_col`, util.cyr). PP_PASS starts
+# it (`_xm_reset`); each pass that rewrites the buffer opens with `_xm_begin`, translates the records it inherits as it
+# copies (`_xm_adv`, at its byte copy: a record whose first byte is copied moves to that byte's output offset; one
+# consumed by a directive or an expansion is gone), adds its own in-line expansions (`_xm_add`: a `#derive`'s generated
+# fns, a macro call), and closes with `_xm_end`, which merges the two. CHANGELOG [6.7.17]
+fn _xm_reset(): i64 {
+    _xm_n = 0;
+    _xm_nb = 0;
+    _xm_tn = 0;
+    _xm_c = 0;
+    _xm_next = 0x7FFFFFFFFFFF;
+    return 0;
+}
+fn _xm_begin(): i64 {
+    _xm_c = 0;
+    _xm_nb = 0;
+    _xm_next = 0x7FFFFFFFFFFF;
+    if (_xm_n > 0) { _xm_next = L64(_xm); }
+    return 0;
+}
+# The pass copies input byte `ip` to output offset `op` (`skip` 0), or drops it (`skip` nonzero: a skipped #ifdef arm).
+fn _xm_adv(ip, op, skip): i64 {
+    while (_xm_c < _xm_n) {
+        var e = _xm + _xm_c * 48;
+        var o = L64(e);
+        if (o > ip) { break; }
+        S64(e + 32, o);
+        S64(e + 40, L64(e + 8));
+        if (o == ip) { if (skip == 0) { S64(e, op); } else { S64(e, 0 - 1); } }
+        else { S64(e, 0 - 1); }
+        _xm_c = _xm_c + 1;
+    }
+    _xm_next = 0x7FFFFFFFFFFF;
+    if (_xm_c < _xm_n) { _xm_next = L64(_xm + _xm_c * 48); }
+    return 0;
+}
+# An in-line expansion: output [oo, oo + ol) replaced input [ii, ii + il), whose text is at `src`. Inside an expansion
+# a record already holds (a macro call in a derive's generated fns), that record grows by the difference instead.
+fn _xm_add(oo, ol, ii, il, src): i64 {
+    if (_xm_c > 0) {
+        var e = _xm + (_xm_c - 1) * 48;
+        if (L64(e) >= 0) {
+            var io = L64(e + 32);
+            var iend = io + L64(e + 40);
+            if (ii >= io) { if (ii < iend) { if (ii + il <= iend) {
+                        S64(e + 8, L64(e + 8) + ol - il);
+                        return 0;
+                    } } }
+        }
+    }
+    if (_xm_nb >= _xm_bcap) {
+        var nc = _xm_bcap * 2;
+        if (nc < 64) { nc = 64; }
+        var nb = alloc(nc * 48);
+        if (nb == 0) { return 0; }
+        var i = 0;
+        while (i < _xm_nb * 48) { S64(nb + i, L64(_xm_b + i)); i = i + 8; }
+        _xm_b = nb;
+        _xm_bcap = nc;
+    }
+    if (_xm_tn + il > _xm_tcap) {
+        var tc = _xm_tcap * 2 + il;
+        if (tc < 4096) { tc = 4096; }
+        var nt = alloc(tc);
+        if (nt == 0) { return 0; }
+        var j = 0;
+        while (j < _xm_tn) { store8(nt + j, load8(_xm_tb + j)); j = j + 1; }
+        _xm_tb = nt;
+        _xm_tcap = tc;
+    }
+    var k = 0;
+    while (k < il) { store8(_xm_tb + _xm_tn + k, load8(src + k)); k = k + 1; }
+    var r = _xm_b + _xm_nb * 48;
+    S64(r, oo);
+    S64(r + 8, ol);
+    S64(r + 16, il);
+    S64(r + 24, _xm_tn);
+    _xm_tn = _xm_tn + il;
+    _xm_nb = _xm_nb + 1;
+    return 0;
+}
+# The pass's end: the inherited records it never reached are gone; the live ones and its own, merged by offset.
+fn _xm_end(): i64 {
+    _xm_next = 0x7FFFFFFFFFFF;
+    var n = _xm_n + _xm_nb;
+    if (n == 0) { return 0; }
+    if (n > _xm_cap) {
+        var na = alloc(n * 2 * 48);
+        if (na == 0) { _xm_n = 0; _xm_nb = 0; return 0; }
+        var i = 0;
+        while (i < _xm_n * 48) { S64(na + i, L64(_xm + i)); i = i + 8; }
+        _xm = na;
+        _xm_cap = n * 2;
+    }
+    # live inherited records (a translated offset; those past `_xm_c` were never reached) packed in place
+    var w = 0;
+    var a = 0;
+    while (a < _xm_n) {
+        var e = _xm + a * 48;
+        if (a < _xm_c) { if (L64(e) >= 0) {
+                if (w != a) { var q = 0; while (q < 48) { S64(_xm + w * 48 + q, L64(e + q)); q = q + 8; } }
+                w = w + 1;
+            } }
+        a = a + 1;
+    }
+    # merged from the back into the table, the new records after the live ones
+    var ia = w - 1;
+    var ib = _xm_nb - 1;
+    var o = w + _xm_nb - 1;
+    while (ib >= 0) {
+        var src = _xm_b + ib * 48;
+        if (ia >= 0) { if (L64(_xm + ia * 48) > L64(src)) { src = _xm + ia * 48; ia = ia - 1; } else { ib = ib - 1; } }
+        else { ib = ib - 1; }
+        var q2 = 0;
+        while (q2 < 48) { S64(_xm + o * 48 + q2, L64(src + q2)); q2 = q2 + 8; }
+        o = o - 1;
+    }
+    _xm_n = w + _xm_nb;
+    _xm_nb = 0;
+    _xm_c = 0;
+    return 0;
+}
+
 fn PP_PASS(S): i64 {
+    _xm_reset();   # 6.7.17: the expansion map starts here (`_xm`, util.cyr)
     var bl = GBL(S);
     var out = S + 0x459D000;
     var op = 0;
@@ -4944,9 +5074,9 @@ fn PP_PASS(S): i64 {
     # Check preprocess output size. Buffer is 24 MB at 0x459D000 (v6.5.39; 8 MB
     # from v5.11.33, 2 MB at 0x44A000 before that).
     if (op > 25165824) {
-        syscall(SYS_WRITE, 2, "error: expanded source exceeds 24MB (", 37);
+        _ew("error: expanded source exceeds 24MB (", 37);
         PRNUM(op);
-        syscall(SYS_WRITE, 2, " bytes)\n", 8);
+        _ew(" bytes)\n", 8);
         syscall(SYS_EXIT, 1);
     }
     # v6.5.34 — the `#@pkgver` declaration was written optimistically at the marker. ⛔ 6.7.6:
@@ -4955,6 +5085,7 @@ fn PP_PASS(S): i64 {
     # PP_RESOLVE_PKGVER, now run by PREPROCESS once every pass is done.
     # No copy-back — data stays at S+0x459D000.
     # PP_IFDEF_PASS reads from 0x459D000 (via its tmp copy) and writes back there.
+    _xm_end();   # 6.7.17
     SBL(S, op);
     return had_include;
 }
@@ -4972,6 +5103,7 @@ fn PP_MACRO_PASS(S): i64 {
     # consumed by an expansion are skipped: they are an invocation, i.e. code, so the
     # state is unchanged by them. See PP_MACRO_START. CHANGELOG [6.6.6]
     var lst = 0;
+    _xm_begin();   # 6.7.17: the expansion map (`_xm`)
     while (ip < bl) {
         var c = load8(S + _SRCB + ip);
         var expanded = 0;
@@ -4984,8 +5116,11 @@ fn PP_MACRO_PASS(S): i64 {
                 # same-line bound that keeps an invocation opened inside a `#`
                 # comment from swallowing the code after it. See PP_MACRO_CALLABLE.
                 if (PP_MACRO_CALLABLE(S, ip, bl, lst) == 1) {
+                    var xi = ip;
+                    var xo = op;
                     ip = PP_EXPAND(S, mmi, ip, bl, out, op);
                     op = load64(S + 0x190700);
+                    _xm_add(xo, op - xo, xi, ip - xi, S + _SRCB + xi);   # 6.7.17: the call's source text
                     expanded = 1;
                 }
             }
@@ -5000,6 +5135,7 @@ fn PP_MACRO_PASS(S): i64 {
         # at the two ENTRY points (PP_NEUT_PASS over the raw source, and each include's
         # READFILE), which covers this pass without a guard in it. CHANGELOG [6.6.6]
         if (expanded == 0) {
+            if (ip >= _xm_next) { _xm_adv(ip, op, 0); }   # 6.7.17
             store8(out + op, c);
             op = op + 1;
             if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
@@ -5007,6 +5143,7 @@ fn PP_MACRO_PASS(S): i64 {
         }
     }
     # No copy-back — output stays at S+0x459D000. LEX reads from there.
+    _xm_end();   # 6.7.17
     SBL(S, op);
     return 0;
 }
@@ -5033,7 +5170,7 @@ fn _pp_tmp_map(): i64 {
     }
     #endif
     if (tmp < 4096) {
-        syscall(SYS_WRITE, 2, "error: cannot map the preprocessor's 24 MiB source buffer\n", 58);
+        _ew("error: cannot map the preprocessor's 24 MiB source buffer\n", 58);
         syscall(SYS_EXIT, 1);
     }
     return tmp;
@@ -5072,7 +5209,7 @@ fn PP_IFDEF_PASS(S): i64 {
     var had_new_include = 1;
     while (had_new_include == 1) {
         if (iter >= 16) {
-            syscall(SYS_WRITE, 2, "error: preprocessor include nesting exceeded 16 levels\n", 55);
+            _ew("error: preprocessor include nesting exceeded 16 levels\n", 55);
             syscall(SYS_EXIT, 1);
         }
         had_new_include = 0;
@@ -5119,6 +5256,7 @@ fn PP_IFDEF_PASS(S): i64 {
         var lst = 0;
         var in_string = 0;
         var open0 = 0;   # 6.6.20: see PP_PASS
+        _xm_begin();   # 6.7.17: the expansion map (`_xm`), translated per iteration
         while (ip < bl) {
             var c = load8(tmp + ip);
             var handled = 0;
@@ -5306,6 +5444,7 @@ fn PP_IFDEF_PASS(S): i64 {
             }
             if (d0 == 0) { if (pp_depth > 0) { open0 = dip; } }
             if (handled == 0) {
+                if (ip >= _xm_next) { _xm_adv(ip, op, skip_depth); }   # 6.7.17
                 if (skip_depth == 0) { store8(out + op, c); op = op + 1; }
                 # v6.5.19 — keep a skipped line's newline; see the PP_PASS twin.
                 elif (c == 10) { store8(out + op, 10); op = op + 1; }
@@ -5330,13 +5469,14 @@ fn PP_IFDEF_PASS(S): i64 {
         # See CHANGELOG [5.11.33]. v6.5.39 raised it to 24 MB, the
         # preprocess_out cap.
         if (op > 25165824) {
-            syscall(SYS_WRITE, 2, "error: expanded source exceeds 24MB (", 37);
+            _ew("error: expanded source exceeds 24MB (", 37);
             PRNUM(op);
-            syscall(SYS_WRITE, 2, " bytes) in PP_IFDEF_PASS iter=", 30);
+            _ew(" bytes) in PP_IFDEF_PASS iter=", 30);
             PRNUM(iter);
-            syscall(SYS_WRITE, 2, "\n", 1);
+            _ew("\n", 1);
             syscall(SYS_EXIT, 1);
         }
+        _xm_end();   # 6.7.17
         SBL(S, op);
         iter = iter + 1;
     }
@@ -5409,9 +5549,9 @@ fn PP_REF_PASS(S): i64 {
     # is `fn_local_names`, so the same overrun would corrupt the per-fn local tables instead.
     # Raising the ceiling without this would have converted a contained bug into a live one.
     if (op > 25165824) {
-        syscall(SYS_WRITE, 2, "error: #ref expansion exceeds 24MB (", 36);
+        _ew("error: #ref expansion exceeds 24MB (", 36);
         PRNUM(op);
-        syscall(SYS_WRITE, 2, " bytes)\n", 8);
+        _ew(" bytes)\n", 8);
         syscall(SYS_EXIT, 1);
     }
     if (found == 1) {
@@ -5688,7 +5828,7 @@ fn _pp_env_rung(S, name): i64 {
     PRSTR(name);
     PRSTR(" must be 0 or 1 (or unset): ");
     PRSTR(e);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     _had_error = 1;
     return 0 - 1;
 }
@@ -5803,7 +5943,7 @@ fn _bnd_target_check(S): i64 {
         _pp_err_head(S, 0, 0);
         PRSTR("the bounds-checked mode is not available for ");
         PRSTR(why);
-        syscall(SYS_WRITE, 2, "\n", 1);
+        _ew("\n", 1);
         # 6.7.8 (C2-8): fatal at once — pass 2 would compile the injected checker for a target
         # it cannot serve (an EFI image refuses its write's kernel32 import: a second error that
         # names the compiler's own text).

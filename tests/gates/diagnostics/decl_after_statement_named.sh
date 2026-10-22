@@ -444,13 +444,13 @@ one "NS3 filed: impl in a fn body" "$(printf 'fn f(): i64 { impl P { fn g(self):
 one "NS4 the body parses on: its return's mistake" 'fn f(): i64 { struct Q { y; } return zz; }
 syscall(60, f());
 ' "error:<source>:1:15: a \`struct\` declaration $IR a fn body
-error:<source>:1:40: undefined variable 'zz' (missing include or enum?)"
+error:<source>:1:38: undefined variable 'zz' (missing include or enum?)"
 one "NS5 the block parses on, and the program" 'var a = 1;
 if (a == 1) { struct Q { y; } a = zz; }
 syscall(60, yy);
 ' "error:<source>:2:15: a \`struct\` declaration $IR a block
-error:<source>:2:37: undefined variable 'zz' (missing include or enum?)
-error:<source>:3:15: undefined variable 'yy' (missing include or enum?)"
+error:<source>:2:35: undefined variable 'zz' (missing include or enum?)
+error:<source>:3:13: undefined variable 'yy' (missing include or enum?)"
 one "NS6 an impl method, a closure (the zone's, replayed last), a nested block" 'struct P { x; }
 impl P { fn m(self): i64 { union U { x; } return 1; } }
 var g = |x| { enum E { A, B } return x; };
@@ -566,7 +566,7 @@ syscall(60, f());
 error:<source>:1:22: a \`use\` declaration $IR a fn body
 error:<source>:1:31: a \`pub\` declaration $IR a fn body
 error:<source>:1:46: a \`public\` declaration $IR a fn body
-error:<source>:1:100: undefined variable 'zz' (missing include or enum?)"
+error:<source>:1:98: undefined variable 'zz' (missing include or enum?)"
 one "NM10 use then pub on one line: no derive step" 'fn f(): i64 { use m.g; pub var x = 1; return x; }
 syscall(60, f());
 ' "error:<source>:1:15: a \`use\` declaration $IR a fn body
@@ -578,7 +578,7 @@ error:<source>:1:26: a \`pub\` declaration $IR a fn body"
 one "NM12 pub const fn: the next statement is its own" 'fn f(): i64 { pub const fn g(): i64 { return 1; } return zz; }
 syscall(60, f());
 ' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
-error:<source>:1:60: undefined variable 'zz' (missing include or enum?)"
+error:<source>:1:58: undefined variable 'zz' (missing include or enum?)"
 one "NM13 a generic fn at two instances: once each" 'fn f<T>(x: T): T { pub var y = x; mod m; return y; }
 syscall(60, f<i64>(1) + f<i32>(2));
 ' "error:<source>:1:20: a \`pub\` declaration $IR a fn body
@@ -605,7 +605,7 @@ a = 2;
 pub const fn g(): i64 { return 1; }
 syscall(60, zz);
 ' "error:<source>:3:1: a \`pub\` declaration $R (line 2)
-error:<source>:4:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:4:13: undefined variable 'zz' (missing include or enum?)"
 one "NM18 module scope: use then pub fn on one line" 'mod mm;
 fn g(): i64 { return 1; }
 mod;
@@ -625,19 +625,19 @@ one "NM20 two pub fns on one line in a fn body" 'fn f(): i64 { pub fn g(): i64 {
 syscall(60, f());
 ' "error:<source>:1:15: a \`pub\` declaration $IR a fn body
 error:<source>:1:45: a \`pub\` declaration $IR a fn body
-error:<source>:1:84: undefined variable 'zz' (missing include or enum?)"
+error:<source>:1:82: undefined variable 'zz' (missing include or enum?)"
 one "NM21 an impl then a fn on one line in a fn body" 'struct P { x; }
 fn f(): i64 { impl P { fn m(self): i64 { return 1; } } fn h(): i64 { return 2; } return zz; }
 syscall(60, f());
 ' "error:<source>:2:15: an \`impl\` declaration $IR a fn body
 error:<source>:2:56: fn 'h' is defined inside fn 'f'; define it at top level
-error:<source>:2:91: undefined variable 'zz' (missing include or enum?)"
+error:<source>:2:89: undefined variable 'zz' (missing include or enum?)"
 one "NM22 pub fn and public fn on one line in a block" 'var a = 1;
 if (a == 1) { pub fn g(): i64 { return 1; } public fn h(): i64 { return 2; } a = zz; }
 syscall(60, a);
 ' "error:<source>:2:15: a \`pub\` declaration $IR a block
 error:<source>:2:45: a \`public\` declaration $IR a block
-error:<source>:2:84: undefined variable 'zz' (missing include or enum?)"
+error:<source>:2:82: undefined variable 'zz' (missing include or enum?)"
 one "PM1 module scope: pub var then used, one error" 'var a = 1;
 a = 2;
 pub var x = 5;
@@ -649,14 +649,14 @@ public var x = 5;
 fn f(): i64 { return x; }
 syscall(60, f() + zz);
 ' "error:<source>:3:1: a \`public\` declaration $R (line 2)
-error:<source>:5:21: undefined variable 'zz' (missing include or enum?)"
+error:<source>:5:19: undefined variable 'zz' (missing include or enum?)"
 one "PM3 control: module scope pub const then used" 'var a = 1;
 a = 2;
 pub const C = 5;
 const D = C + 1;
 syscall(60, D + zz);
 ' "error:<source>:3:1: a \`pub\` declaration $R (line 2)
-error:<source>:5:19: undefined variable 'zz' (missing include or enum?)"
+error:<source>:5:17: undefined variable 'zz' (missing include or enum?)"
 
 # ── U: a use of what a refused declaration names (6.7.15) ───────────────────────────────────────────────────
 L='must come before the first top-level statement (line 2)'
@@ -737,8 +737,8 @@ syscall(60, C + B + zz);
 " "error:<source>:3:1: a \`struct\` declaration $L
 error:<source>:4:8: unknown type 'R' for variable 'r'
 error:<source>:5:1: an \`enum\` declaration $L
-error:<source>:6:15: undefined variable 'C' (missing include or enum?)
-error:<source>:6:23: undefined variable 'zz' (missing include or enum?)"
+error:<source>:6:13: undefined variable 'C' (missing include or enum?)
+error:<source>:6:21: undefined variable 'zz' (missing include or enum?)"
 one "UE2 exact: an untyped q.y in another fn" "${UH}struct Q { y; }
 fn f(q: *Q): i64 { return q.y; }
 fn g(q): i64 { return q.y; }
@@ -766,7 +766,7 @@ const C = B;
 const K = C + 1;
 syscall(60, K + zz);
 " "error:<source>:3:1: an \`enum\` declaration $L
-error:<source>:6:19: undefined variable 'zz' (missing include or enum?)"
+error:<source>:6:17: undefined variable 'zz' (missing include or enum?)"
 one "UF8 case labels in a fn above the declaration" "${UH}fn g(x): i64 { switch (x) { case E.A: return 1; case B: return 2; } return 0; }
 enum E { A, B }
 syscall(60, g(1));
@@ -775,7 +775,7 @@ one "UF9 an array size after it, in sync: the next statement's mistake" "${UH}en
 var arr: i64[E.B];
 syscall(60, zz);
 " "error:<source>:3:1: an \`enum\` declaration $L
-error:<source>:5:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:5:13: undefined variable 'zz' (missing include or enum?)"
 one "UF10 an inner enum in its body's case labels and const" 'fn f(x): i64 {
     enum E { A, B }
     switch (x) { case E.A: return 1; case B: return 2; }
@@ -799,14 +799,14 @@ syscall(60, f());
 ' "error:<source>:1:22: unknown type 'Foo' for variable 'q'
 error:<source>:1:34: expected a type for variable 'r', got number 5
 error:<source>:1:44: unknown type 'Foo' for variable 's'
-error:<source>:1:63: undefined variable 'zz' (missing include or enum?)"
+error:<source>:1:61: undefined variable 'zz' (missing include or enum?)"
 one "UF14 the declaration zone and after a statement" "var q: Foo;
 ${UH}struct Q { y; }
 var p: Q;
 syscall(60, p.y + zz);
 " "error:<source>:1:8: unknown type 'Foo' for variable 'q'
 error:<source>:4:1: a \`struct\` declaration must come before the first top-level statement (line 3)
-error:<source>:6:21: undefined variable 'zz' (missing include or enum?)"
+error:<source>:6:19: undefined variable 'zz' (missing include or enum?)"
 one "UF15 a generic's two instances: once" 'fn f<T>(x: T): i64 { var q: Foo; return 1; }
 syscall(60, f<i64>(1) + f<i32>(2));
 ' "error:<source>:1:29: unknown type 'Foo' for variable 'q'"
@@ -815,7 +815,7 @@ syscall(60, f());
 ' "error:<source>:1:25: uninitialized variable not allowed; use \`var X = 0;\` or initial value
 error:<source>:1:35: unknown type 'Foo' as the target of pointer 'p'
 error:<source>:1:38: uninitialized variable not allowed; use \`var X = 0;\` or initial value
-error:<source>:1:49: undefined variable 'zz' (missing include or enum?)"
+error:<source>:1:47: undefined variable 'zz' (missing include or enum?)"
 one "UF17 by-name Str: a value, a store and a method, a fn above" 'syscall(39);
 fn h(t: *Str): i64 { return t.len; }
 include "lib/str.cyr"
@@ -954,13 +954,13 @@ error:<source>:1:31: fn 'h' is defined inside fn 'f'; define it at top level"
 row5 DV2 "filed: a struct then pub fn h on one line in a block" "$(printf 'var a = 1;\nif (a == 1) { struct Q { y; } pub fn h(): i64 { return 1; } }\nsyscall(60, a + zz);\n')
 " "error:<source>:2:15: a \`struct\` declaration $IR a block
 error:<source>:2:31: a \`pub\` declaration $IR a block
-error:<source>:3:19: $ZZ"
+error:<source>:3:17: $ZZ"
 row5 DV3 "module scope: struct Q {..} fn h(): h is defined" 'var a = 1;
 a = 2;
 struct Q { y; } fn h(): i64 { return zz; }
 syscall(60, h(4));
 ' "error:<source>:3:1: a \`struct\` declaration $L
-error:<source>:3:40: $ZZ
+error:<source>:3:38: $ZZ
 error:<source>:4: 'h' expects 0 arguments, got 1"
 row5 DV4 "control: a refused derive's fns still stepped (a body, after a statement)" "${DH}fn f(): i64 {
 #derive(Serialize)
@@ -975,9 +975,9 @@ var sb = 0;
 R_to_json(0, sb);
 syscall(60, a + f() + zz);
 " "error:<source>:9:1: a \`struct\` declaration $IR a fn body
-error:<source>:10:14: $ZZ
+error:<source>:10:12: $ZZ
 error:<source>:15:1: a \`pub\` declaration must come before the first top-level statement (line 13)
-error:<source>:18:25: $ZZ"
+error:<source>:18:23: $ZZ"
 row5 DV5 "an enum derive: its codecs stepped, the user's fn after them is not" "${DH}fn f(): i64 {
 #derive(Serialize)
 enum E { A; B; } fn h(): i64 { return 1; }
@@ -985,12 +985,12 @@ return E_from_json_str(0) + zz;
 }
 syscall(60, f());
 " "error:<source>:9:1: an \`enum\` declaration $IR a fn body
-error:<source>:9:651: fn 'h' is defined inside fn 'f'; define it at top level
-error:<source>:10:31: $ZZ"
+error:<source>:9:18: fn 'h' is defined inside fn 'f'; define it at top level
+error:<source>:10:29: $ZZ"
 row5 DV6 "a fn named Q_h on a non-derived struct's line is the user's" "$(printf 'fn f(): i64 { struct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
 " "error:<source>:1:15: a \`struct\` declaration $IR a fn body
 error:<source>:1:31: fn 'Q_h' is defined inside fn 'f'; define it at top level
-error:<source>:1:68: $ZZ"
+error:<source>:1:66: $ZZ"
 
 # DV7 — 6.7.16 (the f16 review): ONLY THE NAMES THE DERIVE WROTE. `_dl_dname` took ANY `<Type>_..` / `_cy_..` on a DERIVED
 # refused declaration's line as the derive's, so a user's `fn Q_h` there was stepped and its body never parsed (DV6 is
@@ -1003,29 +1003,29 @@ error:<source>:1:68: $ZZ"
 # one's), an enum's `E_from_json` (an enum codec writes none), `T_w` (no field w).
 #   the lane before it (f33107668)                   -> RED DV7 DV7b DV7c DV7d DV7e, 25
 #   `_dl_dname` without its PP_DERIVE_FAM tests      -> RED DV7c DV7e, 10 (`Q_y` and `_cy_json_skipval` stepped)
-# DV7c / DV7e pin a column past a `#derive(Serialize)` expansion on the same line, which is the EXPANDED line's
-# column (issues/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md, row 1): 6.7.17's bayan 1.11.0
-# refold makes the expansion emit `bayan_json_get_by_str` (7 characters longer), so 2096 -> 2103 and 1587 -> 1594.
+# DV5 / DV7-DV7e pin a column past a `#derive` expansion on the same line: since 6.7.17 the SOURCE line's column (the
+# expansion map, issues/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md, row 1), which no
+# change to the generated fns moves; through 6.7.16 they were the expanded line's (`fn 'h'` at 9:651, `zz` at 10:2101).
 #   `_dl_derived_fn` without `_dl_dv_once`           -> RED DV7d, 5 (the user's duplicate stepped)
 row5 DV7 "review: a user's fn Q_h on a derived refused struct's line" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return zz; }\nsyscall(60, Q_h(4));\n')
 " "error:<source>:4:1: a \`struct\` declaration $L
-error:<source>:4:273: $ZZ
+error:<source>:4:40: $ZZ
 error:<source>:5: 'Q_h' expects 0 arguments, got 1"
 row5 DV7b "... in a fn body: the user's fn refused as nested" "$(printf 'fn f(): i64 {\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
 " "error:<source>:3:1: a \`struct\` declaration $IR a fn body
-error:<source>:3:248: fn 'Q_h' is defined inside fn 'f'; define it at top level
-error:<source>:3:285: $ZZ"
+error:<source>:3:17: fn 'Q_h' is defined inside fn 'f'; define it at top level
+error:<source>:3:52: $ZZ"
 row5 DV7c "fn Q_y on a Serialize-only struct is the user's" "${DH}var a = 1;
 a = 2;
 #derive(Serialize)
 struct Q { y; } fn Q_y(): i64 { return zz; }
 syscall(60, Q_y(4));
 " "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:10:2103: $ZZ
+error:<source>:10:40: $ZZ
 error:<source>:11: 'Q_y' expects 0 arguments, got 1"
 row5 DV7d "a second fn Q_set_y (the user's duplicate) is the user's" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_set_y(): i64 { return zz; }\nsyscall(60, 0);\n')
 " "error:<source>:4:1: a \`struct\` declaration $L
-error:<source>:4:277: $ZZ"
+error:<source>:4:44: $ZZ"
 row5 DV7e "a later line's _cy_ helper, an enum's E_from_json, T_w (no field)" "${DH}var a = 1;
 a = 2;
 #derive(Serialize)
@@ -1039,11 +1039,11 @@ struct T { y; } fn T_w(): i64 { return zz3; }
 syscall(60, 0);
 " "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
 error:<source>:12:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:12:1594: $ZZ
+error:<source>:12:53: $ZZ
 error:<source>:14:1: an \`enum\` declaration must come before the first top-level statement (line 8)
-error:<source>:14:685: undefined variable 'zz2' (missing include or enum?)
+error:<source>:14:49: undefined variable 'zz2' (missing include or enum?)
 error:<source>:16:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:16:274: undefined variable 'zz3' (missing include or enum?)"
+error:<source>:16:40: undefined variable 'zz3' (missing include or enum?)"
 
 # UI — 6.7.16 (issues/archived/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
 # REFUSED IN A FN BODY OR A BLOCK IS NO SECOND ERROR. `_decl_inner` entered the refused declaration's names (`_dl_names`)
@@ -1079,7 +1079,7 @@ row5 UI4 "an impl method's body" 'fn g(q: *Q): i64 { return q.y + zz; }
 struct P { x; }
 impl P { fn m(self): i64 { struct Q { y; } return 1; } }
 syscall(60, g(0));
-' "error:<source>:1:35: $ZZ
+' "error:<source>:1:33: $ZZ
 error:<source>:3:28: a \`struct\` declaration $IR a fn body"
 row5 UI5 "the other bodies and uses: blocks, a case arm, a closure, pub, a union, consts" 'fn g(q: *Q, r: *R, s: *S, t: *T, u: *U, w: *W): i64 { return q.y + r.y + s.y + t.y + u.y + w.y + B + F.D; }
 fn k(x): i64 { switch (x) { case E.A: return 1; } return G.H; }
@@ -1108,7 +1108,7 @@ error:<source>:14:16: a \`struct\` declaration $IR a fn body
 error:<source>:16:15: a \`struct\` declaration $IR a block
 error:<source>:16:31: an \`enum\` declaration $IR a block
 error:<source>:17:29: an \`enum\` declaration $IR a fn body
-error:<source>:18:67: $ZZ"
+error:<source>:18:65: $ZZ"
 row5 UI6 "a refused inner trait's other uses: dyn, impl for, a struct bound" 'struct P { x; }
 fn g(x: dyn Tr): i64 { return 1; }
 impl Tr for P { fn m(self): i64 { return 1; } }
@@ -1116,7 +1116,7 @@ struct B<T: Tr> { v: T; }
 fn f(): i64 { trait Tr { fn m(self): i64; } return 1; }
 syscall(60, f() + zz);
 ' "error:<source>:5:15: a \`trait\` declaration $IR a fn body
-error:<source>:6:21: $ZZ"
+error:<source>:6:19: $ZZ"
 row5 UI7 "exact: a name declared nowhere, a valid top-level struct of the name" 'fn g(q: *Zq): i64 { return q.y; }
 fn h(q: *Q): i64 { return q.w; }
 fn f(): i64 { struct Q { y; } return 1; }
@@ -1152,7 +1152,7 @@ row5 UP1 "a trait default no impl inherits: its struct used" "$(printf 'trait T 
 row5 UP2 "an uninstantiated bounded generic's base: its struct used" "$(printf 'fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }\ntrait Show { fn s(self): i64; }\nfn g(q: *Q): i64 { return q.y; }\nfn main(): i64 { return g(0); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`struct\` declaration $IR a fn body"
 row5 UP3 "a trait default's enum: E.B beside an undefined zz" "$(printf 'trait T { fn d(self): i64 { enum E { A, B } return 1; } }\nfn h(): i64 { return E.B + zz; }\nvar r = h();\nsyscall(60, r);\n')
-" "error:<source>:2:30: $ZZ
+" "error:<source>:2:28: $ZZ
 error:<source>:1:29: an \`enum\` declaration $IR a fn body"
 row5 UP4 "a trait default's trait: a bound naming it" "$(printf 'trait T { fn d(self): i64 { trait Tr { fn m(self): i64; } return 1; } }\nfn g<U: Tr>(x: U): i64 { return 1; }\nfn main(): i64 { return g<i64>(1); }\nvar r = main();\nsyscall(60, r);\n')
 " "error:<source>:1:29: a \`trait\` declaration $IR a fn body"
@@ -1207,20 +1207,20 @@ enum Q { A }
 syscall(60, zz);
 ' "error:<source>:6:1: an \`enum\` declaration must come before the first top-level statement (line 5)
 error:<source>:7:1: an \`enum\` declaration must come before the first top-level statement (line 5)
-error:<source>:8:15: $ZZ"
+error:<source>:8:13: $ZZ"
 row5 UZ4 "control: a zone const and a zone #assert" "$(printf 'const C = E.B;\n#assert E.A == 0\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
 " "error:<source>:5:1: an \`enum\` declaration must come before the first top-level statement (line 4)"
 row5 UZ5 "control: a valid forward zone reference is said once" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
 " "error:<source>:1:14: unknown name 'E' in a const context
-error:<source>:4:15: $ZZ"
+error:<source>:4:13: $ZZ"
 row5 UZ6 "control: ... after the pass-1 reports before the zone's end" "$(printf 'var arr: i64[E.B];\nstruct P { x: Zt; }\nenum E { A, B }\nvar a = 1;\nsyscall(60, zz);\n')
 " "error:<source>:2:15: unknown type 'Zt' for struct field 'x'
 error:<source>:1:14: unknown name 'E' in a const context
-error:<source>:5:15: $ZZ"
+error:<source>:5:13: $ZZ"
 row5 UZ7 "control: a name declared nowhere is said in place" "$(printf 'var arr: i64[Z.B];\nstruct P { x: Zt; }\nvar a = 1;\na = 2;\nsyscall(60, zz);\n')
 " "error:<source>:1:14: unknown name 'Z' in a const context
 error:<source>:2:15: unknown type 'Zt' for struct field 'x'
-error:<source>:5:15: $ZZ"
+error:<source>:5:13: $ZZ"
 row5 UZ8 "a held report is said before an unmatched } stops the compile" "$(printf 'var arr: i64[E.B];\nenum E { A, B }\nvar a = 1;\n}\nsyscall(60, zz);\n')
 " "error:<source>:1:14: unknown name 'E' in a const context
 error:<source>:4:1: unmatched '}' at module scope"
@@ -1365,10 +1365,10 @@ one "DI11b a kernel build: a global's closure, in the replay's words" "$(printf 
 #   `_dl_inner_fill` holding a `mod` header open again               -> RED UM3, 5 ("type 'Q' is declared after its use")
 row5 UM1 "a ';'-less mod after the first statement: the next line's zz" "$(printf 'var a = 1;\na = 2;\nmod m\na = a + zz;\nsyscall(60, a);\n')
 " "error:<source>:3:1: a \`mod\` declaration must come before the first top-level statement (line 2)
-error:<source>:4:11: $ZZ"
+error:<source>:4:9: $ZZ"
 row5 UM2 "a ';'-less mod in a fn body: the next line's zz" "$(printf 'fn f(): i64 { mod m\nreturn zz; }\nsyscall(60, f());\n')
 " "error:<source>:1:15: a \`mod\` declaration $IR a fn body
-error:<source>:2:10: $ZZ"
+error:<source>:2:8: $ZZ"
 row5 UM3 "a ';'-less mod in a body, then a block's refused struct used above it" 'fn h(q: *Q): i64 { return q.y; }
 fn f(): i64 {
     mod m
@@ -1380,7 +1380,7 @@ syscall(60, f());
 error:<source>:4:19: a \`struct\` declaration $IR a fn body"
 row5 UM4 "pub mod m; in a fn body: the pub refusal, then zz" "$(printf 'fn f(): i64 { pub mod m; return zz; }\nsyscall(60, f());\n')
 " "error:<source>:1:15: a \`pub\` declaration $IR a fn body
-error:<source>:1:35: $ZZ"
+error:<source>:1:33: $ZZ"
 
 # The five-leg rows' floor: a row or a leg lost reads RED, never green. (6.7.17's merge of lanes fea and feg left two
 # assignments, 330 then 220; the later one ruled, so 130 lost row-legs read green.)

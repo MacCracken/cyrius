@@ -255,9 +255,9 @@ fn EB(S, b): i64 {
 fn EW(S, w): i64 {
     var cp = GCP(S);
     if ((cp & 3) != 0) {
-        syscall(SYS_WRITE, 2, "error: EW misaligned at cp=", 27);
+        _ew("error: EW misaligned at cp=", 27);
         PRNUM(cp);
-        syscall(SYS_WRITE, 2, " (not 4-byte boundary; shared parse.cyr leaked x86 bytes to aarch64 stream?)\n", 77);
+        _ew(" (not 4-byte boundary; shared parse.cyr leaked x86 bytes to aarch64 stream?)\n", 77);
         syscall(SYS_EXIT, 1);
     }
     EB(S, w & 0xFF);
@@ -777,11 +777,11 @@ fn _esx_arm(S, src, dst): i64 {
     }
     if (_esx_short(src) == 1) { return 0; }
     if (src > 4095) {
-        syscall(SYS_WRITE, 2, "error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
+        _ew("error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
         syscall(SYS_EXIT, 1);
     }
     if (dst > 65535) {
-        syscall(SYS_WRITE, 2, "error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
+        _ew("error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
         syscall(SYS_EXIT, 1);
     }
     EW(S, 0xF1000000 | (src << 10) | (8 << 5) | 0x1F);      # cmp  x8, #src
@@ -809,11 +809,11 @@ fn _esx_arm_atfd(S, src, dst): i64 {
         return 0;
     }
     if (src > 4095) {
-        syscall(SYS_WRITE, 2, "error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
+        _ew("error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
         syscall(SYS_EXIT, 1);
     }
     if (dst > 65535) {
-        syscall(SYS_WRITE, 2, "error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
+        _ew("error: ESYSXLAT target number exceeds the 16-bit movz immediate\n", 64);
         syscall(SYS_EXIT, 1);
     }
     EW(S, 0xF1000000 | (src << 10) | (8 << 5) | 0x1F);      # cmp  x8, #src
@@ -1884,7 +1884,7 @@ fn _esx_prhex(w): i64 {
         if (d < 10) { store8(&b + i, 48 + d); } else { store8(&b + i, 55 + d); }
         i = i + 1;
     }
-    syscall(SYS_WRITE, 2, &b, 8);
+    _ew(&b, 8);
     return 0;
 }
 # `src` < 0: a structural failure before any row decoded — name the offending word instead.
@@ -2106,7 +2106,7 @@ fn _esx_native_warn(S, p, en, lit): i64 {
     var al = 1000 + lit;
     var hasal = 0;
     if (_esx_walk(cb, p, en, al, 0 - 1) == lit) { hasal = 1; }
-    syscall(SYS_WRITE, 2, "warning:", 8);
+    _ew("warning:", 8);
     _err_head_at(S, kw);
     if (_esx_rl_vi >= 0 || _esx_rl_lc >= 0) {
         PRSTR(": syscall constant ");

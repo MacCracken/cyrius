@@ -1789,7 +1789,7 @@ var e = nope;
 var x = mkg1<*Pt>(33);
 syscall(60, x.v);
 EOF
-order2 GZO0 "5:13: undefined variable 'nope'" "6:14: a type argument is a type name, got '*'" "the filed repro verbatim: line 5's error, then line 6's"
+order2 GZO0 "5:9: undefined variable 'nope'" "6:14: a type argument is a type name, got '*'" "the filed repro verbatim: line 5's error, then line 6's"
 GZOH='include "lib/syscalls.cyr"
 trait Show { fn show(self): i64; }
 struct G1<T> { v: T; }
@@ -1806,7 +1806,7 @@ var b = B1 { 1 };'
 # rowo <name> <initialiser of x> <second error>: line 14 `var e = nope;`, line 15 `var x = <initialiser>;`
 rowo() {
     printf '%s\nvar e = nope;\nvar x = %s;\nsyscall(60, 0);\n' "$GZOH" "$2" > "$T/$1.cyr"
-    order2 "$1" "14:13: undefined variable 'nope'" "$3" "the zone: \`var x = $2;\` is refused after line 14's error"
+    order2 "$1" "14:9: undefined variable 'nope'" "$3" "the zone: \`var x = $2;\` is refused after line 14's error"
 }
 rowo GZO1 'mkg1<1>(33)' "15:14: a type argument is a type name, got number 1"
 rowo GZO2 'mkg1<Pt<i32>>(33)' "15:14: 'Pt' is not a generic struct: it takes no type arguments"
@@ -2218,9 +2218,9 @@ printf '%s\nvar G = if (1 == 1) { mkg1(P) } else { b.mkg(P) };\nfn f(): i64 { re
 runs TI30 33 "the zone: a fn body reads \`G.v.a\` and passes G before the replay"
 printf '%s\nvar G = if (1 == 1) { mkg1(Q2) } else { mkg1(Q2) };\nfn f(): i64 { return G.v.a; }\nsyscall(60, G.v.a + f());\n' "$TIGH" > "$T/TI31zone.cyr"
 zafg TI31
-for zw in zone after; do refused "TI31$zw" "an if expression branch cannot be a struct value over 8 bytes: struct 'G1\$P2'" "the $zw: a 16 B instance branch is refused at each branch, no \`G.v\` cascade" 2; done
+for zw in zone after; do refused "TI31$zw" "an if expression branch cannot be a struct value over 8 bytes: struct 'G1<P2>'" "the $zw: a 16 B instance branch is refused at each branch, no \`G.v\` cascade" 2; done
 rowig TI32 'var G = if (1 == 1) { mkg1(P) } else { mkg1(33) };' 'G.v.a'
-for zw in zone after; do refused "TI32$zw" "if expression branches differ in type: struct 'G1' here, struct 'G1\$Pt' before it" "the $zw: another instance in a later branch is the merge's one refusal"; done
+for zw in zone after; do refused "TI32$zw" "if expression branches differ in type: struct 'G1' here, struct 'G1<Pt>' before it" "the $zw: another instance in a later branch is the merge's one refusal"; done
 rows=$((rows + 1))
 _u1=$("$CC" < "$T/TI22zone.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)
 _u2=$("$CC" < "$T/TI22after.cyr" 2>&1 >/dev/null | grep -o 'note: [0-9]* unreachable fns' || true)

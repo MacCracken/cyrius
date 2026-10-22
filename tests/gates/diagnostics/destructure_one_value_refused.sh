@@ -308,7 +308,7 @@ R3="'f' returns 3 values - return (a, b, c)"
 refused ret2_in_3  "${SEED}fn f(x): (i64, i64, i64) { ret2(x, x + 1); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = f(5); return c; }\nvar r = main(); syscall(60, r);\n" "2:28: $R3"
 refused ret2_in_3_gen 'fn f<T>(x: T): (i64, i64, i64) { ret2(x, x + 1); }\nfn main(): i64 { var a, b, c = f<i64>(5); var d, e, g = f<i32>(5); return c; }\nsyscall(60, main());\n' "1:34: $R3"
 refused ret2_in_3_next 'fn f(x): (i64, i64, i64) { ret2(x, x + 1); syscall(60, nosuch); return (1, 2, 3); }\nfn main(): i64 { var a, b, c = f(5); return c; }\nsyscall(60, main());\n' "1:28: $R3" 2
-check "ret2_in_3_next: the next statement's own error" yes "$(grep -qF "1:62: undefined variable 'nosuch'" "$T/ret2_in_3_next.err" && echo yes || echo no)"
+check "ret2_in_3_next: the next statement's own error" yes "$(grep -qF "1:56: undefined variable 'nosuch'" "$T/ret2_in_3_next.err" && echo yes || echo no)"
 refused return_ret2_in_3 "${SEED}fn f(x): (i64, i64, i64) { return ret2(x, x + 1); }\nfn main(): i64 { var x, y, w = h(); var a, b, c = f(5); return c; }\nvar r = main(); syscall(60, r);\n" "2:35: $R3"
 runs ret2_in_2    'fn f(x): (i64, i64) { ret2(x, x + 5); }\nfn main(): i64 { var a, b = f(5); return a + b; }\nsyscall(60, main());\n' 15
 runs ret2_closure_in_3 'include "lib/fnptr.cyr"\nfn f(x): (i64, i64, i64) { var cl = |y| { ret2(y, y + 1); }; var p, q = fncall1(cl, x); return (p, q, 9); }\nfn main(): i64 { var a, b, c = f(5); return a * 100 + b * 10 + c; }\nsyscall(60, main() & 255);\n' 57

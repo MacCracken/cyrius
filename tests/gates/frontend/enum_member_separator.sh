@@ -310,7 +310,7 @@ syscall(60, f());
 ' "error:<source>:2:15: $F
 error:<source>:3:12: expected identifier, got number 6
 error:<source>:1:7: expected identifier, got number 5
-error:<source>:4:24: undefined variable 'zz' (missing include or enum?)"
+error:<source>:4:22: undefined variable 'zz' (missing include or enum?)"
 refuse PT2 "trait T 5 { }" 'trait T 5 { }
 struct Q { a: Foo; }
 enum F { X 6 }
@@ -364,13 +364,13 @@ syscall(60, 1 2);
 syscall(60, zz);
 ' "error:<source>:1:12: expected identifier, got number 5
 error:<source>:2:15: expected ')', got number 2
-error:<source>:3:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:3:13: undefined variable 'zz' (missing include or enum?)"
 refuse Q3 "a struct with no {: one error, then the program's first statement" 'struct P a; }
 syscall(60, 1 2);
 syscall(60, zz);
 ' "error:<source>:1:10: expected '{', got identifier 'a'
 error:<source>:2:15: expected ')', got number 2
-error:<source>:3:15: undefined variable 'zz' (missing include or enum?)"
+error:<source>:3:13: undefined variable 'zz' (missing include or enum?)"
 refuse Q4 "a struct with no {, then a fn body's first statement" 'struct P a; }
 fn f(): i64 { var a = 1 2; return a; }
 syscall(60, f());
@@ -464,7 +464,7 @@ refuse U10 "control: Z.Q (both declared nowhere)" 'enum E { 5 }
 '"$UF"'var q = Z.Q; return q; }
 syscall(60, f());
 ' "$U5E
-error:<source>:2:44: undefined variable 'Z'"
+error:<source>:2:41: undefined variable 'Z'"
 
 # A — the separated forms compile, with the values they always had.
 accept A1 "{ A, B } (E.B)" 'enum E { A, B }
