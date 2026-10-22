@@ -226,12 +226,48 @@ syscall(60, a + zz);' "error:<source>:5:19: $ZZ"
 runs RL4 "control: every key of both files is declared" '#ref "f.toml"
 #ref "f3k.toml"
 syscall(60, ka + kb + kc + kd);' 26
+# RI — a #ref in an INCLUDED file is expanded as the entry's are (6.7.17, the user's D100, 2026-10-22). PP_REF_PASS runs
+# over the entry's raw source before any include, and PP_IFDEF_PASS (which reads every included file's lines) had no
+# #ref arm, so there the line was a comment and its keys "undefined variable 'ka'". Now PP_IFDEF_PASS expands it through
+# the entry's reader (PP_REF_LINE): its path resolves as that file's includes do (READFILE: the entry's directory), the
+# D92 tail rule names the included file's line, and the declarations sit on the #ref's own line.
+#   RI1  the repro verbatim (inc_ref.cyr: `#ref "f.toml"` + a fn returning ka) — exit 5
+#   RI2  a nested include (mid.cyr includes sub/inner.cyr, whose #ref names f3k.toml as its includes name files) — 14
+#   RI3  a tail on an included #ref line: refused at that file's line, the file still read (no "undefined 'ka'")
+#   RI4  an included #ref of three keys, then `zz` on the next line: numbered in place (3:25)
+#   RI5  control: a #ref in a skipped #ifdef arm of an included file is not read (its file does not exist) — 4
+#   RI6  control: the entry's #ref and an included one in one unit, each expanded once — 11
+#   (the finish pass, round 2, the same way) the PP_IFDEF_PASS arm removed (6.7.16)   -> RED RI1 RI2 RI3 RI6, 16
+#                                            PP_REF_EMIT a line per declaration       -> RED RI4 (+ RL1-RL3), 16
+#                                            the arm without its skipped-arm test     -> RED RI5, 4
+printf '#ref "f.toml"\nfn kk(): i64 { return ka; }\n' > "$D/ref/inc_ref.cyr"
+mkdir -p "$D/ref/sub"
+printf '#ref "f3k.toml"\nfn kn(): i64 { return kb + kd; }\n' > "$D/ref/sub/inner.cyr"
+printf 'include "sub/inner.cyr"\nfn km(): i64 { return kn(); }\n' > "$D/ref/mid.cyr"
+printf '#ref "f.toml" junk\nfn kt(): i64 { return ka + zz; }\n' > "$D/ref/inc_tail.cyr"
+printf 'var q = 1;\n#ref "f3k.toml"\nfn kz(): i64 { return zz; }\n' > "$D/ref/inc_ln.cyr"
+printf '#ifdef RI_NOPE\n#ref "nope.toml"\n#endif\nfn kq(): i64 { return 4; }\n' > "$D/ref/inc_skip.cyr"
+printf '#ref "f3k.toml"\nfn kk2(): i64 { return kb; }\n' > "$D/ref/inc_ref2.cyr"
+runs RI1 "the D100 repro verbatim: an included #ref is expanded" 'include "inc_ref.cyr"
+syscall(60, kk());' 5
+runs RI2 "a nested include's #ref, its path as its includes resolve" 'include "mid.cyr"
+syscall(60, km());' 14
+refuse RI3 "a tail on an included #ref line: refused at that file's line" 'include "inc_tail.cyr"
+syscall(60, kt());' "error:inc_tail.cyr:1:15: $RM_
+error:inc_tail.cyr:2:30: $ZZ"
+refuse RI4 "an included #ref of three keys: the next line keeps its number" 'include "inc_ln.cyr"
+syscall(60, kz());' "error:inc_ln.cyr:3:25: $ZZ"
+runs RI5 "control: a #ref in a skipped #ifdef arm of an included file is not read" 'include "inc_skip.cyr"
+syscall(60, kq());' 4
+runs RI6 "control: the entry's #ref and an included one, each once" '#ref "f.toml"
+include "inc_ref2.cyr"
+syscall(60, ka + kk2());' 11
 RDIR=
-# The corpus floor: 30 rows on four legs. A row or a leg lost reads RED, never green.
-[ "$N" -ge 120 ] || bad "floor: $N row-legs ran (floor 120) - rows or legs were lost"
+# The corpus floor: 36 rows on four legs. A row or a leg lost reads RED, never green.
+[ "$N" -ge 144 ] || bad "floor: $N row-legs ran (floor 144) - rows or legs were lost"
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: $G: $NFAIL check(s) failed"
     exit 1
 fi
-echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies, an unclosed file name said so, a #ref line likewise and numbered in place ($N row-legs on $LEGS) (6.7.17, D29, D92)"
+echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies, an unclosed file name said so, a #ref line likewise, numbered in place and expanded in an included file ($N row-legs on $LEGS) (6.7.17, D29, D92, D100)"
 exit 0
