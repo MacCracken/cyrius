@@ -251,7 +251,9 @@ syscall(60, r);
 # step, `&v`, a `.field` base) — exactly a plain dead fn's lines (NU2p; each column 13 on, the header's length); NU3 an un-inherited trait default, NU4 a bounded
 # generic method, NU5 a stub generic, all never parsed; NU6 --syntax-only: no line, rc 0; NU7 ANTI-VACUOUS: every name
 # a body declares or reaches (parameters, locals, a closure's, a loop's, a destructure's, a local const, globals,
-# consts, enum members) resolves — clean, exit 3.
+# consts, enum members) resolves — clean, exit 3. NU8 the boundary (the finish-pass review, 2026-10-22): a global
+# declared after the first top-level statement, below the generic, is in scope in the read, as in an instance a call
+# below that declaration mints (an instance minted above it, or a plain fn above it, refuses the name) — clean, exit 3.
 # MUTATIONS (2026-10-22, measured, every leg built from the mutated tree): the bite before (axis 5's read, names as
 # under --syntax-only) -> RED 25, NU1-NU5 on every leg (rc 0); `_unp_names` never set -> RED 25, the same rows.
 echo "axis 6 — an undefined name in a body pass 2 never parses is refused, as a never-called plain fn's (D110):"
@@ -305,7 +307,10 @@ fn main(): i64 { return 3; }
 var r = main();
 syscall(60, r);
 ' 3
-[ "$((NPN - NUN0))" -ge 40 ] || { echo "  FAIL: axis 6 ran $((NPN - NUN0)) row-legs (floor 40)"; fail=$((fail + 1)); }
+npok NU8 "D110's boundary: a global declared after the first statement, below the generic, is in scope" "${SH}fn gg<T: Show>(x: T): i64 { return LATE; }
+${MN}var LATE = 4;
+" 3
+[ "$((NPN - NUN0))" -ge 45 ] || { echo "  FAIL: axis 6 ran $((NPN - NUN0)) row-legs (floor 45)"; fail=$((fail + 1)); }
 
 if [ "$fail" != 0 ]; then
     echo "FAIL: dead-fn-body-syntax-checked — $fail assertion(s) failed"

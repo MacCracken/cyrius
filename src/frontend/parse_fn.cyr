@@ -1773,13 +1773,13 @@ fn _fsn_one(S, c): i64 {
 }
 # `_fn_src_name`'s spelling of the fn named `nm`: method record `mr` (0 none), type arguments `c0` / `c1` (0 none).
 fn _fsn_spell(S, nm, mr, c0, c1): i64 {
-    if (mr == 0) { if (c0 == 0) { return nm; } }
+    if (mr == 0) { if (c0 == 0) { return _fsn_dm(S, nm); } }   # 6.7.17: `B<i32>_add`
     NPOS_GUARD(S, 1024);
     var b = GNPOS(S);
     var lim = b + 960;
     var wp = b;
     if (mr != 0) {
-        wp = _fsn_put(S, wp, (mr >> 32) - 1, lim, 1);
+        wp = _fsn_tn(S, wp, (mr >> 32) - 1, lim);   # 6.7.17: an instance as written
         wp = _fsn_lit(S, wp, ".", lim);
         wp = _fsn_put(S, wp, mr & 0xFFFFFFFF, lim, 1);
     } else { wp = _fsn_put(S, wp, nm, lim, 1); }

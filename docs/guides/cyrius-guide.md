@@ -1208,12 +1208,14 @@ a = 8;` (or `a = b`) stored into `a[0]`, silently — assign an element, `a[i] =
 
 An array's name passed to a POINTER parameter is refused by name (6.7.17, the user's decision
 D109, 2026-10-22): read as a word the name is its first element, so `fn tp(p: *i64)`, `var a:
-i64[4]; a[0] = 5; tp(a)` passed 5 as the address (a SIGSEGV on every target). Into any parameter
+i64[4]; a[0] = 5; tp(a)` passed 5 as the address (a fault on every target: 139 on Linux, cxvm's guest
+fault, an access violation on Windows). Into any parameter
 declared a pointer — a fn's, a method's, a generic's `*T`, a known `&f` through `callptr` /
 `fncallN`, a fn pointer declared `*fn( .. )` — from a local, a global, a closure's capture or a
 bare `var b[N]`, it is *cannot pass array 'a' to pointer parameter 'p' of 'tp' - an array's name
-is its first element; pass &a for its address*. An untyped parameter still takes the first element
-(`take(a)`).
+is its first element; pass &a for its address*, whatever the element — an array of pointers too
+(`var ap: *i64[4]; tp(ap)`, whose element 0 is a `*i64` and ran right through 6.7.16: write
+`tp(load64(&ap))` for that element). An untyped parameter still takes the first element (`take(a)`).
 
 ## Memory
 
@@ -8273,8 +8275,9 @@ lines are judged in each instance). A base no call ever instantiates — like a 
 impl overrides — is still read once for its syntax (6.7.17; every fn body is parsed, called or not): a syntax error in
 it is refused at its token in a plain fn's words (`return 1 +;` is *unexpected ';'*), and so is a name undefined in
 every instance, one that does not depend on `T` (`return zz;` is *undefined variable 'zz'*, as in a plain fn nothing
-calls; not under `--syntax-only`, where a name is a sibling file's — the agent default D110, 2026-10-22); nothing else
-in it is judged. Through 6.7.16 such a body compiled unread.
+calls; not under `--syntax-only`, where a name is a sibling file's — the agent default D110, 2026-10-22). A global
+declared after the first top-level statement, below the generic, is in scope there, as it is in an instance a call
+below that declaration mints (a plain fn above it refuses the name); nothing else in it is judged. Through 6.7.16 such a body compiled unread.
 
 ```
 struct Pt { x; y; }
@@ -9027,8 +9030,9 @@ to answer -1 for every lock. Every other failure answers its errno through the W
 reroutes use — a closed fd -9 (`ERROR_INVALID_HANDLE`), a code with no row -1 — and a negative fd
 is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). A bad op — one that is
 not `LOCK_SH`, `LOCK_EX` or `LOCK_UN`, with or without `LOCK_NB`, the op read whole — is -22 whatever
-the fd and takes, drops or changes no lock, on every target (6.7.17's D37 / D97 / D104): each arm
-checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host. Through
+the fd and takes, drops or changes no lock, on Linux, macOS and Windows (6.7.17's D37 / D97 / D104): each
+arm checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host (a Windows
+host's cxvm routes no flock: -38 for every op; agnos's arm hands the op to its kernel). Through
 6.7.16 Linux and macOS passed the op to the kernel. Linux's flock(2) answers an op carrying
 `LOCK_MAND` (32) 0 with nothing locked, whatever the fd, and reads only the op's low 32 bits —
 0x100000002 took the exclusive lock and 0x100000008 let it go, each answering 0 (D104). Darwin's

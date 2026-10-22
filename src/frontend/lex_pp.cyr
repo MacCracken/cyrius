@@ -1243,7 +1243,7 @@ fn PP_REF_TAIL(S, base, ip, bl, rfn, rfi): i64 {
 # The offset of the first byte after a directive's file name (`ip`, just past its closing quote) that may not end its
 # line — anything but blanks, one `;`, a `#` comment, CR / LF / EOF — or `bl` when the line ends clean, or when the name
 # ran past its line (an unclosed name: its own report, PP_FNAME_UNCLOSED). One rule for an include (PP_INCLUDE_TAIL)
-# and a #ref (PP_REF_PASS, the user's D92). CHANGELOG [6.7.17]
+# and a #ref (PP_REF_TAIL, at both #ref sites: the user's D92 / D100). CHANGELOG [6.7.17]
 fn PP_FNAME_TAIL_AT(base, ip, bl, fname, fi): i64 {
     if (_pp_has_eol(fname, fi) == 1) { return bl; }
     var p = _pp_blanks(base, ip, bl);

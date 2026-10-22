@@ -4133,13 +4133,15 @@ vyds_msg() {
 # ---- 6.7.17 (D109, the user's decision, 2026-10-22: "refuse it by name - pass `&a`"): an ARRAY's name into a pointer
 # parameter — rows AP refused once, APC the controls (161) ---------------------------------------------------------------
 # An array's name read as a word is its first word (a typed array's element 0), so `fn tp(p: *i64)`, `var a: i64[4];
-# a[0] = 5; tp(a)` passed 5 as the address: SIGSEGV (139) on every target. Refused at the argument now ("cannot pass
+# a[0] = 5; tp(a)` passed 5 as the address: a fault on every target (139; cxvm's guest fault; a Windows access
+# violation). Refused at the argument now ("cannot pass
 # array 'a' to pointer parameter 'p' of 'tp' - an array's name is its first element; pass &a for its address",
 # `_arr_parg` / `_arr_iarg`). AP1 the decision's spelling, AP2 a method, AP3 a generic's `*T`, AP4 / AP5 `callptr(&tp,
 # a)` / `fncall1(&tp, a)`, AP6-AP8 a fn pointer declared `*fn(*i64): i64` (a local, a parameter, a global), AP9 the
 # second parameter (fncall2 through `*fn(i64, *i64)`), AP10 a callee defined below, AP11 a struct-element array into
 # `*Pt`, AP12 an array of vectors into `*f64v2`, AP13 a global array, AP14 a closure's capture, AP15 a bare `var b[16]`,
-# AP16 wrapped. APC1: `&a`, an untyped parameter's `take(a)` (its element 0, unchanged), a callee held in an untyped
+# AP16 wrapped, AP17 an array of pointers (`*i64[4]` into `*i64`: its element 0 is a `*i64` and through 6.7.16 ran
+# right, 7; the name is refused whatever the element — the review's reading of D109, an agent default). APC1: `&a`, an untyped parameter's `take(a)` (its element 0, unchanged), a callee held in an untyped
 # variable. Mutation (measured): the tree before -> RED AP1-AP16 (each compiled) on five legs; `_bx_pcmpe_arg` without
 # `_arr_parg` -> RED AP1-AP3 AP10-AP16 (AP4 AP5 are `_arr_iarg`'s); `_fpt_ptr_param` answering 0 -> RED AP6-AP9.
 APH='include "lib/fnptr.cyr"
@@ -4209,9 +4211,12 @@ syscall(60, r());
     AP16) printf '%s' "$APH"'fn r(): i64 { var a: i64[4]; a[0] = 5; return tp(&a) + tp(((a))); }
 syscall(60, r());
 ' ;;
+    AP17) printf '%s' "$APH"'fn r(): i64 { var x = 7; var ap: *i64[4]; store64(&ap, &x); return tp(ap); }
+syscall(60, r());
+' ;;
     esac
 }
-AP_ROWS="AP1 AP2 AP3 AP4 AP5 AP6 AP7 AP8 AP9 AP10 AP11 AP12 AP13 AP14 AP15 AP16"
+AP_ROWS="AP1 AP2 AP3 AP4 AP5 AP6 AP7 AP8 AP9 AP10 AP11 AP12 AP13 AP14 AP15 AP16 AP17"
 APT="- an array's name is its first element; pass"
 ap_msg() {
     case "$1" in
@@ -4226,6 +4231,7 @@ ap_msg() {
     AP12) echo "cannot pass array 'wa' to pointer parameter 'p' of 'rv' $APT &wa for its address";;
     AP13) echo "cannot pass array 'GA' to pointer parameter 'p' of 'tp' $APT &GA for its address";;
     AP15) echo "cannot pass array 'b' to pointer parameter 'p' of 'tp' $APT &b for its address";;
+    AP17) echo "cannot pass array 'ap' to pointer parameter 'p' of 'tp' $APT &ap for its address";;
     esac
 }
 apc_src() {  # $1 row id -> source on stdout; exits 161 when right

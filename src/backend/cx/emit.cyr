@@ -69,7 +69,7 @@ fn _cx_code_overflow(S, cp): i64 {
     _ew(" B emitted when ", 16);
     if (_cur_fn_ix >= 0) {
         _ew("fn '", 4);
-        PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
+        PRSTR(S + 0xEC00000 + _cur_fn_src(S));   # 6.7.17: as the source spells it (`B<i32>.m`, `g<i32>`)
         _ew("' (its code starts at byte ", 27);
         PRNUM(L64(_fnt_offsets + _cur_fn_ix * 8));
         _ew(")", 1);
@@ -819,7 +819,7 @@ fn _cx_far_branch_refuse(S): i64 {
     _ew("error: a conditional branch spans more than 128 KiB of cx bytecode in ", 70);
     if (_cur_fn_ix >= 0) {
         _ew("fn '", 4);
-        PRSTR(S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8));
+        PRSTR(S + 0xEC00000 + _cur_fn_src(S));   # 6.7.17: as the source spells it (`B<i32>.m`, `g<i32>`)
         _ew("'\n", 2);
     } else {
         _ew("top-level code\n", 15);
