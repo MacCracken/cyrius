@@ -189,6 +189,12 @@
 #      function 'main'" with the later fn bodies never parsed — and `<T: Show<i64> >` added "expected '{', got '>'".
 #      DS1 / DS2 D5's line and the next fn's own error, both spellings; DS3 (control) bounded structs, then a bounded
 #      generic below them (exit 4). Mutant (2026-10-22): the compiler before (e65604d5d) -> RED DS1 DS2.
+#   DL (6.7.17, met in genb GB1) A BOUND'S REFUSAL PUTS THE PANIC LATCH BACK (`_bnd_make`): pass 1 has no statement
+#      resync, so `fn c<U: Nope2>`'s "unknown trait" held the latch to the end of the scan and swallowed every later
+#      generic's bound refusal and every later struct's field error. DL1 a fn's, a struct's and a fn's unknown bound,
+#      in source order; DL2 a struct's field error and a fn body's error after one; DL3 a malformed bound `<U: 5>` and
+#      a bound with arguments `<U: Show<i64> >`, each with the next struct's error; DL4 two impl methods' (pass 2).
+#      Mutant (2026-10-22): the compiler before (e65604d5d) -> RED DL1-DL4 (the first line alone, DL2 its pass-2 line too).
 #
 # Mutations (scratch trees, each RED here — run 2026-10-07): `_capture_tparams` not reading a bound
 #   (every identifier a type parameter again) -> D1 builds, D2-D4 refused only by the cascade;
@@ -901,6 +907,22 @@ errs ds2 2 "DS2: struct B<T: Show<i64> > — no \"expected '{', got '>'\"" \
     "error:<source>:2:13: a trait in a bound takes no type arguments: 'Show'" "error:<source>:3:28: expected ';', got number 2"
 printf 'trait Show { fn show(self): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nstruct B<T: Show> { a: T; }\nstruct C<T, U: Show> { a: T; b: U; }\nfn g<T: Show>(v: T): i64 { return v.show(); }\nfn main(): i64 { var c: C<i8, i64>; c.b = 3; return c.b + g(1); }\nsyscall(60, main());\n' > "$T/ds3.cyr"
 exits ds3 4 "DS3: bounded structs, then a bounded generic below them"
+
+# DL — 6.7.17: a bound's refusal puts the panic latch back (`_bnd_make`)
+UTB="in the bound on type parameter"
+printf 'fn a<U: Nope>(u: U): i64 { return 1; }\nstruct B<T: Zork> { a; }\nfn c<U: Nope2>(u: U): i64 { return 1; }\nsyscall(60, 3);\n' > "$T/dl1.cyr"
+errs dl1 3 "DL1: three unknown bounds, a fn's, a struct's and a fn's — each its line (it was the first alone)" \
+    "error:<source>:1:9: unknown trait 'Nope' $UTB 'U'" "error:<source>:2:13: unknown trait 'Zork' $UTB 'T'" \
+    "error:<source>:3:9: unknown trait 'Nope2' $UTB 'U'"
+printf 'fn c<U: Nope2>(u: U): i64 { return 1; }\nstruct Q { a: Foo; }\nfn main(): i64 { var x = 1 2; return 0; }\nsyscall(60, 3);\n' > "$T/dl2.cyr"
+errs dl2 3 "DL2: a struct's field error and a fn body's after it" "error:<source>:1:9: unknown trait 'Nope2' $UTB 'U'" \
+    "error:<source>:2:15: unknown type 'Foo' for struct field 'a'" "error:<source>:3:28: expected ';', got number 2"
+printf 'trait Show { fn show(self): i64; }\nfn c<U: 5>(u: U): i64 { return 1; }\nstruct Q { a: Foo; }\nfn d<U: Show<i64> >(u: U): i64 { return 1; }\nstruct R { b: Bar; }\nsyscall(60, 3);\n' > "$T/dl3.cyr"
+errs dl3 4 "DL3: a malformed bound and a bound with arguments, each with the next struct's error" \
+    "error:<source>:2:9: expected a trait name in a type parameter's bound" "error:<source>:3:15: unknown type 'Foo' for struct field 'a'" \
+    "error:<source>:4:9: a trait in a bound takes no type arguments: 'Show'" "error:<source>:5:15: unknown type 'Bar' for struct field 'b'"
+printf 'struct M { x; }\nimpl M { fn m<V: Nope4>(self, v: V): i64 { return 1; } fn n<V: Nope5>(self, v: V): i64 { return 1; } }\nsyscall(60, 3);\n' > "$T/dl4.cyr"
+errs dl4 2 "DL4: two impl methods' unknown bounds" "error:<source>:2:18: unknown trait 'Nope4' $UTB 'V'" "error:<source>:2:64: unknown trait 'Nope5' $UTB 'V'"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); well-formed bounded code runs (C)"

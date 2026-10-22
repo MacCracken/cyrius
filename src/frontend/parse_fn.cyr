@@ -10513,7 +10513,18 @@ fn _bnd_errm_at(S, ti, msg, len): i64 {
 # The bound block for the list `_capture_tparams` just read (`tp` its packed names), or 0 when it has
 # no bound. Each trait name is resolved here, once per definition: an undeclared one is refused.
 # Block: [0] count0, [1..8] trait indices; [9] count1, [10..17].
+# ⛔ 6.7.17 — each refusal here puts the panic latch back (as `_ctp_third`'s): it held through pass 1, which nothing
+# resyncs, so `fn c<U: Nope2>` swallowed the next generic's bound refusal and every later struct's field error.
+# A refused inner trait's stand-down keeps the latch it sets. CHANGELOG [6.7.17]
+var _bnd_sd = 0;   # `_bnd_make_r` stood down for a refused inner trait (its latch kept)
 fn _bnd_make(S, tp): i64 {
+    var p0 = _panic;
+    var blk = _bnd_make_r(S, tp);
+    if (p0 == 0) { if (_bnd_sd == 0) { _panic = 0; } }
+    _bnd_sd = 0;
+    return blk;
+}
+fn _bnd_make_r(S, tp): i64 {
     if (_ctp_bad != 0) {
         var bt = _ctp_bad - 1;
         _ctp_bad = 0;
@@ -10535,7 +10546,7 @@ fn _bnd_make(S, tp): i64 {
             var tx = 0 - 1;
             if (_tr_tab != 0) { tx = _tr_find(S, bn); }
             if (tx < 0) {
-                if (_dl_refd_at(S, bn) == 1) { _panic = 1; }   # 6.7.16: a refused (inner) trait's — its one error stands
+                if (_dl_refd_at(S, bn) == 1) { _panic = 1; _bnd_sd = 1; }   # 6.7.16: a refused (inner) trait's — its one error stands
                 else { _bnd_err_at(S, L64(_ctp_buf + (slot * 8 + k) * 16 + 8), "unknown trait ", bn, " in the bound on type parameter ", tpn); }
             } else {
                 S64(blk + (slot * 9 + 1 + c) * 8, tx);
