@@ -8267,8 +8267,9 @@ lines are judged in each instance). A base no call ever instantiates — like a 
 impl overrides — is still read once for its syntax (6.7.17; every fn body is parsed, called or not): a syntax error in
 it is refused at its token in a plain fn's words (`return 1 +;` is *unexpected ';'*), and so is a name undefined in
 every instance, one that does not depend on `T` (`return zz;` is *undefined variable 'zz'*, as in a plain fn nothing
-calls; not under `--syntax-only`, where a name is a sibling file's — the agent default D110, 2026-10-22); nothing else
-in it is judged. Through 6.7.16 such a body compiled unread.
+calls; not under `--syntax-only`, where a name is a sibling file's — the agent default D110, 2026-10-22). A global
+declared after the first top-level statement, below the generic, is in scope there, as it is in an instance a call
+below that declaration mints (a plain fn above it refuses the name); nothing else in it is judged. Through 6.7.16 such a body compiled unread.
 
 ```
 struct Pt { x; y; }
