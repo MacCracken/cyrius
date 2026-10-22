@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — where a fn-pointer type may stand beyond a parameter is undecided; each option changes what
 compiles.
-**Placement:** 6.7.17 — the cleanup of the remaining issues (genb lane, wave 1, unit GB2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (genc lane, wave 1, unit GB2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D8 — Accept it as a one-word pointer.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D9 — Refuse it with the fn's words.
 **Discovered:** the f16 lane — unit FG2 (the trait member's multi-value element; f16's FP7 / FP9 rows), unit FG3 (a

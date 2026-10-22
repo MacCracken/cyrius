@@ -4,7 +4,7 @@
 `warning: large static data (142016 bytes) — consider alloc() for buffers >4KB`; the installed 6.7.9 compiler on
 6.7.9's own sources (`git archive 6.7.9 src lib`) prints the same advisory at 141,760 B. The output is
 byte-identical to `build/cycc`; only stderr carries the noise.
-**Placement:** 6.7.17 — the cleanup of the remaining issues (plat lane, wave 1, unit PL2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (plst lane, wave 1, unit PL2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Discovered:** 2026-10-13, the 6.7.10 ops lane.
 **Severity:** Low — no wrong value; one warning on every self-compile (the bootstrap chain, the fixpoint, the release
 gate, every lane's rebuild), the noise that trains readers to skip the stderr real warnings land on.

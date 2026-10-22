@@ -97,13 +97,13 @@ moves the audit and the refactor review to 6.7.18 (the roadmap's own order: afte
 
 - **Wave 0, on main:** the fold wave (bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9; cyrius's callers on bayan's typed
   lookups) and the keep-everything bite of the 6.7.16 beyond-decisions list (D39–D90).
-- **Wave 1, nine lanes in parallel:** gena (the tail call's by-value copy, a rebound type-parameter name D1, a struct
-  field / method argument binding T D2), genb (parameter and type-argument lists D3–D7, fn-pointer types D8–D9), vala
-  (struct and pointer shapes D10–D17), valb (`Str` shapes D18–D22), valc (a vector value in a word position D23–D25,
-  the `: stack` pair through callptr D26), vald (a suspending async fn's narrow parameter D27), fea (directive-line
-  tails D28–D31, value builtins as statements D32, an inner declaration pass 2 never parses D33), plat
-  (CYRIUS-2026-0037's key_share scan, the self-compile static advisory, PE rename / xflock D35–D37), tool (the helper
-  scripts converted to cyrius D38).
+- **Wave 1, thirteen lanes in parallel** (each independent unit its own lane): gena (the tail call's by-value copy),
+  genr (a rebound type-parameter name D1, a struct field / method argument binding T D2), genb (parameter and
+  type-argument lists D3–D7), genc (fn-pointer types D8–D9), vala (struct and pointer shapes D10–D17), valb (`Str`
+  shapes D18–D22), valc (a vector value in a word position D23–D25, the `: stack` pair through callptr D26), vald (a
+  suspending async fn's narrow parameter D27), fea (directive-line tails D28–D31, value builtins as statements D32), feg
+  (an inner declaration pass 2 never parses D33), plat (CYRIUS-2026-0037's key_share scan, PE rename / xflock
+  D35–D37), plst (the self-compile static advisory), tool (the helper scripts converted to cyrius D38).
 - **Wave 2:** feb (a statement missing its `;`), fec (refused-source cascades), fed (diagnostics: instance names, the
   caret on the name D34, columns past an in-line expansion).
 - **Wave 3:** zr (the zone replay's error order — every diagnostic in source order).
