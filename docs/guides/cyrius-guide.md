@@ -3190,7 +3190,8 @@ sizeof(T)` (6.7.16); a store into a struct element is refused (below).
 type 'Nope' as the target of pointer 's'*), and so is one behind any number of `*` (6.7.17, the user's D93,
 2026-10-22): `[**i64]`, `[***i64]`, `slice<**i64>`, `[**fn(i64): i64]`, `[**Box<i64>]` each declare the same 8-byte
 element, refused as the one-star element is. Through 6.7.16 the second `*` was read as `T` — *expected ']', got '*'*
-(`slice<**T>`: *expected '=', got '*'*).
+(`slice<**T>`: *expected '=', got '*'*). A pointer to a tuple, `[*(i64, i64)]`, is *a tuple type cannot be a pointer
+target `*( .. )`*, as `var p: *(i64, i64)` is (6.7.17; it was *expected ']', got '('*).
 
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds

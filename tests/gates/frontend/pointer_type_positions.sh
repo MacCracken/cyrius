@@ -18,7 +18,8 @@
 #       `cyrius lint` runs): rc 0, silent
 #   PG  a refusal behind two `*` is the one-star element's one line: an unknown name (PG1, PG2), a fn-pointer type's
 #       unknown name (PG3), a pointer to a slice (PG4), a generic struct's unknown argument (PG5); PG6 a control (a
-#       declaration-zone global's slice: the zone's line, as before)
+#       declaration-zone global's slice: the zone's line, as before); PG7 PG8 (met landing D93) a pointer to a tuple is
+#       R3's line, as `var p: *(i64, i64)`'s is — `[*(i64, i64)]` was "expected ']', got '('" through 6.7.16
 #   Z   the repro verbatim (`syscall(60, sizeof(*i64));`: exit 8), `sizeof(*fn(i64): i64)`, `sizeof(**fn)`, a const,
 #       an `#assert`: no error, no warning, the value on x86_64, aarch64 (qemu), cx (cxvm) and PE (wine); ZL each under
 #       --syntax-only: rc 0, silent
@@ -47,6 +48,7 @@
 #   MZ1 `_ce_sizeof` not passing a `*` on               -> RED 20: Z4 Z5 on every leg and Z4L Z5L (a const, an array
 #                                                         size, an #assert: "expected ')', got '*'"), ZG2 ZG3 ZG7 ZG8,
 #                                                         T sizeof_pointer_type on every leg
+#   MG0 the tree before the PG7 fix (720b4aee8)       -> RED 2: PG7 PG8 ("expected ']', got '('" / "expected '=', got '('")
 #   MM0 the tree before the ZM fix (9314c587e)         -> RED 12: ZM1-ZM3 on every leg (the message in the output)
 #   MM1 the look-back kept at 12 tokens                 -> RED 4: ZM2 on every leg (a 15-token operand)
 set -u
@@ -173,6 +175,8 @@ refused PG4 "1:28: a pointer to a slice is not a type (6.7.8: slices are fn-loca
     "PG4 [**[u8]]" "${F}var s: [**[u8]] = 0;${E}"
 refused PG5 "2:32: $NT as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type parameter in scope)" \
     "PG5 [**Box<Nope>]" "struct Box<T> { v: T; }\n${F}var s: [**Box<Nope>] = 0;${E}"
+refused PG7 "1:27: a tuple type cannot be a pointer target \`*( .. )\`" "PG7 [*( .. )]: R3's line, as \`var p: *(i64, i64)\`'s" "${F}var s: [*(i64, i64)] = 0;${E}"
+refused PG8 "1:33: a tuple type cannot be a pointer target \`*( .. )\`" "PG8 slice<**( .. )>" "${F}var s: slice<**(i64, f64)> = 0;${E}"
 refused PG6 "1:8: a slice cannot be declared in the declaration zone (6.7.8: slices are fn-locals) - declare it in a fn; a top-level slice after the first statement is used through slice_ptr / slice_len" \
     "PG6 control: a declaration-zone [**i64] is the zone's line, once" 'var G: [**i64] = 0;\nsyscall(60, 3);\n'
 
