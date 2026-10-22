@@ -21,10 +21,14 @@
 # Measured while building this: without the chain walk, `return o.inner.size;` came
 # back `expected ';', got '.'`; without the `;` consumption, `e.size = 7;` came back
 # `unexpected ';'`. Both were gate axis 6 failures, both were pure fiction.
+# 6.7.17 (met in the feg review fixes): a `.` the next `.` follows is a range's `..`, not a field — `for y in a.n..10`
+# took it as a field's and said "expected identifier, got '.'", and the loop read as one over a vector (lint refused the
+# file; a known struct's path stops there). CHANGELOG [6.7.17]
 fn _synonly_skip_chain(S): i64 {
     var sgo = 1;
     while (sgo == 1) {
         if (PEEKT(S) != 41) { sgo = 0; }
+        elif (TOKTYP(S, GTI(S) + 1) == 41) { sgo = 0; }
         else {
             STI(S, GTI(S) + 1);                                  # consume '.'
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); sgo = 0; }
