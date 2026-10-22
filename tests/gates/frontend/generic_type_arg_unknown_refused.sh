@@ -222,9 +222,11 @@
 #      uc3 (CF1 / UG0 read the issue archive, which the scratch copies left out: not counted).
 #   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
 #      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
-#      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
-#      (exit 10; its descriptor read as "struct 2093"), and the struct call of every H/I shape
-#      (exit 12 / 14)
+#      stub generic nobody calls with a scalar (exit 3), and the struct call of every H/I shape
+#      (exit 12 / 14). A vector local as an inferred argument (its descriptor once read as "struct 2093") built and
+#      ran (exit 10) through 6.7.16; since 6.7.17's D24 (the user: a vector value that is no call follows the call, which
+#      6.7.16's D101 refuses into a word parameter) it is refused by name, inferred or `tw<i64>(a)` alike, and never
+#      as a struct.
 #
 # Mutations: drop the `_tp_resolve` consult in _type_arg_leaf -> C, D RED (refused as unknown
 # `T`). Drop the refusal -> A, B, F, G RED (rc 0). Drop the `_is_enum_name` arm -> F RED
@@ -438,15 +440,13 @@ exits m1 1 "M: a 20,000,001-deep scalar generic tail recursion"
 printf '%s\n%s\nfn main(): i64 { return 3; }\nsyscall(60, main());\n' "$PT" "$GL" > "$T/m2.cyr"
 exits m2 3 "M: a stub generic nobody calls with a scalar"
 printf 'include "lib/simd.cyr"\nfn tw<T>(v: T): i64 { return 5; }\nfn tl<T>(v: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + 1; i = i + 1; } return s + 3; }\nfn main(): i64 { var a: f64v2; return tw(a) + tl(a); }\nsyscall(60, main());\n' > "$T/m3.cyr"
-exits m3 10 "M: a vector local as an inferred argument"
-# ...and it is the BASE call: byte-identical to the explicit `<i64>` spelling. Read as "struct
-# 2093" the inference minted an instance named from out-of-table memory — invisible in the exit
-# code, visible here as a different binary.
+build_refused_by m3 "4:42: a vector value cannot be passed to an integer parameter - 'a' is a vector, passed to parameter 'v' of 'tw'" "M: a vector local as an inferred argument (6.7.17's D24)"
+# ...and the explicit `<i64>` spelling alike. Read as "struct 2093" the inference once minted an instance named from
+# out-of-table memory: no refusal may name a struct.
 sed 's/tw(a) + tl(a)/tw<i64>(a) + tl<i64>(a)/' "$T/m3.cyr" > "$T/m3x.cyr"
-build m3x
-if [ "$rc" -ne 0 ]; then bad "M: the explicit vector control: rc $rc"
-elif cmp -s "$T/m3.bin" "$T/m3x.bin"; then ok "M: a vector argument infers the base, byte-identical to tw<i64>(a)"
-else bad "M: a vector argument minted an instance (differs from tw<i64>(a))"; fi
+build_refused_by m3x "4:47: a vector value cannot be passed to an integer parameter - 'a' is a vector, passed to parameter 'v' of 'tw'" "M: the explicit tw<i64>(a) (6.7.17's D24)"
+if grep -q 'struct [0-9]' "$T/m3.err" "$T/m3x.err"; then bad "M: a vector argument's refusal names a struct id"
+else ok "M: a vector argument's refusal names no struct id"; fi
 printf '%s\n%s\nfn tail(a): i64 { var p: Pt; p.x = a; p.y = 5; return g(p); }\nfn main(): i64 { %s var r = g(p); return r * 0 + tail(2); }\nsyscall(60, main());\n' "$PT" "$GL" "$MKP" > "$T/m4.cyr"
 exits m4 12 "M: the struct call of the H shapes (var r = g(p); return g(p))"
 printf '%s\n%s\nfn main(): i64 { %s return outer(p); }\n%s\nsyscall(60, main());\n' "$PT" "$OI" "$MKP" "$GL" > "$T/m5.cyr"
