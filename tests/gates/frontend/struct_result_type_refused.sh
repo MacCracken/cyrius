@@ -150,6 +150,14 @@
 #   MDS6 `_gs_recv_call` without its generic method arm -> RED 1: TG25
 #   (MDP3 re-measured: GREEN — TA13's `gdo` is a stub now, its base not parsed; `_dsr_tdep` is the base parse's guard
 #   for a T-typed store the scan would read no struct from, and no row reaches it)
+# 6.7.17 (D13, the user's decision, 2026-10-22; issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md
+# row B1) — THE SAME STORE THROUGH AN UNTYPED POINTER is refused in D99's words without the type, "cannot assign '*p'
+# from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_untyped`, parse.cyr): UP0
+# the filed repro verbatim (exit 77 through 6.7.16: Q's first word), UP1-UP13 (`alloc`, `*(p + 8)`, an untyped global,
+# top level, a method, an operator, wrapped, `fncall0(&mkp)`, 24 B, a for step, an untyped parameter, a capture, a
+# generic), UPK1-UPK5 (a field of the result, 8 B, a `Str`, `*(&q)`, a word); UPX UP0 / UP5 on aarch64 / cx / PE.
+# (A scratch copy of the tree with the one change, its cycc built from it, this gate run from the copy; 2026-10-22:)
+#   MUP1 `_dsr_untyped` answering 0 (the tree before)   -> RED 20: UP0-UP13 (compiled), UPX x6
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1499,6 +1507,42 @@ fn main(): i64 { return gds<i32>(5); }'"$TE" one
 accept "TA15c p[0] = 7; (p: *T) at i64 is no stub" "$TH"'fn gdk<T>(x: T): i64 { var p: *T = &x; p[0] = 7; return x + 7; }
 fn main(): i64 { return gdk(5); }'"$TE" 14 'syscall(60, 14);'
 
+echo "=== 6.7.17 (D13): a struct result over 8 B stored through an UNTYPED pointer is refused, in D99's words without the type ==="
+# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B1 — `*p = mkp();` with `var p = &x;`
+# stored Q's first word (77), silently. UP0 the filed repro verbatim; UP1-UP13 every untyped operand and struct result;
+# UPK1-UPK5 a field of the result, an 8 B result, a `Str`, a `*Q` of its own struct, `*(&q)` keep their store.
+UPM="cannot assign '\*p' from 'mkp', which returns the struct 'Q' - store it through a '\*Q' or bind a field"
+UP0S='struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn main(): i64 { var x = 0; var p = &x; *p = mkp(); return x; }
+syscall(60, main());
+'
+refuse_at "UP0 the filed repro B1 verbatim (its one error, at the call)" "3:46: $(printf '%s' "$UPM" | tr -d '\\')" "$UP0S"
+refuse "UP1 p = alloc(16)" "$UPM" "$DQ"'fn main(): i64 { var p = alloc(16); *p = mkp(); return load64(p); }'"$TE" one
+refuse "UP2 *(p + 8) of an untyped p" "cannot assign '\*(p + 8)' from 'mkp'" "$DQ"'fn main(): i64 { var p = alloc(16); *(p + 8) = mkp(); return 0; }'"$TE" one
+refuse "UP3 an untyped global" "cannot assign '\*GU' from 'mkp'" "$DQ"'var GU = 0;
+fn main(): i64 { GU = &GX; *GU = mkp(); return GX; }'"$TE" one
+refuse "UP4 after the first top-level statement" "cannot assign '\*GU' from 'mkp'" "$DQ"'var GU = &GX;
+syscall(1, 1, "", 0);
+*GU = mkp();
+fn main(): i64 { return GX; }'"$TE" one
+refuse "UP5 a method's result" "cannot assign '\*p' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p = &x; *p = q.dup(); return x; }'"$TE" one
+refuse "UP6 an operator's result" "cannot assign '\*p' from 'Q_add'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p = &x; *p = q + q; return x; }'"$TE" one
+refuse "UP7 ((mkp())), wrapped" "$UPM" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = ((mkp())); return x; }'"$TE" one
+refuse "UP8 fncall0(&mkp)" "$UPM" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = fncall0(&mkp); return x; }'"$TE" one
+refuse "UP9 mk3(), 24 B" "cannot assign '\*p' from 'mk3', which returns the struct 'Q3' - store it through a '\*Q3'" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = mk3(); return x; }'"$TE" one
+refuse "UP10 a for step" "$UPM" "$DQ"'fn main(): i64 { var x = 5; var p = &x; for (var i = 0; i < 1; *p = mkp()) { i = i + 1; } return x; }'"$TE" one
+refuse "UP11 an untyped parameter" "$UPM" "$DQ"'fn f(p): i64 { *p = mkp(); return 0; }
+fn main(): i64 { var x = 5; return f(&x); }'"$TE" one
+refuse "UP12 a closure's captured untyped pointer" "$UPM" "$DQ"'fn main(): i64 { var x = 5; var p = &x; var f = || { *p = mkp(); return 0; }; fncall0(f); return x; }'"$TE" one
+refuse "UP13 an untyped pointer in a generic" "$UPM" "$DQ"'fn gu<T>(p, v: T): i64 { *p = mkp(); return 0; }
+fn main(): i64 { var x = 5; return gu(&x, 1); }'"$TE" one
+accept "UPK1 *p = mkp().a, a field of the result" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = mkp().a; return x - 300; }'"$TE" 33 'syscall(60, 33);'
+accept "UPK2 an 8 B result keeps its word" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = mk8(); return x; }'"$TE" 9 'syscall(60, 9);'
+accept "UPK3 a Str result keeps its handle" "$DQ"'fn main(): i64 { alloc_init(); var x = 0; var p = &x; *p = mks(); var s: Str = x; return s.len(); }'"$TE" 3 'syscall(60, 3);'
+accept "UPK4 *(&q) of a Q is q = mkp()" "$DQ"'fn main(): i64 { var q: Q; *(&q) = mkp(); return q.b - 400; }'"$TE" 44 'syscall(60, 44);'
+accept "UPK5 an untyped store of a word keeps it" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = 7; return x; }'"$TE" 7 'syscall(60, 7);'
+
 # TV (6.7.16, the user's D102, 2026-10-20; issues/archived/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
 # so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
@@ -1709,6 +1753,8 @@ cross_rows() {  # $1 the leg's name
     refuse "DSX [$1] DS3" "cannot assign 'gpi()\[0\]: i64' from 'mkp'" "$DQ"'fn main(): i64 { gpi()[0] = mkp(); return GX; }'"$TE" one
     refuse "DSX [$1] TA15" "generic 'gds' has no i64 (or other scalar) instance" "$TH"'fn gds<T>(x: T): i64 { var p: *T = &x; p[0] = mkp(); return 9; }
 fn main(): i64 { return gds(5); }'"$TE" one
+    refuse_at "UPX [$1] UP0" "3:46: $(printf '%s' "$UPM" | tr -d '\\')" "$UP0S"
+    refuse "UPX [$1] UP5" "cannot assign '\*p' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p = &x; *p = q.dup(); return x; }'"$TE" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1723,10 +1769,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 468 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 468"; exit 1
+if [ $((nrefuse + naccept)) -lt 493 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 493"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

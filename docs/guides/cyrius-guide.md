@@ -1987,7 +1987,11 @@ through a '\*P2' or bind a field* (through 6.7.15 it stored the struct's first w
 store `p[i] = mkp();` through the same pointers (`w.pi[0] = ..`, `gi()[0] = ..`, a `*i64` global, at top level too:
 *cannot assign 'p[0]: i64' …*), and a generic's `p[0] = mkp();` with `p: *T` has no scalar instance (D1); `*(&x) = mkp();` is `x =
 mkp();`, judged as that assignment; 8 bytes or less and a `Str` keep their word, a field of the result (`*p =
-mkp().a`) stores it, and through a `*P2` of the result's own struct the store copies (6.7.11). A global declaration is judged the same (6.7.14; the user's decision D28,
+mkp().a`) stores it, and through a `*P2` of the result's own struct the store copies (6.7.11). Through an UNTYPED
+pointer too (6.7.17; the user's decision D13, 2026-10-22): `*p = mkp();` with `var p = &x;` — `alloc(..)`, `*(p + 8)`,
+an untyped parameter, global or capture, at top level, in a `for` step, every result above — is *cannot assign '\*p'
+from 'mkp', which returns the struct 'P2' - store it through a '\*P2' or bind a field* (D99's words without the type;
+through 6.7.16 it stored the struct's first word, silently). A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was

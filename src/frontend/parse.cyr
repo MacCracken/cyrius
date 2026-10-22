@@ -5261,9 +5261,15 @@ fn _dsr_rec(S, ti): i64 {
 # The store through the pointer [a, e) (`from` the destination's first token, for `_dsr_tdep`), spelled [na, ne), of
 # `_dsr_rec`'s result: refused when the pointer reaches no struct of its own (a scalar, a pointer slot of another
 # struct). 1 = refused.
+# ⛔ 6.7.17 (D13, the user's decision, 2026-10-22) — AND THROUGH AN UNTYPED POINTER: `*p = mkp();` with `var p = &x;`
+# (or `alloc(..)`, `p + 8`, an untyped global, at top level, a for step) stored Q's first word (77), silently, where
+# D33 refuses `x = mkp()` into an untyped x and D99 the typed pointer. An operand no typed-pointer reader types
+# (`_hl_pw` 0) and whose pointee is no struct (`_hl_dpsid`: `_dst_struct`'s) is refused in D99's words without the
+# type: "cannot assign '*p' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field".
+# `*p = mkp().a` and a result of 8 B or less are no `_dsr_rec`. CHANGELOG [6.7.17]
 fn _dsr_judge(S, a, e, from, na, ne): i64 {
     var w = _hl_pw(S, a, e);
-    if (w <= 0) { return 0; }
+    if (w <= 0) { return _dsr_untyped(S, a, e, from, na, ne); }
     if (_ps_pinned(w) == 1) {
         if (_pp_sid(S, _ps_pin(w)) == _dsr_sid) { return 0; }   # a `*Q` slot of Q itself: B7-1c's copy, not this rule
     } else {
@@ -5272,6 +5278,13 @@ fn _dsr_judge(S, a, e, from, na, ne): i64 {
     }
     if (_dsr_tdep(S, a, e, from) == 1) { return 0; }
     return _dsr_err(S, na, ne, w, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# `_dsr_judge`'s untyped operand [a, e): refused unless its pointee is a struct or, in a generic's base parse, it may be
+# typed by the type parameter (`_dsr_tdep`). 1 = refused. CHANGELOG [6.7.17]
+fn _dsr_untyped(S, a, e, from, na, ne): i64 {
+    if (_hl_dpsid(S, a, e) > 0) { return 0; }
+    if (_dsr_tdep(S, a, e, from) == 1) { return 0; }
+    return _dsr_err(S, na, ne, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
 }
 # The whole free call (`f(..)` / `g<..>(..)`, not dotted) the value at token ti is, inside any parentheses that wrap
 # all of it up to the cursor: its name token, else -1.
