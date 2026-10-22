@@ -48,8 +48,8 @@
 #      `255 -1 -32768 -32768` (`511 8589934591 32768 -32768` before) on x86_64, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1, aarch64 (qemu), cx (cxvm) and PE (wine); T2 carries its shapes. R7a (x86_64, CYRIUS_ASYNC=1):
 #      a non-suspending `async fn`'s `y: u8` given 0x1FF is 255 too (511 before; exit 1, 2 = not 255) — a suspending
-#      one's parameters live in the coroutine frame, where a narrow slot is refused by name, and keep the word (the
-#      user's call)
+#      one's is narrowed too since 6.7.17 (D27, 2026-10-22; coroutine_midbody_suspend.sh axis 12 pins it: the filed
+#      repro prints -32768 255 255 -32768)
 #   T  tests/tcyr/crossos/address_of_pointer_param.tcyr on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3,
 #      CYRIUS_DCE=1), aarch64 (qemu), cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived
 #      from the file (one row per `assert_eq(` call); the release gate's cross-OS leg runs it on ecb / ach
