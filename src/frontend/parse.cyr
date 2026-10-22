@@ -4211,32 +4211,59 @@ fn _stmt_intr_at(S, noff, nt): i64 {
     if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
     STI(S, nt);   # the name
     _refuse_in_sync(S);
-    if (_tn_seen_at(S, nt) == 0) { _stmt_intr_say(S, noff); }
+    if (_tn_seen_at(S, nt) == 0) { _stmt_val_say(S, "_stmt_intrinsic", noff, S + 0xEC00000 + noff); }
     PCMPE(S);
     _expect_step(S, 5);
     return 1;
 }
 
-# ⛔ 6.7.16 — `mulh64(2, 3).n = 5;` / `sizeof(H).n;`: a `.` after the intrinsic's `)` is no D11 shape, and the call
-# statement's field arm (`_stmt_call_field`) took it as a call to a fn that cannot exist: "expected ';', got '.'" and
-# then "undefined function 'mulh64'" twice and "refusing to emit binary" (`sizeof(H)` also read H as a variable). The
-# statement is parsed as the value position parses it (`var x = mulh64(2, 3).n;`): the factor lowers the intrinsic by
-# name and stops at the `.`, one "expected ';', got '.'". Not marked in sync: the statement is left mid-way, so the
-# resync steps to its `;`. Cursor on the `(`; 1. CHANGELOG [6.7.16]
-# D11's words for the statement at the cursor (the name `noff`): once, latched.
-fn _stmt_intr_say(S, noff): i64 {
-    var tg = "_stmt_intrinsic";
-    if (_err_once(S, (tg * 31 + noff) * 8 + 7) == 0) { return 0; }
+# ⛔ 6.7.17 — A VALUE BUILTIN AS A WHOLE STATEMENT IS REFUSED IN D11'S WORDS (the user's D32, 2026-10-22): `load8(p);`,
+# `load64(p);`, `f32_to(x);`, `f64_sqrt(x);`, `f64_add(a, b);`, `bitget(v, 0, 4);`, `rethi();`, `f64v_dot(a, b, n);`
+# (IS_VALUE_BUILTIN, util.cyr). Like mulh64 (6.7.16's D11) each is lowered inline and has no fn to call, so its value
+# is discarded: "the value of 'load8(..)' is discarded - a statement is an assignment or a call", once at the name, no
+# binary; the value is then parsed under the latch and the statement ends at its `;` in sync, so the next statement is
+# parsed. Through 6.7.16 `load8` and the f64 / bit / dot builtins compiled with the value dropped (PARSE_STMT's builtin
+# bands) while `load16` `load32` `load64` `f32_from` `f32_to` were "unexpected load16". A builtin that stores through a
+# destination (`store8`, `f64v_add(dst, ..)`), returns (`ret2`) or calls (`syscall`, `callptr`) stays a statement. As
+# for mulh64: a type-argument list is the one error at the name (6.7.16's `_ngt_callee_lt`), and with no `(` or a `.`
+# after the call's `)` the statement is parsed as the value position parses it (`_stmt_intrinsic_dot`). Cursor on the
+# builtin token `typ`; 1 = consumed. CHANGELOG [6.7.17]
+fn _stmt_value_builtin(S, typ): i64 {
+    if (IS_VALUE_BUILTIN(typ) == 0) { return 0; }
+    var nt = GTI(S);
+    STI(S, nt + 1);
+    _ngt_callee_lt(S);   # `load8<i64>(p);`: the list refused at the name and stepped
+    if (PEEKT(S) != 10) { return _stmt_intrinsic_dot(S, nt); }
+    var c = _call_close(S, GTI(S)) + 1;
+    if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
+    STI(S, nt);   # the name
+    _refuse_in_sync(S);
+    if (_tn_seen_at(S, nt) == 0) { _stmt_val_say(S, "_stmt_value_builtin", typ, TOKNAME(typ)); }
+    PCMPE(S);
+    _expect_step(S, 5);
+    return 1;
+}
+
+# D11's words for the statement at the cursor, naming `nm` — `mulh64`, `load8` — (the report's identity: the tag `tg`
+# and the key `k`): once, latched. CHANGELOG [6.7.16] [6.7.17]
+fn _stmt_val_say(S, tg, k, nm): i64 {
+    if (_err_once(S, (tg * 31 + k) * 8 + 7) == 0) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": the value of '");
-    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(nm);
     PRSTR("(..)' is discarded - a statement is an assignment or a call\n");
     _err_excerpt(S);
     _had_error = 1;
     _panic = 1;
     return 0;
 }
+# ⛔ 6.7.16 — `mulh64(2, 3).n = 5;` / `sizeof(H).n;`: a `.` after the intrinsic's `)` is no D11 shape, and the call
+# statement's field arm (`_stmt_call_field`) took it as a call to a fn that cannot exist: "expected ';', got '.'" and
+# then "undefined function 'mulh64'" twice and "refusing to emit binary" (`sizeof(H)` also read H as a variable). The
+# statement is parsed as the value position parses it (`var x = mulh64(2, 3).n;`): the factor lowers the intrinsic by
+# name and stops at the `.`, one "expected ';', got '.'". Not marked in sync: the statement is left mid-way, so the
+# resync steps to its `;`. The name at token nt; 1. CHANGELOG [6.7.16]
 fn _stmt_intrinsic_dot(S, nt): i64 {
     STI(S, nt);   # the name
     PCMPE(S);
@@ -7267,44 +7294,40 @@ fn _PARSE_STMT_IMPL(S): i64 {
         return 0;
     }
     if (typ == 8) { _deref_store(S, 5); return 0; }   # `*expr = v;` / `*expr OP= v;`
-    # Expression statements: syscall(...); store8(...); load8(...);
+    # 6.7.17 (D32): a value builtin as the statement — `load8(p);`, `f64_sqrt(x);` — is refused by name. The arms
+    # below are the effect builtins: a store through a destination, a call, `ret2`'s return.
+    if (_stmt_value_builtin(S, typ) == 1) { return 0; }
+    # Expression statements: syscall(...); store8(...);
     # 6.7.14: their `;` through `_expect_step` — an unclosed `syscall(60, 0;` then a `for` stepped the `for`.
     if (typ == 24) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 26) { PCMPE(S); _expect_step(S, 5); return 0; }
-    if (typ == 25) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 45) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 46) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 47) { PCMPE(S); _expect_step(S, 5); return 0; }
-    # f64/SIMD builtins as statements
+    # f64/SIMD builtins as statements: this band's effect members, f64v_add .. f64v_fmadd (89-96, `dst`) and ret2
     if (typ >= 62) { if (typ <= 105) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v5.10.17: f64v_dot/scale/axpy as statements (out-of-range from
+    # v5.10.17: f64v_scale/axpy as statements (out-of-range from
     # the existing 62-105 SIMD band; share the same PCMPE-then-`;` shape).
-    if (typ >= 128) { if (typ <= 130) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    if (typ >= 129) { if (typ <= 130) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.3+ (SIMD Phase 1): f32v_add/sub/mul as statements (138-140).
     if (typ >= 138) { if (typ <= 140) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v6.4.5 (SIMD Phase 2): f32v_fmadd/f32v_dot as statements (141-142).
-    if (typ >= 141) { if (typ <= 142) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.5 (SIMD Phase 2): f32v_fmadd as a statement (141).
+    if (typ == 141) { PCMPE(S); _expect_step(S, 5); return 0; }
     # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul as statements (143-145).
-    if (typ >= 143) { if (typ <= 146) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    if (typ >= 143) { if (typ <= 145) { PCMPE(S); _expect_step(S, 5); return 0; } }
     # v6.4.8 (SIMD Phase 4 R1): f32v8_add/sub/mul as statements (147-149).
     if (typ >= 147) { if (typ <= 149) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v6.4.9 (SIMD Phase 4 R2): f32v8_fma/f32v8_dot as statements (150-151).
-    if (typ >= 150) { if (typ <= 151) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.9 (SIMD Phase 4 R2): f32v8_fma as a statement (150).
+    if (typ == 150) { PCMPE(S); _expect_step(S, 5); return 0; }
     # v6.5.24 (ymm widening): f64v256_add/sub/mul/div as statements (154-157). The lib
     # wrappers call these in STATEMENT position (`f64v256_add(&r, a_ptr, b_ptr, 4);`), so
     # without this band the builtin lexes and emits fine yet is a syntax error at every
-    # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range.
+    # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range; f64v256_dot (159) is a value.
     if (typ >= 154) { if (typ <= 162) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # v6.6.2 — f64_sqrt (136) and callptr (137), renumbered out of their collisions.
-    # ⚠ f64_sqrt WAS inside the 62..105 band above, so moving it without this entry would
-    # silently regress `f64_sqrt(x);` as a statement, and no test in the tree covered that form.
-    # callptr GAINS statement position here: at 111 it hit the `stack var` parser and was a hard
-    # error, which the filing recorded as diagnostics-only and was not.
+    # v6.6.2 — callptr (137), renumbered out of its collision with `stack` (111), GAINS statement position here: at
+    # 111 it hit the `stack var` parser and was a hard error, which the filing recorded as diagnostics-only and was not.
     if (typ == 137) { if (_stmt_callptr_field(S) == 1) { return 0; } }   # 6.7.14: `callptr(&gp, 5).b = 40;`
-    if (typ >= 136) { if (typ <= 137) { PCMPE(S); _expect_step(S, 5); return 0; } }
-    # 6.6.13 — f64_le / f64_ge / f64_trunc (164-166). As lib calls they were legal statements;
-    # without this band the builtins would make `f64_trunc(x);` a syntax error (the f64_sqrt lesson).
-    if (typ >= 164) { if (typ <= 166) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    if (typ == 137) { PCMPE(S); _expect_step(S, 5); return 0; }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);

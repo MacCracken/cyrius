@@ -143,10 +143,14 @@ fn main(): i64 {
     assert_eq(cases, 1176, "the matrix ran 24 trunc + 1,152 le/ge cases");
     assert_eq(bad, 0, "the builtins equal the retired wrapper bodies on every case");
 
-    # Statement position: as lib calls these were legal statements, and they still are.
-    f64_trunc(v);
-    f64_le(v, five);
-    f64_ge(v, five);
+    # Statement position: as lib calls these were legal statements; since 6.7.17 (the user's D32) a value builtin as
+    # a whole statement is refused by name ("the value of 'f64_trunc(..)' is discarded"), gated by
+    # tests/gates/frontend/intrinsic_names_reserved.sh axis 5 on every leg. Here they are values.
+    var tv = f64_trunc(v);
+    var lv = f64_le(v, five);
+    var gv = f64_ge(v, five);
+    assert_eq(lv + gv, 1, "f64_le / f64_ge of a non-equal pair: exactly one holds");
+    assert_eq(f64_to(tv), 3, "f64_trunc(3.7) into a local is 3.0");
     return assert_summary();
 }
 # The exit status IS the summary: main returns it and the top level exits with it. A top-level

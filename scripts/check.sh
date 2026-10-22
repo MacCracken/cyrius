@@ -1095,6 +1095,7 @@ _chk_gate "$ROOT/tests/gates/frontend/sizeof_whole_name.sh"
 # compiled and every call got the intrinsic, `fn fncall1(a, b)` compiled and its call jumped
 # through `a` (SIGSEGV), and `var sizeof` declared with every read a parse error. Every
 # declaration form is refused by name; only a file named fnptr.cyr may declare fncall0..8.
+# 6.7.17 (D32): axis 5 also refuses a value builtin as a whole statement (`load8(p);`, `f64_sqrt(x);`) in D11's words.
 _chk_gate "$ROOT/tests/gates/frontend/intrinsic_names_reserved.sh"
 
 # v6.5.56: `private fn h()` must be rejected rather than silently privatising the whole file

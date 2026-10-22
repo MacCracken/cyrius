@@ -17,9 +17,12 @@
 # this a ZERO-FORK-EDIT change (main.cyr and main_win.cyr both compare against 79 for `object;`).
 #
 # ⚠ THE TRAP THIS FILE EXISTS FOR. `f64_sqrt` was inside the `62..105` STATEMENT BAND in
-# parse.cyr. Renumbering it to 136 without adding a band entry silently regresses `f64_sqrt(x);`
+# parse.cyr. Renumbering it to 136 without adding a band entry silently regressed `f64_sqrt(x);`
 # as a statement — and **no test in the tree covered that form**, so the regression would have
-# shipped green. Both statement forms are asserted below.
+# shipped green. Since 6.7.17 (the user's D32) a value builtin as a whole statement is refused by
+# name — "the value of 'f64_sqrt(..)' is discarded" names token 136's spelling — and that refusal
+# is gated by tests/gates/frontend/intrinsic_names_reserved.sh axis 5 on every leg; callptr's
+# statement form (a call) is asserted below.
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
 include "lib/math.cyr"
@@ -37,12 +40,13 @@ test_group("f64_sqrt after the renumber");
 assert_eq(f64_to(f64_sqrt(f64_from(16))), 4, "f64_sqrt as an expression");
 assert_eq(f64_to(f64_sqrt(f64_from(144))), 12, "f64_sqrt of a larger square");
 
-# ⚠ STATEMENT POSITION — the form the renumber could silently have broken.
+# ⚠ ASSIGNMENT POSITION — a statement whose value is f64_sqrt's (its bare statement is refused, 6.7.17).
 fn _tr_sqrt_stmt(x) {
-    f64_sqrt(x);          # result deliberately discarded; this must PARSE
-    return 1;
+    var r = 0;
+    r = f64_sqrt(x);
+    return f64_to(r);
 }
-assert_eq(_tr_sqrt_stmt(f64_from(9)), 1, "f64_sqrt(x); parses as a bare statement");
+assert_eq(_tr_sqrt_stmt(f64_from(9)), 3, "r = f64_sqrt(x); parses and runs");
 
 # ── callptr (token 137, was 111) ─────────────────────────────────────────────────────
 test_group("callptr after the renumber");

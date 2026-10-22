@@ -10,13 +10,14 @@ include "lib/bench.cyr"
 var _fa = 0;
 var _fb = 0;
 
-fn work_f64_add() { f64_add(_fa, _fb); return 0; }
-fn work_f64_mul() { f64_mul(_fa, _fb); return 0; }
-fn work_f64_div() { f64_div(_fa, _fb); return 0; }
-fn work_f64_from() { f64_from(42); return 0; }
-fn work_f64_to() { f64_to(_fa); return 0; }
-fn work_f64_eq() { f64_eq(_fa, _fb); return 0; }
-fn work_f64_lt() { f64_lt(_fa, _fb); return 0; }
+# Each work fn returns the builtin's value: a value builtin as a whole statement is refused (6.7.17's D32).
+fn work_f64_add() { return f64_add(_fa, _fb); }
+fn work_f64_mul() { return f64_mul(_fa, _fb); }
+fn work_f64_div() { return f64_div(_fa, _fb); }
+fn work_f64_from() { return f64_from(42); }
+fn work_f64_to() { return f64_to(_fa); }
+fn work_f64_eq() { return f64_eq(_fa, _fb); }
+fn work_f64_lt() { return f64_lt(_fa, _fb); }
 
 var N = 10000;
 

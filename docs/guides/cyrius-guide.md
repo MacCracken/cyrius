@@ -742,6 +742,20 @@ call parses on, so its arguments' errors and the next statement's are reported; 
 `mulh64<i64>(2, 3);` is that one error. Before 6.7.16 each was *expected '(', got '<'* with the
 list read as comparisons (*undefined variable 'i64'*), the statement *undefined function 'mulh64'*.
 
+A **value builtin** is a value too, and a statement made of one is refused the same way (6.7.17, the user's D32,
+2026-10-22): `load8(p);` is *the value of 'load8(..)' is discarded - a statement is an assignment or a call*, once at
+the name, no binary — use the value (`var v = load8(p);`). The value builtins are the loads (`load8` .. `load64`), the
+scalar float ops (`f64_add` .. `f64_div`, `f64_from`, `f64_to`, `f64_eq` / `f64_lt` / `f64_gt` / `f64_le` / `f64_ge`,
+`f64_neg`, `f64_abs`, `f64_sqrt`, `f64_floor` / `f64_ceil` / `f64_round` / `f64_trunc`, `f64_sin` .. `f64_exp2`,
+`f64_atan`), `f32_from` / `f32_to`, `bitget` / `bitset` / `bitclr` (each RETURNS the changed word; nothing is stored),
+`rethi`, and the dot products `f64v_dot`, `f32v_dot`, `f32v8_dot`, `f64v256_dot`, `iv_dp8` (`IS_VALUE_BUILTIN` in
+`src/common/util.cyr`). A builtin with an effect stays a statement: the stores (`store8(p, v);` ..), every vector op
+that writes its `dst` (`f64v_add(dst, a, b, n);`, `f32v8_fma(..)`, `iv_add(..)`, `f64v256_scale(..)`, ..),
+`syscall(..)`, `callptr(..)` and `ret2(a, b);`. As for `mulh64`, a `.` after the call (`load16(p).n = 5;`) is
+*expected ';', got '.'* and a type-argument list is the one error at the name. Before 6.7.17 `load8(p);` and the f64,
+bit and dot builtins compiled with the value dropped, while `load16(p);`, `load32(p);`, `load64(p);`, `f32_from(x);`
+and `f32_to(x);` were *unexpected load16*.
+
 ### Default and named arguments (6.7.7)
 
 A trailing parameter may declare a **default**, and a direct call may **name** its arguments
@@ -1177,6 +1191,9 @@ var v = load16(&buf);          # Corresponding reads
 var v = load32(&buf);
 var v = load64(&buf);
 ```
+
+A load is a value: `load64(&buf);` alone is refused, *the value of 'load64(..)' is discarded* (6.7.17; see the
+value builtins under [Functions](#functions), after the reserved intrinsics).
 
 ### Where globals land: natural alignment (6.6.13)
 

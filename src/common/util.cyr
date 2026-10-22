@@ -2384,6 +2384,34 @@ fn TOKNAME_BUILTIN(typ): i64 {
     return 0;
 }
 
+# The builtins whose call is ONLY a value: no store through a destination, no call, no return — `load8(p)`,
+# `f64_sqrt(x)`, `bitset(v, o, w, n)` (it returns the new word; nothing is stored), `f64v_dot(a, b, n)` (the sum). As
+# a whole statement each is refused in 6.7.16's D11 words (the user's D32, 2026-10-22: PARSE_STMT's
+# `_stmt_value_builtin`, parse.cyr). An explicit list, not a range: keywords sit among the numbers (`mod` 72 ..
+# `object` 79, `union` 101, `u128` 105), and the effect builtins beside them — `store*`, `f64v_add(dst, ..)` and every
+# vector op writing `dst`, `ret2` (it returns), `syscall`, `callptr` — stay statements. Each member is confirmed from
+# its PARSE_FACTOR lowering (parse_expr.cyr). 1 = token `typ` is one. CHANGELOG [6.7.17]
+fn IS_VALUE_BUILTIN(typ): i64 {
+    if (typ == 25) { return 1; }                        # load8
+    if (typ >= 42) { if (typ <= 44) { return 1; } }     # load16 load32 load64
+    if (typ >= 62) { if (typ <= 71) { return 1; } }     # f64_add .. f64_neg
+    if (typ >= 80) { if (typ <= 88) { return 1; } }     # f64_abs .. f64_exp2
+    if (typ == 92) { return 1; }                        # f64_round
+    if (typ == 98) { return 1; }                        # rethi
+    if (typ == 99) { return 1; }                        # f64_atan
+    if (typ >= 102) { if (typ <= 104) { return 1; } }   # bitget bitset bitclr
+    if (typ == 128) { return 1; }                       # f64v_dot
+    if (typ == 131) { return 1; }                       # f32_from
+    if (typ == 132) { return 1; }                       # f32_to
+    if (typ == 136) { return 1; }                       # f64_sqrt
+    if (typ == 142) { return 1; }                       # f32v_dot
+    if (typ == 146) { return 1; }                       # iv_dp8
+    if (typ == 151) { return 1; }                       # f32v8_dot
+    if (typ == 159) { return 1; }                       # f64v256_dot
+    if (typ >= 164) { if (typ <= 166) { return 1; } }   # f64_le f64_ge f64_trunc
+    return 0;
+}
+
 # The operator and literal tokens TOKNAME's own table never named: every one printed "got unknown"
 # (`var x <= 1;` -> "expected '=', got unknown"). A SEPARATE fn for the same reason as
 # TOKNAME_BUILTIN (cybs's per-fn string-literal ceiling), and NOT in TOKNAME_BUILTIN, because
