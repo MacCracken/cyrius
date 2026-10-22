@@ -48,8 +48,8 @@
 #   H4  no fn entered: the header alone
 #   H5  the dump path and the first map line are image bytes on all six writers (x86 ELF, PE, x86
 #       Mach-O, agnos, arm64 Mach-O, cx) — and absent from the mode-off image
-#   H6  the large-static advisory leaves the band and the map out (src/main.cyr instrumented: the
-#       plain figure, within the two's alignment)
+#   H6  the large-static advisory leaves the band and the map out (src/main.cyr plus a 128 KB pad,
+#       instrumented: the plain figure, within the two's alignment)
 #   H7  the hit (x86's push / load / add 1 / pop / store) appears once per counted body under the mode
 #       and NEVER with it off — the absolute anchor S10 cannot be (it compares three mode-off runs)
 #   H8  a record over the dump's 992 B line budget is written straight out, whole
@@ -166,7 +166,8 @@
 #        ("4 off, want 0") and H6; S10 stays GREEN (three mode-off runs agree), which is why H7 exists;
 #        scripts/differential.sh sees it too. (Dropping the bare `if (_cov_mode == 1)` cannot self-host:
 #        the hits then address a band that was never registered.)
-#   ML   `_warn_large_static`'s subtraction removed               -> RED 1 of 79: H6 (303968 B under the mode)
+#   ML   `_warn_large_static`'s subtraction removed               -> RED 1 of 79: H6 (303968 B under the mode;
+#        6.7.17, the padded source: 461424 B under the mode, 208416 B plain)
 # MUTATION LEDGER (P5B-3; the same procedure, 2026-10-12; "N of 166"):
 #   MH   the exit hook removed (`_sc_args_done` calls no dump)     -> RED 74 of 166: M3, CC1b, E1-E7 / E12 /
 #        E13 on every leg and x86 codegen mode, E8, E10, AG2
@@ -455,10 +456,13 @@ if [ -x "$T/cc_cx" ]; then h5 "cx" "$T/cc_cx"; else bad "H5 cx: src/main_cx.cyr 
 
 # H6 — the large-static advisory leaves the band and the map out: the instrumented compile of
 # src/main.cyr prints the plain figure, give or take the alignment around the two (each over 8 B, so
-# 16-aligned on x86, and the vars after them re-align: a few bytes either way — never the ~70 KB the
-# band and the map hold for src/main.cyr)
-w0=$("$CC" < src/main.cyr 2>&1 > /dev/null | grep 'large static data' | sed 's/^warning: large static data (\([0-9]*\) bytes).*/\1/' || true)
-w1=$(env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/h6.out" "$CC" < src/main.cyr 2>&1 > "$T/h6.bin" | grep 'large static data' | sed 's/^warning: large static data (\([0-9]*\) bytes).*/\1/' || true)
+# 16-aligned on x86, and the vars after them re-align: a few bytes either way — never the ~250 KB the
+# band and the map hold for src/main.cyr). A 128 KB pad puts it over the advisory's line: since
+# 6.7.17 cycc's own statics are under it (the TS scratch stack is alloc()'d), so src/main.cyr alone
+# prints no figure to compare. CHANGELOG [6.7.17]
+{ cat src/main.cyr; printf 'var _h6_pad[16384];\n'; } > "$T/h6.cyr"
+w0=$("$CC" < "$T/h6.cyr" 2>&1 > /dev/null | grep 'large static data' | sed 's/^warning: large static data (\([0-9]*\) bytes).*/\1/' || true)
+w1=$(env CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/h6.out" "$CC" < "$T/h6.cyr" 2>&1 > "$T/h6.bin" | grep 'large static data' | sed 's/^warning: large static data (\([0-9]*\) bytes).*/\1/' || true)
 dw=$(( ${w1:-0} - ${w0:-0} )); [ "$dw" -lt 0 ] && dw=$((0 - dw))
 if [ -n "$w0" ] && [ -n "$w1" ] && [ "$dw" -lt 64 ]; then ok "H6 the large-static advisory does not count the band or the map: $w1 B under the mode, $w0 B plain"
 else bad "H6 the large-static figure: '$w0' plain, '$w1' under the mode (want within 64 B)"; fi

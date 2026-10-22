@@ -345,9 +345,22 @@ fn TS_AST_CHILDREN_COMMIT(ts_base, count): i64 {
 # point every element's subtree is already allocated, so the block can't
 # overlap anything. Builders nest safely: each saves TS_CST_TOP() on
 # entry and flushes back to it.
-var _ts_cst[8192];            # node-index scratch stack (8192 i64 slots)
+#
+# The stack's 8192 i64 slots (64 KB) are alloc()'d on first TS use, not a
+# top-level array: as a static they were half of every compiler's own var
+# data, a plain cyrius compile never touches them, and they put each x86
+# fork's self-compile over the "large static data" line. CHANGELOG [6.7.17]
+var _ts_cst = 0;              # node-index scratch stack: alloc()'d, 8192 i64 slots
 var _ts_cst_top = 0;
 var _ts_cst_overflow = 0;
+
+# The scratch stack's base, allocated once on first use (the TS arena's
+# alloc() contract, driver.cyr). 0 when the allocation failed — PUSH then
+# records it as an overflow, so FLUSH reports the TS_PS_ERR_CODE 2 path.
+fn _ts_cst_buf(): i64 {
+    if (_ts_cst == 0) { _ts_cst = alloc(65536); }
+    return _ts_cst;
+}
 
 fn TS_CST_TOP(): i64 { return _ts_cst_top; }
 
@@ -356,7 +369,9 @@ fn TS_CST_TOP(): i64 { return _ts_cst_top; }
 # `off < 0` error check.
 fn TS_CST_PUSH(idx): i64 {
     if (_ts_cst_top >= 8192) { _ts_cst_overflow = 1; return 0; }
-    store64(&_ts_cst + _ts_cst_top * 8, idx);
+    var buf = _ts_cst_buf();
+    if (buf == 0) { _ts_cst_overflow = 1; return 0; }
+    store64(buf + _ts_cst_top * 8, idx);
     _ts_cst_top = _ts_cst_top + 1;
     return 0;
 }
@@ -376,10 +391,11 @@ fn TS_CST_FLUSH(ts_base, base): i64 {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 2);
         return 0 - 1;
     }
+    var buf = _ts_cst_buf();
     var i = 0;
     while (i < n) {
         store64(ts_base + TS_AST_CHILDREN_OFF + (used + i) * 8,
-          load64(&_ts_cst + (base + i) * 8));
+          load64(buf + (base + i) * 8));
         i = i + 1;
     }
     store64(ts_base + TS_AST_CHILDREN_OFF + (used + n) * 8, 0 - 1);

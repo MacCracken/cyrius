@@ -2286,6 +2286,10 @@ _chk_gate "$ROOT/tests/gates/diagnostics/undefined_tail_call_refused.sh"
 # 6.6.9 (bite 2) — the "large static data" advisory prints on x86/x86-Mach-O/PE/aarch64/
 # arm64-Mach-O/cx, not x86 ELF alone; silent for small statics and for cx's own alloc heap.
 _chk_gate "$ROOT/tests/gates/diagnostics/large_static_data_every_backend.sh"
+# 6.7.17 — the compiler's own build prints no "large static data" advisory: every fork source
+# through the x86 stage compiler, and each host's self-host shape (PE, both Mach-O, aarch64);
+# the TS front end's 64 KB scratch stack is alloc()'d on first use. A 160 KB control still warns.
+_chk_gate "$ROOT/tests/gates/diagnostics/self_compile_no_large_static_advisory.sh"
 _chk_gate "$ROOT/tests/gates/diagnostics/tls_sigil_include_warning_free.sh"
 
 # 6.6.9 (bite 3) — a "requires lib/<x>.cyr" / "async is gated" error EXITS 1 on every backend:
