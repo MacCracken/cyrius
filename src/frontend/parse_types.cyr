@@ -2326,7 +2326,9 @@ fn _dyn_emit(S, dsid, idx): i64 {
     return 0;
 }
 # The terminator of a source from token `st`: its first depth-0 `term`, or the `)` / `]` / `}` that
-# closes what it sits in.
+# closes what it sits in. 6.7.17: a statement's source (`term` `;`) also ends at a depth-0 statement keyword — its
+# `;` is missing there (`var o: dyn Show = &p` then `return zz;` was "cannot form dyn Show from this expression", the
+# `return` and `zz` read as the source). CHANGELOG [6.7.17]
 fn _dyn_ext(S, st, term): i64 {
     var k = st;
     var d = 0;
@@ -2334,7 +2336,7 @@ fn _dyn_ext(S, st, term): i64 {
     while (k < n) {
         var t = TOKTYP(S, k);
         if (t == 12) { return k; }
-        if (d == 0) { if (t == term) { return k; } }
+        if (d == 0) { if (t == term) { return k; } if (term == 5) { if (_sync_kw_at(S, k, t) == 1) { return k; } } }
         if (t == 10 || t == 28 || t == 13) { d = d + 1; }
         if (t == 11 || t == 29 || t == 14) {
             if (d == 0) { return k; }
@@ -2376,8 +2378,7 @@ fn _dyn_var_init(S, noff, dsid): i64 {
         SVCNT(S, vc + 1);
     }
     STI(S, en);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # The declaration zone's `var G: dyn S = src;` (EMIT_GVAR_INITS, through `_gvi_tuple`; cursor on
@@ -2399,8 +2400,7 @@ fn _gvi_dyn(S, gi, idx, gps, sti): i64 {
     }
     STI(S, en);
     _gvk_left(S, gi, sti, idx);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # `o = src;` into a dyn variable (`_try_aggregate_copy_assign`'s first line; a for step's `term` 11):

@@ -27,6 +27,8 @@
 #       R3 a call's return before the fn's `}`
 #   F   a C-style `for` header missing one of its two `;`: F1 the condition's, F2 the init's, F3 an assignment
 #       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's
+#   D   a `dyn` initializer's `;`: D1 before a `return` (its source ran on to the next `;`: "cannot form dyn Show
+#       from this expression"), D2 before the fn's `}`
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -38,7 +40,8 @@
 # exemption -> RED K3 ("expected '}', got end of file"). On 99355d191 (before parse.cyr's sites) RED: P1-P5.
 # On 11bbb4141 (before parse_fn.cyr's sites) RED: S1 R1-R3. On b91579399 (before `_for_semis`) RED: F1-F6 (the
 # init's resync ran into the condition, the step replayed from the token after the missing `;`, the step skip ran
-# to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'").
+# to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
+# parse_types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -231,6 +234,27 @@ error:<source>:4:36: $UZ"
 row F6 "a compound step after the missing ;: for (var i = 0; i < 3 i += 1)" "${FH}    for (var i = 0; i < 3 i += 1) { b = zz; }
 ${FT}" "error:<source>:4:27: expected ';', got identifier 'i'
 error:<source>:4:43: $UZ"
+
+# ---- D: a `dyn` initializer's `;` (src/frontend/parse_types.cyr)
+DH='trait Show { fn show(self): i64; }
+struct P { a; b; }
+impl Show for P { fn show(self): i64 { return self.a; } }
+'
+row D1 "var o: dyn Show = &p then a return" "${DH}fn f(): i64 {
+    var p = P { 1, 2 };
+    var o: dyn Show = &p
+    return zz;
+}
+syscall(60, f());
+" "error:<source>:7:5: expected ';', got return
+error:<source>:7:14: $UZ"
+row D2 "var o: dyn Show = &p before the fn's }" "${DH}fn f(): i64 {
+    var p = P { 1, 2 };
+    var o: dyn Show = &p }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+" "error:<source>:6:26: expected ';', got '}'
+error:<source>:7:24: $UZ"
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
