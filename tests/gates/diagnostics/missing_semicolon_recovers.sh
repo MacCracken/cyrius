@@ -13,16 +13,22 @@
 # (issues/2026-10-21-statement-missing-semicolon-loses-what-follows.md)
 #
 # THE FIX. The `;` sites step only a token that is not a recovery point (`_expect_step`, src/common/util.cyr: a `}`,
-# EOF, a `;` or a statement keyword stays for the block loop / the statement resync).
+# EOF, a `;` or a statement keyword stays for the block loop / the statement resync). `_stmt_resync`
+# (src/frontend/parse.cyr) first steps through the `}` of each `{` the statement opened and left unclosed
+# (`_resync_close`) — unless the statement ended at its own `;`.
 #
 #   S2  the filing's s2 verbatim (`var a = 1` then `var b = zz;`): the `;`, then `zz`
 #   V   a `var` statement's `;` (PARSE_VAR): V1-V4 before an if / while / for / return, V5 before a closure, V6
 #       before the fn's `}` (the next fn not "inside" it)
+#   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
-#       statement's error after it is reported
+#       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
+#       the fn's
 #
 # On the parent (db54fb84e) RED: S2 V1-V6 (the keyword or `}` stepped: `zz` lost, "return outside a fn body", "fn 'g'
-# is defined inside fn 'f'"); K green.
+# is defined inside fn 'f'"); K green. On bc51aa5c6 (before `_resync_close`) RED: B1 B2 (the stray `{`'s `}` closed the
+# fn: "unexpected ';'" / "unexpected number 4", "return outside a fn body"). `_resync_close` without its own-`;`
+# exemption -> RED K3 ("expected '}', got end of file").
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -119,6 +125,22 @@ syscall(60, f() + g());
 ' "error:<source>:1:25: expected ';', got '}'
 error:<source>:2:24: $UZ"
 
+# ---- B: brace accounting (`_resync_close`)
+row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+' "error:<source>:1:32: expected ';', got '{'
+error:<source>:2:24: $UZ"
+
+row B2 "the same in an if block, two statements inside the braces" 'fn f(): i64 {
+    var a = 1;
+    if (a == 1) { a = 2 { 3; 4 } }
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:3:25: expected ';', got '{'
+error:<source>:4:14: $UZ"
+
 # ---- K: the S22 control
 row K1 "S22 verbatim: var P = 3; P { 5 };" 'struct P { a; }
 fn run(): i64 { var P = 3; P { 5 }; return 0; }
@@ -130,6 +152,13 @@ fn run(): i64 { var P = 3; P { 5 }; return zz; }
 syscall(60, run());
 ' "error:<source>:2:30: expected '=', got '{'
 error:<source>:2:46: $UZ"
+
+row K3 "control: an unclosed literal var p = P { 1, 2; (CT4) — the } after is the fn's" 'struct P { a; b; }
+fn run(): i64 { var p = P { 1, 2; return p.b; }
+fn g(): i64 { return zz; }
+syscall(60, run() + g());
+' "error:<source>:2:33: expected '}', got ';'
+error:<source>:3:24: $UZ"
 
 echo "$G: $pass passed, $fail failed (legs: $LEGS)"
 [ "$fail" -eq 0 ] || exit 1

@@ -2229,7 +2229,36 @@ fn _stmt_resync(S, before): i64 {
             var t = TOKTYP(S, GTI(S) - 1);
             if (t == 5 || t == 14) { _panic = 0; return 0; }
         } }
+    _resync_close(S, before);
     _sync_skip(S);
+    return 0;
+}
+# ... first through the `}` of each `{` the statement opened (tokens [before, cursor)) and left unclosed: an error
+# stepped it as a stray token (`a = 2 { 3 };`: "expected ';', got '{'"), so its `}` is the statement's, not the
+# block's end — taken as the block's end, the rest of the fn parsed at top level ("unexpected ';'", "return outside a
+# fn body"). Everything inside is the broken statement's. Not when the statement ended at its own `;`: then the open
+# `{` is one a construct reported unclosed (`var p = P { 1, 2;`: "expected '}', got ';'"), and the `}` after is the
+# block's. Never past EOF. CHANGELOG [6.7.17]
+fn _resync_close(S, before): i64 {
+    var d = 0;
+    var i = before;
+    var c = GTI(S);
+    var n = GTCNT(S) - 1;   # the EOF token
+    if (c > n) { c = n; }
+    if (c > before) { if (TOKTYP(S, c - 1) == 5) { return 0; } }
+    while (i < c) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { d = d + 1; }
+        elif (t == 14) { if (d > 0) { d = d - 1; } }
+        i = i + 1;
+    }
+    while (d > 0 && i < n) {
+        var u = TOKTYP(S, i);
+        if (u == 13) { d = d + 1; }
+        elif (u == 14) { d = d - 1; }
+        i = i + 1;
+    }
+    if (i > c) { STI(S, i); }
     return 0;
 }
 
