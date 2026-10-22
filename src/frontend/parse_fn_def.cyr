@@ -1096,15 +1096,15 @@ fn _dl_refd_at(S, noff): i64 {
 # a `dyn Tr` "'Tr' is not a trait", an `impl Tr for P` "impl of undeclared trait" (pass 2's check of pass 1's impl).
 # This walk runs before every pass-1 scan (`_tl_pass1`, after `_dyn_fold`). It follows the braces: a `{` after a `fn
 # NAME` header (`_IS_FN_KW`'s definition, not a `*fn(..)` type) opens a body, one after a declaration's header
-# (struct, enum, union, trait, impl, mod) a declaration's body — never a body itself, though a method's in it is — and
+# (struct, enum, union, trait, impl) a declaration's body — never a body itself, though a method's in it is — and
 # any other `{` is its enclosing one's kind (a block, a closure; at module scope a top-level block). At a statement
 # start in a body (after `{`, `}`, `;` or a case's `:`) a declaration `_decl_inner` always refuses is stepped as it
 # steps it (`_dl_skip_in`; the cursor put back) and its names entered (`_dl_names`, `_dl_pre`: names only — nothing
 # is registered yet, so no fn). The stand-downs ask only after resolution failed, so a valid top-level declaration of
 # the same name still resolves. CHANGELOG [6.7.16]
-# 6.7.17: a `use` opens no `{` — it held the header open to the next `;`, so after a `;`-less `use m.f` in a body the
-# next block read as a declaration's and a refused `struct Q` in it went unfilled ("type 'Q' is declared after its
-# use"). CHANGELOG [6.7.17]
+# 6.7.17: a `use` or a `mod` opens no `{` — it held the header open to the next `;`, so after a `;`-less `use m.f` or
+# `mod m` in a body the next block read as a declaration's and a refused `struct Q` in it went unfilled ("type 'Q' is
+# declared after its use"). CHANGELOG [6.7.17]
 var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
 var _dlpn = 0;     # `_dlr`'s first `_dlpn` entries are the pre-walk's (`_dl_inner_fill`)
 var _dlpk = 0;     # per pre-walk entry: its declaration's keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words)
@@ -1133,7 +1133,7 @@ fn _dl_inner_fill(S): i64 {
         elif (k == 32) { if (TOKTYP(S, i + 1) == 2) { pend = 1; ppd = pd; } }
         elif (_dl_kind(k) == 1) {
             if (vec_len(stk) > 0) { if (_dl_brace_in(stk) != 0) { _dl_inner_at(S, i, _dl_brace_in(stk)); } }   # in a body, not module scope
-            if (k != 73) { if (k != 74) { pend = 2; ppd = pd; } }   # `pub` marks the next keyword; a `use` opens no `{`
+            if (k != 72 && k != 73 && k != 74) { pend = 2; ppd = pd; }   # `pub` marks the next keyword; no `{` after a `mod` / `use`
         }
         i = i + 1;
     }
@@ -1334,20 +1334,20 @@ fn _ann_refd_said(S, noff, idx): i64 {
     return 0;
 }
 # Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes
-# first at depth 0 (`mod m;`, `pub var x = ..;`, `pub const ..;`; a `use` its own way, `_dl_skip_use`). A `pub` steps
-# what it marks.
+# first at depth 0 (`pub var x = ..;`, `pub const ..;`; a `use` and a `mod` their own way, `_dl_skip_use` /
+# `_dl_skip_mod`). A `pub` steps what it marks.
 # 6.7.16: a `pub const fn` ends at its body's `}` — it stepped on to the NEXT statement's `;`. CHANGELOG [6.7.16]
 fn _dl_skip(S): i64 { return _dl_skip_at(S, 0); }
 # Below module scope (`_decl_inner`): a `}` met at depth 0 closes the enclosing fn body or block — left for it.
 fn _dl_skip_in(S): i64 { return _dl_skip_at(S, 1); }
 fn _dl_skip_at(S, inner): i64 {
     if (_dl_skip_use(S, inner) == 1) { return 0; }
+    if (_dl_skip_mod(S) == 1) { return 0; }
     var semi = 0;
     var t = PEEKT(S);
-    if (t == 72) { semi = 1; }
     if (t == 73) {
         var t2 = TOKTYP(S, GTI(S) + 1);
-        if (t2 == 3 || t2 == 168 || t2 == 72) { semi = 1; }
+        if (t2 == 3 || t2 == 168) { semi = 1; }
         if (t2 == 168) { if (TOKTYP(S, GTI(S) + 2) == 32) { semi = 0; } }   # `pub const fn`
     }
     var d = 0;
@@ -1372,6 +1372,18 @@ fn _dl_skip_use(S, inner): i64 {
     if (TOKTYP(S, k) != 74) { return 0; }
     STI(S, k);
     _use_step(S, 0, inner);
+    return 1;
+}
+# A `mod` (`pub` before it or not): the tokens `_tl_mod` reads, `mod [NAME] [;]`. The walk above ran on to the next `;`,
+# so a refused `mod m` with none took the next line with it, that line's own error unreported. CHANGELOG [6.7.17]
+fn _dl_skip_mod(S): i64 {
+    var k = GTI(S);
+    if (TOKTYP(S, k) == 73) { k = k + 1; }
+    if (TOKTYP(S, k) != 72) { return 0; }
+    k = k + 1;
+    if (TOKTYP(S, k) == 2) { k = k + 1; }
+    if (TOKTYP(S, k) == 5) { k = k + 1; }
+    STI(S, k);
     return 1;
 }
 
