@@ -148,13 +148,14 @@
 # fn returning `Str` (X30 / X31; it compiled).
 #
 # 6.7.17 (the user's decision D18, 2026-10-22; issues/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md row 1): a struct
-# value of another type assigned into a `Str` HANDLE — a local, a parameter, a global, a `*Str` name; from a call, a
+# value of another type assigned into a `Str` HANDLE — a local, a parameter, a global; from a call, a
 # method, an operator, an if-expression, `fncall0(&mkq)`, an inline struct name or global, a field, a dereference, wrapped,
-# a for step, at top level — is refused by name with the words the same assignment into a `P` handle has (SH1-SH15; SH1
+# a for step, at top level — is refused by name with the words the same assignment into a `P` handle has (SH1-SH15 but
+# SH13 — a `*Str` name keeps 6.7.16's typed-pointer warning, typed_pointer_warn_sign.sh SC1 / SC6; SH1
 # the filed repro verbatim: it compiled and crashed — x86_64 139, cx 252, PE 5 — h holding Q1's word). A `*Q1`, a `Q2`
 # handle and a `: *Q1` call keep the rebind, a `: Str` call its value (SHK1). And at every other `Str` slot (D18's class,
 # met in the bite): a `Str` field (a local's, a global's, through a `*W`, a for step, top level), a literal's `Str`
-# element (in a fn, in the zone), a store through a `*Str` / `**Str` and `return` from a fn returning `Str` (a tail call
+# element (in a fn, in the zone), a store through a `*Str` (`**pp` too) and `return` from a fn returning `Str` (a tail call
 # too) refuse it with the position's words, as a `P` there does (SP1-SP10; each stored or returned the struct's first
 # word); a `: Str` value, a handle and a `*Q1` keep their store (SPK1).
 #
@@ -199,7 +200,7 @@
 # D14a / D14b the copy from a `*Str` (D14), D15 the if-expression's one-word store (pinned); PP1 the copy from `*pp` of a
 # `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); X30 / X31 a frame's t returned from a fn returning `*Str` refused (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); SH1-SH15 a struct value of another type into a
-# `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
+# `Str` handle refused (no SH13), SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
 # repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
 # `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
 # refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); NM1 the D21 filed repro verbatim (4
@@ -321,7 +322,7 @@
 #      reverted)                                      two encoder rows the wild `p.len = 3` corrupted), X30 / X31
 #                                                     x4 (each compiled)
 #   2026-10-22 (6.7.17, D18 a struct value into a `Str` handle; the same scratch-copy method):
-#   x1 `_istr_hdt` answers `dt` (the fix reverted) -> RED 60: SH1-SH15 x4 (each compiled)
+#   x1 `_istr_hdt` answers `dt` (the fix reverted) -> RED 56: SH1-SH15 (no SH13) x4 (each compiled)
 #   x2 `_istr_vsid` only parses, `_istr_tcd` 0     -> RED 40: SP1-SP10 x4 (each compiled)
 #   2026-10-22 (6.7.17, D19 `*p` into a nested `Str` leaf; the same scratch-copy method):
 #   y1 `_spi_dsrc` without its `Str` arm           -> RED 18: R1 x7 (the ns_* rows and R_TOP22 — the data word),
@@ -1173,9 +1174,6 @@ refused SH11 "$MSH" "a for step, wrapped"
 row SH12 "$HQ"'
 fn go(): i64 { var h = str_from("x"); h = fncall0(&mkq); return str_len(h); }'
 refused SH12 "cannot copy 'mkq' into a variable of a different struct/vector type: 'h'" "an untyped \`var h = str_from(..)\` (a \`Str\`) from \`fncall0(&mkq)\`"
-row SH13 "$HQ"'
-fn go(): i64 { var t: Str = Str { "ab", 2 }; var p: *Str = &t; p = mkq(); return str_len(p); }'
-refused SH13 "cannot copy 'mkq' into a variable of a different struct/vector type: 'p'" "into a \`*Str\` local"
 cat > "$T/SH14.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
@@ -1194,7 +1192,7 @@ row SHK1 "$HQ"'
 fn go(): i64 { var q: Q1; var pq: *Q1 = &q; var hq: Q2 = alloc(16); var h: Str = str_from("x"); h = pq; var a = 0; if (h == pq) { a = 1; } h = hq; if (h == hq) { a = a + 2; } h = gpq(); if (h != 0) { a = a + 4; } h = str_from("abc"); return a * 10 + str_len(h); }'
 runs SHK1 73 "controls: a \`*Q1\`, a \`Q2\` handle and a \`: *Q1\` call rebind a \`Str\` handle; a \`: Str\` call is its value"
 # --- SP: 6.7.17 (D18 at every `Str` slot) a struct value of another type into a `Str` FIELD (a local's, a global's,
-# through a `*W`, a for step, top level), a literal's `Str` element, a store through a `*Str` / `**Str`, and `return` from a
+# through a `*W`, a for step, top level), a literal's `Str` element, a store through a `*Str` (`*ps`, `**pp`), and `return` from a
 # fn returning `Str` (a tail call too) is refused with the position's words, as into a `P`; each stored or returned the
 # struct's first word as the header's address. Controls in SPK1. ---
 MSF="cannot copy 'mkq' into a struct field of a different struct type: 's'"
@@ -1388,7 +1386,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=127   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1, ZS2 (D22); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=126   # 6.7.17: + SH1-SH15 (no SH13), SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1, ZS2 (D22); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

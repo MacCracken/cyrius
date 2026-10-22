@@ -5661,19 +5661,22 @@ fn _agg_sc_err(S, td, noff): i64 {
     return 1;
 }
 # ⛔ 6.7.17 — A STRUCT VALUE OF ANOTHER TYPE INTO A `Str` HANDLE IS REFUSED BY NAME (the user's D18, 2026-10-22), as
-# into a `P` handle: `h = mkq();` with `h` a `Str` local, parameter or global (or a `*Str` one) and `mkq` returning a
+# into a `P` handle: `h = mkq();` with `h` a `Str` local, parameter or global and `mkq` returning a
 # `Q1` — a call, method, operator, if-expression, field, name, dereference, wrapped, in a fn, a for step or at top
 # level — stored the struct's first word as the header's address, silently (SIGSEGV at the next `str_len(h)`). `Str` is
 # kept out of the aggregate operand (`_agc_plain_big`, 6.6.16's C2) because it is a heap handle every assignment
 # rebinds, not because it takes other structs: `var h: Str = mkq();` was already refused. The type checks ask this for
 # the destination's struct type: `dt` as `_agc_operand` left it, or for a `Str` handle `0 - _STR_SID` (a handle or
-# `*T` source stays the rebind, `Str` itself the same type). CHANGELOG [6.7.17]
+# `*T` source stays the rebind, `Str` itself the same type). A `*Str` name is no `Str` handle: it keeps 6.7.16's
+# "assigning non-pointer to typed pointer" (typed_pointer_warn_sign.sh SC1 / SC6). CHANGELOG [6.7.17]
 fn _istr_hdt(S, noff, dt): i64 {
     if (dt != 0) { return dt; }
     var ss = _STR_SID(S);
     if (ss <= 0) { return dt; }
     if (_agc_ovr_is(noff) == 1) { return dt; }
-    if (_istr_dst(S, noff) == 0) { return dt; }
+    var d = _istr_dst(S, noff);
+    if (d == 0) { return dt; }
+    if (d > 2) { return dt; }   # a `*Str` local / global
     return 0 - ss;
 }
 # `h = q` — a NAME source `snoff` into a `Str` handle `noff` (`_try_aggregate_copy_assign`'s one-slot exit): refused

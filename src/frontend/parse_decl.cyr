@@ -9176,13 +9176,14 @@ fn _istr_lsv(S, ft, t0, fnoff): i64 {
     PCMPE(S);
     return 0;
 }
-# `*d = <v>` (`_deref_store`, the value at `ti` ending at `term`), the operand [d + 1, ti - 1) a `*Str` or a `**Str`:
-# parsed, D18's check, in the words a `*P`'s store has ('pp' the operand's last name).
+# `*d = <v>` (`_deref_store`, the value at `ti` ending at `term`), the operand [d + 1, ti - 1) a `*Str` (`*pp` of a
+# `**Str` too: `**pp = v`): parsed, D18's check, in the words a `*P`'s store has ('pp' the operand's last name). Through a
+# `**Str` (`*pp = v`) the slot is a `*Str`, no `Str` handle: untouched.
 fn _istr_dsvc(S, d, ti, term): i64 {
     var ss = _STR_SID(S);
     var e = _hl_dx_end(S, ti, term);
     if (ss <= 0 || e < 0) { PCMPE(S); return 0; }
-    if (_hl_dpsid(S, d + 1, ti - 1) != ss) { if (_hl_dref_psid(S, d + 1, ti - 1) != ss) { PCMPE(S); return 0; } }
+    if (_hl_dpsid(S, d + 1, ti - 1) != ss) { PCMPE(S); return 0; }
     var u = _istr_vsid(S, ti, e);
     if (u == 0) { return 0; }
     var pn = _hl_lastnm(S, d + 1, ti - 1, TOKVAL(S, d + 1));
