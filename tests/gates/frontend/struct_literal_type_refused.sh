@@ -459,6 +459,57 @@ fn run(): i64 { var P = 3; P { 5 }; return 0; }
 syscall(60, run());
 ' "error:<source>:2:30: expected '=', got '{'"
 
+# SG (6.7.17, met reviewing the genr lane) — a struct literal argument of a GENERIC is the literal's one error too. It
+# binds the generic's T to nothing, so the call became the i64 one and was refused as that: a bounded `g(P { .. })`
+# "generic 'g': its type argument does not implement trait 'Show'" with a note asking for `impl Show for i64`, a stub
+# `rdb(P { .. })` "has no i64 (or other scalar) instance" — naming a type the source never wrote. `_slit_arg_err`
+# (parse_expr.cyr) reports the literal first from the scalar-call refusals. SGK: a scalar argument keeps them.
+#   the tree before the fix (4cca110c7's compiler)      -> RED 9: SG1-SG9 (the bound's / the stub's words)
+#   `_slit_arg_err` without its method arm (the `(`)   -> RED 1: SG5
+SGH='struct P { a; b; }
+struct Bx<T> { v: T; n; }
+struct K { n; }
+trait Show { fn show(self): i64; }
+impl Show for P { fn show(self): i64 { return self.a; } }
+fn g<T: Show>(x: T): i64 { return x.show(); }
+fn rdb<T>(v: T): i64 { return v.b; }
+fn gb<T: Show>(b: Bx<T>): i64 { return b.n; }
+fn gp<T: Show>(p: *T): i64 { return p.show(); }
+fn g2<T: Show>(a, x: T): i64 { return x.show() + a; }
+impl K { fn m<T: Show>(self, x: T): i64 { return x.show(); } }
+'
+SGM='a struct literal is an initializer: declare `var t: P = P { .. };` and assign or pass t'
+exact1 "SG1 a bounded generic: g(P { 2, 4 })" "$SGH"'fn run(): i64 { return g(P { 2, 4 }); }
+syscall(60, run());
+' "error:<source>:12:26: $SGM"
+exact1 "SG2 a stub: rdb(P { 2, 4 })" "$SGH"'fn run(): i64 { return rdb(P { 2, 4 }); }
+syscall(60, run());
+' "error:<source>:12:28: $SGM"
+exact1 "SG3 a carrier: gb(Bx<P> { .. })" "$SGH"'fn run(): i64 { return gb(Bx<P> { 2, 4, 5 }); }
+syscall(60, run());
+' 'error:<source>:12:27: a struct literal is an initializer: declare `var t: Bx<P> = Bx<P> { .. };` and assign or pass t'
+exact1 "SG4 through p: *T: gp(P { 2, 4 })" "$SGH"'fn run(): i64 { return gp(P { 2, 4 }); }
+syscall(60, run());
+' "error:<source>:12:27: $SGM"
+exact1 "SG5 a generic method: k.m(P { 2, 4 })" "$SGH"'fn run(): i64 { var k = K { 1 }; return k.m(P { 2, 4 }); }
+syscall(60, run());
+' "error:<source>:12:45: $SGM"
+exact1 "SG6 wrapped: g((P { 2, 4 }))" "$SGH"'fn run(): i64 { return g((P { 2, 4 })); }
+syscall(60, run());
+' "error:<source>:12:27: $SGM"
+exact1 "SG7 a second argument: g2((1), P { .. })" "$SGH"'fn run(): i64 { return g2((1), P { 2, 4 }); }
+syscall(60, run());
+' "error:<source>:12:32: $SGM"
+exact1 "SG8 named: g(x: P { 2, 4 })" "$SGH"'fn run(): i64 { return g(x: P { 2, 4 }); }
+syscall(60, run());
+' "error:<source>:12:29: $SGM"
+exact1 "SG9 a declaration: var r = rdb(P { .. });" "$SGH"'fn run(): i64 { var r = rdb(P { 2, 4 }); return r; }
+syscall(60, run());
+' "error:<source>:12:29: $SGM"
+exact1 "SGK a scalar argument keeps the stub's words" "$SGH"'fn run(): i64 { return rdb(5); }
+syscall(60, run());
+' "error:<source>:12:28: generic 'rdb' has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, \`&x\` of one returned as a struct, or a struct result over 8 bytes stored in one — directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument"
+
 # W — the wrap is transparent: `( .. )` around the whole literal initializer IS the initializer.
 WH='struct P { a; b; }
 struct Bx<T> { v: T; w; }

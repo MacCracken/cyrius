@@ -13,6 +13,11 @@
 # `**P2` / `***P2` / `**Box<P2>` and a `**P2` field after a method bind as a free call and a field chain do — the method
 # ran the i64 base (`sizeof(T)` 8; `ppb(b.mqq())` refused "has no i64 instance"), the carrier was refused "a different
 # struct type" (`_ic_pp_arg`; the token scans' `_tok_pp_arg` likewise).
+# The F17 rows (6.7.17, the genr review, beside D2): inside a generic, a struct carrier's T field `b.v` (`b: Box<T>`,
+# `v: T`), whole in an argument, is a value of T as a T-typed name is — forwarded into a stub (`rdb(b.v)`, `k.pick(b.v)`,
+# `gxb(b.v)`, `gxb(mk1(b.v))`, wrapped, named, through `*Box<T>`), or bound to a generic call's `: U` (`var r =
+# idt(b.v); r.b`, a bounded `r.s2()`, a two-slot carrier). D2's instance binds it (`rdb$P2`), but the stub scan read
+# only a name: each generic kept its i64 base and was refused at the definition, called or not.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -111,6 +116,23 @@ fn o3<T>(t: T): i64 { var r = idt(GW.p); var k = K { r.b }; return k.pick(t); }
 fn o4<T>(t: T): i64 { var b = B { 0 }; var r = gd2(b.mqq()); var k = K { r.b }; return k.pick(t); }
 fn o5<T>(t: T): i64 { var b = B { 0 }; var r = unb2(b.mbb2()); var k = K { r.b }; return k.pick(t); }
 fn o6<T>(t: T): i64 { var b = B { 0 }; var r = gd2(b.mwq().qq); var k = K { r.b }; return k.pick(t); }
+# Inside a generic, a carrier's T field (the F17 rows).
+struct Pair<X, Y> { f: X; s: Y; }
+trait Sh2 { fn s2(self): i64; }
+impl Sh2 for P2 { fn s2(self): i64 { return self.a * 10 + self.b; } }
+impl Sh2 for i64 { fn s2(self): i64 { return self + 100; } }
+fn gxb<T>(b: Box<T>): i64 { return b.v.b + b.n; }
+fn mk1<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 1; return b; }
+fn cf1<T>(b: Box<T>): i64 { return rdb(b.v); }
+fn cf2<T>(b: Box<T>): i64 { var k = K { 1 }; return k.pick(b.v); }
+fn cf3<T>(b: Box<T>): i64 { var r = idt(b.v); return r.b; }
+fn cf4<T>(b: *Box<T>): i64 { return rdb(b.v); }
+fn cf5<T>(b: Box<T>): i64 { return rdb((b.v)) * 100 + sz(b.v); }
+fn cf6<T>(b: Box<T>): i64 { return rdb(v: b.v); }
+fn cf7<T: Sh2>(b: Box<T>): i64 { var r = idt(b.v); return r.s2(); }
+fn cf8<A, C: Sh2>(p: Pair<A, C>): i64 { var r = idt(p.s); return r.s2(); }
+fn cf9<T>(b: Box<T>): i64 { return gxb(b.v); }
+fn cf10<T>(b: Box<T>): i64 { return gxb(mk1(b.v)); }
 
 # The declaration zone: the sweep and the replay bind alike — an 8-byte struct result types the global (a 16-byte one
 # is refused there, "call it inside a fn", as `idt(q)` of a struct global is).
@@ -253,6 +275,21 @@ fn run(): i64 {
     assert_eq(o3(q), 34, "F14c: in a generic, var r = idt(GW.p);");
     assert_eq(GZ, 16, "F15a: the zone: var GZ = sz(GW.p);");
     assert_eq(GZR.a, 33, "F15b: the zone: var GZR = idt(GW.p1); is a P1");
+
+    # inside a generic, a struct carrier's T field `b.v` (the genr review, beside D2)
+    assert_eq(cf1(GBX), 72, "F17a: rdb(b.v), a carrier's T field forwarded into a stub (refused at the definition before)");
+    assert_eq(cf2(GBX), 73, "F17b: k.pick(b.v), into a stub method");
+    assert_eq(cf3(GBX), 72, "F17c: var r = idt(b.v); r.b");
+    assert_eq(cf4(GPBX), 72, "F17d: rdb(b.v) through b: *Box<T>");
+    assert_eq(cf5(GBX), 7216, "F17e: rdb((b.v)), wrapped; sz(b.v) binds P2");
+    assert_eq(cf6(GBX), 72, "F17f: rdb(v: b.v), a named argument");
+    var bi: Box<i64>; bi.v = 4; bi.n = 0;
+    assert_eq(cf7(GBX) * 1000 + cf7(bi), 782104, "F17g: a bounded r.s2() on var r = idt(b.v); at P2 and at i64");
+    var pr: Pair<i64, P2>; pr.f = 0; pr.s.a = 3; pr.s.b = 4;
+    var pi: Pair<i64, i64>; pi.f = 0; pi.s = 6;
+    assert_eq(cf8(pr) * 1000 + cf8(pi), 34106, "F17h: var r = idt(p.s); r.s2() through a two-slot carrier's second slot, at P2 and i64");
+    var bb: Box<Box<P2>>; bb.v.v.b = 5; bb.v.n = 2;
+    assert_eq(cf9(bb) * 100 + cf10(GBX), 773, "F17i: gxb(b.v) and gxb(mk1(b.v)) in a carrier position");
     return 0;
 }
 alloc_init();

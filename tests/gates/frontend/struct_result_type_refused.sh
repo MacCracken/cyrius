@@ -2098,6 +2098,90 @@ syscall(60, main());
 accept "RBK7 for x in x.a..5: the start's x" "$RBH"'fn g<T>(x: T): i64 { var s = 0; for x in x.a..5 { s = s + 1; } return s; }
 '"$RBQM" 2 'syscall(60, 2);'
 
+# WR (6.7.17, met reviewing the genr lane): a whole argument's wrap carries what it wraps in the stub scan too, as the
+# parser binds it (the guide: parentheses around the WHOLE argument carry what they wrap). `vb((x))`, `gxw((b))`,
+# `var r = idp((&x)); r.b` and `var r = first((b)); r.a` forwarded / typed nothing (`_gs_arg_named`, `_gs_carries`,
+# `_gs_cb_pp`, `_gs_cb_carr` read the argument's first token), so the generic kept its i64 base and was refused at the
+# definition, called or not — naming the callee ("generic 'vb' has no i64 ... instance") or "no struct type in scope for
+# 'r'" — where the unwrapped spelling made it a stub. Now the struct call runs (WRa-WRd; generic_struct_only_lines.tcyr
+# V29-V33 on every backend) and the scalar call is refused with the stub's words (WR1-WR4, WR1n the forward's note).
+#   MWR1 the tree before the fix (l6717-integ 45c7ff467)    -> RED 9: WR1-WR4 (the callee's words / "no struct type"),
+#                                                             WR1n (the callee's note), WRa-WRd (refused at the definition)
+echo "=== a wrapped whole argument forwards / types T in the stub scan, as the parser binds it (6.7.17) ==="
+WRH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn vb<T>(x: T): i64 { return x.b; }
+fn gxw<T>(b: Box<T>): i64 { return b.v.b + b.n; }
+fn idp<T>(p: *T): T { var r: T = *p; return r; }
+fn first<T>(b: Box<T>): T { var r: T = b.v; return r; }
+'
+WR1G='fn g<T>(x: T): i64 { return vb((x)); }
+'
+WR2G='fn g<T>(b: Box<T>): i64 { return gxw((b)); }
+'
+WR3G='fn g<T>(x: T): i64 { var r = idp((&x)); return r.b; }
+'
+WR4G='fn g<T>(b: Box<T>): i64 { var r = first((b)); return r.a; }
+'
+WRS='fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+WRB='fn main(): i64 { var bx: Box<i64>; bx.v = 1; bx.n = 2; return g(bx); }
+syscall(60, main());
+'
+WRQ='fn main(): i64 { var q = Q { 3, 4 }; return g(q); }
+syscall(60, main());
+'
+WRQB='fn main(): i64 { var bx: Box<Q>; bx.v.a = 3; bx.v.b = 4; bx.n = 6; return g(bx); }
+syscall(60, main());
+'
+refuse "WR1 vb((x)) at g(5): the stub's" "$TGM" "$WRH$WR1G$WRS" one
+tv_note "WR1n the forward's note" "8:29: 'g' forwards its type parameter to 'vb'"
+refuse "WR2 gxw((b)) at Box<i64>" "$TGM" "$WRH$WR2G$WRB" one
+refuse "WR3 var r = idp((&x)); r.b at g(5)" "$TGM" "$WRH$WR3G$WRS" one
+refuse "WR4 var r = first((b)); r.a at Box<i64>" "$TGM" "$WRH$WR4G$WRB" one
+accept "WRa vb((x)) at Q" "$WRH$WR1G$WRQ" 4 'syscall(60, 4);'
+accept "WRb gxw((b)) at Box<Q>" "$WRH$WR2G$WRQB" 10 'syscall(60, 10);'
+accept "WRc var r = idp((&x)); r.b at Q" "$WRH$WR3G$WRQ" 4 'syscall(60, 4);'
+accept "WRd var r = first((b)); r.a at Box<Q>" "$WRH$WR4G$WRQB" 3 'syscall(60, 3);'
+
+# CF (6.7.17, the genr review, beside the user's D2): inside a generic a struct carrier's T field `b.v` (`b: Box<T>`,
+# `v: T`), whole in an argument, is a value of T as a T-typed name is (`_gs_cfv`, parse_fn_def.cyr). Since D2 the
+# instance binds it (`rdb(b.v)` at `Box<Q>` calls `rdb$Q`), but the stub scan read only a name: `rdb(b.v)` and
+# `var r = idt(b.v); r.b` kept the i64 base, refused at the definition naming rdb / "no struct type in scope for 'r'",
+# called or not, where `var y: T = b.v; rdb(y)` was a stub. Now the struct call runs (CFa, CFb; the tcyr's F17 rows on
+# every backend), the scalar call is refused with the stub's words (CF1, CF1n, CF2), and a bounded `r.show()` on such
+# an `r` is a bounded site at every T (CF3, `impl Show for i64`).
+#   MCF1 the tree before the fix (97918d988)                  -> RED 6: CF1 CF2 (rdb's words / "no struct type"), CF1n,
+#                                                               CFa CFb CF3 (refused at the definition)
+echo "=== a carrier's T field, whole in an argument, is a value of T in the stub scan (6.7.17, beside D2) ==="
+CFH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn rdb<T>(x: T): i64 { return x.b; }
+fn idt<T>(x: T): T { return x; }
+'
+CF1G='fn g<T>(b: Box<T>): i64 { return rdb(b.v); }
+'
+CF2G='fn g<T>(b: Box<T>): i64 { var r = idt(b.v); return r.b; }
+'
+CFS='fn main(): i64 { var bi: Box<i64>; bi.v = 4; bi.n = 0; return g(bi); }
+syscall(60, main());
+'
+CFQ='fn main(): i64 { var bq: Box<Q>; bq.v.a = 3; bq.v.b = 4; bq.n = 0; return g(bq); }
+syscall(60, main());
+'
+refuse "CF1 rdb(b.v) at Box<i64>: the stub's" "$TGM" "$CFH$CF1G$CFS" one
+tv_note "CF1n the forward's note" "6:34: 'g' forwards its type parameter to 'rdb'"
+refuse "CF2 var r = idt(b.v); r.b at Box<i64>" "$TGM" "$CFH$CF2G$CFS" one
+accept "CFa rdb(b.v) at Box<Q>" "$CFH$CF1G$CFQ" 4 'syscall(60, 4);'
+accept "CFb var r = idt(b.v); r.b at Box<Q>" "$CFH$CF2G$CFQ" 4 'syscall(60, 4);'
+accept "CF3 bounded r.show() on idt(b.v) at Box<i64>" "$CFH"'trait Show { fn show(self): i64; }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn g<T: Show>(b: Box<T>): i64 { var r = idt(b.v); return r.show(); }
+'"$CFS" 104 'syscall(60, 104);'
+
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
     refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
@@ -2149,10 +2233,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review); D1 (genr) + 44): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review); D1 (genr) + 44; the genr review's WR + 8, CF + 5): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 625 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 625"; exit 1
+if [ $((nrefuse + naccept)) -lt 638 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 638"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

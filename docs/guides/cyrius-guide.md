@@ -1531,7 +1531,9 @@ the tuple: `var t = (1, 2 3);` is `expected ',' between tuple literal elements` 
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
 level), an argument (`f(P { 5, 6 })`), an operand, a nested literal's element (`W { P { 2 } }`), a
 `return` value or a statement it is one error by name — a generic `Box<i64> { .. }` alike (6.7.14, the
-user's decision D12 (a), 2026-10-16):
+user's decision D12 (a), 2026-10-16), and as a generic's argument too: `g(P { 2, 4 })` is the literal's error, not the
+refusal of the `i64` call it would make (6.7.17; through 6.7.16 a bounded `g` asked for `impl Show for i64`, a stub
+said it "has no i64 (or other scalar) instance"):
 
 ```text
 error:<source>:3:21: a struct literal is an initializer: declare `var t: P = P { .. };` and assign or pass t
@@ -7874,7 +7876,10 @@ a generic method's `: U` at what its argument binds (`g(b.idv(q))`), a `Str` fie
 D2, 2026-10-22: through 6.7.16 each ran the i64 base — `sizeof(T)` 8 for a 16-byte `P2` — and a body
 reading `v.b` was refused as having no i64 instance; a program passing such a value now calls the
 struct's instance, and a 9+ byte one at the top level is refused "call it inside a fn" as `g(q)` of a
-struct global is). Only a WHOLE argument binds `T`: `g(p.y)`, a scalar field (an `f64` one too),
+struct global is). Inside a generic, a struct carrier's `T` field (`b.v` with `b: Box<T>`, `v: T`) is a value of
+`T` as a `T`-typed name is: `rdb(b.v)` forwards `T` (the generic is a stub, as `rdb(y)` with `var y: T = b.v;` makes
+it) and `var r = idt(b.v);` types `r` by `T` (6.7.17, beside D2; until then each was refused at the definition, called
+or not). Only a WHOLE argument binds `T`: `g(p.y)`, a scalar field (an `f64` one too),
 `g(p.x + p.y)` and `g(p + 1)` infer `i64` (through a `p: *T`, a typed pointer plus or
 minus `n` is still that pointer — below), and through an `x: T` parameter so does
 every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
@@ -7886,7 +7891,9 @@ this rule). Parentheses around the WHOLE argument carry what they wrap — a sca
 plain spelling does — and a closure's captured struct binds as the struct local it
 captures: `|| g(p)`, and `|| gsz(p)` through a `p: *T` (which passes the address of the
 capture's copy). The user's decision D12 (a), 2026-10-18: through 6.7.14 each ran the i64
-base (`sizeof(T)` 8; `g((h))` on the double's bits) and the captured `gsz(p)` was refused as not a pointer. A tuple literal
+base (`sizeof(T)` 8; `g((h))` on the double's bits) and the captured `gsz(p)` was refused as not a pointer. A wrap
+carries what it wraps in a generic's own body too: `vb((x))` and `gx((b))` forward `T` as `vb(x)` / `gx(b)` do, and
+`var r = idp((&x));` types `r` as `idp(&x)` does (6.7.17; until then each was refused at the definition). A tuple literal
 (`g((p, 3))`) binds nothing. An **f64** argument — an `f64`
 local or parameter, an `f64` global, a float literal, a call returning `f64` (a
 generic one at its `f64` instance), and (6.7.16) a closure's captured `f64`, as the local it
@@ -8208,8 +8215,8 @@ The rebound name itself is the rebinding's own untyped word too (6.7.17, the use
 `fn g<T: Show>(x: T)`, the `x` of a closure's `|x| { return x.show(); }`, of `for x in 0..2 { .. x.show() .. }` and of
 `var q, x = two(); x.show()` is no `T` value, so each `x.show()` / `x.b` there — a field store, `x = mk();`,
 `return &x;`, `x[0] = mk();`, a forward of `x` into a stub, a carrier's `|b| b.v.b` and `b.v.show()` alike — is what
-a plain fn makes of it: *no struct type in scope for 'x'; a method call needs its struct declaration* at the definition,
-as `fn h(x: Pt)` refuses the same body. Through 6.7.16 they were read as `g`'s own `x: T`: a bounded `x.show()` called
+a plain fn makes of it, at the definition (*no struct type in scope for 'x'; a method call needs its struct
+declaration* for `x.show()`, *a '.field' access* for `x.b`), as `fn h(x: Pt)` refuses the same body. Through 6.7.16 they were read as `g`'s own `x: T`: a bounded `x.show()` called
 the bound's impl on the closure's word (SIGSEGV at `T = Pt`; `g(7)` ran it through `impl Show for i64`), and `x.b` made
 the generic a stub, compiled when never called. The rebinding reaches where the parser binds it: a range's end bound
 reads the loop variable (`for x in 0..x.b`), its start bound and a collection the enclosing `x` (`for x in x.a..5`), and

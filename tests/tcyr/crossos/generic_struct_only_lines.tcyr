@@ -21,6 +21,9 @@
 # `|b|` — as is a T value a closure captures, a destructure's right-hand side `pr(x.b)` and a range's start bound
 # `x.a..10` (each reads the enclosing x; inside the rebindings x is their own word, refused at the definition:
 # struct_result_type_refused.sh RB*).
+# 6.7.17 (met reviewing the genr lane), V29-V33: a whole argument's wrap carries what it wraps in the stub scan, as the
+# parser binds it — `vb((x))`, `pp.hm((x))`, `gxw((b))`, `var r = idp((&x));`, `var r = first((b));` forward / type T
+# as their unwrapped spellings do (each was refused at the definition: struct_result_type_refused.sh WR*).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -89,6 +92,12 @@ fn v25<T>(x: T): i64 { var f = |x| { return x + 1; }; return x.b + fncall1(f, 1)
 fn v26<T>(b: Box<T>): i64 { var f = |b| { return b + 1; }; return b.v.b + fncall1(f, 1); }
 fn v27<T>(x: T): i64 { var q, x = pr(x.b); return q + x; }
 fn v28<T>(x: T): i64 { var s = 0; for x in x.a..10 { s = s + 1; } return s; }
+fn gxw<T>(b: Box<T>): i64 { return b.v.b + b.n; }
+fn v29<T>(x: T): i64 { return vb((x)); }
+fn v30<T>(x: T): i64 { var pp = P { 1 }; return pp.hm((x)); }
+fn v31<T>(b: Box<T>): i64 { return gxw((b)); }
+fn v32<T>(x: T): i64 { var r = idp((&x)); return r.b; }
+fn v33<T>(b: Box<T>): i64 { var r = first((b)); return r.a; }
 
 fn run(): i64 {
     var s: S8; s.v = 7;
@@ -142,6 +151,11 @@ fn run(): i64 {
     assert_eq(v26(bx), 10, "V26: b.v.b past a closure's |b|: the carrier's field");
     assert_eq(v27(q), 17, "V27: var q, x = pr(x.b); reads the T value's x.b on its right-hand side");
     assert_eq(v28(q), 3, "V28: for x in x.a..10 reads the T value's x.a in its start bound");
+    assert_eq(v29(q), 8, "V29: vb((x)), a wrapped forward into a stub, at T = Q");
+    assert_eq(v30(q), 9, "V30: pp.hm((x)), a wrapped forward into a stub method");
+    assert_eq(v31(bx), 14, "V31: gxw((b)), a wrapped carrier forward");
+    assert_eq(v32(q), 8, "V32: var r = idp((&x)); r.b");
+    assert_eq(v33(bx), 7, "V33: var r = first((b)); r.a");
     return 0;
 }
 alloc_init();
