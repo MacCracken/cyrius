@@ -394,9 +394,11 @@ struct Q { a: Foo; }
 syscall(60, 0);
 ' "error:<source>:1:9: expected '{', got identifier 'a'
 error:<source>:2:15: $F"
-refuse Q7 "a generic union (its refusal, pass 2's), then the program's first statement" 'union U<T> { a; }
+# 6.7.17 (the user's D5): a generic union is refused by name in pass 1 ("a union takes no type parameters"), its list
+# stepped in both passes — the program's first statement still reports its own
+refuse Q7 "a generic union (D5's refusal), then the program's first statement" 'union U<T> { a; }
 syscall(60, 1 2);
-' "error:<source>:1:8: expected '{', got '<'
+' "error:<source>:1:8: a union takes no type parameters
 error:<source>:2:15: expected ')', got number 2"
 refuse Q8 "pass 2's own refusal (a stack enum's two fields), then a fn body's" 'enum E: stack { A(x, y) }
 fn f(): i64 { var a = 1 2; return a; }
