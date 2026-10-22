@@ -317,7 +317,7 @@ for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
     sum=$(summary "$D/n/$b.out"); np=${sum% *}; nf=${sum#* }
     if [ -z "$sum" ] || [ "$nrc" != 0 ] || [ "$nf" != 0 ] || [ "$np" -lt "$fl" ]; then
         bad "axis 1: $b.tcyr natively: '${sum:-no summary}' (exit $nrc, floor $fl)"
-        grep -m4 'FAIL:' "$D/n/$b.out" | tr -d '\r' | sed 's/^/      /'
+        grep -m4 'FAIL:' "$D/n/$b.out" | tr -d '\r' | sed 's/^/      /' || true
     else ok; fi
 done
 
@@ -927,7 +927,9 @@ esac
 # axis 6, 6.7.16: static — the stdlib wrappers that hand an fd to a raw handle reroute ask
 # `_win_fd_aliases` first. The folds (docs/ecosystem.md's lib/ rows) are not cyrius-edited and call
 # no raw handle reroute; the census reads every other lib/*.cyr.
-FOLDS=$(grep -o '^| `lib/[a-z_0-9]*\.cyr`' "$ROOT/docs/ecosystem.md" | sed 's/^| `lib\///; s/`$//' | tr '\n' ' ')
+# `|| true`: with no fold row, `-e` + pipefail ended the gate here, before the row that says so.
+# CHANGELOG [6.7.17]
+FOLDS=$(grep -o '^| `lib/[a-z_0-9]*\.cyr`' "$ROOT/docs/ecosystem.md" | sed 's/^| `lib\///; s/`$//' | tr '\n' ' ' || true)
 [ -n "$FOLDS" ] || bad "axis 6: no fold rows read from docs/ecosystem.md"
 for lf in "$ROOT"/lib/*.cyr; do
     case " $FOLDS " in *" $(basename "$lf") "*) continue ;; esac
@@ -1165,7 +1167,7 @@ EOF
         sum=$(summary "$D/$b.wout"); np=${sum% *}; nf=${sum#* }
         if [ -z "$sum" ] || [ "$wrc" != 0 ] || [ "$nf" != 0 ] || [ "$np" -lt "$fl" ]; then
             bad "axis 4: $b.tcyr under wine: '${sum:-no summary}' (exit $wrc, floor $fl)"
-            grep -m6 'FAIL:' "$D/$b.wout" | tr -d '\r' | sed 's/^/      /'
+            grep -m6 'FAIL:' "$D/$b.wout" | tr -d '\r' | sed 's/^/      /' || true
         else ok; fi
     done
     WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true

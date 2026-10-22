@@ -135,6 +135,9 @@ build() {  # $1 = file stem, $2 = the syscall's argument list
 }
 
 # axis 1: routed at argc 7 / 6, reported one argument short.
+# Every step a failure path takes ends `|| true` (a build, a FAIL listing) or answers 0 (lno): the
+# row after it names the failure, and under `set -e` (GitHub's run: shell) a failed step ended the
+# gate first, red but with no FAIL line (gates_verdict_under_pipefail.sh axis 4). CHANGELOG [6.7.17]
 rc=0; build lk "0xF04C, 0, 2, 0, 1, 0, &ov" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/lk.exe" ]; then bad "axis 1: syscall(0xF04C, 6 args) did not build for PE (rc $rc)"
 elif grep -q "syscall 61516 with" "$D/lk.err"; then bad "axis 1: syscall(0xF04C, 6 args) is reported as not routed"
@@ -143,10 +146,10 @@ rc=0; build un "0xF04D, 0, 0, 1, 0, &ov" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/un.exe" ]; then bad "axis 1: syscall(0xF04D, 5 args) did not build for PE (rc $rc)"
 elif grep -q "syscall 61517 with" "$D/un.err"; then bad "axis 1: syscall(0xF04D, 5 args) is reported as not routed"
 else ok; fi
-build lks "0xF04C, 0, 2, 0, 1, &ov"
+build lks "0xF04C, 0, 2, 0, 1, &ov" || true
 if grep -q "syscall 61516 with 5 argument" "$D/lks.err"; then ok
 else bad "axis 1: syscall(0xF04C, 5 args) (one argument short) was not reported"; fi
-build uns "0xF04D, 0, 0, 1, &ov"
+build uns "0xF04D, 0, 0, 1, &ov" || true
 if grep -q "syscall 61517 with 4 argument" "$D/uns.err"; then ok
 else bad "axis 1: syscall(0xF04D, 4 args) (one argument short) was not reported"; fi
 
@@ -195,14 +198,17 @@ esac
 # file itself).
 fnbody() { awk -v n="fn $1(" '/^[[:space:]]*#/ { next } index($0, n) == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$IO"; }
 # has TEXT PATTERN: TEXT has a line matching PATTERN. lno TEXT PATTERN: the first such line's
-# number. grep reads a here-document, so its stop at the first match leaves no writer to kill.
+# number. grep reads a here-document, so its stop at the first match leaves no writer to kill. lno
+# answers 0 with no line when nothing matches: under `set -e` a failing `neg=$(lno …)` ended the
+# gate there, before the row that names the missing line (gates_verdict_under_pipefail.sh axis 4
+# runs a mutant). CHANGELOG [6.7.17]
 has() {
     grep -q -e "$2" <<EOF
 $1
 EOF
 }
 lno() {
-    grep -n -m1 -e "$2" <<EOF | cut -d: -f1
+    grep -n -m1 -e "$2" <<EOF | cut -d: -f1 || :
 $1
 EOF
 }
@@ -325,7 +331,7 @@ EOF
             WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
             timeout 120 wine "$1" > "$2" 2>&1 )
     }
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/fl.cyr" > "$D/w/fl.exe" 2> "$D/fl.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$D/fl.cyr" > "$D/w/fl.exe" 2> "$D/fl.err" ) || true
     if [ ! -s "$D/w/fl.exe" ]; then
         bad "axis 5: the PE build of the filed repro produced no binary: $(grep -m2 '^error' "$D/fl.err" | tr '\n' ' ')"
     else
@@ -333,7 +339,7 @@ EOF
         if [ "$frc" = 11 ]; then ok
         else bad "axis 5: the filed repro exits $frc under wine (want 11: xflock(fd, LOCK_EX) -> 0; 10 is the old -1)"; fi
     fi
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/t.exe" 2> "$D/t.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/t.exe" 2> "$D/t.err" ) || true
     if [ ! -s "$D/w/t.exe" ]; then
         bad "axis 5: the PE build of xflock_two_handle.tcyr produced no binary: $(grep -m2 '^error' "$D/t.err" | tr '\n' ' ')"
     else
@@ -344,12 +350,12 @@ EOF
             bad "axis 5: the PE run under wine printed no summary (exit $wrc)"
         elif [ "$wrc" != 0 ] || [ "$nf" != 0 ]; then
             bad "axis 5: xflock_two_handle.tcyr under wine: $np passed, $nf failed (exit $wrc)"
-            grep -m6 'FAIL:' "$D/t.out" | tr -d '\r' | sed 's/^/      /'
+            grep -m6 'FAIL:' "$D/t.out" | tr -d '\r' | sed 's/^/      /' || true
         elif [ "$np" -lt 30 ]; then
             bad "axis 5: xflock_two_handle.tcyr under wine ran only $np rows (floor 30)"
         else ok; fi
     fi
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TR" > "$D/w/r.exe" 2> "$D/r.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TR" > "$D/w/r.exe" 2> "$D/r.err" ) || true
     if [ ! -s "$D/w/r.exe" ]; then
         bad "axis 5: the PE build of xflock_relock_keeps_lock.tcyr produced no binary: $(grep -m2 '^error' "$D/r.err" | tr '\n' ' ')"
     else
@@ -360,7 +366,7 @@ EOF
             bad "axis 5: the relock .tcyr's PE run under wine printed no summary (exit $rrc)"
         elif [ "$rrc" != 0 ] || [ "$nf" != 0 ]; then
             bad "axis 5: xflock_relock_keeps_lock.tcyr under wine: $np passed, $nf failed (exit $rrc)"
-            grep -m6 'FAIL:' "$D/r.out" | tr -d '\r' | sed 's/^/      /'
+            grep -m6 'FAIL:' "$D/r.out" | tr -d '\r' | sed 's/^/      /' || true
         elif [ "$np" -lt 50 ]; then
             bad "axis 5: xflock_relock_keeps_lock.tcyr under wine ran only $np rows (floor 50)"
         else ok; fi

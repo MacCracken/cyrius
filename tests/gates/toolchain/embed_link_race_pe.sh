@@ -95,11 +95,14 @@ build() {  # $1 = file stem, $2 = the syscall's argument list
 }
 
 # axis 1: routed at argc 5, reported one argument short.
+# Every step a failure path takes ends `|| true` (a build, a FAIL listing, the Windows-arm grep): the
+# row after it names the failure, and under `set -e` (GitHub's run: shell) a failed step ended the
+# gate first, red but with no FAIL line (gates_verdict_under_pipefail.sh axis 4). CHANGELOG [6.7.17]
 rc=0; build fp "0xF04E, 0, &b, 32, 0" || rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$D/fp.exe" ]; then bad "axis 1: syscall(0xF04E, 4 args) did not build for PE (rc $rc)"
 elif grep -q "syscall 61518 with" "$D/fp.err"; then bad "axis 1: syscall(0xF04E, 4 args) is reported as not routed"
 else ok; fi
-build fps "0xF04E, 0, &b, 32"
+build fps "0xF04E, 0, &b, 32" || true
 if grep -q "syscall 61518 with 3 argument" "$D/fps.err"; then ok
 else bad "axis 1: syscall(0xF04E, 3 args) (one argument short) was not reported"; fi
 
@@ -142,7 +145,8 @@ EOF
 }
 f4=$fail
 eo=$(fnbody "$MF" _embed_open)
-warm=$(grep -A2 '^    #ifdef CYRIUS_TARGET_WIN' <<EOF
+# `|| true`: with no Windows arm, `-e` ended the gate here, before the row that says so. CHANGELOG [6.7.17]
+warm=$(grep -A2 '^    #ifdef CYRIUS_TARGET_WIN' <<EOF || true
 $(awk 'index($0, "fn _embed_open(") == 1 { s = 1 } s == 1 { print } s == 1 && /^}/ { exit }' "$MF")
 EOF
 )
@@ -179,12 +183,12 @@ fi
 [ "$fail" = "$f4" ] && ok
 
 # axis 5: the arm64-macOS openat route, on the binary.
-( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> "$D/cc_a64.err" )   # includes resolve from the root
+( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2> "$D/cc_a64.err" ) || true   # includes resolve from the root
 if [ ! -s "$D/cc_a64" ]; then
     bad "axis 5: the aarch64 cross compiler did not build from this tree: $(head -2 "$D/cc_a64.err" | tr '\n' ' ')"
 else
     chmod +x "$D/cc_a64"
-    ( cd "$ROOT" && CYRIUS_MACHO_ARM=1 "$D/cc_a64" < "$TC" > "$D/eo_ma" 2> "$D/eo_ma.err" )
+    ( cd "$ROOT" && CYRIUS_MACHO_ARM=1 "$D/cc_a64" < "$TC" > "$D/eo_ma" 2> "$D/eo_ma.err" ) || true
     if [ ! -s "$D/eo_ma" ]; then
         bad "axis 5: the arm64-macOS build of embed_open_under_root.tcyr produced no binary: $(grep -m2 '^error' "$D/eo_ma.err" | tr '\n' ' ')"
     else
@@ -206,11 +210,11 @@ grade() {  # $1 = label, $2 = output file, $3 = exit code, $4 = floor
     if [ -z "$s" ]; then bad "axis 6 ($1): no summary (exit $3)"
     elif [ "$3" != 0 ] || [ "$nf" != 0 ]; then
         bad "axis 6 ($1): $np passed, $nf failed (exit $3)"
-        grep -m6 'FAIL:' "$2" | tr -d '\r' | sed 's/^/      /'
+        grep -m6 'FAIL:' "$2" | tr -d '\r' | sed 's/^/      /' || true
     elif [ "$np" -lt "$4" ]; then bad "axis 6 ($1): only $np rows ran (floor $4)"
     else ok; fi
 }
-( cd "$ROOT" && "$CC" < "$TC" > "$D/eo" 2> "$D/eo.err" )
+( cd "$ROOT" && "$CC" < "$TC" > "$D/eo" 2> "$D/eo.err" ) || true
 if [ ! -s "$D/eo" ]; then
     bad "axis 6: the native build of embed_open_under_root.tcyr produced no binary: $(grep -m2 '^error' "$D/eo.err" | tr '\n' ' ')"
 else
@@ -219,7 +223,7 @@ else
     grade native "$D/n.out" "$nrc" 25
 fi
 if command -v qemu-aarch64 > /dev/null 2>&1 && [ -s "$D/cc_a64" ]; then
-    ( cd "$ROOT" && "$D/cc_a64" < "$TC" > "$D/eo_a" 2> "$D/eo_a.err" )
+    ( cd "$ROOT" && "$D/cc_a64" < "$TC" > "$D/eo_a" 2> "$D/eo_a.err" ) || true
     if [ ! -s "$D/eo_a" ]; then bad "axis 6: the aarch64 build of the .tcyr produced no binary"
     else
         chmod +x "$D/eo_a"; mkdir -p "$D/a"
@@ -235,7 +239,7 @@ if ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP: axis 6 wine (wine absent — the cass cross-OS leg runs embed_open_under_root.tcyr on real Windows)"
 else
     mkdir -p "$D/w"
-    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/eo.exe" 2> "$D/eo_w.err" )
+    ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$TC" > "$D/w/eo.exe" 2> "$D/eo_w.err" ) || true
     if [ ! -s "$D/w/eo.exe" ]; then
         bad "axis 6: the PE build of embed_open_under_root.tcyr produced no binary: $(grep -m2 '^error' "$D/eo_w.err" | tr '\n' ' ')"
     else
