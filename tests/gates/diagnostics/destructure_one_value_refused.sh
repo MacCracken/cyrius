@@ -526,12 +526,12 @@ refused7 da_noeq "fn t(): i64 { var a: i64, b: i64; return 3; }\nsyscall(60, t()
 # two statements: one line each, and the program's next error still its own
 rows=$((rows + 1))
 printf "${TWO8}fn t(): i64 { var a: i64, b = two(3); var c, d: i64 = two(4); return a + b + c + d + zq; }\nsyscall(60, t());\n" > "$T/da_two.cyr"
-"$CC" < "$T/da_two.cyr" > "$T/da_two.bin" 2> "$T/da_two.err"
+"$CC" < "$T/da_two.cyr" > "$T/da_two.bin" 2> "$T/da_two.err" || true   # refused (rc 1): bash -eo pipefail
 check "da_two: two statements, one line each, then 'zq'" "2:19 'a'|2:46 'd'|undefined variable 'zq'" \
     "$(grep '^error' "$T/da_two.err" | sed -n "s/^error:<source>:\([0-9:]*\): .*: \('[a-z]*'\).*/\1 \2/p;s/^error:<source>:[0-9:]*: \(undefined variable 'zq'\).*/\1/p" | tr '\n' '|' | sed 's/|$//')"
 # --syntax-only (cyrius lint) reports it too (a parse-level refusal, nothing resolved)
 rows=$((rows + 1))
-"$CC" --syntax-only < "$T/da_both.cyr" > /dev/null 2> "$T/da_both.so"
+"$CC" --syntax-only < "$T/da_both.cyr" > /dev/null 2> "$T/da_both.so" || true
 check "da_both: --syntax-only names it, once" 1 "$(grep -c "^error.*$DA9" "$T/da_both.so")"
 # controls: an annotated plain var beside a destructure, a list's own `,` inside an annotation
 runs7 da_ctl "${TWO8}struct Box<T> { v: T; n; }\nfn t(): i64 { var a: i64 = 5; var c, d = two(3); var q: Box<i64> = 0; var e: (i64, i64) = two(1); return a + c * 10 + d; }\nsyscall(60, t());\n" 39
