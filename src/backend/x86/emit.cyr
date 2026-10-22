@@ -686,10 +686,10 @@ fn _ESTORE_ODD_RCX(S, w): i64 {
 
 # Width-aware local load: load_width [rbp-off] → rax
 fn EFLLOAD_W(S, idx, width): i64 {
-    _ECORO_REFUSE(S, "a sub-word local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 95);
     # v6.5.66 — a direct read of a param slot keeps its inline copy alive.
     _prov_read(idx);
     if (_IR_REC(S, IR_LOAD_LOCAL, width, idx, 0) == 1) { return 0; }
+    if (_ECORO_LOAD_W(S, idx, width) == 1) { return 0; }   # 6.7.17 (D27): a coroutine-frame slot
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: #regalloc fns reserve [rbp-8] for the saved rbx,
     # so every user-visible local sits 8 bytes deeper in the frame.
@@ -732,10 +732,10 @@ fn EFLLOAD_W(S, idx, width): i64 {
 
 # Width-aware local store: rax → store_width [rbp-off]
 fn EFLSTORE_W(S, idx, width): i64 {
-    _ECORO_REFUSE(S, "a sub-word local in an `async fn` is not supported yet (its locals live in the coroutine frame)", 95);
     # v6.5.65 — any write to a slot invalidates the inline-param provenance recorded for it.
     _prov_kill(idx);
     if (_IR_REC(S, IR_STORE_LOCAL, width, idx, 0) == 1) { return 0; }
+    if (_ECORO_STORE_W(S, idx, width) == 1) { return 0; }   # 6.7.17 (D27): a coroutine-frame slot
     var disp = 0 - ((idx + 1) * 8);
     # v4.8.4-alpha6: shift past the reserved rbx save slot.
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
@@ -5992,6 +5992,41 @@ fn _ECORO_OFF(S, idx): i64 { return _CORO_LOCAL_OFF + (idx - _coro_lo) * 8; }
 fn _ECORO_SLOT(S, idx): i64 {
     if (_cur_fn_coro == 0) { return 0; }
     if (idx < _coro_lo) { return 0; }
+    return 1;
+}
+# 6.7.17 (D27) — A NARROW (i8 .. u32) LOCAL OR PARAMETER OF A SUSPENDING `async fn` lives in the coroutine frame
+# like any other: EFLLOAD_W / EFLSTORE_W's width ladder on `[r11 + disp32]` (the slot's low bytes, as `[rbp+disp]`
+# is on the stack). They refused it by name ("a sub-word local in an `async fn` is not supported yet"), so a narrow
+# parameter kept the caller's whole word (`_pnw_apply` skipped a coroutine) where 6.7.16's D72 narrows every other.
+# The constructor still copies each argument's whole word in; every read narrows it. 1 = emitted; 0 leaves the
+# stack form (and a full-width access) to the caller. CHANGELOG [6.7.17]
+fn _ECORO_LOAD_W(S, idx, width): i64 {
+    if (_ECORO_SLOT(S, idx) == 0) { return 0; }
+    var aw = width;
+    if (aw < 0) { aw = 0 - aw; }
+    if (aw != 1 && aw != 2 && aw != 4) { return 0; }
+    _ECORO_BASE_R11(S);
+    if (width == 0 - 1) { E3(S, 0xBE0F49); }        # movsx rax, byte [r11 + disp32]
+    elif (width == 0 - 2) { E3(S, 0xBF0F49); }      # movsx rax, word [r11 + disp32]
+    elif (width == 0 - 4) { E2(S, 0x6349); }        # movsxd rax, dword [r11 + disp32]
+    elif (width == 1) { E3(S, 0xB60F49); }          # movzx rax, byte [r11 + disp32]
+    elif (width == 2) { E3(S, 0xB70F41); }          # movzx eax, word [r11 + disp32]
+    else { E2(S, 0x8B41); }                         # mov eax, dword [r11 + disp32] (zero-extends)
+    EB(S, 0x83);
+    EDISP32(S, _ECORO_OFF(S, idx));
+    _flags_reflect_rax = 0;                         # a load writes no flags
+    return 1;
+}
+fn _ECORO_STORE_W(S, idx, width): i64 {
+    if (_ECORO_SLOT(S, idx) == 0) { return 0; }
+    if (width != 1 && width != 2 && width != 4) { return 0; }
+    _ECORO_BASE_R11(S);
+    if (width == 1) { E2(S, 0x8841); }              # mov byte [r11 + disp32], al
+    elif (width == 2) { E3(S, 0x894166); }          # mov word [r11 + disp32], ax
+    else { E2(S, 0x8941); }                         # mov dword [r11 + disp32], eax
+    EB(S, 0x83);
+    EDISP32(S, _ECORO_OFF(S, idx));
+    _efl_store_cp = 0 - 1;                          # as EFLSTORE's coroutine arm: no reload to elide
     return 1;
 }
 

@@ -5501,14 +5501,14 @@ fn _pnw_mark(S, li, code): i64 {
     else { SSLICE_W(S, li, 0); }
     return 0;
 }
-# The int-class parameter `pc` at slot `li`: the pending code applied, and the inline pack's field set. ⚠ Not in a
-# suspending `async fn`: its parameters live in the coroutine frame, where a narrow slot is refused by name ("a sub-word
-# local in an `async fn` is not supported yet") — that one keeps the word, unchanged, until the user rules on it.
+# The int-class parameter `pc` at slot `li`: the pending code applied, and the inline pack's field set. A suspending
+# `async fn`'s too (6.7.17's D27): its slot is in the coroutine frame, which EFLLOAD_W / EFLSTORE_W address at the
+# width (`_ECORO_LOAD_W`); the constructor copies the argument's whole word in, every read narrows it.
+# CHANGELOG [6.7.17]
 fn _pnw_apply(S, li, pc, pack): i64 {
     var code = _pnw_pend;
     _pnw_pend = 0;
     if (code == 0) { return pack; }
-    if (_pending_coro == 1) { return pack; }
     _pnw_mark(S, li, code);
     var f = 0x8100 | code;
     if (pc == 0) { return pack | f; }

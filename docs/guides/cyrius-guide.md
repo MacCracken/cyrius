@@ -549,8 +549,9 @@ var r = add(20, 22);   # r = 42
   `0x1FFFFFFFF` is -1; `y += 1` of an `i16` 32767 is -32768 — through a fn pointer (`fncall1(&wid, 0x1FF)` is
   255), a stack-passed parameter, an `#inline` replay and a closure's capture alike. The argument passes whole
   (the ABI is unchanged) and the callee narrows it. ⚠ Through 6.7.15 it held the caller's whole word (511 in a
-  `u8`) and did not wrap. A suspending `async fn`'s narrow parameter still holds the word: its parameters live
-  in the coroutine frame, where a narrow slot is not supported yet.
+  `u8`) and did not wrap. A suspending `async fn`'s (a coroutine's) is narrowed too (6.7.17, the user's decision
+  D27, 2026-10-22): `async fn st1(y: u8)` given `0x1FF` reads 255 after its `await`, and an `i16` `y += 1` of
+  32767 is -32768. ⚠ Through 6.7.16 a coroutine's narrow parameter held the caller's whole word (511, 32768).
 - Forward calls work (functions can call functions defined later). The call reads the callee's whole
   signature wherever the structs it names are declared (6.7.15): a struct parameter (by value or `*S`)
   or a struct return (`: S`, `: *S`, `: Box<S>`) whose struct is declared BELOW the fn — directly, or
@@ -8202,6 +8203,16 @@ step; while one does, the reactor still polls (without blocking) for the fds,
 timers and deadline sentinels other tasks are parked on, so neither side starves.
 (Until 6.6.11 every backend finished such a coroutine with the 0 its suspend
 returned, and this guide told you to force it yourself with `future_force`.)
+
+**Narrow locals and parameters.** A coroutine's `i8` .. `i32` / `u8` .. `u32` local or parameter lives
+in its heap frame at its width, as it does on the stack (6.7.17, D27): `var y: i16 = 5;` before an `await`
+reads 5 after it, a store wraps (`y += 1` of an `i16` 32767 is -32768), and `*(&y)` and a closure's capture
+read its value. ⚠ Through 6.7.16 a narrow local in a coroutine was refused ("a sub-word local in an `async fn`
+is not supported yet") and a narrow parameter held the caller's whole word. The same message also refused every
+read or assignment of a typed-pointer local whose pointee is a word — `*i64` / `*u64` / `*f64` / `*bool` / an
+enum's `*E`, and every pointer to a pointer (`**T`, `***T`) — in a coroutine (a `*i8` .. `*u32`, `*f32`, `*u128`
+or struct pointer never took that path); since 6.7.17 (D27: the refusal goes) those compile too, and `p += 1` /
+`q = q + 2` step by the pointee as they do in any fn.
 
 **Other limits.** `async` generic fns are not yet supported, nor is a value-form vector
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
