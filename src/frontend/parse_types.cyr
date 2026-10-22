@@ -2424,8 +2424,7 @@ fn _dyn_asg(S, noff, term): i64 {
         _agc_from_temp(S, t, dli, dgv, n, dsid);
     }
     STI(S, en);
-    if (PEEKT(S) != term) { ERR_EXPECT(S, term); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, term);
     return 1;
 }
 # `h.o = src;` / `hp.o = src;` (`_fsc_src`'s first lines, `ft` the field's dyn): built in a frame

@@ -28,7 +28,7 @@
 #   F   a C-style `for` header missing one of its two `;`: F1 the condition's, F2 the init's, F3 an assignment
 #       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's
 #   D   a `dyn` initializer's `;`: D1 before a `return` (its source ran on to the next `;`: "cannot form dyn Show
-#       from this expression"), D2 before the fn's `}`
+#       from this expression"), D2 before the fn's `}`; D3 / D4 a dyn assignment `o = &p` before the `}` / a `return`
 #   E   a subscript store's `;` (`a[0] = 1`): E1 before the fn's `}`, E2 before a `return`
 #   T   an assignment's terminator (the `term` sites the statement and the classic-for step share): T1 `*q = 5`
 #       before the fn's `}`, T2 a struct copy `*q = o` before a `return`, T3 / T4 a field store before the `}` / a
@@ -47,7 +47,7 @@
 # to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
 # parse_types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
 # On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
-# On 063eeadf7 (before parse_decl.cyr's `term` sites) RED: T3-T5.
+# On 063eeadf7 (before parse_decl.cyr's `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -261,6 +261,24 @@ fn g(): i64 { return zz; }
 syscall(60, f() + g());
 " "error:<source>:6:26: expected ';', got '}'
 error:<source>:7:24: $UZ"
+
+row D3 "a dyn assignment o = &p before the fn's }" "${DH}fn f(): i64 {
+    var p = P { 1, 2 };
+    var o: dyn Show = &p;
+    o = &p }
+fn g(): i64 { return zz; }
+syscall(60, f() + g());
+" "error:<source>:7:12: expected ';', got '}'
+error:<source>:8:24: $UZ"
+row D4 "a dyn assignment o = &p then a return" "${DH}fn f(): i64 {
+    var p = P { 1, 2 };
+    var o: dyn Show = &p;
+    o = &p
+    return zz;
+}
+syscall(60, f());
+" "error:<source>:8:5: expected ';', got return
+error:<source>:8:14: $UZ"
 
 # ---- E: a subscript store's `;` (src/frontend/parse_expr.cyr)
 row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
