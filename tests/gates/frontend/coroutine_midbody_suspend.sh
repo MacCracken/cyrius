@@ -780,19 +780,23 @@ chmod +x "$T/a11"; g11=0; timeout 30 "$T/a11" || g11=$?
 # held the caller's whole word where 6.7.16's D72 narrows every other parameter: the filed repro
 # printed `98304 511 255 -32768`. D27 (2026-10-22): narrowed, as D72 — the ladder addresses
 # `[r11 + disp32]` (`_ECORO_LOAD_W` / `_ECORO_STORE_W`), so the repro prints `-32768 255 255 -32768`
-# and a narrow local compiles.
-# Rows: R the filed repro verbatim (its stdout); N1-N27 (stdout "N<row>" for each red row) every
+# and a narrow local compiles. The same refusal fired on every read and assignment of an 8-byte
+# typed-pointer local (`var q: *i64` / `*u64` / `*f64` / `**i64`: its load / store also goes through
+# EFLLOAD_W / EFLSTORE_W, at width 8), so those compile since D27 too — N28.
+# Rows: R the filed repro verbatim (its stdout); N1-N28 (stdout "N<row>" for each red row) every
 # width's parameter read after a suspend, every width's `+= 1` wrap, every width's local (stored
 # before or after the suspend), and the other spellings — a narrow param into a narrow local, `*(&y)`
 # (6.7.16's D21), a stack-passed parameter, a closure's capture of a narrow param / local, two
-# suspends, a `u8` loop counter across suspends, a defer, `<<=`. Each async row is compared with its
+# suspends, a `u8` loop counter across suspends, a defer, `<<=`, an 8-byte typed-pointer local (N28:
+# `*i64` `+= 1`, `*u64` `= q + 2`, `*f64`, `**i64` through `&p`). Each async row is compared with its
 # literal value AND a plain-fn control with the same body (D72's answer); `trash()` runs between
 # forces. Legs: x86_64, CYRIUS_IR=3 (its LASE / DCE / DSE see the narrow coroutine nodes), PE (wine,
 # a private prefix). aarch64 and cx refuse a suspending `async fn` (axis 4's x86 guard); x86 Mach-O
 # shares this emitter and ran on ach by hand (6.7.17).
 # MUTATION LEDGER (2026-10-22, a copy of src/ mutated, stage1 rebuilt from it; every leg alike):
 #   the pre-fix src (e65604d5d)                      -> R prints `98304 511 255 -32768`; the rows
-#     probe refused ("a sub-word local in an `async fn` is not supported yet")
+#     probe refused ("a sub-word local in an `async fn` is not supported yet"), N28's a28 alone too
+#     (at its `p += 1` and its `*p` read)
 #   `_pnw_apply`'s coroutine skip alone restored     -> R `98304 511 255 -32768`; N 1-12 19-22 24-27
 #   `_ECORO_LOAD_W` zero-extending every width       -> R `32768 255 255 -32768`; N 1 3 5 7 9 11 13
 #     15 17 19 22 (every signed row)
@@ -898,6 +902,8 @@ async fn a26(y: i8): i64 { defer { g_d = y; } var s = await nopark(); y -= 1; re
 fn c26(y: i8): i64 { defer { g_d = y; } y -= 1; return 0; }
 async fn a27(y: u8): i64 { var s = await nopark(); y = y << 1; y <<= 1; return y; }
 fn c27(y: u8): i64 { y = y << 1; y <<= 1; return y; }
+async fn a28(buf): i64 { var p: *i64 = buf; var q: *u64 = buf; var f: *f64 = buf; var pp: **i64 = &p; var s = await nopark(); p += 1; q = q + 2; var t = await nopark(); return *p + *q + load64(f) + load64(*pp); }
+fn c28(buf): i64 { var p: *i64 = buf; var q: *u64 = buf; var f: *f64 = buf; var pp: **i64 = &p; p += 1; q = q + 2; return *p + *q + load64(f) + load64(*pp); }
 fn main(): i64 {
     alloc_init();
     chk(1, runf(a1(0x1FF)), c1(0x1FF), 0 - 1);
@@ -927,6 +933,8 @@ fn main(): i64 {
     chk(25, runf(a25(0x105)), c25(0x105), 10005);
     runf(a26(0x180)); var d1 = g_d; g_d = 0; c26(0x180); chk(26, d1, g_d, 127);
     chk(27, runf(a27(0x41)), c27(0x41), 4);
+    var B = alloc(24); store64(B, 1); store64(B + 8, 1000); store64(B + 16, 1000000);
+    chk(28, runf(a28(B)), c28(B), 1002001);
     syscall(SYS_WRITE, 1, "\n", 1);
     return g_red;
 }
@@ -969,9 +977,10 @@ else echo "  SKIP coroutine_midbody_suspend axis12: the PE leg (wine not install
   echo "FAIL coroutine_midbody_suspend axis12: $a12_red leg(s) red — a coroutine's narrow parameter or local"
   echo "  does not hold its type's value (N<row>: 1-6 a parameter of each width, 7-12 each width's += 1 wrap,"
   echo "  13-18 a local of each width, 19 a param into a narrow local, 20 *(&y), 21 stack-passed, 22 / 23 a"
-  echo "  closure's capture, 24 two suspends, 25 a u8 loop counter, 26 a defer, 27 <<=)."
+  echo "  closure's capture, 24 two suspends, 25 a u8 loop counter, 26 a defer, 27 <<=, 28 an 8-byte"
+  echo "  typed-pointer local: *i64 / *u64 / *f64 / **i64)."
   exit 1; }
 
 if [ "$a12_skip" -eq 1 ]; then echo "SKIP coroutine_midbody_suspend: every axis that ran passed, but axis 12's PE leg could not run (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS coroutine_midbody_suspend: a narrow (i8 .. u32) parameter or local of a coroutine holds its type's value (D27: the filed repro prints -32768 255 255 -32768; 27 rows on x86_64 / IR=3 / PE) · a closure made in a coroutine captures a struct / tuple / u128 / array / slice in field order (before and after the await, nested) · the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct params over 8 B (24 B / 16 B x coroutine/plain) refused by name with the p: *T spelling (a *P3, a <= 8 B struct and a Str still compute) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
+echo "PASS coroutine_midbody_suspend: a narrow (i8 .. u32) parameter or local of a coroutine holds its type's value (D27: the filed repro prints -32768 255 255 -32768; 28 rows on x86_64 / IR=3 / PE) · a closure made in a coroutine captures a struct / tuple / u128 / array / slice in field order (before and after the await, nested) · the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct params over 8 B (24 B / 16 B x coroutine/plain) refused by name with the p: *T spelling (a *P3, a <= 8 B struct and a Str still compute) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0
