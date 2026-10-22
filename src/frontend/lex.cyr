@@ -124,7 +124,7 @@ fn FM_BUILD(S): i64 {
                         # but warn ONCE — silently dropping mis-attributes file:line in
                         # later error messages on big multi-include consumer builds.
                         if (_fm_overflowed == 0) {
-                            syscall(SYS_WRITE, 2, "warning: file map full (1024 entries) -- file:line attribution truncated past here\n", 83);
+                            _ew("warning: file map full (1024 entries) -- file:line attribution truncated past here\n", 83);
                             _fm_overflowed = 1;
                         }
                     }
@@ -250,8 +250,8 @@ fn FM_LOOKUP(S, expanded_line): i64 {
         var fptr = S + 0x721000 + foff;
         var flen = 0;
         while (load8(fptr + flen) != 0) { flen = flen + 1; }
-        syscall(SYS_WRITE, 2, fptr, flen);
-        syscall(SYS_WRITE, 2, ":", 1);
+        _ew(fptr, flen);
+        _ew(":", 1);
     }
     # Line not in any included file — it's the main source
     PRNUM(_fm_site_line);
@@ -266,12 +266,12 @@ fn FM_LOOKUP(S, expanded_line): i64 {
 # Used by the `duplicate fn` warning to name where the LOSING definition came from —
 # the filing's point was that one position cannot answer "which copy wins" on its own.
 fn _fm_print_fid(S, v): i64 {
-    if (v <= 0) { syscall(SYS_WRITE, 2, "<unknown>", 9); return 0; }
-    if (v == 1) { syscall(SYS_WRITE, 2, "<source>", 8); return 0; }
+    if (v <= 0) { _ew("<unknown>", 9); return 0; }
+    if (v == 1) { _ew("<source>", 8); return 0; }
     var p = S + 0x721000 + (v - 2);
     var n = 0;
     while (load8(p + n) != 0) { n = n + 1; }
-    syscall(SYS_WRITE, 2, p, n);
+    _ew(p, n);
     return 0;
 }
 
@@ -294,9 +294,9 @@ fn ADDTOK(S, typ, val): i64 {
         # at those addresses) to the post-TS-region high block at
         # 0x8C00000 / 0xAC00000 / 0xCC00000 (each 8 MiB), brk
         # extended to S + 0x457C000 in every main_*.cyr.
-        syscall(SYS_WRITE, 2, "error: token limit exceeded: needed ", 36);
+        _ew("error: token limit exceeded: needed ", 36);
         PRNUM(tc + 1);
-        syscall(SYS_WRITE, 2, ", cap is 4194304\n", 17);
+        _ew(", cap is 4194304\n", 17);
         syscall(SYS_EXIT, 1);
     }
     S64(S + 0x8C00000 + tc * 8, typ);
@@ -346,7 +346,7 @@ fn _LEX_EMIT_UTF8(S, spos, cp): i64 {
     if (cp >= 2048) { need = 3; }
     if (cp >= 65536) { need = 4; }
     if (spos + need > 2097152) {
-        syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
+        _ew("error: string data overflow (2MB limit)\n", 40);
         syscall(SYS_EXIT, 1);
     }
     if (cp < 128) {
@@ -717,22 +717,22 @@ fn _check_cyml_pin_drift(): i64 {
     var _pd_strict_name = "CYRIUS_STRICT_PIN";
     var _pd_strict = _env_var_is_1(_pd_strict_name);
     if (_pd_strict == 1) {
-        syscall(1, 2, "error: cyrius.cyml pins ", 24);
-        syscall(1, 2, &_pd_buf + _pd_pin_start, _pd_pin_len);
-        syscall(1, 2, " but cycc is ", 13);
-        syscall(1, 2, _VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
-        syscall(1, 2, " — toolchain drift (CYRIUS_STRICT_PIN)\n", 41);
+        _ew("error: cyrius.cyml pins ", 24);
+        _ew(&_pd_buf + _pd_pin_start, _pd_pin_len);
+        _ew(" but cycc is ", 13);
+        _ew(_VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
+        _ew(" — toolchain drift (CYRIUS_STRICT_PIN)\n", 41);
         #ifdef CYRIUS_TARGET_AGNOS
         syscall(0, 1);
         #else
         syscall(60, 1);
         #endif
     }
-    syscall(1, 2, "warning: cyrius.cyml pins ", 26);
-    syscall(1, 2, &_pd_buf + _pd_pin_start, _pd_pin_len);
-    syscall(1, 2, " but cycc is ", 13);
-    syscall(1, 2, _VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
-    syscall(1, 2, " — toolchain drift (snapshot may be stale; set CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)\n", 88);
+    _ew("warning: cyrius.cyml pins ", 26);
+    _ew(&_pd_buf + _pd_pin_start, _pd_pin_len);
+    _ew(" but cycc is ", 13);
+    _ew(_VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
+    _ew(" — toolchain drift (snapshot may be stale; set CYRIUS_NO_WARN_PIN_DRIFT=1 to silence)\n", 88);
     return 0;
 }
 
@@ -744,11 +744,11 @@ fn _rf_fits(path, skip, pre): i64 {
     var n = 0;
     while (load8(path + n) != 0) { n = n + 1; }
     if (pre + n - skip <= 4095) { return 1; }
-    syscall(SYS_WRITE, 2, "error: include path too long for the fallback directory (", 57);
+    _ew("error: include path too long for the fallback directory (", 57);
     PRNUM(pre + n - skip);
-    syscall(SYS_WRITE, 2, " bytes, the limit is 4095): ", 28);
-    syscall(SYS_WRITE, 2, path, n);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew(" bytes, the limit is 4095): ", 28);
+    _ew(path, n);
+    _ew("\n", 1);
     return 0;
 }
 
@@ -864,11 +864,11 @@ fn READFILE(path, dst, maxsz): i64 {
         while (load8(path + pi) != 0) {
             if (load8(path + pi) == 46 && load8(path + pi + 1) == 46) {
                 if (pi == 0 || load8(path + pi - 1) == 47) {
-                    syscall(SYS_WRITE, 2, "error: path traversal rejected: ", 32);
+                    _ew("error: path traversal rejected: ", 32);
                     var plen = 0;
                     while (load8(path + plen) != 0) { plen += 1; }
-                    syscall(SYS_WRITE, 2, path, plen);
-                    syscall(SYS_WRITE, 2, " (set CYRIUS_ALLOW_PARENT_INCLUDES=1 to permit)\n", 48);
+                    _ew(path, plen);
+                    _ew(" (set CYRIUS_ALLOW_PARENT_INCLUDES=1 to permit)\n", 48);
                     # the include dot-dot path bug/CO-02 (v6.1.41): return -1 so the PP's `nr < 0` guards fire
                     # SYS_EXIT — a rejected hostile include must FAIL the build, not be
                     # treated as a silent empty include (exit 0 after printing 'error:').
@@ -894,11 +894,11 @@ fn READFILE(path, dst, maxsz): i64 {
     }
     if (allow_abs == 0) {
         if (load8(path) == 47) {
-            syscall(SYS_WRITE, 2, "error: absolute include path rejected: ", 39);
+            _ew("error: absolute include path rejected: ", 39);
             var alen = 0;
             while (load8(path + alen) != 0) { alen += 1; }
-            syscall(SYS_WRITE, 2, path, alen);
-            syscall(SYS_WRITE, 2, " (set CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit)\n", 50);
+            _ew(path, alen);
+            _ew(" (set CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit)\n", 50);
             # the absolute-include path bug/CO-02 (v6.1.41): return -1 (fatal) — see the parent-include reject.
             return 0 - 1;
         }
@@ -1560,9 +1560,9 @@ fn NPOS_GUARD(S, need): i64 {
     # preprocess ceiling: thoth's lib+src alone needs ~798 KB of pool, agnostic ~797 KB — both
     # already past the old 512 KB cap for a whole-tree build.
     if (np + need >= 8388336) {
-        syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
+        _ew("error: identifier buffer full (", 31);
         PRNUM(np);
-        syscall(SYS_WRITE, 2, "/8388608 bytes) — reduce included modules or split into separate units\n", 73);
+        _ew("/8388608 bytes) — reduce included modules or split into separate units\n", 73);
         syscall(SYS_EXIT, 1);
     }
     return 0;
@@ -1588,9 +1588,9 @@ fn _lex_dyn(S, p): i64 {
 # loop needs. See NPOS_GUARD above.
 fn LEXID(S, p, npos): i64 {
     if (npos >= 8388336) {
-        syscall(SYS_WRITE, 2, "error: identifier buffer full (", 31);
+        _ew("error: identifier buffer full (", 31);
         PRNUM(npos);
-        syscall(SYS_WRITE, 2, "/8388608 bytes) — reduce included modules or split into separate units\n", 73);
+        _ew("/8388608 bytes) — reduce included modules or split into separate units\n", 73);
         syscall(SYS_EXIT, 1);
     }
     var bl = GBL(S);
@@ -1694,7 +1694,7 @@ fn LEXID(S, p, npos): i64 {
         # 0x7300000 -> 0xF400000 (arena top) and grown 512 KB -> 2 MiB.
         # ⚠ The 65536 at lex.cyr:306/:318 is a UTF-8 codepoint WIDTH test, not this cap.
         if (ec >= 262144) {
-            syscall(SYS_WRITE, 2, "error: identifier dedup table full (262144 entries) - raise LEXID cap in lex.cyr\n", 81);
+            _ew("error: identifier dedup table full (262144 entries) - raise LEXID cap in lex.cyr\n", 81);
             syscall(SYS_EXIT, 1);
         }
         var prev_head = L64(S + 0x457C100 + bucket * 8);
@@ -1932,11 +1932,11 @@ fn LEXID(S, p, npos): i64 {
 # shape. Kept small and separate: LEX is far past the size cybs compiles comfortably.
 # CHANGELOG [6.6.10]
 fn _lex_err_head(S, p): i64 {
-    syscall(SYS_WRITE, 2, "error:", 6);
+    _ew("error:", 6);
     FM_LOOKUP(S, GCLINE(S));
-    syscall(SYS_WRITE, 2, ":", 1);
+    _ew(":", 1);
     PRNUM(_err_col(S, p));
-    syscall(SYS_WRITE, 2, ": ", 2);
+    _ew(": ", 2);
     return 0;
 }
 
@@ -1945,7 +1945,7 @@ fn _lex_err_head(S, p): i64 {
 fn _lex_die(S, p, msg): i64 {
     _lex_err_head(S, p);
     PRSTR(msg);
-    syscall(SYS_WRITE, 2, "\n", 1);
+    _ew("\n", 1);
     syscall(SYS_EXIT, 1);
     return 0;
 }
@@ -2002,7 +2002,7 @@ fn _lex_hex2(c): i64 {
     var lo = c & 15;
     if (hi < 10) { store8(&b, 48 + hi); } else { store8(&b, 87 + hi); }
     if (lo < 10) { store8(&b + 1, 48 + lo); } else { store8(&b + 1, 87 + lo); }
-    syscall(SYS_WRITE, 2, &b, 2);
+    _ew(&b, 2);
     return 0;
 }
 
@@ -2015,13 +2015,13 @@ fn _lex_hex2(c): i64 {
 fn _lex_stray(S, p, c): i64 {
     _lex_err_head(S, p);
     if (c > 127) {
-        syscall(SYS_WRITE, 2, "non-ASCII byte (0x", 18);
+        _ew("non-ASCII byte (0x", 18);
         _lex_hex2(c);
-        syscall(SYS_WRITE, 2, ") -- only ASCII allowed in source (UTF-8 ok in strings)\n", 56);
+        _ew(") -- only ASCII allowed in source (UTF-8 ok in strings)\n", 56);
     } else {
-        syscall(SYS_WRITE, 2, "unexpected character (0x", 24);
+        _ew("unexpected character (0x", 24);
         _lex_hex2(c);
-        syscall(SYS_WRITE, 2, ")\n", 2);
+        _ew(")\n", 2);
     }
     syscall(SYS_EXIT, 1);
     return 0;
@@ -2622,7 +2622,7 @@ fn LEX(S): i64 {
                                                                                                                                         # at
                                                                                                                                         # 0x14A000)
                                                                                                                                         if (spos >= 2097152) {
-                                                                                                                                            syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
+                                                                                                                                            _ew("error: string data overflow (2MB limit)\n", 40);
                                                                                                                                             syscall(SYS_EXIT, 1);
                                                                                                                                         }
                                                                                                                                         if (sgo == 1) {
@@ -2745,7 +2745,7 @@ fn LEX(S): i64 {
                                                                                                                                     } else {
                                                                                                                                         spos = spos + 1;
                                                                                                                                         if (spos >= 2097152) {
-                                                                                                                                            syscall(SYS_WRITE, 2, "error: string data buffer full (2MB limit)\n", 43);
+                                                                                                                                            _ew("error: string data buffer full (2MB limit)\n", 43);
                                                                                                                                             syscall(SYS_EXIT, 1);
                                                                                                                                         }
                                                                                                                                         SSPOS(S, spos);
