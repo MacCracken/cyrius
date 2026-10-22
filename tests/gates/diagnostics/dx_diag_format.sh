@@ -172,5 +172,31 @@ xm EX2 'error:<source>:4:35: a fn returning the struct `B<i32>` takes a value of
 xm EX3 'error:<source>:2:20: a fn returning the struct `Q` returns that struct — `(a, b)` is a tuple, another type' 'fn f(): Q { return (1, 2); }' 20 'struct Q { a; b; c; }\nfn f(): Q { return (1, 2); }\nsyscall(60, 0);\n'
 xm EX4 'error:<source>:4:52: a fn returning the struct `S8` takes a value of that struct, or a pointer to one — `&q` is the address of q'"'"'s slot, not a struct — return q' 'fn h(): S8 { var q: S8 = alloc(8); q.v = 3; return &q; }' 52 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\nstruct S8 { v; }\nfn h(): S8 { var q: S8 = alloc(8); q.v = 3; return &q; }\nfn main(): i64 { alloc_init(); var c: S8 = h(); return c.v == 3; }\nsyscall(60, main());\n'
 
-echo "PASS: dx diagnostics — column (:L:C:) + source excerpt + caret; no at-fail noise; a struct named as written (MN1-MN20); an undefined name at the name (CR1-CR12); every struct-return refusal with its excerpt (EX1-EX4)"
+# ── 6.7.17 (FD1): a diagnostic past an in-line expansion reports the SOURCE column, and its excerpt is the source line
+# — not the expanded one (a `#derive`'s generated fns flattened onto the struct's `}` line; a macro call's body). Each
+# row: the head line exactly, the excerpt line exactly, the caret under the column.
+UZ="undefined variable 'zz' (missing include or enum?)"
+ADD='#define ADD(a, b) ((a) + (b) + (a) + (b))\n'
+xm XM1 "error:<source>:2:25: $UZ" 'struct Q { y; } var w = zz;' 25 '#derive(accessors)\nstruct Q { y; } var w = zz;\nsyscall(60, 0);\n'
+xm XM2 "error:<source>:2:21: $UZ" 'var x = ADD(1, 2) + zz;' 21 "${ADD}"'var x = ADD(1, 2) + zz;\nsyscall(60, 0);\n'
+xm XM3 "error:<source>:2:33: $UZ" 'var x = ADD(1, 2) + ADD(3, 4) + zz;' 33 "${ADD}"'var x = ADD(1, 2) + ADD(3, 4) + zz;\nsyscall(60, 0);\n'
+xm XM4 "error:<source>:3:7: $UZ" ' 2) + zz;' 7 "${ADD}"'var x = ADD(1,\n 2) + zz;\nsyscall(60, 0);\n'
+xm XM5 "error:<source>:2:9: $UZ" 'var x = ID(1);' 9 '#define ID(a) ((a) + zz)\nvar x = ID(1);\nsyscall(60, 0);\n'
+xm XM6 "error:<source>:4:11: $UZ" '} var w = zz;' 11 '#derive(accessors)\nstruct Q {\n    y;\n} var w = zz;\nsyscall(60, 0);\n'
+xm XM7 "error:<source>:2:29: $UZ" 'var x = ADD(ADD(1, 2), 3) + zz;' 29 "${ADD}"'var x = ADD(ADD(1, 2), 3) + zz;\nsyscall(60, 0);\n'
+xm XM8 "error:<source>:3:48: $UZ" 'struct Q { y; } var w = ADD(1, 2) + 1; var v = zz;' 48 \
+    "${ADD}"'#derive(accessors)\nstruct Q { y; } var w = ADD(1, 2) + 1; var v = zz;\nsyscall(60, 0);\n'
+# An included file's line: the macro (defined in the entry) expanded there, and a derive the include pass expands.
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: dx_diag_format: mktemp -d failed"; exit 1; }
+printf 'var y = ADD(1, 2) + zz;\n' > "$D/inc_m.cyr"
+xm XM9 "error:inc_m.cyr:1:21: $UZ" 'var y = ADD(1, 2) + zz;' 21 "${ADD}"'include "inc_m.cyr"\nsyscall(60, 0);\n' "$D"
+printf '#derive(accessors)\nstruct Q { y; } var w = zz;\n' > "$D/inc_d.cyr"
+xm XM10 "error:inc_d.cyr:2:25: $UZ" 'struct Q { y; } var w = zz;' 25 'include "inc_d.cyr"\nsyscall(60, 0);\n' "$D"
+rm -rf "$D"
+# The lexer's head reads the same map: a stray byte past a macro call is at its source column.
+printf '#define ADD(a, b) ((a) + (b) + (a) + (b))\nvar x = ADD(1, 2) + 1; var y = 5 $ 1;\nsyscall(60, 0);\n' > "$T"
+if "$CC" < "$T" > /dev/null 2>"$E"; then echo "FAIL: XM11 compiled clean"; exit 1; fi
+grep -q '^error:<source>:2:34: ' "$E" || { echo "FAIL: XM11: the lexer's column is not the source's (want 2:34):"; cat "$E"; exit 1; }
+
+echo "PASS: dx diagnostics — column (:L:C:) + source excerpt + caret; no at-fail noise; a struct named as written (MN1-MN20); an undefined name at the name (CR1-CR12); every struct-return refusal with its excerpt (EX1-EX4); past an in-line expansion the source column and line (XM1-XM11)"
 exit 0

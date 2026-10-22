@@ -6710,6 +6710,13 @@ so a program with both `myID` and `my` defined silently CALLED THE WRONG ONE, an
 lost two bytes of its own data. Both are fixed; a name that merely ends an identifier, and a name
 inside a string, are now left alone.
 
+**A diagnostic past an expansion points into the source (6.7.17).** A macro call and a `#derive`'s generated fns
+(written onto the line of the declaration's closing `}`) are expanded in-line, and an error later on that line reports
+the column as the source has it, with the source line as its excerpt: `var x = ADD(1, 2) + zz;` is `2:21` under `zz`,
+and `struct Q { y; } var w = zz;` after `#derive(accessors)` is `2:25`. A token the expansion itself produced is
+reported at the call (or just past the declaration's `}`). Through 6.7.16 the column was the expanded line's — `2:39`
+and `2:258` — and the excerpt showed the expansion.
+
 ⛔ **And an invocation opened in a `#` comment used to delete your code.** A `#define` body
 stops at the newline, but that covers only what an expansion *writes*. What it *reads* ran to the
 matching `)` wherever that was, so with `#define M(a) 0` in scope the comment

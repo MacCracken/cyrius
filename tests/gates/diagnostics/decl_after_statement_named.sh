@@ -985,7 +985,7 @@ return E_from_json_str(0) + zz;
 }
 syscall(60, f());
 " "error:<source>:9:1: an \`enum\` declaration $IR a fn body
-error:<source>:9:651: fn 'h' is defined inside fn 'f'; define it at top level
+error:<source>:9:18: fn 'h' is defined inside fn 'f'; define it at top level
 error:<source>:10:29: $ZZ"
 row5 DV6 "a fn named Q_h on a non-derived struct's line is the user's" "$(printf 'fn f(): i64 { struct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
 " "error:<source>:1:15: a \`struct\` declaration $IR a fn body
@@ -1003,29 +1003,29 @@ error:<source>:1:66: $ZZ"
 # one's), an enum's `E_from_json` (an enum codec writes none), `T_w` (no field w).
 #   the lane before it (f33107668)                   -> RED DV7 DV7b DV7c DV7d DV7e, 25
 #   `_dl_dname` without its PP_DERIVE_FAM tests      -> RED DV7c DV7e, 10 (`Q_y` and `_cy_json_skipval` stepped)
-# DV7c / DV7e pin a column past a `#derive(Serialize)` expansion on the same line, which is the EXPANDED line's
-# column (issues/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md, row 1): 6.7.17's bayan 1.11.0
-# refold makes the expansion emit `bayan_json_get_by_str` (7 characters longer), so 2096 -> 2103 and 1587 -> 1594.
+# DV5 / DV7-DV7e pin a column past a `#derive` expansion on the same line: since 6.7.17 the SOURCE line's column (the
+# expansion map, issues/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md, row 1), which no
+# change to the generated fns moves; through 6.7.16 they were the expanded line's (`fn 'h'` at 9:651, `zz` at 10:2101).
 #   `_dl_derived_fn` without `_dl_dv_once`           -> RED DV7d, 5 (the user's duplicate stepped)
 row5 DV7 "review: a user's fn Q_h on a derived refused struct's line" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return zz; }\nsyscall(60, Q_h(4));\n')
 " "error:<source>:4:1: a \`struct\` declaration $L
-error:<source>:4:271: $ZZ
+error:<source>:4:40: $ZZ
 error:<source>:5: 'Q_h' expects 0 arguments, got 1"
 row5 DV7b "... in a fn body: the user's fn refused as nested" "$(printf 'fn f(): i64 {\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return 1; } return zz; }\nsyscall(60, f());\n')
 " "error:<source>:3:1: a \`struct\` declaration $IR a fn body
-error:<source>:3:248: fn 'Q_h' is defined inside fn 'f'; define it at top level
-error:<source>:3:283: $ZZ"
+error:<source>:3:17: fn 'Q_h' is defined inside fn 'f'; define it at top level
+error:<source>:3:52: $ZZ"
 row5 DV7c "fn Q_y on a Serialize-only struct is the user's" "${DH}var a = 1;
 a = 2;
 #derive(Serialize)
 struct Q { y; } fn Q_y(): i64 { return zz; }
 syscall(60, Q_y(4));
 " "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:10:2101: $ZZ
+error:<source>:10:40: $ZZ
 error:<source>:11: 'Q_y' expects 0 arguments, got 1"
 row5 DV7d "a second fn Q_set_y (the user's duplicate) is the user's" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_set_y(): i64 { return zz; }\nsyscall(60, 0);\n')
 " "error:<source>:4:1: a \`struct\` declaration $L
-error:<source>:4:275: $ZZ"
+error:<source>:4:44: $ZZ"
 row5 DV7e "a later line's _cy_ helper, an enum's E_from_json, T_w (no field)" "${DH}var a = 1;
 a = 2;
 #derive(Serialize)
@@ -1039,11 +1039,11 @@ struct T { y; } fn T_w(): i64 { return zz3; }
 syscall(60, 0);
 " "error:<source>:10:1: a \`struct\` declaration must come before the first top-level statement (line 8)
 error:<source>:12:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:12:1592: $ZZ
+error:<source>:12:53: $ZZ
 error:<source>:14:1: an \`enum\` declaration must come before the first top-level statement (line 8)
-error:<source>:14:682: undefined variable 'zz2' (missing include or enum?)
+error:<source>:14:49: undefined variable 'zz2' (missing include or enum?)
 error:<source>:16:1: a \`struct\` declaration must come before the first top-level statement (line 8)
-error:<source>:16:271: undefined variable 'zz3' (missing include or enum?)"
+error:<source>:16:40: undefined variable 'zz3' (missing include or enum?)"
 
 # UI — 6.7.16 (issues/archived/2026-10-19-use-before-inner-refused-declaration-still-reported.md): A USE READ BEFORE A DECLARATION
 # REFUSED IN A FN BODY OR A BLOCK IS NO SECOND ERROR. `_decl_inner` entered the refused declaration's names (`_dl_names`)
