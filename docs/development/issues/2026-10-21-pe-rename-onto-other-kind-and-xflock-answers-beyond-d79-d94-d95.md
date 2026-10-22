@@ -2,7 +2,10 @@
 
 **Status:** 🟡 **OPEN** — each fix changes what a Windows call computes beyond the decided answers (D79 / D94: a failure
 answers the Win32 table's errno; D95: -21 for unlink / truncate / open of a directory); the pw lane stopped on all three.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (plat lane, wave 1, unit PL3; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D35 — Refuse with -20, as Linux.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D36 — -21, as Linux.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D37 — Linux's errno via the Windows error table.
 **Discovered:** the pw lane — its unit PW1's Blocked item (`xflock`) and its review's file_as_issue (all three; staged as
 2026-10-20-pe-rename-of-a-directory-onto-an-existing-file-replaces-the-file.md,
 2026-10-20-pe-rename-of-a-file-onto-an-existing-directory-answers-eacces-not-eisdir.md and

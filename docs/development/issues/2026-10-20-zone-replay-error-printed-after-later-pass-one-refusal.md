@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — measured 2026-10-20 on the 6.7.16 zone lane (l6716-zone at aa0d05620, x86_64; the shared
 front end, every target) against the slot-open compiler (b73e8d5fe's build/cycc).
-**Placement:** unplaced — not fixed in 6.7.16 (the s16 lane's SZ1 found it needs a day-plus redesign: buffering diagnostics to source order); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (zr lane, wave 3, unit ZR1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Severity:** Low — a refused program's diagnostics out of source order; nothing that compiles changes.
 **Kind:** bug (diagnostic order).
 **Discovered:** by the 6.7.16 zone lane's review, checking issues/2026-10-18-zone-replay-reports-only-first-latched-

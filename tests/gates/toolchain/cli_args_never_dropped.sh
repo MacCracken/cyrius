@@ -797,8 +797,8 @@ echo "axis 15b — every cyrius.cyml [release] bins entry ships in the macOS and
 # exempted HERE with a reason (REL_EXEMPT_*). Those builders built a HAND list (cyrfmt cyrlint cyrdoc
 # cyrius-init cyrsign cxvm cyaudit cyrius_api_surface), so no macOS or Windows binary install had
 # cyrius-lsp, ark, cyrld, ts_test_runner or cyrsign-efi, and bin/cyriusly was the shell script on
-# macOS (issues/archived/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md; the user's 6.7.14 D59: the
-# manifest is the source of truth for every tarball). They now build the list through
+# macOS (issues/archived/2026-10-19-cyrius-lsp-absent-from-macos-and-reads-proc.md; the user's 6.7.14 D59:
+# ship every [release] bin, built for aarch64; the macOS / Windows jobs on the manifest kept by 6.7.17's D84). They now build the list through
 # scripts/release-bins.sh. The census before this one read the builders' TEXT (a `for tool in` line,
 # a `/bin/<t>` name), which cannot see a helper that skips an entry or a later line that overwrites
 # one; so the three builders are RUN here (in parallel) and their tarballs unpacked. An entry counts

@@ -3,7 +3,10 @@
 **Status:** 🟡 **OPEN** — D100 / D101 refuse a vector CALL in these places; the vector LOCAL, the store through a `*V`
 and a multi-value element are in no decision, and each fix changes what compiles or computes; the s16 lane stopped on
 them.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (valc lane, wave 1, unit VC1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D23 — The whole vector.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D24 — Refuse them.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D25 — Refuse it at the element.
 **Discovered:** the s16 lane — unit SZ6 (rows 1, 2; its Blocked list), its fix step (row 3; "not fixed").
 **Severity:** Medium — rows 1 and 3 compute a wrong value with no diagnostic (row 1 differs by target); row 2 is the
 same lane-0 value on every target.

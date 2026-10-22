@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — whether a value builtin may stand as a statement, and in which words it is refused, is beyond
 6.7.16's D11 (which decided `mulh64(..);` / `sizeof(..);`); the f16 lane stopped on it.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (fea lane, wave 1, unit FA2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D32 — Refuse every one in D11's words.
 **Discovered:** the f16 lane, unit FF6.
 **Severity:** Low — one builtin compiles where its five siblings are refused, and the refusal's words are the generic
 "unexpected".

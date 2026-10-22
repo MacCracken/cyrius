@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — two repairs of a day or more (rows 1, 2) and a diagnostics policy each needs first (row 2's
 `var y = QQ;`, row 3's choice of error); the s16 and s16b lanes stopped on them.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (fec lane, wave 2, unit FC1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Discovered:** the s16 lane, unit SZ2 (its blocked B1 and B3); the s16b lane's fix step (row 3: "not fixed, still in
 base").
 **Severity:** Low — refused programs' diagnostics; nothing that compiles changes.

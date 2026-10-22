@@ -2,7 +2,12 @@
 
 **Status:** 🟡 **OPEN** — each fix changes what compiles or computes beyond the decided answers; the f16 and s16 lanes
 stopped on them.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (valb lane, wave 1, unit VB1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D18 — Refuse it.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D19 — p (the header's address).
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D20 — Copy into the closure's copy of t.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D21 — Accept it.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D22 — Type it Str.
 **Discovered:** the f16 lane, unit FF4 (row 1; the f16 review's file_as_issue, staged as
 2026-10-21-struct-result-assigned-into-str-handle-local-sigsegv.md); the s16 lane, unit SS2 (rows 2 – 5).
 **Severity:** Medium — row 1 compiles silently and crashes; rows 2 and 3 store a value other than their decided

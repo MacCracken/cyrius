@@ -261,25 +261,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.16 — Break 2, repair 6 (added at the 6.7.15 wave-1 integration, 2026-10-18): what 6.7.15 files** (0)
 
 
-**6.7.17 — the full security audit + the refactor / optimization review** (2)
+**6.7.17 — the full security audit + the refactor / optimization review** (22)
 
 - [A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back](2026-10-09-tail-call-by-value-copy-needs-effect-analysis.md)
 - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](2026-10-13-self-compile-prints-large-static-advisory.md)
-
-**Open by design — placed arcs, not bugs** (6)
-
-- [A constant `if` condition is tested at run time and its dead arm is emitted (DEAD-10)](2026-10-08-constant-if-arms-not-folded.md)
-- [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](2026-10-08-lib-public-constants-const-migration.md)
-- [`cyrius.cyml` has no named build profiles (`[build.PROFILE]`), and `[build] target` is held — warned, never read](2026-10-08-manifest-build-profiles-and-target-unread.md)
-- [Native TLS capability limits: no RSA client/server keys, leaf-only Certificate, empty certificate_authorities, 8 KiB one-record client Certificate (1.3), no libssl `tls_set_groups`, no X448 / secp521r1](2026-10-08-native-tls-capability-limits.md)
-- [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
-- [The TypeScript front end is measured against one project's files (secureyeoman's corpus), not the language — it needs true, in-tree language support](2026-10-19-typescript-support-measured-against-one-projects-files.md)
-
-**Unplaced** (23)
-
-- [The seed (`bootstrap/asm`) truncates input at 131,072 B, overruns its 512-label table and its 65,536 B CODE buffer — all unchecked](2026-10-08-seed-asm-silent-caps-input-labels-code.md)
-- [sigil (the crypto / trust fold) has no runtime logging: none of its 68 `src/` files calls sakshi](2026-10-12-sigil-has-no-runtime-logging.md)
-- [cybs names neither the construct it refused nor the file and line](2026-10-13-cybs-per-construct-refusal-and-file-line.md)
 - [The developer and release helpers moved into `scripts/` (Python and shell) are converted to cyrius — sovereignty, long term](2026-10-19-dev-helper-scripts-converted-to-cyrius.md)
 - [A declaration-zone initializer's error is printed after a LATER line's pass-1 refusal (`var p = g(1 2);` then `const X;` prints 3:8 before 2:13)](2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md)
 - [The 6.7.16 changes beyond the decisions' text — keep or restore each](2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md)
@@ -300,6 +285,21 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [The native TLS 1.3 server checks each key_share against supported_groups by a linear scan — one 16 KB ClientHello costs ~24 ms of server CPU, quadratic in peer-chosen counts (CYRIUS-2026-0037)](2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md)
 - [A value builtin as a bare statement: `load8(p);` compiles while `load16(p);` / `load32(p);` / `load64(p);` / `f32_from(x);` / `f32_to(x);` are "unexpected load16"](2026-10-21-value-builtin-statement-load8-compiles-load16-unexpected.md)
 - [A vector value in a word position beyond D100 / D101: a store through a `*V` writes one word, a vector LOCAL read as a word is its lane 0, and a multi-value fn's vector element is read as one word](2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md)
+
+**Open by design — placed arcs, not bugs** (6)
+
+- [A constant `if` condition is tested at run time and its dead arm is emitted (DEAD-10)](2026-10-08-constant-if-arms-not-folded.md)
+- [cyrius's own `lib/` still spells its public constants as `var` — the public-constants-are-`const` migration (asked by the folds' W2 sweeps)](2026-10-08-lib-public-constants-const-migration.md)
+- [`cyrius.cyml` has no named build profiles (`[build.PROFILE]`), and `[build] target` is held — warned, never read](2026-10-08-manifest-build-profiles-and-target-unread.md)
+- [Native TLS capability limits: no RSA client/server keys, leaf-only Certificate, empty certificate_authorities, 8 KiB one-record client Certificate (1.3), no libssl `tls_set_groups`, no X448 / secp521r1](2026-10-08-native-tls-capability-limits.md)
+- [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
+- [The TypeScript front end is measured against one project's files (secureyeoman's corpus), not the language — it needs true, in-tree language support](2026-10-19-typescript-support-measured-against-one-projects-files.md)
+
+**Unplaced** (3)
+
+- [The seed (`bootstrap/asm`) truncates input at 131,072 B, overruns its 512-label table and its 65,536 B CODE buffer — all unchecked](2026-10-08-seed-asm-silent-caps-input-labels-code.md)
+- [sigil (the crypto / trust fold) has no runtime logging: none of its 68 `src/` files calls sakshi](2026-10-12-sigil-has-no-runtime-logging.md)
+- [cybs names neither the construct it refused nor the file and line](2026-10-13-cybs-per-construct-refusal-and-file-line.md)
 
 ## Recommended security floor
 

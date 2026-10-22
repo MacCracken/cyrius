@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — the consistent fix stops two programs that compile today, beyond D102 (the f16b lane's fix step
 taught D102's untyped-local readers the same three rebindings, f6792b43a, and stopped here).
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (gena lane, wave 1, unit GA2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D1 — Yes: the new name is its own, untyped.
 **Discovered:** the f16b lane — its review's file_as_issue (the `x.b` shape), the bounded crash measured by its fix
 step; staged as this file. Identical on the lane's base 4ae0873f3 and the lane head 8e6a65fa0 (x86_64): the lane
 neither caused nor touched it. Re-measured 2026-10-21 at the 6.7.16 close on the merged compiler (main `4a3c510f3`;

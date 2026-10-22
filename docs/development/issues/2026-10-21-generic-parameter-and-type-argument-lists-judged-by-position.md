@@ -2,7 +2,12 @@
 
 **Status:** 🟡 **OPEN** — each fix changes what compiles beyond the decided answers (6.7.16's D5 / D7 / D88 / D92 judge
 type-argument lists on names that declare none, or too many; none of them reaches these positions).
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (genb lane, wave 1, unit GB1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D3 — Refuse it at the token.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D4 — Refuse with the fn's words.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D5 — Refuse it by name.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D6 — Refuse it once, in every position.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D7 — Refuse it by name.
 **Discovered:** the f16 lane — unit FF3 (a parameter list taking any token; `union U<T>`), unit FG2 (a trait member's
 unknown bound), unit FG3 (a type parameter given type arguments; an explicit call under `CYRIUS_MONOMORPH=0`).
 **Severity:** Low — accepted junk and refused-by-position shapes; nothing computes a wrong value.

@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — making the pair askers read a known `&f` through `callptr` / `fncallN` newly refuses `var v =
 callptr(&f, 4);` ("bind both"), a change to what compiles beyond the decided answers; the s16b lane stopped on it.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (valc lane, wave 1, unit VC2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D26 — Yes, as f(4).
 **Discovered:** the s16b lane, unit SZ7 (met while landing it: the callee, not the chain receiver), and its review's
 file_as_issue; staged as this file. Re-measured 2026-10-21 at the 6.7.16 close on the merged compiler (main
 `4a3c510f3`; `build/cycc` 2,822,280 B) on x86_64, aarch64 (qemu-aarch64), cx (cxvm) and PE (wine 11.20).

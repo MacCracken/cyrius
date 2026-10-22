@@ -3,7 +3,15 @@
 **Status:** 🟡 **OPEN** — each row compiles with rc 0 and no diagnostic and computes a wrong value or crashes; refusing
 (or defining) each changes what compiles or computes beyond the decided answers, so the s16 and f16 lanes stopped on
 them (the user, 2026-10-21: no new decision round).
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (vala lane, wave 1, unit VA1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D10 — Refuse it at the argument.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D11 — Refuse it at the argument.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D12 — Refuse by name.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D13 — Refuse it.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D14 — Copy through the slot.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D15 — Refuse it.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D16 — Refuse it.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D17 — s's address.
 **Discovered:** the s16 lane — unit SZ5 (rows A1, A2, B1 – B3; its Blocked list beside D97 / D99), unit SS2 (row A3), the
 s16 review's file_as_issue (row B4; staged as 2026-10-21-struct-result-into-scalar-field-or-array-element-keeps-first-word.md);
 the f16 lane, unit FF4 (row B5; the f16 review's file_as_issue, staged as

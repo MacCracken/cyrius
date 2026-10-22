@@ -4,7 +4,8 @@
 (`~/.cache/c6`, `~/.cache/cyrius-tools`) into `scripts/`. The user, 2026-10-19: "scripts worth keeping should live in our
 scripts folder" / "scripts worth keeping will need to be converted at some point... to not go against the rule long
 term" (CLAUDE.md § *Ecosystem & stdlib*: "Sovereignty: no Python / bash / C as a shipped deliverable").
-**Placement:** unplaced — filed 2026-10-19; the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (tool lane, wave 1, unit TO1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D38 — Keep them in scripts/release/.
 **Severity:** Low — none of them ships (the tarball scripts copy named files from `scripts/`, never the folder); the
 rule's long-term reading is that the toolchain's own tooling is cyrius.
 **Kind:** tooling (scripts/dev, scripts/release, scripts/folds → programs/ or `cyrius` verbs).

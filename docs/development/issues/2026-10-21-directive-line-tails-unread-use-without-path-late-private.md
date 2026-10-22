@@ -2,7 +2,11 @@
 
 **Status:** 🟡 **OPEN** — each fix newly refuses source that compiles today, or changes what it computes, beyond the
 decided answers; the 6.7.16 lanes stopped on each (the user, 2026-10-21: no new decision round).
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (fea lane, wave 1, unit FA1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D28 — Refuse it by name.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D29 — Refuse it by name.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D30 — Refuse it by name.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D31 — Accept it.
 **Discovered:** the f16 lane — unit FF2 (`#assert`'s tail, met while fixing
 issues/archived/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md; the f16 review's file_as_issue,
 staged as 2026-10-21-assert-tail-after-message-skipped-drops-impl-methods-and-program.md), unit FF3 (`use`), unit FF5

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — a cross-cutting repair of a day or more (43 sites in six frontend files plus the zone replay's
 latch); a first fix was tried in the f16 lane and reverted, and the f16 lane stopped on it.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (feb lane, wave 2, unit FB1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Discovered:** the f16 lane, unit FG2.
 **Severity:** Low — refused programs' diagnostics (one missing `;` hides or invents errors); nothing that compiles
 changes.

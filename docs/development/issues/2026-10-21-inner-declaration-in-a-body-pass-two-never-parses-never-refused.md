@@ -1,7 +1,8 @@
 # A struct, enum or trait declared inside a body pass 2 never parses — a trait default no impl inherits, an uninstantiated bounded generic — is never refused — OPEN
 
 **Status:** 🟡 **OPEN** — refusing it newly refuses source that compiles today; the f16 lane's fix step stopped on it.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (fea lane, wave 1, unit FA3; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D33 — Refuse it wherever it sits.
 **Discovered:** the f16 lane's fix step (beside must_fix 1, b2ae86cc5) and its review's file_as_issue; not staged by the
 lane (no crash, miscompile or silent wrong value).
 **Severity:** Low — an inner declaration the rule refuses everywhere else compiles where its body is never compiled.

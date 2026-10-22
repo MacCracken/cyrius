@@ -1,7 +1,7 @@
 # The native TLS 1.3 server checks each key_share against supported_groups by a linear scan — one 16 KB ClientHello costs ~24 ms of server CPU, quadratic in peer-chosen counts (CYRIUS-2026-0037) — OPEN
 
 **Status:** 🟡 **OPEN** — recorded at the 6.7.16 close as CYRIUS-2026-0037 (P3, tracked); not fixed.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (plat lane, wave 1, unit PL1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Discovered:** 2026-10-20, by the 6.7.16 p16 lane (unit PP3, fixing
 issues/archived/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md), reported in one line in
 its handoff ("met, not swept; not fixed") and neither fixed nor filed; met again by the release-docs pass at the close.

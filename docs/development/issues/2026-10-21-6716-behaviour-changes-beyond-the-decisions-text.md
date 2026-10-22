@@ -10,7 +10,59 @@ merged 6.7.16 one (main `4a3c510f3`; `build/cycc` 2,822,280 B): those items say 
 the lane's or the docs pass's measurement. Each change below ships in 6.7.16 and changes what an existing program does,
 compiles, warns or prints in a way no decision's text names (or wider than its text). The user keeps or restores each at
 the next open (the 6.7.11 – 6.7.15 precedent).
-**Placement:** unplaced — keep or restore each at the next open; the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (on main, before the lanes fork; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D39 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D40 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D41 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D42 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D43 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D44 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D45 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D46 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D47 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D48 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D49 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D50 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D51 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D52 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D53 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D54 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D55 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D56 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D57 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D58 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D59 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D60 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D61 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D62 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D63 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D64 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D65 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D66 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D67 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D68 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D69 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D70 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D71 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D72 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D73 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D74 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D75 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D76 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D77 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D78 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D79 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D80 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D81 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D82 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D83 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D84 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D85 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D86 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D87 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D88 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D89 — Keep.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D90 — Keep.
 **Discovered:** the 6.7.16 release-docs pass (the ⚠ bullets of the sixteen lanes' behaviour drafts and the drafters'
 discrepancy list), 2026-10-21.
 **Kind:** decision (keep or restore, one per item).

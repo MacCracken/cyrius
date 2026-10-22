@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — narrowing it as D72 decided either refuses such a fn or makes a narrow coroutine-frame slot
 compile; both change what compiles, so the s16 lane kept the word and stopped (its unit SS3's blocked item).
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (vald lane, wave 1, unit VD1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D27 — Narrowed, as 6.7.16's D72.
 **Discovered:** the s16 lane, unit SS3 (D72's bite, 179c315b1; the issue's filed surface, plain fns, is closed).
 **Severity:** Medium — a silent wrong value: the parameter reads the caller's whole word.
 **Kind:** decision.

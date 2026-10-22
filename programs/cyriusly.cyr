@@ -96,7 +96,9 @@ fn _path_join(prefix, suffix): i64 {
 # <home>\lib as links where install.ps1 makes COPIES. Measured on cass: `install 6.7.15` printed
 # "Installing Cyrius 6.7.15..." and exited -1 with no reason, `uninstall` printed "rm -rf failed",
 # `use 6.7.14 --global` failed and left a bin.cyrtmp.<pid>.<n> link behind. Each now says it is
-# not available on Windows and what to do instead, and exits 1 before any output or change.
+# not available on Windows and what to do instead, and exits 1 before any change — `uninstall` first answers its
+# two checks as POSIX does (a version not installed: "Version <v> not installed.", rc 0; the active version: rc 1),
+# kept by 6.7.17's D89.
 # version, list, which, home, use <v> (the project pin) and help work there.
 # tests/gates/platform/win_cyriusly_posix_verbs_refused.sh; the cass leg. CHANGELOG [6.7.16]
 #ifdef CYRIUS_TARGET_WIN

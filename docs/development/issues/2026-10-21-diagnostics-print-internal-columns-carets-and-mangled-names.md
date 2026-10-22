@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — three repairs of a day or more each (row 2 also a decision: the guide's own example shows
 today's caret); the f16 lane stopped on all three.
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (fed lane, wave 2, unit FD1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D34 — Point at the name.
 **Discovered:** the f16 lane — unit FF5 (expansion columns), unit FF6 (the undefined-name caret; the mangled name). The
 s16 lane's SZ3 met the caret too and left it as a documented convention.
 **Severity:** Low — where a diagnostic points and what it calls a type; nothing that compiles changes.

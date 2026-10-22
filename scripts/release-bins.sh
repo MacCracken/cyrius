@@ -9,8 +9,9 @@
 # The list is read from the manifest, never kept here. The macOS and Windows builders built a HAND
 # list (cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit cyrius_api_surface), so a macOS or
 # Windows binary install had no cyrius-lsp, ark, cyrld, ts_test_runner or cyrsign-efi, and bin/cyriusly
-# was the shell script; the aarch64 Linux job reads the manifest since 6.7.14 (the user's D59: the
-# manifest's [release] bins list is the source of truth for every tarball). Every entry is built for
+# was the shell script; the aarch64 Linux job reads the manifest since 6.7.14 (the user's 6.7.14 D59:
+# ship every [release] bin, built for aarch64), and the macOS and Windows jobs since 6.7.16 (kept by
+# 6.7.17's D84). Every entry is built for
 # the target and arch-checked (the Mach-O magic and cputype, the PE signature and machine); a listed
 # entry with no programs/<bin>.cyr, a compile that fails, an empty output or a wrong architecture
 # FAILS, naming it. Every source is checked before anything compiles. CHANGELOG [6.7.16]

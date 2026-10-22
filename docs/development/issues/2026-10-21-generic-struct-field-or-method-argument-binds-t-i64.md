@@ -2,7 +2,8 @@
 
 **Status:** 🟡 **OPEN** — binding the struct changes what a valid program computes (`sizeof(T)`, the instance called);
 the s16 lane stopped on it (its unit SZ2's blocked B2).
-**Placement:** unplaced — filed at the 6.7.16 close (2026-10-21); the user places it — never 7.x.
+**Placement:** 6.7.17 — the cleanup of the remaining issues (gena lane, wave 1, unit GA3; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
+**Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D2 — Yes, as a struct local or a free call does.
 **Discovered:** the s16 lane, unit SZ2.
 **Severity:** Medium — a silent value: `sizeof(T)` reads 8 for a 16-byte struct argument, the i64 instance runs.
 **Kind:** decision.

@@ -37,8 +37,8 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
    moved to 6.7.10 and every later release shifted one. Break 2 is 6.7.11 – 6.7.16 (user, 2026-10-09; the fourth
    repair release added at the 6.7.12 open, user 2026-10-15; the fifth at the 6.7.13 integration, user 2026-10-16; the
    sixth at the 6.7.15 wave-1 integration, user 2026-10-18 — what 6.7.15 files): the open queue repaired to 0 bugs, so
-   fuller audits can follow. 6.7.17 is the full security audit + the refactor / optimization review (user, 2026-10-09;
-   renumbered 2026-10-15, 2026-10-16 and 2026-10-18). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.17
+   fuller audits can follow. 6.7.18 is the full security audit + the refactor / optimization review (user, 2026-10-09;
+   renumbered 2026-10-15, 2026-10-16 and 2026-10-18). The closeout's number is OPEN (user, 2026-10-09): what the 6.7.18
    reviews produce ships first, in as
    many releases as it takes, and the closeout follows.
 3. **Every language decision is the user's** — asked at the arc's start, recorded with its date, never a lane's
@@ -51,8 +51,9 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 | Release | Content |
 |---|---|
 | 6.7.0 – 6.7.16 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) · repair 6: what 6.7.15 filed and what 6.7.16's own waves found (6.7.16) |
-| 6.7.17 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
-| 6.7.18 → | what the 6.7.17 reviews produce — the number of releases is open, set at 6.7.17's close (user, 2026-10-09) |
+| 6.7.17 | **the cleanup** (the user, 2026-10-22: "cleanup the remaining issues and make sure we foldin updated bayan, sandhi and sankoch"): every remaining open issue — the 19 filed unplaced at the 6.7.16 close, the two placed here before, the helper scripts converted to cyrius — fixed with the open's 91 decisions (all as recommended); the fold wave bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9 |
+| 6.7.18 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
+| 6.7.19 → | what the 6.7.18 reviews produce — the number of releases is open, set at 6.7.18's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
 
 **Break 2 is 6.7.11 – 6.7.16** (user, 2026-10-09; 6.7.14 added 2026-10-15, 6.7.15 added 2026-10-16, 6.7.16 added 2026-10-18): repair the open queue to 0, so fuller audits can follow. Each repair
@@ -77,7 +78,7 @@ Every feature of the v6.7.x plan has shipped (its spec and the user's decisions 
 C3 bounds, `const` / `const fn`, `bool`, the if-expression, `loop` / `do`, `OP=` on every lvalue, B4 tuples and B6
 default / named arguments (6.7.7), checked `dyn` and the C2 bounds-checked mode (6.7.8), B7 packed narrow fields with
 the handle line and size-independent struct copies, and P5-B execution coverage (6.7.10). What remains is repair
-(6.7.11 – 6.7.16), the audit and review (6.7.17) and the closeout.
+(6.7.11 – 6.7.16), the audit and review (6.7.18) and the closeout.
 
 ⚠ Every new keyword is a new reserved word (`IS_KEYWORD_TOK`).
 
@@ -85,7 +86,29 @@ the handle line and size-independent struct copies, and P5-B execution coverage 
 
 Sized from every open issue and the three remaining features (the 6.7.x release-plan workflow, 2026-10-09). Every issue's `**Placement:**` line names its release; the open shapes of each feature are decided at its open.
 
-### 6.7.17 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18)
+### 6.7.17 — the cleanup (the user, 2026-10-22)
+
+The user (2026-10-22): "lets do 6.7.17 and cleanup the remaining issues and make sure we foldin updated bayan, sandhi and
+sankoch as they have been updated and are on 6.7.16"; then "go with Recommended decisions after triage finishes". The
+triage (five read-only agents on `bbb771d26`, `~/.cache/c6/6717_triage.json`) found all 22 items open; 91 decisions, all
+as recommended — D1–D38 on the class issues, D39–D90 keep each of the 6.7.16 changes beyond the decisions' text, D91
+moves the audit and the refactor review to 6.7.18 (the roadmap's own order: after the queue is at 0). Each issue's
+**Placement** line names its wave and unit; each decision is on its issue's **Decision** line.
+
+- **Wave 0, on main:** the fold wave (bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9; cyrius's callers on bayan's typed
+  lookups) and the keep-everything bite of the 6.7.16 beyond-decisions list (D39–D90).
+- **Wave 1, nine lanes in parallel:** gena (the tail call's by-value copy, a rebound type-parameter name D1, a struct
+  field / method argument binding T D2), genb (parameter and type-argument lists D3–D7, fn-pointer types D8–D9), vala
+  (struct and pointer shapes D10–D17), valb (`Str` shapes D18–D22), valc (a vector value in a word position D23–D25,
+  the `: stack` pair through callptr D26), vald (a suspending async fn's narrow parameter D27), fea (directive-line
+  tails D28–D31, value builtins as statements D32, an inner declaration pass 2 never parses D33), plat
+  (CYRIUS-2026-0037's key_share scan, the self-compile static advisory, PE rename / xflock D35–D37), tool (the helper
+  scripts converted to cyrius D38).
+- **Wave 2:** feb (a statement missing its `;`), fec (refused-source cascades), fed (diagnostics: instance names, the
+  caret on the name D34, columns past an in-line expansion).
+- **Wave 3:** zr (the zone replay's error order — every diagnostic in source order).
+
+### 6.7.18 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18; and from 6.7.17 at the 6.7.17 open, 2026-10-22 — D91: the cleanup first)
 
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
 set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what
@@ -105,7 +128,7 @@ cannot pack filed.
   the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
   differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
   measured same-box before / after.
-  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.17's open):** folders with direct
+  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.18's open):** folders with direct
     names instead of prefixed files, as `backend/` already does — `src/frontend/parse/expr.cyr` for `parse_expr.cyr`,
     `parse/types/type.cyr` (beside `struct.cyr`, `tuple.cyr`, …) for `parse_types.cyr`, `parse/fn/` for the pieces of
     `parse_fn.cyr` (definitions, the call path, the return / tail path, traits, generics, the const-fn evaluator),
@@ -124,7 +147,7 @@ cannot pack filed.
     4. **`src/`, `cbt/` and `programs/` are internal — free to move. `lib/` paths are the stdlib's public contract**
        (`include "lib/str.cyr"`, `[deps] stdlib`, distlib): reorganizing `lib/` keeps every old path working (a
        one-line include of the new home) and is the user's call per module.
-    5. **At 6.7.17, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
+    5. **At 6.7.18, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
        today's `file:line`.
 - **Improve the libs with what the last months added**: where it makes `lib/` clearer or safer, use the 6.7.x
   language (traits, `const` / `const fn`, `bool`, tuples, default / named arguments, `loop` / `do`, `OP=`), fill the
@@ -136,24 +159,24 @@ cannot pack filed.
   - [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](issues/2026-10-13-self-compile-prints-large-static-advisory.md);
 
 
-### 6.7.18 → — what the reviews produce, then the closeout (number open)
+### 6.7.19 → — what the reviews produce, then the closeout (number open)
 
-The 6.7.17 reviews' findings that did not pack into 6.7.17 ship next, in as many releases as they take — sized and
-placed at 6.7.17's close, never squeezed into the closeout. Then the closeout:
+The 6.7.18 reviews' findings that did not pack into 6.7.18 ship next, in as many releases as they take — sized and
+placed at 6.7.18's close, never squeezed into the closeout. Then the closeout:
 
 
 The [cycle-discipline.md](cycle-discipline.md) checklist, ticked into its ledger:
 - **Mechanical:** `release-gate.sh` (record check.sh's count) and the bench.
 - **Judgment:** heap map (the retired IR bands), the dead-code floor, the 2–3 consolidations the minor earned, code
   review, cleanup.
-- **Compliance:** the security re-scan (the full audit ran in 6.7.17); folds byte-identical to their tags (yantra,
+- **Compliance:** the security re-scan (the full audit ran in 6.7.18); folds byte-identical to their tags (yantra,
   bayan); `verify-store.sh`.
 - **Docs:** CHANGELOG / roadmap / state; vidya (tuples, defaults, `dyn`, the bounds mode, packed fields, coverage);
   the backlog re-triaged to 0 open.
 
 ### Proposals — later in the 6.7.x line (the user, 2026-10-15: "keep proposals for later in 6.7.x line")
 
-After Break 2 and the 6.7.17 audit; their release is set when the review follow-ups are:
+After Break 2 and the 6.7.18 audit; their release is set when the review follow-ups are:
 [adjacent string-literal concatenation](proposals/2026-10-13-adjacent-string-literal-concatenation.md) ·
 [`memmove`](proposals/2026-10-14-memmove.md).
 
@@ -171,7 +194,7 @@ After Break 2 and the 6.7.17 audit; their release is set when the review follow-
   needs a PE `VirtualProtect` reroute.
 - u128 carriage → roadmap_6, after 6.7.7's register fix. The file itself closes in 6.7.14.
 - [TypeScript language support](issues/2026-10-19-typescript-support-measured-against-one-projects-files.md) — its own
-  arc AFTER the 6.7.17 audit (the user, 2026-10-19), sized at its open: an in-tree conformance corpus organized by the
+  arc AFTER the 6.7.18 audit (the user, 2026-10-19), sized at its open: an in-tree conformance corpus organized by the
   language with byte-checked JS emit as the gate, a supported / refused matrix, the gaps fixed; it replaces the
   secureyeoman corpus measure, which leaves the gate in 6.7.16.
 
