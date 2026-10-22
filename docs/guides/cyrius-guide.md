@@ -752,7 +752,9 @@ scalar float ops (`f64_add` .. `f64_div`, `f64_from`, `f64_to`, `f64_eq` / `f64_
 `src/common/util.cyr`). A builtin with an effect stays a statement: the stores (`store8(p, v);` ..), every vector op
 that writes its `dst` (`f64v_add(dst, a, b, n);`, `f32v8_fma(..)`, `iv_add(..)`, `f64v256_scale(..)`, ..),
 `syscall(..)`, `callptr(..)` and `ret2(a, b);`. As for `mulh64`, a `.` after the call (`load16(p).n = 5;`) is
-*expected ';', got '.'* and a type-argument list is the one error at the name. Before 6.7.17 `load8(p);` and the f64,
+*expected ';', got '.'* and a type-argument list is the one error at the name. A value builtin or an intrinsic named
+with no `(` (`load16;`, `mulh64;`, `sizeof = 1;`, `load16.x = 1;`) is *expected '(', got ..* alone, the statement
+skipped to its `;` and the next one parsed. Before 6.7.17 `load8(p);` and the f64,
 bit and dot builtins compiled with the value dropped, while `load16(p);`, `load32(p);`, `load64(p);`, `f32_from(x);`
 and `f32_to(x);` were *unexpected load16*.
 

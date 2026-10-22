@@ -86,7 +86,7 @@ for nm in $NAMES; do
             a) e="var y = $nm;" ;;
             b) e="var y = $nm($a;" ;;
             c) e="var y = $nm($a, $a;" ;;
-            d) case $nm in sizeof|mulh64) continue ;; esac; e="$nm;" ;;
+            d) e="$nm;" ;;
         esac
         printf 'var gb: i64 = 7;\nfn main(): i64 {\n    var p = &gb;\n    %s\n}\nfn g(): i64 { return zz; }\nsyscall(60, main());\n' "$e" > "$T/x.cyr"
         for leg in $LEGS; do
@@ -134,8 +134,8 @@ vrow n_kw     'p
 vrow n_for    'for (p; p < 3; p = p + 1) { }' "error:<source>:4:11: expected '=', got ';'|$ZE"
 vrow n_junk   'p 5; zq2 = 1;' "error:<source>:4:7: expected '=', got number 5|error:<source>:4:17: undefined variable 'zq2'|$ZE"
 vrow n_brk    'p { 5 }; zq2 = 1;' "error:<source>:4:7: expected '=', got '{'|error:<source>:4:21: undefined variable 'zq2'|$ZE"
-# The floor: 77 names x 4 shapes less the two bare-name rows, on four legs; 8 V + 8 N rows on four legs.
-X_FLOOR=1224
+# The floor: 77 names x 4 shapes on four legs; 8 V + 8 N rows on four legs.
+X_FLOOR=1232
 V_FLOOR=64
 [ "$nx" -ge "$X_FLOOR" ] || { echo "  FAIL: X ran $nx row-legs (floor $X_FLOOR) — names or legs were lost"; fails=$((fails + 1)); }
 [ "$nv" -ge "$V_FLOOR" ] || { echo "  FAIL: V ran $nv row-legs (floor $V_FLOOR)"; fails=$((fails + 1)); }

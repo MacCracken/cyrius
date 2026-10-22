@@ -4225,19 +4225,15 @@ fn _stmt_intr_at(S, noff, nt): i64 {
 # parsed. Through 6.7.16 `load8` and the f64 / bit / dot builtins compiled with the value dropped (PARSE_STMT's builtin
 # bands) while `load16` `load32` `load64` `f32_from` `f32_to` were "unexpected load16". A builtin that stores through a
 # destination (`store8`, `f64v_add(dst, ..)`), returns (`ret2`) or calls (`syscall`, `callptr`) stays a statement. As
-# for mulh64: a type-argument list is the one error at the name (6.7.16's `_ngt_callee_lt`), and with no `(` or a `.`
-# after the call's `)` the statement is parsed as the value position parses it (`_stmt_intrinsic_dot`). Cursor on the
-# builtin token `typ`; 1 = consumed. CHANGELOG [6.7.17]
+# for mulh64: a type-argument list is the one error at the name (6.7.16's `_ngt_callee_lt`), a `.` after the call's
+# `)` is parsed as the value position parses it (`_stmt_intrinsic_dot`), and with no `(` the statement is "expected
+# '('" alone (`_stmt_no_paren`). Cursor on the builtin token `typ`; 1 = consumed. CHANGELOG [6.7.17]
 fn _stmt_value_builtin(S, typ): i64 {
     if (IS_VALUE_BUILTIN(typ) == 0) { return 0; }
     var nt = GTI(S);
     STI(S, nt + 1);
     _ngt_callee_lt(S);   # `load8<i64>(p);`: the list refused at the name and stepped
-    if (PEEKT(S) != 10) {   # `load16;`: "expected '('", the statement ending at its `;` in sync (the next one parsed)
-        STI(S, nt);
-        _refuse_in_sync(S);
-        return _stmt_intrinsic_dot(S, nt);
-    }
+    if (PEEKT(S) != 10) { return _stmt_no_paren(S); }   # `load16;`
     var c = _call_close(S, GTI(S)) + 1;
     if (c < GTCNT(S)) { if (TOKTYP(S, c) == 41) { return _stmt_intrinsic_dot(S, nt); } }
     STI(S, nt);   # the name
@@ -4246,6 +4242,26 @@ fn _stmt_value_builtin(S, typ): i64 {
     PCMPE(S);
     _expect_step(S, 5);
     return 1;
+}
+
+# A value builtin or an identifier intrinsic named as a statement with no `(` — `load16;`, `mulh64;`, `f64_sqrt 2.0;`,
+# `load16.x = 1;`, `sizeof = 1;` (cursor on the token after the name): "expected '('" there, once, and the statement
+# ends in sync with nothing read as a value (`_stmt_rest_skip`), so the next statement is parsed with its own errors.
+# Parsed as the value position parses it, the token was stepped and the rest read as the argument: `load16.x = 1;`
+# added "undefined variable 'x'", `load16 { 5 };` closed the block at the `}` ("unexpected ';'", "return outside a fn
+# body"); `mulh64;` was the assignment arm's "expected '='" with "undefined variable 'mulh64'". 1. CHANGELOG [6.7.17]
+fn _stmt_no_paren(S): i64 {
+    _refuse_in_sync(S);
+    ERR_EXPECT(S, 10);
+    _stmt_rest_skip(S);
+    return 1;
+}
+# `mulh64;` / `sizeof = 1;` — an identifier intrinsic named as a statement with no `(` (cursor after the name `noff`):
+# as a value builtin's (`_stmt_no_paren`). 1 = consumed. CHANGELOG [6.7.17]
+fn _stmt_intr_bare(S, noff): i64 {
+    if (PEEKT(S) == 10) { return 0; }
+    if (_is_ident_intrinsic(S, noff) == 0) { return 0; }
+    return _stmt_no_paren(S);
 }
 
 # D11's words for the statement at the cursor, naming `nm` — `mulh64`, `load8` — (the report's identity: the tag `tg`
@@ -7367,6 +7383,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);
         if (_stmt_explicit_generic(S, noff) == 1) { return 0; }   # 6.6.12: `id<i32>(4);`
+        if (_stmt_intr_bare(S, noff) == 1) { return 0; }   # 6.7.17: `mulh64;` is "expected '('", as `load16;`
         if (PEEKT(S) == 10) {
             if (_stmt_intrinsic(S, noff) == 1) { return 0; }   # 6.7.16 (D11): `mulh64(a, b);` refused by name
             if (_stmt_call_field(S) == 1) { return 0; }   # 6.6.12: `mk(3).total();`
