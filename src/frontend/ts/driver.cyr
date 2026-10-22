@@ -100,10 +100,13 @@ if (_ts_parse_only_mode == 1) {
         var _tp_err = TS_PARSE_GETERR(_ts_base);
         var _tp_etok = TS_PARSE_GETERR_TOK(_ts_base);
         # current parser TOK_IDX — most accurate since not all err
-        # sites set ERR_TOK_IDX. Emit both for triage.
-        var _tp_cur = load64(_ts_base + 0xD80000 + 8);   # TS_PS_TOK_IDX = 8
-        var _tp_line = load64(_ts_base + 0x100000 + _tp_cur * 8);
-        var _tp_type = load64(_ts_base + 0x000000 + _tp_cur * 8);
+        # sites set ERR_TOK_IDX. Emit both for triage. The arena offsets are
+        # the layout's names (ts/lex.cyr, ts/parse.cyr): `line=` read a literal
+        # 0x100000, inside the token-TYPE table, so it printed 0 for every error.
+        # CHANGELOG [6.7.17]
+        var _tp_cur = load64(_ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX);
+        var _tp_line = load64(_ts_base + TS_TOK_LINES_OFF + _tp_cur * 8);
+        var _tp_type = load64(_ts_base + TS_TOK_TYPES_OFF + _tp_cur * 8);
         syscall(SYS_WRITE, 2, "ts parse error: code=", 21);
         _emit_decimal(_tp_err);
         syscall(SYS_WRITE, 2, " line=", 6);

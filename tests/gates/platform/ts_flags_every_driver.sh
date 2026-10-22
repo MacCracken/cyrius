@@ -35,6 +35,7 @@
 #   M2. driver_args.cyr's `--pa` arm removed (parse-ts unread)  -> RED: axes 1, 2, 4
 #   M3. the Windows driver's `_ts_args_win()` call removed      -> RED: axis 2 (wine rows only)
 #   M4. the drivers' read loop back to fd 0 (the path ignored)  -> RED: axis 2 (the path rows)
+#   M5. (6.7.17) driver.cyr's `line=` back to the literal 0x100000 -> RED: the two line=5 oracle rows
 #   Real tree -> GREEN.
 #
 # ⚠ qemu-aarch64 and wine are EMULATORS, not hardware: the same rows ran on real pi, ecb, ach
@@ -99,6 +100,7 @@ printf 'const t = `abc ${\n' > "$D/c/e_template.ts"           # lex error 9
 printf '/* never closed\nlet x = 1;\n' > "$D/c/e_comment.ts"  # lex error 10 (two digits)
 printf 'let x: number = ;\n' > "$D/c/e_parse.ts"
 printf 'function f( { return 1; }\n' > "$D/c/e_parse2.ts"
+printf 'let a = 1;\n\n\n\nfunction f( { return 1; }\n' > "$D/c/e_parse_line5.ts"
 FILES=$(cd "$D/c" && ls | LC_ALL=C sort)
 
 # _table RUNNER COMPILER OUT — one line per (file, flag, form): rc, stdout cksum, stderr cksum
@@ -125,6 +127,16 @@ if [ "$nrows" -lt 271 ] || [ "$nfail" -lt 20 ]; then
 fi
 grep -qxF "missing rc=1 err=error: cannot open 'no_such_file.ts'" "$D/t_x86" \
     || bad "oracle: x86_64 on a missing file: '$(tail -1 "$D/t_x86")'"
+# 6.7.17 — a parse error names its token's LINE. driver.cyr read the line at a literal 0x100000,
+# inside the token-TYPE table, so every error said line=0; the table below carries the shape to
+# every driver. Both forms: stdin and the path.
+for _lf in stdin path; do
+    rc=0
+    if [ "$_lf" = stdin ]; then ( cd "$D/c" && "$CC" --parse-ts < e_parse_line5.ts > /dev/null 2> "$D/l5.err" ) || rc=$?
+    else ( cd "$D/c" && "$CC" --parse-ts e_parse_line5.ts < /dev/null > /dev/null 2> "$D/l5.err" ) || rc=$?; fi
+    if [ "$rc" -eq 1 ] && grep -q '^ts parse error: code=[0-9]* line=5 ' "$D/l5.err"; then ok
+    else bad "oracle: --parse-ts ($_lf) on an error on line 5: rc $rc, '$(head -1 "$D/l5.err")' (want rc 1, line=5; 6.7.16: line=0)"; fi
+done
 
 _cmp_table() {   # _cmp_table LABEL RUNNER COMPILER
     _l=$1
