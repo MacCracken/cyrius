@@ -2007,6 +2007,7 @@ fn PARSE_FACTOR(S): i64 {
     _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
     _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
     _vop_rchk(S, _ti0);         # 6.7.16 (D100 / D101): a vector call is no operand, no word argument or slot
+    _sop_rchk(S, _ti0);         # 6.7.17 (D111): nor a struct value or call over 8 B
     _pk_post(S, _ti0);          # 6.7.8 (C2-5): a name's, a `*T` field's, a call's kind is its own
     _rd_exit();
     # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
@@ -2435,6 +2436,7 @@ fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
     var t = GTI(S);
     PCMPE(S);
     _vsc_arg(S, fi, ord, t);   # 6.7.16 (D101): a whole vector call into a parameter that takes a word
+    _ssc_arg(S, fi, ord, t);   # 6.7.17 (D111): a struct value or call over 8 B too
     var pk = _pbool_get(fi, ord);
     if (pk == 4) { _IFS_CHECK(S, 1, t); return 0; }
     if (pk == 3) { _IFS_CHECK(S, 2, t); _f32_init_round(S, F32_TYID); return 0; }
@@ -9664,7 +9666,10 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     _OP_OPERAND_ADDR(S, svar, ofp, 0);
     EPUSHR(S);
     _op_lhs_snap(S, ofp);   # 6.7.7: a by-value operand the right one may write is copied here
+    var srt = _sop_rti;
+    _sop_rti = GTI(S);   # 6.7.17 (D111): the rhs is the operator fn's argument, no word
     var rsvar = _op_rhs(S, ofp);   # the rhs, parsed: a struct var's address too (6.6.20: _op_rhs)
+    _sop_rti = srt;
     _OP_OPERAND_ADDR(S, rsvar, ofp, 1);
     EPUSHR(S);
     var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
@@ -9732,7 +9737,10 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg, gfi): i64 {
     if (park != 0 - 1) { _HTLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar, ofi, 0); }   # 6.7.12: or a hidden global
     EPUSHR(S);
     _op_lhs_snap(S, ofi);   # 6.7.7 (EMIT_OP_DISPATCH)
+    var srt = _sop_rti;
+    _sop_rti = GTI(S);   # 6.7.17 (D111): the rhs is the operator fn's argument, no word
     var rsvar = _op_rhs(S, ofi);
+    _sop_rti = srt;
     _OP_OPERAND_ADDR(S, rsvar, ofi, 1);
     EPUSHR(S);
     ECALLPOPS(S, n);

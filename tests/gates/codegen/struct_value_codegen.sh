@@ -513,7 +513,7 @@ refused l15 "the left operand of 'Pt_add' is passed by address" "L15: var G: Pt 
 # (`_var_rhs_csid`): after an integer-returning operator or a comparison the binding is untyped.
 ROPR=docs/development/issues/repros/2026-10-08-struct-operator-results
 refused_file l16 "no struct type in scope for 'r'" "L16: var r = mk3(4) - s; r.x (the filed repro, verbatim: SIGSEGV)" "$ROPR-1-untyped-var-typed-from-leading-call.cyr"
-refused l17 'got `r`' "L17: var r = mk2(1) == p; return r; from a fn returning Pt (SIGSEGV: a 16 B return from an 8 B slot)" "struct Pt { x; y; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn g(p: Pt): Pt { var r = mk2(1) == p; return r; }\nfn main(): i64 { var p: Pt = Pt { 1, 1 }; var q: Pt = g(p); return q.x; }$E"
+refused l17 'got `r`' "L17: var r = mk2(1).x == p.x; return r; from a fn returning Pt (SIGSEGV: a 16 B return from an 8 B slot; 6.7.17: the fields — a whole \`mk2(1) == p\` is D111's refusal)" "struct Pt { x; y; }\nfn mk2(v): Pt { var t: Pt = Pt { v, v }; return t; }\nfn g(p: Pt): Pt { var r = mk2(1).x == p.x; return r; }\nfn main(): i64 { var p: Pt = Pt { 1, 1 }; var q: Pt = g(p); return q.x; }$E"
 # K (6.7.11) — an integer operator's result is an integer: the next `+ - * /` never dispatches on the struct
 # its right operand left (the values file's K rows: every integer arm, 24 B and 8 B, the twins).
 exits_file k01 8 "K1: n - s + 10 (the filed repro, verbatim: SIGSEGV in P3_add(&s, 10))" "$ROPR-2-integer-op-keeps-right-struct-type.cyr"

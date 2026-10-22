@@ -469,8 +469,9 @@ printf '%s\n%s\n%s\n%s\n' "$MV" 'fn h(k): i64 { return k; }' 'fn gr<T>(x: T): (i
 mrows M7 "$D/m7.cyr" "return h(1, 2); at P and Q: the arity error alone (3 lines before)" "'h' expects 1 argument, got 2"
 printf '%s\n%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64, i64) { return (1, 2); }' 'fn run(): i64 { var u = P { 1, 2 }; var v = Q { 3, 4 }; var a, b, e = gr(u); var c, d, f = gr(v); return a; }' 'syscall(60, run());' > "$D/m8.cyr"
 mrows M8 "$D/m8.cyr" "a 3-value generic's return (1, 2); at P and Q (3 lines before)" "error:<source>:3:42: 'gr' returns 3 values - return (a, b, c)"
-printf '%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64) { if (x == 0) { return 1; } return 2; }' "$MR" > "$D/m9.cyr"
-erows M9 "$D/m9.cyr" 2 "two wrong-count returns in one body at P and Q: each once (6 lines before)" "3:51: 'gr' returns 2 values" "3:63: 'gr' returns 2 values"
+# 6.7.17: `&x == 0`, not `x == 0` — at T = P the struct value as a comparison's operand is D111's own refusal.
+printf '%s\n%s\n%s\n' "$MV" 'fn gr<T>(x: T): (i64, i64) { if (&x == 0) { return 1; } return 2; }' "$MR" > "$D/m9.cyr"
+erows M9 "$D/m9.cyr" 2 "two wrong-count returns in one body at P and Q: each once (6 lines before)" "3:52: 'gr' returns 2 values" "3:64: 'gr' returns 2 values"
 printf '%s\n%s\n%s\n%s\n' "$MV" 'impl P { fn mv<T>(self, x: T): (i64, i64) { return 1; } }' 'fn run(): i64 { var u = P { 1, 2 }; var v = Q { 3, 4 }; var a, b = u.mv(v); var c, d = u.mv(1); return a; }' 'syscall(60, run());' > "$D/ms1.cyr"
 erows MS1 "$D/ms1.cyr" 1 "a generic METHOD's wrong-count return at two instances: once, as the source spells it" "error:<source>:3:52: 'P.mv' returns 2 values - return (a, b)"
 printf '%s\n%s\n%s\n%s\n' "$MV" 'trait Tw { fn tw(self): (i64, i64); }' 'impl Tw for P { fn tw(self): (i64, i64) { return 1; } }' 'fn run(): i64 { var u = P { 1, 2 }; var a, b = u.tw(); return a; } syscall(60, run());' > "$D/ms2.cyr"

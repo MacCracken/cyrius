@@ -2110,8 +2110,17 @@ literal's element, is refused in that slot's words with *which is the struct 'Q'
 is the struct 'Q' - declare 'y: Q' or bind a field*; in a generic, into a destination typed by `T`, it has no scalar
 instance (D1's rule). Through 6.7.16 each kept the struct's first word, silently. A struct of 8 bytes or less, a `Str`,
 a handle (its word is the address), a `*T`, a field of the value (`y = q.a`) and a struct destination (a copy) keep
-their meaning. ⚠ A struct value or call as an ARGUMENT to an integer or untyped parameter, a `return` from a scalar fn,
-an operand (`1 + q`), a condition or an index is not refused: it passes its first word, as the call does there.
+their meaning. So is a struct value or a struct CALL over 8 bytes in the word slots no other rule reads (6.7.17; D111,
+an agent default for the user's review, the struct twin of D24 / D101): an argument to a parameter declared an
+integer or a float (`take(q)`, `take(mkp())` — *a struct value cannot be passed to an integer parameter - 'q' is the
+struct 'Q', passed to parameter 'x' of 'take'*; a call *'mkp' returns the struct 'Q'*), a builtin's argument
+(`syscall(60, q)`, *… passed to 'syscall'*), a `return` from a fn declared a scalar (*a struct value cannot be returned
+as i64 - …*), the left operand of an operator that does not dispatch (`q == r`, `q % 2`), a condition, an index, a
+range bound or a `match` subject (*a struct value cannot be used as an integer - …*); through 6.7.16 each passed the
+first word. Unchanged by their own rules: an UNTYPED parameter and an indirect call's argument take the word
+(§ *A struct value into a pointer of another kind*), a fn with no declared return hands back both words (`var a, b =
+f();`), and an operand after an integer one or under a unary `-` / `~` / `!` is word arithmetic (§ *An integer
+operator's result is an integer*).
 A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled

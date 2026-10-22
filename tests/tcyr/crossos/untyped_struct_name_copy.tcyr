@@ -9,8 +9,8 @@
 # copy's, a closure's snapshot carries the type, and an operator dispatches on it. The source is a
 # name (or a wrap `(p)`) naming an inline struct local, a by-value struct parameter or a closure's
 # captured copy of one. Unchanged, and asserted here: a `*T` source stays a plain word, an untyped
-# impl `self` (a `*T`) too, an untyped GLOBAL keeps the word, and `return q;` from an i64 fn is the
-# first word (an rvalue of an inline struct is its first word).
+# impl `self` (a `*T`) too, an untyped GLOBAL keeps the word; `return q;` from an i64 fn was the first word
+# through 6.7.16 and is refused since 6.7.17 (D111: struct_result_type_refused.sh SW6), so `word()` returns `q.x`.
 #
 # 6.7.13 (the user's decision D6 (b), 2026-10-15) — D29 REACHES A STRUCT GLOBAL: `var q = G;` in a fn, G an
 # inline struct global, is a copy of it, as `var q: P = G;` is (6.6.5) — at 3 / 8 / 16 / 24 B, wrapped, written
@@ -85,7 +85,7 @@ fn ptr(): i64 { var p: P = P { 3, 4 }; var pp: *P = &p; var q = pp; return (q ==
 fn wrap(): i64 { var p: P = P { 3, 4 }; var q = (p); q.x = 1; return p.x * 10 + q.y; }
 fn tk(a: P): i64 { return a.y; }
 fn arg(): i64 { var p: P = P { 3, 4 }; var q = p; return tk(q); }
-fn word(): i64 { var p: P = P { 3, 4 }; var q = p; return q; }
+fn word(): i64 { var p: P = P { 3, 4 }; var q = p; return q.x; }   # 6.7.17 (D111): `return q;` is refused
 fn chain(): i64 { var p: P = P { 3, 4 }; var q = p; var r = q; r.y = 7; return q.y * 10 + r.y; }
 fn P_add(a: P, b: P): P { var r = P { a.x + b.x, a.y + b.y }; return r; }
 fn opd(): i64 { var p: P = P { 3, 4 }; var q = p; var s = q + p; return s.x * 10 + s.y; }
@@ -155,7 +155,7 @@ assert_eq(ptr(), 14, "a *T source stays a plain word (the address)");
 assert_eq(capptrc(), 14, "a captured *T parameter copied in a closure stays a word");
 assert_eq(wrap(), 34, "a wrapped (p) source is a copy");
 assert_eq(arg(), 4, "the copy passes to a by-value struct parameter");
-assert_eq(word(), 3, "return q from an i64 fn is the first word");
+assert_eq(word(), 3, "return q.x from an i64 fn: the copy's field (a whole `return q;` is refused since D111)");
 assert_eq(chain(), 47, "a copy of a copy is a copy");
 assert_eq(opd(), 68, "q + p dispatches P_add on the copy");
 assert_eq(gen(), 49, "a generic instance Box<i64> source");

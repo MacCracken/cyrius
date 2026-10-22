@@ -82,7 +82,7 @@ fn cq7(a, b, c, d, e, f, g): P3 { var p: P3; p.x = a * 1000000 + b * 100000 + c 
 fn cp7(a, b, c, d, e, f, g): P2 { var p: P2; p.x = 0; p.y = a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; return p; }
 fn rq2(): P3 { return cq2(1, 2); }
 fn rq7(): P3 { return cq7(1, 2, 3, 4, 5, 6, 7); }
-fn ri7(): i64 { return cq7(1, 2, 3, 4, 5, 6, 7); }
+fn ri7(): i64 { return cq7(1, 2, 3, 4, 5, 6, 7).x; }   # 6.7.17 (D111): the whole P3 into `: i64` is refused
 fn rp7(): P2 { return cp7(1, 2, 3, 4, 5, 6, 7); }
 fn hs(k, q: P3): i64 { return q.z + k; }
 fn hu(q): i64 { return q; }
@@ -183,7 +183,7 @@ fn main(): i64 {
     assert_eq(t1.z, 12, "return cq2(1, 2) in a : P3 fn");
     var t2: P3 = rq7();
     assert_eq(t2.z, 1234567, "return cq7(1..7) in a : P3 fn — 7 ints + retptr, two on the x86 stack");
-    assert_eq(ri7(), 1234567, "return cq7(1..7) in an : i64 fn — the first word");
+    assert_eq(ri7(), 1234567, "return cq7(1..7).x in an : i64 fn — the field (the whole result is refused since D111)");
     assert_eq(hs(5, cq2(3, 4)), 39, "hs(5, cq2(3, 4)) — a struct param gets the result's address");
     assert_eq(hs(0, cq7(7, 6, 5, 4, 3, 2, 1)), 7654321, "hs(0, cq7(7..1))");
     assert_eq(hu(cq2(5, 6)), 56, "hu(cq2(5, 6)) — an untyped param gets the first word, like hu(local)");

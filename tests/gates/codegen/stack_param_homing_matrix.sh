@@ -243,11 +243,11 @@ BEGIN {
         sig = sig (i ? ", " : "") "a" i; args = args (i ? ", " : "") dig[i + 1]
         body = body " + a" i " * " pow10(n - 1 - i); want = want dig[i + 1]
       }
-      # x AND z carry the value: the i64 shapes read x (the first word), while the struct-valued
+      # x AND z carry the value: the i64 shapes read x (`ri`: the field `.x`), while the struct-valued
       # shapes read z — so an assignment that stored only the first word cannot pass.
       p("fn cq" n "(" sig "): P3 { var q: P3; q.x = " body "; q.y = 0; q.z = q.x; LAST = q.x; return q; }")
       p("fn rq" n "(): P3 { return cq" n "(" args "); }")
-      p("fn ri" n "(): i64 { return cq" n "(" args "); }")
+      p("fn ri" n "(): i64 { return cq" n "(" args ").x; }")   # 6.7.17 (D111): a whole P3 into `: i64` is refused
       row++; call[row] = "LAST = 0; cq" n "(" args "); chk(" row ", LAST, " want ");"
       row++; call[row] = "var T" row ": P3 = rq" n "(); chk(" row ", T" row ".z, " want ");"
       row++; call[row] = "chk(" row ", ri" n "(), " want ");"

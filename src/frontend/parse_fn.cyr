@@ -1208,6 +1208,7 @@ fn PARSE_RETURN(S): i64 {
     var pk = _prr_k;
     _prr_ti = 0 - 1;
     _vsc_ret(S, st);   # 6.7.16 (D101): a whole vector call returned by a fn that returns none
+    _ssc_ret(S, st);   # 6.7.17 (D111): a struct value or call over 8 B from a scalar fn
     _PARSE_RETURN_ARMS(S);
     _pair_ret_late(S);   # 6.7.16: the pair / vector class's refusal, after the value's own parse
     _prr_ti = pt;
