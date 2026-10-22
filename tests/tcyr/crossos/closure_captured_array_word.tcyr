@@ -1,0 +1,53 @@
+# closure_captured_array_word.tcyr — 6.7.17 (met reviewing D103): a captured array's name read as a word inside a
+# closure is what it is in its own frame — a typed array's element 0, a bare `var b[N]` / `stack var b[N]`'s first
+# word — on every target.
+#
+# The capture rung read a multi-word capture as its ADDRESS (6.6.5's aggregate rule), so `var a: i64[4]; a[0] = 4;
+# var f = |k| take(a) + k;` passed the env copy's address: 8 on x86_64 / aarch64 / Windows, 248 on cx, where the
+# frame's `take(a)` is 4 — the targets even disagreed. Each value below is read once in the frame and once in a
+# closure (a nested one too); the subscript, `&a` and a write to the copy are the controls that already agreed.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn take(t): i64 { return t; }
+
+fn r_i64(): i64 { var a: i64[4]; a[0] = 4; a[1] = 9; var f = |k| take(a) + k; return fncall1(f, 0) * 10 + take(a); }
+fn r_i32(): i64 {
+    var a: i32[4]; a[0] = 4; a[1] = 9; a[2] = 0; a[3] = 0;
+    var f = |k| take(a) + k;
+    if (fncall1(f, 0) == take(a)) { return 1; }
+    return 0;
+}
+fn r_u8(): i64 {
+    var a: u8[16]; var i = 0; while (i < 16) { a[i] = i + 1; i = i + 1; }
+    var f = |k| take(a) + k;
+    if (fncall1(f, 0) == take(a)) { return 1; }
+    return 0;
+}
+fn r_bare(): i64 { var b[16]; store64(&b, 6); var f = |k| take(b) + k; return fncall1(f, 0) * 10 + take(b); }
+fn r_stack(): i64 { stack var b[16]; store64(&b, 3); var f = |k| take(b) + k; return fncall1(f, 0) * 10 + take(b); }
+fn r_nested(): i64 {
+    var a: i64[4]; a[0] = 4; a[1] = 9;
+    var f = |k| { var g = |j| take(a) + j; return fncall1(g, k); };
+    return fncall1(f, 1);
+}
+fn r_ctl(): i64 {
+    var a: i64[4]; a[0] = 4; a[1] = 9;
+    var f = |k| a[1] * 100 + load64(&a) * 10 + k;
+    var w = |k| { a[0] = 7; return take(a) + k; };
+    var x = fncall1(f, 0);
+    var y = fncall1(w, 0);
+    return x * 100 + y * 10 + take(a);
+}
+
+alloc_init();
+assert_eq(r_i64(), 44, "a captured i64[4] read as a word is its element 0, as in its frame (an address before: 8 / cx 248)");
+assert_eq(r_i32(), 1, "a captured i32[4] reads its frame's word");
+assert_eq(r_u8(), 1, "a captured u8[16] reads its frame's word");
+assert_eq(r_bare(), 66, "a captured bare var b[16] reads its first word");
+assert_eq(r_stack(), 33, "a captured stack var b[16] reads its first word");
+assert_eq(r_nested(), 5, "a nested closure's capture of the array reads element 0");
+assert_eq(r_ctl(), 94074, "the subscript and &a agree, and a write to the copy reads back as element 0 there only");
+var r = assert_summary();

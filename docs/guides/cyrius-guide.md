@@ -473,8 +473,10 @@ element as `store8/16/32` do. There is **no bounds check** — unless the progra
 [**bounds-checked mode**](#the-bounds-checked-mode-678) (6.7.8: `#bounds`, `--bounds`), where `a[i]`
 is checked against the array's N and `p[i]` for a negative index only (`slice<T>` is the checked
 spelling of a pointer with a length). Inside a capturing closure an
-array's subscript reads and writes the closure's captured COPY, as `&a` there does; a
-captured pointer's subscript reaches the memory it points at.
+array's subscript reads and writes the closure's captured COPY, as `&a` there does, and its
+name read as a word is the copy's first word — a typed array's element 0, as in its frame
+(6.7.17; through 6.7.16 it was the copy's ADDRESS: `take(a)` 8 on x86_64, 248 on cx, where 4
+was right); a captured pointer's subscript reaches the memory it points at.
 
 The element is a value of its declared type, as a variable of `T` would be (6.7.8): an `f64`
 is an f64 (`p[1] * 2.0`, `p[1] < 3.0` are float operations); an `f32` is its 4 bytes, in

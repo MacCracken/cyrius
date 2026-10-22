@@ -255,6 +255,23 @@ fn _cl_snap_ptr_word(esl): i64 {
     if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
     return 8;
 }
+# ⛔ 6.7.17 (met reviewing D103) — A CAPTURED ARRAY'S NAME READ AS A WORD IS ITS FIRST WORD, AS IN ITS FRAME. An array's
+# name read as a word is the named slot's word, `EFLLOAD` — a typed array's element 0 (§ compound assignment), a bare
+# `var b[N]` / `stack var b[N]`'s first word — but the capture rung took 6.6.5's multi-word rule (an aggregate's value is
+# its address), so inside a closure `var a: i64[4]; a[0] = 4; .. |k| take(a) + k` passed the env copy's ADDRESS (8 on
+# x86_64 / aarch64 / PE, 248 on cx, where 4 is right; a bare array 8 / cx 72). 1 = enclosing slot `esl` is an array —
+# no type, a span, and its slice-width word in the element-typed band (`_arr_named_marks`) or the bare mark (bit 61 of
+# its depth word, SLBARR): the read loads the copy's first word, as the frame's does. Its subscript and `&a` are
+# unchanged. CHANGELOG [6.7.17]
+fn _cl_snap_arr(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    if (_cl_snap_type(esl) != 0) { return 0; }
+    if (_cl_snap_span(esl) < 1) { return 0; }
+    if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 61) & 1) == 1) { return 1; }   # a bare array
+    if (L64(_cl_snap + _cl_snap_n * 24 + esl * 8) > 0 - 0x1000000000000) { return 0; }
+    return 1;
+}
 # Word offset of capture `capi` inside the env object (slot 0 is the fn pointer).
 fn _cl_cap_woff(capi): i64 {
     var off = 1;
@@ -6428,7 +6445,11 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         # 6.6.5: a multi-word capture IS those words — its value is its
                         # address, the same convention an enclosing inline aggregate has in
                         # its own frame. A single-word capture is a value; load it.
-                        if (L64(&_cl_cap_w + cl_capi * 8) > 1) { SPSC(S, 1); return 0; }
+                        if (L64(&_cl_cap_w + cl_capi * 8) > 1) {
+                            if (_cl_snap_arr(cl_esl) == 1) { ELOAD64(S); return 0; }   # 6.7.17: an array, its first word
+                            SPSC(S, 1);
+                            return 0;
+                        }
                         _cl_cap_load(S, cl_esl);                         # rax = captured value (6.7.3: + a bool's mark)
                         return 0;
                     }
