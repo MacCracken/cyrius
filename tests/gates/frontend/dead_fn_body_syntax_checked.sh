@@ -243,6 +243,70 @@ syscall(60, r);
 ' 3
 [ "$NPN" -ge 60 ] || { echo "  FAIL: axis 5 ran $NPN row-legs (floor 60)"; fail=$((fail + 1)); }
 
+# ── AXIS 6 (6.7.17, D110 — an agent default the user reviews at the release) — AN UNDEFINED NAME IN A BODY PASS 2 NEVER
+# PARSES IS REFUSED, as a never-called plain fn's is. `fn gg<T: Show>(x: T): i64 { return zz; }` never instantiated
+# compiled (rc 0, exit 3); a name undefined there is undefined in every instance (it does not depend on T), so axis 5's
+# read says it too — "undefined variable 'zz'", where a plain dead fn says it — not under --syntax-only (lint's names
+# are a sibling file's). NU1 the review's repro verbatim; NU2 every undefined-name site (a read, an assignment, a for
+# step, `&v`, a `.field` base) — exactly a plain dead fn's lines (NU2p; each column 13 on, the header's length); NU3 an un-inherited trait default, NU4 a bounded
+# generic method, NU5 a stub generic, all never parsed; NU6 --syntax-only: no line, rc 0; NU7 ANTI-VACUOUS: every name
+# a body declares or reaches (parameters, locals, a closure's, a loop's, a destructure's, a local const, globals,
+# consts, enum members) resolves — clean, exit 3.
+# MUTATIONS (2026-10-22, measured, every leg built from the mutated tree): the bite before (axis 5's read, names as
+# under --syntax-only) -> RED 25, NU1-NU5 on every leg (rc 0); `_unp_names` never set -> RED 25, the same rows.
+echo "axis 6 — an undefined name in a body pass 2 never parses is refused, as a never-called plain fn's (D110):"
+NUN0=$NPN
+np5 NU1 "the review's repro: an uninstantiated bounded generic's zz" "${SH}fn gg<T: Show>(x: T): i64 { return zz; }
+$MN" "error:<source>:2:38: undefined variable 'zz' (missing include or enum?)"
+NUF='{ var a = zz; yy = 2; for (var i = 0; i < 2; ww = 1) { } var q = &vv; return uu.f + a; }'
+np5 NU2p "control: every undefined-name site in a plain dead fn" "fn h(): i64 $NUF
+$MN" "error:<source>:1:25: undefined variable 'zz' (missing include or enum?)
+error:<source>:1:33: undefined variable 'yy'
+error:<source>:1:64: undefined variable 'ww'
+error:<source>:1:81: undefined variable 'vv'
+error:<source>:1:95: undefined variable 'uu'"
+np5 NU2 "... the same sites in an uninstantiated bounded generic: the same lines" "fn h<T: Show>(x: T): i64 $NUF
+${SH}$MN" "error:<source>:1:38: undefined variable 'zz' (missing include or enum?)
+error:<source>:1:46: undefined variable 'yy'
+error:<source>:1:77: undefined variable 'ww'
+error:<source>:1:94: undefined variable 'vv'
+error:<source>:1:108: undefined variable 'uu'"
+np5 NU3 "an un-inherited trait default's zz" "trait T { fn d(self): i64 { return zz; } }
+$MN" "error:<source>:1:38: undefined variable 'zz' (missing include or enum?)"
+np5 NU4 "an uninstantiated bounded generic method's zz" "${SH}struct Q { k; }
+impl Q { fn m<T: Show>(self, v: T): i64 { return zz + self.k; } }
+$MN" "error:<source>:3:53: undefined variable 'zz' (missing include or enum?)"
+np5 NU5 "an uncalled stub generic's zz" "fn wrap<T>(p: T): i64 { return p.x + zz; }
+$MN" "error:<source>:1:40: undefined variable 'zz' (missing include or enum?)"
+printf '%s' "${SH}fn gg<T: Show>(x: T): i64 { return zz; }
+$MN" > "$T/NU6.cyr"
+for leg in $LEGS; do
+    npc "$leg" "$T/NU6.cyr" "$T/NU6_$leg" --syntax-only
+    NPN=$((NPN + 1))
+    if [ "$NRC" -ne 0 ] || grep -qE '^(error|warning)' "$T/NU6_$leg.err"; then
+        echo "  FAIL: NU6 $leg: --syntax-only: rc $NRC: $(grep -E '^(error|warning)' "$T/NU6_$leg.err" | tr '\n' '|')"; fail=$((fail + 1))
+    else echo "  ok: NU6 $leg: --syntax-only says no name (rc 0)"; fi
+done
+npok NU7 "ANTI-VACUOUS: every name a never-parsed body reaches resolves" 'trait Show { fn s(self): i64; }
+enum E { A, B }
+const K = 4;
+var gl = 5;
+fn two(): (i64, i64) { return (1, 2); }
+fn gg<T: Show>(x: T, n): i64 {
+    var a = n + gl + K + E.B + B;
+    var c = |y| { return y + a; };
+    for i in 0..n { a = a + i; }
+    var p, q = two();
+    const L = 2;
+    return x.s() + fncall1(c, 1) + p + q + L;
+}
+trait Tr { fn d(self, k): i64 { var z = k + gl; return self.k + z; } }
+fn main(): i64 { return 3; }
+var r = main();
+syscall(60, r);
+' 3
+[ "$((NPN - NUN0))" -ge 40 ] || { echo "  FAIL: axis 6 ran $((NPN - NUN0)) row-legs (floor 40)"; fail=$((fail + 1)); }
+
 if [ "$fail" != 0 ]; then
     echo "FAIL: dead-fn-body-syntax-checked — $fail assertion(s) failed"
     exit 1

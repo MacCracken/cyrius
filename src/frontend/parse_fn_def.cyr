@@ -1388,6 +1388,7 @@ fn _unp_run(S): i64 {
     var he = _had_error;
     var so = _syntax_only;
     var gv = GVCNT(S);
+    _unp_names = 1 - so;   # 6.7.17 (D110): an undefined name too, as a never-called plain fn's
     _syntax_only = 1;
     _ir_enabled = 0;
     _ew_mute = 1;
@@ -1399,6 +1400,7 @@ fn _unp_run(S): i64 {
     }
     _ew_mute = 0;
     _ew_say = 0;
+    _unp_names = 0;
     _syntax_only = so;
     SVCNT(S, gv);
     _had_error = he;

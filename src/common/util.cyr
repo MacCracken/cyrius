@@ -2201,7 +2201,8 @@ fn SEXW(S, v): i64 { S64(S + 0x1903F0, v); return 0; }
 var _ew_mute = 0;   # 1: nothing is written ...
 var _ew_say = 0;    # ... but the report being printed while this is 1
 var _unp_on = 0;    # 1 while a body pass 2 never parsed is read (`_unp_run`, parse_fn_def.cyr)
-var _unp_said = 0;  # the reports that read said (a syntax error)
+var _unp_said = 0;  # the reports that read said (a syntax error, an undefined name)
+var _unp_names = 0; # 1: the read says an undefined name too (D110; not under --syntax-only, whose names are a sibling's)
 var _unp_v = 0;     # per body pass 2 stepped: kind (0 a generic base, 1 a trait default), fi, its `(`, its first token, its `fn`
 var _unp_iv = 0;    # the generics an instance was minted of (their bases' bodies parsed)
 var _unp_dv = 0;    # the trait defaults an impl inherited (their `fn` tokens: parsed as its methods)

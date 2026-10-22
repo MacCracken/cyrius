@@ -8248,8 +8248,10 @@ whose `i64` base is not parsed — a bounded one with no `impl` of its bound for
 such use at the definition all the same, never called included, with the same words at the same place (its other
 lines are judged in each instance). A base no call ever instantiates — like a trait default no impl inherits, or every
 impl overrides — is still read once for its syntax (6.7.17; every fn body is parsed, called or not): a syntax error in
-it is refused at its token in a plain fn's words (`return 1 +;` is *unexpected ';'*), and nothing else in it is judged
-— through 6.7.16 such a body compiled unread.
+it is refused at its token in a plain fn's words (`return 1 +;` is *unexpected ';'*), and so is a name undefined in
+every instance, one that does not depend on `T` (`return zz;` is *undefined variable 'zz'*, as in a plain fn nothing
+calls; not under `--syntax-only`, where a name is a sibling file's — the agent default D110, 2026-10-22); nothing else
+in it is judged. Through 6.7.16 such a body compiled unread.
 
 ```
 struct Pt { x; y; }
