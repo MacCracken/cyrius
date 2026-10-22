@@ -174,7 +174,10 @@ fi
 # 6.7.17 (D20): _istr_amp_cap — `*(&t) = v` with t a closure's captured inline `Str` parks `&t` (the environment copy)
 # while the statement's arms copy v's header through it (a frame slot of the closure; parse_decl.cyr — issues/2026-10-21-
 # str-shapes-beyond-d19-d20-d71-d73.md row 3).
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1 _hl_psrc_copy:1 _fsc_psrc:1 _ret_ptr_src:1 _ret_park_copy:1 _dst_struct:1 _dlo_vec:1 _pe_vtemp:1 _op_park_top:1 _vrcv_dparse:1 _dvi_park:1 _istr_rax_into:1 _psl_store:2 _istr_amp_cap:1"
+# 6.7.17 (D23 A): _dst_vec — `*pv = v` through a `*V` parks the pointer while `_dvec_rcv` copies the whole vector through
+# it (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-21-vector-value-in-a-word-position-
+# beyond-d100-d101.md row 1).
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1 _hl_psrc_copy:1 _fsc_psrc:1 _ret_ptr_src:1 _ret_park_copy:1 _dst_struct:1 _dlo_vec:1 _pe_vtemp:1 _op_park_top:1 _vrcv_dparse:1 _dvi_park:1 _istr_rax_into:1 _psl_store:2 _istr_amp_cap:1 _dst_vec:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
