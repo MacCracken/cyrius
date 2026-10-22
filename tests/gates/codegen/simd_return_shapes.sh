@@ -488,6 +488,15 @@
 # whole call there (VO54) and the guide say "does not match the declared type". Mutations (2026-10-22, measured):
 #   M-VO14 `_vop_mret` answering 0                     -> RED 30: VO68-VO73 on five legs (VO71 VO72 D101's words)
 #   M-VO15 `_vsc_ret` judging a `return (a, b);`       -> RED 10: VO71 VO72 on five legs (D101's words)
+# 6.7.17 (met landing D24) — a refused compound assignment is its whole right side's one error (`_cop_rti`, set by
+# `_asg_wide_refused`, `_asg_struct_refused`, `_dst_cop_err`, `_dvec_cop_err`; `_vop_rchk` leaves a vector value that is
+# all of the right side alone): `w += mk2(1, 1);` on a vector, a struct, an array, through a `*f64v2` / `*Pt` / `**Pt`,
+# `*(&w)`, printed the compound's refusal and then D100's "vector return type does not match the assigned variable" — two
+# errors for one mistake (VCO2 / VCO3 the call's alone, the compound's refusal not said, before D23). Rows VCO1-VCO6
+# (refused once), VCO7 / VCO8 (an operand inside the right side keeps its own: two errors) on five legs. Mutations
+# (2026-10-22, measured, host):
+#   M-VCO1 `_vop_rchk` without the exemption (the tree before) -> RED VCO1-VCO6 (two errors)
+#   M-VCO2 the exemption taking a call an operator follows    -> RED VCO8 (one error)
 # 6.7.17 (D23 A, the user's decision, 2026-10-22; issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md
 # row 1) — a store through a pointer to a vector copies the whole vector (`_dst_vec` / `_dvec_rcv`, parse.cyr), as `w = u`
 # does: the store wrote one word — `*pv = u;` 42 on every leg, `*pv = mk2(4, 7);` and `*(&w) = mk2(4, 7);` x86_64 /
@@ -2941,6 +2950,55 @@ syscall(60, r() % 256);
 }
 VOC_ROWS="VOC1 VOC2 VOC3 VOC4"
 
+# ---- 6.7.17 (met landing D24): a refused compound assignment is its whole right side's one error (rows VCO refused once;
+# VCO7 / VCO8 an operand inside the right side keeps its own, two errors) ----------------------------------------------
+# VCO1-VCO6 `op = mk2(..)` on a vector local, through a `*f64v2`, `*(&w)` wrapped, a struct local, through a `*Pt`, `**qq`
+# of a `**Pt`, an array.
+VCOH='fn mk2(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+struct Pt { a; b; }
+'
+vco_src() {  # $1 row id -> source on stdout
+    case "$1" in
+    VCO1) printf '%s' "$VCOH"'fn r(): i64 { var w: f64v2 = mk2(1, 2); w += mk2(1, 1); return 0; }
+syscall(60, r());
+' ;;
+    VCO2) printf '%s' "$VCOH"'fn r(): i64 { var w: f64v2 = mk2(1, 2); var pv: *f64v2 = &w; *pv += mk2(1, 1); return 0; }
+syscall(60, r());
+' ;;
+    VCO3) printf '%s' "$VCOH"'fn r(): i64 { var w: f64v2 = mk2(1, 2); *(&w) -= (mk2(1, 1)); return 0; }
+syscall(60, r());
+' ;;
+    VCO4) printf '%s' "$VCOH"'fn r(): i64 { var p: Pt; p += mk2(1, 1); return 0; }
+syscall(60, r());
+' ;;
+    VCO5) printf '%s' "$VCOH"'fn r(): i64 { var p: Pt; var q: *Pt = &p; var qq: **Pt = &q; **qq *= mk2(1, 1); return 0; }
+syscall(60, r());
+' ;;
+    VCO6) printf '%s' "$VCOH"'fn r(): i64 { var a: i64[4]; a += mk2(1, 1); return 0; }
+syscall(60, r());
+' ;;
+    VCO7) printf '%s' "$VCOH"'fn r(): i64 { var w: f64v2 = mk2(1, 2); w += 1 + mk2(1, 1); return 0; }
+syscall(60, r());
+' ;;
+    VCO8) printf '%s' "$VCOH"'fn r(): i64 { var p: Pt; var q: *Pt = &p; *q += mk2(1, 1) * 2; return 0; }
+syscall(60, r());
+' ;;
+    esac
+}
+VCO_ROWS="VCO1 VCO2 VCO3 VCO4 VCO5 VCO6"
+VCO2_ROWS="VCO7 VCO8"
+vco_msg() {
+    case "$1" in
+    VCO1|VCO3) echo "compound assignment to vector 'w' is refused";;
+    VCO2) echo "compound assignment to the vector 'pv' points at is refused";;
+    VCO4) echo "compound assignment to struct 'p' is refused";;
+    VCO5) echo "compound assignment to the struct '*qq' points at is refused";;
+    VCO6) echo "compound assignment to array 'a' is refused";;
+    VCO7) echo "compound assignment to vector 'w' is refused"; echo "vector return type does not match the assigned variable";;
+    VCO8) echo "compound assignment to the struct 'q' points at is refused"; echo "vector return type does not match the assigned variable";;
+    esac
+}
+
 # ---- 6.7.17 (D23 A, the user's decision, 2026-10-22; issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-
 # d101.md row 1): a store through a pointer to a vector copies the whole vector, as `w = u` does (rows VS run, VSK refused
 # once) ----------------------------------------------------------------------------------------------------------------
@@ -3982,6 +4040,10 @@ refuse2_tab_all host "$CC" vos_src "$VOS_ROWS" vos_msg
 refuse2_tab_all host-ir3 "$CC" vos_src "$VOS_ROWS" vos_msg CYRIUS_IR=3
 accept_tab_all host "$CC" hostr voc_src "$VOC_ROWS"
 accept_tab_all host-ir3 "$CC" hostr voc_src "$VOC_ROWS" CYRIUS_IR=3
+refuse_tab_all host "$CC" vco_src "$VCO_ROWS" vco_msg
+refuse_tab_all host-ir3 "$CC" vco_src "$VCO_ROWS" vco_msg CYRIUS_IR=3
+refuse2_tab_all host "$CC" vco_src "$VCO2_ROWS" vco_msg
+refuse2_tab_all host-ir3 "$CC" vco_src "$VCO2_ROWS" vco_msg CYRIUS_IR=3
 accept_want_all host "$CC" hostr vs_src "$VS_ROWS" vs_want
 accept_want_all host-ir3 "$CC" hostr vs_src "$VS_ROWS" vs_want CYRIUS_IR=3
 refuse_tab_all host "$CC" vsk_src "$VSK_ROWS" vsk_msg
@@ -4049,6 +4111,8 @@ if cat src/main_cx.cyr | "$CC" > "$W/cycc_cx" 2>/dev/null && [ -s "$W/cycc_cx" ]
     refuse_tab_all cx "$W/cycc_cx" vo_src "$VO_ROWS" vo_msg
     refuse2_tab_all cx "$W/cycc_cx" vos_src "$VOS_ROWS" vos_msg
     accept_tab_all cx "$W/cycc_cx" cxr voc_src "$VOC_ROWS"
+    refuse_tab_all cx "$W/cycc_cx" vco_src "$VCO_ROWS" vco_msg
+    refuse2_tab_all cx "$W/cycc_cx" vco_src "$VCO2_ROWS" vco_msg
     accept_want_all cx "$W/cycc_cx" cxr vs_src "$VS_ROWS" vs_want
     refuse_tab_all cx "$W/cycc_cx" vsk_src "$VSK_ROWS" vsk_msg
     refuse2_tab_all cx "$W/cycc_cx" ws_src "$WS_ROWS" ws_msg
@@ -4109,6 +4173,8 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
         refuse_tab_all aarch64 "$W/cycc_a64" vo_src "$VO_ROWS" vo_msg
         refuse2_tab_all aarch64 "$W/cycc_a64" vos_src "$VOS_ROWS" vos_msg
         accept_tab_all aarch64 "$W/cycc_a64" a64r voc_src "$VOC_ROWS"
+        refuse_tab_all aarch64 "$W/cycc_a64" vco_src "$VCO_ROWS" vco_msg
+        refuse2_tab_all aarch64 "$W/cycc_a64" vco_src "$VCO2_ROWS" vco_msg
         accept_want_all aarch64 "$W/cycc_a64" a64r vs_src "$VS_ROWS" vs_want
         refuse_tab_all aarch64 "$W/cycc_a64" vsk_src "$VSK_ROWS" vsk_msg
         refuse2_tab_all aarch64 "$W/cycc_a64" ws_src "$WS_ROWS" ws_msg
@@ -4174,6 +4240,8 @@ if command -v wine > /dev/null 2>&1; then
         refuse_tab_all win64 "$W/cycc_win" vo_src "$VO_ROWS" vo_msg
         refuse2_tab_all win64 "$W/cycc_win" vos_src "$VOS_ROWS" vos_msg
         accept_tab_all win64 "$W/cycc_win" wr_ voc_src "$VOC_ROWS"
+        refuse_tab_all win64 "$W/cycc_win" vco_src "$VCO_ROWS" vco_msg
+        refuse2_tab_all win64 "$W/cycc_win" vco_src "$VCO2_ROWS" vco_msg
         accept_want_all win64 "$W/cycc_win" wr_ vs_src "$VS_ROWS" vs_want
         refuse_tab_all win64 "$W/cycc_win" vsk_src "$VSK_ROWS" vsk_msg
         refuse2_tab_all win64 "$W/cycc_win" ws_src "$WS_ROWS" ws_msg
@@ -4200,7 +4268,7 @@ fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
 # that are always present) so adding a row cannot leave a stale hard-coded number behind.
-nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VSK_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW, VN, VNS, VG; 6.7.17: + VSK (every row runs on host + cx)
+nr_rows=$(set -- $REFUSE_ROWS $Y_ROWS $Z_ROWS $Q_ROWS QF $K_ROWS $H_ROWS H16 TP $T_ROWS $DK_ROWS $MK_ROWS $CRK_ROWS $NK_ROWS $WRK_ROWS $GA_ROWS GAF $TL_ROWS $GT_ROWS $OP_ROWS $RV_ROWS $SX_ROWS $VA_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VSK_ROWS $VCO_ROWS $VCO2_ROWS; echo $#)   # 6.7.13: + Q, K, H; 6.7.14: + T, DK, MK; 6.7.15: + QF, CRK, NK, WRK, GA, GAF, TL; 6.7.16: + GT, OP, RV, SX, VA, VAS, VO, VOS, WS, WF, FW, VN, VNS, VG; 6.7.17: + VSK, VCO (every row runs on host + cx)
 [ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
 # The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
 # a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
@@ -4230,8 +4298,8 @@ na_floor=$((na_floor + $(set -- $VS_ROWS; echo $#) * 3))   # 6.7.17 (D23): every
 [ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx, + the V rows)"
 # And every row id in both tables must actually produce a source — a typo'd id would otherwise
 # compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
-for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VS_ROWS $VSK_ROWS; do
-    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row"; vg_src "$row"; vs_src "$row"; vsk_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
+for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_ROWS $P_ROWS $K_ROWS $H_ROWS H16 $T_ROWS $U_ROWS $D_ROWS $DK_ROWS $M_ROWS $MK_ROWS $CR_ROWS $CRK_ROWS $NK_ROWS $N_ROWS $WR_ROWS $WRK_ROWS $GA_ROWS $GC_ROWS $TL_ROWS $GT_ROWS $OP_ROWS $OPC_ROWS $RV_ROWS $RVC_ROWS $SX_ROWS $VA_ROWS $VAC_ROWS $VAS_ROWS $VO_ROWS $VOS_ROWS $VOC_ROWS $WS_ROWS $WF_ROWS $FW_ROWS $VN_ROWS $VNS_ROWS $VG_ROWS $VS_ROWS $VSK_ROWS $VCO_ROWS $VCO2_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row"; vg_src "$row"; vs_src "$row"; vsk_src "$row"; vco_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)

@@ -10343,6 +10343,7 @@ fn _vop_rchk(S, ti0): i64 {
     if (a == _vop_done) { return 0; }
     if (_vop_opnd(S, ti0, e) == 0) { return _vop_whole(S, ti0, e, a); }
     if (_vop_vd == 1) { return 0; }
+    if (ti0 == _cop_rti) { if (_tal_binop(TOKTYP(S, e)) == 0) { return 0; } }   # 6.7.17: a refused `op =`'s whole right side
     var k = _vop_ctx(S, ti0);
     if (k == 3) {
         if (_vop_mret(S, ti0) == 1) { return _vrcv_tyerr(S, a, 0); }   # 6.7.17: a multi-value `return`'s element

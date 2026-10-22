@@ -4804,9 +4804,18 @@ fn _asg_struct_refused(S, noff, li): i64 {
         if (gi >= 0) { if (GVTYPE(S, gi) > 0) { if (GVPM(S, gi) == 2) { sv = 1; } } }
     }
     if (sv == 0) { return 0; }
+    _cop_rti = GTI(S);   # 6.7.17: its whole right side is this refusal's
     _err_in_sync(S, "compound assignment to struct ", noff, " is refused - a struct value is not an integer or a float (write `a = a + b`)");
     return 1;
 }
+# ⛔ 6.7.17 (met landing D24) — A REFUSED COMPOUND ASSIGNMENT IS ITS RIGHT SIDE'S ONE ERROR. `w += mk2(1, 1);` on a vector
+# `w` (a struct, an array, `*pv` / `*q` through a pointer to one, `*(&w)`) printed the compound's refusal and then D100's
+# "vector return type does not match the assigned variable" about the call that is the whole right side — two errors
+# for one mistake, at one token (and D24 met the same for a vector name: `*pv += u`). The first token of the right
+# side a compound refusal was made for (`_asg_wide_refused`, `_asg_struct_refused`, `_dst_cop_err`, `_dvec_cop_err`);
+# `_vop_rchk` leaves a vector value that is all of it alone. An operand inside it (`w += 1 + mk2(..)`) keeps its own.
+# CHANGELOG [6.7.17]
+var _cop_rti = 0 - 1;
 
 # ⛔ 6.7.6 (Break 1, lane D) — `a OP= b` ON A SIMD VECTOR, A TYPED ARRAY OR A SLICE IS REFUSED BY
 # NAME (the user's decision, 2026-10-08), as 6.7.5 refused it on a struct: each compiled and
@@ -4830,6 +4839,7 @@ fn _asg_wide_refused(S, noff, li): i64 {
         if (gi >= 0) { if (_arr_gdesc(S, gi) != 0) { k = 2; } elif (_arr_gbare(S, gi) == 1) { k = 4; } }
     }
     if (k == 0) { return 0; }
+    _cop_rti = GTI(S);   # 6.7.17: its whole right side is this refusal's
     if (k == 1) { _err_in_sync(S, "compound assignment to vector ", noff, " is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)"); }
     elif (k == 2) { _err_in_sync(S, "compound assignment to array ", noff, " is refused - an array is not an integer or a float (index an element: `a[i] += b`)"); }
     elif (k == 4) { _err_in_sync(S, "compound assignment to array ", noff, " is refused - an array is not an integer or a float (a bare array has no element type: write the word, `store64(&b, load64(&b) + v)`)"); }
@@ -5073,6 +5083,7 @@ fn _dst_vec(S, term, d): i64 {
 # "the vector 'pv' points at" (`**ppv`: '*ppv'). In sync, as the struct's (`_dst_cop_err`). 0.
 fn _dvec_cop_err(S, d): i64 {
     var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    _cop_rti = GTI(S) + 2;   # 6.7.17: past the `op =` the cursor is on
     if (_amp_vd(S, d + 1, GTI(S)) != 0) {
         _err_in_sync(S, "compound assignment to vector ", nm,
           " is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)");
@@ -5166,6 +5177,7 @@ fn _dh_gv(h): i64 {
 # first word, through 6.7.13. CHANGELOG [6.7.14]
 # `star`: the `*`s the operand of the outer `*` opens with (`_sval_stars`) — 1 for `**pp`, whose operand is `*pp`.
 fn _dst_cop_err(S, nm, star): i64 {
+    _cop_rti = GTI(S) + 2;   # 6.7.17: past the `op =` the cursor is on
     if (_hl_damp == 1) {
         _err_in_sync(S, "compound assignment to struct ", nm,
           " is refused - a struct value is not an integer or a float (write `a = a + b`)");
