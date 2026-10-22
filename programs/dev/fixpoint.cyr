@@ -24,9 +24,13 @@
 # $CYRIUS_REPO, else the one the current directory is in.
 #
 # ⚠ This program is compiled by a cyrius compiler and checks one — a check that shares a defect
-# with what it checks reads GREEN (CLAUDE.md). So the verdicts are not this program's own bytes:
-# every comparison is an exec of `cmp -s`, every digest an exec of `sha256sum`, and `cyrius run`
-# builds it with the installed (tagged) toolchain's compiler, not the build/cycc it rebuilds.
+# with what it checks reads GREEN (CLAUDE.md). In this checkout `cyrius run` builds it with
+# ./build/cycc (cbt/core.cyr's in-repo rule, v6.5.37): the very compiler its c1 stage runs and
+# --install replaces. So the verdicts are not this program's own bytes: every comparison is an
+# exec of `cmp -s`, every digest an exec of `sha256sum`. To build it independently of build/cycc,
+# from the checkout root:
+#   ~/.cyrius/bin/cycc < programs/dev/fixpoint.cyr > <scratch>/fixpoint && chmod +x <scratch>/fixpoint
+#   <scratch>/fixpoint --install <scratch-dir>
 #
 # These were scripts/build-cycc-verify.sh's --fixpoint and --install modes, with byte-identical
 # output (the golden row in tests/gates/toolchain/dev_helpers_match_golden.sh); the script keeps
