@@ -1,0 +1,4 @@
+rc=2
+--- stdout
+--- stderr
+regen-issue-index: @T@/regen_err/docs/development/issues/README.md has no `## Open queue` section followed by another `## ` heading

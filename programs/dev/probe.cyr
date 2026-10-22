@@ -1,0 +1,284 @@
+# programs/dev/probe.cyr — batch probes: split one file of `== name` blocks into probe files, and
+# compile and run every probe in a directory, one line each.
+#
+# Usage:  cyrius run programs/dev/probe.cyr split <dir> <file>
+#         cyrius run programs/dev/probe.cyr run <dir>
+#         OLD_CC=<compiler> cyrius run programs/dev/probe.cyr run <dir>   (before / after, side by side)
+#         PROBE_TIMEOUT=<s> …                                             (each run's timeout, default 10)
+#
+# split   Input: <file>, whose blocks each start with a line `== <name>`; the lines up to the next
+#         `== ` line (or the end) are that probe's source; lines before the first `== ` and a block
+#         whose name is empty are dropped. Output: <dir>/<name>.cyr per block (<dir> created when
+#         missing). Every *.cyr / *.bin / *.err already in <dir> is removed first, so the directory
+#         holds exactly this file's probes. Exit 2 on a usage error.
+# run     Input: <dir>/*.cyr (a path from the caller's cwd, or from the checkout root), in byte
+#         order of their names. Each probe is compiled FROM the checkout root with its build/cycc,
+#         so `include "lib/…"` resolves there, and run under `timeout`.
+#         Output, one probe at a time:
+#   default   `<name>: BUILT exit=<rc> warn=<count of warning lines>`, or, when the compile fails,
+#             `<name>: rc=<rc> errs=<count of error lines> :: <the first two error lines, |-joined>`
+#             (each cut to 170 bytes)
+#   OLD_CC    `== <name>`, then for `before` (OLD_CC) and `after` (build/cycc) in turn:
+#             `<before|after>: compile rc=<rc> run=<rc or -> stdout=[<first 120 bytes, |-joined>]`
+#             and up to six of that compile's stderr lines (notes dropped), indented
+#         The binaries and compile stderr stay next to each probe: <name>.bin / <name>.err
+#         (build/cycc), <name>.old.bin / <name>.old.err (OLD_CC). Exit 0 once every probe is
+#         reported; 2 on a usage / setup error (no <dir>, no probe in it, a compiler that is not
+#         executable).
+#
+# The checkout: $CYRIUS_REPO, else the one the current directory is in. Needs timeout on PATH.
+#
+# It replaced scripts/dev/probe-split.py and scripts/dev/probe.sh, with byte-identical output
+# (the golden rows in tests/gates/toolchain/dev_helpers_match_golden.sh). The one difference:
+# the script ran the probes in the shell's glob order, which is the locale's collation; this runs
+# them in byte order (the same order under LC_ALL=C, and for lowercase names). CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+var PROG = "probe";
+
+fn _split(d, file): i64 {
+    hc_mkdirs(hc_cstr(d));
+    var ents = hc_listdir(hc_cstr(d));
+    if (ents != 0) {
+        var i = 0;
+        while (i < vec_len(ents)) {
+            var e = vec_get(ents, i);
+            if (hc_suf(e, ".cyr") == 1 || hc_suf(e, ".bin") == 1 || hc_suf(e, ".err") == 1) {
+                sys_unlink(hc_cstr(hc_joinc(d, hc_cstr(e))));
+            }
+            i = i + 1;
+        }
+    }
+    var s = hc_read_text(hc_cstr(file));
+    if (s == 0) { hc_die(PROG, hc_cat(file, hc_s(": cannot read")), 1); }
+    var lines = hc_split(s, 10);
+    var cur = 0;
+    var buf = vec_new();
+    var i2 = 0;
+    while (i2 <= vec_len(lines)) {
+        var flush = 0;
+        var line = 0;
+        if (i2 == vec_len(lines)) { flush = 1; }
+        else {
+            line = vec_get(lines, i2);
+            if (hc_pre(line, "== ") == 1) { flush = 1; }
+        }
+        if (flush == 1) {
+            if (cur != 0) {
+                if (hc_n(cur) > 0) {
+                    var body = hc_catc(hc_join(buf, "\n"), "\n");
+                    var path = hc_joinc(d, hc_cstr(hc_catc(cur, ".cyr")));
+                    if (hc_write_new(hc_cstr(path), body) != 0) {
+                        hc_die(PROG, hc_cat(path, hc_s(": cannot write")), 1);
+                    }
+                }
+            }
+            if (line != 0) {
+                cur = hc_strip(hc_sub(line, 3, hc_n(line)));
+                buf = vec_new();
+            }
+        } else {
+            vec_push(buf, line);
+        }
+        i2 = i2 + 1;
+    }
+    return 0;
+}
+
+# grep -c '^<prefix>' over a file's lines.
+fn _count_pre(s, prefc): i64 {
+    var lines = hc_split(s, 10);
+    var n = vec_len(lines);
+    # a trailing newline leaves one empty piece that is no line
+    if (n > 0) { if (hc_n(vec_get(lines, n - 1)) == 0) { n = n - 1; } }
+    var k = 0;
+    var i = 0;
+    while (i < n) {
+        if (hc_pre(vec_get(lines, i), prefc) == 1) { k = k + 1; }
+        i = i + 1;
+    }
+    return k;
+}
+
+fn _lines(s): i64 {
+    var lines = hc_split(s, 10);
+    var n = vec_len(lines);
+    if (n > 0) { if (hc_n(vec_get(lines, n - 1)) == 0) { vec_pop(lines); } }
+    return lines;
+}
+
+fn _strip_nul(s): i64 {
+    if (hc_findb(s, 0, 0) < 0) { return s; }
+    var sb = hc_sb();
+    var i = 0;
+    while (i < hc_n(s)) {
+        if (hc_at(s, i) != 0) { hc_sbb(sb, hc_at(s, i)); }
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+fn _readf(pathc): i64 {
+    var s = hc_read(pathc);
+    if (s == 0) { return hc_s(""); }
+    return s;
+}
+
+# Compile `src` with `cc` into <out>.bin / <out>.err from the root; the compiler's status.
+fn _compile(cc, src, out): i64 {
+    var binp = hc_cstr(hc_catc(out, ".bin"));
+    var errp = hc_cstr(hc_catc(out, ".err"));
+    return hc_run(hc_argv(cc, 0, 0, 0, 0, 0), 0, 0, src, binp, errp, 0);
+}
+
+fn _run(dir_arg, d): i64 {
+    var root = hc_repo_root(0);
+    if (root == 0) {
+        hc_errc("probe: no cyrius checkout here (run it from the checkout, or set CYRIUS_REPO)\n");
+        return 2;
+    }
+    var cwd0 = hc_getcwd();
+    # a path from the caller's cwd wins; otherwise <dir> is read from the checkout root
+    if (hc_at(d, 0) != 47) {
+        if (hc_is_dir(hc_cstr(d)) == 1) { d = hc_cat3(cwd0, hc_s("/"), d); }
+    }
+    var old = hc_getenv_ne("OLD_CC");
+    var old_given = old;
+    if (old != 0) { if (hc_at(old, 0) != 47) { old = hc_cat3(cwd0, hc_s("/"), old); } }
+    if (sys_chdir(hc_cstr(root)) != 0) { hc_errc("probe: cannot cd to "); hc_err(root); hc_errc("\n"); return 2; }
+    if (hc_is_dir(hc_cstr(d)) == 0) {
+        hc_errc("probe: ");
+        hc_err(dir_arg);
+        hc_errc(": no such directory (from the caller's cwd or from ");
+        hc_err(root);
+        hc_errc(")\n");
+        return 2;
+    }
+    var cc = hc_joinc(root, "build/cycc");
+    if (hc_access_x(hc_cstr(cc)) == 0) { hc_errc("probe: "); hc_err(cc); hc_errc(" missing\n"); return 2; }
+    if (old != 0) {
+        if (hc_access_x(hc_cstr(old)) == 0) {
+            hc_errc("probe: OLD_CC=");
+            hc_err(old_given);
+            hc_errc(" is not an executable compiler\n");
+            return 2;
+        }
+    }
+    var to = hc_getenv_ne("PROBE_TIMEOUT");
+    if (to == 0) { to = hc_s("10"); }
+    var names = hc_glob_names(hc_cstr(d), ".cyr");
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(names)) {
+        var f = hc_joinc(d, hc_cstr(vec_get(names, i)));
+        i = i + 1;
+        if (hc_is_file(hc_cstr(f)) == 0) { continue; }
+        n = n + 1;
+        var b = hc_sub(f, 0, hc_n(f) - 4);
+        var name = hc_basename(b);
+        if (old == 0) {
+            var rc = _compile(hc_cstr(cc), hc_cstr(f), b);
+            var err = _readf(hc_cstr(hc_catc(b, ".err")));
+            var sb = hc_sb();
+            hc_sba(sb, name);
+            if (rc == 0) {
+                var bin = hc_cstr(hc_catc(b, ".bin"));
+                sys_chmod(bin, 0x1ED);
+                var ex = hc_run(hc_argv("timeout", hc_cstr(to), bin, 0, 0, 0), 0, 0, 0, "/dev/null", HC_SAME, 0);
+                hc_sbc(sb, ": BUILT exit=");
+                hc_sbi(sb, ex);
+                hc_sbc(sb, " warn=");
+                hc_sbi(sb, _count_pre(err, "warning"));
+            } else {
+                hc_sbc(sb, ": rc=");
+                hc_sbi(sb, rc);
+                hc_sbc(sb, " errs=");
+                hc_sbi(sb, _count_pre(err, "error"));
+                hc_sbc(sb, " :: ");
+                var ls = _lines(err);
+                var k = 0;
+                var j = 0;
+                while (j < vec_len(ls) && k < 2) {
+                    var l = vec_get(ls, j);
+                    if (hc_pre(l, "error") == 1) {
+                        hc_sba(sb, hc_sub(l, 0, 170));
+                        hc_sbc(sb, "|");
+                        k = k + 1;
+                    }
+                    j = j + 1;
+                }
+            }
+            hc_sbc(sb, "\n");
+            hc_out(hc_sbend(sb));
+            continue;
+        }
+        hc_outc("== ");
+        hc_out(name);
+        hc_outc("\n");
+        var c = 0;
+        while (c < 2) {
+            var ccc = old;
+            var out = hc_catc(b, ".old");
+            var label = "before";
+            if (c == 1) { ccc = cc; out = b; label = "after"; }
+            var rc2 = _compile(hc_cstr(ccc), hc_cstr(f), out);
+            var so = hc_s("");
+            var exs = hc_s("-");
+            var binp = hc_cstr(hc_catc(out, ".bin"));
+            var bs = _readf(binp);
+            if (rc2 == 0 && hc_n(bs) > 0) {
+                sys_chmod(binp, 0x1ED);
+                var sop = hc_cstr(hc_catc(out, ".stdout"));
+                var ex2 = hc_run(hc_argv("timeout", hc_cstr(to), binp, 0, 0, 0), 0, 0, 0, sop, HC_SAME, 0);
+                exs = hc_itoa(ex2);
+                var o = _readf(sop);
+                so = hc_replace(_strip_nul(hc_sub(o, 0, 120)), hc_s("\n"), hc_s("|"));
+                sys_unlink(sop);
+            }
+            var sb2 = hc_sb();
+            hc_sbc(sb2, label);
+            hc_sbc(sb2, ": compile rc=");
+            hc_sbi(sb2, rc2);
+            hc_sbc(sb2, " run=");
+            hc_sba(sb2, exs);
+            hc_sbc(sb2, " stdout=[");
+            hc_sba(sb2, so);
+            hc_sbc(sb2, "]\n");
+            var ls2 = _lines(_readf(hc_cstr(hc_catc(out, ".err"))));
+            var k2 = 0;
+            var j2 = 0;
+            while (j2 < vec_len(ls2) && k2 < 6) {
+                var l2 = vec_get(ls2, j2);
+                if (hc_pre(l2, "note:") == 0) {
+                    hc_sbc(sb2, "    ");
+                    hc_sba(sb2, l2);
+                    hc_sbc(sb2, "\n");
+                    k2 = k2 + 1;
+                }
+                j2 = j2 + 1;
+            }
+            hc_out(hc_sbend(sb2));
+            c = c + 1;
+        }
+    }
+    if (n == 0) { hc_errc("probe: no *.cyr in "); hc_err(d); hc_errc("\n"); return 2; }
+    return 0;
+}
+
+fn main(): i64 {
+    args_init();
+    var usage = "usage: cyrius run programs/dev/probe.cyr split <dir> <file> | run <dir>\n";
+    if (argc() < 2) { hc_errc(usage); return 2; }
+    var verb = hc_arg(1);
+    if (hc_eqc(verb, "split") == 1) {
+        if (argc() != 4) { hc_errc(usage); return 2; }
+        return _split(hc_arg(2), hc_arg(3));
+    }
+    if (hc_eqc(verb, "run") == 1) {
+        if (argc() != 3) { hc_errc(usage); return 2; }
+        return _run(hc_arg(2), hc_arg(2));
+    }
+    hc_errc(usage);
+    return 2;
+}

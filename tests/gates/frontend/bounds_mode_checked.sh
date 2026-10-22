@@ -67,6 +67,13 @@
 #       CYRIUS_COVERAGE, CYRIUS_COVERAGE_FILE); floor 2 (the tool loop, the install step). And the
 #       shell twin's setup arm unsets CYRIUS_COVERAGE_FILE with the three. Its run-time half is
 #       tests/gates/toolchain/cyriusly_setup_bootstrap_and_env.sh row C.
+#       (6.7.17) E4f: the COMPILED developer helpers. The self-build that lived in scripts/dev (xb.sh)
+#       became a cyrius program, with the other helpers, under programs/dev (programs/folds and
+#       programs/release beside it), which E4's shell scan never reads: every one whose code
+#       names a src/main*.cyr fork drops CYRIUS_BOUNDS, CYRIUS_POISON and CYRIUS_COVERAGE from the
+#       environment its compiles get (`hc_env_unset(<env>, "<var>")`) before that line; floor 2 (xb, ab).
+#       Named out: programs/dev/helper_common.cyr (it names src/main.cyr to recognise a checkout and
+#       compiles nothing).
 #   M4  the mode with `kernel;`, CYRIUS_KERNEL=1 (a bare-metal --target), `shared;`, `object;`,
 #       CYRIUS_TARGET_EFI=1 -> refused by name (and nothing more: the refusal is fatal at once, so the
 #       injected checker is never compiled for a target it cannot serve); each control (the same
@@ -178,6 +185,10 @@
 #   MS7b _cmd_setup's install.sh line without CYRIUS_COVERAGE_FILE            -> RED E4e (that var, that line)
 #   MS7c scripts/cyriusly's setup unset without CYRIUS_COVERAGE_FILE          -> RED E4e (the twin)
 #   MS7d (the gate) the build / install regex blinded                         -> RED E4e floor (0 lines)
+# 6.7.17 E4f (the E4f block run alone on a scratch copy holding the one mutation):
+#   MS8  programs/dev/xb.cyr's CYRIUS_POISON unset removed                     -> RED E4f xb.cyr (that var)
+#   MS8b programs/dev/ab.cyr's unsets moved below its first src/main line      -> RED E4f ab.cyr ("after")
+#   MS8c (the gate) the fork regex blinded                                      -> RED E4f floor
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -404,6 +415,28 @@ fi
 u=$(_e4_unset scripts/cyriusly CYRIUS_COVERAGE_FILE)
 if [ -n "$u" ]; then ok "E4e scripts/cyriusly's setup unsets CYRIUS_COVERAGE_FILE too (line $u), as the compiled setup does"
 else bad "E4e scripts/cyriusly's setup does not unset CYRIUS_COVERAGE_FILE (the compiled setup unsets all four)"; fi
+# E4f (6.7.17) — the compiled developer helpers: each programs/{dev,folds,release}/*.cyr whose code
+# (comment lines dropped) names a src/main*.cyr fork drops the three switches from its compiles'
+# environment, `hc_env_unset(<env>, "<VAR>")`, on a line before the first one naming the fork.
+: > "$T/e4f"
+for s in $(find programs/dev programs/folds programs/release -name '*.cyr' 2>/dev/null | LC_ALL=C sort); do
+    # named out: helper_common.cyr names src/main.cyr to recognise a checkout and compiles nothing
+    case "$s" in programs/dev/helper_common.cyr) continue ;; esac
+    b=$(grep -nE 'src/main[a-z_0-9]*\.cyr' "$s" | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | cut -d: -f1 || true)
+    [ -n "$b" ] && echo "$s $b" >> "$T/e4f"
+done
+e4fn=$(grep -c . "$T/e4f" || true)
+if [ "$e4fn" -lt 2 ]; then bad "E4f found $e4fn compiled helper(s) naming a src/main*.cyr fork (floor 2: xb, ab) — the scan is blind"; fi
+while read -r s b; do
+    e4bad=""
+    for v in CYRIUS_BOUNDS CYRIUS_POISON CYRIUS_COVERAGE; do
+        u=$(grep -nE "hc_env_unset\([a-z_]+, \"$v\"\)" "$s" | head -1 | cut -d: -f1 || true)
+        if [ -z "$u" ]; then e4bad="$e4bad; does not drop $v"
+        elif [ "$u" -gt "$b" ]; then e4bad="$e4bad; drops $v at line $u, after"; fi
+    done
+    if [ -n "$e4bad" ]; then bad "E4f $s (first src/main*.cyr line $b)${e4bad} — an inherited one reaches its compiles"
+    else ok "E4f $s drops CYRIUS_BOUNDS, CYRIUS_POISON and CYRIUS_COVERAGE before line $b"; fi
+done < "$T/e4f"
 # E4b — the scrub at run time, on the cheapest self-build script: the inherited pair leaves its
 # fixpoint green. A red run is judged against a clean one (red alone too: this row cannot judge).
 e4rc=0

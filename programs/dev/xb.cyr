@@ -1,0 +1,255 @@
+# programs/dev/xb.cyr — build ONE program for four targets, run each, print the four exit codes.
+#
+# Usage:  cyrius run programs/dev/xb.cyr <file.cyr|file.tcyr>
+#         XB_REBUILD=1 cyrius run programs/dev/xb.cyr <file>    (rebuild the cross compilers first)
+#
+# Targets:
+#   x86  build/cycc, run natively
+#   a64  a cross compiler built from the aarch64 fork, run under qemu-aarch64
+#   cx   a cross compiler built from the cx fork, the bytecode run by programs/cxvm.cyr
+#   pe   CYRIUS_TARGET_WIN=1 build/cycc, run under wine (timeout 120 s) with a private WINEPREFIX
+#
+# Input:  the program — a path from the caller's cwd, or from the checkout root; compiled FROM the
+#         root, so its `include "lib/…"` lines resolve there. The checkout's build/cycc, src/ and
+#         programs/cxvm.cyr.
+# Output: one line on stdout, `<name>: x86=<rc> a64=<rc> cx=<rc> pe=<rc>` (`BUILD(<rc>)` where that
+#         target's compile failed). Exit 0 once that line is printed; 2 on a usage / setup error.
+#         Each target's binary and compile stderr stay in the scratch dir for a look:
+#         <scratch>/xb/<repo-key>/<name>.{x,a,cyx,exe} and .{x,a,cx,w}.err.
+#
+# The two cross compilers and cxvm are cached in <scratch>/xb/<repo-key>/ (one cache per checkout:
+# <repo-key> is the POSIX cksum of the checkout's path) and rebuilt — into a temp, then renamed —
+# when one is missing, when any src/**.cyr is newer than the aarch64 compiler, or with
+# XB_REBUILD=1. They are built in the DEFAULT mode: CYRIUS_BOUNDS / CYRIUS_POISON /
+# CYRIUS_COVERAGE are dropped for those builds only (gate row E4); the program under test keeps
+# the caller's environment. Nothing is written to build/.
+#
+# Scratch: CYRIUS_SCRATCH, default ${XDG_CACHE_HOME:-$HOME/.cache}/c6 (the wine prefix and its HOME
+# live in <scratch>/xb/wp and <scratch>/xb/wh, shared by every checkout). The checkout:
+# $CYRIUS_REPO, else the one the current directory is in. Needs qemu-aarch64, wine and timeout on
+# PATH.
+#
+# It replaced scripts/dev/xb.sh, with byte-identical output (the golden row in
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "programs/dev/helper_common.cyr"
+
+var PROG = "xb";
+
+# POSIX cksum: the CRC-32 (polynomial 0x04C11DB7, MSB first) of the bytes then of the length.
+fn _crc_byte(crc, b): i64 {
+    crc = crc ^ ((b & 0xFF) << 24);
+    var k = 0;
+    while (k < 8) {
+        if ((crc & 0x80000000) != 0) { crc = ((crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF; }
+        else { crc = (crc << 1) & 0xFFFFFFFF; }
+        k = k + 1;
+    }
+    return crc;
+}
+fn _cksum(s): i64 {
+    var crc = 0;
+    var i = 0;
+    while (i < hc_n(s)) { crc = _crc_byte(crc, hc_at(s, i)); i = i + 1; }
+    var len = hc_n(s);
+    while (len > 0) {
+        crc = _crc_byte(crc, len & 0xFF);
+        len = len >> 8;
+    }
+    return (~crc) & 0xFFFFFFFF;
+}
+
+# Any `*.cyr` under `dir` (files and directories, at any depth, links not followed) whose mtime
+# is newer than `ns` (find <dir> -newer <ref> -name '*.cyr').
+fn _newer_cyr(dir, ns): i64 {
+    var ents = hc_listdir(hc_cstr(dir));
+    if (ents == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = vec_get(ents, i);
+        var p = hc_joinc(dir, hc_cstr(e));
+        var st[256];
+        if (sys_lstat(hc_cstr(p), &st) == 0) {
+            var mt = load64(&st + 88) * 1000000000 + load64(&st + 96);
+            if (hc_suf(e, ".cyr") == 1 && mt > ns) { return 1; }
+            if ((load32(&st + STAT_MODE) & 0xF000) == 0x4000) {
+                if (_newer_cyr(p, ns) == 1) { return 1; }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# build/cycc(<src>) -> <out>, via a temp so a failed build never leaves a broken <out> that
+# looks newer than src/. Exits 2 on a failure, naming the first error line.
+fn _xb_build(w, env, out, src): i64 {
+    var t = 0;
+    var tries = 0;
+    while (t == 0 && tries < 100) {
+        var cand = hc_cat(hc_joinc(w, ".build."), hc_rand_name(6));
+        var fd = sys_open(hc_cstr(cand), O_WRONLY | O_CREAT | O_EXCL, 0x180);
+        if (fd >= 0) { sys_close(fd); t = cand; }
+        tries = tries + 1;
+    }
+    if (t == 0) { hc_errc("xb: mktemp in "); hc_err(w); hc_errc(" failed\n"); sys_exit(2); }
+    var errp = hc_catc(out, ".build.err");
+    var rc = hc_run(hc_argv("build/cycc", 0, 0, 0, 0, 0), env, 0, src, hc_cstr(t), hc_cstr(errp), 0);
+    var sz = 0;
+    var tb = hc_read(hc_cstr(t));
+    if (tb != 0) { sz = hc_n(tb); }
+    if (rc == 0 && sz > 0) {
+        sys_chmod(hc_cstr(t), 0x1ED);
+        if (sys_rename(hc_cstr(t), hc_cstr(out)) == 0) { return 0; }
+    }
+    sys_unlink(hc_cstr(t));
+    var first = hc_s("");
+    var es = hc_read(hc_cstr(errp));
+    if (es != 0) {
+        var ls = hc_split(es, 10);
+        var i = 0;
+        while (i < vec_len(ls)) {
+            if (hc_pre(vec_get(ls, i), "error") == 1) { first = vec_get(ls, i); break; }
+            i = i + 1;
+        }
+    }
+    hc_errc("xb: building ");
+    hc_err(out);
+    hc_errc(" from ");
+    hc_errc(src);
+    hc_errc(" failed: ");
+    hc_err(first);
+    hc_errc("\n");
+    sys_exit(2);
+    return 2;
+}
+
+# `<label>=<rc>` or `<label>=BUILD(<rc>)`.
+fn _put(sb, label, built, rc): i64 {
+    hc_sbc(sb, label);
+    hc_sbc(sb, "=");
+    if (built == 0) {
+        hc_sbc(sb, "BUILD(");
+        hc_sbi(sb, rc);
+        hc_sbc(sb, ")");
+    } else {
+        hc_sbi(sb, rc);
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    args_init();
+    if (argc() != 2) { hc_errc("usage: cyrius run programs/dev/xb.cyr <file.cyr|file.tcyr>\n"); return 2; }
+    var arg = hc_arg(1);
+    var f = arg;
+    var cwd0 = hc_getcwd();
+    if (hc_at(f, 0) != 47) { if (hc_is_file(hc_cstr(f)) == 1) { f = hc_cat3(cwd0, hc_s("/"), f); } }
+    var root = hc_repo_root(0);
+    if (root == 0) {
+        hc_errc("xb: no cyrius checkout here (run it from the checkout, or set CYRIUS_REPO)\n");
+        return 2;
+    }
+    if (sys_chdir(hc_cstr(root)) != 0) { hc_errc("xb: cannot cd to "); hc_err(root); hc_errc("\n"); return 2; }
+    if (hc_is_file(hc_cstr(f)) == 0) {
+        hc_errc("xb: ");
+        hc_err(arg);
+        hc_errc(": no such file (from the caller's cwd or from ");
+        hc_err(root);
+        hc_errc(")\n");
+        return 2;
+    }
+    if (hc_access_x("build/cycc") == 0) { hc_errc("xb: "); hc_err(root); hc_errc("/build/cycc missing\n"); return 2; }
+
+    var xbd = hc_joinc(hc_scratch(), "xb");
+    var w = hc_joinc(xbd, hc_cstr(hc_itoa(_cksum(root))));
+    if (hc_mkdirs(hc_cstr(w)) != 0) { hc_errc("xb: cannot create "); hc_err(w); hc_errc("\n"); return 2; }
+
+    var cc_a64 = hc_joinc(w, "cc_a64");
+    var cc_cx = hc_joinc(w, "cc_cx");
+    var cxvm = hc_joinc(w, "cxvm");
+    var rebuild = 0;
+    var xr = hc_getenv("XB_REBUILD");
+    if (xr != 0) { if (hc_eqc(xr, "1") == 1) { rebuild = 1; } }
+    if (hc_access_x(hc_cstr(cc_a64)) == 0 || hc_access_x(hc_cstr(cc_cx)) == 0) { rebuild = 1; }
+    if (hc_access_x(hc_cstr(cxvm)) == 0) { rebuild = 1; }
+    if (rebuild == 0) {
+        if (_newer_cyr(hc_s("src"), hc_mtime_ns(hc_cstr(cc_a64))) == 1) { rebuild = 1; }
+    }
+    if (rebuild == 1) {
+        # cc_a64 is the freshness stamp, so it is built LAST: a failed build leaves it older than
+        # src/ and the next run retries all three.
+        var benv = hc_env_list();
+        hc_env_unset(benv, "CYRIUS_BOUNDS");
+        hc_env_unset(benv, "CYRIUS_POISON");
+        hc_env_unset(benv, "CYRIUS_COVERAGE");
+        _xb_build(w, benv, cc_cx, "src/main_cx.cyr");
+        _xb_build(w, benv, cxvm, "programs/cxvm.cyr");
+        _xb_build(w, benv, cc_a64, "src/main_aarch64.cyr");
+    }
+
+    var n = hc_basename(f);
+    var b = hc_joinc(w, hc_cstr(n));
+    var fs = hc_read(hc_cstr(f));
+    if (fs == 0) { fs = hc_s(""); }
+    # A program that runs itself as a child (argv(0) / /proc/self/exe) needs an aarch64
+    # binfmt_misc entry under qemu-user: without one the child's execve fails ENOEXEC, the spawn
+    # answers 127, and a64 reads as a false aarch64 failure (docs/development/dev-tools-linux.md,
+    # Local self-host repro). 6.7.16
+    if (hc_exists("/proc/sys/fs/binfmt_misc/qemu-aarch64") == 0) {
+        if (hc_has(fs, "argv(0)") == 1 || hc_has(fs, "/proc/self/exe") == 1) {
+            hc_errc("xb: note: ");
+            hc_err(n);
+            hc_errc(" spawns itself and this host has no aarch64 binfmt_misc entry (qemu-user-binfmt): ");
+            hc_errc("its a64 child cannot exec (127), so a64 may fail where pi passes\n");
+        }
+    }
+    var fc = hc_cstr(f);
+    var sb = hc_sb();
+    hc_sba(sb, n);
+    hc_sbc(sb, ": ");
+
+    var bx = hc_cstr(hc_catc(b, ".x"));
+    var rx = hc_run(hc_argv("build/cycc", 0, 0, 0, 0, 0), 0, 0, fc, bx, hc_cstr(hc_catc(b, ".x.err")), 0);
+    if (rx == 0) {
+        sys_chmod(bx, 0x1ED);
+        _put(sb, "x86", 1, hc_run(hc_argv(bx, 0, 0, 0, 0, 0), 0, 0, 0, "/dev/null", HC_SAME, 0));
+    } else { _put(sb, "x86", 0, rx); }
+    hc_sbc(sb, " ");
+
+    var ba = hc_cstr(hc_catc(b, ".a"));
+    var ra = hc_run(hc_argv(hc_cstr(cc_a64), 0, 0, 0, 0, 0), 0, 0, fc, ba, hc_cstr(hc_catc(b, ".a.err")), 0);
+    if (ra == 0) {
+        sys_chmod(ba, 0x1ED);
+        _put(sb, "a64", 1, hc_run(hc_argv("qemu-aarch64", ba, 0, 0, 0, 0), 0, 0, 0, "/dev/null", HC_SAME, 0));
+    } else { _put(sb, "a64", 0, ra); }
+    hc_sbc(sb, " ");
+
+    var bc = hc_cstr(hc_catc(b, ".cyx"));
+    var rcx = hc_run(hc_argv(hc_cstr(cc_cx), 0, 0, 0, 0, 0), 0, 0, fc, bc, hc_cstr(hc_catc(b, ".cx.err")), 0);
+    if (rcx == 0) {
+        _put(sb, "cx", 1, hc_run(hc_argv(hc_cstr(cxvm), 0, 0, 0, 0, 0), 0, 0, bc, "/dev/null", HC_SAME, 0));
+    } else { _put(sb, "cx", 0, rcx); }
+    hc_sbc(sb, " ");
+
+    var wenv = hc_env_list();
+    hc_env_setc(wenv, "CYRIUS_TARGET_WIN", "1");
+    var be = hc_cstr(hc_catc(b, ".exe"));
+    var rw = hc_run(hc_argv("build/cycc", 0, 0, 0, 0, 0), wenv, 0, fc, be, hc_cstr(hc_catc(b, ".w.err")), 0);
+    if (rw == 0) {
+        var wp = hc_joinc(xbd, "wp");
+        var wh = hc_joinc(xbd, "wh");
+        hc_mkdirs(hc_cstr(wp));
+        hc_mkdirs(hc_cstr(wh));
+        var renv = hc_env_list();
+        hc_env_set(renv, "WINEPREFIX", wp);
+        hc_env_set(renv, "HOME", wh);
+        hc_env_set(renv, "XDG_CACHE_HOME", hc_joinc(wh, ".cache"));
+        hc_env_setc(renv, "WINEDEBUG", "-all");
+        hc_env_setc(renv, "WINEDLLOVERRIDES", "winemenubuilder.exe=d;mscoree=d;mshtml=d");
+        _put(sb, "pe", 1, hc_run(hc_argv("timeout", "120", "wine", be, 0, 0), renv, 0, 0, "/dev/null", HC_SAME, 0));
+    } else { _put(sb, "pe", 0, rw); }
+    hc_sbc(sb, "\n");
+    hc_out(hc_sbend(sb));
+    return 0;
+}

@@ -1,0 +1,1379 @@
+# programs/dev/helper_common.cyr — the shared basics of the developer, fold and release helper
+# programs (programs/dev, programs/folds, programs/release): strings over lib/str.cyr's Str,
+# UTF-8 code points where a Python original counted characters, files (text reads translate
+# newlines the way Python's text mode does), directory listings, the environment, and one
+# process runner (PATH lookup, a working directory, redirects, an environment, a deadline).
+# Not a program: each helper includes it. Linux only — these are tools for the dev box.
+# The helpers replaced scripts/dev, scripts/folds and scripts/release's Python and shell (each
+# helper's output byte-identical to the script it replaced on the same input:
+# tests/gates/toolchain/dev_helpers_match_golden.sh). CHANGELOG [6.7.17]
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/args.cyr"
+include "lib/chrono.cyr"
+
+# ── strings ──────────────────────────────────────────────────────────────────────────────
+
+# A Str over a C string (no copy).
+fn hc_s(c): i64 { return str_from(c); }
+# A Str over `n` bytes at `p` (no copy).
+fn hc_mk(p, n): i64 { return str_new(p, n); }
+fn hc_d(s): i64 { return load64(s); }
+fn hc_n(s): i64 { return load64(s + 8); }
+fn hc_at(s, i): i64 { return load8(load64(s) + i); }
+
+# s[a:b] with Python's clamping (a and b already non-negative); shares the bytes.
+fn hc_sub(s, a, b): i64 {
+    var n = hc_n(s);
+    if (b > n) { b = n; }
+    if (a > b) { a = b; }
+    return hc_mk(hc_d(s) + a, b - a);
+}
+
+# An owned, NUL-terminated copy.
+fn hc_dup(s): i64 {
+    var n = hc_n(s);
+    var p = alloc(n + 1);
+    memcpy(p, hc_d(s), n);
+    store8(p + n, 0);
+    return hc_mk(p, n);
+}
+
+# The bytes as a C string (a copy unless the byte after them is already NUL).
+fn hc_cstr(s): i64 {
+    var n = hc_n(s);
+    if (load8(hc_d(s) + n) == 0) { return hc_d(s); }
+    return hc_d(hc_dup(s));
+}
+
+fn hc_eq(a, b): i64 {
+    if (hc_n(a) != hc_n(b)) { return 0; }
+    return memeq(hc_d(a), hc_d(b), hc_n(a));
+}
+fn hc_eqc(a, c): i64 { return hc_eq(a, hc_s(c)); }
+
+# The first index >= from where `ndl` starts, or -1.
+fn hc_find(s, ndl, from): i64 {
+    var n = hc_n(s);
+    var m = hc_n(ndl);
+    var d = hc_d(s);
+    var nd = hc_d(ndl);
+    if (from < 0) { from = 0; }
+    if (m == 0) { if (from <= n) { return from; } return 0 - 1; }
+    var c0 = load8(nd);
+    var i = from;
+    while (i + m <= n) {
+        if (load8(d + i) == c0) {
+            if (memeq(d + i, nd, m) == 1) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+fn hc_findc(s, c, from): i64 { return hc_find(s, hc_s(c), from); }
+
+# The first index >= from holding byte `ch`, or -1.
+fn hc_findb(s, ch, from): i64 {
+    var n = hc_n(s);
+    var d = hc_d(s);
+    var i = from;
+    while (i < n) {
+        if (load8(d + i) == ch) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# The last index i with i + len(ndl) <= end where `ndl` starts (Python s.rfind(ndl, 0, end)), or -1.
+fn hc_rfind(s, ndl, end): i64 {
+    var m = hc_n(ndl);
+    if (end > hc_n(s)) { end = hc_n(s); }
+    var i = end - m;
+    while (i >= 0) {
+        if (memeq(hc_d(s) + i, hc_d(ndl), m) == 1) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+fn hc_has(s, c): i64 {
+    if (hc_findc(s, c, 0) >= 0) { return 1; }
+    return 0;
+}
+fn hc_has_s(s, t): i64 {
+    if (hc_find(s, t, 0) >= 0) { return 1; }
+    return 0;
+}
+fn hc_pre_s(s, p): i64 {
+    if (hc_n(p) > hc_n(s)) { return 0; }
+    return memeq(hc_d(s), hc_d(p), hc_n(p));
+}
+fn hc_pre(s, c): i64 { return hc_pre_s(s, hc_s(c)); }
+fn hc_suf_s(s, p): i64 {
+    if (hc_n(p) > hc_n(s)) { return 0; }
+    return memeq(hc_d(s) + hc_n(s) - hc_n(p), hc_d(p), hc_n(p));
+}
+fn hc_suf(s, c): i64 { return hc_suf_s(s, hc_s(c)); }
+
+fn hc_cat(a, b): i64 {
+    var na = hc_n(a);
+    var nb = hc_n(b);
+    var p = alloc(na + nb + 1);
+    memcpy(p, hc_d(a), na);
+    memcpy(p + na, hc_d(b), nb);
+    store8(p + na + nb, 0);
+    return hc_mk(p, na + nb);
+}
+fn hc_catc(a, c): i64 { return hc_cat(a, hc_s(c)); }
+fn hc_ccat(c, a): i64 { return hc_cat(hc_s(c), a); }
+fn hc_cat3(a, b, c): i64 { return hc_cat(hc_cat(a, b), c); }
+
+# Python s.split(sep) for a one-byte separator: every piece, the empty ones too.
+fn hc_split(s, ch): i64 {
+    var v = vec_new();
+    var n = hc_n(s);
+    var d = hc_d(s);
+    var st = 0;
+    var i = 0;
+    while (i < n) {
+        if (load8(d + i) == ch) {
+            vec_push(v, hc_mk(d + st, i - st));
+            st = i + 1;
+        }
+        i = i + 1;
+    }
+    vec_push(v, hc_mk(d + st, n - st));
+    return v;
+}
+
+# Python sep.join(v) over a vec of Str.
+fn hc_join(v, sepc): i64 {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (i > 0) { str_builder_add_cstr(sb, sepc); }
+        str_builder_add(sb, vec_get(v, i));
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# Non-overlapping occurrences of `ndl` (Python s.count(ndl)); an empty needle counts len+1.
+fn hc_count(s, ndl): i64 {
+    if (hc_n(ndl) == 0) { return hc_n(s) + 1; }
+    var k = 0;
+    var i = hc_find(s, ndl, 0);
+    while (i >= 0) {
+        k = k + 1;
+        i = hc_find(s, ndl, i + hc_n(ndl));
+    }
+    return k;
+}
+fn hc_countc(s, c): i64 { return hc_count(s, hc_s(c)); }
+
+# Python s.replace(old, new), every occurrence (old non-empty), up to `maxn` of them when
+# maxn >= 0.
+fn hc_replace_n(s, old, new, maxn): i64 {
+    if (hc_n(old) == 0) { return s; }
+    var i = hc_find(s, old, 0);
+    if (i < 0) { return s; }
+    var sb = str_builder_new();
+    var st = 0;
+    var k = 0;
+    while (i >= 0) {
+        if (maxn >= 0) { if (k >= maxn) { break; } }
+        str_builder_add(sb, hc_sub(s, st, i));
+        str_builder_add(sb, new);
+        st = i + hc_n(old);
+        k = k + 1;
+        i = hc_find(s, old, st);
+    }
+    str_builder_add(sb, hc_sub(s, st, hc_n(s)));
+    return hc_sbend(sb);
+}
+fn hc_replace(s, old, new): i64 { return hc_replace_n(s, old, new, 0 - 1); }
+
+fn _hc_in_set(ch, setc): i64 {
+    var i = 0;
+    while (load8(setc + i) != 0) {
+        if (load8(setc + i) == ch) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# Python s.rstrip(chars) / lstrip(chars) / strip(chars) for an ASCII set.
+fn hc_rstrip_set(s, setc): i64 {
+    var n = hc_n(s);
+    while (n > 0) {
+        if (_hc_in_set(hc_at(s, n - 1), setc) == 0) { break; }
+        n = n - 1;
+    }
+    return hc_mk(hc_d(s), n);
+}
+fn hc_lstrip_set(s, setc): i64 {
+    var i = 0;
+    while (i < hc_n(s)) {
+        if (_hc_in_set(hc_at(s, i), setc) == 0) { break; }
+        i = i + 1;
+    }
+    return hc_sub(s, i, hc_n(s));
+}
+fn hc_strip_set(s, setc): i64 { return hc_lstrip_set(hc_rstrip_set(s, setc), setc); }
+
+# ── UTF-8 code points (Python str semantics over UTF-8 bytes) ────────────────────────────
+
+# The code point at byte `i`; its byte length goes to *lenp. Invalid bytes read as themselves,
+# one byte long (never met on valid UTF-8).
+fn hc_u8(s, i, lenp): i64 {
+    var d = hc_d(s);
+    var n = hc_n(s);
+    var b = load8(d + i);
+    if (b < 0x80) { store64(lenp, 1); return b; }
+    var k = 0;
+    var cp = 0;
+    if ((b & 0xE0) == 0xC0) { k = 1; cp = b & 0x1F; }
+    elif ((b & 0xF0) == 0xE0) { k = 2; cp = b & 0x0F; }
+    elif ((b & 0xF8) == 0xF0) { k = 3; cp = b & 0x07; }
+    else { store64(lenp, 1); return b; }
+    var j = 1;
+    while (j <= k) {
+        if (i + j >= n) { store64(lenp, 1); return b; }
+        var c = load8(d + i + j);
+        if ((c & 0xC0) != 0x80) { store64(lenp, 1); return b; }
+        cp = (cp << 6) | (c & 0x3F);
+        j = j + 1;
+    }
+    store64(lenp, k + 1);
+    return cp;
+}
+
+# Append code point `cp` to builder `sb` as UTF-8.
+fn hc_sb_cp(sb, cp): i64 {
+    if (cp < 0x80) { str_builder_putc(sb, cp); return 0; }
+    if (cp < 0x800) {
+        str_builder_putc(sb, 0xC0 | (cp >> 6));
+        str_builder_putc(sb, 0x80 | (cp & 0x3F));
+        return 0;
+    }
+    if (cp < 0x10000) {
+        str_builder_putc(sb, 0xE0 | (cp >> 12));
+        str_builder_putc(sb, 0x80 | ((cp >> 6) & 0x3F));
+        str_builder_putc(sb, 0x80 | (cp & 0x3F));
+        return 0;
+    }
+    str_builder_putc(sb, 0xF0 | (cp >> 18));
+    str_builder_putc(sb, 0x80 | ((cp >> 12) & 0x3F));
+    str_builder_putc(sb, 0x80 | ((cp >> 6) & 0x3F));
+    str_builder_putc(sb, 0x80 | (cp & 0x3F));
+    return 0;
+}
+
+# len(s) in code points.
+fn hc_ulen(s): i64 {
+    var i = 0;
+    var k = 0;
+    var l = 0;
+    while (i < hc_n(s)) {
+        hc_u8(s, i, &l);
+        i = i + l;
+        k = k + 1;
+    }
+    return k;
+}
+
+# The byte offset of code point `k` (or len(s) bytes when s is shorter).
+fn hc_uoff(s, k): i64 {
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(s) && k > 0) {
+        hc_u8(s, i, &l);
+        i = i + l;
+        k = k - 1;
+    }
+    return i;
+}
+
+# Python s[:k] in code points.
+fn hc_uhead(s, k): i64 { return hc_sub(s, 0, hc_uoff(s, k)); }
+
+# Python f"{s:<w}" / f"{s:>w}": pad with spaces to `w` code points.
+fn hc_ljust(s, w): i64 {
+    var k = hc_ulen(s);
+    if (k >= w) { return s; }
+    var sb = str_builder_new();
+    str_builder_add(sb, s);
+    while (k < w) { str_builder_putc(sb, 32); k = k + 1; }
+    return hc_sbend(sb);
+}
+fn hc_rjust(s, w): i64 {
+    var k = hc_ulen(s);
+    if (k >= w) { return s; }
+    var sb = str_builder_new();
+    while (k < w) { str_builder_putc(sb, 32); k = k + 1; }
+    str_builder_add(sb, s);
+    return hc_sbend(sb);
+}
+
+# Python str.isspace() for one code point (the whitespace str.strip() / split() drop).
+fn hc_py_space(cp): i64 {
+    if (cp >= 9 && cp <= 13) { return 1; }
+    if (cp >= 0x1C && cp <= 0x20) { return 1; }
+    if (cp == 0x85 || cp == 0xA0 || cp == 0x1680) { return 1; }
+    if (cp >= 0x2000 && cp <= 0x200A) { return 1; }
+    if (cp == 0x2028 || cp == 0x2029 || cp == 0x202F || cp == 0x205F || cp == 0x3000) { return 1; }
+    return 0;
+}
+
+# Python s.strip() / rstrip() / lstrip() with no argument.
+fn hc_lstrip(s): i64 {
+    var i = 0;
+    var l = 0;
+    while (i < hc_n(s)) {
+        var cp = hc_u8(s, i, &l);
+        if (hc_py_space(cp) == 0) { break; }
+        i = i + l;
+    }
+    return hc_sub(s, i, hc_n(s));
+}
+fn hc_rstrip(s): i64 {
+    # walk forward, remembering the end of the last non-space code point
+    var i = 0;
+    var l = 0;
+    var last = 0;
+    while (i < hc_n(s)) {
+        var cp = hc_u8(s, i, &l);
+        i = i + l;
+        if (hc_py_space(cp) == 0) { last = i; }
+    }
+    return hc_sub(s, 0, last);
+}
+fn hc_strip(s): i64 { return hc_rstrip(hc_lstrip(s)); }
+
+# Python s.splitlines(keepends): the boundaries \n, \r\n, \r, \v, \f, \x1c-\x1e, \x85, U+2028,
+# U+2029.
+fn hc_splitlines(s, keep): i64 {
+    var v = vec_new();
+    var n = hc_n(s);
+    var i = 0;
+    var st = 0;
+    var l = 0;
+    while (i < n) {
+        var cp = hc_u8(s, i, &l);
+        var eol = 0;
+        if (cp == 10 || cp == 11 || cp == 12 || cp == 13 || cp == 0x1C || cp == 0x1D || cp == 0x1E) { eol = 1; }
+        if (cp == 0x85 || cp == 0x2028 || cp == 0x2029) { eol = 1; }
+        if (eol == 1) {
+            var e = i + l;
+            if (cp == 13 && e < n) { if (hc_at(s, e) == 10) { e = e + 1; } }
+            if (keep == 1) { vec_push(v, hc_sub(s, st, e)); }
+            else { vec_push(v, hc_sub(s, st, i)); }
+            st = e;
+            i = e;
+        } else {
+            i = i + l;
+        }
+    }
+    if (st < n) { vec_push(v, hc_sub(s, st, n)); }
+    return v;
+}
+
+# ── numbers ──────────────────────────────────────────────────────────────────────────────
+
+fn hc_itoa(n): i64 {
+    var sb = str_builder_new();
+    str_builder_add_int(sb, n);
+    return hc_sbend(sb);
+}
+
+# Python f"{n:,}".
+fn hc_commas(n): i64 {
+    var neg = 0;
+    if (n < 0) { neg = 1; n = 0 - n; }
+    var digits = hc_itoa(n);
+    var k = hc_n(digits);
+    var sb = str_builder_new();
+    if (neg == 1) { str_builder_putc(sb, 45); }
+    var i = 0;
+    while (i < k) {
+        if (i > 0 && (k - i) % 3 == 0) { str_builder_putc(sb, 44); }
+        str_builder_putc(sb, hc_at(digits, i));
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# Python int(s) for a decimal string: surrounding whitespace, an optional sign, digits with
+# single underscores between them. 1 and the value at *outp, or 0 when it is not one.
+fn hc_pyint(s, outp): i64 {
+    var t = hc_strip(s);
+    var n = hc_n(t);
+    if (n == 0) { return 0; }
+    var i = 0;
+    var neg = 0;
+    if (hc_at(t, 0) == 43 || hc_at(t, 0) == 45) {
+        if (hc_at(t, 0) == 45) { neg = 1; }
+        i = 1;
+    }
+    if (i >= n) { return 0; }
+    var v = 0;
+    var prev_digit = 0;
+    while (i < n) {
+        var c = hc_at(t, i);
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+            prev_digit = 1;
+        } elif (c == 95) {
+            if (prev_digit == 0) { return 0; }
+            if (i + 1 >= n) { return 0; }
+            var c2 = hc_at(t, i + 1);
+            if (c2 < 48 || c2 > 57) { return 0; }
+            prev_digit = 0;
+        } else {
+            return 0;
+        }
+        i = i + 1;
+    }
+    if (neg == 1) { v = 0 - v; }
+    store64(outp, v);
+    return 1;
+}
+
+# ── builders and output ──────────────────────────────────────────────────────────────────
+
+fn hc_sb(): i64 { return str_builder_new(); }
+fn hc_sba(sb, s): i64 { return str_builder_add(sb, s); }
+fn hc_sbc(sb, c): i64 { return str_builder_add_cstr(sb, c); }
+fn hc_sbb(sb, b): i64 { return str_builder_putc(sb, b); }
+fn hc_sbi(sb, n): i64 { return str_builder_add_int(sb, n); }
+# The builder's bytes as an owned, NUL-terminated Str (an empty builder gives an empty one).
+fn hc_sbend(sb): i64 {
+    var n = load64(sb + 8);
+    var p = alloc(n + 1);
+    memcpy(p, load64(sb), n);
+    store8(p + n, 0);
+    return hc_mk(p, n);
+}
+fn hc_sblen(sb): i64 { return load64(sb + 8); }
+
+# Write all `n` bytes to `fd`; 0, or -1 when a write failed.
+fn hc_wr(fd, p, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var w = sys_write(fd, p + off, n - off);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return 0;
+}
+fn hc_out(s): i64 { return hc_wr(1, hc_d(s), hc_n(s)); }
+fn hc_outc(c): i64 { return hc_wr(1, c, strlen(c)); }
+fn hc_outln(s): i64 { hc_out(s); return hc_outc("\n"); }
+fn hc_err(s): i64 { return hc_wr(2, hc_d(s), hc_n(s)); }
+fn hc_errc(c): i64 { return hc_wr(2, c, strlen(c)); }
+
+# `<prog>: <msg>` on stderr, then exit with `code`.
+fn hc_die(prog, msg, code): i64 {
+    hc_errc(prog);
+    hc_errc(": ");
+    hc_err(msg);
+    hc_errc("\n");
+    sys_exit(code);
+    return code;
+}
+
+# ── files ────────────────────────────────────────────────────────────────────────────────
+
+# The whole file as an owned NUL-terminated Str, or 0 when it cannot be read.
+fn hc_read(pathc): i64 {
+    var n = 0;
+    var p = file_read_whole(pathc, &n);
+    if (p == 0) { return 0; }
+    return hc_mk(p, n);
+}
+
+# Python's text-mode newline translation on read: \r\n and a lone \r both read as \n.
+fn hc_univ_nl(s): i64 {
+    if (hc_findb(s, 13, 0) < 0) { return s; }
+    var sb = str_builder_new();
+    var i = 0;
+    var n = hc_n(s);
+    while (i < n) {
+        var c = hc_at(s, i);
+        if (c == 13) {
+            str_builder_putc(sb, 10);
+            if (i + 1 < n) { if (hc_at(s, i + 1) == 10) { i = i + 1; } }
+        } else {
+            str_builder_putc(sb, c);
+        }
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# A file read the way Python's open(path).read() reads it, or 0.
+fn hc_read_text(pathc): i64 {
+    var s = hc_read(pathc);
+    if (s == 0) { return 0; }
+    return hc_univ_nl(s);
+}
+
+# Write a file this tool creates (Python's open(path, 'w')): created 0644 & ~umask, or emptied
+# and rewritten. 0, or a negative errno.
+fn hc_write_new(pathc, s): i64 {
+    var r = file_write_all(pathc, hc_d(s), hc_n(s));
+    if (r < 0) { return r; }
+    return 0;
+}
+
+# Replace a file someone owns (a tree file, a user's file): a temp beside it renamed over it,
+# its mode kept, a symlink written through — never a truncating write, so a short write leaves
+# the file as it was. 0, or a negative errno.
+fn hc_replace_file(pathc, s): i64 {
+    return file_replace_atomic(pathc, hc_d(s), hc_n(s));
+}
+
+fn _hc_stat_mode(pathc): i64 {
+    var st[256];
+    if (sys_stat(pathc, &st) != 0) { return 0 - 1; }
+    return load32(&st + STAT_MODE) & 0xF000;
+}
+fn hc_is_file(pathc): i64 {
+    if (_hc_stat_mode(pathc) == 0x8000) { return 1; }
+    return 0;
+}
+fn hc_is_dir(pathc): i64 {
+    if (_hc_stat_mode(pathc) == 0x4000) { return 1; }
+    return 0;
+}
+fn hc_exists(pathc): i64 {
+    if (_hc_stat_mode(pathc) >= 0) { return 1; }
+    return 0;
+}
+# Executable by us (access X_OK) and not a directory.
+fn hc_is_exec(pathc): i64 {
+    if (hc_is_dir(pathc) == 1) { return 0; }
+    if (sys_access(pathc, 1) == 0) { return 1; }
+    return 0;
+}
+
+# access(X_OK): what the shell's `[ -x path ]` asks (true for a searchable directory too).
+fn hc_access_x(pathc): i64 {
+    if (sys_access(pathc, 1) == 0) { return 1; }
+    return 0;
+}
+
+# The mtime of `pathc` in ns, or -1 (follows a final link, as find -newer does).
+fn hc_mtime_ns(pathc): i64 {
+    var st[256];
+    if (sys_stat(pathc, &st) != 0) { return 0 - 1; }
+    return load64(&st + 88) * 1000000000 + load64(&st + 96);
+}
+
+# The entries of a directory (no . and ..), unsorted, as a vec of Str; 0 when it cannot be listed.
+fn hc_listdir(pathc): i64 {
+    var v = vec_new();
+    if (dir_list_checked(hc_s(pathc), v) < 0) { return 0; }
+    return v;
+}
+
+fn _hc_cmp_bytes(a, b): i64 {
+    var na = hc_n(a);
+    var nb = hc_n(b);
+    var m = na;
+    if (nb < m) { m = nb; }
+    var i = 0;
+    while (i < m) {
+        var ca = hc_at(a, i);
+        var cb = hc_at(b, i);
+        if (ca != cb) { return ca - cb; }
+        i = i + 1;
+    }
+    return na - nb;
+}
+# Byte-order compare of two Strs (code point order for UTF-8: Python's str order).
+fn hc_cmp(a, b): i64 { return _hc_cmp_bytes(a, b); }
+
+# A STABLE sort of `v` in place by `cmp` (a fn pointer: cmp(a, b) < 0 / 0 / > 0) — Python's
+# sorted() is stable, and equal keys keep their order.
+fn hc_sort_by(v, cmp): i64 {
+    var n = vec_len(v);
+    if (n < 2) { return 0; }
+    var src = alloc(n * 8);
+    var dst = alloc(n * 8);
+    var i = 0;
+    while (i < n) { store64(src + i * 8, vec_get(v, i)); i = i + 1; }
+    var w = 1;
+    while (w < n) {
+        var lo = 0;
+        while (lo < n) {
+            var mid = lo + w;
+            if (mid > n) { mid = n; }
+            var hi = lo + 2 * w;
+            if (hi > n) { hi = n; }
+            var a = lo;
+            var b = mid;
+            var k = lo;
+            while (k < hi) {
+                if (a < mid && (b >= hi || fncall2(cmp, load64(src + a * 8), load64(src + b * 8)) <= 0)) {
+                    store64(dst + k * 8, load64(src + a * 8));
+                    a = a + 1;
+                } else {
+                    store64(dst + k * 8, load64(src + b * 8));
+                    b = b + 1;
+                }
+                k = k + 1;
+            }
+            lo = hi;
+        }
+        var t = src;
+        src = dst;
+        dst = t;
+        w = w * 2;
+    }
+    i = 0;
+    while (i < n) { vec_set(v, i, load64(src + i * 8)); i = i + 1; }
+    return 0;
+}
+fn hc_sort(v): i64 { return hc_sort_by(v, &_hc_cmp_bytes); }
+
+# Python sorted(glob(dir + '/*' + suffix)) as names: the entries of `dirc` ending `suffixc`,
+# no hidden ones (glob's * never matches a leading dot), sorted. A vec of Str names; empty when
+# the directory cannot be listed.
+fn hc_glob_names(dirc, suffixc): i64 {
+    var out = vec_new();
+    var v = hc_listdir(dirc);
+    if (v == 0) { return out; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        var e = vec_get(v, i);
+        if (hc_n(e) > 0) {
+            if (hc_at(e, 0) != 46 && hc_suf(e, suffixc) == 1) { vec_push(out, e); }
+        }
+        i = i + 1;
+    }
+    hc_sort(out);
+    return out;
+}
+
+# `a/b` (Python os.path.join for a relative b; an absolute b replaces a).
+fn hc_join2(a, b): i64 {
+    if (hc_n(b) > 0) { if (hc_at(b, 0) == 47) { return b; } }
+    if (hc_n(a) == 0) { return b; }
+    if (hc_at(a, hc_n(a) - 1) == 47) { return hc_cat(a, b); }
+    return hc_cat3(a, hc_s("/"), b);
+}
+fn hc_joinc(a, c): i64 { return hc_join2(a, hc_s(c)); }
+
+# Python os.path.basename / dirname.
+fn hc_basename(p): i64 {
+    var i = hc_n(p);
+    while (i > 0) {
+        if (hc_at(p, i - 1) == 47) { break; }
+        i = i - 1;
+    }
+    return hc_sub(p, i, hc_n(p));
+}
+fn hc_dirname(p): i64 {
+    var i = hc_n(p);
+    while (i > 0) {
+        if (hc_at(p, i - 1) == 47) { break; }
+        i = i - 1;
+    }
+    var h = hc_sub(p, 0, i);
+    # strip the trailing slashes, unless the head is all slashes
+    var j = hc_n(h);
+    while (j > 0) {
+        if (hc_at(h, j - 1) != 47) { break; }
+        j = j - 1;
+    }
+    if (j == 0) { return h; }
+    return hc_sub(h, 0, j);
+}
+
+# The current directory (the kernel's /proc/self/cwd).
+fn hc_getcwd(): i64 {
+    var b = alloc(4097);
+    var n = xreadlink("/proc/self/cwd", b, 4096);
+    if (n <= 0) { return hc_s("."); }
+    store8(b + n, 0);
+    return hc_mk(b, n);
+}
+
+# Python os.path.normpath for a POSIX path.
+fn hc_normpath(p): i64 {
+    if (hc_n(p) == 0) { return hc_s("."); }
+    var lead = 0;
+    if (hc_at(p, 0) == 47) {
+        lead = 1;
+        # exactly two leading slashes are kept (POSIX), three or more fold to one
+        if (hc_n(p) > 1) { if (hc_at(p, 1) == 47) { lead = 2; } }
+        if (hc_n(p) > 2) { if (lead == 2 && hc_at(p, 2) == 47) { lead = 1; } }
+    }
+    var parts = hc_split(p, 47);
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(parts)) {
+        var c = vec_get(parts, i);
+        if (hc_n(c) == 0 || hc_eqc(c, ".") == 1) { i = i + 1; continue; }
+        if (hc_eqc(c, "..") == 1) {
+            var keep = 0;
+            if (lead == 0 && vec_len(out) == 0) { keep = 1; }
+            if (vec_len(out) > 0) { if (hc_eqc(vec_get(out, vec_len(out) - 1), "..") == 1) { keep = 1; } }
+            if (keep == 1) { vec_push(out, c); }
+            elif (vec_len(out) > 0) { vec_pop(out); }
+            i = i + 1;
+            continue;
+        }
+        vec_push(out, c);
+        i = i + 1;
+    }
+    var body = hc_join(out, "/");
+    var sb = str_builder_new();
+    var k = 0;
+    while (k < lead) { str_builder_putc(sb, 47); k = k + 1; }
+    str_builder_add(sb, body);
+    var r = hc_sbend(sb);
+    if (hc_n(r) == 0) { return hc_s("."); }
+    return r;
+}
+
+# Python os.path.abspath.
+fn hc_abspath(p): i64 {
+    if (hc_n(p) > 0) { if (hc_at(p, 0) == 47) { return hc_normpath(p); } }
+    return hc_normpath(hc_join2(hc_getcwd(), p));
+}
+
+# mkdir -p; 0, or a negative errno.
+fn hc_mkdirs(pathc): i64 {
+    if (hc_is_dir(pathc) == 1) { return 0; }
+    var r = xmkdir_p(pathc, 0x1ED);
+    if (hc_is_dir(pathc) == 1) { return 0; }
+    if (r < 0) { return r; }
+    return 0 - 1;
+}
+
+# A fresh random token of `n` characters from [a-z0-9_] (Python tempfile's alphabet).
+fn hc_rand_name(n): i64 {
+    var alpha = "abcdefghijklmnopqrstuvwxyz0123456789_";
+    var rb = alloc(n);
+    sys_getrandom(rb, n, 0);
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < n) {
+        str_builder_putc(sb, load8(alpha + (load8(rb + i) % 37)));
+        i = i + 1;
+    }
+    return hc_sbend(sb);
+}
+
+# Python tempfile.mkdtemp(prefix=…, dir=…): `<dir>/<prefix><8 random>` created 0700; the path,
+# or 0.
+fn hc_mkdtemp(dirc, prefixc): i64 {
+    var tries = 0;
+    while (tries < 100) {
+        var p = hc_cat(hc_joinc(hc_s(dirc), prefixc), hc_rand_name(8));
+        var r = sys_mkdir(hc_d(p), 0x1C0);
+        if (r == 0) { return p; }
+        if (r != 0 - 17) { return 0; }
+        tries = tries + 1;
+    }
+    return 0;
+}
+
+# rm -rf: remove a file, a link or a whole tree (never following a link out of it). 0 when it
+# is gone.
+fn hc_rmtree(pathc): i64 {
+    var st[256];
+    if (sys_lstat(pathc, &st) != 0) { return 0; }
+    var mode = load32(&st + STAT_MODE) & 0xF000;
+    if (mode == 0x4000) {
+        var v = hc_listdir(pathc);
+        if (v != 0) {
+            var i = 0;
+            while (i < vec_len(v)) {
+                hc_rmtree(hc_d(hc_dup(hc_joinc(hc_s(pathc), hc_cstr(vec_get(v, i))))));
+                i = i + 1;
+            }
+        }
+        if (sys_rmdir(pathc) == 0) { return 0; }
+        return 0 - 1;
+    }
+    if (sys_unlink(pathc) == 0) { return 0; }
+    return 0 - 1;
+}
+
+# ── the environment ──────────────────────────────────────────────────────────────────────
+
+# The value of `namec` in this process's environment as a Str, or 0 when it is not set.
+fn hc_getenv(namec): i64 {
+    var v = getenv(namec);
+    if (v == 0) { return 0; }
+    return hc_s(v);
+}
+
+# Like hc_getenv, but an empty value counts as unset (shell ${X:-…}, Python `environ.get(X) or …`).
+fn hc_getenv_ne(namec): i64 {
+    var v = hc_getenv(namec);
+    if (v == 0) { return 0; }
+    if (hc_n(v) == 0) { return 0; }
+    return v;
+}
+
+# A copy of this process's environment: a vec of `NAME=value` C strings.
+fn hc_env_list(): i64 {
+    var v = vec_new();
+    var n = 0;
+    var blk = env_block(&n);
+    if (blk == 0) { return v; }
+    var i = 0;
+    while (i < n) {
+        var e = blk + i;
+        var l = strlen(e);
+        if (l > 0) { vec_push(v, e); }
+        i = i + l + 1;
+    }
+    return v;
+}
+
+fn _hc_env_idx(env, namec): i64 {
+    var nl = strlen(namec);
+    var i = 0;
+    while (i < vec_len(env)) {
+        var e = vec_get(env, i);
+        if (memeq(e, namec, nl) == 1) { if (load8(e + nl) == 61) { return i; } }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Set NAME=value in an environment vec (replacing an existing entry in place).
+fn hc_env_set(env, namec, val): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, namec);
+    str_builder_putc(sb, 61);
+    str_builder_add(sb, val);
+    var e = hc_d(hc_sbend(sb));
+    var i = _hc_env_idx(env, namec);
+    if (i >= 0) { vec_set(env, i, e); return 0; }
+    vec_push(env, e);
+    return 0;
+}
+fn hc_env_setc(env, namec, valc): i64 { return hc_env_set(env, namec, hc_s(valc)); }
+
+# Python env.setdefault(NAME, value).
+fn hc_env_default(env, namec, val): i64 {
+    if (_hc_env_idx(env, namec) >= 0) { return 0; }
+    return hc_env_set(env, namec, val);
+}
+
+fn hc_env_unset(env, namec): i64 {
+    var i = _hc_env_idx(env, namec);
+    while (i >= 0) {
+        vec_remove(env, i);
+        i = _hc_env_idx(env, namec);
+    }
+    return 0;
+}
+
+# The value of NAME in an environment vec as a Str, or 0.
+fn hc_env_get(env, namec): i64 {
+    var i = _hc_env_idx(env, namec);
+    if (i < 0) { return 0; }
+    var e = vec_get(env, i);
+    return hc_s(e + strlen(namec) + 1);
+}
+
+# ── processes ────────────────────────────────────────────────────────────────────────────
+
+# What hc_run's stderr argument may be besides a path: inherit (0) or stdout's target.
+var HC_SAME = 1;
+
+# Resolve a command name the way execvp does: a name with a `/` is itself; otherwise the first
+# executable `<dir>/<name>` along PATH (from `env`, else this process's). The path, or 0.
+fn hc_which_in(namec, env): i64 {
+    if (strchr(namec, 47) >= 0) { return namec; }
+    var path = 0;
+    if (env != 0) { path = hc_env_get(env, "PATH"); }
+    else { path = hc_getenv("PATH"); }
+    if (path == 0) { path = hc_s("/usr/local/bin:/usr/bin:/bin"); }
+    var dirs = hc_split(path, 58);
+    var i = 0;
+    while (i < vec_len(dirs)) {
+        var d = vec_get(dirs, i);
+        if (hc_n(d) == 0) { d = hc_s("."); }
+        var cand = hc_d(hc_dup(hc_joinc(d, namec)));
+        if (hc_is_exec(cand) == 1) { return cand; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn hc_which(namec): i64 { return hc_which_in(namec, 0); }
+
+fn _hc_open_in(pathc): i64 { return sys_open(pathc, O_RDONLY, 0); }
+fn _hc_open_out(pathc, append): i64 {
+    var fl = O_WRONLY | O_CREAT | O_TRUNC;
+    if (append == 1) { fl = O_WRONLY | O_CREAT | O_APPEND; }
+    return sys_open(pathc, fl, 0x1A4);
+}
+
+var _hc_run_append = 0;
+
+# Run argv (a vec of C strings; argv[0] looked up on PATH) and wait for it.
+#   env      0 = this process's environment, else a vec of `NAME=value` C strings
+#   cwd      0 = ours, else the directory the child starts in
+#   inp      0 = our stdin, else a file to read stdin from
+#   outp     0 = our stdout, else a file stdout is written to (truncated; appended after
+#            hc_run_append(1))
+#   errp     0 = our stderr, HC_SAME = wherever stdout goes, else a file
+#   tmo_ms   0 = no deadline; else the child is SIGKILLed at the deadline (Python
+#            subprocess.run's timeout: the child alone, not its own children)
+# Answers the exit code (0..255), 128 + the signal when a signal ended it, -2 at the deadline,
+# 127 when the command cannot be found or run (the shell's answer), -1 when no child started.
+fn hc_run(argv, env, cwd, inp, outp, errp, tmo_ms): i64 {
+    var argc = vec_len(argv);
+    if (argc < 1) { return 0 - 1; }
+    var envv = env;
+    if (envv == 0) { envv = hc_env_list(); }
+    var prog = hc_which_in(vec_get(argv, 0), env);
+    var av = alloc((argc + 1) * 8);
+    var i = 0;
+    while (i < argc) { store64(av + i * 8, vec_get(argv, i)); i = i + 1; }
+    store64(av + argc * 8, 0);
+    var ne = vec_len(envv);
+    var ev = alloc((ne + 1) * 8);
+    i = 0;
+    while (i < ne) { store64(ev + i * 8, vec_get(envv, i)); i = i + 1; }
+    store64(ev + ne * 8, 0);
+    var append = _hc_run_append;
+    var pid = sys_fork();
+    if (pid < 0) { return 0 - 1; }
+    if (pid == 0) {
+        if (cwd != 0) { if (sys_chdir(cwd) != 0) { sys_exit(127); } }
+        if (inp != 0) {
+            var fi = _hc_open_in(inp);
+            if (fi < 0) { sys_exit(1); }
+            if (fi != 0) { sys_dup2(fi, 0); sys_close(fi); }
+        }
+        if (outp != 0) {
+            var fo = _hc_open_out(outp, append);
+            if (fo < 0) { sys_exit(1); }
+            if (fo != 1) { sys_dup2(fo, 1); sys_close(fo); }
+        }
+        if (errp == HC_SAME) { sys_dup2(1, 2); }
+        elif (errp != 0) {
+            var fe = _hc_open_out(errp, append);
+            if (fe < 0) { sys_exit(1); }
+            if (fe != 2) { sys_dup2(fe, 2); sys_close(fe); }
+        }
+        if (prog != 0) {
+            var xr = sys_execve(prog, av, ev);
+            # the shell's answers: not found 127, found but not runnable (a directory, no
+            # permission, a bad format) 126
+            if (xr != 0 - 2) { sys_exit(126); }
+        }
+        sys_exit(127);
+    }
+    var st[16];
+    store64(&st, 0);
+    if (tmo_ms <= 0) {
+        var w = sys_waitpid(pid, &st, 0);
+        while (w == 0 - 4) { w = sys_waitpid(pid, &st, 0); }
+        if (w < 0) { return 0 - 1; }
+        return _hc_status(load32(&st));
+    }
+    var deadline = clock_now_ns() + tmo_ms * 1000000;
+    var nap = 1;
+    loop {
+        var w2 = sys_waitpid(pid, &st, 1);   # WNOHANG
+        if (w2 == pid) { return _hc_status(load32(&st)); }
+        if (w2 < 0 && w2 != 0 - 4) { return 0 - 1; }
+        if (clock_now_ns() >= deadline) {
+            sys_kill(pid, 9);
+            sys_waitpid(pid, &st, 0);
+            return 0 - 2;
+        }
+        sleep_ms(nap);
+        if (nap < 20) { nap = nap + 1; }
+    }
+    return 0 - 1;
+}
+
+# The signal that ended the last child hc_run / hc_capture_full waited for, or 0 when it exited.
+var hc_last_signal = 0;
+
+fn _hc_status(st): i64 {
+    hc_last_signal = 0;
+    if ((st & 0x7F) == 0) { return (st >> 8) & 0xFF; }
+    hc_last_signal = st & 0x7F;
+    return 128 + (st & 0x7F);
+}
+
+# The next hc_run's output files are appended to (1) or truncated (0, the default).
+fn hc_run_append(on): i64 { _hc_run_append = on; return 0; }
+
+# A vec of C strings from up to six of them (0 ends the list early).
+fn hc_argv(a, b, c, d, e, f): i64 {
+    var v = vec_new();
+    if (a != 0) { vec_push(v, a); } else { return v; }
+    if (b != 0) { vec_push(v, b); } else { return v; }
+    if (c != 0) { vec_push(v, c); } else { return v; }
+    if (d != 0) { vec_push(v, d); } else { return v; }
+    if (e != 0) { vec_push(v, e); } else { return v; }
+    if (f != 0) { vec_push(v, f); }
+    return v;
+}
+
+var hc_last_rc = 0;
+var hc_cap_err = 0;
+
+# Fill pollfd slot `k` of `pfd` with { fd, POLLIN, 0 }.
+fn _hc_pollfd(pfd, k, fd): i64 {
+    store32(pfd + k * 8, fd);
+    store16(pfd + k * 8 + 4, 1);
+    store16(pfd + k * 8 + 6, 0);
+    return 0;
+}
+
+# Read what is ready on `fd` into builder `sb`; 1 at end of file (or an error), else 0.
+fn _hc_drain(fd, sb): i64 {
+    var buf[65536];
+    var r = sys_read(fd, &buf, 65536);
+    if (r == 0 - 4 || r == 0 - 11) { return 0; }
+    if (r <= 0) { return 1; }
+    str_builder_add(sb, hc_mk(&buf, r));
+    return 0;
+}
+
+# Run argv with its stdout (and, by `errmode`, its stderr) read through pipes, the way a shell's
+# $(…) and Python's subprocess.run(capture_output=…) read them: until end of file on every pipe,
+# then the wait. errmode: 0 stderr inherited, 1 stderr into the stdout capture (2>&1), 2 stderr
+# captured on its own into hc_cap_err, 3 stderr to /dev/null. `inp` 0 inherits stdin, else a file.
+# With a deadline (tmo_ms > 0) the child alone is SIGKILLed when it passes, and the status is -2
+# (Python's TimeoutExpired: the output read so far is dropped). The status goes to hc_last_rc,
+# as hc_run's; the stdout bytes are returned (never 0).
+fn hc_capture_full(argv, env, cwd, inp, errmode, tmo_ms): i64 {
+    hc_cap_err = hc_s("");
+    var argc = vec_len(argv);
+    if (argc < 1) { hc_last_rc = 0 - 1; return hc_s(""); }
+    var envv = env;
+    if (envv == 0) { envv = hc_env_list(); }
+    var prog = hc_which_in(vec_get(argv, 0), env);
+    var av = alloc((argc + 1) * 8);
+    var i = 0;
+    while (i < argc) { store64(av + i * 8, vec_get(argv, i)); i = i + 1; }
+    store64(av + argc * 8, 0);
+    var ne = vec_len(envv);
+    var ev = alloc((ne + 1) * 8);
+    i = 0;
+    while (i < ne) { store64(ev + i * 8, vec_get(envv, i)); i = i + 1; }
+    store64(ev + ne * 8, 0);
+    var po[16];
+    var pe[16];
+    if (sys_pipe(&po) < 0) { hc_last_rc = 0 - 1; return hc_s(""); }
+    var or_ = load32(&po);
+    var ow = load32(&po + 4);
+    var er = 0 - 1;
+    var ew = 0 - 1;
+    if (errmode == 2) {
+        if (sys_pipe(&pe) < 0) { sys_close(or_); sys_close(ow); hc_last_rc = 0 - 1; return hc_s(""); }
+        er = load32(&pe);
+        ew = load32(&pe + 4);
+    }
+    var pid = sys_fork();
+    if (pid < 0) {
+        sys_close(or_); sys_close(ow);
+        if (er >= 0) { sys_close(er); sys_close(ew); }
+        hc_last_rc = 0 - 1;
+        return hc_s("");
+    }
+    if (pid == 0) {
+        if (cwd != 0) { if (sys_chdir(cwd) != 0) { sys_exit(127); } }
+        if (inp != 0) {
+            var fi = _hc_open_in(inp);
+            if (fi < 0) { sys_exit(1); }
+            if (fi != 0) { sys_dup2(fi, 0); sys_close(fi); }
+        }
+        sys_close(or_);
+        if (er >= 0) { sys_close(er); }
+        if (ow != 1) { sys_dup2(ow, 1); sys_close(ow); }
+        if (errmode == 1) { sys_dup2(1, 2); }
+        if (errmode == 2) { if (ew != 2) { sys_dup2(ew, 2); sys_close(ew); } }
+        if (errmode == 3) {
+            var dn = sys_open("/dev/null", O_WRONLY, 0);
+            if (dn >= 0) { if (dn != 2) { sys_dup2(dn, 2); sys_close(dn); } }
+        }
+        if (prog != 0) {
+            var xr = sys_execve(prog, av, ev);
+            if (xr != 0 - 2) { sys_exit(126); }
+        }
+        sys_exit(127);
+    }
+    sys_close(ow);
+    if (ew >= 0) { sys_close(ew); }
+    var so = str_builder_new();
+    var se = str_builder_new();
+    var o_open = 1;
+    var e_open = 0;
+    if (er >= 0) { e_open = 1; }
+    var deadline = 0;
+    if (tmo_ms > 0) { deadline = clock_now_ns() + tmo_ms * 1000000; }
+    var timed_out = 0;
+    var pfd[16];
+    var ts[16];
+    while (o_open == 1 || e_open == 1) {
+        var nf = 0;
+        if (o_open == 1) { _hc_pollfd(&pfd, nf, or_); nf = nf + 1; }
+        if (e_open == 1) { _hc_pollfd(&pfd, nf, er); nf = nf + 1; }
+        var tsp = 0;
+        if (tmo_ms > 0) {
+            var left = deadline - clock_now_ns();
+            if (left <= 0) { timed_out = 1; break; }
+            store64(&ts, left / 1000000000);
+            store64(&ts + 8, left % 1000000000);
+            tsp = &ts;
+        }
+        var pr = sys_ppoll(&pfd, nf, tsp, 0, 8);
+        if (pr == 0 - 4) { continue; }
+        if (pr < 0) { break; }
+        if (pr == 0) { continue; }
+        var k = 0;
+        while (k < nf) {
+            var fdk = load32(&pfd + k * 8);
+            var rev = load16(&pfd + k * 8 + 6);
+            if (rev != 0) {
+                if (fdk == or_) { if (_hc_drain(or_, so) == 1) { o_open = 0; } }
+                if (fdk == er) { if (_hc_drain(er, se) == 1) { e_open = 0; } }
+            }
+            k = k + 1;
+        }
+    }
+    sys_close(or_);
+    if (er >= 0) { sys_close(er); }
+    var st[16];
+    store64(&st, 0);
+    if (timed_out == 1) {
+        sys_kill(pid, 9);
+        sys_waitpid(pid, &st, 0);
+        hc_last_rc = 0 - 2;
+        return hc_s("");
+    }
+    if (tmo_ms > 0) {
+        # the pipes are closed, the child may still be running: the rest of the deadline bounds it
+        var nap = 1;
+        loop {
+            var w2 = sys_waitpid(pid, &st, 1);
+            if (w2 == pid) { hc_last_rc = _hc_status(load32(&st)); break; }
+            if (w2 < 0 && w2 != 0 - 4) { hc_last_rc = 0 - 1; break; }
+            if (clock_now_ns() >= deadline) {
+                sys_kill(pid, 9);
+                sys_waitpid(pid, &st, 0);
+                hc_last_rc = 0 - 2;
+                return hc_s("");
+            }
+            sleep_ms(nap);
+            if (nap < 20) { nap = nap + 1; }
+        }
+    } else {
+        var w = sys_waitpid(pid, &st, 0);
+        while (w == 0 - 4) { w = sys_waitpid(pid, &st, 0); }
+        if (w < 0) { hc_last_rc = 0 - 1; }
+        else { hc_last_rc = _hc_status(load32(&st)); }
+    }
+    hc_cap_err = hc_sbend(se);
+    return hc_sbend(so);
+}
+
+# Run argv and capture its stdout as a Str (stderr: 0 inherited, HC_SAME into the capture, or
+# "/dev/null"); the exit status goes to hc_last_rc. Never 0: a run that wrote nothing is "".
+fn hc_capture(argv, env, cwd, errp, tmo_ms): i64 {
+    var mode = 0;
+    if (errp == HC_SAME) { mode = 1; }
+    elif (errp != 0) { mode = 3; }
+    return hc_capture_full(argv, env, cwd, 0, mode, tmo_ms);
+}
+
+# ── the checkout and the scratch dir ─────────────────────────────────────────────────────
+
+# The cyrius checkout a helper works on: `explicit` when given (a Str, else 0), else
+# $CYRIUS_REPO, else the nearest directory at or above the current one holding src/main.cyr
+# and cyrius.cyml (the helpers run from the checkout; the scripts they replaced took their own
+# location). Absolute; 0 when none is found.
+fn hc_repo_root(explicit): i64 {
+    if (explicit != 0) { return hc_abspath(explicit); }
+    var e = hc_getenv_ne("CYRIUS_REPO");
+    if (e != 0) { return hc_abspath(e); }
+    var d = hc_getcwd();
+    loop {
+        var a = hc_d(hc_dup(hc_joinc(d, "src/main.cyr")));
+        var b = hc_d(hc_dup(hc_joinc(d, "cyrius.cyml")));
+        if (hc_is_file(a) == 1 && hc_is_file(b) == 1) { return d; }
+        if (hc_eqc(d, "/") == 1) { return 0; }
+        d = hc_dirname(d);
+        if (hc_n(d) == 0) { return 0; }
+    }
+    return 0;
+}
+
+# The scratch root: $CYRIUS_SCRATCH, else ${XDG_CACHE_HOME:-$HOME/.cache}/c6.
+fn hc_scratch(): i64 {
+    var s = hc_getenv_ne("CYRIUS_SCRATCH");
+    if (s != 0) { return s; }
+    var c = hc_getenv_ne("XDG_CACHE_HOME");
+    if (c != 0) { return hc_joinc(c, "c6"); }
+    var h = hc_getenv("HOME");
+    if (h == 0) { h = hc_s("/"); }
+    return hc_joinc(hc_joinc(h, ".cache"), "c6");
+}
+
+# argv(i) as a Str.
+fn hc_arg(i): i64 { return hc_s(argv(i)); }
+
+# ── Unicode digits (Python's \d, int()) ───────────────────────────────────────────────────
+
+include "lib/unicode/categories.cyr"
+
+# The decimal value 0..9 of code point `cp` when it is a decimal digit (ASCII or any Unicode Nd
+# character — what Python's \d matches and int() reads), else -1. Unicode encodes every Nd run
+# as ten contiguous code points from 0, so the value is the distance from the run's start,
+# modulo ten (adjacent runs, the mathematical digits, start at multiples of ten from the first).
+fn hc_nd_value(cp): i64 {
+    if (cp >= 48 && cp <= 57) { return cp - 48; }
+    if (cp < 128) { return 0 - 1; }
+    if (unicode_category(cp) != GC_ND) { return 0 - 1; }
+    var st = cp;
+    while (st > 0) {
+        if (unicode_category(st - 1) != GC_ND) { break; }
+        st = st - 1;
+    }
+    return (cp - st) % 10;
+}
+
+# ── command-line options (the argparse shapes the Python helpers had) ─────────────────────
+#
+# hc_opt(name, kind) declares `--name`: kind 0 a flag (1 when given), 1 takes a value (the
+# last one given), 2 takes a value and repeats (a vec of them). Then hc_parse(prog, usage,
+# maxpos) reads argv: `--name value`, `--name=value`, an unambiguous prefix of a name (argparse's
+# abbreviation), `--` ending the options, `-h` / `--help` printing `usage` and exiting 0; the
+# rest are positionals (at most `maxpos`, else a usage error). A usage error prints
+# `usage: <usage>` and `<prog>: error: <why>` on stderr and exits 2. Read the results with
+# hc_optv(name) (0 when not given), hc_npos() and hc_pos(i).
+var _hc_on = 0;
+var _hc_ok = 0;
+var _hc_ov = 0;
+var _hc_pos = 0;
+
+fn hc_opt(namec, kind): i64 {
+    if (_hc_on == 0) { _hc_on = vec_new(); _hc_ok = vec_new(); _hc_ov = vec_new(); }
+    vec_push(_hc_on, namec);
+    vec_push(_hc_ok, kind);
+    if (kind == 2) { vec_push(_hc_ov, vec_new()); } else { vec_push(_hc_ov, 0); }
+    return 0;
+}
+
+fn _hc_usage_err(prog, usage, why): i64 {
+    hc_errc("usage: ");
+    hc_errc(usage);
+    hc_errc("\n");
+    hc_errc(prog);
+    hc_errc(": error: ");
+    hc_err(why);
+    hc_errc("\n");
+    sys_exit(2);
+    return 2;
+}
+
+fn _hc_opt_find(prog, usage, name): i64 {
+    if (_hc_on == 0) { return 0 - 1; }
+    var i = 0;
+    while (i < vec_len(_hc_on)) {
+        if (hc_eqc(name, vec_get(_hc_on, i)) == 1) { return i; }
+        i = i + 1;
+    }
+    var hit = 0 - 1;
+    var nhit = 0;
+    i = 0;
+    while (i < vec_len(_hc_on)) {
+        if (hc_pre(hc_s(vec_get(_hc_on, i)), hc_cstr(name)) == 1) { hit = i; nhit = nhit + 1; }
+        i = i + 1;
+    }
+    if (nhit > 1) { _hc_usage_err(prog, usage, hc_cat3(hc_s("ambiguous option: --"), name, hc_s(""))); }
+    return hit;
+}
+
+fn hc_parse(prog, usage, maxpos): i64 {
+    args_init();
+    _hc_pos = vec_new();
+    var n = argc();
+    var i = 1;
+    var only_pos = 0;
+    while (i < n) {
+        var a = hc_arg(i);
+        if (only_pos == 0 && hc_eqc(a, "--") == 1) { only_pos = 1; i = i + 1; continue; }
+        if (only_pos == 0 && (hc_eqc(a, "-h") == 1 || hc_eqc(a, "--help") == 1)) {
+            hc_outc("usage: ");
+            hc_outc(usage);
+            hc_outc("\n");
+            sys_exit(0);
+        }
+        if (only_pos == 0 && hc_pre(a, "--") == 1 && hc_n(a) > 2) {
+            var body = hc_sub(a, 2, hc_n(a));
+            var eq = hc_findb(body, 61, 0);
+            var name = body;
+            var val = 0;
+            if (eq >= 0) { name = hc_sub(body, 0, eq); val = hc_sub(body, eq + 1, hc_n(body)); }
+            var k = _hc_opt_find(prog, usage, name);
+            if (k < 0) { _hc_usage_err(prog, usage, hc_ccat("unrecognized arguments: ", a)); }
+            var kind = vec_get(_hc_ok, k);
+            if (kind == 0) {
+                if (val != 0) {
+                    var oname = hc_s(vec_get(_hc_on, k));
+                    var why = hc_cat3(hc_s("argument --"), oname, hc_s(": ignored explicit argument"));
+                    _hc_usage_err(prog, usage, why);
+                }
+                vec_set(_hc_ov, k, 1);
+                i = i + 1;
+                continue;
+            }
+            if (val == 0) {
+                if (i + 1 >= n) {
+                    var why2 = hc_cat3(hc_s("argument --"), hc_s(vec_get(_hc_on, k)), hc_s(": expected one argument"));
+                    _hc_usage_err(prog, usage, why2);
+                }
+                val = hc_arg(i + 1);
+                i = i + 1;
+            }
+            if (kind == 2) { vec_push(vec_get(_hc_ov, k), val); }
+            else { vec_set(_hc_ov, k, val); }
+            i = i + 1;
+            continue;
+        }
+        if (only_pos == 0 && hc_pre(a, "-") == 1 && hc_n(a) > 1) {
+            _hc_usage_err(prog, usage, hc_ccat("unrecognized arguments: ", a));
+        }
+        vec_push(_hc_pos, a);
+        i = i + 1;
+    }
+    if (vec_len(_hc_pos) > maxpos) {
+        _hc_usage_err(prog, usage, hc_ccat("unrecognized arguments: ", vec_get(_hc_pos, maxpos)));
+    }
+    return 0;
+}
+
+fn hc_optv(namec): i64 {
+    if (_hc_on == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_hc_on)) {
+        if (streq(vec_get(_hc_on, i), namec) == 1) { return vec_get(_hc_ov, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn hc_npos(): i64 { return vec_len(_hc_pos); }
+fn hc_pos(i): i64 { return vec_get(_hc_pos, i); }

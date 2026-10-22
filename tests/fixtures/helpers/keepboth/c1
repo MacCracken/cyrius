@@ -1,0 +1,15 @@
+top
+<<<<<<< HEAD
+ours1
+ours2
+
+=======
+theirs
+>>>>>>> lane-x
+mid
+x<<<<<<< a b
+o
+=======
+t
+>>>>>>> zz
+end

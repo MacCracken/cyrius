@@ -1,0 +1,4 @@
+rc=2
+--- stdout
+--- stderr
+ab: nosuchref: not a commit in @T@/ab_repo

@@ -1,0 +1,15 @@
+rc=0
+--- stdout
+resolved 2 block(s) in f
+--- stderr
+--- file
+top
+ours1
+ours2
+
+theirs
+mid
+xo
+
+t
+end

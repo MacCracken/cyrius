@@ -1,0 +1,9 @@
+rc=0
+--- stdout
+resolved 2 block(s) in f
+--- stderr
+--- file
+k
+
+
+t1

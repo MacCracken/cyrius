@@ -1,0 +1,52 @@
+rc=0
+--- stdout
+12 open; unplaced 3; new group label(s): 6.7.2, ٦.٧.١٧, 6.7.17.1, 6.7.19
+--- stderr
+--- README.md
+# Issues
+
+The backlog: one file per issue.
+
+## Open queue
+
+Regenerated from each file's Placement line.
+
+**6.7.2** (1)
+
+- [D](d.md)
+
+**6.7.17 — the cleanup** (3)
+
+- [Title A](a.md)
+- [Title B](b.md)
+- [K](k.md)
+
+**٦.٧.١٧** (1)
+
+- [H — Arabic-Indic digits](h.md)
+
+**6.7.17.1** (1)
+
+- [G](g.md)
+
+**6.7.18 — next** (1)
+
+- [I — OPEN](i.md)
+
+**6.7.19** (1)
+
+- [C](c.md)
+
+**Open by design — placed arcs** (1)
+
+- [E](e.md)
+
+**Unplaced** (3)
+
+- [F with no placement](f.md)
+- [J](j.md)
+- [L with leading blanks](l.md)
+
+## Archive
+
+Resolved issues move to archived/.

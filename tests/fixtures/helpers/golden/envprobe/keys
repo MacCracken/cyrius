@@ -1,0 +1,26 @@
+rc=0
+cpu
+mem
+kernel
+kernel.randomize_va_space
+vm.mmap_min_addr
+kernel.yama.ptrace_scope
+kernel.unprivileged_userns_clone
+user.max_user_namespaces
+kernel.perf_event_paranoid
+fs.inotify.max_user_watches
+vm.overcommit_memory
+kernel.pid_max
+vm.max_map_count
+ulimit -n
+locale
+localectl-conf
+tz
+tmp
+tmp-size
+binfmt
+net-1.1.1.1
+net-github
+systemd-binfmt
+TMPDIR
+pacman pkgs

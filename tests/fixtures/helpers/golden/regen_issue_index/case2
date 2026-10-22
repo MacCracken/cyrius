@@ -1,0 +1,27 @@
+rc=0
+--- stdout
+3 open; unplaced 1; new group label(s): 6.7.3, 6.7.20
+--- stderr
+--- README.md
+# Issues
+
+## Open queue
+
+Nothing grouped yet.
+
+**6.7.3** (1)
+
+- [N](n.md)
+
+**6.7.20** (1)
+
+- [M](m.md)
+
+**Open by design — placed arcs, not bugs** (0)
+
+
+**Unplaced** (1)
+
+- [O](o.md)
+
+## Archive

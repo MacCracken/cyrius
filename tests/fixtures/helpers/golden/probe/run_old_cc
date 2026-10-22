@@ -1,0 +1,30 @@
+rc=0
+--- stdout
+== bad
+before: compile rc=2 run=- stdout=[]
+    error: old stub refuses
+after: compile rc=1 run=- stdout=[]
+    error: stub refuses BADBAD
+    error: the second error line yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+    error: third
+== empty
+before: compile rc=0 run=- stdout=[]
+after: compile rc=0 run=- stdout=[]
+== exit3
+before: compile rc=0 run=4 stdout=[]
+after: compile rc=0 run=3 stdout=[]
+== hello
+before: compile rc=0 run=1 stdout=[old hi|old there|]
+after: compile rc=0 run=0 stdout=[hi|there|]
+== spaced
+before: compile rc=0 run=6 stdout=[]
+after: compile rc=0 run=5 stdout=[]
+== spin
+before: compile rc=0 run=1 stdout=[old spinning|]
+after: compile rc=0 run=124 stdout=[spinning|]
+== warn
+before: compile rc=0 run=2 stdout=[]
+after: compile rc=0 run=1 stdout=[]
+    warning: stub warns
+    warning: twice
+--- stderr

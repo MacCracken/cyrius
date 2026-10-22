@@ -1,0 +1,24 @@
+rc=0
+--- stdout
+--- stderr
+--- files
+== bad.cyr
+BADBAD
+== empty.cyr
+EMPTYOUT
+== exit3.cyr
+EXIT 3
+== hello.cyr
+SAY hi
+SAY there
+EXIT 0
+== keep.txt
+keep
+== spaced.cyr
+EXIT 5
+== spin.cyr
+SAY spinning
+SPIN
+== warn.cyr
+WARN
+EXIT 1

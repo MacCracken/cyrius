@@ -3197,5 +3197,10 @@ _chk_gate "$ROOT/tests/gates/platform/emacho_sysxlat_fold.sh"
 # scripts/hooks/pre-commit in a throwaway `git init` (6.7.11: the bound is 1.10x build/cycc, under 700K–3M).
 _chk_gate "$ROOT/tests/gates/toolchain/precommit_arm_size_band.sh"
 
+# 6.7.17 — the developer, fold and release helpers are cyrius programs (programs/dev, programs/folds,
+# programs/release), each byte-identical to the Python / shell script it replaced on a fixture input
+# (the goldens under tests/fixtures/helpers/golden were taken from the scripts before they went).
+_chk_gate "$ROOT/tests/gates/toolchain/dev_helpers_match_golden.sh"
+
 # 6.7.0: a parallel run executes everything queued above, then reports (_chk_par_drain).
 _chk_par_drain
