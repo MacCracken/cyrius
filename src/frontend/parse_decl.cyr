@@ -5798,17 +5798,40 @@ fn _gv_defer(S, sti, packed): i64 {
 # depth counts: a `;` inside parens or brackets alone is never valid, and stopping there keeps
 # a malformed `var x = f(1;` from swallowing the rest of the file. EOF stops the walk.
 # CHANGELOG [6.6.6]
-fn _skip_gvar_decl(S): i64 {
+# ⛔ 6.7.17 — AND AT A DECLARATION THE ENTRY'S `;` IS MISSING BEFORE (`_gv_entry_cut`): `var g = 1` then `fn f1() ..`
+# stepped to the `;` of the first statement, so f1 and f2 were never registered or parsed and their errors never
+# reported, and `var h = zz;` after it was no entry of its own. The replay reports the `;` there. `sti` is the entry's
+# own `var`. CHANGELOG [6.7.17]
+fn _skip_gvar_decl(S, sti): i64 {
     var bd = 0;
     var go = 1;
     while (go == 1) {
         var t = PEEKT(S);
         if (t == 12) { return 0; }
+        if (bd <= 0) { if (_gv_entry_cut(S, sti) == 1) { return 0; } }
         STI(S, GTI(S) + 1);
         if (t == 13) { bd = bd + 1; }
         elif (t == 14) { bd = bd - 1; }
         elif (t == 5) { if (bd <= 0) { go = 0; } }
     }
+    return 0;
+}
+# 1 = the cursor, at brace depth 0 in the zone `var` entry from token `sti`, ends that entry: a declaration keyword
+# that begins a later line than the token before it — fn (not a `*fn(` type's), async fn, var, const, struct, enum,
+# union, impl, trait, mod, use, pub, private, or a top-level directive (#assert, #pe_import, the fn attributes,
+# `#deprecated(".."`). None of them is ever inside an initializer at depth 0 (a closure's body is depth 1), so a valid
+# entry never ends early. CHANGELOG [6.7.17]
+fn _gv_entry_cut(S, sti): i64 {
+    var ti = GTI(S);
+    if (ti <= sti) { return 0; }
+    if (GTLINE(S, ti) <= GTLINE(S, ti - 1)) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t == 3 || t == 168 || t == 40 || t == 60 || t == 101) { return 1; }
+    if (t == 77 || t == 167 || t == 72 || t == 74 || t == 73 || t == 153) { return 1; }
+    if (t == 32) { return _tok_fn_kw(S, ti); }
+    if (t == 134) { if (TOKTYP(S, ti + 1) == 32) { return 1; } }
+    if (t == 107 || t == 110 || _tl_flag_tok(t) == 1) { return 1; }
+    if (t == 124) { if (TOKTYP(S, ti + 1) == 10) { if (TOKTYP(S, ti + 2) == 30) { return 1; } } }   # `?` shares it
     return 0;
 }
 
@@ -6401,7 +6424,7 @@ fn PARSE_GVAR_REG(S): i64 {
         }
         _gzf_dt_reg(S, dgs1, dgs2, dgs3);   # 6.7.16 (D98): its f64 elements, typed at the end of pass 1
         _gv_defer(S, sti, (dgs1 + 1) | ((dgs2 + 1) << 21) | ((dgs3 + 1) << 42));
-        _skip_gvar_decl(S);   # 6.6.6: through the `;` outside every `{ }` (see there)
+        _skip_gvar_decl(S, sti);   # 6.6.6: through the `;` outside every `{ }` (see there)
         return 0;
     }
     # Optional type annotation — check scalar types, pointer types, or struct names
@@ -6670,7 +6693,7 @@ fn PARSE_GVAR_REG(S): i64 {
         _gvc_unfolded(S, gvi, cf_has + is_struct);   # 6.7.15: the replay's compare chain
         _gv_defer(S, sti, gvi + 1);   # 6.6.6: gvi + 1 = the slot this entry declared
     }
-    _skip_gvar_decl(S);   # 6.6.6: through the `;` outside every `{ }` (see there)
+    _skip_gvar_decl(S, sti);   # 6.6.6: through the `;` outside every `{ }` (see there)
     return 0;
 }
 

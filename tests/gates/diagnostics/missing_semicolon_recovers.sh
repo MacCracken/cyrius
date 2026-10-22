@@ -35,6 +35,11 @@
 #       `return`, T5 a call's field `gp().n = 5` before the `}`
 #   M   a destructure's call missing its `;`: M1 `x, y = two(3)` before the `}`, M2 `var a, b = two(3)` before a
 #       `return` — "expected ';'", not "needs a call on the right-hand side"; M3 the control `two(3) + 1` keeps it
+#   S3  the filing's s3 verbatim (`var g = 1` then two fns in the declaration zone): the `;`, `zz1` and `zz2` — a SET:
+#       the replay's `;` prints after pass 2's fn bodies until the zone replay is buffered
+#   Z   the zone: `var g = 1` before a struct (Z1), a `var h = zz;` (Z2: h its own entry), a const (Z3), an #assert
+#       (Z4), a closure entry before a fn (Z5), an enum and impl (Z6), a destructure (Z7); ZA valid multi-line
+#       entries (a closure body, a `*fn` type, continued initializers) compile and run unchanged
 #   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
@@ -51,6 +56,8 @@
 # On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
 # On 063eeadf7 (before parse_decl.cyr's `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
 # On 36c6cb47f (before `_dt_rhs_end`) RED: M1 M2 ("multi-value destructure needs a call on the right-hand side").
+# On 82bef3a5b (before `_gv_entry_cut`) RED: S3 Z1 Z2 Z4-Z7 (the entry ran to the next depth-0 `;`: the fns, the
+# struct, `var h` swallowed, their errors never reported); Z3 ZA green.
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -102,6 +109,37 @@ row() {
         elif ! cmp -s "$o.got" "$D/$1.want"; then
             bad "$1 $leg: $2: got $(wc -l < "$o.got") lines: $(tr '\n' '|' < "$o.got")"
         elif [ -s "$o" ]; then bad "$1 $leg: $2: refused, but a binary was written"
+        else ok "$1 $leg: $2"; fi
+    done
+}
+
+# rowset <id> <what> <source> <want-lines>: as `row`, the lines compared as a SET (sorted) — the declaration zone's
+# replay reports after pass 2's fn bodies, so its "expected ';'" prints after the errors it used to swallow; the
+# source order waits for the zone replay's buffering
+rowset() {
+    printf '%s' "$3" > "$D/$1.cyr"
+    printf '%s\n' "$4" | sort > "$D/$1.want"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp "$leg" "$D/$1.cyr" "$o"
+        grep -E '^error' "$o.err" | sort > "$o.got" || true
+        if [ "$CRC" -eq 0 ]; then bad "$1 $leg: $2: rc 0 — want the refusal"
+        elif ! cmp -s "$o.got" "$D/$1.want"; then
+            bad "$1 $leg: $2: got $(wc -l < "$o.got") lines: $(tr '\n' '|' < "$o.got")"
+        elif [ -s "$o" ]; then bad "$1 $leg: $2: refused, but a binary was written"
+        else ok "$1 $leg: $2"; fi
+    done
+}
+# accept <id> <what> <source> <exit>: compiles on every leg; the x86_64 binary exits <exit>
+accept() {
+    printf '%s' "$3" > "$D/$1.cyr"
+    for leg in $LEGS; do
+        o="$D/$1_$leg"
+        comp "$leg" "$D/$1.cyr" "$o"
+        if [ "$CRC" -ne 0 ]; then bad "$1 $leg: $2: refused: $(grep -E '^error' "$o.err" | head -2 | tr '\n' '|')"
+        elif [ "$leg" = x86 ]; then
+            chmod +x "$o"; rr=0; timeout 10 "$o" > /dev/null 2>&1 || rr=$?
+            if [ "$rr" -eq "$4" ]; then ok "$1 $leg: $2 (exit $rr)"; else bad "$1 $leg: $2: exit $rr, want $4"; fi
         else ok "$1 $leg: $2"; fi
     done
 }
@@ -375,6 +413,71 @@ fn f(): i64 {
 syscall(60, f());
 ' "error:<source>:5:12: multi-value destructure needs a call on the right-hand side
 error:<source>:6:14: $UZ"
+
+# ---- Z: the declaration zone — a `var` entry missing its `;` ends at the declaration after it (`_gv_entry_cut`,
+# src/frontend/parse_decl.cyr), so pass 1 / pass 2 register and parse what follows
+rowset S3 "the filing's s3 verbatim: var g = 1 then two fns" 'var g = 1
+fn f1(): i64 { return zz1; }
+fn f2(): i64 { return zz2; }
+syscall(60, g);
+' "error:<source>:2:1: expected ';', got fn
+error:<source>:2:26: undefined variable 'zz1' (missing include or enum?)
+error:<source>:3:26: undefined variable 'zz2' (missing include or enum?)"
+rowset Z1 "var g = 1 before a struct" 'var g = 1
+struct Q { a; }
+fn f1(): i64 { return zz1; }
+syscall(60, g + f1());
+' "error:<source>:2:1: expected ';', got struct
+error:<source>:3:26: undefined variable 'zz1' (missing include or enum?)"
+rowset Z2 "var g = 1 before var h = zz;" 'var g = 1
+var h = zz;
+fn f1(): i64 { return zz1; }
+syscall(60, g + f1());
+' "error:<source>:2:1: expected ';', got var
+error:<source>:2:11: $UZ
+error:<source>:3:26: undefined variable 'zz1' (missing include or enum?)"
+rowset Z3 "var g = 1 before a const (green on the parent: the const's own ; ended the skip)" 'var g = 1
+const C = 5;
+fn f1(): i64 { return zz1 + C; }
+syscall(60, g + f1());
+' "error:<source>:2:1: expected ';', got const
+error:<source>:3:27: undefined variable 'zz1' (missing include or enum?)"
+rowset Z4 "var g = 1 before an #assert" 'var g = 1
+#assert 2 == 3, "boom"
+fn f1(): i64 { return zz1; }
+syscall(60, g + f1());
+' "error:<source>:2:1: expected ';', got #assert
+error:<source>:2:17: #assert failed: boom
+error:<source>:3:26: undefined variable 'zz1' (missing include or enum?)"
+rowset Z5 "a closure var g = |x| { .. } before a fn" 'var g = |x| { return x; }
+fn f1(): i64 { return zz1; }
+syscall(60, f1());
+' "error:<source>:2:1: expected ';', got fn
+error:<source>:2:26: undefined variable 'zz1' (missing include or enum?)"
+rowset Z6 "var g = 1 before an enum and its impl" 'var g = 1
+enum E { A, B }
+impl E { fn m(self): i64 { return zz1; } }
+syscall(60, g);
+' "error:<source>:2:1: expected ';', got enum
+error:<source>:3:38: undefined variable 'zz1' (missing include or enum?)"
+rowset Z7 "a destructure var a, b = two(3) before a fn" 'fn two(a) { return (a, 4); }
+var a, b = two(3)
+fn g(): i64 { return zz; }
+syscall(60, g());
+' "error:<source>:3:1: expected ';', got fn
+error:<source>:3:24: $UZ"
+accept ZA "valid: a multi-line closure, a *fn global, initializers continued on the next line" 'var f = |x| {
+    var y = x + 1;
+    return y;
+};
+var p: *fn(i64): i64 = 0;
+var k =
+    3;
+var q = k
+    + 1;
+fn main(): i64 { return callptr(f, k) + q; }
+syscall(60, main());
+' 8
 
 # ---- B: brace accounting (`_resync_close`)
 row B1 "a = 2 { 3 }; then a later fn's error" 'fn f(): i64 { var a = 1; a = 2 { 3 }; return a; }
