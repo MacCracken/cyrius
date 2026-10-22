@@ -451,6 +451,21 @@ fn ns_filed(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = NsO {
 fn ns_deep(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var x = NsX { *p, 1, 2, 3 }; return (x.o.v.s == a) * 1000 + x.o.v.n * 100 + x.o.m * 10 + x.k; }
 fn ns_wrap(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = NsO { (*ns_gp(p)), 4, 5 }; return str_len(o.v.s) * 10 + o.v.n; }
 fn ns_glob(): i64 { var p: *Str = &gt; var o = NsO { ((*p)), 4, 5 }; return (o.v.s == &gt) * 100 + str_len(o.v.s) * 10 + o.m; }
+# 6.7.17 (the user's D98, 2026-10-22, the finish pass): a `Str` NAME as a nested struct field's element reaching a `Str`
+# first leaf is that leaf's value, as D19's `*p` and the direct `NsWS { a, 1 }` store it; `NsO { a, 1, 2 }` and
+# `NsO { gt, 1, 2 }` were refused (the nd_* rows, R_TOP25).
+var nd_gh: Str = 0;
+var GNDZ = NsO { gt, 3, 4 };   # the declaration zone: gt's header
+fn nd_filed(): i64 { var a = str_from("abcdefg"); var o = NsO { a, 1, 2 }; return (o.v.s == a) * 100 + str_len(o.v.s) * 10 + o.m; }
+fn nd_param(s: Str): i64 { var o = NsO { s, 3, 4 }; return (o.v.s == s) * 10 + o.v.n; }
+fn nd_glob(): i64 { var o = NsO { gt, 1, 2 }; return (o.v.s == &gt) * 100 + str_len(o.v.s) * 10 + o.m; }
+fn nd_hglob(): i64 { nd_gh = str_from("abcd"); var o = NsO { nd_gh, 1, 2 }; return (o.v.s == nd_gh) * 10 + str_len(o.v.s); }
+fn nd_wrap(): i64 { var a = str_from("abcdefg"); var o = NsO { ((a)), 4, 5 }; return (o.v.s == a) * 10 + o.v.n; }
+fn nd_deep(): i64 { var a = str_from("abc"); var x = NsX { a, 1, 2, 3 }; return (x.o.v.s == a) * 1000 + x.o.v.n * 100 + x.o.m * 10 + x.k; }
+fn nd_amp(): i64 { var o = NsO { *(&gt), 1, 2 }; return (o.v.s == &gt) * 10 + o.m; }
+fn nd_cap(): i64 { var a = str_from("abc"); var c = |k| { var o = NsO { a, k, 2 }; return (o.v.s == a) * 10 + o.v.n; }; return fncall1(c, 5); }
+fn nd_capi(): i64 { var t: Str = Str { "abcd", 4 }; var c = |k| { var o = NsO { t, k, 2 }; return str_len(o.v.s) * 10 + o.v.n; }; return fncall1(c, 1); }
+fn nd_zone(): i64 { return (GNDZ.v.s == &gt) * 100 + GNDZ.v.n * 10 + GNDZ.m; }
 # 6.7.17 (the user's D20, 2026-10-22): `*(&t) = v` with t a closure's captured inline `Str` copies v's header into the
 # closure's copy of t, as `*(&t) = v` of a local t does (6.7.16's D71); it wrote v's first word into t.data (the ca_* rows).
 struct CaW { s: Str; n; }
@@ -555,6 +570,9 @@ var R_TOP21 = gi3.len;
 var nsp: *Str = &gt;          # top level after a statement: `*nsp` into a nested `Str` leaf is nsp (6.7.17, D19)
 var GNSO = NsO { *nsp, 4, 5 };
 var R_TOP22 = (GNSO.v.s == &gt) * 100 + str_len(GNSO.v.s) * 10 + GNSO.v.n;
+var ndh = str_from("ab");          # top level after a statement: a handle global's name into the nested `Str` leaf (D98)
+var GNDS = NsO { ndh, 5, 6 };
+var R_TOP25 = (GNDS.v.s == ndh) * 1000 + str_len(GNDS.v.s) * 100 + GNDS.v.n * 10 + GNDS.m;
 var GNM2 = NmV { s: gt, n: 4 };   # after a statement: a named `Str` field (6.7.17, D21)
 var R_TOP23 = (GNM.s == &gt) * 1000 + (GNM2.s == &gt) * 100 + GNM.n * 10 + GNM2.n;
 var zsl = str_from("abcde");       # after a statement: a free call, a method, a generic (6.7.17, D22)
@@ -826,6 +844,17 @@ assert_eq(ns_filed(), 10, "NsO { *p, 1, 2 }: the nested Str leaf is p, the heade
 assert_eq(ns_deep(), 1123, "NsX { *p, 1, 2, 3 }: two levels deep");
 assert_eq(ns_wrap(), 74, "NsO { (*gp(p)), 4, 5 }: a wrapped call's dereference");
 assert_eq(ns_glob(), 175, "NsO { ((*p)), 4, 5 } with p = &gt: gt's header");
+assert_eq(nd_filed(), 172, "NsO { a, 1, 2 }: a Str handle into the nested Str leaf is a (6.7.17, D98; was refused)");
+assert_eq(nd_param(str_from("x")), 13, "NsO { s, 3, 4 }: a Str parameter");
+assert_eq(nd_glob(), 172, "NsO { gt, 1, 2 }: an inline Str global's header address (D98; was refused)");
+assert_eq(nd_hglob(), 14, "NsO { nd_gh, 1, 2 }: a Str handle global");
+assert_eq(nd_wrap(), 14, "NsO { ((a)), 4, 5 }: wrapped");
+assert_eq(nd_deep(), 1123, "NsX { a, 1, 2, 3 }: two levels deep");
+assert_eq(nd_amp(), 12, "NsO { *(&gt), 1, 2 }: `*(&gt)` is gt (6.7.16's D71)");
+assert_eq(nd_cap(), 15, "a closure's captured Str handle");
+assert_eq(nd_capi(), 41, "a closure's captured inline Str: its copy's header");
+assert_eq(nd_zone(), 134, "declaration zone: var GNDZ = NsO { gt, 3, 4 };");
+assert_eq(R_TOP25, 1256, "top level after a statement: NsO { ndh, 5, 6 } stores the handle (D98)");
 assert_eq(z_bind(), 3, "declaration zone: var HZ: Str = gz; HZ.len = 3 writes gz.len (D21 (a); a copy through 6.7.13)");
 assert_eq(z_wrap(), 77, "declaration zone: var HZ2: Str = ((gz)); var PZ: *Str = gz;");
 assert_eq(z_word(), 1, "declaration zone: an untyped var UZ = gz; keeps gz's first word (D22 (b))");

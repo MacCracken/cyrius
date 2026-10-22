@@ -186,6 +186,13 @@
 # where it was "no struct type in scope for 'bb'". Its value is unchanged (the header's address). A name keeps its word
 # (`var H = gt;`, D22a / D22b), and so do a field read and an if-expression of handles (ZS3, ZS4: `G.len` refused).
 #
+# 6.7.17 (the user's decision D98, 2026-10-22, the finish pass): a `Str` NAME as a nested struct field's literal element
+# reaching a `Str` first leaf — `O { a, 1, 2 }` (a handle: a local, a parameter, a capture, a global) or `O { gt, 1, 2 }`
+# (an inline `Str`) — is that leaf's value, as D19's `O { *p, 1, 2 }` stores p and the direct literal `WS { a, 1 }` stores
+# a (ND1, ND2: 13 / 17 on every leg; the tcyr's nd_* rows and R_TOP25), where it was refused "cannot copy 'a' into a
+# struct field of a different struct type: 'v'". A frame's inline `Str` there (`O { t, 1, 2 }`, `O { *(&t), 1, 2 }`) is
+# refused as would-dangle (ND3, NS3), and a `Str` name whose nested field opens with no `Str` leaf keeps its refusal (ND4).
+#
 # ROWS: R0 the filed repro verbatim; R1 tests/tcyr/crossos/inline_str_value.tcyr (its row count derived,
 # floor 132) on x86_64 (plain, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu — EMULATION, not
 # hardware), cx (cxvm) and PE (wine, a private prefix); X1-X19 refused (the message first, ONE `^error`, no
@@ -202,7 +209,7 @@
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); SH1-SH15 a struct value of another type into a
 # `Str` handle refused (no SH13), SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
 # repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
-# `*(&t)` refused as t is (6.7.17, D71's rule); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
+# `*(&t)` taken as t is (6.7.17, D71's rule), ND1-ND4 a `Str` name into a nested `Str` leaf (6.7.17, D98); CA1 the D20 filed repro verbatim (2 on every leg), CA2 another struct
 # refused there (6.7.17, D20), CA3 a captured t's `*(&t) += 1` refused (6.7.17); NM1 the D21 filed repro verbatim (4
 # on every leg), NM2 / NM3 the named element keeps the `Str` field's refusals (6.7.17, D21); ZS1 the D22 filed repro
 # verbatim (3 on every leg), ZS2 its zone line, ZS3 / ZS4 a field read and an if-expression keep their word (6.7.17,
@@ -1264,15 +1271,40 @@ struct O2 { v: WI; k; }
 fn go(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = O2 { *p, 1, 2 }; return o.k; }'
 refused NS2 "cannot copy '*p' into a struct field of a different struct type: 'v'" "\`O2 { *p, 1, 2 }\`: a \`Str\` value off the first-leaf chain (it carried the data word into v.n)"
 # NS3 / NS4 (6.7.17, met in the D19 bite): `*(&t)` of an inline `Str` is t (6.7.16's D71), so as a nested element it is
-# refused as `O { t, 1, 2 }` is, named at t; it carried t's data word into the field's first leaf, silently.
+# what t is there — since D98 (below) the `Str` first leaf takes it as the direct literal does: a frame's t refused as
+# would-dangle (NS3), an inline global's header address stored (NS4); through the D19 bite it carried t's data word into
+# the field's first leaf, silently.
 row NS3 'struct WS { s: Str; n; }
 struct O { v: WS; m; }
 fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var o = O { *(&t), 1, 2 }; return o.m; }'
-refused NS3 "cannot copy 't' into a struct field of a different struct type: 'v'" "\`O { *(&t), 1, 2 }\` of a frame's t"
+refused NS3 "$MF" "\`O { *(&t), 1, 2 }\` of a frame's t: would dangle, as \`WS { *(&t), 1 }\` is"
 row NS4 'struct WS { s: Str; n; }
 struct O { v: WS; m; }
-fn go(): i64 { var o = O { (*&gt), 1, 2 }; return o.m; }'
-refused NS4 "cannot copy 'gt' into a struct field of a different struct type: 'v'" "\`O { (*&gt), 1, 2 }\` of an inline global"
+fn go(): i64 { var o = O { (*&gt), 1, 2 }; return (o.v.s == &gt) * 10 + o.m; }'
+runs NS4 12 "\`O { (*&gt), 1, 2 }\` of an inline global: gt's header address (D98)"
+# --- ND: 6.7.17 (the user's D98, 2026-10-22, the finish pass) a `Str` NAME as a nested struct field's element reaching a
+# `Str` first leaf is that leaf's value, as D19's `O { *p, 1, 2 }` and the direct `WS { a, 1 }` store it: `O { a, 1, 2 }`
+# (a handle) / `O { gt, 1, 2 }` (an inline global) were refused "cannot copy 'a' into a struct field of a different
+# struct type: 'v'". A frame's inline `Str` is refused as would-dangle there (ND3), and a `Str` name whose nested field
+# opens with no `Str` leaf keeps its refusal (ND4). Mutation (2026-10-22, the scratch-copy method): `_spi_strnm`
+# answering 0 -> RED ND1 x7, ND2 x7, ND3 x4 (the old words), NS3 x4 (the same), NS4 x4 (refused), R1 x7 (the file stops
+# compiling: the nd_* rows); the integration's compiler (CYCC, its x86_64 / PE legs) -> RED ND1-ND3, NS3, NS4, R1. ---
+row ND1 'struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn go(): i64 { var a = str_from("abcdefg"); var o = O { a, 1, 2 }; if (o.v.s == a) { return 10 + o.v.n + o.m; } return 99; }'
+runs ND1 13 "\`O { a, 1, 2 }\`: a \`Str\` handle into the nested \`Str\` leaf (D98; was refused)" "$XLEGS $OLEGS"
+row ND2 'struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn go(): i64 { var o = O { gt, 1, 2 }; if (o.v.s == &gt) { return 10 + str_len(o.v.s); } return 99; }'
+runs ND2 17 "\`O { gt, 1, 2 }\`: an inline \`Str\` global's header address (D98; was refused)" "$XLEGS $OLEGS"
+row ND3 'struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var o = O { t, 1, 2 }; return o.m; }'
+refused ND3 "$MF" "\`O { t, 1, 2 }\` of a frame's t: would dangle, as \`WS { t, 1 }\` is"
+row ND4 'struct WI { n; m; }
+struct O2 { v: WI; k; }
+fn go(): i64 { var a = str_from("abc"); var o = O2 { a, 1, 2 }; return o.k; }'
+refused ND4 "cannot copy 'a' into a struct field of a different struct type: 'v'" "\`O2 { a, 1, 2 }\`: a \`Str\` name off the first-leaf chain keeps its refusal"
 # --- CA: 6.7.17 (the user's D20, 2026-10-22) `*(&t) = v` with t a closure's captured inline `Str` copies v's header into
 # the closure's copy of t, as `*(&t) = v` of a local t does (6.7.16's D71) and a captured struct's `*(&s) = v` does
 # (6.7.13); it wrote v's first word into the copy's data word (exit 7). Another struct is refused as `t = mkq()` is (CA2). ---
@@ -1409,7 +1441,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=128   # 6.7.17: + SH1-SH15 (no SH13), SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1-ZS4 (D22); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=132   # 6.7.17: + SH1-SH15 (no SH13), SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4, CA1, CA2 (D20), CA3, NM1-NM3 (D21), ZS1-ZS4 (D22), ND1-ND4 (D98); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi
