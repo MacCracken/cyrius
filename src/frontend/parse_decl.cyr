@@ -10026,12 +10026,14 @@ fn _vsc_rskip(S): i64 {
 # PARSE_RETURN, `st` the value's first token: a call declared to return a vector (`_vcall_vt`: any spelling, any wrap)
 # that is the whole value or starts it with an operator after it (`return mk2(41, 7) + 1;`, `return (mk2(41, 7) + 1) *
 # 2;`), in a fn that returns none, refused before the tail-call arm takes it. A call that a `.`, `[` or a stray token
-# follows is left to its own refusal; a bool fn keeps its own words.
+# follows is left to its own refusal; a bool fn keeps its own words. A `return (a, b);` is its elements' (`_vop_mret`,
+# 6.7.17: a call starting the first one was refused here in D101's words).
 fn _vsc_ret(S, st): i64 {
     if (_vret_any == 0) { return 0; }
     if (GINFN(S) != 1) { return 0; }
     if (_vsc_rskip(S) == 1) { return 0; }
     if (_bx_cur_is_bool(S) == 1) { return 0; }
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
     if (_vcall_vt(S, st, 5, 1) == 0) { return 0; }
     var x = _call_close(S, _vcv_o) + 1;
     while (TOKTYP(S, x) == 11) { x = x + 1; }
@@ -10343,11 +10345,41 @@ fn _vop_rchk(S, ti0): i64 {
     if (_vop_vd == 1) { return 0; }
     var k = _vop_ctx(S, ti0);
     if (k == 3) {
+        if (_vop_mret(S, ti0) == 1) { return _vrcv_tyerr(S, a, 0); }   # 6.7.17: a multi-value `return`'s element
         if (_vsc_rskip(S) == 1) { return 0; }
         return _vsc_err(S, a, 0, 0, 0);
     }
     if (k == 2) { return _vrcv_tyerr(S, a, 1); }
     return _vrcv_tyerr(S, a, 0);
+}
+# ⛔ 6.7.17 (met landing D24) — AN OPERAND IN A MULTI-VALUE `return`'S ELEMENT IS AN ELEMENT'S, AS THE WHOLE CALL IS.
+# `fn two(): (i64, i64) { return (mk2(41, 7) + 1, 3); }` compiled and handed back the result's word plus 1 (x86_64 /
+# aarch64 1, cx / PE 42): a `return`'s operand asked `_vsc_rskip`, which stands down in a multi-value fn (its whole
+# value has words of its own), and nothing else judged the element. In an undeclared multi-value fn the same operand
+# said D101's "returned as i64", where the whole call there (`return (mk2(41, 7), 3);`) and the guide § D100 say "does
+# not match the declared type" (a multi-value `return`). 1 = the operand at token `ti0` is in an element of a `return
+# (a, b[, c]);` — walking back over balanced groups and the parentheses that group, the `(` after `return` has a comma
+# at its own depth (`_tup_commas`). CHANGELOG [6.7.17]
+fn _vop_mret(S, ti0): i64 {
+    var j = ti0 - 1;
+    var d = 0;
+    while (j >= 1) {
+        var t = TOKTYP(S, j);
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (t == 10 || t == 28) {
+            if (d > 0) { d = d - 1; }
+            elif (t == 28) { return 0; }
+            elif (_vop_gparen(S, j) == 0) { return 0; }
+            elif (TOKTYP(S, j - 1) == 33) {
+                if (_tup_commas(S, j) == 0) { return 0; }
+                return 1;
+            }
+        } elif (d == 0) {
+            if (t == 5 || t == 13 || t == 14 || t == 33) { return 0; }
+        }
+        j = j - 1;
+    }
+    return 0;
 }
 # The whole call [ti0, e) (its first token `a`) in the slot around it, refused when the slot takes a word. 1 = refused.
 fn _vop_whole(S, ti0, e, a): i64 {

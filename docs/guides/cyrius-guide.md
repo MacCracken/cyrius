@@ -2303,7 +2303,10 @@ declaration, an argument, a condition, an index, a bound, a field or element of 
 the assigned variable* (an assignment or a store, a tuple literal assigned), and a `return`'s D101's. Bind the vector first and read its lanes (`var w = mkv(41, 7); x += load64(&w);`). ⚠ Through
 6.7.15 each compiled and used one word — x86_64 / aarch64 rax's leftover (`1 + mkv(41, 7)` gave 1, `x += mkv(..)` 0),
 cx / Windows lane 0 (42, 41) — and `rd(mkv(41, 7) + 1)` into a `*f64v2` and `*mkv(41, 7)` crashed (139; cx a wrong
-word; Windows exit 5).
+word; Windows exit 5). An operand in a multi-value `return`'s element (`return (mkv(41, 7) + 1, 3);`, `return (3,
+-s.mv());`) is that element's, *… does not match the declared type*, in a declared and an undeclared multi-value fn alike
+(6.7.17): through 6.7.16 it compiled in a declared one (x86_64 / aarch64 4, cx / Windows 45) and an undeclared one said
+D101's *… cannot be returned as i64*.
 
 ⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
