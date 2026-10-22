@@ -2105,6 +2105,53 @@ impl P3 { fn dv(self, d) { if (d == 0) { return SErr(9); } return SOk(self.b / d
 printf '%s\n%s\nfn g(d): i64 { var v = callptr(&mk3, 5).dv(d)?; var u = fncall1(&mk3, 7).dv(d)?; return SOk(v * 10 + u); }\nfn t(): i64 { var a, b = g(2); var c, e = g(0); return a * 100 + b + c * 50 + e; }\nsyscall(60, t());\n' "$ICH" "$ICM" > "$T/q.cyr"
 qf_run "callptr(&mk3, 5).dv(d)? and fncall1(&mk3, 7).dv(d)?: the method's pair" axisIC17 93
 printf '%s\n%s\nfn t(): i64 { var v = callptr(&mk3, 5).dv(2); return v; }\nsyscall(60, t());\n' "$ICH" "$ICM" | ic_refuse axisIC17b "= callptr"
+# ── axis RQ — 6.7.17 (met reviewing D26): `return f(x)?;` RETURNS THE UNWRAPPED VALUE, ONE WORD ─────────────────────
+# The `?` makes the fn a pair (its Err path returns f's pair), and its Ok path returns the unwrapped value — ONE word,
+# which a caller's `var t, v = g();` reads as the TAG. The every-path rule warns for `var v = f(x)?; return v;` (the
+# guide's `?` section), but the mixed-return pass read `return f(x)?;` as FORWARDING f's pair (the call's flag) and said
+# nothing: in a fn, an impl method and a closure, for `(f(x))?`, `callptr(&f, x)?` and `fncall1(&f, x)? + 1` alike.
+# `_ret_q_plain` (parse.cyr): a return value with a `?` outside every bracket is plain. RQ1-RQ4 warn once per return
+# (each runs its Err path: (1, 9) per fn); RQ5 the controls — `return f(f(x)?);`, `return SOk(f(x)?);`, `var v = f(x)?;
+# return SOk(v);` — forward a pair and stay silent. Mutation (measured): `_ret_is_variant` and `_warn_closure_block`
+# without `_ret_q_plain` (the tree before) -> RED RQ1-RQ4 (no warning) on every leg; RQ5 green.
+# rq_warn <axis> <want> — $T/q.cyr compiles and exits <want> on every leg, its warnings exactly the lines rq_w lists
+rq_warn() {
+    qf_run "the warning rows" "$1" "$2"
+    for leg in $QLEGS; do
+        grep '^warning' "$T/q.$leg.err" | sed 's/ but a SINGLE value here.*//' > "$T/q.$leg.got" || true
+        if ! printf '%s\n' "$rq_w" | cmp -s - "$T/q.$leg.got"; then
+            echo "FAIL stack_enum_lossy_context $1 ($leg): want the warnings"; printf '%s\n' "$rq_w" | sed 's/^/    /'
+            echo "  got"; sed 's/^/    /' "$T/q.$leg.got"; exit 1
+        fi
+    done
+}
+RQH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+enum SR: stack { SOk(v); SErr(e); }
+fn f(x): i64 { if (x > 5) { return SErr(x); } return SOk(x + 1); }
+struct P { a; }'
+RQW='returns a `: stack` pair on another path'
+printf '%s\nfn g(x): i64 { return f(x)?; }\nfn main(): i64 { var t, v = g(9); return t * 100 + v; }\nsyscall(60, main());\n' "$RQH" > "$T/q.cyr"
+rq_w="warning:<source>:7:16: \`g\` $RQW"
+rq_warn axisRQ1 109
+printf '%s\nfn g1(x): i64 { return (f(x))?; }\nfn g2(x): i64 { return callptr(&f, x)?; }\nfn g3(x): i64 { return fncall1(&f, x)? + 1; }\nfn main(): i64 { var a, b = g1(9); var c, d = g2(9); var e, k = g3(9); return (a + c + e) * 10 + b + d + k; }\nsyscall(60, main());\n' "$RQH" > "$T/q.cyr"
+rq_w="warning:<source>:7:17: \`g1\` $RQW
+warning:<source>:8:17: \`g2\` $RQW
+warning:<source>:9:17: \`g3\` $RQW"
+rq_warn axisRQ2 57
+printf '%s\nimpl P { fn m(self): i64 { return f(self.a)?; } }\nfn main(): i64 { var p: P; p.a = 9; var t, v = p.m(); return t * 100 + v; }\nsyscall(60, main());\n' "$RQH" > "$T/q.cyr"
+rq_w="warning:<source>:7:28: \`P.m\` $RQW"
+rq_warn axisRQ3 109
+printf '%s\nfn main(): i64 { alloc_init(); var c = |x| { return f(x)?; }; var t, v = fncall1(c, 9); return t * 100 + v; }\nsyscall(60, main());\n' "$RQH" > "$T/q.cyr"
+rq_w="warning:<source>:7:46: a closure in \`main\` $RQW"
+rq_warn axisRQ4 109
+printf '%s\nfn g1(x): i64 { return f(f(x)?); }\nfn g2(x): i64 { return SOk(f(x)?); }\nfn g3(x): i64 { var v = f(x)?; return SOk(v); }\nfn main(): i64 { var a, b = g1(4); var c, d = g2(4); var e, k = g3(9); return (a + c + e) * 100 + b + d + k; }\nsyscall(60, main());\n' "$RQH" > "$T/q.cyr"
+rq_w=""
+qf_run "return f(f(x)?); / return SOk(f(x)?); / var v = f(x)?; return SOk(v); forward a pair" axisRQ5 120
+for leg in $QLEGS; do
+    if grep -q '^warning' "$T/q.$leg.err"; then echo "FAIL stack_enum_lossy_context axisRQ5 ($leg): a pair forward drew a warning:"; grep '^warning' "$T/q.$leg.err" | head -2 | sed 's/^/    /'; exit 1; fi
+done
 if [ "$qskips" -gt 0 ]; then echo "SKIP stack_enum_lossy_context: $qskips leg(s) of axis QF could not run; every row that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 
 echo 'PASS stack_enum_lossy_context: lossy binds refused on stack enums (bare ctor, forwarding wrapper) · `?` propagates the pair with its Err payload intact · destructure and return-forwarding still work · nullary variants allowed and unflagged · assignment and store64 refused (v6.6.0) · statement-position `?` propagates the pair · top-level destructure works · BOXED enums unaffected by all of it · forward references resolve (`?`, chains, and the diagnostic) · the propagation pass mints no fn-table entries · the explicit generic and method spellings are refused the same way, through wrappers in either order and on any receiver the parser types (by scope, by inference), and their one-value binds and destructures work (6.6.16) · a field, an element, `*p` and every compound `OP=` refused too — any field type, a slice'"'"'s len, a u128 place, a for step, top level, --syntax-only — with `?` consuming the pair at each (6.7.7) · a pair method used above its impl — inherent, trait, collision-prefixed, generic, forwarding through `self` — propagates with `?` and its single bind is refused, minting nothing (6.7.11) · a pair trait DEFAULT used above its trait — inherited, forwarded, overridden — the same (6.7.13) · an inline-replayed pair generic flags itself, not its caller (6.7.13) · a struct-literal element refused the same way — positional, named, a global, a nested leaf — with `?` consuming it, while a plain argument and an operand keep the documented tag (6.7.11) · parentheses around a whole pair call are transparent to every check: each wrapped store refused, `?` and `return (f(..));` propagating, an argument keeping the tag (6.7.13) · each refusal is its statement'"'"'s alone: the next statement'"'"'s error is reported, and a refused u128 `OP=` says nothing more about its right-hand side (6.7.11) · a fn or method whose only pair route is a `?` is a pair above its definition too — `?` propagates, the single bind is refused, in either order, on x86_64 / aarch64 / cx / PE (6.7.14) · parentheses around the whole value are transparent to the first-call rule: each wrapped store refused, `(f()? + 1)` propagating, an operand keeping the tag (6.7.14) · a `: stack` fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` is the direct call'"'"'s pair — `?` propagates, the destructure binds both, every one-wide bind and store is refused, a forwarder or a `?`-only fn through `&f` is a pair above its definition, a callee in a variable stays a word, on x86_64 / aarch64 / cx / PE (6.7.17)'

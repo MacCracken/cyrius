@@ -2575,12 +2575,20 @@ fn _mret_vval(S, t): i64 {
         PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
         PRSTR("'");
     }
-    PRSTR(" returns vector '");
-    _vty_pr(vt);
-    PRSTR("' (");
-    _vec_desc(S, vt);
-    PRNUM(GVEC_NSLOTS(S) * 8);
-    PRSTR(" bytes) as a multi-value element - return its pointer, or its lanes as elements\n");
+    if (_vvl_arr == 1) {   # 6.7.17 (D103): `return (wa, 3);` read wa's element 0's lane 0
+        PRSTR(" returns '");
+        _vval_pnm(S);
+        PRSTR("', an array of '");
+        _vty_pr(vt);
+        PRSTR("', as a multi-value element - return its pointer, or its lanes as elements\n");
+    } else {
+        PRSTR(" returns vector '");
+        _vty_pr(vt);
+        PRSTR("' (");
+        _vec_desc(S, vt);
+        PRNUM(GVEC_NSLOTS(S) * 8);
+        PRSTR(" bytes) as a multi-value element - return its pointer, or its lanes as elements\n");
+    }
     _err_excerpt(S);
     STI(S, sv);
     _had_error = 1;

@@ -507,6 +507,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
         _arr_named_marks(S, sa_named, _arr_desc_k(S, ew, sgn, ann_ti, ann_ti), asz);   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks; 6.7.8: + the kind, N
+        _lav_set(S, sa_named, ann_ti);   # 6.7.17 (D103): an array of vectors
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -515,6 +516,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
     SVSGN(S, vcnt, _arr_gsgn(S, ew, sgn, ann_ti, ann_ti, asz));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark; 6.7.8: + the kind, N
+    _gav_set(S, vcnt, ann_ti);   # 6.7.17 (D103): an array of vectors
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
@@ -4001,9 +4003,13 @@ fn _tup_elem_bad(S, t0, asid): i64 {
     if (w == 0) {
         if (TOKTYP(S, t0) == 2) { if (GTI(S) == t0 + 1) { w = _tup_wide_name(S, TOKVAL(S, t0)); } }
     }
-    if (w == 0) { if (_vval_at(S, t0, GTI(S)) != 0) { w = 1; } }   # 6.7.17 (D24): `((w), 3)`, `(*pv, 3)`
+    if (w != 1) { if (_vval_at(S, t0, GTI(S)) != 0) {   # 6.7.17 (D24): `((w), 3)`, `(*pv, 3)`
+            w = 1;
+            if (_vvl_arr == 1) { w = 4; }   # 6.7.17 (D103): `(wa, 3)` (an f64v2[1] read as a u128 pair before)
+        } }
     if (w == 0) { return 0; }
     if (w == 1) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a vector", 0 - 1, 0); }
+    elif (w == 4) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not an array of vectors", 0 - 1, 0); }
     elif (w == 2) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a slice", 0 - 1, 0); }
     else { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not u128", 0 - 1, 0); }
     return 1;
@@ -4569,6 +4575,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     S64(_vars_base + vc0 * 8, sz);
     SVSGN(S, vc0, _arr_gsgn(S, ew, sgn, eb, _gai_ann(S, sti), sz_raw));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark; 6.7.8: + the kind, N
     var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
+    _gav_set(S, vc, _gai_ann(S, sti));   # 6.7.17 (D103): an array of vectors
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
     # own `_GVAR_VIS` (whose comment claims to be "the one point EVERY global var
@@ -10616,7 +10623,7 @@ fn _vsc_err(S, a, kind, x, y): i64 {
         PRSTR(" - '");
         if (_vsc_vn == 1) {   # 6.7.17 (D24): a name or `*pv`, as written
             _vval_pnm(S);
-            PRSTR("' is a vector");
+            _vval_kind_pr();   # 6.7.17 (D103): "' is an array of vectors"
         } else {
             PRSTR(S + 0xEC00000 + TOKVAL(S, _vsc_nt));
             PRSTR("' returns a vector");
@@ -11167,7 +11174,8 @@ fn _vop_tyerr(S, a, verb): i64 {
         if (verb == 0) { PRSTR(": vector type does not match the declared type - '"); }
         else { PRSTR(": vector type does not match the assigned variable - '"); }
         _vval_pnm(S);
-        PRSTR("' is a vector\n");
+        _vval_kind_pr();   # 6.7.17 (D103): "' is an array of vectors"
+        PRSTR("\n");
         _err_excerpt(S);
         _had_error = 1;
         _panic = 1;
@@ -11219,8 +11227,11 @@ fn _vasg_vval(S, dt, li, term): i64 {
 # pointer to a vector — `*pv`, `**ppv`, `*gp()`, `*h.pv`, `*(pv + 1)`, `*(&w)` (6.7.13's D34: the vector) — by its
 # tokens (`_hl_pw`, `_amp_vd`); `_vvl_a` / `_vvl_e` the span its refusal names. Else 0. Asked only when some local,
 # parameter or pointer is typed a vector (`_vty_any`). CHANGELOG [6.7.17]
+# 6.7.17 (D103): or the name of an array of vectors (`_vnm_arr`, a local or a global; `_vvl_arr` 1), which reads its
+# element 0's lane 0 as a word.
 var _vvl_a = 0;
 var _vvl_e = 0;
+var _vvl_arr = 0;
 fn _vval_at(S, a0, e): i64 {
     if (_vty_any == 0) { return 0; }
     var a = _ie_unparen(S, a0, e);
@@ -11228,12 +11239,86 @@ fn _vval_at(S, a0, e): i64 {
     if (pe <= a) { return 0; }
     var t = TOKTYP(S, a);
     var vt = 0;
-    if (t == 2) { if (pe == a + 1) { vt = _vnm_lty(S, TOKVAL(S, a)); } }
+    var arr = 0;
+    if (t == 2) { if (pe == a + 1) {
+            vt = _vnm_lty(S, TOKVAL(S, a));
+            if (vt == 0) {   # 6.7.17 (D103): `take(wa)`, wa an array of vectors
+                vt = _vnm_arr(S, TOKVAL(S, a));
+                arr = 1;
+            }
+        } }
     elif (t == 8) { vt = _vval_dref(S, a, pe); }
     if (vt == 0) { return 0; }
     _vvl_a = a;
     _vvl_e = pe;
+    _vvl_arr = arr;
     return vt;
+}
+# ⛔ 6.7.17 (D103, the user's decision, 2026-10-22: "refuse it as D24 refuses a vector local") — AN ARRAY OF VECTORS READ
+# AS A WORD IS REFUSED TOO. A typed array's name read as a word is its element 0 (§ compound assignment), so `var wa:
+# f64v2[2]; take(wa)` passed element 0's lane 0, silently and alike on every target — `take(wa)`, `return wa;` from an
+# `: i64` fn, `var x: i64 = wa;` and `if (wa)` 4, `1 + wa` 5 with wa[0] = (4, 7); a global's the same. D24's readers
+# refuse it now, naming it ("'wa' is an array of vectors"). The element type is recorded at the declaration
+# (PARSE_ARRAY's stack and static paths, the top-level `var g: T[N]`): per local slot (`_lav`, written for every typed
+# array local, so a reused slot keeps no stale answer, and read only while the slot is still that array — no type, a
+# span, its slice word in the array band, `_arr_named_marks`) and per global (`_gav`, a byte as `_gv_vvd`). An untyped
+# `var x = wa;` is unchanged. CHANGELOG [6.7.17]
+var _lav = 0;
+var _gav = 0;
+# The vector element type of the array whose element type is token `ann`, else 0 (a bound type parameter: its binding).
+fn _arr_ann_vt(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 2) { return 0; }
+    var b = _tp_resolve(S, TOKVAL(S, ann));
+    if (b != 0) { return _tn_vec(_tn_from_rc(b)); }
+    return _tn_vec(_tn_resolve_at(S, ann));
+}
+fn _lav_set(S, li, ann): i64 {
+    var vt = _arr_ann_vt(S, ann);
+    if (_lav == 0) {
+        if (vt == 0) { return 0; }
+        _lav = alloc(16384 * 8);
+    }
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (vt != 0) { _vty_any = 1; }
+    S64(_lav + li * 8, vt);
+    return 0;
+}
+fn _gav_set(S, vi, ann): i64 {
+    var vt = _arr_ann_vt(S, ann);
+    if (_gav == 0) {
+        if (vt == 0) { return 0; }
+        _gav = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (vt != 0) { _vty_any = 1; }
+    if (vt == 0) { store8(_gav + vi, 0); } else { store8(_gav + vi, 0 - vt - 2048); }
+    return 0;
+}
+# The vector element type of the array of vectors the name `noff` reads — a local's in a fn, else a global's; 0. A
+# closure's captured array keeps its own rules.
+fn _vnm_arr(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (_lav == 0) { return 0; }
+            if (li >= 16384) { return 0; }
+            if (GLTYPE(S, li) != 0) { return 0; }
+            if (GLSPAN(S, li) == 0) { return 0; }
+            if (GSLICE_W(S, li) > 0 - 0x1000000000000) { return 0; }
+            return L64(_lav + li * 8);
+        }
+        if (_hl_capn(S, noff) == 1) { return 0; }
+    }
+    if (_gav == 0) { return 0; }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    var d = load8(_gav + vi);
+    if (d == 0) { return 0; }
+    return 0 - 2048 - d;
 }
 # The vector type of the name `noff` in a fn: a value-form vector local or parameter, a closure's captured vector; 0.
 fn _vnm_lty(S, noff): i64 {
@@ -11255,6 +11340,12 @@ fn _vval_dref(S, d, pe): i64 {
     if (vd == 0) { vd = _amp_vd(S, d + 1, pe); }
     if (vd == 0) { return 0; }
     return 0 - vd;
+}
+# ... and what it is, closing its quote: "' is a vector", or (6.7.17, D103) "' is an array of vectors".
+fn _vval_kind_pr(): i64 {
+    if (_vvl_arr == 1) { PRSTR("' is an array of vectors"); }
+    else { PRSTR("' is a vector"); }
+    return 0;
 }
 # The span `_vval_at` read, as the source spells it, on stderr.
 fn _vval_pnm(S): i64 {
@@ -12428,6 +12519,7 @@ fn _vtop_ref(S, st, ann): i64 {
 # CHANGELOG [6.7.17]
 fn _vtop_vval(S, st): i64 {
     if (_vval_at(S, st, _hl_dx_end(S, st, 5)) == 0) { return 0; }
+    if (_vvl_arr == 1) { return 0; }   # D103: `var X = GA;` of an array of vectors is unchanged
     _vop_done = _vvl_a;   # its one refusal (D100 / D24's readers stand down)
     if (_panic == 1) { return 1; }
     if (_derr_seen(_vvl_a, "_vtop_vval", 0, 0) == 1) { return 1; }

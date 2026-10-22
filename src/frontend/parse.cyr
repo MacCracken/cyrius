@@ -1494,6 +1494,7 @@ var _mixed_warned = 0;
 # 6.7.13: any return value's first token — a whole-call wrap is judged as its call (`_pair_unwrap`),
 # anything but a name is plain. CHANGELOG [6.7.13]
 fn _ret_is_variant(S, a, t): i64 {
+    if (_ret_q_plain(S, t) == 1) { return 1; }   # 6.7.17: `return f(x)?;` is the unwrapped value
     t = _pair_unwrap(S, t);
     if (t < 0) { return 1; }
     if (_pc_mchain(S, t) == 1) { return _riv_chain(S, a, t); }   # 6.7.16: a method chain, any receiver
@@ -1515,6 +1516,29 @@ fn _ret_is_variant(S, a, t): i64 {
     }
     if (nt == 5) { if ((fl & 512) != 0) { return 0; } }
     return 1;
+}
+# ⛔ 6.7.17 (met reviewing D26) — `return f(x)?;` RETURNS THE UNWRAPPED VALUE, ONE WORD: 1 = the return value starting
+# at token t holds a `?` outside every bracket before its `;` (`return f(x)?;`, `return (f(x))?;`, `return
+# callptr(&f, x)?;`, `return f(x)? + 1;`). It was read as forwarding f's pair (the call's flag), so a fn whose `?` makes
+# it a pair and whose Ok path returns the unwrapped value — `fn g(): i64 { return f(4)?; }` — built silent and a
+# caller's `var t, v = g();` read the value as the TAG (5, 5 where (0, 5) was meant), where `var v = f(4)?; return v;`
+# warns, as the guide's `?` section says the every-path rule does. CHANGELOG [6.7.17]
+fn _ret_q_plain(S, t): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    while (t < n) {
+        var k = TOKTYP(S, t);
+        if (k == 10 || k == 28 || k == 13) { d = d + 1; }
+        elif (k == 11 || k == 29 || k == 14) {
+            if (d == 0) { return 0; }
+            d = d - 1;
+        } elif (d == 0) {
+            if (k == 5) { return 0; }
+            if (k == 124) { return 1; }
+        }
+        t = t + 1;
+    }
+    return 0;
 }
 # 6.7.16 — `return w.p.m(..)`, `return f(..).m(..)`, `return (*pw).m(..)`: the chain's last method as the tokens resolve
 # it (`_tok_mch_fn`) — a pair, a nullary variant, else plain; unresolved, a `.m(` is unknown (not plain), and a
@@ -1680,7 +1704,8 @@ fn _warn_closure_block(S, k, n, encl, a): i64 {
         elif (t == 124) { if (_tok_q_is_pair(S, a, j) == 1) { pair = 1; } }
         elif (t == 33) {
             var nt = TOKTYP(S, j + 1);
-            if (_tok_call_is_pair(S, a, j + 1) == 1) { pair = 1; }
+            if (_ret_q_plain(S, j + 1) == 1) { if (plain < 0) { plain = j; } }   # 6.7.17: `return f(x)?;`, one value
+            elif (_tok_call_is_pair(S, a, j + 1) == 1) { pair = 1; }
             elif (nt != 5) { if (_ret_is_variant(S, a, j + 1) == 1) { if (plain < 0) { plain = j; } } }
         }
         j = j + 1;
@@ -5484,7 +5509,9 @@ fn _dvec_rcv(S, term, vt, h, nm): i64 {
         return 0;
     }
     if (_vval_at(S, ti, _hl_dx_end(S, ti, term)) != 0) {   # a vector name, wrapped too: copied, or refused by name
-        if (_dvec_name(S, term, vt, h, nm) == 1) { return 1; }
+        if (_vvl_arr == 0) {   # 6.7.17 (D103): an array of vectors is the receive's own refusal
+            if (_dvec_name(S, term, vt, h, nm) == 1) { return 1; }
+        }
     }
     _vrcv_bad(S, ti, vt, term, 1);   # a call of another vector, wrapped or not
     if (_vrcv_other(S, term, vt) == 1) { return 1; }
