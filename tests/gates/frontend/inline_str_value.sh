@@ -179,7 +179,8 @@
 # `**Str` (6.7.16); HD1 `h = *p` into a handle rebinds (6.7.16, D20); HF1 `w.s = *p` into a `Str` field is p (6.7.16); PL1 / PL3 a literal's `*Str` element takes an inline `Str`'s header, PL2 / PL2b / PL2c a frame's refused (6.7.16, D19); PD1 `var u: Str = *pp;` copies (6.7.16, D74); DS1 `*q = *p` stores p (6.7.16, D73); AMP1 `*(&t)` is t, X20-X28 a frame's refused through it, X29 `*(&t) += 1` refused (6.7.16, D71); X30 / X31 a frame's t returned from a fn returning `*Str` refused (6.7.16); FD1 / FD2 an inline `Str` into a `*Str` field
 # / through a `**Str`, X15-X19 a frame's refused there (6.7.16, D19); SH1-SH15 a struct value of another type into a
 # `Str` handle refused, SHK1 its rebind controls, SP1-SP10 / SPK1 the other `Str` slots (6.7.17, D18); NS1 the D19 filed
-# repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19); CMP a handle into the retyped methods builds
+# repro verbatim (10 on every leg), NS2 a `Str` value off the chain refused (6.7.17, D19), NS3 / NS4 a nested element's
+# `*(&t)` refused as t is (6.7.17, D71's rule); CMP a handle into the retyped methods builds
 # byte-identical to the
 # untyped methods on the x86_64, PE, aarch64 and cx compilers; AS1 an inline `Str` in an `async fn` across awaits
 # (x86_64, CYRIUS_ASYNC=1).
@@ -301,6 +302,7 @@
 #   2026-10-22 (6.7.17, D19 `*p` into a nested `Str` leaf; the same scratch-copy method):
 #   y1 `_spi_dsrc` without its `Str` arm           -> RED 18: R1 x7 (the ns_* rows and R_TOP22 — the data word),
 #      (the fix reverted)                             NS1 x7 (50), NS2 x4 (compiled)
+#   y2 `_spi_dsrc` without its `*(&t)` test        -> RED 8: NS3 x4, NS4 x4 (each compiled, the data word carried)
 #   real tree                                       -> GREEN
 #
 # Exit 1 = a row failed (or the compiler is missing); every leg that cannot run says so by name (a SKIP).
@@ -1223,6 +1225,16 @@ row NS2 'struct WI { n; m; }
 struct O2 { v: WI; k; }
 fn go(): i64 { var a = str_from("abcdefg"); var p: *Str = a; var o = O2 { *p, 1, 2 }; return o.k; }'
 refused NS2 "cannot copy '*p' into a struct field of a different struct type: 'v'" "\`O2 { *p, 1, 2 }\`: a \`Str\` value off the first-leaf chain (it carried the data word into v.n)"
+# NS3 / NS4 (6.7.17, met in the D19 bite): `*(&t)` of an inline `Str` is t (6.7.16's D71), so as a nested element it is
+# refused as `O { t, 1, 2 }` is, named at t; it carried t's data word into the field's first leaf, silently.
+row NS3 'struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn go(): i64 { var t: Str = Str { "abcdefg", 7 }; var o = O { *(&t), 1, 2 }; return o.m; }'
+refused NS3 "cannot copy 't' into a struct field of a different struct type: 'v'" "\`O { *(&t), 1, 2 }\` of a frame's t"
+row NS4 'struct WS { s: Str; n; }
+struct O { v: WS; m; }
+fn go(): i64 { var o = O { (*&gt), 1, 2 }; return o.m; }'
+refused NS4 "cannot copy 'gt' into a struct field of a different struct type: 'v'" "\`O { (*&gt), 1, 2 }\` of an inline global"
 
 # --- CMP: a Str HANDLE passed to the five retyped methods compiles byte-identical to the untyped methods ---
 rows=$((rows + 1))
@@ -1281,7 +1293,7 @@ if [ -f lib/async.cyr ]; then
     runs AS1 177 "an async fn: f(t) and var h: Str = t across awaits (1*100 + 7*10 + 7)" "x86_64:CYRIUS_ASYNC=1"
 else echo "  SKIP AS1: no lib/async.cyr"; skips=$((skips + 1)); fi
 
-FLOOR_ROWS=117   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19); 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
+FLOOR_ROWS=119   # 6.7.17: + SH1-SH15, SHK1, SP1-SP10, SPK1 (D18), NS1, NS2 (D19), NS3, NS4; 6.7.16: + PP1 (2 rows), + HD1 (2 rows, D20), + X15-X19 / FD1 / FD2 (7 rows, D19), + SD2, + HF1 (2 rows), + PL1-PL3 (5 rows), + PD1 (D74), + DS1 (2 rows, D73), + X20-X29 / AMP1 (12 rows, D71), + X30 / X31; the floor is the count that runs
 [ "$rows" -ge "$FLOOR_ROWS" ] || bad "only $rows rows ran (floor $FLOOR_ROWS) — rows were lost"
 echo "  $rows rows, $fails failed, $skips skipped"
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G ($fails)"; exit 1; fi

@@ -3258,6 +3258,7 @@ fn _spi_dsrc(S, ft, fnm): i64 {
     var ti = GTI(S);
     var e = _slit_eend(S, ti);
     if (e < 0) { return 0; }
+    if (_istr_at(S, ti, e) != 0) { return _spi_dref_t(S, fnm); }   # 6.7.16's D71: `*(&t)` is t
     var ps = _hl_dstar_e(S, ti, e, 1);
     if (ps <= 0) { return 0; }
     if (ps == _STR_SID(S)) { return _spi_dstr(S, ft, ti, e, fnm); }   # 6.7.17 (D19)
@@ -3267,6 +3268,15 @@ fn _spi_dsrc(S, ft, fnm): i64 {
     _spi_ps = ps;
     _spi_pn = 0;
     return 1;
+}
+# ⛔ 6.7.17 — `*(&t)` OF AN INLINE `Str` t AS A NESTED STRUCT FIELD'S ELEMENT IS t (6.7.16's D71: `*(&t)` is t wherever a
+# `Str` value is taken), so it is refused by name as `O { t, 1, 2 }` is (*cannot copy 't' into a struct field of a
+# different struct type: 'v'*): it was t's data word carried into the field's first leaf, silently — a frame's header
+# address, had it been taken, would outlive the frame. (Only the `*(&NAME)` form reaches here: a name is `_spi_name`'s.)
+fn _spi_dref_t(S, fnm): i64 {
+    _fsc_type_err(S, TOKVAL(S, _istr_ti), fnm);
+    PCMPE(S);
+    return 4;
 }
 # ... refused by name, the element parsed (4: the whole field).
 fn _spi_dref(S, fnm): i64 {

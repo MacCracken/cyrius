@@ -3734,7 +3734,9 @@ a global's, through a `*W`, nested, a for step, at top level; `**pp` too), a lit
 from a fn returning `Str` store or return p (since 6.7.16; through 6.7.15 the header's data word), and so does a
 NESTED literal's `Str` leaf — `O { *p, 1, 2 }` with O's first field a `WS { s: Str; n; }` stores p in `o.v.s` (since
 6.7.17, the user's decision D19, 2026-10-22; through 6.7.16 the data word), while a `Str` value whose nested field opens
-with no `Str` leaf is refused by name, as a `Str` name there is. `*(&t)` of an inline `Str` is `t` in each of these positions (6.7.16, D71: see *A dereference of an address-of is the struct it names*). An
+with no `Str` leaf is refused by name, as a `Str` name there is — and so is `*(&t)` of an inline `Str` as a nested
+element (`O { *(&t), 1, 2 }` is refused naming t, as `O { t, 1, 2 }` is; through 6.7.16 t's data word was carried into
+the first leaf). `*(&t)` of an inline `Str` is `t` in each of these positions (6.7.16, D71: see *A dereference of an address-of is the struct it names*). An
 untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
 are `Str` handles: `t = if (c) { a } else { b };` stores the chosen handle's address into `t.data` and leaves `t.len`
 (with the warning *assigning non-pointer to typed pointer*), since an if-expression's value is untyped, as for every
