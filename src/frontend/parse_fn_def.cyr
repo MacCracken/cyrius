@@ -5092,8 +5092,16 @@ fn _gs_cb_ex(S, fi, k, w): i64 {
 # ... the argument at token a of a parameter `*` d times then U (d >= 1): 1 when it is `&v` of a name declared `*`
 # d - 1 times then one of fi's type parameters (at d = 1, `&v` of any value of one: `_gs_vkind`), or a name declared
 # with d stars then one, whole.
+# ⛔ 6.7.17 — A WRAP CARRIES WHAT IT WRAPS HERE TOO. The parser binds a whole argument through its parentheses (the
+# guide: `g((h))` is `g(h)`), but the stub scan's argument readers took the first token as the value: `vb((x))`,
+# `p.pick((t))`, `gx((b))` forwarded nothing, so a generic forwarding T only so kept its i64 base and was refused at
+# the definition naming the callee, called or not (`vb(x)` made it a stub); `var r = idp((&x));` /
+# `var r = gvb((b));` left r untyped ("no struct type in scope for 'r'" at `r.b`, as `idp(&x)` / `gvb(b)` did not).
+# `_gs_arg_named`, `_gs_carries` (parse_fn.cyr), this reader and `_gs_cb_carr` read inside the wrap. CHANGELOG [6.7.17]
 fn _gs_cb_pp(S, fi, a, d, dep): i64 {
     var st = 0;
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0; }
     if (TOKTYP(S, a) == 27) {
         if (d == 1) { if (_gs_vkind(S, fi, a + 1, dep + 1) == 1) { return 1; } return 0; }
         a = a + 1;
@@ -5122,6 +5130,8 @@ fn _gs_cb_carr(S, fi, g, o, f): i64 {
     if (go < 0) { return 0; }
     var gn = TOKVAL(S, go + ((f >> 10) & 1023));
     var a = _call_arg_for(S, g, o, (f & 255) - 1);
+    if (a < 0) { return 0; }
+    a = _pwrap_in(S, a);   # 6.7.17: `gvb((b))` (`_gs_cb_pp`'s note)
     if (a < 0) { return 0; }
     if (TOKTYP(S, a) == 27) { a = a + 1; }
     if (TOKTYP(S, a) != 2) { return 0; }

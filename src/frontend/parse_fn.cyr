@@ -15784,6 +15784,8 @@ fn _gs_arg_carries(S, fi, cfi, open, k, mth): i64 {
 # itself a carrier instance (`outer(b)`, `b: Box<Pt>`), so the forwarder is a stub as `gx` is. CHANGELOG [6.7.15]
 fn _gs_carries(S, fi, a, dep): i64 {
     if (dep > 8) { return 0; }
+    a = _pwrap_in(S, a);   # 6.7.17: `gx((b))`, `gx(mk1((x)))` — a wrap carries what it wraps (`_gs_cb_pp`'s note)
+    if (a < 0) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
     if (nt == 31 || nt == 11) {
@@ -15969,6 +15971,8 @@ fn _gs_targs_fwd(S, fi, j): i64 {
 fn _gs_arg_named(S, cfi, open, k, mth): i64 {
     if (k <= mth) { return 0; }
     var a = _call_arg_pk(S, cfi, open, k - 1, k - 1 - mth);
+    if (a < 0) { return 0; }
+    a = _pwrap_in(S, a);   # 6.7.17: `vb((x))`, `p.pick((t))` (`_gs_cb_pp`'s note)
     if (a < 0) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
