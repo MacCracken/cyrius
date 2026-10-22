@@ -3393,14 +3393,24 @@ fn _pps_of_pin(S, pin): i64 {
 # words. An untyped pointer, `0`, a pointer of another depth and a pointer to the declared struct pass. Every call's
 # argument loop (`_arg_push_snap`: a call, a method's arguments, a named one, a tail call — a generic instance's
 # parameters are its own) and an operator's right operand (`_op_arg_check`). 1 = refused. CHANGELOG [6.7.16]
+# ⛔ 6.7.17 (D10 / D11, the user's decisions, 2026-10-22) — AND INTO A BY-VALUE STRUCT PARAMETER, AND AT ANOTHER DEPTH.
+# `bq(u)` / `bq(&p)` (`u: *Pt`) into `b: Q` copied Pt's bytes as a Q (68), `nc4(&pq)` (a `**Pt`) into `p: *Pt` read
+# pq's slot as the Pt and `nc2(pz)` (a `*Box<i64>`) into `pp: **Box<i64>` read the Box as a pointer (139): a by-value
+# struct takes a pointer of ONE star to its own struct (copied through, 6.7.10's B7-1b), so another struct there is
+# D97's refusal; a pointer whose stars differ from the parameter's (`_pa_derr`, both types named) is refused at every
+# struct parameter. `**pps` (it passes `*pps`), an untyped pointer and `0` are typed no struct pointer: they pass.
+# CHANGELOG [6.7.17]
 fn _pa_chk(S, fi, k, a, e): i64 {
     var sp = _pps_param(S, fi, k);
-    if (sp <= 0) { return 0; }
     var dp = _pps_d;
+    if (sp <= 0) { sp = _pa_bv(S, fi, k); dp = 0; }
+    if (sp <= 0) { return 0; }
     var sa = _pa_sid(S, a, e);
     if (sa <= 0) { return 0; }
     if (sa >= 2048) { return 0; }
-    if (_pa_d != dp) { return 0; }
+    var dw = dp;
+    if (dw == 0) { dw = 1; }   # a by-value struct takes a `*S` of its own struct
+    if (_pa_d != dw) { return _pa_derr(S, fi, sa, sp, dp); }
     if (sa == sp) { return 0; }
     var nm = 0;
     if (_pa_nt >= 0) { nm = TOKVAL(S, _pa_nt); }
@@ -3410,6 +3420,60 @@ fn _pa_chk(S, fi, k, a, e): i64 {
     _sarg_ident_err(S, "cannot pass ", nm, 0 - 1, " to a parameter of a different struct type in a call to ", fi);
     STI(S, sv);
     return 1;
+}
+# The struct a BY-VALUE struct parameter `k` of `fi` is declared (its recorded GFPSID: an address-passed struct or
+# tuple, one of 8 B or less, a `Str` handle — no `*`, no untyped `self`, no `dyn`: `&p` forms its object), else 0.
+# CHANGELOG [6.7.17]
+fn _pa_bv(S, fi, k): i64 {
+    if (fi < 0) { return 0; }
+    var ps = GFPSID(S, fi, k);
+    if (ps <= 0) { return 0; }
+    if (ps >= 2048) { return 0; }
+    if (_dyn_is(S, ps) == 1) { return 0; }
+    if (_pptr_param(S, fi, k) == 1) { return 0; }
+    if (_pps_uself(S, fi, k) == 1) { return 0; }
+    return ps;
+}
+# 6.7.17 (D11): the argument `_pa_sid` typed (struct `sa` behind `_pa_d` stars, the span [`_pa_b`, `_pa_e`)) meets the
+# struct parameter `sp` at `dp` stars (0: by value) at another depth — refused at the argument, once, naming it as
+# spelled and both types: "cannot pass '&pq', a '**Pt', to a '*Pt' parameter in a call to 'nc4' - a pointer of another
+# depth". 1.
+fn _pa_derr(S, fi, sa, sp, dp): i64 {
+    var sv = GTI(S);
+    STI(S, _pa_b);
+    if (_err_once(S, ((sa * 31 + sp) * 31 + dp) * 8 + 6) == 0) { STI(S, sv); return 1; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass '");
+    PRSTR(S + 0xEC00000 + _src_span_nm(S, _pa_b, _pa_e, TOKVAL(S, _pa_e - 1)));
+    PRSTR("', a '");
+    _pa_tyname(S, sa, _pa_d);
+    PRSTR("', to a '");
+    _pa_tyname(S, sp, dp);
+    PRSTR("' parameter in a call to '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("' - a pointer of another depth\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _panic = 1;
+    return 1;
+}
+# `d` stars, then struct `sid` as the source spells it (`Box<Pt>`; a generic's base is its i64 binding, `Box<i64>`), on
+# stderr.
+fn _pa_tyname(S, sid, d): i64 {
+    while (d > 0) {
+        PRSTR("*");
+        d = d - 1;
+    }
+    PRSTR(S + 0xEC00000 + _fsn_one(S, sid));
+    if (_sinst_base(sid) > 0) { return 0; }
+    var tp = GSTP(S, sid - 1);
+    if (tp == 0) { return 0; }
+    PRSTR("<i64");
+    if ((tp >> 32) != 0) { PRSTR(", i64"); }
+    PRSTR(">");
+    return 0;
 }
 # The struct parameter `k` of `fi` points through to — a `*S` (GFPSID behind one `*`, `_pptr_param`; an untyped impl
 # `self`, `_pps_uself`), a `**S` / `***S` (GFPPS) — `_pps_d` its stars; else 0 (a by-value struct, a scalar pointer).
@@ -3478,6 +3542,8 @@ fn _pa_amp(S, a, e): i64 {
         _pa_d = 1;
         return t;
     }
+    t = _pa_hamp(S, noff);   # 6.7.17 (D11): `&h` of a handle is a `**S`
+    if (t > 0) { return t; }
     var w = _hl_name_pw(S, noff);
     if (w <= 0) { return 0; }
     if (_ps_pinned(w) == 1) {
@@ -3488,6 +3554,19 @@ fn _pa_amp(S, a, e): i64 {
     t = _hl_psid(S, n, n + 1);
     if (t <= 0) { return 0; }
     _pa_d = 2;
+    return t;
+}
+# ... `&noff` of a struct name that is no `*T` and that `_hl_amp_sid` does not take: a handle (a pointer-mode local,
+# parameter, capture or global; a `Str` one) — its `&` is the slot holding the address, a `**S`, `_pa_d` 2 — or an
+# inline `Str` header (`_pa_d` 1). A tuple or a dyn: 0. CHANGELOG [6.7.17]
+fn _pa_hamp(S, noff): i64 {
+    var t = _hl_name_ty(S, noff);
+    if (t <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    if (_tup_is(S, t) == 1) { return 0; }
+    if (_dyn_is(S, t) == 1) { return 0; }
+    _pa_d = 2;
+    if (_hl_amp_in(S, noff, t) > 0) { _pa_d = 1; }
     return t;
 }
 # ... an if-expression [b, be) (`if` at b, its last `}` ending the span) whose every branch points through as many

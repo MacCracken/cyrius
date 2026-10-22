@@ -715,7 +715,7 @@ if [ "$NG" -lt "$GFLOOR" ]; then echo "FAIL: $G: only $NG rows in $TG (floor $GF
 TP=tests/tcyr/crossos/small_struct_pointer_arg.tcyr
 [ -f "$TP" ] || { echo "FAIL: $G: $TP is missing"; exit 1; }
 NP=$(grep -cE '^[[:space:]]*assert(_[a-z]+)?\(' "$TP")
-PFLOOR=102   # 6.7.14: + the `n + &x` rows
+PFLOOR=100   # 6.7.14: + the `n + &x` rows; 6.7.17 (D10): a_other_8 / a_other_h are refusals (struct_arg_type_refused.sh PV)
 if [ "$NP" -lt "$PFLOOR" ]; then echo "FAIL: $G: only $NP rows in $TP (floor $PFLOOR) — rows were lost"; exit 1; fi
 TQ=tests/tcyr/crossos/small_struct_pointer_copy.tcyr
 [ -f "$TQ" ] || { echo "FAIL: $G: $TQ is missing"; exit 1; }

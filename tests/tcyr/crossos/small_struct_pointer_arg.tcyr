@@ -16,9 +16,10 @@
 # arithmetic on one (`pa + 1`, `pa + i` with `i: i32`); an if-expression whose branches are pointers of
 # one step. Into a free call (not a tail call, and a tail call), a method's argument, a generic
 # (`gw(wp)` into `w: W1<T>`, inferred and explicit), a dyn call, an operator's right operand
-# (`o + sp`, `o + &s`), a closure body, and at top level (the declaration zone and after it). A `*U` of
-# another struct, or a `*i64`, converts as it does over 8 B (6.7.3: a typed pointer converts freely)
-# and is read with the parameter's layout. The callee gets a COPY: its write never reaches the pointee.
+# (`o + sp`, `o + &s`), a closure body, and at top level (the declaration zone and after it). A `*i64`
+# converts as it does over 8 B and is read with the parameter's layout; a `*U` of another struct is refused
+# by name at every size since 6.7.17 (the user's D10: struct_arg_type_refused.sh's PV rows). The callee
+# gets a COPY: its write never reaches the pointee.
 # THE BOUNDARY (no 16 B twin — over 8 B each of these is an address): an UNTYPED value stays the
 # struct's word, as before — an untyped local holding an address, an integer, an i8 / i16 / i32 local
 # or expression of one (their reads carry step 1 for `n + 2`, v6.3.34), an if-expression of them;
@@ -38,8 +39,6 @@ include "lib/assert.cyr"
 
 struct S8 { v; }                     # 8 B
 struct H { v; w; }                   # 16 B — the twin
-struct U8 { u; }                     # 8 B, another type
-struct UH { u; x; }                  # 16 B, another type
 struct XP { p: *S8; q: *H; }
 struct Two8 { a: S8; b: S8; }
 struct TwoH { a: H; b: H; }
@@ -189,8 +188,6 @@ fn a_op_h() {
 }
 fn a_dyn_8() { var z: Z; z.z = 100; var s: S8; s.v = 5; return dk8(&z, &s); }
 fn a_dyn_h() { var z: Z; z.z = 100; var s: H; s.v = 5; s.w = 0; return dkh(&z, &s); }
-fn a_other_8() { var u: U8; u.u = 5; var up: *U8 = &u; return take8(up); }
-fn a_other_h() { var u: UH; u.u = 5; u.x = 0; var up: *UH = &u; return takeh(up); }
 fn a_scal_8() { var x: S8; x.v = 5; var ip: *i64 = &x; return take8(ip); }
 fn a_scal_h() { var x: H; x.v = 5; x.w = 0; var ip: *i64 = &x; return takeh(ip); }
 # A COPY: the callee writes its parameter (5 + 4); the pointee keeps 5.
@@ -420,8 +417,6 @@ assert_eq(a_op_8(), 3535, "an operator's right operand: o + sp, o + &s");
 assert_eq(a_op_8(), a_op_h(), "  = its 16 B twin");
 assert_eq(a_dyn_8(), 105, "a dyn call's argument");
 assert_eq(a_dyn_8(), a_dyn_h(), "  = its 16 B twin");
-assert_eq(a_other_8(), 5, "a *U of another struct converts (read with the parameter's layout)");
-assert_eq(a_other_8(), a_other_h(), "  = its 16 B twin");
 assert_eq(a_scal_8(), 5, "a *i64 converts");
 assert_eq(a_scal_8(), a_scal_h(), "  = its 16 B twin");
 assert_eq(a_copy_8(), 5099, "a copy: the callee's write never reaches the pointee");

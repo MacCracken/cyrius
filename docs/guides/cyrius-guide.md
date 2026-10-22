@@ -2397,7 +2397,8 @@ is read the same way: `((p), 1)` is refused as `(p, 1)` is, and since 6.7.13 so 
 — `(*pp, 1)`, `((*pp), 1)`, `(*gp(), 1)`, `(*w.pp, 1)`, `(*(&p), 1)` — a struct value (the user's decision D2 (a),
 2026-10-15; through 6.7.12 it stored P's first word); `(pp, 1)` and `(pp.a, 1)` are i64s. An argument with NO
 struct type stays accepted: `&p` (an address, as
-`var q: *Q = &p;` is — into a `*S` parameter, since 6.7.16, a pointer to another struct: below), an
+`var q: *Q = &p;` is — into a `*S` parameter since 6.7.16, and into a by-value struct since 6.7.17, a pointer to
+another struct: below), an
 untyped variable (`var u = &p; bq(u)`), a literal, a call returning an
 integer or a pointer, and a fn pointer (`fncall1(&bq, &p)`). Before v6.7.3 only a FIELD into an
 address-passed parameter was checked: every other mismatch compiled clean and the callee read the
@@ -2413,10 +2414,25 @@ reports `cannot pass 'y' to a parameter of a different struct type in a call to 
 an if-expression whose every branch is one, `self` — through a call, a tail call, a method's arguments, a method
 called by its fn name (`Pt_m(&q)`: an untyped `self` is a `*Pt`), a named argument and an operator's right operand,
 at every depth (`**S`, `***S`) and for a generic instance either way (`gb<i64>(&y)` with `p: *Box<T>`). A pointer
-to the declared struct, an untyped pointer (`var u = &p;`, `alloc(..)`), `0` and a pointer of another depth pass.
+to the declared struct, an untyped pointer (`var u = &p;`, `alloc(..)`) and `0` pass.
 Through 6.7.15 every such pointer was passed unchecked and the callee read the other struct at its own offsets
-(`nc1(&y)` returned `y.v.y`, 2, for `y.n`, 9). Into a BY-VALUE struct parameter a typed pointer still converts
-freely (it is copied through, 6.7.10's B7-1b; the user's decision of 2026-10-08).
+(`nc1(&y)` returned `y.v.y`, 2, for `y.n`, 9). Since 6.7.17 (the user's decision D10, 2026-10-22) the same holds
+into a BY-VALUE struct parameter — of any size, a tuple or a `Str` handle: `bq(u)` with `u: *Pt` and `bq(&p)` into
+`fn bq(b: Q)` report `cannot pass 'u' to a parameter of a different struct type in a call to 'bq'`; a pointer to Q
+itself (`bq(&q)`, a `*Q`) is still copied through (6.7.10's B7-1b). From 6.7.3 through 6.7.16 a typed pointer
+converted freely there (the user's decision of 2026-10-08) and the callee read Pt's bytes as a Q (the filed repro:
+68).
+
+⚠ **A pointer of another DEPTH into a struct parameter is refused (6.7.17; the user's decision D11, 2026-10-22).**
+A by-value struct takes a pointer of one star to its struct, a `*S` parameter one star, a `**S` two: `nc4(&pq)` or
+`nc4(pp)` (a `**Pt`) into `p: *Pt` reports `cannot pass '&pq', a '**Pt', to a '*Pt' parameter in a call to 'nc4' - a
+pointer of another depth`, and so do `nc2(pz)` (a `*Box<i64>`) into `pp: **Box<i64>`, `bv(&pq)` into a by-value
+`Pt` (`to a 'Pt' parameter`) and `&h` of a handle (`var h: Pt = alloc(16);` — its `&` is the slot holding the
+address, a `**Pt`; a `Str` handle's `&s` a `**Str`) — the argument named as the source spells it, both types
+written out, at every source and path the pointee check above reads. A pointer of the parameter's depth passes, as do
+`*pp` (a `*Pt`) and `**pp` (the struct value, whose address a `*Pt` takes), an untyped pointer and `0`. Through
+6.7.16 a pointer of another depth passed: `nc4(&pq)` read pq's slot as the Pt (`p.x` was p's address) and `nc2(pz)`
+read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows).
 
 ⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
 (a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is
@@ -2441,8 +2457,8 @@ address is no struct value: `ri(&w + 0)`, a `*Pt` field `ri(w.p)`, a `: *Pt` cal
 (6.7.10).** `bs1(&s)`, `bs1(sp)` with `sp: *S1`, `bs1(gp())` with `fn gp(): *S1`, `bs1(h.p)` with a
 `*S1` field, `bs1(sp + i)`, and an operator's right operand (`o + sp`, `o + &s`) give `fn bs1(b:
 S1)` a copy of the struct — a `*T` local, parameter, global or capture, in a fn and at top level;
-the callee's writes never reach the pointee. A `*U` of another struct converts, as it always did,
-and is read with the parameter's layout. Since 6.7.11 so do an if-expression whose every branch is a
+the callee's writes never reach the pointee. A `*U` of another struct is refused by name since 6.7.17
+(D10, above; it converted through 6.7.16 and was read with the parameter's layout). Since 6.7.11 so do an if-expression whose every branch is a
 pointer, whatever their steps (`t7(if (c == 1) { py } else { &s })`, `py` beside a `*B4`), and an
 integer on the LEFT of a struct pointer (`t1(m + pb)`, `t1(n + pb)` with `n: i32`, `bs1(n + sp)`) —
 through 6.7.10 those passed the address as the struct; an if-expression of a pointer and a value is

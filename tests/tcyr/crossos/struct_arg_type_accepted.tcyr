@@ -154,6 +154,37 @@ fn d97_untyped() {
 }
 fn u_fnptr() { var q: Q; q.a = 0; q.b = 0; q.c = 4; return fncall1(&bq, &q); }
 
+# 6.7.17 (D10 / D11, the user's decisions, 2026-10-22): a pointer to another struct into a BY-VALUE struct parameter,
+# and a pointer of another depth into any struct parameter, are refused (struct_arg_type_refused.sh PV / PX rows). A
+# pointer to the parameter's own struct at its depth passes — a by-value struct takes one star and copies through it
+# — as do `**pps` / `*pp` (a struct value, a `*Q`), a handle's `&h` (a `**Q`), an untyped pointer and 0.
+fn bvq(b: Q): i64 { return b.a * 100 + b.b * 10 + b.c; }
+fn d10_own() {
+    var q: Q; q.a = 1; q.b = 2; q.c = 3;
+    var pq: *Q = &q;
+    return bvq(&q) + bvq(pq) + bq(pq + 0) + q.cc2() * 0 + Q_cc2(&q);
+}
+fn d11_depth() {
+    var q: Q; q.a = 1; q.b = 2; q.c = 3;
+    var pq: *Q = &q;
+    var ppq: **Q = &pq;
+    var pppq: ***Q = &ppq;
+    return bqp(*ppq) + bqp(**pppq) + bvq(**ppq) + bqpp(*pppq) + bqpp(&pq) + bqppp(&ppq);
+}
+fn d11_handle() {
+    var h: Q = alloc(24); h.a = 4; h.b = 5; h.c = 6;
+    var s = str_from("abc");
+    var ps: *Str = s;
+    return bqpp(&h) + bqp(h) + sl(ps) * 1000;
+}
+fn ok0(p: *Q): i64 { if (p == 0) { return 7; } return 1; }
+fn d11_untyped() {
+    var q: Q; q.a = 3; q.b = 2; q.c = 1;
+    var pq: *Q = &q;
+    var u = &pq;
+    return bqpp(u) + bvq(&q) * 0 + ok0(0) * 1000;
+}
+
 # A `Str` handle parameter: a Str local and a Str-returning call.
 fn h_str() { var s = str_from("abcde"); return sl(s) * 10 + sl(str_from("ab")); }
 
@@ -205,6 +236,10 @@ assert_eq(d97_tl(), 123, "D97: a *Q parameter forwarded in tail position");
 assert_eq(d97_generic(), 888, "D97: *Box<T> / **Box<T> bind Pt from &b, gpb<Pt>(&b)");
 assert_eq(d97_untyped(), 777, "D97: an untyped pointer and alloc() still pass");
 assert_eq(h_str(), 52, "a Str local and a Str call into s: Str");
+assert_eq(d10_own(), 375, "D10: &q, a *Q, pq + 0 into b: Q and Q_cc2(&q) copy through their own Q");
+assert_eq(d11_depth(), 738, "D11: *ppq, **pppq, **ppq, *pppq, &pq, &ppq at their own depth");
+assert_eq(d11_handle(), 3912, "D11: &h of a handle into **Q, h into *Q, a *Str into s: Str");
+assert_eq(d11_untyped(), 7321, "D11: an untyped pointer and 0 still pass");
 
 var r = assert_summary();
 syscall(60, r);
