@@ -548,6 +548,7 @@ fn _tl_stray_brace(S): i64 {
 # forks with an object writer (main.cyr, main_win.cyr): there `object;` selects mode 3;
 # elsewhere it is not a declaration and ends the scan ("unexpected object"). CHANGELOG [6.6.17]
 fn _tl_pass1(S, objok): i64 {
+    _eb_begin();      # 6.7.17: the parse's diagnostics held until its end, then printed in source order (util.cyr)
     _dyn_fold(S);     # 6.7.8: `dyn X` -> one identifier token, BEFORE any prepass records an index
     _dl_inner_fill(S);   # 6.7.16: the names a declaration in a fn body or a block declares, before any use is read
     _tr_prepass(S);   # 6.7.0 (A1/A2): every trait and impl, before the first method is registered
@@ -1307,12 +1308,19 @@ fn _dl_pw_end(S): i64 {
     if (PEEKT(S) != 12) { return 0; }
     _pp_done = 1;
     if (_gvi_done == 0) { return 0; }
-    return _dl_pw_flush(S);
+    return _dl_pw_fin(S);
 }
 fn _dl_pw_late(S): i64 {
     _gvi_done = 1;
     if (_pp_done == 0) { return 0; }
-    return _dl_pw_flush(S);
+    return _dl_pw_fin(S);
+}
+# The last parse's end: the inner declarations said, then the parse window's diagnostics written in source order
+# (util.cyr `_eb_end`). CHANGELOG [6.7.17]
+fn _dl_pw_fin(S): i64 {
+    _dl_pw_flush(S);
+    _eb_end();
+    return 0;
 }
 fn _dl_pw_flush(S): i64 {
     if (_dlpd == 0) { return 0; }
@@ -1383,6 +1391,7 @@ fn _unp_due(i): i64 {
     return 1 - _unp_in(_unp_dv, vec_get(_unp_v, b + 4));
 }
 fn _unp_run(S): i64 {
+    _eb_end();   # 6.7.17: the parse window ended by now (`_dl_pw_fin`); every fork calls this after its parse
     if (_unp_v == 0) { return 0; }
     var ol = L64(S + 0x1903F8);
     var he = _had_error;

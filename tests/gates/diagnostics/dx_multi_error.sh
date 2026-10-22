@@ -233,6 +233,67 @@ cascade_legs Z12 3 'fn h(): i64 { return 1; }\nvar a = 1;\nvar c, b = h();\nsysc
 KENV=CYRIUS_ELF64_KERNEL=1
 cascade Z13 3 'kernel;\n'"$ZG"'var p = g(1 2);\nsyscall(60 0);\nsyscall(60 1);\n' "3:13: expected ')', got number 2" "4:12: expected ')', got number 0" "5:12: expected ')', got number 1"
 KENV=
+# ZO1-ZO9 (6.7.17, issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md) — THE PARSE'S DIAGNOSTICS PRINT
+#     IN SOURCE ORDER. The parse is several walks — pass 1 refuses a declaration as it registers it, pass 2 parses the fn
+#     bodies, the declaration zone's initializers are parsed by the replay after both (a `kernel;` build's after the
+#     program) — and each printed as it went: `var p = g(1 2);` then `const X;` printed 3:8 before 2:13. The parse now
+#     HOLDS its diagnostics and prints them sorted by their head's token (a stable sort; util.cyr `_eb_end`). `ordered`
+#     names every `error` / `warning` / note / hint line in the order it must print. ZO1 the filed repro verbatim; ZO2 a
+#     pass-2 fn body after a zone entry's error; ZO3 an annotation refusal between two zone errors; ZO4 a `kernel;`
+#     build's statements and fn against the replay after them (CYRIUS_ELF64_KERNEL=1, as Z13); ZO5 a record's note moves
+#     with it (K12's for step after a zone error); ZO6 a warning rides too (pass 2's typed-pointer warning after a zone
+#     error); ZO7 CYRIUS_DIAG_UNBUFFERED=1 prints the old order (ZO1's source: 3:8 first); ZO8 an exit mid-parse writes
+#     what is held first (pass 1's struct-layout warning, then the unmatched `}` that stops the compile: `_die`); ZO9 a
+#     compiler FAULT mid-parse (a 64 KiB stack, a 1000-deep expression) writes what is held and dies of the fault (rc
+#     139; `_eb_fault`, Linux). Each on the x86_64, aarch64, cx and PE compilers built from this tree.
+#     RED on e3d59ddc1 (before the holding): ZO1-ZO6 on every leg (the old order). `_die` without its `_eb_end`: ZO8
+#     (the warning lost). `_eb_arm` returning at once: ZO9 (nothing printed). `_eb_begin` ignoring the switch: ZO7.
+ordered() {
+    _ol=$1; _ow=$2; _of=$3; shift 3
+    printf '%b' "$_of" > "$T"
+    rc=0; timeout 30 env ${KENV:-} "${KCC:-$CC}" < "$T" > "$O" 2>"$E" || rc=$?
+    [ "$rc" -eq "$_ow" ] || { echo "FAIL: $_ol: rc $rc, want $_ow"; cat "$E"; kfail=$((kfail + 1)); return 0; }
+    grep -E '^(error|warning)|^  (note|hint)' "$E" > "$O.got" || true
+    _on=$(wc -l < "$O.got")
+    [ "$_on" -eq "$#" ] || { echo "FAIL: $_ol: $_on line(s), want $#:"; cat "$O.got"; kfail=$((kfail + 1)); return 0; }
+    _oi=0
+    for _oh in "$@"; do
+        _oi=$((_oi + 1))
+        sed -n "${_oi}p" "$O.got" | grep -qF -- "$_oh" || { echo "FAIL: $_ol: line $_oi is not '$_oh':"; cat "$O.got"; kfail=$((kfail + 1)); return 0; }
+    done
+    return 0
+}
+ordered_legs() {
+    _zl=$1; shift
+    for _lg in x86 a64 cx pe; do
+        case $_lg in x86) KCC=$CC ;; a64) KCC=$A64C ;; cx) KCC=$CX ;; pe) KCC=$PEC ;; esac
+        ordered "$_zl $_lg" "$@"
+    done
+    KCC=
+}
+ZR='fn g(): i64 { return 1; }\nvar p = g(1 2);\nconst X;\nvar q = 3;\nsyscall(60, 0);\n'
+UV="undefined variable"
+ordered_legs ZO1 1 "$ZR" "error:<source>:2:13: expected ')', got number 2" "error:<source>:3:8: expected '=', got ';'"
+ordered_legs ZO2 1 'var g = 1;\nvar h = zz;\nfn f(): i64 { return zz1; }\nsyscall(60, 0);\n' "error:<source>:2:9: $UV 'zz'" "error:<source>:3:22: $UV 'zz1'"
+ordered_legs ZO3 1 'var p = zz;\nvar q: Nope = 3;\nvar r = zz2;\nsyscall(60, 0);\n' "error:<source>:1:9: $UV 'zz'" "error:<source>:2:8: unknown type 'Nope' for variable 'q'" "  note: a type is i8..i64" "error:<source>:3:9: $UV 'zz2'"
+KENV=CYRIUS_ELF64_KERNEL=1
+ordered ZO4 1 'kernel;\nvar p = zz;\nvar q = 1;\nq = zz3;\nfn f(): i64 { return zz4; }\n' "error:<source>:2:9: $UV 'zz'" "error:<source>:4:5: $UV 'zz3'" "error:<source>:5:22: $UV 'zz4'"
+KENV=
+ordered_legs ZO5 1 "$ZG"'var p = g(1 2);\nfn go(): i64 {\n    var i = 0;\n    for (i = 0; i < 3; g()) { i = i + 1; }\n    return i;\n}\nsyscall(60, go());\n' "error:<source>:2:13: expected ')', got number 2" "error:<source>:5:25: expected '=', got '('" "  note: a for step is an assignment"
+ordered_legs ZO6 1 'var p = zz;\nfn f(): i64 { var q = 5; var r: *i64 = q; return 0; }\nsyscall(60, f());\n' "error:<source>:1:9: $UV 'zz'" "warning:<source>:2:41: assigning non-pointer to typed pointer"
+KENV=CYRIUS_DIAG_UNBUFFERED=1
+ordered_legs ZO7 1 "$ZR" "error:<source>:3:8: expected '=', got ';'" "error:<source>:2:13: expected ')', got number 2"
+KENV=
+ordered_legs ZO8 1 'struct A { x; }\nstruct A { y; }\n}\n' "warning:<source>:2:8: struct 'A' redefined with a different layout" "error:<source>:3:1: unmatched '}' at module scope" "  hint: if it was meant to close a fn or block"
+ZD=$(awk 'BEGIN { s = ""; for (i = 0; i < 1000; i++) s = s "("; printf "%s1", s; for (i = 0; i < 1000; i++) printf ")" }')
+for _lg in x86 a64 cx pe; do
+    case $_lg in x86) KCC=$CC ;; a64) KCC=$A64C ;; cx) KCC=$CX ;; pe) KCC=$PEC ;; esac
+    printf 'const X;\nfn f(): i64 { return %s; }\nsyscall(60, f());\n' "$ZD" > "$T"
+    rc=0; ( ulimit -s 64; ulimit -c 0; timeout 30 "$KCC" < "$T" > "$O" 2>"$E" ) 2> /dev/null || rc=$?
+    if [ "$rc" -ne 139 ]; then echo "FAIL: ZO9 $_lg: rc $rc, want 139 (the compiler's fault on a 64 KiB stack)"; head -3 "$E"; kfail=$((kfail + 1))
+    elif ! grep -q "^error:<source>:1:8: expected '=', got ';'" "$E"; then echo "FAIL: ZO9 $_lg: the held error was lost at the fault:"; cat "$E"; kfail=$((kfail + 1)); fi
+done
+KCC=
 # G1-G2 (6.7.16, met beside issues/archived/2026-10-20-wide-struct-if-expression-branch-refusal-cascades-at-variable-use.md) —
 #     AN UNINITIALIZED VECTOR GLOBAL IN THE ZONE IS ONE ERROR. G1 `var V: f64v2;` was two errors at 1:13: pass 1's
 #     "vector global 'V' takes no initializer but 0" (for no initializer at all) and the replay's "uninitialized
@@ -310,12 +371,12 @@ else chmod +x "$O"; rc=0; "$O" || rc=$?; [ "$rc" -eq 33 ] || { echo "FAIL: F13: 
 printf 'struct W { p: Other; n; }\nfn f(): i64 { var w: W; return w.p.a.b + w.p.c; }\nvar r = f();\n' > "$T"
 rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
 grep -q "is not a struct: it has no field" "$E" && { echo "FAIL: F14: --syntax-only refused a sibling struct's field chain:"; cat "$E"; kfail=$((kfail + 1)); }
-[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, G1-G2, L1-L13, F1-F14, D1-D11)"; exit 1; }
+[ "$kfail" -eq 0 ] || { echo "FAIL: dx_multi_error: $kfail cascade row(s) red (K1-K16, KT1-KT4, Z1-Z13, ZO1-ZO9, G1-G2, L1-L13, F1-F14, D1-D11)"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
 [ -s "$O" ] || { echo "FAIL: valid program emitted no output"; exit 1; }
 
-echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), valid emits"
+echo "PASS: dx multi-error — N>=2 errors, no output on error, no crash/hang on garbage, truncated input bounded (<=200 lines, no watchdog), error-then-emit does not fault (x86 + cx), one mistake one error (K1-K16; a list ending \`,)\` KT1-KT4), one error per declaration-zone declaration (Z1-Z8), the zone's last latch released for the first statement on x86_64 / aarch64 / cx / PE and in a kernel build (Z9-Z13), the parse's diagnostics in source order, held through an exit and a fault (ZO1-ZO9), an uninitialized vector global in the zone one error (G1-G2), a struct literal whose name is nothing one error at the name (L1-L13), a \`.name\` past a field that is no struct one error in its own words (F1-F14), a stray \`)\` / \`]\` at the top level is its own error (D1-D5), a refused signature over an empty body ends at its \`}\` (D6-D11), valid emits"
 exit 0

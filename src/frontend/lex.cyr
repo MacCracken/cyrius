@@ -245,6 +245,7 @@ fn FM_SITE(S, expanded_line): i64 {
 }
 
 fn FM_LOOKUP(S, expanded_line): i64 {
+    _eb_at(S, expanded_line);   # 6.7.17: a diagnostic's head keys its record (util.cyr `_eb_put`)
     var foff = FM_SITE(S, expanded_line);
     if (foff >= 0) {
         var fptr = S + 0x721000 + foff;
