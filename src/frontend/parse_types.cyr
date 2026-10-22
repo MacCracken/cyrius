@@ -380,6 +380,37 @@ fn _ngt_refuse(S, nti): i64 {
     if (tail == 0) { return _ngt_hread(S, nti); }
     return _ngt_say(S, nti, tail);
 }
+# 6.7.17 (D102) — under CYRIUS_MONOMORPH=0 a generic's (or a handle's) list is stepped unread, so a name in it that
+# takes no type arguments given some — `Box<Pt<i64>>`, `Box<i64<u8>>`, `Result<Pt<i64>, i64>`, a type parameter's
+# `Box<U<i8>>` — compiled where the default build's reader refuses it at that name. Each such name in the list (any
+# depth) is refused with those words, once (`_ngt_say` / `_tp_targs_refuse`); the caller steps the list as before.
+# Name token `nti`, its `<` next. CHANGELOG [6.7.17]
+fn _ngt_fl_args(S, nti): i64 {
+    var e = _tok_targs_close(S, nti + 2);
+    if (e < 0) { return 0; }
+    var j = nti + 2;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { if (TOKTYP(S, j + 1) == 19) {
+                if (_ngt_union_q(S, j) == 0) { if (_tp_targs_refuse(S, j) == 0) {
+                        var tail = _ngt_tail(S, j);
+                        if (tail != 0) { _ngt_say(S, j, tail); }
+                    } }
+            } }
+        j = j + 1;
+    }
+    return 0;
+}
+# 6.7.17 (D102) — 1 when a struct named `noff` is declared with a `<..>` (`struct NAME <`, anywhere in the file).
+fn _struct_gen_tok(S, noff): i64 {
+    _dlx_build(S);
+    var i = 0;
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
+        if (TOKTYP(S, k) == 40) { if (TOKTYP(S, k + 2) == 19) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } } }
+        i = i + 1;
+    }
+    return 0;
+}
 # 6.7.17 (D5) — 1 when the name at token `nti` (its `<` next) is a union declared with a `<..>`: that declaration was
 # refused ("a union takes no type parameters", `_union_tp_refuse`), so a use's list says nothing more — refused
 # quietly (the caller steps it), as a refused third type parameter's uses say nothing (6.7.16's D8).
@@ -427,14 +458,20 @@ fn _tp_here(S, ti): i64 {
 }
 # The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check
 # (`_tr_rt_bad`) knows a return its reader refuses.
+# ⛔ 6.7.17 (the user's D102, 2026-10-22: "refuse them under the flag as the default build does") — under
+# CYRIUS_MONOMORPH=0 this answered 0 for every name (no struct is recorded as generic there), so `fn g(p: Pt<i64>)`,
+# `var v: i64<u8>`, `Color<i64>` and every sibling position compiled with the list stepped, where the default build
+# refuses each. The flag records no type parameter, so a struct is generic by its declaration's tokens there
+# (`_struct_gen_tok`, as a fn is by `_fn_gen_tok`); a scalar's and an enum's answer never depended on the flag.
+# CHANGELOG [6.7.17]
 fn _ngt_tail(S, nti): i64 {
-    if (_MONOMORPH_OK != 1) { return 0; }   # CYRIUS_MONOMORPH=0: no struct is recorded as generic
     if (TOKTYP(S, nti) != 2) { return 0; }
     if (TOKTYP(S, nti + 1) != 19) { return 0; }
     var noff = TOKVAL(S, nti);
     var sid = FINDSTRUCT(S, noff);
     if (sid > 0) {
-        if (GSTP(S, sid - 1) != 0) { return 0; }
+        if (_MONOMORPH_OK != 1) { if (_struct_gen_tok(S, noff) == 1) { return 0; } }
+        elif (GSTP(S, sid - 1) != 0) { return 0; }
         if (_dyn_is(S, sid) == 1) { return 0; }
         return " is not a generic struct: it takes no type arguments";
     }
@@ -492,7 +529,7 @@ fn _enum_decl_lt(S, noff): i64 {
 fn _ngt_hread(S, nti): i64 {
     if (TOKTYP(S, nti) != 2) { return 0; }
     if (TOKTYP(S, nti + 1) != 19) { return 0; }
-    if (_MONOMORPH_OK != 1) { return 2; }
+    if (_MONOMORPH_OK != 1) { _ngt_fl_args(S, nti); return 2; }   # 6.7.17 (D102)
     var noff = TOKVAL(S, nti);
     if (FINDSTRUCT(S, noff) > 0) { return 0; }
     var np = _ngt_hnp(S, noff);
@@ -4410,8 +4447,7 @@ fn _fld_targ_chk(S, ti): i64 {
 # declared above by `_ngt_refuse`; one declared further down (the reason this reader exists) by its declaration's
 # tokens, as `_fld_targ_chk` reads a generic one. A use re-reads the same tokens silently (`_ptr_tok_sid`).
 fn _fld_ngt(S, ti): i64 {
-    if (_MONOMORPH_OK != 1) { return 0; }
-    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }   # 6.7.17 (D102): under CYRIUS_MONOMORPH=0 too (it returned 0 there)
     if (FINDSTRUCT(S, TOKVAL(S, ti)) > 0) { return _ngt_refuse(S, ti); }
     if (_declared_later_gen(S, TOKVAL(S, ti)) == 1) { return 0; }
     return _ngt_say(S, ti, " is not a generic struct: it takes no type arguments");
@@ -4772,6 +4808,10 @@ fn _tn_slice_gptr(S): i64 {
     if (_MONOMORPH_OK == 1) {
         if (GSTP(S, sid - 1) == 0) { return 0; }
         _targ_chk(S, GTI(S));
+    } else {
+        # 6.7.17 (D102): under CYRIUS_MONOMORPH=0 a non-generic's list is refused (`_ngt_skip`), as the default build's
+        if (_struct_gen_tok(S, TOKVAL(S, GTI(S) - 1)) == 0) { return 0; }
+        _ngt_fl_args(S, GTI(S) - 1);
     }
     SKIP_GENERICS(S);
     return 1;

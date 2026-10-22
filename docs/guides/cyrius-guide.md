@@ -8027,7 +8027,9 @@ type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]` (a gen
 the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
 rest compiled with the list ignored). A tuple element is too — `(i64<u8>, i64)`, `(f64<i32>, ..)`, `(bool<u8>, ..)` in a
 local, a global, a parameter or a field is *'i64' takes no type arguments* at the element's name (6.7.16, the user's
-D93; it compiled with the list ignored). An enum, `Result`, `Option`, `Tagged` and `cstring` take a list by what they
+D93; it compiled with the list ignored). Each of these refusals holds under `CYRIUS_MONOMORPH=0` as well — every
+position, a name inside a generic's own list (`Box<Pt<i64>>`) included, the same line at the same name (6.7.17, the
+user's D102; the flag stepped every list unread, so they compiled there). An enum, `Result`, `Option`, `Tagged` and `cstring` take a list by what they
 declare (6.7.16, the user's D88): one that declares no type parameters — an enum written without `<..>` (declared above
 or below the use), `Option` and `Tagged` (lib/tagged.cyr declares `enum Option: stack`), `cstring`, a program's own
 `enum Result` written without one — given a list (`var e: Color<i64>`, `fn f(p: Option<i64>)`, `s: cstring<i64>`) is

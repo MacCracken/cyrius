@@ -36,15 +36,20 @@
 #   H13 a trait member's walk goes on past a clean `Result<i64, Pt>` / `Gen<i64>` list (a refusal ends it, as D7's):
 #       the next parameter's own "unknown type" line
 #   HX  --syntax-only: H1-H4 and H6-H9 silent, rc 0
-#   M0  CYRIUS_MONOMORPH=0 (no list read or refused, a generic struct its base): a return, a by-value / union field and
-#       a slice element step the list as an annotation does — `fn g(): Result<i64, Pt>`, `f: Box<i64>`, `[Result<i64,
-#       Pt>]` were "expected '{', got '<'", "expected identifier, got '<'", "expected ']', got '<'" (a find repaired in
-#       passing: `_ngt_hread` answers 2 there). Mutant: the commit before (f18d5d0ae) -> RED M0 on every leg
+#   M0  CYRIUS_MONOMORPH=0 (no generic's list read, a generic struct its base): a return, a by-value / union field and
+#       a slice element step a generic's list as an annotation does — `fn g(): Result<i64, Pt>`, `f: Box<i64>`,
+#       `[Result<i64, Pt>]` were "expected '{', got '<'", "expected identifier, got '<'", "expected ']', got '<'" (a find
+#       repaired in passing: `_ngt_hread` answers 2 there). Mutant: the commit before (f18d5d0ae) -> RED M0 on every leg
+#   M0r (6.7.17, the user's D102: "refuse them under the flag as the default build does") a list on a name that declares
+#       none — `c: Color<i64>`, a union's `b: i64<u8>`, an `i64<u8>` return, `slice<Color<i64>>` — was stepped under the
+#       flag too (M0 pinned it); it is the default build's four lines there. Mutant (2026-10-22): the compiler before
+#       (aed26b207) -> RED M0r [x86] / [pe] / [macho] (it compiled; [a64] / [cx] build from the tree)
 #   M0b CYRIUS_MONOMORPH=0 is read before pass 1 by every driver (a find repaired in passing): main_cx.cyr,
 #       main_aarch64_native.cyr and main_aarch64_macho.cyr read it after, so pass 1 ran with the default flag and a
 #       pointer field's `*Color<i64>` / `*Pt<i64>` was refused under the flag on cx and the native aarch64 compiler
 #       (stepped on x86_64, PE, Mach-O x86 and the aarch64 cross compiler); run on the five legs and the native aarch64
-#       compiler under qemu. Mutant: the drivers before (src/main_cx.cyr, src/main_aarch64_native.cyr at 636939df9) ->
+#       compiler under qemu. 6.7.17: D102 refuses that probe in both builds, so pass 1's bound reading is the probe now
+#       (an enum's / a struct's / a fn's unknown bound: refused in pass 1 by default, not read under the flag). Mutant: the drivers before (src/main_cx.cyr, src/main_aarch64_native.cyr at 636939df9) ->
 #       RED M0b [cx] M0b [native]. The aarch64 Mach-O driver runs on macOS only: verified on ecb (the old driver refused
 #       both fields under the flag, the new one compiles the program and it exits 4).
 #   K1-K4 acceptance, run on x86_64, aarch64 (qemu-aarch64), cx (the tree's cxvm) and PE (wine, a private prefix): a
@@ -352,27 +357,40 @@ fn main(): i64 { var h: H; h.g = GB; h.k = 3; return f(h.g) + h.k; }
 syscall(60, main());
 ' 5
 
-echo "M0 — CYRIUS_MONOMORPH=0 reads no list and refuses none: each position steps it ($LEGS):"
+echo "M0 — CYRIUS_MONOMORPH=0 steps a generic's list (a generic struct its base) in each position ($LEGS):"
 CENV=CYRIUS_MONOMORPH=0
-runs M0 "a by-value field Box<i64> / Result<i64, Pt> / Color<i64>, a union field, a Result<i64, Pt> and an i64<u8> return, [Result<i64, Pt>], [*Gen<i64>], slice<Color<i64>> (3 + 1 + 2)" 'include "lib/syscalls.cyr"
+runs M0 "a by-value field Box<i64> / Result<i64, Pt>, a union field, a Result<i64, Pt> return, [Result<i64, Pt>], [*Gen<i64>] (3 + 1 + 2)" 'include "lib/syscalls.cyr"
 include "lib/slice.cyr"
 struct Pt { x; y; }
 struct Box<T> { v: T; n; }
-enum Color { Red, Green }
 enum Gen<T> { GA, GB }
-struct H { f: Box<i64>; r: Result<i64, Pt>; c: Color<i64>; k; }
-union U { r: Result<i64, Pt>; b: i64<u8>; }
+struct H { f: Box<i64>; r: Result<i64, Pt>; k; }
+union U { r: Result<i64, Pt>; b: i64; }
 fn g(): Result<i64, Pt> { return 3; }
-fn h(): i64<u8> { return 1; }
-fn main(): i64 { var hh: H; hh.k = 2; var s: [Result<i64, Pt>] = 0; var t: [*Gen<i64>] = 0; var w: slice<Color<i64>> = 0; return g() + h() + hh.k + slice_len(&s) + slice_len(&t) + slice_len(&w); }
+fn main(): i64 { var hh: H; hh.k = 2; var s: [Result<i64, Pt>] = 0; var t: [*Gen<i64>] = 0; return g() + 1 + hh.k + slice_len(&s) + slice_len(&t); }
 syscall(60, main());
 ' 6
+# 6.7.17 (the user's D102): a list on a name that declares none is refused under the flag as the default build refuses it
+row M0r "CYRIUS_MONOMORPH=0: a by-value field Color<i64>, a union field i64<u8>, an i64<u8> return, slice<Color<i64>> — the default build's four lines" 'include "lib/syscalls.cyr"
+include "lib/slice.cyr"
+enum Color { Red, Green }
+struct H { c: Color<i64>; k; }
+union U { a; b: i64<u8>; }
+fn h(): i64<u8> { return 1; }
+fn main(): i64 { var w: slice<Color<i64>> = 0; return h() + slice_len(&w); }
+syscall(60, main());
+' "${E}4:15: 'Color' $NG
+${E}5:17: 'i64' $NG
+${E}6:9: 'i64' $NG
+${E}7:31: 'Color' $NG"
 CENV=CYRIUS_GATE_NOOP=1
 
 echo "M0b — every driver reads CYRIUS_MONOMORPH before pass 1 ($LEGS, and the native aarch64 compiler under qemu):"
 # main_cx.cyr, main_aarch64_native.cyr and main_aarch64_macho.cyr read it AFTER pass 1, so pass 1 ran with the default
-# flag under CYRIUS_MONOMORPH=0: a pointer field's `*Color<i64>` / `*Pt<i64>` was refused there, stepped on every
-# other driver (a find repaired in passing; the Mach-O driver runs only on macOS — verified on ecb, not here).
+# flag under CYRIUS_MONOMORPH=0 (a find repaired in passing; the Mach-O driver runs only on macOS — verified on ecb, not
+# here). 6.7.17: the probe is pass 1's bound reading — an enum's, a struct's and a fn's unknown bound are refused in
+# pass 1 by default and not read under the flag (D4 / D101) — since D102 refuses the old probe (`*Color<i64>`,
+# `*Pt<i64>`) in both builds.
 M0L="$LEGS"
 if [ "$QEMU" = 1 ] && [ -x "$D/cc_a64" ]; then
     if "$D/cc_a64" < src/main_aarch64_native.cyr > "$D/cc_native" 2> /dev/null && [ -s "$D/cc_native" ]; then chmod +x "$D/cc_native"; M0L="$M0L native"
@@ -380,20 +398,20 @@ if [ "$QEMU" = 1 ] && [ -x "$D/cc_a64" ]; then
 else echo "  SKIP: the native aarch64 compiler leg (qemu-aarch64 not installed)"; skips=$((skips + 1)); fi
 CENV=CYRIUS_MONOMORPH=0
 printf '%s' 'include "lib/syscalls.cyr"
-enum Color { Red, Green }
-struct Pt { x; y; }
-struct H { p: *Color<i64>; q: *Pt<i64>; k; }
-fn main(): i64 { var h: H; h.k = 4; return h.k; }
+enum E<T: Nope> { A }
+struct B<T: Nope2> { v: T; k; }
+fn f<T: Nope3>(x: T): i64 { return x; }
+fn main(): i64 { var b: B<i64>; b.k = 3; return b.k + f(1); }
 syscall(60, main());
 ' > "$D/M0b.cyr"
 for leg in $M0L; do
     o="$D/M0b_$leg"; comp "$leg" "$D/M0b.cyr" "$o"; N=$((N + 1))
     if [ "$CRC" -ne 0 ] || [ ! -s "$o" ] || grep -qE '^(error|warning)' "$o.err"; then
-        bad "M0b [$leg]: CYRIUS_MONOMORPH=0 steps a pointer field's *Color<i64> / *Pt<i64>: rc $CRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"; continue
+        bad "M0b [$leg]: CYRIUS_MONOMORPH=0 reads no bound in pass 1: rc $CRC: $(grep -E '^(error|warning)' "$o.err" | tr '\n' '|')"; continue
     fi
     execute "$leg" "$o"
-    if [ "$XRC" = -1 ]; then ok "M0b [$leg]: CYRIUS_MONOMORPH=0 steps a pointer field's *Color<i64> / *Pt<i64> (compiled; not run: $NOTE)"
-    elif [ "$XRC" = 4 ]; then ok "M0b [$leg]: CYRIUS_MONOMORPH=0 steps a pointer field's *Color<i64> / *Pt<i64> (exit 4)"
+    if [ "$XRC" = -1 ]; then ok "M0b [$leg]: CYRIUS_MONOMORPH=0 reads no bound in pass 1 (compiled; not run: $NOTE)"
+    elif [ "$XRC" = 4 ]; then ok "M0b [$leg]: CYRIUS_MONOMORPH=0 reads no bound in pass 1 (exit 4)"
     else bad "M0b [$leg]: exit $XRC, want 4"; fi
 done
 CENV=CYRIUS_GATE_NOOP=1

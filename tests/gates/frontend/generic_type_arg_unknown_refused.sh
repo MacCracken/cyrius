@@ -1110,5 +1110,110 @@ for f in uc1 uc2 uc3 uc4 uc5 uc6 uc8; do
     else bad "UCX $f: --syntax-only rc $rc: $(grep '^error' "$T/$f.sx" | head -1)"; fi
 done
 
+# ── 6.7.17: under CYRIUS_MONOMORPH=0, as the default build (the user's D102, 2026-10-22) ──────────
+# `fn g(p: Pt<i64>)`, `i64<u8>` and every sibling position compiled under the flag: `_ngt_tail` answered 0 for every
+# name there (no struct is recorded as generic), the local / sizeof / slice reader (`_gen_ann_sid`), the pointer field
+# (`_fld_ngt`) and the slice's pointer element (`_tn_slice_gptr`) asked nothing, and a generic's list was stepped
+# unread. A struct is generic by its declaration's tokens under the flag (`_struct_gen_tok`), and a generic's list is
+# walked for such names (`_ngt_fl_args`).
+# FL  NG's, NR's and NT's programs give under the flag exactly the default build's error lines (the ones with an
+#     explicit call — ng0 ng4 ng6 nr10 nt1, D7's line under the flag — and SR's / PL's, whose other lines judge a
+#     generic's type arguments, which the flag does not read, are left out; their positions are FM's).
+# FM  the remaining positions, one line each in both builds: a literal head, a generic body's `Pt<T>`, a type
+#     argument's `Box<Pt<i64>>` / `Box<i64<u8>>` / a type parameter's `Box<U<i8>>`, `[*Pt<i64>]` / `slice<*Box<Pt<..>>>`,
+#     a trait member's, a `*fn(Box<Pt<..>>)`, a `**Box<Pt<..>>` parameter (the next one's error still its own), an
+#     enum / union / Option / cstring list, `#assert sizeof(Pt<i64>)`, a struct declared below.
+# FLK the controls build under the flag (and FLX runs one on x86_64, aarch64, cx; PE builds); FLA the refusal from the
+#     aarch64, cx and PE compilers under the flag.
+# Mutant (2026-10-22): the compiler before this fix (aed26b207) -> RED every FL row but nt3 (a tuple element's line,
+# read in both builds already), FM fm1-fm7 [mono0] (each built, or its other lines alone) and FLA [pe]; FM [plain],
+# FLK, FLX and FLA [a64] / [cx] (those two compilers build from the tree) green.
+for f in ng1 ng2 ng3 ng5 ng8 nr0 nr1 nr2 nr3 nr4 nr5 nr6 nr7 nr8 nr9 nr11 nr12 nr13 nr14 nt0 nt2 nt3; do
+    [ -f "$T/$f.cyr" ] || { bad "FL $f: no program $T/$f.cyr (its row moved?)"; continue; }
+    rc=0; "$CC" < "$T/$f.cyr" > /dev/null 2> "$T/$f.fd" || rc=$?
+    rf=0; CYRIUS_MONOMORPH=0 "$CC" < "$T/$f.cyr" > /dev/null 2> "$T/$f.ff" || rf=$?
+    d=$(grep '^error' "$T/$f.fd" || true); fl=$(grep '^error' "$T/$f.ff" || true)
+    if [ "$rf" -ne 1 ] || [ "$rc" -ne 1 ] || [ "$d" != "$fl" ]; then bad "FL $f: CYRIUS_MONOMORPH=0 rc $rf [$(echo "$fl" | head -2 | tr '\n' '|')], the default build rc $rc [$(echo "$d" | head -2 | tr '\n' '|')]"
+    else ok "FL $f: CYRIUS_MONOMORPH=0 gives the default build's $(echo "$d" | grep -c '^error' || true) line(s)"; fi
+done
+FMH='include "lib/syscalls.cyr"
+include "lib/tagged.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+enum Color { R, G }
+union W { a; b; }'
+fm() { printf '%s\n%s\nsyscall(60, 7);\n' "$FMH" "$2" > "$T/$1.cyr"; }
+fm fm1 'fn f(): i64 { var p = Pt<i64> { 1, 2 }; return p.y; }'
+fm fm2 'fn h<T>(x: T): i64 { var c: Pt<T>; c.x = 1; return c.x + sizeof(T); }
+fn f(): i64 { var b: Box<Pt>; return h(1) + h(b); }'
+fm fm3 'fn f<U>(u: U): i64 { var a: Box<Pt<i64>>; var b: Box<i64<u8>>; var c: Box<U<i8>>; return 0; }'
+fm fm4 'fn s(): i64 { var a: [*Pt<i64>] = 0; var b: slice<*Box<Pt<i64>>> = 0; return 0; }'
+fm fm5 'trait Sh { fn r(self, a: Box<Pt<i64>>): i64; fn q(self): *Pt<i64>; }
+fn ap(cb: *fn(Box<Pt<i64>>): i64): i64 { return 0; }
+fn pp(p: **Box<Pt<i64>>, q: Nope): i64 { return 0; }'
+fm fm6 'fn e(c: Color<i64>, w: W<i64>, o: Option<i64>, s: cstring<i64>): i64 { return 0; }'
+fm fm7 '#assert sizeof(Pt<i64>) == 16
+fn d(p: Later<i64>): i64 { return 0; }
+struct Later { z; }'
+NGF="'Pt' is not a generic struct: it takes no type arguments"
+for leg in plain mono0; do
+    KENV=""; [ "$leg" = mono0 ] && KENV="CYRIUS_MONOMORPH=0"
+    for row in "fm1|1|7:23: $NGF|a struct literal's head" "fm2|1|7:29: $NGF|a generic body's Pt<T>, two instances — once" \
+        "fm3|3|7:33: $NGF|7:54: 'i64' takes no type arguments|7:75: a type parameter takes no type arguments: 'U'|a type argument's Pt<..> / i64<..> / U<..>" \
+        "fm4|2|7:24: $NGF|7:56: $NGF|[*Pt<..>], slice<*Box<Pt<..>>>" \
+        "fm5|5|7:30: $NGF|7:59: $NGF|8:19: $NGF|9:16: $NGF|9:29: unknown type 'Nope' for parameter 'q'|a trait member's, a *fn(..)'s, a **Box<..> parameter's (the next one's error its own)" \
+        "fm6|4|7:9: 'Color' takes no type arguments|7:24: 'W' is not a generic struct: it takes no type arguments|7:35: 'Option' takes no type arguments|7:51: 'cstring' takes no type arguments|an enum's, a union's, Option's, cstring's list" \
+        "fm7|2|7:16: $NGF|8:9: 'Later' is not a generic struct: it takes no type arguments|#assert sizeof(..), a struct declared below"; do
+        nm=${row%%|*}; r=${row#*|}; n=${r%%|*}; r=${r#*|}
+        rc=0; env $KENV "$CC" < "$T/$nm.cyr" > /dev/null 2> "$T/$nm.$leg.err" || rc=$?
+        k=$(grep -c '^error' "$T/$nm.$leg.err" || true)
+        if [ "$rc" -ne 1 ] || [ "$k" -ne "$n" ]; then bad "FM $nm [$leg]: rc $rc, $k line(s), want $n: $(grep '^error' "$T/$nm.$leg.err" | head -3 | tr '\n' '|')"; continue; fi
+        miss=""; i=1
+        while [ "$i" -le "$n" ]; do
+            l=${r%%|*}; r=${r#*|}
+            grep -qF -- "error:<source>:$l" "$T/$nm.$leg.err" || miss="$miss [$l]"
+            i=$((i + 1))
+        done
+        if [ -n "$miss" ]; then bad "FM $nm [$leg]: missing$miss"; else ok "FM $nm [$leg]: $r"; fi
+    done
+done
+fm flk 'include "lib/vec.cyr"
+struct Q { b: Box<i64>; p: *Box<Pt>; }
+fn f(b: Box<Box<i64>>): i64 { var c: Box<Pt>; var s: [Box<i64>] = 0; var t: [*Box<Pt>] = 0; var v: Vec<Box<Pt>> = 0; var q: Q; q.b.v = 4; return q.b.v + sizeof(Box<i64>); }
+fn main(): i64 { var b: Box<Box<i64>>; return f(b); }'
+sed -i 's/^syscall(60, 7);$/syscall(60, main());/' "$T/flk.cyr"
+rc=0; CYRIUS_MONOMORPH=0 "$CC" < "$T/flk.cyr" > "$T/flk.bin" 2> "$T/flk.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "FLK: CYRIUS_MONOMORPH=0 rc $rc: $(grep '^error' "$T/flk.err" | head -2 | tr '\n' '|')"
+else chmod +x "$T/flk.bin"; got=0; "$T/flk.bin" || got=$?
+    if [ "$got" -eq 20 ]; then ok "FLK: generic lists (Box<i64>, Box<Box<..>>, [Box<..>], [*Box<Pt>], Vec<Box<Pt>>, a field, sizeof) build and run under the flag: exit 20"
+    else bad "FLK: exit $got, want 20"; fi
+fi
+for f in nrk ntk; do   # ngk makes an explicit call: D7's line under the flag
+    [ -f "$T/$f.cyr" ] || { bad "FLK $f: no program"; continue; }
+    rf=0; CYRIUS_MONOMORPH=0 "$CC" < "$T/$f.cyr" > "$T/$f.flb" 2> "$T/$f.ff" || rf=$?
+    if [ "$rf" -eq 0 ]; then ok "FLK $f: the control builds under CYRIUS_MONOMORPH=0"
+    else bad "FLK $f: CYRIUS_MONOMORPH=0 rc $rf: $(grep '^error' "$T/$f.ff" | head -1)"; fi
+done
+A64="$T/cc_a64"; CXC="$T/cc_cx"; CXVM="$T/cxvm"
+if "$CC" < src/main_aarch64.cyr > "$A64" 2> /dev/null && [ -s "$A64" ] && "$CC" < src/main_cx.cyr > "$CXC" 2> /dev/null && [ -s "$CXC" ] \
+   && "$CC" < programs/cxvm.cyr > "$CXVM" 2> /dev/null && [ -s "$CXVM" ]; then
+    chmod +x "$A64" "$CXC" "$CXVM"
+    for leg in a64 cx pe; do
+        case $leg in a64) C="$A64" ;; cx) C="$CXC" ;; pe) C="CYRIUS_TARGET_WIN=1 $CC" ;; esac
+        rc=0; sh -c "CYRIUS_MONOMORPH=0 $C" < "$T/fm6.cyr" > /dev/null 2> "$T/fla.$leg.err" || rc=$?
+        if [ "$rc" -eq 1 ] && [ "$(grep -c '^error' "$T/fla.$leg.err" || true)" -eq 4 ] && grep -qF "error:<source>:7:9: 'Color' takes no type arguments" "$T/fla.$leg.err"; then ok "FLA [$leg]: fm6 under the flag, its four lines"
+        else bad "FLA [$leg]: rc $rc: $(grep '^error' "$T/fla.$leg.err" | head -2 | tr '\n' '|')"; fi
+        rc=0; sh -c "CYRIUS_MONOMORPH=0 $C" < "$T/flk.cyr" > "$T/flx.$leg" 2> "$T/flx.$leg.err" || rc=$?
+        if [ "$rc" -ne 0 ]; then bad "FLX [$leg]: the control under the flag: rc $rc: $(grep '^error' "$T/flx.$leg.err" | head -1)"; continue; fi
+        got=0
+        case $leg in
+            a64) chmod +x "$T/flx.$leg"; timeout 120 qemu-aarch64 "$T/flx.$leg" > /dev/null 2>&1 || got=$? ;;
+            cx)  timeout 120 "$CXVM" < "$T/flx.$leg" > /dev/null 2>&1 || got=$? ;;
+            pe)  got=20 ;;   # built (rc 0); the PE run is the cross-OS leg's
+        esac
+        if [ "$got" -eq 20 ]; then ok "FLX [$leg]: the control under the flag (exit 20, PE built)"; else bad "FLX [$leg]: exit $got, want 20"; fi
+    done
+else bad "FLA: the aarch64 / cx compilers or cxvm did not build from the tree"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16) and at a tuple element (NT, 6.7.16); a generic struct instance declares as a slice element, its list read (NS, 6.7.16); a type argument's name refusal is at the name (NC, 6.7.16); an explicit-generic call of a name that is nothing is \`undefined function\` once, silent under --syntax-only (UC, 6.7.16)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), a struct beside a second type argument runs on every path and a mismatched receive is refused once (K, 6.7.1), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), a bad type argument in a receive is reported once (N), and a struct carrier's T field read as a struct makes the base the stub (CF, 6.7.11), past 64 carriers and T-typed names too (CF7-CF8, 6.7.14), and a forwarder passing its T inside a carrier into a stub is a stub (FC, 6.7.14), its T-typed value whole there too (FC8-FC12, 6.7.15); a type argument that is no name is refused once at its token, by what it is, with no cascade (NN, 6.7.14); \`Name<..>\` whose Name is no type, or a type parameter, is refused once by name (UG, 6.7.14); a signature's generic struct reads its type arguments at the definition (SG, 6.7.14); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name (NG, 6.7.15); a multi-value element, a trait member's signature and a \`*fn(..)\` parameter read theirs too (SR, 6.7.15); a \`**Box<..>\` parameter's refusal leaves the next parameter's error standing (PL, 6.7.16); \`Name<..>\` on a non-generic struct or a scalar is refused once at the name in the positions D6 did not reach too (NR, 6.7.16) and at a tuple element (NT, 6.7.16); a generic struct instance declares as a slice element, its list read (NS, 6.7.16); a type argument's name refusal is at the name (NC, 6.7.16); an explicit-generic call of a name that is nothing is \`undefined function\` once, silent under --syntax-only (UC, 6.7.16); under CYRIUS_MONOMORPH=0 a non-generic's list is refused as the default build refuses it, in every position (FL / FM / FLA, 6.7.17's D102)"
