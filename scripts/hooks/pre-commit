@@ -110,8 +110,11 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
             # tree, as above. 3 MB stays far below a runaway emit. build/cycc-native-aarch64
             # keeps its own band below (the lost-fold backstop; relative to this one since 6.7.11).
             # CHANGELOG [6.7.8]
-            if [ "$size" -lt 700000 ] || [ "$size" -gt 3000000 ]; then
-                _fail "build/cycc size ${size}B outside the expected 700K–3M range — likely contaminated/truncated; refusing commit"
+            # 6.7.16: 3M -> 4M. The wave-4 integration put x86 cycc at 2,822,280 B and the ARM build,
+            # which shares this ceiling, at 3,084,584 B (1.093x; the relative arm below still holds);
+            # raised after `sh scripts/seed-derive-cycc.sh` was GREEN on that tree. CHANGELOG [6.7.16]
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 4000000 ]; then
+                _fail "build/cycc size ${size}B outside the expected 700K–4M range — likely contaminated/truncated; refusing commit"
                 status=1
             fi
             ;;
@@ -156,11 +159,12 @@ for bin in build/cycc build/cc5 build/cycc-native-aarch64 bootstrap/asm; do
             # its size AGAINST x86 cycc: folded it runs ~0.84-0.93x (6.6.18 1,323,072 / 1,582,088;
             # 6.7.11 2,016,960 / 2,168,800), un-folded it ran 1.29x (6.6.17 2,042,184 / 1,582,088).
             # So: at most 1.10x the build/cycc this commit records (the index's blob), under
-            # build/cycc's own 700K-3M band; with no build/cycc in the index, the old fixed 2M.
+            # build/cycc's own 700K-4M band (700K-3M through 6.7.15); with no build/cycc in the index, the old fixed 2M.
             # Pinned by tests/gates/toolchain/precommit_arm_size_band.sh. CHANGELOG [6.7.11]
+            # 6.7.16: under build/cycc's band, 700K-4M since the wave-4 integration. CHANGELOG [6.7.16]
             ref=$(git cat-file -s ":build/cycc" 2>/dev/null || echo 0)
-            if [ "$size" -lt 700000 ] || [ "$size" -gt 3000000 ]; then
-                _fail "$bin size ${size}B outside the expected 700K–3M range — likely contaminated/truncated; refusing commit"
+            if [ "$size" -lt 700000 ] || [ "$size" -gt 4000000 ]; then
+                _fail "$bin size ${size}B outside the expected 700K–4M range — likely contaminated/truncated; refusing commit"
                 status=1
             elif [ "$ref" -gt 0 ] && [ "$size" -gt $((ref * 11 / 10)) ]; then
                 _fail "$bin size ${size}B is over 1.10x build/cycc (${ref}B) — a folded ARM compiler runs below x86 cycc, an un-folded ESYSXLAT build ~1.29x; refusing commit"

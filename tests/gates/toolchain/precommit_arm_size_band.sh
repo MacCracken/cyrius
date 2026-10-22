@@ -9,7 +9,8 @@
 # 2M. 6.7.11: the wave-1 merge grew both compilers past it (x86 2,168,800 B, ARM 2,016,960 B: 0.93x)
 # and the fixed 2M refused that good, seed-derived regeneration — so the ceiling is RELATIVE: at
 # most 1.10x the build/cycc the commit records (the index's blob), under build/cycc's 700K-3M band;
-# with no build/cycc in the index, the old fixed 2M.
+# with no build/cycc in the index, the old fixed 2M. 6.7.16: the absolute ceiling is 4M (the wave-4
+# integration's ARM build is 3,084,584 B beside x86's 2,822,280: 1.093x, folded).
 #
 # Runs a COPY of scripts/hooks/pre-commit inside a throwaway `git init` under mktemp, against a
 # fabricated build/cycc-native-aarch64 (ELF magic + e_machine at offset 18, zero-padded to the
@@ -20,7 +21,8 @@
 #   row 2   ARM 1,323,072 B vs x86 1,582,088 B (6.6.18, folded)          — accepted (anti-vacuous)
 #   row 2b  ARM 2,016,960 B vs x86 2,168,800 B (6.7.11, folded)          — accepted (the fixed 2M refused it)
 #   row 2c  ARM 2,500,000 B vs x86 2,168,800 B (1.15x)                   — REFUSED
-#   row 2d  ARM 3,100,000 B vs x86 2,900,000 B (1.07x, over 3M)          — REFUSED (the absolute ceiling)
+#   row 2d  ARM 4,100,000 B vs x86 3,900,000 B (1.05x, over 4M)          — REFUSED (the absolute ceiling)
+#   row 2f  ARM 3,084,584 B vs x86 2,822,280 B (6.7.16 wave 4, 1.093x)   — accepted (the 3M ceiling refused it)
 #   row 2e  ARM 2,042,184 B, no build/cycc in the index                  — REFUSED (the fixed-2M fallback)
 #   row 3     600,000 B aarch64                                          — REFUSED (lower bound kept)
 #   row 4   1,323,072 B x86_64 e_machine                                 — REFUSED (architecture check kept)
@@ -74,7 +76,8 @@ _row() {
 [ "$(_row 2042184 '\267' 1582088)" != 0 ] || fail "row 1: the 6.6.17 UN-folded 2,042,184 B aarch64 build (1.29x x86) is accepted — the relative ceiling is gone"
 grep -q 'over 1.10x build/cycc' "$T/out" || fail "row 1: the refusal does not name the 1.10x ceiling: $(cat "$T/out")"
 [ "$(_row 2500000 '\267' 2168800)" != 0 ] || fail "row 2c: a 2,500,000 B aarch64 build (1.15x x86) is accepted — the relative ceiling is gone"
-[ "$(_row 3100000 '\267' 2900000)" != 0 ] || fail "row 2d: a 3,100,000 B aarch64 build is accepted — the absolute 3M ceiling is gone"
+[ "$(_row 4100000 '\267' 3900000)" != 0 ] || fail "row 2d: a 4,100,000 B aarch64 build is accepted — the absolute 4M ceiling is gone"
+[ "$(_row 3084584 '\267' 2822280)" = 0 ] || fail "row 2f: the 6.7.16 wave-4 3,084,584 B aarch64 build beside a 2,822,280 B x86 cycc is refused — the ceiling is back under the compiler: $(cat "$T/out")"
 [ "$(_row 2042184 '\267' 0)" != 0 ] || fail "row 2e: a 2,042,184 B aarch64 build with no build/cycc in the index is accepted — the fixed-2M fallback is gone"
 [ "$(_row 600000 '\267' 1582088)" != 0 ] || fail "row 3: a 600,000 B aarch64 build is accepted — the lower bound is gone"
 [ "$(_row 1323072 '\076' 1582088)" != 0 ] || fail "row 4: an x86_64 e_machine in the aarch64 slot is accepted — the architecture check is gone"
@@ -106,4 +109,4 @@ grep -q 'build/cycc is not an ELF' "$T/out" || fail "row 5: the refusal does not
 r=$(_index_row good bad); [ "$r" = 0 ] || fail "row 6: a GOOD staged build/cycc is refused because the working copy is bad — the hook judges the working tree: $(cat "$T/out")"
 r=$(_index_row bad gone); _refused "$r" || fail "row 7: a staged MZ blob commits when the working-tree build/cycc is deleted — a staged artifact is skipped unjudged"
 
-echo "PASS precommit_arm_size_band (build/cycc-native-aarch64: folded 1,323,072 B / 1,582,088 and 2,016,960 B / 2,168,800 accepted; the un-folded 1.29x, 1.15x, over 3M, 2.04M with no build/cycc, 600,000 B and an x86_64 e_machine refused — at most 1.10x build/cycc under 700K–3M; build/cycc judged from the INDEX: staged-bad refused with the working copy good or deleted, staged-good accepted with it bad)"
+echo "PASS precommit_arm_size_band (build/cycc-native-aarch64: folded 1,323,072 B / 1,582,088 and 2,016,960 B / 2,168,800 and 3,084,584 B / 2,822,280 accepted; the un-folded 1.29x, 1.15x, over 4M, 2.04M with no build/cycc, 600,000 B and an x86_64 e_machine refused — at most 1.10x build/cycc under 700K–4M; build/cycc judged from the INDEX: staged-bad refused with the working copy good or deleted, staged-good accepted with it bad)"
