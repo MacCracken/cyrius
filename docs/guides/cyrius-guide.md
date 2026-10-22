@@ -308,7 +308,11 @@ with no type at all — the `=` or `;` right after it — is the same error at t
 `var b: = 0;` is `expected a type for variable 'b', got '='` and reads `= 0` as its initializer;
 `var G: ;` is `... got ';'`, and only that. ⚠ Through 6.7.14 the `=` was read as the type, so the
 error was `expected '=', got number 0` at the initializer, and in the declaration zone `var c: ;
-var d = 2;` compiled with `c` = 2.
+var d = 2;` compiled with `c` = 2. A `*` with no type after it is the same error (6.7.17): `var p: *+ = x;` is
+`expected a type for variable 'p', got '+'`, as a parameter's `p: *+` is (it was *expected identifier, got '+'*; a
+field's `k: *+` keeps that, as `k: +` does). And a declaration whose `*T` annotation is refused — `var p: *Nope = x;`,
+`*fn(Nope)`, `*+` — reports that one error, not also *assigning non-pointer to typed pointer* about its value (6.7.17;
+6.7.11 did so for `*( .. )` only).
 
 ### Arrays: byte vs slot sizing (v6.2.1)
 

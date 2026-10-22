@@ -585,6 +585,43 @@ sgc sgc_meth    "${SG4}"'impl S { fn m(self): i64 { return self.d + 1; } }\nvar 
 rows=$((rows + 19))
 [ "$SGN" -ge 114 ] || { echo "  FAIL: axis 7 (D68) ran $SGN row-legs (floor 114) - rows or legs were lost"; fails=$((fails + 1)); }
 
+# axis 8 (6.7.17) — A REFUSED `*T` ANNOTATION IS ITS DECLARATION'S ONE ERROR: 6.7.11 kept `*( .. )`'s refusal from also
+# warning "assigning non-pointer to typed pointer" about the value; every other refusal of the annotation still did —
+# `var p: *Nope = x;` (and `*fn(Nope)`, 6.7.17's D8), in a fn, the declaration zone and after the first statement
+# (`_ann_said`, `_ptr_refd_ti`, `_tp_warn_gv`). And a variable's `*` with no type after it is D15's refusal: `var p: *+ =
+# x;` was "expected identifier, got '+'" plus the warning (`_ptr_notype`); a field's `k: *+` keeps "expected identifier",
+# as `k: +` does. Mutations (scratch trees with this gate, CYCC= the 2-stage mutant, 2026-10-22): the tree before it
+# (79a311056) -> RED 10: every rp_ row but rp_fld and rp_ctl; `_ptr_annot` not setting `_ptr_refd_ti` -> RED 6: rp_loc_name
+# rp_pp_name rp_loc_fnp rp_loc_notype rp_gen rp_lint (the warning); `_tp_warn_gv` not asking `_ann_said` -> RED 3:
+# rp_dz_name rp_dz_fnp rp_dz_notype; `_ptr_notype` keeping ERR_EXPECT -> RED 4: rp_loc_notype rp_dz_notype rp_pp_semi
+# rp_lint ("expected identifier").
+# alone <name> <source> <want-line>: exactly that one error line (`L:C: text`), no warning, rc 1, no binary
+alone() {
+    rows=$((rows + 1))
+    printf '%b' "$2" > "$T/$1.cyr"
+    rc=0; "$CC" ${4:-} < "$T/$1.cyr" > "$T/$1.out" 2> "$T/$1.err" || rc=$?
+    check "$1: exits 1" 1 "$rc"
+    check "$1: its one line, no warning" "error:<source>:$3|" "$(grep -E '^(error|warning)' "$T/$1.err" | tr '\n' '|')"
+}
+echo "axis 8 - a refused *T annotation is its declaration's one error (6.7.17):"
+RX='var x = 5;\n'
+alone rp_loc_name  "${FN}    var x = 5;\n    var p: *Nope = x;\n    return 3;\n}\nsyscall(60, f());\n" "3:13: unknown type 'Nope' as the target of pointer 'p'"
+alone rp_dz_name   "${RX}var G: *Nope = x;\nsyscall(60, 3);\n" "2:9: unknown type 'Nope' as the target of pointer 'G'"
+alone rp_pp_name   "${RX}x = x + 0;\nvar G: *Nope = x;\nsyscall(60, 3);\n" "3:9: unknown type 'Nope' as the target of pointer 'G'"
+alone rp_loc_fnp   "${FN}    var x = 5;\n    var c: *fn(Nope): i64 = x;\n    return 3;\n}\nsyscall(60, f());\n" "3:16: unknown type 'Nope' for variable 'c'"
+alone rp_dz_fnp    "${RX}var G: *fn(Nope): i64 = x;\nsyscall(60, 3);\n" "2:12: unknown type 'Nope' for variable 'G'"
+alone rp_loc_notype "${FN}    var x = 5;\n    var p: *+ = x;\n    return 3;\n}\nsyscall(60, f());\n" "3:13: expected a type for variable 'p', got '+'"
+alone rp_dz_notype "${RX}var G: *5 = x;\nsyscall(60, 3);\n" "2:9: expected a type for variable 'G', got number 5"
+alone rp_pp_semi   "${RX}x = x + 0;\nvar G: *;\nsyscall(60, 3);\n" "3:9: expected a type for variable 'G', got ';'"
+alone rp_gen       'fn g<T>(a: T): i64 { var x = 5; var p: *Nope = x; return a; }\nsyscall(60, g(1) + g(2));\n' "1:41: unknown type 'Nope' as the target of pointer 'p'"
+alone rp_fld       'struct H { k: *+; j; }\nsyscall(60, 3);\n' "1:16: expected identifier, got '+'"
+alone rp_lint      "${FN}    var x = 5;\n    var p: *+ = x;\n    return 3;\n}\nsyscall(60, f());\n" "3:13: expected a type for variable 'p', got '+'" --syntax-only
+rows=$((rows + 1))
+printf '%b' "${FN}"'    var x = 5;\n    var p: *i64 = x;\n    return 3;\n}\nsyscall(60, f());\n' > "$T/rp_ctl.cyr"
+rc=0; "$CC" < "$T/rp_ctl.cyr" > "$T/rp_ctl.out" 2> "$T/rp_ctl.err" || rc=$?
+check "rp_ctl: control - a known *i64 from an untyped value still compiles and warns" "0 warning:<source>:3:20: assigning non-pointer to typed pointer|" \
+    "$rc $(grep -E '^(error|warning)' "$T/rp_ctl.err" | tr '\n' '|')"
+
 if [ "$rows" -lt 140 ]; then echo "FAIL: type_name_refused: only $rows rows ran (floor 140)"; exit 1; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: type_name_refused: $fails check(s) failed"; exit 1; fi
 echo "PASS: type_name_refused ($rows rows)"

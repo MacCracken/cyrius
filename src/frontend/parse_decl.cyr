@@ -7559,11 +7559,23 @@ fn _tp_warn(S, st): i64 {
 fn _tp_warn_gv(S, slot, st): i64 {
     if (slot < 0) { return 0; }
     if (GVTYPE(S, slot) >= 0) { return 0; }
+    if (_ann_said(S, _tp_decl_var(S, st), st) == 1) { return 0; }   # 6.7.17: its annotation was refused (`_ann_said`)
     if (GPSC(S) != 0) { return 0; }
     if (_scv_err == 1) { return 0; }
     if (_tn_seen_at(S, st) == 1) { return 0; }
     if (_tp_call_pointee(S, st, _gv_ptr_sid(S, slot)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
     return _tp_warn(S, st);
+}
+# The `var` of the zone declaration whose initializer starts at token `st` (st itself when none is met first).
+fn _tp_decl_var(S, st): i64 {
+    var k = st - 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 3) { return k; }
+        if (t == 5 || t == 13 || t == 14) { return st; }
+        k = k - 1;
+    }
+    return st;
 }
 # PARSE_VAR's `*T` declaration (`ann` the annotation's first token; the cursor past the initialiser at `st`): the
 # warning, unless the line is refused — at its call (D14, `_ptr_refd_ti`) or inside its initialiser (`_scv_err`, as

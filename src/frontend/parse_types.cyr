@@ -3936,8 +3936,34 @@ fn _ptr_annot(S, vnoff, quiet): i64 {
         else { STI(S, _call_close(S, GTI(S)) + 1); }
     } elif (PEEKT(S) == 32) {   # 6.7.17 (D8): `*fn( .. )`, a bare `*fn`, `**fn( .. )`
         STI(S, _ptr_fnp_end(S, ti0, vnoff, quiet, " for variable "));
-    } elif (quiet == 0) { ERR_EXPECT(S, 2); }
+    } elif (quiet == 0) { _ptr_notype(S, vnoff); }
+    if (quiet == 0) { if (_ann_said(S, ti0, GTI(S)) == 1) { _ptr_refd_ti = ti0; } }   # 6.7.17: see `_ann_said`
     return ps;
+}
+# ⛔ 6.7.17 — A REFUSED `*T` ANNOTATION IS ITS DECLARATION'S ONE ERROR. 6.7.11 kept `*( .. )`'s refusal from a warning
+# about the value as well; every other refusal of the annotation still added "assigning non-pointer to typed pointer":
+# `var p: *Nope = x;`, `var c: *fn(Nope): i64 = x;` (6.7.17's D8), in a fn, the declaration zone and after the first
+# statement. 1 when a refusal was said at a token of [a, e) (`_tn_once`'s record, so a generic's instance, which says
+# nothing again, agrees). `_tp_warn_decl` reads `_ptr_refd_ti`, the zone's `_tp_warn_gv` asks this itself. CHANGELOG
+# [6.7.17]
+fn _ann_said(S, a, e): i64 {
+    while (a < e) {
+        if (_tn_seen_at(S, a) == 1) { return 1; }
+        a = a + 1;
+    }
+    return 0;
+}
+# ⛔ 6.7.17 — A VARIABLE'S `*` FOLLOWED BY NO TYPE (`var x: *+ = 0;`, `*5`, `*;`) is 6.7.14's D15 refusal, "expected a type
+# for variable 'x', got '+'", as `var x: + = 0;` and a parameter's `p: *+` are; it was "expected identifier, got '+'"
+# with "assigning non-pointer to typed pointer" after it. The token is stepped (not a `=` / `;`: the line reads on there,
+# as D15's does). A field's (`k: *+`, as `k: +`) and a return's keep "expected identifier". CHANGELOG [6.7.17]
+var _ptr_fld = 0;   # `_fld_ptr_annot` is reading a field's annotation
+fn _ptr_notype(S, vnoff): i64 {
+    if (_ptr_fld == 1 || vnoff < 0) { ERR_EXPECT(S, 2); return 0; }
+    _tn_var_err(S, GTI(S), vnoff);
+    var t = PEEKT(S);
+    if (t != 4 && t != 5 && t != 12) { STI(S, GTI(S) + 1); }
+    return 0;
 }
 # ⛔ 6.7.17 (the user's D8, 2026-10-22) — A `*fn( .. )` TYPE DECLARES A LOCAL, A GLOBAL OR A FIELD AS THE ONE POINTER
 # WORD A PARAMETER'S DOES. The readers took the token after the `*` as a type name and met the keyword: `var c:
@@ -4058,11 +4084,18 @@ fn _fld_ptr_annot(S, fnoff, ann): i64 {
         STI(S, _ptr_fnp_end(S, ann, fnoff, 0, " for struct field "));
         return 8;
     }
-    if (TOKTYP(S, ann + 1) != 8) { return _ptr_annot(S, fnoff, 0); }
+    if (TOKTYP(S, ann + 1) != 8) {
+        _ptr_fld = 1;
+        var p1 = _ptr_annot(S, fnoff, 0);
+        _ptr_fld = 0;
+        return p1;
+    }
     if (_fld_pp_late(S, ann) == 1) { return 8; }   # 6.7.16 (D103): `**B`, B declared below
     _ppk_nomint = 1;
+    _ptr_fld = 1;
     var ps = _ptr_annot(S, fnoff, 0);
     _ppk_nomint = 0;
+    _ptr_fld = 0;
     return ps;
 }
 # ⛔ 6.7.16 (the user's D103, 2026-10-20) — A `**B` / `**Box<B>` FIELD POINTS AT A STRUCT DECLARED BELOW, AS `*B` DOES.
