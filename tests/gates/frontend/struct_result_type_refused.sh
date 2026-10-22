@@ -13,9 +13,9 @@
 #       register (1/2/4/8 B) struct FIELD skipped every check, the free call `h.p = mkq8()` too:
 #       `_fsc_src` (src/frontend/parse_decl.cyr) returned 0 before its call and expression arms.
 #   L5  A struct destination ASSIGNED from a FREE call returning a DIFFERENT struct stored one
-#       word: `p = mkq()` (24 B), `p = mkr()` (16 B), `z = mkod2()` (3 B), generic `s = mk(r.v)`
-#       (the field argument infers T = i64, so the call reaches Box<i64>, not Box<Pt>). The
-#       declarations `var z: Odd = mkod2()` and `var s: Box<Pt> = mk(r.v)` were not refused by
+#       word: `p = mkq()` (24 B), `p = mkr()` (16 B), `z = mkod2()` (3 B), generic `s = mk(r.n)`
+#       (the scalar field infers T = i64, so the call reaches Box<i64>, not Box<Pt>). The
+#       declarations `var z: Odd = mkod2()` and `var s: Box<Pt> = mk(r.n)` were not refused by
 #       name either — only the retptr / rax:rdx receives compared the sid. Root cause:
 #       `_try_struct_call_assign` (src/frontend/parse.cyr) exited at `cls == 0`, `n <= 1` and
 #       the sid test with `return 0` = the scalar store.
@@ -24,6 +24,9 @@
 #       and the LEADING declaration block — replayed by EMIT_GVAR_INITS, not PARSE_VAR — checked
 #       nothing at any size. Fixed in `_scv_call_check` (9-16 B at top level),
 #       `_sc_global_mismatch` (-3 and -1) and `_gvi_ann` / `_gvi_expr` (the leading block).
+#       (6.6.11's rows read `mk(r.v)`, the inline Pt field, which inferred i64 then; since 6.7.17 a struct-typed field
+#       binds its struct — the user's D2, 2026-10-22 — so `mk(r.v)` reaches Box<Pt> and is accepted: AGa / DGa, its
+#       value 7. The tree before D2 (3e8756f2a) -> RED AGa DGa, refused "a different struct type".)
 #   L1  (refusal half) `var p: Pt = h.q` / `p = h.q` from a field of a DIFFERENT struct type
 #       SIGSEGV'd / copied a word; now a named refusal like every other struct copy.
 #
@@ -315,7 +318,7 @@ refuse "A3c z = mkod2()  (3 B free call)" "$MA" "$T"'fn main(): i64 { var z: Odd
 refuse "A16m p = y.mr()  (16 B method)" "$MA" "$T"'fn main(): i64 { var y: Q; var p: Pt; p.x = 9; p.y = 9; p = y.mr(); return p.x; }'"$E"
 refuse "A16 p = mkr()  (16 B rax:rdx)" "$MA" "$T"'fn main(): i64 { var p: Pt; p.x = 9; p.y = 9; p = mkr(); return p.x; }'"$E"
 refuse "A24 p = mkq()  (24 B retptr)" "$MA" "$T"'fn main(): i64 { var p: Pt; p.x = 9; p.y = 9; p = mkq(); return p.x; }'"$E"
-refuse "AG  s = mk(r.v)  (generic)" "$MA" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt>; s.n = 0; s = mk(r.v); return s.n; }'"$E"
+refuse "AG  s = mk(r.n)  (generic)" "$MA" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt>; s.n = 0; s = mk(r.n); return s.n; }'"$E"
 refuse "D3m var z: Odd = y.same()" "$MD" "$T"'fn main(): i64 { var y: Od2; var z: Odd = y.same(); return 0; }'"$E"
 refuse "D3o var z: Odd = y + y" "$MD" "$T"'fn main(): i64 { var y: Od2; var z: Odd = y + y; return 0; }'"$E"
 refuse "D8m var z: P8 = y.mq()" "$MD" "$T"'fn main(): i64 { var y: Q8; var z: P8 = y.mq(); return 0; }'"$E"
@@ -323,7 +326,10 @@ refuse "D3c var z: Odd = mkod2()" "$MD" "$T"'fn main(): i64 { var z: Odd = mkod2
 refuse "D8c var z: P8 = mkq8()" "$MD" "$T"'fn main(): i64 { var z: P8 = mkq8(); return 0; }'"$E"
 refuse "D16 var p: Pt = mkr()" "$MD" "$T"'fn main(): i64 { var p: Pt = mkr(); return p.x; }'"$E"
 refuse "D24 var p: Pt = mkq()" "$MD" "$T"'fn main(): i64 { var p: Pt = mkq(); return p.x; }'"$E"
-refuse "DG  var s: Box<Pt> = mk(r.v)" "$MD" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt> = mk(r.v); return s.n; }'"$E"
+refuse "DG  var s: Box<Pt> = mk(r.n)" "$MD" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt> = mk(r.n); return s.n; }'"$E"
+# 6.7.17 (D2): the inline Pt field binds Pt, so mk(r.v) reaches Box<Pt> — the same struct, accepted.
+accept "AGa s = mk(r.v)  (D2, 6.7.17)" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt>; s.n = 0; s = mk(r.v); return s.v.y * 10 + s.n; }'"$E" 75 "$G"'fn main(): i64 { var s: Box<Pt>; s.v.x = 2; s.v.y = 7; s.n = 5; return s.v.y * 10 + s.n; }'"$E"
+accept "DGa var s: Box<Pt> = mk(r.v)  (D2)" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt> = mk(r.v); return s.v.y * 10 + s.n; }'"$E" 75 "$G"'fn main(): i64 { var s: Box<Pt>; s.v.x = 2; s.v.y = 7; s.n = 5; return s.v.y * 10 + s.n; }'"$E"
 # G3m — a top-level declaration AFTER the first top-level statement (PARSE_VAR's global arm,
 # `_sc_global_receive`); the leading declaration block is replayed by EMIT_GVAR_INITS instead.
 refuse "G3m var GZ: Odd = GY.same()  (top)" "$MD" "$T"'var GY = Od2 { 1, 2 };
@@ -1896,6 +1902,172 @@ accept "TV11k for x in, then var y = x;: x's" "$TVR"'fn g<T>(x: T): i64 { var s 
 accept "TV11l var q, x in a closed block: x's" "$TVR"'fn g<T>(x: T): i64 { var r = 0; if (r == 0) { var q, x = two(); r = q + x; } var y = x; return y.b + r; }
 '"$TVQM" 7 'syscall(60, 7);'
 
+# RB (6.7.17, the user's D1, 2026-10-22; issues/2026-10-21-generic-tparam-name-rebound-by-closure-param-forin-destructure-
+# read-as-t-sigsegv.md) — A NAME A CLOSURE PARAMETER, A FOR-IN VARIABLE OR A DESTRUCTURE'S LATER NAME REBINDS IS ITS OWN,
+# UNTYPED, AS A PLAIN FN READS IT — g's own `x: T` too, not only D102's `var y = x;` (TV11). The scans' name tables
+# (`_gsn`, `_gcr`, `_bnr_tab`) and `_tok_name_decl`'s readers had no scope for them, so in `fn g<T: Show>(x: T)` a
+# closure's `|x| { return x.show(); }`, `for x in 0..2 { .. x.show() .. }` and `var q, x = two(); x.show()` were bounded
+# sites of g's x: rc 0, SIGSEGV at T = Pt (RB0-RB2, the filed repros), `g(7)` exit 105 (RB3); and `x.b`, `x = mkp();`,
+# `return &n;`, `p[0] = mkp();`, a forward into a stub, a carrier's `b.v.b` / `gx(b)` on the rebound name made the generic
+# a stub — compiled never called (RB4-RB14; RB16 / RB16b a rebound struct receiver `|p| p.pick(t)` / `p.mk()` read as
+# g's `p: P`), refused at a scalar call with a note blaming T. Each is now the plain fn's
+# refusal at the definition (`_gsn_live`, `_gcr_live`, `_gs_rebound_at`, parse_fn_def.cyr). The rebinding's own reach
+# is the parser's: a range's end bound reads the loop variable (RB15-RB15c), a destructure's right-hand side the enclosing
+# name (RBK6, which the new readers had refused), a range's start bound the enclosing one (RBK7). Controls RBK1-RBK5:
+# g's own x after a rebinding closes, a captured T value in a closure, a carrier after `|b|` (RBK8: a captured `p`) — unchanged
+# (tests/tcyr/crossos/generic_struct_only_lines.tcyr V22-V28 run them on every backend). RBX: RB0 RB1 RB2 RB4 on
+# aarch64 / cx / PE. (trait_bounds_checked.sh RB: a bounded site on a rebound receiver is no site.)
+# (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
+#   MRB1 the tree before (e65604d5d)                         -> RED 32: RB0-RB3 (rc 0, exit 139 / 105), RB4 RB4b RB5
+#                                                             RB6-RB14 RB15b RB15c RB16 RB16b (compiled, or the stub's words; RB15
+#                                                             was refused: `..x` read as a field name), RBX x3 (12)
+#   MRB2 `_bnd_sites` without its rebound test               -> RED 13: RB0-RB3, RBX RB0 RB1 RB2 x3 (rc 0)
+#   MRB3 `_gsn_live` = `_gsn_has` (the T-name table by name)  -> RED 13: RB3 RB4 RB4b RB5 RB6 RB8 RB13 RB14 RB15b RB15c,
+#                                                             RBX RB4 x3
+#   MRB4 `_gs_mvar_holds` reading its right-hand side        -> RED 2: RBK6 RBK6n
+#   MRB5 `_gs_forin_holds` without its end-bound arm          -> RED 2: RB15b RB15c
+#   MRB6 `_bnd_fsite` without its rebound test               -> GREEN here (its refusal is the base parse's either way);
+#                                                             RED in trait_bounds_checked.sh RB4 (the contract's words)
+#   MRB7 `_gs_recv_sid` without its rebound test             -> RED 2: RB16 RB16b (compiled: the stub)
+echo "=== a name a closure's parameter, a for-in variable or a destructure rebinds is untyped (6.7.17, the user's D1) ==="
+RB0='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn g<T: Show>(x: T): i64 { var f = |x| { return x.show(); }; return fncall1(f, 5); }
+fn main(): i64 { var p = Pt { 2, 4 }; return g(p); }
+syscall(60, main());
+'
+RBI='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+'
+RBPM='fn main(): i64 { var p = Pt { 2, 4 }; return g(p); }
+syscall(60, main());
+'
+RB1="$RBI"'fn g<T: Show>(x: T): i64 { var s = 0; for x in 0..2 { s = s + x.show(); } return s; }
+'"$RBPM"
+RB2="$RBI"'fn two(): (i64, i64) { return (1, 2); }
+fn g<T: Show>(x: T): i64 { var q, x = two(); return x.show() + q; }
+'"$RBPM"
+RB4='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var f = |x| { return x.b; }; return fncall1(f, 5); }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+refuse_at "RB0 the filed repro: |x| x.show() at Pt" "7:55: $SN 'x'$SM" "$RB0"
+refuse_at "RB1 the filed for x in: x.show() at Pt" "7:69: $SN 'x'$SM" "$RB1"
+refuse_at "RB2 the filed var q, x: x.show() at Pt" "8:59: $SN 'x'$SM" "$RB2"
+refuse_at "RB3 g(7): exit 105 before" "7:55: $SN 'x'$SM" "$RBI"'fn g<T: Show>(x: T): i64 { var f = |x| { return x.show(); }; return fncall1(f, 5); }
+fn main(): i64 { return g(7); }
+syscall(60, main());
+'
+refuse_at "RB4 the review's |x| x.b, never called" "4:46: $SN 'x'$SA" "$RB4"
+refuse_at "RB4b ... g(5): no stub, no T note" "4:46: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var f = |x| { return x.b; }; return fncall1(f, 5); }
+fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+refuse_at "RB5 for x in 0..3 { x.b }, never called" "4:60: $SN 'x'$SA" 'include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+fn g<T>(x: T): i64 { var s = 0; for x in 0..3 { s = s + x.b; } return s; }
+fn main(): i64 { return 0; }
+syscall(60, main());
+'
+RBH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct S8 { a; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn vb<T>(x: T): i64 { return x.b; }
+fn gx<T>(b: Box<T>): i64 { return b.v.b; }
+fn two(): (i64, i64) { return (1, 2); }
+fn pr(a: i64): (i64, i64) { return (a, a + 1); }
+'
+RBM='fn main(): i64 { return 0; }
+syscall(60, main());
+'
+RBVB="generic 'vb' has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, \`&x\` of one returned as a struct, or a struct result over 8 bytes stored in one — directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument"
+RBGX="$(printf '%s' "$RBVB" | sed "s/'vb'/'gx'/")"
+RBUM="cannot assign 'y' from 'mkp', which returns the struct 'Q' - declare 'y: Q' or bind a field"
+refuse_at "RB6 var q, x = two(); x.b" "15:51: $SN 'x'$SA" "$RBH"'fn g<T>(x: T): i64 { var q, x = two(); return x.b + q; }
+'"$RBM"
+refuse_at "RB7 |b| b.v.b (a carrier)" "15:51: $SN 'b'$SA" "$RBH"'fn g<T>(b: Box<T>): i64 { var f = |b| { return b.v.b; }; return fncall1(f, 5); }
+'"$RBM"
+refuse_at "RB8 |x| vb(x) (a forward)" "15:46: $RBVB" "$RBH"'fn g<T>(x: T): i64 { var f = |x| { return vb(x); }; return fncall1(f, 5); }
+'"$RBM"
+refuse_at "RB9 |b| gx(b) (a carrier forward)" "15:51: $RBGX" "$RBH"'fn g<T>(b: Box<T>): i64 { var f = |b| { return gx(b); }; return fncall1(f, 5); }
+'"$RBM"
+refuse_at "RB10 |y| { y = mkp(); } (D33)" "15:40: $RBUM" "$RBH"'fn g<T>(y: T): i64 { var f = |y| { y = mkp(); return 0; }; return fncall1(f, 5); }
+'"$RBM"
+refuse_at "RB11 for n in: return &n; (D18)" "15:44: a fn returning the struct \`S8\` takes a value of that struct, or a pointer to one — \`&n\` is the address of n's slot, not a struct" "$RBH"'fn g<T>(n: T): S8 { for n in 0..2 { return &n; } var r: S8; return r; }
+'"$RBM"
+refuse_at "RB12 |p| { p[0] = mkp(); }" "15:38: cannot subscript 'p': it is not a typed array, a *T or a slice local - declare \`var a: T[N]\` or \`p: *T\` (T an integer, f64, f32 or bool), or load / store at an explicit byte offset" "$RBH"'fn g<T>(p: *T): i64 { var f = |p| { p[0] = mkp(); return 0; }; return fncall1(f, 5); }
+'"$RBM"
+refuse_at "RB13 for x in: vb(x)" "15:48: $RBVB" "$RBH"'fn g<T>(x: T): i64 { for x in 0..2 { return vb(x); } return 0; }
+'"$RBM"
+refuse_at "RB14 var q, x = two(); vb(x)" "15:50: $RBVB" "$RBH"'fn g<T>(x: T): i64 { var q, x = two(); return vb(x) + q; }
+'"$RBM"
+refuse_at "RB15 for x in 0..x.b: the loop's x" "15:49: $SN 'x'$SA" "$RBH"'fn g<T>(x: T): i64 { var s = 0; for x in 0..x.b { s = s + 1; } return s; }
+'"$RBM"
+refuse_at "RB15b for x in 0..(x.b): the loop's x" "15:49: $SN 'x'$SA" "$RBH"'fn g<T>(x: T): i64 { var s = 0; for x in 0..(x.b) { s = s + 1; } return s; }
+'"$RBM"
+refuse_at "RB15c for x in 0..vb(x): the loop's x" "15:48: $RBVB" "$RBH"'fn g<T>(x: T): i64 { var s = 0; for x in 0..vb(x) { s = s + 1; } return s; }
+'"$RBM"
+RBP='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Q { a; b; }
+struct P { k; }
+impl P { fn pick<U>(self, u: U): i64 { return u.b; } }
+impl P { fn mk(self): Q { var q: Q; q.a = 1; q.b = 2; return q; } }
+'
+refuse_at "RB16 |p| p.pick(t): p the closure's" "7:55: $SN 'p'$SM" "$RBP"'fn g<T>(p: P, t: T): i64 { var f = |p| { return p.pick(t); }; return fncall1(f, 5); }
+'"$RBM"
+refuse_at "RB16b |p| { var y: T = p.mk(); }" "7:57: $SN 'p'$SM" "$RBP"'fn g<T>(p: P, t: T): i64 { var f = |p| { var y: T = p.mk(); return 0; }; return fncall1(f, 5); }
+'"$RBM"
+accept "RBK8 |k| p.pick(t) + k: g's p, captured" "$RBP"'fn g<T>(p: P, t: T): i64 { var f = |k| { return p.pick(t) + k; }; return fncall1(f, 1); }
+fn main(): i64 { var p = P { 1 }; var q = Q { 3, 4 }; return g(p, q); }
+syscall(60, main());
+' 5 'syscall(60, 5);'
+RBQM='fn main(): i64 { var q = Q { 3, 4 }; return g(q); }
+syscall(60, main());
+'
+accept "RBK1 x.show() after |x| and for x in close" "$RBH"'fn g<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; var s = 0; for x in 0..2 { s = s + x; } return x.show() + fncall1(f, 1) + s; }
+'"$RBPM" 27 'syscall(60, 27);'
+accept "RBK2 x.show() after a block's var q, x" "$RBH"'fn g<T: Show>(x: T): i64 { var r = 0; if (r == 0) { var q, x = two(); r = q + x; } return x.show() + r; }
+'"$RBPM" 27 'syscall(60, 27);'
+accept "RBK3 a captured x: |k| x.show() + k" "$RBH"'fn g<T: Show>(x: T): i64 { var f = |k| { return x.show() + k; }; return fncall1(f, 5); }
+'"$RBPM" 29 'syscall(60, 29);'
+accept "RBK4 x.b after |x| closes" "$RBH"'fn g<T>(x: T): i64 { var f = |x| { return x + 1; }; return x.b + fncall1(f, 1); }
+'"$RBQM" 6 'syscall(60, 6);'
+accept "RBK5 b.v.b after |b| closes" "$RBH"'fn g<T>(b: Box<T>): i64 { var f = |b| { return b + 1; }; return b.v.b + fncall1(f, 1); }
+fn main(): i64 { var b: Box<Q>; b.v.a = 1; b.v.b = 9; return g(b); }
+syscall(60, main());
+' 11 'syscall(60, 11);'
+RBK6="$RBH"'fn g<T>(x: T): i64 { var q, x = pr(x.b); return q + x; }
+'
+accept "RBK6 var q, x = pr(x.b);: the RHS's x" "$RBK6$RBQM" 9 'syscall(60, 9);'
+refuse "RBK6n ... g(5): the stub's" "$TGM" "$RBK6"'fn main(): i64 { return g(5); }
+syscall(60, main());
+' one
+accept "RBK7 for x in x.a..5: the start's x" "$RBH"'fn g<T>(x: T): i64 { var s = 0; for x in x.a..5 { s = s + 1; } return s; }
+'"$RBQM" 2 'syscall(60, 2);'
+
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
     refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
@@ -1908,6 +2080,10 @@ cross_rows() {  # $1 the leg's name
     refuse "TVX [$1] TV2" "$TGM" "$TV2" one
     refuse "TVX [$1] TV10" "$TGM" "$TV10" one
     refuse "TVX [$1] TV10b" "$TGM" "$TV10b" one
+    refuse_at "RBX [$1] RB0" "7:55: $SN 'x'$SM" "$RB0"
+    refuse_at "RBX [$1] RB1" "7:69: $SN 'x'$SM" "$RB1"
+    refuse_at "RBX [$1] RB2" "8:59: $SN 'x'$SM" "$RB2"
+    refuse_at "RBX [$1] RB4" "4:46: $SN 'x'$SA" "$RB4"
     refuse "TGX [$1] TG13" "generic 'gc' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc(5); }'"$TE" one
     refuse "TGX [$1] TG17" "generic 'gco' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gco(5); }'"$TE" one
     refuse_at "DPX [$1] DP0" "6:44: $(printf '%s' "$DM" | tr -d '\\')" "$DP0S"
@@ -1941,10 +2117,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29; D1 (genr) + 44): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 570 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 570"; exit 1
+if [ $((nrefuse + naccept)) -lt 614 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 614"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -312,7 +312,8 @@ fn p_int_h() { var a: H = H { 70, 1 }; var b: H = H { 4, 2 }; var r = (a - b); r
 # calls `GB1_add$GPt`. The left operand is argument 0, the right one argument 1, each read as the call reads it: in a
 # fn (GO1-GO17, GO21-GO23: a call result as the left operand, its 8 / 16 / 24 B value held while the instance is made),
 # in the declaration zone (GO18, GO19: a fn body reads it before the replay) and after the first statement (GO20, at the
-# end); a scalar right operand (GO2) and one the call binds nothing from (GO15) are the base.
+# end); a scalar right operand (GO2) is the base. 6.7.17 (the user's D2, 2026-10-22): a struct FIELD operand binds its
+# struct, as the call's argument does (GO15; it was the base through 6.7.16).
 struct GG1<T> { v: T; }
 struct GBx<T> { v: T; }
 struct GPt { a; }
@@ -351,7 +352,7 @@ fn go_shapes() { var b = GB1 { 30 }; var p = GPt { 33 }; var q: *GPt = &p; var y
 fn go_ops() { var b = GB1 { 30 }; var p = GPt { 11 }; var x = b - p; var y = b * p; var z = b / p; return x.v.a + y.v.a + z.v.a; }
 fn go_arg() { var b = GB1 { 30 }; var p = GPt { 33 }; return gtake(b + p); }
 fn go_ret() { var b = GB1 { 30 }; var p = GPt { 33 }; var y = gret(b, p); return y.v.a; }
-fn go_field() { var b = GB1 { 30 }; var w: GW1; w.n = 1; w.s.a = 33; var y = b + w.s; var z = GB1_add(b, w.s); return y.v - z.v + 33; }
+fn go_field() { var b = GB1 { 30 }; var w: GW1; w.n = 1; w.s.a = 33; var y = b + w.s; var z = GB1_add(b, w.s); return y.v.a * 100 + z.v.a; }
 fn go_wrap() { var b = GB1 { 30 }; var p = GPt { 33 }; return (b + p).v.a; }
 fn go_clos() { var b = GB1 { 30 }; var p = GPt { 33 }; var k = |n| { var y = b + p; return y.v.a + n; }; return callptr(k, 0); }
 struct GL2 { a; b; }
@@ -490,7 +491,7 @@ assert_eq(go_shapes(), 33, "GO11: (p), *q, gmkp(33), gid(p), gmkg(p) bind as cal
 assert_eq(go_ops(), 33, "GO12: - * / dispatch their instances too");
 assert_eq(go_arg(), 33, "GO13: gtake(b + p) passes the GG1<GPt>");
 assert_eq(go_ret(), 33, "GO14: return b + p; from a fn returning GG1<GPt>");
-assert_eq(go_field(), 33, "GO15: a field right operand binds nothing (the base), as GB1_add(b, w.s) does");
+assert_eq(go_field(), 3333, "GO15 (6.7.17 D2): a struct field right operand binds its struct, as GB1_add(b, w.s) does");
 assert_eq(go_wrap(), 33, "GO16: (b + p).v.a");
 assert_eq(go_clos(), 33, "GO17: in a closure body");
 assert_eq(GOY.v.a, 33, "GO18: the declaration zone: var GOY = GOB + GOP; is GG1<GPt>");

@@ -182,6 +182,17 @@
 #      compiler (cacd0ff68) -> RED 15: VN0 VN1 VN5 VN5b (both rows each), VN4 VN4b VN4c VN6 (each built), VN7 (the
 #      by-value line alone), VN8 (both rows: the element built); MVN1 `_pn_canon` answering its argument -> RED 1: VN7
 #      (two lines); MVN2 `_tck_nest` keeping a refused list's enclosing list judgeable -> RED 1: VN5 (a second line)
+#   RB (6.7.17, the user's D1, 2026-10-22) A BOUNDED SITE ON A REBOUND RECEIVER IS NO SITE: in `fn g<T: Show>(x: T)` the
+#      `x` of a closure's `|x|`, of `for x in ..` and of `var q, x = two();` is that rebinding's own untyped word, so
+#      `x.other()` there is the plain fn's "no struct type in scope for 'x'" at the definition, not the contract's
+#      "method 'other' is not in the bound" (a site of g's x: RB1-RB3), nor `x.show()` a call of the bound's impl on the
+#      word (struct_result_type_refused.sh RB0-RB3: SIGSEGV at T = Pt); a carrier's `|b| b.v.other()` the same (RB4); the
+#      explicit spelling `|x| x.show<i64>()` (RB5; it was "'i64.show' is not a generic method"). RBK: g's own
+#      `x.other()` past the closure is still the contract's refusal. issues/2026-10-21-generic-tparam-name-rebound-by-
+#      closure-param-forin-destructure-read-as-t-sigsegv.md. Mutants (2026-10-22, a one-edit scratch copy of the tree
+#      each, CYCC= its cycc): the tree before (e65604d5d) -> RED 5: RB1-RB5 (the contract's words, RB5 "'i64.show' is
+#      not a generic method"); `_bnd_sites` without its rebound test -> RED 4: RB1 RB2 RB3 RB5; `_bnd_fsite` without
+#      its rebound test -> RED 1: RB4
 #   C  ANTI-VACUOUS: the same shapes with the impl present build and run; an unbounded `T` keeps
 #      per-instance method resolution; a program with no bound is untouched
 #   DS (6.7.17, met in genb GB1) PASS 2 STEPS A STRUCT'S `<..>` NESTED: `_tl_skip_struct` stopped at the first `>`, so
@@ -990,6 +1001,31 @@ if [ "$rc" -ne 0 ]; then bad "TM4: CYRIUS_MONOMORPH=0: rc $rc: $(grep '^error' "
 else chmod +x "$T/tm4.bin"; got=0; "$T/tm4.bin" || got=$?
     if [ "$got" -eq 3 ]; then ok "TM4: CYRIUS_MONOMORPH=0 reads no bound — the fn's and the member's spelling alike (exit 3)"; else bad "TM4: exit $got, want 3"; fi
 fi
+
+# RB — 6.7.17 (the user's D1): a bounded site on a rebound receiver is no site
+RBH='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x + self.y; } }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+impl Pt { fn other(self): i64 { return 77; } }
+fn two(): (i64, i64) { return (1, 2); }'
+rb() { printf '%s\n%s\nfn main(): i64 { return 0; }\nsyscall(60, main());\n' "$RBH" "$2" > "$T/$1.cyr"; }
+RBM="no struct type in scope for 'x'; a method call needs its struct declaration"
+rb rb1 'fn g<T: Show>(x: T): i64 { var f = |x| { return x.other(); }; return fncall1(f, 5); }'
+errs rb1 1 "RB1: |x| x.other() — the closure's own x, not a site of g's" "error:<source>:10:56: $RBM"
+rb rb2 'fn g<T: Show>(x: T): i64 { var s = 0; for x in 0..2 { s = s + x.other(); } return s; }'
+errs rb2 1 "RB2: for x in 0..2 { x.other() } — the loop's own x" "error:<source>:10:70: $RBM"
+rb rb3 'fn g<T: Show>(x: T): i64 { var q, x = two(); return x.other() + q; }'
+errs rb3 1 "RB3: var q, x = two(); x.other() — the destructure's own x" "error:<source>:10:60: $RBM"
+rb rb4 'fn g<T: Show>(b: Box<T>): i64 { var f = |b| { return b.v.other(); }; return fncall1(f, 5); }'
+errs rb4 1 "RB4: |b| b.v.other() — the closure's own b, not a carrier's field site" "error:<source>:10:57: no struct type in scope for 'b'; a '.field' access needs its struct declaration"
+rb rb5 'fn g<T: Show>(x: T): i64 { var f = |x| { return x.show<i64>(); }; return fncall1(f, 5); }'
+errs rb5 1 "RB5: |x| x.show<i64>() — the explicit spelling on the closure's own x" "error:<source>:10:60: $RBM"
+rb rbk 'fn g<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; return x.other() + fncall1(f, 1); }'
+errs rbk 1 "RBK: g's own x.other() past the closure — the contract's refusal" "error:<source>:10:68: $BDM"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: trait_bounds_checked — $fails row(s) red"; exit 1; fi
 echo "PASS: trait_bounds_checked — bounds checked at the definition (D1-D7), at every instantiation incl. the i64 base, &g, a tail call and an inner generic call (I1-I8), and on generic structs incl. their i64 base (S1-S5); past 64 bounded receivers (B, 6.7.14); a generic forwarding T to a bounded one is bad at i64 alone, named by its forward (F, 6.7.14), at any depth (F13-F15e, 6.7.15); a bounded call on a carrier's T field is a trait use, a scalar T's taking the field's value (BC, 6.7.14), and held to the bound's contract (BD, 6.7.15); a refusal the panic latch swallows prints no orphan note (N, 6.7.14; the contract's too, N2, 6.7.15), and no contract refusal is swallowed (NS, 6.7.16); the explicit spelling v.m<..>(..) is held to the contract and a bound's generic member called so is the bound's call, at a scalar T too, and --syntax-only parses it (BX, BXS, 6.7.16); a Vec element's generic struct held to its bounds (VB, 6.7.15), an argument that is itself an instance judged as by value (VN, 6.7.16); a trait member's bounds looked up with a fn's words (TM, 6.7.17's D4); well-formed bounded code runs (C)"

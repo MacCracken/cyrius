@@ -9936,6 +9936,186 @@ fn _mch_hop(S, sid, k): i64 {
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     return ft;
 }
+# ⛔ 6.7.17 — A STRUCT-TYPED FIELD OR A STRUCT-RETURNING METHOD BINDS A GENERIC'S T AS A STRUCT LOCAL OR A FREE CALL DOES
+# (the user's D2, 2026-10-22). The binding readers took a name or one whole call: `sz(w.p)` (`p: P2`) and `sz(b.mp2())`
+# (`: P2`) ran the i64 base (`sizeof(T)` 8 for 16), and `rdb(w.p)` reading `v.b` was refused as the stub. The whole
+# argument at token `at` — inside any wrap — when it is a receiver head the method arm takes (`_mch_head`: a name, a call,
+# a parenthesised value) and at least one `.field` / `.m(..)` step, each typed as the arm types it (`_mch_hop`,
+# `_mch_mres`): `_acv_is` 1 and the binding through `x: T` (`ptr` 0) or `p: *T` (1) in the parser's encoding (a struct
+# > 0, a scalar < 0, i64 -8) — or (2) the struct a carrier `b: G<T>` / `b: *G<T>` reads, held or pointed at, or (2 + d)
+# what a `*..*T` of d >= 2 stars (or a `**G<T>` carrier) reads through them (`_acv_pp`); `_acv_is` 0 when it is no such
+# chain (its readers' own arms decide). `ta` >= 0: from the tokens of the unit starting at token ta (a token pass,
+# `_mch_tok`), struct answers only. Its readers: `_ic_arg`, `_tok_ta_arg`, `_gsc_arg`, `_tok_sc_arg`, `_ic_pp_arg`,
+# `_tok_pp_arg`. CHANGELOG [6.7.17]
+var _acv_is = 0;
+var _acv_k = 0;   # the last step: 1 a field (`_acv_s` its struct, `_acv_f` its index), 2 a method
+var _acv_s = 0;
+var _acv_f = 0;
+var _acv_o = 0;   # a method step: its `(`, its name token in `_acv_f`, its receiver's struct in `_acv_s`
+fn _acv_bind(S, at, ta, ptr): i64 {
+    _acv_is = 0;
+    var b = _pwrap_in(S, at);
+    if (b < 0) { b = at; }
+    if (_mchain_at(S, _mch_hend(S, b)) == 0) { return 0 - 8; }   # no step after the head, by its shape
+    var sk = _mch_tok;
+    var sa = _mch_ta;
+    var hx = _mch_hx;
+    var nh = _mch_nh;
+    var cf = _cap_fld_sid;
+    var cp = _hl_cp;
+    var da = _hl_damp;
+    _mch_tok = 0;
+    if (ta >= 0) {
+        _mch_tok = 1;
+        _mch_ta = ta;
+    }
+    var r = 0 - 8;
+    var is = _acv_walk(S, b);
+    if (is == 1) {
+        if (ptr >= 4) { r = _acv_pp(S, ptr - 2, ta); }
+        elif (_acv_k == 1) { r = _acv_fld(S, ptr, ta); }
+        else { r = _acv_meth(S, ptr, ta); }
+    }
+    _acv_is = is;   # set last: a binding read above may run a nested `_acv_bind`
+    _mch_tok = sk;
+    _mch_ta = sa;
+    _mch_hx = hx;   # a lookahead inside another chain's head (`_mch_chead` -> `_gen_ret_bound`): its head stays its own
+    _mch_nh = nh;
+    _cap_fld_sid = cf;   # a lookahead: the capture lookup's answer stays its caller's
+    _hl_cp = cp;
+    _hl_damp = da;
+    return r;
+}
+# The head at b and its steps, every one typed, to the argument's end (a `,` or `)` after the last): 1 with the last
+# step in `_acv_*`, else 0.
+fn _acv_walk(S, b): i64 {
+    _acv_k = 0;
+    var sid = _mch_head(S, b);
+    if (sid <= 0) { return 0; }
+    var i = _mch_hend(S, b);   # by shape: the head's typing may run a nested lookahead that moves `_mch_hx`
+    _acv_k = 0;
+    while (_mchain_at(S, i) == 1) {
+        if (sid <= 0) { return 0; }
+        if (sid >= 2048) { return 0; }
+        var nt = i + 1;
+        var o = _mch_mopen(S, sid, nt);
+        _acv_s = sid;
+        if (o < 0) {
+            _acv_k = 1;
+            _acv_f = FINDFIELD(S, sid - 1, TOKVAL(S, nt));
+            if (_acv_f < 0) { return 0; }
+            sid = _mch_hop(S, sid, nt);
+            i = i + 2;
+        } else {
+            _acv_k = 2;
+            _acv_f = nt;
+            _acv_o = o;
+            i = _call_close(S, o) + 1;
+            if (_mchain_at(S, i) == 1) { sid = _mch_mres(S, sid, nt, o); }
+        }
+    }
+    if (_acv_k == 0) { return 0; }
+    var t = TOKTYP(S, i);
+    if (t == 31) { return 1; }
+    if (t == 11) { return 1; }
+    return 0;
+}
+# A field leaf (`_acv_s`, `_acv_f`): an inline struct field its struct (a tuple or a dyn: none); a `*S` field S through
+# `p: *T` or a carrier only — 6.7.14's D8: through `x: T` no pointer binds — and a scalar pointee its scalar through
+# `p: *T` (6.7.15's D11).
+fn _acv_fld(S, ptr, ta): i64 {
+    var si = _acv_s - 1;
+    var ps = _fld_ptr_sid(S, si, _acv_f);
+    if (ps > 0) {
+        if (ptr == 0) { return 0 - 8; }
+        return ps;
+    }
+    var ft = GETFTYPE(S, si, _acv_f);
+    if (ft > 0) { if (ft < 2048) { return _ic_pp_ok(S, ft); } }
+    if (ptr != 1) { return 0 - 8; }
+    if (ta >= 0) { return 0 - 8; }
+    return _ic_pscalar(_fld_ps_get(S, si, _acv_f));
+}
+# A method leaf (receiver struct `_acv_s`, name token `_acv_f`, `(` `_acv_o`): the struct it returns by value
+# (`_acv_mval`); through `p: *T` or a carrier also the struct a `: *S` one points at (`_acv_mptr`), and through `p: *T`
+# a `: *i32` one's scalar.
+fn _acv_meth(S, ptr, ta): i64 {
+    var rs = _acv_s;   # a binding read below may run a nested `_acv_bind`
+    var nt = _acv_f;
+    var o = _acv_o;
+    var mf = _meth_fn_at(S, rs, TOKVAL(S, nt), nt);
+    if (mf < 0) { return 0 - 8; }
+    var v = _acv_mval(S, mf, rs, nt, o);
+    if (v > 0) { return _ic_pp_ok(S, v); }
+    if (ptr == 0) { return 0 - 8; }
+    v = _acv_mptr(S, mf, rs, nt, o);
+    if (v > 0) { return v; }
+    if (ptr != 1) { return 0 - 8; }
+    if (ta >= 0) { return 0 - 8; }
+    if (GFTP(S, mf) != 0) { return 0 - 8; }
+    return _ic_pscalar(_fn_ret_ps(mf));
+}
+# A leaf through a `*..*T` of d stars (`ptr` 2 + d — a `pp: **T` or a `**G<T>` carrier): the word its field is declared
+# with or its method returns, read d stars down (`_ic_pp_deep`), as a field chain (`_ic_pp_chain`, `_tpl_chain`) and a
+# free call (`_ic_pp_arg`) are read there; a generic method's `: *..*U` (d stars) the struct U binds at the step. A token
+# pass answers structs only. CHANGELOG [6.7.17]
+fn _acv_pp(S, d, ta): i64 {
+    var w = 0;
+    if (_acv_k == 1) { w = _fld_ps_get(S, _acv_s - 1, _acv_f); }
+    else {
+        var rs = _acv_s;
+        var nt = _acv_f;
+        var o = _acv_o;
+        var mf = _meth_fn_at(S, rs, TOKVAL(S, nt), nt);
+        if (mf < 0) { return 0 - 8; }
+        if (GFTP(S, mf) != 0) { return _acv_ppg(S, mf, rs, nt, o, d); }
+        w = _fn_ret_ps(mf);
+    }
+    var r = _ic_pp_deep(S, w, d);
+    if (ta >= 0) { if (r <= 0) { return 0 - 8; } }
+    return r;
+}
+# ... a generic method's `: *..*U` of exactly d stars (as `_tpl_call` reads a free one): the struct U binds there.
+fn _acv_ppg(S, mf, rs, nt, o, d): i64 {
+    var k = _tok_ret_ann(S, mf);
+    if (k < 0) { return 0 - 8; }
+    var n = 0;
+    while (TOKTYP(S, k) == 8) {
+        n = n + 1;
+        k = k + 1;
+    }
+    if (n != d) { return 0 - 8; }
+    var w = _tok_tp_which(S, mf, k);
+    if (w < 0) { return 0 - 8; }
+    var c = _gu_okc(_mch_bind(S, mf, rs, nt, o, w));
+    if (c <= 0) { return 0 - 8; }
+    return c;
+}
+# The struct method mf returns by value at the step whose name is token nt (its `(` at o, on struct rs) — a generic's
+# `: T` the struct T binds there, its `: G<..>` the instance that binding names (`_mch_bind`, `_mch_gres`: read, never
+# minted), as `_mch_mres` reads a step; else 0.
+fn _acv_mval(S, mf, rs, nt, o): i64 {
+    var t = GFRS(S, mf);
+    if (GFTP(S, mf) != 0) {
+        var w = _gen_ret_tparam(S, mf);
+        if (w >= 0) { return _gu_okc(_mch_bind(S, mf, rs, nt, o, w)); }
+        if (_gz_gbase(S, t) == 1) { return _mch_gres(S, mf, rs, nt, o, t); }
+    }
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    return t;
+}
+# ... the struct a `: *S` method points at — a generic's `: *T` the struct T binds there; else 0.
+fn _acv_mptr(S, mf, rs, nt, o): i64 {
+    if (GFTP(S, mf) != 0) {
+        var k = _tok_ret_ann(S, mf);
+        if (k >= 0) { if (TOKTYP(S, k) == 8) {
+                var w = _tok_tp_which(S, mf, k + 1);
+                if (w >= 0) { return _gu_okc(_mch_bind(S, mf, rs, nt, o, w)); }
+            } }
+    }
+    return _hl_fn_psid(mf);
+}
 # The cursor on the call `fi` (`_vcall_fi`'s): its checks — and an explicit instance's own (`_gen_own_call_check`) —
 # then past its name, `<..>` and `(`, for a path that emits the call itself (Win64's hidden result pointer).
 fn _vcall_enter(S, fi): i64 {

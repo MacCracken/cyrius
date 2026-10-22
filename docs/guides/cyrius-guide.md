@@ -7783,11 +7783,19 @@ it reaches, 6.7.11: `g(id(p))`, `g(mk1(p))` bind `Pt` and `Box<Pt>`) — binds `
 on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
 `return g(p);`, an argument, a struct receive), exactly as the explicit
 `g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
-every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
+every other path ran the i64 base). A struct-typed **field** and a **method** declared to return
+a struct are whole struct values too, and bind `T` as a struct local or a free call does — on every
+receiver head the method arm takes and every call path: `g(w.p)` (`p: P2`), a nested `g(w.v.p)`, one
+through a pointer `g(pw.p)`, `g(mk().p)`, `g((*pw).p)`, `g(b.mp2())`, a chain's method `g(w.gp().m())`,
+a generic method's `: U` at what its argument binds (`g(b.idv(q))`), a `Str` field (6.7.17, the user's
+D2, 2026-10-22: through 6.7.16 each ran the i64 base — `sizeof(T)` 8 for a 16-byte `P2` — and a body
+reading `v.b` was refused as having no i64 instance; a program passing such a value now calls the
+struct's instance, and a 9+ byte one at the top level is refused "call it inside a fn" as `g(q)` of a
+struct global is). Only a WHOLE argument binds `T`: `g(p.y)`, a scalar field (an `f64` one too),
 `g(p.x + p.y)` and `g(p + 1)` infer `i64` (through a `p: *T`, a typed pointer plus or
 minus `n` is still that pointer — below), and through an `x: T` parameter so does
 every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
-field or call (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
+field, call or method (6.7.14; through 6.7.13 a `var q: *Pt` local bound `Pt` here, against
 this rule). Parentheses around the WHOLE argument carry what they wrap — a scalar's type too:
 `g((h))` with `h: f64` is the `f64` instance, as `g(h)` is — and through an
 `x: T` a whole dereference of a `*Pt` is the struct value `Pt` — `g((p))`, `g(*q)`,
@@ -7844,9 +7852,10 @@ argument infers `i64`, or the width a scalar-returning call declares.
 **Through a pointer parameter** (6.7.14). A `p: *T` parameter binds `T` to what its
 argument POINTS AT: a `*S` local, parameter (an untyped impl `self` included), closure
 capture or global, a field declared `*S` reached through a chain (`w.p`, `wp.p`,
-`G.p`), a call returning `*S` (a generic one at the instance it reaches: `gsz(gpi(gp))`
-with `fn gpi<T>(x: *T): *T`), and `&G` / `&l` of a struct — as a struct value already
-does (its address is passed, 6.6.20) and as a `*Box<T>` carrier does. With
+`G.p`, and since 6.7.17 through a method or a call head: `o.gw().p`), a call returning `*S` (a generic one at the instance it reaches: `gsz(gpi(gp))`
+with `fn gpi<T>(x: *T): *T`; since 6.7.17 a method `b.mpp()` too), and `&G` / `&l` of a struct — as a struct value already
+does (its address is passed, 6.6.20; since 6.7.17, D2, a struct field `gsz(w.s)` or method result `gsz(b.ms())` as well,
+which were refused "a struct value is no address") and as a `*Box<T>` carrier does. With
 `fn gsz<T>(x: *T): i64 { return sizeof(T); }`, `gsz(&gs)`, `gsz(gp)`, `gsz(w.p)` and
 `gsz(mkp())` call `gsz$S` (24 for a 24-byte `S`), exactly as `gsz<S>(&gs)` does, and a
 generic that uses `T` as a struct through the pointer (`return x.a;`) is called at the
@@ -7875,8 +7884,10 @@ that pointer (6.7.15, the user's decision D23 A, 2026-10-18): through `p: *T`, `
 parameter and no generic struct carries is carried by the first parameter declared
 `pp: **T` (or deeper, below): a `**S` argument binds `T` to `S`, the struct it points through to — a `**S`
 local, parameter, closure capture or global, a field declared `**S` reached through a chain
-(`w.pp`, `pw.pp`, `h.w.pp`), a call returning `**S` (a generic one at the instance it
-reaches), and `&p` / `&G` of a `*S` local, parameter or global. With
+(`w.pp`, `pw.pp`, `h.w.pp`, and since 6.7.17 through a method or a call head: `o.mw().pp`), a call
+returning `**S` (a generic one at the instance it reaches; since 6.7.17 a method `o.mpp()` too, and
+a generic method's `: **U` — through 6.7.16 a method result ran the i64 base, `sizeof(T)` 8, beside the
+user's D2 of 2026-10-22), and `&p` / `&G` of a `*S` local, parameter or global. With
 `fn st<T>(pp: **T): i64 { var a = *pp + 1; var b = *pp; return a - b; }` and a 24-byte
 `P3`, `st(pps)` calls `st$P3` and steps 24, exactly as `st<P3>(pps)` does, and
 `fn tg<T>(pp: **T): i64 { return take(**pp); }` hands `take(p: *P3)` the struct — on a free
@@ -7902,7 +7913,8 @@ is that struct: `nb<i64>(&p)` / `nb(&p)` with `p: *Box<i64>`, `nb<Pt>(&q)` with 
 (through 6.7.14 the definition was refused *unknown type 'T' as a type argument*). It
 carries `T` as `p: *Box<T>` does (6.7.16): a call reads its whole argument through its pointers,
 as a `pp: **T` reads its own — `&q` of a `*Box<Pt>`, a `**Box<Pt>` local, parameter, global,
-field or `: **Box<Pt>` call, wrapped — and the `Box<Pt>` there binds `Pt`, so `nb(&q)` calls
+field or `: **Box<Pt>` call, wrapped, and since 6.7.17 a `: **Box<Pt>` method or a field after one
+(`nb(o.mbb())`, `nb(o.mw().bb)`, refused "a different struct type" before) — and the `Box<Pt>` there binds `Pt`, so `nb(&q)` calls
 `nb$Pt` as `nb<Pt>(&q)` does; a `ppp: ***Box<T>` reads one pointee down per extra star, a
 `Pair<i64, T>` its slot, a `Box<i32>` its scalar, on a free call and a generic method alike.
 Through 6.7.15 `nb(&q)` ran the `i64` base and read `Box<Pt>.n` at `Box<i64>`'s offset. Anything
@@ -7917,7 +7929,12 @@ instance binds `T` to its type argument in `T`'s slot, so `gx(b)` with
 WHOLE argument must be the instance: a local or by-value parameter, a struct
 global, or a call returning it — or a pointer to one, which binds what it POINTS AT:
 `&b`, a `bp: *Box<Pt>` name or a call returning one, a field declared
-`bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`, `G.h.bp`). That
+`bp: *Box<Pt>` reached through a chain (`h.bp`, `hp.bp`, `self.bp`, `G.h.bp`). An
+inline `b: Box<Pt>` field and a method returning `Box<Pt>` or `*Box<Pt>` bind it too, on
+every receiver head and call path a struct-typed field binds `x: T` (6.7.17, the user's D2,
+2026-10-22): `gx(h.b)`, `gx(hw.h.b)`, `gx(pw.b)`, `gx(mkh().b)`, `gx(o.mh().b)`, `gx(o.mkb())`,
+`gpx(o.mpb())` call `gx$Pt` / `gpx$Pt` — through 6.7.16 they reached the base, refused as a
+different struct type. That
 holds through a `*Box<T>` parameter, which also takes a `Box<Pt>` value (the call
 passes its address), and through a by-value `b: Box<T>` — address-passed when the
 instance is over 8 B, so `gx(&b)` / `gx(bp)` hand `gx$Pt` the same address, as
@@ -8104,6 +8121,19 @@ closure's own parameter (`|x| { var y = x; .. }`), a `for x in` loop or a destru
 rebinds, where it rebinds it: there `y.b` is refused at the definition. Through 6.7.15 each such
 use was refused at the definition, called or not: *no struct type in scope for 'y'* (`y = mk();` with 6.7.15's D33
 words).
+The rebound name itself is the rebinding's own untyped word too (6.7.17, the user's D1 of 2026-10-22): in
+`fn g<T: Show>(x: T)`, the `x` of a closure's `|x| { return x.show(); }`, of `for x in 0..2 { .. x.show() .. }` and of
+`var q, x = two(); x.show()` is no `T` value, so each `x.show()` / `x.b` there — a field store, `x = mk();`,
+`return &x;`, `x[0] = mk();`, a forward of `x` into a stub, a carrier's `|b| b.v.b` and `b.v.show()` alike — is what
+a plain fn makes of it: *no struct type in scope for 'x'; a method call needs its struct declaration* at the definition,
+as `fn h(x: Pt)` refuses the same body. Through 6.7.16 they were read as `g`'s own `x: T`: a bounded `x.show()` called
+the bound's impl on the closure's word (SIGSEGV at `T = Pt`; `g(7)` ran it through `impl Show for i64`), and `x.b` made
+the generic a stub, compiled when never called. The rebinding reaches where the parser binds it: a range's end bound
+reads the loop variable (`for x in 0..x.b`), its start bound and a collection the enclosing `x` (`for x in x.a..5`), and
+a destructure's right-hand side the enclosing `x` (`var q, x = pr(x.b);`). `g`'s own `x` read after the closure, the
+loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A bounded
+generic with no `impl` of its bound for `i64` has no base to parse (its body is judged in each instance), so there a
+rebound `x.other()` is refused at its first instance, not at the definition.
 
 ```
 struct Pt { x; y; }

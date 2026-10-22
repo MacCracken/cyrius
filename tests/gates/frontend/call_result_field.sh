@@ -61,9 +61,12 @@
 #          table's `P_sc`), and a multi-value one's hint spells the call as written, `var t: (i64, i64) =
 #          w.p.m2(..);` (it printed `P_m2(..)`) — `_call_fld_err` / `_mret_fld_err`, met with L6.
 #   N4/N5  (6.7.16) an instance minted inside a statement already in error leaves its panic latch set: the inner
-#          `q.idv(q)` / `w.p.idv(q)` cleared it (PARSE_FN_DEF, for the instance's own body) and the statement
-#          reported again, "cannot take a field of the result of 'P.idv'" after the destructure's refusal
-#          (`_inst_relatch`, met with the review's inferred-step probes).
+#          `gsz(q)` / `gsz(w.p)` cleared it (PARSE_FN_DEF, for the instance's own body) and the statement reported
+#          again, "cannot take a field of the result of 'P.idv'" (or "binds 2 names, but 'P.idv' returns 1 value")
+#          after the destructure's refusal (`_inst_relatch`, met with the review's inferred-step probes). 6.7.16's
+#          rows spelled the inner call `q.idv(q)` / `w.p.idv(q)`, which bound the outer V i64 then; since 6.7.17 (the
+#          user's D2, 2026-10-22) a generic method's struct result binds as a free call's, so those statements are
+#          valid destructures: N4c / N5c compile and run (34).
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
 #   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
@@ -92,6 +95,10 @@
 #   the tree before the method's name (f04b87953)           -> RED 2: N2 (`P_sc`), N3 (`P_m2`, `P_m2(..)`); and
 #                                                              tuple_checked R15c, struct_value_codegen MP4 / MP5
 #   the tree before `_inst_relatch` (be2efe073)             -> RED 2: N4, N5 (2 error lines each)
+# 6.7.17 (2026-10-22, a scratch copy of src/ with the one change, its 2-stage cycc as CYCC):
+#   `_inst_relatch` a no-op                                 -> RED 2: N4, N5 (2 error lines each)
+#   the tree before D2 (3e8756f2a)                          -> RED 2: N4c, N5c (refused "multi-value destructure
+#                                                              needs a call on the right-hand side")
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -358,13 +365,31 @@ NL='include "lib/syscalls.cyr"
 struct P { k; }
 struct W { p: P; }
 impl P { fn idv<V>(self, x: V): V { return x; } fn m2(self): (i64, i64) { return (3, 4); } }
+fn gsz<T>(v: T): i64 { return sizeof(T); }
 '
-refuse N4 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var q: P = P { 1 }; var a, b = q.idv(q.idv(q)).m2(); return a * 10 + b; }
+refuse N4 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var q: P = P { 1 }; var a, b = q.idv(gsz(q)).m2(); return a * 10 + b; }
 syscall(60, main());
 " "" one
-refuse N5 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var w: W; var q: P = P { 1 }; var a, b = w.p.idv(w.p.idv(q)).m2(); return a * 10 + b; }
+refuse N5 "multi-value destructure needs a call on the right-hand side" "${NL}fn main(): i64 { var w: W; var q: P = P { 1 }; var a, b = w.p.idv(gsz(w.p)).m2(); return a * 10 + b; }
 syscall(60, main());
 " "" one
+# runs34 <label> <source>: compiles, one binary, exits 34
+runs34() {
+    printf '%s' "$2" > "$D/n.cyr"
+    rc=0; cat "$D/n.cyr" | "$CC" > "$D/n.bin" 2>"$D/n.err" || rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$D/n.bin" ]; then
+        printf '  FAIL: %-6s did not build (rc=%s): %s\n' "$1" "$rc" "$(grep -m1 '^error' "$D/n.err" || true)"; fail=$((fail+1)); return
+    fi
+    chmod +x "$D/n.bin"; erc=0; "$D/n.bin" || erc=$?
+    if [ "$erc" -ne 34 ]; then printf '  FAIL: %-6s exited %s, want 34\n' "$1" "$erc"; fail=$((fail+1)); return; fi
+    printf '  ok(runs): %s\n' "$1"; pass=$((pass+1))
+}
+runs34 N4c "${NL}fn main(): i64 { var q: P = P { 1 }; var a, b = q.idv(q.idv(q)).m2(); return a * 10 + b; }
+syscall(60, main());
+"
+runs34 N5c "${NL}fn main(): i64 { var w: W; var q: P = P { 1 }; var a, b = w.p.idv(w.p.idv(q)).m2(); return a * 10 + b; }
+syscall(60, main());
+"
 
 echo "--syntax-only (the lint pre-pass):"
 printf '%s' 'fn main(): i64 {
@@ -393,5 +418,5 @@ else
 fi
 
 echo "call_result_field: $pass passed, $fail failed"
-[ "$pass" -ge 41 ] || { echo "FAIL: call_result_field: only $pass of the 41 rows passed"; exit 1; }
+[ "$pass" -ge 43 ] || { echo "FAIL: call_result_field: only $pass of the 43 rows passed"; exit 1; }
 [ "$fail" -eq 0 ]
