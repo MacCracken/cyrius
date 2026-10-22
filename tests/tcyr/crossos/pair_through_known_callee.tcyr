@@ -1,0 +1,74 @@
+# pair_through_known_callee.tcyr — 6.7.17 (D26, the user's decision, 2026-10-22: "Yes, as f(4)"). A `: stack` pair fn
+# called through `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` is the direct call's pair: `?`
+# propagates it, the destructure binds both, a forwarder `return callptr(&f, x);` returns it
+# (issues/2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md).
+#
+# ⛔ THE DEFECT. No pair asker read the known `&f`, so `callptr(&f, 4)?` and `fncall1(&f, 4)?` took the BOXED `?` and
+# dereferenced the tag: SIGSEGV on x86_64 and aarch64, "guest address out of range: 0" on cx, an access violation (exit
+# 5) on PE. The statement form `fncall1(&f, 4)?;` read fncall1's own flag, and a forwarder or a fn whose only pair route
+# was such a `?`, defined below its caller, was one value there.
+#
+# ⚠ WHY crossos/: the pair is each target's return-register pair through an indirect call, and `?` re-emits both halves
+# on its Err path; this file runs on pi, ecb, ach and cass at the release gate. The one-wide refusals ("bind both") are
+# tests/gates/frontend/stack_enum_lossy_context.sh axis IC, on x86_64 / qemu-aarch64 / cxvm / wine.
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+enum KR: stack { KOk(v); KErr(e); }
+
+fn _kf(x) { if (x > 5) { return KErr(x); } return KOk(x + 1); }
+fn _kf2(x, y) { if (x > 5) { return KErr(x + y); } return KOk(x * 10 + y); }
+fn _kf0() { return KOk(42); }
+
+fn _k_cp(x) { var v = callptr(&_kf, x)?; return KOk(v + 100); }
+fn _k_fc(x) { var v = fncall1(&_kf, x)?; return KOk(v + 200); }
+fn _k_stmt_cp(x) { callptr(&_kf, x)?; return KOk(7); }
+fn _k_stmt_fc(x) { fncall1(&_kf, x)?; return KOk(8); }
+fn _k_wrap(x) { var v = (callptr((&_kf), x))?; return KOk(v + 300); }
+fn _k_two(x) { var v = fncall2(&_kf2, x, 3)? + callptr(&_kf0)?; return KOk(v); }
+
+# Callers ABOVE the fns they call: a forwarder and a fn whose only pair route is a `?` through `&f`.
+fn _k_above(x) { var v = _k_fwd(x)?; var u = _k_qonly(x)?; return KOk(v * 1000 + u); }
+fn _k_fwd(x) { return callptr(&_kf, x); }
+fn _k_qonly(x) { var v = fncall1(&_kf, x)?; return KOk(v + 50); }
+
+fn _k_run(): i64 {
+    var t, v = _k_cp(4);
+    assert_eq(t, 0, "callptr(&f, 4)? on Ok: the tag");
+    assert_eq(v, 105, "... the payload");
+    t, v = _k_cp(9);
+    assert_eq(t, 1, "callptr(&f, 9)? propagates the Err tag");
+    assert_eq(v, 9, "... and its payload");
+    t, v = _k_fc(4);
+    assert_eq(v, 205, "fncall1(&f, 4)? on Ok");
+    t, v = _k_fc(9);
+    assert_eq(t * 100 + v, 109, "fncall1(&f, 9)? propagates the Err with its payload");
+    t, v = _k_stmt_cp(4);
+    assert_eq(t * 100 + v, 7, "the statement callptr(&f, 4)?; passes on Ok");
+    t, v = _k_stmt_cp(9);
+    assert_eq(t * 100 + v, 109, "the statement callptr(&f, 9)?; propagates the Err");
+    t, v = _k_stmt_fc(9);
+    assert_eq(t * 100 + v, 109, "the statement fncall1(&f, 9)?; propagates the Err");
+    t, v = _k_stmt_fc(1);
+    assert_eq(t * 100 + v, 8, "the statement fncall1(&f, 1)?; passes on Ok");
+    t, v = _k_wrap(2);
+    assert_eq(t * 1000 + v, 303, "(callptr((&f), 2))? propagates through the wraps");
+    t, v = _k_two(2);
+    assert_eq(t * 1000 + v, 65, "fncall2(&f2, 2, 3)? + callptr(&f0)?");
+    t, v = _k_two(6);
+    assert_eq(t * 1000 + v, 1009, "fncall2(&f2, 6, 3)? propagates its Err payload");
+    t, v = _k_above(3);
+    assert_eq(t * 100000 + v, 4054, "a forwarder and a ?-only fn through &f, defined below their caller");
+    t, v = _k_above(8);
+    assert_eq(t * 100 + v, 108, "... and their Err through ? above them");
+    var dt, dv = callptr(&_kf, 9);
+    assert_eq(dt * 100 + dv, 109, "var t, v = callptr(&f, 9); binds both");
+    var et, ev = fncall1(&_kf, 2);
+    assert_eq(et * 100 + ev, 3, "var t, v = fncall1(&f, 2); binds both");
+    return 0;
+}
+
+var _a = _k_run();
+var r = assert_summary();
