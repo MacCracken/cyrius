@@ -6718,8 +6718,14 @@ byte` failing with `unexpected '('` — the filed defect, one input class narrow
 ```
 #ref "config.toml"
 # Reads a TOML file and emits key/value pairs as global variables
-# Processed during PP_REF_PASS before main compilation
+# Processed by the preprocessor: the entry file's in PP_REF_PASS, an included file's in PP_IFDEF_PASS
 ```
+
+A `#ref` works in an included file as in the entry file (6.7.17, the user's D100, 2026-10-22): its
+keys become that file's top-level variables, and its file name resolves as the same file's
+`include` names do (from the entry file's directory). Through 6.7.16 only the entry file's `#ref`
+lines were expanded; in an included file the line was a comment, and a use of its keys was
+*undefined variable*. A `#ref` inside a skipped `#ifdef` arm is not read.
 
 The quoted filename is required, and it must follow `#ref ` immediately. A line that merely
 *begins* `#ref ` and has no quote is an ordinary comment — `#ref counting is fine` is prose and

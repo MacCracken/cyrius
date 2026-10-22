@@ -19,8 +19,74 @@ fn ISREF(S, pos, bl): i64 {
     return 1;
 }
 
-# Emit TOML key-value pairs as var declarations into preprocessor output.
-# Simple: read file, for each line starting with a letter, emit "var LINE;\n".
+# ⛔ 6.7.17 — ONE #ref LINE, AT EITHER SITE: the entry's (PP_REF_PASS, over the raw source) and an included file's
+# (PP_IFDEF_PASS — the user's D100, 2026-10-22: that pass had no #ref arm, so a #ref in an included file was a comment
+# and its keys "undefined variable"). `ip` is just past `#ref "` in `base` (`bl` bytes): the file name is read to its
+# closing quote, the rest of the line judged (PP_REF_TAIL, D92) and stepped, and the file's keys emitted at `out` +
+# `_pp_ref_op` through `buf` (PP_REF_EMIT). The name resolves as an include's does (READFILE: the entry's directory,
+# the path guards). The offset past the line; `_pp_ref_op` the new output offset. CHANGELOG [6.7.17]
+var _pp_ref_op = 0;
+fn PP_REF_LINE(S, base, ip, bl, buf, out): i64 {
+    var rfn = S + 0x190400;
+    var rfi = 0;
+    while (ip < bl) {
+        var rc = load8(base + ip);
+        if (rc == 34) { ip = ip + 1; break; }
+        if (rfi >= 767) { PP_FNAME_TOO_LONG(rfn, rfi, "#ref"); }
+        store8(rfn + rfi, rc); rfi = rfi + 1; ip = ip + 1;
+    }
+    store8(rfn + rfi, 0);
+    PP_REF_TAIL(S, base, ip, bl, rfn, rfi);   # D92: the line ends at the file name
+    while (ip < bl) { if (load8(base + ip) == 10) { ip = ip + 1; break; } ip = ip + 1; }
+    var nl = 0;
+    if (load8(base + ip - 1) == 10) { nl = 1; }
+    _pp_ref_op = PP_REF_EMIT(rfn, rfi, buf, out, _pp_ref_op, nl);
+    return ip;
+}
+# The #ref file `rfn` (`rfi` bytes of name, read into `buf`, 16 KB) as declarations at `out + op`: `var LINE; ` for each
+# line that starts with a letter (`#` comments, `[section]` lines and blanks skipped), all on the #ref's own line, then
+# its line break when `nl` — each took a line of its own through 6.7.16, so every later line was numbered off by the key
+# count less one. A file that does not open exits (an unclosed name said so). The new `op`. CHANGELOG [6.7.17]
+fn PP_REF_EMIT(rfn, rfi, buf, out, op, nl): i64 {
+    var rnr = READFILE(rfn, buf, 16384);
+    if (rnr < 0) {
+        PP_FNAME_UNCLOSED(rfn, rfi, "#ref");
+        syscall(SYS_WRITE, 2, "error: cannot open #ref file: ", 30);
+        var n = 0;
+        while (load8(rfn + n) != 0) { n = n + 1; }
+        syscall(SYS_WRITE, 2, rfn, n);
+        syscall(SYS_WRITE, 2, "\n", 1);
+        syscall(SYS_EXIT, 1);
+    }
+    var ri = 0;
+    while (ri < rnr) {
+        var rch = load8(buf + ri);
+        if (rch <= 32) { ri = ri + 1; }
+        elif (rch == 35) { while (ri < rnr) { if (load8(buf + ri) == 10) { break; } ri = ri + 1; } }
+        elif (rch == 91) { while (ri < rnr) { if (load8(buf + ri) == 10) { break; } ri = ri + 1; } }
+        elif (rch >= 65) {
+            store8(out + op, 118); store8(out + op + 1, 97);
+            store8(out + op + 2, 114); store8(out + op + 3, 32); op = op + 4;
+            while (ri < rnr) {
+                rch = load8(buf + ri);
+                if (rch == 10) { ri = ri + 1; break; }
+                store8(out + op, rch); op = op + 1; ri = ri + 1;
+            }
+            while (load8(out + op - 1) == 32) { op = op - 1; }
+            store8(out + op, 59); store8(out + op + 1, 32); op = op + 2;
+        }
+        else { ri = ri + 1; }
+    }
+    if (nl == 1) { store8(out + op, 10); op = op + 1; }
+    return op;
+}
+# PP_IFDEF_PASS's #ref read buffer: alloc'd at the first included #ref (0x191800, PP_REF_PASS's, is the macro tables'
+# by then — main.cyr's heap map). CHANGELOG [6.7.17]
+var _pp_refb = 0;
+fn _pp_ref_buf(): i64 {
+    if (_pp_refb == 0) { _pp_refb = alloc(16384 + 8); }
+    return _pp_refb;
+}
 
 fn ISINCLUDE(S, pos, bl): i64 {
     if (pos + 8 >= bl) { return 0; }
@@ -1163,12 +1229,15 @@ fn PP_INCLUDE_TAIL(S, base, ip, bl, fname, fi): i64 {
 # ⛔ 6.7.17 — A #ref LINE ENDS AT ITS FILE NAME, as an include's does (the user's D92, 2026-10-22): PP_REF_PASS stepped
 # the rest of the line unread, so `#ref "f.toml"; var y = 2; syscall(60, ka + y);` exited 5, not 7. The same rule
 # (PP_FNAME_TAIL_AT) and words: "expected the end of the line after a #ref's file name" at its first byte, the line
-# numbered as PP_PASS numbers it (`_bnd_err` lends the `#@incdir` / `#@srcline` bias; PP_PASS has not run). The file is
-# still read. CHANGELOG [6.7.17]
-fn PP_REF_TAIL(S, ip, bl, rfn, rfi): i64 {
-    var base = S + _SRCB;
+# numbered as PP_PASS numbers it (`_bnd_err` lends the `#@incdir` / `#@srcline` bias; PP_PASS has not run) — or, on an
+# included file's line (`base` PP_IFDEF_PASS's, D100), named by that file as its include tail is. The file is still
+# read. CHANGELOG [6.7.17]
+fn PP_REF_TAIL(S, base, ip, bl, rfn, rfi): i64 {
     var p = PP_FNAME_TAIL_AT(base, ip, bl, rfn, rfi);
-    if (p < bl) { _bnd_err(S, p, _bnd_entry_start(base, bl), "expected the end of the line after a #ref's file name"); }
+    if (p >= bl) { return 0; }
+    var m = "expected the end of the line after a #ref's file name";
+    if (base == S + _SRCB) { _bnd_err(S, p, _bnd_entry_start(base, bl), m); }
+    else { _pp_err_at(S, base, p, m); }   # an included file's line (PP_IFDEF_PASS, D100): <file>:<line>:<col>
     return 0;
 }
 # The offset of the first byte after a directive's file name (`ip`, just past its closing quote) that may not end its
@@ -5176,6 +5245,14 @@ fn PP_IFDEF_PASS(S): i64 {
                             op = load64(S + 0x197008);
                             bol = 1; handled = 1;
                         } } }
+                # 6.7.17 (the user's D100): a #ref line in an included file, expanded as the entry's are — column 0,
+                # the quote right after `#ref ` (PP_REF_PASS's test), outside a skipped #ifdef arm.
+                if (handled == 0) { if (skip_depth == 0) { if (ISREF(tmp, ip, bl) == 1) { if (load8(tmp + ip + 5) == 34) {
+                                _pp_ref_op = op;
+                                ip = PP_REF_LINE(S, tmp, ip + 6, bl, _pp_ref_buf(), out);
+                                op = _pp_ref_op;
+                                bol = 1; handled = 1;
+                            } } } }
                 if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(tmp, ip, bl) == 1) {
                             # v6.6.6 — same pre-check as PP_PASS's include site.
                             if (load8(tmp + ip + 8) != 34) { PP_INCLUDE_NEEDS_QUOTE(); }
@@ -5306,52 +5383,9 @@ fn PP_REF_PASS(S): i64 {
                 # match, consume, bail, bytes gone. CHANGELOG [6.6.6]
                 if (load8(S + _SRCB + ip + 5) == 34) {
                     _rhandled = 1;
-                    ip = ip + 6;
-                    var rfn = S + 0x190400;
-                    var rfi = 0;
-                    while (ip < bl) {
-                        var rc = load8(S + _SRCB + ip);
-                        if (rc == 34) { ip = ip + 1; break; }
-                        if (rfi >= 767) { PP_FNAME_TOO_LONG(rfn, rfi, "#ref"); }
-                        store8(rfn + rfi, rc); rfi = rfi + 1; ip = ip + 1;
-                    }
-                    store8(rfn + rfi, 0);
-                    PP_REF_TAIL(S, ip, bl, rfn, rfi);   # 6.7.17 (D92): the line ends at the file name
-                    while (ip < bl) { if (load8(S + _SRCB + ip) == 10) { ip = ip + 1; break; } ip = ip + 1; }
-                    var rnr = READFILE(rfn, S + 0x191800, 16384);
-                    if (rnr < 0) {
-                        PP_FNAME_UNCLOSED(rfn, rfi, "#ref");   # 6.7.17
-                        syscall(SYS_WRITE, 2, "error: cannot open #ref file: ", 30);
-                        var _rfl = 0;
-                        while (load8(rfn + _rfl) != 0) { _rfl = _rfl + 1; }
-                        syscall(SYS_WRITE, 2, rfn, _rfl);
-                        syscall(SYS_WRITE, 2, "\n", 1);
-                        syscall(SYS_EXIT, 1);
-                    }
-                    # Inline: emit var declarations for each key-value line — all on the #ref's own line, which keeps
-                    # its line break. 6.7.17: each declaration took a line of its own, so every later line of the file
-                    # was numbered off by the key count less one (`#ref` of three keys, then `zz` on line 2: "4:15"; of
-                    # none: "1:15"). CHANGELOG [6.7.17]
-                    var ri = 0;
-                    while (ri < rnr) {
-                        var rch = load8(S + 0x191800 + ri);
-                        if (rch <= 32) { ri = ri + 1; }
-                        elif (rch == 35) { while (ri < rnr) { if (load8(S + 0x191800 + ri) == 10) { break; } ri = ri + 1; } }
-                        elif (rch == 91) { while (ri < rnr) { if (load8(S + 0x191800 + ri) == 10) { break; } ri = ri + 1; } }
-                        elif (rch >= 65) {
-                            store8(out + op, 118); store8(out + op + 1, 97);
-                            store8(out + op + 2, 114); store8(out + op + 3, 32); op = op + 4;
-                            while (ri < rnr) {
-                                rch = load8(S + 0x191800 + ri);
-                                if (rch == 10) { ri = ri + 1; break; }
-                                store8(out + op, rch); op = op + 1; ri = ri + 1;
-                            }
-                            while (load8(out + op - 1) == 32) { op = op - 1; }
-                            store8(out + op, 59); store8(out + op + 1, 32); op = op + 2;
-                        }
-                        else { ri = ri + 1; }
-                    }
-                    if (load8(S + _SRCB + ip - 1) == 10) { store8(out + op, 10); op = op + 1; }
+                    _pp_ref_op = op;
+                    ip = PP_REF_LINE(S, S + _SRCB, ip + 6, bl, S + 0x191800, out);   # 6.7.17: one reader, both sites
+                    op = _pp_ref_op;
                     found = 1;
                     bol = 1;
                 }
