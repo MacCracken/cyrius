@@ -5368,6 +5368,7 @@ fn _gv_fold(S, vi, ti): i64 {
         return vi;
     }
     _gv_clear(S, vi);
+    _gu_drop(pi);   # 6.7.17: the sweep reads only the last declaration's initialiser
     return pi;
 }
 # ⛔ 6.7.15 — A REFUSED TYPE CHANGE IS ONE ERROR (issues/2026-10-16-global-type-change-refusal-cascades-into-earlier-
@@ -14209,14 +14210,38 @@ fn _gu_pass(S, n): i64 {
     var ch = 0;
     var i = 0;
     while (i < n) {
-        var sid = _gu_zsid(S, vec_get(_gu_v, i + 1));
-        if (sid != vec_get(_gu_v, i + 2)) {
-            _gu_set(S, i, sid);
-            ch = 1;
+        if (vec_get(_gu_v, i) >= 0) {   # 6.7.17: a note a redeclaration dropped (`_gu_drop`) types nothing
+            var sid = _gu_zsid(S, vec_get(_gu_v, i + 1));
+            if (sid != vec_get(_gu_v, i + 2)) {
+                _gu_set(S, i, sid);
+                ch = 1;
+            }
         }
         i = i + 3;
     }
     return ch;
+}
+# ⛔ 6.7.17 — A ZONE REDECLARATION SUPERSEDES THE SWEEP'S READING OF THE EARLIER ONE: `var gr = mk1(); var gr = 5;` is one
+# global, the last declaration's (`_gv_fold`), but the end-of-pass-1 sweep still typed it from the first initialiser — a
+# `: P1` call's struct (`gr + 1` dispatched `P1_add`: "undefined function"), a `: f64` call's f64 (6.7.16's D98), and
+# since 6.7.17's D22 a `Str` (`foo(0, gr)` into a cstring parameter took the `Str` overload). A fold drops the slot's
+# earlier notes in both vectors (the gvi word -1); the redeclaration notes its own. CHANGELOG [6.7.17]
+fn _gu_drop(vi): i64 {
+    var i = 0;
+    var n = 0;
+    if (_gu_v != 0) { n = vec_len(_gu_v); }
+    while (i < n) {
+        if (vec_get(_gu_v, i) == vi) { vec_set(_gu_v, i, 0 - 1); }
+        i = i + 3;
+    }
+    i = 0;
+    n = 0;
+    if (_gzf_v != 0) { n = vec_len(_gzf_v); }
+    while (i < n) {
+        if (vec_get(_gzf_v, i) == vi) { vec_set(_gzf_v, i, 0 - 1); }
+        i = i + 5;
+    }
+    return 0;
 }
 # Note `i`'s global takes struct `sid` (`_gu_type`; a handle for a refused type-argument list, `_gu_hdl`), or with 0 is
 # untyped as it was registered.
@@ -14285,7 +14310,8 @@ fn _gzf_pass(S, m): i64 {
         var ti = vec_get(_gzf_v, i + 1);
         var k = vec_get(_gzf_v, i + 2);
         var f = 0;
-        if (k < 0) { f = _gzf_init(S, ti, _gz_end(S, ti)); }
+        if (gvi < 0) { f = 0; }   # 6.7.17: dropped by a redeclaration (`_gu_drop`)
+        elif (k < 0) { f = _gzf_init(S, ti, _gz_end(S, ti)); }
         else { f = _gzf_elem(S, ti, k); }
         if (f != vec_get(_gzf_v, i + 3)) {
             vec_set(_gzf_v, i + 3, f);
