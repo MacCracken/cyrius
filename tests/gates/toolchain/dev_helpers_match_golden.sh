@@ -20,6 +20,11 @@
 # directories, and CYRIUS_SCRATCH / CYRIUS_REPO / HOME point into this gate's temp dir — no
 # network, no sibling checkout, no live store.
 #
+# It reaches its verdict under `sh` (check.sh) and under `bash -eo pipefail` (GitHub's run:
+# shell), red rows included: a helper's expected non-zero exit is read as `… && rc=0 || rc=$?`,
+# and a pipeline whose status means nothing (a diff tail, a grep that may match nothing) ends
+# `|| true`.
+#
 # AXES (one per converted helper; a helper's axis passes when every case of it matches)
 #   regen_issue_index  two issue sets (every group shape: hand labels kept at (0), an automatic
 #                      label inserted in release order and one dropped empty, Unicode digits, a
@@ -100,7 +105,7 @@ _build() {
     if "$CC" < "$2" > "$BIN/$1" 2> "$T/$1.build.err" && [ -s "$BIN/$1" ]; then
         chmod +x "$BIN/$1"
     else
-        echo "FAIL: $NAME: $2 does not build:"; grep -v '^note' "$T/$1.build.err" | head -5
+        echo "FAIL: $NAME: $2 does not build:"; grep -v '^note' "$T/$1.build.err" | head -5 || true
         exit 1
     fi
 }
@@ -125,7 +130,7 @@ _golden() {
     if [ ! -f "$G/$1" ]; then _fail "$1: no golden"; return; fi
     if ! cmp -s "$G/$1" "$2"; then
         _fail "$1 differs from the replaced script's output:"
-        diff "$G/$1" "$2" | head -12 | sed 's/^/      /'
+        diff "$G/$1" "$2" | head -12 | sed 's/^/      /' || true
     fi
 }
 # _golden_as <golden path> <actual file> <old text> <new text>: as _golden, the golden read with
@@ -136,11 +141,11 @@ _golden_as() {
     sed "s|$3|$4|g" "$G/$1" > "$T/golden_as"
     if ! cmp -s "$T/golden_as" "$2"; then
         _fail "$1 differs from the replaced script's output (with $3 read as $4):"
-        diff "$T/golden_as" "$2" | head -12 | sed 's/^/      /'
+        diff "$T/golden_as" "$2" | head -12 | sed 's/^/      /' || true
     fi
 }
 _axis_begin() { AXIS_BAD=0; }
-_axis_end() { AXES=$((AXES + 1)); [ "$AXIS_BAD" = 0 ] && echo "  ok: $1"; }
+_axis_end() { AXES=$((AXES + 1)); if [ "$AXIS_BAD" = 0 ]; then echo "  ok: $1"; fi; }
 
 # _rep <out> <rc> <stdout> <stderr> [<label> <file>]...: one report of a run, the scratch dir
 # spelled @T@.
@@ -169,14 +174,14 @@ for c in case1 case2; do
     R="$T/regen_$c"
     mkdir -p "$R/docs/development/issues"
     cp -a "$F/regen_issue_index/$c/." "$R/docs/development/issues/"
-    "$BIN/regen_issue_index" --repo "$R" > "$T/o" 2> "$T/e"; rc=$?
+    "$BIN/regen_issue_index" --repo "$R" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
     _rep "$T/rep" "$rc" "$T/o" "$T/e" README.md "$R/docs/development/issues/README.md"
     _golden "regen_issue_index/$c" "$T/rep"
 done
 R="$T/regen_err"
 mkdir -p "$R/docs/development/issues"
 printf '# Issues\n\n## Not the queue\n' > "$R/docs/development/issues/README.md"
-(cd "$T" && "$BIN/regen_issue_index" regen_err > "$T/o" 2> "$T/e"); rc=$?
+(cd "$T" && "$BIN/regen_issue_index" regen_err > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "regen_issue_index/no_section" "$T/rep"
 _axis_end "regen_issue_index: two issue sets and the missing-section error match the replaced script"
@@ -188,8 +193,8 @@ for c in c1 c2 c3 c4 c5 c6 c7; do
         K="$T/kb_${c}_$m"
         mkdir -p "$K"
         cp "$F/keepboth/$c" "$K/f"
-        if [ "$m" = sep ]; then (cd "$K" && "$BIN/keepboth" --sep f > "$T/o" 2> "$T/e"); rc=$?
-        else (cd "$K" && "$BIN/keepboth" f > "$T/o" 2> "$T/e"); rc=$?; fi
+        if [ "$m" = sep ]; then (cd "$K" && "$BIN/keepboth" --sep f > "$T/o" 2> "$T/e") && rc=0 || rc=$?
+        else (cd "$K" && "$BIN/keepboth" f > "$T/o" 2> "$T/e") && rc=0 || rc=$?; fi
         _rep "$T/rep" "$rc" "$T/o" "$T/e" file "$K/f"
         _golden "keepboth/$c.$m" "$T/rep"
     done
@@ -208,26 +213,26 @@ _axis_begin
 PD="$T/probes"
 mkdir -p "$PD"
 : > "$PD/stale.bin"; : > "$PD/stale.cyr"; : > "$PD/stale.err"; echo keep > "$PD/keep.txt"
-"$BIN/probe" split "$PD" "$F/probe/probes.txt" > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/probe" split "$PD" "$F/probe/probes.txt" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 { for p in $(ls "$PD" | LC_ALL=C sort); do echo "== $p"; cat "$PD/$p"; done; } > "$T/listing"
 _rep "$T/rep" "$rc" "$T/o" "$T/e" files "$T/listing"
 _golden "probe/split" "$T/rep"
 _axis_end "probe split: a \`== name\` file splits into the probes the replaced script wrote"
 _axis_begin
-(cd "$PR" && CYRIUS_REPO="$PR" PROBE_TIMEOUT=1 "$BIN/probe" run "$PD" > "$T/o" 2> "$T/e"); rc=$?
+(cd "$PR" && CYRIUS_REPO="$PR" PROBE_TIMEOUT=1 "$BIN/probe" run "$PD" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "probe/run" "$T/rep"
-(cd "$PR" && CYRIUS_REPO="$PR" PROBE_TIMEOUT=1 OLD_CC="$T/old_cc" "$BIN/probe" run "$PD" > "$T/o" 2> "$T/e"); rc=$?
+(cd "$PR" && CYRIUS_REPO="$PR" PROBE_TIMEOUT=1 OLD_CC="$T/old_cc" "$BIN/probe" run "$PD" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "probe/run_old_cc" "$T/rep"
 mkdir -p "$T/noprobes"
-(cd "$T" && CYRIUS_REPO="$PR" "$BIN/probe" run noprobes > "$T/o" 2> "$T/e"); rc=$?
+(cd "$T" && CYRIUS_REPO="$PR" "$BIN/probe" run noprobes > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "probe/run_none" "$T/rep"
-(cd "$T" && CYRIUS_REPO="$PR" "$BIN/probe" run nosuchdir > "$T/o" 2> "$T/e"); rc=$?
+(cd "$T" && CYRIUS_REPO="$PR" "$BIN/probe" run nosuchdir > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "probe/run_nodir" "$T/rep"
-(cd "$T" && CYRIUS_REPO="$PR" OLD_CC=no/such/cc "$BIN/probe" run "$PD" > "$T/o" 2> "$T/e"); rc=$?
+(cd "$T" && CYRIUS_REPO="$PR" OLD_CC=no/such/cc "$BIN/probe" run "$PD" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "probe/run_bad_old_cc" "$T/rep"
 _axis_end "probe run: the probes' lines (default, OLD_CC, a timeout) and the setup errors match the replaced script"
@@ -245,14 +250,14 @@ printf '[package]\n' > "$XR/cyrius.cyml"
 _axis_begin
 : > "$T/xb.out"
 for p in p1.prog p2.prog p3.prog p4.prog; do
-    (cd "$XR" && PATH="$FB:$PATH" CYRIUS_REPO="$XR" CYRIUS_SCRATCH="$T/xbs" "$BIN/xb" "$F/xb/$p" >> "$T/xb.out" 2> "$T/e"); echo "rc=$?" >> "$T/xb.out"
+    (cd "$XR" && PATH="$FB:$PATH" CYRIUS_REPO="$XR" CYRIUS_SCRATCH="$T/xbs" "$BIN/xb" "$F/xb/$p" >> "$T/xb.out" 2> "$T/e") && r=0 || r=$?; echo "rc=$r" >> "$T/xb.out"
 done
 _golden "xb/four_programs" "$T/xb.out"
 _axis_end "xb: four programs' four-target lines match the replaced script"
 
 # ── envprobe ─────────────────────────────────────────────────────────────────────────────
 _axis_begin
-PATH="$FB:$PATH" "$BIN/envprobe" > "$T/o" 2> "$T/e"; rc=$?
+PATH="$FB:$PATH" "$BIN/envprobe" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 { echo "rc=$rc"; sed 's/[:=].*//' "$T/o"; } > "$T/keys"
 _golden "envprobe/keys" "$T/keys"
 _axis_end "envprobe: the inventory's lines are the replaced script's (keys; the values are the machine's)"
@@ -275,14 +280,14 @@ done
 # the times masked: every number in a time, a delta or a run list, and the column padding
 _abmask() { sed -e 's/[0-9][0-9]* ms/N ms/g' -e 's/delta [-+][0-9.]*%/delta D/' -e ':a' -e 's/\(: \[[N, ]*\)[0-9][0-9]*/\1N/' -e 'ta' "$1" | tr -s ' '; }
 _axis_begin
-CYRIUS_SCRATCH="$T/abs" "$BIN/ab" HEAD~1 HEAD --runs 2 --repo "$AR" > "$T/o" 2> "$T/e"; rc=$?
+CYRIUS_SCRATCH="$T/abs" "$BIN/ab" HEAD~1 HEAD --runs 2 --repo "$AR" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _abmask "$T/o" > "$T/om"
 _rep "$T/rep" "$rc" "$T/om" "$T/e"
 _golden "ab/two_refs" "$T/rep"
-(cd "$T" && CYRIUS_SCRATCH="$T/abs" "$BIN/ab" nosuchref HEAD --repo ab_repo > "$T/o" 2> "$T/e"); rc=$?
+(cd "$T" && CYRIUS_SCRATCH="$T/abs" "$BIN/ab" nosuchref HEAD --repo ab_repo > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "ab/not_a_commit" "$T/rep"
-CYRIUS_SCRATCH="$T/abs" "$BIN/ab" HEAD HEAD --runs 0 --repo "$AR" > "$T/o" 2> "$T/e"; rc=$?
+CYRIUS_SCRATCH="$T/abs" "$BIN/ab" HEAD HEAD --runs 0 --repo "$AR" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "ab/runs_zero" "$T/rep"
 left=$(ls -A "$T/abs" 2>/dev/null | wc -l)
@@ -308,13 +313,13 @@ for m in dry run; do
     d=""
     [ "$m" = dry ] && d=--dry
     "$BIN/place" --repo "$PL" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$RF/place/units.json" \
-        --decisions "$RF/place/decisions.json" --plan "$RF/place/place.json" $d > "$T/o" 2> "$T/e"; rc=$?
+        --decisions "$RF/place/decisions.json" --plan "$RF/place/place.json" $d > "$T/o" 2> "$T/e" && rc=0 || rc=$?
     _tree "$PL" > "$T/tree"
     _rep "$T/rep" "$rc" "$T/o" "$T/e" tree "$T/tree"
     _golden "place/$m" "$T/rep"
 done
 "$BIN/place" --repo "$PL" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$RF/place/units_bad.json" \
-    --decisions "$RF/place/decisions.json" --plan "$RF/place/none.json" > "$T/o" 2> "$T/e"; rc=$?
+    --decisions "$RF/place/decisions.json" --plan "$RF/place/none.json" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "place/no_line" "$T/rep"
 _axis_end "place: Placement and Decision lines, a special re-placement, --dry and the refusal match place.py"
@@ -328,7 +333,7 @@ for m in dry run; do
     [ "$m" = dry ] && d=--dry
     "$BIN/briefs" --repo "$T" --c6 "$C6" --ver 9.8.7 --date 2026-10-22 --units "$RF/briefs/units.json" \
         --triage "$RF/briefs/triage.json" --decisions "$RF/briefs/decisions.json" \
-        --notes "$RF/briefs/brief_notes.json" --out "$BO" $d > "$T/o" 2> "$T/e"; rc=$?
+        --notes "$RF/briefs/brief_notes.json" --out "$BO" $d > "$T/o" 2> "$T/e" && rc=0 || rc=$?
     : > "$T/tree"
     [ -d "$BO" ] && _tree "$BO" > "$T/tree"
     _rep "$T/rep" "$rc" "$T/o" "$T/e" briefs "$T/tree"
@@ -350,13 +355,13 @@ for m in dry run; do
     git -C "$AV" -c user.email=gate@local -c user.name=gate -c commit.gpgsign=false commit -q -m t
     d=""
     [ "$m" = dry ] && d=--dry
-    "$BIN/archive" --repo "$AV" --c6 "$C6" --ver 9.8.7 --docs "$RF/archive/docs" $d > "$T/o" 2> "$T/e"; rc=$?
+    "$BIN/archive" --repo "$AV" --c6 "$C6" --ver 9.8.7 --docs "$RF/archive/docs" $d > "$T/o" 2> "$T/e" && rc=0 || rc=$?
     git -C "$AV" status --porcelain > "$T/st"
     _tree "$AV" > "$T/tree"
     _rep "$T/rep" "$rc" "$T/o" "$T/e" status "$T/st" tree "$T/tree"
     _golden "archive/$m" "$T/rep"
 done
-"$BIN/archive" --repo "$T/archive_dry" --c6 "$C6" --ver 9.8.7 --docs "$RF/archive/docs_missing" > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/archive" --repo "$T/archive_dry" --c6 "$C6" --ver 9.8.7 --docs "$RF/archive/docs_missing" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "archive/missing" "$T/rep"
 _axis_end "archive: the banners, titles, Status lines, the git mv and every repointed link match archive.py"
@@ -372,7 +377,7 @@ for m in dry run again; do
     [ "$m" = dry ] && d=--dry
     "$BIN/assemble" --repo "$AS" --c6 "$C6" --docs "$RF/assemble/docs" --ver 9.8.7 --prev 9.8.6 \
         --date 2026-10-22 --lanes l1,l2 --mig-extra extra --gatehead abc1234 --driver '1 / 1' \
-        --shell '2 / 2' --bench 99 $d > "$T/o" 2> "$T/e"; rc=$?
+        --shell '2 / 2' --bench 99 $d > "$T/o" 2> "$T/e" && rc=0 || rc=$?
     _tree "$AS" > "$T/tree"
     _rep "$T/rep" "$rc" "$T/o" "$T/e" tree "$T/tree"
     _golden "assemble/$m" "$T/rep"
@@ -381,7 +386,7 @@ AS2="$T/assemble_repo2"
 mkdir -p "$AS2"
 cp -R "$RF/assemble/repo/." "$AS2/"
 "$BIN/assemble" --repo "$AS2" --c6 "$C6" --docs "$RF/assemble/docs" --ver 9.8.7 --prev 9.8.6 \
-    --date 2026-10-22 --lanes l1 --gatehead abc1234 --driver x --shell y > "$T/o" 2> "$T/e"; rc=$?
+    --date 2026-10-22 --lanes l1 --gatehead abc1234 --driver x --shell y > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "assemble/no_bench" "$T/rep"
 _axis_end "assemble: the CHANGELOG entry and the migration section, --dry and both refusals match assemble.py"
@@ -403,7 +408,7 @@ cp "$RF/roadmap_state/arm.bin" "$RS/build/cycc-native-aarch64"
 cp "$RF/roadmap_state/api-surface.snapshot" "$RS/docs/api-surface.snapshot"
 cp -R "$RF/roadmap_state/docs/." "$RS/docs/development/"
 cp -R "$RS/docs/development/." "$T/rs_docs_orig/" 2>/dev/null || { mkdir -p "$T/rs_docs_orig"; cp -R "$RS/docs/development/." "$T/rs_docs_orig/"; }
-"$BIN/roadmap_state" --repo "$RS" --ver 9.8.7 --derive > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/roadmap_state" --repo "$RS" --ver 9.8.7 --derive > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "roadmap_state/derive" "$T/rep"
 for m in dry run; do
@@ -411,19 +416,19 @@ for m in dry run; do
     [ "$m" = dry ] && d=--dry
     "$BIN/roadmap_state" --repo "$RS" --c6 "$C6" --ver 9.8.7 --template "$RF/roadmap_state/template.json" \
         --date 2026-10-22 --set gatehead=abc1234 --set driver='1 / 1' --set bench=99 --set archived=3 $d \
-        > "$T/o" 2> "$T/e"; rc=$?
+        > "$T/o" 2> "$T/e" && rc=0 || rc=$?
     _tree "$RS/docs/development" > "$T/tree"
     _rep "$T/rep" "$rc" "$T/o" "$T/e" docs "$T/tree"
     _golden "roadmap_state/$m" "$T/rep"
 done
 for c in missing norow; do
     "$BIN/roadmap_state" --repo "$RS" --c6 "$C6" --ver 9.8.7 --template "$RF/roadmap_state/template_$c.json" \
-        > "$T/o" 2> "$T/e"; rc=$?
+        > "$T/o" 2> "$T/e" && rc=0 || rc=$?
     _rep "$T/rep" "$rc" "$T/o" "$T/e"
     _golden "roadmap_state/$c" "$T/rep"
 done
 "$BIN/roadmap_state" --repo "$RS" --c6 "$C6" --ver 9.9.0 --template "$RF/roadmap_state/template.json" \
-    > "$T/o" 2> "$T/e"; rc=$?
+    > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "roadmap_state/still_placed" "$T/rep"
 _axis_end "roadmap_state: --derive, a template of every operation dry and real, and the refusals match roadmap-state.py"
@@ -443,7 +448,7 @@ for c in selfrep diverge flip fail1 empty1 fail2 lag; do
         chmod +x "$FR/build/cycc"
         printf 'var x = 1;\n' > "$FR/src/main.cyr"
         printf '[package]\n' > "$FR/cyrius.cyml"
-        (cd "$FR" && CYRIUS_REPO="$FR" "$BIN/fixpoint" --$m "../st_${c}_$m" > "$T/o" 2> "$T/e"); rc=$?
+        (cd "$FR" && CYRIUS_REPO="$FR" "$BIN/fixpoint" --$m "../st_${c}_$m" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
         ls -A "$FR/build" > "$T/buildls"
         _rep "$T/rep" "$rc" "$T/o" "$T/e" build/ "$T/buildls" build/cycc "$FR/build/cycc"
         _golden "fixpoint/$c.$m" "$T/rep"
@@ -482,37 +487,37 @@ RC="$T/rc_copy"
 mkdir -p "$RC"
 cp -R "$FOLDS/foldx/." "$RC/"
 rm -rf "$RC/.git"
-"$BIN/run_ci" "$RC" --list > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/run_ci" "$RC" --list > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "run_ci/list" "$T/rep"
-"$BIN/run_ci" "$RC" --list --include-release > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/run_ci" "$RC" --list --include-release > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "run_ci/list_release" "$T/rep"
 (cd "$T" && PATH="$STORE/9.9.9/bin:$PATH" HOME="$T/fh" CYRIUS_HOME="$T/fakehome" CI_TIMEOUT=3 CI_VERBOSE=1 \
-    REPO_NAME=foldx RUNNER_TEMP="$T/rc_rt" "$BIN/run_ci" "$RC" > "$T/o" 2> "$T/e"); rc=$?
+    REPO_NAME=foldx RUNNER_TEMP="$T/rc_rt" "$BIN/run_ci" "$RC" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "run_ci/run" "$T/rep"
 (cd "$T" && PATH="$STORE/9.9.9/bin:$PATH" HOME="$T/fh" CYRIUS_HOME="$T/fakehome" CI_JOB=other \
-    RUNNER_TEMP="$T/rc_rt" "$BIN/run_ci" "$RC" > "$T/o" 2> "$T/e"); rc=$?
+    RUNNER_TEMP="$T/rc_rt" "$BIN/run_ci" "$RC" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "run_ci/run_one_job" "$T/rep"
 _axis_end "run_ci: the step list and a run of every step shape match run-ci.py"
 _axis_begin
 SW="$T/sibw"
 (cd "$T" && PATH="$FB:$PATH" CYRIUS_FOLDS_ROOT="$FOLDS" CYRIUS_STORE="$STORE" CI_TIMEOUT=3 \
-    "$BIN/sibci" foldx v1 "$SW" > "$T/o" 2> "$T/e"); rc=$?
+    "$BIN/sibci" foldx v1 "$SW" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 { echo "home/bin -> $(readlink "$SW/foldx/home/bin")"; echo "home/lib -> $(readlink "$SW/foldx/home/lib")"
   echo "home/current: $(cat "$SW/foldx/home/current")"; echo "fh/.cyrius -> $(readlink "$SW/foldx/fh/.cyrius")"
   ls "$SW/foldx/home/versions"; ls "$SW/foldx/home/deps" | wc -l; } > "$T/layout"
 _rep "$T/rep" "$rc" "$T/o" "$T/e" ci.log "$SW/foldx/ci.log" copy/cyrius.cyml "$SW/foldx/copy/cyrius.cyml" layout "$T/layout"
 _golden "sibci/run" "$T/rep"
 for bad in "a/b" nopin badpin; do
-    (cd "$T" && CYRIUS_FOLDS_ROOT="$FOLDS" CYRIUS_STORE="$STORE" "$BIN/sibci" "$bad" v1 "$SW" > "$T/o" 2> /dev/null); rc=$?
+    (cd "$T" && CYRIUS_FOLDS_ROOT="$FOLDS" CYRIUS_STORE="$STORE" "$BIN/sibci" "$bad" v1 "$SW" > "$T/o" 2> /dev/null) && rc=0 || rc=$?
     : > "$T/e"   # stderr dropped: git's and tar's own complaints; the verdict is stdout and the status
     _rep "$T/rep" "$rc" "$T/o" "$T/e"
     _golden_as "sibci/bad_$(echo "$bad" | tr / _)" "$T/rep" "sibci.sh: " "sibci: "
 done
-(cd "$T" && "$BIN/sibci" onlyone > "$T/o" 2> /dev/null); rc=$?
+(cd "$T" && "$BIN/sibci" onlyone > "$T/o" 2> /dev/null) && rc=0 || rc=$?
 [ "$rc" = 1 ] || _fail "sibci with a missing argument exited $rc (the script: 1)"
 _axis_end "sibci: an isolated run (summary, step log, manifest, the throwaway home) and the refusals match sibci.sh"
 
@@ -527,10 +532,10 @@ YC="$T/yc"
 mkdir -p "$YC"
 cp -R "$F/run_ci_yaml/." "$YC/"
 mv "$YC/dot-github" "$YC/.github"
-"$BIN/run_ci" "$YC" --list > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/run_ci" "$YC" --list > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "run_ci_yaml/list" "$T/rep"
-(cd "$T" && RUNNER_TEMP="$T/yc_rt" "$BIN/run_ci" "$YC" > "$T/o" 2> "$T/e"); rc=$?
+(cd "$T" && RUNNER_TEMP="$T/yc_rt" "$BIN/run_ci" "$YC" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "run_ci_yaml/run" "$T/rep"
 _axis_end "run_ci: the YAML shapes run-ci.py misread now read as YAML reads them (a PyYAML oracle's output)"
@@ -544,13 +549,13 @@ _axis_begin
 CM="$T/cyml"
 mkdir -p "$CM"
 cp -R "$F/cymlcheck/." "$CM/"
-"$BIN/cymlcheck" "$CM" content/cases.cyml content/sub/deep.cyml content/crlf.cyml content/valid.cyml > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/cymlcheck" "$CM" content/cases.cyml content/sub/deep.cyml content/crlf.cyml content/valid.cyml > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "cymlcheck/named" "$T/rep"
 git init -q "$CM"
 git -C "$CM" -c user.email=gate@local -c user.name=gate add -A
 git -C "$CM" -c user.email=gate@local -c user.name=gate -c commit.gpgsign=false commit -q -m cases
-"$BIN/cymlcheck" "$CM" > "$T/o" 2> "$T/e"; rc=$?
+"$BIN/cymlcheck" "$CM" > "$T/o" 2> "$T/e" && rc=0 || rc=$?
 _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "cymlcheck/tracked" "$T/rep"
 _axis_end "cymlcheck: 116 TOML cases, the recursion limit, CR LF and the tracked-tree walk match cymlcheck.py (tomllib)"
@@ -565,7 +570,8 @@ PYF=$(find scripts -type f -name '*.py' | LC_ALL=C sort)
 nscan=0
 for f in $(find scripts -type f | LC_ALL=C sort); do
     nscan=$((nscan + 1))
-    if head -1 "$f" 2>/dev/null | grep -qE '^#!.*python'; then _fail "$f is a Python script (its #! line)"; fi
+    l1=$(head -1 "$f" 2>/dev/null || true)
+    case $l1 in '#!'*python*) _fail "$f is a Python script (its #! line)" ;; esac
 done
 [ "$nscan" -ge 30 ] || _fail "the scripts/ scan read only $nscan files (floor 30)"
 # A program's message naming the script it replaced points its reader at a file that is gone:
