@@ -2804,7 +2804,9 @@ fn _slice_fld_store(S, lli, fnoff, term): i64 {
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     _refuse_lossy_pair(S);   # 6.7.7 (T5b): `s.len = f();` stored the tag
+    var ti = GTI(S);
     PCMPE(S);
+    _dsr_slf(S, ti);   # 6.7.17 (D16): a struct result over 8 B into `.ptr` / `.len`
     EPUSHR(S);
     EFLADDR_X1(S, lli);
     if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
@@ -2926,6 +2928,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
     var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
     var lps = _istr_pfs(S, _rlf_si, _rlf_fi);   # 6.7.16 (D19): a `*Str` field, read before the RHS too
+    var lfd = ((_rlf_si + 1) << 16) | _rlf_fi;   # 6.7.17 (D16): the field, for `_dsr_fld`
     var fcop = _asg_compound_tok(S);   # 6.7.5 (B8): `x.f OP= e`, the address first (_fld_compound)
     if (fcop != 0) { _fld_compound(S, idx, sid, off, hop, fcop); return _fst_end(S, term); }
     if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5): `h.x, b = f();`
@@ -2945,6 +2948,7 @@ fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
             PCMPE(S);
             _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
             _istr_pfld(S, lps, fst_ti);   # 6.7.16 (D19): an inline `Str` into a `*Str` field
+            _dsr_fld(S, fst_ti, lfd);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
         }
     }
     _tup_fst_chk(S, ft, lfn, fsrc);   # 6.7.7 (R12): a value in rax is never a tuple
@@ -2993,7 +2997,11 @@ var _sfw_fk = 0;
 var _sfw_fn = 0;   # 6.7.3: that field's name (a bool field's refusal names it); _sfw_fk + 16 = a bool
 var _sfw_ft = 0;   # 6.7.13: the field's type, for an inline `Str` element (`_istr_lit`)
 var _sfw_pf = 0;   # 6.7.16: 1 = the field is a `*Str` (`_istr_pfs`), for an inline `Str` element (`_istr_pfld`)
+var _sfw_si = 0 - 1;   # 6.7.17 (D16): the field's struct and index, for `_dsr_lit`
+var _sfw_fi = 0;
 fn _sfw_set(S, si, fi): i64 {
+    _sfw_si = si;
+    _sfw_fi = fi;
     _sfw_fk = _fk_bx(S, si, fi);
     _sfw_fn = GETFNAME(S, si, fi);
     _sfw_ft = GETFTYPE(S, si, fi);
@@ -3010,6 +3018,8 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     _sfw_ft = 0;
     var pf = _sfw_pf;
     _sfw_pf = 0;
+    var lsi = _sfw_si;   # 6.7.17 (D16)
+    _sfw_si = 0 - 1;
     if (_sfw_have == 1) { _sfw_have = 0; }
     else {
         # An element is a one-slot store: a `: stack` pair here kept the tag and dropped the payload
@@ -3022,6 +3032,7 @@ fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
             _ifs_bx(S, fk, t0, _sfw_fn);
             _istr_lit(S, ft, t0);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` field
             _istr_pfld(S, pf, t0);   # 6.7.16 (D19): ... and into a `*Str` field (`W { gt, 1 }`)
+            _dsr_lit(S, t0, lsi, _sfw_fi);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
         }
     }
     EPUSHR(S);
@@ -13044,6 +13055,66 @@ fn _gz_pnu(S, b, sid): i64 {
 # T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
 # lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
 # the line. 1 = such a store. CHANGELOG [6.7.16]
+# ⛔ 6.7.17 (D16) — A FIELD STORE `b.v = R;` (b at token i opening a statement or a for step, the `=` after a field
+# name) whose base reads a name typed by T (`_gs_dsr_dep`: `b: Box<T>`, `*Wt<T>`, a T-typed name) and whose R is a
+# struct result over 8 B: at a scalar T the field is a word (`_dsr_fld` refuses it in a plain fn), so the generic has
+# no scalar instance, as `*p = R` (D99) and `y = R` (D1); at T a struct it copies. CHANGELOG [6.7.17]
+fn _gs_fst_sres(S, fi, i): i64 {
+    var pt = TOKTYP(S, i - 1);
+    if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
+    var eq = _gs_dsr_eq(S, i);
+    if (eq < 0) { return 0; }
+    if (TOKTYP(S, eq - 1) != 2) { return 0; }
+    if (TOKTYP(S, eq - 2) != 41) { return 0; }
+    if (_gs_dsr_dep(S, fi, i) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
+    _gsw_k = 3;
+    _gsw_ti = i;
+    return 1;
+}
+# ⛔ 6.7.17 (D16) — A GENERIC STRUCT'S LITERAL `Box<T> { R, .. }` (its `{` at token i, after the type-argument list's
+# `>` / `>>`, an argument naming one of fi's type parameters) with an element R that is a struct result over 8 B: at a
+# scalar T a T-typed field is a word (`_dsr_lit` refuses a word field's in a plain fn; the base parse leaves a generic
+# struct's to each instance), so the generic has no scalar instance; at T a struct the field copies. CHANGELOG [6.7.17]
+fn _gs_lit_sres(S, fi, i): i64 {
+    var c = TOKTYP(S, i - 1);
+    if (c != 20) { if (c != 39) { return 0; } }
+    var j = i - 2;
+    var d = 1;
+    if (c == 39) { d = 2; }
+    var tp = 0;
+    while (d > 0) {
+        if (j <= _gs_open) { return 0; }
+        var t = TOKTYP(S, j);
+        if (t == 20) { d = d + 1; }
+        if (t == 39) { d = d + 2; }
+        if (t == 19) { d = d - 1; }
+        if (t == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) { tp = 1; } }
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        j = j - 1;
+    }
+    if (tp == 0) { return 0; }
+    if (TOKTYP(S, j) != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, j)) <= 0) { return 0; }
+    return _gs_lit_els(S, fi, i, j);
+}
+# ... the elements of the literal whose `{` is at token i (its struct's name at token nm): 1 at the first struct result
+# over 8 B, a named element's `name:` stepped over.
+fn _gs_lit_els(S, fi, i, nm): i64 {
+    var k = i + 1;
+    while (TOKTYP(S, k) != 14) {
+        if (TOKTYP(S, k) == 2) { if (TOKTYP(S, k + 1) == 49) { k = k + 2; } }
+        if (_gs_sres_big(S, fi, k) == 1) {
+            _gsw_k = 3;
+            _gsw_ti = nm;
+            return 1;
+        }
+        k = _gs_expr_end(S, k);
+        if (TOKTYP(S, k) != 31) { return 0; }
+        k = k + 1;
+    }
+    return 0;
+}
 fn _gs_sub_sres(S, fi, i): i64 {
     var pt = TOKTYP(S, i - 1);
     if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }

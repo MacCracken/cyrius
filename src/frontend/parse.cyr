@@ -5200,7 +5200,11 @@ fn _dsr_sres(S, d, oe, ti): i64 {
 # destination is the statement's `B[..]` (its `[` at `lb`), B a typed pointer by its declared word (`_hl_pw`; an array
 # has none — a local array's element is no store through a pointer); judged as `*B = ..` is, named as spelled ('p[0]:
 # i64'). CHANGELOG [6.7.16]
-fn _dsr_esub(S, eq, ti): i64 {
+# ⛔ 6.7.17 (D16, the user's decision, 2026-10-22) — AND AN ARRAY'S ELEMENT: `buf[0] = mkp();` (a local or global
+# `i64[N]`, a `u8[N]`, ..; `_hl_pw` answers 0 for an array) stored Q's first word (77), silently. `ed` the element kind
+# (`_esub_assign`'s): named as spelled with it, 'buf[0]: i64'; a bool element is its own refusal (`_ifs_bx_el`).
+# CHANGELOG [6.7.17]
+fn _dsr_esub(S, eq, ti, ed): i64 {
     if (_syntax_only == 1) { return 0; }
     if (TOKTYP(S, eq - 1) != 29) { return 0; }
     var s = _vsl_sbeg(S, eq);
@@ -5208,7 +5212,67 @@ fn _dsr_esub(S, eq, ti): i64 {
     var lb = _dsr_lbr(S, eq - 1);
     if (lb <= s) { return 0; }
     if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_hl_pw(S, s, lb) <= 0) { return _dsr_earr(S, s, lb, eq, ed); }
     return _dsr_judge(S, s, lb, s, s, eq);
+}
+# The array arm: refused unless a bool element or, in a generic's base parse, a base typed by its type parameter.
+fn _dsr_earr(S, s, lb, eq, ed): i64 {
+    if (_ek_fk(ed) == 16) { return 0; }
+    if (_dsr_tdep(S, s, lb, s) == 1) { return 0; }
+    _dsr_tm = 1;
+    _dsr_tk = ed;
+    return _dsr_err(S, s, eq, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# ⛔ 6.7.17 (D16) — A STRUCT RESULT OVER 8 B INTO A SCALAR OR POINTER FIELD is refused, as every sibling store is:
+# `w.n = mkp();`, `GW.n = mkp();`, through a `*W` (`pw.n`), a chain (`v.w.n`), a capture, a for step, at top level, a
+# narrow / float / `*i64` / `*Pt` / `**Q` field — stored Q's first word (77; the globals 154), silently. `_fst_on`'s value
+# [ti, cursor), its field `lfd` (`(si + 1) << 16 | fi`, read before the value can re-resolve a field): "cannot assign
+# 'w.n: i64' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field". A struct-typed field
+# is `_fsc_src`'s, a bool its own refusal, a `*Q` field of the result's own struct D14's copy. In a generic's base parse
+# a destination typed by its type parameter is the stub rule's (`_gs_fst_sres`). CHANGELOG [6.7.17]
+fn _dsr_fld(S, ti, lfd): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (lfd <= 0) { return 0; }
+    var si = (lfd >> 16) - 1;
+    var fi = lfd & 0xFFFF;
+    if (GETFTYPE(S, si, fi) > 0) { return 0; }
+    if (GFBOOL(S, si, fi) == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_fld_ptr_sid(S, si, fi) == _dsr_sid) { return 0; }
+    var eq = ti - 1;
+    var s = _vsl_sbeg(S, eq);
+    if (s < 0) { return 0; }
+    if (_dsr_tdep(S, s, eq, s) == 1) { return 0; }
+    _dsr_tm = 2;
+    _dsr_tk = lfd;
+    return _dsr_err(S, s, eq, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# ... a struct literal's element (`W { mkp(), 0 }`, `W { n: mkp(), .. }`, a global's), its value [ti, cursor) into
+# field `fi` of struct `si`, named by the field: 'n: i64'. In a generic fn's base parse a generic struct's element is
+# each instance's to judge. CHANGELOG [6.7.17]
+fn _dsr_lit(S, ti, si, fi): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (si < 0) { return 0; }
+    if (fi < 0) { return 0; }
+    if (GETFTYPE(S, si, fi) > 0) { return 0; }
+    if (GFBOOL(S, si, fi) == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_fld_ptr_sid(S, si, fi) == _dsr_sid) { return 0; }
+    if (_inst_name == 0) { if (GSTP(S, si) != 0) { if (GINFN(S) == 1) { if (GFTP(S, _cur_fn_ix) != 0) { return 0; } } } }
+    _dsr_tm = 2;
+    _dsr_tk = ((si + 1) << 16) | fi;
+    _dsr_tnm = GETFNAME(S, si, fi);
+    return _dsr_err(S, ti, ti, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# ... a slice's `.ptr` / `.len` (`s.len = mkp();`), its value [ti, cursor): 's.len: i64'. CHANGELOG [6.7.17]
+fn _dsr_slf(S, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    var s = _vsl_sbeg(S, ti - 1);
+    if (s < 0) { return 0; }
+    _dsr_tm = 1;
+    _dsr_tk = 8;
+    return _dsr_err(S, s, ti - 1, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
 }
 # The `[` matching the `]` at token j.
 fn _dsr_lbr(S, j): i64 {
@@ -5345,17 +5409,28 @@ fn _dsr_ann_tp(S, an): i64 {
 }
 # The refusal at the call token `at` (fn `fn` / `afi`, struct `sid`), the destination `*E` spelled from its `*` at d,
 # its type from the operand's declared word `w`. 1.
+# 6.7.17 (D16): `_dsr_tm` 1 names an element kind `_dsr_tk` (an array's, a slice field's), 2 the field `_dsr_tk` packs
+# (`_dsr_fld`), with `_dsr_tnm` the destination's name when no span spells it (a literal's field); 0 the word `w`.
+var _dsr_tm = 0;
+var _dsr_tk = 0;
+var _dsr_tnm = 0;
 fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
+    var tm = _dsr_tm;
+    var tk = _dsr_tk;
+    var tnm = _dsr_tnm;
+    _dsr_tm = 0;
+    _dsr_tnm = 0;
     if (_panic == 1) { return 1; }
     if (_tn_once(S, at) == 0) { return 1; }
-    var dn = _src_span_nm(S, d, oe, TOKVAL(S, oe - 1));
+    var dn = tnm;
+    if (dn == 0) { dn = _src_span_nm(S, d, oe, TOKVAL(S, oe - 1)); }
     var sv = GTI(S);
     STI(S, at);
     syscall(SYS_WRITE, 2, "error:", 6);
     _err_head(S);
     PRSTR(": cannot assign '");
     PRSTR(S + 0xEC00000 + dn);
-    _dsr_tn(S, w, 1);
+    _dsr_ty(S, w, tm, tk);
     PRSTR("' from '");
     PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
     PRSTR("', which returns the struct '");
@@ -5367,6 +5442,41 @@ fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
     STI(S, sv);
     _had_error = 1;
     return 1;
+}
+# `_dsr_err`'s type: mode `tm` (see `_dsr_tm`) of `tk`, else `_dsr_tn` of `w`.
+fn _dsr_ty(S, w, tm, tk): i64 {
+    if (tm == 2) { return _dsr_ftn(S, (tk >> 16) - 1, tk & 0xFFFF); }
+    if (tm == 0) { return _dsr_tn(S, w, 1); }
+    var nm = _dsr_kname(tk, 8);
+    if (nm == 0) { return 0; }
+    PRSTR(": ");
+    PRSTR(nm);
+    return 0;
+}
+# Field `fi` of struct `si`'s type, after ": ": a `*T` field's pointer (`*Pt`, `*i64`, `**Q`), an f64 / f32, a narrow
+# signed or unsigned width, else `i64`. CHANGELOG [6.7.17]
+fn _dsr_ftn(S, si, fi): i64 {
+    PRSTR(": ");
+    var ps = _fld_ptr_sid(S, si, fi);
+    if (ps > 0) {
+        PRSTR("*");
+        PRSTR(S + 0xEC00000 + _fsn_one(S, ps));
+        return 0;
+    }
+    var pw = _fld_ps_get(S, si, fi);
+    if (pw > 0) {
+        PRSTR("*");
+        return _dsr_tn(S, pw, 0);
+    }
+    var k = GFFK(S, si, fi);
+    if (k == 1) { PRSTR("f64"); return 0; }
+    if (k == 2) { PRSTR("f32"); return 0; }
+    var ft = GETFTYPE(S, si, fi);
+    if (ft >= 0) { PRSTR("i64"); return 0; }
+    var ed = 0 - ft;
+    if (GFUNS(S, si, fi) == 0) { ed = ed | 0x40; }
+    PRSTR(_dsr_kname(ed, 0));
+    return 0;
 }
 # The type a dereference of step word `w` reaches, after ": " when `lead` is 1: a scalar by its element kind (`i64`,
 # `u8`, `i32`, `f64`, `f32`, `bool`), a pointer slot `*` and its pointee (a struct by name); nothing for a kind the word

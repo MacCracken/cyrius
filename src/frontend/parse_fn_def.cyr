@@ -5541,6 +5541,7 @@ fn _gs_scan_w(S, fi, i, mode): i64 {
         }
         if (t == 33) { if (mode == 0) { if (_gs_ret_amp(S, fi, i) == 1) { return 1; } } }
         if (t == 8) { if (mode == 0) { if (_gs_dsr_stmt(S, fi, i) == 1) { return 1; } } }   # 6.7.16 (D99)
+        if (t == 13) { if (mode == 0) { if (_gs_lit_sres(S, fi, i) == 1) { return 1; } } }   # 6.7.17 (D16)
         if (t == 2) { if (_gs_use(S, fi, i, mode) == 1) { return _gs_why(i, mode); } }
         i = i + 1;
     }

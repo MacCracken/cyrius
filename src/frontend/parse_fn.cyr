@@ -15661,6 +15661,7 @@ fn _gs_use(S, fi, i, mode): i64 {
         if (nx == 4) { return _gs_asg_sres(S, fi, i); }   # 6.7.16 (D1): `y = mkp();`, y typed by T
         if (nx == 28) { return _gs_sub_sres(S, fi, i); }   # 6.7.16 (D99): `p[i] = mkp();`, p a `*T`
         if (nx != 41) { return 0; }
+        if (_gs_fst_sres(S, fi, i) == 1) { return 1; }   # 6.7.17 (D16): `b.v = mkp();`, b reading T
         if (TOKTYP(S, i + 2) == 41) { return 0; }
         # 6.7.16: a FIELD name (`g.v` of `g.v.v`, `q.a` of `q.a.k`) is no T-typed name or carrier, whatever
         # parameter it shares a spelling with; modes 1 / 2 read `.`-preceded names for `_gs_mfwd`. CHANGELOG [6.7.16]

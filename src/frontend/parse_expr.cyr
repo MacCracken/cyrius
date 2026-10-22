@@ -4362,7 +4362,7 @@ fn _esub_assign(S, ed, nm): i64 {
             var ti = GTI(S);
             _sc_beg = 0 - 1;   # 6.7.16 (D99): only this value's own struct-call record may match
             PCMPE(S);
-            _dsr_esub(S, ti - 1, ti);   # 6.7.16 (D99): a struct result over 8 B through a `*i64`'s element
+            _dsr_esub(S, ti - 1, ti, ed);   # 6.7.16 (D99): through a `*i64`'s element; 6.7.17 (D16): an array's
             if (k != 0) { _ifs_bx_el(S, k, ti, nm); }
         }
     } else {

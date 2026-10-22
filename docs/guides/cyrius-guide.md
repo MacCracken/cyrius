@@ -1991,7 +1991,16 @@ mkp().a`) stores it, and through a `*P2` of the result's own struct the store co
 pointer too (6.7.17; the user's decision D13, 2026-10-22): `*p = mkp();` with `var p = &x;` — `alloc(..)`, `*(p + 8)`,
 an untyped parameter, global or capture, at top level, in a `for` step, every result above — is *cannot assign '\*p'
 from 'mkp', which returns the struct 'P2' - store it through a '\*P2' or bind a field* (D99's words without the type;
-through 6.7.16 it stored the struct's first word, silently). A global declaration is judged the same (6.7.14; the user's decision D28,
+through 6.7.16 it stored the struct's first word, silently). And into a scalar or pointer FIELD or an array ELEMENT
+(6.7.17; the user's decision D16, 2026-10-22): `w.n = mkp();`, `GW.n = mkp();`, `pw.n` through a `*W`, a chain
+`v.w.n`, a captured struct's field, a `u8` / `i32` / `f64` / `*i64` / `*Pt` field, `buf[i] = mkp();` of a local or
+global `i64[N]` / `u8[N]`, a slice's `.len`, a struct literal's element (`W { mkp(), 0 }`, `W { n: mkp(), .. }`, a
+global's) — in a fn, a `for` step or at top level — is *cannot assign 'w.n: i64' from 'mkp', which returns the struct
+'P2' - store it through a '\*P2' or bind a field* (the literal's element named by its field, `'n: i64'`); through
+6.7.16 each stored the first word. In a generic, a field or literal element typed by `T` (`b.v = mkp();` with `b:
+Box<T>`, `Box<T> { mkp(), 1 }`) has no scalar instance (D1's rule) and copies at a struct `T`. A struct-typed field
+takes the copy (or its own refusal), a `bool` field its own, and a field of the result (`w.n = mkp().a`), 8 bytes or
+less and a `Str` keep their word. A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was

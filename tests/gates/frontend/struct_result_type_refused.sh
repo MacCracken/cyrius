@@ -158,6 +158,20 @@
 # generic), UPK1-UPK5 (a field of the result, 8 B, a `Str`, `*(&q)`, a word); UPX UP0 / UP5 on aarch64 / cx / PE.
 # (A scratch copy of the tree with the one change, its cycc built from it, this gate run from the copy; 2026-10-22:)
 #   MUP1 `_dsr_untyped` answering 0 (the tree before)   -> RED 20: UP0-UP13 (compiled), UPX x6
+# 6.7.17 (D16, the user's decision, 2026-10-22; the same issue, row B4) — INTO A SCALAR OR POINTER FIELD AND AN ARRAY'S
+# ELEMENT: "cannot assign 'w.n: i64' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field"
+# (`_dsr_fld` from `_fst_on`, `_dsr_earr` from `_dsr_esub`, `_dsr_lit` from EMIT_STRUCT_FIELD_W, `_dsr_slf` from
+# `_slice_fld_store`; the stub scan's `_gs_fst_sres` / `_gs_lit_sres` for a T-typed field or generic literal): FE0-FE0c
+# the filed repros verbatim (77; the globals' two lines, 154), FE1-FE17c, FE18-FE19 generics, FEK1-FEK7; FEX FE1 / FE15b
+# / FE17 / FE18 on aarch64 / cx / PE. FEK5 was refused at the generic's definition before ("field 'v' is not a struct":
+# the base parsed `b.v.b` of an untyped `Box<T>` literal); the literal's stub line leaves it to the instance. (2026-10-22:)
+#   MFE1 the tree before (D13's commit)                 -> RED 43: FE0-FE19 (each compiled), FEK5, FEX x12
+#   MFE2 `_dsr_fld` answering 0                         -> RED 21: FE0 FE0c FE1-FE14 FE19, FEX FE1 x3
+#   MFE3 `_dsr_earr` answering 0                        -> RED 9: FE0b FE0c (its second line) FE15-FE15c, FEX FE15b x3
+#   MFE4 `_dsr_lit` answering 0                         -> RED 6: FE17-FE17c, FEX FE17 x3
+#   MFE5 `_dsr_slf` answering 0                         -> RED 1: FE16
+#   MFE6 `_gs_fst_sres` answering 0                     -> RED 5: FE18 FE18b (compiled: the base kept the word), FEX FE18 x3
+#   MFE7 `_gs_lit_sres` answering 0                     -> RED 2: FE18c (compiled), FEK5 (refused at the definition)
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1543,6 +1557,100 @@ accept "UPK3 a Str result keeps its handle" "$DQ"'fn main(): i64 { alloc_init();
 accept "UPK4 *(&q) of a Q is q = mkp()" "$DQ"'fn main(): i64 { var q: Q; *(&q) = mkp(); return q.b - 400; }'"$TE" 44 'syscall(60, 44);'
 accept "UPK5 an untyped store of a word keeps it" "$DQ"'fn main(): i64 { var x = 5; var p = &x; *p = 7; return x; }'"$TE" 7 'syscall(60, 7);'
 
+echo "=== 6.7.17 (D16): a struct result over 8 B stored into a scalar FIELD or an array ELEMENT is refused, as its siblings ==="
+# issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row B4 — `w.n = mkp();` and `buf[0] = mkp();`
+# kept Q's first word (77; the globals' 154), silently. FE0-FE0c the filed repros verbatim; FE1-FE17 every field store
+# (through a `*W`, a chain, a capture, a for step, top level, narrow / float / `*i64` / `*Pt` fields, a method, an
+# operator, 24 B, wrapped, `fncall0`), every array element (an index variable, `u8[N]`, a global at top level), a
+# slice's `.len`, a struct literal's element (positional, named, a global's); FE18-FE19 generics (a `Box<T>` field and
+# literal at a scalar T are stub lines; a plain field is refused at the definition); FEK1-FEK7 what keeps its store.
+FQ='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+struct Q { a; b; }
+struct Q3 { a; b; c; }
+struct S8 { v; }
+struct Pt { x; y; }
+struct W { n; pi: *i64; }
+struct WF { c: u8; d: i32; f: f64; pp: *Pt; q: Q; }
+struct V { w: W; }
+struct Box<T> { v: T; n; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn mk3(): Q3 { var q: Q3; q.a = 333; q.b = 1; q.c = 2; return q; }
+fn mk8(): S8 { var s: S8; s.v = 9; return s; }
+fn mks(): Str { return str_from("abc"); }
+impl Q { fn dup(self): Q { return mkp(); } }
+fn Q_add(l: Q, r: Q): Q { return mkp(); }
+var GW = W { 1, 0 };
+var GB: i64[2];
+'
+FTE='
+fn main(): i64 { return g(); }
+syscall(60, main());
+'
+FM="cannot assign 'w\.n: i64' from 'mkp', which returns the struct 'Q' - store it through a '\*Q' or bind a field"
+refuse "FE0 the filed repro B4 verbatim: w.n = mkp();" "$FM" 'struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+struct W { n; pi: *i64; }
+fn g(): i64 { var w = W { 1, 0 }; w.n = mkp(); return w.n; }
+syscall(60, g());
+' one
+refuse "FE0b the filed repro: buf[0] = mkp();" "cannot assign 'buf\[0\]: i64' from 'mkp'" 'struct Q { a; b; }
+fn mkp(): Q { var q: Q; q.a = 333; q.b = 444; return q; }
+fn g(): i64 { var buf: i64[2]; buf[0] = mkp(); return buf[0]; }
+syscall(60, g());
+' one
+refuse "FE0c the filed repro: GW.n = mkp(); GB[1] = mkp(); (its two lines)" "cannot assign 'GW\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { GW.n = mkp(); GB[1] = mkp(); return GW.n + GB[1]; }'"$FTE" 2
+if grep -q "cannot assign 'GB\[1\]: i64' from 'mkp'" "$D/r.err"; then printf '  ok(refused): %-40s\n' "FE0c its second line, GB[1]"; pass=$((pass+1))
+else printf '  FAIL: %-46s %s\n' "FE0c its second line, GB[1]" "$(grep '^error' "$D/r.err" | sed -n 2p)"; fail=$((fail+1)); fi
+refuse "FE1 pw.n through a *W" "cannot assign 'pw\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; var pw: *W = &w; pw.n = mkp(); return w.n; }'"$FTE" one
+refuse "FE2 a chain v.w.n" "cannot assign 'v\.w\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var v: V; v.w.n = mkp(); return v.w.n; }'"$FTE" one
+refuse "FE3 a closure's captured struct" "$FM" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; var f = || { w.n = mkp(); return 0; }; fncall0(f); return w.n; }'"$FTE" one
+refuse "FE4 a for step" "$FM" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; for (var i = 0; i < 1; w.n = mkp()) { i = 1; } return w.n; }'"$FTE" one
+refuse "FE5 after the first top-level statement" "cannot assign 'GW\.n: i64' from 'mkp'" "$FQ"'syscall(1, 1, "", 0);
+GW.n = mkp();
+fn g(): i64 { return GW.n; }'"$FTE" one
+refuse "FE6 a u8 field" "cannot assign 'w\.c: u8' from 'mkp'" "$FQ"'fn g(): i64 { var w: WF; w.c = mkp(); return w.c; }'"$FTE" one
+refuse "FE6b an i32 field" "cannot assign 'w\.d: i32' from 'mkp'" "$FQ"'fn g(): i64 { var w: WF; w.d = mkp(); return w.d; }'"$FTE" one
+refuse "FE7 an f64 field" "cannot assign 'w\.f: f64' from 'mkp'" "$FQ"'fn g(): i64 { var w: WF; w.f = mkp(); return 0; }'"$FTE" one
+refuse "FE8 a *i64 field" "cannot assign 'w\.pi: \*i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; w.pi = mkp(); return 0; }'"$FTE" one
+refuse "FE9 a *Pt field (another struct)" "cannot assign 'w\.pp: \*Pt' from 'mkp'" "$FQ"'fn g(): i64 { var w: WF; w.pp = mkp(); return 0; }'"$FTE" one
+refuse "FE10 a method's result" "cannot assign 'w\.n: i64' from 'Q\.dup'" "$FQ"'fn g(): i64 { var q: Q; var w = W { 1, 0 }; w.n = q.dup(); return w.n; }'"$FTE" one
+refuse "FE11 an operator's result" "cannot assign 'w\.n: i64' from 'Q_add'" "$FQ"'fn g(): i64 { var q: Q; var w = W { 1, 0 }; w.n = q + q; return w.n; }'"$FTE" one
+refuse "FE12 mk3(), 24 B" "cannot assign 'w\.n: i64' from 'mk3', which returns the struct 'Q3'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; w.n = mk3(); return w.n; }'"$FTE" one
+refuse "FE13 ((mkp())), wrapped" "$FM" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; w.n = ((mkp())); return w.n; }'"$FTE" one
+refuse "FE14 fncall0(&mkp)" "$FM" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; w.n = fncall0(&mkp); return w.n; }'"$FTE" one
+refuse "FE15 an element at an index variable" "cannot assign 'buf\[i\]: i64' from 'mkp'" "$FQ"'fn g(): i64 { var buf: i64[2]; var i = 1; buf[i] = mkp(); return buf[1]; }'"$FTE" one
+refuse "FE15b a u8 array's element" "cannot assign 'b\[1\]: u8' from 'mkp'" "$FQ"'fn g(): i64 { var b: u8[4]; b[1] = mkp(); return b[1]; }'"$FTE" one
+refuse "FE15c a global array at top level" "cannot assign 'GB\[0\]: i64' from 'mkp'" "$FQ"'syscall(1, 1, "", 0);
+GB[0] = mkp();
+fn g(): i64 { return GB[0]; }'"$FTE" one
+refuse "FE16 a slice's .len" "cannot assign 's\.len: i64' from 'mkp'" "$FQ"'fn g(): i64 { var a: i64[2]; var s: [i64] = slice_of(&a, 2); s.len = mkp(); return 0; }
+fn slice_of(p, n): i64 { return p; }'"$FTE" one
+refuse "FE17 a struct literal's element" "cannot assign 'n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { mkp(), 0 }; return w.n; }'"$FTE" one
+refuse "FE17b ... a named element" "cannot assign 'n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { n: mkp(), pi: 0 }; return w.n; }'"$FTE" one
+refuse "FE17c ... a global's, in the declaration zone" "cannot assign 'n: i64' from 'mkp'" "$FQ"'var GW2 = W { mkp(), 0 };
+fn g(): i64 { return GW2.n; }'"$FTE" one
+refuse "FE18 b.v = mkp(); (b: Box<T>) at i64: a stub" "generic 'gf' has no i64 (or other scalar) instance" "$FQ"'fn gf<T>(x: T): i64 { var b: Box<T>; b.v = mkp(); return 7; }
+fn g(): i64 { return gf(5); }'"$FTE" one
+refuse "FE18b p.v through a *Box<T>: a stub" "generic 'gp' has no i64 (or other scalar) instance" "$FQ"'fn gp<T>(p: *Box<T>): i64 { p.v = mkp(); return 7; }
+fn g(): i64 { var b: Box<i64>; return gp(&b); }'"$FTE" one
+refuse "FE18c Box<T> { mkp(), 1 } at i64: a stub" "generic 'gl' has no i64 (or other scalar) instance" "$FQ"'fn gl<T>(x: T): i64 { var b = Box<T> { mkp(), 1 }; return 7; }
+fn g(): i64 { return gl(5); }'"$FTE" one
+refuse "FE19 a plain field in a generic: at its definition" "$FM" "$FQ"'fn gw<T>(x: T): i64 { var w = W { 1, 0 }; w.n = mkp(); return 7; }
+fn g(): i64 { return 7; }'"$FTE" one
+accept "FEK1 w.n = mkp().a, a field of the result" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; w.n = mkp().a; return w.n - 300; }'"$FTE" 33 'syscall(60, 33);'
+accept "FEK2 an 8 B result keeps its word" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; w.n = mk8(); return w.n; }'"$FTE" 9 'syscall(60, 9);'
+accept "FEK3 a Q field copies" "$FQ"'fn g(): i64 { var w: WF; w.q = mkp(); return w.q.b - 400; }'"$FTE" 44 'syscall(60, 44);'
+accept "FEK4 b.v = mkp(); at T = Q copies" "$FQ"'fn gf<T>(x: T): i64 { var b: Box<T>; b.v = mkp(); return b.v.b - 400; }
+fn g(): i64 { var q: Q; return gf(q); }'"$FTE" 44 'syscall(60, 44);'
+accept "FEK5 Box<T> { mkp(), 1 } at T = Q copies (an untyped var)" "$FQ"'fn gl<T>(x: T): i64 { var b = Box<T> { mkp(), 1 }; return b.v.b - 400; }
+fn g(): i64 { var q: Q; return gl(q); }'"$FTE" 44 'syscall(60, 44);'
+accept "FEK6 buf[0] = mkp().b, a field of the result" "$FQ"'fn g(): i64 { var buf: i64[2]; buf[0] = mkp().b; return buf[0] - 400; }'"$FTE" 44 'syscall(60, 44);'
+accept "FEK7 a Str result into an i64 field keeps its handle" "$FQ"'fn g(): i64 { alloc_init(); var w = W { 1, 0 }; w.n = mks(); var s: Str = w.n; return s.len(); }'"$FTE" 3 'syscall(60, 3);'
+
 # TV (6.7.16, the user's D102, 2026-10-20; issues/archived/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
 # so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
@@ -1755,6 +1863,11 @@ cross_rows() {  # $1 the leg's name
 fn main(): i64 { return gds(5); }'"$TE" one
     refuse_at "UPX [$1] UP0" "3:46: $(printf '%s' "$UPM" | tr -d '\\')" "$UP0S"
     refuse "UPX [$1] UP5" "cannot assign '\*p' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p = &x; *p = q.dup(); return x; }'"$TE" one
+    refuse "FEX [$1] FE1" "cannot assign 'pw\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; var pw: *W = &w; pw.n = mkp(); return w.n; }'"$FTE" one
+    refuse "FEX [$1] FE15b" "cannot assign 'b\[1\]: u8' from 'mkp'" "$FQ"'fn g(): i64 { var b: u8[4]; b[1] = mkp(); return b[1]; }'"$FTE" one
+    refuse "FEX [$1] FE17" "cannot assign 'n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { mkp(), 0 }; return w.n; }'"$FTE" one
+    refuse "FEX [$1] FE18" "generic 'gf' has no i64 (or other scalar) instance" "$FQ"'fn gf<T>(x: T): i64 { var b: Box<T>; b.v = mkp(); return 7; }
+fn g(): i64 { return gf(5); }'"$FTE" one
 }
 CC0=$CC
 if "$CC0" < src/main_aarch64.cyr > "$D/cc_a64" 2> /dev/null && [ -s "$D/cc_a64" ]; then
@@ -1769,10 +1882,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 493 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 493"; exit 1
+if [ $((nrefuse + naccept)) -lt 541 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 541"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0
