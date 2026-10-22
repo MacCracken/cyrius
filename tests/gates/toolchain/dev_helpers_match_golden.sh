@@ -60,7 +60,11 @@
 #   fixpoint           --fixpoint and --install (scripts/build-cycc-verify.sh's two modes until
 #                      6.7.17) over stand-in compilers: a fixpoint, a divergence, a failure at each
 #                      stage, an empty stage, an install that replaces and one that finds it equal
-# FLOOR: the axis count is at least 18.
+#   default checkout   with no CYRIUS_REPO / --repo: a project named someapp (src/main.cyr and a
+#                      cyrius.cyml, as `cyrius init` makes) is never the cyrius checkout — the
+#                      resolver walks past it, and regen_issue_index, ab, place, fixpoint, xb and
+#                      probe refuse it and write nothing; one named cyrius is found from a subdir
+# FLOOR: the axis count is at least 19.
 #
 # MUTATION LEDGER (each measured RED, then restored):
 #   regen_issue_index's automatic label inserted after the first LATER release   -> RED regen
@@ -82,6 +86,7 @@
 #   roadmap_state's refusals back to "roadmap-state.py: …" (as first committed)    -> RED no Python
 #   tomlcheck's "Unclosed array" raised one position early                         -> RED cymlcheck
 #   tomlcheck's frame limit 1001, not 1000                                         -> RED cymlcheck
+#   _hc_is_cyrius_checkout back to the filename probe (src/main.cyr + cyrius.cyml) -> RED default checkout
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: dev_helpers_match_golden: cannot cd to $ROOT"; exit 1; }
@@ -560,6 +565,84 @@ _rep "$T/rep" "$rc" "$T/o" "$T/e"
 _golden "cymlcheck/tracked" "$T/rep"
 _axis_end "cymlcheck: 116 TOML cases, the recursion limit, CR LF and the tracked-tree walk match cymlcheck.py (tomllib)"
 
+# ── the default checkout (6.7.17's review) ───────────────────────────────────────────────
+# With no CYRIUS_REPO / --repo a helper works on the cyrius checkout around the current
+# directory: the nearest directory holding src/main.cyr whose manifest's `[package] name` is
+# exactly "cyrius" — cbt's _dep_is_cyrius_source_repo rule, never a filename probe. src/main.cyr
+# beside a cyrius.cyml is every `cyrius init` project, and the probe took one for the cyrius
+# checkout: regen_issue_index rewrote its issue index, fixpoint asked for its build/cycc. A resolver
+# probe over helper_common.cyr prints hc_repo_root's and hc_repo_root_sh's answers (the Python-
+# and the shell-replacing helpers' defaults); then every helper that resolves a default checkout
+# runs from a consumer project and must refuse it and write nothing. The paths are physical
+# (pwd -P), so getcwd and $PWD spell them alike. No golden: the scripts used their own location,
+# so there is no old output to match.
+_axis_begin
+cat > "$T/rootprobe.cyr" <<'EOF'
+include "programs/dev/helper_common.cyr"
+fn _say(r): i64 {
+    if (r == 0) { hc_outc("NONE\n"); return 0; }
+    hc_out(r);
+    hc_outc("\n");
+    return 0;
+}
+fn main(): i64 {
+    args_init();
+    _say(hc_repo_root(0));
+    _say(hc_repo_root_sh());
+    return 0;
+}
+EOF
+_build rootprobe "$T/rootprobe.cyr"
+TP=$(cd "$T" && pwd -P)
+# _ckproj <dir> <package name>: a `cyrius init`-shaped project with an issue index to regenerate
+_ckproj() {
+    mkdir -p "$1/src" "$1/docs/development/issues"
+    : > "$1/src/main.cyr"
+    printf '[package]\nname = "%s"\nversion = "0.1.0"\n' "$2" > "$1/cyrius.cyml"
+    printf '# Issues\n\n## Open queue\n\nstale\n\n## Proposals\n' > "$1/docs/development/issues/README.md"
+    printf '# An issue\n\n**Placement:** 9.9.9 — a slot\n' > "$1/docs/development/issues/2026-01-01-a.md"
+}
+# _where <dir>: the probe's two answers from <dir>, on one line
+_where() { (cd "$1" && env -u CYRIUS_REPO "$BIN/rootprobe" 2>&1) | tr '\n' ' ' || true; }
+ENC=$(_where "$TP")
+CA="$TP/ck_app"
+CK="$TP/ck_cyrius"
+_ckproj "$CA" someapp
+_ckproj "$CK" cyrius
+_ckproj "$CK/sub/app" someapp
+got=$(_where "$CA/docs/development")
+[ "$got" = "$ENC" ] || _fail "from a project named someapp the default checkout is '$got' (the walk must pass it: '$ENC')"
+got=$(_where "$CK/docs")
+[ "$got" = "$CK $CK " ] || _fail "from inside a project named cyrius the default checkout is '$got' (want '$CK' twice)"
+got=$(_where "$CK/sub/app/src")
+[ "$got" = "$CK $CK " ] || _fail "from a someapp project inside a cyrius checkout the default is '$got' (want the enclosing '$CK' twice)"
+# the cyrius-named project is found end to end: regen_issue_index from its docs/ rewrites its index
+cp "$CK/docs/development/issues/README.md" "$T/ck_readme"
+(cd "$CK/docs" && env -u CYRIUS_REPO "$BIN/regen_issue_index" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
+[ "$rc" = 0 ] || _fail "regen_issue_index in a project named cyrius exited $rc: $(head -2 "$T/e")"
+if cmp -s "$T/ck_readme" "$CK/docs/development/issues/README.md"; then
+    _fail "regen_issue_index in a project named cyrius left its issue index as it was"
+fi
+# every helper with a default checkout, from the someapp project: refused by name, nothing written
+if [ "$ENC" = "NONE NONE " ]; then
+    _tree "$CA" > "$T/ck_before"
+    for h in "regen_issue_index" "ab HEAD HEAD" "place --ver 9.9.9 --date 2026-10-22 --dry" \
+        "fixpoint --fixpoint st" "xb x.cyr" "probe run ."; do
+        set -- $h
+        b=$1
+        shift
+        (cd "$CA" && env -u CYRIUS_REPO CYRIUS_SCRATCH="$T/cks" "$BIN/$b" "$@" > "$T/o" 2> "$T/e") && rc=0 || rc=$?
+        if [ "$rc" = 0 ] || ! grep -q "no cyrius checkout here" "$T/e"; then
+            _fail "$b from a project named someapp: rc $rc, not the no-checkout refusal: $(head -2 "$T/e" | tr '\n' ' ')"
+        fi
+    done
+    _tree "$CA" > "$T/ck_after"
+    cmp -s "$T/ck_before" "$T/ck_after" || _fail "a helper run from a project named someapp wrote into it"
+else
+    echo "  note: $NAME: the helper runs from a someapp project are NOT RUN — this gate's temp dir is inside the cyrius checkout $ENC, which each of them would act on (set TMPDIR outside it); the resolver rows above ran"
+fi
+_axis_end "the default checkout: a project named someapp is never taken for the cyrius checkout (six helpers refuse it, nothing written); one named cyrius is found from a subdirectory"
+
 # ── no Python under scripts/ ─────────────────────────────────────────────────────────────
 # The conversion's acceptance (the issue): scripts/ holds no Python. Every file is looked at — by
 # name (*.py) and by its #! line (a python interpreter) — so a renamed or extension-less Python
@@ -589,9 +672,9 @@ done
 _axis_end "scripts/ holds no Python ($nscan files read: no *.py, no python #! line); no string in $ncyr helper sources names a replaced script"
 
 # ── verdict ──────────────────────────────────────────────────────────────────────────────
-[ "$AXES" -ge 18 ] || _fail "only $AXES axes ran (floor 18)"
+[ "$AXES" -ge 19 ] || _fail "only $AXES axes ran (floor 19)"
 if [ "$FAILS" -ne 0 ]; then
     echo "FAIL: $NAME: $FAILS case(s) differ from the replaced scripts' output"
     exit 1
 fi
-echo "PASS $NAME: $AXES axes — each helper byte-identical to the script it replaced on its fixture input (run_ci's YAML repair: to its oracle)"
+echo "PASS $NAME: $AXES axes — each helper byte-identical to the script it replaced on its fixture input (run_ci's YAML repair: to its oracle; the default checkout: to cbt's cyrius-checkout rule)"

@@ -1266,8 +1266,9 @@ fn hc_capture(argv, env, cwd, errp, tmo_ms): i64 {
 
 # The cyrius checkout a Python-replacing helper works on: `explicit` when given (a Str, else 0),
 # else $CYRIUS_REPO — each as written, the way the scripts used them — else the nearest directory
-# at or above the current one holding src/main.cyr and cyrius.cyml (the helpers run from the
-# checkout; the scripts they replaced took their own location). 0 when none is found.
+# at or above the current one that is the cyrius checkout (_hc_is_cyrius_checkout: src/main.cyr
+# and `[package] name = "cyrius"`; the helpers run from the checkout, the scripts they replaced
+# took their own location). 0 when none is found.
 fn hc_repo_root(explicit): i64 {
     if (explicit != 0) { return explicit; }
     var e = hc_getenv_ne("CYRIUS_REPO");
@@ -1289,14 +1290,281 @@ fn hc_repo_root_sh(): i64 {
 fn _hc_find_root(start): i64 {
     var d = start;
     loop {
-        var a = hc_d(hc_dup(hc_joinc(d, "src/main.cyr")));
-        var b = hc_d(hc_dup(hc_joinc(d, "cyrius.cyml")));
-        if (hc_is_file(a) == 1 && hc_is_file(b) == 1) { return d; }
+        if (_hc_is_cyrius_checkout(d) == 1) { return d; }
         if (hc_eqc(d, "/") == 1) { return 0; }
         d = hc_dirname(d);
         if (hc_n(d) == 0) { return 0; }
     }
     return 0;
+}
+
+# 1 when directory `d` is the cyrius source checkout: it holds src/main.cyr and its manifest's
+# `[package] name` is exactly "cyrius" — cbt's `_dep_is_cyrius_source_repo` rule (cbt/deps.cyr),
+# never a filename probe: src/main.cyr beside a cyrius.cyml is every project `cyrius init` makes,
+# and a helper run inside one took it for the cyrius checkout (regen_issue_index rewrote its issue
+# index, fixpoint asked for its build/cycc). CHANGELOG [6.7.17]
+fn _hc_is_cyrius_checkout(d): i64 {
+    if (hc_is_file(hc_cstr(hc_joinc(d, "src/main.cyr"))) == 0) { return 0; }
+    var nm = _hc_package_name(d);
+    if (nm == 0) { return 0; }
+    return streq(nm, "cyrius");
+}
+
+# ── `[package] name`, read as cbt/manifest.cyr reads it ───────────────────────────────────
+# The manifest is cyrius.cyml, else the legacy cyrius.toml; a UTF-8 BOM is skipped and only the
+# TOML header before a `---` line is read; one line walker steps over every value it is not
+# reading (multi-line strings, arrays and inline tables), so no line inside one is taken for a
+# table header; the first `name` key of `[package]` wins; its value is a one-line basic string
+# (escapes decoded) or literal string; a value that never closes refuses the whole manifest.
+# Each fn is its cbt/manifest.cyr namesake (`_toml_*`, `_mf_load`'s header cut) — the same
+# answers, so the helpers and `cyrius` agree on which directory is the cyrius checkout.
+
+var _hc_toml_unclosed = 0;
+
+fn _hc_toml_eol(buf, n, p): i64 {
+    while (p < n && load8(buf + p) != 10) { p = p + 1; }
+    if (p < n) { return p + 1; }
+    return n;
+}
+
+fn _hc_toml_ws(buf, n, p): i64 {
+    while (p < n) {
+        var c = load8(buf + p);
+        if (c != 32 && c != 9 && c != 13) { return p; }
+        p = p + 1;
+    }
+    return p;
+}
+
+fn _hc_toml_keych(c): i64 {
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c >= 65 && c <= 90) { return 1; }
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c == 95 || c == 45 || c == 46) { return 1; }
+    return 0;
+}
+
+fn _hc_toml_hex(c): i64 {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    if (c >= 97 && c <= 102) { return c - 87; }
+    if (c >= 65 && c <= 70) { return c - 55; }
+    return 0 - 1;
+}
+
+fn _hc_toml_put_cp(out, o, cp): i64 {
+    if (cp < 128) { store8(out + o, cp); return o + 1; }
+    if (cp < 2048) {
+        store8(out + o, 192 | (cp >> 6));
+        store8(out + o + 1, 128 | (cp & 63));
+        return o + 2;
+    }
+    if (cp < 65536) {
+        store8(out + o, 224 | (cp >> 12));
+        store8(out + o + 1, 128 | ((cp >> 6) & 63));
+        store8(out + o + 2, 128 | (cp & 63));
+        return o + 3;
+    }
+    store8(out + o, 240 | (cp >> 18));
+    store8(out + o + 1, 128 | ((cp >> 12) & 63));
+    store8(out + o + 2, 128 | ((cp >> 6) & 63));
+    store8(out + o + 3, 128 | (cp & 63));
+    return o + 4;
+}
+
+# Past the string opening at buf[p]; an unterminated one-line string stops at its line end.
+fn _hc_toml_skip_string(buf, n, p): i64 {
+    var q = load8(buf + p);
+    if (p + 2 < n && load8(buf + p + 1) == q && load8(buf + p + 2) == q) {
+        var i = p + 3;
+        while (i + 2 < n) {
+            var c = load8(buf + i);
+            if (q == 34 && c == 92) { i = i + 2; continue; }
+            if (c == q && load8(buf + i + 1) == q && load8(buf + i + 2) == q) {
+                i = i + 3;
+                if (i < n && load8(buf + i) == q) { i = i + 1; }
+                if (i < n && load8(buf + i) == q) { i = i + 1; }
+                return i;
+            }
+            i = i + 1;
+        }
+        _hc_toml_unclosed = 1;
+        return n;
+    }
+    var j = p + 1;
+    while (j < n) {
+        var d = load8(buf + j);
+        if (d == 10) { return j; }
+        if (d == q) { return j + 1; }
+        if (q == 34 && d == 92) { j = j + 1; }
+        j = j + 1;
+    }
+    return n;
+}
+
+# Past the value at buf[p] (a string, an array or an inline table); a bare token: p itself.
+fn _hc_toml_skip_value(buf, n, p): i64 {
+    if (p >= n) { return n; }
+    var c = load8(buf + p);
+    if (c == 34 || c == 39) { return _hc_toml_skip_string(buf, n, p); }
+    if (c != 91 && c != 123) { return p; }
+    var depth = 0;
+    while (p < n) {
+        c = load8(buf + p);
+        if (c == 34 || c == 39) { p = _hc_toml_skip_string(buf, n, p); continue; }
+        if (c == 35) {
+            while (p < n && load8(buf + p) != 10) { p = p + 1; }
+            continue;
+        }
+        if (c == 91 || c == 123) { depth = depth + 1; }
+        if (c == 93 || c == 125) {
+            depth = depth - 1;
+            if (depth == 0) { return p + 1; }
+        }
+        p = p + 1;
+    }
+    _hc_toml_unclosed = 1;
+    return n;
+}
+
+# The line at p into info (4 x 8 B: kind 0 other / 1 `[table]` / 2 `[[array]]` / 3 `key = value`,
+# name offset, name length, value offset); returns where the next line starts.
+fn _hc_toml_line(buf, n, p, info): i64 {
+    store64(info, 0);
+    p = _hc_toml_ws(buf, n, p);
+    if (p >= n) { return n; }
+    var c = load8(buf + p);
+    if (c == 91) {
+        var k = 1;
+        var s = p + 1;
+        if (s < n && load8(buf + s) == 91) { k = 2; s = s + 1; }
+        s = _hc_toml_ws(buf, n, s);
+        var e = s;
+        while (e < n && load8(buf + e) != 93 && load8(buf + e) != 10) { e = e + 1; }
+        var t = e;
+        while (t > s && (load8(buf + t - 1) == 32 || load8(buf + t - 1) == 9)) { t = t - 1; }
+        store64(info, k);
+        store64(info + 8, s);
+        store64(info + 16, t - s);
+        return _hc_toml_eol(buf, n, e);
+    }
+    var ks = p;
+    var ke = p;
+    if (c == 34 || c == 39) {
+        var qe = _hc_toml_skip_string(buf, n, p);
+        ks = p + 1;
+        ke = qe - 1;
+        p = qe;
+    } else {
+        while (p < n && _hc_toml_keych(load8(buf + p)) == 1) { p = p + 1; }
+        ke = p;
+    }
+    if (ke <= ks) { return _hc_toml_eol(buf, n, p); }
+    p = _hc_toml_ws(buf, n, p);
+    if (p >= n || load8(buf + p) != 61) { return _hc_toml_eol(buf, n, p); }
+    p = _hc_toml_ws(buf, n, p + 1);
+    store64(info, 3);
+    store64(info + 8, ks);
+    store64(info + 16, ke - ks);
+    store64(info + 24, p);
+    return _hc_toml_eol(buf, n, _hc_toml_skip_value(buf, n, p));
+}
+
+# The one-line string at buf[p] as a fresh C string (escapes decoded in a basic string); 0 when
+# it is not a string, is multi-line or unterminated, or holds a bad escape.
+fn _hc_toml_str_at(buf, n, p): i64 {
+    if (p >= n) { return 0; }
+    var q = load8(buf + p);
+    if (q != 34 && q != 39) { return 0; }
+    if (p + 2 < n && load8(buf + p + 1) == q && load8(buf + p + 2) == q) { return 0; }
+    var e = p + 1;
+    while (e < n) {
+        var c = load8(buf + e);
+        if (c == 10) { return 0; }
+        if (c == q) { break; }
+        if (q == 34 && c == 92) { e = e + 1; }
+        e = e + 1;
+    }
+    if (e >= n) { return 0; }
+    var out = alloc(e - p + 1);
+    var o = 0;
+    var i = p + 1;
+    while (i < e) {
+        var b = load8(buf + i);
+        if (q == 34 && b == 92) {
+            var x = load8(buf + i + 1);
+            i = i + 2;
+            if (x == 110) { store8(out + o, 10); o = o + 1; }
+            elif (x == 116) { store8(out + o, 9); o = o + 1; }
+            elif (x == 114) { store8(out + o, 13); o = o + 1; }
+            elif (x == 98) { store8(out + o, 8); o = o + 1; }
+            elif (x == 102) { store8(out + o, 12); o = o + 1; }
+            elif (x == 34 || x == 92) { store8(out + o, x); o = o + 1; }
+            elif (x == 117 || x == 85) {
+                var nd = 4;
+                if (x == 85) { nd = 8; }
+                var cp = 0;
+                var k = 0;
+                while (k < nd) {
+                    if (i + k >= e) { return 0; }
+                    var h = _hc_toml_hex(load8(buf + i + k));
+                    if (h < 0) { return 0; }
+                    cp = cp * 16 + h;
+                    k = k + 1;
+                }
+                if (cp > 1114111) { return 0; }
+                i = i + nd;
+                o = _hc_toml_put_cp(out, o, cp);
+            } else { return 0; }
+        } else {
+            store8(out + o, b);
+            o = o + 1;
+            i = i + 1;
+        }
+    }
+    store8(out + o, 0);
+    return out;
+}
+
+# `[package] name` of the manifest in directory `d` as a C string; 0 when there is no manifest,
+# it cannot be read, a value in its header never closes, or the key is absent or not a string.
+fn _hc_package_name(d): i64 {
+    var mp = hc_cstr(hc_joinc(d, "cyrius.cyml"));
+    if (file_exists(mp) == 0) { mp = hc_cstr(hc_joinc(d, "cyrius.toml")); }
+    if (file_exists(mp) == 0) { return 0; }
+    var s = hc_read(mp);
+    if (s == 0) { return 0; }
+    var buf = hc_d(s);
+    var n = hc_n(s);
+    if (n >= 3 && load8(buf) == 239 && load8(buf + 1) == 187 && load8(buf + 2) == 191) {
+        buf = buf + 3;
+        n = n - 3;
+    }
+    var i = 0;
+    while (i + 3 < n) {
+        if (load8(buf + i) == 10 && memeq(buf + i + 1, "---", 3) == 1) { n = i; break; }
+        i = i + 1;
+    }
+    var info[32];
+    var insec = 0;
+    var v = 0 - 1;
+    var p = 0;
+    _hc_toml_unclosed = 0;
+    while (p < n) {
+        p = _hc_toml_line(buf, n, p, &info);
+        var kind = load64(&info);
+        if (kind == 1 || kind == 2) {
+            insec = 0;
+            if (kind == 1 && load64(&info + 16) == 7) {
+                if (memeq(buf + load64(&info + 8), "package", 7) == 1) { insec = 1; }
+            }
+        } elif (kind == 3 && insec == 1 && v < 0) {
+            if (load64(&info + 16) == 4) {
+                if (memeq(buf + load64(&info + 8), "name", 4) == 1) { v = load64(&info + 24); }
+            }
+        }
+    }
+    if (_hc_toml_unclosed == 1 || v < 0) { return 0; }
+    return _hc_toml_str_at(buf, n, v);
 }
 
 # The shell's `pwd`: $PWD when it names the current directory (the logical path, links kept),

@@ -58,9 +58,9 @@
 # in an isolated copy, release bookkeeping) — tools a developer runs by hand, which may
 # legitimately name a sibling checkout (a fold's CI runs in the FOLD's repo). No gate runs the
 # scripts, and axis 4 keeps it that way; the one gate that runs the cyrius helpers,
-# tests/gates/toolchain/dev_helpers_match_golden.sh, runs them on fixtures with CYRIUS_REPO,
-# CYRIUS_SCRATCH and every checkout they read pointed into its own temp dir, and this scan reads it
-# as it reads every gate.
+# tests/gates/toolchain/dev_helpers_match_golden.sh, runs them on fixtures with CYRIUS_REPO (or the
+# working directory a helper resolves its checkout from), CYRIUS_SCRATCH and every checkout they
+# read pointed into its own temp dir, and this scan reads it as it reads every gate.
 #
 # AXES
 #   1  the tree is clean: every hit is named file:line: rule: the line
