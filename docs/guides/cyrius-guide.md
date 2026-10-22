@@ -592,6 +592,19 @@ var r = add(20, 22);   # r = 42
   report is held until the late declarations are (6.7.16) and dropped for one of them. ⚠ So a zone array
   size naming an enum declared LATER IN THE ZONE (valid, but declared after its use) still says "unknown
   name 'E' in a const context", now after the other pass-1 reports above the first statement.
+- **`use mod.NAME;` is one line** (6.7.17, the user's D30, 2026-10-22). It binds the bare `NAME` to the
+  `mod`-scoped fn (`mod m;` above its fns, then `use m.f;`: `f()` calls `m_f`). The `;` is optional:
+  without it the `use` ends at its line, as an `#assert` does. Any other shape of the line is one error,
+  at its first wrong token (at the `use` when its line ends before the name):
+
+  ```text
+  error:<source>:1:5: expected `use module.name;`
+      use 5;
+          ^
+  ```
+
+  Through 6.7.16 `use 5;`, `use m.;`, `use m;` and `use m.f g;` compiled and bound nothing, and `use
+  m.f` with no `;` silently dropped the line after it — that line was never compiled.
 - **A fn is defined at top level** (or inside a top-level block). A named `fn` / `async fn` inside
   a fn body, a closure, an `impl` method or a generic body is a compile error naming both
   (`fn 'inner' is defined inside fn 'outer'`) — before 6.6.16 it compiled and crashed (SIGILL /

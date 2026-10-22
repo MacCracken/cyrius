@@ -1,0 +1,16 @@
+# directive_line_ends.tcyr — a directive line reads its whole line, and the line after it runs (6.7.17,
+# issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md).
+#   U  a `use` with no `;` ends at its line: pass 2 stepped to the NEXT `;`, so `use dle.seven` dropped the statement on
+#      the line after it (`dle_u = seven();` never ran: 0, not 7)
+# WHY A CROSS-HOST TEST. Each reader is in the shared front end, but the consequence is a statement that runs or not,
+# on every target alike; these rows run on ecb / ach / cass / pi with the release gate's cross-OS leg.
+include "lib/assert.cyr"
+
+var dle_u = 0;
+mod dle;
+fn seven(): i64 { return 7; }
+use dle.seven
+dle_u = seven();
+assert_eq(dle_u, 7, "U: the statement after a `;`-less `use` ran");
+
+var r = assert_summary();

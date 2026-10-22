@@ -977,7 +977,7 @@ fn _dl_quiet(S, a, e): i64 {
         i = i + 1;
     }
     if (TOKTYP(S, a) == 73) { a = a + 1; }   # 6.7.16: `pub use m.f;` too
-    if (TOKTYP(S, a) == 74) { if (TOKTYP(S, e - 2) == 2) { _dl_fn_quiet(S, TOKVAL(S, e - 2), a, 0); } }   # `use m.f;`
+    if (TOKTYP(S, a) == 74) { if (_use_bad(S, a) < 0) { _dl_fn_quiet(S, TOKVAL(S, a + 3), a, 0); } }   # `use m.f` (6.7.17: its `;` or not)
     return 0;
 }
 fn _dl_fn_at(S, i, d, isid): i64 {
@@ -1102,6 +1102,9 @@ fn _dl_refd_at(S, noff): i64 {
 # steps it (`_dl_skip_in`; the cursor put back) and its names entered (`_dl_names`, `_dl_pre`: names only — nothing
 # is registered yet, so no fn). The stand-downs ask only after resolution failed, so a valid top-level declaration of
 # the same name still resolves. CHANGELOG [6.7.16]
+# 6.7.17: a `use` opens no `{` — it held the header open to the next `;`, so after a `;`-less `use m.f` in a body the
+# next block read as a declaration's and a refused `struct Q` in it went unfilled ("type 'Q' is declared after its
+# use"). CHANGELOG [6.7.17]
 var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
 var _dlpn = 0;     # `_dlr`'s first `_dlpn` entries are the pre-walk's (`_dl_inner_fill`)
 var _dlpk = 0;     # per pre-walk entry: its declaration's keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words)
@@ -1130,7 +1133,7 @@ fn _dl_inner_fill(S): i64 {
         elif (k == 32) { if (TOKTYP(S, i + 1) == 2) { pend = 1; ppd = pd; } }
         elif (_dl_kind(k) == 1) {
             if (vec_len(stk) > 0) { if (_dl_brace_in(stk) != 0) { _dl_inner_at(S, i, _dl_brace_in(stk)); } }   # in a body, not module scope
-            if (k != 73) { pend = 2; ppd = pd; }
+            if (k != 73) { if (k != 74) { pend = 2; ppd = pd; } }   # `pub` marks the next keyword; a `use` opens no `{`
         }
         i = i + 1;
     }
@@ -1331,18 +1334,20 @@ fn _ann_refd_said(S, noff, idx): i64 {
     return 0;
 }
 # Step the declaration at the cursor: through the `}` closing its first `{ .. }`, or through its `;` when that comes
-# first at depth 0 (`mod m;`, `use m.f;`, `pub var x = ..;`, `pub const ..;`). A `pub` steps what it marks.
+# first at depth 0 (`mod m;`, `pub var x = ..;`, `pub const ..;`; a `use` its own way, `_dl_skip_use`). A `pub` steps
+# what it marks.
 # 6.7.16: a `pub const fn` ends at its body's `}` — it stepped on to the NEXT statement's `;`. CHANGELOG [6.7.16]
 fn _dl_skip(S): i64 { return _dl_skip_at(S, 0); }
 # Below module scope (`_decl_inner`): a `}` met at depth 0 closes the enclosing fn body or block — left for it.
 fn _dl_skip_in(S): i64 { return _dl_skip_at(S, 1); }
 fn _dl_skip_at(S, inner): i64 {
+    if (_dl_skip_use(S, inner) == 1) { return 0; }
     var semi = 0;
     var t = PEEKT(S);
-    if (t == 72 || t == 74) { semi = 1; }
+    if (t == 72) { semi = 1; }
     if (t == 73) {
         var t2 = TOKTYP(S, GTI(S) + 1);
-        if (t2 == 3 || t2 == 168 || t2 == 72 || t2 == 74) { semi = 1; }
+        if (t2 == 3 || t2 == 168 || t2 == 72) { semi = 1; }
         if (t2 == 168) { if (TOKTYP(S, GTI(S) + 2) == 32) { semi = 0; } }   # `pub const fn`
     }
     var d = 0;
@@ -1358,6 +1363,16 @@ fn _dl_skip_at(S, inner): i64 {
         }
     }
     return 0;
+}
+# A `use` (`pub` before it or not): the tokens `_use_step` reads. The walk above ran on to the next `;`, so a refused
+# `use m.f` with none took the next line with it, that line's own error unreported. CHANGELOG [6.7.17]
+fn _dl_skip_use(S, inner): i64 {
+    var k = GTI(S);
+    if (TOKTYP(S, k) == 73) { k = k + 1; }
+    if (TOKTYP(S, k) != 74) { return 0; }
+    STI(S, k);
+    _use_step(S, 0, inner);
+    return 1;
 }
 
 # One pass-1 step: consume one top-level declaration and return 1, or return 0 at the first
@@ -1485,24 +1500,61 @@ fn _tl_mod(S): i64 {
 
 # `use modname.funcname;` — register the alias funcname -> modname_funcname (pass 1).
 fn _tl_use(S): i64 {
-    STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 2) {
-        var umod = PEEKV(S);
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) == 41) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) == 2) {
-                var ufn = PEEKV(S);
-                # 6.6.20: `use m.mulh64;` binds the BARE name, so it is a declaration of it —
-                # the call would lower to the intrinsic. No fnptr.cyr exemption (isfn 0).
-                _RSV_INTRINSIC_DECL(S, ufn, GTI(S), 0);
-                STI(S, GTI(S) + 1);
-                _tl_use_alias(S, umod, ufn);
-            }
-        }
-    }
-    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    var ti = GTI(S);
+    if (_use_step(S, 1, 0) == 0) { return 0; }
+    var e = GTI(S);
+    var ufn = TOKVAL(S, ti + 3);
+    # 6.6.20: `use m.mulh64;` binds the BARE name, so it is a declaration of it —
+    # the call would lower to the intrinsic. No fnptr.cyr exemption (isfn 0).
+    _RSV_INTRINSIC_DECL(S, ufn, ti + 3, 0);
+    STI(S, ti + 4);
+    _tl_use_alias(S, TOKVAL(S, ti + 1), ufn);
+    STI(S, e);
     return 0;
+}
+# ⛔ 6.7.17 — A `use` IS ONE LINE: `use module.name;`, or with no `;` ending at its line, as an #assert does. Pass 1 read
+# `use IDENT . IDENT [;]` and pass 2 stepped to the next `;`, so `use m.f` with no `;` silently dropped the line after it
+# (`syscall(60, 3);` never compiled: exit 0), and any other shape bound nothing, silently: `use 5;`, `use m.;`, `use m;`,
+# `use m.f g;`. Now one rule steps it in every reader (pass 1, pass 2, a refused one after the first statement or in a
+# body: `_dl_skip_at`), and a line that is not that form is "expected `use module.name;`" at its first wrong token (the
+# `use` when its line ends early), reported once (pass 1, `rep` 1), its line stepped whole (`_ln_rest`, `blk` 1 below
+# module scope) — the user's D30, 2026-10-22. 1 = the form (the cursor past it: the alias is the caller's), 0 = refused.
+# CHANGELOG [6.7.17]
+fn _use_step(S, rep, blk): i64 {
+    var ti = GTI(S);
+    var b = _use_bad(S, ti);
+    if (b < 0) {
+        STI(S, ti + 4);
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+        return 1;
+    }
+    STI(S, b);
+    if (rep == 1) {
+        var p0 = _panic;
+        ERR_MSG(S, "expected `use module.name;`", 27);
+        if (p0 == 0) { _panic = 0; }   # stepped in sync: the next declaration reports its own
+    }
+    if (b == ti) { STI(S, ti + 1); }
+    _ln_rest(S, GTLINE(S, ti), blk);
+    return 0;
+}
+# The first token of the `use` at `ti` that breaks `use IDENT . IDENT` + `;` / EOF / its line's end: the `use` itself when
+# its line ends before the name, -1 for none.
+fn _use_bad(S, ti): i64 {
+    var ln = GTLINE(S, ti);
+    var k = ti + 1;
+    while (k < ti + 4) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return ti; }
+        if (GTLINE(S, k) != ln) { return ti; }
+        if (k == ti + 2) { if (t != 41) { return k; } }
+        elif (t != 2) { return k; }
+        k = k + 1;
+    }
+    var t2 = TOKTYP(S, k);
+    if (t2 == 5 || t2 == 12) { return 0 - 1; }
+    if (GTLINE(S, k) != ln) { return 0 - 1; }
+    return k;
 }
 
 # Append the mangled `mod_fn` to tok_names (NPOS is stable after lexing) and record the alias
@@ -1579,9 +1631,9 @@ fn _tl_scan2_def(S, t, objok): i64 {
     return 0;
 }
 
+# Pass 2: the tokens pass 1 read (`_use_step`, silent). CHANGELOG [6.7.17]
 fn _tl_skip_use(S): i64 {
-    while (PEEKT(S) != 5) { if (PEEKT(S) == 12) { break; } STI(S, GTI(S) + 1); }
-    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    _use_step(S, 0, 0);
     return 0;
 }
 
