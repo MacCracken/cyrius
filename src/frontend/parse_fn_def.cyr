@@ -2200,6 +2200,23 @@ fn _dsg_async_check(S, fi, noff, ti, was, now): i64 {
     return _dsg_report(S, noff, ti, 4, GFFI(S, fi));
 }
 
+# ⛔ 6.7.17 — A STRAY TOKEN WHERE A FN'S `(` GOES (`fn f<T> >(x: T)`, an impl's `fn m<T>>(self, x: T)`, `fn f 5 (a)`):
+# after "expected '('" the cursor stepped that one token and read on, so the real `(` and its list were read as the
+# first parameter — "undefined variable 'T'" and "undefined variable 'x'" in an impl method, "fn 'main' is defined
+# inside fn 'f'" after a bound's refused `<..>`. The cursor moves to the list's `(` when one comes before the body's
+# `{` (the caller steps it, as it stepped the stray token). CHANGELOG [6.7.17]
+fn _fn_lp_find(S): i64 {
+    var k = GTI(S);
+    var e = GTCNT(S);
+    while (k < e) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { STI(S, k); return 0; }
+        if (t == 13 || t == 14 || t == 5 || t == 12) { return 0; }
+        k = k + 1;
+    }
+    return 0;
+}
+
 fn _PARSE_FN_DEF_IMPL(S): i64 {
     var _is_async = 0;
     var _async_noff_f = 0;
@@ -2940,7 +2957,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
     var fn_start = GCP(S);
     # Parse params
-    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
+    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); _fn_lp_find(S); }   # 6.7.17: on to the list's `(`
     STI(S, GTI(S) + 1);
     var pc = 0;
     var str_mask = 0;

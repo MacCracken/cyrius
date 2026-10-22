@@ -53,6 +53,13 @@
 #       f<T> >(x)` says "got '>'"; the next declaration reports its own. GT1-GT3 a fn, a struct, an enum, plain and
 #       under CYRIUS_MONOMORPH=0; GTK controls (exit 5). Mutant (2026-10-22): the compiler before (96415bd9d) -> RED
 #       GT1-GT3 on both legs.
+#       GT4-GT7 (met beside it) A STRAY TOKEN WHERE A FN'S `(` GOES: after "expected '('" PARSE_FN_DEF stepped the one
+#       token, so the real `( .. )` was read as the first parameter — an impl method's `fn m<T>>(self, x: T)` / `fn
+#       m<T> >(..)` added "undefined variable 'T'" and "undefined variable 'x'", a refused bound's `fn f<T:
+#       Show<i64>>>(x: T)` "fn 'main' is defined inside fn 'f'". The cursor moves on to the list's `(` (`_fn_lp_find`).
+#       GT4 the bound, GT5 / GT6 the impl method, both spellings, GT7 `fn f 5 (a)`; plain and CYRIUS_MONOMORPH=0 (GT4
+#       there without its bound's line: the flag reads no bound). Mutant (2026-10-22): the compiler before (81b74c14f)
+#       -> RED GT4 [plain] and GT5-GT7 on both legs (GT7: "undefined variable 'a'").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -221,6 +228,21 @@ for leg in plain mono0; do
     lines gt1 "1:7: expected '(', got '>>'|$NX" "GT1 [$leg]: fn f<T>>(x: T) — the closer left for the header" "$cc"
     lines gt2 "1:11: expected '{', got '>>'|$NX" "GT2 [$leg]: struct B<T>> { a; }" "$cc"
     lines gt3 "1:9: expected '{', got '>>'|$NX" "GT3 [$leg]: enum E<T>> { A }" "$cc"
+done
+NX3="3:28: expected ';', got number 2"
+printf 'trait Show { fn show(self): i64; }\nfn f<T: Show<i64>>>(x: T): i64 { return 1; }\nstruct Q { a: Foo; }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt4.cyr"
+printf 'struct P { a; }\nimpl P { fn m<T>>(self, x: T): i64 { return 1; } }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt5.cyr"
+printf 'struct P { a; }\nimpl P { fn m<T> >(self, x: T): i64 { return 1; } }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt6.cyr"
+printf 'fn f 5 (a): i64 { return a; }\nfn main(): i64 { var y = 1 2; return f(3); }\nsyscall(60, main());\n' > "$D/gt7.cyr"
+FOO="3:15: unknown type 'Foo' for struct field 'a'"
+lines gt4 "2:9: a trait in a bound takes no type arguments: 'Show'|$FOO|2:17: expected '(', got '>>>'|4:28: expected ';', got number 2" \
+    "GT4 [plain]: fn f<T: Show<i64>>>(x: T) — no \"fn 'main' is defined inside fn 'f'\""
+lines gt4 "$FOO|2:17: expected '(', got '>>>'|4:28: expected ';', got number 2" "GT4 [mono0]: the same under the flag" "CYRIUS_MONOMORPH=0 $CC"
+for leg in plain mono0; do
+    cc="$CC"; [ "$leg" = mono0 ] && cc="CYRIUS_MONOMORPH=0 $CC"
+    lines gt5 "2:16: expected '(', got '>>'|$NX3" "GT5 [$leg]: impl P { fn m<T>>(self, x: T) } — no \"undefined variable 'T'\" / 'x'" "$cc"
+    lines gt6 "2:18: expected '(', got '>'|$NX3" "GT6 [$leg]: impl P { fn m<T> >(self, x: T) }" "$cc"
+    lines gt7 "1:6: expected '(', got number 5|$NX" "GT7 [$leg]: fn f 5 (a)" "$cc"
 done
 printf 'trait Show { fn show(self): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nfn f<T: Show>(x: T): i64 { return x.show(); }\nstruct B<T, U> { a: T; b: U; }\nenum E<T> { A }\nfn main(): i64 { var b: B<i8, i64>; b.b = 4; return f(1) + b.b; }\nsyscall(60, main());\n' > "$D/gtk.cyr"
 rc=0; "$CC" < "$D/gtk.cyr" > "$D/gtk.bin" 2> "$D/gtk.err" || rc=$?
