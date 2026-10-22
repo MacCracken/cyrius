@@ -1490,17 +1490,24 @@ fn _efi_ovmf_stub_case(name, serial, deadline_s, want): i64 {
 }
 
 fn _efi_ovmf_boot_codes_gate(): i64 {
-    var label = "the OVMF boot pipeline waits for the firmware to rest, not a fixed 12 s: a firmware that prints 13 s in passes, a mute one is the deadline's own code (4), one that rests without the image's line is 1 at once (6.7.17)";
+    var label = "the OVMF boot pipeline waits for the firmware to rest, not a fixed 12 s: a firmware that ";
+    label = _cat2(label, "prints 13 s in passes, a mute one is the deadline's own code (4), one that rests ");
+    label = _cat2(label, "without the image's line is 1 at once (6.7.17)");
     if (_efi_ovmf_tools_ready() != 1) {
         _skip(label, "parted/mtools/OVMF not all present — the pipeline cannot build its disk image");
         return 0;
     }
+    var slow = "sleep 13\nprintf 'BdsDxe: starting Boot0002\\r\\nhello, uefi\\r\\n";
+    slow = _cat2(slow, "BdsDxe: loading Boot0000\\r\\nPlease select boot device\\r\\n'\n");
+    var rest = "printf 'BdsDxe: starting Boot0002\\r\\nPlease select boot device\\r\\n'\n";
+    var fault = "printf 'hello, uefi\\r\\n!!!! X64 Exception Type - 06(#UD) !!!!\\r\\n'\n";
+    var lost = "printf 'hello, uefi\\r\\nPlease select boot device\\r\\n'\n";
     var bad = 0;
-    bad = bad + _efi_ovmf_stub_case("efi_stub_slow_", "sleep 13\nprintf 'BdsDxe: starting Boot0002\\r\\nhello, uefi\\r\\nBdsDxe: loading Boot0000\\r\\nPlease select boot device\\r\\n'\n", "90", 0);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_slow_", slow, "90", 0);
     bad = bad + _efi_ovmf_stub_case("efi_stub_mute_", "", "3", 4);
-    bad = bad + _efi_ovmf_stub_case("efi_stub_rest_", "printf 'BdsDxe: starting Boot0002\\r\\nPlease select boot device\\r\\n'\n", "90", 1);
-    bad = bad + _efi_ovmf_stub_case("efi_stub_fault_", "printf 'hello, uefi\\r\\n!!!! X64 Exception Type - 06(#UD) !!!!\\r\\n'\n", "90", 2);
-    bad = bad + _efi_ovmf_stub_case("efi_stub_lost_", "printf 'hello, uefi\\r\\nPlease select boot device\\r\\n'\n", "90", 3);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_rest_", rest, "90", 1);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_fault_", fault, "90", 2);
+    bad = bad + _efi_ovmf_stub_case("efi_stub_lost_", lost, "90", 3);
     if (bad == 0) {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);
         println(": five stub firmwares, five exit codes (0 slow / 4 mute / 1 rest / 2 fault / 3 lost)");
@@ -1602,7 +1609,8 @@ fn _efi_ovmf_smoke_gate(): i64 {
     } elif (rc2 == 3) {
         println(": the image printed and did not fault, but BdsDxe never regained control — the firmware `ret` did not return where firmware left it");
     } elif (rc2 == 4) {
-        println(": qemu+OVMF had not reached the image's print 90 s in and the firmware never came to rest — a host too loaded to boot it, or a hung firmware; nothing about the image was measured");
+        _p(": qemu+OVMF had not reached the image's print 90 s in and the firmware never came to rest — ");
+        println("a host too loaded to boot it, or a hung firmware; nothing about the image was measured");
     } else {
         _p(": OVMF runtime smoke failed (sh rc=");
         print_num(rc2);
@@ -1680,7 +1688,8 @@ fn _efi_ovmf_fn_exit_gate(): i64 {
     } elif (rc2 == 3) {
         println(": the fn-exit probe printed and did not fault, but firmware never regained control — the `ret` went somewhere other than firmware's return address");
     } elif (rc2 == 4) {
-        println(": qemu+OVMF had not reached the fn-exit probe's print 90 s in and the firmware never came to rest — a host too loaded to boot it, or a hung firmware; nothing about the exit route was measured");
+        _p(": qemu+OVMF had not reached the fn-exit probe's print 90 s in and the firmware never came to rest — ");
+        println("a host too loaded to boot it, or a hung firmware; nothing about the exit route was measured");
     } else {
         _p(": fn-exit OVMF run failed (sh rc=");
         print_num(rc2);
