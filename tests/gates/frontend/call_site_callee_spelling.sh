@@ -22,7 +22,7 @@
 #        destructure (`S.one` returns 1 value), a bool parameter (`W.b`, `g<i32>`), a cstring parameter (`W.pr`)
 #   N6   `g<f64v2>(b)` (a refused type argument): no line names the minted `g$..`; a call line, if any, `g<f64v2>`
 #   N7   controls, unchanged: a plain fn, a free fn named like a method (`S_x`, no impl), a `mod` fn (`mm_f`)
-#   N8   the aarch64 cross compiler (built from this tree, when present) names `S.ri` and `S.nope` too
+#   N8   the aarch64 cross compiler (built from this tree's src by the gate) names `S.ri` and `S.nope` too
 #   N9   a fn named from a struct instance — `B<i32>_add` (an operator fn), `B<i32>.nope` (a method) — on every
 #        backend: x86_64, PE, Mach-O x86 / arm, aarch64, cx (6.7.17)
 #
@@ -240,12 +240,14 @@ mod mm; fn f(a): i64 { return a; }
 var r = S_x(1, 2) + mm_f(1, 2) + pl(1, 2);
 syscall(60, r);
 EOF
-A64="$ROOT/build/cycc_aarch64"
-if [ -x "$A64" ]; then
+# N8 and N9's aarch64 legs: the cross compiler built from this tree's src (6.7.17: N8 read build/cycc_aarch64, which a
+# fresh tree lacks — the row floor then failed the gate — and an older tree holds stale).
+n9ok=1
+"$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null && chmod +x "$D/cc_a64" || { bad "N8/N9: src/main_aarch64.cyr did not build"; n9ok=0; }
+A64="$D/cc_a64"
+if [ "$n9ok" = 1 ]; then
   diag N8a "error:8:17: cannot pass 'b' to a parameter that is not a pointer to its vector type in a call to 'S.ri' - pass &b for its address|" "$A64" < "$D/N1.cyr"
   diag N8b "warning: undefined function 'S.nope'|warning: undefined function 'S.nope' (reachable call site)|error: refusing to emit binary with 1 reachable undefined function(s) (pass --allow-undef to downgrade)|" "$A64" < "$D/N2e.cyr"
-else
-  echo "  NOTE: call_site_callee_spelling N8 not run — no build/cycc_aarch64 (build it from src/main_aarch64.cyr)"
 fi
 
 # N9 (6.7.17, FD1) — a fn named from a struct INSTANCE: `b + 1` on a `B<i32>` looks up the operator fn `B$i32_add` (the
@@ -263,8 +265,6 @@ struct B<T> { v: T; w: i64; u: i64; }
 fn main(): i64 { var b: B<i32>; return b.nope(); }
 syscall(60, main());
 EOF
-n9ok=1
-"$CC" < src/main_aarch64.cyr > "$D/cc_a64" 2>/dev/null && chmod +x "$D/cc_a64" || { bad "N9: src/main_aarch64.cyr did not build"; n9ok=0; }
 "$CC" < src/main_cx.cyr > "$D/cc_cx" 2>/dev/null && chmod +x "$D/cc_cx" || { bad "N9: src/main_cx.cyr did not build"; n9ok=0; }
 printf '#!/bin/sh\nCYRIUS_TARGET_WIN=1 exec "%s"\n' "$CC" > "$D/cc_pe"
 printf '#!/bin/sh\nCYRIUS_MACHO=1 exec "%s"\n' "$CC" > "$D/cc_mo"

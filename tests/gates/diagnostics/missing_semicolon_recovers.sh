@@ -36,7 +36,10 @@
 #       F7-F11 an empty clause (`for (;;)`, `for (; c;)`, an empty condition / step / init — the guide's refusal) is
 #       one error, named, at the clause (`_for_empty`)
 #   D   a `dyn` initializer's `;`: D1 before a `return` (its source ran on to the next `;`: "cannot form dyn Show
-#       from this expression"), D2 before the fn's `}`; D3 / D4 a dyn assignment `o = &p` before the `}` / a `return`
+#       from this expression"), D2 before the fn's `}`; D3 / D4 a dyn assignment `o = &p` before the `}` / a `return`;
+#       D5 the control: an `if` / `match` expression AS the source is its own refusal, once (the keyword stop at the
+#       source's first token added "expected ';', got if" and parsed the expression as statements, to "expected '}',
+#       got end of file" — the review, RED on l6717-integ 3011c4b59)
 #   E   a subscript store's `;` (`a[0] = 1`): E1 before the fn's `}`, E2 before a `return`
 #   T   an assignment's terminator (the `term` sites the statement and the classic-for step share): T1 `*q = 5`
 #       before the fn's `}`, T2 a struct copy `*q = o` before a `return`, T3 / T4 a field store before the `}` / a
@@ -57,7 +60,10 @@
 #       before a `var` — the declaration after it is parsed, its error reported
 #   A   an `asm { }` body missing its `}`: A1 before the next `asm`, A2 before a `return`, A3 at the end of file —
 #       "expected '}'" once, and what follows parsed
-#   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block
+#   B   brace accounting: B1 `a = 2 { 3 };` then a later fn's error, B2 the same inside an `if` block; B3 a stray `{`
+#       with no `}` of its own (`a = g(1, {` then a `return`): the fn's `}` is not taken as its close (it was, and
+#       the next fn was "defined inside" this one — the review, RED on l6717-integ 3011c4b59); B4 the control, a
+#       stray block over three lines ending `};` is still the statement's
 #   K   the S22 control (struct_literal_type_refused.sh): `var P = 3; P { 5 };` keeps its one line, and a later
 #       statement's error after it is reported; K3 an unclosed literal ending at its `;` (CT4) — the `}` after it is
 #       the fn's
@@ -341,6 +347,18 @@ row D4 "a dyn assignment o = &p then a return" "${DH}fn f(): i64 {
 syscall(60, f());
 " "error:<source>:8:5: expected ';', got return
 error:<source>:8:12: $UZ"
+DF="cannot form dyn Show from this expression - a dyn is formed from a \`*T\` the compiler knows (\`&p\`, a \`*T\` name, a pointer-mode handle, a \`*T\` field or call), a declared scalar or a literal: bind it to a declared variable first"
+row D5 "an if / match expression as a dyn source (control: its own refusal, no keyword stop)" "${DH}fn f(): i64 {
+    var p = P { 1, 2 };
+    var c = 1;
+    var o: dyn Show = if (c == 1) { &p } else { &p };
+    o = match c { 1 => &p, _ => &p };
+    return zz;
+}
+syscall(60, f());
+" "error:<source>:7:23: $DF
+error:<source>:8:9: $DF
+error:<source>:9:12: $UZ"
 
 # ---- E: a subscript store's `;` (src/frontend/parse_expr.cyr)
 row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
@@ -579,6 +597,27 @@ row B2 "the same in an if block, two statements inside the braces" 'fn f(): i64 
 syscall(60, f());
 ' "error:<source>:3:25: expected ';', got '{'
 error:<source>:4:12: $UZ"
+row B3 "a stray { with no } of its own, then a return and the fn's }" 'fn g(a, b): i64 { return a; }
+fn f(): i64 {
+    var a = 1;
+    a = g(1, {
+    return zz;
+}
+fn h(): i64 { return zz; }
+syscall(60, f() + h());
+' "error:<source>:4:14: unexpected '{'
+error:<source>:5:12: $UZ
+error:<source>:7:22: $UZ"
+row B4 "control: a stray block over three lines, ending };" 'fn f(): i64 {
+    var a = 1;
+    a = 2 {
+        3
+    };
+    return zz;
+}
+syscall(60, f());
+' "error:<source>:3:11: expected ';', got '{'
+error:<source>:6:12: $UZ"
 
 # ---- K: the S22 control
 row K1 "S22 verbatim: var P = 3; P { 5 };" 'struct P { a; }

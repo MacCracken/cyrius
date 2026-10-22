@@ -2335,7 +2335,8 @@ fn _dyn_emit(S, dsid, idx): i64 {
 # The terminator of a source from token `st`: its first depth-0 `term`, or the `)` / `]` / `}` that
 # closes what it sits in. 6.7.17: a statement's source (`term` `;`) also ends at a depth-0 statement keyword — its
 # `;` is missing there (`var o: dyn Show = &p` then `return zz;` was "cannot form dyn Show from this expression", the
-# `return` and `zz` read as the source). CHANGELOG [6.7.17]
+# `return` and `zz` read as the source). Never at the source's first token: an `if` / `match` expression there is the
+# source (refused by its own words, not "expected ';', got if"). CHANGELOG [6.7.17]
 fn _dyn_ext(S, st, term): i64 {
     var k = st;
     var d = 0;
@@ -2343,7 +2344,10 @@ fn _dyn_ext(S, st, term): i64 {
     while (k < n) {
         var t = TOKTYP(S, k);
         if (t == 12) { return k; }
-        if (d == 0) { if (t == term) { return k; } if (term == 5) { if (_sync_kw_at(S, k, t) == 1) { return k; } } }
+        if (d == 0) {
+            if (t == term) { return k; }
+            if (term == 5) { if (k > st) { if (_sync_kw_at(S, k, t) == 1) { return k; } } }
+        }
         if (t == 10 || t == 28 || t == 13) { d = d + 1; }
         if (t == 11 || t == 29 || t == 14) {
             if (d == 0) { return k; }

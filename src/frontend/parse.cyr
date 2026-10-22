@@ -2238,9 +2238,12 @@ fn _stmt_resync(S, before): i64 {
 # block's end — taken as the block's end, the rest of the fn parsed at top level ("unexpected ';'", "return outside a
 # fn body"). Everything inside is the broken statement's. Not when the statement ended at its own `;`: then the open
 # `{` is one a construct reported unclosed (`var p = P { 1, 2;`: "expected '}', got ';'"), and the `}` after is the
-# block's. Never past EOF. CHANGELOG [6.7.17]
+# block's. Never past EOF. And only to a `}` on that `{`'s own line or followed by a `;` (`P { 5 };`): a stray `{` with
+# no `}` of its own (`a = g(1, {` then `return ..;` and the fn's `}`) matched the fn's end, and the fn after it was
+# "defined inside" this one. CHANGELOG [6.7.17]
 fn _resync_close(S, before): i64 {
     var d = 0;
+    var o = before;   # the outermost `{` left open
     var i = before;
     var c = GTI(S);
     var n = GTCNT(S) - 1;   # the EOF token
@@ -2248,7 +2251,7 @@ fn _resync_close(S, before): i64 {
     if (c > before) { if (TOKTYP(S, c - 1) == 5) { return 0; } }
     while (i < c) {
         var t = TOKTYP(S, i);
-        if (t == 13) { d = d + 1; }
+        if (t == 13) { if (d == 0) { o = i; } d = d + 1; }
         elif (t == 14) { if (d > 0) { d = d - 1; } }
         i = i + 1;
     }
@@ -2258,7 +2261,8 @@ fn _resync_close(S, before): i64 {
         elif (u == 14) { d = d - 1; }
         i = i + 1;
     }
-    if (i > c) { STI(S, i); }
+    if (d > 0) { return 0; }
+    if (i > c) { if (GTLINE(S, i - 1) == GTLINE(S, o) || TOKTYP(S, i) == 5) { STI(S, i); } }
     return 0;
 }
 
@@ -7881,7 +7885,11 @@ fn PARSE_STMT(S): i64 {
     _agc_ovr = 0;
     var fe = _flt_en;   # 6.7.16: this statement's errors are counted from here (`_FLT_TYPE_WARN`)
     _flt_en = _err_n;
+    # 6.7.17: a statement nested in an assignment's value (a closure body) keeps the assignment's name token: `zq =
+    # |a| { var t = 1; t = t + 1; return a; };` reported 'zq' under the inner `t`. CHANGELOG [6.7.17]
+    var an = _asg_nti;
     _PARSE_STMT_IMPL(S);
+    _asg_nti = an;
     _flt_en = fe;
     _agc_ovr = ov;
     _rd_exit();
