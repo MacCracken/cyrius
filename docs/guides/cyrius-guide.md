@@ -1781,7 +1781,8 @@ a `Str` handle (a local, a parameter, a global) is refused by name as into a `P`
 user's decision D18, 2026-10-22): `h = mkq();` with `fn mkq(): Q1` is *cannot copy 'mkq' into a variable of a
 different struct/vector type: 'h'* — a method, operator or if-expression result, a struct name, field or dereference
 alike — where through 6.7.16 h took the struct's first word as the header's address (a crash at the next
-`str_len(h)`); a handle, a `*T` and a `: Str` call keep their rebind. So at every other `Str` slot: a `Str` field
+`str_len(h)`); a handle, a `*T` and a `: Str` call keep their rebind, and a `*Str` name, a typed pointer, keeps the
+*assigning non-pointer to typed pointer* warning. So at every other `Str` slot: a `Str` field
 (`w.s = mkq();`, a for step's, top level) and a literal's `Str` element (`W { mkq(), 1 }`) are *cannot copy 'mkq' into a
 struct field of a different struct type: 's'*, a store through a `*Str` (`*ps = q;`, `**pp = q;`) is *cannot copy 'q'
 into a variable of a different struct/vector type: 'ps'*, and `return mkq();` from a fn returning `Str` (a tail call
@@ -8400,6 +8401,11 @@ var a = 7;        # warning: duplicate symbol 'a' redefined with conflicting val
   `= g`), and `var g: bool = true;` then `var g = 1;`, are refused the same way —
   through 6.7.13 the bool mark was the last declaration's, so `var g = 5; var g: bool
   = g;` built a bool holding 5. Two `bool` declarations of one global are fine.
+- A global typed by its initialising call — an untyped `var g = mk1();` (a struct, 6.7.14), `= mkf(1.5);` (an
+  f64, 6.7.16), `= str_from("x");` (a `Str`, 6.7.17) — takes its LAST declaration's type, as after the first
+  statement: `var g = mk1(); var g = 5;` is an integer and `var g = 5; var g = mk1();` the struct (6.7.17; through
+  6.7.16 the declaration zone read the first initialiser — `g + 1` dispatched `P1_add`, *undefined function*, and
+  `var g = mkf(1.5); var g = 7;` made `g * 2` f64 arithmetic on 7).
 - A same-value redeclaration is silent; that is the usual way two files, or an
   `#ifdef` arm, end up declaring one global. A later constant that **differs**
   from the earlier constant warns, whatever that constant was — `var a = 0;` then
