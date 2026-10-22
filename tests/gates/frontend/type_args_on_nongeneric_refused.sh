@@ -82,7 +82,7 @@ one() {
     rc=0
     if [ $# -ge 4 ]; then sh -c "$4" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?
     else "$CC" < "$D/$1.cyr" > "$D/$1.bin" 2> "$D/$1.err" || rc=$?; fi
-    n=$(grep -c '^error' "$D/$1.err")
+    n=$(grep -c '^error' "$D/$1.err" || true)   # 0 lines: grep exits 1 (bash -eo pipefail)
     if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
     elif [ "$n" -ne 1 ]; then bad "$3: $n error lines, want 1: $(grep '^error' "$D/$1.err" | tr '\n' '|')"
     elif ! grep -qF -- "$2" "$D/$1.err"; then bad "$3: refused, but not with \"$2\": $(grep '^error' "$D/$1.err")"
@@ -142,8 +142,8 @@ one b2 "11:45: 'i64.show' is not a generic method: it takes no type arguments" "
 # ── U: no such method; a receiver of no known struct ────────────────────────────────────────────────────────
 mk u1 'fn go(): i64 { var p: Pt; p.y = 6; return p.zz<i64>(1); }'
 mk u1b 'fn go(): i64 { var p: Pt; p.y = 6; return p.zz(1); }'
-"$CC" < "$D/u1.cyr" > /dev/null 2> "$D/u1.err"; a=$(grep '^error' "$D/u1.err")
-"$CC" < "$D/u1b.cyr" > /dev/null 2> "$D/u1b.err"; b=$(grep '^error' "$D/u1b.err")
+"$CC" < "$D/u1.cyr" > /dev/null 2> "$D/u1.err" || true; a=$(grep '^error' "$D/u1.err" || true)
+"$CC" < "$D/u1b.cyr" > /dev/null 2> "$D/u1b.err" || true; b=$(grep '^error' "$D/u1b.err" || true)
 if [ -n "$a" ] && [ "$a" = "$b" ]; then ok "U1: p.zz<i64>(1) reports what p.zz(1) reports: $a"
 else bad "U1: p.zz<i64>(1) [$a] differs from p.zz(1) [$b]"; fi
 mk u2 'fn go(): i64 { var p: Pt; p.y = 6; var q = &p; var r = q.m<i64>(1); return r; }'
@@ -153,7 +153,7 @@ one u2 "no struct type in scope for 'q'; a method call needs its struct declarat
 for x in r1:X1 m1:X2 b1:X3; do
     f=${x%%:*}; w=${x##*:}
     rc=0; "$CC" --syntax-only < "$D/$f.cyr" > /dev/null 2> "$D/$f.so" || rc=$?
-    n=$(grep -c '^error' "$D/$f.so")
+    n=$(grep -c '^error' "$D/$f.so" || true)
     if [ "$rc" -eq 0 ] && [ "$n" -eq 0 ]; then ok "$w: --syntax-only on $f is silent (rc 0)"
     else bad "$w: --syntax-only on $f: rc $rc, $n error line(s): $(grep '^error' "$D/$f.so" | tr '\n' '|')"; fi
 done
