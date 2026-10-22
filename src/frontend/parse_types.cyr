@@ -380,6 +380,37 @@ fn _ngt_refuse(S, nti): i64 {
     if (tail == 0) { return _ngt_hread(S, nti); }
     return _ngt_say(S, nti, tail);
 }
+# 6.7.17 (D102) — under CYRIUS_MONOMORPH=0 a generic's (or a handle's) list is stepped unread, so a name in it that
+# takes no type arguments given some — `Box<Pt<i64>>`, `Box<i64<u8>>`, `Result<Pt<i64>, i64>`, a type parameter's
+# `Box<U<i8>>` — compiled where the default build's reader refuses it at that name. Each such name in the list (any
+# depth) is refused with those words, once (`_ngt_say` / `_tp_targs_refuse`); the caller steps the list as before.
+# Name token `nti`, its `<` next. CHANGELOG [6.7.17]
+fn _ngt_fl_args(S, nti): i64 {
+    var e = _tok_targs_close(S, nti + 2);
+    if (e < 0) { return 0; }
+    var j = nti + 2;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { if (TOKTYP(S, j + 1) == 19) {
+                if (_ngt_union_q(S, j) == 0) { if (_tp_targs_refuse(S, j) == 0) {
+                        var tail = _ngt_tail(S, j);
+                        if (tail != 0) { _ngt_say(S, j, tail); }
+                    } }
+            } }
+        j = j + 1;
+    }
+    return 0;
+}
+# 6.7.17 (D102) — 1 when a struct named `noff` is declared with a `<..>` (`struct NAME <`, anywhere in the file).
+fn _struct_gen_tok(S, noff): i64 {
+    _dlx_build(S);
+    var i = 0;
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
+        if (TOKTYP(S, k) == 40) { if (TOKTYP(S, k + 2) == 19) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } } }
+        i = i + 1;
+    }
+    return 0;
+}
 # 6.7.17 (D5) — 1 when the name at token `nti` (its `<` next) is a union declared with a `<..>`: that declaration was
 # refused ("a union takes no type parameters", `_union_tp_refuse`), so a use's list says nothing more — refused
 # quietly (the caller steps it), as a refused third type parameter's uses say nothing (6.7.16's D8).
@@ -427,14 +458,20 @@ fn _tp_here(S, ti): i64 {
 }
 # The words `Name<..>` at token `nti` is refused with, or 0 when it is not the shape. 6.7.16: apart, so the impl check
 # (`_tr_rt_bad`) knows a return its reader refuses.
+# ⛔ 6.7.17 (the user's D102, 2026-10-22: "refuse them under the flag as the default build does") — under
+# CYRIUS_MONOMORPH=0 this answered 0 for every name (no struct is recorded as generic there), so `fn g(p: Pt<i64>)`,
+# `var v: i64<u8>`, `Color<i64>` and every sibling position compiled with the list stepped, where the default build
+# refuses each. The flag records no type parameter, so a struct is generic by its declaration's tokens there
+# (`_struct_gen_tok`, as a fn is by `_fn_gen_tok`); a scalar's and an enum's answer never depended on the flag.
+# CHANGELOG [6.7.17]
 fn _ngt_tail(S, nti): i64 {
-    if (_MONOMORPH_OK != 1) { return 0; }   # CYRIUS_MONOMORPH=0: no struct is recorded as generic
     if (TOKTYP(S, nti) != 2) { return 0; }
     if (TOKTYP(S, nti + 1) != 19) { return 0; }
     var noff = TOKVAL(S, nti);
     var sid = FINDSTRUCT(S, noff);
     if (sid > 0) {
-        if (GSTP(S, sid - 1) != 0) { return 0; }
+        if (_MONOMORPH_OK != 1) { if (_struct_gen_tok(S, noff) == 1) { return 0; } }
+        elif (GSTP(S, sid - 1) != 0) { return 0; }
         if (_dyn_is(S, sid) == 1) { return 0; }
         return " is not a generic struct: it takes no type arguments";
     }
@@ -492,7 +529,7 @@ fn _enum_decl_lt(S, noff): i64 {
 fn _ngt_hread(S, nti): i64 {
     if (TOKTYP(S, nti) != 2) { return 0; }
     if (TOKTYP(S, nti + 1) != 19) { return 0; }
-    if (_MONOMORPH_OK != 1) { return 2; }
+    if (_MONOMORPH_OK != 1) { _ngt_fl_args(S, nti); return 2; }   # 6.7.17 (D102)
     var noff = TOKVAL(S, nti);
     if (FINDSTRUCT(S, noff) > 0) { return 0; }
     var np = _ngt_hnp(S, noff);
@@ -3471,7 +3508,8 @@ fn _pps_of_pin(S, pin): i64 {
 # (6.7.3 let a typed pointer convert freely). The whole argument [a, e), just pushed, to parameter `k` of `fi`: when the
 # parameter points through its stars to struct S (`_pps_param`) and the argument — by the compiler's own typing
 # (`_pa_sid`) — through as many to another struct, it is refused at the argument, `&y` named `y`, once, in 6.7.3's
-# words. An untyped pointer, `0`, a pointer of another depth and a pointer to the declared struct pass. Every call's
+# words. An untyped pointer, `0` and a pointer to the declared struct pass (a pointer of another depth passed too
+# through 6.7.16 — refused since, below). Every call's
 # argument loop (`_arg_push_snap`: a call, a method's arguments, a named one, a tail call — a generic instance's
 # parameters are its own) and an operator's right operand (`_op_arg_check`). 1 = refused. CHANGELOG [6.7.16]
 # ⛔ 6.7.17 (D10 / D11, the user's decisions, 2026-10-22) — AND INTO A BY-VALUE STRUCT PARAMETER, AND AT ANOTHER DEPTH.
@@ -3539,6 +3577,62 @@ fn _pa_derr(S, fi, sa, sp, dp): i64 {
     _had_error = 1;
     _panic = 1;
     return 1;
+}
+# ⛔ 6.7.17 (D107, the user's decision, 2026-10-22: "refuse it, naming both pointer types, as an argument of another
+# depth is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION. `var u: *Pt = &h;` (h a handle: its `&` is
+# the slot holding the address, a `**Pt`) held the slot, so `u.x` read the handle's word as the Pt; `var u: *Pt = pp;`
+# (a `**Pt`) and `var pp: **Pt = pq;` (a `*Pt`) the same, silently. The annotation at `ann` (one or more `*`, then a
+# struct: `_ppd_ann`), the initialiser [ti, e) typed as an argument is (`_pa_sid`: a name, `&x`, a field, a call,
+# `*ppp`, an if-expression) at another number of stars: "cannot initialise 'u: *Pt' from '&h', a '**Pt' - a pointer of
+# another depth", at the initialiser. A pointer of the annotation's depth (to any struct, as 6.7.3 left declarations),
+# an untyped pointer, `0` and an inline struct (D17's address) are unchanged. PARSE_VAR in a fn and at top level
+# after the first statement (cursor on the `=`), the zone replay (`_vin_zone`). 1 = refused. CHANGELOG [6.7.17]
+var _ppd_d = 0;
+fn _ppd_val(S, ti, e, ann, noff): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (e <= ti) { return 0; }
+    var ds = _ppd_ann(S, ann);
+    if (ds <= 0) { return 0; }
+    var dd = _ppd_d;
+    var sa = _pa_sid(S, ti, e);
+    if (sa <= 0) { return 0; }
+    if (sa >= 2048) { return 0; }
+    if (_pa_d == dd) { return 0; }
+    if (_tn_once(S, _pa_b) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, _pa_b);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": cannot initialise '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(": ");
+    _pa_tyname(S, ds, dd);
+    PRSTR("' from '");
+    PRSTR(S + 0xEC00000 + _src_span_nm(S, _pa_b, _pa_e, TOKVAL(S, _pa_e - 1)));
+    PRSTR("', a '");
+    _pa_tyname(S, sa, _pa_d);
+    PRSTR("' - a pointer of another depth\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _ptr_refd_ti = ann;
+    return 1;
+}
+# The struct the pointer annotation at `ann` points through to — `*S`, `**S`, `***S` (S a plain struct or an instance;
+# a bound T's at one star) — `_ppd_d` its stars; else 0.
+fn _ppd_ann(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    var d = 0;
+    while (TOKTYP(S, ann + d) == 8) { d = d + 1; }
+    if (d == 0) { return 0; }
+    _ppd_d = d;
+    var t = 0;
+    if (d == 1) { t = _ptr_ann_sid_tp(S, ann); }
+    else { t = _ptr_tok_sid(S, ann + d); }
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    if (_dx_plain(S, t) == 0) { if (t != _STR_SID(S)) { return 0; } }
+    return t;
 }
 # `d` stars, then struct `sid` as the source spells it (`Box<Pt>`; a generic's base is its i64 binding, `Box<i64>`), on
 # stderr.
@@ -4424,8 +4518,7 @@ fn _fld_targ_chk(S, ti): i64 {
 # declared above by `_ngt_refuse`; one declared further down (the reason this reader exists) by its declaration's
 # tokens, as `_fld_targ_chk` reads a generic one. A use re-reads the same tokens silently (`_ptr_tok_sid`).
 fn _fld_ngt(S, ti): i64 {
-    if (_MONOMORPH_OK != 1) { return 0; }
-    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }   # 6.7.17 (D102): under CYRIUS_MONOMORPH=0 too (it returned 0 there)
     if (FINDSTRUCT(S, TOKVAL(S, ti)) > 0) { return _ngt_refuse(S, ti); }
     if (_declared_later_gen(S, TOKVAL(S, ti)) == 1) { return 0; }
     return _ngt_say(S, ti, " is not a generic struct: it takes no type arguments");
@@ -4637,6 +4730,7 @@ fn _tn_slice_w(S, ti, vnoff): i64 {
         _tn_refuse(S, ti, " as the element of slice ", vnoff);
         return 8;
     }
+    if (_vec_ann_at(S, ti) == 1) { return _tn_slice_vec(S, ti, vnoff); }   # 6.7.17 (D105): `[Vec<T>]`
     var g = _tn_slice_gen(S, ti);   # 6.7.16 (D89): `[Box<i64>]`, the instance
     if (g > 0) { return _tn_bytes(S, _tn_code(6, g)); }
     _tn_slice_ngt(S, ti);   # 6.7.16 (D7): `[Pt<i64>]`
@@ -4655,11 +4749,51 @@ fn _tn_slice_gen(S, ti): i64 {
     var sid = FINDSTRUCT(S, TOKVAL(S, ti));
     if (sid <= 0) { return 0; }
     if (_MONOMORPH_OK == 1) { if (GSTP(S, sid - 1) == 0) { return 0; } }
+    var over = _targ_over(S, ti + 1);   # 6.7.17: an over-closer is the slice's error (`_sl_el_over`)
     STI(S, ti + 1);
     var g = _gen_ann_sid(S, sid);
     _ta_pending_gt = 0;
-    STI(S, GTI(S) - 1);
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
     return g;
+}
+# The levels the `<..>` at token `k` closes beyond itself with its last closer (`_skip_targ_list`'s answer); the cursor
+# does not move.
+fn _targ_over(S, k): i64 {
+    var sv = GTI(S);
+    STI(S, k);
+    var o = _skip_targ_list(S);
+    STI(S, sv);
+    return o;
+}
+# ⛔ 6.7.17 (the user's D105, 2026-10-22) — A SLICE ELEMENT IS ANY TYPE VALID ELSEWHERE: `[Vec<i64>]` / `slice<Vec<T>>`
+# declare the 8-byte `vec_new()` handle `var v: Vec<i64>` does, `[*Vec<T>]` / `[**Vec<T>]` and `[*u128]` the 8-byte
+# pointer element (D93's). Each was a parse error — "expected ']', got '<'" / "expected ']', got u128" (the word form
+# "expected '=', got .." and "undefined variable 'i64'") — while `[u128]`, `[Box<i64>]` and the same annotations on a
+# local compiled. T is read as that annotation reads it (`_vec_ann_chk`: "unknown type 'Nope' as the Vec element of
+# 's'", a tuple, a pointer, a second argument refused by name) and the list stepped, the cursor on its last token (the
+# caller steps past it). CHANGELOG [6.7.17]
+fn _tn_slice_vec(S, ti, vnoff): i64 {
+    _vec_ann_chk(S, ti, vnoff);
+    STI(S, ti + 1);
+    var over = _skip_targ_list(S);
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
+    return 8;
+}
+# A slice element's `<..>` (`nti` its name; the cursor just past the list) whose last closer closed `over` levels beyond
+# it (`>>` / `>>>`): 1 when that is more than the slice may take — `slice<T<..>>`'s own `>` (one), none in `[T<..>]` (the
+# slice's opening token is the one before the element's `*`s). The caller then leaves the cursor so the slice's own read
+# meets that closer and reports it ("expected ']', got '>>'", "expected '=', got '>>>'"), as a declaration's list does
+# (6.7.17, `_tpl_skip`). A `>` after a closer that closed the slice too (`slice<Vec<i64>>>`) is reported here, where the
+# word form's read would take it as the slice's own: "expected '=', got '>'". Every element list asks it — Vec<T>, a
+# generic struct's (`[Box<i64>>]` compiled through 6.7.16, D89's), Result<..>, behind `*`s or not. CHANGELOG [6.7.17]
+fn _sl_el_over(S, nti, over): i64 {
+    var k = nti - 1;
+    while (TOKTYP(S, k) == 8) { k = k - 1; }
+    var lim = 1;
+    if (TOKTYP(S, k) == 28) { lim = 0; }
+    if (over > lim) { return 1; }
+    if (over == 1) { if (PEEKT(S) == 20) { ERR_EXPECT(S, 4); } }
+    return 0;
 }
 # 6.7.17 (D6): a slice element that is a type parameter with a list (`[U<i8>]`): refused (`_tp_targs_refuse`) and
 # stepped as `_tn_slice_ngt` steps one, before a bound parameter's early width — it was "expected ']', got '<'".
@@ -4675,8 +4809,8 @@ fn _tn_slice_tpa(S, ti): i64 {
 fn _tn_slice_ngt(S, ti): i64 {
     if (_ngt_refuse(S, ti) == 0) { return 0; }
     STI(S, ti + 1);
-    SKIP_GENERICS(S);
-    STI(S, GTI(S) - 1);
+    var over = _skip_targ_list(S);   # 6.7.17: an over-closer is the slice's error (`_sl_el_over`)
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
     return 0;
 }
 
@@ -4778,10 +4912,25 @@ fn _tn_slice_ptr_el(S, noff): i64 {
         _tup_pos_refuse(S, "a pointer target `*( .. )`");
         return 0;
     }
+    if (PEEKT(S) == 105) {   # 6.7.17 (D105): `[*u128]`, as `var p: *u128` (see `_tn_slice_vec`)
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
     if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+    if (_tn_slice_vptr(S, noff) == 1) { return 0; }   # 6.7.17 (D105): `[*Vec<T>]`
     if (_tn_slice_gptr(S) == 1) { return 0; }   # 6.7.16 (D89): `[*Box<i64>]`
-    _ngt_skip(S);   # 6.7.16: `[*Pt<i64>]` refused at the name (D7's words; it was "expected ']', got '<'")
+    # 6.7.16: `[*Pt<i64>]` refused at the name (D7's words; it was "expected ']', got '<'"), `[*Result<..>]` read
+    if (PEEKT(S) == 19) { if (_ngt_refuse(S, GTI(S) - 1) != 0) { _tn_slice_pskip(S); } }
     return 0;
+}
+# ... `[*Vec<T>]` / `slice<**Vec<T>>`, cursor on the `<` after `Vec`: T read as `var p: *Vec<T>` reads it, the list
+# stepped (the cursor past it, or on a closer that closes more than the slice may: `_sl_el_over`). 1 = stepped.
+fn _tn_slice_vptr(S, noff): i64 {
+    var nti = GTI(S) - 1;
+    if (_vec_ann_at(S, nti) == 0) { return 0; }
+    _vec_ann_chk(S, nti, noff);
+    _tn_slice_pskip(S);
+    return 1;
 }
 # ... `[*Box<i64>]` / `slice<*Box<i64>>`, cursor on the `<` after a generic struct's name: its list read as a pointer
 # field's is (`_targ_chk`: every refusal in it, nothing minted — a pointer is 8 bytes whatever it points at) and
@@ -4794,9 +4943,21 @@ fn _tn_slice_gptr(S): i64 {
     if (_MONOMORPH_OK == 1) {
         if (GSTP(S, sid - 1) == 0) { return 0; }
         _targ_chk(S, GTI(S));
+    } else {
+        # 6.7.17 (D102): under CYRIUS_MONOMORPH=0 a non-generic's list is refused (`_ngt_skip`), as the default build's
+        if (_struct_gen_tok(S, TOKVAL(S, GTI(S) - 1)) == 0) { return 0; }
+        _ngt_fl_args(S, GTI(S) - 1);
     }
-    SKIP_GENERICS(S);
+    _tn_slice_pskip(S);
     return 1;
+}
+# A pointer element's `<..>` (cursor on its `<`): stepped; a closer that closes more than the slice may is left for the
+# slice's own read (`_sl_el_over`). CHANGELOG [6.7.17]
+fn _tn_slice_pskip(S): i64 {
+    var nti = GTI(S) - 1;
+    var over = _skip_targ_list(S);
+    if (_sl_el_over(S, nti, over) == 1) { STI(S, GTI(S) - 1); }
+    return 0;
 }
 # A slice local's canonical slot `li` (PARSE_VAR, `ann` the annotation's `[` / `slice`): its element
 # width `w` and, above bit 31, its element descriptor (`_slice_led`) — a slice store checks and
@@ -5334,6 +5495,40 @@ fn _enum_mem_name(S, emit_code, enoff): i64 {
     return 0 - 1;
 }
 
+# ⛔ 6.7.17 (the user's D101, 2026-10-22: "refuse it by name, as a fn's / struct's unknown bound") — AN ENUM'S
+# TYPE-PARAMETER BOUNDS ARE LOOKED UP: `enum E<T: Nope> { A }` compiled — the list was stepped (`_tpl_skip`) and no
+# bound read, where `struct B<T: Nope>` and `fn f<T: Nope>` are "unknown trait 'Nope' in the bound on type parameter
+# 'T'". Each parameter's bound is read and judged by the fn's own reader (`_ctp_bounds` + `_bnd_make`, as slot 0, so an
+# enum's third parameter — an enum may declare more than two — is judged too): the same words, once, at the bound, a
+# malformed bound (`T: 5`) or one with arguments (`T: Show<i64>`) its fn line too; pass 1 (`emit_code` 0), in source
+# order, the cursor put back. CYRIUS_MONOMORPH=0 reads no bound — an enum's as a fn's and a struct's. The block is not
+# kept: an enum binds nothing. Cursor on the `<`. CHANGELOG [6.7.17]
+fn _enum_tp_bounds(S): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (PEEKT(S) != 19) { return 0; }
+    var sv = GTI(S);
+    STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) != 2) { go = 0; }
+        else {
+            var tn = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) == 49) {
+                _ctp_n0 = 0; _ctp_n1 = 0; _ctp_bad = 0; _ctp_closed = 0;
+                _ctp_bounds(S, 0);
+                _bnd_make(S, tn + 1);
+                if (_ctp_closed == 1) { _ctp_closed = 0; go = 0; }
+            }
+            if (go == 1) {
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+            }
+        }
+    }
+    STI(S, sv);
+    return 0;
+}
+
 # Parse: enum Name { A; B; C; } — registers variants as global constants
 # Called from BOTH pass 1 (register vars) and pass 2 (emit init code).
 # Pass 1: just register var names + sizes (no code)
@@ -5348,6 +5543,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
     # bound to anything (mono-only); accepting the syntax unblocks
     # `enum Result<T, E> { Ok(v); Err(e); }` source shape.
     if (PEEKT(S) == 19) { _tpl_names(S, GTI(S)); }   # 6.7.17 (D3): `enum E<5>`
+    if (emit_code == 0) { _enum_tp_bounds(S); }      # 6.7.17 (D101): `enum E<T: Nope>`
     _tpl_skip(S);   # 6.7.17: `enum E<T>> {` — the `>>` left for "expected '{'"
     # v6.5.55 — `enum Name: stack { V(x); ... }` opts the declaration OUT of heap boxing.
     # A payload variant of a stack enum returns its (tag, payload) in the multi-return

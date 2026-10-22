@@ -588,15 +588,17 @@ var r = add(20, 22);   # r = 42
   ```
 
   (`... not inside a block` in a top-level block). Through 6.7.14 it was `unexpected struct` and up to
-  four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by
-  the recovery. It is refused wherever it sits, whether or not its body is ever compiled (6.7.17, the
-  user's decision D33): in a trait default no impl inherits, in a bounded generic fn or method that is
-  never instantiated (`fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }`), in the body of a
-  refused nested fn or a refused `impl`'s method. Through 6.7.16 such a declaration compiled — said only
-  once a use of its name stood down. Those bodies are not parsed, so their declarations are said at the
-  end of the parse, after its other errors. Either way, a use of what the refused declaration names
-  adds no error of its own (6.7.15): `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` /
-  `.m()`, a payload member's constructor `Ok2(5)` — the declaration's one error stands for them (through
+  four invented errors — the last of them often "return outside a fn body", the fn's own `}` taken by the
+  recovery. It is refused wherever it sits, whether or not its body is ever compiled (6.7.17, the user's
+  decision D33): in a trait default no impl inherits (or every impl overrides), in a bounded generic fn
+  or method that is never instantiated (`fn gg<T: Show>(x: T): i64 { struct Q { y; } return 1; }`), in
+  the body of a refused nested fn, a refused `impl`'s method or a refused `trait`'s default. Through
+  6.7.16 a declaration in a never-compiled default or generic compiled, and one in a refused fn's, impl's
+  or trait's body went unsaid beside that refusal — each said only once a use of its name stood down.
+  Those bodies are not parsed, so their declarations are said at the end of the parse, after its other
+  errors. Either way, a use of what the refused declaration names adds no error of its own (6.7.15):
+  `Q { 5 }`, `E.B`, a member `B`, a `: Q` / `*Q` annotation and that variable's `.y` / `.m()`, a payload
+  member's constructor `Ok2(5)` — the declaration's one error stands for them (through
   6.7.14 each was "undefined variable 'Q'", "unknown type 'Q' for parameter 'q'", "no struct type in
   scope for 'q'", ...). So do (6.7.16) `E.B` / `B` in a const context (a `case` label, a const, an array
   size), a refused trait as a bound (`fn g<T: Tr>`), `var q: Q;` with no initializer (any refused
@@ -1531,7 +1533,9 @@ the tuple: `var t = (1, 2 3);` is `expected ',' between tuple literal elements` 
 `var p: P = P { .. };`), and nothing else: as an assignment's right side (`G = P { 5 };`, a local, at top
 level), an argument (`f(P { 5, 6 })`), an operand, a nested literal's element (`W { P { 2 } }`), a
 `return` value or a statement it is one error by name — a generic `Box<i64> { .. }` alike (6.7.14, the
-user's decision D12 (a), 2026-10-16):
+user's decision D12 (a), 2026-10-16), and as a generic's argument too: `g(P { 2, 4 })` is the literal's error, not the
+refusal of the `i64` call it would make (6.7.17; through 6.7.16 a bounded `g` asked for `impl Show for i64`, a stub
+said it "has no i64 (or other scalar) instance"):
 
 ```text
 error:<source>:3:21: a struct literal is an initializer: declare `var t: P = P { .. };` and assign or pass t
@@ -2095,7 +2099,20 @@ less and a `Str` keep their word. A COMPOUND assignment is judged as its `=` for
 2026-10-22): `y += mk3();`, `*p += mk3();`, `w.n -= mk3();`, `b[0] |= mk3();`, `p += mk3();` into a `*i64`, a slice's
 `.len`, in a `for` step or at top level, are refused with that destination's words (*cannot assign 'y: i64' from 'mk3',
 which returns the struct 'P2' - declare 'y: P2' or bind a field*; through 6.7.16 they combined the struct's first
-word, silently). A global declaration is judged the same (6.7.14; the user's decision D28,
+word, silently). In a generic, the same store into a destination typed by `T` (`y += mk3();` with `y: T`, `*p +=
+..` and `p[0] += ..` with `p: *T`, `b.v += ..` with `b: *Box<T>`) has no scalar instance, as its `=` form (D1's
+rule): `g(5)` is refused naming the line. A struct VALUE that is no call is judged as the call is in each of these
+slots (6.7.17; the user's decision D106, 2026-10-22): an inline local, a by-value parameter, a captured copy, an
+inline global, a dereference (`*pq`, `**ppq`, `*(&q)`) or a struct-typed field (`w.q`) over 8 bytes, stored into a
+scalar or pointer name (`y = q;`, `p = q;` with `p: *i64`), declared into one (`var z: i64 = q;`, `var p: *i64 = q;`,
+in a fn, the declaration zone and after the first statement), a field, an element, `*p`, a compound right side or a
+literal's element, is refused in that slot's words with *which is the struct 'Q'*: *cannot assign 'y' from 'q', which
+is the struct 'Q' - declare 'y: Q' or bind a field*; in a generic, into a destination typed by `T`, it has no scalar
+instance (D1's rule). Through 6.7.16 each kept the struct's first word, silently. A struct of 8 bytes or less, a `Str`,
+a handle (its word is the address), a `*T`, a field of the value (`y = q.a`) and a struct destination (a copy) keep
+their meaning. ⚠ A struct value or call as an ARGUMENT to an integer or untyped parameter, a `return` from a scalar fn,
+an operand (`1 + q`), a condition or an index is not refused: it passes its first word, as the call does there.
+A global declaration is judged the same (6.7.14; the user's decision D28,
 2026-10-16): `var X: *P2 = mkp();` at top level — in the declaration zone or after the first statement,
 every path above — is refused with the same words, once and with no warning. Through 6.7.13 it compiled
 after the first statement under the warning and faulted at `X.b`; in the declaration zone the call was
@@ -2454,6 +2471,11 @@ an operand, a condition, an index, a range bound, a literal's field (*vector typ
 `return`'s D25's, a bool's, a struct's and a pointer of another kind's their own, a vector global its own. Read a lane
 through the vector's address (`load64(&w)`, `load64(&w + 8)`). ⚠ Through 6.7.16 each compiled and read lane 0, the same
 on every target (`take(w)`, `return w;`, `var x: i64 = w;` and `if (w)` 4, `1 + w` 5 with `w` = (4, 7); `*w` crashed).
+An ARRAY of vectors is refused in the same slots (6.7.17, the user's decision D103, 2026-10-22): a typed array's name
+read as a word is its element 0, so `var wa: f64v2[2]; take(wa)` passed element 0's lane 0 — `take(wa)`, `return wa;`,
+`var x: i64 = wa;`, `if (wa)`, `1 + wa`, `x = wa`, `syscall(60, wa)`, a tuple or multi-value element, a local or a
+global, in a fn or at top level — and each is *… - 'wa' is an array of vectors* now. Pass its address (`rd(&wa)`,
+`&wa + 16` is element 1) or read a lane (`load64(&wa)`).
 
 **An untyped declaration from a vector value copies it in a fn (6.7.17, the user's decision D95, 2026-10-22).** `var x
 = w;` with `w` a vector local, a by-value vector parameter or a closure's captured vector — `(w)` too — declares a
@@ -2593,7 +2615,13 @@ address, a `**Pt`; a `Str` handle's `&s` a `**Str`) — the argument named as th
 written out, at every source and path the pointee check above reads. A pointer of the parameter's depth passes, as do
 `*pp` (a `*Pt`) and `**pp` (the struct value, whose address a `*Pt` takes), an untyped pointer and `0`. Through
 6.7.16 a pointer of another depth passed: `nc4(&pq)` read pq's slot as the Pt (`p.x` was p's address) and `nc2(pz)`
-read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows).
+read the Box as a pointer (139 on x86_64 and aarch64, a cx guest fault, exit 5 on Windows). A DECLARATION of a
+pointer to a struct is judged the same (6.7.17; the user's decision D107, 2026-10-22): `var u: *Pt = &h;` with h a
+handle, `var u: *Pt = pp;` with `pp: **Pt`, `var pp: **Pt = u;` with `u: *Pt` — a field, a call, `*ppp`, wrapped, a
+capture, in a fn, the declaration zone and after the first statement — reports `cannot initialise 'u: *Pt' from '&h',
+a '**Pt' - a pointer of another depth`; through 6.7.16 `u` held the handle's slot and `u.x` read its word as the Pt.
+A pointer of the annotation's depth still converts (to any struct, `var q: *Q = &p;`), and `*pp`, an untyped
+pointer, `0` and an inline struct (its address, D17) pass.
 
 ⚠ **A struct value into a pointer of another kind is refused by name (6.7.13; the user's decision D5
 (a), 2026-10-15).** `ri(s)` with `fn ri(p: *i64)` — or `*u8`, `*f64`, `**T`, any `*T` whose `T` is
@@ -3214,6 +3242,17 @@ type 'Nope' as the target of pointer 's'*), and so is one behind any number of `
 element, refused as the one-star element is. Through 6.7.16 the second `*` was read as `T` — *expected ']', got '*'*
 (`slice<**T>`: *expected '=', got '*'*). A pointer to a tuple, `[*(i64, i64)]`, is *a tuple type cannot be a pointer
 target `*( .. )`*, as `var p: *(i64, i64)` is (6.7.17; it was *expected ']', got '('*).
+
+**Any type valid elsewhere (6.7.17, the user's D105, 2026-10-22).** An element is any type a local takes: `[Vec<i64>]`
+/ `slice<Vec<T>>` hold the 8-byte `vec_new()` handle `var v: Vec<i64>` declares, its `T` read as that annotation
+reads it (`[Vec<Nope>]` is *unknown type 'Nope' as the Vec element of 's'*, `[Vec<*i64>]` *expected a Vec element type
+for 's', got '*'*); `[*Vec<T>]`, `[**Vec<T>]`, `[*u128]` and `slice<*u128>` are 8-byte pointer elements. Through 6.7.16
+each was *expected ']', got '<'* / *expected ']', got u128* (the word form *expected '=', got ..*). A `>>` / `>>>` that
+closes more than the element and the slice is the slice's own error at it: `[Vec<i64>>]` is *expected ']', got '>>'*,
+`slice<Vec<i64>>>` *expected '=', got '>>>'* — a generic struct's and a `Result<..>`'s list too, behind `*`s or not
+(through 6.7.16 `var s: [Box<i64>>] = 0;` compiled, the extra level dropped). The positions a decision refuses stay
+refused by name: a tuple element
+(6.7.7), `dyn Tr` (6.7.8), a slice of slices (6.7.8).
 
 **Stores (6.7.8).** `s[i] = v` stores the element at `s.ptr + i * sizeof(T)` at T's width, after
 checking `i` against `s.len` exactly as a read does — out of range (or negative) prints `slice bounds
@@ -3953,10 +3992,14 @@ non-pointer to typed pointer*). A `Str` FIELD is such a handle, and so is a fn's
 a global's, through a `*W`, nested, a for step, at top level; `**pp` too), a literal's `W { *p, 1 }` and `return *p;`
 from a fn returning `Str` store or return p (since 6.7.16; through 6.7.15 the header's data word), and so does a
 NESTED literal's `Str` leaf — `O { *p, 1, 2 }` with O's first field a `WS { s: Str; n; }` stores p in `o.v.s` (since
-6.7.17, the user's decision D19, 2026-10-22; through 6.7.16 the data word), while a `Str` value whose nested field opens
-with no `Str` leaf is refused by name, as a `Str` name there is — and so is `*(&t)` of an inline `Str` as a nested
-element (`O { *(&t), 1, 2 }` is refused naming t, as `O { t, 1, 2 }` is; through 6.7.16 t's data word was carried into
-the first leaf). `*(&t)` of an inline `Str` is `t` in each of these positions (6.7.16, D71: see *A dereference of an address-of is the struct it names*). An
+6.7.17, the user's decision D19, 2026-10-22; through 6.7.16 the data word) — and so does a `Str` NAME there, as the
+direct literal `WS { a, 1 }` does (since 6.7.17, the user's decision D98, 2026-10-22; through 6.7.16 *cannot copy 'a'
+into a struct field of a different struct type: 'v'*): `O { a, 1, 2 }` stores the handle a (a local, a parameter, a
+capture, a global), `O { gt, 1, 2 }` and `O { *(&gt), 1, 2 }` gt's header address, and a frame's inline `Str` there
+(`O { t, 1, 2 }`, `O { *(&t), 1, 2 }`) is refused as would-dangle, as `WS { t, 1 }` is (through 6.7.16 `*(&t)` carried t's
+data word into the first leaf). A `Str` value — a name, `*p` — whose nested field opens with no `Str` leaf is refused by
+name (`O2 { a, 1, 2 }` with `O2 { v: WI; k; }`); a `*Str` NAME p there keeps its refusal (*cannot copy 'p' into a
+struct field of a different struct type: 'v'*). `*(&t)` of an inline `Str` is `t` in each of these positions (6.7.16, D71: see *A dereference of an address-of is the struct it names*). An
 untyped source keeps the one-word store into `t.data` — an if-expression too, even when both branches
 are `Str` handles: `t = if (c) { a } else { b };` stores the chosen handle's address into `t.data` and leaves `t.len`
 (with the warning *assigning non-pointer to typed pointer*), since an if-expression's value is untyped, as for every
@@ -4144,8 +4187,12 @@ argument - bind it first: `var a, b = mk(..);` `` (and `does not initialize stru
 into a struct 'P' field`, `is not assigned to struct 'P'`). It used to hand over its FIRST value as the
 struct's address (a crash) or as one field. Bind the values and build the struct: `var a, b = mk(3);
 var p = P { a, b }; take(p);`. A callee declared `: P` returns a `P` and is accepted everywhere a `P` is (its
-`return (x, y);` is refused since 6.7.11: a tuple is not the struct). A `*P` and a `Str` handle take a word — the call's first value, as `var x = mk(3);`
-does — and are not refused.
+`return (x, y);` is refused since 6.7.11: a tuple is not the struct). A `*P` (a `*Str` too) takes a word — the call's
+first value, as `var x = mk(3);` does — and is not refused. A `Str` slot is a struct slot here (6.7.17, the user's
+decision D99, 2026-10-22; through 6.7.16 it took the first value as the header's address): `var h: Str = mk(3);`, `h =
+mk(3);`, `w.s = mk(3);`, `W { mk(3), 1 }` (a nested literal's `Str` leaf too), `*ps = mk(3);` through a `*Str`, a `Str`
+argument (a generic's `x: T` at `T = Str` too) and `return mk(3);` from a fn returning `Str` are refused with the same
+words naming `Str` (``a multi-value call 'mk' does not initialize struct 'Str' - bind it first: `var a, b = mk(..);` ``).
 A `return` is the fifth such destination (6.7.13, the user's decision of 2026-10-15): in a fn returning a
 struct of 8 bytes or less, `return mk(3);` (`(mk(3))`, `b.mk(3)` too) returned the call's first value as
 the struct's word, and is refused as ``a multi-value call 'mk' is not returned as struct 'P1' - bind it
@@ -4379,7 +4426,7 @@ tuple FIELD (`h.p == 5`). Compare elements, or copy the tuple into a tuple place
 | `var t: (i64, i64) = u;` (`u` a struct value, or a tuple of another type — `(i64, i64, i64)`; a global in the declaration zone too, 6.7.16: it also said "… not a tuple" first) | `cannot copy 'u' into a variable of a different struct/vector type: 't'` |
 | `take(f())` / `take(b.f())` into a tuple parameter (`f` declared, or undeclared with every `return` `(a, b)`; 6.7.13 — or declared one scalar, `fn f(a): i64 { return (a, a + 1); }`, with `ret2` too; 6.7.14) | ``a multi-value call 'f' is not a tuple argument - bind it first: `var t: (i64, i64) = f(..);` …`` |
 | `take(5)` into a tuple parameter (an integer literal; 6.7.14), or any argument made only of literals and operators, `take(-5)`, `take(5 + 0)` (6.7.15) | `cannot pass an integer to tuple parameter 't' (i64, i64) of 'take' - it takes a tuple` (`take(true)`, and a boolean value — `take(1 == 1)`, `take(!0)`, 6.7.16: `cannot pass a bool …`; an f64, `take(1.5)`, `take(-1.5)`, `take(1.5 + 1)`, 6.7.16: `cannot pass an f64 …`) |
-| `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
+| `take(mk())` / `take(b.mk())` into a struct `P` parameter, `var p: P = mk();`, `h.p = mk();`, `p = mk();` (`mk` returns several values; 6.7.11; a `Str` slot too, 6.7.17) | ``a multi-value call 'mk' is not a struct 'P' argument - bind it first: `var a, b = mk(..);` `` (… `does not initialize struct 'P'`, `is not stored into a struct 'P' field`, `is not assigned to struct 'P'`) |
 | `h.p = f();` (wrapped, `h.p = (f());`, too: this one error, 6.7.15) | `a multi-value call 'f' is not stored into a tuple field - bind it first …` |
 | `f().0` | ``cannot take a field of the result of 'f': it returns 2 values - bind them first …`` |
 | `return t;` from a fn not declared `: (i64, i64)` | ``cannot return tuple 't' (i64, i64) - a tuple is returned by a fn declared with its values …`` |
@@ -7051,7 +7098,7 @@ tag and the payload separately (or use a struct).
 📎 `stack` is reused rather than a new keyword: it has meant "lives on the stack instead of
 being hoisted" since v5.5.36's `stack var buf[N]`, which is the same idea one level up.
 
-Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today); a use's list is held to them (6.7.16, the user's D88): `Result<i64, Pt>` reads its two, `Tri<..>` with four is *'Tri' takes 3 type arguments, 4 given*, and an enum declared without `<..>` given one is *'Color' takes no type arguments* ([Generic Functions](#generic-functions)). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
+Generic params (`<T, E>`) are syntactically accepted but not yet semantically bound (mono-only erasure today); a use's list is held to them (6.7.16, the user's D88): `Result<i64, Pt>` reads its two, `Tri<..>` with four is *'Tri' takes 3 type arguments, 4 given*, and an enum declared without `<..>` given one is *'Color' takes no type arguments* ([Generic Functions](#generic-functions)). A bound on one of its parameters is looked up as a fn's or a struct's is: `enum E<T: Nope> { A }` is *unknown trait 'Nope' in the bound on type parameter 'T'* at `Nope`, a malformed bound (`T: 5`, `T: Show<i64>`) the fn's line — once, in source order; `CYRIUS_MONOMORPH=0` reads no bound, an enum's as a fn's (6.7.17, the user's D101; it compiled). Variant separators are `;` or `,` — mixed in same decl works — and one is required between variants ([Enums](#enums)). In mixed enums, bare names stay as int constants and paren'd names heap-allocate; convention is paren-consistent (`enum Option { None(); Some(v); }`) for sum types you'll match against.
 
 Helper API:
 
@@ -7188,6 +7235,9 @@ fn that otherwise returns one value (`fn f(x): i64 { var v = g(x)?; … }`),
 with the every-path rule (*"returns a `: stack` pair on another path but
 a SINGLE value here"*, see *Bind the pair as a pair*) — a warning, not an
 error: declare the fn `: Result` and return a variant on every path.
+`return g(x)?;` is such a single value too (6.7.17; through 6.7.16 it
+was read as forwarding g's pair and said nothing, in a fn, an impl
+method and a closure, for `(g(x))?` and `callptr(&g, x)?` alike).
 
 ## No try / catch — design decision
 
@@ -7845,7 +7895,10 @@ a generic method's `: U` at what its argument binds (`g(b.idv(q))`), a `Str` fie
 D2, 2026-10-22: through 6.7.16 each ran the i64 base — `sizeof(T)` 8 for a 16-byte `P2` — and a body
 reading `v.b` was refused as having no i64 instance; a program passing such a value now calls the
 struct's instance, and a 9+ byte one at the top level is refused "call it inside a fn" as `g(q)` of a
-struct global is). Only a WHOLE argument binds `T`: `g(p.y)`, a scalar field (an `f64` one too),
+struct global is). Inside a generic, a struct carrier's `T` field (`b.v` with `b: Box<T>`, `v: T`) is a value of
+`T` as a `T`-typed name is: `rdb(b.v)` forwards `T` (the generic is a stub, as `rdb(y)` with `var y: T = b.v;` makes
+it) and `var r = idt(b.v);` types `r` by `T` (6.7.17, beside D2; until then each was refused at the definition, called
+or not). Only a WHOLE argument binds `T`: `g(p.y)`, a scalar field (an `f64` one too),
 `g(p.x + p.y)` and `g(p + 1)` infer `i64` (through a `p: *T`, a typed pointer plus or
 minus `n` is still that pointer — below), and through an `x: T` parameter so does
 every POINTER — a `pp: *Pt` parameter, a `var q: *Pt` local, `&p`, a `*Pt` global,
@@ -7857,7 +7910,9 @@ this rule). Parentheses around the WHOLE argument carry what they wrap — a sca
 plain spelling does — and a closure's captured struct binds as the struct local it
 captures: `|| g(p)`, and `|| gsz(p)` through a `p: *T` (which passes the address of the
 capture's copy). The user's decision D12 (a), 2026-10-18: through 6.7.14 each ran the i64
-base (`sizeof(T)` 8; `g((h))` on the double's bits) and the captured `gsz(p)` was refused as not a pointer. A tuple literal
+base (`sizeof(T)` 8; `g((h))` on the double's bits) and the captured `gsz(p)` was refused as not a pointer. A wrap
+carries what it wraps in a generic's own body too: `vb((x))` and `gx((b))` forward `T` as `vb(x)` / `gx(b)` do, and
+`var r = idp((&x));` types `r` as `idp(&x)` does (6.7.17; until then each was refused at the definition). A tuple literal
 (`g((p, 3))`) binds nothing. An **f64** argument — an `f64`
 local or parameter, an `f64` global, a float literal, a call returning `f64` (a
 generic one at its `f64` instance), and (6.7.16) a closure's captured `f64`, as the local it
@@ -8041,7 +8096,9 @@ type, a `**Pt<i64>` parameter, a slice element `[Pt<i64>]` / `[*Pt<i64>]` (a gen
 the list stepped (a scalar return, a by-value field and a slice element were parse errors; the
 rest compiled with the list ignored). A tuple element is too — `(i64<u8>, i64)`, `(f64<i32>, ..)`, `(bool<u8>, ..)` in a
 local, a global, a parameter or a field is *'i64' takes no type arguments* at the element's name (6.7.16, the user's
-D93; it compiled with the list ignored). An enum, `Result`, `Option`, `Tagged` and `cstring` take a list by what they
+D93; it compiled with the list ignored). Each of these refusals holds under `CYRIUS_MONOMORPH=0` as well — every
+position, a name inside a generic's own list (`Box<Pt<i64>>`) included, the same line at the same name (6.7.17, the
+user's D102; the flag stepped every list unread, so they compiled there). An enum, `Result`, `Option`, `Tagged` and `cstring` take a list by what they
 declare (6.7.16, the user's D88): one that declares no type parameters — an enum written without `<..>` (declared above
 or below the use), `Option` and `Tagged` (lib/tagged.cyr declares `enum Option: stack`), `cstring`, a program's own
 `enum Result` written without one — given a list (`var e: Color<i64>`, `fn f(p: Option<i64>)`, `s: cstring<i64>`) is
@@ -8179,15 +8236,16 @@ The rebound name itself is the rebinding's own untyped word too (6.7.17, the use
 `fn g<T: Show>(x: T)`, the `x` of a closure's `|x| { return x.show(); }`, of `for x in 0..2 { .. x.show() .. }` and of
 `var q, x = two(); x.show()` is no `T` value, so each `x.show()` / `x.b` there — a field store, `x = mk();`,
 `return &x;`, `x[0] = mk();`, a forward of `x` into a stub, a carrier's `|b| b.v.b` and `b.v.show()` alike — is what
-a plain fn makes of it: *no struct type in scope for 'x'; a method call needs its struct declaration* at the definition,
-as `fn h(x: Pt)` refuses the same body. Through 6.7.16 they were read as `g`'s own `x: T`: a bounded `x.show()` called
+a plain fn makes of it, at the definition (*no struct type in scope for 'x'; a method call needs its struct
+declaration* for `x.show()`, *a '.field' access* for `x.b`), as `fn h(x: Pt)` refuses the same body. Through 6.7.16 they were read as `g`'s own `x: T`: a bounded `x.show()` called
 the bound's impl on the closure's word (SIGSEGV at `T = Pt`; `g(7)` ran it through `impl Show for i64`), and `x.b` made
 the generic a stub, compiled when never called. The rebinding reaches where the parser binds it: a range's end bound
 reads the loop variable (`for x in 0..x.b`), its start bound and a collection the enclosing `x` (`for x in x.a..5`), and
 a destructure's right-hand side the enclosing `x` (`var q, x = pr(x.b);`). `g`'s own `x` read after the closure, the
-loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A bounded
-generic with no `impl` of its bound for `i64` has no base to parse (its body is judged in each instance), so there a
-rebound `x.other()` is refused at its first instance, not at the definition.
+loop or the destructure's block closes — or captured by a closure that does not rebind it — is unchanged. A generic
+whose `i64` base is not parsed — a bounded one with no `impl` of its bound for `i64`, or a stub — refuses its first
+such use at the definition all the same, never called included, with the same words at the same place (its other
+lines are judged in each instance).
 
 ```
 struct Pt { x; y; }
@@ -8927,14 +8985,18 @@ alone, as flock does; a refused `LOCK_NB` is -11 (-EAGAIN on PE; Darwin's is -35
 to answer -1 for every lock. Every other failure answers its errno through the Win32 table the fd
 reroutes use — a closed fd -9 (`ERROR_INVALID_HANDLE`), a code with no row -1 — and a negative fd
 is -9 before any Win32 call, as on Linux (6.7.17's D37; each answered -1). A bad op — one that is
-not `LOCK_SH`, `LOCK_EX` or `LOCK_UN`, with or without `LOCK_NB` — is -22 whatever the fd and takes,
-drops or changes no lock, as on Linux: the arm checks the op before the fd. So does macOS since
-6.7.17 (6.7.17's D97), natively and for a cx guest on a Mac: it passed the op to Darwin's flock,
-which answers an fd that is no descriptor -9 whatever the op, and on an open fd reads an op naming
+not `LOCK_SH`, `LOCK_EX` or `LOCK_UN`, with or without `LOCK_NB`, the op read whole — is -22 whatever
+the fd and takes, drops or changes no lock, on every target (6.7.17's D37 / D97 / D104): each arm
+checks the op before the fd, and cxvm does for a cx guest on a Linux or a Darwin host. Through
+6.7.16 Linux and macOS passed the op to the kernel. Linux's flock(2) answers an op carrying
+`LOCK_MAND` (32) 0 with nothing locked, whatever the fd, and reads only the op's low 32 bits —
+0x100000002 took the exclusive lock and 0x100000008 let it go, each answering 0 (D104). Darwin's
+flock answers an fd that is no descriptor -9 whatever the op, and on an open fd reads an op naming
 `LOCK_UN` as an unlock, else one naming `LOCK_EX` as the exclusive lock, else one naming `LOCK_SH`
 as the shared one, whatever other bits it carries — 3 (`LOCK_SH | LOCK_EX`) took the exclusive lock
-and answered 0, 9 (`LOCK_UN | LOCK_SH`) let the lock go — and an op naming none of the three -9.
-The Windows arm reads the code with `syscall(0xF04F)`, the last error as -errno through that table. As under flock,
+and answered 0, 9 (`LOCK_UN | LOCK_SH`) let the lock go — and an op naming none of the three -9
+(D97). The Windows arm reads the code with `syscall(0xF04F)`, the last error as -errno through that
+table. As under flock,
 re-taking the mode a handle already holds is a no-op that never lets go of the lock (6.7.13 —
 6.7.12 dropped and re-took it, and a handle waiting for the lock got in between); the held mode
 is recorded as a lock on one more byte beside the sentinel (2^63 − 2 for `LOCK_EX`, 2^63 − 3 for
@@ -9365,6 +9427,7 @@ never fired and `file_close_r` was never `Err`.
 | `file_rename` / `sys_rename` to another volume (the source kept) | -18 | -1 | -1; -18 since 6.7.17 |
 | `xflock(fd, LOCK_EX)` of a closed fd, `xflock(-4, LOCK_EX)` | -9 | -1 | -1; -9 since 6.7.17 |
 | `xflock(h + 1, 3)` (a bad op on an fd never opened, beside the open `h`) | -22 (macOS: -9; -22 since 6.7.17) | -1; -22 since 6.7.12 | -22; -9 since 6.7.16; -22 since 6.7.17 |
+| `xflock(fd, 32)`, `xflock(-1, 32)` (`LOCK_MAND`); `xflock(fd, 0x100000002)` | -22 (0 before 6.7.17: ignored, or the low 32 bits locked) | -1; -22 since 6.7.12 | -22 |
 
 A close of a NEGATIVE fd answers -9 without reaching `CloseHandle` (6.7.16): -1 and -2 are the
 current-process and current-thread pseudo-handles, which `CloseHandle` "closes" with TRUE, so a

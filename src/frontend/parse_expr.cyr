@@ -2575,12 +2575,20 @@ fn _mret_vval(S, t): i64 {
         PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
         PRSTR("'");
     }
-    PRSTR(" returns vector '");
-    _vty_pr(vt);
-    PRSTR("' (");
-    _vec_desc(S, vt);
-    PRNUM(GVEC_NSLOTS(S) * 8);
-    PRSTR(" bytes) as a multi-value element - return its pointer, or its lanes as elements\n");
+    if (_vvl_arr == 1) {   # 6.7.17 (D103): `return (wa, 3);` read wa's element 0's lane 0
+        PRSTR(" returns '");
+        _vval_pnm(S);
+        PRSTR("', an array of '");
+        _vty_pr(vt);
+        PRSTR("', as a multi-value element - return its pointer, or its lanes as elements\n");
+    } else {
+        PRSTR(" returns vector '");
+        _vty_pr(vt);
+        PRSTR("' (");
+        _vec_desc(S, vt);
+        PRNUM(GVEC_NSLOTS(S) * 8);
+        PRSTR(" bytes) as a multi-value element - return its pointer, or its lanes as elements\n");
+    }
     _err_excerpt(S);
     STI(S, sv);
     _had_error = 1;
@@ -5987,6 +5995,38 @@ fn _slit_err(S, ti, o): i64 {
     _err_excerpt(S);
     _had_error = 1;
     STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.17 — A STRUCT LITERAL ARGUMENT OF A GENERIC IS REFUSED AS ONE, NOT AS THE SCALAR CALL IT MADE (met reviewing
+# the genr lane). D12 (a) of 6.7.14 refuses a struct literal argument by name, once, but a literal binds a generic's T
+# to nothing, so `g(P { 2, 4 })` with `T: Show`, a stub `rdb(P { .. })`, `gb(Box<P> { .. })`, `gp(P { .. })` through
+# `p: *T` and `k.m(P { .. })` were refused as the i64 call they became — "its type argument does not implement trait
+# 'Show'" with a note asking for `impl Show for i64`, or "has no i64 (or other scalar) instance" — naming a type the
+# source never wrote. The scalar-call refusals (`_refuse_bnd_base`, `_refuse_gen_stub`) report the literal first when
+# the call's list — the cursor on its first argument — holds one, whole (wrapped or named too): 1 = reported (the
+# statement latched, as the refusal it replaces latched it). CHANGELOG [6.7.17]
+fn _slit_arg_err(S): i64 {
+    if (_panic == 1) { return 0; }
+    var a = GTI(S);
+    if (TOKTYP(S, a) == 10) { if (TOKTYP(S, a - 1) == 2) { a = a + 1; } }   # a method's refusal: on its `(`
+    if (TOKTYP(S, a - 1) != 10) { return 0; }
+    var n = GTCNT(S);
+    while (a < n) {
+        var w = a;
+        if (TOKTYP(S, w) == 2) { if (TOKTYP(S, w + 1) == 49) { w = w + 2; } }   # a named argument `v: ..`
+        w = _pwrap_in(S, w);
+        if (w >= 0) {
+            var o = _slit_open(S, w);
+            if (o > 0) {
+                _slit_err(S, w, o);
+                _panic = 1;
+                return 1;
+            }
+        }
+        a = _arg_next(S, a);
+        if (TOKTYP(S, a) != 31) { return 0; }
+        a = a + 1;
+    }
     return 0;
 }
 # The literal's type as written: the name, or (`Box<i64>`) the source from the name to its `{`, blanks after it

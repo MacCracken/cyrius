@@ -27,8 +27,8 @@
 #   a multi-value call 'mk' is not assigned to struct 'P' - bind it first: ...
 # The predicate keys on the callee's DECLARED return (`_mv_callee`): a `: P` fn returns a P and stays
 # accepted (C2; its `return (x, y)` / `ret2` producers are refused at the producer since 6.7.11 / 6.7.13 —
-# the SR axis below). A `*P` (parameter, variable) and a `Str`
-# handle take a word — the call's first value, as `var x = mk(3);` does — and are not refused (C3, C6).
+# the SR axis below). A `*P` (parameter, variable) takes a word — the call's first value, as `var x = mk(3);` does — and
+# is not refused (C3). (A `Str` handle took the word too until 6.7.17's D99: axis ST below; C6 now refused.)
 #
 # LEGS: every refused row on the x86_64, aarch64 (cross), cx and PE (CYRIUS_TARGET_WIN=1) compilers —
 # refused, the ONE `^error` line, no `^warning`, no binary; every control row run on x86_64, aarch64
@@ -83,6 +83,22 @@
 # struct's word (the repro exited 50 on x86_64 / aarch64 / cx / PE: GT2 = {5, 0}) — `is not assigned to struct 'P2'`,
 # at every size, a method, wrapped, a classic-for step and top level; a `*i64` still takes the first value.
 #   N18 `_mv_dst_sid` answering 0 under the override again -> RED DP1-DP9 DPu (BUILT), every leg
+#
+# 6.7.17 — AXIS ST: A MULTI-VALUE CALL INTO A `Str` SLOT IS REFUSED AS INTO A STRUCT SLOT (the user's D99, 2026-10-22, the
+# finish pass; issues/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md): `var h: Str = mk(3);`, `h = mk(3);` (it warned
+# "assigning non-pointer to typed pointer"), `w.s = mk(3);`, `W { mk(3), 1 }`, `return mk(3);` from a fn returning `Str`,
+# a `Str` argument (C6), `*ps = mk(3);` through a `*Str`, a nested literal's `Str` leaf — each stored or passed the
+# call's FIRST value as the header's address — now take this gate's words with the struct `Str`: a method, wrapped, a
+# for step, a generic's `T = Str`, the declaration zone and after the first statement too (ST1-ST14). A `*Str`
+# parameter or variable still takes the first value as a pointer, as a `*P` does (STK1).
+#   N19 `_mv_named` without its `Str` arm             -> RED C6 ST1 ST2 ST8 ST9 ST10 ST12 ST13 (BUILT), every leg
+#   N20 `_mv_sarg` answering 0                        -> RED ST10 (a generic's `T = Str` argument), every leg
+#   N21 `_mv_pstr` answering 0                        -> RED STK1 (a `*Str` parameter refused), every leg
+#   N22 the `Str` field / literal / `*Str` store /    -> RED ST3 ST4 ST5 ST6 ST7 ST11 ST14 (BUILT), every leg
+#       return arms' `_mv_span` calls removed
+#   N23 `_istr_tcd` without its multi-value divert    -> RED ST5 (the tail call took it), every leg
+#   N24 `_spi_strnm` answering 0                      -> RED ST7 (the nested leaf carried the first value), every leg
+#   the tree before the fix (CYCC=the integration's compiler: its x86_64 and PE legs) -> RED C6 ST1-ST14
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -378,7 +394,77 @@ fn tk(s: Str): i64 { return 7; }
 fn f(): i64 { return tk(mk(3)); }
 syscall(60, f());
 EOF
-runs C6 7 "control: a \`Str\` handle parameter takes a word"
+refused C6 "a multi-value call 'mk' is not a struct 'Str' argument - bind it first: \`var a, b = mk(..);\`" "a \`Str\` parameter (6.7.17, D99: it took the first value as the header's address)"
+
+# --- axis ST (6.7.17, D99): a multi-value call into a `Str` slot, refused as into a struct slot ---
+SH='include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fnptr.cyr"
+struct B { z; }
+struct W { s: Str; n; }
+struct WS { s: Str; n; }
+struct O { v: WS; m; }
+impl B { fn mk(self, a): (i64, i64) { return (a, a + 1); } }
+fn mk(a): (i64, i64) { return (a, a + 1); }
+fn tk(s: Str): i64 { return 7; }
+fn tkp(p: *Str): i64 { return 7; }
+fn gg<T>(x: T): i64 { return 7; }'
+srow() { printf '%s\n%s\n' "$SH" "$2" > "$T/$1.cyr"; }
+SDCL="does not initialize struct 'Str' - bind it first: \`var a, b = mk(..);\`"
+SASG="is not assigned to struct 'Str' - bind it first: \`var a, b = mk(..);\`"
+SFLD="is not stored into a struct 'Str' field - bind it first: \`var a, b = mk(..);\`"
+SARG="is not a struct 'Str' argument - bind it first: \`var a, b = mk(..);\`"
+srow ST1 'fn f(): i64 { var h: Str = mk(3); return 3; }
+syscall(60, f());'
+refused ST1 "a multi-value call 'mk' $SDCL" "\`var h: Str = mk(3);\`"
+srow ST2 'fn f(): i64 { var h: Str = str_from("a"); h = mk(3); return 3; }
+syscall(60, f());'
+refused ST2 "a multi-value call 'mk' $SASG" "\`h = mk(3);\` into a \`Str\` handle (it warned, then stored the first value)"
+srow ST3 'fn f(): i64 { var w: W; w.s = mk(3); return 3; }
+syscall(60, f());'
+refused ST3 "a multi-value call 'mk' $SFLD" "\`w.s = mk(3);\` into a \`Str\` field"
+srow ST4 'fn f(): i64 { var w = W { mk(3), 1 }; return w.n; }
+syscall(60, f());'
+refused ST4 "a multi-value call 'mk' $SFLD" "\`W { mk(3), 1 }\`, a literal's \`Str\` element"
+srow ST5 'fn r(): Str { return mk(3); }
+fn f(): i64 { r(); return 3; }
+syscall(60, f());'
+refused ST5 "a multi-value call 'mk' is not returned as struct 'Str' - bind it first: \`var a, b = mk(..);\`" "\`return mk(3);\` from a fn returning \`Str\` (a tail call)"
+srow ST6 'fn f(): i64 { var h = str_from("a"); var ps: *Str = &h; *ps = mk(3); return 3; }
+syscall(60, f());'
+refused ST6 "a multi-value call 'mk' $SASG" "\`*ps = mk(3);\` through a \`*Str\`"
+srow ST7 'fn f(): i64 { var o = O { mk(3), 1, 2 }; return o.m; }
+syscall(60, f());'
+refused ST7 "a multi-value call 'mk' $SFLD" "\`O { mk(3), 1, 2 }\`: a nested literal's \`Str\` leaf"
+srow ST8 'fn f(): i64 { var b = B { 0 }; var h: Str = str_from("a"); h = (b.mk(3)); return 3; }
+syscall(60, f());'
+refused ST8 "a multi-value call 'mk' is not assigned to struct 'Str' - bind it first: \`var a, b = b.mk(..);\`" "a method, wrapped"
+srow ST9 'fn f(): i64 { var b = B { 0 }; return tk(b.mk(3)); }
+syscall(60, f());'
+refused ST9 "a multi-value call 'mk' is not a struct 'Str' argument - bind it first: \`var a, b = b.mk(..);\`" "a method into a \`Str\` parameter"
+srow ST10 'fn f(): i64 { return gg<Str>(mk(3)); }
+syscall(60, f());'
+refused ST10 "a multi-value call 'mk' $SARG" "a generic's \`x: T\` at \`T = Str\`"
+srow ST11 'fn f(): i64 { var w: W; var i = 0; for (i = 0; i < 1; w.s = mk(3)) { i = i + 1; } return 3; }
+syscall(60, f());'
+refused ST11 "a multi-value call 'mk' $SFLD" "a for step's \`w.s = mk(3)\`"
+srow ST12 'var GZ: Str = mk(3);
+syscall(60, 3);'
+refused ST12 "a multi-value call 'mk' $SDCL" "the declaration zone: \`var GZ: Str = mk(3);\`"
+srow ST13 'alloc_init();
+var GH: Str = str_from("a");
+GH = mk(3);
+syscall(60, 3);'
+refused ST13 "a multi-value call 'mk' $SASG" "after the first statement: \`GH = mk(3);\`"
+srow ST14 'alloc_init();
+var GW = W { mk(3), 1 };
+syscall(60, GW.n);'
+refused ST14 "a multi-value call 'mk' $SFLD" "after the first statement: \`var GW = W { mk(3), 1 };\`"
+srow STK1 'fn f(): i64 { var p: *Str = 0; p = mk(3); var q = mk(4); var a, b = mk(3); var w = W { str_from("abc"), a + b }; return tkp(mk(3)) + str_len(w.s) * 10 + w.n + (p == 3) * 50 + (q == 4) * 40 - 7; }
+syscall(60, f());'
+runs STK1 127 "control: a \`*Str\` parameter / variable takes the first value as a pointer, a scalar the first value, bound values build the \`Str\` slot"
 
 # --- axis SR (6.7.13, D22 A): `ret2(a, b)` in a fn declared to return a named struct, every class ---
 R2S="returns that struct — \`ret2\` writes two values"
@@ -539,7 +625,7 @@ fn f(): i64 { var p: P = mp(3); return p.a * 10 + p.b; }
 syscall(60, f());'
 runs SC2 34 "control: a closure's own ret2 inside a struct fn"
 
-[ "$rows" -ge 75 ] || bad "only $rows rows ran (floor 75)"
+[ "$rows" -ge 90 ] || bad "only $rows rows ran (floor 90)"   # 6.7.17: + ST1-ST14, STK1 (D99)
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails check(s) red"; exit 1; fi
 if [ "$skips" -gt 0 ]; then echo "SKIP: $G — $skips leg(s) could not run (named above); the rest passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: $G ($rows rows) — a multi-value call into a named struct (argument, method argument, declaration, field, assignment; every size, both top-level zones, wrapped, named, generic, a for step) is refused by name on x86_64 / aarch64 / cx / PE; the crossing, \`*P\`, \`Str\` and scalar controls run on all four; 6.7.13: \`ret2\` in a struct fn (every class), \`return mk(..)\` from an 8 B struct fn and \`*p = mk(..)\` through a \`*S\` refused"
+echo "PASS: $G ($rows rows) — a multi-value call into a named struct (argument, method argument, declaration, field, assignment; every size, both top-level zones, wrapped, named, generic, a for step) is refused by name on x86_64 / aarch64 / cx / PE; the crossing, \`*P\`, \`*Str\` and scalar controls run on all four; 6.7.17: a \`Str\` slot refuses it too (D99); 6.7.13: \`ret2\` in a struct fn (every class), \`return mk(..)\` from an 8 B struct fn and \`*p = mk(..)\` through a \`*S\` refused"

@@ -21,10 +21,14 @@
 # Measured while building this: without the chain walk, `return o.inner.size;` came
 # back `expected ';', got '.'`; without the `;` consumption, `e.size = 7;` came back
 # `unexpected ';'`. Both were gate axis 6 failures, both were pure fiction.
+# 6.7.17 (met in the feg review fixes): a `.` the next `.` follows is a range's `..`, not a field — `for y in a.n..10`
+# took it as a field's and said "expected identifier, got '.'", and the loop read as one over a vector (lint refused the
+# file; a known struct's path stops there). CHANGELOG [6.7.17]
 fn _synonly_skip_chain(S): i64 {
     var sgo = 1;
     while (sgo == 1) {
         if (PEEKT(S) != 41) { sgo = 0; }
+        elif (TOKTYP(S, GTI(S) + 1) == 41) { sgo = 0; }
         else {
             STI(S, GTI(S) + 1);                                  # consume '.'
             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); sgo = 0; }
@@ -507,6 +511,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
         _arr_named_marks(S, sa_named, _arr_desc_k(S, ew, sgn, ann_ti, ann_ti), asz);   # 6.6.12: after SLAGG (see util.cyr SLAEW); 6.7.6: + the typed / bare marks; 6.7.8: + the kind, N
+        _lav_set(S, sa_named, ann_ti);   # 6.7.17 (D103): an array of vectors
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -515,6 +520,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
     SVSGN(S, vcnt, _arr_gsgn(S, ew, sgn, ann_ti, ann_ti, asz));   # 6.6.12: the element descriptor (see _arr_gsgn); 6.7.6: + the typed mark; 6.7.8: + the kind, N
+    _gav_set(S, vcnt, ann_ti);   # 6.7.17 (D103): an array of vectors
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
@@ -3265,6 +3271,7 @@ fn _spi_first_fk(S, ft): i64 {
 # The initialiser at the cursor, for a nested struct field of type `ft` (named `fnm`). Returns the kind
 # (see `_spi_pk`); 0 = nothing parsed (the leaves parse it).
 fn _spi_src(S, ft, fnm): i64 {
+    if (_spi_strnm(S, ft) == 1) { return 0; }   # 6.7.17 (D98): a `Str` name, taken by the nested `Str` leaf
     if (PEEKT(S) == 2) {
         var nx = TOKTYP(S, GTI(S) + 1);
         if (nx == 31 || nx == 14) { return _spi_name(S); }
@@ -3279,6 +3286,80 @@ fn _spi_src(S, ft, fnm): i64 {
     var rd = _spi_dsrc(S, ft, fnm);   # 6.7.17: a dereference `*pq`
     if (rd != 0) { return rd; }
     return _spi_expr(S, ft);
+}
+# ⛔ 6.7.17 — A `Str` NAME AS A NESTED STRUCT FIELD'S ELEMENT REACHING A `Str` FIRST LEAF IS THAT LEAF'S VALUE (the user's
+# D98, 2026-10-22), as D19 stores `O { *p, 1, 2 }`'s p and the direct literal `WS { a, 1 }` stores a: `O { a, 1, 2 }` /
+# `O { gt, 1, 2 }` with O's first field a `WS { s: Str; n; }` were refused as a struct of another type ("cannot copy 'a'
+# into a struct field of a different struct type: 'v'") — a `Str` field is one handle slot, not a nested struct. The
+# element (inside any wrap) is left to the leaf (0: nothing parsed), which takes it as a positional `Str` field does: a
+# handle's word, an inline `Str`'s header address (`*(&t)` is t, 6.7.16's D71), a frame's inline `Str` refused as
+# would-dangle (D7 (1)). A `*Str` name is a pointer, no `Str` value: it keeps its refusal. CHANGELOG [6.7.17]
+# 1 = the element at the cursor is such a name (a `Str` handle local, parameter, capture or global; an inline `Str`, or
+# `*(&NAME)` of one) — or a whole multi-value call, which the leaf refuses (D99) — and nested struct `ft`'s first leaf
+# is a `Str`.
+fn _spi_strnm(S, ft): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_spi_first_str(S, ft) == 0) { return 0; }
+    var st = GTI(S);
+    var e = _slit_eend(S, st);
+    if (e < 0) { return 0; }
+    if (_istr_at(S, st, e) != 0) { return 1; }
+    var a = _ie_unparen(S, st, e);
+    if (_spi_mvc(S, a, _ie_pe) == 1) { return 1; }   # D99: a multi-value call, refused by the leaf (`_istr_lsv`)
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var noff = TOKVAL(S, a);
+    if (_fsc_name_src(S, noff) != 0 - ss) { return 0; }
+    _fsc_reset();
+    if (_spi_nptr(S, noff) == 1) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.17 — A MULTI-VALUE CALL INTO A `Str` PARAMETER IS REFUSED AS INTO A STRUCT PARAMETER (the user's D99,
+# 2026-10-22: a `Str` slot refuses it as a struct slot; `_mv_named` admits `Str`): `fs(two())` with `s: Str` passed the
+# first value as the header's address. A `Str` parameter is a handle the callee does not copy in (`_pm_copies` 0), yet
+# no `*P` — and a generic's `x: T` at `T = Str` is address-passed — so it is judged here: 1 = parameter `argc` of `fi`
+# is a `Str` by value (`GFPSID` the `Str`, not declared a pointer). A `*Str` / `**Str` parameter takes the first
+# value as a pointer, as a `*P` does (`_mv_pstr` 1). CHANGELOG [6.7.17]
+fn _mv_sarg(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    if (_pptr_param(S, fi, argc) == 1) { return 0; }
+    return 1;
+}
+fn _mv_pstr(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    return _pptr_param(S, fi, argc);
+}
+# 1 = [a, pe) is a whole call (free or method, `_dt_call_open`'s reading) of a fn returning several values (6.7.17, the
+# user's D99: a multi-value call into a `Str` slot is refused as into a struct slot — the leaf's `Str` field refuses it).
+fn _spi_mvc(S, a, pe): i64 {
+    var sv = GTI(S);
+    STI(S, a);
+    var fi = 0 - 1;
+    var o = _dt_call_open(S);
+    if (o >= 0) { fi = _dt_call_fn(S); }
+    STI(S, sv);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    return _mv_callee(S, fi);
+}
+# 1 = name `noff`, resolved as the factor resolves it (a local, a capture, a global), is declared a pointer (`*Str`,
+# `**Str`): its word is no `Str` value.
+fn _spi_nptr(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return GLPTRP(S, li); }
+        if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
+                var esl = _cl_snap_find(S, noff);
+                if (esl >= 0) { return _cl_snap_ptrp(esl); }
+            } }
+    }
+    if (_gv_ptr_sid(S, _findvar_core(S, noff)) > 0) { return 1; }
+    return 0;
 }
 # ⛔ 6.7.17 — A DEREFERENCE AS A NESTED STRUCT FIELD'S ELEMENT IS THE STRUCT IT READS (6.7.10's decision 6: `*p` is a
 # struct value at every size), as the name it points at is (6.6.12): `O { *pq, 5 }` with `pq: *Q2` into `v: Q2` copies
@@ -3306,9 +3387,10 @@ fn _spi_dsrc(S, ft, fnm): i64 {
     return 1;
 }
 # ⛔ 6.7.17 — `*(&t)` OF AN INLINE `Str` t AS A NESTED STRUCT FIELD'S ELEMENT IS t (6.7.16's D71: `*(&t)` is t wherever a
-# `Str` value is taken), so it is refused by name as `O { t, 1, 2 }` is (*cannot copy 't' into a struct field of a
-# different struct type: 'v'*): it was t's data word carried into the field's first leaf, silently — a frame's header
-# address, had it been taken, would outlive the frame. (Only the `*(&NAME)` form reaches here: a name is `_spi_name`'s.)
+# `Str` value is taken): into a field whose first leaf is no `Str` it is refused by name as `O2 { t, 1, 2 }` is (*cannot
+# copy 't' into a struct field of a different struct type: 'v'*); it was t's data word carried into the field's first
+# leaf, silently. (A `Str` first leaf takes it as t, D98: `_spi_strnm`. Only the `*(&NAME)` form reaches here: a name is
+# `_spi_name`'s.)
 fn _spi_dref_t(S, fnm): i64 {
     _fsc_type_err(S, TOKVAL(S, _istr_ti), fnm);
     PCMPE(S);
@@ -3323,7 +3405,7 @@ fn _spi_dref(S, fnm): i64 {
 # ⛔ 6.7.17 — `*p` OF A `*Str` CARRIED TO A NESTED STRUCT'S `Str` FIRST LEAF IS p (the user's D19, 2026-10-22), as the
 # direct literal `WS { *p, 1 }` stores it (6.7.16's SS-8, D20 carried to a literal's `Str` field): `O { *p, 1, 2 }` with
 # O's first field a `WS` whose first field is `s: Str` stored the header's data word in `o.v.s`. A `Str` value whose
-# nested field does not open with a `Str` leaf is refused by name, as a `Str` name there is (`O { a, 1, 2 }`). `*pp` of
+# nested field does not open with a `Str` leaf is refused by name, as a `Str` name there is (`O2 { a, 1, 2 }`). `*pp` of
 # a `**Str` reads the `*Str` itself: a word, carried as before (0). 2 = E parsed (rax = p), carried to the leaf.
 fn _spi_dstr(S, ft, ti, e, fnm): i64 {
     if (_hl_dpp != 0) { return 0; }
@@ -3707,8 +3789,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     _sl_base_li = 0 - 1;
     _STRUCT_INIT_BODY(S, vcnt, sid);
     _sl_base_li = _ps_sv;
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);
+    _slit_rbrace(S);   # 6.7.17: elements past the last field, one error
     _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
     SLVAR(S, vcnt);
     _GVAR_VIS(S, vcnt, _ps_decl_ti);   # v6.6.4: PARSE_PROG-path struct-literal global (see PARSE_ARRAY)
@@ -3810,8 +3891,7 @@ fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
     _sl_base_li = named;
     _STRUCT_INIT_BODY(S, 0, sid);
     _sl_base_li = sv_base;
-    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-    STI(S, GTI(S) + 1);                          # consume '}'
+    _slit_rbrace(S);                             # consume '}' (6.7.17: elements past the last field, one error)
     _slit_unwrap(S);                             # 6.7.14: a wrap's `)`s
     S64(S + 0x5D9D000 + named * 8, noff);
     SLDEP(S, named, GSDEP(S));
@@ -3927,9 +4007,13 @@ fn _tup_elem_bad(S, t0, asid): i64 {
     if (w == 0) {
         if (TOKTYP(S, t0) == 2) { if (GTI(S) == t0 + 1) { w = _tup_wide_name(S, TOKVAL(S, t0)); } }
     }
-    if (w == 0) { if (_vval_at(S, t0, GTI(S)) != 0) { w = 1; } }   # 6.7.17 (D24): `((w), 3)`, `(*pv, 3)`
+    if (w != 1) { if (_vval_at(S, t0, GTI(S)) != 0) {   # 6.7.17 (D24): `((w), 3)`, `(*pv, 3)`
+            w = 1;
+            if (_vvl_arr == 1) { w = 4; }   # 6.7.17 (D103): `(wa, 3)` (an f64v2[1] read as a u128 pair before)
+        } }
     if (w == 0) { return 0; }
     if (w == 1) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a vector", 0 - 1, 0); }
+    elif (w == 4) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not an array of vectors", 0 - 1, 0); }
     elif (w == 2) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a slice", 0 - 1, 0); }
     else { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not u128", 0 - 1, 0); }
     return 1;
@@ -4495,6 +4579,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     S64(_vars_base + vc0 * 8, sz);
     SVSGN(S, vc0, _arr_gsgn(S, ew, sgn, eb, _gai_ann(S, sti), sz_raw));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark; 6.7.8: + the kind, N
     var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
+    _gav_set(S, vc, _gai_ann(S, sti));   # 6.7.17 (D103): an array of vectors
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
     # own `_GVAR_VIS` (whose comment claims to be "the one point EVERY global var
@@ -5859,7 +5944,7 @@ fn _gv_ifs(S, sti, ann_float): i64 {
 # and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
 fn _gen_ann_sid(S, sid): i64 {
     if (sid <= 0) { _vec_ann_chk(S, GTI(S) - 1, _vec_ann_vn(S, GTI(S) - 1)); }   # 6.7.11: `Vec<T>` reads T
-    if (_MONOMORPH_OK != 1) { _tp_targs_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.17 (D6): `U<i8>`
+    if (_MONOMORPH_OK != 1) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.17 (D6, D102): `U<i8>`, `Pt<i64>`
     if (sid <= 0) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.15 (D6): `i64<..>`
     if (PEEKT(S) != 19) {
         if (GSTP(S, sid - 1) != 0) { _bnd_sbase(S, sid); }   # 6.7.1 (C3): a bare `Box` is its i64 base
@@ -5961,6 +6046,28 @@ fn _slit_wrap_k(S, st): i64 {
     if (TOKTYP(S, o) != 13) { return 0; }
     if (_slit_close(S, o) != e - k - 1) { return 0; }
     return k;
+}
+# ⛔ 6.7.17 — A STRUCT LITERAL WITH ELEMENTS PAST ITS LAST FIELD IS ONE ERROR (met in issues/2026-10-21-str-shapes-beyond-
+# d19-d20-d71-d73.md, D98's probes): `P2 { 1, 2, 3, 4 }` was "expected '}', got number 3" and then, the close having
+# taken the `3` for its `}` and the declaration the `,` for its `;`, the literal's own `}` closed the fn — "unexpected
+# ';'" and "return outside a fn body" (one element too many happened to land on the `}`; a refused element ahead of
+# them, `OP { q, 1, 2, 3 }`, the same two). The literal's body parsed, the cursor on its `}`: consumed. Else the report,
+# and a skip to the `}` that closes the literal (nesting counted, never past a `;` at depth 0), consumed. CHANGELOG [6.7.17]
+fn _slit_rbrace(S): i64 {
+    if (PEEKT(S) != 14) {
+        ERR_EXPECT(S, 14);
+        var d = 0;
+        while (PEEKT(S) != 12) {
+            var t = PEEKT(S);
+            if (d == 0) { if (t == 14 || t == 5) { break; } }
+            if (t == 10 || t == 13) { d = d + 1; }
+            if (t == 11 || t == 14) { d = d - 1; }
+            STI(S, GTI(S) + 1);
+        }
+        if (PEEKT(S) != 14) { return 0; }
+    }
+    STI(S, GTI(S) + 1);
+    return 0;
 }
 # The literal's body was parsed: its wrap's `)`s, before the declaration's `;`.
 fn _slit_unwrap(S): i64 {
@@ -7913,8 +8020,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 if (dq == 1) { _gvs_mark(S); }
                 _gvi_struct_body(S, idx, sid);   # 6.7.14: named or positional
                 if (dq == 1) { _gvs_undo(S); }
-                if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-                STI(S, GTI(S) + 1);
+                _slit_rbrace(S);   # 6.7.17: elements past the last field, one error
                 _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
                 _gv_slvar(S, idx);
                 _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
@@ -9326,6 +9432,7 @@ fn _istr_fsrc(S, fnoff, term): i64 {
     var e = _hl_dx_end(S, st, term);
     if (e < 0) { return 0; }
     if (_istr_vsid(S, st, e) != 0) { _istr_verr_f(S, fnoff); }
+    else { _mv_span(S, st, GTI(S), _STR_SID(S), 1); }   # 6.7.17 (D99): a multi-value call, as into a struct field
     return 2;
 }
 # A literal's `Str` element at `t0` (EMIT_STRUCT_FIELD_W, `ft` its field's type, `fnoff` the field): parsed, D18's
@@ -9335,6 +9442,7 @@ fn _istr_lsv(S, ft, t0, fnoff): i64 {
         var e = _slit_eend(S, t0);
         if (e > t0) {
             if (_istr_vsid(S, t0, e) != 0) { _istr_verr_f(S, fnoff); }
+            else { _mv_span(S, t0, GTI(S), _STR_SID(S), 1); }   # 6.7.17 (D99): a multi-value call
             return 0;
         }
     }
@@ -9350,7 +9458,7 @@ fn _istr_dsvc(S, d, ti, term): i64 {
     if (ss <= 0 || e < 0) { PCMPE(S); return 0; }
     if (_hl_dpsid(S, d + 1, ti - 1) != ss) { PCMPE(S); return 0; }
     var u = _istr_vsid(S, ti, e);
-    if (u == 0) { return 0; }
+    if (u == 0) { return _mv_span(S, ti, GTI(S), ss, 3); }   # 6.7.17 (D99): a multi-value call, as through a `*P`
     var pn = _hl_lastnm(S, d + 1, ti - 1, TOKVAL(S, d + 1));
     if (_istr_vk == 2) { _agg_dx_err(S, 0 - ss, 0 - u, pn); return 0; }
     _err_ident_fn(S, "cannot copy ", _ess_nm, _ess_fi, " into a variable of a different struct/vector type: ", pn);
@@ -9364,7 +9472,7 @@ fn _istr_rsv(S, st): i64 {
     if (ss <= 0 || e < 0) { PCMPE(S); return 0; }
     if (_cur_fn_ret_sid != ss || GIDEP(S) != 0) { PCMPE(S); return 0; }
     var u = _istr_vsid(S, st, e);
-    if (u == 0) { return 0; }
+    if (u == 0) { return _mv_span(S, st, GTI(S), ss, 4); }   # 6.7.17 (D99): a multi-value call, as from a fn returning a struct
     if (_istr_vk == 2) { return _ret_sid_refuse_d(S, st, _hl_dna, _hl_dne, _hl_dnm, u); }
     return _ret_sid_refuse(S, st, _ess_nm, _ess_fi, u, 0);
 }
@@ -9375,6 +9483,7 @@ fn _istr_tcd(S, cfi): i64 {
     if (ss <= 0) { return 0; }
     if (_cur_fn_ret_sid != ss) { return 0; }
     if (GIDEP(S) != 0) { return 0; }
+    if (_mv_callee(S, cfi) == 1) { return 1; }   # 6.7.17 (D99): a multi-value callee, refused there too
     if (_istr_vok(S, GFRS(S, cfi)) == 0) { return 0; }
     return 1;
 }
@@ -10518,7 +10627,7 @@ fn _vsc_err(S, a, kind, x, y): i64 {
         PRSTR(" - '");
         if (_vsc_vn == 1) {   # 6.7.17 (D24): a name or `*pv`, as written
             _vval_pnm(S);
-            PRSTR("' is a vector");
+            _vval_kind_pr();   # 6.7.17 (D103): "' is an array of vectors"
         } else {
             PRSTR(S + 0xEC00000 + TOKVAL(S, _vsc_nt));
             PRSTR("' returns a vector");
@@ -11069,7 +11178,8 @@ fn _vop_tyerr(S, a, verb): i64 {
         if (verb == 0) { PRSTR(": vector type does not match the declared type - '"); }
         else { PRSTR(": vector type does not match the assigned variable - '"); }
         _vval_pnm(S);
-        PRSTR("' is a vector\n");
+        _vval_kind_pr();   # 6.7.17 (D103): "' is an array of vectors"
+        PRSTR("\n");
         _err_excerpt(S);
         _had_error = 1;
         _panic = 1;
@@ -11121,8 +11231,11 @@ fn _vasg_vval(S, dt, li, term): i64 {
 # pointer to a vector — `*pv`, `**ppv`, `*gp()`, `*h.pv`, `*(pv + 1)`, `*(&w)` (6.7.13's D34: the vector) — by its
 # tokens (`_hl_pw`, `_amp_vd`); `_vvl_a` / `_vvl_e` the span its refusal names. Else 0. Asked only when some local,
 # parameter or pointer is typed a vector (`_vty_any`). CHANGELOG [6.7.17]
+# 6.7.17 (D103): or the name of an array of vectors (`_vnm_arr`, a local or a global; `_vvl_arr` 1), which reads its
+# element 0's lane 0 as a word.
 var _vvl_a = 0;
 var _vvl_e = 0;
+var _vvl_arr = 0;
 fn _vval_at(S, a0, e): i64 {
     if (_vty_any == 0) { return 0; }
     var a = _ie_unparen(S, a0, e);
@@ -11130,12 +11243,86 @@ fn _vval_at(S, a0, e): i64 {
     if (pe <= a) { return 0; }
     var t = TOKTYP(S, a);
     var vt = 0;
-    if (t == 2) { if (pe == a + 1) { vt = _vnm_lty(S, TOKVAL(S, a)); } }
+    var arr = 0;
+    if (t == 2) { if (pe == a + 1) {
+            vt = _vnm_lty(S, TOKVAL(S, a));
+            if (vt == 0) {   # 6.7.17 (D103): `take(wa)`, wa an array of vectors
+                vt = _vnm_arr(S, TOKVAL(S, a));
+                arr = 1;
+            }
+        } }
     elif (t == 8) { vt = _vval_dref(S, a, pe); }
     if (vt == 0) { return 0; }
     _vvl_a = a;
     _vvl_e = pe;
+    _vvl_arr = arr;
     return vt;
+}
+# ⛔ 6.7.17 (D103, the user's decision, 2026-10-22: "refuse it as D24 refuses a vector local") — AN ARRAY OF VECTORS READ
+# AS A WORD IS REFUSED TOO. A typed array's name read as a word is its element 0 (§ compound assignment), so `var wa:
+# f64v2[2]; take(wa)` passed element 0's lane 0, silently and alike on every target — `take(wa)`, `return wa;` from an
+# `: i64` fn, `var x: i64 = wa;` and `if (wa)` 4, `1 + wa` 5 with wa[0] = (4, 7); a global's the same. D24's readers
+# refuse it now, naming it ("'wa' is an array of vectors"). The element type is recorded at the declaration
+# (PARSE_ARRAY's stack and static paths, the top-level `var g: T[N]`): per local slot (`_lav`, written for every typed
+# array local, so a reused slot keeps no stale answer, and read only while the slot is still that array — no type, a
+# span, its slice word in the array band, `_arr_named_marks`) and per global (`_gav`, a byte as `_gv_vvd`). An untyped
+# `var x = wa;` is unchanged. CHANGELOG [6.7.17]
+var _lav = 0;
+var _gav = 0;
+# The vector element type of the array whose element type is token `ann`, else 0 (a bound type parameter: its binding).
+fn _arr_ann_vt(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 2) { return 0; }
+    var b = _tp_resolve(S, TOKVAL(S, ann));
+    if (b != 0) { return _tn_vec(_tn_from_rc(b)); }
+    return _tn_vec(_tn_resolve_at(S, ann));
+}
+fn _lav_set(S, li, ann): i64 {
+    var vt = _arr_ann_vt(S, ann);
+    if (_lav == 0) {
+        if (vt == 0) { return 0; }
+        _lav = alloc(16384 * 8);
+    }
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (vt != 0) { _vty_any = 1; }
+    S64(_lav + li * 8, vt);
+    return 0;
+}
+fn _gav_set(S, vi, ann): i64 {
+    var vt = _arr_ann_vt(S, ann);
+    if (_gav == 0) {
+        if (vt == 0) { return 0; }
+        _gav = alloc(1048576);
+    }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (vt != 0) { _vty_any = 1; }
+    if (vt == 0) { store8(_gav + vi, 0); } else { store8(_gav + vi, 0 - vt - 2048); }
+    return 0;
+}
+# The vector element type of the array of vectors the name `noff` reads — a local's in a fn, else a global's; 0. A
+# closure's captured array keeps its own rules.
+fn _vnm_arr(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (_lav == 0) { return 0; }
+            if (li >= 16384) { return 0; }
+            if (GLTYPE(S, li) != 0) { return 0; }
+            if (GLSPAN(S, li) == 0) { return 0; }
+            if (GSLICE_W(S, li) > 0 - 0x1000000000000) { return 0; }
+            return L64(_lav + li * 8);
+        }
+        if (_hl_capn(S, noff) == 1) { return 0; }
+    }
+    if (_gav == 0) { return 0; }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    var d = load8(_gav + vi);
+    if (d == 0) { return 0; }
+    return 0 - 2048 - d;
 }
 # The vector type of the name `noff` in a fn: a value-form vector local or parameter, a closure's captured vector; 0.
 fn _vnm_lty(S, noff): i64 {
@@ -11157,6 +11344,12 @@ fn _vval_dref(S, d, pe): i64 {
     if (vd == 0) { vd = _amp_vd(S, d + 1, pe); }
     if (vd == 0) { return 0; }
     return 0 - vd;
+}
+# ... and what it is, closing its quote: "' is a vector", or (6.7.17, D103) "' is an array of vectors".
+fn _vval_kind_pr(): i64 {
+    if (_vvl_arr == 1) { PRSTR("' is an array of vectors"); }
+    else { PRSTR("' is a vector"); }
+    return 0;
 }
 # The span `_vval_at` read, as the source spells it, on stderr.
 fn _vval_pnm(S): i64 {
@@ -11681,8 +11874,13 @@ fn _rcv_say(S, ti, fnoff, sid, pscale, ann, noff): i64 {
         _rcv_ann_pr(S, ann, ae);
     }
     PRSTR("' from '");
-    PRSTR(S + 0xEC00000 + _fn_src_name(S, _rcv_fi, fnoff));
-    PRSTR("', which returns the struct '");
+    if (_rcv_isv == 1) {   # 6.7.17 (D106): a struct value that is no call, named as written
+        _ssv_pr(S);
+        PRSTR("', which is the struct '");
+    } else {
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, _rcv_fi, fnoff));
+        PRSTR("', which returns the struct '");
+    }
     _sn_pr(S, sid);
     PRSTR("' - declare '");
     PRSTR(S + 0xEC00000 + noff);
@@ -11710,6 +11908,9 @@ var _rcv_asg_e = 0 - 1;
 # 6.7.15 — the fn whose result `_rcv_ann_refuse` names (a struct-call record's `_sc_fi`: a method `Pt.mq` as the source
 # spells it, `_fn_src_name`); -1: the name as written.
 var _rcv_fi = 0 - 1;
+# 6.7.17 (D106) — 1: the source `_rcv_say` names is a struct value that is no call (`_ssv_at`'s span).
+# CHANGELOG [6.7.17]
+var _rcv_isv = 0;
 fn _rcv_head(): i64 {
     if (_rcv_asg_e >= 0) { return ": cannot assign '"; }
     return ": cannot initialise '";
@@ -12257,6 +12458,10 @@ fn _dt_mfn(S, o, mf, mt, rs): i64 {
 fn _vin_decl(S, pscale, sty, ann): i64 {
     if (PEEKT(S) != 4) { return pscale; }
     _vin_vval(S, pscale, ann);   # 6.7.17 (D24): `var x: i64 = w;`
+    _svin_val(S, pscale, ann);   # 6.7.17 (D106): `var x: i64 = q;`, q a struct value
+    if (ann > 0) { if (pscale > 0) { if (TOKTYP(S, ann - 1) == 49) {   # 6.7.17 (D107): `var u: *Pt = &h;`
+                _ppd_val(S, GTI(S) + 1, _hl_dx_end(S, GTI(S) + 1, 5), ann, TOKVAL(S, ann - 2));
+            } } }
     if (GINFN(S) != 1) {
         _vin_top(S, pscale, ann);
         return pscale;
@@ -12330,6 +12535,7 @@ fn _vtop_ref(S, st, ann): i64 {
 # CHANGELOG [6.7.17]
 fn _vtop_vval(S, st): i64 {
     if (_vval_at(S, st, _hl_dx_end(S, st, 5)) == 0) { return 0; }
+    if (_vvl_arr == 1) { return 0; }   # D103: `var X = GA;` of an array of vectors is unchanged
     _vop_done = _vvl_a;   # its one refusal (D100 / D24's readers stand down)
     if (_panic == 1) { return 1; }
     if (_derr_seen(_vvl_a, "_vtop_vval", 0, 0) == 1) { return 1; }
@@ -12354,7 +12560,59 @@ fn _vin_zone(S, gi, noff): i64 {
     var ann = 1;
     if (_gu_untyped(S, st) == 1) { ann = 0; }
     if (ann == 1) { if (_vin_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D24): `var X: i64 = *GP;`
+    if (ann == 1) { if (_svin_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D106): `var X: i64 = GQ;`
+    if (ann == 1) { if (_ppd_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D107): `var GU: *Pt = GPP;`
     return _vtop_ref(S, st, ann);
+}
+# ⛔ 6.7.17 (D106, the user's decision, 2026-10-22) — A DECLARATION ANNOTATED A SCALAR OR A POINTER TO NO STRUCT
+# (`_asa_scalar` / `_asa_ptr`'s classes: `var z: i64 = q;`, `: u8`, `: f64`, `: *i64`, `: **Q`) whose whole
+# initialiser is a struct value that is no call (`_ssv_at`, parse.cyr) is refused as `var z: i64 = mkp();` is
+# (6.7.11's D24, 6.7.13's D14: `_rcv_ann_refuse`), naming the value: "cannot initialise 'z: i64' from 'q', which is
+# the struct 'Q' - declare 'z: Q' or bind a field". A `bool` keeps its own refusal, a struct annotation its copy (or
+# "cannot copy"), a `*S` D17's address (`_spd_decl`). PARSE_VAR in a fn and at top level after the first statement,
+# the cursor on the `=`. 0. CHANGELOG [6.7.17]
+fn _svin_val(S, pscale, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (pscale < 0) { return 0; }
+    if (TOKTYP(S, ann - 1) != 49) { return 0; }
+    var ti = GTI(S) + 1;
+    return _svin_judge(S, ti, _hl_dx_end(S, ti, 5), ann, TOKVAL(S, ann - 2));
+}
+# ... the value [ti, e) into the declaration of `noff` annotated at `ann`. 1 = refused.
+fn _svin_judge(S, ti, e, ann, noff): i64 {
+    if (e < 0) { return 0; }
+    var sid = _ssv_at(S, ti, e);
+    if (sid <= 0) { return 0; }
+    var ps = 0;
+    if (TOKTYP(S, ann) == 8) {
+        if (_ptr_ann_sid_tp(S, ann) > 0) { return 0; }   # `*S`: D17's (`_spd_decl`)
+        if (_asa_ptr(S, ann, sid) == 0) { return 0; }
+        ps = 1;
+    } elif (_asa_scalar(S, ann) == 0) { return 0; }
+    _rcv_isv = 1;
+    var r = _rcv_ann_refuse(S, _ssv_a, TOKVAL(S, _ssv_a), sid, ps, ann, noff);
+    _rcv_isv = 0;
+    if (r == 1) { if (ps == 1) { _ptr_refd_ti = ann; } }
+    return r;
+}
+# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse_types.cyr): `var GU: *Pt = GPP;`. 1 = refused.
+fn _ppd_zval(S, st): i64 {
+    var i = _vrcv_dbeg(S, st);
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    if (TOKTYP(S, i + 3) != 8) { return 0; }
+    return _ppd_val(S, st, _hl_dx_end(S, st, 5), i + 3, TOKVAL(S, i + 1));
+}
+# ... the declaration zone's replay (`_vin_zone`, the initialiser at `st`): `var X: i64 = GQ;`. 1 = refused.
+fn _svin_zval(S, st): i64 {
+    var i = _vrcv_dbeg(S, st);
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    var sv = GTI(S);
+    STI(S, st - 1);   # the `=`: the annotation is printed up to it
+    var r = _svin_judge(S, st, _hl_dx_end(S, st, 5), i + 3, TOKVAL(S, i + 1));
+    STI(S, sv);
+    return r;
 }
 # 6.7.17 (D24) — ... and a vector value that is no call as the whole initialiser of a zone declaration annotated no
 # vector, struct or bool (`_vin_vval`'s rule; the annotation read back from the initialiser at `st`): `var X: i64 =
@@ -13946,11 +14204,6 @@ fn _gz_pnu(S, b, sid): i64 {
     _gz_pnu_ti = a;
     return u;
 }
-# ⛔ 6.7.16 (D99, the s16 review) — THE D1 STUB SCAN READS A SUBSCRIPT STORE `p[i] = R;` (p's name at token i, opening a
-# statement or a for step) as `_gs_dsr_stmt` reads `*p = R;`: p declared a pointer (`p: *T`, `pp: **T`; an array `a:
-# T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
-# lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
-# the line. 1 = such a store. CHANGELOG [6.7.16]
 # ⛔ 6.7.17 (D16) — A FIELD STORE `b.v = R;` (b at token i opening a statement or a for step, the `=` after a field
 # name) whose base reads a name typed by T (`_gs_dsr_dep`: `b: Box<T>`, `*Wt<T>`, a T-typed name) and whose R is a
 # struct result over 8 B: at a scalar T the field is a word (`_dsr_fld` refuses it in a plain fn), so the generic has
@@ -13960,8 +14213,9 @@ fn _gs_fst_sres(S, fi, i): i64 {
     if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
     var eq = _gs_dsr_eq(S, i);
     if (eq < 0) { return 0; }
-    if (TOKTYP(S, eq - 1) != 2) { return 0; }
-    if (TOKTYP(S, eq - 2) != 41) { return 0; }
+    var de = _gs_cop_de(S, eq);   # 6.7.17 (D15): `b.v += R`
+    if (TOKTYP(S, de - 1) != 2) { return 0; }
+    if (TOKTYP(S, de - 2) != 41) { return 0; }
     if (_gs_dsr_dep(S, fi, i) == 0) { return 0; }
     if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
     _gsw_k = 3;
@@ -14011,12 +14265,71 @@ fn _gs_lit_els(S, fi, i, nm): i64 {
     }
     return 0;
 }
+# ⛔ 6.7.17 (D106, the user's decision, 2026-10-22) — THE D1 STUB SCAN READS A STRUCT VALUE THAT IS NO CALL AS IT
+# READS A STRUCT RESULT (`_gs_sres_big`): at a scalar T, `y = q;` (y: T), `var y: T = q;`, `*p = q;` / `p[0] += q;`
+# (p: *T) and `b.v = q;` (b: *Box<T>) kept q's first word, silently — the base parse leaves a T-typed store to the
+# scan (`_dsr_tdep`), as for `mkp()`. The expression [j, e), inside any parentheses, is one name the generic itself
+# declares (`_tok_name_decl` from `_gs_open`) as an inline struct over 8 B (`_rcv_big`): a by-value parameter `q: Q`,
+# a `var q: Q;`, a `var q: Q = ..` from a literal or a by-value call (`_tok_init_sid`; any other initialiser makes a
+# handle), an untyped `var q = Q { .. }` / `= mkp()`. 1 = such a value. CHANGELOG [6.7.17]
+fn _gs_sval_big(S, j, e): i64 {
+    var a = _ie_unparen(S, j, e);
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var d = _tok_name_decl(S, _gs_open, a, TOKVAL(S, a));
+    if (d < 0) { return 0; }
+    if (_gs_rebound(S, d, a, TOKVAL(S, a)) == 1) { return 0; }
+    var sid = _tok_decl_sid(S, _gs_open, d, _tok_hdr_end(S, _gs_open, a));
+    if (sid <= 0) { return 0; }
+    if (_tds_ptr == 1) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    if (_gs_sval_hdl(S, d, sid) == 1) { return 0; }
+    return _rcv_big(S, sid);
+}
+# 1 = the declaration at token d, `var q: Q ..` of struct `sid`, makes a handle: an initialiser that is neither a
+# literal nor a by-value call of `sid` (`alloc(..)`, an address). No initialiser, or a parameter: 0.
+fn _gs_sval_hdl(S, d, sid): i64 {
+    if (TOKTYP(S, d - 1) != 3) { return 0; }
+    if (TOKTYP(S, d + 1) != 49) { return 0; }
+    var nt = TOKTYP(S, d + 3);
+    if (nt == 5) { return 0; }
+    if (nt != 4) { return 1; }
+    if (_tok_init_sid(S, _gs_open, d, d + 4) != sid) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.17 (D15, the user's decision, 2026-10-22) — THE D1 STUB SCAN READS A COMPOUND `OP=` STORE AS ITS `=` FORM: at a
+# scalar T, `y += R` (y typed by T), `*p += R` (p a `*T`), `p[0] += R` and `b.v += R` (b reading T) combine a struct
+# result over 8 B with a word, which a plain fn refuses (`_cop_sres`, parse.cyr) and the base parse leaves to the scan
+# (`_dsr_tdep`), so `g(5)` compiled and added Q's first word. The end of a store's destination whose `=` is at token eq:
+# eq, or eq - 1 when an `OP` token before it makes the pair a compound assignment. CHANGELOG [6.7.17]
+fn _gs_cop_de(S, eq): i64 {
+    if (_is_cop_tok(TOKTYP(S, eq - 1)) == 1) { return eq - 1; }
+    return eq;
+}
+# ... `y OP= R` at token i (y's name, an `OP` and `=` after it), y declared with T (`_gs_dst_tp`), R a struct result
+# over 8 B: `_gs_asg_sres`'s judgment of `y = R`. 1 = such a store.
+fn _gs_cop_asg(S, fi, i): i64 {
+    if (TOKTYP(S, i + 2) != 4) { return 0; }
+    var pt = TOKTYP(S, i - 1);
+    if (pt == 41 || pt == 3 || pt == 49) { return 0; }   # a field, a `var`, a label
+    if (pt == 8) { return 0; }   # `*p OP= R`: `_gs_dsr_stmt`'s
+    if (_gs_dst_tp(S, fi, i) == 0) { return 0; }
+    if (_gs_sres_big(S, fi, i + 3) == 0) { return 0; }
+    _gsw_k = 3;
+    _gsw_ti = i;
+    return 1;
+}
+# ⛔ 6.7.16 (D99, the s16 review) — THE D1 STUB SCAN READS A SUBSCRIPT STORE `p[i] = R;` (p's name at token i, opening a
+# statement or a for step) as `_gs_dsr_stmt` reads `*p = R;`: p declared a pointer (`p: *T`, `pp: **T`; an array `a:
+# T[N]` is no store through a pointer) whose annotation reads T, R a struct result over 8 B — at a scalar T the store
+# lands in a scalar, refused in a plain fn (`_dsr_esub`), so the generic has no scalar instance: `g(5)` is refused naming
+# the line. 1 = such a store. CHANGELOG [6.7.16]
 fn _gs_sub_sres(S, fi, i): i64 {
     var pt = TOKTYP(S, i - 1);
     if (pt != 5) { if (pt != 13) { if (pt != 14) { return 0; } } }
     var eq = _gs_dsr_eq(S, i);
     if (eq < 0) { return 0; }
-    if (TOKTYP(S, eq - 1) != 29) { return 0; }
+    if (TOKTYP(S, _gs_cop_de(S, eq) - 1) != 29) { return 0; }   # 6.7.17 (D15): `p[i] += R` too
     var d = _tok_name_decl(S, _gs_open, i, TOKVAL(S, i));
     if (d < 0) { return 0; }
     if (TOKTYP(S, d + 1) != 49) { return 0; }

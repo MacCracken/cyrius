@@ -437,6 +437,13 @@ TMW="1:22: unknown trait 'Nope' in the bound on type parameter 'V'"
 [ -n "$CXCC" ] && lines tm1 "$TMW" "A [cx]: TM1" "$CXCC"
 lines tm1 "$TMW" "A [pe]: TM1" "CYRIUS_TARGET_WIN=1 $CC"
 lines tm1 "$TMW" "A [macho]: TM1" "CYRIUS_MACHO=1 $CC"
+# 6.7.17 (the user's D101): trait_bounds_checked.sh EB1 — an enum's unknown bound — from every cross compiler
+printf 'enum E<T: Nope> { A }\nsyscall(60, 3);\n' > "$D/eb1.cyr"
+EBW="1:11: unknown trait 'Nope' in the bound on type parameter 'T'"
+[ -n "$A64" ] && lines eb1 "$EBW" "A [a64]: EB1" "$A64"
+[ -n "$CXCC" ] && lines eb1 "$EBW" "A [cx]: EB1" "$CXCC"
+lines eb1 "$EBW" "A [pe]: EB1" "CYRIUS_TARGET_WIN=1 $CC"
+lines eb1 "$EBW" "A [macho]: EB1" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
 echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), a list entry that is no name (P, the user's D3), a union's list (U, the user's D5), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"

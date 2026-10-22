@@ -3176,12 +3176,14 @@ fn _mv_callee_any(S, fi): i64 {
     if (_fn_ret_arity(S, fi) != 0) { return 1; }
     return 0;
 }
-# 1 = struct `sid` (1-based) is a named plain struct: no tuple (R17's), dyn, vector or stdlib handle.
+# 1 = struct `sid` (1-based) is a named plain struct: no tuple (R17's), dyn, vector or stdlib handle — but `Str` (6.7.17,
+# the user's D99: a multi-value call into a `Str` slot is refused as into a struct slot). CHANGELOG [6.7.17]
 fn _mv_named(S, sid): i64 {
     if (sid <= 0) { return 0; }
     if (sid >= 2048) { return 0; }
     if (_tup_is(S, sid) == 1) { return 0; }
     if (_dyn_is(S, sid) == 1) { return 0; }
+    if (sid == _STR_SID(S)) { return 1; }   # 6.7.17 (D99): a `Str` slot refuses it as a struct slot does
     if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
     return 1;
 }
@@ -3253,7 +3255,7 @@ fn _mv_span(S, a, b, sid, kind): i64 {
 fn _mv_arg_call(S, fi, argc): i64 {
     var ps = GFPSID(S, fi, argc);
     if (_mv_named(S, ps) == 0) { return 0; }
-    if (_pm_copies(fi, argc) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { if (_mv_sarg(S, fi, argc) == 0) { return 0; } }   # 6.7.17 (D99): a `Str` too
     var ti = GTI(S);
     var o = _gcall_open(S, ti);
     if (o < 0) { return 0; }
@@ -3267,13 +3269,13 @@ fn _mv_arg_call(S, fi, argc): i64 {
 fn _mv_arg_mrc(S, fi, argc, st): i64 {
     var ps = GFPSID(S, fi, argc);
     if (_mv_named(S, ps) == 0) { return 0; }
-    if (_pm_copies(fi, argc) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { if (_mv_sarg(S, fi, argc) == 0) { return 0; } }   # 6.7.17 (D99): a `Str` too
     return _mv_span(S, st, GTI(S), ps, 0);
 }
 # ... and a by-value parameter of 8 B or less (`_sarg_byval_small`: one word, never address-passed).
 fn _mv_small_arg(S, fi, argc, st): i64 {
     var ps = GFPSID(S, fi, argc);
-    if (_mv_named(S, ps) == 0) { return 0; }
+    if (_mv_named(S, ps) == 0 || _mv_pstr(S, fi, argc) == 1) { return 0; }   # 6.7.17 (D99): a `*Str` takes a word
     return _mv_span(S, st, GTI(S), ps, 0);
 }
 # A struct-typed declaration (`pscale` = `0 - sid`; a local or a global in either zone) whose initialiser
@@ -11290,6 +11292,7 @@ fn _refuse_bnd_fwd(S, fi, noff): i64 {
 # The refusal for a scalar call (or `&g`) of generic fi whose base is not a valid i64 instance:
 # its own bound (reported by `_bnd_check_fn`), or a bounded struct it instantiates with its T.
 fn _refuse_bnd_base(S, fi, noff): i64 {
+    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `g(P { .. })` is the literal's error (parse_expr.cyr)
     if (_bnd_check_fn(S, fi, 0 - 8, 0 - 8) == 1) { return 0; }
     if (_bbs_fwd > 0) { _refuse_bnd_fwd(S, fi, noff); return 0; }   # 6.7.14
     if (_bbs_why <= 0) { return 0; }
@@ -15606,7 +15609,9 @@ fn _gs_dst_tp(S, fi, i): i64 {
 # 1 = the expression from token j is a struct result D24 refuses into a scalar: over 8 B, not a `Str` or a dyn.
 fn _gs_sres_big(S, fi, j): i64 {
     _gs_late = 1;
-    return _rcv_big(S, _gs_sres(S, fi, _gs_open, j, _gs_expr_end(S, j)));
+    var e = _gs_expr_end(S, j);
+    if (_rcv_big(S, _gs_sres(S, fi, _gs_open, j, e)) == 1) { return 1; }
+    return _gs_sval_big(S, j, e);   # 6.7.17 (D106): a struct value that is no call
 }
 # The struct the expression [lo, hi) results in, as D24 / D27 / D32 read it: a whole call — free, generic (at the
 # binding the call makes), a method, a known `&f` through fncallN / callptr — inside any parentheses, or one
@@ -15721,6 +15726,7 @@ fn _gs_use(S, fi, i, mode): i64 {
     if (mode == 0) {
         if (nx == 4) { return _gs_asg_sres(S, fi, i); }   # 6.7.16 (D1): `y = mkp();`, y typed by T
         if (nx == 28) { return _gs_sub_sres(S, fi, i); }   # 6.7.16 (D99): `p[i] = mkp();`, p a `*T`
+        if (_is_cop_tok(nx) == 1) { return _gs_cop_asg(S, fi, i); }   # 6.7.17 (D15): `y += mkp();`, y typed by T
         if (nx != 41) { return 0; }
         if (_gs_fst_sres(S, fi, i) == 1) { return 1; }   # 6.7.17 (D16): `b.v = mkp();`, b reading T
         if (TOKTYP(S, i + 2) == 41) { return 0; }
@@ -15786,12 +15792,15 @@ fn _gs_arg_carries(S, fi, cfi, open, k, mth): i64 {
 # itself a carrier instance (`outer(b)`, `b: Box<Pt>`), so the forwarder is a stub as `gx` is. CHANGELOG [6.7.15]
 fn _gs_carries(S, fi, a, dep): i64 {
     if (dep > 8) { return 0; }
+    a = _pwrap_in(S, a);   # 6.7.17: `gx((b))`, `gx(mk1((x)))` — a wrap carries what it wraps (`_gs_cb_pp`'s note)
+    if (a < 0) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
     if (nt == 31 || nt == 11) {
         if (_gcr_live(S, a) == 1) { return 1; }   # 6.7.17 (D1): either, where it sits
         return _gsn_live(S, a);
     }
+    if (nt == 41) { if (_gs_cfv(S, a, 0) > 0) { return 1; } return 0; }   # 6.7.17: `gx(b.v)`, a carrier's T field
     if (nt != 10 && nt != 19) { return 0; }
     var g = FINDFN(S, TOKVAL(S, a));
     if (g < 0) { return 0; }
@@ -15972,8 +15981,11 @@ fn _gs_arg_named(S, cfi, open, k, mth): i64 {
     if (k <= mth) { return 0; }
     var a = _call_arg_pk(S, cfi, open, k - 1, k - 1 - mth);
     if (a < 0) { return 0; }
+    a = _pwrap_in(S, a);   # 6.7.17: `vb((x))`, `p.pick((t))` (`_gs_cb_pp`'s note)
+    if (a < 0) { return 0; }
     if (TOKTYP(S, a) != 2) { return 0; }
     var nt = TOKTYP(S, a + 1);
+    if (nt == 41) { if (_gs_cfv(S, a, 0) > 0) { return 1; } return 0; }   # 6.7.17: `rdb(b.v)`, a carrier's T field
     if (nt != 31 && nt != 11) { return 0; }
     return _gsn_live(S, a);   # 6.7.17 (D1)
 }
@@ -16148,6 +16160,7 @@ fn _gen_fwd_err(S, fi, noff, tail, fi2): i64 {
 # The refusal, by name, for a scalar call / type argument / address of a stub generic fi (the site names it `noff`).
 # 6.7.16 (D1): the words name the two new shapes too, and a note names the line that needs a struct.
 fn _refuse_gen_stub(S, fi, noff): i64 {
+    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `rdb(P { .. })` is the literal's error (parse_expr.cyr)
     _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, `&x` of one returned as a struct, or a struct result over 8 bytes stored in one — directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
     if (_err_quiet == 0) { _gen_stub_note(S, fi); }
     return 0;

@@ -307,9 +307,9 @@ fn main(): i64 { var p = Pt { 0, 0 }; var t, v = p.qc(); return t; }
 syscall(60, main());' > "$T/im_closure.cyr"
 # warns <compiler> <fixture> <expected count>
 warns() {
-  "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  rc=0; "$T/$1" < "$T/$2.cyr" > "$T/o" 2>"$T/e" || rc=$?
   if [ "$rc" -ne 0 ]; then _bad "$1 $2: rc $rc (the fixture must build)"; grep '^error' "$T/e" | head -2; return; fi
-  n=$(grep -c "$NEEDLE" "$T/e")
+  n=$(grep -c "$NEEDLE" "$T/e" || true)
   if [ "$n" -ne "$3" ]; then _bad "$1 $2: $n mixed-return warning(s), expected $3"; grep "$NEEDLE" "$T/e" | head -2 | cut -c1-160 | sed 's/^/      /'; return; fi
   pass=$((pass + 1))
 }
@@ -376,14 +376,14 @@ done
 "$T/x86" < "$T/im_repro.cyr" > "$T/imr" 2>"$T/e"
 if grep -q '^warning:<source>:3:64: `Pt.qm` returns a `: stack` pair on another path but a SINGLE value here' "$T/e"; then pass=$((pass + 1))
 else _bad "im_repro: the warning is not at 3:64 naming \`Pt.qm\`: $(grep "$NEEDLE" "$T/e" | cut -c1-80)"; fi
-chmod +x "$T/imr"; "$T/imr"; rc=$?
+chmod +x "$T/imr"; rc=0; "$T/imr" || rc=$?
 if [ "$rc" -eq 50 ]; then pass=$((pass + 1)); else _bad "im_repro: exit $rc, want 50 (the warning changes no code)"; fi
 # 6.7.16: an inherited default is named as its trait's member, `Dv.qd` — the code's home — not the first inheriting
 # impl's `Pt.qd` (an empty `impl Dv for Pt { }`); an override keeps its own impl's name.
 "$T/x86" < "$T/im_default2.cyr" > "$T/imd" 2>"$T/e"
 if grep -q '^warning:<source>:2:65: `Dv.qd` returns' "$T/e"; then pass=$((pass + 1))
 else _bad "im_default2: the one warning is not the default's at 2:65 naming \`Dv.qd\`: $(grep "$NEEDLE" "$T/e" | cut -c1-80)"; fi
-chmod +x "$T/imd"; "$T/imd"; rc=$?
+chmod +x "$T/imd"; rc=0; "$T/imd" || rc=$?
 if [ "$rc" -eq 55 ]; then pass=$((pass + 1)); else _bad "im_default2: exit $rc, want 55 (the warning changes no code)"; fi
 "$T/x86" < "$T/im_override_pt.cyr" > /dev/null 2>"$T/e"
 if grep -q '^warning:<source>:5:71: `Pt.qd` returns' "$T/e" && grep -q '^warning:<source>:2:65: `Dv.qd` returns' "$T/e"; then pass=$((pass + 1))

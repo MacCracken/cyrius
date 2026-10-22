@@ -292,8 +292,10 @@ fn _prescan_skip_impl(S): i64 {
 # stepped one token for each name, so `impl Tr for {` took the `{` as the type and met the body's `}` as "unmatched '}'
 # at module scope", the header's own error never printed. Now, after the header's one error (PARSE_IMPL) or at the same
 # token (pass 1: `_impl_hdr_name` takes only what PARSE_IMPL takes), both step the rest of the header to its `{` and the
-# block through its `}`. A `;` ends the header (stepped), and a `}`, a declaration keyword, `fn`, `var` or `const` at
-# depth 0 ends it before that token, so the program after a header with no block is its own. CHANGELOG [6.7.17]
+# block through its `}`. A `;` ends the header (stepped), and at depth 0 a `}`, a declaration keyword, `fn`, `var`,
+# `const`, a statement keyword or a statement that starts a later line (`_impl_hdr_stmt`) ends it before that token, so
+# the program after a header with no block is its own (with only the declarations ending it, `impl P` then `a = zz;`,
+# `if (zz == 1) { .. }` or `while (..) { }` was stepped as the header, a `{ .. }` taken as its block). CHANGELOG [6.7.17]
 fn _impl_hdr_skip(S): i64 {
     var d = 0;
     while (PEEKT(S) != 12) {
@@ -302,6 +304,7 @@ fn _impl_hdr_skip(S): i64 {
             if (t == 13) { return _skip_refused_body(S); }
             if (t == 5) { STI(S, GTI(S) + 1); return 0; }
             if (_impl_hdr_end(t) == 1) { return 0; }
+            if (_impl_hdr_stmt(S, GTI(S)) == 1) { return 0; }
         }
         if (t == 10 || t == 28) { d = d + 1; }
         if (t == 11 || t == 29) { if (d > 0) { d = d - 1; } }
@@ -316,10 +319,28 @@ fn _impl_hdr_bad(S, ti): i64 {
     _dl_quiet(S, ti, GTI(S));
     return 0;
 }
-# 1 = token kind `t` ends a malformed impl header before it: a `}`, `fn`, `var`, `const` or a declaration keyword.
+# 1 = token kind `t` ends a malformed impl header before it: a `}`, `fn`, `var`, `const`, a declaration keyword or a
+# statement keyword (`if`, `while`, `return`, `switch`, `match`, `do`, `asm`) — none is ever in a header. `for` is
+# the header's own (`impl Tr for P`).
 fn _impl_hdr_end(t): i64 {
     if (t == 14 || t == 32 || t == 3 || t == 168) { return 1; }
+    if (t == 15 || t == 16 || t == 33 || t == 57 || t == 75 || t == 172 || t == 48) { return 1; }
     return _dl_kind(t);
+}
+# 1 = a statement starts at token `i`, the first of its line: a call or an assignment — a name or a builtin followed
+# by `(`, `=`, `.`, `[` or a compound `op =` (`_is_cop_tok`) — a `*p = ..` store, or `loop {`. No header holds one at
+# a line's start; on the header's own line `impl P Q.R {` is a header's mistake, its block stepped.
+fn _impl_hdr_stmt(S, i): i64 {
+    if (i == 0) { return 0; }
+    if (GTLINE(S, i) == GTLINE(S, i - 1)) { return 0; }
+    var t = TOKTYP(S, i);
+    if (t == 55) { return 0; }
+    if (t == 8) { return 1; }
+    if (_TOK_IS_LOOP(S, i) == 1) { return 1; }
+    var t2 = TOKTYP(S, i + 1);
+    if (t2 == 10 || t2 == 4 || t2 == 41 || t2 == 28) { return 1; }
+    if (_is_cop_tok(t2) == 1) { if (TOKTYP(S, i + 2) == 4) { return 1; } }
+    return 0;
 }
 # Pass 1's step over an impl header's name, as PARSE_IMPL reads it: a tuple type's `( .. )` (PARSE_IMPL refuses it,
 # `_impl_tup_refuse`) or an identifier. 1 = stepped, 0 = neither (the cursor left on it).
@@ -1193,8 +1214,9 @@ fn _dl_refd_at(S, noff): i64 {
 # declared after its use"). CHANGELOG [6.7.17]
 var _dl_pre = 0;   # 1 while `_dl_inner_fill` enters names
 # Per declaration the walk met (`_dl_pw_rec`): its keyword token * 2, + 1 in a fn body (`_dl_in_say`'s words). None is
-# recorded before `_dl_pw_skip` (`_dl_inner_at`: a derive's fns).
+# recorded in the window `_dl_pw_skip0`..`_dl_pw_skip` (`_dl_inner_at`: a derive's fns, after the declaration's `}`).
 var _dlpd = 0;
+var _dl_pw_skip0 = 0;
 var _dl_pw_skip = 0;
 fn _dl_inner_fill(S): i64 {
     var n = GTCNT(S);
@@ -1211,7 +1233,9 @@ fn _dl_inner_fill(S): i64 {
         elif (k == 11 || k == 29) { if (pd > 0) { pd = pd - 1; } }
         elif (k == 13) {
             var c = _dl_brace_in(stk);
-            if (pend == 1) { if (pd == ppd) { c = 3; pend = 0; } }
+            # A `{` met before a fn header's `(` closes is that fn's body (a malformed header, `fn f(: i64 {`): valid
+            # code holds none in a parameter list. It read as a block. CHANGELOG [6.7.17]
+            if (pend == 1) { if (pd >= ppd) { c = 3; pend = 0; } }
             if (pend == 2) { if (pd == ppd) { c = 0; pend = 0; } }
             vec_push(stk, c);
         }
@@ -1251,7 +1275,10 @@ fn _dl_inner_at(S, i, bk): i64 {
     _dl_names(S, i, e);
     STI(S, e);
     _dl_derived(S, i);
-    _dl_pw_skip = GTI(S);   # a `#derive`'s fns there (`public fn E_to_json`) are the compiler's, stepped with it
+    # A `#derive`'s fns there (`public fn E_to_json`) are the compiler's, stepped with it: only that window, after the
+    # `}` — a declaration inside this one (a refused inner trait's default) is still recorded. CHANGELOG [6.7.17]
+    _dl_pw_skip0 = e;
+    _dl_pw_skip = GTI(S);
     return 0;
 }
 # ⛔ 6.7.17 — AN INNER DECLARATION IS REFUSED WHEREVER IT SITS, ITS BODY COMPILED OR NOT (the user's decision D33,
@@ -1265,7 +1292,7 @@ fn _dl_inner_at(S, i, bk): i64 {
 # once (`_ce_err_dup`), so one pass 2 reported stays one line, and two bodies declaring one name are two.
 # CHANGELOG [6.7.17]
 fn _dl_pw_rec(i, bk): i64 {
-    if (i < _dl_pw_skip) { return 0; }
+    if (i >= _dl_pw_skip0) { if (i < _dl_pw_skip) { return 0; } }
     if (_dlpd == 0) { _dlpd = vec_new(); }
     var f = 0;
     if (bk == 3) { f = 1; }
@@ -3763,9 +3790,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
     if (_b3_skip == 1) {
         var _b3_bd = 1;
+        _rbs_begin(S, fi);   # 6.7.17 (D1): a rebound T-typed name's `x.f` / `x.m(` here, refused as a plain fn's
         while (_b3_bd > 0) {
             var _b3t = PEEKT(S);
             if (_b3t == 12) { break; }               # EOF guard
+            _rbs_tok(S);
             # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
             # instance ever re-parses this body. See `_refuse_nested_fn` (parse.cyr).
             if (_b3_skip_tok(S) == 0) {   # 6.7.16 (D2): and a `return &n;` (`_ret_amp_stub`)
@@ -5126,6 +5155,11 @@ fn _gs_cbind(S, fi, g, ni, w, dep): i64 {
     if (at < 0) { return 0; }
     if (_ic_ptr_param(S, g, pk - 1) == 1) { return _gs_cb_pp(S, fi, at, 1, dep); }
     if (_gs_vkind(S, fi, at, dep + 1) == 1) { return 1; }
+    var cs = _gs_cfv(S, at, 1);   # 6.7.17: `idt(b.v)`, a carrier's T field
+    if (cs > 0) {
+        _gs_cfv_tp(S, fi, at, cs - 1);
+        return 1;
+    }
     return 0;
 }
 # ... explicit type argument w of the list from token k: 1 when it is one of fi's type parameters, whole.
@@ -5139,8 +5173,16 @@ fn _gs_cb_ex(S, fi, k, w): i64 {
 # ... the argument at token a of a parameter `*` d times then U (d >= 1): 1 when it is `&v` of a name declared `*`
 # d - 1 times then one of fi's type parameters (at d = 1, `&v` of any value of one: `_gs_vkind`), or a name declared
 # with d stars then one, whole.
+# ⛔ 6.7.17 — A WRAP CARRIES WHAT IT WRAPS HERE TOO. The parser binds a whole argument through its parentheses (the
+# guide: `g((h))` is `g(h)`), but the stub scan's argument readers took the first token as the value: `vb((x))`,
+# `p.pick((t))`, `gx((b))` forwarded nothing, so a generic forwarding T only so kept its i64 base and was refused at
+# the definition naming the callee, called or not (`vb(x)` made it a stub); `var r = idp((&x));` /
+# `var r = gvb((b));` left r untyped ("no struct type in scope for 'r'" at `r.b`, as `idp(&x)` / `gvb(b)` did not).
+# `_gs_arg_named`, `_gs_carries` (parse_fn.cyr), this reader and `_gs_cb_carr` read inside the wrap. CHANGELOG [6.7.17]
 fn _gs_cb_pp(S, fi, a, d, dep): i64 {
     var st = 0;
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0; }
     if (TOKTYP(S, a) == 27) {
         if (d == 1) { if (_gs_vkind(S, fi, a + 1, dep + 1) == 1) { return 1; } return 0; }
         a = a + 1;
@@ -5169,6 +5211,8 @@ fn _gs_cb_carr(S, fi, g, o, f): i64 {
     if (go < 0) { return 0; }
     var gn = TOKVAL(S, go + ((f >> 10) & 1023));
     var a = _call_arg_for(S, g, o, (f & 255) - 1);
+    if (a < 0) { return 0; }
+    a = _pwrap_in(S, a);   # 6.7.17: `gvb((b))` (`_gs_cb_pp`'s note)
     if (a < 0) { return 0; }
     if (TOKTYP(S, a) == 27) { a = a + 1; }
     if (TOKTYP(S, a) != 2) { return 0; }
@@ -5336,7 +5380,9 @@ fn _rbn_scan(S, o): i64 {
         if (tt == 13) { dp = dp + 1; }
         if (tt == 14) { dp = dp - 1; if (dp == 0) { return 0; } }
         if (tt == 35) { le = _rbn_lit(S, t, le); }
-        elif (tt == 55) { if (TOKTYP(S, t + 1) == 2) { if (TOKTYP(S, t + 2) == 76) { _rbn_add(S, TOKVAL(S, t + 1)); } } }
+        elif (tt == 55) {
+            if (TOKTYP(S, t + 1) == 2) { if (TOKTYP(S, t + 2) == 76) { _rbn_add(S, TOKVAL(S, t + 1)); } }
+        }
         elif (tt == 3) { _rbn_mvar(S, t); }
         t = t + 1;
     }
@@ -5392,6 +5438,144 @@ fn _gcr_live(S, ni): i64 {
     if (_gcr_has(TOKVAL(S, ni)) == 0) { return 0; }
     if (_gs_rebound_at(S, _gs_open, ni) == 1) { return 0; }
     return 1;
+}
+# ⛔ 6.7.17 — A CARRIER'S T FIELD, WHOLE, IS A VALUE OF T (beside the user's D2, 2026-10-22). Since D2 each instance
+# binds a struct-typed field (`rdb(b.v)` with `b: Box<P>` calls `rdb$P`, as `rdb(y)` with `var y: T = b.v;` does), but
+# the stub scan took only a T-typed NAME for a value of T: a generic forwarding `b.v` (`b: Box<T>`, `v: T`) into a stub
+# — `rdb(b.v)`, `k.pick(b.v)`, `var r = idt(b.v); return r.b;`, a bounded `r.show()` — kept its i64 base and was
+# refused at the definition, called or not, where the `var y: T = b.v;` spelling was a stub. `_gs_arg_named`,
+# `_gs_carries` (parse_fn.cyr) and `_gs_cbind` take it as they take a T-typed name. 1 + the carrier's slot when the
+# whole argument at token a (inside a wrap) is `b.f`, b a carrier where it sits whose G declares f with G's type
+# parameter in a slot the carrier gives T — `f: T`, or `f: *T` unless `byval` (`_gsn` holds `p: *T` names,
+# `_gs_vkind` does not) — as `_gs_cfield` reads `b.f.g`; else 0. CHANGELOG [6.7.17]
+fn _gs_cfv(S, a, byval): i64 {
+    if (_gcr_n == 0) { return 0; }
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 41) { return 0; }
+    if (TOKTYP(S, a + 2) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 3);
+    if (nt != 31 && nt != 11) { return 0; }
+    if (_gcr_live(S, a) == 0) { return 0; }
+    var e = 0;
+    while (e < _gcr_n) {
+        if (load64(_gcr + e * 24) == TOKVAL(S, a)) {
+            var sl = load64(_gcr + e * 24 + 16);
+            if (sl < 256) {   # a `**G<..>` carrier has no fields (`_gs_cfield`)
+                var ft = _gs_gfield_at(S, load64(_gcr + e * 24 + 8), sl, TOKVAL(S, a + 2));
+                if (ft >= 0) { if (byval == 0 || TOKTYP(S, ft) != 8) { return sl + 1; } }
+            }
+        }
+        e = e + 1;
+    }
+    return 0;
+}
+# ... `_gvk_tp` for such a field at slot sl (`_gs_cbind`'s, read by `_bnr_uvar`): fi's type parameter the carrier's
+# annotation names there — fi's only one when it has one — else 0 (`_gs_cb_carr`'s reading).
+fn _gs_cfv_tp(S, fi, a, sl): i64 {
+    _gvk_tp = 0;
+    var tp = GFTP(S, fi);
+    if (((tp >> 32) & 0xFFFFFFFF) == 0) {
+        _gvk_tp = (tp & 0xFFFFFFFF) - 1;
+        return 0;
+    }
+    a = _pwrap_in(S, a);
+    var d = _tok_name_decl(S, _gs_open, a, TOKVAL(S, a));
+    if (d < 0) { return 0; }
+    if (TOKTYP(S, d + 1) != 49) { return 0; }
+    var h = d + 2;
+    while (TOKTYP(S, h) == 8) { h = h + 1; }
+    if (TOKTYP(S, h + 1) != 19) { return 0; }
+    var j = h + 2;
+    if (sl > 1) { return 0; }
+    if (sl == 1) { while (TOKTYP(S, j) == 2) { j = j + 1; } if (TOKTYP(S, j) != 31) { return 0; } j = j + 1; }
+    if (_gs_targ_whole(S, j) == 1) { _gs_vtp(S, fi, j); }
+    return 0;
+}
+# ⛔ 6.7.17 (the user's D1, 2026-10-22) — A REBOUND T-TYPED NAME IS REFUSED AT THE DEFINITION IN A SKIPPED BASE TOO. A
+# generic whose i64 base is not parsed (PARSE_FN_DEF's `_b3_skip`: a stub — `x.y` elsewhere in its body — or a bounded
+# one with no `impl` of its bound for i64) had its body judged only in its instances, so `|x| { return x.show(); }`,
+# `for x in 0..2 { .. x.y .. }` or `var q, x = two(); x.y` on its `x: T` compiled when the generic was never called —
+# where D1 refuses them at the definition, called or not, as it does with an i64 base. The skip now reports the first
+# such use as the plain fn's parse does, at the token the parser reports it on and in the parser's own words (so an
+# instance's report there is the same report, once): a method call at its `(`, a field store (a statement `x.f ..`
+# that is no method chain) and a field read at the token after the field name. The first only: the parser's resync
+# after a read refused at a statement's `;` swallows the next statement, so a token walk reporting every one would
+# invent errors an instance does not make (a called generic's instances report the rest, as before). `_rbs_begin`
+# reads it on the stub scan's tables of fi (swapped in, `_bbf_swap`); `_rbs_tok` reports it when the skip reaches its
+# token. CHANGELOG [6.7.17]
+var _rbs_r = 0 - 1;   # the report token, -1 = none
+var _rbs_nm = 0;      # the rebound name
+var _rbs_kd = 0;      # 1 a field read, 2 a field store, 3 a method call
+fn _rbs_begin(S, fi): i64 {
+    _rbs_r = 0 - 1;
+    if (_syntax_only == 1) { return 0; }   # the parser's `sid == 0` arms are silent there
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    _bbf_swap();
+    _gs_params(S, fi, o);
+    var t = _gs_body_open(S, _gs_at);
+    var n = GTCNT(S);
+    var dp = 1;
+    while (t > 0 && t < n) {
+        var tt = TOKTYP(S, t);
+        if (tt == 12) { break; }
+        if (tt == 13) { dp = dp + 1; }
+        elif (tt == 14) { dp = dp - 1; if (dp == 0) { break; } }
+        elif (tt == 3) { _gs_var(S, fi, t); }   # the scan's T-typed locals, as `_gs_scan` meets them
+        elif (tt == 2) { if (_rbs_use(S, o, t) == 1) { break; } }
+        t = t + 1;
+    }
+    _bbf_swap();
+    return 0;
+}
+# ... the use at token t, when it is `x.f` / `x.m(` on a T-typed name or a carrier (`_gsn`, `_gcr`) rebound where it
+# sits: its report token and kind recorded, 1.
+fn _rbs_use(S, o, t): i64 {
+    if (TOKTYP(S, t + 1) != 41) { return 0; }
+    var ft = TOKTYP(S, t + 2);
+    if (ft != 2 && ft != 1) { return 0; }
+    if (TOKTYP(S, t - 1) == 41) { return 0; }   # a field's name, not a receiver
+    var noff = TOKVAL(S, t);
+    if (_gsn_has(noff) == 0) { if (_gcr_has(noff) == 0) { return 0; } }
+    if (_gs_rebound_at(S, o, t) == 0) { return 0; }
+    var r = t + 3;
+    var kind = 1;
+    if (TOKTYP(S, r) == 19) {   # `x.m<..>(`
+        var c = _tok_targs_close(S, r + 1);
+        if (c > 0) { if (TOKTYP(S, c + 1) == 10) { r = c + 1; } }
+    }
+    if (TOKTYP(S, r) == 10) { kind = 3; }
+    else {
+        var pt = TOKTYP(S, t - 1);
+        if (pt == 5 || pt == 13 || pt == 14) {   # a statement: PARSE_FIELD_STORE unless a method chain
+            var k = t + 3;
+            while (TOKTYP(S, k) == 41 && TOKTYP(S, k + 1) == 2) { k = k + 2; }
+            if (TOKTYP(S, k) != 10 && TOKTYP(S, k) != 19) { kind = 2; }
+        }
+    }
+    _rbs_r = r;
+    _rbs_nm = noff;
+    _rbs_kd = kind;
+    return 1;
+}
+# ... at each token the skip walks: the use's report there (none when a consumed nested fn stepped over it).
+fn _rbs_tok(S): i64 {
+    if (_rbs_r < 0) { return 0; }
+    if (GTI(S) < _rbs_r) { return 0; }
+    var at = _rbs_r;
+    _rbs_r = 0 - 1;
+    if (GTI(S) != at) { return 0; }
+    var pv = _panic;
+    var m = "no struct type in scope for ";
+    if (_rbs_kd == 3) {
+        ERR_IDENT(S, m, _rbs_nm, "; a method call needs its struct declaration (missing include?)", 0 - 1);
+    } elif (_rbs_kd == 2) {
+        ERR_IDENT(S, m, _rbs_nm, "; a '.field' assignment needs its struct declaration (missing include?)", 0 - 1);
+    } else { ERR_IDENT(S, m, _rbs_nm, "; a '.field' access needs its struct declaration (missing include?)", 0 - 1); }
+    _panic = pv;   # the skip steps on; nothing after the base is latched by it
+    return 0;
 }
 # 1 = the carrier `noff` has an entry for the struct named `gn` at `slot` (a `**G` one's 256 + slot too).
 fn _gcr_slot(noff, gn, slot): i64 {
@@ -6020,17 +6204,18 @@ fn _gs_dsr_stmt(S, fi, i): i64 {
     while (TOKTYP(S, a) == 8) { a = a + 1; }
     var eq = _gs_dsr_eq(S, a);
     if (eq < 0) { return 0; }
-    var lt = TOKTYP(S, eq - 1);
+    var de = _gs_cop_de(S, eq);   # 6.7.17 (D15): `*p += R` too
+    var lt = TOKTYP(S, de - 1);
     if (lt != 2) { if (lt != 11) { if (lt != 29) { return 0; } } }
     var nm = 0 - 1;
     var j = a;
-    while (j < eq) {
+    while (j < de) {
         if (TOKTYP(S, j) == 2) { if (nm < 0) { if (_gs_dsr_dep(S, fi, j) == 1) { nm = j; } } }
         j = j + 1;
     }
     if (nm < 0) { return 0; }
     if (_gs_sres_big(S, fi, eq + 1) == 0) { return 0; }
-    if (lt == 2) { nm = eq - 1; }
+    if (lt == 2) { nm = de - 1; }
     _gsw_k = 5;
     _gsw_ti = nm;
     return 1;

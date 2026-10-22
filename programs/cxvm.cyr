@@ -558,16 +558,15 @@ fn _cx_host_posix(sn, a, b, c): i64 {
 }
 
 #ifndef CYRIUS_TARGET_WIN
-# flock(fd, op). A Darwin host's flock reads an op naming LOCK_UN as an unlock, else LOCK_EX, else
-# LOCK_SH, whatever other bits it carries, and answers an op naming none, or any op on a
-# non-descriptor, -9 (EBADF); Linux checks the op first, -22. So a Darwin host checks it first, as
-# the stdlib's macOS arm does: an op that is not LOCK_SH, LOCK_EX or LOCK_UN (+ LOCK_NB) is -22
-# (6.7.17's D97). CHANGELOG [6.7.17]
+# flock(fd, op). Every POSIX host checks the op first, as the stdlib's arms do: an op that is not
+# LOCK_SH, LOCK_EX or LOCK_UN (+ LOCK_NB), read whole, is -22 whatever the fd. A Darwin host's flock
+# reads an op naming LOCK_UN as an unlock, else LOCK_EX, else LOCK_SH, whatever other bits it
+# carries, and answers an op naming none, or any op on a non-descriptor, -9 (6.7.17's D97); a Linux
+# host's flock(2) answers an op carrying LOCK_MAND (32) 0 with nothing locked and reads only the
+# op's low 32 bits (6.7.17's D104). CHANGELOG [6.7.17]
 fn _cx_host_flock(fd, op): i64 {
-    #ifdef CYRIUS_TARGET_MACOS
     var cmd = op & (0 - 5);                         # drop LOCK_NB (4)
     if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }
-    #endif
     return syscall(SYS_FLOCK, fd, op);
 }
 

@@ -185,6 +185,28 @@
 #   MCO3 `_esub_assign` without its `_cop_dst`          -> RED 2: CO10 CO11 (an array's element; `p[0]` judged by its word)
 #   MCO4 `_slice_fld_store` without its `_cop_dst = 2`  -> RED 1: CO14
 #   MCO5 the float arm warning beside a refusal         -> RED 1: CO8w
+#   (the review, 2026-10-22: CO20-CO24 the same stores through a generic's T at a scalar instance, a stub as their `=`
+#   forms are; COK4 / COK5; COX CO21 on aarch64 / cx / PE)
+#   (each a scratch copy of src / lib / tests / programs — the AS0 rows read docs/, so they are red in every copy)
+#   MCO6 the tree before it (the integration head)      -> RED 9: CO20-CO24 (compiled, the first word added: 78), CO24b
+#                                                          (the i32 instance's own "cannot assign 'y: T'"), COX CO21 x3
+#   MCO7 `_gs_cop_de` answering eq (no compound pair)   -> RED 6: CO21-CO23, COX CO21 x3
+#   MCO8 `_gs_cop_asg` answering 0                      -> RED 3: CO20 CO24 CO24b
+# 6.7.17 (D106, the user's decision, 2026-10-22: "refuse it as the struct call is there", the struct twin of D24) — A
+# STRUCT VALUE THAT IS NO CALL INTO A WORD SLOT is refused where the struct call is, in the call's words with "which is
+# the struct 'Q'": an inline local, a by-value parameter, a captured copy, an inline global, `*pq` / `**ppq` / `*(&q)`, a
+# struct-typed field (`_ssv_at`, parse.cyr) — over 8 B, not a `Str` / tuple / dyn — into a name (`_asa_sval`, from
+# `_pcmpe_struct_assign`), a declaration annotated a scalar or a pointer to no struct (`_svin_val`; the zone's
+# `_svin_zval`), and every `_dsr_rec` reader (`_dsr_val`: a field, an element, `*p` typed or untyped, a compound, a
+# literal's element, a slice field); through a generic's T the stub scan reads it (`_gs_sval_big`). SV0 the review's
+# blocked repro verbatim, SV1-SV22, SVK1-SVK5, SVX SV0 / SV4 on aarch64 / cx / PE. (Scratch copies of src / lib / tests
+# / programs / docs, each compiler built from its copy, 2026-10-22:)
+#   M-SV1 the tree before it (the integration head)     -> RED 29: SV0-SV22 (compiled: the first word), SVX x6
+#   M-SV2 `_dsr_val` answering 0                        -> RED 9: SV4-SV9, SVX SV4 x3
+#   M-SV3 `_asa_sval` answering 0                       -> RED 13: SV0 SV1 SV2 SV10-SV14 SV18 SV19, SVX SV0 x3
+#   M-SV4 `_svin_val` answering 0                       -> RED 7: SV0 SV3 SV15 SV17, SVX SV0 x3
+#   M-SV5 `_svin_zval` answering 0                      -> RED 1: SV16
+#   M-SV6 `_gs_sval_big` answering 0                    -> RED 3: SV20-SV22
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
 set -eu
@@ -1713,6 +1735,84 @@ refuse "CO19 a field's for step" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn
 accept "COK1 y += mkp().a, a field of the result" "$CQ"'fn g(): i64 { var y = 1; y += mkp().a; return y - 300; }'"$FTE" 34 'syscall(60, 34);'
 accept "COK2 an 8 B result keeps its word" "$CQ"'fn g(): i64 { var y = 1; y += mk8(); return y; }'"$FTE" 10 'syscall(60, 10);'
 accept "COK3 y += (mkp()).b, a wrapped result's field" "$CQ"'fn g(): i64 { var y = 1; y += (mkp()).b; return y - 400; }'"$FTE" 45 'syscall(60, 45);'
+# 6.7.17 (D15, its review) — THROUGH A GENERIC'S T: at a scalar instance `y += R` (y: T), `*p += R` / `p[0] -= R`
+# (p: *T), `b.v |= R` (b: *Box<T>) and a for step combined Q's first word (78), silently (CO24b: `gc<i32>` was refused
+# in the instance's words, "cannot assign 'y: T'", where `y = R` is a stub): the base parse leaves a T-typed store to
+# the D1 stub scan (`_dsr_tdep`), which read only the `=` forms. Now it reads `OP=` as its `=` form (`_gs_cop_de`,
+# `_gs_cop_asg`): no scalar instance, the call refused naming the line. COK4 / COK5: 8 B and a field of the result
+# keep their word.
+CGM="generic 'gc' has no i64 (or other scalar) instance"
+refuse "CO20 y += mkp(); (y: T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; y += mkp(); return 7; }
+fn g(): i64 { return gc(1); }'"$FTE" one
+refuse "CO21 *p += mkp(); (p: *T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(p: *T): i64 { *p += mkp(); return 7; }
+fn g(): i64 { var z = 1; return gc(&z); }'"$FTE" one
+refuse "CO22 p[0] -= mkp(); (p: *T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(p: *T): i64 { p[0] -= mkp(); return 7; }
+fn g(): i64 { var z = 1; return gc(&z); }'"$FTE" one
+refuse "CO23 b.v |= mkp(); (b: *Box<T>) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(b: *Box<T>): i64 { b.v |= mkp(); return 7; }
+fn g(): i64 { var b: Box<i64>; b.v = 1; return gc(&b); }'"$FTE" one
+refuse "CO24 a for step y += mkp(); (y: T) at i64: a stub" "$CGM" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; for (var i = 0; i < 1; y += mkp()) { i = 1; } return 7; }
+fn g(): i64 { return gc(1); }'"$FTE" one
+refuse "CO24b gc<i32>(1): the stub's words, as y = mkp() has" "$CGM" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; y += mkp(); return 7; }
+fn g(): i64 { return gc<i32>(1); }'"$FTE" one
+accept "COK4 *p += mk8(); (p: *T), 8 B keeps its word" "$CQ"'fn gc<T>(p: *T): i64 { *p += mk8(); return 0; }
+fn g(): i64 { var z = 1; gc(&z); return z; }'"$FTE" 10 'syscall(60, 10);'
+accept "COK5 y += mkp().a; (y: T), a field of the result" "$CQ"'fn gc<T>(x: T): i64 { var y: T = x; y += mkp().a; return y - 300; }
+fn g(): i64 { return gc(1); }'"$FTE" 34 'syscall(60, 34);'
+
+echo "=== 6.7.17 (D106): a struct VALUE that is no call into a word slot is refused as the struct call is there ==="
+# The vala review's blocked item, decided by the user (D106, 2026-10-22: "refuse it as the struct call is there", the
+# struct twin of D24): `y = q;`, `var z: i64 = q;`, `w.n = q;`, `buf[0] = q;`, `*p = q;`, `y += q;` and `W { q, 0 }`
+# with q a 16-byte Q kept q's first word (77), silently, where each refuses `mkp()`. SV0 the review's repro verbatim
+# (154 through 6.7.16); SV1-SV19 every source (a local, wrapped, a by-value parameter, a capture, a global, `*pq`, a
+# struct-typed field) and slot (a name, a declaration in a fn, the zone and after the first statement, a field, an
+# element, `*p` typed and untyped, `p: *i64`, a compound, a literal's element, a for step); SV20-SV22 through a
+# generic's T (stub lines, as `mkp()` is); SVK1-SVK5 what keeps its word (8 B, a handle's address, a field of the
+# value), its copy (a struct destination, `*pq`, `w.pq`) and the generic at T = Q.
+SV0S='struct Q { a; b; }
+fn main(): i64 { var q = Q { 333, 444 }; var y: i64 = 0; y = q; var z: i64 = q; return y + z; }
+syscall(60, main());
+'
+refuse_at "SV0 the review's repro verbatim (its two lines)" "2:62: cannot assign 'y: i64' from 'q', which is the struct 'Q' - declare 'y: Q' or bind a field|2:78: cannot initialise 'z: i64' from 'q', which is the struct 'Q' - declare 'z: Q' or bind a field" "$SV0S"
+SQ="$FQ"'var GQ = Q { 333, 444 };
+var GY = 5;
+'
+SVW="which is the struct 'Q'"
+refuse "SV1 y = q; an untyped y (D33's words)" "cannot assign 'y' from 'q', $SVW - declare 'y: Q' or bind a field" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var y = 0; y = q; return y; }'"$FTE" one
+refuse "SV2 y = ((q)); a u8 y, wrapped" "cannot assign 'y: u8' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var y: u8 = 0; y = ((q)); return y; }'"$FTE" one
+refuse "SV3 var z: f64 = q;" "cannot initialise 'z: f64' from 'q', $SVW - declare 'z: Q' or bind a field" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var z: f64 = q; return 0; }'"$FTE" one
+refuse "SV4 w.n = q; a field" "cannot assign 'w\.n: i64' from 'q', $SVW - store it through a '\*Q' or bind a field" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var w = W { 1, 0 }; w.n = q; return w.n; }'"$FTE" one
+refuse "SV5 buf[0] = q; an element" "cannot assign 'buf\[0\]: i64' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var buf: i64[2]; buf[0] = q; return buf[0]; }'"$FTE" one
+refuse "SV6 *p = q; an untyped p (D13's words)" "cannot assign '\*p' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var x = 0; var p = &x; *p = q; return x; }'"$FTE" one
+refuse "SV7 *p = q; a *i64 p (D99's words)" "cannot assign '\*p: i64' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var x = 0; var p: *i64 = &x; *p = q; return x; }'"$FTE" one
+refuse "SV8 y += q; a compound (D15)" "cannot assign 'y' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var y = 1; y += q; return y; }'"$FTE" one
+refuse "SV9 W { q, 0 }, a literal's element" "cannot assign 'n: i64' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var w = W { q, 0 }; return w.n; }'"$FTE" one
+refuse "SV10 y = *pq; a dereference" "cannot assign 'y' from '\*pq', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var pq: *Q = &q; var y = 0; y = *pq; return y; }'"$FTE" one
+refuse "SV11 y = w.q; a struct-typed field" "cannot assign 'y' from 'w\.q', $SVW" "$SQ"'fn g(): i64 { var w: WF; var y = 0; y = w.q; return y; }'"$FTE" one
+refuse "SV12 a by-value parameter" "cannot assign 'y' from 'q', $SVW" "$SQ"'fn f(q: Q): i64 { var y = 0; y = q; return y; }
+fn g(): i64 { var q = Q { 333, 444 }; return f(q); }'"$FTE" one
+refuse "SV13 a closure's captured copy" "cannot assign 'y' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var f = || { var y = 0; y = q; return y; }; return fncall0(f); }'"$FTE" one
+refuse "SV14 GY = GQ; globals in a fn" "cannot assign 'GY' from 'GQ', $SVW" "$SQ"'fn g(): i64 { GY = GQ; return GY; }'"$FTE" one
+refuse "SV15 after the first top-level statement" "cannot initialise 'GZ: i64' from 'GQ', $SVW" "$SQ"'syscall(1, 1, "", 0);
+var GZ: i64 = GQ;
+fn g(): i64 { return GZ; }'"$FTE" one
+refuse_at "SV16 the declaration zone: var GZ: i32 = GQ;" "24:15: cannot initialise 'GZ: i32' from 'GQ', which is the struct 'Q' - declare 'GZ: Q' or bind a field" "$SQ"'var GZ: i32 = GQ;
+fn g(): i64 { return GZ; }'"$FTE"
+refuse "SV17 var p: *i64 = q; (D14's words)" "cannot initialise 'p: \*i64' from 'q', $SVW - declare 'p: Q' and take" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var p: *i64 = q; return 0; }'"$FTE" one
+refuse "SV18 p = q; p a *i64 (D32's words)" "cannot assign 'p: \*i64' from 'q', $SVW - declare 'p: Q' and take" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var x = 0; var p: *i64 = &x; p = q; return 0; }'"$FTE" one
+refuse "SV19 a for step y = q" "cannot assign 'y' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var y = 0; for (var i = 0; i < 1; y = q) { i = 1; } return y; }'"$FTE" one
+SGM="generic 'gv' has no i64 (or other scalar) instance"
+refuse "SV20 y = q; (y: T) at i64: a stub" "$SGM" "$SQ"'fn gv<T>(x: T): i64 { var y: T = x; var q = Q { 333, 444 }; y = q; return 7; }
+fn g(): i64 { return gv(1); }'"$FTE" one
+refuse "SV21 *p = q; (p: *T, q a parameter) at i64: a stub" "$SGM" "$SQ"'fn gv<T>(p: *T, q: Q): i64 { *p = q; return 7; }
+fn g(): i64 { var z = 1; var q = Q { 333, 444 }; return gv(&z, q); }'"$FTE" one
+refuse "SV22 b.v += q; (b: *Box<T>) at i64: a stub" "$SGM" "$SQ"'fn gv<T>(b: *Box<T>): i64 { var q: Q; q.a = 333; b.v += q; return 7; }
+fn g(): i64 { var b: Box<i64>; b.v = 1; return gv(&b); }'"$FTE" one
+accept "SVK1 an 8 B struct value keeps its word" "$SQ"'fn g(): i64 { var s = S8 { 7 }; var y = 0; y = s; var z: i64 = s; var w = W { 1, 0 }; w.n = s; y += s; return y + z + w.n; }'"$FTE" 28 'syscall(60, 28);'
+accept "SVK2 a handle keeps its address" "$SQ"'fn g(): i64 { var h: Q = alloc(16); var y = 0; y = h; var z: i64 = h; var x = 0; var p = &x; *p = h; if (y == z) { if (x == z) { return 3; } } return 0; }'"$FTE" 3 'syscall(60, 3);'
+accept "SVK3 a struct destination copies" "$SQ"'fn g(): i64 { var q = Q { 3, 4 }; var r: Q = q; r = GQ; r = q; var pq: *Q = &r; *pq = q; var w: WF; w.q = q; return r.a * 10 + w.q.b; }'"$FTE" 34 'syscall(60, 34);'
+accept "SVK4 a field of the value keeps its word" "$SQ"'fn g(): i64 { var q = Q { 3, 4 }; var y = 0; y = q.a; var z: i64 = (q).b; y += q.b; return y * 10 + z; }'"$FTE" 74 'syscall(60, 74);'
+accept "SVK5 y = q; (y: T) at T = Q copies" "$SQ"'fn gv<T>(x: T): i64 { var y: T = x; var q = Q { 3, 4 }; y = q; return y.a * 10 + y.b; }
+fn g(): i64 { var q = Q { 1, 2 }; return gv(q); }'"$FTE" 34 'syscall(60, 34);'
 
 # TV (6.7.16, the user's D102, 2026-10-20; issues/archived/2026-10-20-generic-untyped-local-from-type-parameter-value-refused.md)
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
@@ -2068,6 +2168,169 @@ syscall(60, main());
 accept "RBK7 for x in x.a..5: the start's x" "$RBH"'fn g<T>(x: T): i64 { var s = 0; for x in x.a..5 { s = s + 1; } return s; }
 '"$RBQM" 2 'syscall(60, 2);'
 
+# RBN (6.7.17, the user's D1, the integrator's ruling at the genr finish pass): NEVER CALLED, IN A SKIPPED BASE TOO.
+# A generic whose i64 base is not parsed — bounded with no `impl` of its bound for i64, or a stub (`var k = x.y;`
+# elsewhere) — was judged only in its instances, so its rebound `x.show()` / `x.y` (a closure's `|x|`, a `for x in`,
+# a destructure's later name) compiled when never called; D1 refuses them at the definition, called or not, as the
+# same body with `impl Show for i64` (a parsed base) does. RBN rows: never called x {closure, for-in, destructure} x
+# {method, field} x {an i64 impl, none, a stub base}: each exactly the parsed base's line (`_rbs_begin` / `_rbs_tok`,
+# parse_fn_def.cyr). RBNC: called at Pt with no i64 impl, still exactly one line (the instance's report at the same
+# token is the same report). RBNK: g's own x past the rebindings, a destructure's right-hand side and a range's start
+# in a skipped base still compile and run. RBNX: RBN on aarch64 / cx / PE.
+# (each a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it; MRBN1 the compiler
+# alone, run from the real tree with CYCC=, so its aarch64 / cx legs cross-build the fixed src)
+#   MRBN1 the compiler before the fix (l6717-integ 761023ca2) -> RED 15: the 12 none / stub rows and RBNS (compiled,
+#                                                               rc 0), RBNX [pe] x2; the i64 rows, RBNC, RBNK green
+#   MRBN2 `_rbs_tok` reporting nothing                        -> RED 19: the 12 none / stub rows, RBNS, RBNX x6
+#   MRBN3 `_rbs_use` without its statement arm (no store)     -> RED 1: RBNS (the '.field' access words)
+RBNB='include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+struct Pt { x; y; }
+trait Show { fn show(self): i64; }
+impl Show for Pt { fn show(self): i64 { return self.x * 10 + self.y; } }
+impl Pt { fn other(self): i64 { return 77; } }
+fn two(): (i64, i64) { return (1, 2); }
+'
+RBNI='impl Show for i64 { fn show(self): i64 { return self + 100; } }
+'
+RBNO='# no impl Show for i64
+'
+RBNM='fn main(): i64 { return 0; }
+syscall(60, main());
+'
+rbn_g() {  # $1 form (cl fi ds)  $2 use  $3 "stub" for the stub base -> the generic's line
+    if [ "${3:-}" = stub ]; then
+        case $1 in
+            cl) printf 'fn g<T>(x: T): i64 { var k = x.y; var f = |x| { return %s; }; return fncall1(f, 5) + k; }\n' "$2" ;;
+            fi) printf 'fn g<T>(x: T): i64 { var k = x.y; var s = 0; for x in 0..2 { s = s + %s; } return s + k; }\n' "$2" ;;
+            ds) printf 'fn g<T>(x: T): i64 { var k = x.y; var q, x = two(); return %s + q + k; }\n' "$2" ;;
+        esac
+    else
+        case $1 in
+            cl) printf 'fn g<T: Show>(x: T): i64 { var f = |x| { return %s; }; return fncall1(f, 5); }\n' "$2" ;;
+            fi) printf 'fn g<T: Show>(x: T): i64 { var s = 0; for x in 0..2 { s = s + %s; } return s; }\n' "$2" ;;
+            ds) printf 'fn g<T: Show>(x: T): i64 { var q, x = two(); return %s + q; }\n' "$2" ;;
+        esac
+    fi
+}
+rbn_rows() {  # $1 form  $2 / $3 the method / field line:col with a parsed or bound-bad base  $4 / $5 the stub's
+    refuse_at "RBN i64 $1 x.show()" "$2: $SN 'x'$SM" "$RBNB$RBNI$(rbn_g $1 'x.show()')
+$RBNM"
+    refuse_at "RBN i64 $1 x.y" "$3: $SN 'x'$SA" "$RBNB$RBNI$(rbn_g $1 'x.y')
+$RBNM"
+    refuse_at "RBN none $1 x.show()" "$2: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g $1 'x.show()')
+$RBNM"
+    refuse_at "RBN none $1 x.y" "$3: $SN 'x'$SA" "$RBNB$RBNO$(rbn_g $1 'x.y')
+$RBNM"
+    refuse_at "RBN stub $1 x.other()" "$4: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g $1 'x.other()' stub)
+$RBNM"
+    refuse_at "RBN stub $1 x.y" "$5: $SN 'x'$SA" "$RBNB$RBNO$(rbn_g $1 'x.y' stub)
+$RBNM"
+}
+rbn_rows cl 9:55 9:52 9:63 9:59
+rbn_rows fi 9:69 9:66 9:77 9:73
+rbn_rows ds 9:59 9:57 9:67 9:64
+refuse_at "RBNS none: a statement |x| { x.y = 3; }" "9:46: $SN 'x'$SS" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var f = |x| { x.y = 3; return 0; }; return fncall1(f, 5); }
+'"$RBNM"
+RBNP='fn main(): i64 { var p = Pt { 2, 4 }; return g(p); }
+syscall(60, main());
+'
+refuse_at "RBNC none, called at Pt: one line" "9:55: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g cl 'x.show()')
+$RBNP"
+accept "RBNK1 none: g's own x past |x| and for x in" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; var s = 0; for x in 0..2 { s = s + x; } return x.show() + fncall1(f, 1) + s; }
+'"$RBNP" 27 'syscall(60, 27);'
+accept "RBNK2 stub: var q, x = pr2(x.y); the RHS's x" "$RBNB$RBNO"'fn pr2(v): (i64, i64) { return (v, 1); }
+fn g<T>(x: T): i64 { var q, x = pr2(x.y); return q + x; }
+'"$RBNP" 5 'syscall(60, 5);'
+accept "RBNK3 none: for x in x.y..9, the start's x" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var s = 0; for x in x.y..9 { s = s + 1; } return s; }
+'"$RBNP" 5 'syscall(60, 5);'
+accept "RBNK4 none, never called: g's own x past the rebindings" "$RBNB$RBNO"'fn g<T: Show>(x: T): i64 { var f = |x| { return x + 1; }; var q, z = two(); return x.show() + fncall1(f, 1) + q + z; }
+'"$RBNM" 0 'syscall(60, 0);'
+
+# WR (6.7.17, met reviewing the genr lane): a whole argument's wrap carries what it wraps in the stub scan too, as the
+# parser binds it (the guide: parentheses around the WHOLE argument carry what they wrap). `vb((x))`, `gxw((b))`,
+# `var r = idp((&x)); r.b` and `var r = first((b)); r.a` forwarded / typed nothing (`_gs_arg_named`, `_gs_carries`,
+# `_gs_cb_pp`, `_gs_cb_carr` read the argument's first token), so the generic kept its i64 base and was refused at the
+# definition, called or not — naming the callee ("generic 'vb' has no i64 ... instance") or "no struct type in scope for
+# 'r'" — where the unwrapped spelling made it a stub. Now the struct call runs (WRa-WRd; generic_struct_only_lines.tcyr
+# V29-V33 on every backend) and the scalar call is refused with the stub's words (WR1-WR4, WR1n the forward's note).
+#   MWR1 the tree before the fix (l6717-integ 45c7ff467)    -> RED 9: WR1-WR4 (the callee's words / "no struct type"),
+#                                                             WR1n (the callee's note), WRa-WRd (refused at the definition)
+echo "=== a wrapped whole argument forwards / types T in the stub scan, as the parser binds it (6.7.17) ==="
+WRH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn vb<T>(x: T): i64 { return x.b; }
+fn gxw<T>(b: Box<T>): i64 { return b.v.b + b.n; }
+fn idp<T>(p: *T): T { var r: T = *p; return r; }
+fn first<T>(b: Box<T>): T { var r: T = b.v; return r; }
+'
+WR1G='fn g<T>(x: T): i64 { return vb((x)); }
+'
+WR2G='fn g<T>(b: Box<T>): i64 { return gxw((b)); }
+'
+WR3G='fn g<T>(x: T): i64 { var r = idp((&x)); return r.b; }
+'
+WR4G='fn g<T>(b: Box<T>): i64 { var r = first((b)); return r.a; }
+'
+WRS='fn main(): i64 { return g(5); }
+syscall(60, main());
+'
+WRB='fn main(): i64 { var bx: Box<i64>; bx.v = 1; bx.n = 2; return g(bx); }
+syscall(60, main());
+'
+WRQ='fn main(): i64 { var q = Q { 3, 4 }; return g(q); }
+syscall(60, main());
+'
+WRQB='fn main(): i64 { var bx: Box<Q>; bx.v.a = 3; bx.v.b = 4; bx.n = 6; return g(bx); }
+syscall(60, main());
+'
+refuse "WR1 vb((x)) at g(5): the stub's" "$TGM" "$WRH$WR1G$WRS" one
+tv_note "WR1n the forward's note" "8:29: 'g' forwards its type parameter to 'vb'"
+refuse "WR2 gxw((b)) at Box<i64>" "$TGM" "$WRH$WR2G$WRB" one
+refuse "WR3 var r = idp((&x)); r.b at g(5)" "$TGM" "$WRH$WR3G$WRS" one
+refuse "WR4 var r = first((b)); r.a at Box<i64>" "$TGM" "$WRH$WR4G$WRB" one
+accept "WRa vb((x)) at Q" "$WRH$WR1G$WRQ" 4 'syscall(60, 4);'
+accept "WRb gxw((b)) at Box<Q>" "$WRH$WR2G$WRQB" 10 'syscall(60, 10);'
+accept "WRc var r = idp((&x)); r.b at Q" "$WRH$WR3G$WRQ" 4 'syscall(60, 4);'
+accept "WRd var r = first((b)); r.a at Box<Q>" "$WRH$WR4G$WRQB" 3 'syscall(60, 3);'
+
+# CF (6.7.17, the genr review, beside the user's D2): inside a generic a struct carrier's T field `b.v` (`b: Box<T>`,
+# `v: T`), whole in an argument, is a value of T as a T-typed name is (`_gs_cfv`, parse_fn_def.cyr). Since D2 the
+# instance binds it (`rdb(b.v)` at `Box<Q>` calls `rdb$Q`), but the stub scan read only a name: `rdb(b.v)` and
+# `var r = idt(b.v); r.b` kept the i64 base, refused at the definition naming rdb / "no struct type in scope for 'r'",
+# called or not, where `var y: T = b.v; rdb(y)` was a stub. Now the struct call runs (CFa, CFb; the tcyr's F17 rows on
+# every backend), the scalar call is refused with the stub's words (CF1, CF1n, CF2), and a bounded `r.show()` on such
+# an `r` is a bounded site at every T (CF3, `impl Show for i64`).
+#   MCF1 the tree before the fix (97918d988)                  -> RED 6: CF1 CF2 (rdb's words / "no struct type"), CF1n,
+#                                                               CFa CFb CF3 (refused at the definition)
+echo "=== a carrier's T field, whole in an argument, is a value of T in the stub scan (6.7.17, beside D2) ==="
+CFH='include "lib/syscalls.cyr"
+struct Q { a; b; }
+struct Box<T> { v: T; n; }
+fn rdb<T>(x: T): i64 { return x.b; }
+fn idt<T>(x: T): T { return x; }
+'
+CF1G='fn g<T>(b: Box<T>): i64 { return rdb(b.v); }
+'
+CF2G='fn g<T>(b: Box<T>): i64 { var r = idt(b.v); return r.b; }
+'
+CFS='fn main(): i64 { var bi: Box<i64>; bi.v = 4; bi.n = 0; return g(bi); }
+syscall(60, main());
+'
+CFQ='fn main(): i64 { var bq: Box<Q>; bq.v.a = 3; bq.v.b = 4; bq.n = 0; return g(bq); }
+syscall(60, main());
+'
+refuse "CF1 rdb(b.v) at Box<i64>: the stub's" "$TGM" "$CFH$CF1G$CFS" one
+tv_note "CF1n the forward's note" "6:34: 'g' forwards its type parameter to 'rdb'"
+refuse "CF2 var r = idt(b.v); r.b at Box<i64>" "$TGM" "$CFH$CF2G$CFS" one
+accept "CFa rdb(b.v) at Box<Q>" "$CFH$CF1G$CFQ" 4 'syscall(60, 4);'
+accept "CFb var r = idt(b.v); r.b at Box<Q>" "$CFH$CF2G$CFQ" 4 'syscall(60, 4);'
+accept "CF3 bounded r.show() on idt(b.v) at Box<i64>" "$CFH"'trait Show { fn show(self): i64; }
+impl Show for i64 { fn show(self): i64 { return self + 100; } }
+fn g<T: Show>(b: Box<T>): i64 { var r = idt(b.v); return r.show(); }
+'"$CFS" 104 'syscall(60, 104);'
+
 cross_rows() {  # $1 the leg's name
     refuse_at "CPX [$1] CP0" "4:42: $NSF" "$CPA"
     refuse_at "CPX [$1] CP1" "5:36: $UM" "$CPB"
@@ -2084,6 +2347,10 @@ cross_rows() {  # $1 the leg's name
     refuse_at "RBX [$1] RB1" "7:69: $SN 'x'$SM" "$RB1"
     refuse_at "RBX [$1] RB2" "8:59: $SN 'x'$SM" "$RB2"
     refuse_at "RBX [$1] RB4" "4:46: $SN 'x'$SA" "$RB4"
+    refuse_at "RBNX [$1] none cl x.show()" "9:55: $SN 'x'$SM" "$RBNB$RBNO$(rbn_g cl 'x.show()')
+$RBNM"
+    refuse_at "RBNX [$1] stub fi x.y" "9:73: $SN 'x'$SA" "$RBNB$RBNO$(rbn_g fi 'x.y' stub)
+$RBNM"
     refuse "TGX [$1] TG13" "generic 'gc' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gc(5); }'"$TE" one
     refuse "TGX [$1] TG17" "generic 'gco' has no i64 (or other scalar) instance" "$TH"'fn main(): i64 { return gco(5); }'"$TE" one
     refuse_at "DPX [$1] DP0" "6:44: $(printf '%s' "$DM" | tr -d '\\')" "$DP0S"
@@ -2098,6 +2365,10 @@ fn main(): i64 { return gds(5); }'"$TE" one
     refuse "UPX [$1] UP5" "cannot assign '\*p' from 'Q\.dup'" "$DQ"'fn main(): i64 { var q: Q; var x = 5; var p = &x; *p = q.dup(); return x; }'"$TE" one
     refuse "COX [$1] CO5" "cannot assign '\*p' from 'mkp'" "$CQ"'fn g(): i64 { var x = 10; var p = &x; *p += mkp(); return x; }'"$FTE" one
     refuse "COX [$1] CO7" "cannot assign 'w\.n: i64' from 'mkp'" "$CQ"'fn g(): i64 { var w = W { 1, 0 }; w.n += mkp(); return w.n; }'"$FTE" one
+    refuse "COX [$1] CO21" "$CGM" "$CQ"'fn gc<T>(p: *T): i64 { *p += mkp(); return 7; }
+fn g(): i64 { var z = 1; return gc(&z); }'"$FTE" one
+    refuse_at "SVX [$1] SV0" "2:62: cannot assign 'y: i64' from 'q', which is the struct 'Q' - declare 'y: Q' or bind a field|2:78: cannot initialise 'z: i64' from 'q', which is the struct 'Q' - declare 'z: Q' or bind a field" "$SV0S"
+    refuse "SVX [$1] SV4" "cannot assign 'w\.n: i64' from 'q', $SVW" "$SQ"'fn g(): i64 { var q = Q { 333, 444 }; var w = W { 1, 0 }; w.n = q; return w.n; }'"$FTE" one
     refuse "FEX [$1] FE1" "cannot assign 'pw\.n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { 1, 0 }; var pw: *W = &w; pw.n = mkp(); return w.n; }'"$FTE" one
     refuse "FEX [$1] FE15b" "cannot assign 'b\[1\]: u8' from 'mkp'" "$FQ"'fn g(): i64 { var b: u8[4]; b[1] = mkp(); return b[1]; }'"$FTE" one
     refuse "FEX [$1] FE17" "cannot assign 'n: i64' from 'mkp'" "$FQ"'fn g(): i64 { var w = W { mkp(), 0 }; return w.n; }'"$FTE" one
@@ -2117,10 +2388,10 @@ unset CYRIUS_TARGET_WIN
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # FLOOR (the wave-4 integration, 2026-10-21: 6.7.16's D102 review 367 (f16b) and the generic-callee / D99 rows 401 (s16:
-# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29; D1 (genr) + 44): a lost row block —
+# + DS, TA15, DSX), each over the genbind review's 300 — 300 + 67 + 101; 345 at D102, 327 at D96; 6.7.17's D13 + 25, D16 + 48, D15 + 29 (+ 11 at its review), D106 + 34; D1 (genr) + 44; the genr review's WR + 8, CF + 5; the genr finish's RBN + 30): a lost row block —
 # a source variable emptied, a leg's loop dropped — is RED, not a shorter green.
-if [ $((nrefuse + naccept)) -lt 614 ]; then
-    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 614"; exit 1
+if [ $((nrefuse + naccept)) -lt 702 ]; then
+    echo "FAIL: struct_result_type_refused ran $((nrefuse + naccept)) rows, under its floor of 702"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
 exit 0

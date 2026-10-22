@@ -630,6 +630,33 @@ for f in so15_bad1 so15_bad2; do
     check "ANTI-VACUOUS: $f still refuses lint" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
 done
 
+# ── AXIS 16 (6.7.17, met in the feg review fixes) — a RANGE whose start is a field of a receiver with no struct here:
+# `for y in x.a..10` (x untyped, or of a sibling file's struct). `_synonly_skip_chain` took the range's first `.` as a
+# field's and said "expected identifier, got '.'" (and the loop read as one over a vector: "undefined function
+# 'vec_len'"), so lint refused valid source; now a `.` another `.` follows ends the chain. ANTI-VACUOUS: so16_bad
+# `x.a.;` keeps its "expected identifier". RED on the bite before (the merged tree's compiler): so16a / so16b's
+# --syntax-only and LINTED rows.
+echo "axis 16 — a range starting at a field of a receiver with no struct here passes --syntax-only and lint:"
+printf 'struct Foo { g; }\n' > "$T/w/so16_sib.cyr"
+printf 'fn f(x): i64 {\n    var s = 0;\n    for y in x.g..10 { s = s + y; }\n    return s;\n}\nvar r = f(0);\n' > "$T/w/so16a.cyr"
+printf 'fn f(): i64 {\n    var a: Foo;\n    a.g = 1;\n    var s = 0;\n    for y in a.g..10 { s = s + y; }\n    return s;\n}\nvar r = f();\n' > "$T/w/so16b.cyr"
+cat "$T/w/so16_sib.cyr" "$T/w/so16b.cyr" > "$T/w/joined_so16b.cyr"
+j_rc=0
+( cd "$T/w" && "$CYCC" < "joined_so16b.cyr" > /dev/null 2> "$T/sj" ) || j_rc=$?
+check "premise: so16b compiles once Foo is in scope" 0 "$j_rc"
+for f in so16a so16b; do
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --syntax-only < "$f.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+    check "$f passes --syntax-only (exit 0)" 0 "$s_rc"
+    check "$f --syntax-only prints no diagnostic" 0 "$(grep -cE '^(error|warning)' "$T/se" || true)"
+    rc=$(lint "$f.cyr")
+    check "$f is LINTED, not refused (exit 0)" 0 "$rc"
+done
+printf 'fn f(x): i64 {\n    var s = x.g.;\n    return s;\n}\nvar r = f(0);\n' > "$T/w/so16_bad.cyr"
+s_rc=0
+( cd "$T/w" && "$CYCC" --syntax-only < "so16_bad.cyr" > /dev/null 2> "$T/se" ) || s_rc=$?
+check "ANTI-VACUOUS: so16_bad keeps 'expected identifier' under --syntax-only" "yes 1" "$([ "$s_rc" != 0 ] && echo yes || echo no) $(grep -c '^error:<source>:2:[0-9]*: expected identifier' "$T/se" || true)"
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: lint-reports-unparseable — lint tells the truth about parsing AND still lints"
