@@ -29,13 +29,20 @@
 #           on a registration line, and nothing `sh`/`bash`/`.`-runs a $ROOT script except the
 #           staging call to scripts/install.sh
 #   axis 5  every driver-registered path resolves as a selector (`--resolve gate:<name>`)
-#   axis 7  a ratchet: the gates that hard-code `CC="$ROOT/build/cycc"` (and so cannot be pointed
-#           at a candidate compiler via $CYCC) do not grow past their ceiling
+#   axis 7  a ratchet: the gates that run the tree's build/cycc without honouring $CYCC (and so
+#           cannot be pointed at a candidate compiler through it) do not grow past their ceiling —
+#           an assignment, an inline run or staging, or a default through another variable, each
+#           reader checked on a fixture per spelling (6.7.17)
 #   axis 6  ANTI-VACUOUS: the census is run against four mutants of the registry and must go
 #           red on each — one `_chk_gate` turned back into a bare `sh` (axes 1 + 4), a gate
 #           registered twice (axis 1), a registration of a missing file (axis 2), and a driver
 #           `_gate(` whose path is a variable (axis 3).
 #
+# MUTATION PROOF (6.7.17, axis 7, in a scratch copy of the tree): f1b6f335d's assignment-only reader
+# restored -> RED (19 fixture spellings read as 'none'; "95 assign / 0 inline / 0 default — a
+# reader is blind"); the cp / ln alternative dropped -> RED on its 2 fixtures; the ${CYCC:-…}
+# exclusion dropped -> RED (3 rows); a new gate running `| "$ROOT/build/cycc"`, or one defaulting
+# through `${CC:-…}`, -> RED, 151 over the ceiling of 150.
 # MUTATION PROOF (6.6.8, outside this gate): with the ten bare `sh` lines restored in
 # scripts/check.sh this gate is RED on axes 1 and 4, naming each one (measured with one restored); with
 # `_chk_driver_gate_manifest` back to its `"tests/gates/…"`-only grep it is RED on axis 3
@@ -189,27 +196,114 @@ echo "axis 7: gates that ignore \$CYCC do not grow (ratchet)"
 # diagnostics/derive_non_struct_rejected.sh (placed from the 6.6.7 reviews) and set this
 # ceiling at what remained. LOWER it as gates are converted; never raise it — a new gate
 # writes the CYCC form. Derived, printed, and floor-checked so a blind grep cannot pass.
-# 6.7.17: the reader takes every spelling the tree uses — `CC="$ROOT/build/cycc"`, `CC="$R/build/cycc"`,
-# `CC=build/cycc` and an unconditional `CYCC="$ROOT/build/cycc"` (which overrides the caller's $CYCC).
-# It read only the first, so 38 of the 95 gates that pin build/cycc were invisible to it and a new
-# gate written `CC="$R/build/cycc"` grew the set unseen; the ceiling moved from 63 to what the
-# corrected reader measures — a reader fix, not growth. The reader is checked on each spelling
-# below, so a narrowed regex goes RED. CHANGELOG [6.7.17]
-CYCC_CEIL=95   # 6.7.17: the corrected reader's count (63 under the old one; 6.7.7: lowered to what the tree measured; 6.6.16: srca-3 converted diagnostics/recursion_depth_bounded.sh; 6.6.11: B06, B10, B11 converted four more)
-HARD_RE='^(CC|CYCC)="?(\$ROOT/|\$R/)?build/cycc"?$'
-for _sp in 'CC="$ROOT/build/cycc"' 'CC="$R/build/cycc"' 'CC=build/cycc' 'CC=$ROOT/build/cycc' 'CYCC="$ROOT/build/cycc"'; do
-    printf '%s\n' "$_sp" | grep -qE "$HARD_RE" || _fail "the ratchet's reader does not count the hard-coded spelling $_sp"
-done
-printf '%s\n' 'CC="${CYCC:-$ROOT/build/cycc}"' | grep -qE "$HARD_RE" && _fail "the ratchet's reader counts the \$CYCC form as hard-coded"
-NHARD=$(grep -lE "$HARD_RE" tests/gates/*/*.sh | grep -c . || true)
-NSOFT=$(grep -lE 'CYCC:-' tests/gates/*/*.sh | grep -c . || true)
+# 6.7.17: the reader reads every way a gate in the tree names the compiler it runs, one reader
+# per way, each file counted once under the first that matches:
+#   assign   the tree's compiler assigned to any variable, indented or exported —
+#            `CC="$ROOT/build/cycc"`, `CC="$R/build/cycc"`, `CC=build/cycc`, and an unconditional
+#            `CYCC="$ROOT/build/cycc"` (it overrides the caller's $CYCC);
+#   inline   in a gate with no `${CYCC:-…}` form, the tree's compiler run or staged in place:
+#            piped into (`| build/cycc`, `| ./build/cycc`, `| "$ROOT/build/cycc"`, env words
+#            allowed between), run on a redirected stdin (`"$ROOT/build/cycc" <`, `"$R/build/cycc" <`,
+#            `./build/cycc <`), or a `cp` / `ln -s` of it into a staged home or scratch root (what
+#            that home's CLI then runs);
+#   default  in a gate with no `${CYCC:-…}` form, a default through ANOTHER variable —
+#            `${CC:-$ROOT/build/cycc}`, `${CYRIUS_CC:-…}`, `${CYCC_BIN:-…}`: a run with $CYCC set
+#            still tests build/cycc there.
+# Not counted, by design: a stub written AT a scratch root's build/cycc, a `[ -x … ]` check, text
+# inside a fixture, and a release / install script a gate drives (it runs the compiler it names).
+# Until 6.7.17 it read only `CC="$ROOT/build/cycc"`: 38 assignment gates, the 33 inline and the 22
+# default ones were invisible, and a new gate written any of those ways grew the set unseen. The
+# ceiling moved from 63 to what the corrected reader measures — a reader fix, not growth. Each
+# spelling is checked below on a fixture of its own, so a narrowed reader goes RED.
+# CHANGELOG [6.7.17]
+CYCC_CEIL=150  # 6.7.17: the corrected reader's count, 95 assign + 33 inline + 22 default (63 under the old one; 6.7.7: lowered to what the tree measured; 6.6.16: srca-3 converted diagnostics/recursion_depth_bounded.sh; 6.6.11: B06, B10, B11 converted four more)
+# The tree's compiler as a gate spells it: `build/cycc`, `./build/cycc`, `$ROOT/build/cycc`,
+# `$R/build/cycc` (R is the root there), `${ROOT}/…`, `"$ROOT"/…`, quoted or not.
+TREE_CC='"?(\$\{?(ROOT|R)\}?"?/|\./)?build/cycc"?'
+ENVW='([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+HARD_RE='^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*='"$TREE_CC"'[[:space:]]*(#.*)?$'
+SOFT_RE='\$\{CYCC:-'
+INLINE_RE='(\|[[:space:]]*'"$ENVW$TREE_CC"'([[:space:]]|$))|((^|[[:space:];&|(!])'"$ENVW$TREE_CC"'[[:space:]]*<)|((^|[[:space:];&|(])(cp|ln[[:space:]]+-[a-z]*s[a-z]*)[[:space:]]+"?\$\{?(ROOT|R)\}?"?/build/cycc"?[[:space:]])'
+DEFAULT_RE='\$\{[A-Za-z_][A-Za-z0-9_]*:-"?\$\{?(ROOT|R)\}?"?/build/cycc'
+# The gates under $1 that run the tree's compiler without honouring $CYCC: `<reader> <file>` each.
+_pinned() {
+    find "$1" -name '*.sh' | LC_ALL=C sort > "$D/pin.list"
+    while read -r _pf; do
+        [ -n "$_pf" ] || continue
+        if grep -qE "$HARD_RE" "$_pf"; then echo "assign $_pf"; continue; fi
+        grep -qE "$SOFT_RE" "$_pf" && continue
+        grep -vE '^[[:space:]]*#' "$_pf" > "$D/pin.code" || true
+        if [ "$(grep -cE "$INLINE_RE" "$D/pin.code" || true)" -gt 0 ]; then echo "inline $_pf"
+        elif [ "$(grep -cE "$DEFAULT_RE" "$D/pin.code" || true)" -gt 0 ]; then echo "default $_pf"; fi
+    done < "$D/pin.list"
+}
+# The reader on a fixture per spelling: `<reader>|<the line>`; `none|…` must not be counted.
+FX="$D/pinfx"; mkdir -p "$FX"
+cat > "$D/pin.cases" <<'CASES'
+assign|CC="$ROOT/build/cycc"
+assign|CC="$R/build/cycc"
+assign|CC=build/cycc
+assign|CC=$ROOT/build/cycc
+assign|CYCC="$ROOT/build/cycc"
+assign|    CC="$ROOT/build/cycc"   # indented, with a comment
+assign|export CYCC=./build/cycc
+assign|COMPILER="$ROOT"/build/cycc
+inline|cat src/main.cyr | build/cycc > "$T/o"
+inline|cat src/main_cx.cyr | ./build/cycc > "$D/cc" 2>/dev/null; chmod +x "$D/cc"
+inline|cat "$T/x.cyr" | CYRIUS_TARGET_AGNOS=1 build/cycc > "$T/x"
+inline|CYRIUS_FRAMETRIM=0 sh -c "cat src/main.cyr | build/cycc > \"$TMP/off\""
+inline|"$ROOT/build/cycc" < "$T/p.cyr" > "$T/p" 2> "$T/p.err"
+inline|if CYRIUS_TARGET_AGNOS=1 "$R/build/cycc" < "$T/p.cyr" > "$T/p.bin"; then :; fi
+inline|./build/cycc < src/main_aarch64.cyr > "$D/a" 2>/dev/null || true
+inline|( cd "$ROOT" && "$ROOT/build/cycc" < x.cyr > "$T/p" )
+inline|if ! "$ROOT/build/cycc" < "$1" > "$2" 2> "$T/build.err"; then exit 1; fi
+inline|cp "$ROOT/build/cycc" "$T/home/bin/cycc"
+inline|ln -s "$ROOT/build/cycc" "$R4/build/cycc"
+inline|cat "$ROOT/x.cyr" | "$ROOT/build/cycc" > /dev/null
+inline|"${ROOT}"/build/cycc < x.cyr > "$T/x"
+default|CC="${CC:-$ROOT/build/cycc}"
+default|CC=${CYRIUS_CC:-"$ROOT/build/cycc"}
+default|CYCC=${CYCC_BIN:-"$ROOT/build/cycc"}
+none|CC="${CYCC:-$ROOT/build/cycc}"
+none|CC=${CYCC:-"$ROOT/build/cycc"}
+none|# cat src/main.cyr | build/cycc > "$T/o"
+none|[ -x "$ROOT/build/cycc" ] || { echo "FAIL: build/cycc not built"; exit 1; }
+none|printf '#!/bin/sh\nexit 0\n' > "$W/root/build/cycc"
+none|cp "$D/cycc.new" "$ROOT/build/cycc"
+none|cat src/main_aarch64.cyr | ./build/cycc_aarch64 > "$D/x"
+none|rm -f "$R/build/cycc-native-aarch64" "$R/build/cycc"
+CASES
+_ci=0
+while IFS='|' read -r _kind _line; do
+    _ci=$((_ci + 1))
+    printf '%s\n' "$_line" > "$FX/case$_ci.sh"
+done < "$D/pin.cases"
+# A gate with the ${CYCC:-…} form is not counted for an inline run beside it (it honours $CYCC).
+printf '%s\n%s\n' 'CC="${CYCC:-$ROOT/build/cycc}"' 'cat x.cyr | build/cycc > "$T/x"' > "$FX/soft_inline.sh"
+_pinned "$FX" > "$D/pin.fx"
+_ci=0
+while IFS='|' read -r _kind _line; do
+    _ci=$((_ci + 1))
+    _got=$(grep " $FX/case$_ci.sh\$" "$D/pin.fx" | cut -d' ' -f1 || true)
+    [ -n "$_got" ] || _got=none
+    [ "$_got" = "$_kind" ] || _fail "the ratchet's reader reads \`$_line\` as '$_got' (want '$_kind')"
+done < "$D/pin.cases"
+grep -q "soft_inline.sh\$" "$D/pin.fx" && _fail "the ratchet's reader counts a gate with the \${CYCC:-…} form for an inline run beside it"
+_pinned tests/gates > "$D/pin.tree"
+NHARD=$(grep -c '^assign ' "$D/pin.tree" || true)
+NINL=$(grep -c '^inline ' "$D/pin.tree" || true)
+NDEF=$(grep -c '^default ' "$D/pin.tree" || true)
+NPIN=$((NHARD + NINL + NDEF))
+NSOFT=$(find tests/gates -name '*.sh' -exec grep -lE "$SOFT_RE" {} + | grep -c . || true)
 [ "$NSOFT" -ge 10 ] || _fail "only $NSOFT gate(s) honour \$CYCC — the ratchet's reader is blind"
-if [ "$NHARD" -gt "$CYCC_CEIL" ]; then
-    _fail "$NHARD gates hard-code build/cycc (ceiling $CYCC_CEIL) — write CC=\${CYCC:-\"\$ROOT/build/cycc\"}"
-    grep -lE "$HARD_RE" tests/gates/*/*.sh | sed 's/^/      /' | tail -5
+[ "$NHARD" -ge 10 ] && [ "$NINL" -ge 10 ] && [ "$NDEF" -ge 5 ] \
+    || _fail "the ratchet's readers see $NHARD assign / $NINL inline / $NDEF default gate(s) — a reader is blind"
+if [ "$NPIN" -gt "$CYCC_CEIL" ]; then
+    _fail "$NPIN gates run build/cycc without honouring \$CYCC (ceiling $CYCC_CEIL) — write CC=\${CYCC:-\"\$ROOT/build/cycc\"}"
+    sed 's/^/      /' "$D/pin.tree" | tail -5
 fi
-[ "$NHARD" -lt "$CYCC_CEIL" ] && echo "  note: $NHARD < ceiling $CYCC_CEIL — lower CYCC_CEIL in this gate to $NHARD"
-echo "  $NHARD hard-coded (ceiling $CYCC_CEIL), $NSOFT honour \$CYCC"
+[ "$NPIN" -lt "$CYCC_CEIL" ] && echo "  note: $NPIN < ceiling $CYCC_CEIL — lower CYCC_CEIL in this gate to $NPIN"
+echo "  $NPIN ignore \$CYCC ($NHARD assign, $NINL inline, $NDEF default; ceiling $CYCC_CEIL), $NSOFT honour \$CYCC"
 
 if [ "$FAILS" -ne 0 ]; then
     echo "check_gate_census: $FAILS FAILURE(S)"
