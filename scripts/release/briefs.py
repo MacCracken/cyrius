@@ -77,7 +77,14 @@ def main():
         if wave == 0:
             continue
         for lane, units in lanes.items():
-            meta = lanemeta[lane]
+            meta = lanemeta.get(lane)
+            if meta is None:
+                # a release may run a triage group as several lanes (6.7.17): the lane takes the notes of the
+                # group its first issue was triaged in
+                first = next(iter(units.values()))[0]
+                if first not in items:
+                    sys.exit(f'{lane}: {first} is not in the triage')
+                meta = lanemeta[items[first][0]]
             for u, xs in units.items():
                 key = f'{lane}/{u}'
                 out = [f"# {ver} brief — lane {lane}, unit {u} (wave {wave})\n"]
