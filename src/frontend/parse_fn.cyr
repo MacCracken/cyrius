@@ -14093,6 +14093,7 @@ fn _tpl_skip(S): i64 {
 # `fn g3<A, B, C>` read `sizeof(C)` as 8 for a 24-byte struct argument and `struct Three<A, B, C>` laid C out as i64,
 # with no diagnostic. CHANGELOG [6.7.16]
 fn _capture_tparams(S): i64 {
+    if (PEEKT(S) == 19) { _tpl_names(S, GTI(S)); }   # 6.7.17 (D3): an entry that is no name
     if (_MONOMORPH_OK == 0) { _tpl_skip(S); return 0; }
     if (PEEKT(S) != 19) { return 0; }
     _ctp_n0 = 0; _ctp_n1 = 0; _ctp_bad = 0;   # 6.7.1 (C3): this list's bounds
@@ -14120,6 +14121,14 @@ fn _capture_tparams(S): i64 {
                 if (PEEKT(S) == 49) {
                     _ctp_bounds(S, n - 1);
                     if (_ctp_closed == 1) { _ctp_closed = 0; return off0 | (off1 << 32); }   # `>>` closed it
+                }
+            } elif (PEEKT(S) == 19) {
+                # 6.7.17: `<T<i64>>` (refused, `_tpl_names`) — the inner list stepped whole, as SKIP_GENERICS steps it:
+                # its names were taken as parameters, and its `>>` read past the list
+                var nx = _skip_targ_list(S);
+                if (nx > 0) {
+                    if (nx > 1) { STI(S, GTI(S) - 1); }
+                    return off0 | (off1 << 32);
                 }
             } else {
                 STI(S, GTI(S) + 1);

@@ -60,6 +60,17 @@
 #       GT4 the bound, GT5 / GT6 the impl method, both spellings, GT7 `fn f 5 (a)`; plain and CYRIUS_MONOMORPH=0 (GT4
 #       there without its bound's line: the flag reads no bound). Mutant (2026-10-22): the compiler before (81b74c14f)
 #       -> RED GT4 [plain] and GT5-GT7 on both legs (GT7: "undefined variable 'a'").
+#   P   (6.7.17, the user's D3, 2026-10-22: "Refuse it at the token") A TYPE-PARAMETER LIST ENTRY THAT IS NO NAME:
+#       `struct P<5>`, `struct R<T, 5>`, `enum E<5>`, `fn f<5>()` compiled with the token stepped unread (rc 0, exit 3);
+#       now "a type parameter is a name, got number 5" at the token, once per list, in pass 1 in source order, plain,
+#       under CYRIUS_MONOMORPH=0 and --syntax-only (cyrius lint; no name is resolved). P1 the filed repro verbatim (four
+#       lines); P2 an empty entry (`<,T>`, `<T,,U>`, `<T,>`: its `,` / `>`); P3 a keyword, a string, `<T<i64>>`, `=`,
+#       `+`, `u128`, junk after a bound — and `<T: 5>` stays the bound's own line (none under the flag, which reads no
+#       bound); P4 a trait member's `fn g<5>` / `fn h<T, 6>`, a struct's and an enum's `<T<..>>`, the next fn's own
+#       error after them; PK controls `<>`, `<T: Show + Eq, U>`, `enum Res<T, E>`, a member's `<V: Show + Eq, U>`
+#       (exit 36); A [a64] / [cx] / [pe] / [macho] P1. Issue: issues/2026-10-21-generic-parameter-and-type-argument-
+#       lists-judged-by-position.md row 1. Mutant (2026-10-22): the compiler before (193c42f72) -> RED P1-P4 on every
+#       leg (built, or only the bound's / a closer's line: `<T<i64>>` read `>>` past the list) and A [pe] / [macho] P1.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -251,6 +262,67 @@ else chmod +x "$D/gtk.bin"; got=0; "$D/gtk.bin" || got=$?
     if [ "$got" -eq 5 ]; then ok "GTK: controls — a bounded fn, a two-parameter struct, a generic enum: exit 5"; else bad "GTK: exit $got, want 5"; fi
 fi
 
+# ── P: a type-parameter list entry that is no name (6.7.17, the user's D3) ──────────────────────────────────────
+NM="a type parameter is a name, got"
+cat > "$D/p1.cyr" <<'EOF'
+struct P<5> { a; }
+struct R<T, 5> { a; }
+enum E<5> { A }
+fn f<5>(): i64 { return 3; }
+syscall(60, f());
+EOF
+P1W="1:10: $NM number 5|2:13: $NM number 5|3:8: $NM number 5|4:6: $NM number 5"
+lines p1 "$P1W" "P1 [plain]: the filed repro verbatim (it built: exit 3)"
+lines p1 "$P1W" "P1 [mono0]: under CYRIUS_MONOMORPH=0" "CYRIUS_MONOMORPH=0 $CC"
+lines p1 "$P1W" "P1 [lint]: --syntax-only reports it" "$CC --syntax-only"
+printf 'fn f<,T>(x: T): i64 { return 1; }\nfn g<T,,U>(x: T): i64 { return 1; }\nfn h<T,>(x: T): i64 { return 1; }\nsyscall(60, 3);\n' > "$D/p2.cyr"
+lines p2 "1:6: $NM ','|2:8: $NM ','|3:8: $NM '>'" "P2: an empty entry — <,T>, <T,,U>, <T,>"
+cat > "$D/p3.cyr" <<'EOF'
+fn k<if>(x): i64 { return 1; }
+fn l<"s">(x): i64 { return 1; }
+fn m<T<i64>>(x): i64 { return 1; }
+fn o<T = i64>(x): i64 { return 1; }
+trait Show { fn show(self): i64; }
+fn p<T: Show 5>(x): i64 { return 1; }
+fn q<T + U>(x): i64 { return 1; }
+fn r<u128>(x): i64 { return 1; }
+fn n<T: 5>(x): i64 { return 1; }
+syscall(60, 3);
+EOF
+P3W="1:6: $NM reserved keyword 'if'|2:6: $NM string|3:7: $NM '<'|4:8: $NM '='|6:14: $NM number 5|7:8: $NM '+'|8:6: $NM reserved keyword 'u128'"
+lines p3 "$P3W|9:9: expected a trait name in a type parameter's bound (\`T: Show + Eq\`)" "P3 [plain]: each token, once; <T: 5> the bound's line"
+lines p3 "$P3W" "P3 [mono0]: the same, no bound line (the flag reads none)" "CYRIUS_MONOMORPH=0 $CC"
+cat > "$D/p4.cyr" <<'EOF'
+trait Tr { fn g<5>(self): i64; fn h<T, 6>(self): i64; fn k<U>(self): i64; }
+struct B<T<i64>> { a; }
+enum E<T<i8>> { A }
+fn main(): i64 { var y = 1 2; return 0; }
+syscall(60, main());
+EOF
+P4W="1:17: $NM number 5|1:40: $NM number 6|2:11: $NM '<'|3:9: $NM '<'|4:28: expected ';', got number 2"
+lines p4 "$P4W" "P4 [plain]: a trait member's, a struct's, an enum's — the next fn's own error after them"
+lines p4 "$P4W" "P4 [mono0]" "CYRIUS_MONOMORPH=0 $CC"
+cat > "$D/pk.cyr" <<'EOF'
+trait Show { fn show(self): i64; }
+trait Eq { fn eq(self, o): i64; }
+struct Pt { x; y; }
+impl Show for Pt { fn show(self): i64 { return self.x; } }
+impl Eq for Pt { fn eq(self, o): i64 { return 1; } }
+fn h<T: Show + Eq, U>(a: T, b: U): i64 { return a.show() + sizeof(U); }
+fn k<T, E>(a: T, b: E): i64 { return sizeof(T); }
+struct Two<A, B> { a: A; b: B; }
+enum Res<T, E> { Ok, Err }
+fn i<>(x): i64 { return x; }
+trait Tm { fn g<V: Show + Eq, U>(self, v: V, u: U): i64; }
+fn main(): i64 { var p = Pt { 3, 4 }; var t: Two<i8, Pt>; return h(p, 5) + k(1, 2) + sizeof(Two<i8, Pt>) + i(0); }
+syscall(60, main());
+EOF
+rc=0; "$CC" < "$D/pk.cyr" > "$D/pk.bin" 2> "$D/pk.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "PK: controls: rc $rc: $(grep '^error' "$D/pk.err" | head -1)"
+else chmod +x "$D/pk.bin"; got=0; "$D/pk.bin" || got=$?
+    if [ "$got" -eq 36 ]; then ok "PK: controls — <>, <T: Show + Eq, U>, enum Res<T, E>, a member's <V: Show + Eq, U>: exit 36"; else bad "PK: exit $got, want 36"; fi
+fi
+
 # ── C: controls, every leg ──────────────────────────────────────────────────────────────────────────────────
 cat > "$D/c.cyr" <<'EOF'
 trait Show { fn show(self): i64; }
@@ -310,7 +382,11 @@ lines g3 "2:13: a third type parameter 'C': $M" "A [pe]: R1" "CYRIUS_TARGET_WIN=
 [ -n "$CXCC" ] && lines trm "1:22: a third type parameter 'C': $M" "A [cx]: T1" "$CXCC"
 lines trm "1:22: a third type parameter 'C': $M" "A [pe]: T1" "CYRIUS_TARGET_WIN=1 $CC"
 lines trm "1:22: a third type parameter 'C': $M" "A [macho]: T1" "CYRIUS_MACHO=1 $CC"
+[ -n "$A64" ] && lines p1 "$P1W" "A [a64]: P1" "$A64"
+[ -n "$CXCC" ] && lines p1 "$P1W" "A [cx]: P1" "$CXCC"
+lines p1 "$P1W" "A [pe]: P1" "CYRIUS_TARGET_WIN=1 $CC"
+lines p1 "$P1W" "A [macho]: P1" "CYRIUS_MACHO=1 $CC"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: $G — $fails row(s) red"; exit 1; fi
-echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
+echo "PASS: $G — a third type parameter is refused at its declaration, once, by name (the user's D8): the filed programs (R), a struct and every use (S), bounded (B), a method (M), four parameters (F), a struct declared below (L), a generic body (G), source order (O), --syntax-only (X), a trait member's own (T, the user's D92), a list entry that is no name (P, the user's D3), the controls on x86_64 / aarch64 / cx / PE (C) and every cross compiler (A)"
 exit 0

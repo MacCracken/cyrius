@@ -7947,7 +7947,12 @@ type parameter 'C': a generic takes at most two type parameters* — and its use
 (6.7.16, the user's D8; through 6.7.15 it was accepted and bound nothing: `g3(1, 2, s)` read
 `sizeof(C)` as 8 for a 24-byte struct). So is a trait member's own third, `trait T { fn g<A, B, C>(self, c: C):
 i64; }`, at the member — with or without a default body, whatever its impls declare (6.7.16, the user's D92; a
-bodiless member's compiled, and so did an impl declaring `<A, B>` for it). A
+bodiless member's compiled, and so did an impl declaring `<A, B>` for it). Each entry of a
+type-parameter list is a name (with its bound): one that is not — `struct P<5>`, `struct R<T, 5>`, `enum E<5>`,
+`fn f<5>()`, a trait member's `fn g<5>(self)`, `<T<i64>>`, an empty entry `<,T>` / `<T,,U>` / `<T,>` — is refused at
+that token, once per list, under `--syntax-only` too: *a type parameter is a name, got number 5* (6.7.17, the user's
+D3; through 6.7.16 the token was stepped unread). A list closed by a `>>` that closes more than it (`fn f<T>>(x)`,
+`struct B<T>> {`) is the header's *expected '(', got '>>'* (6.7.17; the extra level was dropped). A
 struct type argument works in either slot of a two-parameter generic — explicit
 (`g<Pt, i64>`, `g<i64, Pt>`) or inferred (`g(p, 2)`, `g(5, p)`, `g(p, q)` with two
 structs) — on every call path, struct receives and assignments included (6.7.1;

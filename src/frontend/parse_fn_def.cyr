@@ -5347,11 +5347,91 @@ fn _tl_trait2_body(S, ti): i64 {
 # PARSE_FN_DEF as well, and `_tn_once` keeps it to one line (the user's D92, 2026-10-20). CHANGELOG [6.7.16]
 fn _tr_tp_third(S, p): i64 {
     if (TOKTYP(S, p + 2) != 19) { return 0; }
+    _tpl_names(S, p + 2);   # 6.7.17 (D3): an entry that is no name, as a fn's
     var k = _tp_nth_at(S, p + 2, 2);
     if (k < 0) { return 0; }
     var sv = GTI(S);
     STI(S, k);
     _ctp_third(S);
+    STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.17 (D3) — A TYPE-PARAMETER LIST ENTRY THAT IS NO NAME IS REFUSED AT ITS TOKEN: `struct P<5>`, `struct R<T, 5>`,
+# `enum E<5>`, `fn f<5>()` and a trait member's `fn g<5>(self)` compiled with the token stepped unread (each reader took
+# names and stepped anything else). "a type parameter is a name, got number 5" (the user's D3, 2026-10-22: refuse it at
+# the token), once per list at its first such token; an empty entry (`<,T>`, `<T,,U>`, `<T,>`) is the same mistake, its
+# `,` / `>` the token, as a fn's parameter list refuses `(a,,b)` / `(a,)`. Said in pass 1 in source order (a fn's
+# prescan, a struct's and an enum's definition, a trait member's walk; later readers of the same token say nothing,
+# `_tn_once`), in both monomorph modes, never by an instance's re-emit; no name is resolved, so `--syntax-only` (cyrius
+# lint) reports it too. A bound's own shape (`T: 5`, `T: Show<i64>`) stays `_bnd_make`'s, a closer that closes more
+# than the list the header's (`_tpl_skip`). Read off the tokens from the `<` at `lt`; nothing is consumed.
+# CHANGELOG [6.7.17]
+fn _tpl_names(S, lt): i64 {
+    var k = lt + 1;
+    var st = 0;   # 0 an entry next, 1 past a parameter's name, 2 a bound's trait next, 3 past a bound's trait
+    var d = 1;
+    var e = GTCNT(S);
+    while (k < e) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return 0; }
+        if (d == 1) {
+            if (_targ_gt_n(t) > 0) { return _tpl_end(S, k, st); }
+            if (t == 19) {
+                if (st < 2) { return _tpl_err(S, k); }   # `<T<i64>>`: a parameter takes no list
+                d = 2;                                    # a bound's (its refusal `_bnd_make`'s)
+            } else {
+                st = _tpl_st(t, st);
+                if (st < 0) { return _tpl_err(S, k); }
+            }
+        } else {
+            if (t == 19) { d = d + 1; }
+            d = d - _targ_gt_n(t);
+            if (d < 1) { return 0; }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+# The list's closer at token `k` (`st` as above): an entry was promised and none came (`<T,>`) — refused there.
+fn _tpl_end(S, k, st): i64 {
+    if (st != 0) { return 0; }
+    if (TOKTYP(S, k - 1) != 31) { return 0; }   # `<>`: no entry at all
+    return _tpl_err(S, k);
+}
+# The state after token type `t` at depth 1, from state `st`; -1 = the token is refused.
+fn _tpl_st(t, st): i64 {
+    if (st == 2) {            # a bound's trait next: anything else is the bound's own refusal (`_bnd_make`)
+        if (t == 2) { return 3; }
+        if (t == 31) { return 0; }
+        return 2;
+    }
+    if (t == 2) { return 1; }
+    if (t == 31) { if (st == 0) { return 0 - 1; } return 0; }
+    if (t == 49) { if (st == 1) { return 2; } return 0 - 1; }
+    if (t == 6) { if (st == 3) { return 2; } return 0 - 1; }
+    return 0 - 1;
+}
+# "a type parameter is a name, got <the token>" at token `k`: once per token, the latch left as it was, the cursor put
+# back. A declaration's pass-1 reader says it, never an instance's re-emit.
+fn _tpl_err(S, k): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    _err_n = _err_n + 1;
+    if (_tn_once(S, k) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, k);
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    PRSTR(": a type parameter is a name, got ");
+    var t = TOKTYP(S, k);
+    if (IS_KEYWORD_TOK(t) == 1) { PRSTR("reserved keyword '"); PRSTR(TOKNAME(t)); PRSTR("'"); }
+    else {
+        PRSTR(TOKNAME(t));
+        if (t == 1) { PRSTR(" "); PRNUM(TOKVAL(S, k)); }
+    }
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
     STI(S, sv);
     return 0;
 }
