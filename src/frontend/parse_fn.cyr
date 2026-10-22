@@ -10478,8 +10478,14 @@ fn _ctp_bounds(S, slot): i64 {
         STI(S, GTI(S) + 1);             # consume the trait name
         if (PEEKT(S) == 19) {           # a trait takes no type arguments
             _ctp_badat(slot, GTI(S), 4);
-            # its `>>` may close the parameter list too (`<T: Show<i64>>`)
-            if (_skip_targ_list(S) > 0) { _ctp_closed = 1; return 0; }
+            # its `>>` may close the parameter list too (`<T: Show<i64>>`); 6.7.17: a closer closing more than that
+            # (`<T: Show<i64>>>`) is left for the header, as `_tpl_skip` leaves it
+            var cx = _skip_targ_list(S);
+            if (cx > 0) {
+                _ctp_closed = 1;
+                if (cx > 1) { STI(S, GTI(S) - 1); }
+                return 0;
+            }
         }
         if (PEEKT(S) == 6) { STI(S, GTI(S) + 1); }   # `+`
         else { go = 0; }
@@ -14066,6 +14072,16 @@ fn _skip_targ_list(S): i64 {
     }
     return 0 - d;
 }
+# ⛔ 6.7.17 — A DECLARATION'S `<..>` (a fn's, a struct's, a union's, an enum's) CLOSED BY A `>>` / `>>>` THAT CLOSES
+# MORE THAN THE LIST: `fn f<T>>(x)`, `struct B<T>> {`, `enum E<T>> {`. The extra level was dropped — they compiled under
+# CYRIUS_MONOMORPH=0 and for an enum — and the default capture read on past it (`>>` closed nothing there), the
+# parameters and the body taken as the list, the rest of the file with them. The cursor is left ON that closer, so the
+# header's next read reports it — "expected '(', got '>>'" — as it reports `fn f<T> >(x)`'s `>`. CHANGELOG [6.7.17]
+fn _tpl_skip(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    if (_skip_targ_list(S) > 0) { STI(S, GTI(S) - 1); }
+    return 0;
+}
 
 # v6.3.9 (F-fns): capture a generic param list `<T, U>` at a fn signature, returning
 # the names PACKED as (off0+1) | ((off1+1) << 32) (0 = no `<...>`). Consumes EXACTLY
@@ -14077,7 +14093,7 @@ fn _skip_targ_list(S): i64 {
 # `fn g3<A, B, C>` read `sizeof(C)` as 8 for a 24-byte struct argument and `struct Three<A, B, C>` laid C out as i64,
 # with no diagnostic. CHANGELOG [6.7.16]
 fn _capture_tparams(S): i64 {
-    if (_MONOMORPH_OK == 0) { SKIP_GENERICS(S); return 0; }
+    if (_MONOMORPH_OK == 0) { _tpl_skip(S); return 0; }
     if (PEEKT(S) != 19) { return 0; }
     _ctp_n0 = 0; _ctp_n1 = 0; _ctp_bad = 0;   # 6.7.1 (C3): this list's bounds
     STI(S, GTI(S) + 1);  # consume <
@@ -14091,6 +14107,7 @@ fn _capture_tparams(S): i64 {
         # It must consume EXACTLY what SKIP_GENERICS does (see the comment on this fn),
         # so the two guards have to stay in lockstep.
         elif (PEEKT(S) == 12) { go = 0; }
+        elif (_targ_gt_n(PEEKT(S)) > 1) { return off0 | (off1 << 32); }   # 6.7.17: `<T>>` — left for the header (`_tpl_skip`)
         else {
             if (PEEKT(S) == 2) {
                 if (n == 0) { off0 = PEEKV(S) + 1; }
@@ -18317,7 +18334,7 @@ fn _prescan_skip_fn(S): i64 {
     STI(S, GTI(S) + 1);  # consume name
     # 6.7.17: the `<..>` NESTED (`_skip_targ_list`), as `_capture_tparams` reads it: to the first `>`, a bound's
     # `<T: Show<i64>>` (one `>>`) ran pass 1 past the file's end, every later declaration unscanned. CHANGELOG [6.7.17]
-    SKIP_GENERICS(S);
+    _tpl_skip(S);
     # 6.7.7: the parameter list as one balanced `( .. )` first, so nothing in a parameter default
     # (a refused `{`) is taken for the body. The same cursor for every list that holds no brace.
     if (PEEKT(S) == 10) {

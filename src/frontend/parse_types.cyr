@@ -5021,7 +5021,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
     # PARSE_STRUCT_DEF / PARSE_UNION_DEF. Type params are not yet
     # bound to anything (mono-only); accepting the syntax unblocks
     # `enum Result<T, E> { Ok(v); Err(e); }` source shape.
-    SKIP_GENERICS(S);
+    _tpl_skip(S);   # 6.7.17: `enum E<T>> {` — the `>>` left for "expected '{'"
     # v6.5.55 — `enum Name: stack { V(x); ... }` opts the declaration OUT of heap boxing.
     # A payload variant of a stack enum returns its (tag, payload) in the multi-return
     # register pair (rax = tag, rdx = payload) instead of a 16-byte `alloc`, and is read with

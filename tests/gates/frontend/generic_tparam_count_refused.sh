@@ -44,6 +44,15 @@
 #   M4  the report made in pass 2 by the member's signature walk (`_tr_sig_check`, the triage's plan) instead of
 #       `_tl_trait1`'s -> RED 2: T5 T7 (the member's line after pass 1's); `_tl_trait1` not walking at all -> M3's 10
 #   M5  `_tp_nth_at` counting a bound's trait names as parameters -> RED 2: T6 (at `Nope`), T8 (`Eq` refused)
+#
+#   GT  (6.7.17, met in genb GB1) A DECLARATION'S LIST CLOSED BY A `>>` THAT CLOSES MORE THAN IT (`fn f<T>>(x)`,
+#       `struct B<T>> {`, `enum E<T>> {`): the extra level was dropped — compiled under CYRIUS_MONOMORPH=0 and for an
+#       enum — and the default capture read on past it, the parameters and the body taken as the list ("a third type
+#       parameter 'i64'", "unknown trait 'T' in the bound on type parameter 'x'", "expected '(', got end of file", the
+#       rest of the file lost). The closer is left for the header (`_tpl_skip`): "expected '(', got '>>'", as `fn
+#       f<T> >(x)` says "got '>'"; the next declaration reports its own. GT1-GT3 a fn, a struct, an enum, plain and
+#       under CYRIUS_MONOMORPH=0; GTK controls (exit 5). Mutant (2026-10-22): the compiler before (96415bd9d) -> RED
+#       GT1-GT3 on both legs.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -200,6 +209,24 @@ rc=0; "$CC" < "$D/t8.cyr" > "$D/t8.bin" 2> "$D/t8.err" || rc=$?
 if [ "$rc" -ne 0 ]; then bad "T8: control — <V: Show + Eq, U> and <U> members: rc $rc: $(grep '^error' "$D/t8.err" | head -1)"
 else chmod +x "$D/t8.bin"; got=0; "$D/t8.bin" || got=$?
     if [ "$got" -eq 36 ]; then ok "T8: control — <V: Show + Eq, U> and <U> members build and run: exit 36"; else bad "T8: exit $got, want 36"; fi
+fi
+
+# ── GT: a declaration's list closed by a `>>` that closes more than it (6.7.17) ─────────────────────────────────
+NX="2:28: expected ';', got number 2"
+printf 'fn f<T>>(x: T): i64 { return 1; }\nfn main(): i64 { var y = 1 2; return f(3); }\nsyscall(60, main());\n' > "$D/gt1.cyr"
+printf 'struct B<T>> { a; }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt2.cyr"
+printf 'enum E<T>> { A }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt3.cyr"
+for leg in plain mono0; do
+    cc="$CC"; [ "$leg" = mono0 ] && cc="CYRIUS_MONOMORPH=0 $CC"
+    lines gt1 "1:7: expected '(', got '>>'|$NX" "GT1 [$leg]: fn f<T>>(x: T) — the closer left for the header" "$cc"
+    lines gt2 "1:11: expected '{', got '>>'|$NX" "GT2 [$leg]: struct B<T>> { a; }" "$cc"
+    lines gt3 "1:9: expected '{', got '>>'|$NX" "GT3 [$leg]: enum E<T>> { A }" "$cc"
+done
+printf 'trait Show { fn show(self): i64; }\nimpl Show for i64 { fn show(self): i64 { return self; } }\nfn f<T: Show>(x: T): i64 { return x.show(); }\nstruct B<T, U> { a: T; b: U; }\nenum E<T> { A }\nfn main(): i64 { var b: B<i8, i64>; b.b = 4; return f(1) + b.b; }\nsyscall(60, main());\n' > "$D/gtk.cyr"
+rc=0; "$CC" < "$D/gtk.cyr" > "$D/gtk.bin" 2> "$D/gtk.err" || rc=$?
+if [ "$rc" -ne 0 ]; then bad "GTK: controls: rc $rc: $(grep '^error' "$D/gtk.err" | head -1)"
+else chmod +x "$D/gtk.bin"; got=0; "$D/gtk.bin" || got=$?
+    if [ "$got" -eq 5 ]; then ok "GTK: controls — a bounded fn, a two-parameter struct, a generic enum: exit 5"; else bad "GTK: exit $got, want 5"; fi
 fi
 
 # ── C: controls, every leg ──────────────────────────────────────────────────────────────────────────────────
