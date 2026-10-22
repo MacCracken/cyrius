@@ -5167,7 +5167,7 @@ fn _bck_file(S, tb): i64 {
     var so = GSPOS(S);
     if (so + n + 1 > 2097152) {
         _ew("error: string data overflow (2MB limit)\n", 40);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var k = 0;
     while (k <= n) { store8(S + 0x21A000 + so + k, load8(nm + k)); k = k + 1; }
@@ -6623,7 +6623,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             var fc = GFCNT(S);
             if (fc >= 1048576) {
                 _ew("error: fixup table full (1048576)\n", 34);
-                syscall(SYS_EXIT, 1);
+                _die(1);
             }
             # Register the function-address fixup (common to both
             # backends — only the placeholder bytes differ).
@@ -7900,7 +7900,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             var clfc = GFCNT(S);
             if (clfc >= 1048576) {
                 _ew("error: fixup table full (1048576)\n", 34);
-                syscall(SYS_EXIT, 1);
+                _die(1);
             }
             ELOAD_FN_ADDR(S, _fixup_base + clfc * 16, clfc, clfi);   # rax = fn addr
             EPOPC(S);                        # rcx = dest
@@ -7927,7 +7927,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             var clfc = GFCNT(S);
             if (clfc >= 1048576) {
                 _ew("error: fixup table full (1048576)\n", 34);
-                syscall(SYS_EXIT, 1);
+                _die(1);
             }
             var clfaddr = _fixup_base + clfc * 16;
             ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);

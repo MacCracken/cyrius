@@ -8660,6 +8660,15 @@ the user's decision of 2026-10-15); `return callptr(fp, ..);` (its callee unknow
 
 ## Global Initializers
 
+**A compile's diagnostics print in source order (6.7.17).** The compiler reads a file in several walks — pass 1
+registers the declarations, pass 2 compiles the fn bodies, and a deferred initializer (below) is parsed only when the
+startup code is emitted, after both (in a `kernel;` build after the program) — but the errors and warnings of those
+walks print sorted by the place each one points at, once the last of them ends: `var p = g(1 2);` above `const X;`
+reports line 2, then line 3 (through 6.7.16 line 3 came first, pass 1's). A note or hint stays under the line it
+belongs to; a line naming no place stays after everything printed before it. A compile that stops early — a cap, an
+unmatched `}` — and, on Linux, a compiler fault print what was found first. `CYRIUS_DIAG_UNBUFFERED=1` prints each
+diagnostic as it is found instead, in the walks' order (what to set when chasing a compiler fault on macOS or Windows).
+
 Variables can be declared among function definitions:
 
 ```

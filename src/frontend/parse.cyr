@@ -7267,7 +7267,7 @@ fn _PARSE_DEFER(S): i64 {
     var dci = L64(S + 0x1AC020);
     if (dci >= 64) {
         _ew("error: too many defer blocks (max 64)\n", 38);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(S + 0x1AC028 + dci * 24, dstart);
     S64(S + 0x1AC028 + dci * 24 + 8, dend);
@@ -8084,7 +8084,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         var sdci = L64(S + 0x1AC020);
         if (sdci >= 64) {
             _ew("error: too many defer/secret blocks (max 64)\n", 45);
-            syscall(SYS_EXIT, 1);
+            _die(1);
         }
         S64(S + 0x1AC028 + sdci * 24, ssbody);
         S64(S + 0x1AC028 + sdci * 24 + 8, ssend);
@@ -8541,7 +8541,7 @@ fn PARSE_PROG(S): i64 {
             while (load8(&_pp_hostonly_name + _hol) != 0) { _hol = _hol + 1; }
             _ew(&_pp_hostonly_name, _hol);
             _ew(" (marked #host_only; not available under CYRIUS_KERNEL)\n", 56);
-            syscall(SYS_EXIT, 1);
+            _die(1);
         }
     }
     return 0;

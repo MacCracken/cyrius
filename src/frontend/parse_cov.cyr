@@ -84,7 +84,7 @@ fn _cov_pass1(S): i64 {
         PRSTR(why);
         PRSTR(why2);
         _ew("\n", 1);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     _cov_hv = _cov_greg(S);
     _cov_mv = _cov_greg(S);
@@ -405,7 +405,7 @@ fn _cov_finish(S): i64 {
     var op = GBL(S);
     if (op + 8192 > 25165824) {
         PRSTR("error: the execution-coverage mode's dump does not fit the 24MB preprocess buffer\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var ag = 0;
     if (PP_FLAG_SLOT(S, PP_HASH_CSTR("CYRIUS_TARGET_AGNOS")) >= 0) { ag = 1; }

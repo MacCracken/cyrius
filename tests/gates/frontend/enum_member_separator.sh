@@ -307,47 +307,47 @@ struct Q { a: Foo; }
 enum F { X 6 }
 fn f(): i64 { return zz; }
 syscall(60, f());
-' "error:<source>:2:15: $F
+' "error:<source>:1:7: expected identifier, got number 5
+error:<source>:2:15: $F
 error:<source>:3:12: expected identifier, got number 6
-error:<source>:1:7: expected identifier, got number 5
 error:<source>:4:22: undefined variable 'zz' (missing include or enum?)"
 refuse PT2 "trait T 5 { }" 'trait T 5 { }
 struct Q { a: Foo; }
 enum F { X 6 }
 syscall(60, 0);
-' "error:<source>:2:15: $F
-error:<source>:3:12: expected identifier, got number 6
-error:<source>:1:9: expected '{', got number 5"
+' "error:<source>:1:9: expected '{', got number 5
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6"
 refuse PT3 "trait T<X> { fn m(self): i64; }: no member read as a top-level fn" 'trait T<X> { fn m(self): i64; }
 struct Q { a: Foo; }
 enum F { X 6 }
 syscall(60, 0);
-' "error:<source>:2:15: $F
-error:<source>:3:12: expected identifier, got number 6
-error:<source>:1:8: expected '{', got '<'"
+' "error:<source>:1:8: expected '{', got '<'
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6"
 refuse PT4 "trait T: U { .. } and trait { .. } (no name)" 'trait T: U { fn m(self): i64; }
 trait { fn m(self): i64; }
 struct Q { a: Foo; }
 syscall(60, 0);
-' "error:<source>:3:15: $F
-error:<source>:1:8: expected '{', got ':'
-error:<source>:2:7: expected identifier, got '{'"
+' "error:<source>:1:8: expected '{', got ':'
+error:<source>:2:7: expected identifier, got '{'
+error:<source>:3:15: $F"
 refuse PT5 "trait T; and a trait with no body before a struct" 'trait T;
 trait U
 struct Q { a: Foo; }
 enum F { X 6 }
 syscall(60, 0);
-' "error:<source>:3:15: $F
-error:<source>:4:12: expected identifier, got number 6
-error:<source>:1:8: expected '{', got ';'
-error:<source>:3:1: expected '{', got struct"
+' "error:<source>:1:8: expected '{', got ';'
+error:<source>:3:1: expected '{', got struct
+error:<source>:3:15: $F
+error:<source>:4:12: expected identifier, got number 6"
 refuse PT6 "--syntax-only: PT1's header" 'trait 5 { }
 struct Q { a: Foo; }
 enum F { X 6 }
 syscall(60, 0);
-' "error:<source>:2:15: $F
-error:<source>:3:12: expected identifier, got number 6
-error:<source>:1:7: expected identifier, got number 5" --syntax-only
+' "error:<source>:1:7: expected identifier, got number 5
+error:<source>:2:15: $F
+error:<source>:3:12: expected identifier, got number 6" --syntax-only
 refuse PT7 "a trait member's refusal, then the program's first statement" 'trait T { var x; }
 syscall(60, 1 2);
 ' "error:<source>:1:11: a trait body holds only \`fn\` declarations - in trait 'T'

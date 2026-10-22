@@ -141,14 +141,15 @@ refused d92 "$TC" "D92: var G = 5; var G: bool = true" 'var G = 5;\nvar G: bool 
 # `var X: bool = G;` is X's own error after the type change (as it is with the refused line removed); through 6.7.14 X
 # read the refused bool declaration, which hid it — the mirror of shape 2, whose X was refused for reading the refused
 # integer (issues/archived/2026-10-16-global-type-change-refusal-cascades-into-earlier-reader.md; global_redeclaration_one_
-# definition.sh IC). Mutation: the replay's hiding dropped (`_gvr_hide` a no-op) -> D93 RED (one error).
+# definition.sh IC). Mutation: the replay's hiding dropped (`_gvr_hide` a no-op) -> D93 RED (one error). Printed in source
+# order since 6.7.17 (ZR1: the parse's reports held and sorted): X's 2:15, then the type change's 3:13.
 printf 'var G = 5;\nvar X: bool = G;\nvar G: bool = true;\nsyscall(60, G);\n' > "$T/d93.cyr"
 build d93
 e=$( (grep '^error' "$T/d93.err" || true) | sed 's/^error:<source>:\([0-9]*:[0-9]*\):.*/\1/' | tr '\n' ' ')
 if [ "$rc" -eq 0 ]; then bad "D93: var G = 5; var X: bool = G; var G: bool = true (shape 3): BUILT"
-elif [ "$e" != "3:13 2:15 " ] || ! grep -qF "$TC" "$T/d93.err" || ! grep -q "cannot initialize bool 'X'" "$T/d93.err"; then
-    bad "D93: shape 3: want the type change (3:13), then X's own refusal (2:15): $(grep '^error' "$T/d93.err" | tr '\n' '|')"
-else ok "D93: var G = 5; var X: bool = G; var G: bool = true (shape 3): the type change, then X's own refusal"; fi
+elif [ "$e" != "2:15 3:13 " ] || ! grep -qF "$TC" "$T/d93.err" || ! grep -q "cannot initialize bool 'X'" "$T/d93.err"; then
+    bad "D93: shape 3: want X's own refusal (2:15), then the type change (3:13): $(grep '^error' "$T/d93.err" | tr '\n' '|')"
+else ok "D93: var G = 5; var X: bool = G; var G: bool = true (shape 3): X's own refusal, then the type change"; fi
 refused d94 "$TC" "D94: var G: bool = true; var G = 1" 'var G: bool = true;\nvar G = 1;\nsyscall(60, G);\n'
 refused d95 "$TC" "D95: var G = 0; var G: bool = false" 'var G = 0;\nvar G: bool = false;\nsyscall(60, G);\n'
 # Shape 2 stays refused: the type change, then X's own refusal (a type-change refusal registers the second

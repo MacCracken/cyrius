@@ -152,7 +152,7 @@ fn _grow_g1(): i64 { _varn_base = _grow_one(_varn_base, _var_cap); _grow_g2(); r
 fn _var_grow(S): i64 {
     if (_var_cap * 2 > 1048576) {
         _ew("error: variable table exceeds 1048576 entries (too many globals+enums+arrays)\n", 78);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     _grow_g1();
     return 0;
@@ -190,7 +190,7 @@ fn GENUMC(S): i64 { return L64(S + 0x214000); }
 fn SENUMC(S, v): i64 {
     if (v >= 1024) {
         _ew("error: enum table full (1024) — too many enum decls\n", 54);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(S + 0x214000, v);
     return 0;
@@ -230,7 +230,7 @@ fn _fixup_grow(S): i64 {
     # can't grow unbounded into OOM).
     if (nc > 67108864) {
         _ew("error: fixup table exceeds 64M entries\n", 39);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var nb = alloc(nc * 16);
     var used = L64(S + 0x18FCA8) * 16;
@@ -846,7 +846,7 @@ fn _codebuf_grow(S): i64 {
     var nc = _codebuf_cap + 8388608;   # v6.4.49: +8 MiB linear steps (was *2)
     if (nc > 67108864) {
         _ew("error: codebuf exceeds 64 MiB (program too large)\n", 50);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var nb = alloc(nc);
     var used = GCP(S);
@@ -1047,7 +1047,7 @@ fn GVW128(S, vi): i64 {
 fn SFLC(S, v): i64 {
     if (v >= 16384) {
         _ew("error: too many stack slots in one function (max 16384)\n", 56);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     if (_lfi_base != 0) { _lfi_clear(S, v); }
     S64(S + 0x18DA10, v);
@@ -1826,7 +1826,7 @@ fn ADDXP(S, p): i64 {
     var c = GXPC(S);
     if (c >= 8) {
         _ew("error: too many && conditions (max 8)\n", 38);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(S + 0x18F848 + c * 8, p);
     SXPC(S, c + 1);
@@ -2217,7 +2217,254 @@ fn _unp_say(): i64 {
 }
 fn _ew(b, n): i64 {
     if (_ew_mute == 1) { if (_ew_say == 0) { return n; } }
+    if (_eb_on == 1) { return _eb_put(b, n); }
     return syscall(SYS_WRITE, 2, b, n);
+}
+# ⛔ 6.7.17 — EVERY EXIT THE PARSE CAN REACH GOES THROUGH `_die`: the files `_ew`'s census reads (an error's own exit, a
+# cap's refusal, an internal error). One exit is what lets the diagnostics the parse holds be written before the
+# process ends (zone-replay's source order, `_eb_end` below). diagnostic_writer_census.sh holds them to it.
+# CHANGELOG [6.7.17]
+fn _die(code): i64 {
+    _eb_end();
+    syscall(SYS_EXIT, code);
+    return 0;
+}
+
+# ⛔ 6.7.17 — THE PARSE'S DIAGNOSTICS PRINT IN SOURCE ORDER. The parse is not one walk: pass 1 refuses a declaration as
+# it registers it, pass 2 parses the fn bodies, the declaration zone's initializers are parsed only by the replay
+# (EMIT_GVAR_INITS) and a `kernel;` build replays them after the program. So `var p = g(1 2);` then `const X;` printed
+# 3:8 (pass 1) before 2:13 (the replay), and a fn body's error printed before a zone entry's above it. Every diagnostic
+# byte goes through `_ew`, so from pass 1's start (`_tl_pass1`, every fork) to the last parse's end (`_dl_pw_fin`:
+# PARSE_PROG and the replay both ended) `_ew` HOLDS what it is given, as records: a line that starts with `error` or
+# `warning` opens one, the lines after it (its excerpt, notes, hints) join it, and the head on its first line keys it
+# on the head's token (`_err_head_at`; a line-only head, FM_LOOKUP alone, on its line's: `_eb_line_ti`). A record with
+# no head takes the largest key so far: everything printed before it stays before it. The window's end writes the
+# records in key order, a STABLE sort (one token's reports in the order printed), and `_ew` writes through again.
+# Every exit the window can reach goes through `_die`, which writes them first. The bytes are unchanged; only their
+# order is. CYRIUS_DIAG_UNBUFFERED=1 writes through from the start (the old order — and what a compiler fault prints
+# before it dies). CHANGELOG [6.7.17]
+var _eb_on = 0;       # 1: `_ew` holds what it is given (`_eb_begin` .. `_eb_end`)
+var _eb_buf = 0;      # the held bytes, alloc'd at the first, doubled as they grow
+var _eb_cap = 0;
+var _eb_len = 0;
+var _eb_ls = 0;       # where the line being written starts
+var _eb_rv = 0;       # the records: (key, start offset) pairs, in the order printed; the last is open. Past them,
+var _eb_rcap = 0;     # 2 x `_eb_rcap` words: the sort's index and its scratch, alloc'd with them — the window's end
+var _eb_rn = 0;       # allocs nothing, so a fault inside alloc (its lock held) can still write what is held
+var _eb_hti = 0 - 1;  # the token `_err_head_at` hands FM_LOOKUP (-1: a line-only head)
+var _eb_max = 0 - 1;  # the largest key so far
+fn _eb_begin(): i64 {
+    var e = _read_env("CYRIUS_DIAG_UNBUFFERED");
+    if (e != 0) { if (load8(e) == 49 && load8(e + 1) == 0) { return 0; } }
+    _eb_on = 1;
+    _eb_arm();
+    _vec_die_hook = &_eb_end;   # a vec abort mid-parse writes them first (lib/vec.cyr `_vec_abort`)
+    return 0;
+}
+# A FAULT IN THE COMPILER WRITES WHAT IS HELD, THEN DIES OF THE FAULT. Held diagnostics a crash would lose printed
+# before it unbuffered, so on Linux (x86_64, aarch64) SIGSEGV / SIGBUS / SIGFPE / SIGILL run `_eb_fault` on a stack of
+# its own (a fault past the stack's end too): the records written, the signal raised again at its default action — the
+# exit status is the fault's, as before. One-shot (SA_RESETHAND) and undeferred (SA_NODEFER), so a fault inside the
+# write, or the raise, ends the process at once. Elsewhere (macOS, Windows, cx) a fault prints what is held only under
+# CYRIUS_DIAG_UNBUFFERED=1. CHANGELOG [6.7.17]
+fn _eb_fault(sig): i64 {
+    _eb_end();
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    syscall(62, syscall(39), sig);    # kill(getpid(), sig)
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    syscall(129, syscall(172), sig);  # kill(getpid(), sig) — the native numbers (no ESYSXLAT row)
+    #endif
+    #endif
+    _die(128 + sig);
+    return 0;
+}
+fn _eb_arm(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    var ss = alloc(65536 + 24);
+    if (ss == 0) { return 0; }
+    S64(ss, ss + 24);    # stack_t: ss_sp, ss_flags, ss_size
+    S64(ss + 8, 0);
+    S64(ss + 16, 65536);
+    var act[32];
+    var i = 0;
+    while (i < 32) { store8(&act + i, 0); i = i + 1; }
+    S64(&act, &_eb_fault);
+    S64(&act + 8, 0x08000000 | 0x40000000 | 0x80000000);   # SA_ONSTACK | SA_NODEFER | SA_RESETHAND
+    #ifdef CYRIUS_ARCH_X86
+    S64(&act + 8, L64(&act + 8) | 0x04000000);   # SA_RESTORER: x86_64 refuses a handler without one. Never
+    S64(&act + 16, &_eb_fault);                  # reached: the handler does not return
+    syscall(131, ss, 0);          # sigaltstack
+    syscall(13, 11, &act, 0, 8);  # rt_sigaction
+    syscall(13, 7, &act, 0, 8);
+    syscall(13, 8, &act, 0, 8);
+    syscall(13, 4, &act, 0, 8);
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    syscall(132, ss, 0);          # sigaltstack
+    syscall(134, 11, &act, 0, 8); # rt_sigaction
+    syscall(134, 7, &act, 0, 8);
+    syscall(134, 8, &act, 0, 8);
+    syscall(134, 4, &act, 0, 8);
+    #endif
+    #endif
+    return 0;
+}
+# 1 when the `n` bytes at `b` start with the `k` at `s`.
+fn _eb_pfx(b, n, s, k): i64 {
+    if (n < k) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (load8(b + i) != load8(s + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+fn _eb_put(b, n): i64 {
+    if (n <= 0) { return n; }
+    var ok = 1;
+    if (_eb_rn == 0) { ok = _eb_rec(); }
+    elif (_eb_len == _eb_ls) {
+        if (_eb_pfx(b, n, "error", 5) == 1 || _eb_pfx(b, n, "warning", 7) == 1) { ok = _eb_rec(); }
+    }
+    if (ok == 1) { if (_eb_len + n > _eb_cap) { ok = _eb_grow(n); } }
+    if (ok == 0) {   # no room: what is held, written (in order), and this through
+        _eb_end();
+        return _ew(b, n);
+    }
+    var i = 0;
+    while (i < n) {
+        var c = load8(b + i);
+        store8(_eb_buf + _eb_len + i, c);
+        i = i + 1;
+        if (c == 10) { _eb_ls = _eb_len + i; }
+    }
+    _eb_len = _eb_len + n;
+    return n;
+}
+fn _eb_grow(n): i64 {
+    var nc = _eb_cap * 2;
+    if (nc < 4096) { nc = 4096; }
+    while (nc < _eb_len + n) { nc = nc * 2; }
+    var nb = alloc(nc);
+    if (nb == 0) { return 0; }
+    var i = 0;
+    while (i < _eb_len) { store8(nb + i, load8(_eb_buf + i)); i = i + 1; }
+    _eb_buf = nb;
+    _eb_cap = nc;
+    return 1;
+}
+# Open a record at the line being written, the open one closed: unkeyed, it takes the largest key so far. 0 = no room.
+fn _eb_rec(): i64 {
+    if (_eb_rn > 0) { _eb_close(); }
+    if (_eb_rn >= _eb_rcap) {
+        var nc = _eb_rcap * 2;
+        if (nc < 64) { nc = 64; }
+        var nr = alloc(nc * 32);   # the records, then the sort's two index arrays
+        if (nr == 0) { return 0; }
+        var i = 0;
+        while (i < _eb_rn * 2) { S64(nr + i * 8, L64(_eb_rv + i * 8)); i = i + 1; }
+        _eb_rv = nr;
+        _eb_rcap = nc;
+    }
+    S64(_eb_rv + _eb_rn * 16, 0 - 2);
+    S64(_eb_rv + _eb_rn * 16 + 8, _eb_ls);
+    _eb_rn = _eb_rn + 1;
+    return 1;
+}
+fn _eb_close(): i64 {
+    var r = _eb_rv + (_eb_rn - 1) * 16;
+    if (L64(r) == 0 - 2) { S64(r, _eb_max); }
+    return 0;
+}
+# A head's position (FM_LOOKUP, at expanded line `ln`): it keys the open record when it is on the record's first line
+# and the record has no key yet — a note naming another place keys nothing.
+fn _eb_at(S, ln): i64 {
+    var ti = _eb_hti;
+    _eb_hti = 0 - 1;
+    if (_eb_on == 0) { return 0; }
+    if (_eb_rn == 0) { return 0; }
+    var r = _eb_rv + (_eb_rn - 1) * 16;
+    if (L64(r) != 0 - 2) { return 0; }
+    if (L64(r + 8) != _eb_ls) { return 0; }
+    if (ti < 0) { ti = _eb_line_ti(S, ln); }
+    S64(r, ti);
+    if (ti > _eb_max) { _eb_max = ti; }
+    return 0;
+}
+# A line-only head's token: the cursor when it is on line `ln` (one statement's reports keep their order), else the
+# line's last token.
+fn _eb_line_ti(S, ln): i64 {
+    var c = _err_ti(S, GTI(S));
+    if (GTLINE(S, c) == ln) { return c; }
+    var lo = 0;
+    var hi = GTCNT(S);
+    while (lo < hi) {
+        var m = (lo + hi) / 2;
+        if (GTLINE(S, m) <= ln) { lo = m + 1; } else { hi = m; }
+    }
+    if (lo > 0) { return lo - 1; }
+    return 0;
+}
+fn _eb_key(r): i64 { return L64(_eb_rv + r * 16); }
+# One pass of the merge sort: runs [lo, md) and [md, hi) of `a` into `t`, the left run's first on a tie (stable).
+fn _eb_merge(a, t, lo, md, hi): i64 {
+    var i = lo;
+    var j = md;
+    var k = lo;
+    while (k < hi) {
+        var rt = 0;
+        if (i >= md) { rt = 1; }
+        elif (j < hi) { if (_eb_key(L64(a + j * 8)) < _eb_key(L64(a + i * 8))) { rt = 1; } }
+        if (rt == 1) { S64(t + k * 8, L64(a + j * 8)); j = j + 1; }
+        else { S64(t + k * 8, L64(a + i * 8)); i = i + 1; }
+        k = k + 1;
+    }
+    return 0;
+}
+# The window's end: the records written in key order (a stable merge sort of their indices), `_ew` writing through again.
+fn _eb_end(): i64 {
+    if (_eb_on == 0) { return 0; }
+    _eb_on = 0;
+    if (_eb_rn == 0) { return 0; }
+    _eb_close();
+    var n = _eb_rn;
+    var a = _eb_rv + _eb_rcap * 16;
+    var t = a + _eb_rcap * 8;
+    var m = _ew_mute;
+    _ew_mute = 0;
+    var i = 0;
+    while (i < n) { S64(a + i * 8, i); i = i + 1; }
+    var w = 1;
+    while (w < n) {
+        var lo = 0;
+        while (lo < n) {
+            var md = lo + w;
+            if (md > n) { md = n; }
+            var hi = md + w;
+            if (hi > n) { hi = n; }
+            _eb_merge(a, t, lo, md, hi);
+            lo = hi;
+        }
+        i = 0;
+        while (i < n) { S64(a + i * 8, L64(t + i * 8)); i = i + 1; }
+        w = w * 2;
+    }
+    i = 0;
+    while (i < n) {
+        var r = L64(a + i * 8);
+        var st = L64(_eb_rv + r * 16 + 8);
+        var en = _eb_len;
+        if (r + 1 < n) { en = L64(_eb_rv + (r + 1) * 16 + 8); }
+        if (en > st) { _ew(_eb_buf + st, en - st); }
+        i = i + 1;
+    }
+    _ew_mute = m;
+    _eb_rn = 0;
+    _eb_len = 0;
+    _eb_ls = 0;
+    return 0;
 }
 
 # Print a number to stderr (decimal)
@@ -2298,7 +2545,7 @@ fn _write_out_failed(written, len, eno): i64 {
     _ew(" bytes): errno ", 15);
     PRNUM(eno);
     _ew("\n", 1);
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 
@@ -2808,7 +3055,7 @@ fn _rd_enter(S): i64 {
         _ew("error:", 6);
         _err_head(S);
         _ew(": nesting too deep (over 256 levels — truncated or hostile source)\n", 69);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var m[8];
     var sp = &m;
@@ -2833,7 +3080,7 @@ fn _rd_stack_refuse(S): i64 {
     } else {
         PRSTR(": nesting too deep (over 6 MB of the compiler's stack — truncated or hostile source)\n");
     }
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 
@@ -3047,7 +3294,7 @@ fn _wd_tick(S): i64 {
         _wd_stall = _wd_stall + 1;
         if (_wd_stall > 500000) {
             _ew("error: parser recovery aborted (desync — too many errors)\n", 60);
-            syscall(SYS_EXIT, _had_error);
+            _die(_had_error);
         }
     } else {
         _wd_last = g;
@@ -3100,7 +3347,7 @@ fn _wd_eof_tick(S): i64 {
         _ew("error:", 6);
         _err_head(S);
         _ew(": unexpected end of input (truncated or unbalanced source)\n", 59);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     return 0;
 }
@@ -3341,6 +3588,7 @@ fn _err_ti(S, ti): i64 {
 # consumed, so it used to point at the `(` rather than at the definition.
 fn _err_head_at(S, ti): i64 {
     ti = _err_ti(S, ti);
+    _eb_hti = ti;   # 6.7.17: the record's key (`_eb_at`)
     FM_LOOKUP(S, GTLINE(S, ti));
     _ew(":", 1);
     PRNUM(_err_col(S, GTOFF(S, ti)));
@@ -4004,7 +4252,7 @@ fn _cmdline_refuse(why): i64 {
     PRSTR("error: ");
     PRSTR(why);
     PRSTR(" (/proc/self/cmdline is read whole; a cut copy is never scanned)\n");
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 #endif

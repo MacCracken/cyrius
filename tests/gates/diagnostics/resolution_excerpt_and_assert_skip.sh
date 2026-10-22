@@ -303,8 +303,8 @@ line" junk
 syscall(60, 9);' "error:<source>:2:7: $AM"
 atrefuse AT10 "the zone: a struct's error after the refused line" '#assert 1 == 1, "m" junk
 struct Q { a: Foo; }
-syscall(60, 3);' "error:<source>:2:15: unknown type 'Foo' for struct field 'a'
-error:<source>:1:21: $AM"
+syscall(60, 3);' "error:<source>:1:21: $AM
+error:<source>:2:15: unknown type 'Foo' for struct field 'a'"
 atrefuse AT11 "a generic fn at two instances: once" 'fn g<T>(x: T): i64 { #assert 1 == 1, "m" junk
 return 1; }
 syscall(60, g<i64>(1) + g<i32>(2));' "error:<source>:1:42: $AM"

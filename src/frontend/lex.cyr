@@ -245,6 +245,7 @@ fn FM_SITE(S, expanded_line): i64 {
 }
 
 fn FM_LOOKUP(S, expanded_line): i64 {
+    _eb_at(S, expanded_line);   # 6.7.17: a diagnostic's head keys its record (util.cyr `_eb_put`)
     var foff = FM_SITE(S, expanded_line);
     if (foff >= 0) {
         var fptr = S + 0x721000 + foff;
@@ -297,7 +298,7 @@ fn ADDTOK(S, typ, val): i64 {
         _ew("error: token limit exceeded: needed ", 36);
         PRNUM(tc + 1);
         _ew(", cap is 4194304\n", 17);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     S64(S + 0x8C00000 + tc * 8, typ);
     S64(S + 0xAC00000 + tc * 8, val);
@@ -347,7 +348,7 @@ fn _LEX_EMIT_UTF8(S, spos, cp): i64 {
     if (cp >= 65536) { need = 4; }
     if (spos + need > 2097152) {
         _ew("error: string data overflow (2MB limit)\n", 40);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     if (cp < 128) {
         store8(dst + spos, cp);
@@ -722,11 +723,7 @@ fn _check_cyml_pin_drift(): i64 {
         _ew(" but cycc is ", 13);
         _ew(_VERSION_STR_CYCC + _pd_self_start, _pd_self_len);
         _ew(" — toolchain drift (CYRIUS_STRICT_PIN)\n", 41);
-        #ifdef CYRIUS_TARGET_AGNOS
-        syscall(0, 1);
-        #else
-        syscall(60, 1);
-        #endif
+        _die(1);   # SYS_EXIT is agnos's 0 there (the driver's Sys enum)
     }
     _ew("warning: cyrius.cyml pins ", 26);
     _ew(&_pd_buf + _pd_pin_start, _pd_pin_len);
@@ -1563,7 +1560,7 @@ fn NPOS_GUARD(S, need): i64 {
         _ew("error: identifier buffer full (", 31);
         PRNUM(np);
         _ew("/8388608 bytes) — reduce included modules or split into separate units\n", 73);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     return 0;
 }
@@ -1591,7 +1588,7 @@ fn LEXID(S, p, npos): i64 {
         _ew("error: identifier buffer full (", 31);
         PRNUM(npos);
         _ew("/8388608 bytes) — reduce included modules or split into separate units\n", 73);
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var bl = GBL(S);
     var ws = npos;
@@ -1695,7 +1692,7 @@ fn LEXID(S, p, npos): i64 {
         # ⚠ The 65536 at lex.cyr:306/:318 is a UTF-8 codepoint WIDTH test, not this cap.
         if (ec >= 262144) {
             _ew("error: identifier dedup table full (262144 entries) - raise LEXID cap in lex.cyr\n", 81);
-            syscall(SYS_EXIT, 1);
+            _die(1);
         }
         var prev_head = L64(S + 0x457C100 + bucket * 8);
         S64(S + 0xF400000 + ec * 8, bl | (prev_head << 32));
@@ -1946,7 +1943,7 @@ fn _lex_die(S, p, msg): i64 {
     _lex_err_head(S, p);
     PRSTR(msg);
     _ew("\n", 1);
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 
@@ -2023,7 +2020,7 @@ fn _lex_stray(S, p, c): i64 {
         _lex_hex2(c);
         _ew(")\n", 2);
     }
-    syscall(SYS_EXIT, 1);
+    _die(1);
     return 0;
 }
 
@@ -2623,7 +2620,7 @@ fn LEX(S): i64 {
                                                                                                                                         # 0x14A000)
                                                                                                                                         if (spos >= 2097152) {
                                                                                                                                             _ew("error: string data overflow (2MB limit)\n", 40);
-                                                                                                                                            syscall(SYS_EXIT, 1);
+                                                                                                                                            _die(1);
                                                                                                                                         }
                                                                                                                                         if (sgo == 1) {
                                                                                                                                             var sc = load8(S + 0x459D000 + p);
@@ -2746,7 +2743,7 @@ fn LEX(S): i64 {
                                                                                                                                         spos = spos + 1;
                                                                                                                                         if (spos >= 2097152) {
                                                                                                                                             _ew("error: string data buffer full (2MB limit)\n", 43);
-                                                                                                                                            syscall(SYS_EXIT, 1);
+                                                                                                                                            _die(1);
                                                                                                                                         }
                                                                                                                                         SSPOS(S, spos);
                                                                                                                                     }

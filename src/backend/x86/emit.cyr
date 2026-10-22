@@ -1512,7 +1512,7 @@ fn _msx_stub_site(S): i64 {
         var nc = _msx_scap * 2;
         if (nc < 64) { nc = 64; }
         var nl = alloc(nc * 16);
-        if (nl == 0) { PRSTR("error: EMACHO_SYSXLAT stub sites: alloc failed\n"); syscall(SYS_EXIT, 1); }
+        if (nl == 0) { PRSTR("error: EMACHO_SYSXLAT stub sites: alloc failed\n"); _die(1); }
         var i = 0;
         while (i < _msx_ns * 2) { store64(nl + i * 8, load64(_msx_sl + i * 8)); i = i + 1; }
         _msx_sl = nl;
@@ -1525,7 +1525,7 @@ fn _msx_stub_site(S): i64 {
     _wpjs_add_raw(S, GCP(S));
     if (_wpjs_n != wi + 1) {
         PRSTR("error: EMACHO_SYSXLAT stub sites: the disp32 registry could not grow\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     EB(S, 0xFB); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF);   # -5: `call .`, the placeholder
     store64(_msx_sl + _msx_ns * 16, wi);
@@ -1569,7 +1569,7 @@ fn _msx_stub_patch(S, wi, stub): i64 {
         PRSTR("error: internal: EMACHO_SYSXLAT stub site at code offset ");
         PRNUM(site);
         PRSTR(" is no longer its call placeholder (did a pass move code without the registry?)\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var rel = stub - site - 4;
     store8(a, rel & 0xFF);
@@ -1584,7 +1584,7 @@ fn _msx_stubs_drained(): i64 {
         PRNUM(_msx_ns);
         PRSTR(" run-time-number x86 Mach-O syscall site(s) reached FIXUP unpatched");
         PRSTR(" — this driver never called EMACHO_SYSX_STUBS\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     return 0;
 }
@@ -1889,7 +1889,7 @@ fn _pe_w32_errno_site(S, cls): i64 {
     _wpjs_add_raw(S, GCP(S));
     if (_wpjs_n != wi + 1) {
         PRSTR("error: PE errno stub sites: the disp32 registry could not grow\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     EB(S, 0xFB); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0xFF); # -5: `call .`, the placeholder
     store64(_pew_sl + _pew_ns * 16, wi);
@@ -1901,7 +1901,7 @@ fn _pew_grow(): i64 {
     var nc = _pew_scap * 2;
     if (nc < 64) { nc = 64; }
     var nl = alloc(nc * 16);
-    if (nl == 0) { PRSTR("error: PE errno stub sites: alloc failed\n"); syscall(SYS_EXIT, 1); }
+    if (nl == 0) { PRSTR("error: PE errno stub sites: alloc failed\n"); _die(1); }
     var i = 0;
     while (i < _pew_ns * 2) { store64(nl + i * 8, load64(_pew_sl + i * 8)); i = i + 1; }
     _pew_sl = nl;
@@ -1951,7 +1951,7 @@ fn _pew_j8(S, op): i64 {
 }
 fn _pew_land8(S, at): i64 {
     var rel = GCP(S) - at - 1;
-    if (rel > 127) { PRSTR("error: internal: a PE stub's rel8 jump is out of range\n"); syscall(SYS_EXIT, 1); }
+    if (rel > 127) { PRSTR("error: internal: a PE stub's rel8 jump is out of range\n"); _die(1); }
     store8(_codebuf_base + at, rel);
     return 0;
 }
@@ -2116,7 +2116,7 @@ fn _pew_patch(S, wi, stub): i64 {
         PRSTR("error: internal: PE errno stub site at code offset ");
         PRNUM(site);
         PRSTR(" is no longer its call placeholder (did a pass move code without the registry?)\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     var rel = stub - site - 4;
     store8(a, rel & 0xFF);
@@ -2131,7 +2131,7 @@ fn _pew_stubs_drained(): i64 {
         PRNUM(_pew_ns);
         PRSTR(" PE errno stub site(s) reached FIXUP unpatched");
         PRSTR(" — this driver never called EPE_ERRNO_STUBS\n");
-        syscall(SYS_EXIT, 1);
+        _die(1);
     }
     return 0;
 }

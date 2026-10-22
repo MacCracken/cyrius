@@ -47,8 +47,9 @@
 #       `return r.pick(1);` ("no struct type in scope for 'r'" after the `;`), G2 the same through a generic call
 #       (met by a `;`-deletion sweep of tests/tcyr/crossos/generic_method_struct_arg.tcyr), G3 `return mk() }` in a
 #       struct-returning fn ("return must be a bare local identifier, or a call ..")
-#   S3  the filing's s3 verbatim (`var g = 1` then two fns in the declaration zone): the `;`, `zz1` and `zz2` — a SET:
-#       the replay's `;` prints after pass 2's fn bodies until the zone replay is buffered
+#   S3  the filing's s3 verbatim (`var g = 1` then two fns in the declaration zone): the `;`, `zz1` and `zz2` IN SOURCE
+#       ORDER — the replay's `;` printed after pass 2's fn bodies until 6.7.17 (ZR1) held the parse's diagnostics and
+#       printed them sorted (util.cyr `_eb_end`); S3 and Z1-Z7 compared the lines as a set until then
 #   Z   the zone: `var g = 1` before a struct (Z1), a `var h = zz;` (Z2: h its own entry), a const (Z3), an #assert
 #       (Z4), a closure entry before a fn (Z5), an enum and impl (Z6), a destructure (Z7); ZA valid multi-line
 #       entries (a closure body, a `*fn` type, continued initializers) compile and run unchanged
@@ -77,6 +78,7 @@
 # RED: C1 C2. On bd7abcdb4 (before `_for_empty`) RED: F7-F11 ("unexpected ';'" twice, "expected '=', got '{'").
 # On 0896f7c7b (before `_asm_bad`) RED: A1-A3 ("unexpected asm" / "unexpected return", then "parser recovery aborted
 # (desync — too many errors)"). On f83155934 (before `_call_ends_at`'s missing-`;` arm) RED: G1-G3.
+# On e3d59ddc1 (before ZR1 held the parse's diagnostics) RED: S3 Z1-Z7 on every leg (the replay's line last).
 #
 # Legs: x86_64, aarch64 and cx (their compilers built from this tree's src) and PE (CYRIUS_TARGET_WIN=1) — the
 # frontend is shared; a refusal needs no run.
@@ -132,23 +134,6 @@ row() {
     done
 }
 
-# rowset <id> <what> <source> <want-lines>: as `row`, the lines compared as a SET (sorted) — the declaration zone's
-# replay reports after pass 2's fn bodies, so its "expected ';'" prints after the errors it used to swallow; the
-# source order waits for the zone replay's buffering
-rowset() {
-    printf '%s' "$3" > "$D/$1.cyr"
-    printf '%s\n' "$4" | sort > "$D/$1.want"
-    for leg in $LEGS; do
-        o="$D/$1_$leg"
-        comp "$leg" "$D/$1.cyr" "$o"
-        grep -E '^error' "$o.err" | sort > "$o.got" || true
-        if [ "$CRC" -eq 0 ]; then bad "$1 $leg: $2: rc 0 — want the refusal"
-        elif ! cmp -s "$o.got" "$D/$1.want"; then
-            bad "$1 $leg: $2: got $(wc -l < "$o.got") lines: $(tr '\n' '|' < "$o.got")"
-        elif [ -s "$o" ]; then bad "$1 $leg: $2: refused, but a binary was written"
-        else ok "$1 $leg: $2"; fi
-    done
-}
 # accept <id> <what> <source> <exit>: compiles on every leg; the x86_64 binary exits <exit>
 accept() {
     printf '%s' "$3" > "$D/$1.cyr"
@@ -477,51 +462,51 @@ error:<source>:4:22: $UZ"
 
 # ---- Z: the declaration zone — a `var` entry missing its `;` ends at the declaration after it (`_gv_entry_cut`,
 # src/frontend/parse_decl.cyr), so pass 1 / pass 2 register and parse what follows
-rowset S3 "the filing's s3 verbatim: var g = 1 then two fns" 'var g = 1
+row S3 "the filing's s3 verbatim: var g = 1 then two fns" 'var g = 1
 fn f1(): i64 { return zz1; }
 fn f2(): i64 { return zz2; }
 syscall(60, g);
 ' "error:<source>:2:1: expected ';', got fn
 error:<source>:2:23: undefined variable 'zz1' (missing include or enum?)
 error:<source>:3:23: undefined variable 'zz2' (missing include or enum?)"
-rowset Z1 "var g = 1 before a struct" 'var g = 1
+row Z1 "var g = 1 before a struct" 'var g = 1
 struct Q { a; }
 fn f1(): i64 { return zz1; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got struct
 error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
-rowset Z2 "var g = 1 before var h = zz;" 'var g = 1
+row Z2 "var g = 1 before var h = zz;" 'var g = 1
 var h = zz;
 fn f1(): i64 { return zz1; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got var
 error:<source>:2:9: $UZ
 error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
-rowset Z3 "var g = 1 before a const (green on the parent: the const's own ; ended the skip)" 'var g = 1
+row Z3 "var g = 1 before a const (green on the parent: the const's own ; ended the skip)" 'var g = 1
 const C = 5;
 fn f1(): i64 { return zz1 + C; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got const
 error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
-rowset Z4 "var g = 1 before an #assert" 'var g = 1
+row Z4 "var g = 1 before an #assert" 'var g = 1
 #assert 2 == 3, "boom"
 fn f1(): i64 { return zz1; }
 syscall(60, g + f1());
 ' "error:<source>:2:1: expected ';', got #assert
 error:<source>:2:17: #assert failed: boom
 error:<source>:3:23: undefined variable 'zz1' (missing include or enum?)"
-rowset Z5 "a closure var g = |x| { .. } before a fn" 'var g = |x| { return x; }
+row Z5 "a closure var g = |x| { .. } before a fn" 'var g = |x| { return x; }
 fn f1(): i64 { return zz1; }
 syscall(60, f1());
 ' "error:<source>:2:1: expected ';', got fn
 error:<source>:2:23: undefined variable 'zz1' (missing include or enum?)"
-rowset Z6 "var g = 1 before an enum and its impl" 'var g = 1
+row Z6 "var g = 1 before an enum and its impl" 'var g = 1
 enum E { A, B }
 impl E { fn m(self): i64 { return zz1; } }
 syscall(60, g);
 ' "error:<source>:2:1: expected ';', got enum
 error:<source>:3:35: undefined variable 'zz1' (missing include or enum?)"
-rowset Z7 "a destructure var a, b = two(3) before a fn" 'fn two(a) { return (a, 4); }
+row Z7 "a destructure var a, b = two(3) before a fn" 'fn two(a) { return (a, 4); }
 var a, b = two(3)
 fn g(): i64 { return zz; }
 syscall(60, g());
