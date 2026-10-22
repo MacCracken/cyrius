@@ -411,8 +411,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     # (it was `expected ';'`); refused by name inside a top-level block. A local's stays unsupported.
     var _pa_init = 0;
     if (PEEKT(S) == 4) { if (GINFN(S) != 1) { _pa_init = _gai_stmt(S, ann_ti, asz); } }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);  # consume ;
+    _expect_step(S, 5);  # consume ;
     # Arrays inside functions are globals. To avoid name collisions between
     # functions (e.g. two functions both with `var buf[N]`), always register
     # a NEW global even if one with the same name exists. FINDVAR returns
@@ -2463,8 +2462,7 @@ fn _store_hop(S, noff, idx, sid, off): i64 {
     STI(S, d + 2);
     if (PEEKT(S) == 10) {
         _field_load_on(S, noff, fnoff, d, _hop_idx, ps);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, 5);
         return 0 - 1000;
     }
     var fi = FINDFIELD(S, ps - 1, fnoff);
@@ -3794,8 +3792,7 @@ fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
     SLVAR(S, vcnt);
     _GVAR_VIS(S, vcnt, _ps_decl_ti);   # v6.6.4: PARSE_PROG-path struct-literal global (see PARSE_ARRAY)
     SVDEAD(S, vcnt, 0);   # 6.7.16: the name visible from here (`_glit_hold`)
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 0;
 }
 
@@ -3897,8 +3894,7 @@ fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
     SLDEP(S, named, GSDEP(S));
     SLAGG(S, named, nslots);
     SLTYPE(S, named, 0 - sid);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);                          # consume ';'
+    _expect_step(S, 5);                          # consume ';'
     return 0;
 }
 
@@ -4198,8 +4194,7 @@ fn _tup_var_lit(S, noff, pscale, ann, lp): i64 {
     if (GINFN(S) == 1) { _tup_lit_local(S, noff, sid, infer); }
     else { _tup_lit_global(S, noff, sid, infer, st); }
     _pw_close(S, lp - st);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 
@@ -4473,8 +4468,7 @@ fn _tup_var_cap(S, noff, pscale): i64 {
     if (GINFN(S) == 1) { _tup_cap_local(S, noff, sid, c); }
     else { _tup_cap_global(S, noff, sid, c, dti); }
     _pw_close(S, k);   # 6.7.14 (D45): `= (two(3));`
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 fn _tup_cap_local(S, noff, sid, c): i64 {
@@ -4531,8 +4525,7 @@ fn _gvi_tup_cap(S, gi, idx, gps, sti, noff): i64 {
         }
     }
     _gvk_left(S, gi, sti, idx);   # a `kernel;` build names what stays late
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 
@@ -4599,8 +4592,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
         if (vc != vc0) { _gv_supersede(S, noff, 1); }   # 6.6.16: a list is the value from start
         _gv_defer(S, sti, vc + 1);   # 6.6.6: vc + 1 = the slot this entry declared
     }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 0;
 }
 
@@ -5054,8 +5046,7 @@ fn _gai_replay(S, gi, noff, gsup, sti): i64 {
     var seed = 0;
     if (vi >= 0) { seed = _gai_seed(S, gi, vi, noff); }
     _gai_eval(S, vi, ann, seed);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 0;
 }
 
@@ -7582,8 +7573,7 @@ fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
     _pw_close(S, lp - st);
     _gv_slvar(S, idx);
     _gvk_left(S, gi, sti, idx);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # ⛔ 6.7.7 (B4 review) — THE REPLAY AGREES WITH PASS 1 OR REFUSES BY NAME. Pass 1 sized the global from
@@ -7626,8 +7616,7 @@ fn _gvi_tup_odd(S, gi, idx, gps, sti, noff): i64 {
     _tup_err(S, ti, "cannot initialize tuple ", noff, " with a value that is not a tuple");
     _masg_skip(S);
     _gvk_left(S, gi, sti, idx);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # ⛔ 6.6.11 — a leading-block initialiser, replayed here rather than parsed by PARSE_VAR, so a
@@ -7974,9 +7963,8 @@ fn EMIT_GVAR_INITS(S): i64 {
             EMOVRA_RDX(S);
             if (ei2 >= 0) { EVSTORE(S, ei2); _gv_slvar(S, ei2); }
             _gvk_dst(S, sti, ei1, ei2, ei3);   # 6.6.16 (C6): a kernel build names what stays late
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            _expect_step(S, 5);
             if (edz == 1) { _panic = 0; }   # the zone check's report: latched through its statement
-            STI(S, GTI(S) + 1);
             gi = gi + 1;
             continue;
         }
@@ -8024,8 +8012,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
                 _gv_slvar(S, idx);
                 _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
-                if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                STI(S, GTI(S) + 1);
+                _expect_step(S, 5);
                 did_struct = 1;
             }
         }
@@ -8037,8 +8024,7 @@ fn EMIT_GVAR_INITS(S): i64 {
                 }
             }
             _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-            STI(S, GTI(S) + 1);
+            _expect_step(S, 5);
         }
         gi = gi + 1;
     }
@@ -8454,8 +8440,7 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     if (took == 1) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 2, 0 - 1, STRUCTSZ(S, sid - 1)); }
     if (took == 2) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 1, 0 - 1000 - pg, STRUCTSZ(S, sid - 1)); }
     if (took == 3) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, sid - 1)); }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);   # consume ';'
+    _expect_step(S, 5);   # consume ';'
     return 1;
 }
 
@@ -9579,8 +9564,7 @@ fn _sci_dexpr(S, noff, pscale): i64 {
     var sz = STRUCTSZ(S, ps - 1);
     var named = _sci_slots(S, noff, pscale, (sz + 7) / 8);
     _agc_copy_bytes(S, named, 0 - 1, _AGC_DREF(h), 0 - 1, sz);
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);   # consume ';'
+    _expect_step(S, 5);   # consume ';'
     return 1;
 }
 # 1 = the initialiser after the `=` at the cursor is `*pp` of a `**S` (`_hl_dstar_x`'s twin), for
@@ -11475,8 +11459,7 @@ fn _vrcv_decl(S, noff, pscale, ann): i64 {
     STI(S, GTI(S) + 1);   # `=`
     if (k == 4) { _vrcv_demit(S, named, pscale, "initialised", noff); }   # 6.7.13 (D34): `*p`
     else { _vrcv_emit(S, named, pscale, k); }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 1;
 }
 # The vector a whole initialiser `fncallN(&f, ..)` / `callptr(&f, ..)` at token `ti` (`;` after it) returns, `f`
@@ -12766,8 +12749,7 @@ fn PARSE_VAR(S): i64 {
             _GVAR_VIS(S, gi2, GTI(S));
             if (_dt_n == 3) { _GVAR_VIS(S, gi3, GTI(S)); }
         }
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
+        _expect_step(S, 5);
         return 0;
     }
     # Optional type annotation: var x: type = ... or var x: *type = ...
@@ -13027,8 +13009,7 @@ fn PARSE_VAR(S): i64 {
                             PCMPE(S);
                             EFLSTORE_F64V2_PAIR(S, _f2c_named);
                         }
-                        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                        STI(S, GTI(S) + 1);   # consume ';'
+                        _expect_step(S, 5);   # consume ';'
                         return 0;
                     }
                 }
@@ -13091,8 +13072,7 @@ fn PARSE_VAR(S): i64 {
                             PCMPE(S);
                             EFLSTORE_F64V4_PAIR(S, _f4c_named);
                         }
-                        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-                        STI(S, GTI(S) + 1);   # consume ';'
+                        _expect_step(S, 5);   # consume ';'
                         return 0;
                     }
                 }
@@ -13260,8 +13240,7 @@ fn PARSE_VAR(S): i64 {
         # needs a destination for a struct result (PARSE_FNCALL's temp, struct-param args,
         # assignment, `return f()`), which had none. CHANGELOG [6.6.6]
         _struct_call_emit(S, asv_fi, asv_fnoff, asv_named);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);                         # consume ';'
+        _expect_step(S, 5);                         # consume ';'
         return 0;
     }
     # v5.10.45 Phase 1 — asv_pair path for 9-16B int-class non-Str
@@ -13331,8 +13310,7 @@ fn PARSE_VAR(S): i64 {
         # NO hidden retptr — pair-return uses rax/rdx, received into the 2-slot local.
         # 6.6.6: `_struct_call_emit`, as in asv_try above. CHANGELOG [6.6.6]
         _struct_call_emit(S, asp_fi, asp_fnoff, asp_named);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);                         # consume ';'
+        _expect_step(S, 5);                         # consume ';'
         return 0;
     }
     # Check for array: var buf[N];  (v6.2.1: `var buf: T[N]` passes the
@@ -13451,8 +13429,7 @@ fn PARSE_VAR(S): i64 {
         }
         # 6.6.6: `var p: S = b.mk(..)` / `var c: V3 = a + b` — the call's temp becomes `p`.
         if (_sc_var_receive(S, noff, pscale, scalar_type + lfloat + slice_elt_w + lbool, scv_start) == 1) {
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-            STI(S, GTI(S) + 1);
+            _expect_step(S, 5);
             return 0;
         }
         var li = GFLC(S);
@@ -13632,8 +13609,7 @@ fn PARSE_VAR(S): i64 {
         _GVAR_VIS(S, vcnt, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
         SVCNT(S, vcnt + 1);
     }
-    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
     return 0;
 }
 
