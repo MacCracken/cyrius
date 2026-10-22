@@ -149,11 +149,30 @@ syscall(60, 3);' 3
 runs IC5 'control: CRLF line ends' "$(printf 'include "lib/syscalls.cyr"\r\nsyscall(60, 3);\r')" 3
 runs IC6 "control: an included file's clean include lines" "include \"$D/inner_clean.cyr\"
 syscall(60, ib());" 6
-# The corpus floor: 12 rows on four legs. A row or a leg lost reads RED, never green.
-[ "$N" -ge 48 ] || bad "floor: $N row-legs ran (floor 48) - rows or legs were lost"
+# IU — 6.7.17, met while writing the rows above: A FILE NAME WITH NO CLOSING QUOTE ON ITS LINE IS SAID SO. The include
+# (both copies) and #ref name loops read to the next `"` wherever it sits, so the lines after an unclosed name were read
+# as part of it: "cannot open include file: lib/syscalls.cyr<LF>var x = " (the next lines printed as the file's name),
+# 767 bytes on "include/#ref filename exceeds 767 bytes", and with a quote on the next line also the tail error at a
+# column of THAT line. Now one line naming the cause (PP_FNAME_UNCLOSED; the same exit 1, nothing else changes).
+#   IU1 the entry; IU2 an included file (PP_IFDEF_PASS); IU3 no quote for 767+ bytes; IU4 `#ref`
+#   `PP_FNAME_UNCLOSED` answering 0 at once (6.7.16's messages)  -> RED IU1-IU4, 16
+#   PP_INCLUDE_TAIL without its unclosed-name stand-down         -> RED IU1 IU2, 8 (the tail error at the next line too)
+UM_='the file name has no closing quote on its line'
+printf 'include "lib/syscalls.cyr\nfn ic(): i64 { return 7; }\nvar s = "q";\n' > "$D/inner_unclosed.cyr"
+refuse IU1 "an unclosed name in the entry" 'include "lib/syscalls.cyr
+var x = "a";
+syscall(60, 3);' "error: include \"lib/syscalls.cyr: $UM_"
+refuse IU2 "an unclosed name in an included file" "include \"$D/inner_unclosed.cyr\"
+syscall(60, ic());" "error: include \"lib/syscalls.cyr: $UM_"
+refuse IU3 "an unclosed name with no quote for 767+ bytes" "$(printf 'include "lib/syscalls.cyr\n'; i=0; while [ $i -lt 100 ]; do printf 'var x%d = 1;\n' $i; i=$((i + 1)); done; printf 'syscall(60, 3);')" "error: include \"lib/syscalls.cyr: $UM_"
+refuse IU4 "an unclosed #ref name" '#ref "nope.toml
+var a = "x";
+syscall(60, 3);' "error: #ref \"nope.toml: $UM_"
+# The corpus floor: 16 rows on four legs. A row or a leg lost reads RED, never green.
+[ "$N" -ge 64 ] || bad "floor: $N row-legs ran (floor 64) - rows or legs were lost"
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: $G: $NFAIL check(s) failed"
     exit 1
 fi
-echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies ($N row-legs on $LEGS) (6.7.17, D29)"
+echo "PASS: $G - an include line ends at its file name, a tail refused by name in both preprocessor copies, an unclosed file name said so ($N row-legs on $LEGS) (6.7.17, D29)"
 exit 0
