@@ -237,9 +237,11 @@ fn _pair_unwrap(S, ti): i64 {
 # The `(` of the call a value starting at the name (or `callptr`) at token a starts with, by its shape: the last call
 # of a method chain on any receiver (`_pc_shape`: `x.m(`, `x.m<..>(` (6.7.15), 6.7.16 `w.p.m(`, `f(..).m(`), else
 # `name(` / `name<..>(` — its callee the asker's to resolve (a comparison `p.n < a > (b)` resolves to none); else -1.
+# 6.7.17 (D26): and `callptr(`, whose known `&f` the askers now resolve — `(callptr(&f, 4))?`. CHANGELOG [6.7.17]
 fn _pair_lead_open(S, a): i64 {
     var o = _pc_shape(S, a);
     if (o >= 0) { return o; }
+    if (TOKTYP(S, a) == 137) { return _icall_open_at(S, a); }
     if (TOKTYP(S, a) != 2) { return 0 - 1; }
     return _pair_ret_open(S, a);
 }
@@ -1167,6 +1169,7 @@ fn _tok_ret_callee(S, a, t): i64 {
     t = _pair_unwrap(S, t);   # 6.7.13: `return (f(..));` forwards as `return f(..);`
     if (t < 0) { return 0 - 1; }
     if (_pc_mchain(S, t) == 1) { return _tok_mch_fn(S, a, t); }   # 6.7.16: a method chain, any receiver
+    if (_icall_open_at(S, t) >= 0) { return _tok_ic_fi(S, a, t); }   # 6.7.17 (D26): `callptr(&f, ..)` and fncallN
     if (TOKTYP(S, t) != 2) { return 0 - 1; }
     var o = _pair_ret_open(S, t);
     if (o >= 0) {
@@ -1182,6 +1185,48 @@ fn _tok_ret_callee(S, a, t): i64 {
     if (sid > 0) { mf = _meth_fn_at(S, sid, TOKVAL(S, t + 2), t + 2); }
     else { mf = _tok_method_any(S, TOKVAL(S, t + 2)); }
     return mf;
+}
+# 6.7.17 (D26) — the fn the call through fncallN / callptr at token t reaches when its callee is `&f` and `f`, in the
+# unit starting at token a, is no local, parameter or capture (`_tok_name_decl`, the scope walk) nor a global: the
+# parser's `_hl_ic_fi` read from the tokens, for the token passes (a forwarder `return callptr(&f, x);` defined below
+# its caller, a `?` on it, the mixed-return warning). -1 for a callee held in a variable. CHANGELOG [6.7.17]
+fn _tok_ic_fi(S, a, t): i64 {
+    if (a < 0) { return _hl_ic_fi(S, t); }
+    var f = _icall_fti(S, t);
+    if (f < 0) { return 0 - 1; }
+    var noff = TOKVAL(S, f);
+    if (_tok_name_decl(S, a, f, noff) >= 0) { return 0 - 1; }
+    if (_tok_cl_pname(S, a, f, noff) == 1) { return 0 - 1; }
+    if (_findvar_core(S, noff) >= 0) { return 0 - 1; }
+    return FINDFN(S, noff);
+}
+# 1 = the name `noff` at token k is a parameter of a block closure whose body encloses k, in the unit starting at token
+# a (`|f| { .. &f .. }`): the scope walk (`_tok_name_decl`) reads a `var` and a fn's parameters, not a closure's, and
+# the parser's `&f` is that parameter (`_hl_ic_fi`'s FINDLOCAL).
+fn _tok_cl_pname(S, a, k, noff): i64 {
+    var d = 0;
+    var i = k - 1;
+    while (i >= a) {
+        var t = TOKTYP(S, i);
+        if (t == 14) { d = d + 1; }
+        elif (t == 13) {
+            if (d > 0) { d = d - 1; }
+            elif (_tok_is_closure_body(S, i) == 1) { if (_tok_cl_has(S, i - 1, noff) == 1) { return 1; } }
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+# 1 = the closure parameter list closing at the `|` at token e names `noff` (`|a, f|`; `||` names none).
+fn _tok_cl_has(S, e, noff): i64 {
+    if (TOKTYP(S, e) != 35) { return 0; }
+    var j = e - 1;
+    while (TOKTYP(S, j) == 2) {
+        if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; }
+        if (TOKTYP(S, j - 1) != 31) { return 0; }
+        j = j - 2;
+    }
+    return 0;
 }
 
 # 6.7.11 — the receiver `self` at token t, in the unit starting at token a, when that unit is the
@@ -1452,6 +1497,7 @@ fn _ret_is_variant(S, a, t): i64 {
     t = _pair_unwrap(S, t);
     if (t < 0) { return 1; }
     if (_pc_mchain(S, t) == 1) { return _riv_chain(S, a, t); }   # 6.7.16: a method chain, any receiver
+    if (_icall_open_at(S, t) >= 0) { return _riv_icall(S, a, t); }   # 6.7.17 (D26): `return callptr(&f, ..)`
     if (TOKTYP(S, t) != 2) { return 1; }
     var rf = _tok_ret_callee(S, a, t);
     var nt = 10;
@@ -1479,6 +1525,17 @@ fn _riv_chain(S, a, t): i64 {
         if (TOKTYP(S, _pc_shape(S, t) - 1) == 2) { return 0; }
         return 1;
     }
+    var fl = GFLG(S, rf);
+    if ((fl & 256) != 0) { return 0; }
+    if ((fl & 512) != 0) { return 0; }
+    return 1;
+}
+# 6.7.17 (D26) — `return callptr(&f, ..)` / `return fncallN(&f, ..)`: a whole variant when the known `&f` returns a pair
+# or is a nullary variant, as `return f(..)` is; else plain (a callee held in a variable is a word). It was always
+# plain, so a forwarder beside `return Ok(..)` drew the dropped-tag warning. CHANGELOG [6.7.17]
+fn _riv_icall(S, a, t): i64 {
+    var rf = _tok_ic_fi(S, a, t);
+    if (rf < 0) { return 1; }
     var fl = GFLG(S, rf);
     if ((fl & 256) != 0) { return 0; }
     if ((fl & 512) != 0) { return 0; }
@@ -1523,8 +1580,10 @@ fn _tok_targs_open(S, e): i64 {
 
 # 1 = a `(` after a token of type ct opens a wrap, not a call's arguments: ct is neither a name nor
 # the `>` / `>>` / `>>>` closing a type-argument list. CHANGELOG [6.7.13]
+# 6.7.17 (D26): nor `callptr`, whose known `&f` is a pair asker's callee (`callptr(&f, 4)?`). CHANGELOG [6.7.17]
 fn _tok_wrap_open(ct): i64 {
     if (ct == 2 || ct == 20 || ct == 39 || ct == 152) { return 0; }
+    if (ct == 137) { return 0; }
     return 1;
 }
 # Does the `?` at token q consume a pair (`f(..)?`, `g<..>(..)?`, `x.m(..)?` — the callee flagged
@@ -1837,6 +1896,18 @@ fn _pair_callee_at(S, ti): i64 {
     if (o != ti + 3) { mf = _mcall_xquiet(S, mf, ti + 3); }
     return mf;
 }
+# ⛔ 6.7.17 (D26, the user's decision, 2026-10-22) — A KNOWN `&f` CALLEE'S PAIR IS THE DIRECT CALL'S: `callptr(&f, 4)`
+# and `fncall1(&f, 4)` with f returning a `: stack` pair answered no callee, so `callptr(&f, 4)?` took the boxed `?`
+# and dereferenced the tag (SIGSEGV) and `var v = callptr(&f, 4);` kept the tag in silence, where `f(4)` propagates and
+# is refused "bind both". The fn every pair asker judges at token ti (`_callee_returns_pair_at`): through fncallN /
+# callptr, the `&f` the call reaches (`_hl_ic_fi`; -1 for a callee held in a variable, a word) — unless a method chain
+# continues on its result, whose last method `_pair_callee_at` answers; else `_pair_callee_at`'s. Not in
+# `_pair_callee_at` itself: its other askers (the destructure's count and f64 typing, `_dt_call_fn`) keep an
+# indirect call's callee unknown. CHANGELOG [6.7.17]
+fn _pair_call_fn(S, ti): i64 {
+    if (_icall_open_at(S, ti) >= 0) { if (_mcall_open(S, ti, 0 - 1) < 0) { return _hl_ic_fi(S, ti); } }
+    return _pair_callee_at(S, ti);
+}
 # The fn the call at token ti reaches (`_gen_resolve_call`: a generic's instance, instantiating it if
 # needed, so its body — parsed with T bound — has set its own pair flag; else FINDFN's entry). A
 # lookahead: the refusal state that resolver leaves for an emitting path is put back.
@@ -2001,7 +2072,7 @@ fn _recv_sid(S, noff): i64 {
 fn _callee_returns_pair_at(S, ti): i64 {
     ti = _pair_unwrap(S, ti);
     if (ti < 0) { return 0; }
-    var _cra = _pair_callee_at(S, ti);
+    var _cra = _pair_call_fn(S, ti);   # 6.7.17 (D26): `callptr(&f, ..)` / `fncallN(&f, ..)` too
     if (_cra < 0) { return 0; }
     _ensure_pair_flags(S);
     if ((GFLG(S, _cra) & 256) == 0) { return 0; }
@@ -6883,6 +6954,18 @@ fn _PARSE_DEFER(S): i64 {
     EPATCH(S, djmp);
     return 0;
 }
+# 1 = the statement call `noff(..)` (the cursor on its `(`) returns a `: stack` pair, so a `?` after it takes the pair
+# lowering (`_stmt_qmark`): FINDFN's entry's flag — or, through `fncallN(&f, ..)`, the known f's (6.7.17, the user's
+# D26 of 2026-10-22: `fncall1(&f, 4)?;` read fncall1's own flag, took the boxed `?` and dereferenced the tag; a callee
+# held in a variable stays a word). CHANGELOG [6.7.17]
+fn _stmt_call_pair(S, noff): i64 {
+    _ensure_pair_flags(S);
+    if (_icall_open_at(S, GTI(S) - 1) >= 0) { return _callee_returns_pair_at(S, GTI(S) - 1); }
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { return 0; }
+    if ((GFLG(S, fi) & 256) != 0) { return 1; }
+    return 0;
+}
 # v5.6.3: #must_use — warn when the fn `noff` names is marked #must_use and is called as a
 # bare expression statement (result dropped). Called BEFORE the call is parsed, so the line
 # is the call site's, not the trailing ';'. Shared by the `IDENT (` statement arm and the
@@ -7865,12 +7948,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # the call, so the `?` desugar below can take the value-form path. Read from the fn
             # table by name rather than peeking the cursor: by the time `?` is seen the cursor is
             # already past the call.
-            var _qs_pair = 0;
-            _ensure_pair_flags(S);
-            var _qs_fi = FINDFN(S, noff);
-            if (_qs_fi >= 0) {
-                if ((GFLG(S, _qs_fi) & 256) != 0) { _qs_pair = 1; }
-            }
+            var _qs_pair = _stmt_call_pair(S, noff);   # 6.7.17 (D26): `fncall1(&f, 4)?;` too
             # ⛔ 6.6.5 — `fncallN(cb, …);` AS A STATEMENT WAS NOT THE SAME LANGUAGE AS IN AN
             # EXPRESSION. v6.5.17 lowered `fncallN` to the closure-aware indirect call in
             # PARSE_FACTOR (parse_expr.cyr), but this dispatch sends IDENT+`(` straight to

@@ -2244,6 +2244,13 @@ assignments stored the pointer word into the first field, the argument passed th
 `t = fncall0(&mks);` (`mks: Str`) into an inline `Str` copies the header (its length stayed stale). The `f` of `&f`
 resolves as the `&` operator resolves it — a local, closure capture or global named `f` is that variable, so
 `fncall0(&f)` is then a callee held in a variable.
+A known callee returning a `: stack` pair is the direct call's pair (6.7.17, the user's decision D26 of 2026-10-22):
+`callptr(&f, 4)?` and `fncall1(&f, 4)?` propagate, as an expression and as the statement `fncall1(&f, 4)?;`, `var t,
+v = callptr(&f, 4);` binds both, `return callptr(&f, x);` forwards the pair (its fn is a pair wherever it is defined,
+as a `?` through `&f` makes it), and `var v = callptr(&f, 4);` and every one-wide store are refused *bind both*, as
+`f(4)` is (the value form's refusals, below). Through 6.7.16 no pair check read the `&f`: the `?` took the boxed
+lowering and dereferenced the tag (a SIGSEGV; a fault on cx, an access violation on Windows) and the one-wide bind
+kept the tag in silence. Through a callee held in a variable the result stays one word.
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one — by name, or (6.7.13) the
@@ -6961,7 +6968,11 @@ parameter, `self`, a global or a closure's capture — a method's result `w.gp()
 `callptr(&gw, &w).p.m(..)`, a parenthesised head `(*pw).m(..)`, wrapped or not. Through 6.7.15 every check read a
 single-name receiver only: `w.p.rs(3)?` crashed (the boxed `?`), `var v = w.p.rs(3);` kept the tag in silence, a
 forwarder `return w.p.rs(3);` defined below its caller was one value there, and `return w.p.rs(3);` beside
-`return Ok(..);` drew the dropped-tag warning below.
+`return Ok(..);` drew the dropped-tag warning below. So is a call through a fn pointer whose callee is written `&f`
+— `callptr(&f, ..)`, `fncallN(&f, ..)`, `callptr((&f), ..)` (6.7.17, the user's decision D26 of 2026-10-22): through
+6.7.16 `callptr(&f, 4)?` crashed, `var v = callptr(&f, 4);` kept the tag in silence, and a forwarder `return
+callptr(&f, x);` was one value above its definition and drew the dropped-tag warning beside `return Ok(..);`. A
+callee held in a variable (`callptr(fp, 4)`) is unknown: its result is one word.
 
 **Parentheses around a whole pair call are transparent** (6.7.13, the user's decision of 2026-10-15),
 as around a whole struct source: `var v = (f());`, `x = ((f()));`, `h.n = (f());`, `P { (f()), 3 }`
