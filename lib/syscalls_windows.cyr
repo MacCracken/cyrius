@@ -1188,8 +1188,8 @@ fn sys_qpc_ns(): i64 {
 # before). A directory onto an existing file is -20 and a file onto a directory -21, as Linux
 # (`_win_rename`; 6.7.17's D35 / D36 — the directory replaced the file and a file answered -13).
 # ⚠ MoveFileExW moves a file across volumes only with MOVEFILE_COPY_ALLOWED, which is not set, so
-# a cross-volume rename fails, as rename(2) does — with -1 here (ERROR_NOT_SAME_DEVICE has no row
-# in the Win32 table), where rename(2) answers -18 (EXDEV).
+# a cross-volume rename fails ERROR_NOT_SAME_DEVICE, which the Win32 table maps to -18 (EXDEV), as
+# rename(2) answers (6.7.17's D96; it was -1). CHANGELOG [6.7.17]
 fn sys_rename(oldpath, newpath): i64 { return _win_rename(oldpath, newpath); }
 
 # GetModuleFileNameW(NULL, wbuf, cch) — 0xF03A (61498), the Windows source for the full

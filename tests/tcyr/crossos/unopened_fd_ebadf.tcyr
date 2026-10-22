@@ -39,8 +39,8 @@
 # answers its code through the one Win32 table (0xF04F) — a closed handle ERROR_INVALID_HANDLE, -9
 # — and a negative fd is -9 before any Win32 call (-1 is the current-process pseudo-handle). A cx
 # guest on a Windows host has no flock route: -38. A bad op is -22 whatever the fd, as on Linux: the
-# Windows arm checks the op first (Darwin's flock checks the fd first, so a non-descriptor is -9
-# there). CHANGELOG [6.7.17]
+# Windows arm checks the op first, and so do the macOS arm and cxvm on a Darwin host (6.7.17's D97:
+# Darwin's flock checks the fd first, so a non-descriptor was -9 there). CHANGELOG [6.7.17]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/str.cyr"
@@ -164,10 +164,11 @@ assert_eq(ln4, lbad, "xflock(-4, LOCK_EX) is -9 (the filed repro; Windows answer
 assert_eq(ln1, lbad, "xflock(-1, LOCK_EX | LOCK_NB) is -9 (Windows handed the pseudo-handle -1 to LockFileEx)");
 assert_eq(lnun, lbad, "xflock(-8, LOCK_UN) is -9 (Windows answered -1)");
 
-# A bad op is -22 whatever the fd: Linux's flock(2) checks the op before the fd, and so does the
-# Windows arm since 6.7.17 (an aliasing fd answered -9). Darwin's flock checks the fd first, so
-# every fd below, none a descriptor, is -9 there, natively and for a cx guest on a Mac (measured on
-# ecb and ach); on an OPEN fd Darwin takes 3 as LOCK_EX and answers 0, which no row here asks.
+# A bad op is -22 whatever the fd: Linux's flock(2) checks the op before the fd, and so do the
+# Windows arm (an aliasing fd answered -9) and, since 6.7.17's D97, the macOS arm and cxvm on a
+# Darwin host — Darwin's flock checks the fd first, so every fd below, none a descriptor, was -9
+# there, natively and for a cx guest on a Mac (measured on ecb and ach). A bad op on an OPEN fd is
+# xflock_two_handle.tcyr's group.
 test_group("xflock with a bad op is -EINVAL, whatever the fd");
 var hb = file_open(p, O_RDONLY, 0);
 assert_eq(hb >= 0, 1, "a descriptor to close opens");
@@ -176,18 +177,14 @@ var lb_c = xflock(hb, 3);                      # LOCK_SH | LOCK_EX: not one op
 var lb_n1 = xflock(0 - 1, 3);
 var lb_n4 = xflock(0 - 4, 16);                 # no lock bit at all
 var opbad = 0 - 22;
-#ifdef CYRIUS_TARGET_MACOS
-opbad = 0 - 9;
-#endif
 #ifdef CYRIUS_TARGET_CX
-if (lb_c == 0 - 9) { opbad = 0 - 9; }         # a Darwin host's flock
 if (lc_ex == 0 - 38) { opbad = 0 - 38; }      # a Windows host has no flock route
 #endif
-assert_eq(lb_c, opbad, "xflock(closed, 3) is -22 (macOS -9)");
-assert_eq(lb_n1, opbad, "xflock(-1, 3) is -22 (macOS -9)");
-assert_eq(lb_n4, opbad, "xflock(-4, 16) is -22 (macOS -9)");
+assert_eq(lb_c, opbad, "xflock(closed, 3) is -22 (macOS answered -9)");
+assert_eq(lb_n1, opbad, "xflock(-1, 3) is -22 (macOS answered -9)");
+assert_eq(lb_n4, opbad, "xflock(-4, 16) is -22 (macOS answered -9)");
 if (_ufe_check(h + 1) == 1) {
-    assert_eq(xflock(h + 1, 3), opbad, "xflock(h + 1, 3) is -22 (macOS -9; Windows answered -9)");
+    assert_eq(xflock(h + 1, 3), opbad, "xflock(h + 1, 3) is -22 (macOS and Windows answered -9)");
 }
 #endif
 

@@ -2190,6 +2190,10 @@ fn _pe_w32_errno_rows_b(S): i64 {
     _pe_w32_c(S, 206);                                  #   ERROR_FILENAME_EXCED_RANGE
     _pe_w32_e(S, 20);                                   # ENOTDIR
     _pe_w32_c(S, 267);                                  #   ERROR_DIRECTORY
+    # A move to another volume: MoveFileExW without MOVEFILE_COPY_ALLOWED, as rename(2)'s EXDEV
+    # (6.7.17's D96; it answered -1). CHANGELOG [6.7.17]
+    _pe_w32_e(S, 18);                                   # EXDEV
+    _pe_w32_c(S, 17);                                   #   ERROR_NOT_SAME_DEVICE
     return 0;
 }
 fn EWRITE_PE(S): i64 {

@@ -262,7 +262,20 @@
 #                                                           the arms are there — behaviour is axis 4's
 #   `_win_is_dir` always a directory (every -13 is -21)     axis 4 FAIL (path_failure_errno 48 / 1:
 #                                                           the held-open file's -13 reads -21)
-# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16]
+# 6.7.17 — a rename across volumes answers -18 (6.7.17's D96, the user, 2026-10-22: "add the row —
+# 17 -> -18 (EXDEV)"). MoveFileExW without MOVEFILE_COPY_ALLOWED fails ERROR_NOT_SAME_DEVICE (17), and
+# the table had no row for it: `file_rename` / `sys_rename` to another volume answered -1 (Linux -18).
+# The table maps 17 to -18. Rows: axis 3's TABLE gains `17:18`; axis 1 and axis 4 run
+# tests/tcyr/crossos/rename_cross_volume_exdev.tcyr (floor 2 natively, 4 under wine: on Windows its
+# first group sets the thread's last error to 2 / 17 and reads it back through 0xF04F, the table
+# stub every failing reroute calls; its rename rows run where /tmp is another volume — natively on a
+# tmpfs /tmp beside a disk checkout, and under wine only when the run directory is off /tmp, which
+# this gate's is not).
+#   mutant (2026-10-22, 6.7.17 finish pass; wine 11.20)      result
+#   the pre-fix compiler (the table without the 17 row)     axis 3 FAIL (the table maps the old 21 rows);
+#                                                           axis 4 FAIL (rename_cross_volume_exdev 3 / 1:
+#                                                           last error 17 reads -1)
+# Exit 77 = could not run (the SKIP protocol). CHANGELOG [6.7.14] [6.7.15] [6.7.16] [6.7.17]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: pe_reroute_failure_errno: build/cycc missing"; exit 77; }
@@ -273,14 +286,16 @@ T3="$ROOT/tests/tcyr/crossos/lseek_failed_seek.tcyr"
 T4="$ROOT/tests/tcyr/crossos/close_answer.tcyr"
 T5="$ROOT/tests/tcyr/crossos/path_failure_errno.tcyr"
 T6="$ROOT/tests/tcyr/crossos/unopened_fd_ebadf.tcyr"
-for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6"; do
+T7="$ROOT/tests/tcyr/crossos/rename_cross_volume_exdev.tcyr"
+for f in "$IO" "$T1" "$T2" "$T3" "$T4" "$T5" "$T6" "$T7"; do
     [ -f "$f" ] || { echo "FAIL: pe_reroute_failure_errno: $f is missing"; exit 1; }
 done
 # Row floors, as measured at 6.7.14 (each .tcyr runs every row on every target it counts); T5's and
-# T6's at 6.7.16.
-F1=10; F2=10; F3=13; F4=13; F5=50; F6=53
+# T6's at 6.7.16; T7's at 6.7.17 (natively its two setup rows always run; under wine its two table
+# rows too).
+F1=10; F2=10; F3=13; F4=13; F5=50; F6=53; F7=2; F7W=4
 # Win32 code:errno, sorted by code — the table src/backend/x86/emit.cyr's _pe_w32_errno_rows_a/_b emit.
-TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
+TABLE="2:2 3:2 5:13 6:9 8:12 14:12 15:2 17:18 32:13 33:13 80:17 87:22 109:32 112:28 123:2 131:22 145:39 161:2 183:17 206:36 232:32 267:20"
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: pe_reroute_failure_errno: mktemp -d failed"; exit 1; }
 # A PRIVATE wine prefix, and wine's own HOME / XDG_CACHE_HOME, under $D — never the user's
@@ -305,7 +320,7 @@ summary() { tr -d '\r' < "$1" | sed -n 's/^\([0-9][0-9]*\) passed, \([0-9][0-9]*
 
 # axis 1: the POSIX oracle.
 mkdir -p "$D/n"
-for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
+for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6" "$T7:$F7"; do
     t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
     ( cd "$ROOT" && "$CC" < "$t" > "$D/n/$b" 2> "$D/n/$b.err" ) || true
     if [ ! -s "$D/n/$b" ]; then
@@ -1156,7 +1171,7 @@ EOF
         got=$(line "$D/w/wa/wa.out")
         if [ "$got" = "-9 -9 -9 -9 1 -1 -1" ]; then ok; else bad "axis 4: the stdlib wrappers of an fd never opened, under wine: '$got' (want '-9 -9 -9 -9 1 -1 -1'; '-10057 -10054 0 -10057 1 1 1' is the socket s / the file h acted on)"; fi
     fi
-    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6"; do
+    for pair in "$T1:$F1" "$T2:$F2" "$T3:$F3" "$T4:$F4" "$T5:$F5" "$T6:$F6" "$T7:$F7W"; do
         t=${pair%:*}; fl=${pair##*:}; b=$(basename "$t" .tcyr)
         ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < "$t" > "$D/w/$b.exe" 2> "$D/$b.werr" ) || true
         if [ ! -s "$D/w/$b.exe" ]; then
@@ -1176,4 +1191,4 @@ fi
 echo "$pass passed, $fail failed"
 [ "$pass" -ge 10 ] || { echo "FAIL: pe_reroute_failure_errno: only $pass rows ran (floor 10: axes 1 and 5 always run)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_reroute_failure_errno"; exit 1; fi
-echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile / MoveFileExW / CreateSymbolicLinkW / FlushFileBuffers answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; an fd with a low bit set (no descriptor: it would alias the handle below it) is -9 in every fd reroute; ftruncate of a pipe, the null device or a read-only descriptor -22"
+echo "PASS: pe_reroute_failure_errno — a failed ReadFile / WriteFile / SetFilePointerEx / CreateFileW / CloseHandle / CreateDirectoryW / DeleteFileW / RemoveDirectoryW / SetEndOfFile / MoveFileExW / CreateSymbolicLinkW / FlushFileBuffers answers -errno through one GetLastError table (a good close 0); a drained pipe still reads 0; a close / truncate of fd 0 / 1 / 2 reaches the std handle; a negative fd's close is -9; an fd with a low bit set (no descriptor: it would alias the handle below it) is -9 in every fd reroute; ftruncate of a pipe, the null device or a read-only descriptor -22; a rename to another volume -18"

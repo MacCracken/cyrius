@@ -1,0 +1,99 @@
+# rename_cross_volume_exdev.tcyr — 6.7.17: a rename across volumes answers -18 (EXDEV) on every
+# target, Windows included, and the source stays where it was.
+#
+# ⛔ THE DEFECT. Windows' `file_rename` / `sys_rename` (`_win_rename` -> MoveFileExW, reroute 0xF034)
+# pass MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH and not MOVEFILE_COPY_ALLOWED, so a move to
+# another volume fails ERROR_NOT_SAME_DEVICE (17), as rename(2) fails EXDEV. The failing reroute maps
+# the code through the one Win32 table (src/backend/x86/emit.cyr `_pe_w32_errno_rows_a` / `_b`), which
+# had no row for 17: the rename answered -1 where Linux and macOS answer -18, so a caller that falls
+# back to copy-and-delete on -18 (the POSIX idiom for a cross-device move) never took that branch.
+#
+# THE FIX (6.7.17's D96, the user, 2026-10-22: "add the row — 17 -> -18 (EXDEV)"). The table maps
+# ERROR_NOT_SAME_DEVICE to -18. It is a table row, so every failing reroute that meets code 17 answers
+# -18 (MoveFileExW is the one that meets it in practice). CHANGELOG [6.7.17]
+#
+# Two groups:
+#   1. Windows only — the table row itself, on every Windows host (cass has one volume, so no real
+#      rename there reaches code 17). The thread's last error is set (the TEB's LastErrorValue at
+#      gs:[0x68], what GetLastError reads) and read back through `syscall(0xF04F)`, the same table
+#      stub every failing reroute calls: 2 -> -2 (the probe reaches the table), 17 -> -18.
+#   2. Every target — a REAL rename of a file in the current directory into /tmp. Where /tmp is
+#      another volume (a tmpfs /tmp beside a disk checkout on Linux; under wine, Z:\tmp is the Linux
+#      /tmp) it is -18 and the file is still at its source. Where it is the same volume the rename
+#      answers 0 (the file is moved back), and where there is no /tmp (-2: on real Windows `/tmp` is
+#      C:\tmp) the group prints a `not run:` line naming why.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+#ifdef CYRIUS_TARGET_WIN
+# The thread's last error set to 2 / 17 (mov dword gs:[0x68], imm32), then read back through the
+# table. Nothing between the store and the 0xF04F call makes a Win32 call.
+fn _xv_table2(): i64 {
+    asm {
+        0x65; 0xC7; 0x04; 0x25; 0x68; 0x00; 0x00; 0x00; 0x02; 0x00; 0x00; 0x00;
+    }
+    return syscall(0xF04F);
+}
+fn _xv_table17(): i64 {
+    asm {
+        0x65; 0xC7; 0x04; 0x25; 0x68; 0x00; 0x00; 0x00; 0x11; 0x00; 0x00; 0x00;
+    }
+    return syscall(0xF04F);
+}
+
+test_group("the Win32 table maps ERROR_NOT_SAME_DEVICE (17) to -EXDEV (6.7.17's D96)");
+assert_eq(_xv_table2(), 0 - 2, "last error 2 (ERROR_FILE_NOT_FOUND) reads -2 through the table");
+assert_eq(_xv_table17(), 0 - 18, "last error 17 (ERROR_NOT_SAME_DEVICE) reads -18 (it read -1: no row)");
+#endif
+
+fn _xv_exists(path): i64 {
+    var fd = file_open(path, O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    file_close(fd);
+    return 1;
+}
+
+fn _xv_say(msg): i64 {
+    sys_write(1, msg, strlen(msg));
+    return 0;
+}
+
+test_group("a rename to another volume is -EXDEV and the file stays (6.7.17's D96)");
+var src = test_scratch("xv_cross_volume.tmp");
+var sl = strlen(src);
+var dst = alloc(sl + 8);
+memcpy(dst, "/tmp/", 5);
+memcpy(dst + 5, src, sl);
+store8(dst + 5 + sl, 0);
+xunlink(src);
+var fd = file_open(src, O_WRONLY | O_CREAT | O_TRUNC, 420);
+assert_eq(fd >= 0, 1, "the source file is made");
+assert_eq(file_write(fd, "xv", 2), 2, "two bytes written to it");
+file_close(fd);
+var rr = file_rename(src, dst);
+if (rr == 0 - 18) {
+    assert_eq(rr, 0 - 18, "file_rename into /tmp, another volume, is -18 (Windows answered -1)");
+    assert_eq(sys_rename(src, dst), 0 - 18, "sys_rename into /tmp, another volume, is -18 (Windows answered -1)");
+    assert_eq(_xv_exists(src), 1, "the source is still there");
+    assert_eq(_xv_exists(dst), 0, "nothing was made at the target");
+} else {
+    if (rr == 0) {
+        file_rename(dst, src);
+        _xv_say("  not run: /tmp is on the current directory's volume: the cross-volume rows\n");
+    } else {
+        if (rr == 0 - 2) {
+            _xv_say("  not run: no /tmp here: the cross-volume rows\n");
+        } else {
+            assert_eq(rr, 0 - 18, "file_rename into /tmp is -18, 0 or -2 (Windows answered -1 across volumes)");
+        }
+    }
+}
+xunlink(src);
+xunlink(dst);
+
+var r = assert_summary();

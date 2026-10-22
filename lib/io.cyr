@@ -526,6 +526,12 @@ fn xflock(fd, op): i64 {
     # process, while on arm64 it ran with a stale x16. Issue the x86-Linux flock number
     # (73) and let ESYSXLAT renumber it to 131 — the sanctioned "x86 number + an
     # ESYSXLAT entry" pattern (CLAUDE.md), so ONE source number serves both backends.
+    # The op before the fd, as Linux's flock(2) and the Windows arm check it: a bad op is -22 for
+    # every fd. Darwin's flock reads an op naming LOCK_UN as an unlock, else LOCK_EX, else LOCK_SH,
+    # whatever other bits it carries (3 locked exclusive and answered 0), and answers an op naming
+    # none, or any op on a non-descriptor, -9 (6.7.17's D97). CHANGELOG [6.7.17]
+    var cmd = op & (0 - 5);                    # drop LOCK_NB (4)
+    if (cmd != 1) { if (cmd != 2) { if (cmd != 8) { return 0 - 22; } } }
     return syscall(73, fd, op);                # → BSD flock 131 via ESYSXLAT
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
