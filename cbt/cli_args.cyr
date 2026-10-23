@@ -19,7 +19,7 @@
 #   * flags were read AFTER the work they were meant to control
 #     (`--dry-run` is set inside the build loop, which runs after _auto_deps, so a
 #      dry-run build still resolved and wrote lib/; the deps branch never set it at
-#      all, which left cbt/deps.cyr's dry-run branch unreachable).
+#      all, which left cbt/deps/resolve.cyr's dry-run branch unreachable).
 #
 # THE RULE, enforced here for every verb and every delegated tool:
 #   1. flags may appear in ANY position;
@@ -62,7 +62,7 @@ fn _cli_global_spec(): i64 {
 
 # The dep/target block. Every flag here changes WHICH deps resolve or WHAT target
 # they resolve for, so it is applied before _auto_deps (rule 5).
-# 6.7.6 (lane C): `--local[=a,b]` / `--no-local` (the local-development switch; cbt/deps.cyr
+# 6.7.6 (lane C): `--local[=a,b]` / `--no-local` (the local-development switch; cbt/deps/local.cyr
 # "LOCAL MODE") and `--locked` (resolve the tags, compare with lib/ + cyrius.lock, write nothing)
 # change which deps resolve too, so they sit in this block.
 fn _cli_target_spec(): i64 {
@@ -714,7 +714,7 @@ fn _cli_preflight(verb): i64 {
 # _dry_run in particular: it used to be set inside the build loop, which runs AFTER
 # the resolver, so `cyrius build --dry-run s o` in a [deps] project printed
 # "dry-run: compile" having already created lib/. And the deps branch never set it,
-# which is why cbt/deps.cyr's dry-run early return had never once been reached.
+# which is why cbt/deps/resolve.cyr's dry-run early return had never once been reached.
 # Every --features occurrence, each one comma-split, in argv order. `--features fa
 # --features fb` == `--features fa,fb` (round-3 review; CHANGELOG [6.6.5]).
 fn _cli_features_all(): i64 {

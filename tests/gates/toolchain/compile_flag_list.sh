@@ -200,7 +200,7 @@ mk_env_probe() {   # $1 = the _cc_win_env_apply source to use, $2 = output .cyr
         echo 'var _covx_dump = 0;'
         cat <<'CYR'
 fn put(s): i64 { sys_write(1, s, strlen(s)); return 0; }
-# cbt's `_cat2` (cbt/deps.cyr), which `_cc_flag_inject` builds the dump entry with.
+# cbt's `_cat2` (cbt/deps/git_cache.cyr), which `_cc_flag_inject` builds the dump entry with.
 fn _cat2(a, b): i64 {
     var la = strlen(a);
     var lb = strlen(b);

@@ -114,7 +114,25 @@ include "cbt/commands/distlib/distlib.cyr"
 include "cbt/commands/publish.cyr"
 include "cbt/project.cyr"
 include "cbt/quality.cyr"
-include "cbt/deps.cyr"
+# 6.7.18: the resolver, split from cbt/deps.cyr along its seams into cbt/deps/ by stage, each piece moved unchanged and
+# included HERE in its old order, so the CLI built from them is byte-identical on every target. One parent, no
+# nesting. CHANGELOG [6.7.18]
+include "cbt/deps/vendor.cyr"
+include "cbt/deps/pin.cyr"
+include "cbt/deps/stdlib.cyr"
+include "cbt/deps/leaves.cyr"
+include "cbt/deps/names.cyr"
+include "cbt/deps/submodule.cyr"
+include "cbt/deps/keys.cyr"
+include "cbt/deps/local.cyr"
+include "cbt/deps/named.cyr"
+include "cbt/deps/dry_run.cyr"
+include "cbt/deps/resolve.cyr"
+include "cbt/deps/package.cyr"
+include "cbt/deps/update.cyr"
+include "cbt/deps/sha256.cyr"
+include "cbt/deps/git_cache.cyr"
+include "cbt/deps/lock.cyr"
 include "cbt/pulsar.cyr"
 
 # ================================================================

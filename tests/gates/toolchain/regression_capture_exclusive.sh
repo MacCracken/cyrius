@@ -352,11 +352,11 @@ PEFX
 a5=0
 [ "$(awk -f "$W/pe.awk" "$W/fx/pe.cyr" | tr '\t\n' '| ')" = '_a|/proc/self/environ _b|/root ' ] \
   || { fail "axis 5a self-test: the detector saw '$(awk -f "$W/pe.awk" "$W/fx/pe.cyr" | tr '\t\n' '| ')' (want _a|/proc/self/environ _b|/root)"; a5=1; }
-ALLOW5='cbt/deps.cyr|_dep_wt_run|/dev/null|a POSIX fork child: the PE arm spawns before the fork (cbt_fork_sites_have_pe_arm.sh)
-cbt/deps.cyr|_dep_wt_run|/usr/bin/env|the execve target of that POSIX fork child (sys_execve is a -1 stub on PE)
-cbt/deps.cyr|_git_run|/dev/null|a POSIX fork child: the PE arm spawns before the fork (cbt_fork_sites_have_pe_arm.sh)
-cbt/deps.cyr|_git_run|/usr/bin/env|the execve target of that POSIX fork child (sys_execve is a -1 stub on PE)
-cbt/deps.cyr|_process_named_deps|/usr/bin/env|the execve target of a POSIX fork child (sys_execve is a -1 stub on PE)'
+ALLOW5='cbt/deps/local.cyr|_dep_wt_run|/dev/null|a POSIX fork child: the PE arm spawns before the fork (cbt_fork_sites_have_pe_arm.sh)
+cbt/deps/local.cyr|_dep_wt_run|/usr/bin/env|the execve target of that POSIX fork child (sys_execve is a -1 stub on PE)
+cbt/deps/git_cache.cyr|_git_run|/dev/null|a POSIX fork child: the PE arm spawns before the fork (cbt_fork_sites_have_pe_arm.sh)
+cbt/deps/git_cache.cyr|_git_run|/usr/bin/env|the execve target of that POSIX fork child (sys_execve is a -1 stub on PE)
+cbt/deps/named.cyr|_process_named_deps|/usr/bin/env|the execve target of a POSIX fork child (sys_execve is a -1 stub on PE)'
 : > "$W/pesites"; npe=0
 for f in $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort); do
     [ -f "$f" ] || continue

@@ -9,7 +9,7 @@
 #     write back. Measured on 6.6.5: a 144,090-byte cyrius.cyml came out 65,535 bytes, cut
 #     mid-line, and `cyriusly use 9.9.9` printed "Pinned cyrius.cyml to 9.9.9" and exited 0.
 #     78,555 bytes of the user's manifest destroyed, silently, by a command that edits ONE line.
-#   * cbt/deps.cyr `cmd_update` — the cyrius.toml -> cyrius.cyml migration read the toml at
+#   * cbt/deps/update.cyr `cmd_update` — the cyrius.toml -> cyrius.cyml migration read the toml at
 #     32767 bytes, wrote the buffer as the cyml and then `sys_unlink("cyrius.toml")`, deleting
 #     the only untruncated copy.
 # The same cap in `_print_resolved_version` is not data loss but is the same root cause: a
@@ -213,7 +213,7 @@ programs/checks/deps_init.cyr|_deps_lock_gate|lock_path|a cyrius.lock the gate i
 programs/checks/platform_efi.cyr|_efi_ovmf_fn_exit_gate|efi_bin|the gate reads the 64-byte header of an EFI image it just built
 cbt/commands/lint.cyr|_lint_syntax_prepass|errf|a child compiler'"'"'s stderr capture in the private temp dir
 cbt/commands/capacity.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capture in the private temp dir
-cbt/deps.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
+cbt/deps/git_cache.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
 x=0
 found=""
 for f in programs/*.cyr programs/checks/*.cyr $(find cbt -name '*.cyr' | LC_ALL=C sort); do

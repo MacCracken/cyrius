@@ -1299,7 +1299,7 @@ fn _hc_find_root(start): i64 {
 }
 
 # 1 when directory `d` is the cyrius source checkout: it holds src/main.cyr and its manifest's
-# `[package] name` is exactly "cyrius" — cbt's `_dep_is_cyrius_source_repo` rule (cbt/deps.cyr),
+# `[package] name` is exactly "cyrius" — cbt's `_dep_is_cyrius_source_repo` rule (cbt/deps/lock.cyr),
 # never a filename probe: src/main.cyr beside a cyrius.cyml is every project `cyrius init` makes,
 # and a helper run inside one took it for the cyrius checkout (regen_issue_index rewrote its issue
 # index, fixpoint asked for its build/cycc). CHANGELOG [6.7.17]

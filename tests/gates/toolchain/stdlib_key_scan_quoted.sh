@@ -90,16 +90,16 @@ fi
 cd "$ROOT"
 # axis 3 (structural). 6.6.20: the scan is gone — `[deps] stdlib` is read by ONE helper on the
 # one manifest reader (`_dep_declared_stdlib` -> `_toml_find(buf, n, "deps", "stdlib")`,
-# cbt/deps.cyr), and every reader of the key calls it. This axis counted `"stdlib", 6` byte
+# cbt/deps/keys.cyr), and every reader of the key calls it. This axis counted `"stdlib", 6` byte
 # scans and required each to route through `_toml_key_at`; a fourth hand-rolled copy is exactly
 # what it exists to catch, so it now requires there be NO byte scan and that both readers (cmd_deps,
 # `lib sync`'s _libsync_declared_mods) call the helper.
-raw=$(grep -c '"stdlib", 6' $(find cbt/commands -name '*.cyr' | LC_ALL=C sort) cbt/deps.cyr | awk -F: '{s+=$2} END{print s}')
-users=$(grep -c '_dep_declared_stdlib(' $(find cbt/commands -name '*.cyr' | LC_ALL=C sort) cbt/deps.cyr | awk -F: '{s+=$2} END{print s}')
+raw=$(grep -c '"stdlib", 6' $(find cbt/commands cbt/deps -name '*.cyr' | LC_ALL=C sort) | awk -F: '{s+=$2} END{print s}')
+users=$(grep -c '_dep_declared_stdlib(' $(find cbt/commands cbt/deps -name '*.cyr' | LC_ALL=C sort) | awk -F: '{s+=$2} END{print s}')
 if [ "$raw" -ne 0 ]; then
     echo "  FAIL axis 3 (structural): $raw raw \"stdlib\", 6 byte scan(s) in cbt/ — a hand-rolled key scan has been reintroduced"
     fail=1
-elif ! grep -q '_toml_find(buf, n, "deps", "stdlib")' cbt/deps.cyr || [ "$users" -lt 3 ]; then
+elif ! grep -q '_toml_find(buf, n, "deps", "stdlib")' cbt/deps/keys.cyr || [ "$users" -lt 3 ]; then
     echo "  FAIL axis 3 (structural): the [deps] stdlib readers do not all go through _dep_declared_stdlib (definition + $((users - 1)) caller(s); want 2)"
     fail=1
 else

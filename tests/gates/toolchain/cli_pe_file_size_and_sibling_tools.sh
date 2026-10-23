@@ -2,7 +2,7 @@
 # 6.6.9 — the Windows CLI sizes files, verifies sidecars and finds the tools beside it.
 #
 # THE BUGS (both in cbt/, both invisible off Windows):
-#   1. `_file_size` (cbt/deps.cyr) was a raw `syscall(4, …)` — x86-Linux stat — and syscall 4
+#   1. `_file_size` (cbt/deps/vendor.cyr) was a raw `syscall(4, …)` — x86-Linux stat — and syscall 4
 #      has no PE reroute, so on cyrius.exe it answered -38 for EVERY path, at 38 call sites.
 #      Two of them are user-visible here: `cyrius distlib`'s compile-verified sidecar sized
 #      every file it splices with it, compiled an EMPTY unit, saw nothing undefined and

@@ -435,7 +435,7 @@ fn main(): i64 {
     i = 0;
     while (i < 32) { if (load64(&_cbt_sig_names + i * 8) != 0) { seen = seen + 1; } i = i + 1; }
     assert_eq(seen, 0, "untracked names leave the table empty");
-    # 6.7.14: a pointer tracked again holds its one slot (deps.cyr's per-process `git_err`, which
+    # 6.7.14: a pointer tracked again holds its one slot (cbt/deps/git_cache.cyr's per-process `git_err`, which
     # every `_git_run` re-registers), and one untrack forgets it.
     _cbt_scratch_track(t1);
     _cbt_scratch_track(t1);

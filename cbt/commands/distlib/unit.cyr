@@ -44,7 +44,7 @@
 # the owner lookup credited it to the first stdlib file declaring that name — for libro's
 # thin sigil surface, the sigil MONOLITH — and the next round recorded the monolith's own needs
 # (`sys`) as libro's. `cyrius deps` records the module paths and the leaves it pulled for named
-# deps (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps.cyr): the modules enter the unit, and a
+# deps (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps/): the modules enter the unit, and a
 # named dep's own need is kept out of the sidecar (see the classification in the loop); a leaf
 # that IS a named dep (libro's umbrella includes `lib/patra.cyr`) is the consumer's pinned
 # module, not the stdlib snapshot's fold; and no named dep is ever an owner.

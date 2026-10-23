@@ -1,0 +1,777 @@
+# CLI — deps: _process_named_deps — one manifest's [deps.NAME] sections.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# v5.7.14: process [deps.X] sections in `buf` (manifest content of
+# length `n`). `manifest_dir` is the absolute directory containing
+# the manifest; relative `path = "..."` entries resolve against it.
+# Successfully-resolved deps' names go into _dep_visited (closest-
+# wins de-dup), and their resolved dirs go into _dep_queue for the
+# transitive walk in cmd_deps. Returns errors count for this manifest.
+fn _process_named_deps(buf, n, manifest_dir): i64 {
+    var errors = 0;
+    var info[32];
+    var si = 0;
+    while (si < n) {
+        # 6.6.20: the section walk is on the one reader (`_toml_line`, cbt/manifest.cyr) — headers
+        # and keys whole, indented or not, never inside a multi-line value. This was a private
+        # column-0 scan: an indented `tag` was dropped (unpinned HEAD vendored), `[ deps.x ]`
+        # ignored, a `[deps.x]` inside a `"""` description resolved, and a later `[docs]` /
+        # `[[bin]]` key read as the dep's own.
+        si = _toml_line(buf, n, si, &info);
+        var hclosed = 0;
+        var dep_name = _dep_hdr_name(buf, n, &info, &hclosed);
+        if (dep_name != 0) {
+            # 6.7.6: the test-scope pass walks the root manifest a second time — a header refused
+            # below was named, and counted, by the first pass (once, not twice)
+            var named_before = 0;
+            if (_dep_test_pass == 1 && _dep_ctx_kind == 0) { named_before = 1; }
+            # A header with no `]` on its line: the old scan ran its NAME across the newline.
+            if (hclosed == 0) {
+                if (named_before == 1) { continue; }
+                _dep_refuse_unclosed(dep_name);
+                errors = errors + 1;
+                continue;
+            }
+            # the deps-header dot-dot path bug (6.6.13): the header NAME becomes a path — the clone dir
+            # `<home>/deps/<name>/<tag>` (mkdir + git clone), the `lib/<name>_<base>`
+            # destination, and the `dist/<name>.cyr` default. the include filename-capture overflow bug (v6.2.51)
+            # guarded
+            # the sub-module / index / package names and never this one, so a manifest
+            # — the consumer's or any TRANSITIVE dep's — naming `[deps.../../x]` made
+            # `cyrius deps` mkdir and clone OUTSIDE `<home>/deps`. Refused before any
+            # path is derived; the rest of the section is skipped by the outer scan.
+            # 6.6.20 (the deps-name guard bug): `[deps.]` / `[deps..]` / `[deps..x]`, `\` and control bytes too
+            # (_dep_name_unsafe) — the empty and dot names aliased ANOTHER dep's cache root.
+            if (_dep_name_unsafe(dep_name) == 1) {
+                if (named_before == 1) { continue; }
+                _dep_refuse_name(dep_name);
+                errors = errors + 1;
+                continue;
+            }
+            # The section's keys (`_dep_sec_read`: the one reader of a [deps.NAME] table, shared
+            # with the local-mode prescan and the dry run so the three cannot disagree).
+            var rec = alloc(_DS_SIZE);
+            si = _dep_sec_read(buf, n, si, manifest_dir, rec);
+            _dep_decl_note(dep_name, rec);   # 6.7.12 (D25): before any skip — a declaration read
+            # 6.7.6 (part T) — SCOPE. A dependency's own `scope = "test"` deps are its own test
+            # business: never walked by a consumer. The project's are resolved in phase 4, after
+            # every production dependency (`_dep_test_pass`), so a name both sides reach is the
+            # production one and a production build never depends on a test-only declaration.
+            var dep_scope = load64(rec + _DS_SCOPE);
+            if (_dep_ctx_kind != 0) {
+                if (dep_scope == 1) { continue; }
+            } elif (_dep_test_pass == 0) {
+                if (dep_scope == 0 - 1) {
+                    _ew("error: [deps.");
+                    _ew_shown(dep_name);
+                    _ew("] scope = \"");
+                    _ew_shown(load64(rec + _DS_SCOPEV));
+                    _ew("\" is not a scope — the one scope is \"test\" (resolved always, prepended to test / bench / fuzz compiles only) — section refused\n");
+                    errors = errors + 1;
+                    continue;
+                }
+                if (dep_scope == 1) { continue; }
+            } elif (dep_scope != 1) { continue; }
+            # v5.7.14: closest-wins skip. 6.7.6 (R7): after the keys are read, so a diamond — the
+            # same name wanted at another tag — is SAID rather than dropped in silence. Only by an
+            # entry this run would resolve: one gated out (optional with no active feature, another
+            # target) wants nothing here, and was called "wanted" (6.7.6 review).
+            if (_dep_name_visited(dep_name) == 1) {
+                if (_dep_gated(dep_name, rec) == 0) { _dep_diamond(dep_name, rec); }
+                continue;
+            }
+            var dep_path = load64(rec + _DS_PATH);
+            var dep_git = load64(rec + _DS_GIT);
+            var dep_tag = load64(rec + _DS_TAG);
+            var dep_modules = load64(rec + _DS_MODULES);
+            var dep_requires = load64(rec + _DS_REQUIRES);
+            var dep_modular = load64(rec + _DS_MODULAR);   # v6.2.50 Phase C: sub-modules from dist/<name>/
+            var dep_optional = load64(rec + _DS_OPTIONAL); # v6.3.1 lever 2: only when a feature names it
+            var dep_target = load64(rec + _DS_TARGET);     # v6.3.1 lever 2: only on a matching target
+            var dep_bad = load64(rec + _DS_BAD);           # 6.6.17 (m6): the key that is not a string
+            # the release-integrity hardening item (v6.2.30): cleared if a tagged dep's resolved commit
+            # disagrees with the lock — gates the module copy so poisoned
+            # content never lands in lib/.
+            var dep_pin_ok = 1;
+            # 6.7.6 (R11): a key nothing reads, in the project's OWN manifest, is named — `dev = true`
+            # read as silence. A dependency's manifest is its author's business.
+            if (_dep_ctx_kind == 0) { _dep_warn_unknown_keys(dep_name, load64(rec + _DS_UNKNOWN)); }
+            if (dep_bad != 0) {
+                _ew("error: [deps.");
+                _ew_shown(dep_name);
+                _ew("] ");
+                _ew(dep_bad);
+                if (streq(dep_bad, "optional") == 1) { _ew(" is not true or false — section refused\n"); }
+                else { _ew(" is not a TOML string (quote it: \"…\" or '…') — section refused\n"); }
+                errors = errors + 1;
+                continue;
+            }
+            # the deps-tag dot-dot path bug (6.6.16): the tag becomes a path component of the clone dir —
+            # refuse one that would leave `<home>/deps/<name>` BEFORE any gate, mkdir,
+            # clone or is_dir. Only when a `tag` key is present: a tagless path / git dep
+            # (dep_tag == 0) is the common shape and stays untouched.
+            if (dep_tag != 0 && _dep_reject_unsafe_tag(dep_tag) == 1) {
+                _ew("error: [deps.");
+                _ew_shown(dep_name);
+                _ew("] tag '");
+                _ew_shown(dep_tag);
+                _ew("' is not a usable tag (it would make the cache path leave <home>/deps/");
+                _ew_shown(dep_name);
+                _ew(") — section refused\n");
+                errors = errors + 1;
+                continue;
+            }
+            # 6.6.20 (the modules dot-dot / symlink vendoring bug): a `modules` entry is joined onto the dep's tree and
+            # copied into
+            # lib/, so `"../secret"` vendored any readable file and exited 0. Refused, like the tag
+            # above, before any gate, clone or copy (transitive `path` confinement is separate).
+            if (dep_modules != 0 && _dep_modules_refused(dep_name, dep_modules) > 0) {
+                errors = errors + 1;
+                continue;
+            }
+            # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps):
+            # gate this dep on the active feature set and the build target. An
+            # `optional = true` dep resolves only when an active feature names it;
+            # a `target = "..."` dep resolves only on a matching build target. The
+            # axes COMBINE — a miss on EITHER skips the dep entirely (no requires
+            # pull, no clone, no module copy, no `_dep_includes` push). Absent keys
+            # → dep_optional 0 / dep_target 0 → never gated, so every pre-existing
+            # manifest resolves the identical include set + order (byte-identical).
+            # A skipped dep is NOT marked visited, so a later (transitive)
+            # *required* reference can still resolve it. `continue` re-enters the
+            # outer scan at the next section header the key loop left `si` on.
+            if (dep_optional == 1 && _dep_feature_active(dep_name) == 0) {
+                if (_verbose == 1) {
+                    sys_write(STDERR_FD, "  skip optional dep (no active feature): ", 41);
+                    _ew_shown(dep_name);
+                    sys_write(STDERR_FD, "\n", 1);
+                }
+                continue;
+            }
+            if (dep_target != 0 && _dep_target_matches(dep_target) == 0) {
+                if (_verbose == 1) {
+                    sys_write(STDERR_FD, "  skip dep (target mismatch): ", 30);
+                    _ew_shown(dep_name);
+                    sys_write(STDERR_FD, "\n", 1);
+                }
+                continue;
+            }
+            # v6.2.46 (dependency-model arc, lever 1 / Phase A): resolve this
+            # dep's declared `requires` stdlib leaves BEFORE its own modules,
+            # so each leaf's `include "lib/<leaf>"` lands ahead of this dep's
+            # include in `_dep_includes` — topological emit falls out of
+            # resolution order, no separate sort. Reuses the recursive stdlib
+            # resolver + its `_dep_stdlib_seen` dedup, so a leaf already pulled
+            # (by `[deps].stdlib` or another fold's `requires`) is not
+            # re-included. Converts the hand-ordered "ct/keccak MUST precede
+            # the sigil include" consumer chain — and its omit-one → runtime
+            # `ud2`/SIGILL trap — into a declared, fail-loud, resolve-time-
+            # ordered requirement. Init the seen-set if the `[deps].stdlib`
+            # phase didn't (a requires-only consumer) so `_dep_stdlib_seen_add`
+            # doesn't vec_push into a null set.
+            if (dep_requires != 0) {
+                if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
+                var rq_dir = _dep_find_stdlib_dir();
+                if (rq_dir == 0) {
+                    sys_write(STDERR_FD, "error: dep ", 11);
+                    _ew_shown(dep_name);
+                    sys_write(STDERR_FD, " declares requires but the cyrius stdlib was not found\n", 55);
+                    errors += 1;
+                } else {
+                    errors = errors + _dep_pull_leaves(rq_dir, dep_name, dep_requires);
+                }
+            }
+            # 6.6.13 (I10a): a block with NO `modules` and NO `modular` key means
+            # `modules = ["dist/<name>.cyr"]` when the tag (or path) ships that file —
+            # probed below, after the clone and its release-integrity hardening item pin. It used to be silently
+            # inert: never cloned, vendored, pinned or marked visited, so a TRANSITIVE
+            # `[deps.<name>]` resolved in its place (agnostic 0.1.7). An explicit
+            # `modules = []` parses to a non-zero empty vec, so it is NOT defaulted —
+            # it stays the "declared, not linked" spelling. The name is already
+            # validated (the deps-header dot-dot path bug above), so it is safe to build a path from.
+            # 6.7.6 (lane C) — WHERE THIS DEP COMES FROM: its working tree or its git (`_dep_pick`, the
+            # rule at "LOCAL MODE" above). Until 6.7.6 a `path` beside git/tag won whenever the
+            # directory existed, silently, with no clone and no commit pin.
+            var pick = _dep_pick(dep_name, rec, _dep_ctx_kind, _dep_ctx_owner, 1);
+            if (pick < 0) {
+                errors = errors + 1;
+                continue;
+            }
+            var dep_local = 0;      # 1: resolved from a working tree (its kind for the walk below)
+            var dep_desc = 0;       # where it came from, for `deps -v`
+            if (pick == 1) {
+                dep_local = 1;
+                if (dep_git != 0) { dep_desc = _dep_say_local(dep_name, rec, _dep_ctx_owner); }
+                else {
+                    dep_desc = _cat2("local-only ", _shown(load64(rec + _DS_RAW)));
+                    if (_dep_local_active == 1 || _verbose == 1) {
+                        _ew("local-only: ");
+                        _ew_shown(dep_name);
+                        _ew(" <- ");
+                        _ew_shown(load64(rec + _DS_RAW));
+                        if (_dep_ctx_owner != 0) { _ew(" (via "); _ew_shown(_dep_ctx_owner); _ew(")"); }
+                        _ew(" (no git / tag: a release cannot resolve it)\n");
+                    }
+                }
+            } else {
+                dep_path = 0;       # its git decides; a path beside it is a dev override not in use
+            }
+            var dep_mod_default = 0;
+            if (dep_modules == 0 && dep_modular == 0 && (dep_git != 0 || dep_path != 0)) {
+                dep_mod_default = 1;
+            }
+            var need_clone = 0;
+            # I10a/I10c: a defaulted block and a `modular`-only block are cloned too —
+            # the guard used to be `dep_modules != 0` alone, so both were dropped here.
+            if (dep_git != 0 && dep_path == 0 && (dep_modules != 0 || dep_modular != 0 || dep_mod_default == 1)) {
+                need_clone = 1;
+            }
+            # the release-integrity hardening item (v6.2.30): the commit-pin verify below lives in the
+            # need_clone branch, so a dep resolved from a working tree has no pin checked — and
+            # since 6.7.6 that happens only in local mode, which never writes cyrius.lock. A
+            # default resolve always builds (and pins) the tag.
+            var dep_fetched = 0;
+            if (need_clone == 1) {
+                var clone_dir = _dep_clone_dir(dep_name, dep_tag);
+                # 6.7.6 (R8): `cyrius update` re-fetches an UNTAGGED clone — it floats by design, and
+                # the cache froze it at its first fetch. A tag is immutable and is never re-fetched.
+                if (_dep_update_mode == 1 && dep_tag == 0 && is_dir(str_from(clone_dir)) == 1) {
+                    _status(_cat2(_cat2(_cat2("  ", _shown(dep_name)), ": untagged — re-fetching "), _shown(dep_git)));
+                    _dep_rm_tree(clone_dir);
+                }
+                if (is_dir(str_from(clone_dir)) == 0) { dep_fetched = 1; }
+                # 6.7.13 (D41): a clone the pin-move dry pass fetched is this command's fetch too
+                if (_dep_dry_drop != 0 && dep_fetched == 1) { vec_push(_dep_dry_fetched, clone_dir); }
+                if (_dep_dry_drop == 0 && _dep_dry_fetched != 0) {
+                    if (_dep_path_in(_dep_dry_fetched, clone_dir) == 1) { dep_fetched = 1; }
+                }
+                if (is_dir(str_from(clone_dir)) == 0) {
+                    var git_ok = 1;
+                    var gi2 = 0;
+                    while (load8(dep_git + gi2) != 0) {
+                        var gc = load8(dep_git + gi2);
+                        if (gc == 59 || gc == 124 || gc == 96 || gc == 36 || gc == 38 || gc == 40 || gc == 41) {
+                            git_ok = 0;
+                        }
+                        gi2 += 1;
+                    }
+                    if (dep_tag != 0) {
+                        var ti2 = 0;
+                        while (load8(dep_tag + ti2) != 0) {
+                            var tc2 = load8(dep_tag + ti2);
+                            if (tc2 == 59 || tc2 == 124 || tc2 == 96 || tc2 == 36 || tc2 == 38) {
+                                git_ok = 0;
+                            }
+                            ti2 += 1;
+                        }
+                    }
+                    if (git_ok == 0) {
+                        sys_write(STDERR_FD, "error: unsafe characters in git URL or tag — skipping ", 56);
+                        _ew_shown(dep_name);
+                        sys_write(STDERR_FD, "\n", 1);
+                        errors += 1;
+                    }
+                    # v6.6.6 — REFUSE BY NAME ON PE. `sys_fork` is `return 0 - 1` on
+                    # Windows (lib/syscalls_windows.cyr), so the clone below never ran
+                    # and the dep-cache tamper-check hardening item status check reported `git clone failed for dep
+                    # '<name>' from <url>` — a statement about git that git never made,
+                    # sending the reader to look at a remote that is fine. The verify
+                    # half already asks `_git_exec_available()` before believing a fork
+                    # failure (6.6.5); the clone half did not. CHANGELOG [6.6.6].
+                    if (git_ok == 1 && _git_exec_available() == 0) {
+                        _ew("error: dep '");
+                        _ew_shown(dep_name);
+                        _ew("' needs a git clone, which cyrius cannot run on this platform\n");
+                        _ew("       (no fork). Pre-populate the dep cache from a POSIX host, or\n");
+                        _ew("       vendor the dep with a [deps.NAME] path/version entry.\n");
+                        errors = errors + 1;
+                        git_ok = 0;
+                        dep_pin_ok = 0;
+                    }
+                    if (git_ok == 1) {
+                        # the git argument-quoting bug (v6.1.33): clone via ARGV — no /bin/sh string, no
+                        # sys_system. Each field is a distinct argv element AND a
+                        # `--` separates options from the url/dir positionals, so a
+                        # url/tag beginning with `-` can't be read as a git flag
+                        # (the `-c …ext::sh` / `--upload-pack=…` arg-injection class
+                        # the metachar denylist above misses — space + leading `-`
+                        # aren't blocked). `/usr/bin/env` resolves git via PATH.
+                        # the dep-cache tamper-check hardening item (v6.6.5): the same `-u` scrub the verify uses. Git
+                        # exports GIT_INDEX_FILE into every hook, so a `cyrius deps`
+                        # run from a pre-commit hook made THIS clone write the user's
+                        # in-progress commit index — their commit then failed with
+                        # "invalid object … Error building trees" and the cache was
+                        # left with no index of its own. CHANGELOG [6.6.5].
+                        var gargv[512];   # N BYTES: up to ~48 ptrs (384 B) + slack
+                        var gai = _git_env_argv(&gargv, 0);
+                        store64(&gargv + gai * 8, "git");       gai = gai + 1;
+                        gai = _git_no_plaintext(&gargv, gai);   # 6.7.18
+                        store64(&gargv + gai * 8, "-c");        gai = gai + 1;
+                        store64(&gargv + gai * 8, "advice.detachedHead=false"); gai = gai + 1;
+                        store64(&gargv + gai * 8, "clone");     gai = gai + 1;
+                        store64(&gargv + gai * 8, "--depth");   gai = gai + 1;
+                        store64(&gargv + gai * 8, "1");         gai = gai + 1;
+                        store64(&gargv + gai * 8, "-q");        gai = gai + 1;
+                        if (dep_tag != 0) {
+                            store64(&gargv + gai * 8, "-b");    gai = gai + 1;
+                            store64(&gargv + gai * 8, dep_tag); gai = gai + 1;
+                        }
+                        store64(&gargv + gai * 8, "--");        gai = gai + 1;
+                        store64(&gargv + gai * 8, dep_git);     gai = gai + 1;
+                        store64(&gargv + gai * 8, clone_dir);   gai = gai + 1;
+                        store64(&gargv + gai * 8, 0);
+                        if (_verbose == 1) {
+                            sys_write(STDERR_FD, "  git clone: ", 13);
+                            _ew_shown(dep_git);
+                            sys_write(STDERR_FD, "\n", 1);
+                        }
+                        # 6.7.14: tracked, the signal FORWARDED — a SIGTERM'd resolve left `git clone`
+                        # running on to create the cache after the CLI died; sent the signal, git
+                        # removes its own partial clone directory. fwd 2: a git that does not exit on
+                        # it within the grace is SIGKILLed (`_cbt_child_track`). CHANGELOG [6.7.15]
+                        var gpid = _cbt_fork_tracked(2);
+                        if (gpid == 0) {
+                            sys_execve("/usr/bin/env", &gargv, _envp);
+                            sys_exit(127);
+                        }
+                        # the dep-cache tamper-check hardening item (v6.6.5): the clone's exit status used to be
+                        # DISCARDED, so a failed clone surfaced downstream as the
+                        # misleading `modules entry "…" not found at tag`. A fork
+                        # failure left `gsb` uninitialised too. CHANGELOG [6.6.5].
+                        var gsb[8];
+                        store64(&gsb, 0);
+                        var gok = 0;
+                        if (gpid > 0) {
+                            if (sys_waitpid(gpid, &gsb, 0) > 0) {
+                                if ((load64(&gsb) & 0xFFFF) == 0) { gok = 1; }
+                            }
+                            _cbt_child_untrack(gpid);
+                        }
+                        if (gok == 0) {
+                            _ew("error: git clone failed for dep '");
+                            _ew_shown(dep_name);
+                            _ew("' from ");
+                            _ew_shown(dep_git);
+                            # git's own stderr is INHERITED here (not captured), so
+                            # its diagnostic is already on the terminal above this.
+                            _ew("\n");
+                            errors = errors + 1;
+                            # ...and don't then ALSO report every declared module as
+                            # "not found at tag" against a directory that was never
+                            # created. One failure, named once.
+                            dep_pin_ok = 0;
+                        }
+                    }
+                }
+                dep_path = clone_dir;
+                # the release-integrity hardening item (v6.2.30): pin the resolved commit for a TAGGED dep.
+                # The tag is meant to be immutable, so on every resolve (fresh
+                # clone OR reused cache) we enforce, against the lock and the
+                # checkout, gating the module copy via dep_pin_ok:
+                #   1. a corrupt/truncated pin line for this dep → fail closed
+                #      (don't silently TOFU-re-pin over corruption);
+                #   2. HEAD must equal the locked commit → catches a force-pushed
+                #      / repointed tag (the core the release-integrity hardening item threat);
+                #   3. the checkout must BE the tag — `_git_cache_verify`.
+                # the dep-cache tamper-check hardening item (v6.6.5) rewrote 3 and closed the two holes AROUND it:
+                #   * an unreadable checkout (no .git, dubious ownership, fork
+                #     failure) used to SKIP every check — `if (_head != 0)` had no
+                #     else — so tampered bytes were vendored and the pin dropped.
+                #     It now refuses, and `.git` is proved a real directory BEFORE
+                #     any git runs, so discovery can't reach an enclosing repo and
+                #     pin a FOREIGN HEAD;
+                #   * an UNTAGGED dep skipped content verification entirely,
+                #     because the whole block sat under `if (dep_tag != 0)`. It
+                #     floats by design (no pin) — that is not a reason to vendor
+                #     bytes its remote never published. CHANGELOG [6.6.5].
+                # POSIX-only (mirrors the clone) — and that is now SAID, not assumed:
+                # `sys_fork` is `return -1` on Windows, so every `_git_run` there fails
+                # and the `_head == 0` refusal below would hard-fail a pre-populated
+                # cache (the only way a git dep can exist on native Windows) with a
+                # reason that is false and a recovery that cannot run. The platform
+                # stays out of the check — and warns that it did. CHANGELOG [6.6.5].
+                var _head = 0;
+                var _gx = _git_exec_available();
+                if (_gx == 0) {
+                    # 6.6.13 (I10): only when there IS a cache. With none, the clone above
+                    # was refused by name (`dep_pin_ok == 0`) and this line claimed bytes
+                    # were being vendored that did not exist — measured on cass for a
+                    # modules-less git dep, which reaches here since I10a.
+                    if (dep_pin_ok == 1 && is_dir(str_from(clone_dir)) == 1) {
+                        _ew("warning: dep '");
+                        _ew_shown(dep_name);
+                        _ew("': its cached checkout was NOT verified — git cannot be run on this\n");
+                        _ew("         platform (no fork), so the cached bytes are vendored as they are.\n");
+                    }
+                } elif (_git_has_repo(clone_dir) == 1) { _git_cap_errno = 0; _head = _git_head_sha(clone_dir); }
+                if (_gx == 0) {
+                    dep_path = clone_dir;   # unchanged from above: vendor the cache as found
+                } elif (_head == 0) {
+                    if (is_dir(str_from(clone_dir)) == 1) {
+                        _git_cache_refuse(dep_name, dep_tag, clone_dir, _git_cap_judge(1));
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    }
+                } elif (dep_tag == 0) {
+                    var _uv = _git_cache_verify(clone_dir, 0, _head, dep_git);
+                    if (_uv != 0) {
+                        _git_cache_refuse(dep_name, 0, clone_dir, _uv);
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    }
+                } else {
+                    var _exp = _lock_commit_lookup(dep_name, dep_git, dep_tag);
+                    if (_exp == -1) {
+                        sys_write(STDERR_FD, "error: corrupt commit-pin line for dep '", 40);
+                        _ew_shown(dep_name);
+                        sys_write(STDERR_FD, "' in cyrius.lock — refusing (delete cyrius.lock to re-pin intentionally).\n", 76);
+                        # These two branches refuse without going through `_git_cache_refuse`,
+                        # so they clear the stderr capture themselves — `_git_head_sha` above
+                        # created it. CHANGELOG [6.6.5].
+                        _git_err_clear();
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    } elif (_exp != 0 && _cstr_eq(_exp, _head) == 0) {
+                        sys_write(STDERR_FD, "error: commit-pin mismatch for dep '", 36);
+                        _ew_shown(dep_name);
+                        sys_write(STDERR_FD, "' tag '", 7);
+                        _ew_shown(dep_tag);
+                        sys_write(STDERR_FD, "': cyrius.lock pins ", 20);
+                        sys_write(STDERR_FD, _exp, strlen(_exp));
+                        sys_write(STDERR_FD, " but the tag now resolves to ", 29);
+                        sys_write(STDERR_FD, _head, strlen(_head));
+                        sys_write(STDERR_FD, " (force-pushed/repointed tag) — refusing. Delete cyrius.lock to re-pin intentionally.\n", 88);
+                        _git_err_clear();
+                        dep_pin_ok = 0;
+                        errors = errors + 1;
+                    } else {
+                        var _vr = _git_cache_verify(clone_dir, dep_tag, _head, dep_git);
+                        if (_vr != 0) {
+                            _git_cache_refuse(dep_name, dep_tag, clone_dir, _vr);
+                            dep_pin_ok = 0;
+                            errors = errors + 1;
+                        } else {
+                            # 6.7.6 (part L): --locked holds the lock to what it records — a tag
+                            # with NO pin there is a difference (a default resolve would add one).
+                            if (_dep_locked == 1 && _exp == 0) {
+                                _ew("  differs: cyrius.lock has no commit pin for ");
+                                _ew_shown(dep_name);
+                                _ew(" tag ");
+                                _ew_shown(dep_tag);
+                                _ew(" (the tag resolves to ");
+                                _ew(_head);
+                                _ew(")\n");
+                                _dep_locked_diff = _dep_locked_diff + 1;
+                            }
+                            var _cl = str_builder_new();
+                            str_builder_add_cstr(_cl, "commit\t");
+                            str_builder_add_cstr(_cl, _head);
+                            str_builder_add_cstr(_cl, "\t");
+                            str_builder_add_cstr(_cl, dep_name);
+                            str_builder_add_cstr(_cl, "\t");
+                            str_builder_add_cstr(_cl, dep_git);
+                            str_builder_add_cstr(_cl, "\t");
+                            str_builder_add_cstr(_cl, dep_tag);
+                            if (_dep_commit_lines != 0) {
+                                vec_push(_dep_commit_lines, str_data(str_builder_build(_cl)));
+                            }
+                        }
+                    }
+                }
+                # 6.7.6 (part L): `deps -v` says where it came from
+                var _dsb = str_builder_new();
+                if (dep_tag != 0) {
+                    str_builder_add_cstr(_dsb, "tag ");
+                    str_builder_add_cstr(_dsb, _shown(dep_tag));
+                } else {
+                    str_builder_add_cstr(_dsb, "untagged ");
+                    str_builder_add_cstr(_dsb, _shown(dep_git));
+                }
+                if (_head != 0) {
+                    str_builder_add_cstr(_dsb, " @");
+                    str_builder_add(_dsb, str_new(_head, 7));
+                }
+                if (dep_fetched == 1) { str_builder_add_cstr(_dsb, " (fetched)"); }
+                else { str_builder_add_cstr(_dsb, " (cache)"); }
+                dep_desc = str_data(str_builder_build(_dsb));
+            }
+            # 6.6.13 (I10a): the default probe — strictly `dist/<name>.cyr`, no `lib/`
+            # fallback. On a hit the block resolves exactly as if it had listed it: the
+            # copy loop below runs the `.deps` sidecar pull, the stdlib-clobber and
+            # symlink guards, and marks the dep visited (closest-wins) + queued. A failed
+            # or refused clone (`dep_pin_ok == 0`) has already been reported.
+            if (dep_mod_default == 1 && dep_path != 0 && dep_pin_ok == 1) {
+                var dm_sb = str_builder_new();
+                str_builder_add_cstr(dm_sb, "dist/");
+                str_builder_add_cstr(dm_sb, dep_name);
+                str_builder_add_cstr(dm_sb, ".cyr");
+                var dm_rel = str_data(str_builder_build(dm_sb));
+                var dm_full = _dep_join_path(dep_path, dm_rel);
+                # 6.6.20: a LINK there (even a dangling one) is taken too, so the copy loop
+                # refuses it by name rather than this warning calling the file absent.
+                if (file_exists(dm_full) == 1 || _dep_src_link(dm_full, strlen(dep_path)) != 0) {
+                    dep_modules = vec_new();
+                    vec_push(dep_modules, dm_rel);
+                } else {
+                    # 6.6.13 (I10b): SAY so, and count it. Not marked visited — that is
+                    # what the warning tells the reader — and the clone's verified commit
+                    # pin is kept, as for `modules = []`. A warning, not an error: exit 0.
+                    _ew("warning: [deps.");
+                    _ew_shown(dep_name);
+                    _ew("] declares no modules and ");
+                    if (need_clone == 1 && dep_tag != 0) {
+                        _ew("tag '");
+                        _ew_shown(dep_tag);
+                        _ew("'");
+                    } elif (need_clone == 1) {
+                        _ew_shown(dep_git);
+                    } else {
+                        _ew_shown(dep_path);
+                    }
+                    _ew(" ships no ");
+                    _ew_shown(dm_rel);
+                    _ew(" — nothing vendored; a transitive [deps.");
+                    _ew_shown(dep_name);
+                    _ew("] will resolve instead (list modules, or modules = []");
+                    _ew(" for a dep that is declared but not linked)\n");
+                    _dep_inert = _dep_inert + 1;
+                }
+            }
+            # v6.2.50 Phase C: pull declared modular sub-modules from the dep's
+            # `dist/<name>/` (each + its transitive index deps + lib leaves, in
+            # topological order). A per-dep `seen` set dedups + breaks cycles.
+            var sm_errs = 0;
+            if (dep_modular != 0 && dep_path != 0 && dep_pin_ok == 1) {
+                if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
+                var sm_dir = _dep_find_stdlib_dir();
+                var sm_seen = vec_new();
+                var smi = 0;
+                while (smi < vec_len(dep_modular)) {
+                    sm_errs = sm_errs + _dep_pull_submodule(dep_path, dep_name, vec_get(dep_modular, smi), sm_dir, sm_seen);
+                    smi = smi + 1;
+                }
+                errors = errors + sm_errs;
+            }
+            var dep_had_success = 0;
+            # 6.6.13 (I10c): a `modular` pull that vendored cleanly resolves the dep —
+            # visited (closest-wins), queued, counted, so its clone's commit pin reaches
+            # cyrius.lock. Before, nothing marked it, so even a cloned modular-only dep
+            # vendored with no lock written and no line of output.
+            if (dep_modular != 0 && dep_path != 0 && dep_pin_ok == 1) {
+                if (vec_len(dep_modular) > 0 && sm_errs == 0) { dep_had_success = 1; }
+            }
+            if (dep_path != 0 && dep_modules != 0 && dep_pin_ok == 1) {
+                var mi = 0;
+                while (mi < vec_len(dep_modules)) {
+                    var mod_path = vec_get(dep_modules, mi);
+                    var sb = str_builder_new();
+                    str_builder_add_cstr(sb, dep_path);
+                    str_builder_add_cstr(sb, "/");
+                    str_builder_add_cstr(sb, mod_path);
+                    var src = str_data(str_builder_build(sb));
+                    # 6.6.20 (the modules dot-dot / symlink vendoring bug): the file — and below, its .deps sidecar — is
+                    # read only
+                    # from inside the dep's tree; a committed link is refused by name, uncopied.
+                    # The PRIMARY path is checked before the `lib/<base>` fallback: a dangling
+                    # link reads as absent to file_exists, and must not be resolved around.
+                    var _dpl = strlen(dep_path);
+                    var _slk = _dep_src_link(src, _dpl);
+                    if (_slk == 0 && file_exists(src) == 0) {
+                        var fb = mod_path;
+                        var fbi = 0;
+                        while (load8(mod_path + fbi) != 0) {
+                            if (load8(mod_path + fbi) == 47) { fb = mod_path + fbi + 1; }
+                            fbi = fbi + 1;
+                        }
+                        if (fb != mod_path) {
+                            var sb_fb = str_builder_new();
+                            str_builder_add_cstr(sb_fb, dep_path);
+                            str_builder_add_cstr(sb_fb, "/lib/");
+                            str_builder_add_cstr(sb_fb, fb);
+                            var alt = str_data(str_builder_build(sb_fb));
+                            if (file_exists(alt) == 1) {
+                                src = alt;
+                                _slk = _dep_src_link(src, _dpl);
+                            }
+                        }
+                    }
+                    if (_slk != 0) {
+                        _dep_refuse_src_link(dep_name, src + _dpl + 1, _slk);
+                        errors = errors + 1;
+                        mi = mi + 1;
+                        continue;
+                    }
+                    if (file_exists(src) == 0) {
+                        sys_write(STDERR_FD, "error: [deps.", 13);
+                        _ew_shown(dep_name);
+                        sys_write(STDERR_FD, "] modules entry \"", 17);
+                        _ew_shown(mod_path);
+                        # 6.7.6 (R12): a dep resolved from a working tree has no tag to name
+                        if (need_clone == 1 && dep_tag != 0) {
+                            _ew("\" not found at tag ");
+                            _ew_shown(dep_tag);
+                            _ew(" in ");
+                        } elif (need_clone == 1) {
+                            _ew("\" not found in the clone of ");
+                            _ew_shown(dep_git);
+                            _ew(" at ");
+                        } else {
+                            _ew("\" not found in the local path ");
+                        }
+                        _ew_shown(dep_path);
+                        sys_write(STDERR_FD, "\n", 1);
+                        errors = errors + 1;
+                        mi = mi + 1;
+                        continue;
+                    }
+                    # v6.2.47 (deps lever 1, Phase A producer-side consumed):
+                    # if the dep ships a `.deps` sidecar next to this module
+                    # (emitted by `cyrius distlib`), auto-resolve the fold's
+                    # declared stdlib leaves BEFORE the fold's own include is
+                    # pushed — same topological-by-resolution-order placement as
+                    # a hand-authored `requires` key, but the consumer needn't
+                    # author it. Shared resolver + `_dep_stdlib_seen` dedup (a leaf
+                    # also in `[deps].stdlib`/`requires` won't repeat).
+                    var _src_l = strlen(src);
+                    if (_src_l > 4 && memeq(src + _src_l - 4, ".cyr", 4) == 1) {
+                        var _sc_sb = str_builder_new();
+                        var _sc_stem = alloc(_src_l - 3);
+                        memcpy(_sc_stem, src, _src_l - 4);
+                        store8(_sc_stem + _src_l - 4, 0);
+                        str_builder_add_cstr(_sc_sb, _sc_stem);
+                        str_builder_add_cstr(_sc_sb, ".deps");
+                        var _sc_path = str_data(str_builder_build(_sc_sb));
+                        var _sc_lk = _dep_src_link(_sc_path, _dpl);
+                        if (_sc_lk != 0) {
+                            _dep_refuse_src_link(dep_name, _sc_path + _dpl + 1, _sc_lk);
+                            errors = errors + 1;
+                            mi = mi + 1;
+                            continue;
+                        }
+                        var _sc_leaves = _dep_read_sidecar(_sc_path);
+                        if (_sc_leaves != 0) {
+                            if (vec_len(_sc_leaves) > 0) {
+                                if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
+                                var _sc_dir = _dep_find_stdlib_dir();
+                                if (_sc_dir != 0) {
+                                    errors = errors + _dep_pull_leaves(_sc_dir, dep_name, _sc_leaves);
+                                }
+                            }
+                        }
+                    }
+                    var base = mod_path;
+                    var bi = 0;
+                    while (load8(mod_path + bi) != 0) {
+                        if (load8(mod_path + bi) == 47) { base = mod_path + bi + 1; }
+                        bi = bi + 1;
+                    }
+                    var sb3 = str_builder_new();
+                    var _dnl = strlen(dep_name);
+                    var _bsd = 1;
+                    var _ck = 0;
+                    while (_ck < _dnl) {
+                        if (load8(base + _ck) != load8(dep_name + _ck)) { _bsd = 0; break; }
+                        _ck = _ck + 1;
+                    }
+                    if (_bsd == 1) {
+                        str_builder_add_cstr(sb3, base);
+                    } else {
+                        str_builder_add_cstr(sb3, dep_name);
+                        str_builder_add_cstr(sb3, "_");
+                        str_builder_add_cstr(sb3, base);
+                    }
+                    var dst_rel = str_data(str_builder_build(sb3));
+                    var dst = _dep_ipath(dst_rel);     # lib/<file>: the include string, the lock key
+                    var wdst = _dep_wpath(dst_rel);    # 6.7.6: where this run writes it
+                    # v5.11.8: file-copy instead of symlink (was
+                    # syscall(88, sym_src, dst) symlink-then-fallback-
+                    # to-copy). Symlinks fired install.sh's `cp -L`
+                    # same-file collision and let snapshot-ping-pong
+                    # silently overwrite project lib/ files. Always
+                    # copy → distinct inodes at every layer. See
+                    # CHANGELOG [5.11.8], roadmap v5.10.37/v5.11.8 pin.
+                    if (_dep_vendor_mode == 1) {
+                        var _l2 = _dep_dest_is_linked(wdst);
+                        if (_l2 != 0) { return errors + _dep_refuse_symlinked_dest(_l2); }
+                    }
+                    # v6.5.39 — refuse BEFORE the unlink, same discipline as the v6.5.37
+                    # symlink guard above: a delete-then-refuse would leave the tree worse
+                    # than either outcome, and here the file being deleted IS the snapshot
+                    # copy we are defending.
+                    # 6.6.11 (S2): a thin profile of a package that is a stdlib leaf here.
+                    var _kf = _dep_keep_fold_over_profile(dep_name, dst, wdst, mod_path);
+                    if (_kf < 0) { return errors + 1; }
+                    if (_kf == 1) {
+                        # 6.7.13: the fold stands in for this named dep's module, so it is a leaf
+                        # pulled on the dep's behalf — distlib's verify then splices it (and what
+                        # it includes) as the dep's and records neither as the bundle's own need.
+                        _dep_note_nd_leaf(dep_name);
+                        dep_had_success = 1;
+                        mi = mi + 1;
+                        continue;
+                    }
+                    var _cl_stem = _dep_lib_dst_stem(dst);
+                    if (_cl_stem != 0) {
+                        if (_dep_stdlib_seen_has(_cl_stem) == 1) {
+                            _dep_refuse_stdlib_clobber(_cl_stem, src, dst);
+                            # The DEP resolved fine — only this one module is skipped — so
+                            # `dep_had_success` stays set and the dep is still marked visited
+                            # and queued for the transitive walk below.
+                            # ⚠ Deliberately NO `vec_push(_dep_includes, dst)`: Phase 1
+                            # already pushed this exact path when it copied the snapshot, and
+                            # a second push would emit the include twice.
+                            # 6.6.9: it IS this dep's module in scope, so distlib's verify
+                            # splices it (the leaf of the same name is then skipped there).
+                            vec_push(_dep_nd_modules, dst);
+                            dep_had_success = 1;
+                            mi = mi + 1;
+                            continue;
+                        }
+                    }
+                    sys_unlink(wdst);
+                    var cr2 = _dep_copy_file(src, wdst);
+                    if (cr2 == 0 || cr2 == 2) {
+                        vec_push(_dep_includes, dst);
+                        vec_push(_dep_nd_modules, dst);   # 6.6.9: a named dep's module (distlib verify)
+                        dep_had_success = 1;
+                        if (cr2 == 0) {
+                            if (_verbose == 1) {
+                                sys_write(STDERR_FD, "  ", 2);
+                                _ew_shown(dep_name);
+                                sys_write(STDERR_FD, ": ", 2);
+                                _ew_shown(base);
+                                sys_write(STDERR_FD, "\n", 1);
+                            }
+                        }
+                    } elif (cr2 == 1) { errors = errors + 1; }
+                    mi = mi + 1;
+                }
+            }
+            # v5.7.14: on success, mark visited + queue for transitive walk. 6.7.6: with where it
+            # came from (the diamond notice, `deps -v`) and, for the walk, what KIND of tree it is —
+            # a clone's own overrides are never followed, a local checkout's are for selected names.
+            if (dep_had_success == 1) {
+                var vpath = 0;
+                if (dep_local == 1) { vpath = _abs_path(dep_path); }
+                if (dep_desc == 0) { dep_desc = "(no source)"; }
+                if (_dep_test_pass == 1) { dep_desc = _cat2(dep_desc, " [test scope]"); }
+                _dep_vis_push(dep_name, dep_tag, dep_git, vpath, _dep_ctx_owner, dep_desc);
+                if (dep_path != 0) {
+                    vec_push(_dep_queue, _abs_path(dep_path));
+                    var qk = 1;
+                    if (dep_local == 1) {
+                        qk = 3;
+                        if (dep_git != 0) { qk = 2; }
+                    }
+                    vec_push(_dep_queue_kind, qk);
+                    vec_push(_dep_queue_owner, dep_name);
+                }
+            }
+        }
+    }
+    # The COUNT: the callers sum it into the `N errors` summary, and only `_deps_finish` turns
+    # it into an exit status (the v6.5.37 clamp lives there). Clamped here too, two refused
+    # sections printed two errors and a summary of `1 errors`. CHANGELOG [6.7.12]
+    return errors;
+}

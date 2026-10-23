@@ -1,0 +1,53 @@
+# CLI — deps: `cyrius package`.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+fn cmd_package(): i64 {
+    # Read manifest if present
+    var name = "unknown";
+    var entry = "src/main.cyr";
+    var output_name = "main";
+
+    # 6.6.17: `[build] entry` / `output` through the one reader (cbt/manifest.cyr). This read the
+    # manifest into a 65,535-byte buffer and then used NOTHING from it, so every project packaged
+    # src/main.cyr into build/main whatever it declared.
+    if (_mf_load() < 0) { return 1; }
+    var mentry = _mf_key_str("build", "entry");
+    if (mentry != 0) { entry = mentry; }
+    var mout = _mf_str("build", "output");
+    if (_cfg_output_refused(mout) != 0) { return 1; }   # 6.6.20 (SEC-02): confined, as for build
+    # 6.6.20: the version every other stamp uses (`_project_version`: the manifest's `[package]
+    # version`, else ./VERSION, both through the checked reader) — this printed ./VERSION read raw,
+    # so a project declaring `version = "0.1.0"` packaged as "unknown". 0 = refused, named.
+    var ver = _project_version();
+    if (ver == 0) { return 1; }
+
+    _status("=== cyrius package ===");
+    sys_write(STDOUT_FD, "  version: ", 11);
+    println(ver);
+
+    # A missing entry is refused by name, in compile()'s words (so `build` and `package` say the
+    # same thing), before build/ is created: it skipped the compile and printed "package ready"
+    # with rc 0, no artifact and an empty build/ left behind. CHANGELOG [6.7.12]
+    if (file_exists(entry) == 0) {
+        _err_ctx("no such file", entry);
+        return 1;
+    }
+    sys_mkdir("build", 0x1ED);
+    var out = make_path("build", output_name);
+    if (mout != 0) { out = mout; }
+    println("  compiling...");
+    # v6.5.19: was a bare `compile(entry, out);`. On a failed compile package
+    # printed "package ready in build/" and exited 0 with no artifact — the
+    # same green-placebo shape as the v6.4.73 `capacity` bug.
+    # CHANGELOG [6.5.19].
+    var pkg_cr = compile(entry, out);
+    if (pkg_cr != 0) {
+        _err_ctx("package: entry does not compile", entry);
+        return 1;
+    }
+    sys_write(STDOUT_FD, "  package ready: ", 17);
+    sys_write(STDOUT_FD, out, strlen(out));
+    sys_write(STDOUT_FD, "\n", 1);
+    return 0;
+}

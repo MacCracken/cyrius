@@ -1,7 +1,7 @@
 #!/bin/sh
 # manifest_strings_shown_escaped.sh — a string read from a manifest (the project's own, or a
 # dependency's, which the user never wrote) reaches the terminal in an error ONLY through the one
-# escaping printer (`_shown` / `_ew_shown`, cbt/deps.cyr): a byte below 32, 127 or above is shown
+# escaping printer (`_shown` / `_ew_shown`, cbt/deps/names.cyr): a byte below 32, 127 or above is shown
 # as `\xNN`. A raw ESC in an error line is a terminal escape sequence the manifest's author
 # chose (clear the screen, retitle the window, forge an earlier line); a raw newline forges a
 # whole line. And each refusal is ONE line, from the caller that knows what was refused.

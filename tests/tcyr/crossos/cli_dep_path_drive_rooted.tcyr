@@ -1,4 +1,4 @@
-# cli_dep_path_drive_rooted.tcyr — CROSS-HOST: the CLI's `[deps.X] path` join (cbt/deps.cyr
+# cli_dep_path_drive_rooted.tcyr — CROSS-HOST: the CLI's `[deps.X] path` join (cbt/deps/keys.cyr
 # `_dep_join_path`) on each host's own compiler. On Windows (cass) a drive-rooted `C:/x` / `C:\x`,
 # a rooted `\x` (UNC included) and a drive-relative `C:x` are taken as given; a relative path joins
 # onto the manifest's directory. POSIX hosts (ecb, ach, pi, x86_64 Linux) take only a leading `/` as
@@ -51,7 +51,22 @@ include "cbt/commands/distlib/distlib.cyr"
 include "cbt/commands/publish.cyr"
 include "cbt/project.cyr"
 include "cbt/quality.cyr"
-include "cbt/deps.cyr"
+include "cbt/deps/vendor.cyr"
+include "cbt/deps/pin.cyr"
+include "cbt/deps/stdlib.cyr"
+include "cbt/deps/leaves.cyr"
+include "cbt/deps/names.cyr"
+include "cbt/deps/submodule.cyr"
+include "cbt/deps/keys.cyr"
+include "cbt/deps/local.cyr"
+include "cbt/deps/named.cyr"
+include "cbt/deps/dry_run.cyr"
+include "cbt/deps/resolve.cyr"
+include "cbt/deps/package.cyr"
+include "cbt/deps/update.cyr"
+include "cbt/deps/sha256.cyr"
+include "cbt/deps/git_cache.cyr"
+include "cbt/deps/lock.cyr"
 include "cbt/pulsar.cyr"
 
 alloc_init();

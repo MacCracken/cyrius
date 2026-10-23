@@ -330,7 +330,7 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
 
 # 6.7.12 — the transitive include closure, in the snapshot `root`, of the stdlib leaves `cyrius
 # deps` pulled for named deps (`_dep_nd_leaves`): each leaf, every leaf its file includes (the
-# resolver's own rule, `_dep_stdlib_inc_names`, cbt/deps.cyr — so it is the set the resolve
+# resolver's own rule, `_dep_stdlib_inc_names`, cbt/deps/stdlib.cyr — so it is the set the resolve
 # vendored for those deps), and so on; a family directory's members are walked and the family
 # name itself is in the set. Built once per snapshot (the verify asks for every name it
 # classifies). CHANGELOG [6.7.12]

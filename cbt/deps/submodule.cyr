@@ -1,0 +1,135 @@
+# CLI — deps: modular deps — a module's index and one sub-module's pull.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# v6.2.50 (deps lever 1 / Phase C — module-granular extraction): read a module's
+# dep line `<mod> = [...]` from a `dist/<pkg>/index.cyml`, returning the dep vec
+# (sibling-module names + `lib:<leaf>` entries) or 0 if absent.
+fn _dep_read_index_deps(index_path, submod): i64 {
+    if (file_exists(index_path) == 0) { return 0; }
+    var sz = _file_size(index_path);
+    if (sz <= 0) { return 0; }
+    var buf = alloc(sz + 1);
+    var nn = file_read_all(index_path, buf, sz);
+    if (nn <= 0) { return 0; }
+    store8(buf + nn, 0);
+    var ml = strlen(submod);
+    var i = 0;
+    while (i < nn) {
+        var ls = i;
+        while (ls < nn && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) { ls = ls + 1; }
+        if (ls + ml < nn && memeq(buf + ls, submod, ml) == 1) {
+            var c = load8(buf + ls + ml);
+            if (c == 32 || c == 61) {   # key boundary: `<mod> ` or `<mod>=`
+                return _parse_toml_str_array(buf, nn, ls + ml);
+            }
+        }
+        while (i < nn && load8(buf + i) != 10) { i = i + 1; }
+        if (i < nn) { i = i + 1; }
+    }
+    return 0;
+}
+
+# v6.2.50 Phase C: pull ONE modular sub-module `<dep_src>/dist/<pkg>/<mod>.cyr` +
+# its transitive deps (from the index) into the consumer's lib/, in topological
+# order. `lib:<leaf>` index entries resolve as stdlib leaves; bare names are
+# sibling sub-modules (recursed). `seen` dedups + breaks cycles. Deps are pulled
+# BEFORE the module so its `include` lands after theirs in `_dep_includes`.
+fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
+    # the include filename-capture overflow bug: traversal guard, BEFORE any fs op — a sub-module name becomes
+    # `dist/<pkg>/<mod>.cyr`
+    # and `lib/<pkg>_<mod>.cyr`, so it takes the dep-NAME rule (no `/` at all), named here.
+    if (_dep_name_unsafe(submod) == 1) {
+        _ew("error: [deps.");
+        _ew_shown(pkg);
+        _ew("] modular sub-module '");
+        _ew_shown(submod);
+        _ew("' is not a usable name (empty, `.`-led, or holding `/`, `\\`, `..` or a control byte) — refused\n");
+        return 1;
+    }
+    if (_dep_list_has(seen, submod) == 1) { return 0; }
+    vec_push(seen, submod);
+    var errs = 0;
+    var ip_sb = str_builder_new();
+    str_builder_add_cstr(ip_sb, dep_src);
+    str_builder_add_cstr(ip_sb, "/dist/");
+    str_builder_add_cstr(ip_sb, pkg);
+    str_builder_add_cstr(ip_sb, "/index.cyml");
+    var ip = str_data(str_builder_build(ip_sb));
+    var dsl = strlen(dep_src);
+    # 6.6.20 (the modules dot-dot / symlink vendoring bug): read only from inside the dep's tree
+    var ilk = _dep_src_link(ip, dsl);
+    if (ilk != 0) { return _dep_refuse_src_link(pkg, ip + dsl + 1, ilk); }
+    var deps = _dep_read_index_deps(ip, submod);
+    if (deps != 0) {
+        var di = 0;
+        while (di < vec_len(deps)) {
+            var d = vec_get(deps, di);
+            if (strlen(d) > 4 && memeq(d, "lib:", 4) == 1) {
+                # the include filename-capture overflow bug: an index-controlled leaf name. 6.6.20: by the LEAF rule —
+                # this used the
+                # dep-name rule, which refuses `/`, so `lib:unicode/categories` (what distlib
+                # --modular writes) was refused as path traversal.
+                if (_dep_leaf_ok(d + 4) == 0) {
+                    _dep_refuse_leaf("the modular index of ", pkg, d + 4);
+                    errs = errs + 1;
+                } elif (stdlib_dir != 0) {
+                    _dep_note_nd_leaf(d + 4);
+                    if (_dep_copy_stdlib_recursive(stdlib_dir, d + 4, 1) == 1) { errs = errs + 1; }
+                }
+            } else {
+                errs = errs + _dep_pull_submodule(dep_src, pkg, d, stdlib_dir, seen);
+            }
+            di = di + 1;
+        }
+    }
+    # copy `<dep_src>/dist/<pkg>/<mod>.cyr` → `lib/<pkg>_<mod>.cyr`
+    var src_sb = str_builder_new();
+    str_builder_add_cstr(src_sb, dep_src);
+    str_builder_add_cstr(src_sb, "/dist/");
+    str_builder_add_cstr(src_sb, pkg);
+    str_builder_add_cstr(src_sb, "/");
+    str_builder_add_cstr(src_sb, submod);
+    str_builder_add_cstr(src_sb, ".cyr");
+    var src = str_data(str_builder_build(src_sb));
+    var df_sb = str_builder_new();
+    str_builder_add_cstr(df_sb, pkg);
+    str_builder_add_cstr(df_sb, "_");
+    str_builder_add_cstr(df_sb, submod);
+    str_builder_add_cstr(df_sb, ".cyr");
+    var df_rel = str_data(str_builder_build(df_sb));
+    var dst_full = _dep_ipath(df_rel);
+    var wdst = _dep_wpath(df_rel);    # 6.7.6: where this run writes it
+    # 6.6.11 (S2): a modular sub-module of a package that is a stdlib leaf here.
+    var _kf = _dep_keep_fold_over_profile(pkg, dst_full, wdst, submod);
+    if (_kf < 0) { return errs + 1; }
+    if (_kf == 1) {
+        _dep_note_nd_leaf(pkg);   # 6.7.13: the fold stands in for the dep's sub-module: its leaf (CHANGELOG [6.7.13])
+        return errs;
+    }
+    # v6.5.37 (A0) — refuse BEFORE the unlink. A symlinked destination must not be
+    # deleted either: unlink on a link removes the link, but the guard exists so a
+    # vendoring run cannot touch a shared target at all, and a delete-then-refuse
+    # leaves the tree worse than either outcome alone.
+    if (_dep_vendor_mode == 1) {
+        var _l1 = _dep_dest_is_linked(wdst);
+        if (_l1 != 0) { return _dep_refuse_symlinked_dest(_l1); }
+    }
+    # 6.6.20 (the modules dot-dot / symlink vendoring bug): checked before the unlink
+    var slk = _dep_src_link(src, dsl);
+    if (slk != 0) { return errs + _dep_refuse_src_link(pkg, src + dsl + 1, slk); }
+    sys_unlink(wdst);
+    var cr = _dep_copy_file(src, wdst);
+    if (cr == 0 || cr == 2) {
+        vec_push(_dep_includes, dst_full);
+        vec_push(_dep_nd_modules, dst_full);   # 6.6.9: a named dep's module (distlib verify)
+    } elif (cr == 1) {
+        sys_write(STDERR_FD, "error: modular sub-module ", 26);
+        _ew_shown(pkg);
+        sys_write(STDERR_FD, ":", 1);
+        _ew_shown(submod);
+        sys_write(STDERR_FD, " not found in dist/\n", 20);
+        errs = errs + 1;
+    }
+    return errs;
+}

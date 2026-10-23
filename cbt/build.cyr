@@ -1266,7 +1266,7 @@ fn _cbt_tmpdir_cleanup(): i64 {
 }
 
 # 6.7.13 (D41) — SILENCE this process's stdout and stderr, and what its children inherit, while
-# `cyrius deps` runs its pin-move dry pass (deps.cyr `_deps_pin_move_dry`): the user then sees
+# `cyrius deps` runs its pin-move dry pass (cbt/deps/resolve.cyr `_deps_pin_move_dry`): the user then sees
 # the real resolve's output alone, once. `_cbt_mute(1)` returns 1 when muted and 0 when it could
 # not be set up (the caller runs on unmuted); `_cbt_mute(0)` restores. Whatever is written while
 # muted is gone, so the caller takes every exit it can reach BEFORE muting (the dry pass runs

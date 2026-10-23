@@ -86,7 +86,7 @@ scan=$(awk '
         if (lastguard == 0 || NR - lastguard > 12) { print "UNGUARDED " NR ": " $0 }
     }
     END { print "SITES " sites+0 }
-' cbt/deps.cyr)
+' cbt/deps/stdlib.cyr)
 unguarded=$(echo "$scan" | grep '^UNGUARDED' || true)
 nsites=$(echo "$scan" | awk '/^SITES/{print $2}')
 if [ -n "$unguarded" ]; then

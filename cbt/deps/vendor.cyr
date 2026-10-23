@@ -1,0 +1,500 @@
+# CLI — deps: the resolver's state, the symlinked-destination refusal, path helpers, the one vendoring write.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ================================================================
+# Dependency resolution: cyrius deps
+# ================================================================
+# Reads cyrius.cyml (or cyrius.toml fallback), resolves:
+#   [deps] stdlib = ["string", "fmt", ...] → copy from cyrius stdlib
+#   [deps.name] path = "../repo" modules = ["src/foo.cyr"] → copy from sibling
+# All deps land in lib/ (created if needed).
+
+# ⛔ v6.5.37 — a vendor destination that is a SYMLINK is refused, never followed.
+# Declared here, above every use: a global declared BELOW its use is NOT visible in
+# cyrius (that false claim, written down in an issue file, cost two whole fix attempts
+# at 6.5.33/.34 — do not move this below _dep_copy_file).
+var _dep_linkdest_reported = 0;
+
+# ⛔ v6.5.37 (A0) — VENDOR MODE. The symlink refusal below must fire for VENDORING (cyrius
+# deps / update / lib sync writing into a project's lib/) and must NOT fire for TOOLCHAIN
+# INSTALLS, because `~/.cyrius/bin` is itself a symlink into `versions/<v>/bin` on a normal
+# install — so an ungated guard refuses `cyrius lsp install` and every sibling that writes
+# there. The first cut of this guard (earlier in v6.5.37) WAS ungated and did exactly that,
+# and it failed in the worst available way: `cbt/cyrius.cyr` ignored `_dep_copy_file`'s
+# return and printed "Installed: <path>" over a copy that never happened. Set to 1 at the
+# top of the vendoring commands only.
+var _dep_vendor_mode = 0;
+
+# 6.7.14 — A KILLED SCRATCH RESOLVE LEAVES NOTHING. `--locked` (into `<tmp>/locked-deps`) and the
+# pin-move dry pass (into `<tmp>/pin-move-deps`) resolve into a private scratch under the CLI's temp
+# dir, and a SIGTERM mid-resolve left all of it there (the handler's rmdir of the temp dir then
+# failed). While one runs, `_dep_copy_file` records each directory it is about to create at or under
+# the scratch root and each file — the destination and `_aw_open`'s sibling temp — before it can
+# exist, in two vecs registered through the kill handler's scratch-tree slot (cbt/sigclean.cyr
+# `_cbt_sig_tree_set`), so the handler unlinks them and removes the directories, rmdir only. The
+# slot is single: its other user, distlib's stdlib mirror, is made inside the verify, after the
+# startup resolve has ended, so the two never overlap in one process. CHANGELOG [6.7.14]
+var _dep_scr_root = 0;      # the scratch root (a cstr), 0 when no scratch resolve runs
+var _dep_scr_files = 0;     # vec of cstr: every file the scratch resolve can have created
+var _dep_scr_dirs = 0;      # vec of cstr: its directories, parents first
+
+# 6.7.6 (lane C) — the walk's state for the local-mode rule (see "LOCAL MODE" below). Declared up
+# here, above every use (a global declared below its use is not visible).
+var _dep_local_from = 0;    # what switched local mode on: "--local" or "CYRIUS_LOCAL"
+var _dep_local_ign = 0;     # CYRIUS_LOCAL was set but this run resolves the tags: why (said once)
+# _dep_local_seen: every dep name a walked manifest gave a `path` — a selected name that none
+# declares is warned, so a typo does not read as "no override".
+var _dep_local_seen = 0;
+var _dep_hint = 0;          # vec: root deps whose checkout exists but the default run builds the tag
+# _dep_ctx_kind: the manifest being walked — 0 the root, 1 a cloned dep, 2 a local override,
+# 3 a local-only dep (a `path` with no remote source).
+var _dep_ctx_kind = 0;
+var _dep_ctx_owner = 0;     # its dep name (0 for the root)
+var _dep_queue_kind = 0;    # parallel to _dep_queue: each queued directory's kind
+var _dep_queue_owner = 0;   # parallel to _dep_queue: each queued directory's dep name
+var _dep_vis_tag = 0;       # parallel to _dep_visited: the tag it resolved at (0 = none)
+var _dep_vis_git = 0;       # ... the git it resolved from (0 = none)
+var _dep_vis_path = 0;      # ... the working tree it resolved from (0 = a clone)
+var _dep_vis_by = 0;        # ... the dep whose manifest named it (0 = the root)
+var _dep_vis_desc = 0;      # ... where it came from, as `deps -v` prints it
+var _dep_locked_diff = 0;   # --locked: differences found during the resolve (named as found)
+var _dep_locked_crlf = 0;   # --locked: of _deps_locked_compare's, the CRLF checkouts (6.7.12, D10)
+var _dep_wt_why = 0;        # the first line of the last _dep_wt_run's stderr, or 0 (quoted by `cyrius update`)
+# A [deps.NAME] section's keys as `_dep_sec_read` returns them (byte offsets into the record).
+var _DS_PATH = 0;           # `path` joined onto the manifest's directory
+var _DS_RAW = 8;            # `path` as written
+var _DS_GIT = 16;
+var _DS_TAG = 24;
+var _DS_MODULES = 32;
+var _DS_REQUIRES = 40;
+var _DS_MODULAR = 48;
+var _DS_OPTIONAL = 56;      # 1, 0, or -1 (the key is present and is not true / false)
+var _DS_TARGET = 64;
+var _DS_BAD = 72;           # the key whose value has the wrong type, or 0
+var _DS_UNKNOWN = 80;       # vec of keys nothing reads (the root manifest's are warned)
+var _DS_SCOPE = 88;         # 6.7.6 (part T): 1 for `scope = "test"`, -1 for another string, 0 absent
+var _DS_SCOPEV = 96;        # ...the value as written (named when refused)
+var _DS_SIZE = 104;
+# 6.7.6 (part T): 1 while cmd_deps resolves the TEST SCOPE (phase 4): the root's `scope = "test"`
+# deps and everything they bring, after every production dependency.
+var _dep_test_pass = 0;
+
+# Print the refusal ONCE (the copy loop calls this ~100x per resolve) and return 1,
+# the same error code the dep modules path-escape bug traversal guard uses. Full incident writeup lives at
+# the call site in _dep_copy_file.
+fn _dep_refuse_symlinked_dest(path): i64 {
+    if (_dep_linkdest_reported == 1) { return 1; }
+    _dep_linkdest_reported = 1;
+    var m1 = "error: refusing to vendor into a SYMLINKED directory: ";
+    sys_write(STDERR_FD, m1, strlen(m1));
+    _ew_shown(path);
+    var m2 = "\n  Writing through it overwrites whatever it points at. If that is the shared\n  stdlib under ~/.cyrius, it corrupts every project on this machine: a stale lib/\n  replaces the installed one, and the next `cyrius deps` in any OTHER repo reads\n  the corruption back out.\n  A project's lib/ must be a REAL directory populated by `cyrius deps`.\n  Fix:  rm ";
+    sys_write(STDERR_FD, m2, strlen(m2));
+    _ew_shown(path);
+    var m3 = "     # the LINK only - never `rm -rf`, that follows it\n        cyrius deps\n";
+    sys_write(STDERR_FD, m3, strlen(m3));
+    return 1;
+}
+
+# ⛔ v6.5.37 (A0) — is ANY component of `dst` a symlink? Returns the offending path, or 0.
+#
+# ⚠ THE FINAL COMPONENT IS THE HALF THE FIRST CUT MISSED, and it is the shape the ecosystem
+# actually has. The first guard walked directory PREFIXES only, so it caught
+# `lib -> <snapshot>` (the nous shape) and sailed straight past
+# `lib/alloc.cyr -> <snapshot>/alloc.cyr` — a real directory holding a symlinked FILE. That
+# second shape is not exotic: CLAUDE.md calls single-file `lib/<dep>.cyr` symlinks
+# "legitimate `cyrius deps` output", and three live instances sit under
+# `~/.cyrius/deps/sigil/*/lib/sakshi.cyr` today. Measured against the prefix-only guard:
+# `cyrius deps` exit 0, the symlink target overwritten, silent.
+#
+# So a gate written only around the directory shape ships GREEN over the file shape. That is
+# the v6.5.36 lesson verbatim — a gate that pins the mechanism rather than the property
+# passes while the mechanism is wrong — which is why the companion gate asserts BOTH.
+#
+# Windows too: `is_symlink`'s PE arm (GetFileAttributesW's REPARSE_POINT bit, then
+# FindFirstFileW's name-surrogate tag — lib/fs.cyr) sees symlinks and junctions.
+# CHANGELOG [6.6.9]
+fn _dep_dest_is_linked(dst): i64 {
+    var n = strlen(dst);
+    var buf = alloc(n + 1);
+    var i = 0;
+    while (i < n) {
+        if (load8(dst + i) == 47) {   # '/'
+            memcpy(buf, dst, i);
+            store8(buf + i, 0);
+            if (is_symlink(str_from(buf)) == 1) { return buf; }
+        }
+        i = i + 1;
+    }
+    if (is_symlink(str_from(dst)) == 1) { return dst; }
+    return 0;
+}
+
+# Byte size of the regular file at `path`, or -1 when it cannot be opened or read.
+#
+# ⛔ open + lseek(SEEK_END), NEVER stat. This was a raw `syscall(4, …)` (x86-Linux stat) with a
+# per-target st_size offset (48 on Linux, 72 in Darwin's legacy struct — CHANGELOG [6.0.41]).
+# Syscall 4 has no PE reroute, so on the Windows CLI every one of its call sites got -38 — among
+# them `cyrius distlib`'s verify loop, which sized every file it splices with it and therefore
+# compiled an EMPTY entry and reported "nothing undefined" over every sidecar. SYS_LSEEK is routed
+# on every target (SetFilePointerEx on PE), and `file_open` carries the agnos bridge, so one body
+# serves all of them and no stat struct offset can be wrong. Same shape as build.cyr's
+# `_artifact_size`.
+# ⚠ A DIRECTORY opens and seeks on Linux (ext4 answers its hash EOF, not a byte count), so a
+# positive size is confirmed by reading one byte: a directory's read fails (EISDIR) and answers
+# -1, which is what every caller — "size it, then read that many bytes" — needs.
+# CHANGELOG [6.6.9]
+fn _file_size(path): i64 {
+    var fd = file_open(path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = xlseek(fd, 0, 2);
+    if (n > 0) {
+        var probe[8];
+        if (xlseek(fd, 0, 0) != 0) { n = 0 - 1; }
+        elif (file_read(fd, &probe, 1) != 1) { n = 0 - 1; }
+    }
+    file_close(fd);
+    if (n < 0) { return 0 - 1; }
+    return n;
+}
+
+# Resolve a (possibly relative) path to absolute using getcwd(2).
+# Needed for symlink creation: a relative symlink target is resolved
+# relative to the SYMLINK's parent directory, not the caller's CWD.
+# When we write `lib/{dep}.cyr -> ../sigil/dist/sigil.cyr`, that resolves
+# to `{proj}/sigil/dist/sigil.cyr` (wrong) instead of `{sibling}/sigil/...`.
+# Fix: make every symlink target absolute. Absolute paths are unambiguous.
+# Returns src unchanged if already absolute, else allocates an absolute copy.
+# A trailing `/.` names the directory before it, so it is dropped: `.` is the working directory
+# itself, never `<cwd>/.` — which every caller joining "/lib" or a parent onto it carried along
+# (`_consumer_dir`, the local-mode walks). CHANGELOG [6.7.12]
+fn _abs_path(src): i64 {
+    if (load8(src) == 47) { return _abs_drop_dot(src); }
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows: a drive-rooted `C:\x` / `C:/x` is absolute; a rooted `\x` (or `\\server\share`)
+    # and a drive-relative `C:x` cannot be joined onto the cwd and are returned as given.
+    if (load8(src) == 92 || load8(src + 1) == 58) { return src; }
+    #endif
+    return _abs_drop_dot(_abs_join_cwd(src));
+}
+
+# `p` without its trailing `/.` segments (`/a/b/./.` → `/a/b`, `/.` → `/`), or `p` itself when it
+# has none. CHANGELOG [6.7.12]
+fn _abs_drop_dot(p): i64 {
+    var n = strlen(p);
+    var m = n;
+    while (m >= 2 && load8(p + m - 1) == 46 && load8(p + m - 2) == 47) { m = m - 2; }
+    if (m == n) { return p; }
+    if (m == 0) { m = 1; }   # `/.` is the root
+    var out = alloc(m + 1);
+    memcpy(out, p, m);
+    store8(out + m, 0);
+    return out;
+}
+
+# "<cwd>/<src>", or `src` unchanged when the cwd cannot be read.
+fn _abs_join_cwd(src): i64 {
+    var cwd[4096];
+    var cwd_len = _cwd_read(&cwd, 4096);
+    if (cwd_len < 0) { return src; }
+    var src_len = strlen(src);
+    var out = alloc(cwd_len + 1 + src_len + 1);
+    memcpy(out, &cwd, cwd_len);
+    store8(out + cwd_len, 47);  # '/'
+    memcpy(out + cwd_len + 1, src, src_len);
+    store8(out + cwd_len + 1 + src_len, 0);
+    return out;
+}
+
+# The working directory into `buf` (`cap` bytes), NUL-terminated; its length, or -1 when it
+# cannot be read (or does not fit).
+fn _cwd_read(buf, cap): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_cwd_read(buf, cap);
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    # Darwin has NO getcwd syscall (slot 326 is unused → SIGSYS). Derive
+    # the cwd from the "." fd via fcntl(F_GETPATH): open(".") then
+    # fcntl(fd, F_GETPATH=50, buf) writes the absolute path, returns 0/-errno.
+    # See CHANGELOG [6.0.41]; v6.6.8 spells it through the stdlib wrappers
+    # instead of raw 2/72/3. (F_GETPATH needs MAXPATHLEN = 1024 bytes.)
+    if (cap < 1024) { return 0 - 1; }
+    var fd = sys_open(".", 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var fr = sys_fcntl(fd, 50, buf);
+    sys_close(fd);
+    if (fr != 0) { return 0 - 1; }
+    return strlen(buf);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_WIN
+    # syscall 79 = getcwd(buf, size); returns length incl. nul, or -errno.
+    # (aarch64-Linux: ESYSXLAT renumbers x86 79 → aarch64 getcwd 17.)
+    var n = syscall(79, buf, cap);
+    if (n <= 0) { return 0 - 1; }
+    return n - 1;
+    #endif
+    #endif
+}
+
+# Windows: the working directory through kernel32!GetCurrentDirectoryW, as UTF-8 into `buf`
+# (`cap` bytes); its length, or -1. getcwd (syscall 79) has no PE reroute — it returned -38, so
+# `_abs_path` was the identity on cyrius.exe: an absolute in-project unit lost its test.cyml and
+# CYRIUS_TEST_FILE / CYRIUS_TEST_DIR were exported relative. There is no reroute for
+# GetCurrentDirectoryW either; it is resolved through GetModuleHandleA / GetProcAddress (0xF013 /
+# 0xF014) and called with callptr, as `_win_sysdir` (lib/process_win.cyr) calls
+# GetSystemDirectoryW. A directory longer than 1023 WCHARs, or than `cap` in UTF-8, is -1 (never
+# cut). CHANGELOG [6.7.12]
+#ifdef CYRIUS_TARGET_WIN
+fn _win_cwd_read(buf, cap): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");                       # GetModuleHandleA
+    if (k32 == 0) { return 0 - 1; }
+    var gcd = syscall(0xF014, k32, "GetCurrentDirectoryW");          # GetProcAddress
+    if (gcd == 0) { return 0 - 1; }
+    var wb = alloc(2056);                                            # 1024 WCHARs + NUL
+    var n = callptr(gcd, 1024, wb) & 0xFFFFFFFF;                     # DWORD: WCHARs, NUL excluded
+    if (n == 0 || n >= 1024) { return 0 - 1; }                       # failed, or did not fit
+    store16(wb + n * 2, 0);
+    var m = _fs_narrow(wb, buf, cap);
+    if (m <= 0 || m + 5 >= cap) { return 0 - 1; }                    # empty, or may have been cut
+    return m;
+}
+#endif
+
+# Byte-compare two files. Returns 1 if identical, 0 otherwise (including if either
+# cannot be opened). Short-circuits on the first differing byte. Added v6.5.7 for
+# _dep_copy_file's staleness predicate — see the note there for why this is a byte
+# compare and not a hash. Uses only sys_open / syscall(0) / sys_close, all of which
+# _dep_copy_file already issues unguarded, so this adds no PE cross-compile risk.
+fn _files_identical(a, b): i64 {
+    var fa = sys_open(a, O_RDONLY, 0);
+    if (fa < 0) { return 0; }
+    var fb = sys_open(b, O_RDONLY, 0);
+    if (fb < 0) { sys_close(fa); return 0; }
+    var ba = alloc(32768);
+    var bb = alloc(32768);
+    var same = 1;
+    var go = 1;
+    while (go == 1) {
+        var na = syscall(0, fa, ba, 32768);
+        var nb = syscall(0, fb, bb, 32768);
+        if (na != nb) { same = 0; go = 0; }
+        if (go == 1) {
+            if (na <= 0) { go = 0; }
+            else {
+                if (memeq(ba, bb, na) == 0) { same = 0; go = 0; }
+            }
+        }
+    }
+    sys_close(fa);
+    sys_close(fb);
+    return same;
+}
+
+# Start recording the scratch resolve into `root` for the kill handler (see `_dep_scr_root`).
+fn _dep_scr_begin(root): i64 {
+    _dep_scr_files = vec_new();
+    _dep_scr_dirs = vec_new();
+    _dep_scr_root = root;
+    _cbt_sig_tree_set(_dep_scr_files, _dep_scr_dirs);
+    return 0;
+}
+
+# Stop recording, once the scratch has been removed (a kill during the removal re-walks the vecs).
+fn _dep_scr_end(): i64 {
+    if (_dep_scr_root == 0) { return 0; }
+    _cbt_sig_tree_set(0, 0);
+    _dep_scr_root = 0;
+    _dep_scr_files = 0;
+    _dep_scr_dirs = 0;
+    return 0;
+}
+
+# Record directory `p` (a prefix the mkdir-p walk is about to create; a buffer it reuses, so a copy
+# is kept) when it is the scratch root or under it and not yet recorded — never one above the root
+# (the CLI's temp dir, $TMPDIR, …), which the handler must not remove.
+fn _dep_scr_dir(p): i64 {
+    if (_dep_scr_dirs == 0) { return 0; }
+    var rl = strlen(_dep_scr_root);
+    var pl = strlen(p);
+    if (pl < rl) { return 0; }
+    if (memeq(p, _dep_scr_root, rl) == 0) { return 0; }
+    if (pl > rl && load8(p + rl) != 47) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_scr_dirs)) {
+        if (_cstr_eq(vec_get(_dep_scr_dirs, i), p) == 1) { return 0; }
+        i = i + 1;
+    }
+    var c = alloc(pl + 1);
+    memcpy(c, p, pl);
+    store8(c + pl, 0);
+    vec_push(_dep_scr_dirs, c);
+    return 0;
+}
+
+# Record file `p` (a cstr that stays valid) before it can exist.
+fn _dep_scr_file(p): i64 {
+    if (_dep_scr_files != 0) { vec_push(_dep_scr_files, p); }
+    return 0;
+}
+
+# Commit `dh` (`abort` 1: give it up) and forget its temp's record at slot `ts` of the scratch
+# record (-1: none). The renamed (or unlinked) temp's name is free, so a kill must not unlink what
+# another process puts there later: HUP / INT / TERM are held across the commit and the clear, so
+# no kill lands between the rename and the 0 the handler skips. The hold spans the fsync, close and
+# rename. Answers `_aw_commit`'s result. CHANGELOG [6.7.16]
+fn _dep_aw_finish(dh, ts, abort): i64 {
+    var hold[8];
+    var hr = 0 - 1;
+    if (ts >= 0) { hr = _cbt_sig_hold(&hold); }
+    var r = 0;
+    if (abort == 1) { r = _aw_abort(dh); }
+    else { r = _aw_commit(dh); }
+    if (ts >= 0 && _dep_scr_files != 0) { vec_set(_dep_scr_files, ts, 0); }
+    if (hr == 0) { _cbt_sig_release(&hold); }
+    return r;
+}
+
+fn _dep_copy_file(src, dst): i64 {
+    # Skip only if the destination is byte-identical. v6.5.7: this was SIZE-ONLY,
+    # so any change that preserves file length was never vendored while `lib sync`
+    # printed "copied 99 .cyr files" and exited 0. The most common size-neutral
+    # change is the one that happens on EVERY patch release — a version stamp in a
+    # header comment (`# Version: 1.1.2` -> `# Version: 1.1.3` is the same byte
+    # count), which is exactly how a consumer's lib/vani.cyr sat a release behind
+    # with every command reporting success. `cyrius deps --verify` cannot catch it
+    # and structurally never could: cyrius.lock is written FROM lib/ on disk, so a
+    # stale file simply gets its stale hash recorded.
+    #
+    # Size stays as a NEGATIVE fast path only (different size => definitely copy);
+    # equal size falls through to a content compare. Deliberately a byte compare
+    # rather than _sha256sum_file: a compare stops at the first differing byte and
+    # reads no further, where a digest reads both files whole (until 6.7.12 the digest
+    # also cost a sha256sum / certutil process per file).
+    var src_sz = _file_size(src);
+    var dst_sz = _file_size(dst);
+    if (src_sz > 0 && src_sz == dst_sz) {
+        if (_files_identical(src, dst) == 1) {
+            if (_dep_closure != 0) { vec_push(_dep_closure, dst); }   # 6.7.12: vendored (unchanged)
+            return 2;
+        }
+    }
+    # the dep modules path-escape bug: reject dep writes outside lib/ (path traversal)
+    var di = 0;
+    while (load8(dst + di) != 0) {
+        if (load8(dst + di) == 46 && load8(dst + di + 1) == 46) {
+            sys_write(STDERR_FD, "  error: path traversal in dep destination: ", 44);
+            _ew_shown(dst);
+            sys_write(STDERR_FD, "\n", 1);
+            return 1;
+        }
+        di += 1;
+    }
+    # v5.8.49: mkdir-p any intermediate directories in dst so subdir-
+    # nested stdlib modules (e.g. `lib/unicode/categories.cyr`) can be
+    # written. Before this fix, sys_open with O_CREAT failed with ENOENT
+    # when the parent dir did not exist, silently dropping subdir-stdlib
+    # files at consumer-side `cyrius deps` resolution. Loop walks dst
+    # char-by-char; whenever we hit `/`, mkdir the prefix up to that
+    # slash (0o755). sys_mkdir returns -EEXIST harmlessly on already-
+    # present dirs — same idiom used by sys_mkdir("lib", ...) callers
+    # above and below.
+    # ⛔ v6.5.37 — REFUSE TO WRITE THROUGH A SYMLINKED DESTINATION DIRECTORY.
+    #
+    # THE INCIDENT (2026-09-01). `nous/lib` was a directory-level symlink to `~/.cyrius/lib`,
+    # itself a symlink to `~/.cyrius/versions/6.5.36/lib` — the LIVE stdlib snapshot. nous pins
+    # cyrius 6.3.35, so `_dep_find_stdlib_dir()` correctly resolved the SOURCE to
+    # `versions/6.3.35/lib`; the resolver then wrote each leaf to `lib/<mod>.cyr`, straight
+    # through the symlink and INTO the 6.5.36 snapshot. 27 files of 6.3.35-era stdlib replaced
+    # the shipped ones — `lib/alloc.cyr` lost `fn _alloc_zero`, the memory-reuse
+    # information-leak fix from v6.4.1 (daimon VULN-007). `~/.cyrius/lib` is the global default
+    # source, so every other repo then READ the corruption: shabda ingested it 12 seconds later.
+    #
+    # ⚠ CLAUDE.md has forbidden the directory-level `lib` symlink since the v5.5.30–v5.5.33
+    # sakshi corruption and even ships `find` commands to detect it — but the remedy was always
+    # a human noticing. THE TOOL NEVER REFUSED. v5.11.8 switched dep resolution from symlink to
+    # file-copy to stop the snapshot overwriting a project's `lib/`; that guarded ONE direction
+    # and left the reverse — a project's `lib/` overwriting the snapshot — wide open.
+    #
+    # Checked per destination-directory PREFIX in the same walk the mkdir-p below already does,
+    # so `lib` and `lib/unicode` are both covered, and checked BEFORE any mkdir so a refusal
+    # creates nothing. Sibling of the dep modules path-escape bug traversal guard above: same choke point, same
+    # `return 1`, so every write path (stdlib leaves, `requires`, `.deps` sidecar, modules,
+    # submodules) inherits it without a per-caller edit.
+    #
+    # It fires on every target, PE included: `is_symlink` has a Windows arm since 6.6.9
+    # (GetFileAttributesW + FindFirstFileW's reparse tag, lib/fs.cyr). CHANGELOG [6.6.9]
+    if (_dep_vendor_mode == 1) {
+        var linked = _dep_dest_is_linked(dst);
+        if (linked != 0) { return _dep_refuse_symlinked_dest(linked); }
+    }
+    var dst_len = strlen(dst);
+    var prefix_buf = alloc(dst_len + 1);
+    var pi = 0;
+    while (pi < dst_len) {
+        if (load8(dst + pi) == 47) {   # '/'
+            memcpy(prefix_buf, dst, pi);
+            store8(prefix_buf + pi, 0);
+            _dep_scr_dir(prefix_buf);   # 6.7.14: a scratch resolve records it before it exists
+            sys_mkdir(prefix_buf, 0x1ED);
+        }
+        pi = pi + 1;
+    }
+    var sfd = sys_open(src, O_RDONLY, 0);
+    if (sfd < 0) {
+        sys_write(STDERR_FD, "  error: cannot read ", 21);
+        _ew_shown(src);
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    # Crash-safe: the vendored copy is replaced only once every byte landed (CHANGELOG [6.6.6]).
+    # A scratch resolve records the destination before it exists (CHANGELOG [6.7.14]) and the
+    # sibling temp `_aw_open` CREATED: HUP / INT / TERM are held from before its exclusive create
+    # until the temp is recorded, so no kill lands between the two and the temp recorded is the
+    # one this CLI made, never a name it skipped. (The temp used to be predicted — the next
+    # counter value's name — and recorded before the open; when `_aw_open` had to skip that name
+    # because a file sat there, a kill unlinked the file. CHANGELOG [6.7.15]) Its slot is kept and
+    # cleared once the temp is renamed or removed (`_dep_aw_finish`). CHANGELOG [6.7.16]
+    var shold[8];
+    var shr = 0 - 1;
+    var tslot = 0 - 1;
+    if (_dep_scr_files != 0) {
+        _dep_scr_file(dst);
+        shr = _cbt_sig_hold(&shold);
+    }
+    var dh = _aw_open(dst);
+    if (dh != 0 && _dep_scr_files != 0) {
+        _dep_scr_file(load64(dh + 8));
+        tslot = vec_len(_dep_scr_files) - 1;
+    }
+    if (shr == 0) { _cbt_sig_release(&shold); }
+    if (dh == 0) {
+        sys_close(sfd);
+        sys_write(STDERR_FD, "  error: cannot write ", 22);
+        _ew_shown(dst);
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    # Stream copy in 32KB chunks — handles files of any size
+    var buf = alloc(32768);
+    var total = 0;
+    var go = 1;
+    var rerr = 0;
+    while (go == 1) {
+        var n = syscall(0, sfd, buf, 32768);
+        if (n < 0) { rerr = 1; }
+        if (n <= 0) { go = 0; }
+        else { _aw_write(dh, buf, n); total = total + n; }
+    }
+    sys_close(sfd);
+    if (total == 0 || rerr != 0) { _dep_aw_finish(dh, tslot, 1); return 1; }
+    if (_dep_aw_finish(dh, tslot, 0) != 0) {
+        sys_write(STDERR_FD, "  error: write failed: ", 23);
+        _ew_shown(dst);
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    if (_dep_closure != 0) { vec_push(_dep_closure, dst); }   # 6.7.12: vendored (written)
+    return 0;
+}

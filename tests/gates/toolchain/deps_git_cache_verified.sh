@@ -1,5 +1,5 @@
 #!/bin/sh
-# deps_git_cache_verified.sh — the release-integrity hardening item cached-checkout check (cbt/deps.cyr) refuses a
+# deps_git_cache_verified.sh — the release-integrity hardening item cached-checkout check (cbt/deps/git_cache.cyr) refuses a
 # tampered dep cache in every shape we can build, accepts an untouched one whatever its
 # metadata says, and NEVER writes inside a cached checkout. (The exec-bit probe writes ONE
 # file BESIDE one, in `<home>/deps/<name>/`, and unlinks it — it has to be on the cache's own

@@ -1,6 +1,6 @@
 # cli_scratch_resolve_kill.tcyr — CROSS-HOST: a killed scratch resolve leaves nothing (6.7.14).
 # `cyrius deps --locked` and the pin-move dry pass resolve into a private scratch under the CLI's
-# temp dir; while one runs, cbt/deps.cyr's `_dep_copy_file` records each directory it is about to
+# temp dir; while one runs, cbt/deps/vendor.cyr's `_dep_copy_file` records each directory it is about to
 # create at or under the scratch root (never one above it) and each file — the destination before
 # it exists, and the sibling temp `_aw_open` created, recorded with HUP / INT / TERM held across
 # the exclusive create (6.7.15; 6.7.14 recorded the name it PREDICTED, so a file planted there,
@@ -60,7 +60,22 @@ include "cbt/commands/distlib/distlib.cyr"
 include "cbt/commands/publish.cyr"
 include "cbt/project.cyr"
 include "cbt/quality.cyr"
-include "cbt/deps.cyr"
+include "cbt/deps/vendor.cyr"
+include "cbt/deps/pin.cyr"
+include "cbt/deps/stdlib.cyr"
+include "cbt/deps/leaves.cyr"
+include "cbt/deps/names.cyr"
+include "cbt/deps/submodule.cyr"
+include "cbt/deps/keys.cyr"
+include "cbt/deps/local.cyr"
+include "cbt/deps/named.cyr"
+include "cbt/deps/dry_run.cyr"
+include "cbt/deps/resolve.cyr"
+include "cbt/deps/package.cyr"
+include "cbt/deps/update.cyr"
+include "cbt/deps/sha256.cyr"
+include "cbt/deps/git_cache.cyr"
+include "cbt/deps/lock.cyr"
 include "cbt/pulsar.cyr"
 
 alloc_init();

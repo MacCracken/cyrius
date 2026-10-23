@@ -193,9 +193,11 @@ cbt/build.cyr|p|_cbt_tmp_probe'"'"'s 4 KB probe in the CLI'"'"'s OWN private tem
 cbt/commands/lint.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
 cbt/commands/distlib/distlib.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
 cbt/quality.cyr|tmpf|a _cbt_tmpfile doctest source
-cbt/deps.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
-cbt/deps.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr
-cbt/deps.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)
+cbt/deps/git_cache.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
+cbt/deps/git_cache.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr
+cbt/deps/git_cache.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)
+cbt/deps/local.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout (the local-mode working-tree queries, _dep_wt_run)
+cbt/deps/local.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr (the local-mode working-tree queries, _dep_wt_run)
 programs/ark.cyr|path|_ark_append — the whole-record append: every write checked, a short one rolled back with ftruncate
 programs/cyrius-init.cyr|path|_append_whole — the whole-record append into the user'"'"'s starship.toml / .gitignore, same rule
 programs/cxvm.cyr|?|_cx_open_flags / _cx_flags_back (6.7.15): a cx GUEST'"'"'s open and fcntl flag bits mapped to the host'"'"'s O_TRUNC / O_APPEND and back — no open on the line, and cxvm writes nothing of its own: the guest'"'"'s own open passed through as it was until 6.7.15'

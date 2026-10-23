@@ -1,0 +1,340 @@
+# CLI — deps: `deps --dry-run`, the manifest's unknown keys and sections, the --locked comparison.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# The cache directory a clone of `name` at `tag` would use, WITHOUT creating anything
+# (`_dep_clone_dir` mkdirs both levels); 0 when there is no persistent cache.
+fn _dep_clone_dir_peek(name, tag): i64 {
+    if (_home == 0) { return 0; }
+    var key = tag;
+    if (key == 0) { key = ".untagged"; }
+    return _cat2(_cat2(_cat2(_cat2(_home, "/deps/"), name), "/"), key);
+}
+
+# One `deps --dry-run` line: `  <name>  <where it would come from>[ via <owner>]`.
+fn _deps_dry_say(name, what, owner): i64 {
+    var sn = _shown(name);
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, sn, strlen(sn));
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, what, strlen(what));
+    if (owner != 0) {
+        var so = _shown(owner);
+        sys_write(STDOUT_FD, " via ", 5);
+        sys_write(STDOUT_FD, so, strlen(so));
+    }
+    sys_write(STDOUT_FD, "\n", 1);
+    return 0;
+}
+
+# The dry run's walk of ONE manifest (`buf`/`n`, in `dir`, of `kind` / `owner`): one line per
+# [deps.NAME], decided by the resolver's own rule (`_dep_pick`, the same refusals by the same
+# lines), and every tree it can read WITHOUT a fetch queued for the next level — a local checkout,
+# or a clone already in the cache. `st`: [0] listed, [1] refused; `seen`, `q*` the BFS.
+fn _deps_dry_walk(buf, n, dir, kind, owner, st, seen, qd, qk, qo): i64 {
+    var info[32];
+    var rec = alloc(_DS_SIZE);
+    var p = 0;
+    while (p < n) {
+        # 6.6.20: the resolver's own header pass (_dep_hdr_name), so the listing is exactly what
+        # the real run resolves; a refused name is refused by the same line, rc 1.
+        p = _toml_line(buf, n, p, &info);
+        var hc = 0;
+        var nm = _dep_hdr_name(buf, n, &info, &hc);
+        if (nm == 0) { continue; }
+        if (hc == 0) { _dep_refuse_unclosed(nm); store64(st + 8, load64(st + 8) + 1); continue; }
+        if (_dep_name_unsafe(nm) == 1) { _dep_refuse_name(nm); store64(st + 8, load64(st + 8) + 1); continue; }
+        p = _dep_sec_read(buf, n, p, dir, rec);
+        if (kind != 0 && load64(rec + _DS_SCOPE) == 1) { continue; }   # 6.7.6: its own test deps
+        if (_dep_list_has(seen, nm) == 1) { continue; }   # closest wins, as in the resolve
+        store64(st, load64(st) + 1);
+        if (load64(rec + _DS_OPTIONAL) == 1 && _dep_feature_active(nm) == 0) {
+            _deps_dry_say(nm, "(skipped: optional, no active feature)", owner);
+            continue;
+        }
+        var tg = load64(rec + _DS_TARGET);
+        if (tg != 0 && _dep_target_matches(tg) == 0) {
+            _deps_dry_say(nm, _cat2(_cat2("(skipped: target ", _shown(tg)), ")"), owner);
+            continue;
+        }
+        var pk = _dep_pick(nm, rec, kind, owner, 2);
+        if (pk < 0) { store64(st + 8, load64(st + 8) + 1); continue; }
+        vec_push(seen, nm);
+        var git = load64(rec + _DS_GIT);
+        var tag = load64(rec + _DS_TAG);
+        var sb = str_builder_new();
+        var next = 0;
+        var nk = 1;
+        if (pk == 1) {
+            next = load64(rec + _DS_PATH);
+            if (git != 0) {
+                nk = 2;
+                str_builder_add_cstr(sb, "local ");
+                str_builder_add_cstr(sb, _shown(load64(rec + _DS_RAW)));
+                str_builder_add_cstr(sb, _dep_local_state(next, tag));
+                str_builder_add_cstr(sb, " — CI builds ");
+                str_builder_add_cstr(sb, _dep_ci_builds(git, tag));
+            } else {
+                nk = 3;
+                str_builder_add_cstr(sb, "local-only ");
+                str_builder_add_cstr(sb, _shown(load64(rec + _DS_RAW)));
+            }
+        } elif (git != 0) {
+            if (tag != 0) { str_builder_add_cstr(sb, "tag "); str_builder_add_cstr(sb, _shown(tag)); str_builder_add_cstr(sb, " from "); }
+            else { str_builder_add_cstr(sb, "untagged "); }
+            str_builder_add_cstr(sb, _shown(git));
+            var cd = _dep_clone_dir_peek(nm, tag);
+            if (cd != 0 && is_dir(str_from(cd)) == 1) {
+                next = cd;
+                var sha = _dep_wt_out(cd, "rev-parse", "--short=7", "HEAD", 0);
+                if (sha != 0) { str_builder_add_cstr(sb, " (cached @"); str_builder_add_cstr(sb, sha); str_builder_add_cstr(sb, ")"); }
+                else { str_builder_add_cstr(sb, " (cached)"); }
+            } else {
+                str_builder_add_cstr(sb, " (not fetched: its own dependencies are listed once it is)");
+            }
+        } else {
+            str_builder_add_cstr(sb, "(no git and no path: nothing to resolve)");
+        }
+        if (kind == 0 && load64(rec + _DS_SCOPE) == 1) { str_builder_add_cstr(sb, " [test scope]"); }
+        _deps_dry_say(nm, str_data(str_builder_build(sb)), owner);
+        if (next != 0) {
+            vec_push(qd, _abs_path(next));
+            vec_push(qk, nk);
+            vec_push(qo, nm);
+        }
+    }
+    return 0;
+}
+
+# `deps --dry-run`: what WOULD resolve, and from where, writing nothing — no clone, no fetch, no
+# lib/ or lock write. 6.7.6 (part L): each dependency's source by the resolver's own rule
+# (`local ../sigil @…`, `tag 3.9.9 from … (cached @…)`, `… via mid`), the transitive ones too as
+# far as a local checkout or the cache can show them; it fails where the real run fails.
+fn _deps_dry_list(manifest, buf, n): i64 {
+    sys_write(STDOUT_FD, "dry-run: would resolve deps from ", 33);
+    sys_write(STDOUT_FD, manifest, strlen(manifest));
+    if (_dep_locked == 1) {
+        if (_dep_lib_unvendored() == 1) { println(" and compare them with cyrius.lock — no vendored lib/ here (nothing written):"); }
+        else { println(" and compare them with lib/ and cyrius.lock (nothing written):"); }
+    }
+    elif (_dep_local_on == 1 && _dep_local_prescan(buf, n, _abs_path("."), 0, 0, vec_new()) == 1) {
+        println(" into build/local-deps/lib/ (local mode: lib/ and cyrius.lock untouched; nothing written):");
+    } else { println(" into lib/ (nothing written):"); }
+    var st = alloc(16);
+    store64(st, 0);
+    store64(st + 8, 0);
+    var seen = vec_new();
+    var qd = vec_new();
+    var qk = vec_new();
+    var qo = vec_new();
+    _deps_dry_walk(buf, n, _abs_path("."), 0, 0, st, seen, qd, qk, qo);
+    var qi = 0;
+    while (qi < vec_len(qd) && qi < 512) {
+        var d = vec_get(qd, qi);
+        var k = vec_get(qk, qi);
+        var o = vec_get(qo, qi);
+        qi = qi + 1;
+        var tm = _cat2(d, "/cyrius.cyml");
+        if (file_exists(tm) == 0) { tm = _cat2(d, "/cyrius.toml"); }
+        if (file_exists(tm) == 0) { continue; }
+        var tn = 0;
+        var tb = file_read_whole_max(tm, _MF_MAX, &tn);
+        if (tb == 0) { continue; }
+        var bom = _mf_bom_len(tb, tn);
+        tb = tb + bom;
+        tn = _mf_header_len(tb, tn - bom);
+        store8(tb + tn, 0);
+        _deps_dry_walk(tb, tn, d, k, o, st, seen, qd, qk, qo);
+    }
+    if (load64(st) == 0 && load64(st + 8) == 0) {
+        println("  (no [deps.NAME] entries; stdlib = [...] modules resolve from the toolchain)");
+    }
+    if (load64(st + 8) > 0) { return 1; }
+    return 0;
+}
+
+# 6.7.6 (R11) — a key nothing reads in the project's own `[deps.NAME]`, named as `[build]`'s are
+# (`_cfg_warn_section`): `dev = true` or a misspelt `modlues` read as silence.
+fn _dep_warn_unknown_keys(name, keys): i64 {
+    if (keys == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(keys)) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "cyrius.cyml [deps.");
+        str_builder_add_cstr(sb, _shown(name));
+        str_builder_add_cstr(sb, "] ");
+        str_builder_add_cstr(sb, _shown(vec_get(keys, i)));
+        str_builder_add_cstr(sb, " is not a known key and nothing reads it (cyrius help manifest lists them)");
+        _warn(str_data(str_builder_build(sb)));
+        i = i + 1;
+    }
+    return 0;
+}
+
+var _dep_mf_warned = 0;
+
+# 6.7.6 (R11) — the project's own manifest: a TABLE nothing reads (`[dev-dependencies]`,
+# `[[bin]]`, a misspelt `[dep.x]`) and a `[deps]` key nothing reads are named, once per run. A
+# section is known when the vocabulary (`cyrius help manifest`) declares it; `[deps.NAME]` and
+# `[lib.PROFILE]` take any name.
+fn _dep_warn_manifest(): i64 {
+    if (_dep_mf_warned == 1 || _mf_state != 1) { return 0; }
+    _dep_mf_warned = 1;
+    _cfg_warn_section("deps");
+    if (_tc_warned == 0) {          # 6.7.6 (part T): [test]'s keys, as [deps]' (R11)
+        _tc_warned = 1;
+        _cfg_warn_section("test");
+    }
+    var info[32];
+    var p = 0;
+    while (p < _mf_len) {
+        p = _toml_line(_mf_buf, _mf_len, p, &info);
+        var k = load64(&info);
+        if (k != 1 && k != 2) { continue; }
+        var hl = load64(&info + 16);
+        var nm = alloc(hl + 1);
+        memcpy(nm, _mf_buf + load64(&info + 8), hl);
+        store8(nm + hl, 0);
+        if (k == 1 && _dep_section_known(nm) == 1) { continue; }
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "cyrius.cyml [");
+        if (k == 2) { str_builder_add_cstr(sb, "["); }
+        str_builder_add_cstr(sb, _shown(nm));
+        str_builder_add_cstr(sb, "]");
+        if (k == 2) { str_builder_add_cstr(sb, "]"); }
+        str_builder_add_cstr(sb, " is not a known section and nothing reads it (cyrius help manifest lists them)");
+        _warn(str_data(str_builder_build(sb)));
+    }
+    return 0;
+}
+
+# 1 when the vocabulary declares section `nm` (a `deps.NAME` / `lib.PROFILE` table matches its
+# `.*` row; the header name rule itself is the resolver's, which refuses a bad one by name).
+fn _dep_section_known(nm): i64 {
+    var sec = nm;
+    if (strlen(nm) >= 5 && memeq(nm, "deps.", 5) == 1) { return 1; }
+    if (strlen(nm) >= 4 && memeq(nm, "lib.", 4) == 1) { return 1; }
+    var i = 0;
+    var row = _mf_vocab(0);
+    while (row != 0) {
+        if (streq(_mf_vocab_field(row, 0), sec) == 1) { return 1; }
+        i = i + 1;
+        row = _mf_vocab(i);
+    }
+    return 0;
+}
+
+# 6.7.6 (part L) — `--locked`: compare what the tags resolved (into `scratch`, a private
+# directory standing for lib/) with the committed lib/ and cyrius.lock, as a DEFAULT resolve would
+# rewrite them: every file the tags vendor must be in lib/ byte for byte and in the lock at its
+# hash; every other lib/ file keeps its lock line, so that line must hold its hash; a lock line
+# for a file that exists nowhere would be dropped; and the lock's `cyrius` line must name this
+# pin. With no vendored lib/ (`_dep_locked_nolib`) the lock alone is compared — every hash, every
+# line, the pin. Each difference is named on stderr; returns how many. Writes nothing.
+# Replaces the hand-rolled CI guards (`git diff --exit-code cyrius.lock`, lock-check.sh,
+# verify-lock.sh, …) and the CI sequence whose `deps` rewrote the lock before `--verify` read it.
+fn _deps_locked_compare(scratch): i64 {
+    var lb = _dep_lock_buf;
+    var ln = _dep_lock_len;
+    var d = 0;
+    _dep_locked_crlf = 0;
+    var sl = strlen(scratch);
+    var made = vec_new();
+    var files = _deps_lock_files(scratch);
+    if (_deps_lock_unlisted != 0) {
+        _ew("  differs: the tag resolution could not be listed (named above)\n");
+        d = d + 1;
+    }
+    var i = 0;
+    while (i < vec_len(files)) {
+        var f = vec_get(files, i);
+        i = i + 1;
+        var lp = _cat2("lib", f + sl);
+        vec_push(made, lp);
+        var h = _sha256sum_file(f);
+        var lh = 0;
+        if (lb != 0) { lh = _lock_buf_hash_lookup(lb, ln, lp); }
+        if (h == 0) {
+            _ew("  differs: "); _ew(lp); _ew(": cannot hash what the tags resolve ("); _sha_fail_why(); _ew(")\n");
+            d = d + 1;
+        } elif (lh == 0) {
+            _ew("  differs: "); _ew(lp); _ew(": the tags resolve it and cyrius.lock has no line for it\n");
+            d = d + 1;
+        } elif (memeq(h, lh, 64) == 0) {
+            _ew("  differs: "); _ew(lp); _ew(": cyrius.lock records ");
+            sys_write(STDERR_FD, lh, 64);
+            _ew(", the tags resolve ");
+            sys_write(STDERR_FD, h, 64);
+            _ew("\n");
+            d = d + 1;
+        }
+        if (_dep_locked_nolib == 1) { continue; }   # no vendored lib/: the lock alone is the contract
+        if (file_exists(lp) == 0) {
+            _ew("  differs: "); _ew(lp); _ew(": missing from lib/ (the tags resolve it)\n");
+            d = d + 1;
+        } elif (_files_identical(f, lp) == 0) {
+            if (h != 0 && _sha_is_crlf_of(lp, h) == 1) {
+                # 6.7.12 (D10): the tags' bytes with LF made CRLF — still a difference, named
+                _ew("  differs: "); _ew(lp);
+                _ew(": lib/ holds other bytes than the tags resolve");
+                _ew(" — CRLF checkout: add `lib/** -text` to .gitattributes\n");
+                _dep_locked_crlf = _dep_locked_crlf + 1;
+            } else {
+                _ew("  differs: "); _ew(lp); _ew(": lib/ holds other bytes than the tags resolve (stale)\n");
+            }
+            d = d + 1;
+        }
+    }
+    # lib/ files the resolution does not produce: a default resolve keeps them and re-hashes them
+    var kept = _deps_lock_files("lib");
+    var k = 0;
+    while (k < vec_len(kept)) {
+        var kf = vec_get(kept, k);
+        k = k + 1;
+        if (_dep_path_in(made, kf) == 1) { continue; }
+        var klh = 0;
+        if (lb != 0) { klh = _lock_buf_hash_lookup(lb, ln, kf); }
+        if (klh == 0) {
+            _ew("  differs: "); _ew(kf); _ew(": in lib/ but not in cyrius.lock\n");
+            d = d + 1;
+            continue;
+        }
+        var kh = _sha256sum_file(kf);
+        if (kh == 0 || memeq(kh, klh, 64) == 0) {
+            _ew("  differs: "); _ew(kf); _ew(": its bytes do not match cyrius.lock");
+            if (kh != 0 && _sha_is_crlf_of(kf, klh) == 1) {
+                _ew(" — CRLF checkout: add `lib/** -text` to .gitattributes");   # 6.7.12 (D10)
+                _dep_locked_crlf = _dep_locked_crlf + 1;
+            }
+            _ew("\n");
+            d = d + 1;
+        }
+    }
+    # lock lines naming a file neither lib/ nor the resolution has: a default resolve drops them
+    var pos = 0;
+    while (lb != 0 && pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lb + le) != 10) { le = le + 1; }
+        var lw = le;
+        if (lw > pos && load8(lb + lw - 1) == 13) { lw = lw - 1; }
+        if (lw - pos > 66 && load8(lb + pos + 64) == 32 && load8(lb + pos + 65) == 32) {
+            var path = _git_cstr_copy(lb + pos + 66, lw - pos - 66);
+            if (_dep_path_in(made, path) == 0 && file_exists(path) == 0) {
+                _ew("  differs: cyrius.lock lists "); _ew_shown(path); _ew(", which neither lib/ nor the tags hold\n");
+                d = d + 1;
+            }
+        }
+        pos = le + 1;
+    }
+    if (_dep_lock_has_trailer == 0) {
+        _ew("  differs: cyrius.lock has no `cyrius` pin line (a resolve writes one)\n");
+        d = d + 1;
+    } elif (_dep_lock_pin_same == 0) {
+        _ew("  differs: cyrius.lock records another stdlib pin than ");
+        _ew_shown(_dep_lock_pin_value());
+        _ew("\n");
+        d = d + 1;
+    }
+    _dep_say_kept_pins();   # 6.7.12 (D25): a carried old-tag pin is named; it is not a difference
+    return d;
+}

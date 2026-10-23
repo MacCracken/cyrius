@@ -98,7 +98,7 @@ fn _cbt_sig_tree_drop(): i64 {
 
 # Register scratch name `p` (a cstr that stays valid) for the kill handler. Call it BEFORE the file
 # can exist. A full table leaves `p` untracked: a kill then leaves it to the reaper, as before.
-# A pointer already tracked is not tracked twice, so a name reused across calls (deps.cyr's one
+# A pointer already tracked is not tracked twice, so a name reused across calls (cbt/deps/git_cache.cyr's one
 # `git_err` per process, re-registered by every `_git_run`) holds one slot. CHANGELOG [6.7.14]
 fn _cbt_scratch_track(p): i64 {
     if (p == 0) { return 0; }

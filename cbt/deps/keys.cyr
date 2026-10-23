@@ -1,0 +1,119 @@
+# CLI — deps: visited names, path joins, the [deps.NAME] header and the key / list readers.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# v5.7.14: returns 1 if `name` is already in _dep_visited, else 0.
+fn _dep_name_visited(name): i64 {
+    if (_dep_visited == 0) { return 0; }
+    var i = 0;
+    var nl = strlen(name);
+    while (i < vec_len(_dep_visited)) {
+        var v = vec_get(_dep_visited, i);
+        if (strlen(v) == nl) {
+            if (memeq(v, name, nl) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v5.7.14: join a manifest-relative `path = "..."` to the manifest's
+# directory. Returns `rel` unchanged if absolute.
+fn _dep_join_path(manifest_dir, rel): i64 {
+    if (load8(rel) == 47) { return rel; }
+    #ifdef CYRIUS_TARGET_WIN
+    # Windows: a drive-rooted `C:\x` / `C:/x` is absolute, and a rooted `\x` (or `\\server\share`)
+    # or a drive-relative `C:x` cannot be joined onto a directory: returned as given, the rule
+    # `_abs_path` uses. CHANGELOG [6.7.13]
+    if (load8(rel) == 92 || (load8(rel) != 0 && load8(rel + 1) == 58)) { return rel; }
+    #endif
+    var ml = strlen(manifest_dir);
+    var rl = strlen(rel);
+    var out = alloc(ml + 1 + rl + 1);
+    memcpy(out, manifest_dir, ml);
+    store8(out + ml, 47);
+    memcpy(out + ml + 1, rel, rl);
+    store8(out + ml + 1 + rl, 0);
+    return out;
+}
+
+# The NAME of the `[deps.NAME]` table header `_toml_line` parsed into `info`, as a fresh cstr
+# (`[ deps.x ]` and `[deps.x ]` read as `x`); 0 for any other line. *closedp = 0 when the header
+# has no `]` on its line. The ONE header rule: the resolver, `deps --dry-run` and distlib's
+# named-dep set all read headers through it, so they cannot disagree about which tables exist.
+fn _dep_hdr_name(buf, n, info, closedp): i64 {
+    if (load64(info) != 1) { return 0; }
+    var hs = load64(info + 8);
+    var hl = load64(info + 16);
+    if (hl < 5 || memeq(buf + hs, "deps.", 5) == 0) { return 0; }
+    var p = hs + hl;
+    while (p < n && (load8(buf + p) == 32 || load8(buf + p) == 9)) { p = p + 1; }
+    store64(closedp, 0);
+    if (p < n && load8(buf + p) == 93) { store64(closedp, 1); }
+    var nl = hl - 5;
+    var nm = alloc(nl + 1);
+    memcpy(nm, buf + hs + 5, nl);
+    store8(nm + nl, 0);
+    return nm;
+}
+
+fn _dep_refuse_unclosed(name): i64 {
+    _ew("error: [deps.");
+    _ew_shown(name);
+    _ew(" has no closing `]` on its line — not a table header; section refused\n");
+    return 1;
+}
+
+# 1 when the key buf[ks..ks+kl) is exactly `key`.
+fn _dep_key_is(buf, ks, kl, key): i64 {
+    if (kl != strlen(key)) { return 0; }
+    return memeq(buf + ks, key, kl);
+}
+
+# The bareword at buf[p]: 1 for `true`, 0 for `false`, -1 for anything else.
+fn _dep_bareword_bool(buf, n, p): i64 {
+    if (p + 4 <= n && memeq(buf + p, "true", 4) == 1 && _toml_tok_end(buf, n, p + 4) == 1) { return 1; }
+    if (p + 5 <= n && memeq(buf + p, "false", 5) == 1 && _toml_tok_end(buf, n, p + 5) == 1) { return 0; }
+    return 0 - 1;
+}
+
+# The string list whose VALUE starts at buf[v] (a `_toml_find` / `_toml_line` value offset): an
+# array of strings, or one string as a one-element list (both as `_parse_toml_str_array` reads
+# them from a key).
+fn _dep_strs_at(buf, n, v): i64 {
+    if (v < n && (load8(buf + v) == 34 || load8(buf + v) == 39)) {
+        var one = vec_new();
+        var e = 0;
+        var s = _toml_str_at(buf, n, v, &e);
+        if (s != 0) { vec_push(one, s); }
+        return one;
+    }
+    return _parse_toml_str_array(buf, n, v);
+}
+
+# `[deps] stdlib` as a vec of leaf names, or 0 when the key is absent. Through the one reader, so
+# a `stdlib` in prose, in a quoted or multi-line value, or in another table is never the key —
+# the byte scan this replaced (cmd_deps, `lib sync`) took a `"""` description holding
+# `stdlib = ["math"]` for the real key. CHANGELOG [6.6.20].
+fn _dep_declared_stdlib(buf, n): i64 {
+    var v = _toml_find(buf, n, "deps", "stdlib");
+    if (v < 0) { return 0; }
+    return _dep_strs_at(buf, n, v);
+}
+
+# `[<section>]`'s `name = ["a", …]` entries into parallel vecs (`names`, `lists`), through the one
+# reader — `[groups]` and `[features]`. A value that is not an array is not an entry.
+fn _dep_parse_name_lists(buf, n, section, names, lists): i64 {
+    var keys = _toml_section_keys(buf, n, section);
+    var i = 0;
+    while (i < vec_len(keys)) {
+        var k = vec_get(keys, i);
+        i = i + 1;
+        var v = _toml_find(buf, n, section, k);
+        if (v >= 0 && v < n && load8(buf + v) == 91) {
+            vec_push(names, k);
+            vec_push(lists, _parse_toml_str_array(buf, n, v));
+        }
+    }
+    return 0;
+}

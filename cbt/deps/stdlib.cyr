@@ -1,0 +1,579 @@
+# CLI — deps: finding the stdlib and vendoring its leaves — the walk, the clobber refusal, family order.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# v5.11.17 — stdlib_dir resolution order (Part 1 of per-repo
+# isolation arc; Parts 2-3 at v5.11.23/24). Closes the snapshot-
+# ping-pong wipe wedge that landed multiple times in the v5.11.x
+# cycle (notably v5.11.3, v5.11.13). See CHANGELOG [5.11.17].
+#
+# Resolution priority:
+#   (a) `./lib` when running inside the cyrius source repo
+#       (signal: src/main.cyr present). Closes the cyrius-repo
+#       ping-pong — the repo reads its own in-tree stdlib instead
+#       of the mutable `~/.cyrius/lib` global symlink, so a
+#       sibling agent's `cyriusly use <other>` can't wipe edits.
+#   (b) `~/.cyrius/versions/<cyml-cyrius-field>/lib/` when the
+#       consumer's cyrius.cyml pins `[package].cyrius = "X.Y.Z"`
+#       AND that version is installed. Isolates downstream repos
+#       from the global pointer.
+#   (c) `~/.cyrius/lib` legacy fallback for consumers without a
+#       cyrius pin (existing behavior, unchanged).
+# Hard-error (not silent fallback) when cyml pins a version that
+# is NOT installed.
+# Cross-platform "does this dir hold the stdlib" check. `is_dir`
+# (lib/fs.cyr) probes via getdents64 (Linux syscall 217), which Darwin
+# does NOT provide (it uses getdirentries with a different ABI; .34's
+# ESYSXLAT doesn't cover 217) — so on arm64 macOS `is_dir` false-negatives
+# a directory that demonstrably exists. That made the pinned-version
+# install-probe below reject a valid snapshot, so every consumer manifest
+# with a `cyrius =` pin AND `[deps] stdlib` failed to build on Darwin
+# (ai-hwaccel 2.3.6 blocked; issue 2026-06-02-macos-arm64-deps-stdlib-pin-check).
+# `file_exists` is open()-based and works on Darwin; checking for a
+# canonical always-present stdlib file confirms the dir exists AND holds
+# the stdlib. See CHANGELOG [6.0.40].
+fn _dep_dir_has_stdlib(dir_cstr): i64 {
+    return file_exists(make_path(dir_cstr, "syscalls.cyr"));
+}
+
+fn _dep_find_stdlib_dir(): i64 {
+    # (a) cyrius source-repo dev mode: `./lib` if we're in the cyrius repo ITSELF.
+    #
+    # ⛔ v6.5.25 — THIS WAS THE ROOT CAUSE OF THE bote/agnosai/majra FILING, and it was a
+    # functional resolution failure, not the diagnostic problem it was filed as. The test
+    # used to be `file_exists("src/main.cyr")`, which is TRUE for essentially every cyrius
+    # project — `src/main.cyr` is the default entry the init templates generate. So for
+    # bote, agnosai and majra this branch fired, found the consumer's OWN partially-
+    # populated `./lib` (the `[deps].stdlib` phase has already copied into it by this
+    # point), and returned it AS "the stdlib". Branch (b), the version-pinned snapshot
+    # this was all supposed to read from, was never reached.
+    #
+    # Everything downstream followed from that: a sidecar leaf not yet in `./lib` looked
+    # ABSENT, so `cyrius deps` reported `dep libro requires 'bench' but it is not in the
+    # cyrius stdlib` about a module that ships in the stdlib, and pointed maintainers at
+    # deleting a correct `[deps].stdlib` declaration. Reproduced verbatim on the real bote
+    # tree: 3 errors on `bench`/`test` (libro) and `patra` (majra). With the identity test
+    # corrected, those leaves are copied out of the pinned snapshot and the resolve
+    # SUCCEEDS — the message was a symptom, the wrong directory was the bug.
+    #
+    # ⚠ This is the SAME `file_exists("src/main.cyr")` ≠ cyrius-repo conflation fixed in
+    # `cyrius audit` at v6.4.63 (and originally at v6.0.1). `_dep_is_cyrius_source_repo()`
+    # exists precisely for this and matches `[package].name` exactly (so `cyrius-x` does
+    # not qualify) — it was written for the audit fix and never applied here. When a
+    # "am I the cyrius repo?" test is needed, use that helper; never a filename probe.
+    if (_dep_is_cyrius_source_repo() == 1) {
+        if (_dep_dir_has_stdlib("./lib") == 1) { return "./lib"; }
+    }
+
+    # (b) cyrius.cyml-pinned version → per-repo isolation
+    var pin = _dep_read_cyml_cyrius_field();
+    if (pin != 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, _home);
+        str_builder_add_cstr(sb, "/versions/");
+        str_builder_add_cstr(sb, pin);
+        str_builder_add_cstr(sb, "/lib");
+        var pinned_lib = str_data(str_builder_build(sb));
+        if (_dep_dir_has_stdlib(pinned_lib) == 1) { return pinned_lib; }
+        # Pinned version not installed → hard error per acceptance bar
+        # 6.6.20: the pin is a manifest string (and the path carries it), so both shown escaped.
+        sys_write(STDERR_FD, "error: cyrius.cyml pins version ", 32);
+        _ew_shown(pin);
+        sys_write(STDERR_FD, " but it is not installed at ", 28);
+        _ew_shown(pinned_lib);
+        sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
+        _ew_shown(pin);
+        sys_write(STDERR_FD, "\n", 1);
+        _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
+    }
+
+    # (c) legacy fallback — `~/.cyrius/lib` global symlink
+    var installed = make_path(_home, "lib");
+    if (_dep_dir_has_stdlib(installed) == 1) { return installed; }
+    # Dev mode without a cyrius repo signal (rare): `./lib`
+    if (_dep_dir_has_stdlib("./lib") == 1) { return "./lib"; }
+    return 0;
+}
+
+# v5.10.19 — transitive include resolution for stdlib modules.
+#
+# Pre-fix, `cyrius deps` copied only the directly-named stdlib
+# files (`stdlib = ["syscalls", "process", ...]`) and ignored
+# the `include "lib/X.cyr"` directives INSIDE those files. Most
+# stdlib modules are leaf files, so this worked — except for
+# a handful of arch-dispatcher modules:
+#
+#   lib/syscalls.cyr → includes lib/syscalls_x86_64_linux.cyr
+#                              + lib/syscalls_aarch64_linux.cyr
+#                              + lib/syscalls_windows.cyr
+#   lib/alloc.cyr    → includes lib/alloc_macos.cyr
+#                              + lib/alloc_windows.cyr
+#
+# A consumer that listed `"syscalls"` in `[deps] stdlib`
+# received `lib/syscalls.cyr` only; cyrius's source compile
+# then failed at `include "lib/syscalls_x86_64_linux.cyr"` —
+# missing file → SYS_* / O_* / fn names defined in the peer
+# went undefined → cascading "unexpected unknown" /
+# "undefined variable 'SYS_CLOSE'" diagnostics.
+#
+# In-tree consumers (cyrius's own `programs/checks/`)
+# dodged because the dev-mode `./lib` path resolves the
+# whole repo lib/ tree at once. agnosys 1.1.13 surfaced the
+# gap on CI which uses the installed `~/.cyrius/lib` snapshot.
+#
+# Fix: scan each copied file for `include "lib/X.cyr"` (or
+# `include "lib/sub/X.cyr"`) and recursively copy referenced
+# files — same path-relative shape, same `_dep_copy_file`
+# call, but breadcrumbed via `_dep_stdlib_seen` so cycles
+# (none today, but the dispatcher pattern courts them) and
+# repeat-copies are skipped. Visited set is per-`cmd_deps`
+# invocation; reset at every call.
+var _dep_stdlib_seen = 0;
+var _dep_group_names = 0;     # v6.2.49 Phase B: [groups] names (parallel to members)
+var _dep_group_members = 0;   # v6.2.49 Phase B: [groups] member lists
+var _dep_feature_names = 0;   # v6.3.1 lever 2: [features] feature names (parallel to deps)
+var _dep_feature_deps = 0;    # v6.3.1 lever 2: per-feature member lists (deps and/or features)
+
+fn _dep_stdlib_seen_init(): i64 {
+    _dep_stdlib_seen = vec_new();
+    return 0;
+}
+
+fn _dep_stdlib_seen_has(name): i64 {
+    if (_dep_stdlib_seen == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_stdlib_seen)) {
+        var v = vec_get(_dep_stdlib_seen, i);
+        if (strlen(v) == nl) { if (memeq(v, name, nl) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _dep_stdlib_seen_add(name): i64 {
+    var nl = strlen(name);
+    var dup = alloc(nl + 1);
+    memcpy(dup, name, nl);
+    store8(dup + nl, 0);
+    vec_push(_dep_stdlib_seen, dup);
+    return 0;
+}
+
+# Copy stdlib module `mod_name` (e.g. "syscalls" or
+# "syscalls_x86_64_linux"), then scan its content for
+# `include "lib/X.cyr"` directives and recursively copy
+# those too. Uses `_dep_stdlib_seen` to short-circuit
+# repeats.
+#
+# `is_top` flag: 1 for the consumer-named module
+# (gets pushed onto `_dep_includes` so `compile()`
+# prepends an explicit `include "lib/<mod>.cyr"`), 0
+# for transitive includes. Critical: pre-fix, every
+# transitively-copied file was pushed onto
+# `_dep_includes`. `compile()` then prepended each as
+# an explicit `include`, which OVERRIDES the
+# `#ifdef CYRIUS_TARGET_*` arch-dispatcher logic —
+# both `lib/syscalls_x86_64_linux.cyr` AND
+# `lib/syscalls_aarch64_linux.cyr` parsed
+# simultaneously, fns defined twice, "duplicate fn"
+# warnings cascading + binaries running with the
+# wrong arch's syscall numbers. Top-level-only push
+# preserves the dispatcher pattern.
+# v6.5.28 — push `include "lib/<mod>.cyr"` onto `_dep_includes` unless it is already there.
+# Needed because the seen-guard below now has to service a TOP-LEVEL request for a module that
+# a transitive pull already copied; without the once-check that would double-prepend.
+fn _dep_push_include_once(mod_name): i64 {
+    var pib = str_builder_new();
+    str_builder_add_cstr(pib, make_path("lib", mod_name));
+    str_builder_add_cstr(pib, ".cyr");
+    var want = str_data(str_builder_build(pib));
+    var pi = 0;
+    while (pi < vec_len(_dep_includes)) {
+        if (streq(vec_get(_dep_includes, pi), want) == 1) { return 0; }
+        pi = pi + 1;
+    }
+    vec_push(_dep_includes, want);
+    return 0;
+}
+
+# v6.5.39 — the stem of a "lib/<stem>.cyr" destination, or 0 if `dst` is not that shape.
+# Used to ask "would this copy land on a stdlib leaf?" without re-deriving the name from the
+# dep/module pair, which the caller has already combined three different ways.
+fn _dep_lib_dst_stem(dst): i64 {
+    var n = strlen(dst);
+    if (n < 9) { return 0; }                        # shortest possible is "lib/x.cyr"
+    if (load8(dst) != 108) { return 0; }            # 'l'
+    if (load8(dst + 1) != 105) { return 0; }        # 'i'
+    if (load8(dst + 2) != 98) { return 0; }         # 'b'
+    if (load8(dst + 3) != 47) { return 0; }         # '/'
+    if (load8(dst + n - 4) != 46) { return 0; }     # '.'
+    if (load8(dst + n - 3) != 99) { return 0; }     # 'c'
+    if (load8(dst + n - 2) != 121) { return 0; }    # 'y'
+    if (load8(dst + n - 1) != 114) { return 0; }    # 'r'
+    var sb = str_builder_new();
+    var i = 4;
+    while (i < n - 4) {
+        str_builder_putc(sb, load8(dst + i));
+        i = i + 1;
+    }
+    return str_data(str_builder_build(sb));
+}
+
+# ⭐ v6.5.39 — REFUSE a dep artifact that would overwrite a stdlib leaf Phase 1 already wrote.
+#
+# THE DEFECT (filed 2026-09-01, confirmed in two consumer repos). A named dep whose NAME
+# collides with a declared `[deps] stdlib` leaf lands its own resolved artifact on
+# `lib/<leaf>.cyr` and wins, because the resolver's phase order guarantees it: Phase 1 copies
+# the stdlib from the pinned snapshot, Phase 2 does named deps, Phase 3 the transitive BFS —
+# and Phase 3 is structurally LAST. Measured: `lib sync` writes sakshi 2.4.12 and the very
+# next `cyrius deps` reverts it to the dep's version, exit 0, no diagnostic.
+#
+# ⚠ THE FILING'S NAMED MECHANISM IS WRONG and fixing what it points at would change nothing.
+# It concluded "from the named dep's own lib/" from a byte-identity, but three files share
+# those bytes; a marker probe (a transitive tag that exists ONLY in the git cache) shows the
+# real source is the dep's RESOLVED ARTIFACT — `~/.cyrius/deps/<name>/<tag>/dist/<name>.cyr`.
+# The filing's second-ranked candidate, the fallback at `_dep_pull_module`, is not on this path.
+# It also reads as though the consumer's direct dep is the culprit; in the filed chain sakshi is
+# THREE hops down and appears in no manifest the consumer authored, so the consumer cannot fix
+# it by editing their own file. That is why this must be enforced HERE, in the resolver.
+#
+# ⚠ THE DISCRIMINATOR IS `_dep_stdlib_seen`, NOT "does the file exist in the stdlib dir".
+# Every one of the ~101 stdlib modules exists in the snapshot, so an existence test would also
+# refuse a project that legitimately depends on a package of that name WITHOUT declaring it as
+# a stdlib leaf — leaving it with no `lib/<name>.cyr` at all. The seen-set holds exactly what
+# Phase 1 actually copied, and Phase 1 completes before Phase 3 begins, so by here it is
+# fully populated and order-insensitive for this purpose.
+#
+# ⚠ NAMES PATHS, NOT VERSIONS, and that is deliberate. The filing's own ⚠ records that the
+# obvious version grep (`v?[0-9]+\.[0-9]+\.[0-9]+`) matches an earlier unrelated string in
+# these bundles. Two exact paths cannot be misparsed and say strictly more.
+fn _dep_refuse_stdlib_clobber(stem, src, dst): i64 {
+    sys_write(STDERR_FD, "warning: refusing to overwrite stdlib leaf '", 44);
+    sys_write(STDERR_FD, stem, strlen(stem));
+    sys_write(STDERR_FD, "' -- a dependency resolves a package of the same name.\n", 55);
+    sys_write(STDERR_FD, "  kept (stdlib snapshot): ", 26);
+    sys_write(STDERR_FD, dst, strlen(dst));
+    sys_write(STDERR_FD, "\n  skipped (dep artifact): ", 27);
+    _ew_shown(src);   # 6.6.20: it carries the manifest's `modules` entry
+    sys_write(STDERR_FD, "\n  declare it in [deps] stdlib OR depend on the package, not both.\n", 67);
+    return 0;
+}
+
+# ⭐ 6.6.11 (S2) — THE FOLD WINS OVER A THIN PROFILE OF THE SAME PACKAGE, TOO.
+# `_dep_refuse_stdlib_clobber` only ever caught a dep artifact whose stem EQUALS a declared
+# stdlib leaf. A named dep whose NAME is a stdlib leaf ships more than that: libro's `[deps.sigil]`
+# is the thin `dist/sigil-mldsa.cyr` plus `src/{sha_ni,sha256,hex}.cyr`, vendored as
+# `lib/sigil-mldsa.cyr` and `lib/sigil_*.cyr`. bote declares the stdlib leaf `sigil` (the
+# MONOLITH fold) and depends on libro, so both copies of sigil landed in one unit: 233
+# `duplicate fn` warnings while the two versions matched, and at the 6.6.10 pin (fold 3.13.4,
+# libro's thin 3.12.18) five arity errors and a failed build — correctness hung on libro's sigil
+# tag moving in lockstep with every cyrius fold. Now a module of a named dep `<leaf>` whose file is
+# `<leaf>-<profile>` or `<leaf>_<x>` is NOT vendored and NOT auto-included when `<leaf>` is a
+# stdlib leaf this resolution already copied: the fold is the package. (Dropped from BOTH lists:
+# vendored-but-not-included would still be hashed and locked, included-but-not-vendored is a
+# missing include.) A copy an earlier resolution vendored there is removed. CHANGELOG [6.6.11]
+fn _dep_is_leaf_profile(stem, leaf): i64 {
+    var ll = strlen(leaf);
+    if (strlen(stem) <= ll + 1) { return 0; }
+    if (memeq(stem, leaf, ll) == 0) { return 0; }
+    var c = load8(stem + ll);
+    if (c == 45 || c == 95) { return 1; }            # '-' or '_'
+    return 0;
+}
+
+# 1 when `dst` (lib/<stem>.cyr) is a thin profile module of the named dep `dep`, and `dep` is a
+# stdlib leaf already copied — the caller then skips it (see above). Removes a stale vendored
+# copy at `wdst` (where this run writes `dst`: `_dep_wpath`), through the symlink guard; -1 when
+# that guard refuses.
+# 6.7.13 (D41) — during the pin-move dry pass (`_deps_pin_move_dry`) a vec of the lib/ paths of
+# stale thin-profile copies Phase 2 removes (in scope: they are not held after the real pass); else 0.
+var _dep_dry_drop = 0;
+# ... and the clone directories the dry pass fetched (kept for the real pass, whose `deps -v`
+# then still says "fetched"); 0 when no dry pass ran this resolve.
+var _dep_dry_fetched = 0;
+
+fn _dep_keep_fold_over_profile(dep, dst, wdst, mod_path): i64 {
+    var stem = _dep_lib_dst_stem(dst);
+    if (stem == 0) { return 0; }
+    if (_dep_stdlib_seen_has(dep) == 0) { return 0; }
+    if (_dep_is_leaf_profile(stem, dep) == 0) { return 0; }
+    if (_dep_dry_drop != 0) { vec_push(_dep_dry_drop, dst); }   # 6.7.13 (D41): the real pass drops it
+    if (file_exists(wdst) == 1) {
+        if (_dep_vendor_mode == 1) {
+            var lk = _dep_dest_is_linked(wdst);
+            if (lk != 0) { _dep_refuse_symlinked_dest(lk); return 0 - 1; }
+        }
+        sys_unlink(wdst);
+    }
+    _ew("note: [deps.");
+    _ew_shown(dep);
+    _ew("] ");
+    _ew_shown(mod_path);
+    _ew(" not vendored — '");
+    _ew_shown(dep);
+    _ew("' is a stdlib leaf here, and its fold lib/");
+    _ew_shown(dep);
+    _ew(".cyr is the package\n");
+    return 1;
+}
+
+fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
+    if (_dep_stdlib_seen_has(mod_name) == 1) {
+        # ⛔ v6.5.28 — THE SEEN-GUARD USED TO `return 0` UNCONDITIONALLY, which conflated two
+        # different jobs this fn does: COPY the file, and PUSH its top-level include. Once a
+        # module had been pulled TRANSITIVELY (is_top=0) it was marked seen, so when the
+        # resolver later reached that module's own `[deps].stdlib` entry it short-circuited
+        # here and never pushed the include. `lib/X.cyr` was on disk, `cyrius deps` reported
+        # success, the lockfile listed it — and every symbol in X was an undefined function,
+        # with nothing in the output naming X.
+        #
+        # ⚠ Purely an ORDERING artifact: the SAME declared module set builds or fails on which
+        # entry comes first, which is what made it expensive to diagnose — the manifest looks
+        # correct because it IS correct. Filed from kavach 3.11.14, whose whole tree stopped
+        # building on a 6.5.21 -> 6.5.27 pin move.
+        # ⛔ Not confined to `[deps].stdlib`: `_dep_pull_leaves` calls this with is_top=1 for
+        # the `requires` key and the `dist/<pkg>.deps` sidecar, so a bundle whose sidecar lists
+        # leaves in an unlucky order handed the identical failure to EVERY consumer.
+        #
+        # The copy is genuinely already done, so only the push is owed. Top-level-only push is
+        # preserved deliberately — prepending TRANSITIVE includes overrides the
+        # `#ifdef CYRIUS_TARGET_*` arch dispatchers and was itself a prior bug (see the header
+        # comment above this fn).
+        # ⛔ v6.5.31 — DIRECTORY FAMILIES MUST NOT GET A FLAT INCLUDE HERE.
+        #
+        # `unicode` is the one stdlib module that is a package DIRECTORY (`lib/unicode/*.cyr`)
+        # with no `lib/unicode.cyr`. The expansion below handles that — but only on the FIRST
+        # arrival, because this seen-guard returns before reaching it. So when `unicode` came
+        # in via BOTH a dep's `.deps` sidecar AND the consumer's own `[deps].stdlib`, the first
+        # route expanded the family correctly and the second route landed here and pushed a
+        # flat `include "lib/unicode.cyr"` — a file that legitimately does not exist. The build
+        # died with `cannot open include file: lib/unicode.cyr` while `lib/unicode/` sat there
+        # fully populated, sending the reader after a missing stdlib module instead of a
+        # double declaration. Filed from agnostic 2.0.1 consuming agnosai 2.0.2.
+        #
+        # ⚠ INTRODUCED AT v6.5.28, not v6.2.47 as the filing reasonably guessed: this push is
+        # what the transitive-include fix added, and it was written for flat leaves only.
+        # Either declaration alone worked; only the combination reached it.
+        #
+        # The family members were already pushed by whichever route arrived first, so the
+        # correct action here is to push NOTHING — guarded by the same file_exists test the
+        # expansion itself keys on, so the two cannot disagree about what a family is.
+        if (is_top == 1) {
+            var gsb = str_builder_new();
+            str_builder_add_cstr(gsb, stdlib_dir);
+            str_builder_add_cstr(gsb, "/");
+            str_builder_add_cstr(gsb, mod_name);
+            str_builder_add_cstr(gsb, ".cyr");
+            if (file_exists(str_data(str_builder_build(gsb))) == 1) {
+                _dep_push_include_once(mod_name);
+            }
+        }
+        return 0;
+    }
+    _dep_stdlib_seen_add(mod_name);
+
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, stdlib_dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, mod_name);
+    str_builder_add_cstr(sb, ".cyr");
+    var src = str_data(str_builder_build(sb));
+
+    # Directory-family expansion (v6.1.x): a bare family name like "unicode" is a
+    # DIRECTORY (lib/unicode/*.cyr), not a single lib/unicode.cyr. When the
+    # <name>.cyr source is absent but <stdlib_dir>/<name>/ is a directory, resolve
+    # every .cyr inside it. Each accessor self-includes its data file, so the
+    # transitive scan below still fixes ordering. Fixes downstream consumers
+    # (e.g. niyama) declaring bare "unicode" in [deps].stdlib — previously this
+    # errored "cannot read lib/unicode.cyr" and dropped the whole family.
+    if (file_exists(src) == 0) {
+        var dsb = str_builder_new();
+        str_builder_add_cstr(dsb, stdlib_dir);
+        str_builder_add_cstr(dsb, "/");
+        str_builder_add_cstr(dsb, mod_name);
+        var dir_path = str_builder_build(dsb);
+        # 6.6.10: a family directory that EXISTS but cannot be listed is named (it read as an
+        # empty family, and the error below then blamed a missing `<name>.cyr`).
+        var entries = 0;
+        if (is_dir(dir_path) == 1) {
+            entries = _cbt_list_dir(str_data(dir_path), "its modules were NOT resolved");
+            if (entries == 0) { return 1; }
+        }
+        if (entries != 0) { vec_sort_by(entries, &_dep_name_cmp); }   # v6.5.37 (A8): readdir order is not deterministic
+        if (entries != 0) {
+            var n = vec_len(entries);
+            var ei = 0;
+            var expanded = 0;
+            while (ei < n) {
+                var es = vec_get(entries, ei);
+                ei = ei + 1;
+                var ed = str_data(es);
+                var el = str_len(es);
+                if (el >= 5) {
+                    if (memeq(ed + el - 4, ".cyr", 4) == 1) {
+                        var stem = el - 4;
+                        var subbuf = str_builder_new();
+                        str_builder_add_cstr(subbuf, mod_name);
+                        str_builder_add_cstr(subbuf, "/");
+                        var stemc = alloc(stem + 1);
+                        memcpy(stemc, ed, stem);
+                        store8(stemc + stem, 0);
+                        str_builder_add_cstr(subbuf, stemc);
+                        var sub_name = str_data(str_builder_build(subbuf));
+                        _dep_copy_stdlib_recursive(stdlib_dir, sub_name, is_top);
+                        expanded = 1;
+                    }
+                }
+            }
+            if (expanded == 1) { return 0; }
+        }
+    }
+
+    var rel = _cat2(mod_name, ".cyr");
+    var dst_full = _dep_ipath(rel);   # lib/<mod>.cyr — the include string, and the lock's key
+    var wdst = _dep_wpath(rel);       # where this run writes it (6.7.6: local mode / --locked)
+
+    # v6.6.4 — lock guard BEFORE the write: a snapshot leaf whose bytes moved under an
+    # unchanged pin is refused here (named on stderr, counted into `errors`), so neither
+    # lib/<leaf> nor cyrius.lock changes. The include push + transitive scan still run so
+    # every moved leaf is reported in one pass; the resolve fails as a whole afterwards.
+    # 6.7.6: only when this run writes lib/ — local mode writes neither lib/ nor the lock, and
+    # --locked names the same disagreement in its own comparison.
+    var cr = 0;
+    var gr = 0;
+    if (_dep_writes_lib() == 1) { gr = _dep_lock_guard_stdlib_leaf(src, dst_full); }
+    if (gr == 0) {
+        cr = _dep_copy_file(src, wdst);
+        # 6.6.9: a vendored leaf the lock has no line for — a new leaf, or no lock at all —
+        # makes cmd_deps write the lock. A new leaf has no locked hash to disagree with, so
+        # the 6.6.4 moved-snapshot refusal above is not in play. CHANGELOG [6.6.9]
+        if (cr != 1 && _dep_lock_active == 1 && _lock_file_hash_lookup(dst_full) == 0) {
+            _dep_lock_new_leaf = 1;
+        }
+    }
+    if (cr == 1) { return 1; }
+    if (is_top == 1) { vec_push(_dep_includes, dst_full); }
+
+    # Scan the just-copied source for `include "lib/X.cyr"`
+    # directives. Open the SOURCE (not destination — same
+    # bytes; src guaranteed readable since copy succeeded).
+    var sfd = sys_open(src, O_RDONLY, 0);
+    if (sfd < 0) { return 0; }
+    var sz = _file_size(src);
+    if (sz <= 0) { sys_close(sfd); return 0; }
+    var fbuf = alloc(sz + 1);
+    var nread = syscall(0, sfd, fbuf, sz);
+    sys_close(sfd);
+    if (nread <= 0) { return 0; }
+    store8(fbuf + nread, 0);
+
+    var incs = _dep_stdlib_inc_names(fbuf, nread);
+    var ii = 0;
+    while (ii < vec_len(incs)) {
+        var inc_name = vec_get(incs, ii);
+        ii = ii + 1;
+        # Recursive fetch (transitive). Only if the
+        # source file actually exists in stdlib_dir —
+        # silently skip non-stdlib includes (consumer
+        # might `include "src/foo.cyr"` in stdlib if
+        # someone got creative; not our concern).
+        var probe_sb = str_builder_new();
+        str_builder_add_cstr(probe_sb, stdlib_dir);
+        str_builder_add_cstr(probe_sb, "/");
+        str_builder_add_cstr(probe_sb, inc_name);
+        str_builder_add_cstr(probe_sb, ".cyr");
+        var probe_path = str_data(str_builder_build(probe_sb));
+        if (file_exists(probe_path) == 1) {
+            # Transitive — is_top=0 so we copy the
+            # file but DON'T push to `_dep_includes`.
+            # The top-level dispatcher (`lib/syscalls.cyr`,
+            # `lib/alloc.cyr`) follows its own
+            # `include "lib/X.cyr"` chain at parse time
+            # gated by `#ifdef`.
+            _dep_copy_stdlib_recursive(stdlib_dir, inc_name, 0);
+        }
+    }
+    return 0;
+}
+
+# The `include "lib/X.cyr"` names in a stdlib file's text (`X`, the `.cyr` dropped), in order.
+# Leading whitespace is tolerated; a line starting with `#` is skipped (commented-out includes
+# in retro/historical comments shouldn't drag deps in). The ONE rule for a stdlib leaf's
+# includes: the resolver's transitive walk above and distlib's named-dep closure
+# (`_distlib_nd_closure`, cbt/commands/distlib/verify.cyr) both read it, so the closure distlib credits to a
+# named dep is the one `cyrius deps` vendors for it. CHANGELOG [6.7.12]
+fn _dep_stdlib_inc_names(fbuf, nread): i64 {
+    var out = vec_new();
+    var pos = 0;
+    while (pos < nread) {
+        var ls = pos;
+        # End-of-line
+        var le = pos;
+        while (le < nread && load8(fbuf + le) != 10) { le = le + 1; }
+        # Trim leading whitespace
+        var lp = ls;
+        while (lp < le) {
+            var lc = load8(fbuf + lp);
+            if (lc != 32 && lc != 9) { break; }
+            lp = lp + 1;
+        }
+        # Comment line — skip
+        if (lp < le && load8(fbuf + lp) != 35 && le - lp >= 13) {
+            # Match `include "lib/`
+            if (memeq(fbuf + lp, "include \"lib/", 13) == 1) {
+                var name_start = lp + 13;
+                var name_end = name_start;
+                while (name_end < le && load8(fbuf + name_end) != 34) {
+                    name_end = name_end + 1;
+                }
+                if (name_end < le) {
+                    var inc_len = name_end - name_start;
+                    # Strip ".cyr" suffix (4 bytes) if present.
+                    if (inc_len > 4) {
+                        if (memeq(fbuf + name_end - 4, ".cyr", 4) == 1) {
+                            inc_len = inc_len - 4;
+                        }
+                    }
+                    var inc_name = alloc(inc_len + 1);
+                    memcpy(inc_name, fbuf + name_start, inc_len);
+                    store8(inc_name + inc_len, 0);
+                    vec_push(out, inc_name);
+                }
+            }
+        }
+        pos = le + 1;
+    }
+    return out;
+}
+
+# ⛔ v6.5.37 (A8) — DETERMINISTIC FAMILY EXPANSION. `dir_list` returns readdir order, which
+# is filesystem-dependent, not sorted. Measured on `lib/unicode` at 6.5.36:
+#   _casefold_data.cyr  casefold.cyr  _normalize_data.cyr  normalize.cyr  _decode.cyr ...
+# — not lexicographic. So the one stdlib module that is a package DIRECTORY expanded into a
+# consumer's `lib/` in whatever order that machine's filesystem happened to hand back, and
+# the resulting include list differed between machines for identical inputs.
+#
+# ⚠ WHY IT MATTERS HERE MORE THAN IT WOULD ELSEWHERE: this is a self-hosting toolchain whose
+# central promise is byte-identical reproduction. A dependency resolution whose output order
+# depends on directory layout is a reproducibility hole even when every ordering happens to
+# compile — and "happens to compile" is doing real work, because cyrius requires globals to
+# be declared before use, so a family member ordered ahead of the data file it reads is a
+# compile error rather than a subtle difference.
+#
+# Sorting at the expansion sites rather than inside `dir_list` itself: the walkers in
+# cbt/commands/ use it for test/bench discovery where readdir order is harmless, and changing
+# a shared primitive to fix two callers is the wider blast radius.
+fn _dep_name_cmp(a, b): i64 {
+    var pa = str_data(a);
+    var pb = str_data(b);
+    var i = 0;
+    while (1 == 1) {
+        var ca = load8(pa + i);
+        var cb = load8(pb + i);
+        if (ca != cb) { return ca - cb; }
+        if (ca == 0) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}

@@ -1,5 +1,5 @@
 #!/bin/sh
-# toml_key_boundary_and_values.sh — 6.6.17 (P1 m6). The manifest line scanners in cbt/deps.cyr read
+# toml_key_boundary_and_values.sh — 6.6.17 (P1 m6). The manifest line scanners (now in cbt/manifest.cyr) read
 # whole TOML keys and TOML string values.
 #
 # THE DEFECTS (measured on 6.6.16):

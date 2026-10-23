@@ -3,7 +3,7 @@
 # Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
 
 # v6.2.40: `[deps] stdlib = [...]` from the cwd's cyrius.cyml as a vec of declared module-name
-# cstrings, or 0 if absent / empty. 6.6.20: through `_dep_declared_stdlib` (cbt/deps.cyr), the
+# cstrings, or 0 if absent / empty. 6.6.20: through `_dep_declared_stdlib` (cbt/deps/keys.cyr), the
 # one reader `cyrius deps` uses — this was the third copy of a raw byte scan for `stdlib`.
 fn _libsync_declared_mods(): i64 {
     # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
@@ -61,7 +61,7 @@ fn _libsync_declared_idx(name, declared): i64 {
 # v6.5.12: copy a stdlib PACKAGE DIRECTORY (`<snapshot>/lib/<name>/*.cyr`).
 #
 # ⛔ WHY THIS EXISTS. `cyrius deps` learned about package directories at v6.1.x —
-# `deps.cyr:_dep_copy_stdlib_recursive` has the expansion and its comment names the
+# `cbt/deps/stdlib.cyr:_dep_copy_stdlib_recursive` has the expansion and its comment names the
 # exact consumer bug ("declaring bare `unicode` in [deps].stdlib … dropped the whole
 # family"). `cyrius lib sync` was the UN-UPDATED TWIN and kept a flat, `.cyr`-only
 # scan, so a consumer declaring `unicode` got a SUCCESS message and no unicode:
