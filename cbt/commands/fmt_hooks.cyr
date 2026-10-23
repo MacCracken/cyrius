@@ -1,0 +1,95 @@
+# CLI — commands: `cyrius fmt` (delegates to cyrfmt) and `cyrius hooks install`.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ================================================================
+# Quality commands — delegate to companion tools
+# ================================================================
+
+# v6.5.28 — `mode`: 0 = WRITE IN PLACE (the new default), 1 = --check, 2 = --dry
+# (report what would change, touch nothing), 3 = --verbose (write in place AND echo to stdout).
+#
+# ⚠ BREAKING CLI CHANGE, taken deliberately (maintainer 2026-08-18). `cyrius fmt <file>` used
+# to print to stdout and never touch the file, so `--check` could flag a file the tool gave
+# you no in-place way to fix — the state rupa hit and worked around by un-wrapping every call.
+# Scripts that relied on the old stdout-only behaviour move to `--dry` (report) or
+# `--verbose` (write + echo).
+# v6.6.5 — N files, and the mode is forwarded in cyrfmt's CANONICAL POSITION.
+# `mode`: 0 = WRITE IN PLACE (the default), 1 = --check, 2 = --dry (report, touch
+# nothing), 3 = --verbose (write in place AND echo to stdout). main() rejects a
+# combination, so exactly one mode arrives here.
+#
+# ⚠ BREAKING CLI CHANGE, taken deliberately (maintainer 2026-08-18). `cyrius fmt <file>`
+# used to print to stdout and never touch the file, so `--check` could flag a file the
+# tool gave you no in-place way to fix. Scripts that relied on the old stdout-only
+# behaviour move to `--dry` (report) or `--verbose` (write + echo).
+#
+# The rc is the MAX over the files, and every file is visited: `cyrius fmt --check a b`
+# used to check only `a` (agnoshi/scripts/check-fmt.sh exists solely because of that).
+fn _cmd_fmt_one(cyrfmt, file, check_mode): i64 {
+    if (check_mode == 2) {
+        # --dry: run the CHECK (which never writes) and translate its verdict, so "would
+        # change" and "is not canonical" cannot drift apart — they are the same question.
+        var drc = run_tool(cyrfmt, "--check", file, 0);
+        if (drc == 0) {
+            sys_write(STDOUT_FD, "cyrius fmt --dry: already canonically formatted: ", 49);
+            println(file);
+            return 0;
+        }
+        println("cyrius fmt --dry: WOULD reformat (see the diagnostic above); file left unchanged");
+        return drc;
+    }
+    if (check_mode == 3) {
+        # --verbose: write in place, then echo the canonical result to stdout.
+        var vrc = run_tool(cyrfmt, "--write", file, 0);
+        if (vrc != 0) { return vrc; }
+        return run_tool(cyrfmt, file, 0, 0);
+    }
+    if (check_mode == 1) {
+        # v5.8.42: cyrfmt's mode used to be honoured at argv(1) ONLY, so (file,
+        # "--check") silently dumped the formatted text to stdout and exited 0 —
+        # drift never detected. cyrfmt accepts flags in any position since v6.6.5,
+        # but the canonical order is kept here so the two fixes are independent.
+        return run_tool(cyrfmt, "--check", file, 0);
+    }
+    # DEFAULT: rewrite in place.
+    return run_tool(cyrfmt, "--write", file, 0);
+}
+
+fn cmd_fmt(files, check_mode): i64 {
+    var cyrfmt = _tool_path(_tools_dir, "cyrfmt");
+    var rc = 0;
+    var i = 0;
+    while (i < vec_len(files)) {
+        var one = _cmd_fmt_one(cyrfmt, vec_get(files, i), check_mode);
+        if (one > rc) { rc = one; }
+        i = i + 1;
+    }
+    return rc;
+}
+
+# cyrius hooks install — copy the repo's build-artifact pre-commit hook
+# into .git/hooks/ so commits can't ship a contaminated build/cycc.
+# See scripts/hooks/pre-commit + CHANGELOG [6.0.36]. install.sh also
+# installs it on --refresh-only; this verb is the explicit/manual path.
+fn cmd_hooks(action): i64 {
+    if (streq(action, "install") == 0) {
+        println("Usage: cyrius hooks install");
+        return 1;
+    }
+    if (file_exists(".git") == 0) {
+        println("error: not a git repository (.git not found)");
+        return 1;
+    }
+    if (file_exists("scripts/hooks/pre-commit") == 0) {
+        println("error: scripts/hooks/pre-commit not found (run from the cyrius repo root)");
+        return 1;
+    }
+    var r = sys_system("cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit");
+    if (r == 0) {
+        println("installed build-artifact pre-commit hook (.git/hooks/pre-commit)");
+    } else {
+        println("error: failed to install hook");
+    }
+    return r;
+}

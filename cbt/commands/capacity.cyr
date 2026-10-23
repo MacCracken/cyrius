@@ -1,0 +1,264 @@
+# CLI — commands: `cyrius capacity` — the compiler table utilization report.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ================================================================
+# Capacity — compiler table utilization report
+# ================================================================
+# Compiles source under CYRIUS_STATS=1, parses stats from stderr.
+# --check: exit 1 if any table >= 85%. --json: machine-readable output.
+
+fn cmd_capacity(source, check_mode, json_mode): i64 {
+    var cc = current_cc();
+    if (cc == 0) { _err("cycc not found"); return 1; }
+    if (source == 0) {
+        _err("no file given");
+        sys_write(STDERR_FD, "usage: cyrius capacity [--check] [--json] [file.cyr]\n", 53);
+        return 1;
+    }
+    if (file_exists(source) == 0) { _err_ctx("file not found", source); return 1; }
+    # v6.5.7: capacity does NOT route through compile() — it calls
+    # _materialize_source and forks cycc itself — so it does not inherit that
+    # function's guard and needs its own. file_exists returns 1 for a directory
+    # (open-then-close), so `cyrius capacity benches` printed a full, plausible
+    # stats block (var_table / fixup_table / code_size, all measuring the
+    # auto-prepended stdlib) and exited 0 — a green placebo of exactly the kind
+    # the v6.4.73 note below exists to prevent.
+    if (is_dir(str_from(source)) == 1) { _err_ctx("not a file", source); return 1; }
+
+    # Compile with CYRIUS_STATS=1, capture stderr.
+    # v6.4.73: feed the compiler the MATERIALIZED source (manifest dep includes +
+    # defines prepended), not the raw file. Pre-.73 this forked cycc on `source`
+    # directly, so on any real project every stdlib fn was undefined, the compile
+    # aborted BEFORE the stats block, and the --check path below then found zero
+    # stats lines and printed "ok (all caps under 85%)". See the placebo guard at
+    # the bottom of this fn. CHANGELOG [6.4.73].
+    var cap_source = _materialize_source(source);
+    # v6.6.6 (bite 26b) — same contract as compile()'s caller: 0 is "the preprocessed source
+    # is not what was asked for", already named. Measuring caps against a truncated file
+    # would report a stats block for a program nobody wrote. CHANGELOG [6.6.6].
+    if (cap_source == 0) { return 1; }
+    var tmpout = _cbt_tmpfile("cap_out");
+    var tmperr = _cbt_tmpfile("cap_err");
+    # v6.6.6 — PE arm. `/bin/sh` does not exist on Windows and `sys_fork` is a -1 stub,
+    # so this used to "wait" on -1 and decode an uninitialised status slot; whenever that
+    # garbage happened to read as WIFEXITED/0, `cyrius capacity --check` then found no
+    # stats lines in an empty stderr capture and reported `ok (all caps under 85%)` for a
+    # compile that never ran — the exact placebo the guard further down exists to stop.
+    # `_win_capacity_spawn` runs the same thing through cmd.exe. CHANGELOG [6.6.6].
+    var cap_rc = 0;
+    #ifdef CYRIUS_TARGET_WIN
+    cap_rc = _win_capacity_spawn(cc, cap_source, tmperr);
+    if (cap_source != source) { xunlink(cap_source); _cbt_scratch_untrack(cap_source); }
+    if (cap_rc < 0) { return 1; }
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    # The kill handler unlinks `cap_err` and stops the compiler, as for compile()'s: registered
+    # before the child can create the file, the child tracked by `_cbt_fork_tracked`, both
+    # dropped once it is reaped and read. CHANGELOG [6.7.13]
+    _cbt_scratch_track(tmperr);
+    var pid = _cbt_fork_tracked(0);
+    if (pid < 0) {
+        # 6.6.20: no child, no status — see `_cbt_fork_failed`. CHANGELOG [6.6.20]
+        _cbt_fork_failed("the compiler for capacity stats", pid);
+        if (cap_source != source) { _cbt_scratch_drop(cap_source); }
+        _cbt_scratch_untrack(tmperr);
+        return 1;
+    }
+    if (pid == 0) {
+        var sfd = sys_open(cap_source, O_RDONLY, 0);
+        if (sfd < 0) { sys_exit(1); }
+        _cbt_redirect(sfd, 0);   # same-fd guard: CHANGELOG [6.7.16]
+        var ofd = sys_open("/dev/null", O_WRONLY, 0);
+        _cbt_redirect(ofd, 1);
+        var efd = sys_open(tmperr, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+        _cbt_redirect(efd, 2);
+        # Set CYRIUS_STATS=1 in environment — simpler: use env command
+        var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
+        store64(&argv, cc);
+        store64(&argv + 8, 0);
+        # Modify environ to add CYRIUS_STATS=1
+        # Simplest: exec via env
+        var sh_argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
+        store64(&sh_argv, "/bin/sh");
+        store64(&sh_argv + 8, "-c");
+        # Build command string
+        var cmd_sb = str_builder_new();
+        str_builder_add_cstr(cmd_sb, "CYRIUS_STATS=1 ");
+        str_builder_add_cstr(cmd_sb, cc);
+        var cmd_str = str_data(str_builder_build(cmd_sb));
+        store64(&sh_argv + 16, cmd_str);
+        store64(&sh_argv + 24, 0);
+        sys_execve("/bin/sh", &sh_argv, _envp);
+        sys_exit(127);
+    }
+    var cap_status = _cbt_wait_status(pid, "the compiler for capacity stats");   # 6.6.20
+    _cbt_child_untrack(pid);
+    # v6.5.19: the second _materialize_source caller, same leak as compile()'s —
+    # the preprocessed temp was never removed. Same "we made it" test (the fn returns
+    # `source` itself when no prepend was needed).
+    if (cap_source != source) { _cbt_scratch_drop(cap_source); }
+    cap_rc = 1;
+    if (cap_status >= 0 && WIFEXITED(cap_status) == 1) { cap_rc = WEXITSTATUS(cap_status); }
+    #endif
+    var cap_failed = 1;
+    if (cap_rc == 0) { cap_failed = 0; }
+
+    # Read stderr output.
+    # v6.4.73: 1 MiB, was 8 KiB. The stats block is printed at the END of the
+    # compile, so on any project whose warnings exceed the buffer the stats lines
+    # were the FIRST thing truncated away — stiva 3.0.6 emits ~20 KB of
+    # duplicate-fn warnings before them. An 8 KiB read there captured warnings
+    # only, and the caller read that as "no tables near their cap".
+    var errbuf = alloc(1048576);
+    var errlen = file_read_all(tmperr, errbuf, 1048575);
+    _cbt_scratch_drop(tmperr);
+    if (errlen <= 0) {
+        _err("no stats output from compiler");
+        # v6.6.6 — the Windows reason MOVED, so this says what is actually true now.
+        # It first read "cycc.exe cannot see CYRIUS_STATS: _read_env reads
+        # /proc/self/environ", which was right when it was written and stopped being
+        # right in the same release: the PE arm of `_read_env` was wired (0xF015
+        # GetEnvironmentVariableA), and with the PE spawn already armed, `cyrius
+        # capacity` REPORTS REAL NUMBERS on Windows — measured under wine. An empty
+        # capture here is therefore an ordinary "the compiler printed nothing", the
+        # same on every target, and a Windows-specific excuse for it would now be a
+        # lie. CHANGELOG [6.6.6].
+        return 1;
+    }
+    store8(errbuf + errlen, 0);
+    # The compile itself must have SUCCEEDED before any utilization number means
+    # anything. A failed compile produces no stats lines, and every consumer below
+    # treats "no lines" as "nothing over the threshold" — which is how `cyrius
+    # capacity --check` reported `ok (all caps under 85%)` for a project sitting at
+    # fn_table 90% / identifiers 92%. Fail loud instead.
+    if (cap_failed == 1) {
+        sys_write(STDERR_FD, errbuf, errlen);
+        _err_ctx("compile failed — no capacity numbers to report", source);
+        return 1;
+    }
+
+    if (json_mode == 1) {
+        # Parse "  name:    used / cap" lines into JSON
+        println("{");
+        var first = 1;
+        var pos = 0;
+        while (pos < errlen) {
+            # Skip to "  " at line start
+            if (pos + 4 < errlen && load8(errbuf + pos) == 32 && load8(errbuf + pos + 1) == 32) {
+                var ns = pos + 2;
+                var ne = ns;
+                while (ne < errlen && load8(errbuf + ne) != 58) { ne = ne + 1; }
+                if (ne < errlen) {
+                    var name_len = ne - ns;
+                    # Skip to first digit
+                    var di = ne + 1;
+                    while (di < errlen && (load8(errbuf + di) < 48 || load8(errbuf + di) > 57)) { di = di + 1; }
+                    # Parse used
+                    var used = 0;
+                    while (di < errlen && load8(errbuf + di) >= 48 && load8(errbuf + di) <= 57) {
+                        used = used * 10 + load8(errbuf + di) - 48;
+                        di = di + 1;
+                    }
+                    # Skip to next digit (cap)
+                    while (di < errlen && (load8(errbuf + di) < 48 || load8(errbuf + di) > 57)) { di = di + 1; }
+                    var cap = 0;
+                    while (di < errlen && load8(errbuf + di) >= 48 && load8(errbuf + di) <= 57) {
+                        cap = cap * 10 + load8(errbuf + di) - 48;
+                        di = di + 1;
+                    }
+                    if (cap > 0) {
+                        var pct = used * 100 / cap;
+                        if (first == 0) { println(","); }
+                        sys_write(STDOUT_FD, "  \"", 3);
+                        sys_write(STDOUT_FD, errbuf + ns, name_len);
+                        sys_write(STDOUT_FD, "\": {\"used\": ", 12);
+                        fmt_int(used);
+                        sys_write(STDOUT_FD, ", \"cap\": ", 9);
+                        fmt_int(cap);
+                        sys_write(STDOUT_FD, ", \"pct\": ", 9);
+                        fmt_int(pct);
+                        sys_write(STDOUT_FD, "}", 1);
+                        first = 0;
+                    }
+                }
+            }
+            # Skip to next line
+            while (pos < errlen && load8(errbuf + pos) != 10) { pos = pos + 1; }
+            pos = pos + 1;
+        }
+        println("");
+        println("}");
+    } elif (check_mode == 1) {
+        # Print stats to stderr
+        sys_write(STDERR_FD, errbuf, errlen);
+        # Parse "  name:    used / cap" lines, check if any >= 85%
+        var hits = 0;
+        var seen = 0;   # v6.4.73: stats lines actually parsed (0 = no certification possible)
+        var pos = 0;
+        while (pos < errlen) {
+            # Look for lines with " / " (stats format)
+            if (pos + 4 < errlen && load8(errbuf + pos) == 32 && load8(errbuf + pos + 1) == 32) {
+                # Find the / separator
+                var sl = pos;
+                var has_slash = 0;
+                var slash_pos = 0;
+                while (sl < errlen && load8(errbuf + sl) != 10) {
+                    if (load8(errbuf + sl) == 47) {
+                        if (sl > 0 && load8(errbuf + sl - 1) == 32 && sl + 1 < errlen && load8(errbuf + sl + 1) == 32) {
+                            has_slash = 1;
+                            slash_pos = sl;
+                        }
+                    }
+                    sl = sl + 1;
+                }
+                if (has_slash == 1) {
+                    # Parse used (digits before " / ")
+                    var ui = slash_pos - 2;
+                    while (ui > pos && load8(errbuf + ui) >= 48 && load8(errbuf + ui) <= 57) { ui = ui - 1; }
+                    ui = ui + 1;
+                    var used = 0;
+                    while (ui < slash_pos && load8(errbuf + ui) >= 48 && load8(errbuf + ui) <= 57) {
+                        used = used * 10 + load8(errbuf + ui) - 48;
+                        ui = ui + 1;
+                    }
+                    # Parse cap (digits after " / ")
+                    var ci2 = slash_pos + 2;
+                    var cap = 0;
+                    while (ci2 < errlen && load8(errbuf + ci2) >= 48 && load8(errbuf + ci2) <= 57) {
+                        cap = cap * 10 + load8(errbuf + ci2) - 48;
+                        ci2 = ci2 + 1;
+                    }
+                    if (cap > 0) {
+                        var pct = used * 100 / cap;
+                        seen = seen + 1;
+                        if (pct >= 85) { hits = hits + 1; }
+                    }
+                }
+            }
+            while (pos < errlen && load8(errbuf + pos) != 10) { pos = pos + 1; }
+            pos = pos + 1;
+        }
+        # v6.4.73 placebo guard: parsing ZERO stats lines is not a pass. It means
+        # the stats block never arrived (compile aborted, buffer truncated, or the
+        # emitter's format drifted from this parser) — none of which is evidence
+        # that the tables are under 85%. Reporting "ok" here is precisely the
+        # vacuous green CLAUDE.md warns about, so treat it as a hard failure.
+        if (seen == 0) {
+            sys_write(STDERR_FD, errbuf, errlen);
+            _err("no capacity lines parsed from compiler output — cannot certify caps");
+            return 1;
+        }
+        if (hits > 0) {
+            sys_write(STDERR_FD, "cyrius capacity --check: ", 25);
+            fmt_int_fd(STDERR_FD, hits);
+            sys_write(STDERR_FD, " table(s) at >=85% -- failing\n", 30);
+            return 1;
+        }
+        println("cyrius capacity --check: ok (all caps under 85%)");
+    } else {
+        # Default: just print stats
+        sys_write(STDERR_FD, errbuf, errlen);
+    }
+    return 0;
+}

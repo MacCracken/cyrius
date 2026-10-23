@@ -94,8 +94,8 @@ cd "$ROOT"
 # scans and required each to route through `_toml_key_at`; a fourth hand-rolled copy is exactly
 # what it exists to catch, so it now requires there be NO byte scan and that both readers (cmd_deps,
 # `lib sync`'s _libsync_declared_mods) call the helper.
-raw=$(grep -c '"stdlib", 6' cbt/commands.cyr cbt/deps.cyr | awk -F: '{s+=$2} END{print s}')
-users=$(grep -c '_dep_declared_stdlib(' cbt/commands.cyr cbt/deps.cyr | awk -F: '{s+=$2} END{print s}')
+raw=$(grep -c '"stdlib", 6' $(find cbt/commands -name '*.cyr' | LC_ALL=C sort) cbt/deps.cyr | awk -F: '{s+=$2} END{print s}')
+users=$(grep -c '_dep_declared_stdlib(' $(find cbt/commands -name '*.cyr' | LC_ALL=C sort) cbt/deps.cyr | awk -F: '{s+=$2} END{print s}')
 if [ "$raw" -ne 0 ]; then
     echo "  FAIL axis 3 (structural): $raw raw \"stdlib\", 6 byte scan(s) in cbt/ — a hand-rolled key scan has been reintroduced"
     fail=1

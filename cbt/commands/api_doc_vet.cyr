@@ -1,0 +1,89 @@
+# CLI — commands: `cyrius api-surface`, `doc`, `vet` and `deny` — delegates to their companion tools.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# v5.7.33: snapshot-based public API surface diff. Pattern from
+# agnosys/scripts/check-api-surface.sh; cyrius-native impl in
+# programs/cyrius_api_surface.cyr ($_tools_dir/cyrius_api_surface).
+# v5.9.14: source renamed from `api_surface.cyr` after the release
+# tarball at 5.9.13 shipped without `cyrius_api_surface` — both
+# `release.yml` and `install.sh --refresh-only` look up
+# `programs/${bin}.cyr` keyed off cyrius.cyml [release].bins, and
+# the old name silently failed the lookup. Local installs masked
+# this because `build/cyrius_api_surface` was already present from
+# manual builds; the CI runner has no such fallback.
+# v5.9.12: `scope_project` flag forward (v5.9.11 agnosys filing
+# §4 — exclude lib/ entries from the scan so downstream
+# consumers don't pick up cyrius stdlib that churns across
+# releases). Pre-v5.9.12 this dispatcher dropped the flag.
+# v5.9.13: `snapshot_arg` (`--snapshot=PATH`) forward — same
+# shape; pinned as follow-up at v5.9.12 ship.
+fn cmd_api_surface(update_flag, scope_project, snapshot_arg): i64 {
+    var tool = _tool_path(_tools_dir, "cyrius_api_surface");
+    var av = vec_new();
+    if (update_flag != 0) { vec_push(av, "--update"); }
+    if (scope_project != 0) { vec_push(av, "--scope=project"); }
+    # v6.6.5 — the `--snapshot PATH` SPACE form is accepted by the CLI now, so
+    # re-emit it in the attached form the tool reads.
+    if (snapshot_arg != 0) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "--snapshot=");
+        str_builder_add_cstr(sb, snapshot_arg);
+        vec_push(av, str_data(str_builder_build(sb)));
+    }
+    return run_tool_vec(tool, av);
+}
+
+# v6.5.8: validate the target BEFORE delegating. `cyrius doc <missing-file>` printed
+# NOTHING and exited 0 — the worst shape in the fail-open family, because empty output
+# from a doc generator is indistinguishable from "this file has no documentation", so a
+# mistyped path reads as a finding about the code.
+#
+# v6.6.5 — it used to take arg1/arg2 and pick "whichever is not a flag", which is how
+# `cyrius vet --bogus f.cyr` bypassed the check entirely (the '-' token was skipped and
+# the real file never reached the existence test). After the classifier an operand can
+# never be a flag, so this always checks a real path.
+fn _cmd_target_ok(t, verb): i64 {
+    if (t == 0) { return 1; }
+    if (file_exists(t) == 1) { return 1; }
+    _err_ctx(verb, t);
+    return 0;
+}
+
+# v6.6.5 — 1..N files, and `--check` is forwarded whatever position it was typed in.
+# `cyrius doc f.cyr --check` used to drop the flag and write markdown with exit 0 —
+# the spelling ark/CLAUDE.md prescribes, so ark's doc gate had never once failed.
+fn cmd_doc(files, check): i64 {
+    var cyrdoc = _tool_path(_tools_dir, "cyrdoc");
+    var rc = 0;
+    var i = 0;
+    while (i < vec_len(files)) {
+        var f = vec_get(files, i);
+        if (_cmd_target_ok(f, "doc: cannot read") == 0) { return 1; }
+        var av = vec_new();
+        if (check != 0) { vec_push(av, "--check"); }
+        vec_push(av, f);
+        var one = run_tool_vec(cyrdoc, av);
+        if (one > rc) { rc = one; }
+        i = i + 1;
+    }
+    return rc;
+}
+
+# vet / deny are dependency-audit passes implemented by the `cyaudit` tool
+# (programs/cyaudit.cyr) — NOT the compiler. These were mis-wired to `cybs` (the asm
+# bootstrap compiler), which has no vet/deny mode: it ignored the argv, read stdin and
+# emitted a stray ELF to stdout. Route to cyaudit. See CHANGELOG [6.1.25].
+fn cmd_vet(file): i64 {
+    # v6.5.8: `cyrius vet <missing>` reported "no dependencies" and exited 0 — a clean
+    # bill of health for a file that was never opened.
+    if (_cmd_target_ok(file, "vet: cannot read") == 0) { return 1; }
+    var cyaudit = _tool_path(_tools_dir, "cyaudit");
+    return run_tool(cyaudit, "vet", file, 0);
+}
+
+fn cmd_deny(file): i64 {
+    if (_cmd_target_ok(file, "deny: cannot read") == 0) { return 1; }
+    var cyaudit = _tool_path(_tools_dir, "cyaudit");
+    return run_tool(cyaudit, "deny", file, 0);
+}

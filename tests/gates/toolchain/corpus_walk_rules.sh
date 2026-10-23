@@ -6,7 +6,7 @@
 # had their own copy of the directory walk, and every walker fix had to be made three times:
 # v6.5.12's depth cap, `elif` and never-descend-a-symlink, then 6.6.10's unlistable-directory
 # failure (that one is walkers_fail_closed_unreadable_dir.sh). 6.6.20 folded the three into
-# `_corpus_walk_d` (cbt/commands.cyr). This gate pins the rules ONCE PER VERB, so a fourth corpus
+# `_corpus_walk_d` (cbt/commands/tests.cyr). This gate pins the rules ONCE PER VERB, so a fourth corpus
 # or a re-forked walker that drops one goes red here — nothing gated the v6.5.12 rules before.
 #
 # One fixture, the same shape under tests/ (for test), fuzz/ and benches/:

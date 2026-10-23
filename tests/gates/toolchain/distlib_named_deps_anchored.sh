@@ -3,7 +3,7 @@
 # same text appearing in comment prose.
 #
 # THE BUG. The exclude-set scan matched the literal `[deps.` ANYWHERE in the manifest buffer
-# with no line anchoring (`cbt/commands.cyr`), so a comment explaining the layout registered
+# with no line anchoring (`_distlib_named_deps`, cbt/commands/distlib/modular.cyr), so a comment explaining the layout registered
 # its example dep as a real one. Because that set means "this is a fold, not a stdlib leaf",
 # the named leaf was then EXCLUDED from the generated `.deps` sidecar. Filed from patra
 # (11 leaves emitted against 12 declared, `sakshi` missing) and confirmed in libro.

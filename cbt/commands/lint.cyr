@@ -1,0 +1,289 @@
+# CLI — commands: `cyrius lint` — the syntax pre-pass, then cyrlint.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ================================================================
+# lint — syntax pre-pass (v6.5.19)
+# ================================================================
+# THE FILED DEFECT (hisab, the residual half of the dead-fn-body filing).
+# `cyrius lint` reported `0 warnings`, exit 0, on a file `cyrius build` rejects with
+# `unexpected ';'`. `programs/cyrlint.cyr` is a LINE-BASED SCANNER — 929 lines of
+# `memeq` at raw byte offsets, one `brace_depth` counter, no token stream and no AST —
+# so "does this file parse?" is not a question it can ask. `0 warnings` was an honest
+# report about its own nine rules and a false one about the file.
+#
+# THE FORK, AND WHY (a). The filing named three options and left the choice open:
+#   (a) run a compiler syntax pre-pass  <- CHOSEN
+#   (b) give cyrlint a real front end
+#   (c) just reword the summary
+# (b) is a SECOND PARSER for one language, forever, in the repo whose thesis is one
+# toolchain: src/frontend/ is 17,703 lines carrying ~1,040 `E*(S, ...)` emitter call
+# sites and threads `S` (the compiler heap base) through every function — the parser IS
+# the emitter, so there is no parse-only slice to lift. This tree already has the
+# receipt for what a divergent copy costs: the v6.5.17 dead-fn-body bug was fork-
+# divergent across the 7 `main*` forks and shipped green for months. (c) leaves the
+# linter still unable to answer the question. (a) reuses the component that is already
+# correct and stays entirely inside cbt/.
+#
+# ⛔ 6.6.11 (O4) — THE CLASSIFIER IS INVERTED: a refusal lints only when EVERY error is a
+# named CONTEXT-dependent message. Until 6.6.11 it was the other way round — lint refused only
+# when an error's message started with an entry of a SYNTAX allow-list (`unexpected `,
+# `expected `, …) and linted anyway otherwise — so any refusal the list did not name read
+# `0 warnings`, rc 0. Measured at 6.6.10: `#derive(accessors)` on an enum
+# (`error: #derive(accessors) applies to a struct; Color is an enum`), and #derive on neither a
+# struct nor an enum, both of which `cyrius build` refuses. Those messages carry no
+# `<loc>: ` part and are not syntax-shaped; the list could never have named every refusal the
+# compiler has, and each one it missed was a clean bill of health on a broken file.
+#
+# WHY THE OLD DIRECTION EXISTED, AND WHY IT NO LONGER HOLDS. The v6.5.19 pre-pass ran with
+# `--allow-undef` only, and 38 of 191 in-repo files exited non-zero standalone — 27 with
+# `undefined variable 'X'`, a file merely lacking its includes. `--syntax-only` (also v6.5.19,
+# src/common/util.cyr `_syntax_only`) now suppresses undefined variables and fns, and the
+# census under lint's own flags is 2 refusals in 199 in-repo files, both context-dependent:
+# lib/ganita.cyr (`f64_sin requires include "lib/math.cyr"`) and lib/yukti.cyr (`array size
+# identifier must be an enum constant` until 6.7.2, the enum lives in another file). So the exception is
+# now small and NAMED — `_lint_msg_is_context` — and everything else the compiler refuses
+# fails lint and is forwarded. A read-only sweep over the sibling repos' sources, with the
+# CLI's own flags, is recorded in CHANGELOG [6.6.11].
+#
+# ⚠ `no struct type in scope for` is in the context set on purpose: the 6.5.19 cross-file
+# struct shape (`e.size` with `Entry` declared in a SIBLING module — the ordinary layout of a
+# manifest that concatenates modules) must still lint. Gate axis 6 pins it.
+#
+# COST: ~89 ms per lint against ~6 ms for cyrlint alone. It does NOT touch
+# `cyrius audit`: `audit_lint_walk` (lib/audit_walk.cyr) execs the cyrlint BINARY
+# directly and never routes through this function.
+
+fn _lint_pfx(p, n, s): i64 {
+    var sl = strlen(s);
+    if (n < sl) { return 0; }
+    return memeq(p, s, sl);
+}
+
+# 1 when the cstr `s` occurs anywhere in p[0, n).
+fn _lint_has(p, n, s): i64 {
+    var sl = strlen(s);
+    var q = 0;
+    while (q + sl <= n) {
+        if (memeq(p + q, s, sl) == 1) { return 1; }
+        q = q + 1;
+    }
+    return 0;
+}
+
+# The CONTEXT set: messages that depend on what OTHER files of the unit supply, so a file
+# linted alone may legitimately produce them. Every other error is a refusal of the file itself.
+fn _lint_msg_is_context(p, n): i64 {
+    # f64_sin / f64_cos / … and the slice subscript: `<what> requires include "lib/<x>.cyr"`
+    if (_lint_has(p, n, " requires include \"") == 1) { return 1; }
+    # an array sized by an enum constant (or a const) another file declares (lib/yukti.cyr) — since
+    # 6.7.2 every const context names it `unknown name 'X' in a const context` (a const fn another
+    # file declares: `unknown fn 'f' in a const context`)
+    if (_lint_pfx(p, n, "unknown name '") == 1 && _lint_has(p, n, "' in a const context") == 1) { return 1; }
+    if (_lint_pfx(p, n, "unknown fn '") == 1 && _lint_has(p, n, "' in a const context") == 1) { return 1; }
+    # a struct declared in a sibling module (the 6.5.19 cross-file shape, gate axis 6)
+    if (_lint_pfx(p, n, "no struct type in scope for ") == 1) { return 1; }
+    # …and the same struct named as a field's type (the 6.6.11 sweep:
+    # 23 sibling-repo files, e.g. samay's `name: Str` with lib/str.cyr not in the file)
+    if (_lint_pfx(p, n, "unknown type '") == 1 && _lint_has(p, n, "' for struct field '") == 1) { return 1; }
+    return 0;
+}
+
+# The message of an `error:` line buf[ls, le): after `error:<file>:<line>:<col>: ` — the
+# location can never contain a COLON FOLLOWED BY A SPACE (line and column are digits), so the
+# first `": "` ends it — or after `error: ` when the compiler gave no location (the #derive
+# stage). -1 when the line is not an error line.
+fn _lint_err_msg(buf, ls, le): i64 {
+    if (le - ls < 7) { return 0 - 1; }
+    if (memeq(buf + ls, "error:", 6) == 0) { return 0 - 1; }
+    if (load8(buf + ls + 6) == 32) { return ls + 7; }
+    var q = ls + 6;
+    while (q + 1 < le) {
+        if (load8(buf + q) == 58) { if (load8(buf + q + 1) == 32) { return q + 2; } }
+        q = q + 1;
+    }
+    return le;                        # a located error with no message: not a context one
+}
+
+# The verdict on a captured stderr: 0 = every error line is context-dependent (lint the file),
+# 1 = some error is the file's own (refuse), 2 = no error line at all (could not tell).
+fn _lint_capture_verdict(buf, n): i64 {
+    var seen = 0;
+    var p = 0;
+    while (p < n) {
+        var ls = p;
+        while (p < n) { if (load8(buf + p) == 10) { break; } p = p + 1; }
+        var le = p;
+        if (p < n) { p = p + 1; }
+        var ms = _lint_err_msg(buf, ls, le);
+        if (ms >= 0) {
+            seen = 1;
+            if (_lint_msg_is_context(buf + ms, le - ms) == 0) { return 1; }
+        }
+    }
+    if (seen == 0) { return 2; }
+    return 0;
+}
+
+# Forward the compiler's OWN diagnostic rather than inventing a new one: the `error:`
+# lines plus their indented source excerpt / caret / hint continuations.
+fn _lint_forward_diag(buf, n): i64 {
+    var p = 0;
+    while (p < n) {
+        var ls = p;
+        while (p < n) { if (load8(buf + p) == 10) { break; } p = p + 1; }
+        var le = p;
+        if (p < n) { p = p + 1; }
+        var ll = le - ls;
+        var emit = 0;
+        if (ll >= 6) { if (memeq(buf + ls, "error:", 6) == 1) { emit = 1; } }
+        if (ll >= 1) { if (load8(buf + ls) == 32) { emit = 1; } }
+        if (emit == 1) {
+            sys_write(STDERR_FD, buf + ls, ll);
+            sys_write(STDERR_FD, "\n", 1);
+        }
+    }
+    return 0;
+}
+
+# The syntax pre-pass could not use the CLI's temp dir (errno `en`): an error by name, and
+# the caller counts the file as NOT linted (rc 1). CHANGELOG [6.6.9]
+fn _lint_prepass_tmp_fail(file, en): i64 {
+    _err_ctx("lint could not run its syntax pre-pass (the compiler's diagnostics could not be captured)", file);
+    _ew("  temp dir: ");
+    _ew(_cbt_tmpdir());
+    _ew(" (errno ");
+    fmt_int_fd(STDERR_FD, en);
+    _ew(") — free space there, or set TMPDIR to an absolute path elsewhere.\n");
+    return 1;
+}
+
+# The compiler FAILED and wrote something, but no `error:` line (a crash after a warning, an
+# abort with its own wording). ⛔ 6.6.11 (B10 review) — this was "could not tell, linting
+# anyway": a warning line, then `0 warnings`, rc 0, over a file the compiler had refused or
+# died on — the fail-open shape O4 closed for error lines. Now a refusal by name, with what
+# the compiler DID and everything it wrote. (An EMPTY capture keeps its own path above.)
+# CHANGELOG [6.6.11]
+fn _lint_refuse_no_error_line(file, buf, n): i64 {
+    _err_ctx("the compiler failed on it without an error line, so lint checks were NOT run", file);
+    if (_cc_last_exit < 0) { _ew("  the compiler did not exit normally (killed by a signal?)"); }
+    else { _ew("  the compiler exited "); fmt_int_fd(STDERR_FD, _cc_last_exit); }
+    _ew("; everything it wrote:\n");
+    sys_write(STDERR_FD, buf, n);
+    if (load8(buf + n - 1) != 10) { sys_write(STDERR_FD, "\n", 1); }
+    return 1;
+}
+
+# 0 = parses (or we could not tell) -> run the line checks exactly as before.
+# 1 = a syntax error was reported -> the caller must not pretend to have linted.
+fn _lint_syntax_prepass(file): i64 {
+    if (file_exists(file) == 0) { return 0; }        # let cyrlint report the missing file
+    var cc = current_cc();
+    if (cc == 0) { return 0; }                       # no compiler -> lint as before
+    if (file_exists(cc) == 0) { return 0; }
+    var errf = _cbt_tmpfile("lint_err");
+    var outf = _cbt_tmpfile("lint_out");
+    # 6.6.9: the diagnostics capture is created HERE, not only in compile()'s child — whose
+    # open "fails open" onto our stderr, so under a starved temp dir the compiler's errors
+    # went to the terminal, the capture read back empty and the file linted clean (rc 0).
+    # A capture that cannot be created is a failure by name. CHANGELOG [6.6.9]
+    var efd0 = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    if (efd0 < 0) { return _lint_prepass_tmp_fail(file, 0 - efd0); }
+    sys_close(efd0);
+    var sv_skip = _skip_deps;
+    var sv_undef = _cc_allow_undef;
+    var sv_syn = _cc_syntax_only;
+    _skip_deps = 1;          # ⭐ lint ONE file in isolation — never resolve the dep graph
+    _cc_allow_undef = 1;     # undefined FNS are expected with no stdlib in scope
+    # v6.5.19: undefined VARIABLES are expected too, and unlike undefined fns they
+    # were a PARSE-TIME abort that --allow-undef cannot reach. Without this the
+    # compiler stopped at the first missing include and never reached the file's
+    # syntax errors, so lint printed `0 warnings` on a file that does not parse —
+    # verbatim the filed defect. See _syntax_only (src/common/util.cyr).
+    _cc_syntax_only = 1;
+    _cc_stderr_to = errf;
+    var cr = compile(file, outf);
+    _cc_stderr_to = 0;
+    _cc_syntax_only = sv_syn;
+    _cc_allow_undef = sv_undef;
+    _skip_deps = sv_skip;
+    if (cr == 0) { sys_unlink(outf); sys_unlink(errf); return 0; }
+    var buf = alloc(65536);
+    var n = file_read_all(errf, buf, 65535);
+    if (n <= 0) {
+        # probed with both temps still in place, so the answer is about the dir as the
+        # compiler found it (unlinking first freed the very inode it lacked)
+        var pe = _cbt_tmp_probe();
+        sys_unlink(outf);
+        sys_unlink(errf);
+        # ⛔ 6.6.9 bite 9 — the compiler FAILED and said nothing we could read. That was
+        # "lint as before", i.e. a verdict: under a starved temp dir `compile()` could not
+        # write its capture, so a file that does not parse linted `0 warnings`, rc 0. A full
+        # temp dir now fails BY NAME; otherwise the pass says it could not tell, then lints.
+        # CHANGELOG [6.6.9]
+        if (pe != 0) { return _lint_prepass_tmp_fail(file, pe); }
+        _ew("warning: ");
+        _ew(file);
+        _ew(": the syntax pre-pass could not tell whether it parses (the compiler failed with no diagnostic); linting anyway\n");
+        return 0;
+    }
+    sys_unlink(outf);
+    sys_unlink(errf);
+    store8(buf + n, 0);
+    var verdict = _lint_capture_verdict(buf, n);
+    if (verdict == 0) { return 0; }   # only context-dependent errors -> lint
+    if (verdict == 2) { return _lint_refuse_no_error_line(file, buf, n); }
+    _err_ctx("does not parse or compile, so lint checks were NOT run", file);
+    _info("  cyrlint is a line-based scanner with no parser, so its \"0 warnings\" would");
+    _info("  describe its own rules rather than the file. The compiler reports:");
+    _lint_forward_diag(buf, n);
+    return 1;
+}
+
+# v6.6.5 — 1..N files, with EVERY declared flag forwarded, in any position.
+#
+# THE FILED DEFECT (mabda 4.1.3, 2026-09-16): cyrlint has supported
+# `--strict-deferrals` (exit 2 on an untracked deferral marker) in either position
+# since it was written, but this wrapper knew only `--strict`. `cyrius lint
+# --strict-deferrals f.cyr` handed cyrlint the FLAG as its file (usage text, exit 1);
+# `cyrius lint f.cyr --strict-deferrals` DROPPED the flag and exited 0 with the gate
+# off — mabda shipped three untracked deferrals across 4.1.0–4.1.2 behind that exit 0.
+# The forwarding was capped by run_tool's 3 arguments (--strict + file was all that
+# fit); run_tool_vec removes the cap. CHANGELOG [6.6.5].
+# ⛔ v6.6.5 (round-2 review) — ONE cyrlint invocation over every file, not one per
+# file. The first cut spawned cyrlint per file and took the MAX of the exit codes,
+# which made `--exit-with-count` mean two different things depending on which binary
+# you asked: measured on three 100-warning files, `cyrlint a b c --exit-with-count`
+# exited **255** (300 summed, clamped) and `cyrius lint a b c --exit-with-count`
+# exited **100** (the max). `docs/guides/cyrius-guide.md` documents ONE answer —
+# "the warning count, clamped to 255" — so the wrapper was quietly contradicting the
+# tool it wraps. Handing cyrlint the whole list makes the tool's own semantics the
+# only semantics; there is no second implementation to drift.
+fn cmd_lint(files, flags): i64 {
+    var cyrlint = _tool_path(_tools_dir, "cyrlint");
+    var rc = 0;
+    # v6.5.19: syntax pre-pass BEFORE the line checks, per file. See
+    # _lint_syntax_prepass for why the verdict keys on the message class, not the
+    # exit code. A file that fails it is NOT handed to cyrlint (linting a file that
+    # does not parse reports noise), but it still forces rc >= 1.
+    var lintable = vec_new();
+    var i = 0;
+    while (i < vec_len(files)) {
+        var f = vec_get(files, i);
+        if (_lint_syntax_prepass(f) != 0) {
+            if (rc < 1) { rc = 1; }
+        } else {
+            vec_push(lintable, f);
+        }
+        i = i + 1;
+    }
+    if (vec_len(lintable) == 0) { return rc; }
+    var av = vec_new();
+    var j = 0;
+    while (j < vec_len(flags)) { vec_push(av, vec_get(flags, j)); j = j + 1; }
+    var k = 0;
+    while (k < vec_len(lintable)) { vec_push(av, vec_get(lintable, k)); k = k + 1; }
+    var one = run_tool_vec(cyrlint, av);
+    if (one > rc) { rc = one; }
+    return rc;
+}

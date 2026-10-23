@@ -3,7 +3,7 @@
 # TARBALL to another machine and installs it there ships the `.sha256` sidecar with it, and
 # REQUIRES the sidecar on the far side.
 #
-# ⛔ THE DEFECT (found at 67ea9c17). `_cross_os_selfhost()` in cbt/commands.cyr carries the
+# ⛔ THE DEFECT (found at 67ea9c17). `_cross_os_selfhost()` in cbt/commands/audit.cyr carries the
 # two macOS install pillars inline — the ecb (Apple Silicon) arm added at v6.0.38 and the
 # ach (Intel) arm at v6.4.59. Both built the real release tarball, `scp`'d it to the Mac and
 # ran the REAL `scripts/install.sh` against it with `CYRIUS_INSTALL_TARBALL=…`. Neither ever
@@ -81,7 +81,7 @@
 #
 # ⚠ NOT COVERED, and said plainly rather than implied — this enumeration is what a future
 # reader will trust, so it is the COMPLETE list. `grep -rn CYRIUS_INSTALL_TARBALL` finds five
-# live pillars. Four are covered here: `cbt/commands.cyr` ×2 (axes 1 + 2) and
+# live pillars. Four are covered here: `cbt/commands/audit.cyr` ×2 (axes 1 + 2) and
 # `.github/workflows/ci.yml` ×2 (axis 2 — they take their tarball from the artifact store,
 # not an scp, so axis 1 does not apply to them). The fifth,
 # `scripts/cross-os-selfhost.sh`'s `ecb-install` arm, and `scripts/cass-install-gate.sh`

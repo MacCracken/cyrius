@@ -211,8 +211,8 @@ ALLOW='programs/checks/cx.cyr|_cx_roundtrip_gate|out1|the gate reads the 8-byte 
 programs/checks/deps_init.cyr|_deps_sidecar_gate|sidecar|a sidecar the gate itself generated into its scratch dir
 programs/checks/deps_init.cyr|_deps_lock_gate|lock_path|a cyrius.lock the gate itself generated into its scratch dir
 programs/checks/platform_efi.cyr|_efi_ovmf_fn_exit_gate|efi_bin|the gate reads the 64-byte header of an EFI image it just built
-cbt/commands.cyr|_lint_syntax_prepass|errf|a child compiler'"'"'s stderr capture in the private temp dir
-cbt/commands.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capture in the private temp dir
+cbt/commands/lint.cyr|_lint_syntax_prepass|errf|a child compiler'"'"'s stderr capture in the private temp dir
+cbt/commands/capacity.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capture in the private temp dir
 cbt/deps.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
 x=0
 found=""

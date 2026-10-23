@@ -58,12 +58,12 @@ if [ "$RC" != 0 ] && echo "$OUT" | grep -qF 'FAIL: self-host step 2 exited 3'; t
 else bad "step 2's real status (3) not quoted (rc $RC): $OUT"; fi
 
 # 4 — source: no raw status print in cmd_soak; the helper describes.
-BODY=$(awk '/^fn cmd_soak\(/{f=1} f&&/^}/{print; exit} f' "$ROOT/cbt/commands.cyr")
-[ -n "$BODY" ] || bad "source: cmd_soak not found in cbt/commands.cyr"
+BODY=$(awk '/^fn cmd_soak\(/{f=1} f&&/^}/{print; exit} f' "$ROOT/cbt/commands/soak_smoke.cyr")
+[ -n "$BODY" ] || bad "source: cmd_soak not found in cbt/commands/soak_smoke.cyr"
 if echo "$BODY" | grep -qE 'fmt_int\((s1|s2)\)|self-host step [12] exited'; then
     bad "source: cmd_soak prints a raw _self_host_step status: $(echo "$BODY" | grep -nE 'fmt_int\((s1|s2)\)|self-host step [12] exited' | head -2)"
 else ok "source: cmd_soak quotes no raw _self_host_step status"; fi
-HELP=$(awk '/^fn _soak_step_failed\(/{f=1} f&&/^}/{print; exit} f' "$ROOT/cbt/commands.cyr")
+HELP=$(awk '/^fn _soak_step_failed\(/{f=1} f&&/^}/{print; exit} f' "$ROOT/cbt/commands/soak_smoke.cyr")
 if echo "$HELP" | grep -q '_raw_fail_describe(' && echo "$BODY" | grep -q '_soak_step_failed(2, s2)'; then
     ok "source: soak's step-failure line goes through _raw_fail_describe"
 else bad "source: _soak_step_failed missing, not describing, or not called for step 2"; fi

@@ -1168,7 +1168,7 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
 # Leading whitespace is tolerated; a line starting with `#` is skipped (commented-out includes
 # in retro/historical comments shouldn't drag deps in). The ONE rule for a stdlib leaf's
 # includes: the resolver's transitive walk above and distlib's named-dep closure
-# (`_distlib_nd_closure`, cbt/commands.cyr) both read it, so the closure distlib credits to a
+# (`_distlib_nd_closure`, cbt/commands/distlib/verify.cyr) both read it, so the closure distlib credits to a
 # named dep is the one `cyrius deps` vendors for it. CHANGELOG [6.7.12]
 fn _dep_stdlib_inc_names(fbuf, nread): i64 {
     var out = vec_new();
@@ -1229,7 +1229,7 @@ fn _dep_stdlib_inc_names(fbuf, nread): i64 {
 # compile error rather than a subtle difference.
 #
 # Sorting at the expansion sites rather than inside `dir_list` itself: the walkers in
-# commands.cyr use it for test/bench discovery where readdir order is harmless, and changing
+# cbt/commands/ use it for test/bench discovery where readdir order is harmless, and changing
 # a shared primitive to fix two callers is the wider blast radius.
 fn _dep_name_cmp(a, b): i64 {
     var pa = str_data(a);
@@ -7250,7 +7250,7 @@ fn _lock_commit_line_cmp(a, b): i64 {
 # 6.7.13 (D42, the user, 2026-10-15): every lock writer is held to it. The bare `--lock` (and
 # publish's lock) resolved nothing, so it wrote none of lib/: every lib/ file the new snapshot
 # ships with other bytes is named (`cyrius deps` re-vendors the closure first). A scoped
-# `lib sync` refuses before it copies (commands.cyr `_libsync_pin_move_refused`), so its re-lock
+# `lib sync` refuses before it copies (cbt/commands/lib_sync.cyr `_libsync_pin_move_refused`), so its re-lock
 # (`_dep_lock_only`) never meets the shape. A resolve is refused before Phase 1 writes
 # (`_deps_pin_move_dry`, D41); this check after it stays as the backstop. CHANGELOG [6.7.13]
 fn _dep_pin_move_refused(): i64 {

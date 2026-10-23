@@ -23,7 +23,7 @@
 #
 # ⛔ WHAT AXIS 3 ENFORCES, EXACTLY: every scp-a-release-tarball site in `scripts/`. That is
 # TWO of the FOUR such sites in the tree, and the claim is written down narrowly because the
-# other two are the LIVE ones. `cbt/commands.cyr`'s `_cross_os_selfhost()` — what
+# other two are the LIVE ones. `cbt/commands/audit.cyr`'s `_cross_os_selfhost()` — what
 # `cyrius audit` actually runs — carries its own inline ecb and ach install pillars as shell
 # strings (the `ecb-install` mode of `cross-os-selfhost.sh` is reachable by hand and is
 # invoked by nothing in the repo, and there is no `ach-install` mode at all), and BOTH of

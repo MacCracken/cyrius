@@ -6,7 +6,7 @@
 # "couldn't verify" vs "verified broken"; BOTH block a release — "not
 # available" is never an excuse, that placebo IS the rot). There is NO skip.
 #
-# Invoked per host by `cyrius audit` (_cross_os_selfhost, cbt/commands.cyr)
+# Invoked per host by `cyrius audit` (_cross_os_selfhost, cbt/commands/audit.cyr)
 # via _co_run_sh so ssh/scp inherit the real environment (HOME +
 # SSH_AUTH_SOCK). Also runnable standalone: `sh scripts/cross-os-selfhost.sh <host>`.
 #

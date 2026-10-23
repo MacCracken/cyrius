@@ -1,0 +1,239 @@
+# CLI — commands: `cyrius fuzz` — the .fcyr walk and the --poison A/B legs.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# Walk `dir` for `*.fcyr` harnesses, compile and run each.
+# Updates *passcnt / *failcnt / *found via caller-owned i64 storage.
+# Returns the number of harnesses attempted.
+# Compile + run one .fcyr harness, updating the caller-owned counters.
+# Factored out of _fuzz_walk_dir at v6.5.7 so an explicit file argument runs
+# through exactly the same path as a discovered one.
+fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+    store64(found_ptr, 1);
+    # 6.7.6 (part T): this harness's test-scope configuration, named before its line opens
+    if (_tc_for(path) != 0) {
+        sys_write(STDOUT_FD, "  ", 2);
+        sys_write(STDOUT_FD, path, strlen(path));
+        println("  COMPILE FAIL (its test configuration was refused, above)");
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 1;
+    }
+    var tmpbin = _cbt_tmpexe("fuzz");
+    var pl = strlen(path);
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, path, pl);
+    var pad = 26 - pl;
+    while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
+    # v6.6.6 (bite 24 review) — the header above is left open so `PASS` lands on it, which
+    # is bite 24d's shape at a caller bite 24d did not reach. Live, not latent:
+    # `CYRIUS_HOME=<empty> cyrius fuzz h.fcyr` printed `  h.fcyr   error: cycc not found.
+    # Install Cyrius or set CYRIUS_HOME.` / `COMPILE FAIL`. CHANGELOG [6.6.6].
+    # 6.6.18 (poison-10) — the compiler CHILD's stderr is captured too, and relayed only
+    # once the verdict has closed the line. `_progress_open` covers cbt's own named errors,
+    # not the child's: `note: N unreachable fns (...)` landed between the padded path and
+    # `PASS` on every harness with a dead fn. A capture that cannot be created fails OPEN
+    # (compile() keeps our stderr), exactly as before. CHANGELOG [6.6.18]
+    var errf = _cbt_tmpfile("fuzz_err");
+    _progress_open = 1;
+    _cc_stderr_to = errf;
+    var fr = compile(path, tmpbin);
+    _cc_stderr_to = 0;
+    _progress_open = 0;
+    if (fr == 0) {
+        if (_poison_ab == 1) { return _fuzz_ab_finish(path, tmpbin, errf, passcnt_ptr, failcnt_ptr); }
+        var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
+        sys_unlink(tmpbin);
+        if (ec == 0) {
+            println("PASS");
+            _fuzz_relay_capture(errf);
+            store64(passcnt_ptr, load64(passcnt_ptr) + 1);
+            return 0;
+        }
+        println("FAIL");
+        _fuzz_relay_capture(errf);
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 1;
+    }
+    println("COMPILE FAIL");
+    _cbt_relay_file(errf);
+    _cc_undef_hints(errf);
+    _fuzz_relay_capture(errf);
+    store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+    sys_unlink(tmpbin);
+    return 1;
+}
+
+# A fresh, empty capture file for run_binary_timed's `_run_stdout_to` (the child only opens it),
+# or 0 after naming why it could not be made.
+fn _fuzz_cap_new(name): i64 {
+    var cap = _cbt_tmpfile(name);
+    sys_unlink(cap);
+    var fd = sys_open(cap, O_WRONLY | O_CREAT | O_EXCL, 0x180);
+    if (fd < 0) { _err_ctx("cyrius fuzz --poison=ab cannot capture a leg's output", cap); return 0; }
+    sys_close(fd);
+    return cap;
+}
+
+# Run one capture leg: the binary's stdout into a fresh capture. Answers the exit code and leaves
+# the capture's path in `_fuzz_leg_cap` (0 when it could not be made: the leg counts as exit 126).
+var _fuzz_leg_cap = 0;
+fn _fuzz_leg(bin, name): i64 {
+    _fuzz_leg_cap = _fuzz_cap_new(name);
+    if (_fuzz_leg_cap == 0) { sys_unlink(bin); return 126; }
+    _run_stdout_to = _fuzz_leg_cap;
+    var ec = run_binary_timed(bin, _run_timeout_ms(), 0);
+    _run_stdout_to = 0;
+    sys_unlink(bin);
+    return ec;
+}
+
+# ⭐ 6.6.18 (poison-8) — THE A/B DIFFERENTIAL. Leg A (fill 0xA5) is already compiled at `bin_a`;
+# leg B is compiled with `CYRIUS_POISON_B` pushed onto `_defines` (a `#define` the materialized
+# source carries, so nothing else changes) and popped straight after — the manifest's [build]
+# defines must survive into the next harness. PASS only when both legs exit 0 and print the same
+# bytes; otherwise `FAIL (A exit x, B exit y)` or `FAIL (A/B diverged at byte N)`. A's output
+# is echoed after the verdict either way. CHANGELOG [6.6.18]
+fn _fuzz_ab_finish(path, bin_a, errf, passcnt_ptr, failcnt_ptr): i64 {
+    var bin_b = _cbt_tmpexe("fuzzb");
+    var errb = _cbt_tmpfile("fuzz_errb");
+    var made = 0;
+    if (_defines == 0) { _defines = vec_new(); made = 1; }
+    vec_push(_defines, "CYRIUS_POISON_B");
+    _progress_open = 1;
+    _cc_stderr_to = errb;
+    var fb = compile(path, bin_b);
+    _cc_stderr_to = 0;
+    _progress_open = 0;
+    vec_pop(_defines);
+    if (made == 1) { _defines = 0; }
+    if (fb != 0) {
+        println("COMPILE FAIL (the B leg, -D CYRIUS_POISON_B)");
+        _fuzz_relay_capture(errb);
+        _fuzz_relay_capture(errf);
+        sys_unlink(bin_a);
+        sys_unlink(bin_b);
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 1;
+    }
+    sys_unlink(errb);
+    var ea = _fuzz_leg(bin_a, "fuzz_outa");
+    var cap_a = _fuzz_leg_cap;
+    var eb = _fuzz_leg(bin_b, "fuzz_outb");
+    var cap_b = _fuzz_leg_cap;
+    var na = 0;
+    var nb = 0;
+    var ba = 0;
+    var bb = 0;
+    if (cap_a != 0) { ba = file_read_whole(cap_a, &na); sys_unlink(cap_a); }
+    if (cap_b != 0) { bb = file_read_whole(cap_b, &nb); sys_unlink(cap_b); }
+    if (ba == 0) { na = 0; }
+    if (bb == 0) { nb = 0; }
+    var diff = 0 - 1;
+    var k = 0;
+    while (diff < 0 && k < na && k < nb) {
+        if (load8(ba + k) != load8(bb + k)) { diff = k; }
+        k = k + 1;
+    }
+    if (diff < 0 && na != nb) { diff = k; }
+    var ok = 0;
+    if (ea != 0 || eb != 0) {
+        sys_write(STDOUT_FD, "FAIL (A exit ", 13);
+        fmt_int_fd(STDOUT_FD, ea);
+        sys_write(STDOUT_FD, ", B exit ", 9);
+        fmt_int_fd(STDOUT_FD, eb);
+        println(")");
+    } elif (diff >= 0) {
+        sys_write(STDOUT_FD, "FAIL (A/B diverged at byte ", 27);
+        fmt_int_fd(STDOUT_FD, diff);
+        println(")");
+    } else {
+        println("PASS");
+        ok = 1;
+    }
+    if (na > 0) {
+        sys_write(STDOUT_FD, ba, na);
+        if (load8(ba + na - 1) != 10) { sys_write(STDOUT_FD, "\n", 1); }
+    }
+    _fuzz_relay_capture(errf);
+    if (ok == 1) { store64(passcnt_ptr, load64(passcnt_ptr) + 1); return 0; }
+    store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+    return 1;
+}
+
+# Copy a compile() stderr capture to our stderr whole (chunked: a COMPILE FAIL can be long),
+# then remove it. Absent capture = nothing to relay. CHANGELOG [6.6.18]
+fn _fuzz_relay_capture(errf): i64 {
+    _cbt_relay_file(errf);
+    sys_unlink(errf);
+    return 0;
+}
+
+# v6.5.7: RECURSIVE, matching `_tests_walk` — see the note on _bench_walk_dir. The walk itself
+# is _corpus_walk_d (6.6.20); fuzz/ is optional, so an absent root is nothing to run.
+fn _fuzz_walk_one(path, cd): i64 {
+    return _fuzz_run_one(path, load64(cd + 32), load64(cd + 40), load64(cd + 48));
+}
+
+fn _fuzz_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+    var cd = _corpus_cd(".fcyr", &_fuzz_walk_one, "fuzz", "its harnesses were NOT run (counted as a failure)");
+    return _corpus_walk(dir, cd, passcnt_ptr, failcnt_ptr, found_ptr);
+}
+
+fn cmd_fuzz(source): i64 {
+    # Discover *.fcyr harnesses, compile and run each
+    _status("=== cyrius fuzz ===");
+    var pass_store[1];
+    var fail_store[1];
+    var found_store[1];
+    store64(&pass_store, 0);
+    store64(&fail_store, 0);
+    store64(&found_store, 0);
+    # v6.5.7: an explicit file or SUBFOLDER argument, symmetric with bench/tests.
+    if (source != 0) {
+        # 6.6.10: `file_exists` is an open(), which fails on a directory the user cannot read —
+        # that is not "no such file", it is a walk that fails (by name) below.
+        if (file_exists(source) == 0 && is_dir(str_from(source)) == 0) {
+            _err_ctx("no such file or directory", source);
+            return 1;
+        }
+        if (is_dir(str_from(source)) == 1) {
+            _fuzz_walk_dir(source, &pass_store, &fail_store, &found_store);
+        } else {
+            _fuzz_run_one(source, &pass_store, &fail_store, &found_store);
+        }
+        if (load64(&found_store) == 0) {
+            _err_ctx("no fuzz harnesses found under", source);
+            return 1;
+        }
+        return _bench_summary(load64(&pass_store), load64(&fail_store));
+    }
+    _fuzz_walk_dir("fuzz", &pass_store, &fail_store, &found_store);
+    # v6.5.6 — also walk `tests/`. `cyrius init` scaffolds its fuzz harness to
+    # `tests/<proj>.fcyr` (`_tests_rel` hardcodes "tests/" for ALL THREE extensions
+    # and no fuzz/ dir is created), so every scaffolded project reported
+    # "No fuzz harnesses found" against a harness the scaffolder had just written.
+    # Exactly the gap v6.4.72 closed for the TEST corpus and v6.4.78 for BENCH —
+    # fuzz was the third sibling that never got the same treatment. The walk is
+    # RECURSIVE (v6.5.7), but "fuzz" and "tests" are sibling roots and a symlinked
+    # SUBDIRECTORY is never descended (v6.5.12), so a linked subtree is not walked
+    # twice — `tests/fz -> ../fuzz` does not run fuzz/ again. A symlinked FILE under
+    # tests/ is a harness of its own and does run, so `tests/a.fcyr -> ../fuzz/a.fcyr`
+    # runs fuzz/a.fcyr a second time and is counted twice.
+    _fuzz_walk_dir("tests", &pass_store, &fail_store, &found_store);
+    var fuzz_pass = load64(&pass_store);
+    var fuzz_fail = load64(&fail_store);
+    # 6.7.9: an EMPTY corpus fails, as bare `cyrius test`'s and `cyrius fuzz <empty dir>` do — a CI
+    # line over harnesses that moved or were renamed passed vacuously. CHANGELOG [6.7.9]
+    if (load64(&found_store) == 0) {
+        _err("no fuzz harnesses found (looked in fuzz/ and tests/, recursively)");
+        println("  Create `fuzz/*.fcyr` files to test library functions, or pass an explicit path.");
+        return 1;
+    }
+    sys_write(STDOUT_FD, "\n=== ", 5);
+    fmt_int(fuzz_pass);
+    sys_write(STDOUT_FD, " passed, ", 9);
+    fmt_int(fuzz_fail);
+    println(" failed ===");
+    if (fuzz_fail > 0) { return 1; }
+    return 0;
+}

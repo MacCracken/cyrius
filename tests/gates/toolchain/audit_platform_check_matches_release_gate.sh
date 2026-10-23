@@ -4,7 +4,7 @@
 #
 # THE DEFECT. scripts/release-gate.sh step 4 runs `cross-os-selfhost.sh "$H" "crossos"` for
 # ecb ach cass pi — the self-host AND the platform libtest (tests/tcyr/crossos/ on the native
-# compiler). The CLI's cross-OS verb (`_cross_os_selfhost`, cbt/commands.cyr) passed `crossos`
+# compiler). The CLI's cross-OS verb (`_cross_os_selfhost`, cbt/commands/audit.cyr) passed `crossos`
 # to ach ONLY: pi and cass ran a bare self-host, and ecb an inline self-host + exit-42 sequence
 # with no libtest — while the ach comment said the libtest ran "matching ecb/cass/pi". So the verb
 # whose job is the pre-release platform check was weaker than the gate it mirrors, and said

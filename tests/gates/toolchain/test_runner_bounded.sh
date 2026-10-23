@@ -379,7 +379,7 @@ echo "axis 3 — the deadline is applied to the batch verbs and NOT to 'cyrius r
 # row RED against a perfectly correct cmd_test. Strip whole-line `#` comments first,
 # and require the open paren so only a real call counts.
 calls_in() {   # $1 = fn name, $2 = symbol to count
-    awk -v f="^fn $1\\\\(" '$0 ~ f,/^}/' "$ROOT/cbt/commands.cyr" \
+    awk -v f="^fn $1\\\\(" '$0 ~ f,/^}/' $(find "$ROOT/cbt/commands" -name '*.cyr' | LC_ALL=C sort) \
         | sed 's/^[[:space:]]*#.*$//' | grep -c "$2(" || true
 }
 check "cmd_run does not deadline its child" 0 "$(calls_in cmd_run run_binary_timed)"

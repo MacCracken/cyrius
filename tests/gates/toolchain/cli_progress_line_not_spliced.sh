@@ -141,9 +141,9 @@ printf 'fn main(): i64 { return 0; }\n' > "$W/smoke/probe.smcyr"
 # A spliced line is one that BEGINS with a progress header and also carries an `error:`.
 # The header verbs are read off cmd_build rather than typed here, so a renamed verb makes
 # this vacuous-loud instead of silently unchecked.
-VERBS=$(sed -n 's/^[ \t]*sys_write(STDOUT_FD, "\(compile\|emit-js\|emit-cx\) ", [0-9]*);.*/\1/p' cbt/commands.cyr | sort -u | tr '\n' '|' | sed 's/|$//')
+VERBS=$(sed -n 's/^[ \t]*sys_write(STDOUT_FD, "\(compile\|emit-js\|emit-cx\) ", [0-9]*);.*/\1/p' cbt/commands/build_run.cyr | sort -u | tr '\n' '|' | sed 's/|$//')
 if [ -z "$VERBS" ] || [ "$(printf '%s' "$VERBS" | tr '|' '\n' | grep -c .)" -lt 3 ]; then
-  echo "FAIL: could not derive the three progress verbs from cbt/commands.cyr (got '$VERBS')"
+  echo "FAIL: could not derive the three progress verbs from cbt/commands/build_run.cyr (got '$VERBS')"
   echo "FAIL cli_progress_line_not_spliced"; exit 1
 fi
 

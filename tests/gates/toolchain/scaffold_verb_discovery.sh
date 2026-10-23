@@ -105,9 +105,9 @@ done
 # ── AXIS 7: no double-count. The walks are now RECURSIVE, so `tests/bcyr` must NOT
 # also be walked explicitly — it lives under `tests/` and would be visited twice.
 echo "axis 7 — recursion did not introduce a double-count:"
-n_bench=$(grep -cE '_bench_walk_dir\("(benches|tests)"' cbt/commands.cyr)
+n_bench=$(grep -cE '_bench_walk_dir\("(benches|tests)"' cbt/commands/benches.cyr)
 check "_bench_walk_dir roots (benches + tests, NOT tests/bcyr)" 2 "$n_bench"
-n_bcyr=$(grep -c '_bench_walk_dir("tests/bcyr"' cbt/commands.cyr || true)
+n_bcyr=$(grep -c '_bench_walk_dir("tests/bcyr"' cbt/commands/benches.cyr || true)
 check "no explicit tests/bcyr walk" 0 "$n_bcyr"
 n_repo=$(ls fuzz/*.fcyr 2>/dev/null | wc -l | tr -d ' ')
 n_fl=0; [ "$n_repo" -ge 11 ] && n_fl=1   # a floor, never a pinned count (6.7.18 added five harnesses)

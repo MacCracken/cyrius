@@ -11,7 +11,7 @@
 # `programs/cyrlint.cyr` is a line-based scanner with no parser — "does this file
 # parse?" is not a question it can ask, so `0 warnings` was a true statement about its
 # nine rules and a false one about the file. v6.5.19 runs a compiler syntax pre-pass in
-# `cmd_lint` first (cbt/commands.cyr) and forwards the compiler's own diagnostic.
+# `cmd_lint` first (cbt/commands/lint.cyr) and forwards the compiler's own diagnostic.
 #
 # ⭐ AXIS 3 IS THE ONE THAT MATTERS. The cheap implementation — gate on the compiler's
 # EXIT CODE — passes axes 1 and 2 and is WRONG: 38 of the 191 files this repo lints
@@ -391,7 +391,7 @@ check "premise: x_ret compiles once the sibling struct is in scope" 0 "$jr_rc"
 # `fn return type must be ...` latched `_panic` and the resync landed inside the `for`
 # header). 6.6.16 (C8) names the type and clears its own latch, so the cascade is GONE —
 # the second row pins that — and the refusal is `unknown type 'Str2' as a fn return type`,
-# which is not in `_lint_msg_is_context` (cbt/commands.cyr): without lint's --syntax-only
+# which is not in `_lint_msg_is_context` (cbt/commands/lint.cyr): without lint's --syntax-only
 # arm this file would still be condemned, so the axis below is not vacuous.
 check "premise: a plain compile refuses the return type BY NAME" 1 \
     "$(grep -c "unknown type 'Str2' as a fn return type" "$T/re" || true)"

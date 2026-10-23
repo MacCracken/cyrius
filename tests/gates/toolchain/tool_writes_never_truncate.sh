@@ -186,12 +186,12 @@ cmp -s "$D/mid/_categories_data.cyr" "lib/unicode/_categories_data.cyr" || { fai
 ALLOW='programs/cyrld.cyr|out_path|the linker output: every write is checked and fails rc 1 (a build artifact, the class of cycc'"'"'s own output)
 cbt/build.cyr|_cc_stderr_to|a child'"'"'s stderr capture
 cbt/build.cyr|dst|_copy_binary'"'"'s staging copy of a compiler into the CLI'"'"'s OWN private temp dir (_cbt_tmpexe): not a user or tree file, every write checked (a short one returns rc 1) and an empty source refused, so temp+rename would only rename a temp onto a temp
-cbt/commands.cyr|tmperr|a child'"'"'s stderr capture in the private temp dir
-cbt/commands.cyr|entry|a _cbt_tmpfile probe source (short write checked: it then fails to compile)
-cbt/commands.cyr|dst|distlib'"'"'s verify mirror (dist/.dlverify-<pid>, 6.6.9): a scratch copy of the pinned snapshot, removed after the verify — not a user or tree file; a short write fails the verify
+cbt/commands/capacity.cyr|tmperr|a child'"'"'s stderr capture in the private temp dir
+cbt/commands/distlib/verify.cyr|entry|a _cbt_tmpfile probe source (short write checked: it then fails to compile)
+cbt/commands/distlib/unit.cyr|dst|distlib'"'"'s verify mirror (dist/.dlverify-<pid>, 6.6.9): a scratch copy of the pinned snapshot, removed after the verify — not a user or tree file; a short write fails the verify
 cbt/build.cyr|p|_cbt_tmp_probe'"'"'s 4 KB probe in the CLI'"'"'s OWN private temp dir, unlinked at once (6.6.9: is the temp dir writable?)
-cbt/commands.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
-cbt/commands.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
+cbt/commands/lint.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
+cbt/commands/distlib/distlib.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
 cbt/quality.cyr|tmpf|a _cbt_tmpfile doctest source
 cbt/deps.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
 cbt/deps.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr

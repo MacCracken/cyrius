@@ -1,0 +1,365 @@
+# CLI — commands: `cyrius soak` and `cyrius smoke`.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ================================================================
+# Soak — extended test loop
+# ================================================================
+
+# `cyrius soak`'s step-failure line, on stdout like soak's other FAIL lines. What the step
+# DID comes from `_raw_fail_describe` — the same words `cyrius self` uses (`_self_step_failed`)
+# — because the raw `_self_host_step` status is not an exit code: `_pulsar_raw_compile` returns
+# a flat 1 for a signal, an empty output and a failed rename, so soak printed "step 2 exited 1"
+# for a SIGSEGV that `cyrius self` on the same tree called "killed by signal 11". A negative
+# status means the step already NAMED its failure (the macOS stage refusal, -1 after its own
+# `_err_ctx`); soak printed "exited -1" on top of it. It now says only where. CHANGELOG [6.6.11]
+fn _soak_step_failed(step, rc): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "FAIL: self-host step ");
+    str_builder_add_int(sb, step);
+    if (rc < 0) { str_builder_add_cstr(sb, " failed (the error above names why)"); }
+    else {
+        str_builder_add_cstr(sb, " ");
+        _raw_fail_describe(sb, rc);
+    }
+    str_builder_add_cstr(sb, "\n");
+    var m = str_data(str_builder_build(sb));
+    sys_write(STDOUT_FD, m, strlen(m));
+    return 0;
+}
+
+fn cmd_soak(iters): i64 {
+    if (iters <= 0) { iters = 100; }
+    _status("=== cyrius soak test ===");
+    sys_write(STDOUT_FD, "  iterations: ", 14);
+    fmt_int(iters);
+    sys_write(STDOUT_FD, "\n", 1);
+
+    # v5.7.38: built-in self-host loop must NOT auto-prepend manifest
+    # deps (sigil/sakshi/patra/yukti/mabda/sankoch in cyrius's own
+    # manifest). The 6 dep bundles + src/main.cyr's 7,400 LOC blow
+    # past the compiler's 2 MB expanded-source cap. _skip_deps is the
+    # v5.7.8 mechanism for suppressing the auto-prepend; save/restore
+    # so the .scyr walker below still gets auto-prepend (consumer
+    # parity with cmd_test/cmd_bench/cmd_fuzz).
+    var saved_skip_deps = _skip_deps;
+    _skip_deps = 1;
+
+    # v6.6.6 — the PER-TARGET compiler source, asked once. The loop below used to name
+    # `src/main.cyr` unconditionally; on Windows that is the LINUX fork, so step 2 built
+    # a PE out of Linux syscall numbers and page-faulted, and every iteration then
+    # printed "FAIL: self-host output differs" — blaming the self-host for a source
+    # selection bug. Missing source: say so ONCE and stop, rather than N identical
+    # failures. See `_self_host_src` (cbt/build.cyr). CHANGELOG [6.6.6].
+    var soak_src = _self_host_src();
+    if (file_exists(soak_src) == 0) {
+        _err_ctx("soak: the compiler source for this target is missing", soak_src);
+        _skip_deps = saved_skip_deps;
+        return 1;
+    }
+    # v6.6.6 — the loop no longer goes through `compile()`, which owned BOTH of these
+    # messages; say it here ONCE rather than letting every iteration report an execve of
+    # a path that is null or absent as "step 1 exited 127". `current_cc()` is not always
+    # `_cc`: on arm64-macOS `find_tools` sets `_arch = ARCH_AARCH64`, so it answers with
+    # `cycc_aarch64` (on that platform the same native binary as `cycc`, per
+    # scripts/build-macos-arm64-tarball.sh) — and a tree missing it must say so, not
+    # blame the self-host. CHANGELOG [6.6.6].
+    var soak_cc = current_cc();
+    if (soak_cc == 0) {
+        _err("soak: cycc not found. Install Cyrius or set CYRIUS_HOME.");
+        _skip_deps = saved_skip_deps;
+        return 1;
+    }
+    if (file_exists(soak_cc) == 0) {
+        _err_ctx("soak: compiler not found", soak_cc);
+        _skip_deps = saved_skip_deps;
+        return 1;
+    }
+    # 6.7.12 — the two self-host steps build the DEFAULT compiler: they exec with `_envp` minus the
+    # compile-mode switches (cbt/core.cyr `_envp_self_build`), as `cyrius pulsar` does; the test
+    # suite and the .scyr harnesses below are the user's own compiles and keep `_envp`, on every
+    # host (the Windows arm clears the four around the step's spawn only). CHANGELOG [6.7.12]
+    var soak_envp = _envp_self_build();
+
+    var soak_pass = 0;
+    var soak_fail = 0;
+    var si = 0;
+    while (si < iters) {
+        si = si + 1;
+        sys_write(STDOUT_FD, "[", 1);
+        fmt_int(si);
+        sys_write(STDOUT_FD, "/", 1);
+        fmt_int(iters);
+        sys_write(STDOUT_FD, "] ", 2);
+
+        var iter_ok = 1;
+
+        # 1. Self-hosting check
+        # v6.6.6 — `_cbt_tmpexe`, not `_cbt_tmpfile`: cc5_t is EXECUTED below, and on
+        # Windows CreateProcessW appends `.exe` to an extensionless program name, so an
+        # unsuffixed path is looked up as `<path>.exe` and never found. CHANGELOG [6.6.6]
+        var cc5_t = _cbt_tmpexe("soak_a");
+        var cc4_t = _cbt_tmpfile("soak_b");
+        # v6.6.6 — BOTH STEPS GO THROUGH `_self_host_step` (cbt/build.cyr) AND THE
+        # VERDICT IS A BYTE COMPARE. Three separate reasons this loop reported on
+        # something other than the self-host, all of them fixed there rather than here so
+        # `cmd_self` and this cannot drift apart again:
+        #   * step 1 was `compile()`, which PREPENDS `#@incdir src` + `#@pkgver`, while
+        #     step 2 piped the file RAW — two different compilers, then compared. In this
+        #     repo on x86-64 Linux that alone made every `cyrius soak` print
+        #     "FAIL: self-host size mismatch" (1,315,048 vs 1,315,032 B);
+        #   * step 2 ran cc5_t UNSIGNED, and Apple Silicon's AMFI SIGKILLs an unsigned
+        #     arm64 Mach-O, so on ecb the step could never complete at all;
+        #   * the comparison was on SIZE — and on PE `_file_size` answered -38 (until 6.6.9) for every
+        #     path, so `-1 != -1` scored a PASS over files that need not exist.
+        # The PE spawn arm moved into `_pulsar_raw_compile` with the rest of the step;
+        # its exit code is still the verdict ("step 2 exited N"). CHANGELOG [6.6.6].
+        var user_envp = _envp;
+        _envp = soak_envp;
+        var s1 = _self_host_step(soak_cc, soak_src, cc5_t);
+        if (s1 != 0) {
+            _soak_step_failed(1, s1);
+            iter_ok = 0;
+        }
+        if (iter_ok == 1) {
+            var s2 = _self_host_step(cc5_t, soak_src, cc4_t);
+            if (s2 != 0) {
+                _soak_step_failed(2, s2);
+                iter_ok = 0;
+            }
+        }
+        _envp = user_envp;
+        # ⚠ Only when step 2 actually ran. A failed spawn has already said why, and a
+        # second "output differs" on top of it names the wrong cause.
+        if (iter_ok == 1) {
+            if (_self_host_same(cc5_t, cc4_t) == 0) {
+                sys_write(STDOUT_FD, "FAIL: self-host output differs\n", 31);
+                iter_ok = 0;
+            }
+        }
+        sys_unlink(cc5_t);
+        sys_unlink(cc4_t);
+
+        # 2. Test suite
+        # v6.5.11: RECURSIVE. Was a flat dir_list over tests/tcyr, so a subfoldered
+        # test was invisible to EVERY soak iteration while the run still reported
+        # success — soak was never brought along by the v6.5.7 bench/fuzz pass.
+        # find_files returns full paths (path_join → str_builder_build, NUL-terminated).
+        if (iter_ok == 1) {
+            # 6.6.10: an unlistable test directory fails the iteration, by name.
+            # An ABSENT tests/tcyr is an empty suite, as before; only an existing directory
+            # it cannot list is an error (is_dir asks stat, so mode 000 is still 1).
+            var _sk_e0 = _err_count;
+            var tent = vec_new();
+            if (is_dir(str_from("tests/tcyr")) == 1) {
+                tent = _cbt_find_files("tests/tcyr", ".tcyr", "its tests were NOT run");
+            }
+            if (_err_count > _sk_e0) { iter_ok = 0; }
+            var ti = 0;
+            while (ti < vec_len(tent)) {
+                var tpath = vec_get(tent, ti);
+                var tn = str_data(tpath);
+                var tl = str_len(tpath);
+                var tmpbin = _cbt_tmpexe("soak_t");
+                if (compile(tn, tmpbin) == 0) {
+                    var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
+                    sys_unlink(tmpbin);
+                    if (ec != 0) {
+                        sys_write(STDOUT_FD, "FAIL: ", 6);
+                        sys_write(STDOUT_FD, tn, tl);
+                        sys_write(STDOUT_FD, "\n", 1);
+                        iter_ok = 0;
+                        break;
+                    }
+                } else {
+                    sys_unlink(tmpbin);
+                    iter_ok = 0;
+                    break;
+                }
+                ti = ti + 1;
+            }
+        }
+
+        if (iter_ok == 1) {
+            soak_pass = soak_pass + 1;
+            println("ok");
+        } else {
+            soak_fail = soak_fail + 1;
+        }
+    }
+    println("");
+    sys_write(STDOUT_FD, "=== soak complete: ", 19);
+    fmt_int(soak_pass);
+    sys_write(STDOUT_FD, "/", 1);
+    fmt_int(iters);
+    sys_write(STDOUT_FD, " passed, ", 9);
+    fmt_int(soak_fail);
+    println(" failed ===");
+
+    # Restore auto-prepend before the .scyr walker — harness code
+    # benefits from manifest dep auto-prepend the same as .tcyr/.bcyr/
+    # .fcyr (per the v5.7.21 fuzz parity slot).
+    _skip_deps = saved_skip_deps;
+
+    # v5.7.38: discover and run user-authored *.scyr soak harnesses in
+    # `tests/scyr/` + `soak/`. Mirrors the *.tcyr / *.bcyr / *.fcyr
+    # discovery shape. Each .scyr is a complete cyrius program that
+    # manages its own iteration count internally; the runner just
+    # compiles + runs each once. Skip silently when neither dir exists
+    # or both are empty.
+    var scyr_pass = 0;
+    var scyr_fail = 0;
+    var scyr_found = 0;
+    var sd = 0;
+    var sdirs = vec_new();
+    vec_push(sdirs, "tests/scyr");
+    vec_push(sdirs, "soak");
+    while (sd < vec_len(sdirs)) {
+        var sdir = vec_get(sdirs, sd);
+        # 6.6.10: is_dir (stat), not file_exists (open) — open fails on a directory you may
+        # not read, so a mode-000 harness ROOT was skipped in silence. Absent still skips.
+        if (is_dir(str_from(sdir)) == 1) {
+            # v6.5.11: RECURSIVE. Was a depth-1 dir_list, so tests/scyr/<sub>/x.scyr
+            # never ran and cmd_soak still reported success — the same defect the
+            # v6.5.7 pass fixed for bench/fuzz without bringing scyr/smcyr along.
+            var _sc_e0 = _err_count;   # 6.6.10: an unlistable directory is a failed harness run
+            var sentries = _cbt_find_files(sdir, ".scyr", "its harnesses were NOT run (counted as a failure)");
+            if (_err_count > _sc_e0) { scyr_fail = scyr_fail + 1; }
+            var sei = 0;
+            while (sei < vec_len(sentries)) {
+                var spath_s = vec_get(sentries, sei);
+                var snd = str_data(spath_s);
+                var snl = str_len(spath_s);
+                if (scyr_found == 0) {
+                    println("");
+                    println("=== cyrius soak harnesses ===");
+                }
+                scyr_found = 1;
+                var stmpbin = _cbt_tmpexe("scyr");
+                sys_write(STDOUT_FD, "  ", 2);
+                sys_write(STDOUT_FD, snd, snl);
+                var spad = 44 - snl;
+                while (spad > 0) { sys_write(STDOUT_FD, " ", 1); spad = spad - 1; }
+                # v6.6.6 (bite 24 review) — same open-header shape as `_fuzz_run_one`; a
+                # named compile() error would splice into this line. CHANGELOG [6.6.6].
+                _progress_open = 1;
+                var scr = compile(snd, stmpbin);
+                _progress_open = 0;
+                if (scr == 0) {
+                    var sec = run_binary_timed(stmpbin, _run_timeout_ms(), 0);
+                    sys_unlink(stmpbin);
+                    if (sec == 0) {
+                        println("PASS");
+                        scyr_pass = scyr_pass + 1;
+                    } else {
+                        println("FAIL");
+                        scyr_fail = scyr_fail + 1;
+                    }
+                } else {
+                    println("COMPILE FAIL");
+                    scyr_fail = scyr_fail + 1;
+                    sys_unlink(stmpbin);
+                }
+                sei = sei + 1;
+            }
+        }
+        sd = sd + 1;
+    }
+    if (scyr_found == 1) {
+        sys_write(STDOUT_FD, "=== ", 4);
+        fmt_int(scyr_pass);
+        sys_write(STDOUT_FD, " passed, ", 9);
+        fmt_int(scyr_fail);
+        println(" failed ===");
+    }
+
+    if (soak_fail > 0 || scyr_fail > 0) { return 1; }
+    return 0;
+}
+
+# v5.7.38: cyrius smoke — discover + run *.smcyr smoke harnesses in
+# `tests/smcyr/` + `smoke/`. A smoke test answers "did this start at
+# all?" — small, fast, exits non-zero on first sign of trouble. Same
+# walker shape as cmd_fuzz; auto-prepend wired in cbt/cyrius.cyr's
+# _auto_deps gate so harnesses can `include "lib/string.cyr"` etc.
+# without manifest churn.
+fn cmd_smoke(): i64 {
+    _status("=== cyrius smoke ===");
+    var smoke_pass = 0;
+    var smoke_fail = 0;
+    var found = 0;
+    var sd = 0;
+    var sdirs = vec_new();
+    vec_push(sdirs, "tests/smcyr");
+    vec_push(sdirs, "smoke");
+    while (sd < vec_len(sdirs)) {
+        var sdir = vec_get(sdirs, sd);
+        if (is_dir(str_from(sdir)) == 1) {   # 6.6.10: stat, not open — see cmd_soak
+            # v6.5.11: RECURSIVE — see the matching note in cmd_soak. The printed
+            # path is now dir-relative rather than a bare basename; the smoke gate
+            # (programs/checks/services.cyr) matches on a SUBSTRING, so the
+            # basename it looks for is still present.
+            var _sm_e0 = _err_count;   # 6.6.10: an unlistable directory fails the smoke run
+            var entries = _cbt_find_files(sdir, ".smcyr", "its smoke harnesses were NOT run");
+            if (_err_count > _sm_e0) { return 1; }
+            var ei = 0;
+            while (ei < vec_len(entries)) {
+                var name = vec_get(entries, ei);
+                var nd = str_data(name);
+                var nl = str_len(name);
+                found = 1;
+                var tmpbin = _cbt_tmpexe("smoke");
+                sys_write(STDOUT_FD, "  ", 2);
+                sys_write(STDOUT_FD, nd, nl);
+                var pad = 44 - nl;
+                while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
+                # v6.6.6 (bite 24 review) — same open-header shape as `_fuzz_run_one`, and
+                # live the same way: `CYRIUS_HOME=<empty> cyrius smoke` spliced `error:
+                # cycc not found` into this line. CHANGELOG [6.6.6].
+                _progress_open = 1;
+                var smr = compile(nd, tmpbin);
+                _progress_open = 0;
+                if (smr == 0) {
+                    var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
+                    sys_unlink(tmpbin);
+                    if (ec == 0) {
+                        println("PASS");
+                        smoke_pass = smoke_pass + 1;
+                    } else {
+                        println("FAIL");
+                        smoke_fail = smoke_fail + 1;
+                        # Smoke tests exit non-zero on first sign
+                        # of trouble. Bail out — don't run the
+                        # remainder; the canonical pattern is
+                        # "fail fast, surface the first issue."
+                        sys_write(STDOUT_FD, "\n=== smoke aborted: ", 20);
+                        fmt_int(smoke_pass);
+                        sys_write(STDOUT_FD, " passed before fail ===\n", 24);
+                        return 1;
+                    }
+                } else {
+                    println("COMPILE FAIL");
+                    smoke_fail = smoke_fail + 1;
+                    sys_unlink(tmpbin);
+                    return 1;
+                }
+                ei = ei + 1;
+            }
+        }
+        sd = sd + 1;
+    }
+    # 6.7.9: an EMPTY corpus fails, as bare `cyrius fuzz` / `bench` / `test` do — a CI line over
+    # harnesses that moved or were renamed passed vacuously. CHANGELOG [6.7.9]
+    if (found == 0) {
+        _err("no smoke harnesses found (looked in tests/smcyr/ and smoke/, recursively)");
+        println("  Create *.smcyr files to define quick-validation programs.");
+        return 1;
+    }
+    sys_write(STDOUT_FD, "\n=== ", 5);
+    fmt_int(smoke_pass);
+    sys_write(STDOUT_FD, " passed, ", 9);
+    fmt_int(smoke_fail);
+    println(" failed ===");
+    if (smoke_fail > 0) { return 1; }
+    return 0;
+}

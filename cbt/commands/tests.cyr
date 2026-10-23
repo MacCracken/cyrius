@@ -1,0 +1,492 @@
+# CLI — commands: `cyrius test` and `cyrius tests` — the .tcyr grade, the declared and the walked corpus.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ⛔ 6.6.11 (O3) — THE ONE .tcyr RULE, the same one every reader applies (programs/checks/
+# selfhost.cyr `_tcyr_grade`, ci.yml, scripts/cross-os-libtest-runner.sh, the cass leg): when the
+# test SOURCE calls assert_summary(, the LAST stdout line that STARTS with `N passed, M failed`
+# must exist with N >= 1 and M == 0 — on top of exit 0. `cyrius test` graded on the exit code
+# alone and never saw stdout, so a test that died before its summary with `syscall(60, 0)` (its
+# FAIL row went to stderr), a body run twice by the epilogue's auto-call of a defined `main`
+# (`1 passed, 1 failed`, exit 0) and a test that asserted nothing (`0 passed, 0 failed`) all
+# scored PASS on `cyrius test`, `cyrius tests` and bare `cyrius test`. The requirement comes from
+# the source text, so a .tcyr without assert_summary( is graded on its exit code.
+
+# Parse decimal digits at buf[p..n) into *valp; returns the first non-digit offset.
+fn _test_num_at(buf, n, p, valp): i64 {
+    var v = 0;
+    while (p < n) {
+        var c = load8(buf + p);
+        if (c < 48 || c > 57) { break; }
+        v = v * 10 + (c - 48);
+        p = p + 1;
+    }
+    store64(valp, v);
+    return p;
+}
+
+# The LAST line of buf[0, n) that starts with `N passed, M failed`: N at out+0, M at out+8,
+# answers 1; 0 when there is none.
+fn _test_last_summary(buf, n, out): i64 {
+    var found = 0;
+    var np[8];
+    var nf[8];
+    var ls = 0;
+    while (ls < n) {
+        var p = _test_num_at(buf, n, ls, &np);
+        if (p > ls && p + 9 <= n && memeq(buf + p, " passed, ", 9) == 1) {
+            var q = _test_num_at(buf, n, p + 9, &nf);
+            if (q > p + 9 && q + 7 <= n && memeq(buf + q, " failed", 7) == 1) {
+                store64(out, load64(&np));
+                store64(out + 8, load64(&nf));
+                found = 1;
+            }
+        }
+        while (ls < n && load8(buf + ls) != 10) { ls = ls + 1; }
+        ls = ls + 1;
+    }
+    return found;
+}
+
+# 1 when the file at `path` contains the cstr `needle`.
+fn _test_src_has(path, needle): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0 || n <= 0) { return 0; }
+    var nl = strlen(needle);
+    var i = 0;
+    while (i + nl <= n) {
+        if (memeq(b + i, needle, nl) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The verdict of a test that EXITED 0, from its captured stdout: 0 = pass, M > 0 = the summary
+# reports failures, -3 = no summary although the source calls assert_summary(, -4 = a summary
+# of 0 assertions.
+fn _test_grade(source, buf, n): i64 {
+    var sm[16];
+    store64(&sm, 0);
+    store64(&sm + 8, 0);
+    var have = 0;
+    if (buf != 0) { have = _test_last_summary(buf, n, &sm); }
+    if (have == 1 && load64(&sm + 8) > 0) { return load64(&sm + 8); }
+    if (_test_src_has(source, "assert_summary(") == 1) {
+        if (have == 0) { return 0 - 3; }
+        if (load64(&sm) < 1) { return 0 - 4; }
+    }
+    return 0;
+}
+
+fn _test_grade_why(gv): i64 {
+    if (gv == 0 - 3) { return "no assert summary on stdout: the test stopped before assert_summary() or ran nothing"; }
+    if (gv == 0 - 4) { return "the assert summary reports 0 assertions"; }
+    return "the assert summary reports failures";
+}
+
+# The FAIL row for a unit that ran and did not exit 0 — a timeout, a signal or an exit status —
+# in `cyrius test`'s words; `cyrius coverage --exec` names a failing RUN program with it too
+# (6.7.10). The caller counts the failure.
+fn _test_fail_exit(source, exit_code): i64 {
+    if (exit_code == _RUN_TIMEOUT_KILLED) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, " (timed out after ", 18);
+        var tbuf[24];
+        var tlen = fmt_int_buf(_run_timeout_ms() / 1000, &tbuf);
+        sys_write(STDERR_FD, &tbuf, tlen);
+        # strlen, not a hand-counted literal: the first cut of this line counted 61
+        # for a 63-byte string (the em-dash is 3 bytes) and truncated its own hint
+        # mid-word. There is no reason to count bytes by hand when strlen is in scope.
+        # 6.7.6: the three channels, highest first (argument > environment > manifest)
+        var tmsg = "s — killed; --timeout <seconds>, CYRIUS_TEST_TIMEOUT or [test] timeout raise it, 0 disables)\n";
+        sys_write(STDERR_FD, tmsg, strlen(tmsg));
+    } else {
+        # ⛔ v6.5.37 — NAME THE FAILING TEST, AND SAY IF IT DIED OF A SIGNAL.
+        #
+        # Only the compile-error and timeout branches printed anything, so an ordinary
+        # non-zero exit — an assertion failure OR a SIGSEGV — was counted and never
+        # announced. The suite printed "283 passed, 1 failed" with no indication of WHICH
+        # file, leaving a hand bisect over 284 tests; the singular `cyrius test <file>`
+        # printed NOTHING AT ALL and merely exited 139.
+        #
+        # ⚠ THE FILING THAT PROMPTED THIS (prani, 2026-08-31) CLAIMED THE RUN WAS SCORED AS
+        # A PASS. IT IS NOT, and that is worth recording so nobody re-fixes it: measured at
+        # 6.5.36, a .tcyr that segfaults gives `cyrius test` exit 139 and the suite exit 1
+        # with the failure counted. The reporter almost certainly read `$?` through a pipe,
+        # which yields the LAST command's status — the same trap CLAUDE.md already warns
+        # about for check.sh's grep summary. The real defect is silence, not mis-scoring.
+        #
+        # A signal is distinguished because it is a different KIND of failure: an assertion
+        # failure is the test's verdict, a SIGSEGV is the test never reaching one.
+        # 6.7.6: read from the wait status (`_run_last_signal`), not from exit_code > 128 — a test
+        # that exits 232 was "killed by signal 104".
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        var sig = _run_last_signal;
+        if (sig > 0) {
+            var smsg = " (killed by signal ";
+            sys_write(STDERR_FD, smsg, strlen(smsg));
+            var sbuf[24];
+            var slen = fmt_int_buf(sig, &sbuf);
+            sys_write(STDERR_FD, &sbuf, slen);
+            if (sig == 11) { var s11 = " SIGSEGV"; sys_write(STDERR_FD, s11, strlen(s11)); }
+            if (sig == 6) { var s6 = " SIGABRT"; sys_write(STDERR_FD, s6, strlen(s6)); }
+            if (sig == 4) { var s4 = " SIGILL"; sys_write(STDERR_FD, s4, strlen(s4)); }
+            if (sig == 8) { var s8 = " SIGFPE"; sys_write(STDERR_FD, s8, strlen(s8)); }
+            var send = " — the test never reached a verdict)\n";
+            sys_write(STDERR_FD, send, strlen(send));
+        } else {
+            var emsg = " (exit ";
+            sys_write(STDERR_FD, emsg, strlen(emsg));
+            var ebuf[24];
+            var elen = fmt_int_buf(exit_code, &ebuf);
+            sys_write(STDERR_FD, &ebuf, elen);
+            sys_write(STDERR_FD, ")\n", 2);
+        }
+    }
+    return 0;
+}
+
+fn cmd_test(source): i64 {
+    # v6.6.5 — `cyrius test --dry-run f.tcyr` consumed the flag and RAN the test
+    # anyway (measured: "T1 RAN", exit 3). A dry run compiles nothing and runs
+    # nothing; the counters are left alone so a dry run cannot be mistaken for a
+    # result.
+    if (_dry_run == 1) {
+        sys_write(STDOUT_FD, "dry-run: compile + run ", 23);
+        sys_write(STDOUT_FD, source, strlen(source));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 0;
+    }
+    _total = _total + 1;
+    # 6.7.6: `[build] test_standalone = true` compiles the test with no [deps] stdlib prepend (see
+    # _cfg_test_standalone, cbt/manifest.cyr). A value that is not a bool was named once; every
+    # test then fails, not compiled — never silently compiled the other way. CHANGELOG [6.7.6]
+    var tsa = _cfg_test_standalone();
+    if (tsa < 0) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        var tsm = " (not compiled; see the error above)\n";
+        sys_write(STDERR_FD, tsm, strlen(tsm));
+        _fail = _fail + 1;
+        return 1;
+    }
+    # 6.7.6 (part T): this unit's test-scope configuration — [test] defines / modules / timeout
+    if (_tc_for(source) != 0) {
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        var tcm = " (not compiled; its test configuration was refused, above)\n";
+        sys_write(STDERR_FD, tcm, strlen(tcm));
+        _fail = _fail + 1;
+        return 1;
+    }
+    var tsa_skip = _skip_deps;
+    if (tsa == 1) { _skip_deps = 1; }
+    var tmpbin = _cbt_tmpexe("test_bin");
+    var pre_err = _err_count;
+    var r = compile(source, tmpbin);
+    _skip_deps = tsa_skip;
+    if (r != 0) {
+        # 6.6.9 bite 10 — the row stays (it is the suite's tally line and names the file),
+        # but it no longer calls a failure cbt NAMED — a missing file, an unwritable temp —
+        # a "compile error". See `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        if (_compile_fail_verdict(pre_err, STDERR_FD, ": compile error") == 1) {
+            var tnc = " (not compiled; see the error above)\n";
+            sys_write(STDERR_FD, tnc, strlen(tnc));
+        }
+        _fail = _fail + 1;
+        sys_unlink(tmpbin);
+        return 1;
+    }
+    # v6.5.19: BOUNDED. A .tcyr that spins used to hang the whole suite with no
+    # deadline of any kind, and the only way out was to kill the runner — which
+    # orphaned the child to PID 1, where it kept burning a core indefinitely (19 of
+    # them were found during this release, and they turned a release-gate perf
+    # tripwire red). See `run_binary_timed` in cbt/build.cyr for both halves of the
+    # fix. Report the timeout BY NAME: a bare nonzero code here would read as an
+    # ordinary assertion failure and send the reader into the test's logic.
+    # 6.6.11 (O3): the test's STDOUT is captured, echoed back, and its assert summary GRADED —
+    # see `_test_grade`. The capture file is created here so a temp that cannot hold it is named
+    # (and the test counted failed) rather than the verdict falling back to the exit code.
+    var cap = _cbt_tmpfile("test_out");
+    sys_unlink(cap);
+    var cfd0 = sys_open(cap, O_WRONLY | O_CREAT | O_EXCL, 0x180);   # fresh and empty: the child only opens it
+    if (cfd0 < 0) {
+        _err_ctx("cyrius test cannot capture the test's output (its assert summary is the verdict)", cap);
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, " (not run)\n", 11);
+        _fail = _fail + 1;
+        sys_unlink(tmpbin);
+        return 1;
+    }
+    sys_close(cfd0);
+    _run_stdout_to = cap;
+    var exit_code = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
+    _run_stdout_to = 0;
+    sys_unlink(tmpbin);
+    var clen = 0;
+    var cbuf = file_read_whole(cap, &clen);
+    sys_unlink(cap);
+    if (cbuf == 0) { clen = 0; }
+    var gv = 0;
+    if (exit_code == 0) { gv = _test_grade(source, cbuf, clen); }
+    # 6.7.10 (P5-B): under `cyrius coverage --exec` (`_covx_dump`) only a FAILING test's output is
+    # echoed — the run is the coverage report's, not a test log. CHANGELOG [6.7.10]
+    if (clen > 0) {
+        if (_covx_dump == 0 || exit_code != 0 || gv != 0) { sys_write(STDOUT_FD, cbuf, clen); }
+    }
+    if (exit_code == 0) {
+        if (gv == 0) {
+            _pass = _pass + 1;
+            return 0;
+        }
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, " (exit 0, but ", 14);
+        var gw = _test_grade_why(gv);
+        sys_write(STDERR_FD, gw, strlen(gw));
+        sys_write(STDERR_FD, ")\n", 2);
+        _fail = _fail + 1;
+        return 1;
+    }
+    _test_fail_exit(source, exit_code);
+    _fail = _fail + 1;
+    return exit_code;
+}
+
+# v6.0.62: `cyrius tests [dir]` — the plural verb, a RECURSIVE folder/suite
+# runner (vs `cyrius test <file>` single-file + bare `cyrius test` shallow
+# auto-discover, both unchanged). 6.7.6: `cyrius test <dir>` is that runner (CHANGELOG [6.7.6]);
+# the `tests` alias was removed at 6.7.12. Walks `dir` (default "tests") for *.tcyr at
+# any depth, runs each via cmd_test, aggregates _pass/_fail. Mirrors the
+# proven shallow-discover pattern (dir_list + make_path → NUL-terminated cstr
+# for cmd_test's strlen; dir_list already skips . / ..) rather than find_files,
+# whose path_join Strs are not guaranteed NUL-terminated.
+# v6.5.12: depth-bounded. `is_dir` follows symlinks (lib/fs.cyr, plain O_RDONLY), so a
+# link to an ancestor made this re-descend until PATH_MAX — measured as **41 passed** for
+# a tree holding ONE .tcyr. An inflated pass count reads as coverage, which is the worst
+# possible failure for a test runner.
+# 6.6.17 (P1): the files a bare `cyrius test` has already run, so a file that `[build] test` names
+# AND the tests/ walk finds runs ONCE (crab declares `test = "tests"`; chakshu, klug and sit name
+# their tests/<name>.tcyr). 0 = not tracking (`cyrius test <dir>`, which never reads the key).
+# 6.7.6: a multi-operand `cyrius test a b ...` tracks too — see _test_path.
+var _tests_seen = 0;
+
+# `p` with leading "./" and doubled / trailing slashes removed — the one spelling `_tests_seen`
+# compares. A fresh cstr.
+fn _test_norm(p): i64 {
+    var n = strlen(p);
+    var out = alloc(n + 1);
+    var i = 0;
+    var o = 0;
+    while (i + 1 < n && load8(p + i) == 46 && load8(p + i + 1) == 47) {
+        i = i + 2;
+        while (i < n && load8(p + i) == 47) { i = i + 1; }
+    }
+    while (i < n) {
+        var c = load8(p + i);
+        var dup = 0;
+        if (c == 47 && o > 0) {
+            if (load8(out + o - 1) == 47) { dup = 1; }
+        }
+        if (dup == 0) {
+            store8(out + o, c);
+            o = o + 1;
+        }
+        i = i + 1;
+    }
+    while (o > 1 && load8(out + o - 1) == 47) { o = o - 1; }
+    store8(out + o, 0);
+    return out;
+}
+
+# 1 when `p` has not run yet in this bare `cyrius test` (and records it); always 1 when not tracking.
+fn _tests_first_run(p): i64 {
+    if (_tests_seen == 0) { return 1; }
+    var np = _test_norm(p);
+    var i = 0;
+    while (i < vec_len(_tests_seen)) {
+        if (streq(vec_get(_tests_seen, i), np) == 1) { return 0; }
+        i = i + 1;
+    }
+    vec_push(_tests_seen, np);
+    return 1;
+}
+
+# 6.6.17 (P1): run what `[build] test` declares — 6.7.6: `[test] files`, of which `[build] test` is
+# the older spelling (_cfg_test_files) — a file as-is whatever its extension (the init
+# template's is src/test.cyr), a directory's .tcyr files recursively. 41 manifests declared the key
+# and nothing read it (kashi's 393 assertions never ran in CI). A target that does not exist is a
+# FAILED run, by name — a typo must not read as "nothing to test".
+fn _tests_run_declared(targets): i64 {
+    var i = 0;
+    while (i < vec_len(targets)) {
+        var t = _test_norm(vec_get(targets, i));
+        i = i + 1;
+        if (is_dir(str_from(t)) == 1) {
+            _tests_walk(t);
+        } elif (file_exists(t) == 1) {
+            _tests_found = 1;
+            if (_tests_first_run(t) == 1) { cmd_test(t); }
+        } else {
+            # 6.7.6: names the key it was read under — `[test] files` or the older `[build] test`
+            _err_ctx(_cat2(_cat2("cyrius.cyml ", _tc_files_where), " names a path that does not exist"), t);
+            _fail = _fail + 1;
+        }
+    }
+    return 0;
+}
+
+# ⭐ 6.6.20 (REFACTOR-09) — ONE corpus walker behind `cyrius test`/`tests` (.tcyr), `fuzz`
+# (.fcyr) and `bench` (.bcyr). There were three hand-synced copies, and every walker fix had to be
+# made three times: v6.5.12's depth cap, `elif` and never-descend-a-symlink, then 6.6.10's
+# unlistable-directory failure. They differed only in the extension, two message words and what
+# runs a file, which is what the descriptor `cd` (built by _corpus_cd) carries:
+#   +0  ext        ".tcyr" / ".fcyr" / ".bcyr"
+#   +8  run_fp     fn(path, cd) — runs ONE file; its result is the runner's to count
+#   +16 noun       "<noun> walk depth cap" in the depth-cap warning
+#   +24 what       _cbt_list_dir's tail for a directory that cannot be listed
+#   +32 pass_ptr   i64 counters the runner and the walker share
+#   +40 fail_ptr
+#   +48 found_ptr  set to 1 by an unlistable directory; 0 when the caller reads "found nothing
+#                  but counted a failure" itself (the tests walk)
+# THE RULES, each once a separate fix in each copy:
+#   * depth-capped at 64 — `is_dir` follows symlinks, so a link to an ancestor once re-descended
+#     to PATH_MAX (41 passed for a tree holding ONE .tcyr) (v6.5.12);
+#   * a SYMLINKED directory is never descended (the loop guard); a symlinked FILE still runs;
+#   * a directory named `x.fcyr` is a directory — `elif`, never handed to the runner, which gave
+#     `error: not a file` + a failure over a healthy tree (v6.5.12);
+#   * an ABSENT directory is an empty scope; one that exists and cannot be listed is a FAILED run
+#     by name — `dir_list` read it as empty, so its files silently did not run (6.6.10);
+#   * a name that is ONLY the extension (the dotfile `.tcyr`) is not a corpus file.
+# Returns how many files were handed to the runner. CHANGELOG [6.6.20]
+fn _corpus_walk_d(dir, cd, depth): i64 {
+    if (depth > 64) {
+        _ew("warning: ");
+        _ew(load64(cd + 16));
+        _ew(" walk depth cap (64) hit — symlink loop? subtree skipped: ");
+        _ew(dir);
+        _ew("\n");
+        return 0;
+    }
+    if (is_dir(str_from(dir)) == 0) { return 0; }
+    var entries = _cbt_list_dir(dir, load64(cd + 24));
+    if (entries == 0) {
+        var fcnt = load64(cd + 40);
+        store64(fcnt, load64(fcnt) + 1);
+        if (load64(cd + 48) != 0) { store64(load64(cd + 48), 1); }
+        return 0;
+    }
+    var ext = load64(cd);
+    var el = strlen(ext);
+    var n = 0;
+    var ei = 0;
+    while (ei < vec_len(entries)) {
+        var name = vec_get(entries, ei);
+        var nd = str_data(name);
+        var nl = str_len(name);
+        var full = make_path(dir, nd);
+        if (is_dir(str_from(full)) == 1) {
+            if (is_symlink(str_from(full)) == 0) { n = n + _corpus_walk_d(full, cd, depth + 1); }
+        } elif (nl > el) {
+            if (memeq(nd + nl - el, ext, el) == 1) {
+                n = n + 1;
+                fncall2(load64(cd + 8), full, cd);
+            }
+        }
+        ei = ei + 1;
+    }
+    return n;
+}
+
+# A corpus descriptor for _corpus_walk_d; the counters are filled in by _corpus_walk.
+fn _corpus_cd(ext, run_fp, noun, what): i64 {
+    var cd = alloc(56);
+    store64(cd, ext);
+    store64(cd + 8, run_fp);
+    store64(cd + 16, noun);
+    store64(cd + 24, what);
+    return cd;
+}
+
+fn _corpus_walk(dir, cd, pass_ptr, fail_ptr, found_ptr): i64 {
+    store64(cd + 32, pass_ptr);
+    store64(cd + 40, fail_ptr);
+    store64(cd + 48, found_ptr);
+    return _corpus_walk_d(dir, cd, 0);
+}
+
+# The tests walk's runner: once per file per bare `cyrius test` (see _tests_first_run).
+fn _tests_walk_one(path, cd): i64 {
+    _tests_found = 1;
+    if (_tests_first_run(path) == 1) { cmd_test(path); }
+    return 0;
+}
+
+fn _tests_walk(dir): i64 {
+    var cd = _corpus_cd(".tcyr", &_tests_walk_one, "test", "its tests were NOT run (counted as a failure)");
+    return _corpus_walk(dir, cd, &_pass, &_fail, 0);
+}
+
+# 6.7.6: ONE operand of a multi-operand `cyrius test <path> <path>...`. A DIRECTORY runs every .tcyr
+# under it (the walk above); anything else runs as one file through cmd_test (a missing path is its
+# named failure there). The caller turns on `_tests_seen`, so a file two operands reach — `cyrius test
+# tests tests/a.tcyr` — runs ONCE: the pass count is distinct files, as the bare suite's is. A
+# directory holding no .tcyr is a failure, counted and named, as `cyrius test <dir>` alone is one —
+# unless the walk already named one (an unlistable directory). CHANGELOG [6.7.6]
+fn _test_path(p): i64 {
+    if (is_dir(str_from(p)) == 0) {
+        if (_tests_first_run(p) == 1) { cmd_test(p); }
+        return 0;
+    }
+    var pre_fail = _fail;
+    _tests_found = 0;
+    _tests_walk(p);
+    if (_tests_found == 0 && _fail == pre_fail) {
+        sys_write(STDOUT_FD, "No .tcyr files found under ", 27);
+        sys_write(STDOUT_FD, p, strlen(p));
+        sys_write(STDOUT_FD, "\n", 1);
+        _fail = _fail + 1;
+    }
+    return 0;
+}
+
+# A directory's suite: `cyrius test <dir>` and `cyrius audit`'s sweep.
+fn cmd_tests(dir): i64 {
+    _pass = 0; _fail = 0; _tests_found = 0;
+    if (is_dir(str_from(dir)) == 0) {
+        sys_write(STDERR_FD, "cyrius test: not a directory: ", 30);
+        sys_write(STDERR_FD, dir, strlen(dir));
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    _tests_walk(dir);
+    # 6.6.10: nothing found BECAUSE a directory could not be listed is that failure (already
+    # named), not "no tests".
+    if (_tests_found == 0 && _fail > 0) { return 1; }
+    if (_tests_found == 0) {
+        sys_write(STDOUT_FD, "No .tcyr files found under ", 27);
+        sys_write(STDOUT_FD, dir, strlen(dir));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 1;
+    }
+    # v6.6.5 — a dry run has no verdict to report; printing "0 passed, 0 failed"
+    # would be a result for work that was never done. (6.6.10: an unlistable directory is
+    # still a failure — the dry run could not say what it would have run.)
+    if (_dry_run == 1) {
+        if (_fail > 0) { return 1; }
+        return 0;
+    }
+    sys_write(STDOUT_FD, "\n", 1);
+    fmt_int(_pass);
+    sys_write(STDOUT_FD, " passed, ", 9);
+    fmt_int(_fail);
+    println(" failed");
+    if (_fail > 0) { return 1; }
+    return 0;
+}

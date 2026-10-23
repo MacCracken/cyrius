@@ -19,9 +19,19 @@
 # flat spellings are flagged, a comment and the two recursive spellings are not. Floor: the census
 # reads every tracked gate (>= 500 files), so a broken reader cannot read green.
 #
+# AXIS 2 — THE INCLUDE LIST AND ITS MIRRORS. cbt/cyrius.cyr includes the split pieces itself, one
+# after another (one parent, no nesting), and the tests that compile the CLI's modules
+# (tests/tcyr/crossos/cli_*.tcyr, embed_open_under_root.tcyr) copy that include list by hand. Pinned:
+# every .cyr under cbt/ but the entry is included exactly once — by cbt/cyrius.cyr's main block, or
+# by another cbt/ file (core.cyr's srcscan.cyr) — and every .tcyr that includes a piece of a cbt/
+# subfolder carries cbt/cyrius.cyr's cbt/ include list exactly, in its order (a dropped or reordered
+# piece is named). Floors: the list holds >= 30 files, >= 5 mirrors are compared.
+#
 # MUTATION LEDGER (measured at 6.7.18):
 #   M1  the parent of this gate (the 22 flat readers)                        -> RED, 35 lines named
 #   M2  one reader turned back (cbt_fork_sites_have_pe_arm.sh `scan cbt/*.cyr`) -> RED, that line
+#   M3  cbt/commands/clean.cyr dropped from cli_dry_pass_mute.tcyr's include list -> RED, axis 2 names it
+#   M4  cbt/commands/clean.cyr dropped from cbt/cyrius.cyr                    -> RED, axis 2 (not included)
 #   Real tree -> GREEN.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -79,9 +89,52 @@ else
     echo "  ok: no flat cbt/ glob in $nf gates, scripts and workflows ($ng gates)"
 fi
 
+# ── axis 2: the include list and its mirrors ─────────────────────────────────────────────
+# cbt_incs <file> — its `include "cbt/…"` lines, in order (an indented or commented line is not one).
+cbt_incs() { sed -n 's/^include "\(cbt\/[^"]*\)".*/\1/p' "$1"; }
+awk '/^#ifndef CYRIUS_TARGET_AGNOS/ { on = 1 } on' cbt/cyrius.cyr > "$W/main.cyr"
+cbt_incs "$W/main.cyr" > "$W/list"
+nl=$(grep -c . "$W/list" || true); [ -n "$nl" ] || nl=0
+a2=0
+if [ "$nl" -lt 30 ]; then
+    echo "  FAIL: axis 2: cbt/cyrius.cyr's main block includes only $nl cbt/ file(s) (floor 30) — the reader is not reading"
+    a2=1
+fi
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do [ "$f" = cbt/cyrius.cyr ] || cbt_incs "$f"; done > "$W/nested"
+cat "$W/list" "$W/nested" | LC_ALL=C sort | uniq -d > "$W/twice"
+if [ -s "$W/twice" ]; then
+    echo "  FAIL: axis 2: included more than once: $(tr '\n' ' ' < "$W/twice")"
+    a2=1
+fi
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do
+    [ "$f" = cbt/cyrius.cyr ] && continue
+    grep -qxF "$f" "$W/list" || grep -qxF "$f" "$W/nested" \
+        || { echo "  FAIL: axis 2: $f is included by nothing (cbt/cyrius.cyr's main block includes every piece)"; a2=1; }
+done
+nm=0
+for t in $(find tests -name '*.tcyr' | LC_ALL=C sort); do
+    grep -q '^include "cbt/[a-z_]*/' "$t" || continue
+    nm=$((nm + 1))
+    cbt_incs "$t" > "$W/mirror"
+    if ! cmp -s "$W/list" "$W/mirror"; then
+        echo "  FAIL: axis 2: $t does not carry cbt/cyrius.cyr's cbt/ include list (- the CLI's, + the test's):"
+        diff "$W/list" "$W/mirror" | grep '^[<>]' | sed 's/^</    -/; s/^>/    +/'
+        a2=1
+    fi
+done
+if [ "$nm" -lt 5 ]; then
+    echo "  FAIL: axis 2: only $nm test(s) compile the CLI's split modules (floor 5) — the mirror scan is not reading"
+    a2=1
+fi
+if [ "$a2" = 0 ]; then
+    echo "  ok: axis 2: every cbt/ file is included exactly once ($nl by cbt/cyrius.cyr), and $nm tests carry its list in order"
+else
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     echo "FAIL $NAME"
     exit 1
 fi
-echo "PASS $NAME: every reader of the CLI's source reads cbt/ recursively ($nf files censused, scanner self-tested)"
+echo "PASS $NAME: every reader of the CLI's source reads cbt/ recursively ($nf files censused, scanner self-tested), and its include list has no drifted copy"
 exit 0

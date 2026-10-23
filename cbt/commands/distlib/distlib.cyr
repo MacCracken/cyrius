@@ -1,0 +1,771 @@
+# CLI — commands / distlib: a bundle's [embed] entries and cmd_distlib.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# 6.6.19 (E3) — the [embed] entries a bundle carries, from `[<lsec>] embed` (a NAME or a list of
+# them, each declared in [embed]) as a vec of _embed_load entries in the order listed; -1 after
+# naming what is wrong. Sets _dl_embed_key / _dl_embed_sel for _distlib_embed_unlisted.
+var _dl_embed_key = 0;
+var _dl_embed_sel = 0;
+fn _distlib_embed_select(lsec): i64 {
+    _dl_embed_key = _cfg_where(lsec, "embed");
+    var sel = vec_new();
+    _dl_embed_sel = sel;
+    var names = _mf_strs(lsec, "embed");
+    if (_toml_bad == 1) {
+        _err_ctx("distlib: must be an [embed] NAME or an array of them", _dl_embed_key);
+        return 0 - 1;
+    }
+    if (names == 0) { return sel; }
+    var all = _embed_load();
+    if (all < 0) { return 0 - 1; }
+    var bad = 0;
+    var i = 0;
+    while (i < vec_len(names)) {
+        var nm = vec_get(names, i);
+        i = i + 1;
+        var hit = 0;
+        var j = 0;
+        while (j < vec_len(all)) {
+            if (streq(_embed_e_name(vec_get(all, j)), nm) == 1) { hit = vec_get(all, j); }
+            j = j + 1;
+        }
+        if (hit == 0) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "cyrius.cyml ");
+            str_builder_add_cstr(sb, _dl_embed_key);
+            str_builder_add_cstr(sb, " names ");
+            str_builder_add_cstr(sb, _shown(nm));   # 6.6.20: shown escaped
+            str_builder_add_cstr(sb, ", which [embed] does not declare (a bundle carries [embed] entries by NAME)");
+            _err(str_data(str_builder_build(sb)));
+            bad = bad + 1;
+            continue;
+        }
+        var dup = 0;
+        j = 0;
+        while (j < vec_len(sel)) {
+            if (vec_get(sel, j) == hit) { dup = 1; }
+            j = j + 1;
+        }
+        if (dup == 0) { vec_push(sel, hit); }
+    }
+    if (bad > 0) { return 0 - 1; }
+    return sel;
+}
+
+# A name still undefined after the converged verify that IS one of this project's [embed] accessors
+# (NAME or NAME_len) means a bundle module calls an embed the bundle does not carry: the verify
+# compiled it ALONE, without the producer's prelude, and a consumer will too. Refused naming the
+# key and the NAME (_distlib_report_unowned only WARNS — a bundle may call a consumer's hook, but
+# never this). Returns the count named.
+fn _distlib_embed_unlisted(out_path, names): i64 {
+    var all = _embed_all;
+    if (_embed_state != 1 || all == 0) { return 0; }
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(names)) {
+        var u = vec_get(names, i);
+        i = i + 1;
+        var j = 0;
+        while (j < vec_len(all)) {
+            var en = _embed_e_name(vec_get(all, j));
+            j = j + 1;
+            if (streq(u, en) == 1 || _embed_is_len_of(u, en) == 1) {
+                var sb = str_builder_new();
+                str_builder_add_cstr(sb, "distlib: ");
+                str_builder_add_cstr(sb, out_path);
+                str_builder_add_cstr(sb, " calls ");
+                str_builder_add_cstr(sb, u);
+                str_builder_add_cstr(sb, "(), the accessor of [embed] ");
+                str_builder_add_cstr(sb, en);
+                str_builder_add_cstr(sb, ", but cyrius.cyml ");
+                str_builder_add_cstr(sb, _dl_embed_key);
+                str_builder_add_cstr(sb, " does not list ");
+                str_builder_add_cstr(sb, en);
+                str_builder_add_cstr(sb, " — a bundle carries only the embeds it names; add it there");
+                _err(str_data(str_builder_build(sb)));
+                n = n + 1;
+            }
+        }
+    }
+    return n;
+}
+
+# 1 after naming it when `[package] name` cannot name a bundle: it becomes `dist/<name>.cyr`, the
+# `dist/<name>/` modular dir and the bundle's first header line, so it takes the profile rule
+# ([A-Za-z0-9_-], 1-32 characters — every package name in the ecosystem). It took the dep-name
+# rule, which let `name = "nm\nvar INJECTED = 7;\n#"` write `dist/nm?var INJECTED = 7;?#.cyr`
+# with a live `var INJECTED = 7;` line in the bundle header. CHANGELOG [6.6.20].
+fn _distlib_bad_pkg_name(name): i64 {
+    if (_distlib_valid_profile(name) == 1) { return 0; }
+    _ew("error: distlib: [package] name '");
+    _ew_shown(name);
+    _ew("' cannot name a bundle (allowed: [A-Za-z0-9_-], 1-32 characters) — nothing written\n");
+    return 1;
+}
+
+fn cmd_distlib(profile): i64 {
+    if (_distlib_valid_profile(profile) == 0) {
+        _err("invalid profile name (allowed: [a-zA-Z0-9_-]{1,32})");
+        return 1;
+    }
+    # Read manifest
+    var mf = "cyrius.cyml";
+    if (file_exists(mf) == 0) { mf = "cyrius.toml"; }
+    if (file_exists(mf) == 0) {
+        _err("no cyrius.cyml or cyrius.toml found");
+        return 1;
+    }
+    # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
+    if (_mf_load() != 1) { _err("cannot read manifest"); return 1; }
+    var mbuf = _mf_buf;
+    var mlen = _mf_len;
+
+    # Extract package name. ⛔ v6.5.37 (A5): this scan decides the output FILENAME, and it once
+    # had no guards at all — a comment (`# The package name = "…"`), a `display_name` tail and a
+    # traversal `name = "../victim/pwned"` each hijacked the bundle. 6.6.17: `[package] name`
+    # through the one reader (cbt/manifest.cyr) — anchored to [package], whole-key, comment- and
+    # string-aware — and `_distlib_bad_pkg_name` (6.6.20: the bundle-name rule) before the first sys_open.
+    var pkg_name = _mf_str("package", "name");
+    if (pkg_name == 0) { pkg_name = "lib"; }
+    if (_distlib_bad_pkg_name(pkg_name) == 1) { return 1; }
+
+    # The `# Version:` header: `[package] version` from the manifest, else ./VERSION
+    # (_project_version, cbt/core.cyr). 6.6.20 (REFACTOR-11): this read ./VERSION alone, under a
+    # comment that claimed cyml_expand_value. CHANGELOG [6.6.20]
+    var pkg_ver = _project_version();
+    if (pkg_ver == 0) { return 1; }   # 6.6.20 (SEC-04): refused, and named
+
+    # Find modules list. With a profile, [lib.PROFILE] only; otherwise [build], then [lib].
+    # 6.6.17: through the one reader (cbt/manifest.cyr), which steps over multi-line values, so a
+    # line inside an array that begins with `[` is never read as a section header.
+    var modules = 0;
+    var lsec = "lib";
+    if (profile != 0) {
+        var psb = str_builder_new();
+        str_builder_add_cstr(psb, "lib.");
+        str_builder_add_cstr(psb, profile);
+        lsec = str_data(str_builder_build(psb));
+        modules = _mf_strs(lsec, "modules");
+    } else {
+        modules = _mf_strs("build", "modules");
+        if (modules == 0 && _toml_bad == 0) { modules = _mf_strs("lib", "modules"); }
+    }
+    if (_toml_bad == 1) {
+        _err("distlib: `modules` must be a string or an array of strings");
+        return 1;
+    }
+    # 6.6.19 (E3) — the [embed] entries this bundle carries: `[lib] embed` / `[lib.P] embed`,
+    # nothing unless named (rekha's 1.6 MB face must never ride into dist/rekha.cyr). An
+    # embed-only profile is LEGAL — `[lib.face] embed = ["FACE"]` with no modules is a bundle of
+    # data — so "no modules" is refused only when the profile names no embed either.
+    var esel = _distlib_embed_select(lsec);
+    if (esel < 0) { return 1; }
+    if (vec_len(esel) > 0 && modules == 0) { modules = vec_new(); }
+
+    if ((modules == 0 || vec_len(modules) == 0) && vec_len(esel) == 0) {
+        if (profile != 0) {
+            _err_ctx("no modules found for profile", profile);
+            println("  Add modules = [...] (or embed = [...]) under the matching [lib.PROFILE] section.");
+        } else {
+            _err("no [build] modules or [lib] modules found in manifest");
+            println("  Add modules = [\"src/types.cyr\", \"src/lib.cyr\", ...] to your manifest.");
+        }
+        return 1;
+    }
+
+    # v6.2.50 Phase C: --modular → per-module `dist/<pkg>/<mod>.cyr` + index.cyml
+    # (the flat single-file path below is unchanged for default `cyrius distlib`).
+    if (_distlib_modular == 1) {
+        return _distlib_modular_emit(pkg_name, modules, mbuf, mlen);
+    }
+
+    # Create dist/ directory
+    sys_mkdir("dist", 0x1ED);
+
+    # Build output path: dist/{name}.cyr or dist/{name}-{profile}.cyr
+    var out_sb = str_builder_new();
+    str_builder_add_cstr(out_sb, "dist/");
+    str_builder_add_cstr(out_sb, pkg_name);
+    if (profile != 0) {
+        str_builder_add_cstr(out_sb, "-");
+        str_builder_add_cstr(out_sb, profile);
+    }
+    str_builder_add_cstr(out_sb, ".cyr");
+    var out_path = str_data(str_builder_build(out_sb));
+
+    # v6.5.8 `--check`: regenerate into a SIBLING temp and byte-compare, so a CI job can
+    # ask "is every committed bundle current?" without dirtying the tree.
+    # ⚠ The temp lives inside dist/, not /tmp: cbt/cyrius.cyr cross-compiles to PE and both
+    # Mach-O flavours, and a hardcoded /tmp is wrong on Windows. A sibling path sidesteps
+    # the platform temp-dir question entirely and keeps the rename-free compare local.
+    var real_path = out_path;
+    if (_distlib_check == 1) {
+        var chk_sb = str_builder_new();
+        str_builder_add_cstr(chk_sb, "dist/.check-");
+        str_builder_add_cstr(chk_sb, pkg_name);
+        if (profile != 0) {
+            str_builder_add_cstr(chk_sb, "-");
+            str_builder_add_cstr(chk_sb, profile);
+        }
+        str_builder_add_cstr(chk_sb, ".cyr");
+        out_path = str_data(str_builder_build(chk_sb));
+    }
+
+    # v6.6.6: the bundle is built in a sibling temp and renamed over out_path only once every
+    # byte landed; an error part-way (or a short write) leaves the previous bundle as it was —
+    # it used to be truncated to whatever had been written, and a short write still exited 0.
+    var ofd = _aw_open(out_path);
+    if (ofd == 0) {
+        _err_ctx("cannot create", out_path);
+        return 1;
+    }
+
+    # Write header
+    _aw_write(ofd, "# ", 2);
+    _aw_write(ofd, pkg_name, strlen(pkg_name));
+    _aw_write(ofd, ".cyr -- bundled distribution\n", 29);
+    _aw_write(ofd, "# Version: ", 11);
+    _aw_write(ofd, pkg_ver, strlen(pkg_ver));
+    _aw_write(ofd, "\n", 1);
+    if (profile != 0) {
+        _aw_write(ofd, "# Profile: ", 11);
+        _aw_write(ofd, profile, strlen(profile));
+        _aw_write(ofd, "\n", 1);
+    }
+    _aw_write(ofd, "# Generated by: cyrius distlib\n", 31);
+    _aw_write(ofd, "# Do not edit -- rebuild with: cyrius distlib\n", 46);
+    # v6.0.9 — no trailing blank after the header. The per-module
+    # loop below opens each module with `\n# --- <name> ---\n\n`,
+    # so the single blank between header and first module marker
+    # comes for free. Writing an extra blank here produced the
+    # bundle-line-6 cyrlint double-blank warning (see
+    # issues/archived/2026-05-27-cyrius-distlib-blank-lines.md, cause 1).
+
+    # v6.0.9 — track previous-line-blank to collapse runs of ≥2
+    # consecutive blanks. The include-strip step drops `include`
+    # lines silently, which leaves adjacent blanks (cause 2 in the
+    # filed issue). prev_blank starts at 0 (the header's last write
+    # was a content line, "# Do not edit ..."), so the per-module
+    # opener writes its single leading blank as the separator.
+    var prev_blank = 0;
+
+    # 6.6.19 (E3) — the carried [embed] entries, after the header and before the first module (the
+    # same generated text a build prepends; cbt/build.cyr _embed_render).
+    if (vec_len(esel) > 0) {
+        _aw_write(ofd, "\n# --- [embed] ---\n\n", 20);
+        var eln = 0;
+        var etx = _embed_render(esel, &eln);
+        _aw_write(ofd, etx, eln);
+    }
+
+    # Concatenate each module
+    var mi = 0;
+    var total_lines = 0;
+    var req_leaves = vec_new();   # v6.2.47: stripped lib/ leaf requirements → dist/<pkg>.deps sidecar
+    while (mi < vec_len(modules)) {
+        var mod_path = vec_get(modules, mi);
+        if (file_exists(mod_path) == 0) {
+            # v6.2.52 (user: make it fail-loud): a missing module is a HARD ERROR,
+            # not a warning — a partial bundle silently drops a module.
+            _err_ctx("distlib: module not found", _shown(mod_path));   # 6.6.20: shown escaped
+            _aw_abort(ofd);
+            return 1;
+        }
+
+        # Module separator. The leading \n is the single blank
+        # before the module header; the trailing \n\n is "end the
+        # header line + one blank after". prev_blank=1 afterwards.
+        if (prev_blank == 0) { _aw_write(ofd, "\n", 1); }
+        _aw_write(ofd, "# --- ", 6);
+        # Extract basename
+        var bn = mod_path;
+        var bni = 0;
+        while (load8(mod_path + bni) != 0) {
+            if (load8(mod_path + bni) == 47) { bn = mod_path + bni + 1; }
+            bni = bni + 1;
+        }
+        _aw_write(ofd, bn, strlen(bn));
+        _aw_write(ofd, " ---\n\n", 6);
+        prev_blank = 1;
+
+        # Read module and write line by line, stripping include
+        # directives (both `lib/...` stdlib refs and `src/...`
+        # self-refs). The consumer is expected to include any
+        # required stdlib before this bundle — cyrius's deps phase
+        # handles the include order, now with stdlib-before-deps
+        # (v5.5.26 flip in cbt/build.cyr).
+        # v5.7.36: per-module read buffer 64KB → 256KB (mabda hit the 64KB wall).
+        # v6.4.10: 256KB → 1MB (1048576), cycc's input_buf then (24 MB since) —
+        # distlib was refusing modules the compiler compiles fine (shabdakosh's 283KB
+        # generated CMUdict forced a manual shard). One-shot alloc in the short-lived
+        # cbt process; the fail-loud guard is preserved at the new 1MB ceiling. A
+        # dynamic (_file_size-based) buffer is the eventual fix if a module nears 1MB.
+        var fbuf = alloc(1048576);
+        var flen = file_read_all(mod_path, fbuf, 1048575);
+        if (flen <= 0) { mi = mi + 1; continue; }
+        # v6.2.51 (closeout): fail loud on a >1MB module rather than silently
+        # truncating the bundle + dropping its trailing include/leaf lines.
+        if (flen >= 1048575 && _file_size(mod_path) > 1048575) {
+            _err_ctx("distlib: module exceeds 1024KB read cap (truncated)", _shown(mod_path));
+            _aw_abort(ofd);
+            return 1;
+        }
+        store8(fbuf + flen, 0);
+
+        var pos = 0;
+        while (pos < flen) {
+            var ls = pos;
+            while (pos < flen && load8(fbuf + pos) != 10) { pos = pos + 1; }
+            var le = pos;
+            if (pos < flen) { pos = pos + 1; }
+
+            var ll = le - ls;
+            if (ll >= 8 && memeq(fbuf + ls, "include ", 8) == 1) {
+                # v6.2.47: capture the `lib/` requirement for the sidecar.
+                _distlib_capture_lib_leaf(req_leaves, fbuf + ls, ll);
+                # v6.2.48: strip `src/` self-refs (those files are absent at the
+                # consumer) but KEEP `lib/` includes so the bundle stays
+                # self-contained for RAW-include consumers (e.g. a test that does
+                # `include "dist/pkg.cyr"` directly — sigil's tcyr suite). A
+                # cyrius-deps consumer dedupes the redundant include against the
+                # sidecar prepend via include-once. This makes cyrius distlib a
+                # superset of the bash regen-dist.sh it replaces (which kept lib/,
+                # stripped src/) — moving sigil back to distlib was breaking its
+                # tcyr suite precisely because distlib used to strip lib/ too.
+                if (ll >= 13 && memeq(fbuf + ls, "include \"src/", 13) == 1) {
+                    continue;
+                }
+            }
+            # v6.0.9 — collapse consecutive blanks. A line is blank
+            # iff ll == 0. Skip a blank if the previous emitted line
+            # was also blank; otherwise track the new state.
+            if (ll == 0) {
+                if (prev_blank == 1) { continue; }
+                prev_blank = 1;
+            } else {
+                prev_blank = 0;
+            }
+            _aw_write(ofd, fbuf + ls, ll);
+            _aw_write(ofd, "\n", 1);
+            total_lines = total_lines + 1;
+        }
+
+        mi = mi + 1;
+    }
+
+    if (_aw_commit(ofd) != 0) {
+        _err_ctx("distlib: write failed (previous bundle left as it was)", out_path);
+        return 1;
+    }
+
+    # ⭐ 6.6.18 (D4, P4 option 2) — THE COMPILE-VERIFY FIXPOINT IS THE ONLY AUTHORITY FOR THE
+    # SIDECAR. The seed is just the `lib/` includes the bundled modules KEEP (above) — those lines
+    # ship in the bundle, so they are a hard requirement of the artifact itself. Three text
+    # inferences used to feed it and are gone: the umbrella scan of src/lib.cyr + src/main.cyr
+    # (v6.2.48), the `[deps] stdlib` union (v6.5.10) and the profile prune (v6.4.48). The union
+    # published a package's TEST-ONLY leaves to every consumer — 75 ecosystem sidecars name
+    # `assert` and 68 of those bundles reference no assert symbol; 51 of 53 name `bench` and use
+    # none of it — and it hid real gaps (niyama's `unicode`, mabda's agnos `io`, D1/D3) behind a
+    # declaration. Every filed case the inferences existed for (setu: referenced but not
+    # included; ranga / sit: empty profile sidecars; the v6.4.48 sha-profile over-report) is now
+    # derived by the compiler. `[deps] stdlib` still feeds auto-prepend and `cyrius deps` for the
+    # package's OWN builds; it never reaches the published sidecar. CHANGELOG [6.6.18]
+
+    # v6.2.48: a captured `lib/X` that matches a `[deps.X]` named dep is NOT a
+    # stdlib leaf — it resolves as a fold via the consumer's transitive
+    # resolution. Listing it in the sidecar would double-include `lib/X.cyr`
+    # (once transitively, once as a bogus stdlib pull) → duplicate-fn errors.
+    # Collect the named-dep names so they're EXCLUDED from the sidecar below.
+    var named_deps = _distlib_named_deps(mbuf, mlen);   # v6.2.51 closeout: shared helper (was duplicated here + in _distlib_modular_emit)
+
+    # v6.2.47 (deps lever 1, Phase A producer side): emit the dep sidecar
+    # `dist/<pkg>.deps` — one stdlib leaf per line — capturing the
+    # `include "lib/X"` requirements stripped above. Lets `cyrius deps`
+    # auto-resolve a fold's stdlib leaves for a consumer that declares just
+    # `[deps.<pkg>]` (no hand-authored `requires`). Folds destroy their
+    # includes at fold time, so this index is the only record.
+    # v6.5.29 — a PROFILE always emits its sidecar, even when the pruned set is empty.
+    # The `> 0` guard meant an empty result wrote no file at all, so `dist/<pkg>-<prof>.deps`
+    # simply never appeared and a consumer following the sidecar silently fell back to the
+    # BASE sidecar — the superset the profile exists to avoid. An empty profile sidecar is a
+    # true and useful statement ("this profile needs no stdlib leaves"); a missing one is an
+    # invitation to inherit the wrong answer. The base path keeps the `> 0` guard so a
+    # package with genuinely no leaves does not gain a stray file.
+    # v6.5.37 (A3) — verify the leaf set against the artifact before publishing it.
+    var _verified_added = _distlib_verify_leaves(req_leaves, out_path, named_deps);
+    # 6.6.9: a verify that could not run is not a verified sidecar — keep the previous one
+    # (and, under --check, the temp bundle goes with it).
+    if (_verified_added < 0) {
+        if (_distlib_check == 1) { xunlink(out_path); }
+        return 1;
+    }
+    # 6.6.18 review: the TOTAL, then how many the verify derived (it printed the derived count
+    # alone — sigil's "9" for a 19-leaf sidecar).
+    var sc_total = 0;
+    var sci = 0;
+    while (sci < vec_len(req_leaves)) {
+        if (_distlib_vec_has(named_deps, vec_get(req_leaves, sci)) == 0) { sc_total = sc_total + 1; }
+        sci = sci + 1;
+    }
+    if (sc_total > 0) {
+        sys_write(STDOUT_FD, "  sidecar: ", 11);
+        fmt_int(sc_total);
+        sys_write(STDOUT_FD, " leaf(s), compile-verified (", 28);
+        fmt_int(_verified_added);
+        println(" derived by the verify)");
+    }
+    # 6.6.18 (D5): the requires block — see _distlib_write_requires. Same under --check, so the
+    # regenerated temp is compared WITH its block.
+    var rq_sb = str_builder_new();
+    var rqpl = strlen(real_path);
+    if (rqpl > 4 && memeq(real_path + rqpl - 4, ".cyr", 4) == 1) {
+        var rqstem = alloc(rqpl - 3);
+        memcpy(rqstem, real_path, rqpl - 4);
+        store8(rqstem + rqpl - 4, 0);
+        str_builder_add_cstr(rq_sb, rqstem);
+    } else {
+        str_builder_add_cstr(rq_sb, real_path);
+    }
+    str_builder_add_cstr(rq_sb, ".deps");
+    if (_distlib_write_requires(out_path, str_data(str_builder_build(rq_sb)), req_leaves, named_deps) != 0) {
+        if (_distlib_check == 1) { xunlink(out_path); }
+        return 1;
+    }
+    # ⛔ v6.5.37 (A7) — AND REMOVE A SIDECAR THAT NO LONGER DESCRIBES ANYTHING.
+    # The `> 0` guard below is deliberate (v6.5.29: a package with genuinely no leaves should
+    # not gain a stray file) but it only decides whether to WRITE. It never removed an
+    # existing one, so a package that dropped its whole `[deps] stdlib` kept publishing the
+    # old list: measured at 6.5.36, 7 stale leaves survived the leaf set going empty, and
+    # `cyrius deps` in a consumer went on vendoring all seven. Over-reporting is the
+    # dangerous direction — a named leaf that is not stdlib is a HARD resolver error — so a
+    # sidecar that has become false must go, not linger.
+    # Deletion rather than an empty file keeps the v6.5.29 intent intact: no stray files for
+    # packages that never had leaves, and no lie for packages that stopped having them.
+    if (vec_len(req_leaves) == 0 && profile == 0) {
+        var st_sb = str_builder_new();
+        var stopl = strlen(out_path);
+        if (stopl > 4 && memeq(out_path + stopl - 4, ".cyr", 4) == 1) {
+            var ststem = alloc(stopl - 3);
+            memcpy(ststem, out_path, stopl - 4);
+            store8(ststem + stopl - 4, 0);
+            str_builder_add_cstr(st_sb, ststem);
+        } else {
+            str_builder_add_cstr(st_sb, out_path);
+        }
+        str_builder_add_cstr(st_sb, ".deps");
+        var stale_deps = str_data(str_builder_build(st_sb));
+        if (file_exists(stale_deps) == 1) {
+            xunlink(stale_deps);
+            sys_write(STDOUT_FD, "  sidecar: removed ", 19);
+            sys_write(STDOUT_FD, stale_deps, strlen(stale_deps));
+            println(" (no stdlib leaves remain)");
+        }
+    }
+    if (vec_len(req_leaves) > 0 || profile != 0) {
+        var dep_sb = str_builder_new();
+        var opl = strlen(out_path);
+        if (opl > 4 && memeq(out_path + opl - 4, ".cyr", 4) == 1) {
+            var stem = alloc(opl - 3);
+            memcpy(stem, out_path, opl - 4);
+            store8(stem + opl - 4, 0);
+            str_builder_add_cstr(dep_sb, stem);
+        } else {
+            str_builder_add_cstr(dep_sb, out_path);
+        }
+        str_builder_add_cstr(dep_sb, ".deps");
+        var sidecar_path = str_data(str_builder_build(dep_sb));
+        # v6.6.6: crash-safe and checked, like the bundle — an unwritable sidecar used to be
+        # skipped silently and a short write truncated it, both with exit 0.
+        var dfd = _aw_open(sidecar_path);
+        if (dfd == 0) { _err_ctx("distlib: cannot write", sidecar_path); return 1; }
+        if (dfd != 0) {
+            _aw_write(dfd, "# cyrius dep sidecar - stdlib leaves this fold requires in scope.\n", 66);
+            _aw_write(dfd, "# Auto-generated by `cyrius distlib`; consumed by `cyrius deps`.\n", 65);
+            var li = 0;
+            var written = 0;
+            while (li < vec_len(req_leaves)) {
+                var lf = vec_get(req_leaves, li);
+                var lfl = strlen(lf);
+                # Skip named-dep folds (resolved transitively, not as leaves).
+                var is_nd = 0;
+                var ci = 0;
+                while (ci < vec_len(named_deps)) {
+                    var ndn = vec_get(named_deps, ci);
+                    if (strlen(ndn) == lfl) { if (memeq(ndn, lf, lfl) == 1) { is_nd = 1; } }
+                    ci = ci + 1;
+                }
+                if (is_nd == 0) {
+                    _aw_write(dfd, lf, lfl);
+                    _aw_write(dfd, "\n", 1);
+                    written = written + 1;
+                }
+                li = li + 1;
+            }
+            if (_aw_commit(dfd) != 0) { _err_ctx("distlib: write failed (previous sidecar left as it was)", sidecar_path); return 1; }
+            sys_write(STDOUT_FD, sidecar_path, strlen(sidecar_path));
+            sys_write(STDOUT_FD, ": ", 2);
+            fmt_int(written);
+            println(" stdlib leaf requirements");
+        }
+    }
+
+    # Standalone compile-check is informational only (v5.5.27).
+    # A bundle like `dist/patra.cyr` is DESIGNED to be concatenated
+    # into a consumer's compile unit that already has the stdlib in
+    # scope (via the consumer's own `include "lib/syscalls.cyr"` or
+    # via cyrius's own `[deps] stdlib = [...]` resolution). The
+    # bundle's include directives are stripped during concatenation,
+    # so references like `SYS_LSEEK` are intentionally unresolved
+    # until the consumer includes them. A non-zero compile result
+    # is therefore NOT a bundle defect; it's expected for bundles
+    # whose stdlib deps are declared in cyrius.cyml rather than
+    # re-included per module. Emit an info note instead of failing
+    # the command.
+    #
+    # Prior behavior exited 1 here, which broke patra 1.5.5's
+    # release CI (the release workflow runs `cyrius distlib` as a
+    # step; every consumer-bundle shape tripped the same check).
+    # v6.5.8: in --check mode compare against the committed bundle and clean up. Skipped
+    # for the informational compile below — it would be N spurious compiles (14 for sigil)
+    # of a temp we are about to delete.
+    if (_distlib_check == 1) {
+        var rq_has = _distlib_has_requires(out_path);
+        var same = _distlib_files_same(out_path, real_path);
+        var dp_sb = str_builder_new();
+        var dopl = strlen(out_path);
+        if (dopl > 4) {
+            var dstem = alloc(dopl - 3);
+            memcpy(dstem, out_path, dopl - 4);
+            store8(dstem + dopl - 4, 0);
+            str_builder_add_cstr(dp_sb, dstem);
+        }
+        str_builder_add_cstr(dp_sb, ".deps");
+        var chk_deps = str_data(str_builder_build(dp_sb));
+        # The .deps sidecar counts too — sigil's CI already diff-checks dist/sigil.deps,
+        # and a stale sidecar mis-resolves a consumer's stdlib leaves.
+        # v6.5.37 (A7) — build the committed sidecar's path FIRST, because the
+        # interesting case is the one where the regenerated file does NOT exist.
+        var rd_sb = str_builder_new();
+        var ropl = strlen(real_path);
+        if (ropl > 4) {
+            var rstem = alloc(ropl - 3);
+            memcpy(rstem, real_path, ropl - 4);
+            store8(rstem + ropl - 4, 0);
+            str_builder_add_cstr(rd_sb, rstem);
+        }
+        str_builder_add_cstr(rd_sb, ".deps");
+        var committed_deps = str_data(str_builder_build(rd_sb));
+        # ⛔ v6.5.37 (A7) — "REGENERATED ABSENT, COMMITTED PRESENT" IS DRIFT, NOT CLEAN.
+        # This was `if (file_exists(chk_deps) == 1) { compare }`, so when the fresh run
+        # produced NO sidecar — which is exactly what happens once a package's leaf set
+        # empties — the comparison was skipped and `--check` reported *current* over a
+        # committed file that no longer describes anything. Measured at 6.5.36: a package
+        # that dropped its whole `[deps] stdlib` kept a 7-leaf sidecar and --check stayed
+        # green. The absence of the regenerated file is the signal, not a reason to skip.
+        if (file_exists(chk_deps) == 1) {
+            if (_distlib_files_same(chk_deps, committed_deps) == 0) { same = 0; }
+            xunlink(chk_deps);
+        } elif (file_exists(committed_deps) == 1) {
+            same = 0;
+        }
+        xunlink(out_path);
+        if (same == 0) {
+            _distlib_drift = _distlib_drift + 1;
+            sys_write(STDERR_FD, "  STALE: ", 9);
+            sys_write(STDERR_FD, real_path, strlen(real_path));
+            sys_write(STDERR_FD, "\n", 1);
+            # 6.6.18 (D5): every pre-6.6.18 bundle with leaves reads STALE — say why.
+            if (rq_has == 1 && file_exists(real_path) == 1 && _distlib_has_requires(real_path) == 0) {
+                var rqm = "    the committed bundle predates cyrius 6.6.18's requires block — run cyrius distlib --all\n";
+                sys_write(STDERR_FD, rqm, strlen(rqm));
+            }
+            return 0;
+        }
+        sys_write(STDOUT_FD, "  current: ", 11);
+        sys_write(STDOUT_FD, real_path, strlen(real_path));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 0;
+    }
+
+    # v6.5.14: this compiled to `/dev/null` and therefore NEVER RAN. compile()
+    # writes an intermediate `<output>.tmp.<pid>` for the atomic rename, and
+    # `/dev/null.tmp.<pid>` cannot be created (/dev/ is not writable), so the
+    # call failed on the WRITE every time — before cycc ever saw the bundle.
+    # The note below then attributed that failure to unresolved symbols, so a
+    # syntactically broken bundle and a perfect one printed the same reassuring
+    # line. This is the identical defect v5.7.8 fixed for `cyrius check`
+    # (~line 566 of this file); distlib never got the same treatment.
+    # ...and it is checked the way a CONSUMER actually uses it: through a
+    # generated one-line entry that `include`s the bundle. Piping the bundle
+    # itself down stdin (what this used to do) also hits cycc's 1 MB input_buf
+    # — sigil's main bundle passed 1 MB and reported `input exceeds 1MB buffer`
+    # — whereas `include` is resolved by cycc from DISK and has no such cap. So
+    # the stdin form was doubly wrong: it never ran, and had it run it would
+    # have failed the largest bundles for a reason no consumer ever meets.
+    # The entry lands NEXT TO the bundle so the v6.5.7 `#@incdir` marker
+    # resolves the include relative to the entry's own directory.
+    var dl_pid = sys_getpid();
+    var dl_ob = str_builder_new();
+    str_builder_add_cstr(dl_ob, _cbt_tmpfile("distchk_"));
+    str_builder_add_int(dl_ob, dl_pid);
+    var dl_out = str_data(str_builder_build(dl_ob));
+
+    var dl_base = out_path;
+    var dl_bi = strlen(out_path);
+    while (dl_bi > 0) {
+        if (load8(out_path + dl_bi - 1) == 47) { dl_base = out_path + dl_bi; dl_bi = 0; }
+        else { dl_bi = dl_bi - 1; }
+    }
+    # v6.5.17: the entry lives in the PROJECT ROOT, not beside the bundle, and
+    # includes the bundle by its full relative path. v6.5.14 put it in dist/ so
+    # the #@incdir marker would resolve the bundle's own name — but that also
+    # rooted the manifest's auto-prepended `lib/<leaf>.cyr` lines at dist/lib/,
+    # which does not exist, so the stdlib silently failed to prepend. bayan is
+    # the case that exposed it: its bundle compiles clean when the same leaves
+    # are included by hand, and `cyrius check --with-deps` fails identically —
+    # i.e. the bundle was always correct and only the check's CWD was wrong.
+    var dl_eb = str_builder_new();
+    str_builder_add_cstr(dl_eb, ".distchk");
+    str_builder_add_int(dl_eb, dl_pid);
+    str_builder_add_cstr(dl_eb, ".cyr");
+    var dl_entry = str_data(str_builder_build(dl_eb));
+
+    var dl_sb = str_builder_new();
+    str_builder_add_cstr(dl_sb, "include \"");
+    str_builder_add_cstr(dl_sb, out_path);
+    str_builder_add_cstr(dl_sb, "\"\n");
+    var dl_src = str_data(str_builder_build(dl_sb));
+    # Undefined fns are the ONE expected failure (a bundle ships no stdlib), so
+    # downgrade exactly that and let everything else stay fatal. Previously any
+    # non-zero result printed the reassuring "unresolved symbols (expected)"
+    # note and distlib still exited 0 — so a bundle that did not parse shipped
+    # looking identical to a good one.
+    # v6.5.17: compile the entry WITH the manifest's [deps] stdlib in scope.
+    # 6.5.14's repaired check compiled the bundle ALONE and downgraded undefined
+    # FNS with --allow-undef. But a bundle ships no stdlib GLOBALS either, and an
+    # undefined variable is a PARSE-TIME abort (parse/expr.cyr:589) that
+    # --allow-undef cannot reach — it only gates the fixup stage. So any bundle
+    # reading a stdlib `var` or enum constant was reported as defective and
+    # distlib exited 1: hisab's `F64_ONE` (the ordinary way to write 1.0 in a
+    # language with no float literals), and 44 of 69 [lib] repos on the filer's
+    # machine. The bundle was correct; the check was asking the wrong question.
+    # Prepending deps asks the RIGHT one — "does this compile the way a consumer
+    # will use it" — and makes the check STRONGER, not weaker.
+    var dl_saved_skip = _skip_deps;
+    _skip_deps = 0;
+    # 6.6.19 (E3) — the bundle is checked ALONE: not beside the producer's [embed] prelude, and not
+    # beside its [build] modules (the base bundle IS those modules, so they compiled twice; a
+    # [lib.P] bundle borrowed their globals). Not a forked child — saved and restored.
+    var dl_saved_emb = _embeds;
+    var dl_saved_bm = _build_modules;
+    _embeds = 0;
+    _build_modules = 0;
+    var check_r = 0 - 1;
+    var dl_wrote = 0;
+    var dl_errf = _cbt_tmpfile("distlib_err");
+    var dl_retired = 0;
+    var dl_cap = 0;
+    # ⛔ 6.6.20 (the committed-symlink write bug): the entry is the PROJECT's `.distchk<pid>.cyr`, and a name that exists
+    # is removed, never followed — `file_write_all` (O_TRUNC) wrote through a committed link
+    # there, so a checkout planting `.distchk<N>.cyr -> <any path>` for a range of pids (a CI
+    # container's are small and steady) had `cyrius distlib` create or truncate that file.
+    xunlink(dl_entry);
+    var dl_efd = file_create_exclusive(dl_entry, 0x1A4);
+    if (dl_efd >= 0) {
+        var dl_ew = _io_write_full(dl_efd, dl_src, strlen(dl_src));
+        if (file_close(dl_efd) < 0) { dl_ew = 0 - 1; }
+        if (dl_ew >= 0) { dl_wrote = 1; } else { xunlink(dl_entry); }
+    }
+    # ⛔ 6.7.14: the self-check reads the PINNED stdlib, as the verify does — through the same
+    # mirror as the compiler's lib/ overlay (_distlib_mirror_make: the snapshot minus what ./lib
+    # holds). It had none, so a leaf ./lib lacks resolved from the CLI's own version slot: absent,
+    # "cannot open include file"; present, a stdlib the bundle does not pin. The verify has
+    # dropped its mirror by now; this one is made for the compile and dropped right after it.
+    var dl_root = 0;
+    var dl_mir = 0;
+    if (dl_wrote == 1) {
+        dl_root = _distlib_stdlib_root();
+        if (dl_root != 0) { dl_mir = _distlib_mirror_make(dl_root); }
+        if (dl_mir == 0) {
+            xunlink(dl_entry);
+            _skip_deps = dl_saved_skip;
+            _embeds = dl_saved_emb;
+            _build_modules = dl_saved_bm;
+            if (dl_root == 0) {
+                var nsr = "distlib: no stdlib snapshot for the pinned cyrius — the bundle self-check cannot run";
+                _err_ctx(nsr, out_path);
+            }
+            return 1;
+        }
+    }
+    if (dl_wrote == 1) {
+        # 6.6.20 (CBT-02): the capture is created HERE, so a compile() that bails before its child
+        # opens it still leaves an (empty) file to read back, and "cannot read it" means only that.
+        var dl_cfd = sys_open(dl_errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+        if (dl_cfd >= 0) {
+            sys_close(dl_cfd);
+            dl_cap = 1;
+            _cc_allow_undef = 1;
+            _cc_stderr_to = dl_errf;
+            check_r = compile(dl_entry, dl_out);
+            _cc_stderr_to = 0;
+            _cc_allow_undef = 0;
+            # v6.6.2 — the blast-door check. Undefined fns are downgraded above; a RETIRED name is
+            # not a consumer's to supply and must still fail. See _distlib_retired_name.
+            dl_retired = _distlib_scan_retired_file(dl_errf);
+            # 6.6.20 (CBT-03): a bundle that does not compile for any OTHER reason gets the
+            # compiler's own diagnostics. The capture above is what silences compile()'s own relay,
+            # and it was read only for the scan, so the user saw "does not compile" and never WHY
+            # (the error line was lost since the v6.6.2 capture). A retired name is reported by name
+            # below instead — its capture is the undefined-fn warnings, not an error.
+            if (check_r != 0 && dl_retired == 0) { _distlib_relay_selfcheck(dl_errf); }
+            sys_unlink(dl_errf);
+        }
+        xunlink(dl_entry);
+        _distlib_mirror_drop();
+    }
+    _skip_deps = dl_saved_skip;
+    _embeds = dl_saved_emb;
+    _build_modules = dl_saved_bm;
+    sys_unlink(dl_out);
+    if (dl_wrote == 0) {
+        _err_ctx("distlib: cannot write the bundle self-check entry", dl_entry);
+        return 1;
+    }
+    if (dl_cap == 0) {
+        var mcap = "distlib: cannot create the self-check capture — RETIRED-name check NOT run, bundle NOT verified";
+        _err_ctx(mcap, dl_errf);
+        return 1;
+    }
+    if (dl_retired == 0 - 1) {
+        var mrd = "distlib: the self-check capture was not read whole — RETIRED-name check NOT run, bundle NOT verified";
+        _err_ctx(mrd, out_path);
+        return 1;
+    }
+    if (dl_retired != 0) {
+        _err_ctx("distlib: the bundle calls a RETIRED stdlib name", out_path);
+        sys_write(STDERR_FD, "      symbol: ", 14);
+        sys_write(STDERR_FD, dl_retired, strlen(dl_retired));
+        sys_write(STDERR_FD, "\n", 1);
+        _info("      Undefined fns are downgraded here because a bundle omits the stdlib and the");
+        _info("      consumer supplies it. This name is different: the stdlib RETIRED it, so no");
+        _info("      consumer on any version can satisfy it. See docs/retired-symbols.allow.");
+        return 1;
+    }
+    if (check_r != 0) {
+        _err_ctx("distlib: the generated bundle does not compile", out_path);
+        _info("      (undefined fns are already downgraded — this is a REAL defect");
+        _info("       in the bundle, not the consumer's missing stdlib).");
+        return 1;
+    }
+
+    # Report
+    sys_write(STDOUT_FD, out_path, strlen(out_path));
+    sys_write(STDOUT_FD, ": ", 2);
+    fmt_int(total_lines);
+    sys_write(STDOUT_FD, " lines (v", 9);
+    sys_write(STDOUT_FD, pkg_ver, strlen(pkg_ver));
+    println(")");
+    return 0;
+}

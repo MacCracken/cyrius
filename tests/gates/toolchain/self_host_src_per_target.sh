@@ -75,9 +75,11 @@ CC="$R/build/cycc"
 # The file under test may be overridden so a mutant tree can be measured without
 # touching the repo (the harness at the bottom of this header sets it).
 BUILD_CYR="${SHSPT_BUILD_CYR:-$R/cbt/build.cyr}"
-CMDS_CYR="${SHSPT_CMDS_CYR:-$R/cbt/commands.cyr}"
+# 6.7.18: cmd_self and cmd_soak live in cbt/commands/self.cyr and cbt/commands/soak_smoke.cyr (the verb split of
+# cbt/commands.cyr): CMDS_CYR is the list of the two, read in that order.
+CMDS_CYR="${SHSPT_CMDS_CYR:-$R/cbt/commands/self.cyr $R/cbt/commands/soak_smoke.cyr}"
 [ -f "$BUILD_CYR" ] || { echo "FAIL self_host_src_per_target: missing $BUILD_CYR"; exit 1; }
-[ -f "$CMDS_CYR" ]  || { echo "FAIL self_host_src_per_target: missing $CMDS_CYR"; exit 1; }
+for _c in $CMDS_CYR; do [ -f "$_c" ] || { echo "FAIL self_host_src_per_target: missing $_c"; exit 1; }; done
 
 fail=0
 note() { printf '  %s\n' "$*"; }
@@ -220,7 +222,7 @@ check_row windows       scripts/build-windows-tarball.sh       "$(expect_from sc
 # `cmd_self` and `cmd_soak` are the two verbs that self-host. A fork path written into
 # either body is the defect coming back, one caller at a time.
 for fnname in cmd_self cmd_soak; do
-  body=$(awk -v f="^fn $fnname\\\\(" '$0 ~ f {inb=1} inb {print} inb && /^\}/ {exit}' "$CMDS_CYR")
+  body=$(awk -v f="^fn $fnname\\\\(" '$0 ~ f {inb=1} inb {print} inb && /^\}/ {exit}' $CMDS_CYR)
   if [ -z "$body" ]; then
     echo "FAIL axis5: could not extract $fnname from $CMDS_CYR"
     fail=1
