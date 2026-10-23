@@ -4,7 +4,7 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — 6.7.17 in flight
+## [6.7.17] — 2026-10-22
 
 **Break 2, repair 7 — the cleanup: the 22 issues still open after 6.7.16 (the triage at the open — five read-only
 agents on `bbb771d26` — found all 22 open) and the fold wave the user asked for (2026-10-22: "lets do 6.7.17 and
