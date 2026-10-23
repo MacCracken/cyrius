@@ -80,6 +80,9 @@
 #     pid gone between ps and /proc, and a kill of an exited child, ended it the same way.
 #   * check_driver_bounded.sh (6.7.18) — axis 4 ran the check driver bare on suites that are RED by
 #     design (`( … "$T/drv" tcyr ) > out`): its exit 1 ended the gate before any 4a row.
+#   * check_driver_dies_with_check_sh.sh (6.7.18) — `kill -9 "$CHK"; wait "$CHK"`: the wait on a
+#     SIGKILLed job returns 137 (rc 1 at axis 4), and the EXIT trap's kill of a gone pid stopped the
+#     trap before its `rm -rf`. Every kill / wait of a process that may be gone is `|| true` now.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -149,7 +152,8 @@ tests/gates/toolchain/install_gates_ship_the_checksum.sh
 tests/gates/toolchain/scaffold_verb_discovery.sh
 tests/gates/toolchain/stdlib_key_scan_quoted.sh
 tests/gates/toolchain/test_runner_bounded.sh
-tests/gates/toolchain/check_driver_bounded.sh"
+tests/gates/toolchain/check_driver_bounded.sh
+tests/gates/toolchain/check_driver_dies_with_check_sh.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
