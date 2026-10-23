@@ -695,13 +695,19 @@ fn _async_dns_build_query(id, host, out): i64 {
     return qi + 4;
 }
 
-# Skip a DNS name at `off` (labels + 0xC0 compression pointer). Returns offset past it.
+# Skip a DNS name at `off` (labels + 0xC0 compression pointer). Returns offset past it, or -1 when
+# it runs off the end of buf[0, blen), uses a reserved label type, or has more than 256 labels.
+# 6.7.18 (D1): every byte is read through a slice of buf[0, blen) — checked in every build, so a
+# bound this fn gets wrong is `slice bounds violation`, never a read past the datagram.
+# CHANGELOG [6.7.18]
 fn _async_dns_skip_name(buf, blen, off): i64 {
+    var s: [u8] = 0;
+    slice_set(&s, buf, blen);
     var p = off;
     var safety = 0;
     while (safety < 256) {
-        if (p >= blen) { return 0 - 1; }
-        var c = load8(buf + p);
+        if (p < 0 || p >= blen) { return 0 - 1; }
+        var c = s[p];
         if (c == 0) { return p + 1; }
         if ((c & 0xC0) == 0xC0) {
             if (p + 1 >= blen) { return 0 - 1; }
@@ -717,11 +723,15 @@ fn _async_dns_skip_name(buf, blen, off): i64 {
 # Parse a DNS response: verify the txid + rcode, skip the question, and return the
 # first A record's IPv4 (network-order bytes as an int, ready for async_connect), or
 # -1. Pragmatic — returns the first A answer (no CNAME-chain / name-match validation).
+# 6.7.18 (D1): every read goes through a slice of buf[0, blen) — single bytes as `r[i]`, the
+# 16-bit fields through slice_get_be — checked in every build. CHANGELOG [6.7.18]
 fn _async_dns_parse_a(buf, blen, expected_id): i64 {
     if (blen < 12) { return 0 - 1; }
-    if (((load8(buf + 0) << 8) | load8(buf + 1)) != expected_id) { return 0 - 1; }
-    if ((load8(buf + 3) & 0x0F) != 0) { return 0 - 1; }        # rcode
-    var ancount = (load8(buf + 6) << 8) | load8(buf + 7);
+    var r: [u8] = 0;
+    slice_set(&r, buf, blen);
+    if (slice_get_be(&r, 0, 2) != expected_id) { return 0 - 1; }
+    if ((r[3] & 0x0F) != 0) { return 0 - 1; }                 # rcode
+    var ancount = slice_get_be(&r, 6, 2);
     if (ancount == 0) { return 0 - 1; }
     var off = _async_dns_skip_name(buf, blen, 12);             # skip the question name
     if (off < 0) { return 0 - 1; }
@@ -731,17 +741,13 @@ fn _async_dns_parse_a(buf, blen, expected_id): i64 {
         off = _async_dns_skip_name(buf, blen, off);
         if (off < 0) { return 0 - 1; }
         if (off + 10 > blen) { return 0 - 1; }
-        var rtype = (load8(buf + off + 0) << 8) | load8(buf + off + 1);
-        var rdlength = (load8(buf + off + 8) << 8) | load8(buf + off + 9);
+        var rtype = slice_get_be(&r, off, 2);
+        var rdlength = slice_get_be(&r, off + 8, 2);
         off = off + 10;
         if (rtype == 1) {
             if (rdlength != 4) { return 0 - 1; }
             if (off + 4 > blen) { return 0 - 1; }
-            var b0 = load8(buf + off);
-            var b1 = load8(buf + off + 1);
-            var b2 = load8(buf + off + 2);
-            var b3 = load8(buf + off + 3);
-            return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            return r[off] | (r[off + 1] << 8) | (r[off + 2] << 16) | (r[off + 3] << 24);
         }
         off = off + rdlength;
         i = i + 1;

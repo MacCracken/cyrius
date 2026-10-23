@@ -256,6 +256,27 @@ fn _slice_idx_addr(s_addr, idx, w): i64 {
     return load64(s_addr) + idx * w;
 }
 
+# 6.7.18 (the user's D1): the `w`-byte (1..8) BIG-ENDIAN unsigned field at element `i` of the
+# [u8] slice at `s` (a slice POINTER, `&s`), every byte of it checked as `s[i]` checks one: an `i`
+# below 0, a field that reaches past `s.len`, or a width outside 1..8 is `slice bounds violation`,
+# exit 134, in every build. The one checked read the network parsers take a multi-byte length or
+# type field through (a DNS RR's TYPE / RDLENGTH, a WebSocket frame's extended length), so a parser
+# whose own bounds check is wrong stops at the slice instead of reading past the buffer.
+# CHANGELOG [6.7.18]
+fn slice_get_be(s, i, w): i64 {
+    if (w < 1 || w > 8) { _slice_bounds_trap(); }
+    if (i < 0) { _slice_bounds_trap(); }
+    if (i > load64(s + 8) - w) { _slice_bounds_trap(); }
+    var p = load64(s) + i;
+    var v = 0;
+    var k = 0;
+    while (k < w) {
+        v = (v << 8) | load8(p + k);
+        k = k + 1;
+    }
+    return v;
+}
+
 # Unchecked variants — same shape, no bounds check. Caller's
 # responsibility to guarantee 0 <= idx < s.len. Useful inside
 # already-checked loops or perf hot paths where the bounds check

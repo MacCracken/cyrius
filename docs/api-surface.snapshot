@@ -4475,6 +4475,7 @@ slice::slice_eq/2
 slice::slice_eq_bytes/2
 slice::slice_from_buf/3
 slice::slice_from_cstr/2
+slice::slice_get_be/3
 slice::slice_is_empty/1
 slice::slice_is_null/1
 slice::slice_len/1
