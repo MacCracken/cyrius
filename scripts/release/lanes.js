@@ -23,6 +23,7 @@ export const meta = {
 //   hosts: ['ecb macOS arm64', ...],   the verification hosts, by ~/.ssh/config alias + what each is
 //   lanes: [{ name, wt: '<abs worktree>', base: '<sha or branch the lane was cut from>',
 //             units: ['G1', ...], heap: true? (the lane carries a heap-layout bite),
+//   max_parallel: N? — at most N lanes at once (default: all),
 //             notes: { '<unit>': '<text>' }? (a resumed run: what that unit already committed or left
 //                                             uncommitted in the worktree, put in its agent's prompt) }]
 // }
@@ -157,5 +158,11 @@ const runLane = async (l) => {
   const fix = await agent(FIX(l, review || { verdicts: [], must_fix: [], file_as_issue: [] }), { label: `fix:${l.name}`, phase: 'Fix + gate', schema: FIX_RES })
   return { lane: l.name, units, review, fix }
 }
-const results = await parallel(args.lanes.map(l => () => runLane(l)))
+// args.max_parallel: at most this many lanes at once (a pool; default all) — 6.7.17 ran thirteen at once on one
+// 16-core box and every lane's commands crawled. Results keep the lanes' order.
+const MAXP = Math.max(1, Math.min(args.max_parallel || args.lanes.length, args.lanes.length))
+const results = new Array(args.lanes.length)
+let nextLane = 0
+const worker = async () => { while (nextLane < args.lanes.length) { const i = nextLane++; results[i] = await runLane(args.lanes[i]) } }
+await parallel(Array.from({ length: MAXP }, () => worker))
 return results
