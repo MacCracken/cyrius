@@ -45,6 +45,9 @@ as a planning aid, never a cap (user, 2026-06-10: "no worries about patch size, 
 Still 6.x. About 3–5 releases. Whether they form the tail of v6.7.x or the head of the RISC-V minor is decided at the
 v6.7.x close.
 
+**Placed at 6.8.0** (the first release after v6.7.x): [`lib/pam.cyr` refuses empty passwords — drop `nullok`](issues/2026-10-22-pam-nullok-empty-password-authenticates.md)
+(the user, 2026-10-22, at the 6.7.18 audit).
+
 ### The DCE compaction arc
 
 Order: **aarch64 first** (its own repair model, which rv64 reuses; cheaper after 6.6.18's ESYSXLAT fold), then PE /

@@ -242,7 +242,8 @@ acceptable prevents the fix from covering it.
 bootstrap/       the 29 KB seed + cybs.cyr + asm.cyr
 src/             main.cyr + the per-target forks (main_aarch64{,_macho,_native}.cyr, main_win.cyr,
                  main_x86_macho.cyr, main_cx.cyr) + version_str.cyr (generated)
-  frontend/      lex, lex_pp, parse + the parse_* split; frontend/ts/ — the TypeScript front end
+  frontend/      lex/ (lex, pp, attr), parse/ (parse + its split: decl, expr, fn, fn_def, types, ctrl, cov);
+                 frontend/ts/ — the TypeScript front end
   backend/       x86/ (emit, jump, fixup, decode, float = SSE/AVX + all SIMD), aarch64/, macho/, pe/,
                  cx/ (bytecode; runner programs/cxvm.cyr), js/ (TS → JS), common/ (tokens, env — every
                  fork; runtime — every native fork, all but cx; never re-fork them)
