@@ -14,12 +14,16 @@ fn L64(a): i64 {
 # ================================================================
 # STATE ACCESSORS
 # ================================================================
+# The hot accessors (these, the token-stream ones in backend/common/tokens.cyr, the local-slot and
+# line ones below) read and write their cell with load64 / store64 itself, not through L64 / S64:
+# each wrapper is one more call, and L64's frame saves five registers. A self-compile made 108 M
+# L64 calls, ~12 % of its time (tests/gates/frontend/token_accessors_direct.sh). CHANGELOG [6.7.18]
 
-fn GBL(S): i64 { return L64(S + 0x18C100); }
-fn SBL(S, v): i64 { S64(S + 0x18C100, v); return 0; }
-fn GCP(S): i64 { return L64(S + 0x18C108); }
-fn SCP(S, v): i64 { S64(S + 0x18C108, v); return 0; }
-fn GVCNT(S): i64 { return L64(S + 0x18C110); }
+fn GBL(S): i64 { return load64(S + 0x18C100); }
+fn SBL(S, v): i64 { store64(S + 0x18C100, v); return 0; }
+fn GCP(S): i64 { return load64(S + 0x18C108); }
+fn SCP(S, v): i64 { store64(S + 0x18C108, v); return 0; }
+fn GVCNT(S): i64 { return load64(S + 0x18C110); }
 # Phase 0 tail (v6.3.0): growable var-family. SEVEN parallel 8 B/slot tables —
 # var_noffs (0x11A000), var_sizes (0x12A000), var_types (0x13A000), gvar_byte_off
 # (0x1B0000), enum_const_val (0x1D8000), gvar_initval (0x1EC000), var_enum_id
@@ -204,10 +208,10 @@ fn SENUMVCNT(S, eid, v): i64 { S64(S + 0x214008 + eid * 8, v); return 0; }
 # enum_variant_count[] growing from 256 to 1024 slots.
 fn GENUMNM(S, eid): i64 { return L64(S + 0x216008 + eid * 8); }
 fn SENUMNM(S, eid, v): i64 { S64(S + 0x216008 + eid * 8, v); return 0; }
-fn GTCNT(S): i64 { return L64(S + 0x18C118); }
-fn STCNT(S, v): i64 { S64(S + 0x18C118, v); return 0; }
-fn GTI(S): i64 { return L64(S + 0x18C120); }
-fn STI(S, v): i64 { S64(S + 0x18C120, v); return 0; }
+fn GTCNT(S): i64 { return load64(S + 0x18C118); }
+fn STCNT(S, v): i64 { store64(S + 0x18C118, v); return 0; }
+fn GTI(S): i64 { return load64(S + 0x18C120); }
+fn STI(S, v): i64 { store64(S + 0x18C120, v); return 0; }
 fn GNPOS(S): i64 { return L64(S + 0x18C128); }
 fn SNPOS(S, v): i64 { S64(S + 0x18C128, v); return 0; }
 
@@ -961,9 +965,9 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
     }
     return 0 - 1;
 }
-fn GINFN(S): i64 { return L64(S + 0x18DA08); }
+fn GINFN(S): i64 { return load64(S + 0x18DA08); }
 fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
-fn GFLC(S): i64 { return L64(S + 0x18DA10); }
+fn GFLC(S): i64 { return load64(S + 0x18DA10); }
 # 6.6.10 — "this untyped variable was initialised from a float", one byte per LOCAL slot
 # (`_lfi_base`, 16384 = SFLC's cap) and per GLOBAL (`_gfi_base`, the var table's hard cap).
 # Both alloc()'d lazily on the first flagged declaration: no heap-LAYOUT change, and never on
@@ -1709,7 +1713,7 @@ fn SFRA(S, fi, v): i64 { if (_fnreg_base == 0) { _fnreg_base = alloc(131072 * 8)
 # `S + 0xNNNNNN + fi * 8` at their call sites (fn_flags, fn_deprecated_msg,
 # fn_var_bytes). Same lazy-alloc-at-max-cap shape as the accessors above, so the
 # raw sites become GFLG/SFLG/GFDM/SFDM/GFVB/SFVB and the fixed heap bands retire.
-fn GFLG(S, fi): i64 { if (_fnflg_base == 0) { return 0; } return L64(_fnflg_base + fi * 8); }
+fn GFLG(S, fi): i64 { if (_fnflg_base == 0) { return 0; } return load64(_fnflg_base + fi * 8); }
 fn SFLG(S, fi, v): i64 { if (_fnflg_base == 0) { _fnflg_base = alloc(131072 * 8); } S64(_fnflg_base + fi * 8, v); return 0; }
 fn GFDM(S, fi): i64 { if (_fndep_base == 0) { return 0; } return L64(_fndep_base + fi * 8); }
 fn SFDM(S, fi, v): i64 { if (_fndep_base == 0) { _fndep_base = alloc(131072 * 8); } S64(_fndep_base + fi * 8, v); return 0; }
@@ -1834,19 +1838,19 @@ fn ADDXP(S, p): i64 {
 }
 
 # Line tracking
-fn GCLINE(S): i64 { return L64(S + 0x18FCB8); }
-fn SCLINE(S, v): i64 { S64(S + 0x18FCB8, v); return 0; }
+fn GCLINE(S): i64 { return load64(S + 0x18FCB8); }
+fn SCLINE(S, v): i64 { store64(S + 0x18FCB8, v); return 0; }
 # v6.4.60 (DX): tok_lines packs the token-start byte offset (into preprocess_out)
 # in the high 32 bits + the line number in the low 32. GTLINE masks to the line
 # (all ~30 readers use it purely as a line number); GTOFF reads the offset for the
 # column + source-excerpt. STLINE writes the whole packed word (ADDTOK builds it).
-fn GTLINE(S, ti): i64 { return L64(S + 0xCC00000 + ti * 8) & 0xFFFFFFFF; }
-fn GTOFF(S, ti): i64 { return L64(S + 0xCC00000 + ti * 8) >> 32; }
-fn STLINE(S, ti, v): i64 { S64(S + 0xCC00000 + ti * 8, v); return 0; }
+fn GTLINE(S, ti): i64 { return load64(S + 0xCC00000 + ti * 8) & 0xFFFFFFFF; }
+fn GTOFF(S, ti): i64 { return load64(S + 0xCC00000 + ti * 8) >> 32; }
+fn STLINE(S, ti, v): i64 { store64(S + 0xCC00000 + ti * 8, v); return 0; }
 
 # Block scoping
-fn GSDEP(S): i64 { return L64(S + 0x18FCC0); }
-fn SSDEP(S, v): i64 { S64(S + 0x18FCC0, v); return 0; }
+fn GSDEP(S): i64 { return load64(S + 0x18FCC0); }
+fn SSDEP(S, v): i64 { store64(S + 0x18FCC0, v); return 0; }
 # ⛔ 6.6.5 — THE AGGREGATE LAYOUT IS RECORDED HERE, IT IS NEVER INFERRED.
 #
 # Whether an aggregate local is INLINE (the slot IS the struct, so its fields are at
@@ -1867,7 +1871,7 @@ fn SSDEP(S, v): i64 { S64(S + 0x18FCC0, v); return 0; }
 # Registration sets it; `_local_struct_is_ptr` (parse/fn/call_args.cyr) is the one reader that
 # answers the question for field access, method self, argument passing, copy-init,
 # copy-assign and the regalloc picker. CHANGELOG [6.6.5]
-fn GLDEP(S, li): i64 { return L64(S + 0x5DBD000 + li * 8) & 0xFFFFFFFF; }
+fn GLDEP(S, li): i64 { return load64(S + 0x5DBD000 + li * 8) & 0xFFFFFFFF; }
 fn SLDEP(S, li, v): i64 { S64(S + 0x5DBD000 + li * 8, v); return 0; }
 # `n` is the SLOT SPAN, not a flag: 0 = not an inline aggregate, >= 1 = the slot is the
 # base of an inline aggregate `n` words wide, occupying slots li, li-1, ... li-(n-1).
@@ -2067,9 +2071,9 @@ fn SCOPE_POP(S): i64 {
 }
 
 # Pointer scale tracking (0 = not a pointer, >0 = element size in bytes)
-fn GPSC(S): i64 { return L64(S + 0x18F890); }
-fn SPSC(S, v): i64 { S64(S + 0x18F890, v); return 0; }
-fn GLTYPE(S, li): i64 { return L64(S + 0x5DDD000 + li * 8); }
+fn GPSC(S): i64 { return load64(S + 0x18F890); }
+fn SPSC(S, v): i64 { store64(S + 0x18F890, v); return 0; }
+fn GLTYPE(S, li): i64 { return load64(S + 0x5DDD000 + li * 8); }
 # 6.7.17 (D24 / D25): a local or parameter typed a vector (a descriptor, <= -2048) marks `_vty_any`, as a `*V` step word
 # does (`_ps_vw`) and a vector or `*V` global (`_gv_vvd_set`, `_gv_pvd_set`) — the scans for a vector value that is no
 # call (`_vval_at`) run only then. CHANGELOG [6.7.17]
