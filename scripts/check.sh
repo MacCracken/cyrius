@@ -2417,6 +2417,9 @@ _chk_gate "$ROOT/tests/gates/diagnostics/decl_after_statement_named.sh"
 # read of a never-parsed body relies on: no raw `syscall(SYS_WRITE, 2, ..)` in the files a parse reaches. Mutation in
 # the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/diagnostic_writer_census.sh"
+# 6.7.18 — every compiler source file a compiled message of cycc names exists: the #derive field cap still said
+# "raise in lex_pp.cyr" after the frontend moves. The gate builds cycc from the tree. Measured RED on the parent.
+_chk_gate "$ROOT/tests/gates/diagnostics/compiled_messages_name_live_files.sh"
 # 6.7.16 — a refusal made in sync (a subscript or `*p` refusal whose statement parses on to its `;`) clears only its
 # latch: the NEXT statement is parsed and its own error reported (`y = pa[0]; y = zz9;` lost zz9's). x86_64,
 # aarch64, cx, PE and Mach-O. Mutation in the header.

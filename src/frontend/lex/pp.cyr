@@ -2090,7 +2090,7 @@ fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
         # Process struct (22 fields with `#derive(accessors)`) overflowed field_types →
         # wrong accessor offsets → CR3=0x2 page-fault on first kernel context switch.
         if (fc >= 256) {
-            var cm = "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n";
+            var cm = "error: #derive struct field cap exceeded (max 256 — raise in lex/pp.cyr / S+0x1FC000 region)\n";
             _ew(cm, 95);
             _die(1);
         }
