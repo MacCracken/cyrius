@@ -95,7 +95,12 @@ fn _pam_sigpipe_rows(): i64 {
     while (nd > 0) { nd = nd - 1; store8(dn + dl, load8(&dg + nd)); dl = dl + 1; }
     store8(dn + dl, 0);
     _pam_dir = dn;
-    assert_eq(sys_mkdir(_pam_dir, 0x1C0), 0, "a private 0700 directory for the stand-in helpers");
+    # The name is predictable: only a directory THIS run created is private. One already there (a
+    # directory or link another user planted in /tmp) is never written into or run from — the
+    # stand-ins would be swappable there, and `rec` a link the piped bytes follow. CHANGELOG [6.7.18]
+    var mkr = sys_mkdir(_pam_dir, 0x1C0);
+    assert_eq(mkr, 0, "a private 0700 directory for the stand-in helpers");
+    if (mkr != 0) { return 0; }
     var early = _pam_script("early.sh", "#!/bin/sh\nexit 1\n");
     var drain = _pam_script("drain.sh", "#!/bin/sh\n/bin/cat > /dev/null\nexit 1\n");
     assert(early != 0 && drain != 0, "the stand-in helpers are written");
