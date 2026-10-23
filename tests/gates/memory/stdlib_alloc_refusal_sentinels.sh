@@ -25,8 +25,8 @@
 #   * normalize: the 6.6.9 step-buffer `return off` -> rc 1 (a SHORTER string, returned as success);
 #     dropping the -1 propagation in the walk    -> rc 1 at the nested row (k=4)
 #   * each of lib/ws.cyr's three checks (ws_new, the handshake buffer, CYRIUS-2026-0011's ws_recv_frame
-#     payload) and lib/ws_server.cyr's six (ws_server_new, concat, digest, ws_server_send_close,
-#     the recv buffer, the recv copy) -> rc 139 in its probe. (lib/ws.cyr's sender had a fourth,
+#     payload) and lib/ws_server.cyr's five (ws_server_new, concat, digest, ws_server_send_close,
+#     the recv message — 6.7.18 folded the recv buffer and its copy into it) -> rc 139 in its probe. (lib/ws.cyr's sender had a fourth,
 #     its masked copy; 6.6.20 removed that allocation, and its two rows now pin that the sender
 #     allocates nothing — restoring an alloc there fails them "allocated MORE".)
 #   * every lib/ file at its pre-6.6.10 state   -> rc 139 at the first row
@@ -350,9 +350,8 @@ CYR
 # found, so the handshake's first four allocations are the four lookups (k=1..4, each refused ->
 # that header reads absent -> 0) and its own follow: concat (k=5), digest (k=6), then sha1's two
 # (k=7, 8).
-# ⚠ ws_server_recv's two rows follow the same zero-length reasoning as ws_recv_frame's: an
-# unchecked recv BUFFER only writes through (store8 at 0 + 0) for an empty frame, and an
-# unchecked OUT copy only does (memcpy to 0) for a non-empty one.
+# ⚠ ws_server_recv's two rows cover both payload shapes: an unchecked message allocation is
+# written through by the payload read for a non-empty frame and by the NUL store for an empty one.
 cat > "$W/fi/wss_probe.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -400,11 +399,12 @@ fn main(): i64 {
     _fi_arm(1); _refused("ws_server_send_close payload", 1, ws_server_send_close(ws, 1000, "bye"), 0 - 1);
     _fi_arm(2); _served("ws_server_send_close", 2, ws_server_send_close(ws, 1000, "bye") == 0);
 
-    # the recv buffer is lazy (first use), then one copy per data frame
+    # one allocation per data frame: the message it returns, read straight into (6.7.18,
+    # CYRIUS-2026-0043 — the lazy process-global 1 MiB buffer and the copy out of it are gone)
     var r0 = _frame_wss(0);
-    _fi_arm(1); _refused("ws_server_recv buffer (empty frame)", 1, ws_server_recv(r0), 0);
+    _fi_arm(1); _refused("ws_server_recv message (empty frame)", 1, ws_server_recv(r0), 0);
     var r3 = _frame_wss(3);
-    _fi_arm(2); _refused("ws_server_recv out (3 bytes)", 2, ws_server_recv(r3), 0);
+    _fi_arm(1); _refused("ws_server_recv message (3 bytes)", 1, ws_server_recv(r3), 0);
     var r3b = _frame_wss(3);
     _fi_arm(2); _served("ws_server_recv", 2, ws_server_recv(r3b) != 0);
     return _rows_done();

@@ -1,0 +1,179 @@
+# ws_server_connections_isolated.tcyr — CYRIUS-2026-0043 (6.7.18): two WebSocket connections served on
+# two threads never read into each other's buffer.
+#
+# ⛔ WHY. ws_server_recv read every frame into ONE process-global 1 MiB buffer, so under a threaded
+# server (sandhi_server_run_pooled) connection A's handler, blocked part-way through a PING, had its
+# payload overwritten by connection B's message — and A's PONG then echoed B's plaintext to A's peer
+# (through A's own mask key, so masking hid nothing). Each frame now has a buffer of its own: a data
+# frame the allocation ws_server_recv returns, a control frame (RFC 6455 §5.5: at most 125 bytes)
+# the call's stack. CHANGELOG [6.7.18]
+#
+# Loopback TCP in this process (as ws_server_socket_reads.tcyr), one extra thread for A's handler.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/chrono.cyr"
+include "lib/thread.cyr"
+
+include "lib/ws_server.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _wi_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A MASKED client frame (FIN | `op`, mask key m0..m3) carrying `n` < 126 bytes of `data`, at out.
+# Returns its size.
+fn _wi_masked(out, op, data, n, m0, m1, m2, m3): i64 {
+    store8(out, 0x80 | op);
+    store8(out + 1, 0x80 | n);
+    store8(out + 2, m0);
+    store8(out + 3, m1);
+    store8(out + 4, m2);
+    store8(out + 5, m3);
+    var i = 0;
+    while (i < n) {
+        store8(out + 6 + i, load8(data + i) ^ load8(out + 2 + i % 4));
+        i = i + 1;
+    }
+    return 6 + n;
+}
+
+# A connected loopback pair: slot[0] the client fd, slot[8] the accepted server fd. 1 on success.
+fn _wi_pair(lfd, slot): i64 {
+    var ct, cfd = tcp_socket();
+    if (is_err_result(ct) == 1) { return 0; }
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), _wi_port(lfd));
+    if (is_err_result(kt) == 1) { return 0; }
+    var at, afd = sock_accept(lfd);
+    if (is_err_result(at) == 1) { return 0; }
+    sock_set_recv_timeout(cfd, 5, 0);
+    sock_set_recv_timeout(afd, 5, 0);
+    store64(slot, cfd);
+    store64(slot + 8, afd);
+    return 1;
+}
+
+var _wi_ws_a = 0;
+var _wi_a_started = 0;
+var _wi_a_result = 0 - 1;
+
+# Connection A's handler: one ws_server_recv (it answers the PING, then reads A's text frame).
+fn _wi_handler_a(arg): i64 {
+    _wi_a_started = 1;
+    _wi_a_result = ws_server_recv(_wi_ws_a);
+    return 0;
+}
+
+fn _wi_group(): i64 {
+    test_group("CYRIUS-2026-0043 — two connections on two threads keep their own payloads");
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "listener tcp_socket");
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "bind 127.0.0.1:0");
+    var st, sv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(st), 0, "listen");
+    var pa[16];
+    var pb[16];
+    assert_eq(_wi_pair(lfd, &pa), 1, "connection A");
+    assert_eq(_wi_pair(lfd, &pb), 1, "connection B");
+    var a_peer = load64(&pa);
+    var b_peer = load64(&pb);
+    _wi_ws_a = ws_server_new(load64(&pa + 8));
+    var ws_b = ws_server_new(load64(&pb + 8));
+
+    # A: a masked PING of 16 'a' — all but its last byte, so A's handler blocks mid-payload.
+    var fa = alloc(64);
+    var na = _wi_masked(fa, WS_OP_PING, "aaaaaaaaaaaaaaaa", 16, 0x5A, 0x5A, 0x5A, 0x5A);
+    assert_eq(sock_send_all(a_peer, fa, na - 1), na - 1, "A's peer sends its PING less one byte");
+    var th = thread_create(&_wi_handler_a, 0);
+    assert(th != 0, "thread_create (A's handler)");
+    var waited = 0;
+    while (_wi_a_started == 0 && waited < 5000) { sleep_ms(10); waited = waited + 10; }
+    sleep_ms(300);                       # A's handler is now blocked waiting for the last byte
+
+    # B: a masked TEXT secret, read on this thread while A's frame is in flight.
+    var fb = alloc(64);
+    var nb = _wi_masked(fb, WS_OP_TEXT, "B-SECRET-TOKEN-1", 16, 1, 2, 3, 4);
+    assert_eq(sock_send_all(b_peer, fb, nb), nb, "B's peer sends its secret");
+    var mb = ws_server_recv(ws_b);
+    assert(mb != 0, "B's handler gets a message");
+    if (mb != 0) { assert_eq(streq(mb, "B-SECRET-TOKEN-1"), 1, "B's handler gets B's own message"); }
+
+    # A's last byte: A's handler answers the PING with A's own payload.
+    assert_eq(sock_send_all(a_peer, fa + na - 1, 1), 1, "A's peer sends the last PING byte");
+    var pong = alloc(64);
+    var got = 0;
+    while (got < 18) {
+        var rt, rn = sock_recv(a_peer, pong + got, 18 - got);
+        if (is_err_result(rt) == 1) { break; }
+        if (rn <= 0) { break; }
+        got = got + rn;
+    }
+    assert_eq(got, 18, "A's peer reads an 18-byte PONG");
+    assert_eq(load8(pong), 0x80 | WS_OP_PONG, "… FIN | PONG");
+    assert_eq(load8(pong + 1), 16, "… unmasked, 16 bytes");
+    assert_eq(memeq(pong + 2, "aaaaaaaaaaaaaaaa", 16), 1, "… A's own payload — not B's message");
+
+    # A's text frame ends A's handler.
+    var nt = _wi_masked(fa, WS_OP_TEXT, "A-OWN", 5, 9, 8, 7, 6);
+    assert_eq(sock_send_all(a_peer, fa, nt), nt, "A's peer sends a text frame");
+    thread_join(th);
+    assert(_wi_a_result != 0 - 1 && _wi_a_result != 0, "A's handler returns a message");
+    if (_wi_a_result != 0 - 1 && _wi_a_result != 0) { assert_eq(streq(_wi_a_result, "A-OWN"), 1, "… A's own text"); }
+
+    test_group("frames ws_server_recv reads into buffers of their own");
+    var big = alloc(300);
+    memset(big, 0x7A, 300);
+    # A 200-byte TEXT (16-bit length form), unmasked: returned whole.
+    store8(fb, 0x81); store8(fb + 1, 126); store8(fb + 2, 0); store8(fb + 3, 200);
+    assert_eq(sock_send_all(b_peer, fb, 4), 4, "B's peer: a 200-byte text header");
+    assert_eq(sock_send_all(b_peer, big, 200), 200, "… and its payload");
+    var m2 = ws_server_recv(ws_b);
+    assert(m2 != 0, "ws_server_recv returns it");
+    if (m2 != 0) { assert_eq(strlen(m2), 200, "… 200 bytes"); assert_eq(load8(m2 + 199), 0x7A, "… intact to its end"); }
+    # A reserved opcode (3) with a 300-byte payload is drained and dropped; the next frame is read.
+    store8(fb, 0x83); store8(fb + 1, 126); store8(fb + 2, 1); store8(fb + 3, 44);
+    assert_eq(sock_send_all(b_peer, fb, 4), 4, "B's peer: a reserved-opcode header (300 bytes)");
+    assert_eq(sock_send_all(b_peer, big, 300), 300, "… and its payload");
+    nb = _wi_masked(fb, WS_OP_TEXT, "after", 5, 1, 1, 1, 1);
+    assert_eq(sock_send_all(b_peer, fb, nb), nb, "… then a text frame");
+    var m3 = ws_server_recv(ws_b);
+    assert(m3 != 0, "the reserved frame is skipped");
+    if (m3 != 0) { assert_eq(streq(m3, "after"), 1, "… and the next frame read"); }
+    # A PING over RFC 6455 §5.5's 125-byte control cap fails the call.
+    store8(fb, 0x89); store8(fb + 1, 126); store8(fb + 2, 0); store8(fb + 3, 126);
+    assert_eq(sock_send_all(b_peer, fb, 4), 4, "B's peer: a 126-byte PING header");
+    assert_eq(sock_send_all(b_peer, big, 126), 126, "… and its payload");
+    assert_eq(ws_server_recv(ws_b), 0, "a 126-byte control frame: 0");
+
+    sock_close(a_peer);
+    sock_close(b_peer);
+    sock_close(load64(&pa + 8));
+    sock_close(load64(&pb + 8));
+    sock_close(lfd);
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    _wi_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);
