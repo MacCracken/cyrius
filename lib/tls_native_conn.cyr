@@ -1464,6 +1464,7 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
             # NOT end-of-stream — drain it and keep reading, so only a real
             # close_notify returns 0. Non-empty data is delivered to the caller.
             if (n > 0) {
+                store64(ctx + TLS_CTX_OFF_KEY_UPDATES, 0);   # data ends a KeyUpdate run. CHANGELOG [6.7.18]
                 if (n <= maxlen) {
                     memcpy(buf, plain, n);
                     return n;
@@ -1520,6 +1521,9 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
 # allocator. Sealing the close_notify allocates nothing: the record (at most 31
 # bytes, TLS 1.2's) is built on the stack. The caller owns the socket fd
 # (TLS_CTX_OFF_SOCK_FD) and closes it after this returns. CHANGELOG [6.6.13]
+# Every secret the ctx holds — traffic secrets, keys and IVs, the key schedule, the
+# private key — is zeroised after the close_notify (_tn_wipe_secrets), whatever the
+# state, a failed ctx's too. CHANGELOG [6.7.18]
 fn tls_native_close(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var state = load64(ctx + TLS_CTX_OFF_STATE);
@@ -1535,6 +1539,7 @@ fn tls_native_close(ctx): i64 {
             _tn_io_write_all(ctx, load64(ctx + TLS_CTX_OFF_SOCK_FD), &rec, rn);
         }
     }
+    _tn_wipe_secrets(ctx);
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CLOSED);
     return TLS_OK;
 }

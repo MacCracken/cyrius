@@ -997,6 +997,12 @@ fn tls_native_client_seal_handshake(ctx, inner, inner_len, out, out_max): i64 {
 # transitions to CONNECTED. Returns the client Finished record length,
 # `TLS_ERR_AUTHN` on a bad server Finished, or another negative error.
 fn tls_native_client_finish(ctx, out, out_max): i64 {
+    # Both handshake-traffic secrets and Finished keys live in `secret var`s, zeroised on every
+    # return (they were _tn_alloc copies abandoned un-wiped in the ctx's allocator). CHANGELOG [6.7.18]
+    secret var s_shs_b[_TLS_MAX_DIGEST_LEN];
+    secret var s_fk_b[_TLS_MAX_DIGEST_LEN];
+    secret var c_chs_b[_TLS_MAX_DIGEST_LEN];
+    secret var c_fk_b[_TLS_MAX_DIGEST_LEN];
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
@@ -1014,13 +1020,11 @@ fn tls_native_client_finish(ctx, out, out_max): i64 {
         return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
     }
     # Verify the server Finished over CH..CertificateVerify.
-    var s_shs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (s_shs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var s_shs = &s_shs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, s_shs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var s_fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (s_fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var s_fk = &s_fk_b;
     if (tls_native_hkdf_expand_label(s_shs, hlen, "finished", 8, 0, 0, hash_algo, s_fk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -1078,13 +1082,11 @@ fn tls_native_client_finish(ctx, out, out_max): i64 {
         }
     }
     # Build + seal the client Finished over CH..serverFinished (+ clientCert/CV).
-    var c_chs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (c_chs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var c_chs = &c_chs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, c_chs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var c_fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (c_fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var c_fk = &c_fk_b;
     if (tls_native_hkdf_expand_label(c_chs, hlen, "finished", 8, 0, 0, hash_algo, c_fk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -1303,60 +1305,74 @@ fn _tn_rotate_send_keys(ctx): i64 {
     return _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len);
 }
 
-# Shared rotation core: advance the secret at `secoff`, re-derive key/IV,
-# reset the sequence at `seqoff`. Stores fresh allocations (the old key/IV/
-# secret are abandoned to the bump arena).
+# Shared rotation core: advance the secret at `secoff` to secret_{N+1}, re-derive the key and IV
+# from it, reset the sequence at `seqoff`. IN PLACE: the new secret, key and IV overwrite the old
+# ones in the buffers install_app_keys allocated, so a rotation allocates nothing (a peer's
+# KeyUpdates cannot grow the no-free heap or the connection's arena) and no copy of the rotated-out
+# secret, key or IV is left behind; the new secret's scratch is a `secret var`, zeroised on return.
+# (It allocated a fresh secret, key and IV per rotation and abandoned the old ones un-wiped.)
+# CHANGELOG [6.7.18]
 fn _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len): i64 {
-    var oldsec = load64(ctx + secoff);
-    if (oldsec == 0) { return TLS_ERR_PROTOCOL; }
-    var newsec = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (newsec == 0) { return TLS_ERR_OOM; }
-    if (tls_native_key_update_secret(oldsec, hlen, hash_algo, newsec) < 0) {
+    secret var nsec[_TLS_MAX_DIGEST_LEN];
+    var sec = load64(ctx + secoff);
+    var k = load64(ctx + keyoff);
+    var iv = load64(ctx + ivoff);
+    if (sec == 0) { return TLS_ERR_PROTOCOL; }       # no 1.3 application keys (a 1.2 ctx)
+    if (k == 0) { return TLS_ERR_PROTOCOL; }
+    if (iv == 0) { return TLS_ERR_PROTOCOL; }
+    if (tls_native_key_update_secret(sec, hlen, hash_algo, &nsec) < 0) {
         return TLS_ERR_INTERNAL;
     }
-    var nk = _tn_alloc(ctx, key_len);
-    var niv = _tn_alloc(ctx, iv_len);
-    if (nk == 0) { return TLS_ERR_OOM; }
-    if (niv == 0) { return TLS_ERR_OOM; }
-    tls_native_derive_key(newsec, hlen, hash_algo, nk, key_len);
-    tls_native_derive_iv(newsec, hlen, hash_algo, niv, iv_len);
-    store64(ctx + secoff, newsec);
-    store64(ctx + keyoff, nk);
-    store64(ctx + ivoff, niv);
+    memcpy(sec, &nsec, hlen);
+    if (tls_native_derive_key(sec, hlen, hash_algo, k, key_len) < 0) { return TLS_ERR_INTERNAL; }
+    if (tls_native_derive_iv(sec, hlen, hash_algo, iv, iv_len) < 0) { return TLS_ERR_INTERNAL; }
     tls_native_seq_init(ctx + seqoff);
     return TLS_OK;
 }
 
 # Send a KeyUpdate (RFC 8446 §4.6.3) with the given request_update byte,
 # then rotate our send keys. Used to answer a peer KeyUpdate(update_requested).
+# The record (27 bytes) is built on the stack: an answer allocates nothing. CHANGELOG [6.7.18]
 fn _tn_send_key_update(ctx, request_update): i64 {
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
     var msg[8];                                   # 4-byte header + 1-byte body
     tls_native_handshake_write_header(&msg, TLS_HS_KEY_UPDATE, 1);
     store8(&msg + _TLS_HANDSHAKE_HEADER_LEN, request_update & 0xFF);
-    var rec = _tn_alloc(ctx, 64);
-    if (rec == 0) { return TLS_ERR_OOM; }
-    var rn = _tn_seal_ct(ctx, TLS_CT_HANDSHAKE, &msg, _TLS_HANDSHAKE_HEADER_LEN + 1, rec, 64);
+    var rec[64];
+    var rn = _tn_seal_ct(ctx, TLS_CT_HANDSHAKE, &msg, _TLS_HANDSHAKE_HEADER_LEN + 1, &rec, 64);
     if (rn < 0) { return rn; }
-    var w = _tn_io_write_all(ctx, fd, rec, rn);
+    var w = _tn_io_write_all(ctx, fd, &rec, rn);
     if (w < 0) { return w; }
     return _tn_rotate_send_keys(ctx);
 }
 
-# Handle one record's worth of post-handshake handshake messages. Consumes
-# (and ignores) NewSessionTicket; for KeyUpdate, rotates the receive keys and
-# — when the peer set update_requested — answers with our own KeyUpdate and
-# rotates our send keys. Returns TLS_OK or a negative error.
+# Handle one record's worth of post-handshake handshake messages. Consumes (and ignores)
+# NewSessionTicket. A KeyUpdate (RFC 8446 §4.6.3) is checked before it costs anything: its body
+# is exactly one byte, 0 or 1 (else TLS_ERR_BAD_HANDSHAKE: decode_error / illegal_parameter); it
+# ends its record (§5.1: the message before a key change aligns with a record boundary, so a
+# record holds at most one KeyUpdate; else TLS_ERR_PROTOCOL, unexpected_message); and it is at
+# most the _TN_KEY_UPDATE_MAX-th in a row with no application data between them
+# (TLS_CTX_OFF_KEY_UPDATES; else TLS_ERR_PROTOCOL). Then the receive keys rotate and, when the
+# peer set update_requested, we answer with our own KeyUpdate and rotate our send keys. (It
+# rotated once per KeyUpdate however many one record packed, with any body, allocating each
+# time — the post-handshake KeyUpdate flood.) Returns TLS_OK or a negative error.
+# CHANGELOG [6.7.18]
 fn _tn_handle_post_handshake(ctx, msg, msg_len): i64 {
     var pos = 0;
     while (pos + _TLS_HANDSHAKE_HEADER_LEN <= msg_len) {
         var htype = load8(msg + pos) & 0xFF;
         var blen = _tn_be24_r(msg + pos + 1);
         var body = msg + pos + _TLS_HANDSHAKE_HEADER_LEN;
-        if (pos + _TLS_HANDSHAKE_HEADER_LEN + blen > msg_len) { return TLS_OK; }
+        var next = pos + _TLS_HANDSHAKE_HEADER_LEN + blen;
+        if (next > msg_len) { return TLS_OK; }
         if (htype == TLS_HS_KEY_UPDATE) {
-            var req = 0;
-            if (blen >= 1) { req = load8(body) & 0xFF; }
+            if (blen != 1) { return TLS_ERR_BAD_HANDSHAKE; }
+            var req = load8(body) & 0xFF;
+            if (req > 1) { return TLS_ERR_BAD_HANDSHAKE; }
+            if (next != msg_len) { return TLS_ERR_PROTOCOL; }
+            var kus = load64(ctx + TLS_CTX_OFF_KEY_UPDATES) + 1;
+            if (kus > _TN_KEY_UPDATE_MAX) { return TLS_ERR_PROTOCOL; }
+            store64(ctx + TLS_CTX_OFF_KEY_UPDATES, kus);
             var rr = _tn_rotate_recv_keys(ctx);
             if (rr < 0) { return rr; }
             if (req == 1) {
@@ -1366,7 +1382,7 @@ fn _tn_handle_post_handshake(ctx, msg, msg_len): i64 {
         }
         # NewSessionTicket + any other type: consume and ignore (no session
         # resumption yet; RFC 8446 §4.6.1 lets a client discard tickets).
-        pos = pos + _TLS_HANDSHAKE_HEADER_LEN + blen;
+        pos = next;
     }
     return TLS_OK;
 }
@@ -2099,6 +2115,50 @@ fn _tn_wipe_ephemeral(ctx): i64 {
     return 0;
 }
 
+# Zeroise the `n` bytes the ctx slot at `off` points to, then clear the slot. CHANGELOG [6.7.18]
+fn _tn_wipe_slot(ctx, off, n): i64 {
+    var p = load64(ctx + off);
+    if (p != 0) {
+        if (n > 0) { memset(p, 0, n); }
+    }
+    store64(ctx + off, 0);
+    return 0;
+}
+
+# Zeroise every secret the ctx still holds and clear its slot: the application-traffic secrets,
+# keys and IVs of both directions (the TLS 1.3 secrets kept for KeyUpdate; TLS 1.2's keys share the
+# slots, its IV 4 bytes on GCM), the TLS 1.3 handshake keys, the key schedule's secrets
+# (_tn_ks_wipe), the TLS 1.2 master secret, the parsed private key (_tn_load_privkey's copy), the
+# ticket key, and the ephemeral key and shared secret (_tn_wipe_ephemeral, for a ctx no handshake
+# driver ran). Each buffer is wiped at the size it was allocated with. A cleared key slot makes a
+# later seal or open TLS_ERR_PROTOCOL, never a record under a zero key. tls_native_close runs it
+# last: through 6.7.17 close wiped nothing, and a closed session's keys (and a copy of the
+# server's private key per accepted connection) outlived it in the no-free heap or the
+# connection's arena — the 2026-10-22 audit's Finding 28. Idempotent. CHANGELOG [6.7.18]
+fn _tn_wipe_secrets(ctx): i64 {
+    var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
+    var key_len = tls_native_cipher_key_len(cipher);
+    var iv13 = tls_native_cipher_iv_len(cipher);
+    var iv_app = iv13;
+    if (load64(ctx + TLS_CTX_OFF_VERSION) == TLS_VERSION_1_2) { iv_app = tls_native_cipher_iv_len_12(cipher); }
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_SRV_APP_SECRET, _TLS_MAX_DIGEST_LEN);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_CLI_APP_SECRET, _TLS_MAX_DIGEST_LEN);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_SRV_APP_KEY, key_len);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_CLI_APP_KEY, key_len);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_SRV_APP_IV, iv_app);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_CLI_APP_IV, iv_app);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_SRV_HS_KEY, key_len);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_CLI_HS_KEY, key_len);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_SRV_HS_IV, iv13);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_CLI_HS_IV, iv13);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_MASTER12, TLS12_MASTER_SECRET_LEN);
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_KEY_MAT, 48);         # _tn_load_privkey's allocation
+    _tn_wipe_slot(ctx, TLS_CTX_OFF_STEK, 32);            # _tn_ctx_stek's
+    _tn_wipe_ephemeral(ctx);
+    _tn_ks_wipe(load64(ctx + TLS_CTX_OFF_KEYSCHED));
+    return 0;
+}
+
 # Store the HelloRetryRequest sentinel (SHA-256("HelloRetryRequest"),
 # RFC 8446 §4.1.3) into the 32-byte `out` ServerHello.random field.
 fn _tn_hrr_random(out): i64 {
@@ -2514,19 +2574,21 @@ fn _tn_build_cert_verify(ctx, out, out_max, label, label_len): i64 {
 # finished_key = HKDF-Expand-Label(server_hs_traffic, "finished", "",
 # Hash.length).
 fn _tn_build_finished(ctx, out, out_max): i64 {
+    # The secret and the Finished key are `secret var`s, zeroised on return (they were _tn_alloc
+    # copies abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var shs_b[_TLS_MAX_DIGEST_LEN];
+    secret var fk_b[_TLS_MAX_DIGEST_LEN];
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
     if (ts == 0) { return TLS_ERR_PROTOCOL; }
     if (ks == 0) { return TLS_ERR_PROTOCOL; }
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
-    var shs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (shs == 0) { return TLS_ERR_OOM; }
+    var shs = &shs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, shs) < 0) {
         return TLS_ERR_PROTOCOL;
     }
-    var fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (fk == 0) { return TLS_ERR_OOM; }
+    var fk = &fk_b;
     if (tls_native_hkdf_expand_label(shs, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }
@@ -2866,6 +2928,10 @@ fn tls_native_server_recv_client_certverify(ctx, msg, msg_len): i64 {
 # state machine advances to CONNECTED. Used for both the no-auth path
 # (the only client message) and the client-auth path (after Cert+CV).
 fn tls_native_server_recv_client_finished(ctx, msg, msg_len): i64 {
+    # The secret and the Finished key are `secret var`s, zeroised on every return (they were
+    # _tn_alloc copies abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var chs_b[_TLS_MAX_DIGEST_LEN];
+    secret var fk_b[_TLS_MAX_DIGEST_LEN];
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var ht = 0;
     var blen = 0;
@@ -2882,13 +2948,11 @@ fn tls_native_server_recv_client_finished(ctx, msg, msg_len): i64 {
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
     if (blen != hlen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    var chs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (chs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var chs = &chs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, chs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var fk = &fk_b;
     if (tls_native_hkdf_expand_label(chs, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -2984,6 +3048,10 @@ fn tls_native_server_open_ticket(ctx, blob, blob_len, out): i64 {
 # Hash.length), seals it into the ticket, and serializes the message
 # into `out`. Returns the message length or a negative TLS_ERR_*.
 fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
+    # The resumption master secret's copy and the PSK are `secret var`s, zeroised on every return
+    # (they were _tn_alloc copies abandoned un-wiped; the PSK leaves only sealed). CHANGELOG [6.7.18]
+    secret var rm_b[_TLS_MAX_DIGEST_LEN];
+    secret var psk_b[_TLS_MAX_DIGEST_LEN];
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
     if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
@@ -2994,8 +3062,7 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
-    var rm = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (rm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var rm = &rm_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_RESUMPTION_MASTER, rm) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
@@ -3009,8 +3076,7 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     # ticket. Never emit a weak NewSessionTicket.
     if (_tn_rand_bytes(nonce, 8) != 8) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     if (_tn_rand_bytes(age_add, 4) != 4) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    var psk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (psk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var psk = &psk_b;
     if (tls_native_hkdf_expand_label(rm, hlen, "resumption", 10, nonce, 8, hash_algo, psk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -3043,28 +3109,29 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
 #   binder       = HMAC(finished_key, transcript_hash)
 # Writes `out` (Hash.length bytes). Returns TLS_OK or an error. Used
 # by both ticket issuance verification and the resumed handshake.
+# The early secret, binder key and Finished key are `secret var`s, zeroised on every return (they
+# were three no-free global allocations per call, never wiped). CHANGELOG [6.7.18]
 fn tls_native_psk_binder(psk, psk_len, hash_algo, transcript_hash, th_len, out): i64 {
+    secret var early_b[_TLS_MAX_DIGEST_LEN];
+    secret var binder_key_b[_TLS_MAX_DIGEST_LEN];
+    secret var fk_b[_TLS_MAX_DIGEST_LEN];
+    var zero_b[_TLS_MAX_DIGEST_LEN];
     var hlen = _tn_hash_len(hash_algo);
     if (th_len != hlen) { return TLS_ERR_INVALID_PARAM; }
     # early_secret = HKDF-Extract(salt=0^hlen, ikm=psk)
-    var zero = alloc(hlen);
-    if (zero == 0) { return TLS_ERR_OOM; }
-    var zi = 0;
-    while (zi < hlen) { store8(zero + zi, 0); zi = zi + 1; }
-    var early = alloc(hlen);
-    if (early == 0) { return TLS_ERR_OOM; }
+    var zero = &zero_b;
+    memset(zero, 0, hlen);
+    var early = &early_b;
     _tn_hkdf_extract(zero, hlen, psk, psk_len, hash_algo, early);
     # binder_key = Derive-Secret(early, "res binder", "")
-    var binder_key = alloc(hlen);
-    if (binder_key == 0) { return TLS_ERR_OOM; }
+    var binder_key = &binder_key_b;
     var empty_th = _tn_empty_transcript(hash_algo);
     if (empty_th == 0) { return TLS_ERR_OOM; }
     if (tls_native_derive_secret(early, hlen, "res binder", 10, empty_th, binder_key) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }
     # finished_key = HKDF-Expand-Label(binder_key, "finished", "", L)
-    var fk = alloc(hlen);
-    if (fk == 0) { return TLS_ERR_OOM; }
+    var fk = &fk_b;
     if (tls_native_hkdf_expand_label(binder_key, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }

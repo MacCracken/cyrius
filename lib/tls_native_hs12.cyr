@@ -1149,6 +1149,9 @@ fn tls_native_12_compute_premaster(ctx, peer_pub, out): i64 {
 # both record sequences to 0 (the post-CCS epoch starts at seq 0).
 # Returns TLS_OK or a negative TLS_ERR_*.
 fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
+    # The key_block (every key and IV of the epoch, at most 2 * 32 + 2 * 12 = 88 bytes) is a
+    # `secret var`, zeroised on every return (it was a _tn_alloc abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var kb_b[96];
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
     var master = _tn_alloc(ctx, TLS12_MASTER_SECRET_LEN);
     if (master == 0) { return TLS_ERR_OOM; }
@@ -1183,8 +1186,8 @@ fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
     var sr = load64(ctx + TLS_CTX_OFF_SERVER_RANDOM);
     var kb_len = tls_native_12_key_block_len(identity);
     if (kb_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
-    var kb = _tn_alloc(ctx, kb_len);
-    if (kb == 0) { return TLS_ERR_OOM; }
+    if (kb_len > 96) { return TLS_ERR_INTERNAL; }
+    var kb = &kb_b;
     if (tls_native_12_key_block(identity, master, cr, sr, kb, kb_len) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }
@@ -1946,6 +1949,10 @@ fn tls_native_accept_12(ctx, sock_fd): i64 {
 # the key schedule, and reset both direction sequence numbers. Call
 # after the handshake secret is derived (.18).
 fn tls_native_server_install_handshake_keys(ctx): i64 {
+    # The two handshake-traffic secrets the keys derive from are `secret var`s, zeroised on every
+    # return (they were _tn_alloc copies abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var ss_b[_TLS_MAX_DIGEST_LEN];
+    secret var cs_b[_TLS_MAX_DIGEST_LEN];
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
     if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
@@ -1954,8 +1961,7 @@ fn tls_native_server_install_handshake_keys(ctx): i64 {
     var key_len = tls_native_cipher_key_len(cipher);
     var iv_len = tls_native_cipher_iv_len(cipher);
     var hlen = _tn_hash_len(hash_algo);
-    var ss = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (ss == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var ss = &ss_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, ss) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
@@ -1967,8 +1973,7 @@ fn tls_native_server_install_handshake_keys(ctx): i64 {
     tls_native_derive_iv(ss, hlen, hash_algo, siv, iv_len);
     store64(ctx + TLS_CTX_OFF_SRV_HS_KEY, sk);
     store64(ctx + TLS_CTX_OFF_SRV_HS_IV, siv);
-    var cs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (cs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var cs = &cs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, cs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }

@@ -293,6 +293,10 @@ var TLS_RECORD_MAX_CIPHERTEXT = 16640;            # 16384 + 256, §5.2
 # tls_native_read drains before yielding to the caller — bounds a peer that
 # floods post-handshake messages instead of sending application data.
 var TLS_POST_HANDSHAKE_DRAIN_MAX = 32;
+# The KeyUpdates a peer may send back to back, with no application data between them, before the
+# connection fails (OpenSSL's MAX_KEY_UPDATE_MESSAGES and BoringSSL's kMaxKeyUpdates are 32). Each
+# costs a key derivation, and an update_requested one a record back. CHANGELOG [6.7.18]
+const _TN_KEY_UPDATE_MAX = 32;
 const _TLS_AEAD_NONCE_LEN = 12;                   # 96-bit per §5.3
 # Read-only mirror of `_TLS_AEAD_NONCE_LEN`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var TLS_AEAD_NONCE_LEN = _TLS_AEAD_NONCE_LEN;

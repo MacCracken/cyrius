@@ -1,0 +1,265 @@
+# The native TLS 1.3 stack's post-handshake KeyUpdate (RFC 8446 §4.6.3) against a peer that floods
+# it — the 2026-10-22 security audit's Finding 21 — and the rotation's key hygiene (Finding 28).
+# Through 6.7.17 _tn_handle_post_handshake rotated the receive keys once per KeyUpdate however many
+# one record packed (a 16 KiB record holds 3276), with any body (a request_update of 2, an empty or
+# a two-byte body), answering each update_requested one with a record; and every rotation allocated
+# a fresh secret, key and IV (the answer a 64-byte record too) and abandoned the old ones un-wiped,
+# on the no-free heap the default server path uses. 6.7.18: a KeyUpdate's body is exactly one byte,
+# 0 or 1; it ends its record (§5.1); at most 32 come in a row with no application data between
+# them; and a rotation overwrites the secret, key and IV in place, allocating nothing.
+#
+# Hermetic: a client and a server handshake in memory (as tls_native_scaffold's .28 group does),
+# and the client reads the server's records through an in-memory transport
+# (tls_native_set_transport) — no socket, so the run is the same on every host. CHANGELOG [6.7.18]
+
+include "lib/assert.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/tls_native.cyr"
+
+# --- the in-memory wire: the server's records are queued in _ku_rbuf, the client's land in _ku_wbuf ---
+var _ku_rbuf = 0;
+var _ku_rpos = 0;
+var _ku_rlen = 0;
+var _ku_wbuf = 0;
+var _ku_wpos = 0;
+var _KU_WCAP = 262144;          # room for 3276 answers (27 bytes each) should a refusal regress
+
+fn _ku_write(handle, buf, n): i64 {
+    if (_ku_wpos + n > _KU_WCAP) { return 0 - 1; }
+    memcpy(_ku_wbuf + _ku_wpos, buf, n);
+    _ku_wpos = _ku_wpos + n;
+    return n;
+}
+fn _ku_read(handle, buf, n): i64 {
+    var avail = _ku_rlen - _ku_rpos;
+    if (avail <= 0) { return 0 - 1; }
+    var take = n;
+    if (take > avail) { take = avail; }
+    memcpy(buf, _ku_rbuf + _ku_rpos, take);
+    _ku_rpos = _ku_rpos + take;
+    return take;
+}
+fn _ku_now(): i64 { return 1893456000; }
+
+# A P-256 self-signed localhost certificate and its key (tls_native_scaffold's cert23 / key23).
+var _ku_cert = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var _ku_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+
+# The pair under test: a fresh in-memory handshake, both sides with application keys installed.
+var _ku_srv = 0;
+var _ku_cl = 0;
+
+fn _ku_pair(): i64 {
+    _ku_rpos = 0;
+    _ku_rlen = 0;
+    _ku_wpos = 0;
+    var srv = tls_native_new_server(_ku_cert, 385, _ku_key, 138);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 1; }
+    var cl = tls_native_new_client("localhost", 9);
+    var ch[512];
+    var chn = tls_native_client_build_hello(cl, &ch, 512);
+    var sh[256];
+    var shn = tls_native_server_respond_hello(srv, &ch, chn, &sh, 256);
+    if (tls_native_client_parse_server_hello(cl, &sh, shn) != TLS_OK) { return 2; }
+    tls_native_server_derive_handshake(srv);
+    tls_native_server_install_handshake_keys(srv);
+    var flight[4096];
+    var fl = tls_native_server_build_flight(srv, &flight, 4096);
+    tls_native_server_derive_master(srv);
+    var flrec[4096];
+    var flrecn = tls_native_server_seal_handshake(srv, &flight, fl, &flrec, 4096);
+    if (tls_native_client_recv_flight(cl, &flrec, flrecn) != TLS_OK) { return 3; }
+    var cfin[256];
+    if (tls_native_client_finish(cl, &cfin, 256) < 0) { return 4; }
+    if (tls_native_install_app_keys(srv) != TLS_OK) { return 5; }
+    if (tls_native_install_app_keys(cl) != TLS_OK) { return 6; }
+    if (load64(cl + TLS_CTX_OFF_STATE) != TLS_STATE_CONNECTED) { return 7; }
+    _ku_srv = srv;
+    _ku_cl = cl;
+    return 0;
+}
+
+# Queue one server record of inner content type `ct` carrying `len` bytes of `p`.
+fn _ku_queue(ct, p, len): i64 {
+    var n = _tn_seal_ct(_ku_srv, ct, p, len, _ku_rbuf + _ku_rlen, _TLS_RECORD_MAX_PLAINTEXT + 64);
+    if (n > 0) { _ku_rlen = _ku_rlen + n; }
+    return n;
+}
+
+# `n` KeyUpdate messages (`18 00 00 01 <req>`) at `p`; returns their length.
+fn _ku_msgs(p, n, req): i64 {
+    var i = 0;
+    while (i < n) {
+        store8(p + i * 5, TLS_HS_KEY_UPDATE);
+        store8(p + i * 5 + 1, 0);
+        store8(p + i * 5 + 2, 0);
+        store8(p + i * 5 + 3, 1);
+        store8(p + i * 5 + 4, req);
+        i = i + 1;
+    }
+    return n * 5;
+}
+
+# The client's RECEIVE direction (the server's application-traffic secret / key / IV).
+fn _ku_rsec(): i64 { return load64(_ku_cl + TLS_CTX_OFF_SRV_APP_SECRET); }
+fn _ku_rkey(): i64 { return load64(_ku_cl + TLS_CTX_OFF_SRV_APP_KEY); }
+fn _ku_riv(): i64 { return load64(_ku_cl + TLS_CTX_OFF_SRV_APP_IV); }
+fn _ku_hlen(): i64 { return _tn_hash_len(tls_native_cipher_hash_algo(load64(_ku_cl + TLS_CTX_OFF_CIPHER))); }
+fn _ku_klen(): i64 { return tls_native_cipher_key_len(load64(_ku_cl + TLS_CTX_OFF_CIPHER)); }
+
+_ku_rbuf = alloc(65536);
+_ku_wbuf = alloc(_KU_WCAP);
+var _ku_msg = alloc(_TLS_RECORD_MAX_PLAINTEXT);
+var _ku_b[64];
+assert_eq(tls_native_set_transport(&_ku_read, &_ku_write, &_ku_now), TLS_OK, "the in-memory transport installs");
+
+# ================================================================
+test_group("a KeyUpdate flood record fails fast and allocates nothing");
+# ================================================================
+assert_eq(_ku_pair(), 0, "flood: the in-memory handshake completes");
+# Warm up: the first read allocates the ctx's read buffer, so the flood's read is measured alone.
+_ku_queue(TLS_CT_APPLICATION_DATA, "warm", 4);
+assert_eq(tls_native_read(_ku_cl, &_ku_b, 64), 4, "flood: a first application record reads");
+# One record packed with KeyUpdate(update_requested): 3276 of them fill 16380 of its 16384 bytes.
+var _kf_len = _ku_msgs(_ku_msg, 3276, 1);
+assert_gt(_ku_queue(TLS_CT_HANDSHAKE, _ku_msg, _kf_len), 0, "flood: the server seals the 3276-KeyUpdate record");
+var _kf_key[32];
+memcpy(&_kf_key, _ku_rkey(), _ku_klen());
+var _kf_used = alloc_used();
+var _kf_wpos = _ku_wpos;
+assert_eq(tls_native_read(_ku_cl, &_ku_b, 64), TLS_ERR_PROTOCOL,
+  "flood: the read refuses the record (a KeyUpdate that does not end its record)");
+assert_eq(alloc_used() - _kf_used, 0, "flood: refusing it allocated nothing");
+assert_eq(_ku_wpos - _kf_wpos, 0, "flood: no KeyUpdate answer was written");
+assert_eq(_tn_ct_eq(_ku_rkey(), &_kf_key, _ku_klen()), 1, "flood: the receive key never rotated");
+assert_eq(tls_native_read(_ku_cl, &_ku_b, 64), TLS_ERR_PROTOCOL, "flood: the connection stays failed");
+
+# ================================================================
+test_group("a KeyUpdate body other than one byte of 0 or 1 is refused");
+# ================================================================
+assert_eq(_ku_pair(), 0, "body: the in-memory handshake completes");
+var _kb_key[32];
+memcpy(&_kb_key, _ku_rkey(), _ku_klen());
+_ku_msgs(_ku_msg, 1, 2);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 5), TLS_ERR_BAD_HANDSHAKE, "body: request_update 2 refused");
+_ku_msgs(_ku_msg, 1, 255);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 5), TLS_ERR_BAD_HANDSHAKE, "body: request_update 255 refused");
+_ku_msgs(_ku_msg, 1, 0);
+store8(_ku_msg + 3, 0);                           # 18 00 00 00: an empty body
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 4), TLS_ERR_BAD_HANDSHAKE, "body: an empty KeyUpdate refused");
+_ku_msgs(_ku_msg, 1, 0);
+store8(_ku_msg + 3, 2);                           # 18 00 00 02 00 00: a two-byte body
+store8(_ku_msg + 5, 0);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 6), TLS_ERR_BAD_HANDSHAKE, "body: a two-byte KeyUpdate refused");
+assert_eq(_tn_ct_eq(_ku_rkey(), &_kb_key, _ku_klen()), 1, "body: no refused KeyUpdate rotated the receive key");
+
+# ================================================================
+test_group("a KeyUpdate ends its record (RFC 8446 §5.1)");
+# ================================================================
+assert_eq(_ku_pair(), 0, "align: the in-memory handshake completes");
+_ku_msgs(_ku_msg, 2, 0);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 10), TLS_ERR_PROTOCOL,
+  "align: two KeyUpdates in one record refused");
+_ku_msgs(_ku_msg, 1, 0);
+store8(_ku_msg + 5, TLS_HS_NEW_SESSION_TICKET);   # a KeyUpdate, then an empty NewSessionTicket
+store8(_ku_msg + 6, 0); store8(_ku_msg + 7, 0); store8(_ku_msg + 8, 0);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 9), TLS_ERR_PROTOCOL,
+  "align: a message after a KeyUpdate refused");
+assert_eq(_ku_pair(), 0, "align: a second pair");
+store8(_ku_msg, TLS_HS_NEW_SESSION_TICKET);       # an empty NewSessionTicket, then a KeyUpdate: legal
+store8(_ku_msg + 1, 0); store8(_ku_msg + 2, 0); store8(_ku_msg + 3, 0);
+_ku_msgs(_ku_msg + 4, 1, 0);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 9), TLS_OK, "align: a KeyUpdate that ends its record is taken");
+assert_eq(_tn_rotate_send_keys(_ku_srv), TLS_OK, "align: the server rotates its send keys to match");
+_ku_queue(TLS_CT_APPLICATION_DATA, "after", 5);
+assert_eq(tls_native_read(_ku_cl, &_ku_b, 64), 5, "align: the next record reads under the rotated key");
+assert_eq(_tn_ct_eq(&_ku_b, "after", 5), 1, "align: its bytes are intact");
+
+# ================================================================
+test_group("a rotation is in place: nothing allocated, no rotated-out bytes left behind");
+# ================================================================
+assert_eq(_ku_pair(), 0, "rotate: the in-memory handshake completes");
+var _kr_hlen = _ku_hlen();
+var _kr_klen = _ku_klen();
+var _kr_sp = _ku_rsec();
+var _kr_kp = _ku_rkey();
+var _kr_ip = _ku_riv();
+var _kr_sec[48];
+var _kr_key[32];
+var _kr_iv[12];
+memcpy(&_kr_sec, _kr_sp, _kr_hlen);
+memcpy(&_kr_key, _kr_kp, _kr_klen);
+memcpy(&_kr_iv, _kr_ip, 12);
+var _kr_used = alloc_used();
+_ku_msgs(_ku_msg, 1, 0);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 5), TLS_OK, "rotate: KeyUpdate(update_not_requested) taken");
+assert_eq(alloc_used() - _kr_used, 0, "rotate: the rotation allocated nothing");
+# The buffers that held the rotated-out secret, key and IV hold none of them now.
+assert_eq(_tn_ct_eq(_kr_sp, &_kr_sec, _kr_hlen), 0, "rotate: the old secret's buffer no longer holds it");
+assert_eq(_tn_ct_eq(_kr_kp, &_kr_key, _kr_klen), 0, "rotate: the old key's buffer no longer holds it");
+assert_eq(_tn_ct_eq(_kr_ip, &_kr_iv, 12), 0, "rotate: the old IV's buffer no longer holds it");
+assert_eq(_ku_rsec(), _kr_sp, "rotate: the secret was rotated in its own buffer");
+assert_eq(_ku_rkey(), _kr_kp, "rotate: the key was rotated in its own buffer");
+assert_eq(_ku_riv(), _kr_ip, "rotate: the IV was rotated in its own buffer");
+# ... and they hold secret_1 = HKDF-Expand-Label(secret_0, "traffic upd") and the key / IV from it.
+var _kr_want[48];
+var _kr_halg = tls_native_cipher_hash_algo(load64(_ku_cl + TLS_CTX_OFF_CIPHER));
+tls_native_key_update_secret(&_kr_sec, _kr_hlen, _kr_halg, &_kr_want);
+assert_eq(_tn_ct_eq(_ku_rsec(), &_kr_want, _kr_hlen), 1, "rotate: the secret is secret_1");
+var _kr_wkey[32];
+tls_native_derive_key(&_kr_want, _kr_hlen, _kr_halg, &_kr_wkey, _kr_klen);
+assert_eq(_tn_ct_eq(_ku_rkey(), &_kr_wkey, _kr_klen), 1, "rotate: the key is secret_1's");
+# update_requested: one 27-byte answer, sealed under the client's old send key, then its send keys rotate.
+var _kr_cs = load64(_ku_cl + TLS_CTX_OFF_CLI_APP_SECRET);
+var _kr_csec[48];
+memcpy(&_kr_csec, _kr_cs, _kr_hlen);
+_kr_used = alloc_used();
+var _kr_w0 = _ku_wpos;
+_ku_msgs(_ku_msg, 1, 1);
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 5), TLS_OK, "rotate: KeyUpdate(update_requested) taken");
+assert_eq(alloc_used() - _kr_used, 0, "rotate: the rotation and its answer allocated nothing");
+assert_eq(_ku_wpos - _kr_w0, 27, "rotate: one KeyUpdate record was written back");
+assert_eq(load64(_ku_cl + TLS_CTX_OFF_CLI_APP_SECRET), _kr_cs, "rotate: the send secret was rotated in its own buffer");
+assert_eq(_tn_ct_eq(_kr_cs, &_kr_csec, _kr_hlen), 0, "rotate: the old send secret's buffer no longer holds it");
+var _kr_dec[64];
+var _kr_ict = 0;
+assert_eq(_tn_open_record(_ku_srv, _ku_wbuf + _kr_w0, 27, &_kr_dec, 64, &_kr_ict), 5,
+  "rotate: the server opens the answer");
+assert_eq(_kr_ict, TLS_CT_HANDSHAKE, "rotate: the answer is a handshake record");
+assert_eq(load8(&_kr_dec) & 0xFF, TLS_HS_KEY_UPDATE, "rotate: the answer is a KeyUpdate");
+assert_eq(load8(&_kr_dec + 4) & 0xFF, 0, "rotate: the answer is update_not_requested");
+assert_eq(_tn_handle_post_handshake(_ku_srv, &_kr_dec, 5), TLS_OK, "rotate: the server takes it");
+var _kr_rec[128];
+var _kr_rn = tls_native_seal_app(_ku_cl, "both-ways", 9, &_kr_rec, 128);
+assert_eq(_tn_open_record(_ku_srv, &_kr_rec, _kr_rn, &_kr_dec, 64, &_kr_ict), 9,
+  "rotate: client data opens under the rotated keys");
+
+# ================================================================
+test_group("at most 32 KeyUpdates in a row; application data ends the run");
+# ================================================================
+assert_eq(_ku_pair(), 0, "run: the in-memory handshake completes");
+_ku_msgs(_ku_msg, 1, 0);
+var _kn_i = 0;
+var _kn_ok = 0;
+while (_kn_i < 32) {
+    if (_tn_handle_post_handshake(_ku_cl, _ku_msg, 5) == TLS_OK) { _kn_ok = _kn_ok + 1; }
+    _tn_rotate_send_keys(_ku_srv);
+    _kn_i = _kn_i + 1;
+}
+assert_eq(_kn_ok, 32, "run: 32 KeyUpdates in a row are taken");
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 5), TLS_ERR_PROTOCOL, "run: the 33rd in a row is refused");
+assert_eq(_ku_pair(), 0, "run: a second pair");
+_kn_i = 0;
+while (_kn_i < 32) {
+    _tn_handle_post_handshake(_ku_cl, _ku_msg, 5);
+    _tn_rotate_send_keys(_ku_srv);
+    _kn_i = _kn_i + 1;
+}
+_ku_queue(TLS_CT_APPLICATION_DATA, "data", 4);
+assert_eq(tls_native_read(_ku_cl, &_ku_b, 64), 4, "run: application data reads after 32 KeyUpdates");
+assert_eq(_tn_handle_post_handshake(_ku_cl, _ku_msg, 5), TLS_OK, "run: the next KeyUpdate starts a new run");
+
+tls_native_set_transport(0, 0, 0);
+var rc = assert_summary();
