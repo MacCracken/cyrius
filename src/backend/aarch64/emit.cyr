@@ -1396,7 +1396,7 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF1009D1F); EW(S, 0x54000041); EW(S, 0xD2801588);
     # v6.2.27: pipe 22 → pipe2 59 + flags=0. aarch64-Linux has NO pipe(2)
     # (22 is epoll_pwait there); only pipe2(fds, flags). Raw `syscall(22, &fds)`
-    # is a sanctioned x86-canonical call (_SC_ARITY n==22 → 1 arg, parse/expr.cyr:24)
+    # is a sanctioned x86-canonical call (_SC_ARITY n==22 → 1 arg, parse/expr/closure.cyr)
     # used by tests/tcyr/platform/process.tcyr's fork+pipe group and any consumer issuing a
     # bare pipe. Untranslated, x8=22 ran epoll_pwait(garbage) → -EINVAL, garbage
     # rfd/wfd → downstream SIGSEGV/SIGILL. Same self-host-blind class as the v6.2.10
@@ -3773,7 +3773,7 @@ fn EVLOAD_W(S, idx, width): i64 {
     EVADDR_X1(S, idx);
     # v6.4.23: negative width = SIGNED sub-i64 global → sign-extending load from [x1]
     # (same encodings as EFIELD_LOAD_W; the global-load caller now passes a negated
-    # width for signed iN globals per parse/expr.cyr's GVSGN check).
+    # width for signed iN globals per parse/expr/factor.cyr's GVSGN check).
     if (width < 0 - 2) { EW(S, 0xB9800020); return 0; }  # -4: ldrsw x0, [x1]
     if (width == 0 - 2) { EW(S, 0x79800020); return 0; } # ldrsh x0, [x1]
     if (width == 0 - 1) { EW(S, 0x39800020); return 0; } # ldrsb x0, [x1]

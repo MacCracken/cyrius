@@ -995,9 +995,10 @@ fn _gvi_ptr_ann(S, st): i64 {
 # D18 (a), 2026-10-15). The warning fired for a `*T` declaration in a fn or after the first statement and for an
 # assignment to a `*T` global or a `*Struct` local, and nowhere else: a declaration-zone `*T` global (its initialiser is
 # replayed by EMIT_GVAR_INITS, or baked into the image when it folds — `_tp_warn_gv`, `_tp_warn_baked`) and an
-# assignment to a `*T` local or `p: *T` parameter of a scalar T (parse.cyr: the slot's typed-pointer bit) never
-# warned. The literal 0 alone is a null pointer, so `var p: *T = 0;`, `p = 0;` and `G = 0;` are quiet at every site,
-# as the kind-0 compare-mix warning exempts it (issues/archived/2026-10-12-typed-pointer-non-pointer-warning-gaps.md).
+# assignment to a `*T` local or `p: *T` parameter of a scalar T (parse/assign_copy.cyr: the slot's typed-pointer bit)
+# never warned. The literal 0 alone is a null pointer, so `var p: *T = 0;`, `p = 0;` and `G = 0;` are quiet at every
+# site, as the kind-0 compare-mix warning exempts it
+# (issues/archived/2026-10-12-typed-pointer-non-pointer-warning-gaps.md).
 # CHANGELOG [6.7.13]
 # ⛔ 6.7.14 — A STRING LITERAL IS A BYTE POINTER. `var s: *u8 = "abc";`, `t = "xyz";` and a zone `var p: *u8 = "abc";`
 # warned (D18 (a) carried the warning to the assignment and the zone): a string's value is its address, the C-string
@@ -1365,7 +1366,7 @@ fn EMIT_GVAR_INITS(S): i64 {
     if (_gvr_n > 0) { _gvr_hide(S, GTCNT(S)); }
     _gv_hide_program(S, 0);
     # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
-    # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
+    # pair-returning fn's OTHER return paths can be judged. Runs once; see parse/pair_check.cyr.
     _warn_mixed_pair_returns(S);
     _dl_pw_late(S);   # 6.7.16: a kernel build replays the globals after the program (parse/fn_def.cyr `_dl_pw_end`)
     return 0;

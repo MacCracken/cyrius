@@ -637,7 +637,7 @@ fn PP_PASS(S): i64 {
                                 # Scanning the bytes just read means no file is opened
                                 # twice. The decision cannot be made here — kernel_mode is
                                 # still 0 during preprocessing (see the reporting site at
-                                # the end of PARSE_PROG in parse.cyr for why).
+                                # the end of PARSE_PROG in parse/prog.cyr for why).
                                 if (PP_IS_HOST_ONLY(out + op, nr) == 1) { PP_NOTE_HOST_ONLY(fname); }
                                 # v6.6.6 (the file-marker forge (private visibility) bug) — an include is READFILE'd
                                 # STRAIGHT into

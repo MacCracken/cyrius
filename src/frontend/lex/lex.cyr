@@ -2760,7 +2760,7 @@ fn LEX(S): i64 {
                                                                                                                                     # Token-30 value = (pool offset << 32) | length. str_data is 2 MB (offsets and
                                                                                                                                     # lengths both need 21 bits); the old 16-bit length field OR-ed a >= 64 KB
                                                                                                                                     # literal's length INTO the offset, so the literal read from its 2nd byte.
-                                                                                                                                    # Decoders: parse/expr.cyr ESADDR, parse.cyr #assert/#pe_import, parse/fn.cyr
+                                                                                                                                    # Decoders: parse/expr/factor.cyr ESADDR, parse/builtin.cyr #assert, parse/stmt.cyr #pe_import, parse/fn/def.cyr
                                                                                                                                     # #deprecated. CHANGELOG [6.6.4]
                                                                                                                                     var eline = GCLINE(S);
                                                                                                                                     SCLINE(S, sline);
@@ -2802,7 +2802,7 @@ fn LEX(S): i64 {
     }
     _lex_eof_tok(S, bl);
     # 6.6.5 — one pass over the finished token stream to record which files declared
-    # `private`, BEFORE pass 1 stamps anything. See _PRIV_PRESCAN (src/frontend/parse/parse.cyr)
+    # `private`, BEFORE pass 1 stamps anything. See _PRIV_PRESCAN (src/frontend/parse/vis.cyr)
     # for why this cannot be done during the walk. CHANGELOG [6.6.5]
     _PRIV_PRESCAN(S);
     return 0;

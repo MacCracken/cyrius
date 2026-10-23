@@ -100,7 +100,7 @@ fn thread_create(fp, arg): i64 {
     _tls_live = _tls_live + 1;      # published BEFORE the thread can call thread_local_get
     atomic_fence();
     # pthread_create(&pthread_t, attr=NULL, _thr_entry, ctl) via __got[5]. 1700 is the
-    # libSystem-routine sub-band (see src/frontend/parse/expr.cyr) — NOT a BSD syscall number.
+    # libSystem-routine sub-band (see src/frontend/parse/expr/factor.cyr) — NOT a BSD syscall number.
     var rc = syscall(1700, ctl + 24, 0, &_thr_entry, ctl);
     if (rc != 0) {
         _threads_live_dec();

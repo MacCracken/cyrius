@@ -1164,7 +1164,7 @@ fn _gen_fwd_err(S, fi, noff, tail, fi2): i64 {
 # The refusal, by name, for a scalar call / type argument / address of a stub generic fi (the site names it `noff`).
 # 6.7.16 (D1): the words name the two new shapes too, and a note names the line that needs a struct.
 fn _refuse_gen_stub(S, fi, noff): i64 {
-    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `rdb(P { .. })` is the literal's error (parse/expr.cyr)
+    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `rdb(P { .. })` is the literal's error (parse/expr/undef.cyr)
     _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, `&x` of one returned as a struct, or a struct result over 8 bytes stored in one — directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
     if (_err_quiet == 0) { _gen_stub_note(S, fi); }
     return 0;
@@ -2087,7 +2087,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     if (defstart == 0) { return 0 - 2; }            # 0 = no recorded def-start
     defstart = defstart - 1;                        # stored +1 (token index 0 is valid)
     # --- save the ENCLOSING fn's state (the fn currently being emitted) ---
-    # 6.6.7 — ALL of it, through the shared snapshot (parse.cyr `_fnst_save`) plus the
+    # 6.6.7 — ALL of it, through the shared snapshot (parse/state.cyr `_fnst_save`) plus the
     # compaction tables. The hand-kept list here saved rp_vec by LENGTH while the nested
     # PARSE_FN_DEF truncated it to 0 (an early `return` before the first `f<T>()` fell
     # through on x86/PE and hung on aarch64), and it omitted the defer table (an enclosing

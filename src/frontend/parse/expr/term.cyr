@@ -251,7 +251,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                 # v6.4.74 — `_cfo = 0` MOVED TO AFTER the emit (17 sites across
                                 # `/ % << >> >>>`). Clearing the const-fold flag BEFORE
                                 # `PARSE_FACTOR(S)` does not work: PARSE_FACTOR *re-arms* it for a
-                                # bare NUM (parse/expr.cyr:358/368 set `_cfp = GCP(S)` then
+                                # bare NUM (parse/expr/factor.cyr sets `_cfp = GCP(S)` then
                                 # `_cfv = val; _cfo = 1`). PEXPR then saw a live fold, folded the
                                 # RHS literal with the next operator, and `SCP(S, _cfp)` REWOUND
                                 # the code pointer over the entire shift/div sequence — silently
@@ -411,7 +411,7 @@ fn _ptr_diff(S, ps, rs): i64 {
 fn EPTR_SCALE(S, ps): i64 {
     # rax has the offset value; multiply by pointer scale
     # mov rcx, rax; mov rax, ps; imul rcx → rax = offset * scale
-    var st = _ps_step(ps);   # 6.7.8 (C2-3a): `ps` may be a step word (`_ps_word`, parse/types.cyr)
+    var st = _ps_step(ps);   # 6.7.8 (C2-3a): `ps` may be a step word (`_ps_word`, parse/types/ptr.cyr)
     if (st > 1) { EMOVCA(S); EMOVI(S, st); EIMUL(S); }
     return 0;
 }

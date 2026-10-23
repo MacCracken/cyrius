@@ -2112,7 +2112,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
         return 0;
     }
     # --- save enclosing (top-level) state; the constructor is its own fn ---
-    # 6.6.7 — through the shared per-fn snapshot (parse.cyr `_fnst_save`), which zeroes the
+    # 6.6.7 — through the shared per-fn snapshot (parse/state.cyr `_fnst_save`), which zeroes the
     # parameter span, regalloc, ret class and the rest, and gives the constructor its own
     # return-patch and defer ranges. (6.6.6 had to add `_cur_fn_pslots` here by hand after the
     # list drifted; the shared snapshot is what stops the next one drifting.) CHANGELOG [6.6.7]
@@ -2738,7 +2738,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     } else {
         # Not found — a monomorphized instance, an async fn's `f$impl`, or an earlier definition
         # of a redefined fn (pass 1 keeps the last one's start). A fn inside a top-level block is
-        # prescanned since 6.6.17 (`_prescan_block_fn`; one inside a fn body is refused, parse.cyr
+        # prescanned since 6.6.17 (`_prescan_block_fn`; one inside a fn body is refused, parse/stmt.cyr
         # `_refuse_nested_fn`). The v6.5.38 identity rule still applies; it lives in
         # `_fn_def_slot` now so pass 1 and pass 2 cannot drift apart about what a definition owns.
         fi = _fn_def_slot(S, noff, _vis_fid, _this_priv);
@@ -3999,7 +3999,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if (_b3t == 12) { break; }               # EOF guard
             _rbs_tok(S);
             # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
-            # instance ever re-parses this body. See `_refuse_nested_fn` (parse.cyr).
+            # instance ever re-parses this body. See `_refuse_nested_fn` (parse/stmt.cyr).
             if (_b3_skip_tok(S) == 0) {   # 6.7.16 (D2): and a `return &n;` (`_ret_amp_stub`)
                 if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
                 elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
@@ -4140,7 +4140,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
     STI(S, GTI(S) + 1);
     # Defer flag init (zeroing trampoline), return landing, LIFO defer walk — the shared
-    # epilogue authority (parse.cyr `_defer_emit_init` / `_rp_patch_here` / `_defer_emit_walk`),
+    # epilogue authority (parse/state.cyr `_defer_emit_init` / `_rp_patch_here` / `_defer_emit_walk`),
     # over THIS fn's ranges [_defer_base, count) and [_rp_base, len). CHANGELOG [6.6.7]
     # 6.7.3: off the end of a bool fn is `false` — before the defer trampoline (with defers the
     # fall-through jmps round it to the landing); every return lands past it.
@@ -4179,7 +4179,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     #
     # ⛔ `_AARCH64_BACKEND == 0` IS NOT AN x86 TEST — cx sets it to 0 as well, so every pass
     # below this line used to walk cx BYTECODE looking for x86 ModRM bytes, and NOP-fill on a
-    # match. `wp_compact` (common/ir.cyr) and `_try_vec_direct` (parse/expr.cyr) already carry
+    # match. `wp_compact` (common/ir.cyr) and `_try_vec_direct` (parse/expr/intrin.cyr) already carry
     # both tests and say so; these four did not. The reasoning the CO-03 comment gives for
     # aarch64 — the compiler's own output never spells the pattern, a consumer's could — holds
     # verbatim for cx, whose opcode assignment is not a fixed ISA and can change under us.
@@ -5127,7 +5127,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     SFNE(S, fi, GCP(S));
     # Restore state (DON'T restore VCNT — arrays inside functions are globals that persist)
     # 6.6.5: their NAMES do not persist though — close every fn-local static declared in this
-    # body so it cannot shadow a later file's global. See `_fs_push` (parse.cyr).
+    # body so it cannot shadow a later file's global. See `_fs_push` (parse/state.cyr).
     _fs_popto(S, _fs_floor);
     _fs_floor = _fs_saved_floor;
     SLVAR(S, saved_lv);

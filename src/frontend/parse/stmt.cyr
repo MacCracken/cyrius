@@ -192,7 +192,7 @@ fn _must_use_warn(S, noff): i64 {
 # _PARSE_STMT_IMPL (the cybs per-fn cap). `pair` = the callee is pair-returning, read by name
 # BEFORE the call was parsed. Cursor on the token after the call; no-op unless it is `?`.
 fn _stmt_qmark(S, pair): i64 {
-    if (PEEKT(S) == 28) { return _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `f(..)[i] = v;` (parse/expr.cyr)
+    if (PEEKT(S) == 28) { return _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `f(..)[i] = v;` (parse/expr/subscript.cyr)
     if (PEEKT(S) == 124) {
         STI(S, GTI(S) + 1);
         if (GINFN(S) == 0) {
@@ -1164,7 +1164,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var _qs_pair = _stmt_call_pair(S, noff);   # 6.7.17 (D26): `fncall1(&f, 4)?;` too
             # ⛔ 6.6.5 — `fncallN(cb, …);` AS A STATEMENT WAS NOT THE SAME LANGUAGE AS IN AN
             # EXPRESSION. v6.5.17 lowered `fncallN` to the closure-aware indirect call in
-            # PARSE_FACTOR (parse/expr.cyr), but this dispatch sends IDENT+`(` straight to
+            # PARSE_FACTOR (parse/expr/factor.cyr), but this dispatch sends IDENT+`(` straight to
             # PARSE_FNCALL, so in statement position the SAME TEXT stayed an ordinary call
             # into lib/fnptr.cyr — which calls the bit-63-tagged env pointer verbatim.
             # `fncall1(closure, 2);` SIGSEGV'd (exit 139) while `var r = fncall1(closure, 2);`
@@ -1211,7 +1211,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             PARSE_FIELD_STORE(S, noff, 5);
             return 0;
         }
-        if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse/expr.cyr)
+        if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse/expr/subscript.cyr)
         # assignment or compound assignment: already consumed IDENT
         # 6.7.2 (B1): a const is not an lvalue — refused by name (the statement still parses on).
         # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse/fn.cyr). 6.7.14: only before an

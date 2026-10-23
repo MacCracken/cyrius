@@ -132,7 +132,7 @@ fn _SIMD_STASH(S, idx): i64 {
 #
 # ⛔ THE DECISION IS PURE LOOKAHEAD — NOTHING IS CONSUMED OR EMITTED UNTIL IT SUCCEEDS. The fast
 # path swallows 11 tokens unevaluated, allocates no stash slots and never leaves `n` in rax, so a
-# per-backend stubbed emitter CANNOT undo it; the gate has to be on the PARSER. parse.cyr:518-529
+# per-backend stubbed emitter CANNOT undo it; the gate has to be on the PARSER. parse/switch.cyr
 # records that exact failure for the switch jump-table path ("a stranded `ja default` in cx output").
 #
 # ⚠ `_AARCH64_BACKEND == 0` IS NOT AN x86 TEST — cx sets it to 0 as well, which is why the
@@ -828,7 +828,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     # f64 builtins — check before PARSE_FACTOR dispatches.
     # v5.11.37 path-A: each ptyp dispatches to its named op in
     # <backend>/emit.cyr — x86 emits SSE2/x87, aarch64 emits FNEG /
-    # polyfill-call / hard-error, cx is no-op. parse/expr.cyr is
+    # polyfill-call / hard-error, cx is no-op. parse/expr/ is
     # arch-agnostic for these ops.
     if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 1; } }
     if (ptyp == 66) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }

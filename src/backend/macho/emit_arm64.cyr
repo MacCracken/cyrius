@@ -513,7 +513,7 @@ fn EMITMACHO_ARM64(S): i64 {
     # or not). Shared header sets ordinal=1 (libSystem), type=POINTER,
     # seg=2, offset=0; each DO_BIND auto-advances offset by 8 B so
     # binds land at __got[0], __got[1], … in order. Must stay
-    # lockstep with parse.cyr's _TARGET_MACHO==2 slot assignments and
+    # lockstep with parse/expr/factor.cyr's _TARGET_MACHO==2 slot assignments and
     # the indirect symtab below.
     var bind_start = o;
     store8(O + o, 0x11); o = o + 1;        # SET_DYLIB_ORDINAL_IMM | 1

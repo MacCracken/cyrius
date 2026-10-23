@@ -237,7 +237,7 @@ fn _arr_named_marks(S, li, d, n): i64 {
     SSLICE_W(S, li, 0 - 0x1000000000000 - n);
     return 0;
 }
-# `stack var b[N]` (parse.cyr): the span, and the bare mark — it states no element type either.
+# `stack var b[N]` (parse/stmt.cyr): the span, and the bare mark — it states no element type either.
 fn _stk_named_marks(S, li, n): i64 {
     SLAGG(S, li, n);
     SSLICE_W(S, li, 0);
@@ -518,7 +518,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
-    # See `_fs_push` (parse.cyr) for the whole story.
+    # See `_fs_push` (parse/state.cyr) for the whole story.
     if (GINFN(S) == 1) { _fs_push(S, vcnt, noff); }
     else {
         # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after

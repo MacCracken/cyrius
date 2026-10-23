@@ -450,7 +450,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # ⛔ 6.6.5 — A GLOBAL SOURCE WAS NOT A COPY, IT WAS A CRASH. `var b: P = A;` for a
     # top-level `var A = P { 1, 2 };` fell out of this path (FINDLOCAL fails) into the scalar
     # init, which stored A's ADDRESS into a slot marked struct-typed — so `b.x` dereferenced
-    # a value, not an address: SIGSEGV. The sibling `_agc_operand` (parse.cyr) fixed the
+    # a value, not an address: SIGSEGV. The sibling `_agc_operand` (parse/assign.cyr) fixed the
     # assignment form of the same hole; this is the declaration form. `_sci_gsrc` is the
     # global's slot, or -1 for the local source. CHANGELOG [6.6.5]
     _sci_gsrc = 0 - 1;

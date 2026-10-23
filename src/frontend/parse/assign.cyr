@@ -527,7 +527,7 @@ fn _asg_compound_load(S, noff): i64 {
         _asg_cstep = _slot_ptr_step(S, li);
         if (lt > 0) { if (lt < 8) {
                 var lw = lt;
-                if (GSLICE_W(S, li) < 0) { lw = 0 - lt; }   # signed: movsx (parse/expr.cyr)
+                if (GSLICE_W(S, li) < 0) { lw = 0 - lt; }   # signed: movsx (parse/expr/factor.cyr)
                 EFLLOAD_W(S, li, lw);
                 return lt;
             } }

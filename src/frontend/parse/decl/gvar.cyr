@@ -1334,7 +1334,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # var, INCLUDING inside already-parsed library code that uses the constant as an
     # ABI offset (patra `DbOff.DB_PATH`). Hard-error. An int-literal shadow stays a
     # CHKDUPVAL warning above (e.g. chrono's harmless `var CLOCK_MONOTONIC = 1`
-    # aliasing the syscall enum, same value). See CHK_ENUM_SHADOW in parse/types.cyr.
+    # aliasing the syscall enum, same value). See CHK_ENUM_SHADOW in parse/types/lookup.cyr.
     if (chk_has == 0) { CHK_ENUM_SHADOW(S, noff); }
     # Register
     var vcnt = GVCNT(S);
@@ -1387,7 +1387,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # v6.2.11: flag a conflicting-value redefinition (issue 2026-06-14) when this
     # global has a `= NUM ;` literal AND shadows a prior def, BEFORE it's
     # counted so the lookup sees only prior defs. Mirrors the enum-member site in
-    # parse/types.cyr. Gated on the shadow so the common non-colliding case skips
+    # parse/types/enum.cyr. Gated on the shadow so the common non-colliding case skips
     # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
     # 6.7.15: asked once the registration is written, so a refused shape and a prior the replay folds stand it down
     # (_gv_dup_later). The cursor is still the declaration's `=`.

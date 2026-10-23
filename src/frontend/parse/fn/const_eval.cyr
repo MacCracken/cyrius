@@ -940,7 +940,7 @@ fn _ce_stmt(S): i64 {
 # `x OP= e` at the cursor (an IDENT): the operator, or 0.
 fn _ce_cop(S): i64 {
     var ct = TOKTYP(S, _ce_ti + 1);
-    if (_is_cop_tok(ct) == 1) {   # 6.7.5: the runtime's own list (parse.cyr)
+    if (_is_cop_tok(ct) == 1) {   # 6.7.5: the runtime's own list (parse/assign.cyr)
         if (TOKTYP(S, _ce_ti + 2) == 4) { return ct; }
     }
     return 0;
@@ -1912,7 +1912,7 @@ fn _asg_lvalue_at(S, noff): i64 {
     if (_slit_stmt(S, noff) == 1) { return 1; }   # 6.7.14 (D12 (a)): a statement `P { .. };`
     if (_asg_pair_at(S) == 1) {
         if (_asg_lvalue_refused(S, noff) == 1) { return 1; }
-        return _asg_cap_first(S, noff, GTI(S) - 1);   # 6.7.14: a captured name, at the name (parse.cyr)
+        return _asg_cap_first(S, noff, GTI(S) - 1);   # 6.7.14: a captured name, at the name (parse/assign.cyr)
     }
     if (_asg_lvalue_is(S, noff) == 0) { return 0; }
     ERR_EXPECT(S, 4);
