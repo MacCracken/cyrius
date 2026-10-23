@@ -128,6 +128,15 @@ fn _tr_prepass(S): i64 {
         if (tn != 0) { S64(_ti_tab + i * 64 + 48, _tr_find(S, tn)); }
         i = i + 1;
     }
+    # 6.7.18: `_ti_by_ti` bisects the `impl` tokens when they ascend — they do: the walk above is the only
+    # caller of `_tr_scan_impl` and moves only forward. Checked here rather than assumed. CHANGELOG [6.7.18]
+    _ti_asc = 1;
+    i = 1;
+    while (i < _ti_n) {
+        if (load64(_ti_tab + i * 64 + 32) <= load64(_ti_tab + (i - 1) * 64 + 32)) { _ti_asc = 0; }
+        i = i + 1;
+    }
+    _ti_asc_n = _ti_n;
     return 0;
 }
 fn _tr_find(S, noff): i64 {
@@ -232,7 +241,23 @@ fn _tr_scan_im(S, p): i64 {
 
 # ── queries ─────────────────────────────────────────────────────────────────────────────────
 # The impl whose `impl` token is `ti`, -1 when none (no trait / impl tables, or not recorded).
+# 6.7.18: by bisection while the recorded tokens ascend (`_tr_prepass` checks it): each impl asks twice (its
+# prescan, its parse), so the scan below cost O(impls^2) (800 impls: 640,000 reads). Ascending tokens are unique, so
+# the bisection's hit is the scan's first; anything else takes the scan. CHANGELOG [6.7.18]
+var _ti_asc = 0;     # 1 when impls [0, _ti_asc_n) have strictly ascending `impl` tokens
+var _ti_asc_n = 0 - 1;
 fn _ti_by_ti(S, ti): i64 {
+    if (_ti_asc == 1 && _ti_asc_n == _ti_n) {
+        var lo = 0;
+        var hi = _ti_n;
+        while (lo < hi) {
+            var mid = (lo + hi) >> 1;
+            var v = load64(_ti_tab + mid * 64 + 32);
+            if (v == ti) { return mid; }
+            if (v < ti) { lo = mid + 1; } else { hi = mid; }
+        }
+        return 0 - 1;
+    }
     var i = 0;
     while (i < _ti_n) {
         if (L64(_ti_tab + i * 64 + 32) == ti) { return i; }

@@ -54,6 +54,10 @@
 #      stepped over and an ISALNUM -> CCLASS pair per identifier byte: row A's program (52,965 bytes) made 57,093
 #      CCLASS + 12,040 ISALNUM calls; the tree 258 (the table's fill and the odd caller). Bound: under one call
 #      per 10 source bytes. src/frontend/lex/lex.cyr.
+#   T3 row T's program at 800 impls: each impl looks its record up by its `impl` token twice (`_ti_by_ti`: its
+#      prescan, its parse), and that was a scan of every impl reading each token through L64 — O(N^2). It bisects
+#      the tokens, which `_tr_prepass` records ascending (checked there). The parent: 1,290,255 L64 calls against
+#      1,041,571 TOKTYP calls (1.24x); the tree 649,455 (0.62x). Bound: L64 under 0.9x TOKTYP.
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -69,6 +73,7 @@
 # T2: the parent of its fix -> RED (383%); `_tr_providers` walking every impl again (same answer) -> RED.
 # F: the parent of its fix -> RED (80 per token); `_FINDFN_CSTR` taking its walk again (the hash skipped) -> RED.
 # C: the parent of its fix -> RED (69,133 calls); LEX asking CCLASS per byte again (LEXID by table) -> RED.
+# T3: the parent of its fix -> RED (1.24x); `_tr_prepass` leaving `_ti_asc` 0 (the scan always) -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -200,6 +205,15 @@ if run "$D/t1.cyr"; then
             else echo "  ok [T2] STREQ calls $Q1 (200 impls) -> $Q2 (400), $((Q2 * 100 / Q1))% (bound 300%)"; fi
         fi
     fi
+fi
+
+# ── T3: an impl's record by its token ─────────────────────────────────────────────────────────────────────────
+tgen 800 > "$D/t3.cyr"
+if run "$D/t3.cyr"; then
+    T3L=$(count L64); T3T=$(count TOKTYP)
+    if [ "$T3T" -lt 1 ] || [ $((T3L * 10)) -ge $((T3T * 9)) ]; then
+        echo "FAIL: $G [T3]: $T3L L64 calls against $T3T TOKTYP calls at 800 impls (bound 0.9x)"; FAIL=1
+    else echo "  ok [T3] $T3L L64 calls against $T3T TOKTYP calls at 800 impls ($((T3L * 100 / T3T))%, bound 90%)"; fi
 fi
 
 # ── F: a fn by C-string name ───────────────────────────────────────────────────────────────────────────────
