@@ -74,11 +74,15 @@ printf 'include "lib/assert.cyr"\nvar r = assert_summary();\nsyscall(60, r);\n' 
 printf 'include "lib/assert.cyr"\nassert_eq(1, 1, "ok");\nvar r = assert_summary();\nsyscall(60, 3);\n' > "$Z/exit3.tcyr"
 printf 'var q = 0;\nsyscall(60, q);\n' > "$Z/optout.tcyr"
 printf 'include "lib/assert.cyr"\nassert_eq(1, 1, "ok");\nvar r1 = assert_summary();\nassert_eq(1, 2, "after the first summary");\nvar r2 = assert_summary();\nsyscall(60, 0);\n' > "$Z/late.tcyr"
-NROWS=$(ls "$Z" | grep -c '\.tcyr$')
+NROWS=$(ls "$Z" | grep -c '\.tcyr$' || true)
 # The floor is 1 so the suite's own floor check is not what this gate reads.
 echo 1 > "$R/tests/tcyr/CORPUS_FLOOR"
 
-( cd "$R" && CYRIUS_CHECK_TIMEOUT=60 timeout 300 "$T/drv" tcyr ) 2>&1 | strip_ansi > "$T/out.txt"
+# The run is captured to a file and its status dropped (`|| true`), not piped into strip_ansi: the
+# suite is RED by design, and under `bash -eo pipefail` the driver's exit 1 failed the pipeline and
+# ended the gate before any row. CHANGELOG [6.7.18]
+( cd "$R" && CYRIUS_CHECK_TIMEOUT=60 timeout 300 "$T/drv" tcyr ) > "$T/out.raw" 2>&1 || true
+strip_ansi < "$T/out.raw" > "$T/out.txt"
 row() { grep -E "^  zz/$1 " "$T/out.txt" | sed -E 's/^  zz\/[a-z_0-9]+ +//'; }
 echo "the check driver's tcyr rows:"
 check "good        passes"                       "PASS" "$(row good)"
@@ -93,7 +97,8 @@ check "the suite row is RED"                     "yes"  "$(grep -q "^  FAIL: tes
 
 echo "mutation: the summary requirement deleted"
 if [ "$MUT_OK" = yes ]; then
-    ( cd "$R" && CYRIUS_CHECK_TIMEOUT=60 timeout 300 "$T/drv_mut" tcyr ) 2>&1 | strip_ansi > "$T/mut.txt"
+    ( cd "$R" && CYRIUS_CHECK_TIMEOUT=60 timeout 300 "$T/drv_mut" tcyr ) > "$T/mut.raw" 2>&1 || true
+    strip_ansi < "$T/mut.raw" > "$T/mut.txt"
     check "the mutant scores die_early PASS (so the row is load-bearing)" "PASS" \
         "$(grep -E '^  zz/die_early ' "$T/mut.txt" | sed -E 's/^  zz\/[a-z_0-9]+ +//')"
 else
