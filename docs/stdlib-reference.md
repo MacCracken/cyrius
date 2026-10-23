@@ -160,6 +160,7 @@ after the first statement uses the helper API.
 | `slice_from_cstr` | `slice_from_cstr(&dst, cstr) → 0` | Init from null-terminated string |
 | `slice_from_buf` | `slice_from_buf(&dst, buf, len) → 0` | Init from `(buf, len)` pair |
 | `vec_as_slice` | `vec_as_slice(&dst, v) → 0` | Snapshot vec's first 16 bytes |
+| `slice_get_be` | `slice_get_be(&s, i, w) → value` | The `w`-byte (1..8) big-endian unsigned field at element `i` of a `[u8]` slice, every byte checked (`slice bounds violation`, exit 134) — the network parsers' multi-byte reads (6.7.18) |
 | `_slice_idx_get_W(&s, i)` | width 1/2/4/8/16 | Bounds-checked sized load (used by `s[i]` lowering) |
 | `_slice_idx_addr(&s, i, w)` | width 1/2/4/8 | Bounds-checked element address (used by `s[i] = v`, `s[i] OP= v` and a signed `s[i]`, 6.7.8) |
 | `slice_unchecked_get_W(&s, i)` | width 1/2/4/8/16 | Same as above, no bounds check |
@@ -684,11 +685,18 @@ Minimal HTTP/1.0 client.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `http_get` | `http_get(url) → resp_ptr` | GET request — back-compat shape; failure → resp with `status == HTTP_ERROR` (-1) |
-| `http_get_r` | `http_get_r(url) → Result<resp_ptr, HttpError>` | Result variant (v5.8.31). Bad URL or a request over 2048 bytes → `Err(HttpBadUrl)`; unresolvable host or net failure → `Err(HttpNetErr)`; 200-299 → `Ok(resp)`; non-2xx → `Err(HttpNon2xx)` |
+| `http_get_r` | `http_get_r(url) → Result<resp_ptr, HttpError>` | Result variant (v5.8.31). Bad URL or a request over 2048 bytes → `Err(HttpBadUrl)`; unresolvable host, net failure or a deadline that passed → `Err(HttpNetErr)`; 200-299 → `Ok(resp)`; non-2xx → `Err(HttpNon2xx)` |
 | `http_get_a` | `http_get_a(a, url) → resp_ptr` | Allocator variant (v5.8.36): the receive buffer and response come from `a` |
 | `http_status` / `http_body` / `http_body_len` | `(resp) → field` | Response accessors |
 
 `enum HttpError { HttpBadUrl; HttpNetErr; HttpNon2xx; HttpOther; }`.
+
+Deadlines (6.7.18, CYRIUS-2026-0049): `HTTP_IDLE_TIMEOUT_MS` (default 5000) bounds every wait — the
+connect, the request's send, each read for the next bytes — and `HTTP_TIMEOUT_MS` (default 30000)
+the whole exchange. Running out of either is a failure (`HTTP_ERROR` / `Err(HttpNetErr)`), never a
+truncated response returned as complete; 0 turns that bound off. Both are module vars, read once
+per call: lower them before fetching untrusted URLs. A status line whose code is not three digits
+reads as status 0 (6.7.18).
 
 Note: `http_get` shipped with a long-standing latent bug
 (treated net.cyr Result heap pointers as raw int fds) that was
@@ -1824,7 +1832,7 @@ WebSocket client (RFC 6455): handshake upgrade, frame masking/unmasking, automat
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `ws_new` | `ws_new(fd) → ws` | WebSocket handle from a connected socket |
-| `ws_connect` | `ws_connect(sock, path, host) → ws` | Perform the upgrade handshake |
+| `ws_connect` | `ws_connect(sock, path, host) → ws` | Perform the upgrade handshake: reads the 101's whole header block (up to 8 KiB; longer is CLOSED) and keeps any bytes after it for the frame reader (6.7.18) |
 | `ws_fd` | `ws_fd(ws) → fd` | Underlying socket fd |
 | `ws_state` | `ws_state(ws) → state` | `WS_CONNECTING`/`OPEN`/`CLOSING`/`CLOSED` |
 | `ws_send_text` | `ws_send_text(ws, msg) → n` | Send a masked text message |
@@ -1843,9 +1851,9 @@ WebSocket server (RFC 6455). An HTTP handler (the sandhi fold's server) detects 
 | `ws_server_new` | `ws_server_new(fd) → ws` | Create handle for upgraded socket |
 | `ws_server_fd` | `ws_server_fd(ws) → fd` | Extract socket file descriptor |
 | `ws_server_state` | `ws_server_state(ws) → state` | Get connection state |
-| `ws_server_handshake` | `ws_server_handshake(cfd, req_buf, req_len) → ws/0` | Perform upgrade; reply 101 or 0 on failure |
+| `ws_server_handshake` | `ws_server_handshake(cfd, req_buf, req_len) → ws/0` | Perform upgrade; reply 101 or 0 on failure — a `Sec-WebSocket-Key` must be 22 base64 characters and `==` (6.7.18) |
 | `ws_server_recv_frame` | `ws_server_recv_frame(ws, payload_buf, max, opcode_out) → len/-1` | Receive frame and unmask |
-| `ws_server_recv` | `ws_server_recv(ws) → data/0` | Receive text/binary, handle ping/close |
+| `ws_server_recv` | `ws_server_recv(ws) → data/0` | Receive text/binary, handle ping/close. Each frame has its own buffer — a data frame the allocation returned, a control frame (125 bytes at most, RFC 6455 §5.5; longer fails the call) the call's stack — so connections on different threads never share one (6.7.18, CYRIUS-2026-0043) |
 | `ws_server_send_text` | `ws_server_send_text(ws, msg)` | Send text message |
 | `ws_server_send_binary` | `ws_server_send_binary(ws, data, len)` | Send binary message |
 | `ws_server_send_ping` | `ws_server_send_ping(ws)` | Send ping frame |
