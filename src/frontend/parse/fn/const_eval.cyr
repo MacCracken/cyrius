@@ -1645,9 +1645,9 @@ fn _ce_top_expr(S, ti, out): i64 {
     return v;
 }
 # 6.7.15 — the same, QUIET: a refusal sets `out`[1] and prints nothing, counts no error and latches nothing — the
-# declaration zone's probe of a float global's initializer (parse/decl.cyr _gvk_fx), which the replay compiles as
-# run-time code when the evaluator refuses it. Its tokens are pre-scanned (_gvk_fscan): only consts already
-# evaluated are read, so no const's own evaluation runs under it. CHANGELOG [6.7.15]
+# declaration zone's probe of a float global's initializer (parse/decl/gvar_init.cyr _gvk_fx), which the replay compiles
+# as run-time code when the evaluator refuses it. Its tokens are pre-scanned (_gvk_fscan): only consts already evaluated
+# are read, so no const's own evaluation runs under it. CHANGELOG [6.7.15]
 var _ce_quiet = 0;
 fn _ce_top_quiet(S, ti, out): i64 {
     var sq = _ce_quiet;

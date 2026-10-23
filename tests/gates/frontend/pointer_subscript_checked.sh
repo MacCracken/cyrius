@@ -34,7 +34,7 @@
 # P / S0 — THE STEP WORD CARRIES THE ELEMENT KIND (C2-3a). A typed pointer's step (sizeof(T)) is
 # all GPSC carried, and `*u8` / `*i8`, `*u32` / `*f32`, `*f64` / `*bool` / `*i64` share steps, so
 # C2's `p[i]` and `*p` at the element's width had nothing to load by. The step is now stored and
-# carried as one word, `ps | ed << 40` (the element descriptor, parse/decl.cyr `_ek_*`): the slot
+# carried as one word, `ps | ed << 40` (the element descriptor, parse/decl/array.cyr `_ek_*`): the slot
 # mark (locals, `p: *T` parameters, captures), a field's `_fld_ps`, a return's `_fn_rps`, a global's
 # `_gv_ped` beside GVTYPE; an f64 / f32 / bool array records its kind in the descriptor. Nothing
 # reads the kind yet — the corpus differential is byte-identical on every target — so these rows
@@ -73,7 +73,7 @@
 # against the declared N, and no table held it (a global kept N * sizeof(T) with an 8-byte floor, a
 # local its slot span, so `u8[5]` read as 8 elements). N now rides, behind a nonzero descriptor, a
 # global's GVSGN bits 16..47 and a stack local's slice-width word (`0 - 2^48 - N`; the closure
-# snapshot carries it) — parse/decl.cyr `_arr_gsgn` / `_arr_named_marks`. Nothing reads N until the
+# snapshot carries it) — parse/decl/array.cyr `_arr_gsgn` / `_arr_named_marks`. Nothing reads N until the
 # mode's check (C2-8, rows N1-N6 by trip / no-trip), so these rows pin that it changes NOTHING: the
 # redeclaration fold compares the descriptor without N, and a bare array's word stays 0x100.
 #   N0a `u8[5]` then `u8[6]` (8 B each) fold, and the folded global subscripts as before

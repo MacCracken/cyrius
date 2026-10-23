@@ -2685,7 +2685,7 @@ var _pw_end = 0 - 1;
 # call starting there records its struct temp (`_fnc_agg`), as a method call's does. -1 = none.
 var _sc_fcw = 0 - 1;
 # 6.7.6 — the last WHOLE `Str` field read (`h.name`): its first token, the token after it, the Str
-# struct id and the field's name (`_fls_note`, parse/decl.cyr). Passive — the load is unchanged.
+# struct id and the field's name (`_fls_note`, parse/decl/field.cyr). Passive — the load is unchanged.
 var _fls_beg = 0 - 1;
 var _fls_end = 0 - 1;
 var _fls_sid = 0;
@@ -2760,8 +2760,8 @@ var _ra_auto_count = 0;
 
 # v5.11.62: current fn index for the per-fn array-byte attribution
 # tracked at 0x1C8000 (reclaimed v5.11.19 fn_regalloc slot). PARSE_FN_DEF
-# sets to the fn's fi at entry and resets to -1 at exit. parse/decl.cyr's
-# array-registration path (parse/decl.cyr `PARSE_ARRAY`) adds the aligned
+# sets to the fn's fi at entry and resets to -1 at exit. parse/decl/array.cyr's
+# array-registration path (parse/decl/array.cyr `PARSE_ARRAY`) adds the aligned
 # size into the slot when this is >= 0; top-level `var foo[N]` declarations
 # (no enclosing fn) skip the accounting. Read by FIXUP's `large static
 # data` warning emitter (src/backend/x86/fixup.cyr) to compute "M bytes
@@ -3371,7 +3371,21 @@ include "src/frontend/parse/expr.cyr"
 # Parse array: already past [, parse N]; register global var with aligned size
 
 # v5.5.38: var/array/field/struct-init/assignment fns extracted.
-include "src/frontend/parse/decl.cyr"
+# 6.7.18: that file (parse/decl.cyr) is split along its seams into parse/decl/, each piece moved unchanged and
+# included HERE, one after another in its old order, so the token stream, and every compiler built from it, is the
+# same. One parent, no nesting. CHANGELOG [6.7.18]
+include "src/frontend/parse/decl/array.cyr"
+include "src/frontend/parse/decl/field.cyr"
+include "src/frontend/parse/decl/struct_lit.cyr"
+include "src/frontend/parse/decl/tuple_lit.cyr"
+include "src/frontend/parse/decl/static_init.cyr"
+include "src/frontend/parse/decl/gvar.cyr"
+include "src/frontend/parse/decl/gvar_init.cyr"
+include "src/frontend/parse/decl/struct_copy.cyr"
+include "src/frontend/parse/decl/vector.cyr"
+include "src/frontend/parse/decl/receive.cyr"
+include "src/frontend/parse/decl/var.cyr"
+include "src/frontend/parse/decl/handle.cyr"
 
 
 # Emit inverted jcc for comparison op, return patch offset
@@ -6486,7 +6500,7 @@ fn _asg_hdl_call(S): i64 {
 # nested struct fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return), under any
 # parentheses that wrap it whole (`(h.name)`, `((f(..)))`: the guide's whole-wrap transparency, 6.7.16). An inline
 # struct field is not a pointer, so it is not typed here. 0 otherwise. A peek. The local's arm (`_asg_ret_peek`) and
-# the `*Str` declaration / global / zone (`_tp_call_pointee`, parse/decl.cyr) read it, so they agree.
+# the `*Str` declaration / global / zone (`_tp_call_pointee`, parse/decl/gvar_init.cyr) read it, so they agree.
 fn _tpv_sid(S, st): i64 {
     var a = _tpv_peel(S, st);
     if (a < 0) { return 0; }
@@ -7013,7 +7027,7 @@ fn _tup_asg(S, noff, term): i64 {
 # into an existing tuple variable — a local, a by-value parameter (copied in, inline), a global, at
 # top level too (no temp: the values go from the registers straight into the slots, every one read
 # before any is stored, so `t = f(t.1, t.0);` reads the old t). The capture's contract is
-# `_tup_cap_check`'s (parse/decl.cyr), the destructure's: a refused callee is reported and skipped.
+# `_tup_cap_check`'s (parse/decl/tuple_lit.cyr), the destructure's: a refused callee is reported and skipped.
 # Inside a wrap too — `t = (f());` (6.7.14, D45: it was R12, as the destructure refused `(f())`): the
 # whole-value wrap is `_asg_paren`'s, which runs this on its inside. 1 = done (`term` consumed).
 fn _tup_asg_call(S, noff, term): i64 {
@@ -7929,7 +7943,7 @@ fn PARSE_STMT(S): i64 {
 
 # 6.6.16 (C1): a statement inside another statement that has NO braced PARSE_PROG body — a
 # `switch` case / default arm, an `@unsafe { }` body, a `for`'s init clause — is one nesting
-# level deeper for _gai_stmt (parse/decl.cyr), which takes an array initializer only at module
+# level deeper for _gai_stmt (parse/decl/static_init.cyr), which takes an array initializer only at module
 # scope (`_pp_depth == 1`). PARSE_PROG counts every braced body; these parse their statements
 # through PARSE_STMT directly, so a list in a top-level `case` arm was baked whether the arm ran
 # or not. A wrapper, so no hot function gains a global reference. CHANGELOG [6.6.16]

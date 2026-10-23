@@ -1,0 +1,1371 @@
+# PARSER — decl: enum-named global initializers in the image (`_gvk_*`, `_spc_*`), the global initializer checks
+# (`_gvs_*`, `_gvi_*`), the typed-pointer warnings (`_tp_*`) and EMIT_GVAR_INITS.
+# ================================================================
+# Split from parse/decl.cyr at 6.7.18, unchanged; parse.cyr includes parse/decl/ in source order. CHANGELOG [6.7.18]
+
+# ================================================================
+# Enum-named global initializers in the image (6.6.16, C6)
+# ================================================================
+# ⛔ WHY. A declaration-zone global whose initializer names an enum constant (`var X = A;`,
+# `E.A`, `A + 1`, `var X: u8 = A;`) never took the static-init path. Pass 1's folder refuses every
+# name, and must: it sees only the names declared so far, so it would miss a forward enum and fold
+# 3 where a later `var A = 9;` makes the program read 9. The global was a runtime store in the
+# deferred replay — and an x86 `kernel;` build emits that replay AFTER its top-level program
+# (main.cyr's `_init_km == 1` branch, the v5.7.19 multiboot order), so a kernel that never returns
+# read 0. A struct literal (`var Q = P { A, 0x66 };`) was deferred whatever it named.
+#
+# NOW the fold sits where names resolve exactly as the replayed store resolves them, and its value
+# is BAKED (6.6.16 kept the store; 6.7.14 drops it where it writes what the image holds, _gvk_quiet):
+#   * _gvk_pre, just before the replay: each live scalar entry whose initializer folds (the enum arm
+#     on, _CF_ENUM) records the value as its slot's static init, in entry order, so the last
+#     declaration wins as its store would. On cx (scalars are not in its var data) the same record
+#     is what _gv_cx_prestore stores first, so a read through an earlier initializer agrees there.
+#   * _spc_try, at the replay: a struct literal whose EVERY leaf is a constant is written into the
+#     slot's image blob (util.cyr _vgai_base; every writer bakes it, cx's var data too) by a walker
+#     that mirrors _spi_fields leaf for leaf and bails at anything it does not fully understand.
+#   * _gvk_warn: what an x86 kernel build still leaves to its late replay is named, once per entry.
+# CHANGELOG [6.6.16]
+var _gvk_late = 0;   # 1 = this replay runs AFTER the top-level program (main.cyr; see _gvk_arm)
+# _gvk_bk 4 (6.7.15): a superseded entry's constant, folded for the compare and not baked.
+var _gvk_bk = 0;     # per deferred entry: 1 = _gvk_pre baked its scalar, 2 = _spc_try its literal, 3 = 1 not replayed
+var _gvk_v = 0;      # per deferred entry: the value _gvk_pre baked or folded (bk 1 / 3 / 4)
+# _gvk_ik 2 / 3 (6.7.16): float bits (compared, supersedes), a struct / tuple literal of constants (supersedes only).
+var _gvk_ik = 0;     # per deferred entry: 1 = that value is an integer fold (compared, supersedes; 6.7.15), 2, 3
+var _spc_ti = 0;     # the struct walker's token
+var _spc_ok = 0;     # 0 = a leaf did not fold: the literal is not baked
+var _spc_cl = 14;    # the token that closes the literal: `}`, or (6.7.7) a tuple literal's `)`
+
+# main.cyr's x86 kernel branch, before its late replay. An EFI application that defines `efi_main`
+# runs that replay before it calls efi_main (main.cyr), so efi_main sees every value: no warning.
+fn _gvk_arm(S): i64 {
+    _gvk_late = 1;
+    if (_TARGET_EFI_APPLICATION != 1) { return 0; }
+    var fi = _find_fn_by_name(S, "efi_main", 8);
+    if (fi < 0) { return 0; }
+    if (L64(_fnt_offsets + fi * 8) >= 0) { _gvk_late = 0; }
+    return 0;
+}
+
+fn _gvk_live(S, vi): i64 {
+    if (vi < 0) { return 0; }
+    if (GVDEAD(S, vi) != 0) { return 0; }
+    return 1;
+}
+# A slot a folded scalar can be baked into: live, no struct annotation, a width the static-init
+# writer bakes (_EMIT_GVAR_STATIC_INITS: 8 / 4 / 2 / 1).
+fn _gvk_plain(S, vi): i64 {
+    if (_gvk_live(S, vi) == 0) { return 0; }
+    if (GVPM(S, vi) != 0) { return 0; }
+    var w = L64(_vars_base + vi * 8);
+    if (w == 8 || w == 4 || w == 2 || w == 1) { return 1; }
+    return 0;
+}
+
+# The first token of entry `sti`'s initializer (`var NAME [: T] = <expr> ;`), or 0 when it is not a
+# single `= <expr>` (a destructure, an array list). The cursor is put back.
+fn _gvk_rhs(S, sti): i64 {
+    if (TOKTYP(S, sti + 2) == 31) { return 0; }
+    var sv = GTI(S);
+    STI(S, sti + 2);
+    if (PEEKT(S) == 49) { _gvi_ann(S, 0 - 1); }
+    var r = 0;
+    if (PEEKT(S) == 4) { r = GTI(S) + 1; }
+    STI(S, sv);
+    return r;
+}
+
+# Before the replay (names resolve as there: all registered, a kernel build's program globals
+# hidden). An entry a later constant declaration superseded is that declaration's value: not baked.
+fn _gvk_pre(S): i64 {
+    var gc = L64(S + 0x19A000);
+    _gvk_bk = alloc(gc + 8);
+    _gvk_v = alloc(gc * 8 + 8);
+    _gvk_ik = alloc(gc + 8);
+    _gvk_mw = alloc(gc + 8);   # 6.7.16
+    _gvs_b = alloc(gc * 8 + 8);   # 6.7.15: each baked literal's bytes (_spc_try)
+    var gi = 0;
+    while (gi < gc) {
+        store8(_gvk_bk + gi, _gvk_one(S, gi));
+        gi = gi + 1;
+    }
+    gi = 0;
+    while (gi < gc) {   # 6.7.16 (D14 (a)): a struct / tuple literal the replay will bake is a constant (_gvs_pre)
+        if (load8(_gvk_bk + gi) == 0) { if (_gvs_pre(S, gi) == 1) { store8(_gvk_ik + gi, 3); } }
+        gi = gi + 1;
+    }
+    _gvk_chain(S, gc);   # 6.7.15: a baked constant supersedes the slot's earlier writers; the replay's compares
+    gi = 0;
+    while (gi < gc) {
+        var k = load8(_gvk_bk + gi);
+        if (k == 1 || k == 4) { if (_gvk_quiet(S, gi) == 1) { store8(_gvk_bk + gi, 3); } }
+        gi = gi + 1;
+    }
+    return 0;
+}
+fn _gvk_one(S, gi): i64 {
+    var graw = L64(_gvt(S) + gi * 8);
+    var ti = _gvk_rhs(S, _gv_tok(graw));
+    if (ti == 0) { return 0; }
+    if (gi >= _gv_ent_cap) { return 0; }
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;   # its recorded slot (_gv_ent_slot)
+    if (_gvk_plain(S, vi) == 0) { return 0; }
+    var v = _gvk_flt(S, _gv_tok(graw), vi, ti);
+    if (_gai_ok == 0) {
+        _cf_enum = 1;
+        v = _CF_TRY(S, ti, 5);
+        _cf_enum = 0;
+        if (_cf_ok == 0) { return 0; }
+        store8(_gvk_ik + gi, 1);
+    } else {
+        store8(_gvk_ik + gi, 2);   # 6.7.16 (D13 (a)): a float constant, its bits
+        store8(_gvk_mw + gi, _gvk_fmix);   # 6.7.16 (D15 (a))
+    }
+    store64(_gvk_v + gi * 8, v);
+    if ((_gv_sup(graw) & 1) != 0) { return 4; }   # 6.7.15: the later constant's value is the slot's
+    S64(_vgsi_base + vi * 8, v);
+    return 1;
+}
+
+# ⛔ 6.7.15 — EVERY CONSTANT REDECLARATION IS THE VALUE FROM PROGRAM START (the user's decision D2 (a), 2026-10-18;
+# issues/archived/2026-10-17-named-constant-redeclaration-ordered-unlike-a-literal.md). A redeclaration pass 1 folds (`= 7`,
+# `= 0`, `= 2 + 1`) supersedes every earlier writer of the slot (_gv_supersede); one only the replay folds (`= C`,
+# `= E.B`, `= A + 1`) did not, so its earlier writers stored in order: `var a = D; var b = a; var a = C;` gave b D,
+# `var G = 0; var b = G; var G = C;` b 0, `var a = f(); var b = a; var a = C;` b f(), and `var G = D;` / `= 0` then
+# `var r = setg(); var G = C;` reset setg's write to C. Now an entry whose integer fold _gvk_one baked (bk 1)
+# supersedes the earlier writers of its slot the same way — a computed one runs into a sink, a constant runs nothing
+# (_gvk_quiet), a list is not laid down — so the image holds the last constant and every read sees it. The walk also
+# makes the compares pass 1 left to the replay (`_gvc_rec`, see _gvc_add), in declaration order: a fold against the
+# slot's constant before it.
+# ⛔ 6.7.16 — A FLOAT CONSTANT TOO (the user's decision D13 (a), 2026-10-19; issues/2026-10-18-float-literal-global-
+# redeclaration-keeps-declaration-order.md). A float literal (`_gvk_flt`) and a constant f64 expression (`_gvk_fx`) were
+# baked but kept their order: `var G: f64 = 1.5; var b = load64(&G); var G: f64 = 2.5;` gave b 1.5, a call between the
+# two that wrote G was reset by the later literal's store, and a differing pair was never compared. Their bits
+# (`_gvk_ik` 2) now link as an integer fold does: the later float constant is the value from program start, an earlier
+# float declaration of the name leaves no startup store, and the pair is compared bit for bit (a warning, at the later
+# `=`). A computed float redeclaration still runs in order. CHANGELOG [6.7.16]
+var _gvc_sv = 0;   # per slot: the chain's last constant
+var _gvc_sh = 0;   # per slot: 1 = it has one
+fn _gvk_chain(S, gc): i64 {
+    var n = GVCNT(S);
+    _gvc_sv = alloc(n * 8 + 8);
+    _gvc_sh = alloc(n + 8);
+    var ri = 0;
+    var gi = 0;
+    while (gi < gc) {
+        ri = _gvc_upto(S, ri, gi);
+        if (load8(_gvk_ik + gi) != 0) { _gvk_link(S, gi); }
+        gi = gi + 1;
+    }
+    _gvc_upto(S, ri, gc);
+    return 0;
+}
+# The records from `ri` on that come before entry `gi`; returns the next one's index.
+fn _gvc_upto(S, ri, gi): i64 {
+    while (ri < _gvc_n) {
+        var r = _gvc_rec + ri * 32;
+        if (load64(r + 8) > gi) { return ri; }
+        var slot = load64(r) >> 1;
+        if ((load64(r) & 1) == 0) { _gvc_set(slot, load64(r + 24), load64(r + 16)); }
+        else { _gvc_cmp(S, slot, load64(r + 16), load64(r + 24)); }
+        ri = ri + 1;
+    }
+    return ri;
+}
+fn _gvc_set(slot, has, v): i64 {
+    store8(_gvc_sh + slot, has);
+    store64(_gvc_sv + slot * 8, v);
+    return 0;
+}
+# Constant `v` declared at token `ti` (its `=`) into `slot`: warned when the slot's constant before it differs.
+fn _gvc_cmp(S, slot, v, ti): i64 {
+    if (load8(_gvc_sh + slot) == 1) { if (load64(_gvc_sv + slot * 8) != v) {
+            var sv = GTI(S);
+            STI(S, ti);
+            _dupval_warn(S, L64(_varn_base + slot * 8));
+            STI(S, sv);
+        } }
+    return _gvc_set(slot, 1, v);
+}
+# Entry `gi`, a constant of its slot (an integer fold, or 6.7.16's float bits): compared at its `=`; it supersedes the
+# slot's earlier writers. Baked (bk 1),
+# all of them; superseded itself (bk 4), by a later list or constant that already superseded every earlier scalar
+# entry, the one writer left is an earlier list — which a literal's pass-1 supersede reaches too (_gv_supersede):
+# `var a[1] = {7}; var a = C; var a[1] = {9};` is C's bytes under the second list, as with `var a = 0x0506;`
+# (6.7.16, issues/archived/2026-10-18-list-redeclaration-over-named-scalar-constant-loses-unlisted-bytes.md).
+fn _gvk_link(S, gi): i64 {
+    var sti = _gv_tok(L64(_gvt(S) + gi * 8));
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    if (load8(_gvk_ik + gi) == 3) { return _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }   # 6.7.16 (D14 (a)): no compare
+    _gvc_cmp(S, vi, load64(_gvk_v + gi * 8), _gvk_rhs(S, sti) - 1);
+    var bk = load8(_gvk_bk + gi);
+    if (bk == 1 || bk == 4) { _gvk_sup(S, gi, vi, TOKVAL(S, sti + 1)); }
+    return 0;
+}
+# Every target of an entry before `gi` that writes slot `vi` (named `noff`) is superseded, as _gv_supersede marks.
+fn _gvk_sup(S, gi, vi, noff): i64 {
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var r = load64(_gvx_rec + (e - 1) * 8);
+        if ((r >> 2) < gi) { _gvk_sup1(S, r >> 2, r & 3, vi); }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return 0;
+}
+fn _gvk_sup1(S, g, k, vi): i64 {
+    var w = (load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF;
+    if (w - 1 != vi) { return 0; }
+    var a = _gvt(S) + g * 8;
+    S64(a, L64(a) | ((1 << k) << 40));
+    return 0;
+}
+# A float scalar's float literal, optionally negated, then `;` (`_gai_ok` 1): the bits the replayed store writes —
+# binary64 for an `f64` global or an untyped `var K = 1.5;`, binary32 zero-extended for an `f32` (_f32_init_round
+# rounds, _gai_f32 gives the same bits). The integer folder above refused the literal, so an x86 `kernel;` build left
+# `var G: f64 = 1.5;` to its late replay and the program read 0 (issues/2026-10-08-kernel-float-global-init-not-
+# baked.md). `sti` = the entry's `var`, `ti` its initializer. CHANGELOG [6.7.14]
+fn _gvk_flt(S, sti, vi, ti): i64 {
+    _gai_ok = 0;
+    _gvk_fmix = 0;
+    var t = GVTYPE(S, vi);
+    if (t != F64_TYID) { if (t != F32_TYID) { if (TOKTYP(S, sti + 2) != 4) { return 0; } } }
+    var lt = ti;
+    var neg = 0;
+    if (TOKTYP(S, lt) == 7) { neg = 1; lt = lt + 1; }
+    if (TOKTYP(S, lt) != 61 || TOKTYP(S, lt + 1) != 5) { return _gvk_fx(S, t, ti); }   # 6.7.15
+    _gai_ok = 1;
+    var bits = FLIT_NUM(TOKVAL(S, lt));
+    if (neg == 1) { bits = bits ^ (1 << 63); }
+    if (t == F32_TYID) { return _gai_f32(bits); }
+    return bits;
+}
+# ⛔ 6.7.15 — AND A CONSTANT F64 EXPRESSION (issues/2026-10-16-kernel-float-global-constant-not-a-literal-left-
+# late.md): an f64 const (`var G: f64 = CF;`), a parenthesized literal (`= (1.5)`) and f64 arithmetic of them
+# (`= 1.5 + 1.0`, `= -CF`, `= CF * 2.0`) are constants 6.7.2's const evaluator computes as binary64 bits, but only
+# the bare literal was baked: the rest stayed a replayed store, which an x86 `kernel;` build runs after its program
+# (it read 0, warned "use a constant"). The initializer is evaluated at the TOP context, quietly (_ce_top_quiet),
+# when its tokens to the `;` are only float literals, f64 consts (the names the replay reads as those consts, none
+# another file's private one), `( )`, `+ - * /` and unary `-` (_gvk_fscan) — so a call, a variable, an integer or
+# an enum operand (whose mix the replay warns about) never reach the evaluator. A NaN result (its bits are the
+# target's) is refused by the evaluator, quietly, and left to the replay. Baked as the literal is: binary64, or an
+# `f32` global's binary32 rounding (_gai_f32), and dropped from the replay by _gvk_quiet. CHANGELOG [6.7.15]
+fn _gvk_fx(S, t, ti): i64 {
+    if (_gvk_fscan(S, ti) == 0) { return 0; }
+    var o: i64[3];
+    var v = _ce_top_quiet(S, ti, &o);
+    if (load64(&o + 8) != 0) { return 0; }
+    if (load64(&o) != 1) { return 0; }
+    if (TOKTYP(S, load64(&o + 16)) != 5) { return 0; }
+    _gai_ok = 1;
+    if (t == F32_TYID) { return _gai_f32(v); }
+    return v;
+}
+# ⛔ 6.7.16 — AND AN INTEGER OR ENUM OPERAND (the user's decision D15 (a), 2026-10-19; issues/2026-10-18-kernel-float-
+# global-mixed-int-operand-left-late.md). `var M: f64 = 1.5 + 1;` and `= 1.5 * E.A` were left to the replay, because
+# the scan took float literals and f64 consts only: an x86 `kernel;` build read 0 (and named them late), an earlier
+# initializer's read saw 0 and a call in one that wrote M was reset. The scan now also takes an integer literal, an
+# integer const and an enum constant, bare or qualified (`E.A`: a name, `.`, a member of that enum; `_gvk_fname`),
+# and the evaluator computes the mix as the run-time arithmetic does — the LEFT operand's kind picks f64 and the
+# integer is its raw bits (`_ce_binop`) — so an f64 result is baked. An integer left operand (`1 + 1.5`: integer
+# arithmetic on the float's bits) is no f64 result and stays with the replay, as does a NaN. The replay's warning about
+# the mix is kept: such an entry (`_gvk_mw`) is parsed once more, its code taken back (_gvi_baked). CHANGELOG [6.7.16]
+var _gvk_fmix = 0;   # the scan met an integer operand
+var _gvk_mw = 0;     # per deferred entry: 1 = a baked float with an integer operand (its replay warns)
+fn _gvk_fscan(S, ti): i64 {
+    _gvk_fmix = 0;
+    var k = ti;
+    var n = 0;
+    while (TOKTYP(S, k) != 5) {
+        if (k >= GTCNT(S)) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 2) {
+            var w = _gvk_fname(S, k);
+            if (w == 0) { return 0; }
+            n = n + 1;
+            k = k + w - 1;
+        } elif (t == 61) { n = n + 1; }
+        elif (t == 1) { n = n + 1; _gvk_fmix = 1; }   # 6.7.16: an integer literal
+        elif (t < 6 || t > 11) { return 0; }   # + - * / ( )
+        k = k + 1;
+    }
+    return n;
+}
+# The operand at token `k`, as the replay reads it — its token count, 0 = not one the bake takes: an f64 const, or
+# (6.7.16) an integer const (1), a qualified enum constant (`E.A`, 3: _gvk_fqual) or a bare one (1: _gvk_fenum); not
+# another file's private name, not a call, not a field.
+fn _gvk_fname(S, k): i64 {
+    var nt = TOKTYP(S, k + 1);
+    if (nt == 10) { return 0; }   # a call
+    if (nt == 41) { return _gvk_fqual(S, k); }
+    if (_gvk_name_ok(S, k) == 0) { return 0; }
+    var ci = _cst_find(S, TOKVAL(S, k));
+    if (ci < 0) { return _gvk_fenum(S, k); }
+    var ck = _cst_kind_peek(S, ci);
+    if (ck != 0) { if (ck != 1) { return 0; } }
+    if (_findvar_core(S, TOKVAL(S, k)) != L64(_cst_tab + ci * 64 + 24)) { return 0; }
+    if (ck == 0) { _gvk_fmix = 1; }
+    return 1;
+}
+# A bare enum constant: the global the name resolves to (as the replay's read) is one.
+fn _gvk_fenum(S, k): i64 {
+    var vi = _findvar_core(S, TOKVAL(S, k));
+    if (vi < 0) { return 0; }
+    if (GVECP(S, vi) != 1) { return 0; }
+    if (GVENUMID(S, vi) <= 0) { return 0; }
+    _gvk_fmix = 1;
+    return 1;
+}
+# `E.A`: E no variable, A a constant of the enum named E (_enum_qual_resolve's first answer, quietly).
+fn _gvk_fqual(S, k): i64 {
+    if (TOKTYP(S, k + 2) != 2) { return 0; }
+    if (_ce_is_var(S, TOKVAL(S, k)) == 1) { return 0; }
+    if (_enum_variant_in(S, TOKVAL(S, k), TOKVAL(S, k + 2)) < 0) { return 0; }
+    _gvk_fmix = 1;
+    return 3;
+}
+
+# ⛔ 6.7.14 — A BAKED SCALAR IS NOT REPLAYED WHERE ITS STORE WROTE WHAT THE SLOT ALREADY HOLDS (issues/2026-10-08-const-
+# init-redundant-store-and-unfolded-const-operand.md item 1; the user's decision D11 (b), 2026-10-16). `var X = C;`,
+# `= E.A`, `= A + 1` put the value in the image AND stored it again at startup (6.6.16 kept the store: three
+# instructions, 18 bytes on x86_64), and the replay re-ran the expression — so `var R = INT_MIN % -1;` (folding to
+# zero) and `var Q = (0 - CF_MAX - 1) / (0 - 1);` (through an enum constant) trapped at startup on x86_64 and cx
+# (SIGFPE, 136) while aarch64 ran: a constant initializer is the global's value from program start (the guide's
+# § Declaring a global twice), as `var X = 5;` is. 1 = entry `gi` (bk 1, or 4: folded but superseded) is stepped
+# over by the replay. A superseded constant runs nothing: a later constant is the slot's value (6.7.15, D2 (a): a
+# baked integer fold supersedes like a literal, _gvk_chain). Otherwise the slot's image value is its value and the
+# nearest earlier replayed writer of the slot, if any, is a baked entry of that value (after _gvk_chain, which since
+# 6.7.16 supersedes for a float constant too, only a computed initializer or another file's private const before it
+# is left to keep the store). An earlier nonzero literal (`= 3`, `= 2 + 1`) is a static init, not a replayed writer. Not
+# dropped: a slot a list blob covers (_gvk_left's rule), a bool global (the replay's parse judges its value, 6.7.3),
+# and an initializer naming another file's private const (the replay reports it) — superseded, each still runs into
+# its sink. cx stores the image value first (_gv_cx_prestore), so it agrees. CHANGELOG [6.7.14] [6.7.15]
+fn _gvk_quiet(S, gi): i64 {
+    if (gi >= _gv_ent_cap) { return 0; }
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    if (vi < 0) { return 0; }
+    if (GVGAI(S, vi) != 0) { return 0; }
+    if (GVBOOL(S, vi) != 0) { return 0; }
+    var sti = _gv_tok(L64(_gvt(S) + gi * 8));
+    if (_gvk_names_ok(S, _gvk_rhs(S, sti)) == 0) { return 0; }
+    if ((_gv_sup(L64(_gvt(S) + gi * 8)) & 1) != 0) { return 1; }   # 6.7.15
+    var v = load64(_gvk_v + gi * 8);
+    var p = _gvk_prev(S, gi, vi, TOKVAL(S, sti + 1), 1);
+    if (p == 0 - 2) { return 0; }
+    if (p == 0 - 1) {
+        if (L64(_vgsi_base + vi * 8) == v) { return 1; }
+        return 0;
+    }
+    if (load64(_gvk_v + p * 8) == v) { return 1; }
+    return 0;
+}
+# The nearest entry before `gi` whose live target writes slot `vi` (named `noff`): -1 none; its index when it is a
+# baked scalar (bk 1 / 3; `want` 1) or a baked literal (bk 2; `want` 2, 6.7.15); -2 any other writer (a computed
+# initializer, a destructure target, an unrecorded slot). Walks the name's list of deferred targets (_gvx_note),
+# newest first.
+fn _gvk_prev(S, gi, vi, noff, want): i64 {
+    if (_gvx_m == 0) { return 0 - 1; }
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var r = load64(_gvx_rec + (e - 1) * 8);
+        var g = r >> 2;
+        if (g < gi) {
+            var k = r & 3;
+            var w = 0;
+            if (g < _gv_ent_cap) { w = (load64(_gv_ent_base + g * 8) >> (21 * k)) & 0x1FFFFF; }
+            if (w == 0) { return 0 - 2; }
+            if (w - 1 == vi) {
+                if (((_gv_sup(L64(_gvt(S) + g * 8)) >> k) & 1) == 0) { return _gvk_prev_kind(g, k, want); }
+            }
+        }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return 0 - 1;
+}
+fn _gvk_prev_kind(g, k, want): i64 {
+    if (k != 0) { return 0 - 2; }
+    var b = load8(_gvk_bk + g);
+    if (want == 2) {
+        if (b == 2) { return g; }
+        return 0 - 2;
+    }
+    if (b == 1 || b == 3) { return g; }
+    return 0 - 2;
+}
+# 0 = a name in the initializer at `ti` (to its `;`) is another file's private global: the replay's parse
+# refuses it (FINDVAR -> _vis_check_var), so the entry is replayed. A qualified `E.A`'s variant carries no stamp.
+fn _gvk_names_ok(S, ti): i64 {
+    if (ti <= 0) { return 0; }
+    var k = ti;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 5 || t == 12) { return 1; }
+        if (t == 2) { if (TOKTYP(S, k - 1) != 41) { if (_gvk_name_ok(S, k) == 0) { return 0; } } }
+        k = k + 1;
+    }
+    return 1;
+}
+fn _gvk_name_ok(S, k): i64 {
+    var vi = _findvar_core(S, TOKVAL(S, k));
+    if (vi < 0) { return 1; }
+    var owner = GVFI(S, vi);
+    if (owner == 0) { return 1; }
+    var here = FM_FILEID(S, GTLINE(S, k)) + 1;
+    if (here == 0) { return 1; }
+    if (here == owner) { return 1; }
+    return 0;
+}
+
+# After the replay's scalar or struct arm: in a late replay the entry is named unless it was baked —
+# by _spc_try (2), or by _gvk_pre (1) into a slot no list blob covers (the image writes a blob over
+# the scalar: `var B[1] = {..}; var B = A;` holds the list until the late store).
+fn _gvk_left(S, gi, sti, idx): i64 {
+    if (_gvk_late != 1) { return 0; }
+    if (_gvk_live(S, idx) == 0) { return 0; }
+    var k = load8(_gvk_bk + gi);
+    if (k == 2) { return 0; }
+    if (_gvs_sup(S, gi) == 1) { return 0; }   # 6.7.16: a superseded literal of constants runs nothing
+    if (k == 1 || k == 3) { if (GVGAI(S, idx) == 0) { return 0; } }
+    return _gvk_warn(S, sti);
+}
+# A destructure stays deferred: named when any of its targets is live.
+fn _gvk_dst(S, sti, a, b, c): i64 {
+    if (_gvk_live(S, a) + _gvk_live(S, b) + _gvk_live(S, c) == 0) { return 0; }
+    return _gvk_warn(S, sti);
+}
+# Once per entry; not in a build that has already failed (it runs nothing).
+fn _gvk_warn(S, sti): i64 {
+    if (_gvk_late != 1) { return 0; }
+    if (_had_error != 0) { return 0; }
+    _ew("warning:", 8);
+    _err_head_at(S, sti + 1);
+    PRSTR(": in a kernel build the initializer of '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, sti + 1));
+    PRSTR("' runs after the top-level program: the program does not see its value, and a kernel that never returns never runs it (use a constant, or assign it in the program)\n");
+    return 0;
+}
+
+# A struct literal at the cursor (past `{`) whose every leaf is a constant — an integer, an enum
+# constant or a constant expression of them; a float literal (optionally negated) in a float field —
+# is written into slot `idx`'s blob, each leaf at its FIELDOFF and FIELDSZ, the bytes the replayed
+# stores write (EMIT_STRUCT_FIELD_W: a float literal is its binary64 bits in an f64 field, its
+# binary32 bits zero-extended in an f32 field).
+# Nested struct fields are walked into, as _spi_fields walks them (a constant into a nested field is
+# its first leaf); a named-field list by its names (_spc_nfields). Not baked: a union, a Str / Vec /
+# u128 leaf, a name or call (a whole struct value is one), a string — anything the walk does not fully
+# understand. Reads tokens only (the cursor and the diagnostics are the replay's). Entry `gi` is
+# marked baked (2).
+fn _spc_try(S, gi, idx, sid): i64 {
+    if (_gvk_live(S, idx) == 0) { return 0; }
+    if (_gvs_sup(S, gi) == 1) { return 0; }   # 6.7.16 (D14 (a)): a later literal is the slot's bytes
+    if (_spc_walk(S, sid, 0) == 0) { return 0; }
+    var b = _gai_blob(S, idx, 8, 6, GVSI(S, idx));
+    _spc_walk(S, sid, b + 16);
+    store8(_gvk_bk + gi, 2);
+    store64(_gvs_b + gi * 8, _gvs_snap(b));   # 6.7.15: its bytes, for a later literal's compare (_gvs_quiet)
+    return 0;
+}
+# One walk (`d` = 0: check only); 1 = every leaf folded and the list ends at its `}`.
+fn _spc_walk(S, sid, d): i64 {
+    _spc_ti = GTI(S);
+    _spc_ok = 1;
+    if (_spc_named(S) == 1) { _spc_nfields(S, sid - 1, d); }
+    else { _spc_fields(S, sid - 1, 0, d); }
+    if (_spc_ok == 0) { return 0; }
+    if (TOKTYP(S, _spc_ti) != _spc_cl) { return 0; }
+    return 1;
+}
+# A named-field list (`name: value`, any order — _STRUCT_INIT_BODY's test): each leaf at its field's FIELDOFF, as the
+# replay stores it. Not baked: a nested struct field (the replay refuses it in this form), an unknown or repeated name,
+# a field left out — the replay reports those. A `kernel;` build's named literal was left to the late replay, so its
+# program read zeros where the positional form read the values. CHANGELOG [6.7.14]
+fn _spc_named(S): i64 {
+    if (TOKTYP(S, _spc_ti) != 2) { return 0; }
+    if (TOKTYP(S, _spc_ti + 1) != 49) { return 0; }
+    return 1;
+}
+fn _spc_nfields(S, si, d): i64 {
+    if (ISUNION(S, si) == 1) { _spc_ok = 0; return 0; }
+    var fc = GETFCOUNT(S, si);
+    var seen = 0;
+    var n = 0;
+    while (_spc_named(S) == 1) {
+        var fi = _spc_fidx(S, si, fc, TOKVAL(S, _spc_ti));
+        if (fi < 0 || fi > 62) { _spc_ok = 0; return 0; }
+        if ((seen & (1 << fi)) != 0) { _spc_ok = 0; return 0; }
+        seen = seen | (1 << fi);
+        if (_spi_is_nested(S, GETFTYPE(S, si, fi)) == 1) { _spc_ok = 0; return 0; }
+        _spc_ti = _spc_ti + 2;
+        _spc_leaf(S, si, fi, FIELDOFF(S, si, fi), d);
+        if (_spc_ok == 0) { return 0; }
+        n = n + 1;
+    }
+    if (n != fc) { _spc_ok = 0; }
+    return 0;
+}
+# The field of struct `si` named by the string at `noff`, or -1.
+fn _spc_fidx(S, si, fc, noff): i64 {
+    var fi = 0;
+    while (fi < fc) {
+        if (STREQTOK(S, GETFNAME(S, si, fi), noff) == 1) { return fi; }
+        fi = fi + 1;
+    }
+    return 0 - 1;
+}
+fn _spc_fields(S, si, base, d): i64 {
+    if (ISUNION(S, si) == 1) { _spc_ok = 0; return 0; }
+    var fc = GETFCOUNT(S, si);
+    var fi = 0;
+    while (fi < fc) {
+        if (_spc_ok == 0) { return 0; }
+        var ft = GETFTYPE(S, si, fi);
+        var off = base + FIELDOFF(S, si, fi);
+        if (_spi_is_nested(S, ft) == 1) {
+            if (GETFCOUNT(S, ft - 1) == 0) { _spc_ok = 0; return 0; }
+            if (_dyn_is(S, ft) == 1) { _spc_ok = 0; return 0; }   # 6.7.8 (V8): never baked; the replay refuses it
+            _spc_fields(S, ft - 1, off, d);
+        } else { _spc_leaf(S, si, fi, off, d); }
+        fi = fi + 1;
+    }
+    return 0;
+}
+fn _spc_leaf(S, si, fi, off, d): i64 {
+    var ft = GETFTYPE(S, si, fi);
+    if (ft > 0 || ft < 0 - 8) { _spc_ok = 0; return 0; }   # Str (> 0), u128 / Vec (< -8)
+    var ti = _spc_ti;
+    var v = 0;
+    _gai_ok = 0;
+    if (GFFK(S, si, fi) != 0) { v = _gai_flit(S, ti); }
+    if (_gai_ok == 1) {
+        ti = ti + 1;
+        if (TOKTYP(S, ti - 1) == 7) { ti = ti + 1; }
+        # An f32 field holds binary32 bits (the replayed store rounds, _f32_init_round): an x86
+        # kernel runs that store after its program, so it read 1.5's binary64 bits (0.0). CHANGELOG [6.7.10]
+        if (GFFK(S, si, fi) == 2) { v = _gai_f32(v); }
+    } else {
+        var tm = 31;   # 6.7.7: a tuple literal's last element ends at its `)`
+        if (_spc_cl == 11) { if (fi == GETFCOUNT(S, si) - 1) { tm = 11; } }
+        _cf_enum = 1;
+        v = _CF_TRY(S, ti, tm);
+        _cf_enum = 0;
+        if (_cf_ok == 0) { _spc_ok = 0; return 0; }
+        ti = _cf_ti;
+    }
+    if (d != 0) { _gai_put(d + off, FIELDSZ(S, ft), v); }
+    if (TOKTYP(S, ti) == 31) { ti = ti + 1; }
+    _spc_ti = ti;
+    return 0;
+}
+
+# ⛔ 6.7.15 — A BAKED STRUCT LITERAL IS NOT STORED AGAIN AT STARTUP (issues/2026-10-16-zone-struct-literal-baked-and-
+# stored.md). `var p = P { 1, 2 };`, its named form and a tuple literal `(1, 2)` put their bytes in the image
+# (_spc_try, bk 2) AND replayed every element's store — per field on x86_64 `mov eax, imm; push rax; movabs rcx, p;
+# [add rcx, off;] pop rax; mov [rcx], rax`. 6.7.14's scalar rule (_gvk_quiet; 6.7.14's D11 (b): a constant
+# initializer is the global's value from program start) now covers the baked literal: its stores are dropped when no
+# earlier live writer of the slot exists (6.7.16: a later literal of constants supersedes it, below), or when the
+# nearest earlier writer is a baked literal of the same bytes. The walk still runs — every diagnostic it gives is given (a
+# bool field's refusal, an integer into a float field) — and the code it emitted is taken back (_gvs_mark /
+# _gvs_undo). As with a scalar constant, a call in an earlier initializer that writes the global keeps its write.
+# cx bakes the literal into its var data too (main_cx.cyr, _gai_bake). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — A REDECLARED LITERAL OF CONSTANTS IS THE VALUE FROM PROGRAM START (the user's decision D14 (a),
+# 2026-10-19; issues/archived/2026-10-18-struct-tuple-literal-redeclaration-order-vs-d2.md). 6.7.15's D2 (a) made every scalar
+# constant redeclaration the global's value from program start, but a struct or tuple literal is baked at the replay
+# (_spc_try), after _gvk_chain had run, so a later literal of other bytes superseded nothing: `var p = P { 1, 2 }; var
+# b = p.a; var p = P { 3, 4 };` gave b 1 (both literals stored in order) and a call between the two that wrote p was
+# overwritten by the later literal's stores (p.a 3, not the call's 9). Now _gvs_pre (in _gvk_pre, before the chain)
+# dry-runs the literal walker on each struct / tuple entry where the replay will walk it — the same head, the same
+# slot type, the same closer — and an entry whose every leaf folds is a constant (`_gvk_ik` 3): _gvk_link supersedes
+# the slot's earlier writers for it, as for a scalar constant (an earlier computed one runs into a sink). A superseded
+# literal of constants bakes nothing (_spc_try), stores nothing (_gvs_quiet: its walk runs for its diagnostics and the
+# code is taken back) and makes no sink (_gvi_slot). So an earlier literal leaves no
+# startup store, a read between the two sees the later bytes, and a call between them keeps its write. Not compared
+# (a warning is for scalars). CHANGELOG [6.7.16]
+var _gvs_b = 0;   # per deferred entry: a copy of the bytes _spc_try baked (bk 2), [size][bytes]
+var _gvs_m = 0;   # the emit state _gvs_mark saved (one walk at a time: a baked literal holds no nested literal)
+# 1 = entry `gi` is a struct / tuple literal the replay will bake into its slot: every leaf a constant, the walk
+# (_spc_walk, check only) from the element the replay starts it at. Names resolve as at the replay (_gvk_pre's).
+fn _gvs_pre(S, gi): i64 {
+    if (gi >= _gv_ent_cap) { return 0; }
+    var vi = (load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1;
+    if (_gvk_live(S, vi) == 0) { return 0; }
+    if (GVPM(S, vi) != 2) { return 0; }   # an inline struct / tuple global: the slot IS the bytes
+    var sid = GVTYPE(S, vi);
+    if (sid <= 0) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    var rt = _gvk_rhs(S, _gv_tok(L64(_gvt(S) + gi * 8)));
+    if (rt == 0) { return 0; }
+    var at = _gvs_open(S, rt, sid);
+    if (at == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, at);
+    var ok = _spc_walk(S, sid, 0);
+    STI(S, sv);
+    _spc_cl = 14;
+    return ok;
+}
+# The first element token of the literal initializer at `rt` into a slot of type `sid` — as EMIT_GVAR_INITS reaches
+# it: a tuple literal (`_gvi_tuple`: any wrap, ending at the `;`) for a tuple type, else a struct literal head (`P {`,
+# `W<..> {`, a wrap holding exactly it: `_lit_head_w`) naming the slot's struct — with `_spc_cl` its closer; 0 = none.
+fn _gvs_open(S, rt, sid): i64 {
+    var pe = _pw_end;
+    var r = _gvs_open1(S, rt, sid);
+    _pw_end = pe;
+    return r;
+}
+fn _gvs_open1(S, rt, sid): i64 {
+    if (_tup_is(S, sid) == 1) {
+        var lp = _tup_lit_at(S, rt);
+        if (lp < 0) { return 0; }
+        if (TOKTYP(S, _pw_end) != 5) { return 0; }
+        _spc_cl = 11;
+        return lp + 1;
+    }
+    var h = rt;
+    if (TOKTYP(S, h) == 10) {
+        var k = _slit_wrap_k(S, h);
+        if (k == 0) { return 0; }
+        h = h + k;
+    }
+    if (TOKTYP(S, h) != 2) { return 0; }
+    var b = FINDSTRUCT(S, TOKVAL(S, h));
+    if (b <= 0) { return 0; }
+    var o = h + 1;
+    if (TOKTYP(S, o) == 19) { o = _targs_end(S, o + 1) + 1; }   # `W<..> {`: pass 1's instance is the slot's type
+    elif (b != sid) { return 0; }
+    if (TOKTYP(S, o) != 13) { return 0; }
+    _spc_cl = 14;
+    return o + 1;
+}
+fn _gvs_snap(b): i64 {
+    var n = load64(b);
+    var c = alloc(n + 8);
+    store64(c, n);
+    var i = 0;
+    while (i < n) { store8(c + 8 + i, load8(b + 16 + i)); i = i + 1; }
+    return c;
+}
+# 1 = entry `gi`'s literal (into slot `idx`) is baked and its stores are dropped: the walk runs under _gvs_mark.
+fn _gvs_quiet(S, gi, idx): i64 {
+    if (gi >= _gv_ent_cap) { return 0; }
+    if ((load64(_gv_ent_base + gi * 8) & 0x1FFFFF) - 1 != idx) { return 0; }   # its own slot, not a sink
+    if (_gvs_sup(S, gi) == 1) { return 1; }   # 6.7.16 (D14 (a)): superseded by a later literal: no store
+    if (load8(_gvk_bk + gi) != 2) { return 0; }
+    var noff = TOKVAL(S, _gv_tok(L64(_gvt(S) + gi * 8)) + 1);
+    var p = _gvk_prev(S, gi, idx, noff, 2);
+    if (p == 0 - 2) { return 0; }
+    if (p == 0 - 1) { return 1; }
+    return _gvs_same(load64(_gvs_b + p * 8), load64(_gvs_b + gi * 8));
+}
+# 1 = entry `gi` is a struct / tuple literal of constants (`_gvk_ik` 3) that a later one superseded (_gvk_link).
+fn _gvs_sup(S, gi): i64 {
+    if (load8(_gvk_ik + gi) != 3) { return 0; }
+    return _gv_sup(L64(_gvt(S) + gi * 8)) & 1;
+}
+fn _gvs_same(a, b): i64 {
+    if (a == 0 || b == 0) { return 0; }
+    var n = load64(a);
+    if (load64(b) != n) { return 0; }
+    var i = 0;
+    while (i < n) {
+        if (load8(a + 8 + i) != load8(b + 8 + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# The emit state before the walk of a literal whose stores are dropped, and its undo: the code position, the
+# fixups and IR nodes it recorded, the jump sources (CYRIUS_IR / CYRIUS_DCE), the peephole trackers, the constant
+# folder's arming and the push depth go back to what they were, so the binary is the one the literal's absence
+# would give. A walk that made an IR basic block, a global or a string keeps its code (0).
+fn _gvs_mark(S): i64 {
+    if (_gvs_m == 0) { _gvs_m = alloc(160); }
+    var m = _gvs_m;
+    store64(m, GCP(S));
+    store64(m + 8, GFCNT(S));
+    store64(m + 16, IR_NCNT(S));
+    store64(m + 24, IR_BCNT(S));
+    store64(m + 32, IR_CURBB(S));
+    store64(m + 40, _gvs_bbn(S));
+    store64(m + 48, _last_push_cp);
+    store64(m + 56, _last_emovca_cp);
+    store64(m + 64, _last_movca_popr_cp);
+    store64(m + 72, _flags_cp);
+    store64(m + 80, _flags_reflect_rax);
+    store64(m + 88, _xdepth);
+    store64(m + 96, _cfo);
+    store64(m + 104, _cfp);
+    store64(m + 112, _cfv);
+    store64(m + 120, _wpjs_n);
+    store64(m + 128, _wpsw_n);
+    store64(m + 136, GVCNT(S));
+    store64(m + 144, L64(S + 0x18FCC8));
+    return 0;
+}
+fn _gvs_undo(S): i64 {
+    var m = _gvs_m;
+    if (IR_BCNT(S) != load64(m + 24)) { return 0; }
+    if (IR_CURBB(S) != load64(m + 32)) { return 0; }
+    if (GVCNT(S) != load64(m + 136)) { return 0; }
+    if (L64(S + 0x18FCC8) != load64(m + 144)) { return 0; }
+    SCP(S, load64(m));
+    SFCNT(S, load64(m + 8));
+    IR_SNCNT(S, load64(m + 16));
+    _gvs_bbn_set(S, load64(m + 40));
+    _last_push_cp = load64(m + 48);
+    _last_emovca_cp = load64(m + 56);
+    _last_movca_popr_cp = load64(m + 64);
+    _flags_cp = load64(m + 72);
+    _flags_reflect_rax = load64(m + 80);
+    _xdepth = load64(m + 88);
+    _cfo = load64(m + 96);
+    _cfp = load64(m + 104);
+    _cfv = load64(m + 112);
+    _wpjs_n = load64(m + 120);
+    _wpsw_n = load64(m + 128);
+    return 1;
+}
+# The current IR basic block's node count (ir_emit counts each node there), when IR is recording.
+fn _gvs_bbn(S): i64 {
+    if (IR_ENABLED(S) == 0) { return 0; }
+    var bi = IR_CURBB(S);
+    if (bi < 0 || bi >= _ir_bcap) { return 0; }
+    return load64(_ir_bb_base + bi * 32 + 16);
+}
+fn _gvs_bbn_set(S, v): i64 {
+    if (IR_ENABLED(S) == 0) { return 0; }
+    var bi = IR_CURBB(S);
+    if (bi < 0 || bi >= _ir_bcap) { return 0; }
+    store64(_ir_bb_base + bi * 32 + 16, v);
+    return 0;
+}
+
+# Emit deferred global var inits (replays saved token positions)
+# The leading declaration block's `: Type` annotation, consumed. Returns `0 - sid` for a struct
+# name, else 0 (a pointer, a scalar: not checked here). `slot` is the global the entry declared.
+# ⛔ 6.6.11: a generic `W1<Pt>` is the INSTANCE pass 1 recorded on the slot (_gen_ann_sid), read
+# back rather than re-parsed (a bad type argument is reported once, by pass 1). It returned 0, so
+# no generic global's initialiser was checked. CHANGELOG [6.6.11]
+fn _gvi_ann(S, slot): i64 {
+    STI(S, GTI(S) + 1);   # consume :
+    # `var G: = 4;` / `var G: ;`: no type, refused by pass 1 (`_tn_head_var`), which steps no token. CHANGELOG [6.7.15]
+    if (PEEKT(S) == 4 || PEEKT(S) == 5) { return 0; }
+    if (PEEKT(S) == 10) {   # 6.7.7 (B4): a tuple, interned by pass 1 — looked up, quietly
+        var tsid = _tup_type(S, 1);
+        STI(S, GTI(S) + 1);   # consume ')'
+        return 0 - tsid;
+    }
+    var a0 = GTI(S);
+    var ps = _gvi_stars(S);
+    if (ps == 1) { if (PEEKT(S) == 32) {   # 6.7.17 (D8): `*fn( .. )`, read by pass 1 — stepped as it stepped it
+            STI(S, _ptr_fnp_end(S, a0, 0 - 1, 1, " for variable "));
+            return 0;
+        } }
+    if (PEEKT(S) == 28) {   # 6.7.8 (C2-6a): a slice, refused by name at registration — stepped whole
+        _sl_ann_skip(S);
+        return 0;
+    }
+    if (ps == 1) {
+        if (PEEKT(S) == 10) {   # `*( .. )`, refused by pass 1 — stepped whole
+            STI(S, _call_close(S, GTI(S)) + 1);
+            return 0;
+        }
+    }
+    var sid = 0;
+    if (PEEKT(S) == 2) { sid = FINDSTRUCT(S, PEEKV(S)); }
+    STI(S, GTI(S) + 1);
+    var gen = 0;
+    if (PEEKT(S) == 19) { gen = 1; }
+    SKIP_GENERICS(S);
+    if (ps == 1) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (gen == 1) {
+        if (slot < 0) { return 0; }
+        if (GVTYPE(S, slot) <= 0) { return 0; }
+        return 0 - GVTYPE(S, slot);
+    }
+    return 0 - sid;
+}
+# An entry `_gvk_quiet` cleared (bk 3): no code — its tokens are stepped to the `;` the folder ended on, the slot is
+# the "last var" as its store made it, and a `*T` global's value is warned about as the replay warned (6.7.13's
+# D18 (a); the literal 0 exempt). 1 = handled. CHANGELOG [6.7.14]
+fn _gvi_baked(S, gi, idx, gps): i64 {
+    if (gps != 0) { return 0; }
+    if (load8(_gvk_bk + gi) != 3) { return 0; }
+    if (GVGAI(S, idx) != 0) { return 0; }   # a zone list's blob, laid down by the replay since _gvk_pre ran
+    var st = GTI(S);
+    if (load8(_gvk_mw + gi) == 1) { _gvi_mixw(S); }   # 6.7.16 (D15 (a)): the mix warning, once
+    while (PEEKT(S) != 5) {
+        if (PEEKT(S) == 12) { return 1; }
+        STI(S, GTI(S) + 1);
+    }
+    if (idx < 0) { return 1; }
+    if (GVTYPE(S, idx) < 0) { _tp_warn(S, st); }
+    if ((_gv_sup(L64(_gvt(S) + gi * 8)) & 1) == 0) { _gv_slvar(S, idx); }   # 6.7.15: superseded, it was a sink's
+    return 1;
+}
+# A baked float whose initializer mixes an integer operand into f64 arithmetic (_gvk_fscan): parsed as the replay
+# parsed it, so its "f64 arithmetic with a non-f64 right operand" is given at the token and in the order it was, and
+# the code it emitted is taken back (_gvs_mark / _gvs_undo) — nothing is stored. CHANGELOG [6.7.16]
+fn _gvi_mixw(S): i64 {
+    _gvs_mark(S);
+    PCMPE(S);
+    _gvs_undo(S);
+    return 0;
+}
+# The slot entry `gi`'s scalar initializer is replayed into: _gv_target's — or, for a constant the replay steps (bk 3,
+# _gvi_baked) that a later constant superseded, its own slot, which it does not write and does not make the "last
+# var" (as its sink did not): the sink, an 8-byte global, would be the one trace of a declaration that leaves no
+# startup store (6.7.15, D2 (a)). CHANGELOG [6.7.15]
+fn _gvi_slot(S, gi, gsup, gps, noff): i64 {
+    var vi = _gv_ent_slot(S, gi, 0, noff);
+    if (gps == 0) { if (vi >= 0) { if (load8(_gvk_bk + gi) == 3) { if (GVGAI(S, vi) == 0) { return vi; } } } }
+    if (vi >= 0) { if (load8(_gvk_ik + gi) == 3) { return vi; } }   # 6.7.16 (D14 (a)): a literal of constants, the same
+    return _gv_target(S, vi, gsup, 0);
+}
+# A declaration-zone struct literal's fields, named or positional, as PARSE_STRUCT_INIT reads them (into the
+# global: no frame slot). The replay called the positional walk itself, so the named form the guide teaches,
+# `var p = P { a: 1, b: 2 };`, was "undefined variable 'a'" before the first statement. CHANGELOG [6.7.14]
+fn _gvi_struct_body(S, idx, sid): i64 {
+    var sv = _sl_base_li;
+    _sl_base_li = 0 - 1;
+    _STRUCT_INIT_BODY(S, idx, sid);
+    _sl_base_li = sv;
+    return 0;
+}
+# Every leading `*` of the annotation, as pass 1's `_ptr_annot` steps them: 1 = there was one. It read
+# one, so `**i64` left the cursor on `i64` and `*( .. )` inside its parentheses ("expected '='"). CHANGELOG [6.7.14]
+fn _gvi_stars(S): i64 {
+    var ps = 0;
+    while (PEEKT(S) == 8) {
+        STI(S, GTI(S) + 1);
+        ps = 1;
+    }
+    return ps;
+}
+
+# The replay's cursor is on the initializer's first token: the refusal reads (and reports at) the
+# `=` before it, as PARSE_VAR's does. CHANGELOG [6.7.6]
+fn _gvi_pair_bind(S): i64 {
+    var sv = GTI(S);
+    STI(S, sv - 1);
+    _refuse_single_pair_bind(S);
+    STI(S, sv);
+    return 0;
+}
+# A capture's first token: a name, or `callptr` (6.7.14; `_dt_call_open_cp`), or (6.7.14, D45) the
+# first `(` of parentheses wrapping one whole call (`_dt_wrap_k`). CHANGELOG [6.7.14]
+# 6.7.16: or a parenthesised method-chain head, `(GW).p.m2()` (`_pw_head`).
+fn _gvi_cap_tok(S): i64 {
+    if (PEEKT(S) == 2) { return 1; }
+    if (PEEKT(S) == 137) { return 1; }
+    if (_dt_wrap_k(S, 5) > 0) { return 1; }
+    if (PEEKT(S) == 10) { if (_pw_head(S, GTI(S)) == 0) { return 1; } }
+    return 0;
+}
+# 6.7.7 (B4) — a declaration-zone TUPLE LITERAL, replayed (cursor on the RHS; pass 1 registered the
+# global inline, `_tup_gci`): its constant elements baked into the image (`_spc_try`, the struct
+# literal's walker, closing at `)`), then every element stored, as a struct literal is (6.7.15: not
+# when it is baked and the image's bytes are its own, _gvs_quiet). 1 = done (`;` consumed), 0 = not a
+# whole literal (the replay goes on).
+fn _gvi_tuple(S, gi, idx, gps, sti, noff): i64 {
+    if (_gvi_dyn(S, gi, idx, gps, sti) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in place
+    if (_gvi_cap_tok(S) == 1) {   # 6.7.7 (T5): a capture
+        if (_gvi_tup_cap(S, gi, idx, gps, sti, noff) == 1) { return 1; }
+        return _gvi_tup_odd(S, gi, idx, gps, sti, noff);
+    }
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return _gvi_tup_odd(S, gi, idx, gps, sti, noff); }
+    if (TOKTYP(S, _pw_end) != 5) { return _gvi_tup_odd(S, gi, idx, gps, sti, noff); }
+    var sid = 0;
+    var infer = 0;
+    if (TOKTYP(S, sti + 2) != 49) { infer = 1; }
+    elif (gps < 0) { if (gps > 0 - 2048) { if (_tup_is(S, 0 - gps) == 1) { sid = 0 - gps; } } }
+    if (infer == 0) {
+        if (sid == 0) {
+            _tup_r9(S, lp, noff, sti + 3);   # 6.7.16: not after a refused annotation
+            return _tup_lit_skip(S, st, 5);
+        }
+    }
+    var n = _tup_lit_shape(S, lp, sid);
+    if (n == 0) { return _tup_lit_skip(S, st, 5); }
+    if (infer == 1) { sid = _tup_ints(S, n); }
+    if (_gvi_tup_slot(S, idx, sid, gps, noff, lp) == 0) { return _tup_lit_skip(S, st, 5); }
+    STI(S, lp + 1);
+    _spc_cl = 11;
+    _spc_try(S, gi, idx, sid);
+    _spc_cl = 14;
+    STI(S, lp);
+    var dq = _gvs_quiet(S, gi, idx);   # 6.7.15: baked, not stored again
+    if (dq == 1) { _gvs_mark(S); }
+    _tup_elems(S, sid, idx, 0 - 1, infer);
+    if (dq == 1) { _gvs_undo(S); }
+    _pw_close(S, lp - st);
+    _gv_slvar(S, idx);
+    _gvk_left(S, gi, sti, idx);
+    _expect_step(S, 5);
+    return 1;
+}
+# ⛔ 6.7.7 (B4 review) — THE REPLAY AGREES WITH PASS 1 OR REFUSES BY NAME. Pass 1 sized the global from
+# the tokens alone (`_tup_gci`, before the fns and structs below it were declared); the replay reads
+# them with everything declared. Where the two still disagree — only a `<` comparison spelled like a
+# generic call's type arguments (`x < a, b > (c)`) can now — the declaration is refused: storing a
+# literal into the 8-byte slot pass 1 made overran the next global, and the value store into a
+# tuple pass 1 made inline kept one word (R12).
+# The literal's slot (`sid` the literal's tuple): 1 = the tuple pass 1 registered inline; else 0,
+# refused at the literal (quietly under a tuple annotation: pass 1 refused that declaration, R12).
+fn _gvi_tup_slot(S, idx, sid, gps, noff, lp): i64 {
+    if (idx < 0) { return 1; }
+    if (GVPM(S, idx) == 2) { if (GVTYPE(S, idx) == sid) { return 1; } }
+    if (gps < 0) { return 0; }
+    _tup_err(S, lp, "the declaration zone reads a `<` comparison in the tuple literal of ", noff, " as an explicit generic call (`name<A, B>(..)`) - parenthesize the comparison");
+    return 0;
+}
+# A POINTER-MODE tuple global — pass 1 found no whole tuple: its R12 refusal, or a lone name it left
+# to the replay (`_tup_svtype_p1`). A whole same-type source is `_gci_init`'s (one declared below:
+# `_gci_below`, the real cause); anything else is R12 at the annotation's `(` (once, so not again
+# after pass 1's) and the value path parses on. 0. CHANGELOG [6.7.11]
+fn _gvi_tup_late(S, idx, gps, sti, noff): i64 {
+    if (gps >= 0) { return 0; }
+    if (_tup_is(S, GVTYPE(S, idx)) == 0) { return 0; }
+    if (_gci_src(S, GTI(S)) != 0) { return 0; }
+    _tup_err(S, sti + 3, "cannot initialize tuple ", noff, " with a value that is not a tuple");
+    return 0;
+}
+# A global pass 1 registered INLINE as a tuple whose initializer, read with every fn declared, is no
+# literal, no capture and no whole tuple source (`_gci_init` copies one): refused by name, the `;`
+# consumed (1); else 0 (the replay goes on).
+fn _gvi_tup_odd(S, gi, idx, gps, sti, noff): i64 {
+    if (idx < 0) { return 0; }
+    if (GVPM(S, idx) == 1) { return _gvi_tup_late(S, idx, gps, sti, noff); }   # 6.7.11
+    if (GVPM(S, idx) != 2) { return 0; }
+    if (_tup_is(S, GVTYPE(S, idx)) == 0) { return 0; }
+    if (gps < 0) { if (_gci_src(S, GTI(S)) != 0) { return 0; } }
+    var ti = GTI(S);
+    if (gps < 0) { ti = sti + 3; }   # the annotation's `(`, where pass 1 reports R12
+    _tup_err(S, ti, "cannot initialize tuple ", noff, " with a value that is not a tuple");
+    _masg_skip(S);
+    _gvk_left(S, gi, sti, idx);
+    _expect_step(S, 5);
+    return 1;
+}
+# ⛔ 6.6.11 — a leading-block initialiser, replayed here rather than parsed by PARSE_VAR, so a
+# struct-typed global's whole call / method result was never type-checked (`var G: Odd = mk2();`
+# compiled silently where the same line after a statement was refused). The same arming and
+# check PARSE_VAR's top-level arm makes. CHANGELOG [6.6.11]
+fn _gvi_expr(S, gps): i64 {
+    _gvi_pair_bind(S);   # 6.7.6: a `: stack` pair into one global is refused, as in a fn
+    if (gps == 0) { return _gvi_scalar(S); }
+    var st = GTI(S);
+    _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
+    var w = _scv_arm(S, gps, 0);
+    PCMPE(S);
+    _scv_disarm(S, w);
+    _mv_decl_src(S, gps, st);      # 6.7.11: a multi-value call into a struct declaration
+    _sc_global_pair(S, gps, st);   # 6.7.9: + a whole 9-16 B method / operator result (no frame)
+    return 0;
+}
+
+# The declaration zone's initialiser of no struct type: D24 at its call (`var G: i64 = mk2(5);`, 6.7.13) and at a
+# method / operator result (`var G: i64 = B.mk();`, D13 — `_sc_beg` cleared, so only this parse's record is read;
+# `_scv_err` as `_scv_disarm` sets it). Nothing is armed: a dyn result keeps V4's refusal at the factor.
+fn _gvi_scalar(S): i64 {
+    var st = GTI(S);
+    var he = _had_error;
+    var en = _err_n;
+    var tn = _tsc_n;
+    var ps = _gvi_ptr_ann(S, st);
+    _scv_top_ann(S, ps);   # 6.7.13: D24 in the declaration zone; 6.7.14: D14 (D28 (a))
+    _sc_beg = 0 - 1;
+    PCMPE(S);
+    _scv_err = _own_err(en, he);   # 6.7.17: after an earlier error too
+    _ini_refd(S, st, en, he, tn);   # 6.7.17: a refused type-deciding initializer marks its global
+    _scv_rec_ann(S, ps, st);   # 6.7.13 (D13)
+    if (_gu_untyped(S, st) == 1) { _gu_zref(S, st); }   # 6.7.14 (D30): `var x = mk2(30);`; 6.7.15 (D35): `= B2.mk();`
+    return 0;
+}
+# 6.7.14 (D28 (a)) — 1 = the zone declaration whose initialiser starts at `st` is annotated `*T` (`**T`, any number of
+# `*`): `_gvi_ann` gives a pointer `gps` 0, so the replay judged `var X: *P2 = mkp();` as a scalar (D24's remedy) and
+# left a method / operator result alone. The pointer scale is not needed: D14's refusal reads only its sign.
+fn _gvi_ptr_ann(S, st): i64 {
+    var ann = _scv_ann_at(S, st - 1);
+    if (ann <= 0) { return 0; }
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    return 1;
+}
+
+# ⛔ 6.7.13 — "ASSIGNING NON-POINTER TO TYPED POINTER" AT EVERY `*T` SITE, THE LITERAL 0 EXEMPT (the user's decision
+# D18 (a), 2026-10-15). The warning fired for a `*T` declaration in a fn or after the first statement and for an
+# assignment to a `*T` global or a `*Struct` local, and nowhere else: a declaration-zone `*T` global (its initialiser is
+# replayed by EMIT_GVAR_INITS, or baked into the image when it folds — `_tp_warn_gv`, `_tp_warn_baked`) and an
+# assignment to a `*T` local or `p: *T` parameter of a scalar T (parse.cyr: the slot's typed-pointer bit) never
+# warned. The literal 0 alone is a null pointer, so `var p: *T = 0;`, `p = 0;` and `G = 0;` are quiet at every site,
+# as the kind-0 compare-mix warning exempts it (issues/archived/2026-10-12-typed-pointer-non-pointer-warning-gaps.md).
+# CHANGELOG [6.7.13]
+# ⛔ 6.7.14 — A STRING LITERAL IS A BYTE POINTER. `var s: *u8 = "abc";`, `t = "xyz";` and a zone `var p: *u8 = "abc";`
+# warned (D18 (a) carried the warning to the assignment and the zone): a string's value is its address, the C-string
+# idiom, but it sets no pointer scale. And a `*T` destination whose value was refused as `&a[i]` warned beside the
+# refusal (`_tp_refd_at`). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — INTO ANY `*T` (6.7.14's D53 as worded: "never warn for a string literal ... exempt at every site, as the
+# literal 0 is"; the user's decision D59, 2026-10-18). 6.7.14 exempted only a `*u8` / `*i8` destination, so `var s:
+# *i64 = "abcdefgh";`, `*f64`, `*i32` and a one-byte struct's `*B1` still warned "non-pointer" of a value that is its
+# literal's address. CHANGELOG [6.7.15]
+# 1 = the initialiser / right-hand side at token `st`, alone up to its `;`, is the literal 0 (a null pointer,
+# `_tp_null_exempt`) or a string literal (its literal's address, `_tp_str_exempt`), into any `*T`.
+fn _tp_exempt(S, st): i64 {
+    if (st < 0) { return 0; }
+    if (_tp_null_exempt(S, st) == 1) { return 1; }
+    if (_tp_fna_exempt(S, st) == 1) { return 1; }
+    return _tp_str_exempt(S, st);
+}
+# ⛔ 6.7.17 — A FN'S ADDRESS IS A POINTER, AS EVERY OTHER `&name` IS, AND SO IS A CLOSURE LITERAL (its value is a fn
+# pointer). `&x` of a variable is a pointer to this check (6.5.29: scale 1), `&f` of a fn carried no scale, so the one
+# value a `*fn( .. )` holds warned "assigning non-pointer to typed pointer": `var c: *fn(i64): i64 = &dbl;` (6.7.17's
+# D8), a zone or late global's, `c = &inc;`, `cb = &inc;` into a `cb: *fn( .. )` parameter, `G = &inc;`, a for step,
+# `var g: *fn(i64): i64 = |x| x + 1;`. 1 = from `st` to its terminator (`_tp_term`), under any parentheses that wrap
+# it whole: `&` and one name (a variable's `&x` never reaches here), or a closure literal (`|` / `||` first; bare, it
+# runs to the value's end). `&f + 1` is judged as before. Warning text only. CHANGELOG [6.7.17]
+fn _tp_fna_exempt(S, st): i64 {
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var a = st + k;
+    var t = TOKTYP(S, a);
+    if (t == 35 || t == 54) { return _tp_cl_whole(S, st, k); }
+    if (t != 27) { return 0; }
+    if (TOKTYP(S, a + 1) != 2) { return 0; }
+    if (_pair_unwrap_k(S, a + 2, k, a) < 0) { return 0; }
+    if (TOKTYP(S, a + 2 + k) != _tp_term) { return 0; }
+    return 1;
+}
+# A closure literal at token `st + k` under the k `(` at `st`: 1 when they wrap it whole (k 0: it is the value).
+fn _tp_cl_whole(S, st, k): i64 {
+    if (k == 0) { return 1; }
+    var c = _call_close(S, st + k - 1);
+    if (_pair_unwrap_k(S, c + 1, k - 1, c) < 0) { return 0; }
+    if (TOKTYP(S, c + k) != _tp_term) { return 0; }
+    return 1;
+}
+# 1 = from `st` to its `;`: the integer literal 0 under any parentheses that wrap it whole — `0`, `(0)`, `((0))` (the
+# guide's whole-wrap transparency, as the string literal's arm peels it). `var p: *i64 = (0);`, `p = (0);` and a zone
+# `var G: *i64 = (0);` warned "non-pointer" where `= 0;` was quiet; `(0) + 1` and `(1)` are judged as before
+# (issues/archived/2026-10-18-parenthesised-null-literal-into-typed-pointer-warns.md). Warning text only. CHANGELOG [6.7.16]
+fn _tp_null_exempt(S, st): i64 {
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var a = st + k;
+    if (TOKTYP(S, a) != 1) { return 0; }
+    if (TOKVAL(S, a) != 0) { return 0; }
+    if (_pair_unwrap_k(S, a + 1, k, a) < 0) { return 0; }
+    if (TOKTYP(S, a + 1 + k) != _tp_term) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.15 — A STRING LITERAL'S ADDRESS PLUS OR MINUS AN INTEGER, AND THE LITERAL IN PARENTHESES, ARE ITS ADDRESS TOO:
+# `var s: *u8 = "abc" + 1;` and `var t: *u8 = ("xyz");` warned "assigning non-pointer to typed pointer" (6.7.14 took the
+# literal only alone before the `;`). 1 = from `st` to its `;`: the literal, then `+` / `-` and one integer operand (an
+# integer or char literal, or a single name) or nothing, under any parentheses that wrap it whole — `("abc")`,
+# `(("x"))`, `("abc" + 1)`, `("abc") + 1` (k `(` before the literal, j of them closed right after it, the rest after
+# the operand). Any other expression (`"abc" + x * 2`) is judged as before. Warning text only. CHANGELOG [6.7.15]
+fn _tp_str_exempt(S, st): i64 {
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var a = st + k;
+    if (TOKTYP(S, a) != 30) { return 0; }
+    var e = a + 1;
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, e) != 11) { break; }
+        e = e + 1;
+        j = j + 1;
+    }
+    var op = TOKTYP(S, e);
+    if (op == 6 || op == 7) {
+        var o = TOKTYP(S, e + 1);
+        if (o != 1 && o != 2) { return 0; }
+        e = e + 2;
+    }
+    if (_pair_unwrap_k(S, e, k - j, a) < 0) { return 0; }
+    if (TOKTYP(S, e + k - j) != _tp_term) { return 0; }
+    return 1;
+}
+# The warning (at the cursor) into a `*T`, unless the value starting at `st` is exempt or was refused already (an
+# `&a[i]` inside it). An assignment's (parse.cyr's `_PARSE_STMT_IMPL` arms) calls it directly.
+# ⛔ 6.7.17 (met landing D24) — A REFUSED STATEMENT PRINTS NO TYPED-POINTER WARNING, as it prints no float-type one
+# (6.7.16, `_FLT_TYPE_WARN`): `var p: *f64v2 = mk2(4, 7);` and `p = mk2(4, 7);` printed D100's refusal and then
+# "assigning non-pointer to typed pointer" about the refused value (`var x: *i64 = (*GP);` D24's the same). Not while
+# the statement's error holds the panic latch, nor after one that does not latch (`_err_n` past `_flt_en`, the count at
+# the statement's start). CHANGELOG [6.7.17]
+fn _tp_warn(S, st): i64 {
+    if (_panic == 1) { return 0; }
+    if (_err_n != _flt_en) { return 0; }
+    if (_tp_exempt(S, st) == 1) { return 0; }
+    if (_tp_refd_at >= st) { if (_tp_refd_at <= GTI(S)) { return 0; } }
+    WARN(S, "assigning non-pointer to typed pointer", 38);
+    return 0;
+}
+# The declaration zone's replay (cursor past the initialiser at `st`): the global `slot` is a `*T` (GVTYPE `0 - step`).
+# A line refused inside its initialiser (`_scv_err`, `_gvi_scalar`) or at its first token (D24) is not warned too.
+fn _tp_warn_gv(S, slot, st): i64 {
+    if (slot < 0) { return 0; }
+    if (GVTYPE(S, slot) >= 0) { return 0; }
+    if (_ann_said(S, _tp_decl_var(S, st), st) == 1) { return 0; }   # 6.7.17: its annotation was refused (`_ann_said`)
+    if (GPSC(S) != 0) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    if (_tn_seen_at(S, st) == 1) { return 0; }
+    if (_tp_call_pointee(S, st, _gv_ptr_sid(S, slot)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
+    return _tp_warn(S, st);
+}
+# The `var` of the zone declaration whose initializer starts at token `st` (st itself when none is met first).
+fn _tp_decl_var(S, st): i64 {
+    var k = st - 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 3) { return k; }
+        if (t == 5 || t == 13 || t == 14) { return st; }
+        k = k - 1;
+    }
+    return st;
+}
+# PARSE_VAR's `*T` declaration (`ann` the annotation's first token; the cursor past the initialiser at `st`): the
+# warning, unless the line is refused — at its call (D14, `_ptr_refd_ti`) or inside its initialiser (`_scv_err`, as
+# the zone's `_tp_warn_gv` asks): `var X: *P3 = mk3();` after the first statement, a struct result over 16 B with no
+# frame, said "assigning non-pointer to typed pointer" beside its one refusal. CHANGELOG [6.7.14]
+fn _tp_warn_decl(S, ann, st): i64 {
+    if (_ptr_refd_ti == ann) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    if (_tp_call_pointee(S, st, _ptr_ann_sid_tp(S, ann)) == 1) { return 0; }   # 6.7.16: a `: Str` call into a `*Str`
+    return _tp_warn(S, st);
+}
+# `_PARSE_STMT_IMPL`'s assignment to a `*T` global `gvi` (the value at `st`, the cursor past it): the warning, unless
+# the value is a `: Str` call into a `*Str` global. CHANGELOG [6.7.16]
+fn _tp_warn_gasg(S, gvi, st): i64 {
+    if (_tp_call_pointee(S, st, _gv_ptr_sid(S, gvi)) == 1) { return 0; }
+    return _tp_warn(S, st);
+}
+# ⛔ 6.7.16 — A `: Str` CALL INTO A `*Str` IS ITS POINTER. A fn or method declared `: Str` returns the header's address
+# (a `Str` is a handle: `_rcv_big`), which is what a `*Str` holds, so `var p: *Str = str_from(..);`, a zone
+# `var G: *Str = str_from(..);` and `GP = str_from(..);` / `GP = h.clone();` into a `*Str` global no longer warn
+# "assigning non-pointer to typed pointer" — the `*Str` local's assignment was already quiet (`_asg_ret_sid`, v6.5.28)
+# (issues/archived/2026-10-18-str-call-into-str-pointer-declaration-or-global-warns-typed-pointer.md). Any other struct's call
+# keeps the warning: `: Q` into a `*Str`, and a `: P` call into a `*P` (a struct of 8 B or less is returned as its word,
+# not an address; over 8 B is D14's refusal). Warning text only.
+# ⛔ 6.7.16 — AND EVERY OTHER VALUE THE `*Str` LOCAL TAKES. A `: Str` FIELD is a pointer slot (its value is the header's
+# address), but this took calls only, so `var f: *Str = h.name;` and `GZ = h.name;` warned where `l = h.name;` into the
+# local did not (issues/archived/2026-10-19-str-field-into-str-pointer-declaration-or-global-warns-typed-pointer.md); so did a
+# `Str`-typed name (`var a: *Str = GS;`), a field or a method of a call's result (`mkh().name`, `mkh().nm()`), and each
+# of those and the call under parentheses that wrap the value whole (`(h.name)`, `(str_from(..))` — in the local too).
+# 1 = the value from `st` to its `;` is one primary the local's arm types as the destination's pointee (`_tpv_sid`,
+# parse.cyr: the same reader) and that pointee is `Str`. A field of any other type (`h.n`) is still warned about.
+fn _tp_call_pointee(S, st, psid): i64 {
+    if (st < 0) { return 0; }
+    if (psid <= 0) { return 0; }
+    if (psid != _STR_SID(S)) { return 0; }
+    if (_tp_hdl_name(S, st) == 1) { return 1; }   # 6.7.16: a `Str` handle's name
+    if (_tpv_sid(S, st) == psid) { return 1; }
+    return 0;
+}
+# 1 = capture `noff` is a `Str` handle's (its slot one word, no `*Str`).
+fn _tp_hdl_cap(S, noff): i64 {
+    var esl = _cl_snap_find(S, noff);
+    if (_cl_cap_find(esl) < 0) { return 0; }
+    if (_cl_snap_type(esl) != 0 - _STR_SID(S)) { return 0; }
+    if (_cl_snap_ptrp(esl) == 1) { return 0; }
+    if (_cl_snap_span(esl) >= 1) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.16 — AND A `Str` HANDLE'S NAME: a handle holds the header's address, as a `*Str` does, so `GP = GA;` / `var P:
+# *Str = GA;` (GA a `Str` handle global — in a fn, at top level, in the declaration zone) and a closure's `var p: *Str =
+# h;` / `GP = h;` (h a captured handle) no longer warn — a handle LOCAL's was already quiet (its factor's step word). 1 =
+# the value from `st` to the cursor is one name, inside any parentheses, of a `Str` handle local, parameter or global
+# (`_istr_dst` 1 / 2) or a capture of one. CHANGELOG [6.7.16]
+fn _tp_hdl_name(S, st): i64 {
+    if (_istr_at(S, st, GTI(S)) != 0) { return 1; }   # 6.7.16 (D71): `GP = *(&t)` — its address taken, or refused
+    var a = _ie_unparen(S, st, GTI(S));
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var noff = TOKVAL(S, a);
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) < 0) { if (_hl_capn(S, noff) == 1) { return _tp_hdl_cap(S, noff); } } }
+    var d = _istr_dst(S, noff);
+    if (d == 1 || d == 2) { return 1; }
+    return 0;
+}
+# A `*T` global's initialiser at `st` the folder baked into the image (an integer constant, never replayed): at
+# its `;`, as the replay would report.
+fn _tp_warn_baked(S, st): i64 {
+    if (_tp_exempt(S, st) == 1) { return 0; }
+    var e = st;
+    while (e < GTCNT(S)) { if (TOKTYP(S, e) == 5) { break; } e = e + 1; }
+    WARN_AT(S, e, "assigning non-pointer to typed pointer", 38);
+    return 0;
+}
+
+# 6.7.3 (B2) — a declaration-zone `var g: bool = e;` is judged exactly once: a value the folder
+# BAKES into the image (the final `sit_lit` 1: `= true`, a constant shadow or redeclaration, cx
+# included) here, by its token shape — `true` / `false`, optionally parenthesised, then `;` (the
+# pass-1 folder folds no names, so that is the whole static boolean subset); any other (deferred,
+# `= false`, a call, a const) at the replay, by the stamp.
+fn _bx_lit_bool(S, ti): i64 {
+    var d = 0;
+    while (TOKTYP(S, ti) == 10) { d = d + 1; ti = ti + 1; }
+    var t = TOKTYP(S, ti);
+    if (t != 169 && t != 170) { return 0; }
+    ti = ti + 1;
+    while (d > 0) { if (TOKTYP(S, ti) != 11) { return 0; } d = d - 1; ti = ti + 1; }
+    if (TOKTYP(S, ti) != 5) { return 0; }
+    return 1;
+}
+fn _bx_gv_reg(S, ann_bool, sit_lit, ti, noff): i64 {
+    if (ann_bool == 0) { return 0; }
+    if (sit_lit == 0) { return 0; }
+    if (_bx_lit_bool(S, ti) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot initialize bool ", noff, " with a value that is not a bool", 0 - 1);
+}
+fn _bx_gvi_expr(S, gps, gi, noff): i64 {
+    var ti = GTI(S);
+    _vin_zone(S, gi, noff);   # 6.7.15 (D26 / D27): a vector call has no storage here
+    _gvi_expr(S, gps);
+    _tp_warn_gv(S, _gv_ent_slot(S, gi, 0, noff), ti);   # 6.7.13 (D18 (a)): a declaration-zone `*T`
+    _gz_agree(S, gps, _gv_ent_slot(S, gi, 0, noff), ti, noff);   # 6.7.10 (B7-1g)
+    if (_gvb_base == 0) { return 0; }   # no bool global anywhere: no lookup
+    if (_BX_IS(S) == 1) { return 0; }
+    if (GVBOOL(S, _gv_ent_slot(S, gi, 0, noff)) == 0) { return 0; }
+    return _bx_refuse(S, ti, "cannot initialize bool ", noff, " with a value that is not a bool", 0 - 1);
+}
+
+fn EMIT_GVAR_INITS(S): i64 {
+    _gv_hide_program(S, 1);   # 6.6.6: a kernel replay reads declaration-zone globals (FINDVAR)
+    _gvk_pre(S);              # 6.6.16 (C6): enum-named scalars baked; resolves as the replay does
+    if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
+    var gc = L64(S + 0x19A000);
+    var gi = 0;
+    # The latch as the replay found it: pass 2's silent re-read of a refused declaration (`const X;`) set it, and it
+    # keeps PARSE_PROG from reporting that declaration twice. An entry's latch is released at the loop's end, so it
+    # never swallows the program's first statement. CHANGELOG [6.7.16]
+    var p_in = _panic;
+    while (gi < gc) {
+        # 6.6.6: bits 40+ flag a target a later constant declaration superseded (_gv_supersede).
+        var graw = L64(_gvt(S) + gi * 8);
+        var gsup = _gv_sup(graw);
+        var sti = _gv_tok(graw);
+        _gvr_gi = gi;   # 6.7.16: the entry a copy source's store is ordered against (_gvr_unset)
+        if (_gvr_n > 0) { _gvr_hide(S, sti); }   # 6.7.15: a refused type change, as the source reads here
+        STI(S, sti);
+        # Each entry starts with the panic latch clear, as a fn's statement does (the cursor is re-seated at
+        # its `var`, so no resync): an earlier entry's error latched through every later one. CHANGELOG [6.7.16]
+        _panic = 0;
+        _flt_en = _err_n;   # 6.7.16: and its own errors counted from here (`_FLT_TYPE_WARN`)
+        STI(S, GTI(S) + 1);  # consume VAR
+        var noff = PEEKV(S);
+        STI(S, GTI(S) + 1);  # consume IDENT
+        _dt_ann1(S);   # 6.7.17: an annotated destructure name, stepped (pass 1 refused it)
+        # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 2 (the replay half; pass 1 registered the names
+        # in PARSE_GVAR_REG). The DRAIN ORDER is the load-bearing part and it matches the
+        # in-function path exactly: EMOVRA_R3 and EMOVRA_RDX both land in rax, so the third
+        # slot must be read BEFORE rdx overwrites it. CHANGELOG [6.6.0].
+        if (PEEKT(S) == 31) {
+            STI(S, GTI(S) + 1);   # consume ,
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var eg2 = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            _dt_annk(S);
+            var eg3 = 0;
+            var egn = 2;
+            if (PEEKT(S) == 31) {
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+                eg3 = PEEKV(S);
+                STI(S, GTI(S) + 1);
+                _dt_annk(S);
+                egn = 3;
+            }
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);   # consume =
+            var ewk = _dt_wrap_in(S, 5);   # 6.7.14 (D45): `var a, b = (f(7));`
+            var ed0 = _dt_dfr_n();   # 6.7.17
+            var edz = _dt_zone_check(S, egn, ewk);   # 6.6.17 (a5)
+            var ei1 = _gv_target(S, _gv_ent_slot(S, gi, 0, noff), gsup, 0);
+            var ei2 = _gv_target(S, _gv_ent_slot(S, gi, 1, eg2), gsup, 1);
+            var ei3 = 0 - 1;
+            if (egn == 3) { ei3 = _gv_target(S, _gv_ent_slot(S, gi, 2, eg3), gsup, 2); }
+            PCMPE(S);
+            _dt_dfr_say(S, ed0);
+            _pw_close(S, ewk);
+            if (ei1 >= 0) { EVSTORE(S, ei1); }
+            if (egn == 3) {
+                EMOVRA_R3(S);
+                if (ei3 >= 0) { EVSTORE(S, ei3); }
+            }
+            EMOVRA_RDX(S);
+            if (ei2 >= 0) { EVSTORE(S, ei2); _gv_slvar(S, ei2); }
+            _gvk_dst(S, sti, ei1, ei2, ei3);   # 6.6.16 (C6): a kernel build names what stays late
+            _expect_step(S, 5);
+            if (edz == 1) { _panic = 0; }   # the zone check's report: latched through its statement
+            gi = gi + 1;
+            continue;
+        }
+        var gps = 0;
+        if (PEEKT(S) == 49) { gps = _gvi_ann(S, _gv_ent_slot(S, gi, 0, noff)); }
+        # v5.11.51: an array initializer `var foo[N] = { .. };`. ⛔ 6.6.16 (C1): evaluated into the
+        # slot's image blob (_gai_replay) — no code on an image target; it emitted one byte store
+        # per element, which a `kernel;` build runs after its never-returning program.
+        if (PEEKT(S) == 28) {
+            _gai_replay(S, gi, noff, gsup, sti);
+            gi = gi + 1;
+            continue;
+        }
+        # v5.8.42: same bare-decl `var X;` improvement as PARSE_VAR.
+        # Top-level vars hit this path; mirror the diagnostic so the
+        # error text doesn't depend on where the bare-decl appears.
+        if (PEEKT(S) != 4) { _decl_eq_err(S); }
+        STI(S, GTI(S) + 1);  # consume =
+        # Check for struct init: StructName { ... }
+        # v5.9.33: same lookahead guard as PARSE_VAR — require `{` after
+        # the struct-named ident to commit to struct-init; otherwise fall
+        # through to scalar expr (e.g. `var x = MASK & 0xF;` where MASK
+        # is also a struct name).
+        var idx = _gvi_slot(S, gi, gsup, gps, noff);   # 6.7.15: a stepped constant makes no sink
+        var did_struct = 0;
+        did_struct = _gvi_tuple(S, gi, idx, gps, sti, noff);   # 6.7.7 (B4): a tuple literal; (T5) a capture
+        if (did_struct == 0 && _lit_head_tok(S) == 1) {
+            var sid = _lit_head_w(S);   # 6.6.12: `Name {` or `Name<args> {`; 6.7.14: a wrap too
+            if (sid > 0) {
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+                STI(S, GTI(S) + 1);
+                # v5.9.36: width-aware boff advance + width-correct
+                # store, mirroring PARSE_STRUCT_INIT's positional path.
+                # See that fn for the full rationale.
+                # v6.3.44 Str-field fix lives in _emit_struct_positional_init now
+                # (R5, v6.4.15) — this global-init REPLAY was the parallel copy
+                # that had to take the fix separately.
+                _spc_try(S, gi, idx, sid);   # 6.6.16 (C6): an all-constant literal is baked
+                var dq = _gvs_quiet(S, gi, idx);   # 6.7.15: and then not stored again
+                if (dq == 1) { _gvs_mark(S); }
+                _gvi_struct_body(S, idx, sid);   # 6.7.14: named or positional
+                if (dq == 1) { _gvs_undo(S); }
+                _slit_rbrace(S);   # 6.7.17: elements past the last field, one error
+                _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
+                _gv_slvar(S, idx);
+                _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
+                _expect_step(S, 5);
+                did_struct = 1;
+            }
+        }
+        if (did_struct == 0) {
+            if (_gvi_baked(S, gi, idx, gps) == 0) {   # 6.7.14: else the image holds it (_gvk_quiet)
+                if (_gci_init(S, idx, gps, noff) == 0) {   # 6.6.12: a whole struct source is copied
+                    _bx_gvi_expr(S, gps, gi, noff);   # 6.7.3: _gvi_expr, and a bool global's value judged
+                    if (idx >= 0) { _gvi_store(S, idx); }   # 6.6.13: at its width; 6.7.6: f32 rounds
+                }
+            }
+            _gvk_left(S, gi, sti, idx);   # 6.6.16 (C6): a kernel build names what stays late
+            _expect_step(S, 5);
+        }
+        gi = gi + 1;
+    }
+    _gu_presolve(S);   # 6.7.17: the reports held for a global the sweep judged refused
+    _panic = p_in;
+    if (_gvr_n > 0) { _gvr_hide(S, GTCNT(S)); }
+    _gv_hide_program(S, 0);
+    # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
+    # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
+    _warn_mixed_pair_returns(S);
+    _dl_pw_late(S);   # 6.7.16: a kernel build replays the globals after the program (parse/fn_def.cyr `_dl_pw_end`)
+    return 0;
+}

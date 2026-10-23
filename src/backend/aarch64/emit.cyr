@@ -3650,7 +3650,7 @@ fn EFLSTORE(S, idx): i64 {
 # local slot `lli` into x0 (EFLADDR) or x1 (EFLADDR_X1) for caller code
 # that needs an &local — struct-field LEA, hidden retbuf-arg push,
 # slice canonical-slot init via `slice_set` / `slice_ptr`. Pre-v5.8.54
-# these were defined in x86/emit.cyr only; parse/decl.cyr (lines 127,
+# these were defined in x86/emit.cyr only; parse/decl.cyr (now parse/decl/; lines 127,
 # 236, 301, 355, 931, 1019, 1060) and parse/expr.cyr:234 call them
 # unconditionally — the aarch64 cross-build emitted "undefined function"
 # warnings + "will crash at runtime" errors. sit v0.7.2 release flow
@@ -3810,12 +3810,12 @@ fn _ESTORE_ODD_X1(S, w): i64 {
     return 0;
 }
 
-# v5.9.40 — sub-byte struct field load (parse/decl.cyr:252).
+# v5.9.40 — sub-byte struct field load (parse/decl/field.cyr).
 # Field-base ptr is in x1 (already advanced to the field start
 # by callers). Emits ldrb/ldrh/ldr w0/ldr x0 by width. Pulled
 # out of an inline `if (_AARCH64_BACKEND == 1)` block into a
 # named helper so the cx backend can sit alongside as a peer
-# without parse/decl.cyr having to grow another arch arm.
+# without parse/decl/field.cyr having to grow another arch arm.
 fn EFIELD_LOAD_W(S, width): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     # v6.3.35: negative width = SIGNED field → sign-extending load from [x1].

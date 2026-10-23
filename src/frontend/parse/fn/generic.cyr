@@ -1258,7 +1258,7 @@ fn _gen_addr_check(S, fi, noff): i64 {
 # 2026-10-18): `g(ps + 1)`, `g(1 + ps)`, `g((ps) - 1)` bind what ps points at (`_ic_parith`) — they ran the i64 base
 # (`p + 1` stepped 8 for a 24-byte S). Through `x: T` no pointer binds, so the arithmetic is read through `p: *T` only.
 # ⛔ 6.7.17 — a whole field or method chain on any receiver head binds as the struct value it is (the user's D2,
-# 2026-10-22): `sz(w.p)`, `sz(b.mp2())`, `sz(w.gp().m())`, `sz((*pw).p)` — `_acv_bind` (parse/decl.cyr). CHANGELOG [6.7.17]
+# 2026-10-22): `sz(w.p)`, `sz(b.mp2())`, `sz(w.gp().m())`, `sz((*pw).p)` — `_acv_bind` (parse/decl/vector.cyr). CHANGELOG [6.7.17]
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
     if (ptr == 1) {

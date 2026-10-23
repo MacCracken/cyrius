@@ -4,7 +4,7 @@
 # Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
 
 # ⭐ 6.6.5 — PARSE_FNCALL's `: Str` param auto-coercion, EXTRACTED so the method-call path
-# (parse/decl.cyr) uses the same code rather than a second copy that drifts. A string
+# (parse/decl/field.cyr) uses the same code rather than a second copy that drifts. A string
 # literal landing in a param the callee annotated `: Str` is wrapped in `str_from(...)`;
 # without the wrap the callee receives a raw cstr pointer and every Str accessor reads the
 # wrong shape. Measured on 6.6.4 AND on the first cut of this bite: `h.slen("abcde")`

@@ -1106,7 +1106,7 @@ fn _prescan_ret_type(S, fi): i64 {
 }
 
 # ⛔ 6.6.17 (a5) — PASS 1: does fn `fi`'s body PROVABLY return ONE value? Then GFLG bit 1024, which
-# `_dt_arity_check` (parse/decl.cyr) reads to refuse `var a, b = f();` — b took a stale rdx,
+# `_dt_arity_check` (parse/decl/receive.cyr) reads to refuse `var a, b = f();` — b took a stale rdx,
 # silently, at fn scope and at top level. Recorded HERE so a forward call knows it. Conservative:
 # a `ret2`, an `asm` block, a `?` or any `return` that is not provably one value (`_ret_stmt_single`)
 # leaves the bit clear. Closure and nested-fn bodies are their own units. Cursor: past the
@@ -1490,7 +1490,7 @@ fn _pre_attr_drop(): i64 {
 # declared `Box<Pt>` (24 B, `v` a Pt): `var r: Box<Pt> = mk<Pt>(p); r.v.x` failed with "expected
 # ';', got '.'", and a plain `fn mkp(x: Pt): Box<Pt>` was refused ("fn return struct-id differs
 # from declared var type"). As a parameter type `r.v.x` failed the same way. The type now
-# resolves exactly as a `var b: Box<Pt>` does (parse/decl.cyr): an ALL-i64 argument list is the
+# resolves exactly as a `var b: Box<Pt>` does (parse/decl/var.cyr): an ALL-i64 argument list is the
 # base struct itself, anything else the deduped `Box$..` instance, with an instance's T bound.
 # ⛔ 6.7.16 — A generic's BASE reads its list with T bound to i64, as the base's body reads the same
 # annotation: `: G1<T>` is still the base `G1`, but `: G1<Box<T>>` is `G1$Box` and `: Box<Pt>` /

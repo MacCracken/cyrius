@@ -1,5 +1,5 @@
 # struct_name_param_collision.tcyr — v5.9.33 regression for the
-# parse/decl.cyr struct-init detection over-eagerness.
+# parse/decl/ struct-init detection over-eagerness.
 #
 # Bug history: pre-v5.9.33, PARSE_VAR's struct-literal detection
 # fired on any `var X = ident ...;` where `ident` matched a known
@@ -22,7 +22,7 @@
 # the 64 KB DCE bitmap window, so its body is fully parsed even
 # when unreferenced. On x86 the same fn DCE'd, masking the bug.
 #
-# Fix: parse/decl.cyr PARSE_VAR / EMIT_GVAR_INITS / PARSE_GVAR_REG
+# Fix: parse/decl/ PARSE_VAR / EMIT_GVAR_INITS / PARSE_GVAR_REG
 # require the next-next token after a struct-named ident to be `{`
 # before committing to the struct-init path. Bare ident references
 # fall through to scalar expression parsing.

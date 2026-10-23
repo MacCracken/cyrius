@@ -83,7 +83,7 @@ var _vgsi_base = 0;    # 0x1EC000 gvar_initval
 # else an alloc'd { +0 the data length, +8 eb | kind << 8 of the last entry that wrote it, +16 the
 # array's bytes }. Every backend copies it into the var area (_gai_bake below) — cx too, into the
 # var data its .cyx carries (main_cx.cyr). (C6: a declaration-zone struct literal whose every leaf
-# is a constant is a blob too, written by _spc_try in parse/decl.cyr.) The `kind` byte is a field of
+# is a constant is a blob too, written by _spc_try in parse/decl/gvar_init.cyr.) The `kind` byte is a field of
 # the header and nothing else reads it (1 an integer element, 2 the bare byte list, 3 u128, 4 f64, 5
 # f32, 6 a struct literal) — it is no type code and never reaches a type table. Lazily allocated at the var table's
 # hard cap, the SVFI shape: NOT a heap-map region and NOT a `_grow_g*` link (the cybs-fragile
@@ -1447,7 +1447,7 @@ fn SVPM(S, vi, v): i64 { if (_var_ptrmode == 0) { _var_ptrmode = alloc(1048576);
 # 6.6.17 (a3) — a VECTOR-typed global (`var g: f64v2 = 0;`): its byte size / 8 (2 or 4), 0 = not
 # one. It owns the vector's 16/32 bytes (it was one 8-byte slot, so `&g` with a `*_ptr` form wrote
 # past it into the next global); a value-form read or write of it is refused by name
-# (`_vecg_refuse`, parse/decl.cyr). Lazy-alloc'd at the var table's cap like `_var_ptrmode`.
+# (`_vecg_refuse`, parse/decl/gvar.cyr). Lazy-alloc'd at the var table's cap like `_var_ptrmode`.
 var _var_vecg = 0;
 fn GVVEC(S, vi): i64 { if (_var_vecg == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_vecg + vi); }
 fn SVVEC(S, vi, v): i64 { if (_var_vecg == 0) { if (v == 0) { return 0; } _var_vecg = alloc(1048576); } store8(_var_vecg + vi, v); return 0; }
@@ -3821,7 +3821,7 @@ fn ERR_EXPECT(S, expected_type): i64 {
 # v6.5.19 — a NAME-RESOLUTION diagnostic that NAMES the identifier at fault.
 #
 # WHY IT EXISTS, AND WHY THE MESSAGE CLASS MATTERS. Six struct-field sites in
-# parse/decl.cyr reported through `ERR(S)` — i.e. `unexpected ';'`, the SYNTAX
+# parse/decl/field.cyr reported through `ERR(S)` — i.e. `unexpected ';'`, the SYNTAX
 # emitter — for what is a resolution failure. `total = total + e.size;` where the
 # struct `e` belongs to is declared in a SIBLING FILE is well-formed cyrius that
 # merely lacks context, and calling it a syntax error was wrong twice over:
@@ -4117,7 +4117,7 @@ fn _edup_grow(): i64 {
 
 # ⛔ 6.6.6 — A STRUCT COPY BETWEEN TWO DIFFERENT STRUCT TYPES WAS SILENTLY ACCEPTED.
 # Both copy paths — `p = q;` (`_try_aggregate_copy_assign`, parse.cyr) and
-# `var p: P = q;` (`_try_struct_copy_init`, parse/decl.cyr) — answered a type mismatch
+# `var p: P = q;` (`_try_struct_copy_init`, parse/decl/struct_copy.cyr) — answered a type mismatch
 # with `return 0`, which falls through to the generic 8-byte store. So:
 #   struct P3{x;y;z;} struct Q3{a;b;c;}   p = q;        -> one word of three copied,
 #                                                          p.x became q.a, p.y/p.z stale
@@ -4139,7 +4139,7 @@ fn _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff): i64 {
     return 1;
 }
 # 6.7.3 — the passive whole-field record for the argument type check of a parameter that is not
-# address-passed (`_fpk_note`, parse/decl.cyr; read by `_sarg_byval_small`, parse/fn/call_args.cyr): the
+# address-passed (`_fpk_note`, parse/decl/field.cyr; read by `_sarg_byval_small`, parse/fn/call_args.cyr): the
 # token the argument begins at, and the field's struct, end token and name. Emits nothing.
 var _fpk_want = 0 - 1;
 var _fpk_ft = 0;

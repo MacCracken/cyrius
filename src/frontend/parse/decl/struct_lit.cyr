@@ -1,0 +1,898 @@
+# PARSER — decl: struct literals — EMIT_STRUCT_FIELD_W, positional and nested initializers (`_spi_*`),
+# PARSE_STRUCT_INIT, _STRUCT_LIT_LOCAL.
+# ================================================================
+# Split from parse/decl.cyr at 6.7.18, unchanged; parse.cyr includes parse/decl/ in source order. CHANGELOG [6.7.18]
+
+# Parse struct init: var name = StructName { expr, expr, ... };
+# sid is 1-based struct id, noff is var name offset.
+# v5.9.36: width param picks the matching storeN encoding so
+# narrow-typed fields (i8/i16/i32) write only their declared
+# width — pre-fix the always-store64 path overflowed past
+# `STRUCTSZ`-allocated storage at global scope (e.g. `var p32 =
+# point_i32 { 100, 200, 300 }` allocated 12 bytes per
+# STRUCTSZ but the literal wrote 24, clobbering the next gvar).
+# `width = 8` keeps the legacy store64 path; the `width = 1/2/4`
+# branches mirror the existing PARSE_FIELD_STORE narrow-store
+# encodings.
+# 6.6.5 — the struct-literal field stores now serve BOTH a global slot and a FRAME slot.
+# `_sl_base_li` is the frame slot when >= 0, and it is captured BEFORE `PCMPE` because an
+# initialiser expression can contain a closure whose body declares its own literal and would
+# otherwise leave the wrong base in place for the rest of this literal's fields.
+var _sl_base_li = 0 - 1;
+# 6.6.10: the float kind of the field EMIT_STRUCT_FIELD_W is about to initialise (1 = f64,
+# 2 = f32), set by its callers and consumed on entry, so `P { 1, 2 }` into f64 fields warns.
+var _sfw_fk = 0;
+var _sfw_fn = 0;   # 6.7.3: that field's name (a bool field's refusal names it); _sfw_fk + 16 = a bool
+var _sfw_ft = 0;   # 6.7.13: the field's type, for an inline `Str` element (`_istr_lit`)
+var _sfw_pf = 0;   # 6.7.16: 1 = the field is a `*Str` (`_istr_pfs`), for an inline `Str` element (`_istr_pfld`)
+var _sfw_si = 0 - 1;   # 6.7.17 (D16): the field's struct and index, for `_dsr_lit`
+var _sfw_fi = 0;
+fn _sfw_set(S, si, fi): i64 {
+    _sfw_si = si;
+    _sfw_fi = fi;
+    _sfw_fk = _fk_bx(S, si, fi);
+    _sfw_fn = GETFNAME(S, si, fi);
+    _sfw_ft = GETFTYPE(S, si, fi);
+    _sfw_pf = _istr_pfs(S, si, fi);
+    return 0;
+}
+# 6.6.12: 1 = the value is already in rax (a nested-literal walk parsed it), consumed on entry.
+var _sfw_have = 0;
+fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
+    var sl_li = _sl_base_li;
+    var fk = _sfw_fk;
+    _sfw_fk = 0;
+    var ft = _sfw_ft;
+    _sfw_ft = 0;
+    var pf = _sfw_pf;
+    _sfw_pf = 0;
+    var lsi = _sfw_si;   # 6.7.17 (D16)
+    _sfw_si = 0 - 1;
+    if (_sfw_have == 1) { _sfw_have = 0; }
+    else {
+        # An element is a one-slot store: a `: stack` pair here kept the tag and dropped the payload
+        # (`P { f(7), 3 }`, named, a global's), so it is refused as every other store is; `f(7)?`
+        # consumes the pair. Right before the PCMPE, as T5b's sites. CHANGELOG [6.7.11]
+        _refuse_lossy_pair(S);
+        var t0 = GTI(S);
+        if (_istr_ldx(S, ft, pf) == 0) {   # 6.7.16: `V { *p, 1 }`, a `*Str`'s `*p` into a `Str` / `*Str` field, is p
+            _istr_lsv(S, ft, t0, _sfw_fn);   # PCMPE; 6.7.17 (D18): a struct value of another type into a `Str` field
+            _ifs_bx(S, fk, t0, _sfw_fn);
+            _istr_lit(S, ft, t0);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` field
+            _istr_pfld(S, pf, t0);   # 6.7.16 (D19): ... and into a `*Str` field (`W { gt, 1 }`)
+            _dsr_lit(S, t0, lsi, _sfw_fi);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
+        }
+    }
+    EPUSHR(S);
+    # Load variable address into x1/rcx via fixup
+    if (sl_li >= 0) { EFLADDR_X1(S, sl_li); }
+    else { EVADDR_X1(S, vcnt); }
+    if (boff > 0) {
+        EADDIMM_X1(S, boff);
+    }
+    EPOPR(S);
+    if (width == 1) { ESTORE8(S); }
+    elif (width == 2) { ESTORE16(S); }
+    elif (width == 4) { ESTORE32(S); }
+    else { ESTOC(S); }
+    _slit_sep(S);   # 6.7.15 (D1 (a)): the `,` after the element is required
+    return 0;
+}
+# The token ending the struct literal element at `ti`: its depth-0 `,` or `}`; -1 at anything else. CHANGELOG [6.7.16]
+fn _slit_eend(S, ti): i64 {
+    var d = 0;
+    var i = ti;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 14 || t == 29) {
+            if (d == 0) {
+                if (t == 14) { return i; }
+                return 0 - 1;
+            }
+            d = d - 1;
+        }
+        elif (t == 31) { if (d == 0) { return i; } }
+        elif (t == 5 || t == 12) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# A tuple literal's elements store through the same EMIT_STRUCT_FIELD_W: `_tup_elems` sets `_slit_tup` around each
+# element's store, so `(1, 2 3)` names a tuple literal. CHANGELOG [6.7.16]
+var _slit_tup = 0;
+# ⛔ 6.7.15 — A STRUCT LITERAL'S ELEMENTS ARE SEPARATED BY COMMAS (the user's decision D1 (a), 2026-10-18). After an
+# element (cursor past it): a `,` is stepped; the literal's `}` (a tuple literal's `)`, which shares the store) is
+# left, so a trailing comma stays valid; a token that can open another element is "expected ',' between struct
+# literal elements", at it, once (the statement latched), and the walk reads that element from there. Every element's
+# store steps here (positional, named, a nested struct's leaves, generic, in a fn and in both zones; a whole nested
+# value is taken only when a `,` / `}` follows it, `_spi_follow`). The declaration zone's bake folds a leaf only when
+# its `,` / `}` follows (`_CF_TRY`, `_gai_flit`), so a commaless literal is left to the replay's store, which reports
+# it — a kernel build's too. `P { 3 4 }` and `P { b: 1 a: 2 }` compiled, the values landing where the commas put them
+# (issues/archived/2026-10-16-struct-literal-elements-need-no-comma.md). A `;` / `)` / `]` / end of file after an element is
+# an unclosed literal, left to its own "expected '}'". CHANGELOG [6.7.15]
+fn _slit_sep(S): i64 {
+    var t = PEEKT(S);
+    if (t == 31) { STI(S, GTI(S) + 1); return 0; }
+    if (t == 14 || t == 11 || t == 5 || t == 12 || t == 29) { return 0; }
+    if (_slit_tup == 1) {
+        ERR_MSG(S, "expected ',' between tuple literal elements", 43);
+        return 0;
+    }
+    ERR_MSG(S, "expected ',' between struct literal elements", 44);
+    return 0;
+}
+
+# The value the walk is carrying into a nested field, parsed but not yet stored:
+#   0 none; 1 a struct recorded for `_fsc_src_x1` (named, a field, or a call in a temp);
+#   2 a scalar in rax — the next leaf's value; 3 a struct of <= 8 B in rax; 4 a struct call
+#   already refused (top level, > 8 B): the whole field is consumed and nothing is stored, so
+#   the walk does not descend and invent `unexpected '}'` for the values it would be short.
+# `_spi_ps` is the struct type of kinds 1 and 3, `_spi_pn` the source's name for a refusal.
+var _spi_pk = 0;
+var _spi_ps = 0;
+var _spi_pn = 0;
+var _spi_pfi = 0 - 1;   # 6.7.15: ... the fn `_spi_pn` is the result of (a method's record, `Pt.dup`), else -1
+
+# R5 (v6.4.15): positional struct-literal init, extracted from the two formerly-parallel
+# copies in PARSE_STRUCT_INIT and EMIT_GVAR_INITS (the .44 Str-field fix had to be applied to
+# both separately — the exact repeat-fix bug class this kills). target_idx is the global slot
+# receiving it (`_sl_base_li` >= 0 selects a frame slot instead).
+# ⛔ 6.6.12 — A NESTED STRUCT FIELD WAS FLATTENED AS 8 BYTES PER INNER FIELD, whatever the inner
+# fields' widths, and never recursed. `struct HO { o: Odd; t: i8; u: i32; }` (8 B, Odd = i8+i16)
+# took its four values at +0, +8, +16, +17 — 13 bytes past the object, over the next global (a
+# string's bytes) or, fn-local, over the frame: wrong on x86, aarch64, PE and cx alike. And a
+# struct nested TWO levels deep was never descended, so `N { m; v: B { p: Pt; n; } }` stored
+# `n` over `m`'s neighbour. Now every leaf is written at its real FIELDOFF and FIELDSZ, the
+# walk recursing through each nested struct (a Str field stays ONE 8-byte pointer slot,
+# v5.10.7/v6.3.44). Byte-identical for an all-i64 nesting, where 8 was always the width.
+# ⭐ 6.6.12 — A NESTED STRUCT FIELD ALSO TAKES A WHOLE STRUCT VALUE: `B2 { p, 5 }` with `p: Pt`
+# (a local, a parameter, a global, a struct-typed field, a call / method / operator returning
+# Pt) is copied byte-exact, where it used to be `unexpected '}'` because the literal wanted
+# `p`'s two words flattened. A struct value of a type found further down the nested field's
+# FIRST-field chain fills that inner struct (`N { 1, p, 5 }` with `v: B { p: Pt; n; }`); any
+# other struct type is refused by name. An expression that is not a struct value is the first
+# LEAF of the nested field, exactly as before. CHANGELOG [6.6.12]
+fn _emit_struct_positional_init(S, target_idx, sid): i64 {
+    _spi_pk = 0;
+    _spi_fields(S, target_idx, _sl_base_li, sid - 1, 0);
+    _spi_pk = 0;
+    return 0;
+}
+
+# Every field of struct `si`, based `base` bytes into the literal's object. `li` is the frame
+# slot captured at entry (-1 for a global), since an initialiser can hold a closure with its own.
+fn _spi_fields(S, tidx, li, si, base): i64 {
+    var fc = GETFCOUNT(S, si);
+    var fi = 0;
+    while (fi < fc) {
+        var ft = GETFTYPE(S, si, fi);
+        var off = base + FIELDOFF(S, si, fi);
+        if (_spi_is_nested(S, ft) == 1) { _spi_nested(S, tidx, li, si, fi, off); }
+        else { _spi_leaf(S, tidx, si, fi, off); }
+        fi = fi + 1;
+    }
+    return 0;
+}
+fn _spi_is_nested(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    return 1;
+}
+
+# A scalar / pointer / Str / Vec leaf: its own width, at its own offset. A carried scalar
+# (kind 2) is its value, already in rax.
+fn _spi_leaf(S, tidx, si, fi, off): i64 {
+    if (_spi_pk != 2) { if (PEEKT(S) == 14) { return _spi_short(S); } }   # 6.7.16
+    if (_spi_pk == 2) { _sfw_have = 1; }
+    _spi_pk = 0;
+    _sfw_set(S, si, fi);
+    EMIT_STRUCT_FIELD_W(S, tidx, off, FIELDSZ(S, GETFTYPE(S, si, fi)));
+    return 0;
+}
+
+# A nested struct field of type `ft`: a whole struct value of that type is stored here; one of
+# a type on its first-field chain, or a scalar, is carried down into it.
+fn _spi_nested(S, tidx, li, si, fi, off): i64 {
+    var ft = GETFTYPE(S, si, fi);
+    var est = 0 - 1;   # the element's first token, when it starts here
+    if (_spi_pk == 0) {
+        if (PEEKT(S) == 14) { return _spi_short(S); }   # 6.7.16
+        est = GTI(S);
+        _spi_pfi = 0 - 1;
+        _spi_pk = _spi_src(S, ft, GETFNAME(S, si, fi));
+    }
+    if (_spi_pk == 4) { return _spi_took(S); }
+    if (_spi_pk == 1 || _spi_pk == 3) {
+        if (_spi_ps == ft) {
+            if (_spi_pk == 1) { _spi_copy(S, tidx, li, off, STRUCTSZ(S, ft - 1)); }
+            else { _spi_store_rax(S, tidx, li, off, STRUCTSZ(S, ft - 1)); }
+            return _spi_took(S);
+        }
+        if (_spi_chain_has(S, ft, _spi_ps) == 0) {
+            _fsc_type_errf(S, _spi_pn, _spi_pfi, GETFNAME(S, si, fi));
+            return _spi_took(S);
+        }
+    }
+    # 6.7.8 (V8): a dyn field takes a whole dyn (a copy, above); descending would write its two words
+    # from the literal's values. Refused by name; the walk goes on so the literal stays in sync.
+    if (_dyn_is(S, ft) == 1) {
+        if (_dyn_lit_form(S, est, ft) == 1) { return _spi_took(S); }   # 6.7.8 (D5): F5, the element taken whole
+        _dyn_err(S, GTI(S), "", ft, GETFNAME(S, si, fi), " (a field) is set from a whole dyn - a struct literal cannot write its words");
+    }
+    _spi_fields(S, tidx, li, ft - 1, off);
+    return 0;
+}
+
+# ⛔ 6.7.16 — A POSITIONAL LITERAL SHORT OF A FIELD (`P { 2 }` for `struct P { a; b; }`) is "missing struct field in
+# initializer" at its `}`, as the named form short of one is: the walk parsed the `}` as the next leaf's value,
+# "unexpected '}'", naming no rule. Once (the statement latched, in sync), nothing stored for the leaves left.
+# CHANGELOG [6.7.16]
+fn _spi_short(S): i64 {
+    _refuse_in_sync(S);
+    ERR_MSG(S, "missing struct field in initializer", 35);
+    return 0;
+}
+# The carried value was this whole field (stored, or refused by name): drop it, eat its `,`.
+fn _spi_took(S): i64 {
+    _spi_pk = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
+# Is struct `want` the type of a nested struct reached through `ft`'s FIRST fields?
+fn _spi_chain_has(S, ft, want): i64 {
+    var t = ft;
+    while (_spi_is_nested(S, t) == 1) {
+        if (t == want) { return 1; }
+        if (GETFCOUNT(S, t - 1) == 0) { return 0; }
+        t = GETFTYPE(S, t - 1, 0);
+    }
+    return 0;
+}
+
+# The float kind of the leaf a scalar carried into nested struct `ft` lands on (its first leaf).
+var _spi_first_fn = 0;   # 6.7.3: that leaf's field name
+fn _spi_first_fk(S, ft): i64 {
+    var t = ft;
+    while (_spi_is_nested(S, t) == 1) {
+        if (GETFCOUNT(S, t - 1) == 0) { return 0; }
+        var t2 = GETFTYPE(S, t - 1, 0);
+        if (_spi_is_nested(S, t2) == 0) { _spi_first_fn = GETFNAME(S, t - 1, 0); return _fk_bx(S, t - 1, 0); }
+        t = t2;
+    }
+    return 0;
+}
+
+# The initialiser at the cursor, for a nested struct field of type `ft` (named `fnm`). Returns the kind
+# (see `_spi_pk`); 0 = nothing parsed (the leaves parse it).
+fn _spi_src(S, ft, fnm): i64 {
+    if (_spi_strnm(S, ft) == 1) { return 0; }   # 6.7.17 (D98): a `Str` name, taken by the nested `Str` leaf
+    if (PEEKT(S) == 2) {
+        var nx = TOKTYP(S, GTI(S) + 1);
+        if (nx == 31 || nx == 14) { return _spi_name(S); }
+        var r = _spi_call(S, 0);
+        if (r != 0) { return r; }
+    }
+    if (PEEKT(S) == 10) {
+        if (_spi_pname(S) == 1) { return 1; }
+        var rp = _spi_pcall(S);
+        if (rp != 0) { return rp; }
+    }
+    var rd = _spi_dsrc(S, ft, fnm);   # 6.7.17: a dereference `*pq`
+    if (rd != 0) { return rd; }
+    return _spi_expr(S, ft);
+}
+# ⛔ 6.7.17 — A `Str` NAME AS A NESTED STRUCT FIELD'S ELEMENT REACHING A `Str` FIRST LEAF IS THAT LEAF'S VALUE (the user's
+# D98, 2026-10-22), as D19 stores `O { *p, 1, 2 }`'s p and the direct literal `WS { a, 1 }` stores a: `O { a, 1, 2 }` /
+# `O { gt, 1, 2 }` with O's first field a `WS { s: Str; n; }` were refused as a struct of another type ("cannot copy 'a'
+# into a struct field of a different struct type: 'v'") — a `Str` field is one handle slot, not a nested struct. The
+# element (inside any wrap) is left to the leaf (0: nothing parsed), which takes it as a positional `Str` field does: a
+# handle's word, an inline `Str`'s header address (`*(&t)` is t, 6.7.16's D71), a frame's inline `Str` refused as
+# would-dangle (D7 (1)). A `*Str` name is a pointer, no `Str` value: it keeps its refusal. CHANGELOG [6.7.17]
+# 1 = the element at the cursor is such a name (a `Str` handle local, parameter, capture or global; an inline `Str`, or
+# `*(&NAME)` of one) — or a whole multi-value call, which the leaf refuses (D99) — and nested struct `ft`'s first leaf
+# is a `Str`.
+fn _spi_strnm(S, ft): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (_spi_first_str(S, ft) == 0) { return 0; }
+    var st = GTI(S);
+    var e = _slit_eend(S, st);
+    if (e < 0) { return 0; }
+    if (_istr_at(S, st, e) != 0) { return 1; }
+    var a = _ie_unparen(S, st, e);
+    if (_spi_mvc(S, a, _ie_pe) == 1) { return 1; }   # D99: a multi-value call, refused by the leaf (`_istr_lsv`)
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var noff = TOKVAL(S, a);
+    if (_fsc_name_src(S, noff) != 0 - ss) { return 0; }
+    _fsc_reset();
+    if (_spi_nptr(S, noff) == 1) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.17 — A MULTI-VALUE CALL INTO A `Str` PARAMETER IS REFUSED AS INTO A STRUCT PARAMETER (the user's D99,
+# 2026-10-22: a `Str` slot refuses it as a struct slot; `_mv_named` admits `Str`): `fs(two())` with `s: Str` passed the
+# first value as the header's address. A `Str` parameter is a handle the callee does not copy in (`_pm_copies` 0), yet
+# no `*P` — and a generic's `x: T` at `T = Str` is address-passed — so it is judged here: 1 = parameter `argc` of `fi`
+# is a `Str` by value (`GFPSID` the `Str`, not declared a pointer). A `*Str` / `**Str` parameter takes the first
+# value as a pointer, as a `*P` does (`_mv_pstr` 1). CHANGELOG [6.7.17]
+fn _mv_sarg(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    if (_pptr_param(S, fi, argc) == 1) { return 0; }
+    return 1;
+}
+fn _mv_pstr(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    return _pptr_param(S, fi, argc);
+}
+# 1 = [a, pe) is a whole call (free or method, `_dt_call_open`'s reading) of a fn returning several values (6.7.17, the
+# user's D99: a multi-value call into a `Str` slot is refused as into a struct slot — the leaf's `Str` field refuses it).
+fn _spi_mvc(S, a, pe): i64 {
+    var sv = GTI(S);
+    STI(S, a);
+    var fi = 0 - 1;
+    var o = _dt_call_open(S);
+    if (o >= 0) { fi = _dt_call_fn(S); }
+    STI(S, sv);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    return _mv_callee(S, fi);
+}
+# 1 = name `noff`, resolved as the factor resolves it (a local, a capture, a global), is declared a pointer (`*Str`,
+# `**Str`): its word is no `Str` value.
+fn _spi_nptr(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return GLPTRP(S, li); }
+        if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
+                var esl = _cl_snap_find(S, noff);
+                if (esl >= 0) { return _cl_snap_ptrp(esl); }
+            } }
+    }
+    if (_gv_ptr_sid(S, _findvar_core(S, noff)) > 0) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.17 — A DEREFERENCE AS A NESTED STRUCT FIELD'S ELEMENT IS THE STRUCT IT READS (6.7.10's decision 6: `*p` is a
+# struct value at every size), as the name it points at is (6.6.12): `O { *pq, 5 }` with `pq: *Q2` into `v: Q2` copies
+# `*pq`, a struct on the field's first-field chain fills that inner struct, and another struct is refused by name
+# (*cannot copy '*pq' into a struct field of a different struct type: 'v'*). It was a word read carried into the nested
+# field's first leaf: a 16-byte element was "missing struct field in initializer" (its second word taken from the next
+# element) and another struct's word filled the leaf, silently. `*pp` of a `**S` is the `*S` it reads, copied through
+# as a `*S` name is. CHANGELOG [6.7.17]
+# The element at the cursor (up to its `,` / `}`) is one dereference `* E` inside any wrap, E typed `*U` (U a plain
+# struct; `_hl_dstar_e`'s mode 1): 1 = its pointer parked and recorded (`_spi_ps` U), 4 = refused (the element parsed);
+# else 0, nothing moved.
+fn _spi_dsrc(S, ft, fnm): i64 {
+    var ti = GTI(S);
+    var e = _slit_eend(S, ti);
+    if (e < 0) { return 0; }
+    if (_istr_at(S, ti, e) != 0) { return _spi_dref_t(S, fnm); }   # 6.7.16's D71: `*(&t)` is t
+    var ps = _hl_dstar_e(S, ti, e, 1);
+    if (ps <= 0) { return 0; }
+    if (ps == _STR_SID(S)) { return _spi_dstr(S, ft, ti, e, fnm); }   # 6.7.17 (D19)
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { if (_spi_chain_has(S, ft, ps) == 0) { return _spi_dref(S, fnm); } }
+    _fsc_hsrc(_hl_dx_src(S));
+    _spi_ps = ps;
+    _spi_pn = 0;
+    return 1;
+}
+# ⛔ 6.7.17 — `*(&t)` OF AN INLINE `Str` t AS A NESTED STRUCT FIELD'S ELEMENT IS t (6.7.16's D71: `*(&t)` is t wherever a
+# `Str` value is taken): into a field whose first leaf is no `Str` it is refused by name as `O2 { t, 1, 2 }` is (*cannot
+# copy 't' into a struct field of a different struct type: 'v'*); it was t's data word carried into the field's first
+# leaf, silently. (A `Str` first leaf takes it as t, D98: `_spi_strnm`. Only the `*(&NAME)` form reaches here: a name is
+# `_spi_name`'s.)
+fn _spi_dref_t(S, fnm): i64 {
+    _fsc_type_err(S, TOKVAL(S, _istr_ti), fnm);
+    PCMPE(S);
+    return 4;
+}
+# ... refused by name, the element parsed (4: the whole field).
+fn _spi_dref(S, fnm): i64 {
+    _fsc_type_err(S, _hl_dname(S), fnm);
+    PCMPE(S);
+    return 4;
+}
+# ⛔ 6.7.17 — `*p` OF A `*Str` CARRIED TO A NESTED STRUCT'S `Str` FIRST LEAF IS p (the user's D19, 2026-10-22), as the
+# direct literal `WS { *p, 1 }` stores it (6.7.16's SS-8, D20 carried to a literal's `Str` field): `O { *p, 1, 2 }` with
+# O's first field a `WS` whose first field is `s: Str` stored the header's data word in `o.v.s`. A `Str` value whose
+# nested field does not open with a `Str` leaf is refused by name, as a `Str` name there is (`O2 { a, 1, 2 }`). `*pp` of
+# a `**Str` reads the `*Str` itself: a word, carried as before (0). 2 = E parsed (rax = p), carried to the leaf.
+fn _spi_dstr(S, ft, ti, e, fnm): i64 {
+    if (_hl_dpp != 0) { return 0; }
+    if (_spi_first_str(S, ft) == 0) { return _spi_dref(S, fnm); }
+    _istr_vdx(S, ti, e);
+    return 2;
+}
+# 1 = the first leaf of nested struct `ft` (down its first fields) is a `Str` field.
+fn _spi_first_str(S, ft): i64 {
+    var t = ft;
+    while (_spi_is_nested(S, t) == 1) {
+        if (GETFCOUNT(S, t - 1) == 0) { return 0; }
+        t = GETFTYPE(S, t - 1, 0);
+    }
+    return IS_STR_FIELD(S, t);
+}
+# 6.7.14 — a named struct in parentheses that wrap the whole element (`HE { 7, (q0), 8 }`, `((q0))`) is the
+# element the unwrapped name is (guide § Parentheses; 6.7.11's D44). It was an expression whose word went into
+# the nested struct's first leaf and the next element into its second: "unexpected '}'". The wrap is stepped
+# into, `_spi_name` takes the name (a struct of another type then meets its refusal by name), and the wrap is
+# closed; 0 = not that shape (cursor untouched). CHANGELOG [6.7.14]
+fn _spi_pname(S): i64 {
+    var st = GTI(S);
+    var k = _spi_epk(S, st);
+    if (k == 0) { return 0; }
+    if (TOKTYP(S, st + k) != 2) { return 0; }
+    if (TOKTYP(S, st + k + 1) != 11) { return 0; }
+    STI(S, st + k);
+    if (_spi_name(S) == 0) {
+        STI(S, st);
+        return 0;
+    }
+    _pw_close(S, k);
+    return 1;
+}
+
+# `IDENT ,` / `IDENT }`: a named struct (recorded, consumed) or 0 (cursor untouched).
+fn _spi_name(S): i64 {
+    var noff = PEEKV(S);
+    var t = _fsc_name_src(S, noff);
+    if (t == 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }   # a vector: not a struct, the leaf takes it as ever
+    _spi_ps = 0 - t;
+    _spi_pn = noff;
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
+# `f(..)` / `f<..>(..)` followed by `,` or `}` (`pk` > 0: by the `)` of the wrap `_spi_pcall` stepped
+# into), `f` returning a struct: > 8 B into a temp (1), <= 8 B in rax (3). 0 = not that shape (cursor
+# untouched). At top level there is no frame for a > 8 B result: refused by name (here for rax:rdx,
+# by the call itself for a retptr one) and taken as the whole field (4), so that refusal is the only
+# error.
+fn _spi_call(S, pk): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    if (_spi_follow(S, o, pk) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (rs == _STR_SID(S)) { return 0; }
+    var noff = PEEKV(S);
+    var k = 1;
+    if (STRUCTSZ(S, rs - 1) <= 8) { PCMPE(S); k = 3; }
+    elif (GINFN(S) != 1) {
+        if (_ret_agg_class(S, fi) == 1) { _spi_top_ref(S, noff); }
+        PCMPE(S);
+        return 4;
+    } else {
+        var t = _struct_call_into_temp(S);
+        _fsc_reset();
+        _fsc_li = t;
+    }
+    # Recorded AFTER the call is parsed: an argument may hold a closure with a literal of its own.
+    _spi_ps = rs;
+    _spi_pn = noff;
+    return k;
+}
+
+# ... that refusal, the call's token marked reported, so a dyn result's V4 refusal at the same call ("a dyn Show
+# result used as a value") is not a second report (6.7.13, D17 (a)'s top-level row). CHANGELOG [6.7.13]
+fn _spi_top_ref(S, noff): i64 {
+    _refuse_toplevel_struct_call(S, noff);
+    _tn_once(S, GTI(S));
+    return 0;
+}
+# The call whose `(` is token `o` ends the element: `,` / `}`, or the wrap's `)` (`pk` > 0).
+fn _spi_follow(S, o, pk): i64 {
+    var nx = _call_follow(S, o - 1);
+    if (pk > 0) {
+        if (nx == 11) { return 1; }
+        return 0;
+    }
+    if (nx == 31) { return 1; }
+    if (nx == 14) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.11 — A FREE STRUCT CALL IN PARENTHESES THAT WRAP THE WHOLE ELEMENT (`H { 7, (mkq(4, 9)), 8 }`,
+# `((mk<Pt>(1)))`) is the element the unwrapped call is — 6.7.6's transparency, which a wrapped method or
+# operator result has too (`_spi_epk`, 6.7.13). It was an expression whose rax went into the nested
+# struct's first leaf and the next element into its second: "unexpected '}'" at 16 / 24 B and at 8 B with several
+# leaves, a one-leaf struct's word unchecked (issues/2026-10-10-paren-wrapped-struct-call-as-nested-literal-
+# element-refused.md; the user's decision (a), 2026-10-13). The wrap is stepped into, `_spi_call` takes the
+# call (its refusals — another struct, no frame at top level — the unwrapped call's), and the wrap is
+# closed. 0 = not that shape (cursor untouched). CHANGELOG [6.7.11]
+# 6.7.13: a dyn-returning call too (`H { 7, (pass(o)), 8 }`, the user's decision D17 (a), 2026-10-15) — it was
+# refused twice ("a dyn Show result used as a value", then `_dyn_lit_form`'s). CHANGELOG [6.7.13]
+fn _spi_pcall(S): i64 {
+    var st = GTI(S);
+    var k = _pwrap_name(S, st);
+    if (k == 0) { return 0; }
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 14) { return 0; } }
+    STI(S, st + k);
+    var r = _spi_call(S, k);
+    if (r == 0) {
+        STI(S, st);
+        return 0;
+    }
+    _pw_close(S, k);
+    return r;
+}
+
+# Any other initialiser, parsed with the struct-source arms up (a struct-typed field, a
+# method / operator call returning a struct). A scalar is left in rax (2) for the first leaf.
+# A struct call refused at top level (no frame) is the whole field (4), so its refusal is the
+# only error.
+# `_spi_tup_refd` (6.7.16): an element in which the factor refused a tuple literal (R9: `W { (1, 2), 3 }` for a tuple
+# or struct field, `(1, 2) + 1`, `g((1, 2))`, any wrap) is the whole field too, as 6.6.12's refused value: the walk
+# carried the element into the field's first leaf, wanted one value more and met the `}` — "unexpected '}'" after
+# the literal's own error (alone under --syntax-only, where R9 says nothing: an invented syntax error)
+# (issues/archived/2026-10-19-tuple-literal-struct-literal-element-cascades-unexpected-brace.md). CHANGELOG [6.7.16]
+fn _spi_expr(S, ft): i64 {
+    var st = GTI(S);
+    var tl0 = _tls_n;
+    var pk = _spi_epk(S, st);   # 6.7.13: the arms below run inside a wrap of the whole element
+    var sv = _fla_want;
+    var svl = _fla_lit;
+    _fla_want = st + pk;
+    _fla_lit = st + pk;
+    _fla_hit = 0;
+    _sc_rbeg = 0 - 1;
+    _refuse_lossy_pair(S);   # a scalar carried into a nested field's first leaf is an element too (at its first token). CHANGELOG [6.7.11]
+    STI(S, st + pk);
+    var w = _sc_arm(S);
+    PCMPE(S);
+    var bx = _BX_IS(S);   # 6.7.3: the stamp, before anything below can move the cursor
+    _pw_close(S, pk);
+    _sc_want = w;
+    _fla_want = sv;
+    _fla_lit = svl;
+    if (_spi_refused(S, st, pk) == 1) { return 4; }
+    if (_slit_whole(S, st + pk, pk) == 1) { return 4; }   # 6.7.14 (D12 (a)): a refused `P { .. }` is the field
+    if (_tls_n != tl0) { return 4; }   # 6.7.16: a tuple literal R9 refused in the element (`_spi_tup_refd`)
+    var t = _sc_whole(S, st);
+    if (t >= 0) {
+        _fsc_reset();
+        _fsc_li = t;
+        _spi_ps = _sc_sid;
+        _spi_pn = _sc_fn;
+        _spi_pfi = _sc_fi;
+        return 1;
+    }
+    if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); return 4; }
+    if (t == 0 - 3) { _spi_ps = _sc_sid; _spi_pn = _sc_fn; _spi_pfi = _sc_fi; return 3; }
+    if (_fla_hit == 1) {
+        _fla_hit = 0;
+        _spi_ps = _fla_ft;
+        _spi_pn = _fla_name;
+        return 1;
+    }
+    _spi_leaf_check(S, _spi_first_fk(S, ft), st, bx);
+    return 2;
+}
+# ⛔ 6.7.13 — A 9-16 B METHOD OR OPERATOR RESULT IN PARENTHESES AS A NESTED-STRUCT LITERAL ELEMENT
+# (`HE { 7, (q0.dupe()), 8 }`, `(q0 + q1)`) was refused "unexpected '}'": the struct-call destination was
+# armed at the `(`, so the call inside got no frame temp (`_sc_pre` wants `_sc_want` at the call), the
+# element was a scalar for the nested struct's first leaf and the next element its second. At 8 B and
+# 24 B it worked by accident (rax; the retptr temp). Every other destination steps a whole wrap before it
+# arms (`_scv_peel`, `_rcv_peel`, `_ret_peel`); the element now does too: the parentheses wrapping the
+# whole element at `st` (up to its `,` / `}`; a tuple literal is no wrap), 0 for none. `_pw_end` is kept.
+# CHANGELOG [6.7.13]
+fn _spi_epk(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var pe = _pw_end;
+    var k = 0;
+    if (_tup_lit_at(S, st) < 0) { k = _pwrap_k(S, st); }
+    var e = TOKTYP(S, _pw_end);
+    _pw_end = pe;
+    if (k == 0) { return 0; }
+    if (e != 31) { if (e != 14) { return 0; } }
+    return k;
+}
+# A scalar carried into a nested struct lands on its first leaf: the float warning, and (6.7.3) a
+# bool leaf's check — `bx` the stamp taken right after the value was parsed.
+fn _spi_leaf_check(S, k, st, bx): i64 {
+    _IFS_CHECK(S, k & 15, st);
+    if ((k & 15) == 2) { _f32_init_round(S, F32_TYID); }   # 6.7.6 (D2): as _ifs_bx
+    if (k < 16) { return 0; }
+    if (bx == 1) { return 0; }
+    return _bx_refuse(S, st, "cannot store a value that is not a bool into bool field ", _spi_first_fn, 0, 0 - 1);
+}
+
+# The whole value (up to its `,` / `}`; inside its `pk` parentheses, 6.7.13) was a > 16 B method /
+# operator call `_sc_pre` refused at top level.
+fn _spi_refused(S, st, pk): i64 {
+    if (_sc_rbeg != st + pk) { return 0; }
+    if (_sc_rend + pk != GTI(S)) { return 0; }
+    if (PEEKT(S) == 31) { return 1; }
+    if (PEEKT(S) == 14) { return 1; }
+    return 0;
+}
+
+# x1 = the literal's object + `off`.
+fn _spi_dst_x1(S, tidx, li, off): i64 {
+    if (li >= 0) { EFLADDR_X1(S, li); }
+    else { EVADDR_X1(S, tidx); }
+    if (off > 0) { EADDIMM_X1(S, off); }
+    return 0;
+}
+fn _spi_store_w(S, w): i64 {
+    if (w == 1) { ESTORE8(S); }
+    elif (w == 2) { ESTORE16(S); }
+    elif (w == 4) { ESTORE32(S); }
+    else { ESTOC(S); }
+    return 0;
+}
+fn _spi_w(rem): i64 {
+    if (rem >= 8) { return 8; }
+    if (rem >= 4) { return 4; }
+    if (rem >= 2) { return 2; }
+    return 1;
+}
+
+# `nb` bytes from the recorded source into the literal at `off` (8/4/2/1-byte chunks).
+fn _spi_copy(S, tidx, li, off, nb): i64 {
+    var o = 0;
+    while (o < nb) {
+        var w = _spi_w(nb - o);
+        _fsc_src_x1(S, o);
+        EFIELD_LOAD_W(S, w);
+        EPUSHR(S);
+        _spi_dst_x1(S, tidx, li, off + o);
+        EPOPR(S);
+        _spi_store_w(S, w);
+        o = o + w;
+    }
+    return 0;
+}
+
+# A struct of `nb` <= 8 bytes in rax, into the literal at `off`: exactly `nb` bytes, each chunk
+# shifted down into place (the value kept on the stack; the address may use rax).
+fn _spi_store_rax(S, tidx, li, off, nb): i64 {
+    EPUSHR(S);
+    var o = 0;
+    while (o < nb) {
+        var w = _spi_w(nb - o);
+        if (o > 0) { EMOVI(S, o * 8); EMOVCA(S); }
+        EPOPR(S);
+        EPUSHR(S);
+        if (o > 0) { ESHRCL(S); }
+        EPUSHR(S);
+        _spi_dst_x1(S, tidx, li, off + o);
+        EPOPR(S);
+        _spi_store_w(S, w);
+        o = o + w;
+    }
+    EPOPR(S);
+    return 0;
+}
+
+# ⛔ 6.7.17 — A NAMED `Str` FIELD IS ONE HANDLE SLOT, NOT A NESTED STRUCT (the user's D21, 2026-10-22): `V { s: a, n: 1
+# }` was "named init not supported for nested struct fields — use positional", where the positional `V { a, 1 }`
+# compiles. The element goes through the positional `Str` field's checks (EMIT_STRUCT_FIELD_W): an inline `Str`'s header
+# address (`_istr_lit`; a frame's refused as would-dangle), `*p` of a `*Str` is p (`_istr_ldx`), another struct refused
+# (`_istr_lsv`). 1 = field type `ft` is a struct the named form cannot take (a nested one). CHANGELOG [6.7.17]
+fn _sl_named_nest(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    return 1;
+}
+# 6.6.5 — the initialiser body of a struct literal, EXTRACTED so the top-level form and the
+# new fn-local form share one parser. Writes through `target_idx` (a global slot) or, when
+# `_sl_base_li >= 0`, through that frame slot. CHANGELOG [6.6.5]
+fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
+    var si = sid - 1;
+    var fc = GETFCOUNT(S, si);
+    # Detect named-field syntax: next token is IDENT (2) followed by ':' (49).
+    # Empty struct literal `{}` falls through to positional branch as a no-op.
+    var named = 0;
+    if (PEEKT(S) == 2) {
+        if (TOKTYP(S, GTI(S) + 1) == 49) { named = 1; }
+    }
+    if (named == 1) {
+        # Named init: `StructName { field: expr, field: expr }`.
+        # Each field must appear exactly once; any order. Nested struct
+        # fields are not supported in named form — use positional for those.
+        var initialized = 0;
+        while (PEEKT(S) != 14) {
+            if (PEEKT(S) == 12) { break; }   # v6.4.61: EOF guard (multi-error recovery safety)
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var fname_off = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
+            STI(S, GTI(S) + 1);
+            var found = 0 - 1;
+            var fi = 0;
+            while (fi < fc) {
+                if (STREQTOK(S, GETFNAME(S, si, fi), fname_off) == 1) { found = fi; fi = fc; }
+                else { fi = fi + 1; }
+            }
+            if (found < 0) { ERR_MSG(S, "unknown struct field in initializer", 35); }
+            var ft = GETFTYPE(S, si, found);
+            if (_sl_named_nest(S, ft) == 1) { ERR_MSG(S, "named init not supported for nested struct fields — use positional", 68); }
+            var bit = 1 << found;
+            if ((initialized & bit) != 0) { ERR_MSG(S, "struct field initialized twice", 30); }
+            initialized = initialized | bit;
+            var boff = FIELDOFF(S, si, found);
+            # v5.9.36: width-correct store. Pre-fix this always
+            # store64'd, which clobbered up to 7 bytes past the
+            # field for narrow types — happened to work because
+            # subsequent stores overwrote the high bytes, but
+            # broke for the LAST narrow field at end-of-struct
+            # (which would overflow the struct's allocation).
+            var nf_w = FIELDSZ(S, ft);
+            if (found >= 0) { _sfw_set(S, si, found); }
+            EMIT_STRUCT_FIELD_W(S, target_idx, boff, nf_w);
+        }
+        # Require every field to be set — no implicit zero defaults (yet).
+        var fi2 = 0;
+        while (fi2 < fc) {
+            if ((initialized & (1 << fi2)) == 0) { ERR_MSG(S, "missing struct field in initializer", 35); }
+            fi2 = fi2 + 1;
+        }
+    } else {
+        # Positional init — emit each scalar field in declaration order,
+        # flattening nested structs.
+        # v5.9.36: width-aware boff advance + width-correct store. Pre-
+        # fix `boff += 8` per field forced 8-byte stride, but STRUCTSZ
+        # used width-aware FIELDSZ summing to <8 per narrow field
+        # (i32 → 4) — net `var p32 = point_i32 {...}` allocated 12
+        # bytes per STRUCTSZ but the literal wrote 24, clobbering the
+        # next gvar. Now: each field advances by its declared width
+        # (FIELDSZ) and writes only that many bytes. Untyped fields
+        # (`a; b; c;`) keep the 8-byte stride; nested-struct fields
+        # flatten into 8-byte slots per inner field (existing
+        # behavior preserved).
+        _emit_struct_positional_init(S, target_idx, sid);
+    }
+    return 0;
+}
+
+# ⛔ 6.7.16 — AN INLINE LITERAL GLOBAL HOLDS ITS INDEX WHILE ITS ELEMENTS ARE PARSED. A struct or tuple literal global
+# after the first statement registered its slot at the next index and bumped the count only after its elements, so the
+# name stayed hidden from them (`var cfg = P { cfg, 2 };` reads the outer cfg) — but an element that made a hidden
+# global temporary (`_HTEMP`: on PE a vector call's result storage, 6.7.12) took that same index and overwrote the
+# slot, and the literal's own count bump then cut the temporary off: `var GP = Pt { mk2(41, 7), 1 };`, `var GT = (3, 1 +
+# mk2(41, 7));` printed their refusal and then "undefined variable 'GP'" at the next use (through 6.7.15 that wrong
+# error alone, the refusal never printed). Now the slot is counted at once, marked dead — invisible to every lookup
+# (`_findvar_core`), so the outer name still answers inside — and made live after the elements. CHANGELOG [6.7.16]
+fn _glit_hold(S, vcnt): i64 {
+    SVDEAD(S, vcnt, 1);
+    SVCNT(S, vcnt + 1);
+    return 0;
+}
+fn PARSE_STRUCT_INIT(S, noff, sid): i64 {
+    var si = sid - 1;
+    var _ps_decl_ti = GTI(S);   # v6.6.4: the type-name token, for the visibility stamp (see PARSE_ARRAY)
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    STI(S, GTI(S) + 1);
+    var sz = STRUCTSZ(S, si);
+    var vcnt = GVCNT(S);
+    S64(_varn_base + vcnt * 8, noff);
+    S64(_vars_base + vcnt * 8, sz);
+    SVTYPE(S, vcnt, sid);
+    SVPM(S, vcnt, 2);   # 6.6.5: a top-level literal is INLINE — STRUCTSZ bytes of .bss
+    _glit_hold(S, vcnt);   # 6.7.16: its index held, its name withheld, while the fields are parsed
+    var _ps_sv = _sl_base_li;
+    _sl_base_li = 0 - 1;
+    _STRUCT_INIT_BODY(S, vcnt, sid);
+    _sl_base_li = _ps_sv;
+    _slit_rbrace(S);   # 6.7.17: elements past the last field, one error
+    _slit_unwrap(S);   # 6.7.14: a wrap's `)`s
+    SLVAR(S, vcnt);
+    _GVAR_VIS(S, vcnt, _ps_decl_ti);   # v6.6.4: PARSE_PROG-path struct-literal global (see PARSE_ARRAY)
+    SVDEAD(S, vcnt, 0);   # 6.7.16: the name visible from here (`_glit_hold`)
+    _expect_step(S, 5);
+    return 0;
+}
+
+# ⛔ 6.6.5 — `var p = T { ... }` INSIDE A FN IS A PER-CALL FRAME OBJECT.
+#
+# It used to register a GLOBAL slot (GVCNT) even with GINFN == 1, which made it three
+# different bugs at once, none of them needing a name collision:
+#   * RECURSION shared it. `rec(3)` with a literal returned 0 where 9 is right.
+#   * THREADS shared it. Eight threads building one returned a wrong exit code on every run,
+#     while the identical `var q: T;` + field stores were clean on every run.
+#   * FINDVAR is one flat last-match table, so the slot was visible to EVERY later file. A
+#     global and a fn-local literal of the same name resolved to the literal — returning 2
+#     where 6 is right, in ONE file, silently.
+# v6.6.4 made the cross-file case a DIAGNOSTIC for `private` files only, and it named the
+# consumer's own variable. Making the storage right is what removes all four.
+#
+# ⚠ THE NAME IS WITHHELD UNTIL THE INITIALISERS ARE PARSED, which is not a detail: the
+# global path bumped GVCNT only at the end, so `var cfg = P { cfg, 2 };` saw the OUTER `cfg`.
+# The slots are reserved first (the emitters address them by index, not by GFLC), and the
+# name lands last, so the local form keeps that order exactly.
+#
+# ⚠ EVERY store is ADDRESSED (`lea` + `mov [rcx]`), never EFLSTORE. The regalloc picker
+# rewrites `mov [rbp+disp], rax` into a register move; an aggregate's words are then read back
+# through an address the register never reaches. Registration also records the span, which
+# bars the picker from the slots outright — the addressed stores are the second lock.
+#
+# ⛔ 6.6.5 (review round 2) — ADDRESS THE BLOCK FROM ITS NAMED SLOT + k*8, NEVER SLOT-BY-SLOT.
+# This loop used to `EFLADDR_X1(named - k)`, which is the same address on the STACK (a higher
+# slot index is a LOWER address) but NOT in a coroutine's heap frame, where `_ECORO_AGG_OFF`
+# answers a whole aggregate from its span. One base + a byte offset is exactly what
+# `EMIT_STRUCT_FIELD_W` does for the field stores, so both halves of the literal now ask the
+# same question and cannot disagree. CHANGELOG [6.6.5]
+fn _sl_zero_slots(S, named, nslots): i64 {
+    EMOVI(S, 0);
+    var k = 0;
+    while (k < nslots) {
+        EFLADDR_X1(S, named);
+        if (k > 0) { EADDIMM_X1(S, k * 8); }
+        ESTOC(S);
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
+    var si = sid - 1;
+    STI(S, GTI(S) + 1);                          # consume the type name
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    STI(S, GTI(S) + 1);                          # consume '{'
+    var sz = STRUCTSZ(S, si);
+    if (sz < 8) { sz = 8; }
+    var nslots = ((sz + 7) & (0 - 8)) / 8;
+    var existing = FINDLOCAL(S, noff);
+    if (existing >= 0) { if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); } }
+    # ⚠ `ERR_MSG` IS NOT A TERMINATOR — it sets `_had_error`/`_panic` (v6.4.62 panic mode) and
+    # returns. Without the `return` the allocation loop below ran anyway and was stopped only
+    # by `SFLC`'s own `syscall(SYS_EXIT, 1)` at 16384 slots, which REPLACED this precise
+    # message with the generic "too many stack slots in one function". Panic mode swallows the
+    # cascade, so returning here loses nothing. CHANGELOG [6.6.5]
+    if (GFLC(S) + nslots + 1 >= 15360) {
+        ERR_MSG(S, "struct literal exceeds the per-fn stack-slot budget; build it through alloc() instead", 85);
+        return 0;
+    }
+    var k = 0;
+    while (k < nslots - 1) {
+        var fl = GFLC(S);
+        S64(S + 0x5D9D000 + fl * 8, 0 - 1);
+        SLDEP(S, fl, GSDEP(S));
+        SLTYPE(S, fl, 0);
+        SSLICE_W(S, fl, 0);
+        SFLC(S, fl + 1);
+        k = k + 1;
+    }
+    var named = GFLC(S);
+    S64(S + 0x5D9D000 + named * 8, 0 - 1);       # anonymous until the initialisers are parsed
+    SLDEP(S, named, GSDEP(S));
+    SLTYPE(S, named, 0);
+    SSLICE_W(S, named, 0);
+    # ⛔ 6.6.5 (review round 2) — THE SPAN MUST BE RECORDED BEFORE A SINGLE BYTE IS EMITTED.
+    # It used to land only at the bottom of this fn, after the initialisers. On the stack that
+    # is invisible; inside a coroutine it SPLIT THE VARIABLE IN HALF, because `_ECORO_AGG_OFF`
+    # reads `GLSPAN` and so answered `named` while the span was still 0 and `named-nslots+1`
+    # afterwards. Measured on a suspending `async fn`: `var p = P2{5,6}; await ...; p.x*10+p.y`
+    # returned 5 where 56 is right (6.6.4 answered 56) — and the field stores ran up to
+    # `nslots-1` slots PAST the block, over whatever local follows. `SLDEP` below overwrites
+    # the whole depth word, which is why the trailing `SLAGG` stays. CHANGELOG [6.6.5]
+    SLAGG(S, named, nslots);
+    SFLC(S, named + 1);
+    # Zero every word first: a global literal lands in .bss, so the padding of a struct whose
+    # size is not a multiple of 8 reads as zero. A frame slot holds the last call's bytes.
+    _sl_zero_slots(S, named, nslots);
+    var sv_base = _sl_base_li;
+    _sl_base_li = named;
+    _STRUCT_INIT_BODY(S, 0, sid);
+    _sl_base_li = sv_base;
+    _slit_rbrace(S);                             # consume '}' (6.7.17: elements past the last field, one error)
+    _slit_unwrap(S);                             # 6.7.14: a wrap's `)`s
+    S64(S + 0x5D9D000 + named * 8, noff);
+    SLDEP(S, named, GSDEP(S));
+    SLAGG(S, named, nslots);
+    SLTYPE(S, named, 0 - sid);
+    _expect_step(S, 5);                          # consume ';'
+    return 0;
+}

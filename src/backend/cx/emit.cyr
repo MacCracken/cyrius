@@ -15,7 +15,7 @@
 # Each instruction is 4 bytes: [opcode][ra][rb][rc] (little-endian in output)
 
 # v5.7.11: stubs matching backend/x86/emit.cyr — parse.cyr / parse/expr.cyr
-# / parse/decl.cyr / parse/fn/ reference these in shared codepaths
+# / parse/decl/ / parse/fn/ reference these in shared codepaths
 # (`if (_AARCH64_BACKEND == 1)`, `if (_TARGET_MACHO == ...)`, etc.).
 # cx backend is x86-shaped, never aarch64/mach-o/PE — all 0.
 # Drifted out of sync over multiple v5.6.x/v5.7.x minors because no
@@ -1266,7 +1266,7 @@ fn EFLSTORE_W(S, idx, width): i64 {
     return 0;
 }
 
-# v5.9.40 — sub-byte struct field load (parse/decl.cyr:252).
+# v5.9.40 — sub-byte struct field load (parse/decl/field.cyr).
 # Field-base ptr is in r1; emit width-correct load into r0.
 # Mirrors the aarch64 ldrb/ldrh/ldr w0 dispatch and the x86
 # movzx rax/movzx eax/mov eax dispatch, with cx using the new

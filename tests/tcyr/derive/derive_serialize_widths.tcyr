@@ -16,7 +16,7 @@
 #
 # Fix at v5.9.36 (paired in one slot per the v5.9.35 cascade
 # pin):
-#   (a) `src/frontend/parse/decl.cyr` — `EMIT_STRUCT_FIELD_W`
+#   (a) `src/frontend/parse/decl/struct_lit.cyr` — `EMIT_STRUCT_FIELD_W`
 #       added (width-correct store via ESTORE8/16/32/STOC).
 #       PARSE_STRUCT_INIT positional + named, EMIT_GVAR_INITS
 #       all switched to advance boff by FIELDSZ (declared width)

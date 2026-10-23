@@ -27,7 +27,7 @@ fn SSTC(S, v): i64 { S64(S + 0x18F830, v); return 0; }
 # sizeof, expression sizeof). Returns 1/2/4/8, else 0. The four masks are
 # mutually exclusive (distinct name bytes) so if/return == the former if/elif
 # chain. Narrow slice only — the complex annotation ladders (unsigned/f64/f32/
-# u128/SIMD-order-sensitive) in parse/decl.cyr keep their inline form.
+# u128/SIMD-order-sensitive) in parse/decl/var.cyr keep their inline form.
 fn _scalar_name_width(name64): i64 {
     if (name64 & 0xFFFF == 0x3869) { return 1; }
     if (name64 & 0xFFFFFF == 0x363169) { return 2; }
@@ -3209,9 +3209,9 @@ fn _gv_lit_get(vi): i64 {
     if (vi >= 1048576) { return 0; }
     return load8(_gv_lit + vi) & 1;
 }
-# 6.7.15 — bit 1 of the same byte: since global `vi`'s last constant, pass 1 registered an initializer it could not
-# fold (a computed one, or a const- / enum-named constant only the replay folds), so a later constant's compare
-# waits for the replay (_gv_dup_later, parse/decl.cyr). The next constant's `_gv_lit_set` clears it. CHANGELOG [6.7.15]
+# 6.7.15 — bit 1 of the same byte: since global `vi`'s last constant, pass 1 registered an initializer it could not fold
+# (a computed one, or a const- / enum-named constant only the replay folds), so a later constant's compare waits for the
+# replay (_gv_dup_later, parse/decl/gvar.cyr). The next constant's `_gv_lit_set` clears it. CHANGELOG [6.7.15]
 fn _gv_pend_set(vi): i64 {
     if (_gv_lit == 0) { _gv_lit = alloc(1048576); }
     if (vi < 0) { return 0; }
@@ -3275,7 +3275,7 @@ fn _slice_lw(S, li): i64 {
     if (GLSLICE(S, li) == 0) { return 0; }
     return GSLICE_W(S, li) & 0xFFFFFFFF;
 }
-# 6.7.8 (C2-6a): the element descriptor of slice local `li` (`_ek_*`, parse/decl.cyr: an integer's
+# 6.7.8 (C2-6a): the element descriptor of slice local `li` (`_ek_*`, parse/decl/array.cyr: an integer's
 # width and sign, f64 / f32 / bool; 8 for any other word — a pointer, an enum, a cstring; 0 for a
 # struct), 0 when `li` is no slice. It rides the slice word above bit 31 (`_sl_slice`): the width
 # below it is sizeof(T), which passes 255 for a struct element.
@@ -3286,7 +3286,7 @@ fn _slice_led(S, li): i64 {
 # ⛔ 6.7.8 (C2-3a) — THE STEP WORD CARRIES THE ELEMENT KIND. A typed pointer's step (sizeof(T), the
 # pointer-scale word GPSC while its value is in rax) says nothing about T's kind: `*u8` / `*i8` both
 # step 1, `*u32` / `*f32` / `*i32` 4, `*f64` / `*bool` / `*i64` 8. So the step is stored and carried
-# as ONE word, `ps | ed << 40` (ed = the element descriptor, `_ek_of_ptr_ann`, parse/decl.cyr):
+# as ONE word, `ps | ed << 40` (ed = the element descriptor, `_ek_of_ptr_ann`, parse/decl/array.cyr):
 # in the slot mark, a `name: *T` field's `_fld_ps`, a `: *T` return's `_fn_rps` (a global's GVTYPE
 # is a shape key, so its kind sits beside it in `_gv_ped`). Every setter of GPSC writes the word
 # and pointer arithmetic writes the operand's word back, so `p + n`, `p - n` and a parenthesised
@@ -6944,7 +6944,7 @@ fn _gv_note_loopvar(S): i64 {
 # CHANGELOG [6.6.6]
 #
 # 6.6.9 — THE GLOBAL VAR TABLE HAS A NAME INDEX. `_findvar_core` and `_gv_prior`
-# (parse/decl.cyr) used to walk EVERY registered global with STREQ, and every new top-level
+# (parse/decl/gvar.cyr) used to walk EVERY registered global with STREQ, and every new top-level
 # global or enum member triggers two of those walks (the sit_shadow probe + `_gv_fold`, or
 # CHKDUPVAL + the enum pass-2 lookup), so N registrations cost O(N²): 20,000 constant
 # globals took ~4.9 s, 99 % of it in this phase. Now a name maps to the HIGHEST slot of that
@@ -7153,7 +7153,7 @@ fn _vis_check_var(S, vi, noff): i64 {
 #     warn; a three-link chain -> old cx 1 warning, new cx and host 2.
 # 6.6.6: "last definition wins" is now what the compiler DOES, for every read —
 # a redeclaration shares the global's slot and a constant one is its value from
-# program start (see _gv_supersede, parse/decl.cyr). It used to be a second
+# program start (see _gv_supersede, parse/decl/gvar.cyr). It used to be a second
 # slot, so this warning described a semantics nobody implemented (the earlier
 # read got 0). A constant redeclaration now records its value, so a 3rd+ link
 # of a chain is compared against the 2nd (it used to compare against 0 and stay
@@ -7199,8 +7199,9 @@ fn CHKDUPVAL(S, noff, newval): i64 {
     if (phas == 1) { if (pval != newval) { _dupval_warn(S, noff); } }
     return 0;
 }
-# CHKDUPVAL's warning at the cursor, shared by the declaration zone's replay compare (_gvk_link, parse/decl.cyr),
-# which reports a pair whose earlier or later constant only the replay folds. CHANGELOG [6.7.15]
+# CHKDUPVAL's warning at the cursor, shared by the declaration zone's replay compare (_gvk_link,
+# parse/decl/gvar_init.cyr), which reports a pair whose earlier or later constant only the replay folds. CHANGELOG
+# [6.7.15]
 fn _dupval_warn(S, noff): i64 {
     _ew("warning:", 8);
     _err_head(S);

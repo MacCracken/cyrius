@@ -7,7 +7,7 @@
 # ("undefined function 'P1_add'", no binary) — and a `: f64` call's f64 — `gf * 2` was f64 arithmetic on the integer 7
 # (0 where 14 is right, with a warning); 6.7.17's D22 added a `: Str` call's `Str`. The fold now drops the slot's earlier
 # notes, so the last declaration types the global; a call redeclaring a plain global still types it.
-# Mutation: `_gv_fold` without its `_gu_drop` call (src/frontend/parse/decl.cyr) — this file stops compiling.
+# Mutation: `_gv_fold` without its `_gu_drop` call (src/frontend/parse/decl/gvar.cyr) — this file stops compiling.
 include "lib/syscalls.cyr"
 include "lib/str.cyr"
 include "lib/assert.cyr"

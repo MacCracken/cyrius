@@ -23,7 +23,7 @@
 # A `*S8` LOCAL of the fn's own struct is the struct it points at, as a `*S8` parameter is (decision 6:
 # struct copies are size-independent). An untyped value stays the struct's word (out of scope).
 # `_ret_small_val` / `_ret_expr_sid` / `_ret_small_ptr` / `_tc_small_sret_divert` (src/frontend/parse/fn/ret_agg.cyr, the divert in fn/ret.cyr),
-# `_ret_small_gh` (parse/decl.cyr). The runtime half is tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr
+# `_ret_small_gh` (parse/decl/handle.cyr). The runtime half is tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr
 # (the `*T` local rows, every leg: tests/gates/codegen/small_struct_handle_line.sh R13).
 #
 # Refusal rows are checked on the MESSAGE, that it is the ONE `^error`, and that no binary was written.

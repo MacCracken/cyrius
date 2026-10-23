@@ -158,7 +158,7 @@
 #      its canaries) natively AND on cxvm, 0 on the real tree.
 #   c. B03 V3: `_fla_want = st;` deleted from _push_struct_expr_arg (parse/fn/call_agg.cyr) -> R3 RED (native
 #      SIGSEGV; cxvm traps "guest address out of range: 3"), R5 RED on both legs, R6 native RED
-#   d. B03 V4: `_gci_src` returns 0 first (parse/decl.cyr) -> R3 RED (native SIGSEGV; cxvm traps
+#   d. B03 V4: `_gci_src` returns 0 first (parse/decl/struct_copy.cyr) -> R3 RED (native SIGSEGV; cxvm traps
 #      "guest address out of range: 3"), R6 native RED
 #   (Before the cxvm host-memory bug's cxvm bounds checks the c/d cx legs exited 63 / 64 — B03's hand-off numbers;
 #   cxvm now traps the stray access, exit 1, which the row reads as RED just the same.)
@@ -167,7 +167,7 @@
 #      ("binds 2 names, but 'fncall1' returns 1 value"; R10b names fncall0), 41 green.
 #   f. fncall8's cx arm alone back -> R10b cxvm RED (names fncall8), 43 green; fncall0's alone ->
 #      R10b cxvm RED (names fncall0), 43 green.
-#   g. (R12) the critical lane's bite 18 reverted in parse/decl.cyr (cx keeps the deferred replay of
+#   g. (R12) the critical lane's bite 18 reverted in parse/decl/ (cx keeps the deferred replay of
 #      a folded global), that tree's cycc_cx passed as CYCC_CX -> R12 cxvm RED (exit 136, SIGFPE),
 #      45 green.
 #   h. (R18 — R13 in the refold worktree, measured there; that tree 50/50) lib/sakshi.cyr back to 2.5.8 (the

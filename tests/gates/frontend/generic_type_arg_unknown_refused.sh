@@ -241,7 +241,7 @@
 #   drop the `_gen_addr_check` call (parse/expr.cyr)    -> J RED (rc 0)
 #   6.7.1: `_instantiate_generic_fn` refusing a struct beside a second type argument again (the
 #   pre-6.7.1 `-3`) -> K RED (refused, rc 1)
-#   drop the `_gen_own_call_check` in the asv_pair receive (parse/decl.cyr) -> L RED (rc 0)
+#   drop the `_gen_own_call_check` in the asv_pair receive (parse/decl/var.cyr) -> L RED (rc 0)
 #   drop the vector guard in _infer_conc_at_cursor      -> M's vector row RED
 #   drop the `_targs_resolvable` early-out in _gen_resolve_call -> N RED (reported twice)
 #   6.7.11: `_gs_use` mode 0 without `_gs_cfield` -> CF1 / CF5 RED (the definition fails), CF2-CF4

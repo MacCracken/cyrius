@@ -763,10 +763,10 @@ fn EFLSTORE_W(S, idx, width): i64 {
     return 0;
 }
 
-# v5.9.40 — sub-byte struct field load (parse/decl.cyr:252).
+# v5.9.40 — sub-byte struct field load (parse/decl/field.cyr).
 # Field-base ptr is in rcx (already advanced to the field start
 # by callers). Emits movzx rax/movzx eax/mov eax/mov rax by
-# width. Pulled out of an inline emit block in parse/decl.cyr
+# width. Pulled out of an inline emit block in parse/decl/field.cyr
 # so the aarch64 + cx backends can sit alongside as peers.
 fn EFIELD_LOAD_W(S, width): i64 {
     # Every width the narrow ladder emits is recorded, the signed ones (-1 / -2 / -4) too. Unrecorded,

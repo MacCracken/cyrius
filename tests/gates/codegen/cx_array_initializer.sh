@@ -3,7 +3,7 @@
 # image target (6.6.16, C1).
 #
 # ⛔ WHY. Every target evaluates `var X: T[N] = { .. }` into a blob at the replay and copies it into
-# the var area of its output (src/frontend/parse/decl.cyr, "Global array initializers";
+# the var area of its output (src/frontend/parse/decl/static_init.cyr, "Global array initializers";
 # _gai_bake). cx does it through its OWN writer — a .cyx carries its var data after the bytecode,
 # and cxvm copies it into the guest (src/main_cx.cyr) — and keeps a run-time PRESTORE of every
 # scalar constant ahead of the replay (_gv_cx_prestore), which must leave a slot a list bakes

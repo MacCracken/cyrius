@@ -67,7 +67,7 @@
 #         fns defined after the violation; without them M5b reported 1 and this axis passed it.
 #   M6  drop the _fn_by_defti pass-1 authority            -> public_marker_scoped_to_its_item
 #         var_then_fn + arr_then_fn red (pass 2's `var` skip re-arms `public` and consumes nothing)
-#   M7  remove the SNPOS commit in parse/decl.cyr         -> axis 3 wrong_name red (names Q7_seven,
+#   M7  remove the SNPOS commit in parse/decl/field.cyr         -> axis 3 wrong_name red (names Q7_seven,
 #         a method that EXISTS, for a call to q.nosuch())
 #   M8  remove SFDS in pass 1                             -> axis 3 fwd_generic red, the crossos
 #         tcyr fails to COMPILE, and var_then_fn/arr_then_fn red (the authority keys on SFDS)

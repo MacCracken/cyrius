@@ -135,7 +135,7 @@
 #                                         from 0x198000[8192]=1024 into this reclaimed .27 output_buf
 #                                         gap, below TS@0x800000; the count gvar_cnt stays at 0x19A000).
 #                                         v6.6.9: holds only the FIRST 4096 — the 4097th moves the table
-#                                         to alloc'd storage, doubling (_gvt/_gv_defer, parse/decl.cyr);
+#                                         to alloc'd storage, doubling (_gvt/_gv_defer, parse/decl/gvar.cyr);
 #                                         the "too many initialized globals (max 4096)" cap is gone.
 #   (0x19A100/0x19A108/0x19D000/0x198000 now FREE — 0x198000 reclaimed by the v6.3.41 gvar_toks move,
 #    the rest by the v6.1.35 file_map move)
@@ -206,7 +206,7 @@
 #                                        accumulator (sum of all
 #                                        `var foo[N]` aligned sizes
 #                                        registered inside this fn body).
-#                                        Set by parse/decl.cyr's array-
+#                                        Set by parse/decl/array.cyr's array-
 #                                        register path when `_cur_fn_ix >= 0`.
 #                                        Read by FIXUP's `large static data`
 #                                        warning to compute "M bytes inside
@@ -1527,7 +1527,7 @@ _warn_undefined_prepass(S);
 
 if (_init_km == 1) {
     # 6.6.16 (C6): this replay runs AFTER the program — a constant initializer is baked into the
-    # image (_gvk_pre / _spc_try), what is not is warned (parse/decl.cyr _gvk_arm). CHANGELOG [6.6.16]
+    # image (_gvk_pre / _spc_try), what is not is warned (parse/decl/gvar_init.cyr _gvk_arm). CHANGELOG [6.6.16]
     _gvk_arm(S);
     EMIT_GVAR_INITS(S);
 } else {

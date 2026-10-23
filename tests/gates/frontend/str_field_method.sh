@@ -6,7 +6,7 @@
 # one pointer slot holding the header's address (6.6.17), so the field walk stopped before the `.m(` and nothing
 # continued from there, while a method on a nested INLINE field (6.7.0 A5) and on a `Str` local (`h.len()`) parsed.
 # The field's value — the header, as `h.len()` passes a handle's and `str_len(w.s)` passes the field — is parked as a
-# `*Str` receiver and the method continues from it (`_load_str_hop`, src/frontend/parse/decl.cyr), as a `*T` field's
+# `*Str` receiver and the method continues from it (`_load_str_hop`, src/frontend/parse/decl/field.cyr), as a `*T` field's
 # method does. Filed: docs/development/issues/archived/2026-10-17-method-call-on-str-field-does-not-parse.md
 #
 #   F  the filing's repros, verbatim: F1 `return w.s.len();` (5), F2 its `var k = w.s.clone();` (then `str_len(k)`: 5),

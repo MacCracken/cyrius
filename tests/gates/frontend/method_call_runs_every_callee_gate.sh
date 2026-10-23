@@ -2,7 +2,7 @@
 # tests/gates/frontend/method_call_runs_every_callee_gate.sh — 6.6.5
 #
 # ⛔ THE DEFECT CLASS. `s.m(x)` and `M_m(&s, x)` are ONE call syntax with TWO marshalling
-# paths in the compiler, and the method one (parse/decl.cyr's own argument loop) ran NONE of
+# paths in the compiler, and the method one (parse/decl/field.cyr's own argument loop) ran NONE of
 # PARSE_FNCALL's callee gates. Four separate silent failures lived in that one loop, and they
 # were found one at a time, each review round turning up the next:
 #
@@ -28,7 +28,7 @@
 # that the free-fn arm really did refuse — an "equal" pair of empty outputs is a failure.
 #
 # MUTATION LEDGER — every mutant BUILT as a full cycc from mutated source and RUN:
-#   N1 drop `_check_int_lit_cstring_arg` from the method loop (parse/decl.cyr)
+#   N1 drop `_check_int_lit_cstring_arg` from the method loop (parse/decl/field.cyr)
 #        -> row cstr_lit red: the method arm emits a binary where the identical free arm is
 #           refused (that binary then SIGSEGVs, rc 139 — measured directly). 6.6.4's behaviour.
 #   N2 drop `_CHECK_ARITY` from the method loop
@@ -277,7 +277,7 @@ MASKS_FNCALL=$(cat src/frontend/parse/fn/*.cyr | grep -cE '_fnt_(str|struct|simd
 # the dot form: `self` is parameter 0). The row follows the call again: the method arm and
 # PARSE_FNCALL must each marshal through it, and it must call `_call_arg_one`, the vector second
 # pass and the arity check. An extraction that finds nothing fails every grep below (never vacuous).
-MARM=$(sed -n '/^fn _field_load_on(/,/^}/p' src/frontend/parse/decl.cyr)
+MARM=$(sed -n '/^fn _field_load_on(/,/^}/p' src/frontend/parse/decl/*.cyr)
 FNCALL=$(sed -n '/^fn PARSE_FNCALL(/,/^}/p' src/frontend/parse/fn/*.cyr)
 MARSH=$(sed -n '/^fn _owncall_args_at(/,/^}/p' src/frontend/parse/fn/*.cyr)
 ARGONE=$(sed -n '/^fn _call_arg_one(/,/^}/p' src/frontend/parse/fn/*.cyr)

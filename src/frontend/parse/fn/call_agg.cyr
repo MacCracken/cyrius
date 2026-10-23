@@ -319,7 +319,7 @@ fn _sc_pre(S, fi, noff, beg): i64 {
     return t;
 }
 
-# 6.7.13 (D29) — a value-form vector receive of a METHOD call `x.m(..)` (`_vrcv_emit`, parse/decl.cyr) on PE: the
+# 6.7.13 (D29) — a value-form vector receive of a METHOD call `x.m(..)` (`_vrcv_emit`, parse/decl/vector.cyr) on PE: the
 # method whose receiver is token `_sc_vbeg` (one-shot) takes the destination's address, slot `_sc_vdst`, as its
 # hidden result pointer (int arg 0, before `self`) — `_icall_vret`'s shape. -1 (no temp: `_sc_post` reads nothing).
 fn _sc_vret(S): i64 {
@@ -655,7 +655,7 @@ fn _sc_global_pair(S, pscale, start): i64 {
 }
 
 # 6.6.17 (a3): a vector global declared after the first statement takes only `= 0;` (see
-# `_vecg_size`, parse/decl.cyr). `start` is the initializer's first token, after
+# `_vecg_size`, parse/decl/gvar.cyr). `start` is the initializer's first token, after
 # `var NAME : VEC =` (a vector type is one token, so the name is 4 back).
 fn _vecg_rhs_ok(S, start): i64 {
     var v = _CF_TRY(S, start, 5);

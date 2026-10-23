@@ -4,7 +4,7 @@
 # The local-variable arm of this warning gated on `lt > 0`, but in the local SLTYPE scheme
 # a positive type is a narrow WIDTH (1/2/4) or a FLOAT TAG (F64_TYID 0x40000001 /
 # F32_TYID 0x40000002); the pointer-like case is stored NEGATIVE as `0 - sid`
-# (src/frontend/parse/decl.cyr:2490). The test was therefore inverted, with a failure mode
+# (src/frontend/parse/decl/var.cyr). The test was therefore inverted, with a failure mode
 # in BOTH directions at once — it fired on every width- or float-annotated local, and
 # never on a real typed-pointer local, so the check was unreachable for its own purpose.
 # The GLOBAL arm of the same warning (`vt < 0`, src/frontend/parse/parse.cyr:~1550) had always
@@ -116,7 +116,7 @@ else echo "  ok axis 4: struct-typed local assigned a non-pointer warns (check i
 # --- axis 5 (v6.5.28): the assignment path must consult the callee's DECLARED return type ---
 # v6.5.27's sign fix made this check reach real typed-pointer locals for the FIRST time, and
 # exposed the gap behind it: the DECLARATION path resolves the callee's return sid
-# (parse/decl.cyr: peek `IDENT (`, FINDFN, GFRS) but the ASSIGNMENT path did not. So
+# (parse/decl/var.cyr: peek `IDENT (`, FINDFN, GFRS) but the ASSIGNMENT path did not. So
 # `var t: Str = mk();` was accepted while `t = mk();` — the same call, the same binding —
 # warned. Two paths disagreeing about one expression. Filed from abaco.
 cat > "$T" <<'EOF'
@@ -403,7 +403,7 @@ tpx A7 0 1 - "top level after a statement: var P: *i64 = &A[1]; refused once" 'v
 # --- axis 15 (6.7.15; issues/archived/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md) ---
 # A string literal's address plus or minus ONE integer operand (an integer / char literal or a single name), and the
 # literal under parentheses that wrap it whole, are its address too: `var s: *u8 = "abc" + 1;` and `var t: *u8 =
-# ("xyz");` warned (6.7.14 exempted the literal only alone before the `;`). `_tp_str_exempt` (parse/decl.cyr), at every
+# ("xyz");` warned (6.7.14 exempted the literal only alone before the `;`). `_tp_str_exempt` (parse/decl/gvar_init.cyr), at every
 # site `_tp_exempt` serves: a declaration in a fn, after the first statement and in the zone, an assignment. Any other
 # expression is judged as before (SLK1, SLK2). Warning text only: no binary changes (each row's exit is the one before).
 #   `_tp_exempt` without `_tp_str_exempt` (the literal alone, the lane before the bite) -> RED 6: SL0 (2) SL1 (6)

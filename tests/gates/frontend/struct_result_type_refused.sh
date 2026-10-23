@@ -11,7 +11,7 @@
 #       class 0, so no destination had a sid to compare (and the scalar operator dispatch never
 #       called it). Fixed by recording it with `_sc_tmp = -3` (`_sc_post_small`). An exact-
 #       register (1/2/4/8 B) struct FIELD skipped every check, the free call `h.p = mkq8()` too:
-#       `_fsc_src` (src/frontend/parse/decl.cyr) returned 0 before its call and expression arms.
+#       `_fsc_src` (src/frontend/parse/decl/field.cyr) returned 0 before its call and expression arms.
 #   L5  A struct destination ASSIGNED from a FREE call returning a DIFFERENT struct stored one
 #       word: `p = mkq()` (24 B), `p = mkr()` (16 B), `z = mkod2()` (3 B), generic `s = mk(r.n)`
 #       (the scalar field infers T = i64, so the call reaches Box<i64>, not Box<Pt>). The
@@ -553,7 +553,7 @@ syscall(60, main());
 # over a struct result is refused ONCE, "unknown type 'Foo'": D24's "cannot initialise 'x: Foo' from 'Q_mk', which
 # returns the struct 'Q'" followed it on the same line (the free call since 6.7.11, the `&f` call, a method and an
 # operator since 6.7.13, `*Foo` / `**Foo` under D14), and the zone's top-level line too. D24 does not judge an
-# annotation refused at its name (`_rcv_ann_refd`, parse/decl.cyr); the declaration parses on as a plain i64.
+# annotation refused at its name (`_rcv_ann_refd`, parse/decl/receive.cyr); the declaration parses on as a plain i64.
 #   the tree before (the `_rcv_ann_refd` test removed)  -> RED 11: U0-U10 (2 error lines each); U11 U12 green
 echo "6.7.14 — an unknown annotation type over a struct result is refused once (no D24 cascade):"
 MU="unknown type 'Foo'"
@@ -777,7 +777,7 @@ syscall(60, X.a);
 # `.m()` ON AN UNTYPED CLOSURE CAPTURE take the `sid == 0` arms an untyped local takes. PARSE_FIELD_LOAD's and
 # PARSE_FIELD_STORE's capture rung (`_CL_CAP_FIELD_IDX`) answered for a struct capture only, so an untyped one fell to
 # the globals and "undefined variable 'x'" — at the right column, naming the wrong fault; after a refused annotation it
-# was a second error (the stand-down looked up no capture). Now the rung (`_cl_cap_fld_any`, parse/decl.cyr) hands any
+# was a second error (the stand-down looked up no capture). Now the rung (`_cl_cap_fld_any`, parse/decl/field.cyr) hands any
 # capture on as its capture-band index with sid 0: "no struct type in scope for 'x'" in the field / store / method
 # wording, a captured vector's "SIMD vector has no named fields", and the refused-annotation stand-down, which resolves
 # the capture to its declaring fn's slot through any nesting (`_cl_cap_origin`, parse/expr.cyr: the closure context

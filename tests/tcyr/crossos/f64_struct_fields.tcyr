@@ -11,7 +11,7 @@
 # float literal on the right is exact.
 #
 # Mutation that reddens this file: drop the `_field_load_type` call in PARSE_FIELD_LOAD
-# (src/frontend/parse/decl.cyr) — every arithmetic row fails.
+# (src/frontend/parse/decl/field.cyr) — every arithmetic row fails.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -87,7 +87,7 @@ fn union_f32_generic(): i64 {
 # typed local or param, a typed global) takes that type, so `t + t` is a float add. It was an
 # INTEGER add of the bit patterns (`var t = p.y; t + t` was 0 after f64_to). A literal and any
 # arithmetic stay untyped, by design. Mutation: drop the `elif (dfc != 0)` stamp in PARSE_VAR
-# (src/frontend/parse/decl.cyr) — every copy row fails.
+# (src/frontend/parse/decl/var.cyr) — every copy row fails.
 var GC: f64 = 1.25;
 var GC2 = GC;
 var GPC = P { 0.5, 3.0 };
@@ -128,7 +128,7 @@ copy_inference();
 
 # The same copies declared AFTER the first top-level statement take PARSE_VAR's path, not
 # _gv_float_copy at registration. Mutation: drop PARSE_VAR's `if (dfc != 0) { SVTYPE(..) }`
-# (src/frontend/parse/decl.cyr) — all four rows below fail (integer adds of the bit patterns).
+# (src/frontend/parse/decl/) — all four rows below fail (integer adds of the bit patterns).
 var GL3 = GC;
 var GL4 = GPC.y;
 assert_eq(bits(GL3 + GL3), 2.5, "late global var G3 = G: G3 + G3 is a float add (top level)");

@@ -895,7 +895,7 @@ fn _cl_cap_narrow(S, base): i64 {
 # 6.7.16: 1 = fn fi is generic (the explicit call's arm reads its `<..>`). One that is not, given `<..>(` at the cursor
 # (just past its name) with a type list (`_tylist_at`), is refused once at the name — "'nf' is not a generic fn: it
 # takes no type arguments" — and the list stepped, so the call parses as `nf(..)` (it was "undefined variable 'nf'" +
-# "undefined variable 'i64'" + "expected ';', got '>'"; `_meth_ngt`'s free twin, parse/decl.cyr). 0.
+# "undefined variable 'i64'" + "expected ';', got '>'"; `_meth_ngt`'s free twin, parse/decl/field.cyr). 0.
 fn _eta_gen(S, fi): i64 {
     if (GFTP(S, fi) != 0) { return 1; }
     var nt = GTI(S) - 1;
@@ -1333,7 +1333,7 @@ fn _icall_stmt_chain(S, ti): i64 {
     return 1;
 }
 # 6.7.11 — a value-form vector receive of `fncallN(&f, ..)` / `callptr(&f, ..)` (`_vrcv_emit`,
-# parse/decl.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
+# parse/decl/vector.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
 # from `f(..)`, so the call whose name is token `_icall_vbeg` (one-shot) passes the destination's
 # address, slot `_icall_vdst`. Elsewhere the result is in the vector registers and the receive
 # stores them. -1 (no struct temp).
@@ -4294,7 +4294,7 @@ fn _sysx_meant_here(S, n): i64 {
 # a `p: *T` parameter, a closure capture or a global subscripts as an array does — the element at
 # `p + i * sizeof(T)`: the pointer's VALUE is the base where an array's address is — and `var a:
 # f64[N]` / `f32[N]` / `bool[N]` (refused by name until now) take `a[i]` too. The element's
-# descriptor (`_ek_*`, parse/decl.cyr: an array's from its declaration, a pointer's from the step
+# descriptor (`_ek_*`, parse/decl/array.cyr: an array's from its declaration, a pointer's from the step
 # word, `_ps_word`) types the value as a declared T would be (`_esub_load`: an f64, an f32's 4
 # bytes, a boolean value, an iN sign-extended) and checks a store as a field of T is checked
 # (`_esub_assign`: an f64 into an f32 rounds, a non-bool into a bool is refused, an integer
@@ -4614,7 +4614,7 @@ fn _sub_how(S, ti): i64 {
     return 2;
 }
 # The base's step word, 0 when it is no `*T`: a field's from its declaration, and only when its load
-# ended at the cursor (`_flt_ti`, parse/decl.cyr — a slice's `.ptr` or an enum constant is read
+# ended at the cursor (`_flt_ti`, parse/decl/field.cyr — a slice's `.ptr` or an enum constant is read
 # another way); a direct call's from the callee it reaches (`_fn_rps`, the instance's); any other
 # call's from the word its call set (a method's `_call_ret_ps`, a builtin's 0).
 fn _sub_word(S, h): i64 {
@@ -9873,7 +9873,7 @@ fn PEXPR(S): i64 {
 # >> >>>`, `*| *?` and a postfix `?` (_PARSE_TERM_IMPL); `& | ^` (here); unary `-` / `~` (_neg_int,
 # _bnot_int); an operator fn's result with no `: *T` return (EMIT_OP_DISPATCH: a `: *T` one steps
 # by T, as its free call does); a field that is no `*T`
-# (_field_load_type, parse/decl.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
+# (_field_load_type, parse/decl/field.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
 # `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
 # the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
 fn _pexpr_bit_ps(S, typ, ps): i64 {

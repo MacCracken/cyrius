@@ -290,7 +290,7 @@
 #
 # 6.7.15 (issues/archived/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md) — a method declared `: V` on a
 # FIELD-CHAIN receiver (`w.s.mv()`, `pw.s.mv()`, `h.w.s.mv()`, `n.ps.mv()`) is the vector where a single name's is: one
-# recogniser (`_vmc_open` -> `_mch_open`, parse/decl.cyr) serves the receives, D37's untyped declaration, D38's scalar
+# recogniser (`_vmc_open` -> `_mch_open`, parse/decl/vector.cyr) serves the receives, D37's untyped declaration, D38's scalar
 # refusals, the value-form and `*V` arguments (`_svc_rs`) and D39's return. Before: the untyped declaration bound one word
 # (x86_64 104, IR=3 40, aarch64 144, cx 98, PE 195 — garbage, per build), the annotated declaration, the assignment, the
 # value-form argument and the return were refused "got `w`", `rd(w.s.mv())` into a `*f64v2` pushed lane 0 as the address
@@ -5506,16 +5506,16 @@ done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(cat src/frontend/parse/fn/*.cyr | grep -c "$MSG" || true)   # 6.7.18: parse/fn.cyr, split into parse/fn/
 [ "$n" -ge 1 ] || bad "src/frontend/parse/fn/ no longer spells '$MSG' — reworded?"
-n=$(grep -c "$MSGV" src/frontend/parse/decl.cyr || true)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$MSGV' — reworded?"
-n=$(grep -c "$HINT" src/frontend/parse/decl.cyr || true)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$HINT' — reworded?"
-n=$(grep -c "$VAM" src/frontend/parse/decl.cyr || true)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$VAM' — reworded?"
-n=$(grep -c "$VLD - '" src/frontend/parse/decl.cyr || true)   # 6.7.17 (D24)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$VLD - ' — reworded?"
-n=$(grep -c "$VDT" src/frontend/parse/decl.cyr || true)   # 6.7.17 (D95)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$VDT' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$MSGV" || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$MSGV' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$HINT" || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$HINT' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$VAM" || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$VAM' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$VLD - '" || true)   # 6.7.17 (D24)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$VLD - ' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$VDT" || true)   # 6.7.17 (D95)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$VDT' — reworded?"
 
 echo "simd_return_shapes: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.

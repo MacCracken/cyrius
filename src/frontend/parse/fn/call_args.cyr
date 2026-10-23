@@ -1751,7 +1751,7 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # EPUSHR: byte-identical), and its static struct is checked: a bare name; a whole free call,
 # resolved AFTER the parse (a dedup hit — resolving it first would move a generic's instantiation);
 # a whole method / operator result (`_sc_post`'s record); a whole struct-typed field (the passive
-# `_fpk` record, parse/decl.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
+# `_fpk` record, parse/decl/field.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
 # other one to the caller. All three argument loops reach it. CHANGELOG [6.7.3]
 # 6.7.10 (B7-1): a HANDLE of 8 B or less (`take(a)`, `take((a))`) passes the struct it points at, as
 # one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed

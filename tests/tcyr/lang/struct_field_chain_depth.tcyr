@@ -1,6 +1,6 @@
 # struct_field_chain_depth.tcyr — 6.6.12 B04 (R7): a field chain reaches ANY nesting depth.
 #
-# ⛔ `_resolve_leaf_field` (src/frontend/parse/decl.cyr) descended exactly ONE nested level (an
+# ⛔ `_resolve_leaf_field` (src/frontend/parse/decl/field.cyr) descended exactly ONE nested level (an
 # `if`, not a loop), and it serves both the field load and the field store. So the two-level
 # `n.v.x` worked and every three-level chain was a syntax error: `n.v.v.x = 3;` "expected '=',
 # got '.'", `var r = n.v.v.x;` "expected ';', got '.'" — through a local, a global (inline and
@@ -15,7 +15,7 @@
 # The loop's token guards are covered too: a `..` range after a deep chain stays a range, and a
 # two-level chain (the old path) is the control.
 #
-# MUTATION: `_resolve_leaf_field`'s `while (_rlf_more(..))` (src/frontend/parse/decl.cyr) back to
+# MUTATION: `_resolve_leaf_field`'s `while (_rlf_more(..))` (src/frontend/parse/decl/field.cyr) back to
 # the old single-level `if` makes this file fail to build ("expected ';', got '.'").
 include "lib/assert.cyr"
 include "lib/alloc.cyr"

@@ -7,7 +7,7 @@
 # per-fn string-literal ceiling; not TOKNAME_BUILTIN, whose table IS the reserved set).
 #
 #   axis 1  the derivation (issues/archived/2026-10-08-tokname-operator-tokens-unnamed.md): every number in an
-#           `ADDTOK(S, N` of a .cyr under src/frontend/{lex,parse}/ (recursive since 6.7.18: parse/fn/)
+#           `ADDTOK(S, N` of a .cyr under src/frontend/{lex,parse}/ (recursive since 6.7.18: parse/fn/, parse/decl/)
 #           or a `return N` of LEXKW_EXT, minus 0 (LEXKW_EXT's
 #           "not a keyword"), has an arm in TOKNAME, TOKNAME_OP or TOKNAME_BUILTIN. A floor on the
 #           emitted set keeps a regex that matches nothing from passing. 6.7.17: and every `return N * 16` of

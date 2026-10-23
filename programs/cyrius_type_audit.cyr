@@ -366,6 +366,8 @@ fn main(): i64 {
     _scan_dir("src/frontend/parse");
     sys_write(2, "\nsrc/frontend/parse/fn/:\n", 25);   # 6.7.18: parse/fn.cyr, split by seam (_scan_dir is not recursive)
     _scan_dir("src/frontend/parse/fn");
+    sys_write(2, "\nsrc/frontend/parse/decl/:\n", 27);   # 6.7.18: parse/decl.cyr, split by seam
+    _scan_dir("src/frontend/parse/decl");
     sys_write(2, "\nsrc/backend/x86/:\n", 19);
     _scan_dir("src/backend/x86");
     sys_write(2, "\nsrc/backend/aarch64/:\n", 23);

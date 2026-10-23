@@ -32,7 +32,7 @@
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree whose src/ carries the mutation, built
 # by build/cycc and run as CYCC=<mutant>, so the cx and aarch64 legs are built from it too):
-#   m1 whole fix reverted (6.6.5 parse/decl.cyr)  -> RED rows A B C D E F G I K, cx B D, a64 A B D
+#   m1 whole fix reverted (6.6.5 parse/decl/gvar.cyr)  -> RED rows A B C D E F G I K, cx B D, a64 A B D
 #   m2 _gv_fold always returns the fresh slot      -> RED rows A B C D E F G I, cx A B D, a64 A B D
 #   m3 _gv_supersede made a no-op                  -> RED rows D G, cx B D, a64 D
 #   m4 _gv_cx_prestore made a no-op                -> RED cx A B D only

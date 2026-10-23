@@ -17,7 +17,7 @@
 # src/common/util.cyr: a `}`, EOF, a `;` or a statement keyword stays for the block loop / the statement resync).
 # `_stmt_resync` (src/frontend/parse/parse.cyr) first steps through the `}` of each `{` the statement opened and left
 # unclosed (`_resync_close`) — unless the statement ended at its own `;`. A zone `var` entry and a const end at a
-# declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse/decl.cyr). The classic-for header
+# declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse/decl/gvar.cyr). The classic-for header
 # (`_for_semis` / `_for_empty`), a dyn source's extent (`_dyn_ext`), a destructure's call check (`_dt_rhs_end`), a
 # whole call's end (`_call_ends_at`) and an `asm { }` body (`_asm_bad`) read a missing `;` / `}` as that, once.
 # The `undefined variable` rows pin the name's own column (6.7.17, the user's D34; re-derived from the compiler — they
@@ -77,7 +77,7 @@
 # to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
 # parse/types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
 # On c3dea492b (before parse/expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
-# On 063eeadf7 (before parse/decl.cyr's `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
+# On 063eeadf7 (before parse/decl/'s `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
 # On 36c6cb47f (before `_dt_rhs_end`) RED: M1 M2 ("multi-value destructure needs a call on the right-hand side").
 # On 82bef3a5b (before `_gv_entry_cut`) RED: S3 Z1 Z2 Z4-Z7 (the entry ran to the next depth-0 `;`: the fns, the
 # struct, `var h` swallowed, their errors never reported); Z3 ZA green. On 1094715eb (before `_cst_skip_decl`'s cut)
@@ -156,7 +156,7 @@ accept() {
 
 UZ="undefined variable 'zz' (missing include or enum?)"
 
-# ---- V: a `var` statement's `;` (PARSE_VAR and the declaration sites, src/frontend/parse/decl.cyr)
+# ---- V: a `var` statement's `;` (PARSE_VAR and the declaration sites, src/frontend/parse/decl/var.cyr)
 row S2 "the filing's s2 verbatim: var a = 1 then var b = zz;" 'fn main(): i64 {
 var a = 1
 var b = zz;
@@ -479,7 +479,7 @@ syscall(60, g());
 error:<source>:4:22: $UZ"
 
 # ---- Z: the declaration zone — a `var` entry missing its `;` ends at the declaration after it (`_gv_entry_cut`,
-# src/frontend/parse/decl.cyr), so pass 1 / pass 2 register and parse what follows
+# src/frontend/parse/decl/gvar.cyr), so pass 1 / pass 2 register and parse what follows
 row S3 "the filing's s3 verbatim: var g = 1 then two fns" 'var g = 1
 fn f1(): i64 { return zz1; }
 fn f2(): i64 { return zz2; }

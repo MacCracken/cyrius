@@ -7,7 +7,7 @@
 # The v6.6.6 struct-copy arc covered a local, a parameter and a global as the DESTINATION, never
 # a field. Each row below read the stale / pointer word on 6.6.9.
 #
-# Mutation that reddens this file: make `_fsc_src` (src/frontend/parse/decl.cyr) return 0.
+# Mutation that reddens this file: make `_fsc_src` (src/frontend/parse/decl/field.cyr) return 0.
 #
 # The "odd-width" rows (6.6.10, bite 5 review): a <= 8 B struct result — a method, an overloaded
 # operator, a free call at top level — and a plain integer arrive in rax, and a 3/5/6/7-byte field
@@ -22,7 +22,7 @@
 #     passes x's value. Mutation: make `_fn_self_byval` (src/frontend/parse/fn/sig.cyr) return 0.
 #   * a struct VARIABLE copied FROM a struct-typed field (`q = b.v;` into a local, a global and an
 #     address-passed parameter; `var p: Pt = b.v;`) copied one word, and the declaration SIGSEGV'd
-#     reading `p.x` through that word. Mutation: make `_fla_arm` (src/frontend/parse/decl.cyr)
+#     reading `p.x` through that word. Mutation: make `_fla_arm` (src/frontend/parse/decl/field.cyr)
 #     return before arming — the "from a struct-typed field" group goes red (x86: SIGSEGV).
 #
 # 6.6.12 rows — the positional LITERAL of a struct with a nested struct field:
@@ -35,7 +35,7 @@
 #     global in the leading declaration block (the canary is static data, in place before the
 #     literal runs) and a fn-local (canaries on both sides). The global after the first
 #     statement is checked field by field.
-#     Mutation: make `_spi_nested` (src/frontend/parse/decl.cyr) flatten 8 bytes per inner field
+#     Mutation: make `_spi_nested` (src/frontend/parse/decl/struct_lit.cyr) flatten 8 bytes per inner field
 #     instead of recursing — the HO rows go red and the two-level literals stop compiling.
 #   * a nested struct field takes a whole struct VALUE (`Box { p, 5 }`): a local, a parameter, a
 #     global, a struct-typed field, a call (>16 B retptr, 9-16 B rax:rdx, <= 8 B rax), a method, an
@@ -53,7 +53,7 @@
 #   * a TOP-LEVEL copy-init `var B: Pt = A;` / `var G: Pt = BX.v;` gave B one 8-byte pointer-mode
 #     slot holding the source's first word, so `B.x` dereferenced it (SIGSEGV) — in the leading
 #     declaration block and after the first statement alike. It is now an inline copy.
-#     Mutation: make `_gci_src` (src/frontend/parse/decl.cyr) return 0 — the "top-level
+#     Mutation: make `_gci_src` (src/frontend/parse/decl/struct_copy.cyr) return 0 — the "top-level
 #     copy-init" group goes red (x86: SIGSEGV).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

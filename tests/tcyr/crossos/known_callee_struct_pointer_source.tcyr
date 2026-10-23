@@ -4,7 +4,7 @@
 # assignment, field), a by-value argument, a `return`, a wrap before `.name` (6.7.14's D24 (a)), a dereference of a
 # `**P2` callee, a chain through the result.
 #
-# THROUGH 6.7.15 those readers (`_hl_pchain` / `_hl_cw` / `_hl_psrc`, src/frontend/parse/decl.cyr) read `f(..)` but not
+# THROUGH 6.7.15 those readers (`_hl_pchain` / `_hl_cw` / `_hl_psrc`, src/frontend/parse/decl/handle.cyr) read `f(..)` but not
 # `fncallN(&f, ..)` / `callptr(&f, ..)`: `var t: P2 = *fncall0(&gp);` bound a handle to G's first field (SIGSEGV),
 # `l = fncall0(&gp)`, `o.s = fncall0(&gp)` and `m = *fncall0(&gp)` stored the pointer word into the first field (b read
 # 0), `take(*fncall0(&gp))` passed G's first word as the struct's address (SIGSEGV), `return *fncall0(&gp);` from a

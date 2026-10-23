@@ -10,7 +10,7 @@
 # print through the mute: a valid program's never-instantiated generic body could print a refusal about T = i64.
 #
 # THE FILES: everything the parse reaches — every .cyr under src/frontend/parse/ and src/frontend/lex/, folders
-# included (6.7.18: parse/fn/; the file map's writers a diagnostic's head
+# included (6.7.18: parse/fn/ and parse/decl/; the file map's writers a diagnostic's head
 # calls live in the preprocessor), src/common/util.cyr, src/common/ir.cyr, and src/backend/<target>/{emit,jump,float}.cyr
 # and src/backend/common/*.cyr (not js/, the TypeScript front end's). (FIXUP / the image writers and the drivers run
 # outside a parse.) The one raw write left is `_ew`'s.

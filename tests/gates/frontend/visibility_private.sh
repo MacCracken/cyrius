@@ -234,7 +234,7 @@ paxis amp_top     1 hid_fn 'var g = &hid_fn; fn main(): i64 { return fncall1(g, 
 paxis amp_fncall  1 hid_fn 'fn main(): i64 { return fncall1(&hid_fn, 1); }'
 paxis amp_pub     0 pub_fn 'fn main(): i64 { var f = &pub_fn; return callptr(f, 1); }'
 paxis amp_same    0 hid_fn 'fn main(): i64 { return pub_same_amp(); }'
-# `s.method()` — its own call emitter (parse/decl.cyr method path)
+# `s.method()` — its own call emitter (parse/decl/field.cyr method path)
 paxis method      1 HidPair.hid_m 'fn main(): i64 { var p: HidPair; p.a = 0; p.b = 0; return p.hid_m(); }'
 # struct receives that emit their own call
 paxis asv_typed   1 hid_big  'fn main(): i64 { var s: HidBig = hid_big(); return s.c; }'

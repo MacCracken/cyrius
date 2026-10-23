@@ -1,0 +1,701 @@
+# PARSER — decl: tuple literals, variables and captures (`_tup_*`), and PARSE_GVAR_ARR.
+# ================================================================
+# Split from parse/decl.cyr at 6.7.18, unchanged; parse.cyr includes parse/decl/ in source order. CHANGELOG [6.7.18]
+
+# ⛔ 6.7.7 (B4) — THE TUPLE LITERAL `(a, b)` (the user's decision, 2026-10-08): a value laid out as an
+# anonymous struct of 8-byte slots. It is taken in FIVE positions, each claiming it before an
+# expression is parsed — a `var` initializer (`_tup_var`: a local, a global in either zone), an
+# assignment to a tuple variable (`_tup_asg`) or tuple field (`_tup_fsc_lit`), a tuple argument
+# (`_tup_sarg_lit`), and `return`'s multi-value arm — so a factor that opens one anywhere else is
+# refused by name (`_tup_lit_stray`). Parentheses wrapping the whole literal are transparent
+# (6.7.6). An annotated literal's elements take the annotation's types and the struct literal's
+# checks (an integer into an f64 element keeps its bits, warned; a bool element takes a bool); an
+# UN-annotated one is `(i64, .., i64)`, and a float element there is refused (ADR-002: an untyped
+# float is an integer — the user's decision, 2026-10-09: declare the tuple's type). A struct, tuple,
+# u128, vector or slice element is refused by name. The elements are evaluated and stored in order
+# through ADDRESSED stores from the block's named slot (EMIT_STRUCT_FIELD_W; `_STRUCT_LIT_LOCAL`'s
+# discipline: the span recorded before a byte is emitted, the name withheld until the elements are
+# parsed, so `var t = (t.1, 1);` reads the OUTER t). An assignment, a field store and an argument
+# build into a frame temp first, so `t = (t.1, t.0);` swaps. CHANGELOG [6.7.7]
+
+# After a refused literal whose outermost wrap opens at `st`: the cursor past its `)`, and `term`
+# consumed when it follows (0: left for the caller). 1.
+fn _tup_lit_skip(S, st, term): i64 {
+    STI(S, _call_close(S, st) + 1);
+    if (term != 0) { if (PEEKT(S) == term) { STI(S, GTI(S) + 1); } }
+    return 1;
+}
+# R2 and the arity, from the tokens of the literal whose `(` is `lp`: an empty element, a trailing
+# comma and more than 256 elements are refused; for a type `sid` (> 0) the count must be its arity.
+# Returns the count, or 0 after a refusal (reported).
+fn _tup_lit_shape(S, lp, sid): i64 {
+    var n = 0;
+    var q = lp + 1;
+    var go = 1;
+    while (go == 1) {
+        var t = TOKTYP(S, q);
+        if (t == 31) { _tup_err(S, q, "an empty element in a tuple literal", 0 - 1, 0); return 0; }
+        if (t == 11) { _tup_err(S, q - 1, "a trailing comma in a tuple literal", 0 - 1, 0); return 0; }
+        n = n + 1;
+        q = _arg_next(S, q);
+        go = 0;
+        if (TOKTYP(S, q) == 31) { q = q + 1; go = 1; }
+    }
+    if (n > 256) { _tup_err(S, lp, "a tuple literal has at most 256 elements", 0 - 1, 0); return 0; }
+    if (sid <= 0) { return n; }
+    if (n == GETFCOUNT(S, sid - 1)) { return n; }
+    _tup_arity_err(S, lp, sid, n);
+    return 0;
+}
+fn _tup_arity_err(S, ti, sid, n): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": tuple ");
+    _sn_pr(S, sid);
+    PRSTR(" has ");
+    PRNUM(GETFCOUNT(S, sid - 1));
+    PRSTR(" elements - this literal has ");
+    PRNUM(n);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# A bare name that is no i64 / f64 / bool value: 1 a vector, 2 a slice, 3 a u128 (a local's 2-slot
+# pair, a 16-byte global); else 0. Lookups only (the factor resolved and reported the name).
+fn _tup_wide_name(S, nm): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (lt <= 0 - 2048) { return 1; }
+            if (lt != 0) { return 0; }
+            if (GLSPAN(S, li) != 2) { return 0; }
+            if (_slice_lw(S, li) > 0) { return 2; }
+            return 3;
+        }
+    }
+    var gv = _findvar_core(S, nm);
+    if (gv < 0) { return 0; }
+    if (GVVEC(S, gv) != 0) { return 1; }
+    if (GVW128(S, gv) == 1) { return 3; }
+    if (GVPM(S, gv) != 0) { return 0; }
+    if (L64(_vars_base + gv * 8) == 16) { return 2; }
+    return 0;
+}
+# R8 — the element just parsed (from token `t0`, its static struct `asid`) is a struct value (a heap
+# handle — `Str`, `Result`, `Option`, `Tagged` — is a pointer, an i64), a u128, a vector or a slice:
+# refused by name. (A whole tuple was refused at its factor, `_tup_rchk`, at the same token.)
+fn _tup_elem_bad(S, t0, asid): i64 {
+    if (asid > 0) {
+        if (asid < 2048) {
+            var nm = L64(S + 0x1A6018 + (asid - 1) * 8);
+            var c = _classify_param_type(S, nm);
+            if (c == 1 || c == 3 || c == 4 || c == 5) { return 0; }
+            _tup_err(S, t0, "a tuple element is i64, f64 or bool, not struct ", _ei_sid(asid), 0);   # 6.7.17: as written
+            return 1;
+        }
+    }
+    var w = 0;
+    if (_W128_IS(S) == 1) { w = 3; }
+    if (w == 0) {
+        if (TOKTYP(S, t0) == 2) { if (GTI(S) == t0 + 1) { w = _tup_wide_name(S, TOKVAL(S, t0)); } }
+    }
+    if (w != 1) { if (_vval_at(S, t0, GTI(S)) != 0) {   # 6.7.17 (D24): `((w), 3)`, `(*pv, 3)`
+            w = 1;
+            if (_vvl_arr == 1) { w = 4; }   # 6.7.17 (D103): `(wa, 3)` (an f64v2[1] read as a u128 pair before)
+        } }
+    if (w == 0) { return 0; }
+    if (w == 1) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a vector", 0 - 1, 0); }
+    elif (w == 4) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not an array of vectors", 0 - 1, 0); }
+    elif (w == 2) { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not a slice", 0 - 1, 0); }
+    else { _tup_err(S, t0, "a tuple element is i64, f64 or bool, not u128", 0 - 1, 0); }
+    return 1;
+}
+# Element `k` of a literal of type `sid`, cursor on its first token: parsed (the value in rax) and
+# judged — R8; un-annotated (`infer`), R7: a float is refused, its type must be declared; typed, the
+# struct literal's field checks (`_ifs_bx`: an integer into f64 warned, a bool element a bool).
+# An element is a one-slot store: a `: stack` pair there kept the tag and dropped the payload
+# (`var t = (f(7), 3);`), so it is refused as at every other one (T5b; `f(7)?` consumes the pair).
+fn _tup_elem_val(S, sid, k, infer): i64 {
+    _refuse_lossy_pair(S);   # 6.7.7 (B4 review)
+    var t0 = GTI(S);
+    var asid = _expr_struct_sid(S, t0);
+    # 6.7.13 (D2 (a), 2026-10-15): a whole dereference `*ps` of a `*S` is a struct value (6.7.10 decision 6),
+    # refused by name as `(s, 1)` is, through the argument's arm (`_ess_deref`) — it stored S's first word.
+    if (asid == 0) { asid = _ess_deref(S, t0); }
+    if (_tup_elem_bad(S, t0, asid) == 1) { return 0; }
+    if (infer == 1) {
+        if (_UFV_IS_FLOAT(S) == 1) {
+            _tup_err(S, t0, "a float element needs the tuple's type declared - an un-annotated tuple literal's elements are i64 (declare the tuple's type: `var t: (i64, f64) = ( .. );`)", 0 - 1, 0);
+        }
+        return 0;
+    }
+    _ifs_bx(S, _fk_bx(S, sid - 1, k), t0, _tup_fname(S, k));
+    return 0;
+}
+# THE ELEMENT LOOP, shared by every position: the literal whose `(` is the cursor (its shape vetted,
+# `_tup_lit_shape`) stored into tuple `sid` — frame slot `li` (>= 0: a local, a temp; field 0 is that
+# slot) or global `gidx` (`li` -1). The cursor is left past its `)`.
+fn _tup_elems(S, sid, gidx, li, infer): i64 {
+    var sv = _sl_base_li;
+    STI(S, GTI(S) + 1);   # consume (
+    var n = GETFCOUNT(S, sid - 1);
+    var k = 0;
+    while (k < n) {
+        _tup_elem_val(S, sid, k, infer);
+        _sl_base_li = li;   # read by EMIT_STRUCT_FIELD_W: set after the element (a closure in it may declare its own)
+        _sfw_have = 1;
+        var st = _slit_tup;
+        _slit_tup = 1;   # `_slit_sep` names a tuple literal
+        EMIT_STRUCT_FIELD_W(S, gidx, k * 8, 8);   # consumes the `,` after the element
+        _slit_tup = st;
+        k = k + 1;
+    }
+    _sl_base_li = sv;
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# `var t[: T] = ( .. );` in a fn, cursor on the literal's own `(`: the block reserved with its span
+# recorded and its name withheld, the elements stored, then the name.
+fn _tup_lit_local(S, noff, sid, infer): i64 {
+    var named = _tup_lres(S, noff, GETFCOUNT(S, sid - 1));
+    if (named < 0) {
+        STI(S, _call_close(S, GTI(S)) + 1);
+        return 0;
+    }
+    _tup_elems(S, sid, 0, named, infer);
+    _tup_lname(S, named, noff, sid);
+    return 0;
+}
+# A tuple `var`'s block in a fn (a literal's, a capture's): the duplicate check, then `nslots` frame
+# slots — the fillers, then the named slot, left ANONYMOUS (the initializer reads an outer name) with
+# its span recorded BEFORE a byte is emitted (a coroutine frame). Returns the named slot; -1 past the
+# per-fn slot budget (refused by name).
+fn _tup_lres(S, noff, nslots): i64 {
+    var existing = FINDLOCAL(S, noff);
+    if (existing >= 0) { if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); } }
+    if (GFLC(S) + nslots + 1 >= 15360) {
+        ERR_MSG(S, "struct literal exceeds the per-fn stack-slot budget; build it through alloc() instead", 85);
+        return 0 - 1;
+    }
+    var k = 0;
+    while (k < nslots - 1) {
+        var fl = GFLC(S);
+        S64(S + 0x5D9D000 + fl * 8, 0 - 1);
+        SLDEP(S, fl, GSDEP(S));
+        SLTYPE(S, fl, 0);
+        SSLICE_W(S, fl, 0);
+        SFLC(S, fl + 1);
+        k = k + 1;
+    }
+    var named = GFLC(S);
+    S64(S + 0x5D9D000 + named * 8, 0 - 1);   # anonymous until the initializer is parsed
+    SLDEP(S, named, GSDEP(S));
+    SLTYPE(S, named, 0);
+    SSLICE_W(S, named, 0);
+    SLAGG(S, named, nslots);                  # the span BEFORE a byte is emitted (a coroutine frame)
+    SFLC(S, named + 1);
+    return named;
+}
+# ... and its name and type, once the block is filled.
+fn _tup_lname(S, named, noff, sid): i64 {
+    S64(S + 0x5D9D000 + named * 8, noff);
+    SLDEP(S, named, GSDEP(S));
+    SLAGG(S, named, GETFCOUNT(S, sid - 1));
+    SLTYPE(S, named, 0 - sid);
+    return 0;
+}
+# A tuple global after the first statement, registered INLINE (8n bytes, the slot IS the tuple) at
+# the next index, its count not yet bumped — so the name is not visible until the caller's SVCNT.
+fn _tup_greg(S, noff, sid): i64 {
+    var vcnt = GVCNT(S);
+    S64(_varn_base + vcnt * 8, noff);
+    S64(_vars_base + vcnt * 8, STRUCTSZ(S, sid - 1));
+    SVTYPE(S, vcnt, sid);
+    SVPM(S, vcnt, 2);
+    return vcnt;
+}
+# ... a global after the first statement (PARSE_STRUCT_INIT's shape: inline, its name registered
+# after the elements); `dti` the declaration's token, for its visibility.
+fn _tup_lit_global(S, noff, sid, infer, dti): i64 {
+    var vcnt = _tup_greg(S, noff, sid);
+    _glit_hold(S, vcnt);   # 6.7.16: held while the elements are parsed (an element's hidden temporary)
+    _tup_elems(S, sid, vcnt, 0 - 1, infer);
+    SLVAR(S, vcnt);
+    _GVAR_VIS(S, vcnt, dti);
+    SVDEAD(S, vcnt, 0);
+    return 0;
+}
+# PARSE_VAR's arm, where its `: stack` pair refusal stood (cursor on `=`): a literal initializer —
+# the whole of it, up to the `;` — declares the tuple (1, the `;` consumed). Anything else is not
+# this arm's: the pair refusal runs and PARSE_VAR goes on (0). `ann` is the annotation's first token
+# (0: none), `pscale` PARSE_VAR's. A refused literal still lets the name be declared, so its later
+# uses do not cascade: under a non-tuple annotation PARSE_VAR parses on (0; the literal's factor
+# refusal is the one already reported, at the same token); a tuple-typed one whose literal has the
+# wrong shape is skipped and declared as `var t: T;` is (0, cursor on the `;`).
+fn _tup_var(S, noff, pscale, ann): i64 {
+    if (_dyn_var(S, noff, pscale, ann) == 1) { return 1; }   # 6.7.8: U1/U2; (D5) a dyn formed in place
+    if (PEEKT(S) == 4) {
+        var lp = _tup_lit_at(S, GTI(S) + 1);
+        if (lp >= 0) { if (TOKTYP(S, _pw_end) == 5) { return _tup_var_lit(S, noff, pscale, ann, lp); } }
+        if (_tup_var_cap(S, noff, pscale) == 1) { return 1; }   # 6.7.7 (B4, T5): `var t: T = f();`
+    }
+    _refuse_single_pair_bind(S);
+    return 0;
+}
+# A literal refused for its SHAPE (an empty element, a trailing comma, more than 256 elements, the
+# wrong arity) still declares its name, so its later uses do not cascade ("undefined variable",
+# "no struct type in scope"): as the annotation's tuple `sid`, else as the `(i64 x n)` its commas
+# give (at most 256) — in a fn a local (its block reserved, nothing stored), at top level an inline
+# global. A tuple-annotated local is PARSE_VAR's (`var t: T;`). CHANGELOG [6.7.11]
+fn _tup_var_refd(S, noff, sid, lp, st): i64 {
+    if (sid <= 0) {
+        var n = _tup_commas(S, lp) + 1;
+        if (n > 256) { n = 256; }
+        sid = _tup_ints(S, n);
+    }
+    if (GINFN(S) == 1) {
+        var named = _tup_lres(S, noff, GETFCOUNT(S, sid - 1));
+        if (named >= 0) { _tup_lname(S, named, noff, sid); }
+        return 0;
+    }
+    var vcnt = _tup_greg(S, noff, sid);
+    _GVAR_VIS(S, vcnt, st);
+    SVCNT(S, vcnt + 1);
+    return 0;
+}
+fn _tup_var_lit(S, noff, pscale, ann, lp): i64 {
+    var st = GTI(S) + 1;
+    var sid = 0;
+    var infer = 0;
+    if (ann == 0) { infer = 1; }
+    elif (pscale < 0) { if (pscale > 0 - 2048) { if (_tup_is(S, 0 - pscale) == 1) { sid = 0 - pscale; } } }
+    if (infer == 0) {
+        if (sid == 0) {   # R9: a scalar, struct, bool, slice, vector or pointer annotation
+            _tup_r9(S, lp, noff, ann);   # 6.7.16: not after a refused annotation
+            return 0;
+        }
+    }
+    var n = _tup_lit_shape(S, lp, sid);
+    if (n == 0) {
+        if (infer == 0) { if (GINFN(S) == 1) { _tup_lit_skip(S, st, 0); return 0; } }
+        _tup_var_refd(S, noff, sid, lp, st);   # 6.7.11: declared all the same
+        return _tup_lit_skip(S, st, 5);
+    }
+    if (infer == 1) {
+        _tup_gen_chk(S, lp);   # R4: an un-annotated literal mints its type, in a generic fn too
+        sid = _tup_ints(S, n);
+    }
+    STI(S, lp);
+    if (GINFN(S) == 1) { _tup_lit_local(S, noff, sid, infer); }
+    else { _tup_lit_global(S, noff, sid, infer, st); }
+    _pw_close(S, lp - st);
+    _expect_step(S, 5);
+    return 1;
+}
+
+# ⛔ 6.7.16 — R9 IS NOT SAID AFTER A REFUSED ANNOTATION: `var b: Nonexist = (1, 2);` (and `var b: 1 =`, `var b: =`, a
+# refused late struct's `var b: Q =`, in a fn, the declaration zone and after the first statement) added "a tuple
+# literal cannot initialize 'b' - its declared type is not a tuple" after the annotation's error — the refusal left
+# no type (pscale / gps 0), which R9 read as a declared non-tuple. The literal at `lp` stands down, counted: its token
+# is marked reported (`_tn_once`), so the factor's refusal of the literal PARSE_VAR parses on to stands down too, and
+# the declaration is what the refused annotation left — a plain word whose uses the annotation's mark stands down.
+# Annotation token `ann` (`_tup_ann_refd`). A type the annotation still names keeps R9: `var b: i64 =`, `var b: *Nope
+# =` (a pointer), `var b: i64<u8> =` (i64; its type arguments refused). CHANGELOG [6.7.16]
+fn _tup_r9(S, lp, noff, ann): i64 {
+    if (_tup_ann_refd(S, ann) == 1) {
+        _tn_once(S, lp);
+        _had_error = 1;
+        return 0;
+    }
+    _tup_err(S, lp, "a tuple literal cannot initialize ", noff, " - its declared type is not a tuple");
+    _tp_refd_at = lp;   # 6.7.16: and a `*T` declaration's "assigning non-pointer to typed pointer" is not said about it
+    return 0;
+}
+# 1 = the annotation whose first token is `ann` was refused and names no type: a name no type answers that was
+# reported (`_tn_seen_at`) or that a refused declaration declared (`_dl_refd_at`), or a token that is no type at all
+# (6.7.14's D15: a number, an operator; 6.7.15: a missing type, the `=` / `;`), reported there. A name that resolves
+# (`i64` of a refused `i64<u8>`, a type parameter) and a `*` / `[` / `(` head are declared types. CHANGELOG [6.7.16]
+fn _tup_ann_refd(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    var t = TOKTYP(S, ann);
+    if (t == 8 || t == 28 || t == 10) { return 0; }
+    if (t == 2) {
+        if (_tn_resolve_at(S, ann) != 0) { return 0; }
+        if (_dl_refd_at(S, TOKVAL(S, ann)) == 1) { return 1; }
+    }
+    return _tn_seen_at(S, ann);
+}
+# ⛔ 6.7.7 (B4, T5) — THE BRIDGE: A TUPLE CAPTURES A MULTI-VALUE CALL BY ITS TYPE (the user's decision,
+# 2026-10-08): `var t: (i64, f64) = f();`, `t = f();` into an existing tuple (a for step too), `G =
+# f();` at top level and the declaration zone's `var G: T = f();`. It takes the right-hand sides the
+# destructure `var a, b = f();` takes: ONE whole call — `f(`, `g<..>(` or `x.m(` — ending at the
+# terminator, reaching a declared `: (T1, T2[, T3])` fn (its arity and each element's CLASS checked
+# against the tuple's: an f64 element takes an f64 value, a bool element a declared bool, an i64
+# element any integer-class value, a bool included), an undeclared `return (a, b)` / `ret2` fn, a
+# `: stack` pair, a Result / Option / Tagged pair or a `: f64` fn (every element f64) — those
+# unchecked, as the destructure leaves them, except that a bool element needs a declared bool. A
+# struct- or vector-returning callee is refused by name (it is no tuple), as are more than 3
+# elements (the return registers). A provably one-value callee, a wrapped `(f())`, `f()?`, `callptr`
+# and any other value are no capture: the tuple's "not a tuple" refusal (R12). Nothing that compiled
+# changes: each of these was refused (R12) or, for a `: stack` pair, "bind both". CHANGELOG [6.7.7]
+# A tuple's element `k` by class: 1 f64, 3 bool, 0 i64.
+fn _tup_ek(S, sid, k): i64 {
+    if (GFBOOL(S, sid - 1, k) == 1) { return 3; }
+    if (GFFK(S, sid - 1, k) == 1) { return 1; }
+    return 0;
+}
+# Element `k` of multi-value fn `fi`'s declared return, by class: 1 f64, 3 bool, 0 an integer-class
+# value (i8..i64, `*T`, cstring, a `Str` / Result / Option / Tagged handle), 9 a struct value or a
+# vector (no tuple element holds one).
+fn _mret_ek(S, fi, k): i64 {
+    if ((GFLG(S, fi) & (8192 << k)) != 0) { return 3; }
+    var c = GFRT(S, fi, k);
+    if (c == 0 - 9) { return 1; }
+    if (c <= 0 - 2048) { return 9; }
+    if (c > 0) {
+        var cl = _classify_param_type(S, L64(S + 0x1A6018 + (c - 1) * 8));
+        if (cl == 1 || cl == 3 || cl == 4 || cl == 5) { return 0; }
+        return 9;
+    }
+    return 0;
+}
+# Prints fn `fi`'s declared values by class, `(i64, f64)` (a struct element by its name).
+fn _mret_spell(S, fi): i64 {
+    PRSTR("(");
+    var n = GFRN(S, fi);
+    var k = 0;
+    while (k < n) {
+        if (k > 0) { PRSTR(", "); }
+        var e = _mret_ek(S, fi, k);
+        if (e == 1) { PRSTR("f64"); }
+        elif (e == 3) { PRSTR("bool"); }
+        elif (e == 0) { PRSTR("i64"); }
+        elif (GFRT(S, fi, k) > 0) { PRSTR(S + 0xEC00000 + _fsn_one(S, GFRT(S, fi, k))); }   # 6.7.16: `Box<Pt>`, not `Box$Pt`
+        else { PRSTR("a vector"); }
+        k = k + 1;
+    }
+    PRSTR(")");
+    return 0;
+}
+# 1 = fn `fi` provably returns ONE value — the destructure's one-value test (`_dt_arity_check`): pass
+# 1's GFLG bit 1024, unless the fn declares several or returns a `: stack` / Result / Option / Tagged
+# pair, which carry a second word.
+fn _tup_cap_single(S, fi): i64 {
+    var fl = GFLG(S, fi);
+    if ((fl & 1024) == 0) { return 0; }
+    if ((fl & 256) != 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs == MULTIRET_SID) { return 0; }
+    if (rs <= 0 - 16) { if (rs >= 0 - 18) { return 0; } }
+    return 1;
+}
+# THE CAPTURE'S CONTRACT, cursor on the right-hand side of a value of tuple `sid`, which ends at
+# `term`: 0 = no capture (not one whole call, or a provably one-value callee — the caller's R12;
+# cursor kept); 1 = a capture (the call is the cursor's); 2 = a refused one, reported and the call
+# skipped (cursor on `term`), so the caller still declares / leaves the tuple and the parse goes on.
+# 6.7.14 (D45): the call may sit inside parentheses that wrap the whole value (`_dt_wrap_k`): for a
+# capture the cursor is stepped onto it and `_tcap_k` holds the k `)` the caller closes (`_pw_close`)
+# once the call is parsed — read right after this returns, before anything is parsed. CHANGELOG [6.7.14]
+var _tcap_k = 0;
+fn _tup_cap_check(S, sid, term): i64 {
+    _tcap_k = 0;
+    var k = _dt_wrap_in(S, term);
+    var r = _tup_cap_in(S, sid, _dt_wterm(k, term));
+    if (r == 0) { STI(S, GTI(S) - k); }   # cursor kept: on the wrap's first `(`
+    elif (r == 2) { STI(S, GTI(S) + k); }   # past the wrap's `)`s, on `term`
+    else { _tcap_k = k; }
+    return r;
+}
+fn _tup_cap_in(S, sid, term): i64 {
+    var o = _dt_call_open_cp(S);   # 6.7.14: `callptr(..)` too. CHANGELOG [6.7.14]
+    if (o < 0) { return 0; }
+    var e = _call_close(S, o) + 1;
+    if (TOKTYP(S, e) != term) { return 0; }
+    var fi = _dt_call_fn(S);
+    var r = 2;   # 6.7.7 (T6): resolving the callee refused it (R4, `id(t)`): the tuple kept, the call skipped
+    if (_panic == 0) { r = _tup_cap_class(S, sid, fi); }
+    if (r == 2) { STI(S, e); }
+    return r;
+}
+fn _tup_cap_class(S, sid, fi): i64 {
+    var rs = 0;
+    if (fi >= 0) { rs = GFRS(S, fi); }
+    if (rs > 0) { return _tup_cap_err(S, sid, fi, 2, 0); }
+    if (rs <= 0 - 2048) { return _tup_cap_err(S, sid, fi, 3, 0); }
+    if (fi >= 0) { if (_tup_cap_single(S, fi) == 1) { return 0; } }
+    var n = GETFCOUNT(S, sid - 1);
+    if (n > 3) { return _tup_cap_err(S, sid, fi, 1, 0); }
+    if (rs == MULTIRET_SID) { if (GFRN(S, fi) != n) { return _tup_cap_err(S, sid, fi, 4, 0); } }
+    var ar = 0;   # 6.7.11: an undeclared callee's provable count, as the destructure checks it
+    if (fi >= 0) { ar = _fn_ret_arity(S, fi); }
+    if (ar != 0) { if (ar != n) { return _tup_cap_err(S, sid, fi, 7, ar); } }
+    var k = 0;
+    while (k < n) {
+        var c = _tup_cap_elem(S, sid, fi, rs, k);
+        if (c != 0) { return _tup_cap_err(S, sid, fi, c, k); }
+        k = k + 1;
+    }
+    return 1;
+}
+# Element `k`'s agreement: 0, or the refusal's kind (`_tup_cap_err`).
+fn _tup_cap_elem(S, sid, fi, rs, k): i64 {
+    var te = _tup_ek(S, sid, k);
+    if (rs == MULTIRET_SID) {
+        var fe = _mret_ek(S, fi, k);
+        if (fe == te) { return 0; }
+        if (te == 0) { if (fe == 3) { return 0; } }
+        return 4;
+    }
+    if (rs == 0 - 9) {
+        if (te == 1) { return 0; }
+        return 5;
+    }
+    if (te == 3) { return 6; }
+    return 0;
+}
+# A refused capture (cursor on its right-hand side), once per token, in sync. Returns 2. `sid` 0: the
+# callee of a multi-value assignment `a, b = f();` (`_masg_callee`; kinds 2 and 3).
+fn _tup_cap_err(S, sid, fi, kind, k): i64 {
+    if (_syntax_only == 1) { return 2; }
+    if (_panic == 1) { return 2; }
+    var st = GTI(S);
+    if (sid != 0) { if (_vrcv_annbad(S, st) == 1) { return 2; } }   # 6.7.16: a refused annotation's one error
+    if (_tn_once(S, st) == 0) { return 2; }
+    var ct = st;
+    if (_mcall_open(S, st, 0 - 1) >= 0) { ct = _mco_mt; }   # 6.7.15: `x.m<..>(` names m too; 6.7.16: a chain's
+    _ew("error:", 6);
+    _err_head(S);
+    var w = "a tuple";
+    if (sid == 0) {
+        w = "multiple values";
+        PRSTR(": cannot re-assign from '");
+        _tcap_callee_pr(S, ct);
+        PRSTR("'");
+    } else {
+        PRSTR(": cannot capture '");
+        _tcap_callee_pr(S, ct);
+        PRSTR("' into tuple ");
+        _sn_pr(S, sid);
+    }
+    if (kind == 1) { PRSTR(" - a call returns at most 3 values (its return registers)"); }
+    elif (kind == 2) {
+        PRSTR(" - it returns struct '");
+        _sn_pr(S, GFRS(S, fi));
+        PRSTR("', not ");
+        PRSTR(w);
+    }
+    elif (kind == 3) {
+        PRSTR(" - it returns a vector, not ");
+        PRSTR(w);
+    }
+    elif (kind == 4) {
+        PRSTR(" - it returns ");
+        PRNUM(GFRN(S, fi));
+        PRSTR(" values, ");
+        _mret_spell(S, fi);
+    }
+    elif (kind == 5) { PRSTR(" - it is declared `: f64`, so every value it returns is an f64"); }
+    elif (kind == 7) {   # 6.7.11: an undeclared callee's count (`_fn_ret_arity`), `k`
+        PRSTR(" - it returns ");
+        PRNUM(k);
+        PRSTR(" values");
+    }
+    else {
+        PRSTR(" - element ");
+        PRNUM(k);
+        PRSTR(" is a bool, and the call does not declare that value bool");
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 2;
+}
+# The capture's callee as written: its name, or `callptr` (6.7.14: a builtin token, no name).
+fn _tcap_callee_pr(S, ct): i64 {
+    if (TOKTYP(S, ct) == 137) { PRSTR("callptr"); return 0; }
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    return 0;
+}
+# THE DRAIN, right after the call (its first value in rax): every value pushed BEFORE any store — rax,
+# rdx, then r3 for a third (`EMOVRA_RDX` leaves r3 intact) — so nothing clobbers rdx / r3 first.
+fn _tup_drain_push(S, n): i64 {
+    EPUSHR(S);
+    EMOVRA_RDX(S);
+    EPUSHR(S);
+    if (n == 3) {
+        EMOVRA_R3(S);
+        EPUSHR(S);
+    }
+    return 0;
+}
+# ... then popped into tuple `sid`'s slots, the last first, through ADDRESSED stores (the regalloc
+# picker never sees an EFLSTORE of an aggregate slot): `idx` a frame slot as
+# `_resolve_field_base_addr` takes it (`0 - 2 - li`), or a global (>= 0).
+fn _tup_drain_store(S, n, idx, sid): i64 {
+    var k = n - 1;
+    while (k >= 0) {
+        _IR_REC0(S, IR_RAW_EMIT);
+        _resolve_field_base_addr(S, idx, sid);
+        if (k > 0) { EADDIMM_X1(S, k * 8); }
+        EPOPR(S);
+        ESTOC(S);
+        k = k - 1;
+    }
+    return 0;
+}
+# PARSE_VAR's capture arm (cursor on `=`), after the literal's: `var t: T = f();` — 1 = declared (the
+# `;` consumed), 0 = no capture (cursor kept). In a fn the block is reserved with its span before the
+# call is parsed and named after its values are stored (an argument reads an OUTER `t`); a global
+# after the first statement is registered after the call, inline.
+fn _tup_var_cap(S, noff, pscale): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    var sid = 0 - pscale;
+    if (_tup_is(S, sid) == 0) { return 0; }
+    var dti = GTI(S);
+    STI(S, dti + 1);   # `=`
+    var c = _tup_cap_check(S, sid, 5);
+    if (c == 0) {
+        STI(S, dti);
+        return 0;
+    }
+    var k = _tcap_k;
+    if (GINFN(S) == 1) { _tup_cap_local(S, noff, sid, c); }
+    else { _tup_cap_global(S, noff, sid, c, dti); }
+    _pw_close(S, k);   # 6.7.14 (D45): `= (two(3));`
+    _expect_step(S, 5);
+    return 1;
+}
+fn _tup_cap_local(S, noff, sid, c): i64 {
+    var n = GETFCOUNT(S, sid - 1);
+    var named = _tup_lres(S, noff, n);
+    if (named < 0) {
+        _masg_skip(S);
+        return 0;
+    }
+    if (c == 1) {
+        PCMPE(S);
+        _tup_drain_push(S, n);
+        _tup_drain_store(S, n, 0 - 2 - named, sid);
+    }
+    _tup_lname(S, named, noff, sid);
+    return 0;
+}
+fn _tup_cap_global(S, noff, sid, c, dti): i64 {
+    var n = GETFCOUNT(S, sid - 1);
+    if (c == 1) {
+        PCMPE(S);
+        _tup_drain_push(S, n);
+    }
+    var vcnt = _tup_greg(S, noff, sid);   # after the call: a registration inside it takes its own index
+    SVCNT(S, vcnt + 1);
+    if (c == 1) { _tup_drain_store(S, n, vcnt, sid); }
+    SLVAR(S, vcnt);
+    _GVAR_VIS(S, vcnt, dti);
+    return 0;
+}
+# The declaration zone's replay (EMIT_GVAR_INITS, cursor on the right-hand side): `var G: T = f();`,
+# registered inline by pass 1 for a whole call (`_tup_gci`). 1 = done (the `;` consumed); 0 = not a
+# whole call (the replay goes on: a named tuple or field source, or a value pass 1 refused). A whole
+# call that is no capture (a one-value callee) is refused here — pass 1 could not know its callee.
+fn _gvi_tup_cap(S, gi, idx, gps, sti, noff): i64 {
+    if (gps >= 0) { return 0; }
+    if (gps <= 0 - 2048) { return 0; }
+    var sid = 0 - gps;
+    if (_tup_is(S, sid) == 0) { return 0; }
+    if (_tup_gci_call(S, sid) < 0) { return 0; }
+    var c = _tup_cap_check(S, sid, 5);
+    if (c == 0) {
+        _tup_err(S, sti + 3, "cannot initialize tuple ", noff, " with a value that is not a tuple");
+        _masg_skip(S);
+    } elif (c == 1) {
+        var k = _tcap_k;
+        PCMPE(S);
+        _pw_close(S, k);   # 6.7.14 (D45)
+        if (idx >= 0) {
+            var n = GETFCOUNT(S, sid - 1);
+            _tup_drain_push(S, n);
+            _tup_drain_store(S, n, idx, sid);
+            _gv_slvar(S, idx);
+        }
+    }
+    _gvk_left(S, gi, sti, idx);   # a `kernel;` build names what stays late
+    _expect_step(S, 5);
+    return 1;
+}
+
+# 6.6.13 (M2): `eb` is the bytes per element (_arr_ebytes), 0 for a bare `var g[N]`.
+fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
+    STI(S, GTI(S) + 1);
+    # v5.10.48: top-level array-size NUM-or-enum-const-ident — same
+    # rule as the in-fn PARSE_ARRAY above. Closes the var-bracket
+    # parser-cosmetic-limit at top-level too. Without this mirror
+    # fix, `enum Sz { N = 16; } var buf[N];` at top level still
+    # errored even after the in-fn fix landed.
+    var sz_raw = 0;
+    var gs_ti = GTI(S);                  # 6.7.15: the size, refused in sync (`_ce_ctx_close` below)
+    var gs_pw = _ce_ctx_open(0 - 1);
+    if (PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 29) {
+        sz_raw = PEEKV(S);
+        STI(S, GTI(S) + 1);
+    } else {
+        # 6.7.2 (B1, C1): a CONST CONTEXT — any integer const expression (as the in-fn site).
+        sz_raw = _ce_eval_int(S, "an array size must be an integer");
+        if (_ce_err == 0) { if (sz_raw < 0) { ERR_MSG(S, "array size must not be negative", 31); } }
+    }
+    # v6.2.1: element-typed top-level array `var g: T[N]` reserves
+    # N * sizeof(T) bytes. `ew` is the element width from the `: T`
+    # annotation (ann_scalar). ew==0 is the bare `var g[N]` form —
+    # keep the legacy N-i64-SLOTS top-level convention (ew=8). So
+    # `var g: u8[N]` = N bytes, `var g: i64[N]` = 8N, bare = 8N.
+    # The byte-list `= {..}` cap below stays in bytes (= sz).
+    # 6.6.13 (M2): the size multiplies by `eb`, not the integer descriptor `ew` — an f32 / struct
+    # / vector element was 8 bytes (`Pt[2]` 16 of 32, `i8v16[2]` 8 of 32). The 8-byte floor stays.
+    var ar_ew = eb;
+    if (ar_ew < 1) { ar_ew = 8; }
+    # The integer descriptor stands only for an element of exactly that width: a vector element
+    # the prefix ladder read as its leading scalar (`i8v16` as i8) has none, so `g[i]` is refused.
+    if (eb != ew) { ew = 0; sgn = 0; }
+    sz_raw = _arr_size_ok(S, sz_raw, ar_ew);
+    _ce_ctx_close(S, gs_ti, gs_pw, 29, 29, 29);
+    var sz = sz_raw * ar_ew;
+    if (sz < 8) { sz = 8; }
+    if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+    STI(S, GTI(S) + 1);
+    var vc0 = GVCNT(S);
+    S64(_varn_base + vc0 * 8, noff);
+    S64(_vars_base + vc0 * 8, sz);
+    SVSGN(S, vc0, _arr_gsgn(S, ew, sgn, eb, _gai_ann(S, sti), sz_raw));   # 6.6.12: before the fold, so a redeclaration compares it; 6.7.6: + the typed mark; 6.7.8: + the kind, N
+    var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
+    _gav_set(S, vc, _gai_ann(S, sti));   # 6.7.17 (D103): an array of vectors
+    SLVAR(S, vc);
+    # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
+    # own `_GVAR_VIS` (whose comment claims to be "the one point EVERY global var
+    # reaches"), so a top-level array in a `private` file was never private — readable
+    # and addressable from any file — and a `public var arr[N]` never CONSUMED the
+    # marker, re-exposing the next declaration instead.
+    _GVAR_VIS(S, vc, sti);
+    if (vc == vc0) { SVCNT(S, vc0 + 1); }
+    # v5.11.51: the optional initializer `var foo[N] = { .. };` (issue 2026-05-13-gnoboot-byte-
+    # array-literal.md). Pass 1 checks the element type and the count and registers the deferred
+    # entry; the replay evaluates it into the slot's image blob. ⛔ 6.6.16 (C1): it was a BYTE list
+    # whatever the element type, stored at run time — see "Global array initializers" above.
+    # CHANGELOG [6.6.16]
+    if (PEEKT(S) == 4) {
+        STI(S, GTI(S) + 1);
+        _gai_decl(S, _gai_ann(S, sti), sz_raw, sz);
+        if (vc != vc0) { _gv_supersede(S, noff, 1); }   # 6.6.16: a list is the value from start
+        _gv_defer(S, sti, vc + 1);   # 6.6.6: vc + 1 = the slot this entry declared
+    }
+    _expect_step(S, 5);
+    return 0;
+}

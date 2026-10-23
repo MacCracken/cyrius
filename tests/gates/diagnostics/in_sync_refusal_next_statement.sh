@@ -705,7 +705,7 @@ error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 # TOP LEVEL after the first statement (an uninitialized struct or vector, which only a fn's frame holds) IS REFUSED
 # IN SYNC AND DECLARES `c` AS REPORTED. PARSE_VAR's arm latched with no mark — the resync skipped the next statement
 # — and registered a fn-local slot no top-level use reads, so each use of `c` added "undefined variable 'c'".
-# `_usl_top` (src/frontend/parse/decl.cyr) marks it in sync, steps its `;`, and enters `c` in the refused variables
+# `_usl_top` (src/frontend/parse/decl/gvar.cyr) marks it in sync, steps its `;`, and enters `c` in the refused variables
 # (`_dl_var_refd_add`, parse/fn/def.cyr) that `_undef_var_report`, the subscript's undefined base and a multi-value
 # target stand down at (`_dl_name_refd`; U6: the subscript's arm missed a refused late enum's member as well). U1 is
 # the filing's program verbatim. Controls: U5 the declaration in a fn compiles and runs; U7 a type annotation

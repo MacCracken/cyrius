@@ -1,0 +1,1456 @@
+# PARSER — decl: one global per top-level name (`_gv_*`) and PARSE_GVAR_REG.
+# ================================================================
+# Split from parse/decl.cyr at 6.7.18, unchanged; parse.cyr includes parse/decl/ in source order. CHANGELOG [6.7.18]
+
+# ================================================================
+# One global per top-level name (6.6.6)
+# ================================================================
+# WHY. A top-level name declared twice used to get a SECOND storage slot, and FINDVAR's
+# last-match then bound some references to one slot and the rest to the other. The first
+# declaration's static-init value went into a slot nothing read (`var a = 5; var b = a;
+# var a = 5;` gave b 0, and `var a = 7` on the third line gave 0 too, under a warning that
+# promised "last definition wins"). A redeclaration in the DECLARATION ZONE (before the first
+# top-level statement) now REUSES the slot, so every reference names one global. The value
+# rule that goes with it is at _gv_supersede. After the first top-level statement a `var` is
+# a statement and a redeclaration there is still a NEW variable for the code after it
+# (PARSE_VAR; unchanged, and documented in the guide). CHANGELOG [6.6.6]
+
+# The visibility owner a declaration at token `ti` WILL get — _GVAR_VIS's rule, without
+# consuming the pending `public`.
+fn _gv_owner(S, ti): i64 {
+    if (_pub_pending != 0) { return 0; }
+    var fid = FM_FILEID(S, GTLINE(S, ti));
+    if (_PRIV_FILE(fid) == 1) { return fid + 1; }
+    return 0;
+}
+
+# The live, plain global below index `below` that a top-level redeclaration of `noff` must
+# reuse, or -1. An enum constant has no storage to share (CHK_ENUM_SHADOW / CHKDUPVAL own
+# that case), and a prior with a different visibility owner is a different global.
+# 6.6.9: walks only the slots of this name, through the name index (_fvh_head, parse/types.cyr)
+# — it used to STREQ every global below `below`, the second of the two O(N) walks each
+# registration paid. CHANGELOG [6.6.9]
+fn _gv_prior(S, noff, below, owner): i64 {
+    var e = _fvh_head(S, noff);
+    while (e != 0) {
+        var vi = e - 1;
+        if (vi < below) { if (GVDEAD(S, vi) == 0) {
+                if (GVENUMID(S, vi) != 0) { return 0 - 1; }
+                if (_vcst_ix(S, vi) >= 0) { return 0 - 1; }   # 6.7.2: a const is not a global to share (refused by name)
+                if (GVFI(S, vi) != owner) { return 0 - 1; }
+                return vi;
+            } }
+        e = _fvh_next(vi);
+    }
+    return 0 - 1;
+}
+
+# Same storage: width, type marker, layout mode, signedness — and the two side tables a
+# global's type also lives in: a `*T` global's T (`_gv_psid`; `*M` and `*Q` of one size share
+# GVTYPE) and the vector mark (SVVEC; f64v2 and u128 share GVTYPE 0 and width 16). CHANGELOG [6.6.20]
+# ⛔ 6.7.14 — AND `bool` (the user's decision D9 (a), 2026-10-16): bool-ness is part of a global's type. The mark was
+# the LAST declaration's, per slot, so `var G = 5; var G: bool = G;` read G under its own bool mark and built a bool
+# holding 5, and `var G = 5; var G: bool = true;` made the integer declaration's storage a bool (6.7.3 (B2): a bool
+# reads 0 or 1). A redeclaration that changes it is "redeclared with a different type or size", both ways
+# (issues/archived/2026-10-08-redeclared-global-bool-reads-own-stamp.md). PARSE_GVAR_REG marks its registration before the
+# fold (_gv_fold_b); a destructure target and an array never carry the mark. CHANGELOG [6.7.14]
+fn _gv_same_shape(S, a, b): i64 {
+    if (L64(_vars_base + a * 8) != L64(_vars_base + b * 8)) { return 0; }
+    if (GVTYPE(S, a) != GVTYPE(S, b)) { return 0; }
+    if (GVPM(S, a) != GVPM(S, b)) { return 0; }
+    if (_gsgn_shape(GVSGN(S, a)) != _gsgn_shape(GVSGN(S, b))) { return 0; }   # 6.7.6: a bare array's 0x100 is no new shape
+    if (_gv_ptr_sid(S, a) != _gv_ptr_sid(S, b)) { return 0; }
+    if (GVVEC(S, a) != GVVEC(S, b)) { return 0; }
+    if (GVBOOL(S, a) != GVBOOL(S, b)) { return 0; }   # 6.7.14 (D9 (a))
+    return 1;
+}
+# A scalar declaration's registration `vi` (count not bumped) folded as _gv_fold does, its bool mark `b` written
+# first so the fold compares it (_gv_same_shape). A fold clears it (_gv_clear); a new global keeps it.
+fn _gv_fold_b(S, vi, ti, b): i64 {
+    SVBOOL(S, vi, b);
+    return _gv_fold(S, vi, ti);
+}
+
+# Forget a written-but-uncounted registration so the next one at this index starts clean.
+# (Its name needs no reset: every registration writes the name first, and nothing reads an
+# index at or above the count.)
+fn _gv_clear(S, vi): i64 {
+    S64(_vars_base + vi * 8, 0);
+    SVTYPE(S, vi, 0);
+    SVSGN(S, vi, 0);
+    S64(_vgsi_base + vi * 8, 0);
+    _gv_lit_set(vi, 0);   # 6.7.12 (D30)
+    SVGAI(S, vi, 0);   # 6.6.16 (C1): an array initializer's blob
+    if (GVPM(S, vi) != 0) { SVPM(S, vi, 0); }
+    if (GVFI(S, vi) != 0) { SVFI(S, vi, 0); }
+    # The side tables too, or the next global at this index inherits a `*T`'s struct or the
+    # vector mark (a struct global then read through its first word). CHANGELOG [6.6.20]
+    if (GVVEC(S, vi) != 0) { SVVEC(S, vi, 0); }
+    if (_gv_ptr_sid(S, vi) != 0) { S64(_gv_psid + vi * 8, 0); }
+    if (GVBOOL(S, vi) != 0) { SVBOOL(S, vi, 0); }   # 6.7.3
+    if (GVINTD(S, vi) != 0) { SVINTD(S, vi, 0); }   # 6.7.6
+    if (GVW128(S, vi) != 0) { SVW128(S, vi, 0); }   # 6.7.6 (D2)
+    return 0;
+}
+
+# One global cannot have two shapes: code compiled against the first would read the second.
+fn _gv_shape_err(S, noff): i64 {
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": global '", 10);
+    PRSTR(S + 0xEC00000 + noff);
+    _ew("' redeclared with a different type or size (a global has one definition; rename one)\n", 85);
+    _had_error = 1;
+    return 0;
+}
+
+# Registration `vi` (tables written, count NOT yet bumped) -> the slot this top-level
+# declaration uses: the existing global's when the name is already declared, else `vi`.
+# The caller bumps the count only when `vi` comes back. `ti` = the declaration's token.
+fn _gv_fold(S, vi, ti): i64 {
+    var noff = L64(_varn_base + vi * 8);
+    var pi = _gv_prior(S, noff, vi, _gv_owner(S, ti));
+    if (pi < 0) { return vi; }
+    if (_gv_same_shape(S, pi, vi) == 0) {
+        _gv_shape_err(S, noff);
+        _gvr_add(vi, ti);   # 6.7.15
+        return vi;
+    }
+    _gv_clear(S, vi);
+    _gu_drop(pi);   # 6.7.17: the sweep reads only the last declaration's initialiser
+    return pi;
+}
+# ⛔ 6.7.15 — A REFUSED TYPE CHANGE IS ONE ERROR (issues/2026-10-16-global-type-change-refusal-cascades-into-earlier-
+# reader.md). The refused declaration keeps its own registration (its replay stores there), a second global of the
+# name, and the replay runs after pass 1 — so an initializer BETWEEN the two declarations resolved the name (FINDVAR,
+# last match) to the refused one, in its other shape: `var G: bool = true; var X: bool = G; var G: i32 = 5;` added
+# "cannot initialize bool 'X'", a struct G's `var X = G.b;` "no struct type in scope for 'G'". The replay now hides
+# each refused registration while an entry declared before it runs (_gvr_hide), so a reader sees what the source
+# says at its place: the first declaration before the refused one, the refused one after it (as through 6.7.14 —
+# code after it is written for either shape, and reading the first there would cascade the other way).
+var _gvr_rec = 0;   # pairs: the refused slot, its declaration's `var` token
+var _gvr_n = 0;
+var _gvr_cap = 0;   # in words
+fn _gvr_add(vi, ti): i64 {
+    if (_gvr_n * 2 + 2 > _gvr_cap) {
+        if (_gvr_cap == 0) { _gvr_rec = alloc(64 * 8); _gvr_cap = 64; }
+        else { _gvr_rec = _grow_one(_gvr_rec, _gvr_cap); _gvr_cap = _gvr_cap * 2; }
+    }
+    store64(_gvr_rec + _gvr_n * 16, vi);
+    store64(_gvr_rec + _gvr_n * 16 + 8, ti);
+    _gvr_n = _gvr_n + 1;
+    return 0;
+}
+# Before replaying the entry at token `sti`: a refused registration declared after it is hidden (dead), the rest
+# visible. EMIT_GVAR_INITS ends with every one visible again.
+fn _gvr_hide(S, sti): i64 {
+    var i = 0;
+    while (i < _gvr_n) {
+        var d = 0;
+        if (load64(_gvr_rec + i * 16 + 8) > sti) { d = 1; }
+        SVDEAD(S, load64(_gvr_rec + i * 16), d);
+        i = i + 1;
+    }
+    return 0;
+}
+# The prior that scalar registration `vi` (written, uncounted; bool mark `b`, as _gv_fold_b writes it) folds into:
+# its slot, -1 none, -2 a shape the fold refuses. Asked before the fold, so the value compare can stand down.
+fn _gv_fold_peek(S, vi, ti, b): i64 {
+    SVBOOL(S, vi, b);
+    var pi = _gv_prior(S, L64(_varn_base + vi * 8), vi, _gv_owner(S, ti));
+    if (pi < 0) { return 0 - 1; }
+    if (_gv_same_shape(S, pi, vi) == 0) { return 0 - 2; }
+    return pi;
+}
+
+# Register one untyped-or-`ty` 8-byte top-level global (a destructure target) through the
+# fold, stamp it and count it. Returns the slot.
+fn _gv_reg8(S, noff, ty, ti): i64 {
+    var vi = GVCNT(S);
+    S64(_varn_base + vi * 8, noff);
+    S64(_vars_base + vi * 8, 8);
+    if (ty != 0) { SVTYPE(S, vi, ty); }
+    var gi = _gv_fold(S, vi, ti);
+    _GVAR_VIS(S, gi, ti);
+    if (gi == vi) { SVCNT(S, vi + 1); }
+    return gi;
+}
+
+# THE VALUE RULE — "last definition wins", which the collision warning (CHKDUPVAL) has always
+# promised and which is how duplicate fns resolve. In the declaration zone (before the first
+# top-level statement) a redeclaration whose initializer folds to an integer constant is not
+# code, it is the global's value FROM PROGRAM START: every read sees it, including an
+# initializer that sits between the two declarations. So an earlier deferred initializer of
+# the name must no longer assign — it still RUNS (its side effects are kept), into a
+# discarded sink (_gv_target). A computed redeclaration runs in declaration order like every
+# deferred initializer. The flag lives above the 40-bit token index in the gvar_toks entry:
+# bit 40+k = target k of that entry (k = 1, 2 for a destructure's later names).
+#
+# 6.6.9: the entries naming `noff` come from a per-name list built at registration
+# (_gvx_note), not from a scan of every deferred entry. The scan was O(entries) per constant
+# redeclaration, bounded only by the 4096-entry cap this release lifted — past it, a unit of
+# redeclared constants would have been the next quadratic shape. The list records the same
+# names the scan compared (target 0 always; targets 1 and 2 only behind a `,`), so the same
+# bits get set. CHANGELOG [6.6.9]
+#
+# 6.6.16 (C1): an array list is a constant initializer too — baked, the value from program start —
+# so a list redeclaring a slot supersedes the name's earlier deferred initializers the same way
+# (`lists` = 1): `var a = 0; var a[1] = {0, 3};` is 0x300, and `var a = f(); var a[1] = {7};`
+# runs f() into a sink. An earlier LIST is left alone (two lists overlay in order, the shared
+# blob). A constant scalar redeclaration (`lists` = 0) supersedes every earlier entry, lists
+# included: it wins whole. CHANGELOG [6.6.16]
+# 6.7.16: and marks it with bit 43 — a scalar constant came after it, so a later list's seed is that
+# constant's static init, not this entry's fold (_gai_seed). CHANGELOG [6.7.16]
+fn _gv_supersede(S, noff, lists): i64 {
+    if (_gvx_m == 0) { return 0; }
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var v = load64(_gvx_rec + (e - 1) * 8);
+        var a = _gvt(S) + (v >> 2) * 8;
+        var keep = 0;
+        if (lists == 1) { keep = _gai_is_list(S, _gv_tok(L64(a))); }
+        if (keep == 0) { S64(a, L64(a) | ((1 << (v & 3)) << 40)); }
+        if (lists == 0) { S64(a, L64(a) | (8 << 40)); }
+        e = load64(_gvx_nxt + (e - 1) * 8);
+    }
+    return 0;
+}
+
+# The per-name list of deferred-entry targets: name -> newest record + 1 (a name map, see
+# _nm_new in parse/types.cyr); record r = entry * 4 + target, chained through _gvx_nxt.
+var _gvx_m = 0;
+var _gvx_rec = 0;
+var _gvx_nxt = 0;
+var _gvx_n = 0;
+var _gvx_cap = 0;
+fn _gvx_grow(): i64 {
+    if (_gvx_cap == 0) {
+        _gvx_m = _nm_new(4096);
+        _gvx_cap = 4096;
+        _gvx_rec = alloc(4096 * 8);
+        _gvx_nxt = alloc(4096 * 8);
+        return 0;
+    }
+    _gvx_rec = _grow_one(_gvx_rec, _gvx_cap);
+    _gvx_nxt = _grow_one(_gvx_nxt, _gvx_cap);
+    _gvx_cap = _gvx_cap * 2;
+    return 0;
+}
+fn _gvx_rec1(S, gi, k, noff): i64 {
+    if (_gvx_n >= _gvx_cap) { _gvx_grow(); }
+    var r = _gvx_n;
+    store64(_gvx_rec + r * 8, gi * 4 + k);
+    store64(_gvx_nxt + r * 8, _nm_get(S, _gvx_m, noff));
+    _nm_put(S, _gvx_m, noff, r + 1);
+    _gvx_n = r + 1;
+    return 0;
+}
+# Record the names deferred entry `gi` (at `sti`, the `var` token) assigns.
+fn _gvx_note(S, gi, sti): i64 {
+    _gvx_rec1(S, gi, 0, TOKVAL(S, sti + 1));
+    if (TOKTYP(S, sti + 2) == 31) {
+        _gvx_rec1(S, gi, 1, TOKVAL(S, sti + 3));
+        if (TOKTYP(S, sti + 4) == 31) { _gvx_rec1(S, gi, 2, TOKVAL(S, sti + 5)); }
+    }
+    return 0;
+}
+
+fn _gv_tok(raw): i64 { return raw & ((1 << 40) - 1); }
+fn _gv_sup(raw): i64 { return raw >> 40; }
+
+# The slot a replayed initializer stores into: its global, or — when a later constant
+# declaration superseded target `k` — a fresh dead sink of the same shape, so the
+# initializer still runs and its result is discarded. The sink is an _HTEMP slot (the
+# replay runs at top level, where _HTEMP registers a dead, unnamed global) resized to the
+# global's shape.
+fn _gv_target(S, idx, sup, k): i64 {
+    if (idx < 0) { return idx; }
+    if (((sup >> k) & 1) == 0) { return idx; }
+    var vi = 0 - 2 - _HTEMP(S);
+    S64(_vars_base + vi * 8, L64(_vars_base + idx * 8));
+    SVTYPE(S, vi, GVTYPE(S, idx));
+    SVSGN(S, vi, GVSGN(S, idx));
+    if (GVPM(S, idx) != 0) { SVPM(S, vi, GVPM(S, idx)); }
+    return vi;
+}
+
+# SLVAR for a replayed initializer — never a sink (the no-main exit value reads "last var").
+fn _gv_slvar(S, idx): i64 {
+    if (GVDEAD(S, idx) == 0) { SLVAR(S, idx); }
+    return 0;
+}
+
+# The slot(s) each deferred entry DECLARED, recorded when it is registered and read back by
+# the replay — which used to re-resolve the name with FINDVAR at replay time and so could
+# land on a LATER declaration of it (a kernel build replays after the top-level program has
+# registered its own globals). Packed as slot+1 in 21-bit fields, target k at bit 21*k
+# (0 = unrecorded -> FINDVAR). Parallel to gvar_toks, allocated on first use.
+# 6.6.9: grown with gvar_toks (2x by alloc + copy), no longer fixed at 4096 entries. A slot
+# field is 21 bits and the var table's hard cap is 2^20 slots, so slot+1 always fits.
+var _gv_ent_base = 0;
+var _gv_ent_cap = 0;
+fn _gv_ent_set(gc, packed): i64 {
+    if (_gv_ent_base == 0) { _gv_ent_base = alloc(4096 * 8); _gv_ent_cap = 4096; }
+    if (gc >= _gv_ent_cap) { _gv_ent_base = _grow_one(_gv_ent_base, _gv_ent_cap); _gv_ent_cap = _gv_ent_cap * 2; }
+    store64(_gv_ent_base + gc * 8, packed);
+    return 0;
+}
+fn _gv_ent_slot(S, gi, k, noff): i64 {
+    var w = 0;
+    if (gi < _gv_ent_cap) { w = (load64(_gv_ent_base + gi * 8) >> (21 * k)) & 0x1FFFFF; }
+    if (w == 0) { return FINDVAR(S, noff); }
+    return w - 1;
+}
+
+# Hide the top-level program's globals from FINDVAR while the replay runs (on = 1) or stop
+# (on = 0). Only a kernel build sets _gv_zone_top (main.cyr): every other build replays before
+# the program has registered anything. Globals the replay itself registers (sinks, hidden
+# temps) sit above the range and stay visible. See _fv_hidden (parse/types.cyr).
+fn _gv_hide_program(S, on): i64 {
+    _fv_hide_lo = 0;
+    _fv_hide_hi = 0;
+    if (on == 1) { if (_gv_zone_top > 0) { _fv_hide_lo = _gv_zone_top; _fv_hide_hi = GVCNT(S); } }
+    return 0;
+}
+
+# The store of a replayed global initializer (and of cx's prestore), at the slot's width.
+# Narrow scalar globals are PACKED in the var area, so the 8-byte EVSTORE both sites used
+# wrote the value's upper bytes over the next 7/6/4 bytes of globals: `var a: u8 = 0;
+# var b: u8 = 7;` read b as 0, because b's image value was laid down before the program ran
+# and a's replayed store then zeroed it. Sign does not matter here; the load side sign-extends
+# (GVSGN). Not _asg_store_slot: that warns on narrowing, which a declaration does not, and SLVARs
+# again. CHANGELOG [6.6.13]
+# 6.7.7 — every width under 8 goes to EVSTORE_W, which stores a 3 / 5 / 6 / 7-byte width exactly now
+# (`_ESTORE_ODD_RCX`) where it fell back to the 8-byte store. No declaration reaches here at such a
+# width today (a struct global initialised from an expression is registered at 8 bytes; a literal is
+# laid down field by field), so this keeps "at the slot's width" true for every width. CHANGELOG [6.7.7]
+fn _gv_store(S, vi): i64 {
+    var w = L64(_vars_base + vi * 8);
+    if (w > 0) { if (w < 8) { EVSTORE_W(S, vi, w); return 0; } }
+    EVSTORE(S, vi);
+    return 0;
+}
+# The declaration-zone replay's store of an initializer just parsed (EMIT_GVAR_INITS): an f64 value
+# into an `f32` global rounds first (_f32_init_round, parse/expr.cyr). Not in `_gv_store`, whose cx
+# constant prestore runs with no expression parsed. CHANGELOG [6.7.6]
+fn _gvi_store(S, vi): i64 {
+    if (GVW128(S, vi) == 1) { _w128_init_place(S, 2, vi); _gv_slvar(S, vi); return 0; }   # 6.7.6 (D2)
+    _f32_init_round(S, GVTYPE(S, vi));
+    _gv_store(S, vi);
+    _gv_slvar(S, vi);
+    return 0;
+}
+
+# The initial value of a 16-byte LOCAL (PARSE_VAR; canonical slot `lc`, the high half in the slot
+# above it; `ann` = the annotation's type token). ⛔ 6.7.6 (Break 1, D2) — a `u128` takes the whole
+# value (_w128_init_place): a u128 source (a u128 variable, a `+` / `-` result) all 16 bytes, an
+# integer zero-extended. It stored the value into BOTH halves — `var a: u128 = 5;` had a high word
+# of 5, `var a: u128 = c;` c's low word twice — while a global got 0 (the high half). The slot is
+# marked (SLW128) last, after the registration's SLAGG. A slice keeps its store: the value into
+# both words (`var s: [u8] = 0;`).
+# Both halves are written through the ADDRESS (`&canonical + 8` is the high half): the regalloc
+# picker counts `mov [rbp+disp32], rax` per slot to decide what to pin to a callee-saved register,
+# and the nameless high half has no other reference — an EFLSTORE to it would be patched into a
+# register move and leave the stack slot unwritten. A `lea` keeps a slot in memory.
+fn _w16_local_init(S, lc, ann): i64 {
+    _ann_refd_bind_l(S, lc);   # 6.7.16: a refused slice element's stand-down is this slot's
+    if (TOKTYP(S, ann) == 105) {
+        _w128_init_place(S, 1, lc);
+        SLW128(S, lc);
+        return 0;
+    }
+    EPUSHR(S);                 # the value
+    EFLADDR_X1(S, lc);         # rcx = &slice
+    EADDIMM_X1(S, 8);          # rcx = &slice + 8 (the high half)
+    EPOPR(S);
+    ESTOC(S);
+    EFLSTORE(S, lc);           # the canonical slot (.ptr) — address-taken by slice_set / slice_ptr
+    return 0;
+}
+# The same for a 16-byte GLOBAL after the first top-level statement (PARSE_VAR): a u128 whole, a
+# slice's first word (its high half is zero in the image). 6.7.6 (D2)
+fn _w16_global_init(S, vi, st, ann): i64 {
+    if (st == 16) { if (TOKTYP(S, ann) == 105) {
+            _w128_init_place(S, 2, vi);
+            return 0;
+        } }
+    EVSTORE(S, vi);
+    return 0;
+}
+
+# cx bakes no scalar into its .cyx var data (cxvm copies it into the guest; only 6.6.16's array
+# lists are written there, main_cx.cyr), so the static-init value every constant global records in
+# gvar_initval (_vgsi_base) is stored HERE, at startup, ahead of every deferred initializer — the
+# "from program start" the file image gives the other five targets. That covers a plain constant
+# global (PARSE_GVAR_REG's static-init path, which cx takes like every target since 6.7.9), a
+# constant redeclaration or shadow, and the enum-named scalars _gvk_pre folds (since 6.7.14 not
+# replayed where the image value is theirs, _gvk_quiet, on every target). A forward read agrees with
+# the image targets
+#
+#     var b = a;      # 5 on every target
+#     var a = 5;
+#
+# and a static-init value is never computed again at run time (`var Q = INT_MIN / -1;` trapped
+# in cxvm's `idiv` while cx alone replayed it). CHANGELOG [6.6.6] [6.7.9]
+#
+# 6.6.16 (C1): a slot a leading-block array list writes is left to the .cyx var data, where the
+# list is baked (main_cx.cyr) — its blob was seeded with this constant (_gai_cx_blobs).
+fn _gv_cx_prestore(S): i64 {
+    _gai_cx_blobs(S);
+    var n = GVCNT(S);
+    var vi = 0;
+    while (vi < n) {
+        var v = L64(_vgsi_base + vi * 8);
+        if (v != 0) { if (GVGAI(S, vi) == 0) { EMOVI(S, v); _gv_store(S, vi); } }
+        vi = vi + 1;
+    }
+    return 0;
+}
+
+# 6.6.9 — gvar_toks, the deferred-initializer table, GROWS. It was the last fixed table of the
+# var family: 4096 entries at 0x729000, refused past that with "too many initialized globals
+# (max 4096)". The message was wrong about what it counted — every global that does not take
+# the static-init path registers here, which is not only a computed initializer but also a
+# bare `var x;`, `var x = 0;` and a string literal (static init takes a NONZERO constant only,
+# because gvar_initval uses 0 as "no value") — and the cap stood between the filed 20,000-
+# global repro and passing. The region at 0x729000 is still the first 4096 entries (no layout
+# change); the 4097th moves the table to alloc'd storage and it doubles from there, the
+# _grow_one shape. (6.6.6's "the cap error stores anyway" defect has no cap left to overrun.)
+# CHANGELOG [6.6.9]
+var _gvt_base = 0;
+var _gvt_cap = 0;
+fn _gvt(S): i64 {
+    if (_gvt_base == 0) { _gvt_base = S + 0x729000; _gvt_cap = 4096; }
+    return _gvt_base;
+}
+# Register a deferred initializer: `sti` is its `var` token, `packed` the slot(s) it declares
+# (see _gv_ent_set). Every registration site goes through here.
+fn _gv_defer(S, sti, packed): i64 {
+    var gc = L64(S + 0x19A000);
+    var b = _gvt(S);
+    if (gc >= _gvt_cap) { b = _grow_one(b, _gvt_cap); _gvt_base = b; _gvt_cap = _gvt_cap * 2; }
+    S64(b + gc * 8, sti);
+    _gv_ent_set(gc, packed);
+    _gvx_note(S, gc, sti);
+    S64(S + 0x19A000, gc + 1);
+    return 0;
+}
+
+# Skip ONE top-level `var` declaration: consume through the `;` that ENDS it, which is the
+# first `;` outside every `{ }`. A declaration-zone `var` is only registered by pass 1 and
+# stepped over by pass 2 — its initializer is compiled later by EMIT_GVAR_INITS — so both
+# passes need to know where it stops. They used to stop at the FIRST `;`, and a block-bodied
+# closure `var f = |x| { return 7; };` carries one inside its body: both passes then stopped
+# in the middle of the closure, at its `}`, which ends every top-level loop — so every
+# statement after the declaration vanished from the binary with no diagnostic. Only BRACE
+# depth counts: a `;` inside parens or brackets alone is never valid, and stopping there keeps
+# a malformed `var x = f(1;` from swallowing the rest of the file. EOF stops the walk.
+# CHANGELOG [6.6.6]
+# ⛔ 6.7.17 — AND AT A DECLARATION THE ENTRY'S `;` IS MISSING BEFORE (`_gv_entry_cut`): `var g = 1` then `fn f1() ..`
+# stepped to the `;` of the first statement, so f1 and f2 were never registered or parsed and their errors never
+# reported, and `var h = zz;` after it was no entry of its own. The replay reports the `;` there. `sti` is the entry's
+# own `var`. CHANGELOG [6.7.17]
+fn _skip_gvar_decl(S, sti): i64 {
+    var bd = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }
+        if (bd <= 0) { if (_gv_entry_cut(S, sti) == 1) { return 0; } }
+        STI(S, GTI(S) + 1);
+        if (t == 13) { bd = bd + 1; }
+        elif (t == 14) { bd = bd - 1; }
+        elif (t == 5) { if (bd <= 0) { go = 0; } }
+    }
+    return 0;
+}
+# 1 = the cursor, at depth 0 in the zone `var` entry from token `sti` (or a const's, `_cst_skip_decl`), ends it: a
+# declaration keyword that begins a later line than the token before it — fn (not a `*fn(` type's), async fn, var,
+# const, struct, enum, union, impl, trait, mod, use, pub, private, or a top-level directive (#assert, #pe_import, the
+# fn attributes, `#deprecated(".."`). None of them is ever inside an initializer at depth 0 (a closure's body is depth
+# 1), so a valid entry never ends early. CHANGELOG [6.7.17]
+fn _gv_entry_cut(S, sti): i64 {
+    var ti = GTI(S);
+    if (ti <= sti) { return 0; }
+    if (GTLINE(S, ti) <= GTLINE(S, ti - 1)) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t == 3 || t == 168 || t == 40 || t == 60 || t == 101) { return 1; }
+    if (t == 77 || t == 167 || t == 72 || t == 74 || t == 73 || t == 153) { return 1; }
+    if (t == 32) { return _tok_fn_kw(S, ti); }
+    if (t == 134) { if (TOKTYP(S, ti + 1) == 32) { return 1; } }
+    if (t == 107 || t == 110 || _tl_flag_tok(t) == 1) { return 1; }
+    if (t == 124) { if (TOKTYP(S, ti + 1) == 10) { if (TOKTYP(S, ti + 2) == 30) { return 1; } } }   # `?` shares it
+    return 0;
+}
+
+# 6.6.10 — the untyped-float flag for a global registered here (see _UFV_G, parse/expr.cyr).
+# No code is emitted for the initialiser yet, so its SHAPE decides: after any leading `-` / `(`,
+# a float literal, a float builtin, a call to a `: f64` fn, or a lone f64 / f32 / flagged
+# global. `typed` is the sum of the declaration's (non-negative) annotation channels.
+fn _gv_ufv(S, sti, typed): i64 {
+    if (typed != 0) { return 0; }
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var ti = sti + 3;
+    while (TOKTYP(S, ti) == 7 || TOKTYP(S, ti) == 10) { ti = ti + 1; }
+    var t = TOKTYP(S, ti);
+    if (t == 61) { return 1; }
+    if (_NEG_INTRIN_KIND(t) != 0) { return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 10) {
+        var fi = FINDFN(S, TOKVAL(S, ti));
+        if (fi < 0) { return 0; }
+        if (GFRS(S, fi) == 0 - 9) { return 1; }
+        return 0;
+    }
+    if (TOKTYP(S, ti + 1) != 5) { if (TOKTYP(S, ti + 1) != 11) { return 0; } }
+    # ⚠ _findvar_core, NOT FINDVAR: this is a DECLARATION-time peek, and FINDVAR's cross-file
+    # `private` check turns it into an accusation (private_does_not_block_own_declaration.sh).
+    var vi = _findvar_core(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt == F64_TYID) { return 1; }
+    if (gt == F32_TYID) { return 1; }
+    if (_gfi_base == 0) { return 0; }
+    return load8(_gfi_base + vi);
+}
+# ⛔ 6.6.11 — AN UNTYPED `var` COPIED FROM A DECLARED f64 / f32 VALUE STAYED i64. `var t = p.y;`
+# (p.y an f64 field), `var t = y;` (y an f64 local or param) and `var t = G;` (G an f64 global)
+# left `t` untyped, so `t + t` was an INTEGER add of two bit patterns — silent; only `-t` drew
+# kind 3. The v6.5.21 rule (`var t = f();` with f `: f64` types t) now reaches a pure COPY of a
+# declared float: the initialiser is exactly `IDENT` or `IDENT(.IDENT)+` and its value is typed
+# F64/F32. Deliberately NARROW: a literal (`var z = 0.0;`), a float builtin (`f64_sqrt(u)`) and
+# any arithmetic stay untyped — inferring those would turn `==` / `<` on existing code into
+# float compares (NaN, ±0). Returns the type to stamp, else 0. CHANGELOG [6.6.11]
+fn _decl_float_copy(S, ti, end): i64 {
+    var t = GESTYPE(S);
+    if (t != F64_TYID) { if (t != F32_TYID) { return 0; } }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    ti = ti + 1;
+    while (ti < end) {
+        if (TOKTYP(S, ti) != 41) { return 0; }
+        if (TOKTYP(S, ti + 1) != 2) { return 0; }
+        ti = ti + 2;
+    }
+    if (ti != end) { return 0; }
+    return t;
+}
+# The same judgement for a global at REGISTRATION, where no code has been emitted and the shape
+# decides: `= G ;` with G an f64 / f32 global, or `= G.f(.f)* ;` through a struct global whose
+# leaf field is declared f64 / f32. Stamps the type (and clears the untyped-float flag) on a
+# NEW slot only — a redeclaration keeps the slot it folded onto. CHANGELOG [6.6.11]
+fn _gv_float_copy(S, gvi, sti, typed): i64 {
+    if (typed != 0) { return 0; }
+    if (gvi != GVCNT(S)) { return 0; }
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var ti = sti + 3;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var vi = _findvar_core(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    var t = GVTYPE(S, vi);
+    if (TOKTYP(S, ti + 1) == 41) { t = _gv_field_chain(S, vi, ti + 1); ti = _gfc_end; }
+    else { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 5) { return 0; }
+    if (t != F64_TYID) { if (t != F32_TYID) { return 0; } }
+    SVTYPE(S, gvi, t);
+    SGFI(S, gvi, 0);
+    return 0;
+}
+# `.f(.f)*` from token `ti` on struct global `vi`: the leaf's float type (F64_TYID / F32_TYID)
+# or 0; `_gfc_end` is the token after the chain.
+var _gfc_end = 0;
+fn _gv_field_chain(S, vi, ti): i64 {
+    _gfc_end = ti;
+    if (GVPM(S, vi) == 0) { return 0; }
+    var si = GVTYPE(S, vi) - 1;
+    if (si < 0) { return 0; }
+    var k = 0;
+    while (TOKTYP(S, ti) == 41) {
+        if (TOKTYP(S, ti + 1) != 2) { return 0; }
+        if (k != 0) { return 0; }   # a float field is a leaf
+        if (si < 0) { return 0; }
+        var fi = FINDFIELD(S, si, TOKVAL(S, ti + 1));
+        if (fi < 0) { return 0; }
+        k = GFFK(S, si, fi);
+        si = GETFTYPE(S, si, fi) - 1;
+        ti = ti + 2;
+    }
+    _gfc_end = ti;
+    if (k == 1) { return F64_TYID; }
+    if (k == 2) { return F32_TYID; }
+    return 0;
+}
+# 6.6.10 — `var G: f64 = 1;` at registration: the same integer-constant judgement as a local
+# (_IFS_CHECK), over `= <expr> ;`, reported at the initialiser. The cursor is restored.
+fn _gv_ifs(S, sti, ann_float): i64 {
+    var ti = sti + 5;
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    var end = ti + 1;
+    if (TOKTYP(S, end) != 5) { end = ti + 2; }
+    if (TOKTYP(S, end) != 5) { return 0; }
+    var g = GTI(S);
+    STI(S, end);
+    _IFS_CHECK(S, _IFS_K(ann_float), ti);
+    STI(S, g);
+    return 0;
+}
+
+# The token after a struct annotation's name: `<...>` on a GENERIC struct is parsed and the
+# instance `Box$ty` instantiated (deduped), and its sid returned; the base `sid` when every arg
+# is i64 or unresolved (the base IS the all-i64 instance), or when there is no `<`, or when the
+# struct is not generic (SKIP_GENERICS). `sid` <= 0 skips the args and returns it. A `<..>` on a
+# non-generic struct or a scalar is refused at the name first (6.7.15 D6, `_ngt_refuse`).
+# v6.3.10 in PARSE_VAR; ⛔ 6.6.11 PARSE_GVAR_REG and the EMIT_GVAR_INITS replay share it — the
+# declaration-zone global registered `var G: W1<Pt>` as the 8 B BASE, so `G.v.x` did not parse
+# and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
+fn _gen_ann_sid(S, sid): i64 {
+    if (sid <= 0) { _vec_ann_chk(S, GTI(S) - 1, _vec_ann_vn(S, GTI(S) - 1)); }   # 6.7.11: `Vec<T>` reads T
+    if (_MONOMORPH_OK != 1) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.17 (D6, D102): `U<i8>`, `Pt<i64>`
+    if (sid <= 0) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.15 (D6): `i64<..>`
+    if (PEEKT(S) != 19) {
+        if (GSTP(S, sid - 1) != 0) { _bnd_sbase(S, sid); }   # 6.7.1 (C3): a bare `Box` is its i64 base
+        return sid;
+    }
+    if (GSTP(S, sid - 1) == 0) { _ngt_refuse(S, GTI(S) - 1); SKIP_GENERICS(S); return sid; }   # 6.7.15 (D6): `Pt<..>`
+    var lit = 1;
+    if (_bnd_quiet == 0) { lit = _targs_literal(S, GTI(S) + 1); }   # 6.7.1 (C3): `Box<i64>` written out
+    STI(S, GTI(S) + 1);                 # consume `<`
+    _ta_pending_gt = 0;
+    # v6.3.33: conc0 [, conc1] via _parse_one_type_arg (a NESTED generic type-arg is
+    # instantiated → its instance sid).
+    var c0 = _parse_one_type_arg(S);
+    var c1 = _ta_rest_s(S, sid);          # `,` — 6.7.16 (D5): as many as the struct declares
+    _consume_gt(S);                       # the closing `>` (or `>>` tail)
+    # v6.3.37 (B1 half-A): c0 == 0 is an UNRESOLVED type parameter (`var p: Pair<T>` in a
+    # generic body) = the base all-i64 instance, as the return-type classification treats it,
+    # so the local keeps the base sid and matches _cur_fn_ret_sid. -8 is i64.
+    var inst = 0;
+    if (c0 != 0 - 8) { if (c0 != 0) { inst = 1; } }
+    if (c1 != 0) { if (c1 != 0 - 8) { inst = 1; } }
+    if (inst == 0) {
+        if (lit == 1) { _bnd_sbase(S, sid); }   # 6.7.1 (C3)
+        return sid;
+    }
+    var g = _instantiate_generic_struct(S, sid - 1, c0, c1);
+    if (g > 0) { return g; }
+    return sid;
+}
+
+# ⛔ 6.6.12 — THE STRUCT LITERAL HEAD, `Name {` or `Name<args> {`. A generic struct's literal
+# (`Box<Pt> { p, 5 }`, `Box<i64> { 7, 5 }`) was never recognised: the three heads (PARSE_VAR,
+# PARSE_GVAR_REG's lookahead, the EMIT_GVAR_INITS replay) committed only on `IDENT {`, so it
+# parsed as an expression and failed with "undefined variable 'Box'". Cursor on the name: the
+# struct id — the INSTANCE for `<args>`, resolved by `_gen_ann_sid` exactly as the annotation
+# `var b: Box<Pt>` is, so the two compare equal — with the cursor on the head's LAST token (the
+# name, or the closing `>`) so the caller's one-token step lands on `{`. 0 = not a literal head,
+# cursor untouched. (`{` cannot follow an expression, so `Name < a > {` is never a comparison.)
+# CHANGELOG [6.6.12]
+fn _lit_head(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    var sid = FINDSTRUCT(S, PEEKV(S));
+    if (sid <= 0) { return 0; }
+    var ti = GTI(S);
+    if (TOKTYP(S, ti + 1) == 13) { return sid; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var e = _targs_end(S, ti + 2);
+    if (TOKTYP(S, e + 1) != 13) { return 0; }
+    STI(S, ti + 1);
+    sid = _gen_ann_sid(S, sid);
+    STI(S, e);
+    return sid;
+}
+# ⛔ 6.7.14 — PARENTHESES AROUND A WHOLE STRUCT LITERAL INITIALIZER ARE TRANSPARENT (the user's decision D12 (a),
+# 2026-10-16; 6.7.6's rule for a whole struct source, 6.7.13's D19): `var q: P = (P { 5, 6 });` is the literal
+# initializer, in a fn and in either zone. It was "undefined variable 'P'" and "expected ')'" (four errors in a
+# fn). `_lit_head` after stepping a wrap that holds exactly the literal and ends at the `;` (`_slit_wrap_k`):
+# `_slit_pk` is its `(` count, closed by `_slit_unwrap` before the `;`; with no literal the cursor is put back.
+# CHANGELOG [6.7.14]
+var _slit_pk = 0;
+fn _lit_head_w(S): i64 {
+    _slit_pk = 0;
+    if (PEEKT(S) != 10) { return _lit_head(S); }
+    var st = GTI(S);
+    var k = _slit_wrap_k(S, st);
+    if (k == 0) { return 0; }
+    STI(S, st + k);
+    var sid = _lit_head(S);
+    if (sid <= 0) { STI(S, st); return 0; }
+    _slit_pk = k;
+    return sid;
+}
+# 1 = the cursor can open a literal head: a name, or a wrap's `(`.
+fn _lit_head_tok(S): i64 {
+    if (PEEKT(S) == 2) { return 1; }
+    if (PEEKT(S) == 10) { return 1; }
+    return 0;
+}
+# The same, a peek: the cursor and `_slit_pk` are left as they were (pass 1's registration).
+fn _lit_head_p(S): i64 {
+    var st = GTI(S);
+    var sid = _lit_head_w(S);
+    _slit_pk = 0;
+    STI(S, st);
+    return sid;
+}
+# The `(` count of the wrap at token `st` when it holds exactly a literal `Name { .. }` / `Name<..> { .. }`
+# and ends at a `;`; 0 otherwise (a tuple literal is no wrap). `_pw_end` is kept. Reads tokens only.
+fn _slit_wrap_k(S, st): i64 {
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, st);
+    var e = _pw_end;
+    _pw_end = pe;
+    if (TOKTYP(S, e) != 5) { return 0; }
+    if (TOKTYP(S, st + k) != 2) { return 0; }
+    var o = st + k + 1;
+    if (TOKTYP(S, o) == 19) { o = _targs_end(S, o + 1) + 1; }
+    if (TOKTYP(S, o) != 13) { return 0; }
+    if (_slit_close(S, o) != e - k - 1) { return 0; }
+    return k;
+}
+# ⛔ 6.7.17 — A STRUCT LITERAL WITH ELEMENTS PAST ITS LAST FIELD IS ONE ERROR (met in issues/2026-10-21-str-shapes-beyond-
+# d19-d20-d71-d73.md, D98's probes): `P2 { 1, 2, 3, 4 }` was "expected '}', got number 3" and then, the close having
+# taken the `3` for its `}` and the declaration the `,` for its `;`, the literal's own `}` closed the fn — "unexpected
+# ';'" and "return outside a fn body" (one element too many happened to land on the `}`; a refused element ahead of
+# them, `OP { q, 1, 2, 3 }`, the same two). The literal's body parsed, the cursor on its `}`: consumed. Else the report,
+# and a skip to the `}` that closes the literal (nesting counted, never past a `;` at depth 0), consumed. CHANGELOG [6.7.17]
+fn _slit_rbrace(S): i64 {
+    if (PEEKT(S) != 14) {
+        ERR_EXPECT(S, 14);
+        var d = 0;
+        while (PEEKT(S) != 12) {
+            var t = PEEKT(S);
+            if (d == 0) { if (t == 14 || t == 5) { break; } }
+            if (t == 10 || t == 13) { d = d + 1; }
+            if (t == 11 || t == 14) { d = d - 1; }
+            STI(S, GTI(S) + 1);
+        }
+        if (PEEKT(S) != 14) { return 0; }
+    }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# The literal's body was parsed: its wrap's `)`s, before the declaration's `;`.
+fn _slit_unwrap(S): i64 {
+    var k = _slit_pk;
+    _slit_pk = 0;
+    if (k > 0) { _pw_close(S, k); }
+    return 0;
+}
+# An annotated `var p: T = U { .. }` must agree (`pscale` = `0 - sid` for a struct annotation).
+# 6.6.5 in PARSE_VAR; 6.6.12 the declaration-zone global too, which ignored the annotation.
+fn _lit_ann_check(S, pscale, sid, isbool): i64 {
+    if (isbool == 1) {   # 6.7.3: `var b: bool = P { .. };` — a struct is not a boolean value
+        ERR_MSG(S, "a struct literal cannot initialize a bool (a bool takes true / false, a comparison, !x, && / || or another bool)", 112);
+        return 0;
+    }
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if ((0 - pscale) == sid) { return 0; }
+    ERR_MSG(S, "struct literal type does not match the declared type of this variable", 69);
+    return 0;
+}
+
+# ⛔ 6.6.17 (a3) — A VECTOR-TYPED GLOBAL OWNS THE VECTOR. `var g: f64v2 = 0;` (either zone) was ONE
+# 8-byte slot: `f64v2_add(&g, &h)` wrote its 16 bytes over the next global, and `g = f64v2_make(..)`,
+# `var v: f64v2 = g;` and `g = v;` each moved one word of it, silently. The global now takes the
+# vector's 16 / 32 bytes and is marked (SVVEC). It is used through its ADDRESS — `&g` with the
+# `*_ptr` forms, which the parser already routes `f64v2_add(&g, &h)` to; a value-form read or
+# write of it would carry one 8-byte word, so each is refused by name (`_vecg_refuse`), as a
+# value-form vector ARGUMENT is ("must be a local IDENT"). `desc` <= -2048 is a vector descriptor;
+# anything else keeps the 8-byte slot. CHANGELOG [6.6.17]
+fn _vecg_size(S, vi, desc): i64 {
+    S64(_vars_base + vi * 8, 8);
+    if (desc > 0 - 2048) { return 0; }
+    _vec_desc(S, desc);
+    var n = GVEC_NSLOTS(S);
+    if (n < 1) { return 0; }
+    S64(_vars_base + vi * 8, n * 8);
+    SVVEC(S, vi, n);
+    _gv_vvd_set(vi, 0 - desc - 2048);   # 6.7.13: its vector, for `*&G`
+    return 0;
+}
+# The initializer of a vector global: only a constant 0 (the image is zero) — any other value
+# would be stored as one word. `has` / `v` = the declaration's constant fold (PARSE_GVAR_REG).
+# 6.7.16: `rhs` its first token, 0 with no `=` — `var c: f64v2;` has none to refuse: it is the one "uninitialized
+# variable not allowed" (it added "takes no initializer but 0" first). CHANGELOG [6.7.16]
+fn _vecg_init_ok(S, has, v, noff, rhs): i64 {
+    if (rhs == 0) { return 0; }
+    if (has == 1) { if (v == 0) { return 0; } }
+    ERR_IDENT(S, "vector global ", noff, " takes no initializer but 0; set it through its address (`&g` with a `*_ptr` form)", 0 - 1);
+    return 0;
+}
+# A value-form read or write of global `vi`: refused when it is a vector global (see above).
+fn _vecg_refuse(S, vi): i64 {
+    if (GVVEC(S, vi) == 0) { return 0; }
+    ERR_IDENT(S, "vector global ", L64(_varn_base + vi * 8), " is read and written through its address (`&g` with a `*_ptr` form); a value-form vector is a local", 0 - 1);
+    return 1;
+}
+# ⛔ 6.7.16 — `var c: S;` AT TOP LEVEL (PARSE_VAR, after the first statement; an uninitialized struct or vector, which
+# only a fn's frame holds) is refused IN SYNC, at its `;` — the refusal latched with no mark, so the resync skipped
+# the next statement — and declares nothing: it registered a fn-local slot no top-level use reads, so each use of
+# `c` added "undefined variable 'c'". `c` is entered as reported (`_dl_var_refd_add`): its uses stand down. The `;`
+# is stepped. CHANGELOG [6.7.16]
+fn _usl_top(S, noff): i64 {
+    _refuse_in_sync(S);
+    ERR_MSG(S, "uninitialized struct locals only allowed inside a function", 58);
+    _dl_var_refd_add(S, noff);
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# The declaration ladder's named-type head (`_tn_head`, cursor on the annotation). 6.7.8 (C2-6a): a
+# slice is refused by name (the user's decision, 2026-10-10: "a slice declared in the declaration
+# zone" — `var GS: [u8] = 0;` was `expected '=', got identifier 'u8'`, `slice<u8>` "unknown type
+# 'slice'") and consumed to its last token, which the ladder steps past: the global is a plain word,
+# so its uses do not cascade. A top-level slice AFTER the first statement is PARSE_VAR's and keeps
+# compiling (used through slice_ptr(&GS) / slice_len(&GS)).
+fn _gvar_ann_head(S, noff): i64 {
+    var ti = GTI(S);
+    if (_sl_ann_at(S, ti) == 0) { return _tn_head_var(S, noff); }   # 6.7.14 (D15 (a)): a non-type refused
+    _sl_err(S, ti, "a slice cannot be declared in the declaration zone (6.7.8: slices are fn-locals)",
+      " - declare it in a fn; a top-level slice after the first statement is used through slice_ptr / slice_len");
+    _sl_ann_skip(S);
+    STI(S, GTI(S) - 1);
+    return 0;
+}
+# A declaration with no `=` where its initializer belongs (the cursor there; PARSE_VAR, EMIT_GVAR_INITS): a bare
+# `var X;` is "uninitialized variable not allowed", any other token "expected '='". A `;` the annotation reported
+# already (`var b: ;`, `_tn_head_var`) is that one error: the statement is latched quietly, as the refusal latches it.
+# CHANGELOG [6.7.15]
+# 6.7.16: at a `;` the refusal is in sync — PARSE_VAR ends the declaration at that `;` (`_var_eq_step`) — so it marks
+# where (`_pair_sync_ti`, read by `_stmt_resync`); the annotation's own report at the `;` latched already, so that arm
+# marks unconditionally. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AND NOT AFTER A REFUSED ANNOTATION: `var q: Q;` (Q a refused late struct) and `var q: Foo;` added
+# "uninitialized variable not allowed" to the annotation's error — the refusal left the variable a plain word, which
+# the rule reads as a scalar with no value; a struct local takes no initializer. The annotation was refused and names
+# no type (`_decl_ann_refd`): latched quietly, in sync, as the `var c: ;` arm is; the declaration registers (its uses
+# stand down through the annotation's mark). A type the annotation still names keeps the error (`var q: i64;`, `var
+# q: *Foo;` — a pointer needs its value either way). CHANGELOG [6.7.16]
+fn _decl_eq_err(S): i64 {
+    if (PEEKT(S) == 5) {
+        if (_tn_seen_at(S, GTI(S)) == 1) { _pair_sync_ti = GTI(S); _panic = 1; return 0; }
+        if (_decl_ann_refd(S) == 1) { _pair_sync_ti = GTI(S); _panic = 1; return 0; }
+        _refuse_in_sync(S);
+        ERR_MSG(S, "uninitialized variable not allowed; use `var X = 0;` or initial value", 69);
+    }
+    ERR_EXPECT(S, 4);
+    return 0;
+}
+# 1 = the declaration whose `;` is at the cursor is `var NAME: T .. ;` and its annotation T was refused and names no
+# type (`_tup_ann_refd`: a name no type answers that was reported or that a refused declaration declared, or a token
+# that is no type, reported). Walked back to its `var` (a `;` / `{` / `}` first: not this shape).
+fn _decl_ann_refd(S): i64 {
+    var k = GTI(S) - 1;
+    var go = 1;
+    while (go == 1) {
+        if (k < 0) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 3) { go = 0; }
+        elif (t == 5 || t == 13 || t == 14) { return 0; }
+        else { k = k - 1; }
+    }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    if (TOKTYP(S, k + 2) != 49) { return 0; }
+    if (k + 3 >= GTI(S)) { return 0; }
+    if (_tup_ann_refd(S, k + 3) == 0) { return 0; }
+    _had_error = 1;
+    return 1;
+}
+# ⛔ 6.7.16 — A BARE `var c;` / `var c: ;` ENDS AT ITS OWN `;`. PARSE_VAR's `=` step (the cursor where the `=` belongs)
+# stepped the `;` after the refusal and read the NEXT statement as the initializer; the resync then dropped that
+# statement, so `var c; var d = 9; return d;` added "undefined variable 'd'" and `c = 4;` "undefined variable 'c'".
+# Now the `;` is left for the declaration's own end, the value is a 0 (`_var_value`: no struct-literal, inference or
+# expression read — each needs a token the `;` is not) and the name is registered. Out of PARSE_VAR (a cybs-ceiling
+# fn). Any other token is "expected '='" and stepped, as before. CHANGELOG [6.7.16]
+var _var_bare_at = 0 - 1;
+fn _var_eq_step(S): i64 {
+    if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
+    if (_synonly_sib_local(S) == 0) { _decl_eq_err(S); }   # 6.7.16: `var a: Foo;`, Foo a sibling's (lint)
+    if (PEEKT(S) == 5) { _var_bare_at = GTI(S); return 1; }
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+# ⛔ 6.7.16 — `--syntax-only` (cyrius lint), A LOCAL OF A SIBLING MODULE'S STRUCT: `var a: Foo;` / `var b: Box<i64>;`
+# with Foo / Box declared in another file. A struct local takes no initializer, but here the name answers no type, its
+# annotation's refusal is silent under the flag, and the bare-declaration rule read a word with no value: "uninitialized
+# variable not allowed", which lint does not count as context (`_lint_msg_is_context`), so lint refused the file —
+# the ordinary layout of a manifest that concatenates modules (the v6.5.19 class). 1 = the declaration whose `;` is at
+# the cursor is `var NAME: X;` or `var NAME: X<..>;` with X a name no type answers here: accepted, as the unit's build
+# accepts it. `var p: *Foo;` (a pointer needs its value), `var x: i64;` and a type this file declares keep the
+# refusal. CHANGELOG [6.7.16]
+fn _synonly_sib_local(S): i64 {
+    if (_syntax_only != 1) { return 0; }
+    if (PEEKT(S) != 5) { return 0; }
+    var k = GTI(S) - 1;
+    var go = 1;
+    while (go == 1) {
+        if (k < 0) { return 0; }
+        var t = TOKTYP(S, k);
+        if (t == 3) { go = 0; }
+        elif (t == 5 || t == 13 || t == 14) { return 0; }
+        else { k = k - 1; }
+    }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    if (TOKTYP(S, k + 2) != 49) { return 0; }
+    var a = k + 3;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (a + 1 != GTI(S)) {
+        if (TOKTYP(S, a + 1) != 19) { return 0; }
+        if (_tok_targs_close(S, a + 2) != GTI(S) - 1) { return 0; }
+    }
+    if (_tn_resolve_at(S, a) != 0) { return 0; }
+    return 1;
+}
+# PARSE_VAR's value: the expression, or a bare declaration's 0 (an untyped word) at its `;` — refused, so a `*T`
+# declaration says nothing more about it (`_tp_refd_at`, `_tp_warn`).
+fn _var_value(S): i64 {
+    if (_var_bare_at != GTI(S)) {
+        if (_istr_pvd(S) == 1) { return 0; }   # 6.7.16 (D73): `var y: *Str = *p;` is p
+        _var_value_pc(S);
+        return 0;
+    }
+    _var_bare_at = 0 - 1;
+    _tp_refd_at = GTI(S);
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    return 0;
+}
+# ⛔ 6.7.16 — AN UNTYPED `var t = ( .. );` WHOSE INITIALIZER WAS REFUSED STANDS DOWN AS A REFUSED ANNOTATION'S DOES.
+# `var t = (1 2);` (no `,`: not a tuple literal, so the parenthesised expression `(1`, refused at `2`) declared t a
+# scalar, and `t.1` added "no struct type in scope for 't'" after "expected ')', got number 2"
+# (issues/archived/2026-10-19-commaless-two-element-tuple-leaves-name-untyped.md); `(1 + )` the same. The initializer the
+# latch went up in (0 -> 1), a `(` group after an untyped `var NAME =`, marks NAME (`_ann_refd_mark`: the
+# registration binds it), so `t.1`, `t.0 = 5` and `t.m()` are counted, not reported. An initializer that is no `(`
+# group (`var t = zz;`) keeps its uses' reports. CHANGELOG [6.7.16]
+fn _var_value_pc(S): i64 {
+    var p0 = _panic;
+    var st = GTI(S);
+    var en = _err_n;
+    var he = _had_error;
+    var tn = _tsc_n;
+    PCMPE(S);
+    if (p0 == 0) { if (_var_val_refd(S) == 1) { _var_paren_refd(S, st); } }
+    if (p0 == 0) { _ini_refd(S, st, en, he, tn); }   # 6.7.17: any refusal of a type-deciding initializer
+    return 0;
+}
+# ⛔ 6.7.17 — A REFUSED INITIALIZER THAT DECIDED ITS VARIABLE'S TYPE MARKS THE VARIABLE, so its uses stand down as
+# a refused annotation's do (the guide's 6.7.15 rule: a use of what the refused declaration names adds no error of its
+# own). `var y = QQ; return y.a;` added "no struct type in scope for 'y'" after "undefined variable 'QQ'", and the
+# zone's `var y = mkw().p;` (refused: "needs storage in a fn's frame") the same at `y.a`
+# (issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B3). The value parsed from token `st`
+# (inside any wrap the untyped peel stepped into) reported an error of its own (`_own_err` since `en` / `he`, the latch,
+# or a frameless struct call's refusal, which counts only `_tsc_n` since `tn`), it is an untyped `var NAME =`'s, and its
+# shape is one that types a variable — a postfix chain (`_ini_chain`: a name, a call, a field, a method, a subscript,
+# inside any parentheses): NAME is marked (`_ann_refd_mark`: the registration binds it to its slot, so a same-named
+# variable elsewhere still reports). An operator or a literal fixes the value as no struct (`var y = QQ + 1; y.a`
+# keeps y's own error), and so does one whole call of a non-generic fn — its declared return types y whatever its
+# arguments (`_ini_fixed_call`). A copy of a marked variable is marked too (`_ini_copy_refd`). Shared by PARSE_VAR (a
+# fn, after the first statement) and the declaration-zone replay (`_gvi_scalar`). CHANGELOG [6.7.17]
+fn _ini_refd(S, st, en, he, tn): i64 {
+    var rf = 0;
+    if (_own_err(en, he) == 1 || _panic == 1 || _tsc_n != tn) { rf = 1; }
+    elif (_dlv == 0) { return 0; }
+    var b = st;
+    while (TOKTYP(S, b - 1) == 10) { b = b - 1; }
+    if (_gu_untyped(S, b) == 0) { return 0; }
+    var e = _gz_end(S, b);
+    if (_ini_chain(S, b, e) == 0) { return 0; }
+    if (rf == 0) { if (_ini_copy_refd(S, b, e) == 0) { return 0; } }
+    if (_ini_fixed_call(S, b, e) == 1) { return 0; }
+    return _ann_refd_mark(S, TOKVAL(S, b - 2));
+}
+# 1 = the chain [b, e) is, inside any parentheses, one name whose variable is marked (`_ann_refd_q`): `var z = y;` after
+# `var y = QQ;` copies the refusal, so `z.a` stands down too.
+fn _ini_copy_refd(S, b, e): i64 {
+    var a = _ini_lone(S, b, e);
+    if (a < 0) { return 0; }
+    var n = TOKVAL(S, a);
+    var idx = 0 - 1;
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, n);
+        if (li >= 0) { idx = 0 - 2 - li; }
+    }
+    if (idx == 0 - 1) {
+        idx = FINDVAR(S, n);
+        if (idx < 0) { return 0; }
+    }
+    return _ann_refd_q(S, n, idx);
+}
+# 1 = the tokens [a, e) are one postfix chain: a name (`f<..>(`: a call's explicit list) or a parenthesised chain,
+# then any run of `.name` (`.m<..>(`), `( .. )` and `[ .. ]`. Anything else at its level (an operator, a literal, a
+# keyword) fixes the value as no struct: 0.
+fn _ini_chain(S, a, e): i64 {
+    var i = a + 1;
+    var t = TOKTYP(S, a);
+    if (t == 10) {
+        var c = _gz_close(S, a, e);
+        if (c >= e) { return 0; }
+        if (_ini_chain(S, a + 1, c) == 0) { return 0; }
+        i = c + 1;
+    } elif (t == 2) { i = _ini_targs(S, i); }
+    else { return 0; }
+    while (i >= 0 && i < e) {
+        t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0; }
+            i = _ini_targs(S, i + 2);
+        } elif (t == 10 || t == 28) {
+            var c2 = _gz_close(S, i, e);
+            if (c2 >= e) { return 0; }
+            i = c2 + 1;
+        } else { return 0; }
+    }
+    if (i != e) { return 0; }
+    return 1;
+}
+# The name token the value [b, e) is, inside any parentheses; -1 when it is no lone name.
+fn _ini_lone(S, b, e): i64 {
+    while (TOKTYP(S, b) == 10) {
+        if (_gz_close(S, b, e) != e - 1) { break; }
+        b = b + 1;
+        e = e - 1;
+    }
+    if (b + 1 != e) { return 0 - 1; }
+    if (TOKTYP(S, b) != 2) { return 0 - 1; }
+    return b;
+}
+# Token `i` past an explicit list `<..>` that a call's `(` follows (`f<i32>(`, `.m<T>(`); `i` when no `<` opens there;
+# -1 when one does that closes no such list (a comparison).
+fn _ini_targs(S, i): i64 {
+    if (TOKTYP(S, i) != 19) { return i; }
+    var c = _tok_targs_close(S, i + 1);
+    if (c < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + 1) != 10) { return 0 - 1; }
+    return c + 1;
+}
+# 1 = the chain [b, e) is, inside any parentheses, one whole call `f(..)` of a known non-generic fn: its declared return
+# types the variable, so a refused argument decided nothing.
+fn _ini_fixed_call(S, b, e): i64 {
+    while (TOKTYP(S, b) == 10) {
+        if (_gz_close(S, b, e) != e - 1) { break; }
+        b = b + 1;
+        e = e - 1;
+    }
+    if (TOKTYP(S, b) != 2) { return 0; }
+    if (TOKTYP(S, b + 1) != 10) { return 0; }
+    if (_gz_close(S, b + 1, e) != e - 1) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, b));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }
+    return 1;
+}
+# 1 = the value just parsed was refused: the latch is up, or the wrap the untyped peel stepped into (`_scv_peel`, in
+# a fn) is not closed where the value stopped — its close (`_scv_disarm`'s `_pw_close`) will refuse it there:
+# `var t = (1 2);` stops at `2` inside the peeled `( .. )`.
+fn _var_val_refd(S): i64 {
+    if (_panic == 1) { return 1; }
+    var i = 0;
+    while (i < _scv_pk) {
+        if (TOKTYP(S, GTI(S) + i) != 11) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# The value parsed from token `st` — inside the wrap the untyped peel stepped into (`_scv_un_peel`), if any — began
+# at a `(` right after an untyped `var NAME =`: NAME marked.
+fn _var_paren_refd(S, st): i64 {
+    var b = st;
+    while (TOKTYP(S, b - 1) == 10) { b = b - 1; }
+    if (TOKTYP(S, b) != 10) { return 0; }
+    if (TOKTYP(S, b - 1) != 4) { return 0; }
+    if (TOKTYP(S, b - 2) != 2) { return 0; }
+    if (TOKTYP(S, b - 3) != 3) { return 0; }
+    _ann_refd_mark(S, TOKVAL(S, b - 2));
+    return 0;
+}
+# ⛔ 6.7.14 — A REDECLARATION WHOSE INITIALIZER FOLDS (`= 2 + 1`, `= -5`, `= (7)`) IS COMPARED as a literal one is
+# (CHKDUPVAL: "redefined with conflicting value", a same value silent). Only the exact `= NUM ;` was, so `var a = 5;
+# var a = 2 + 1;` compiled silently while the prior side compared any folded constant
+# (issues/archived/2026-10-15-redeclared-global-folded-later-value-not-compared.md). Not over an enum constant (CHK_ENUM_SHADOW's
+# hard error is the one report there) nor a top-level const (refused at the name), and `chk_has` stays 0: it also gates
+# CHK_ENUM_SHADOW. `has` / `v` = the declaration's fold. CHANGELOG [6.7.14]
+fn _gv_dup_folded(S, noff, has, v, is_struct): i64 {
+    if (has == 0) { return 0; }
+    if (is_struct != 0) { return 0; }
+    var pi = _findvar_core(S, noff);
+    if (pi < 0) { return 0; }
+    if (GVENUMID(S, pi) != 0) { return 0; }
+    if (_vcst_ix(S, pi) >= 0) { return 0; }
+    return CHKDUPVAL(S, noff, v);
+}
+# ⛔ 6.7.15 — A CONST- OR ENUM-NAMED REDECLARATION IS COMPARED (issues/2026-10-17-redeclared-global-named-constant-value-
+# never-compared.md). Pass 1 folds no name, so `var a = 3; var a = C;`, `var a = C; var a = 3;`, `= E.B` and `var a =
+# D; var a = C;` were never compared. The compare of a pair whose either side folds only at the replay is made there
+# (_gvk_chain), in declaration order: pass 1 records what it knows in `_gvc_rec`, 4 words a record —
+#   kind 0 (`_gvc_unfolded`): an initializer pass 1 cannot fold follows the slot's constant (`has`, value): the
+#     chain's state before it;
+#   kind 1 (`_gv_dup_later`): a constant after such an initializer — its compare, at its `=`, is the replay's;
+# word 1 = the deferred entry the record precedes (the entry count when it was made). Every other pair is compared
+# in pass 1, as before. CHANGELOG [6.7.15]
+var _gvc_rec = 0;
+var _gvc_n = 0;
+var _gvc_cap = 0;   # in words
+fn _gvc_add(S, kind, slot, v, x): i64 {
+    if (_gvc_n * 4 + 4 > _gvc_cap) { _gvc_grow(); }
+    var r = _gvc_rec + _gvc_n * 32;
+    store64(r, kind + slot * 2);
+    store64(r + 8, L64(S + 0x19A000));
+    store64(r + 16, v);
+    store64(r + 24, x);
+    _gvc_n = _gvc_n + 1;
+    return 0;
+}
+fn _gvc_grow(): i64 {
+    if (_gvc_cap == 0) {
+        _gvc_rec = alloc(256 * 8);
+        _gvc_cap = 256;
+        return 0;
+    }
+    _gvc_rec = _grow_one(_gvc_rec, _gvc_cap);
+    _gvc_cap = _gvc_cap * 2;
+    return 0;
+}
+# A deferred scalar entry of slot `gvi` that pass 1 did not fold (`k` = cf_has + is_struct, 0): the slot's constant
+# so far is the chain's state before it, recorded once per run of such entries.
+fn _gvc_unfolded(S, gvi, k): i64 {
+    if (k != 0) { return 0; }
+    if (_gv_pend_get(gvi) == 0) { if (_gv_has_lit(gvi) == 1) { _gvc_add(S, 0, gvi, L64(_vgsi_base + gvi * 8), 1); } }
+    _gv_pend_set(gvi);
+    return 0;
+}
+# 1 = pass 1 makes no value compare for this declaration (prior `gpi` from _gv_fold_peek; `has` / `v` its constant):
+# its shape is refused — the type change is the one report, not also "conflicting value"
+# (issues/archived/2026-10-16-global-type-change-refusal-cascades-into-earlier-reader.md) — or the prior's last declaration is
+# one pass 1 did not fold, and the compare is recorded for the replay (kind 1, at the cursor: the `=`).
+fn _gv_dup_later(S, gpi, has, v): i64 {
+    if (gpi == 0 - 2) { return 1; }
+    if (gpi < 0) { return 0; }
+    if (has == 0) { return 0; }
+    if (_gv_pend_get(gpi) == 0) { return 0; }
+    _gvc_add(S, 1, gpi, v, GTI(S));
+    return 1;
+}
+fn PARSE_GVAR_REG(S): i64 {
+    var sti = GTI(S);
+    STI(S, GTI(S) + 1);  # consume VAR
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var noff = PEEKV(S);
+    _RSV_INTRINSIC_DECL(S, noff, GTI(S), 0);   # 6.6.20: a global `var sizeof` / `mulh64` / `fncallN`
+    # 6.7.2 (B1): one top-level name is a const OR a global, never both.
+    if (_cst_n > 0) { if (_cst_find(S, noff) >= 0) { ERR_IDENT(S, "", noff, " is already declared as a top-level const", 0 - 1); } }
+    STI(S, GTI(S) + 1);
+    _dt_ann1(S);   # 6.7.17: `var a: i64, b = f();` refused, its annotation stepped
+    # v6.6.0 — TOP-LEVEL DESTRUCTURE, pass 1. `var t, v = f();` is the only correct way to
+    # receive a `: stack` enum, so once Result went to the value form a top-level Result bind
+    # had no legal spelling at all: this parser reached the annotation check with a `,` in hand
+    # and reported `expected '=', got ','`. Registration is all pass 1 owes — the initializer is
+    # replayed by EMIT_GVAR_INITS, which carries the matching branch. Handled inline and
+    # returned early so none of the annotation / struct / static-init logic below has to learn
+    # about multi-name declarations. CHANGELOG [6.6.0].
+    if (PEEKT(S) == 31) {
+        STI(S, GTI(S) + 1);   # consume ,
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        var dg2 = PEEKV(S);
+        _RSV_INTRINSIC_DECL(S, dg2, GTI(S), 0);
+        STI(S, GTI(S) + 1);
+        _dt_annk(S);
+        var dg3 = 0;
+        var dgn = 2;
+        if (PEEKT(S) == 31) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            dg3 = PEEKV(S);
+            _RSV_INTRINSIC_DECL(S, dg3, GTI(S), 0);
+            STI(S, GTI(S) + 1);
+            _dt_annk(S);
+            dgn = 3;
+        }
+        # v6.6.4: ONE `public` covers EVERY name of the declaration. _GVAR_VIS clears the
+        # marker after each stamp, so `public var A, B = f();` exposed A and stamped B
+        # (and C) private. Restore it before each later name; the last stamp leaves it
+        # cleared so nothing leaks past the declaration.
+        # 6.6.6: each name goes through the one-global-per-name fold (_gv_fold).
+        var _dg_pub = _pub_pending;
+        var dgs1 = _gv_reg8(S, noff, 0, sti);
+        _pub_pending = _dg_pub;
+        var dgs2 = _gv_reg8(S, dg2, 0, sti);
+        var dgs3 = 0 - 1;
+        if (dgn == 3) {
+            _pub_pending = _dg_pub;
+            dgs3 = _gv_reg8(S, dg3, 0, sti);
+        }
+        _gzf_dt_reg(S, dgs1, dgs2, dgs3);   # 6.7.16 (D98): its f64 elements, typed at the end of pass 1
+        _gv_defer(S, sti, (dgs1 + 1) | ((dgs2 + 1) << 21) | ((dgs3 + 1) << 42));
+        _skip_gvar_decl(S, sti);   # 6.6.6: through the `;` outside every `{ }` (see there)
+        return 0;
+    }
+    # Optional type annotation — check scalar types, pointer types, or struct names
+    var psc = 0;
+    var ann_sid = 0;
+    var ann_scalar = 0;
+    var ann_signed = 0;  # v6.4.23: 1 for a SIGNED sub-i64 (i8/i16/i32) global scalar → sign-extend on load
+    var ann_float = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for `var x: f64`/`f32`
+    var ann_ti = 0;      # 6.6.13 (M2): the annotation's type token (an array's element size)
+    var ann_vec = 0;     # 6.6.17 (a3): a vector annotation's descriptor (<= -2048), else 0
+    var ann_bool = 0;    # 6.7.3 (B2): `var g: bool` — its initializer is checked
+    if (PEEKT(S) == 49) {
+        STI(S, GTI(S) + 1);
+        ann_ti = GTI(S);
+        # 6.6.16 (C8): `*T` names a type (T resolved whole, an unknown T refused). 6.6.17: its
+        # scale is sizeof(T), as at every other site (it was 8 here whatever T was).
+        if (PEEKT(S) == 8) { psc = _ptr_annot(S, noff, 0); }
+        elif (PEEKT(S) == 105) { ann_scalar = 16; STI(S, GTI(S) + 1); }
+        else {
+            if (_gvar_ann_head(S, noff) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.8: a slice refused
+                # ⛔ 6.6.16 (C8): the one type-name resolver, as PARSE_VAR's ladder. This one
+                # matched PREFIXES before the struct lookup (`var g: i8x = 300` was an i8 global,
+                # `var g: u8pair;` a u8 scalar, `var g: f64v2` an f64) and read an unknown name as
+                # a silent i64. A vector is a plain 8-byte global here, as it is after the first
+                # statement (PARSE_VAR's global arm). CHANGELOG [6.6.16]
+                var ann_c = _tn_ann(S, GTI(S), noff);
+                ann_vec = _tn_vec(ann_c);   # 6.6.17 (a3): see _vecg_size
+                ann_scalar = _tn_iw(ann_c);
+                ann_signed = _tn_sgn(ann_c);
+                ann_float = _tn_flt(ann_c);
+                ann_sid = _tn_sid(ann_c);
+                ann_bool = _tn_bool(ann_c);
+            }
+            STI(S, GTI(S) + 1);
+            ann_sid = _gen_ann_sid(S, ann_sid);   # 6.6.11: `W1<Pt>` is the instance, not the base
+        }
+    }
+    # Array: register with size. v5.11.51 — when the array has a
+    # `= { byte-list };` initializer, PARSE_GVAR_ARR saves sti to
+    # gvar_toks so EMIT_GVAR_INITS replays it at top-level emit time
+    # (pass-1 emits get skipped by the entry-jmp patch).
+    if (PEEKT(S) == 28) {
+        var ann_eb = _gvar_ebytes(S, ann_scalar, ann_float, ann_sid, psc, ann_ti);   # 6.6.13 (M2)
+        PARSE_GVAR_ARR(S, noff, sti, ann_scalar, ann_signed, ann_eb);
+        return 0;
+    }
+    # Check for struct init after =: var p = StructName { ... }
+    # Peek ahead: skip to = then check if next is IDENT matching a struct
+    var save_peek = GTI(S);
+    # We're past the type annotation, at = or the token before it
+    # Find the = sign
+    var pgo = 1;
+    while (pgo == 1) {
+        if (PEEKT(S) == 4) { pgo = 0; }
+        else { if (PEEKT(S) == 5) { pgo = 0; }
+            else { if (PEEKT(S) == 12) { pgo = 0; }
+                else { STI(S, GTI(S) + 1); } } }
+    }
+    var is_struct = 0;
+    var ssid = 0;
+    # v5.11.64: detect `var X = INT_LITERAL ;` shape for static init.
+    # Non-zero literals get pre-written into the var area at FIXUP time
+    # so the value is correct on FIRST READ — fixes the kmode-entry
+    # init-order bug where gvar reads before the post-PROG EMIT_GVAR_INITS
+    # block returned 0. Zero literals fall through to the existing
+    # runtime-store path (BSS-zero is already correct for them).
+    # See CHANGELOG [5.11.64] + the filed issue.
+    #
+    # 6.6.6: a REDECLARATION reuses the global's slot (_gv_fold) and a constant one is
+    # static too — the old shadow opt-out sent it to the runtime-store path while the FIRST
+    # declaration's static value sat in a slot nothing read (b = 0 in `var a = 5; var b = a;
+    # var a = 5;`). An earlier deferred store is now superseded rather than clobbering
+    # (_gv_supersede), which is the hazard the opt-out existed for (mabda `var F64_TWO = 0;`
+    # shadowed by math `var F64_TWO = 0x4000...;`). A declaration that shadows a global it does
+    # NOT fold into — an enum constant, or a global with another visibility owner — is static
+    # as well: each replay entry now stores into the slot it recorded (_gv_ent_slot), so an
+    # earlier deferred store can no longer land on this one, and the enum's startup store skips
+    # a slot that is not an enum constant's (PARSE_ENUM_DEF). CHANGELOG [6.6.6]
+    var sit_lit = 0;
+    var sit_val = 0;
+    var sit_shadow = 0;
+    var rhs_ti = 0;     # 6.7.3: the initializer's first token (a static bool is judged by its shape)
+    var cf_has = 0;     # 6.6.6: the initializer folded to a constant (any target, any value)
+    var cf_val = 0;
+    var chk_lit = 0;    # v6.2.11: `= NUM ;` literal for the collision guardrail
+    var chk_has = 0;
+    # 6.6.6: _findvar_core, not FINDVAR — "does this name already exist?" asked while
+    # REGISTERING this global is not a reference to the prior one, and running the cross-file
+    # `private` check here refused a file its own re-declaration. See _findvar_core.
+    if (_findvar_core(S, noff) >= 0) { sit_shadow = 1; }
+    if (PEEKT(S) == 4) {
+        STI(S, GTI(S) + 1);
+        # v5.9.33: only treat this as a struct-typed gvar if the RHS is a real struct
+        # literal `var p = Point { ... };`. A bare ident reference like `var x = MASK & 0xF;`
+        # (where MASK is also a struct name) must allocate a scalar slot, not STRUCTSZ bytes.
+        # 6.6.12: `Box<Pt> { .. }` too (`_lit_head`), and an annotation must agree with it.
+        var lh_ti = GTI(S);
+        rhs_ti = lh_ti;
+        ssid = _lit_head_p(S);   # 6.7.14: a wrap too
+        STI(S, lh_ti);
+        if (ssid > 0) {
+            is_struct = 1;
+            _lit_ann_check(S, 0 - ann_sid, ssid, ann_bool);
+        } else {
+            ssid = _gci_inline(S, ann_sid, ann_ti);   # 6.6.12: `var G: T = A;` / `= X.f;` — inline; 6.7.7: a tuple literal
+            if (ssid > 0) { is_struct = 1; }
+        }
+        # Static-init detection: shape is exactly `= NUM ;`. Negative
+        # literals (`= - NUM ;`), hex-as-expr, parenthesized literals,
+        # and arithmetic RHS all fall through to the runtime-store
+        # path. Conservative on purpose — no false positives means no
+        # silent value drift versus today's behavior.
+        #
+        # cx takes this path too (6.7.9): its scalar globals are zero in the .cyx var data, and
+        # _gv_cx_prestore stores every recorded value at startup, before the replay. cx used to
+        # opt out and ALSO replay the initializer, so a folded value was computed again at run
+        # time there alone: `var Q = INT_MIN / -1;` trapped in cxvm's `idiv`. CHANGELOG [6.7.9]
+        # v6.2.11: capture a `= NUM ;` literal for the collision guardrail,
+        # INDEPENDENT of the static-init opt below (which skipped shadowing
+        # redefinitions until 6.6.6 — and a collision warning must fire EXACTLY on
+        # those). Read-only (PEEKV, no STI advance); does not affect codegen.
+        if (PEEKT(S) == 1 && TOKTYP(S, GTI(S) + 1) == 5) { chk_lit = PEEKV(S); chk_has = 1; }
+        # v6.4.74: widened from the exact `= NUM ;` shape to ANY constant-foldable
+        # integer expression (`-5`, `0 - 61`, `512 * 2`, `1 << 4`, `(A) | B`, …) via
+        # _CF_TRY above. A folded value is indistinguishable from a literal here, so
+        # it takes the same static-init path and is correct on FIRST READ — which is
+        # what makes computed module-scope initializers work in kmode, where the
+        # deferred EMIT_GVAR_INITS block is unreachable for a kernel whose top-level
+        # program never returns. _CF_TRY is conservative: anything it cannot prove
+        # constant leaves _cf_ok == 0 and we fall through to the runtime-store path
+        # exactly as before. A folded ZERO still falls through — BSS is already zero,
+        # so the runtime store is redundant but harmless, and keeping that branch
+        # identical preserves the v5.11.64 behaviour for `= 0 ;`.
+        var fv = _CF_TRY(S, GTI(S), 5);
+        if (_cf_ok == 1) {
+            cf_has = 1;
+            cf_val = fv;
+            if (fv != 0) {
+                sit_lit = 1;
+                sit_val = fv;
+            }
+        }
+    }
+    STI(S, save_peek);  # restore
+    # v6.3.24: a NON-int-literal global (string / expr / struct / array init →
+    # chk_has==0) that shadows an enum constant is the dangerous silent-miscompile
+    # case — a pointer/expr can never be a benign same-value alias of an int enum
+    # fold, and once registered every later reference to the name rebinds to the
+    # var, INCLUDING inside already-parsed library code that uses the constant as an
+    # ABI offset (patra `DbOff.DB_PATH`). Hard-error. An int-literal shadow stays a
+    # CHKDUPVAL warning above (e.g. chrono's harmless `var CLOCK_MONOTONIC = 1`
+    # aliasing the syscall enum, same value). See CHK_ENUM_SHADOW in parse/types.cyr.
+    if (chk_has == 0) { CHK_ENUM_SHADOW(S, noff); }
+    # Register
+    var vcnt = GVCNT(S);
+    S64(_varn_base + vcnt * 8, noff);
+    if (is_struct == 1) {
+        S64(_vars_base + vcnt * 8, STRUCTSZ(S, ssid - 1));
+        SVTYPE(S, vcnt, ssid);
+        SVPM(S, vcnt, 2);   # 6.6.5: INLINE — the global owns STRUCTSZ bytes
+    } else {
+        if (ann_float != 0) {
+            # f64/f32: 8-byte slot (f64 bit pattern, or f32 bits in the low 32);
+            # SVTYPE marks it so PEXPR/PARSE_TERM route operators to EMIT_F64_BINOP.
+            S64(_vars_base + vcnt * 8, 8);
+            SVTYPE(S, vcnt, ann_float);
+        } elif (ann_scalar > 0) {
+            if (ann_scalar < 8) {
+                S64(_vars_base + vcnt * 8, ann_scalar);
+                SVTYPE(S, vcnt, ann_scalar);
+                SVSGN(S, vcnt, ann_signed);   # v6.4.23: sign-extend a signed iN global on load
+            } else {
+                # 8 (i64) or 16 (u128) — allocate the full width.
+                # No type marker for now: u128 bytes live in the slot,
+                # scalar ops touch the low 64 bits until alpha3 lands
+                # proper arithmetic.
+                S64(_vars_base + vcnt * 8, ann_scalar);
+            }
+        } else {
+            _vecg_size(S, vcnt, ann_vec);
+            if (ann_vec != 0) { _vecg_init_ok(S, cf_has, cf_val, noff, rhs_ti); }
+            # 6.6.5 — `var G: P = <expr>;` gets ONE 8-byte slot, so the slot HOLDS an address;
+            # the literal form above owns STRUCTSZ bytes and IS the struct. Both carry the same
+            # positive SVTYPE, so nothing downstream could tell them apart and every `G.field`
+            # was emitted as `lea &G` — reading the pointer's own bytes as field 0 (measured 0
+            # where 22 is right). Record which one this is. CHANGELOG [6.6.5]
+            if (ann_sid > 0) {
+                _tup_svtype_p1(S, vcnt, ann_sid, noff, ann_ti);   # 6.7.7: SVTYPE, never a pointer-mode tuple
+                if (STRUCTSZ(S, ann_sid - 1) > 8) { SVPM(S, vcnt, 1); } else { SVPM(S, vcnt, 2); }
+            }
+            elif (psc > 0) { _gv_ptr_type(S, vcnt, psc, ann_ti); }   # 6.6.17: + T
+        }
+    }
+    # v6.5.0 Phase 2b: stamp this global's owning file if the file opted into
+    # private-by-default and no `public` moniker preceded it (fileid+1; 0 stays "not
+    # private" — see _var_fileid in util.cyr). Placed HERE, immediately before the
+    # count bump, because this is the point every SCALAR global var reaches: the first
+    # cut sat inside the `ann_scalar < 8` arm and so only ever fired for annotated
+    # narrow scalars like `var x: i32`, silently doing nothing for a plain `var x = 1`.
+    # ⚠ NOT every global: the array form returns from PARSE_GVAR_ARR above and the
+    # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
+    # v6.2.11: flag a conflicting-value redefinition (issue 2026-06-14) when this
+    # global has a `= NUM ;` literal AND shadows a prior def, BEFORE it's
+    # counted so the lookup sees only prior defs. Mirrors the enum-member site in
+    # parse/types.cyr. Gated on the shadow so the common non-colliding case skips
+    # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
+    # 6.7.15: asked once the registration is written, so a refused shape and a prior the replay folds stand it down
+    # (_gv_dup_later). The cursor is still the declaration's `=`.
+    var gpi = _gv_fold_peek(S, vcnt, sti, ann_bool);
+    if (_gv_dup_later(S, gpi, cf_has * (1 - is_struct), cf_val) == 0) {
+        if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
+        if (chk_has == 0 && sit_shadow == 1) { _gv_dup_folded(S, noff, cf_has, cf_val, is_struct); }   # 6.7.14
+    }
+    var gvi = _gv_fold_b(S, vcnt, sti, ann_bool);   # 6.6.6: a redeclaration reuses the global's slot; 6.7.14: + bool
+    _gz_reg(S, gvi, is_struct, ssid, ann_sid, rhs_ti);   # 6.7.10 (B7-1g): judged at the end of pass 1
+    _gu_reg(S, gvi, ann_ti + is_struct, rhs_ti);         # 6.7.14 (D29 / D30): an untyped whole call, typed there
+    _gzf_reg(S, gvi, ann_ti + is_struct, rhs_ti, 0 - 1);   # 6.7.16 (D98): an untyped f64 call, typed there too
+    _GVAR_VIS(S, gvi, sti);
+    _gv_last_marks(S, gvi, ann_bool, ann_scalar, ann_ti);   # 6.7.3 (B2): like the float flag, the last declaration's; 6.7.6: + the integer and u128 marks
+    SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
+    _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
+    _gv_diag_sid(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float + is_struct);   # 6.6.13 I11
+    if (ann_float != 0) { _gv_ifs(S, sti, ann_float); }                      # 6.6.10
+    if (gvi == vcnt) {
+        SVCNT(S, vcnt + 1);
+        # A shadow that keeps its own slot (over an enum constant, or over a global with
+        # another visibility owner): a constant one is its value from program start on every
+        # target, zero and cx included (_gv_cx_prestore) — the global it hides can store
+        # nothing into it (see above), and a read between the two must not see 0.
+        if (sit_shadow == 1 && cf_has == 1 && is_struct == 0) { sit_lit = 1; sit_val = cf_val; }
+    }
+    else {
+        # A redeclaration: a constant one wins from program start (see _gv_supersede) — on
+        # every target, including a zero and including cx (_gv_cx_prestore).
+        sit_lit = 0;
+        if (cf_has == 1 && is_struct == 0) {
+            sit_lit = 1;
+            sit_val = cf_val;
+            _gv_supersede(S, noff, 0);
+        }
+    }
+    # v5.11.64: static-init path — record literal value, skip gvar_toks
+    # registration so EMIT_GVAR_INITS won't replay the (now redundant)
+    # runtime store. FIXUP's var-area writer reads gvar_initval and
+    # writes the literal into the file image at the var's offset.
+    #
+    # SLVAR(vcnt) keeps the "last var" pointer in sync with the runtime-
+    # store path (which SLVAR's inside EMIT_GVAR_INITS's replay loop —
+    # see line ~900). Programs like `var x = 42;` with no main rely on
+    # the entry-trailing `EVLOAD(GLVAR())` → EEXIT to use the last var
+    # as the exit code (aarch64 ci's literal-only test cases hit this
+    # exact shape: `var x = 42;` expects exit 42). Without this call,
+    # static-init vars would silently fall out of the last-var chain
+    # and the binary would exit with whatever rax held — exit-code
+    # corruption the runtime-store path can't reproduce.
+    # On cx the recorded value is what _gv_cx_prestore stores at startup (its var data holds no
+    # scalar), so a forward read agrees with the image targets there too. CHANGELOG [6.6.6] [6.7.9]
+    _bx_gv_reg(S, ann_bool, sit_lit, rhs_ti, noff);   # 6.7.3: a baked bool is judged here
+    if (sit_lit == 1) { if (psc > 0) { _tp_warn_baked(S, rhs_ti); } }   # 6.7.13 (D18 (a)): never replayed
+    if (cf_has == 1) { if (is_struct == 0) { _gv_lit_set(gvi, 1); } }   # 6.7.12 (D30): a constant, zero too
+    if (sit_lit == 1) {
+        S64(_vgsi_base + gvi * 8, sit_val);
+        SLVAR(S, gvi);
+    } else {
+        # Save token index for deferred init
+        _gvc_unfolded(S, gvi, cf_has + is_struct);   # 6.7.15: the replay's compare chain
+        _gv_defer(S, sti, gvi + 1);   # 6.6.6: gvi + 1 = the slot this entry declared
+    }
+    _skip_gvar_decl(S, sti);   # 6.6.6: through the `;` outside every `{ }` (see there)
+    return 0;
+}

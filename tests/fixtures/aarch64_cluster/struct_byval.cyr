@@ -1,7 +1,7 @@
 # struct_byval.cyr — aarch64 Phase 2b struct-by-value cross-test
 # fixture (v5.9.26). Exercises the X8 indirect-result register
 # convention end-to-end:
-#   - Caller `make_point()` invocation: parse/decl.cyr's asv path
+#   - Caller `make_point()` invocation: parse/decl/var.cyr's asv path
 #     loads X8 = &got via EFLADDR_X8 instead of stack-pushing
 #     retptr (x86 SysV / Win64 convention).
 #   - Callee make_point prologue: ESTOREREGPARM(8, stash_disp)

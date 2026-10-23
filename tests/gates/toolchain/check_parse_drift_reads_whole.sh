@@ -9,7 +9,7 @@
 #
 # ROWS — the driver built from this tree, its `--parse-drift-row` mode run over a staged root
 # holding a copy of src/frontend/parse/ (6.7.10: parse/cov.cyr joined the six; 6.7.15: parse/fn/def.cyr,
-# split from parse/fn.cyr; 6.7.18: parse/fn.cyr split into parse/fn/):
+# split from parse/fn.cyr; 6.7.18: parse/fn.cyr and parse/decl.cyr split into parse/fn/ and parse/decl/):
 #   list     the row's files (programs/checks/lint_fmt.cyr) == `find src/frontend/parse -name '*.cyr'`
 #            -> a file the tree has and the row does not, or the reverse, FAILS by name (6.7.18: the
 #            row's list was held to `ls parse/*.cyr | wc -l` = 8, a top-level count a split defeats)
