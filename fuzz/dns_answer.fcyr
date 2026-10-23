@@ -1,0 +1,197 @@
+# Fuzz: the async DNS answer parser — lib/async.cyr _async_dns_parse_a / _async_dns_skip_name, the
+# Linux reactor's resolver, which parses a datagram any host that can reach the socket may send
+# (6.7.18; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+#
+# A VALID answer (a CNAME then an A record, both names compressed) is the seed; each iteration
+# mutates a fresh copy of it from its own seed — a truncation, a count or length field set to 0 /
+# the message's end / past it / 0xFFFF, a label length or compression pointer aimed anywhere, byte
+# flips, a repeated record — into a heap block of exactly the mutated length, and parses it. A
+# graceful -1 passes. A fault fails: the iterations run in a forked child that reports each
+# iteration's seed to the parent before it runs, so the parent names the seed of the iteration that
+# killed it (a SIGSEGV, a `slice bounds violation` exit 134, a poison trap exit 86). To replay one,
+# set _fz_replay to that seed. The child prints one digest of every answer, so `cyrius fuzz
+# --poison=ab` sees an over-read as two different digests.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/async.cyr"
+
+var _fz_name = "fuzz_dns_answer";
+var _fz_iters = 3000;
+var _fz_what = " mutated answers parsed";
+var _fz_first = 0x5EED0D25;  # the first iteration's seed
+var _fz_replay = 0;          # a seed the parent printed: run that one iteration alone
+
+var _fz_bad = 0;             # set by an iteration whose result breaks the parser's contract
+var _fz_s = 0;
+fn _fz_rnd(): i64 {
+    _fz_s = _fz_s * 6364136223846793005 + 1442695040888963407;
+    var r = _fz_s >> 33;
+    if (r < 0) { r = 0 - r; }
+    return r;
+}
+
+# The seed message: id 0x4342, a response, one question (www.example.com A IN), two answers —
+# a CNAME to cdn.example.com and its A record 10.1.2.3. Writes it at b, returns its length.
+fn _fz_seed_msg(b): i64 {
+    var w = 0;
+    var hdr = "\x43\x42\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00";
+    memcpy(b, hdr, 12); w = 12;
+    memcpy(b + w, "\x03www\x07example\x03com\x00", 17); w = w + 17;
+    memcpy(b + w, "\x00\x01\x00\x01", 4); w = w + 4;
+    # answer 1: name -> 12, CNAME IN, ttl 60, rdata "cdn" + -> 16 ("example.com")
+    memcpy(b + w, "\xC0\x0C\x00\x05\x00\x01\x00\x00\x00\x3C\x00\x06\x03cdn\xC0\x10", 18); w = w + 18;
+    # answer 2: name -> 45 (cdn.example.com), A IN, ttl 60, 10.1.2.3
+    memcpy(b + w, "\xC0\x2D\x00\x01\x00\x01\x00\x00\x00\x3C\x00\x04\x0A\x01\x02\x03", 16); w = w + 16;
+    return w;
+}
+
+# Offsets of the fields worth aiming at (counts, RR TYPE / RDLENGTH, labels, pointers).
+var _fz_fields: i64[12];
+
+# Mutate the n-byte message at b (room for 512) by the current LCG. Returns the new length.
+fn _fz_mutate(b, n): i64 {
+    var m = n;
+    var kinds = 1 + _fz_rnd() % 3;
+    while (kinds > 0) {
+        var k = _fz_rnd() % 6;
+        if (k == 0) { m = _fz_rnd() % (m + 1); }                         # truncate
+        elif (k == 1) {                                                  # a 16-bit field to an extreme
+            var off = load64(&_fz_fields + (_fz_rnd() % 12) * 8);
+            var v = 0;
+            var pick = _fz_rnd() % 6;
+            if (pick == 1) { v = m; } elif (pick == 2) { v = m + 1; } elif (pick == 3) { v = 0xFFFF; }
+            elif (pick == 4) { v = 0x7FFF; } elif (pick == 5) { v = _fz_rnd() % 0x10000; }
+            if (off + 1 < 512) { store8(b + off, (v >> 8) & 0xFF); store8(b + off + 1, v & 0xFF); }
+        } elif (k == 2) {                                                # a label length / pointer anywhere
+            var p = _fz_rnd() % (m + 1);
+            if (p < 512) {
+                var c = _fz_rnd() % 4;
+                if (c == 0) { store8(b + p, 63); } elif (c == 1) { store8(b + p, 0xC0); }
+                elif (c == 2) { store8(b + p, 0x40 + _fz_rnd() % 0x40); } else { store8(b + p, _fz_rnd() % 256); }
+            }
+        } elif (k == 3) {                                                # byte flips
+            var f = 1 + _fz_rnd() % 4;
+            while (f > 0) { var q = _fz_rnd() % (m + 1); if (q < 512) { store8(b + q, _fz_rnd() % 256); } f = f - 1; }
+        } elif (k == 4) {                                                # repeat a record (out of order too)
+            var from = 12 + _fz_rnd() % 40;
+            var len = 1 + _fz_rnd() % 20;
+            if (m + len < 512 && from + len <= m) { memcpy(b + m, b + from, len); m = m + len; }
+        } else {                                                         # grow with garbage
+            var g = _fz_rnd() % 16;
+            while (g > 0 && m < 511) { store8(b + m, _fz_rnd() % 256); m = m + 1; g = g - 1; }
+        }
+        kinds = kinds - 1;
+    }
+    return m;
+}
+
+# One iteration from `seed`: returns a value folded into the digest; a result that breaks the
+# parser's contract sets _fz_bad.
+fn _fz_one(seed): i64 {
+    _fz_s = seed;
+    var work = alloc(512);
+    var n = _fz_mutate(work, _fz_seed_msg(work));
+    var b = alloc(n + 1);                     # exactly the message (+1: alloc(0) is no block)
+    memcpy(b, work, n);
+    var r = _async_dns_parse_a(b, n, 0x4342);
+    var o = _async_dns_skip_name(b, n, _fz_rnd() % (n + 2));
+    if (r != 0 - 1 && (r < 0 || r > 0xFFFFFFFF)) { _fz_bad = 1; return 0; }   # not an IPv4 int: a bug
+    if (o != 0 - 1 && (o < 1 || o > n)) { _fz_bad = 2; return 0; }            # past the message: a bug
+    return r * 7 + o;
+}
+
+# ANCOUNT, QDCOUNT, the two RRs' TYPE and RDLENGTH, the question's first label, the two
+# answer-name pointers, the CNAME's label and pointer, the flags (rcode).
+fn _fz_setup(): i64 {
+    var fo = "\x06\x04\x23\x2B\x35\x3D\x0C\x21\x33\x2D\x31\x02";
+    var f = 0;
+    while (f < 12) { store64(&_fz_fields + f * 8, load8(fo + f)); f = f + 1; }
+    return 0;
+}
+
+# ── the supervisor (the same in every network-parser harness) ──
+#ifdef CYRIUS_TARGET_LINUX
+fn main(): i64 {
+    alloc_init();
+    _fz_setup();
+    if (_fz_replay != 0) {
+        var rr = _fz_one(_fz_replay);
+        fmt_int(rr);
+        if (_fz_bad != 0) {
+            syscall(SYS_WRITE, 1, " (contract check ", 17);
+            fmt_int(_fz_bad);
+            syscall(SYS_WRITE, 1, " broken)", 8);
+        }
+        syscall(SYS_WRITE, 1, "\n", 1);
+        return 0;
+    }
+    var pfd[16];
+    if (sys_pipe(&pfd) != 0) { println("FAIL: pipe"); return 1; }
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(load32(&pfd));
+        var wfd = load32(&pfd + 4);
+        _fz_s = _fz_first;
+        var next = _fz_rnd();
+        var dig = 0;
+        var i = 0;
+        while (i < _fz_iters) {
+            var seed = next;
+            var sb[8];
+            store64(&sb, seed);
+            sys_write(wfd, &sb, 8);
+            _fz_s = seed;
+            next = _fz_rnd() * 2654435761 + i;          # the next seed, independent of this iteration
+            var v = _fz_one(seed);
+            if (_fz_bad != 0) {
+                syscall(SYS_WRITE, 1, "FAIL: a result broke the parser's contract (check ", 50);
+                fmt_int(_fz_bad);
+                syscall(SYS_WRITE, 1, ")\n", 2);
+                sys_exit(3);
+            }
+            dig = dig * 1000003 + v;
+            i = i + 1;
+        }
+        syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+        syscall(SYS_WRITE, 1, ": ", 2);
+        fmt_int(_fz_iters);
+        syscall(SYS_WRITE, 1, _fz_what, strlen(_fz_what));
+        syscall(SYS_WRITE, 1, ", digest ", 9);
+        fmt_int(dig);
+        syscall(SYS_WRITE, 1, "\n", 1);
+        sys_exit(0);
+    }
+    sys_close(load32(&pfd + 4));
+    var last = 0;
+    var got = 0;
+    var rb[8];
+    while (sys_read(load32(&pfd), &rb, 8) == 8) { last = load64(&rb); got = got + 1; }
+    var st[8];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    var status = load64(&st) & 0xFFFF;
+    if (status == 0) { return 0; }
+    syscall(SYS_WRITE, 1, "FAIL: ", 6);
+    syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+    syscall(SYS_WRITE, 1, ": iteration ", 12);
+    fmt_int(got - 1);
+    syscall(SYS_WRITE, 1, " (seed ", 7);
+    fmt_int(last);
+    syscall(SYS_WRITE, 1, ") ended with ", 13);
+    if ((status & 0x7F) != 0) { syscall(SYS_WRITE, 1, "signal ", 7); fmt_int(status & 0x7F); }
+    else { syscall(SYS_WRITE, 1, "exit ", 5); fmt_int((status >> 8) & 0xFF); }
+    syscall(SYS_WRITE, 1, " — replay: set _fz_replay to that seed\n", 41);
+    return 1;
+}
+#endif
+#ifndef CYRIUS_TARGET_LINUX
+fn main(): i64 {
+    syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+    println(": runs on Linux (fork + pipe supervisor) — nothing to run here");
+    return 0;
+}
+#endif
+var r = main();
+syscall(SYS_EXIT, r);

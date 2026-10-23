@@ -1,0 +1,225 @@
+# Fuzz: the WebSocket server's upgrade handshake — lib/ws_server.cyr ws_server_handshake (the
+# Upgrade / Connection / Sec-WebSocket-Version / Sec-WebSocket-Key lookups, through the sandhi fold's
+# sandhi_server_find_header, and the key's check and Accept), which reads the request any client
+# sends (6.7.18; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+#
+# A VALID upgrade request is the seed (RFC 6455's sample key). Each iteration mutates a fresh copy
+# from its own seed — a truncation, a header's ':' or CR LF dropped or doubled, a header name's case
+# flipped, a key or version byte changed, a header repeated, byte flips, a long value — into a heap
+# block of exactly the mutated length, and hands it to ws_server_handshake with a pipe as the
+# client socket. A refusal (0, nothing sent) is graceful; an upgrade must have sent a 101. A fault
+# fails: the iterations run in a forked child that reports each iteration's seed to the parent
+# first, so the parent names the seed of the iteration that killed it (a SIGSEGV, `slice bounds
+# violation` exit 134, a poison trap exit 86); set _fz_replay to replay it. The child prints one
+# digest of every answer and every 101's bytes, so `--poison=ab` sees an over-read.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws_server.cyr"
+
+var _fz_name = "fuzz_ws_server_handshake";
+var _fz_iters = 2000;
+var _fz_what = " mutated upgrade requests handled";
+var _fz_first = 0x5EED4A5D;  # the first iteration's seed
+var _fz_replay = 0;          # a seed the parent printed: run that one iteration alone
+
+var _fz_bad = 0;             # set by an iteration whose result breaks the parser's contract
+var _fz_s = 0;
+fn _fz_rnd(): i64 {
+    _fz_s = _fz_s * 6364136223846793005 + 1442695040888963407;
+    var r = _fz_s >> 33;
+    if (r < 0) { r = 0 - r; }
+    return r;
+}
+
+# memmove: n bytes from src to dst, the two may overlap.
+fn _fz_move(dst, src, n): i64 {
+    if (dst > src) {
+        var i = n;
+        while (i > 0) { i = i - 1; store8(dst + i, load8(src + i)); }
+    } else {
+        var j = 0;
+        while (j < n) { store8(dst + j, load8(src + j)); j = j + 1; }
+    }
+    return 0;
+}
+
+var _fz_req1 = "GET /chat HTTP/1.1\r\nHost: server.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n";
+var _fz_req2 = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+
+# The seed's header lines: (offset, length incl. CR LF) of Host, Upgrade, Connection, the key, the
+# version.
+var _fz_lines: i64[10];
+
+# Mutate the n-byte request at b (room for 2048) by the current LCG. Returns the new length.
+fn _fz_mutate(b, n): i64 {
+    var m = n;
+    var kinds = 1 + _fz_rnd() % 3;
+    while (kinds > 0) {
+        var k = _fz_rnd() % 7;
+        var p = _fz_rnd() % (m + 1);
+        if (k == 0) { m = p; }                                           # truncate
+        elif (k == 1) {                                                  # a ':' / CR / LF in or out
+            if (_fz_rnd() % 2 == 0 && m < 2047) {
+                _fz_move(b + p + 1, b + p, m - p);
+                var ins = ":\r\n ";
+                store8(b + p, load8(ins + _fz_rnd() % 4));
+                m = m + 1;
+            } elif (p < m) { _fz_move(b + p, b + p + 1, m - p - 1); m = m - 1; }
+        } elif (k == 2) {                                                # case flips
+            var f = 1 + _fz_rnd() % 6;
+            while (f > 0) {
+                var q = _fz_rnd() % (m + 1);
+                if (q < m) {
+                    var c = load8(b + q);
+                    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) { store8(b + q, c ^ 32); }
+                }
+                f = f - 1;
+            }
+        } elif (k == 3) {                                                # a key / version byte
+            var at = 106 + _fz_rnd() % 26;                                # the key's 24 bytes, or its CRLF
+            if (_fz_rnd() % 3 == 0) { at = 155 + _fz_rnd() % 4; }         # the version, or its CRLF
+            if (at < m) { store8(b + at, _fz_rnd() % 256); }
+        } elif (k == 4) {                                                # repeat a header line
+            var h = _fz_rnd() % 5;
+            var hs = load64(&_fz_lines + h * 16);
+            var hl = load64(&_fz_lines + h * 16 + 8);
+            if (hs + hl <= m && m + hl < 2048) { _fz_move(b + hs + hl, b + hs, m - hs); m = m + hl; }
+        } elif (k == 5) {                                                # byte flips
+            var g = 1 + _fz_rnd() % 4;
+            while (g > 0) { var r = _fz_rnd() % (m + 1); if (r < m) { store8(b + r, _fz_rnd() % 256); } g = g - 1; }
+        } else {                                                         # a long value
+            var lv = 100 + _fz_rnd() % 900;
+            if (p < m && m + lv < 2048) { _fz_move(b + p + lv, b + p, m - p); memset(b + p, 120, lv); m = m + lv; }
+        }
+        kinds = kinds - 1;
+    }
+    return m;
+}
+
+# One iteration from `seed`: returns a value folded into the digest; a result that breaks the
+# parser's contract sets _fz_bad.
+fn _fz_one(seed): i64 {
+    _fz_s = seed;
+    var work = alloc(2048);
+    var n1 = strlen(_fz_req1);
+    memcpy(work, _fz_req1, n1);
+    var n0 = n1 + strlen(_fz_req2);
+    memcpy(work + n1, _fz_req2, n0 - n1);
+    var n = _fz_mutate(work, n0);
+    var b = alloc(n + 1);                     # exactly the request (+1: alloc(0) is no block)
+    memcpy(b, work, n);
+    var pfd[16];
+    if (sys_pipe(&pfd) != 0) { _fz_bad = 11; return 0; }
+    var rfd = load32(&pfd);
+    var wfd = load32(&pfd + 4);
+    var ws = ws_server_handshake(wfd, b, n);
+    sys_close(wfd);
+    var out = alloc(512);
+    var got = 0;
+    var r = sys_read(rfd, out, 511);
+    while (r > 0 && got < 511) { got = got + r; r = sys_read(rfd, out + got, 511 - got); }
+    sys_close(rfd);
+    if (ws != 0 && (got < 12 || memeq(out, "HTTP/1.1 101", 12) != 1)) { _fz_bad = 12; return 0; }
+    if (ws == 0 && got != 0) { _fz_bad = 13; return 0; }
+    var v = got;
+    var i = 0;
+    while (i < got) { v = v * 31 + load8(out + i); i = i + 1; }
+    return v;
+}
+
+fn _fz_setup(): i64 {
+    var lo = "\x14\x1A\x2E\x14\x42\x15\x57\x2D\x84\x1B";   # 20,26 46,20 66,21 87,45 132,27
+    var i = 0;
+    while (i < 10) { store64(&_fz_lines + i * 8, load8(lo + i)); i = i + 1; }
+    return 0;
+}
+
+# ── the supervisor (the same in every network-parser harness) ──
+#ifdef CYRIUS_TARGET_LINUX
+fn main(): i64 {
+    alloc_init();
+    _fz_setup();
+    if (_fz_replay != 0) {
+        var rr = _fz_one(_fz_replay);
+        fmt_int(rr);
+        if (_fz_bad != 0) {
+            syscall(SYS_WRITE, 1, " (contract check ", 17);
+            fmt_int(_fz_bad);
+            syscall(SYS_WRITE, 1, " broken)", 8);
+        }
+        syscall(SYS_WRITE, 1, "\n", 1);
+        return 0;
+    }
+    var pfd[16];
+    if (sys_pipe(&pfd) != 0) { println("FAIL: pipe"); return 1; }
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(load32(&pfd));
+        var wfd = load32(&pfd + 4);
+        _fz_s = _fz_first;
+        var next = _fz_rnd();
+        var dig = 0;
+        var i = 0;
+        while (i < _fz_iters) {
+            var seed = next;
+            var sb[8];
+            store64(&sb, seed);
+            sys_write(wfd, &sb, 8);
+            _fz_s = seed;
+            next = _fz_rnd() * 2654435761 + i;          # the next seed, independent of this iteration
+            var v = _fz_one(seed);
+            if (_fz_bad != 0) {
+                syscall(SYS_WRITE, 1, "FAIL: a result broke the parser's contract (check ", 50);
+                fmt_int(_fz_bad);
+                syscall(SYS_WRITE, 1, ")\n", 2);
+                sys_exit(3);
+            }
+            dig = dig * 1000003 + v;
+            i = i + 1;
+        }
+        syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+        syscall(SYS_WRITE, 1, ": ", 2);
+        fmt_int(_fz_iters);
+        syscall(SYS_WRITE, 1, _fz_what, strlen(_fz_what));
+        syscall(SYS_WRITE, 1, ", digest ", 9);
+        fmt_int(dig);
+        syscall(SYS_WRITE, 1, "\n", 1);
+        sys_exit(0);
+    }
+    sys_close(load32(&pfd + 4));
+    var last = 0;
+    var got = 0;
+    var rb[8];
+    while (sys_read(load32(&pfd), &rb, 8) == 8) { last = load64(&rb); got = got + 1; }
+    var st[8];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    var status = load64(&st) & 0xFFFF;
+    if (status == 0) { return 0; }
+    syscall(SYS_WRITE, 1, "FAIL: ", 6);
+    syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+    syscall(SYS_WRITE, 1, ": iteration ", 12);
+    fmt_int(got - 1);
+    syscall(SYS_WRITE, 1, " (seed ", 7);
+    fmt_int(last);
+    syscall(SYS_WRITE, 1, ") ended with ", 13);
+    if ((status & 0x7F) != 0) { syscall(SYS_WRITE, 1, "signal ", 7); fmt_int(status & 0x7F); }
+    else { syscall(SYS_WRITE, 1, "exit ", 5); fmt_int((status >> 8) & 0xFF); }
+    syscall(SYS_WRITE, 1, " — replay: set _fz_replay to that seed\n", 41);
+    return 1;
+}
+#endif
+#ifndef CYRIUS_TARGET_LINUX
+fn main(): i64 {
+    syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+    println(": runs on Linux (fork + pipe supervisor) — nothing to run here");
+    return 0;
+}
+#endif
+var r = main();
+syscall(SYS_EXIT, r);
