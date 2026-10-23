@@ -581,8 +581,8 @@ fn _bx_pname(S, fi, ord): i64 {
             elif (want == 1) { if (t == 2) { if (k == ord) { return TOKVAL(S, i); } want = 0; } }
         }
         if (t == 10 || t == 19) { d = d + 1; }
-        if (t == 11 || t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
+        if (t == 11) { d = d - 1; }
+        d = d - _targ_gt_n(t);   # 6.7.18: `>>>` closes three (it closed none, so no later parameter was found)
         if (d < 0) { d = 0; }
         i = i + 1;
     }

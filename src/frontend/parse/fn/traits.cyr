@@ -64,8 +64,7 @@ fn _tr_arity(S, p): i64 {
             pd = pd - 1;
         }
         elif (t == 19) { ad = ad + 1; }
-        elif (t == 20) { ad = ad - 1; }
-        elif (t == 39) { ad = ad - 2; }
+        elif (_targ_gt_n(t) > 0) { ad = ad - _targ_gt_n(t); }   # 6.7.18: `>>>` too
         elif (t == 31) { if (pd == 0) { if (ad <= 0) { n = n + 1; } } }
         elif (t == 4) { if (pd == 0) { q = _pl_dflt_end(S, q); continue; } }   # 6.7.7: a default
         q = q + 1;
@@ -98,8 +97,7 @@ fn _tr_paren(S, p): i64 {
         while (TOKTYP(S, q) != 12) {
             var t = TOKTYP(S, q);
             if (t == 19) { ad = ad + 1; }
-            elif (t == 20) { ad = ad - 1; }
-            elif (t == 39) { ad = ad - 2; }
+            else { ad = ad - _targ_gt_n(t); }   # 6.7.18: `>>>` too
             q = q + 1;
             if (ad <= 0) { break; }
         }
@@ -1506,8 +1504,8 @@ fn _bnd_sites(S, fi, open): i64 {
             if (t == 2) { if (TOKTYP(S, i - 1) == 10 || TOKTYP(S, i - 1) == 31) { _bnr_decl(S, fi, tp, blk, i); } }
         }
         if (t == 10 || t == 19 || t == 28) { d = d + 1; }
-        if (t == 11 || t == 20 || t == 29) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        d = d - _targ_gt_n(t);   # 6.7.18: `>>>` too
         if (d < 0) { d = 0; }
         i = i + 1;
     }
