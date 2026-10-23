@@ -2870,7 +2870,7 @@ fn _win_cmd_self(): i64 {
     # PE cycc.exe the Linux fork compiles fine and produces a PE built from Linux syscall
     # numbers, which page-faults the moment the second step tries to RUN it (measured
     # under wine: "Unhandled page fault on write access ... at 0000000140001060"). Same
-    # rule the cross-OS legs already follow (cbt/commands.cyr's ecb sequence uses
+    # rule the cross-OS legs already follow (scripts/cross-os-selfhost.sh's ecb leg compiles
     # src/main_aarch64_macho.cyr). CHANGELOG [6.6.6].
     var self_src = _self_host_src();
     if (file_exists(self_src) == 0) {

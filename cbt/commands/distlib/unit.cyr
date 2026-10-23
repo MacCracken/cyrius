@@ -7,11 +7,11 @@
 # Everything before this point INFERS the leaf set from source text: an include-scan, the
 # declared `[deps] stdlib`, and a prune that keeps a leaf only if the bundle appears to
 # reference one of its definitions. That inference is unverifiable by construction, and it is
-# the ONLY surviving record of what a fold needs — `commands.cyr`'s own note says folding
-# destroys the `include` lines, and `lib/sandhi.cyr` has zero of them. An unverifiable oracle
-# that is also the sole source of truth is a design defect, not a bug: when the prune drops a
-# leaf, nothing downstream can recover it — not the consumer, not the resolver, not a human
-# reading the bundle.
+# the ONLY surviving record of what a fold needs — `cmd_distlib`'s own note
+# (cbt/commands/distlib/distlib.cyr) says folding destroys the `include` lines, and
+# `lib/sandhi.cyr` has zero of them. An unverifiable oracle that is also the sole source of
+# truth is a design defect, not a bug: when the prune drops a leaf, nothing downstream can
+# recover it — not the consumer, not the resolver, not a human reading the bundle.
 #
 # Measured at 6.5.36: 45 of 118 ecosystem sidecars FAIL a clean-room build from exactly the
 # leaves they declare; 13 with hard compiler errors. sigil-sha names

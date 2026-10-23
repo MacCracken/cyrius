@@ -177,7 +177,7 @@ fn cmd_publish(): i64 {
     if (_mf_has("build", "modules") == 1 || _mf_has("lib", "modules") == 1) {
         _status("  distlib...");
         # v6.5.19: was a bare `cmd_distlib(0);`. distlib's return value is
-        # its bundle self-check verdict (commands.cyr, "the generated
+        # its bundle self-check verdict (cbt/commands/distlib/distlib.cyr, "the generated
         # bundle does not compile"), and dropping it meant publish printed
         # that error, then went on to `git tag` the release and exit 0.
         # A defective bundle must not get tagged. CHANGELOG [6.5.19].

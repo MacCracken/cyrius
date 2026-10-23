@@ -595,7 +595,7 @@ fn cmd_distlib(profile): i64 {
     # The note below then attributed that failure to unresolved symbols, so a
     # syntactically broken bundle and a perfect one printed the same reassuring
     # line. This is the identical defect v5.7.8 fixed for `cyrius check`
-    # (~line 566 of this file); distlib never got the same treatment.
+    # (`cmd_check`, cbt/commands/check.cyr); distlib never got the same treatment.
     # ...and it is checked the way a CONSUMER actually uses it: through a
     # generated one-line entry that `include`s the bundle. Piping the bundle
     # itself down stdin (what this used to do) also hits cycc's 1 MB input_buf

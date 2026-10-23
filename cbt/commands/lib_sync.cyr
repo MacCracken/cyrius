@@ -216,7 +216,7 @@ fn _check_lib_freshness(strict): i64 {
     # repos (gnoboot, kybernet, yeo-cy-test) ALSO build from src/main.cyr and have
     # a ./lib of resolved deps, so that conflation would silently disable this
     # check for exactly the consumers it exists to protect. Same conflation was
-    # the v6.0.1 mkdir bug — see deps.cyr:_dep_is_cyrius_source_repo.
+    # the v6.0.1 mkdir bug — see cbt/deps/lock.cyr:_dep_is_cyrius_source_repo.
     if (_dep_is_cyrius_source_repo() == 1) { return 0; }
     # Only a ./lib/ that actually shadows stdlib is in scope (an empty lib/, or
     # one holding unrelated project-local modules, is not — the v5.11.57 lesson).
@@ -317,10 +317,10 @@ fn cmd_lib_sync(): i64 {
     # snapshot holds, and because the snapshot is refreshed FROM ./lib by
     # install.sh --refresh-only, the damage can look like a no-op until a fold that
     # landed after the last bump quietly disappears.
-    # `_check_lib_freshness` (:651) already carves this repo out for exactly this
+    # `_check_lib_freshness` (above) already carves this repo out for exactly this
     # reason; this fn was the unguarded twin. Erroring rather than returning 0
     # silently — the user typed the command, so say why it is refused.
-    # See CLAUDE.md "Downstream repo setup" + deps.cyr:_dep_is_cyrius_source_repo.
+    # See CLAUDE.md "Downstream repo setup" + cbt/deps/lock.cyr:_dep_is_cyrius_source_repo.
     if (_dep_is_cyrius_source_repo() == 1) {
         sys_write(STDERR_FD, "error: `lib sync` refused in the cyrius source repo\n", 52);
         sys_write(STDERR_FD, "  ./lib/ here is the CANONICAL source of the folded stdlib (sandhi pattern),\n", 77);

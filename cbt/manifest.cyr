@@ -1323,7 +1323,7 @@ fn _embed_load(): i64 {
         }
     }
     # A NAME / NAME_len another declaration in scope owns (the stdlib snapshot, the project's own
-    # sources) is refused, never left to "last definition wins" (cbt/commands.cyr). Ahead of a
+    # sources) is refused, never left to "last definition wins" (cbt/commands/distlib/embed.cyr). Ahead of a
     # [deps] resolve that check waits for lib/ to be vendored (_embed_collide_vendored).
     if (bad == 0 && vec_len(out) > 0 && _embed_coll_later == 0) { bad = _embed_collisions(out); }
     if (bad > 0) {

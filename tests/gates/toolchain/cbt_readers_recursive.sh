@@ -27,11 +27,24 @@
 # subfolder carries cbt/cyrius.cyr's cbt/ include list exactly, in its order (a dropped or reordered
 # piece is named). Floors: the list holds >= 30 files, >= 5 mirrors are compared.
 #
+# AXIS 3 — NO POINTER TO THE SPLIT FILES. After the split, fourteen source comments in cbt/,
+# lib/ and programs/ (and two gate headers) still sent a reader to cbt/commands.cyr or
+# cbt/deps.cyr — "the sanctioned predicate (cbt/deps.cyr)", "see deps.cyr:_dep_is_cyrius_source_
+# repo", "(~line 566 of this file)" — files that no longer exist. Pinned: no line of cbt/, lib/,
+# programs/, src/ or scripts/ names `cbt/commands.cyr` / `cbt/deps.cyr` (or the bare
+# `commands.cyr` / `deps.cyr`), but the 6.7.18 split notes ("split from / of cbt/…") and the
+# HISTORY list below — sentences about a past release that were true of the file as it stood. A
+# history entry that matches no line is RED too, so the list cannot outlive its sentence, and it is
+# the axis's floor: the scan must find all of them. (The gates' mutation ledgers are history and
+# are not scanned.)
+#
 # MUTATION LEDGER (measured at 6.7.18):
 #   M1  the parent of this gate (the 22 flat readers)                        -> RED, 35 lines named
 #   M2  one reader turned back (cbt_fork_sites_have_pe_arm.sh `scan cbt/*.cyr`) -> RED, that line
 #   M3  cbt/commands/clean.cyr dropped from cli_dry_pass_mute.tcyr's include list -> RED, axis 2 names it
 #   M4  cbt/commands/clean.cyr dropped from cbt/cyrius.cyr                    -> RED, axis 2 (not included)
+#   M5  the parent of axis 3 (the fourteen stale pointers)                    -> RED, axis 3 names each
+#   M6  one history sentence reworded (cbt/cyrius.cyr's v5.11.17 note)          -> RED, axis 3 (both ways)
 #   Real tree -> GREEN.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -130,6 +143,30 @@ if [ "$a2" = 0 ]; then
     echo "  ok: axis 2: every cbt/ file is included exactly once ($nl by cbt/cyrius.cyr), and $nm tests carry its list in order"
 else
     fail=1
+fi
+
+# ── axis 3: no pointer to the split files ────────────────────────────────────────────────
+# HISTORY — file|substring: a sentence about a past release, true of the file as it stood.
+HISTORY='cbt/cyrius.cyr|Part 1 shipped at v5.11.17 in cbt/deps.cyr
+lib/syscalls_macos.cyr|`cbt/deps.cyr:_file_size` uses STAT_SIZE and was fine
+programs/checks/main.cyr|`cyrius fmt --check cbt/commands.cyr` exited 1 at 6.6.6
+programs/checks/main.cyr|(cbt/deps.cyr had a dry-run branch the CLI could never reach)
+src/backend/aarch64/emit.cyr|_file_size in cbt/deps.cyr] ran as aarch64 io_getevents(4)
+scripts/cross-os-selfhost.sh|papered-over since v6.0.40, deps.cyr'"'"'s'
+printf '%s\n' "$HISTORY" > "$W/history"
+{ grep -rnIE 'cbt/(commands|deps)\.cyr|(^|[^a-zA-Z0-9_/.-])(commands|deps)\.cyr' cbt lib programs src scripts || true; } \
+    | { grep -vE '[Ss]plit (from|of) cbt/' || true; } > "$W/old"
+awk -F'|' 'NR == FNR { hf[NR] = $1; hs[NR] = substr($0, length($1) + 2); nh = NR; next }
+     { f = $0; sub(/:.*/, "", f); ok = 0
+       for (i = 1; i <= nh; i++) if (hf[i] == f && index($0, hs[i]) > 0) { ok = 1; used[i] = 1 }
+       if (!ok) print "  FAIL: axis 3: a pointer to a file the 6.7.18 split removed (name the piece): " substr($0, 1, 200) }
+     END { for (i = 1; i <= nh; i++) if (!used[i]) print "  FAIL: axis 3: history entry matches no line (remove it): " hf[i] "|" hs[i] }' \
+    "$W/history" "$W/old" > "$W/a3"
+if [ -s "$W/a3" ]; then
+    cat "$W/a3"
+    fail=1
+else
+    echo "  ok: axis 3: no line of cbt/ lib/ programs/ src/ scripts/ points at cbt/commands.cyr or cbt/deps.cyr ($(grep -c . "$W/history") history sentences, each found)"
 fi
 
 if [ "$fail" -ne 0 ]; then

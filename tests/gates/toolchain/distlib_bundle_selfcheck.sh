@@ -10,7 +10,7 @@
 #     note: bundle has unresolved symbols (expected for consumer-included bundles...)
 # and exited 0. So a syntactically broken bundle and a perfect one produced byte-identical
 # reassuring output. This is the SAME defect v5.7.8 fixed for `cyrius check` (see the
-# comment at cbt/commands.cyr ~line 566); distlib never got the same treatment.
+# comment in `cmd_check`, cbt/commands/check.cyr); distlib never got the same treatment.
 #
 # ⭐ TWO WRONGS THAT LOOKED LIKE ONE RIGHT. Fixing only the temp path exposes the second
 # half: piping the bundle down cycc's STDIN hits the 1 MB `input_buf` cap, and sigil's main

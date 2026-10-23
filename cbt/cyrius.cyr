@@ -639,7 +639,7 @@ fn main(): i64 {
     _cbt_children_waitable();   # 6.6.20 — an inherited SIGCHLD ignore made no child waitable
     _cbt_sig_install();         # 6.7.12 — a SIGTERM / SIGINT / SIGHUP mid-compile leaves no scratch
     find_tools();
-    # 6.7.6: the compiler's lib/ overlay is this CLI's to set (local mode, cbt/deps.cyr) — one
+    # 6.7.6: the compiler's lib/ overlay is this CLI's to set (local mode, cbt/deps/local.cyr) — one
     # inherited from a shell never reaches a compile.
     _dep_overlay_env(0);
     set_arch(ARCH_X86);
@@ -693,7 +693,7 @@ fn main(): i64 {
     # Every flag is now read before the resolver, which is also what finally makes
     # `--dry-run` mean "write nothing": it used to be set inside the build loop, i.e.
     # AFTER _auto_deps had already created lib/, and the deps branch never set it at
-    # all, which is why cbt/deps.cyr's dry-run early return had never once run.
+    # all, which is why cbt/deps/resolve.cyr's dry-run early return had never once run.
     # CHANGELOG [6.6.5].
     if (_cli_raw_tail(cmd) == 0) {
         if (_cli_known_verb(cmd) == 0) {

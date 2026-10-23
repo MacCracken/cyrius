@@ -183,7 +183,7 @@ fn _audit_sweep(): i64 {
     # hashes. This is the shape that hides best: correct in the cyrius repo, wrong in
     # every project that consumes it.
     #
-    # `_dep_is_cyrius_source_repo()` is the sanctioned predicate (cbt/deps.cyr) — it
+    # `_dep_is_cyrius_source_repo()` is the sanctioned predicate (cbt/deps/lock.cyr) — it
     # reads `[package] name` from cyrius.cyml, and is already what `_check_lib_freshness`
     # and (v6.4.77) `cmd_lib_sync` use for exactly this authored-vs-vendored question.
     # Do NOT substitute `file_exists("src/main.cyr")` (the v6.0.1 conflation bug) and do

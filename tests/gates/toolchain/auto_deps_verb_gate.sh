@@ -79,8 +79,8 @@ EXEMPT_lsp='programs/cyrius-lsp.cyr self-declares all 11 of its includes and onl
 EXEMPT_LIST="pulsar lint lsp"
 
 # ── The analysis. One awk pass over cbt/**/*.cyr:
-#   * strip `#` comments outside double-quoted strings (cbt/deps.cyr:1737 mentions
-#     compile() in prose and is a false positive without this),
+#   * strip `#` comments outside double-quoted strings (a comment in cbt/deps/local.cyr
+#     mentions compile() in prose and is a false positive without this),
 #   * build caller→callee edges keyed on the enclosing `^fn NAME(`,
 #   * reverse-BFS from compile / _materialize_source to the transitive reach set,
 #   * split main()'s dispatch chain into per-verb regions (one `streq(cmd, "X")`
