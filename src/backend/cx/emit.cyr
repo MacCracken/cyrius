@@ -1865,10 +1865,10 @@ fn EF64CEIL(S): i64 { CX_EMIT(S, 107, 0, 0, 0); return 0; }    # 0x6B fceil  r0,
 fn EF64ROUND(S): i64 { CX_EMIT(S, 108, 0, 0, 0); return 0; }   # 0x6C fround r0, r0
 fn EF64TRUNC(S): i64 { CX_EMIT(S, 110, 0, 0, 0); return 0; }   # 0x6E ftrunc r0, r0 (6.6.13)
 # v5.9.40 Phase 2c — real EFLADDR / EFLADDR_X1 for cx. Compute
-# &local-slot. Required by parse/decl.cyr's asv (assignment-
+# &local-slot. Required by parse/decl/var.cyr's asv (assignment-
 # from-struct-value) caller-side and by PARSE_FIELD_STORE/LOAD
 # when the local var is an inline struct (fs_is_ptr == 0 path,
-# parse/decl.cyr:344).
+# parse/decl/field.cyr).
 #   EFLADDR    → addr in r0 (pushed as fn-arg or paired with EPOPC)
 #   EFLADDR_X1 → addr in r1 (paired with EPOPR + storeN [r1], r0)
 # Sub-8-byte struct field stores route through EFLADDR_X1 when
@@ -2041,7 +2041,7 @@ fn _SYSX_ACTUALLY(n): i64 { return 0; }
 fn _pe_pending_imp_add(S, name): i64 { return 0; }
 
 # v6.5.35 — stub. `RA_SCAN_LOOPS` really lives in src/backend/x86/decode.cyr, which this
-# fork does not include; `parse/fn.cyr` is shared by every fork and calls it. Returning -1
+# fork does not include; `parse/fn/def.cyr` is shared by every fork and calls it. Returning -1
 # means "no loop information", which the caller must already handle by falling back to the
 # conservative whole-function interval extent — so the picker behaves exactly as it did
 # before v6.5.35 here. (The x86 regalloc post-pass does not run on these targets anyway;
