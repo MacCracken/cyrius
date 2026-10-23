@@ -41,6 +41,21 @@
 #      each verb reads the capture back from its fd (`_regression_capture_read`) and never names a
 #      file (no file_read_all / file_open / sys_unlink). Both detectors self-tested (the 6.7.16 rules
 #      on the live file with the unlink deleted, and with the three read-backs put back by name).
+#   5  CYRIUS-2026-0048 (6.7.18) — the same class in the CLI the PE build ships. A rooted POSIX
+#      path is DRIVE-RELATIVE on Windows (<current drive>:\proc\self\environ, :\root\.cyrius), a
+#      name any local user can create (the 0012 / 0014 / 0020 class lib/io.cyr's env_block
+#      already refuses): load_environ read "/proc/self/environ" on PE to EOF through unchecked
+#      doubling allocations (2.3 GB faulted cyrius.exe), and find_tools fell back to the home
+#      "/root" with USERPROFILE and CYRIUS_HOME unset, then looked for \root\.cyrius\bin\cycc.exe.
+#      (a) STATIC over cbt/*.cyr: a "/proc/…", "/etc/…", "/sys/…", "/dev/…", "/root", "/tmp",
+#      "/usr/…", "/var/…" or "/home/…" literal in code the PE build compiles — outside an
+#      `#ifndef CYRIUS_TARGET_WIN` / `#ifdef CYRIUS_TARGET_{LINUX,MACOS,AGNOS,CX}` region (or the
+#      `#else` of `#ifdef CYRIUS_TARGET_WIN`) — sits in an allowlisted file|fn|literal with its
+#      reason; an entry matching no live site fails. Detector self-tested.
+#      (b) wine (a named SKIP without it): cyrius.exe --version under WINEDEBUG=+file opens no
+#      "/proc/self/environ"; with USERPROFILE and CYRIUS_HOME unset (a .bat) it exits 1 naming
+#      the refusal and probes no "/root/.cyrius". Both RED on the parent (b873a1eca's cbt/: 5a
+#      flags load_environ, _cbt_environ and find_tools; 5b sees both opens).
 #
 # MUTATION LEDGER (2026-10-18, 6.7.15, each in a scratch copy of the tree's lib/; the .tcyr's
 # count of 22 rows alongside):
@@ -287,5 +302,110 @@ b=$(_capopen_bad "$ROOT/lib/regression.cyr")
 [ -z "$b" ] || { echo "$b" | sed "s/^/FAIL: $NAME: axis 4b: /"; FAIL=1; a4=1; }
 [ "$a4" = 0 ] && echo "  ok: axis 4: no lib/ string literal names a /tmp path outside the 2 allowlisted sites ($nf files, $nl literals); the capture open is O_CREAT|O_EXCL|O_NOFOLLOW 0600, unlinks the name at once and is the only builder of a capture name; each verb reads its capture back from the fd, never by name (detectors self-tested)"
 
+# ── axis 5: the PE CLI reads no drive-relative rooted path (CYRIUS-2026-0048) ──
+cat > "$W/pe.awk" <<'AWK'
+# "<fn>\t<literal>" for each rooted POSIX system-path literal in code the PE build compiles
+function excl(   i) { for (i = 1; i <= sp; i++) if (ex[i]) return 1; return 0 }
+/^[ \t]*fn [A-Za-z_0-9]+[ \t]*\(/ { f = $0; sub(/^[ \t]*fn[ \t]+/, "", f); sub(/[ \t]*\(.*/, "", f) }
+/^[ \t]*#ifndef[ \t]/ { sp++; nm[sp] = $2; ng[sp] = 1; ex[sp] = ($2 == "CYRIUS_TARGET_WIN"); next }
+/^[ \t]*#ifdef[ \t]/  { sp++; nm[sp] = $2; ng[sp] = 0; ex[sp] = ($2 ~ /^CYRIUS_TARGET_(LINUX|MACOS|AGNOS|CX)$/); next }
+/^[ \t]*#else/        { if (sp > 0) ex[sp] = (nm[sp] == "CYRIUS_TARGET_WIN" && ng[sp] == 0); next }
+/^[ \t]*#endif/       { if (sp > 0) sp--; next }
+excl() { next }
+{
+    line = $0; n = length(line); i = 1; ins = 0; cur = ""
+    while (i <= n) {
+        c = substr(line, i, 1)
+        if (ins) {
+            if (c == "\\") { cur = cur substr(line, i, 2); i += 2; continue }
+            if (c == "\"") { if (cur ~ /^\/(proc|etc|sys|dev|root|tmp|usr|var|home)(\/|$)/) print f "\t" cur; ins = 0; cur = ""; i++; continue }
+            cur = cur c; i++; continue
+        }
+        if (c == "#") break
+        if (c == "'") { if (substr(line, i + 1, 1) == "\\") { i += 4 } else { i += 3 }; continue }
+        if (c == "\"") { ins = 1; cur = "" }
+        i++
+    }
+}
+AWK
+cat > "$W/fx/pe.cyr" <<'PEFX'
+fn _a(): i64 {
+    var x = file_open("/proc/self/environ", 0, 0);
+}
+fn _b(): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    var y = "/etc/hosts";
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    var z = 0;
+    #else
+    var w = "/etc/passwd";
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    var t = "/tmp";
+    #endif
+    # "/proc/x" in a comment
+    var v = "/procfoo"; var u = "/lib"; var q = '"';
+    var r = "/root";
+}
+PEFX
+a5=0
+[ "$(awk -f "$W/pe.awk" "$W/fx/pe.cyr" | tr '\t\n' '| ')" = '_a|/proc/self/environ _b|/root ' ] \
+  || { fail "axis 5a self-test: the detector saw '$(awk -f "$W/pe.awk" "$W/fx/pe.cyr" | tr '\t\n' '| ')' (want _a|/proc/self/environ _b|/root)"; a5=1; }
+ALLOW5='cbt/deps.cyr|_dep_wt_run|/dev/null|a POSIX fork child: the PE arm spawns before the fork (cbt_fork_sites_have_pe_arm.sh)
+cbt/deps.cyr|_dep_wt_run|/usr/bin/env|the execve target of that POSIX fork child (sys_execve is a -1 stub on PE)
+cbt/deps.cyr|_git_run|/dev/null|a POSIX fork child: the PE arm spawns before the fork (cbt_fork_sites_have_pe_arm.sh)
+cbt/deps.cyr|_git_run|/usr/bin/env|the execve target of that POSIX fork child (sys_execve is a -1 stub on PE)
+cbt/deps.cyr|_process_named_deps|/usr/bin/env|the execve target of a POSIX fork child (sys_execve is a -1 stub on PE)'
+: > "$W/pesites"; npe=0
+for f in "$ROOT"/cbt/*.cyr; do
+    [ -f "$f" ] || continue
+    npe=$((npe + 1))
+    awk -f "$W/pe.awk" "$f" | tr '\t' '|' | sed "s|^|${f#"$ROOT"/}\||" >> "$W/pesites"
+done
+printf '%s\n' "$ALLOW5" | cut -d'|' -f1-3 | LC_ALL=C sort -u > "$W/allow5"
+pbad=$(LC_ALL=C sort -u "$W/pesites" | LC_ALL=C comm -23 - "$W/allow5")
+pdead=$(LC_ALL=C sort -u "$W/pesites" | LC_ALL=C comm -13 - "$W/allow5")
+[ "$npe" -ge 10 ] || { fail "axis 5a: scanned $npe cbt/ files (floor 10) — the scan read nothing"; a5=1; }
+[ -z "$pbad" ] || { echo "$pbad" | sed "s/^/FAIL: $NAME: axis 5a: a rooted POSIX path the PE CLI compiles (drive-relative on Windows — put it under #ifndef CYRIUS_TARGET_WIN, or allowlist it with its reason): /"; FAIL=1; a5=1; }
+[ -z "$pdead" ] || { echo "$pdead" | sed "s/^/FAIL: $NAME: axis 5a: allowlist entry matches no live site (remove it): /"; FAIL=1; a5=1; }
+[ "$a5" = 0 ] && echo "  ok: axis 5a: no rooted POSIX path in cbt/ code the PE build compiles outside the $(printf '%s\n' "$ALLOW5" | grep -c .) allowlisted fork-child sites ($npe files; detector self-tested)"
+if command -v wine > /dev/null 2>&1 && command -v winepath > /dev/null 2>&1; then
+    # A PRIVATE prefix under $W (never ~/.wine), its HOME and cache with it; torn down on exit.
+    WP="$W/wine"; WHM="$W/whome"; mkdir -p "$WHM" "$W/wrun"
+    _wine_down() {
+        [ -d "$WP" ] || return 0
+        _ws="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WP" 2>/dev/null)-$(printf '%x' "$(stat -c '%i' "$WP" 2>/dev/null || echo 0)")"
+        WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1 || true
+        WINEPREFIX="$WP" wineserver -w > /dev/null 2>&1 || true
+        rm -rf "$_ws" || true
+    }
+    trap '_wine_down; rm -rf "$W"' EXIT
+    _wine() { ( cd "$W/wrun" && env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' "$@" ); }
+    a5b=0
+    if ( cd "$ROOT" && "$CC" < src/main_win.cyr > "$W/cc_win" 2> /dev/null ) && chmod +x "$W/cc_win" \
+       && ( cd "$ROOT" && "$W/cc_win" < cbt/cyrius.cyr > "$W/cyrius.exe" 2> "$W/pe.err" ) && [ -s "$W/cyrius.exe" ]; then
+        rc=0; _wine env WINEDEBUG=+file timeout 300 wine "$W/cyrius.exe" --version > "$W/w5v.out" 2> "$W/w5v.trace" || rc=$?
+        grep -q '^cyrius ' "$W/w5v.out" || { fail "axis 5b: cyrius.exe --version did not run under wine (rc=$rc): $(head -c 200 "$W/w5v.out" | tr -d '\r')"; a5b=1; }
+        if grep -q 'proc.self.environ' "$W/w5v.trace"; then
+            fail "axis 5b: cyrius.exe opened the drive-relative /proc/self/environ: $(grep -m1 'proc.self.environ' "$W/w5v.trace" | cut -c1-160)"; a5b=1
+        fi
+        WEXE=$(_wine winepath -w "$W/cyrius.exe" 2> /dev/null | tr -d '\r')
+        printf '@echo off\r\nset USERPROFILE=\r\nset CYRIUS_HOME=\r\n%s --version\r\necho rc=%%errorlevel%%\r\n' "$WEXE" > "$W/wrun/nohome.bat"
+        _wine env WINEDEBUG=+file timeout 300 wine cmd /c nohome.bat > "$W/w5h.out" 2> "$W/w5h.trace" || true
+        if ! grep -q 'rc=1' "$W/w5h.out" || ! grep -q 'neither CYRIUS_HOME nor USERPROFILE is set' "$W/w5h.out" "$W/w5h.trace"; then
+            fail "axis 5b: with USERPROFILE and CYRIUS_HOME unset cyrius.exe did not refuse by name: $(tr -d '\r' < "$W/w5h.out" | tail -2 | tr '\n' ' ')"; a5b=1
+        fi
+        if grep -q 'root.\.cyrius' "$W/w5h.trace"; then
+            fail "axis 5b: with no home cyrius.exe probed the drive-relative \\root\\.cyrius: $(grep -m1 'root.\.cyrius' "$W/w5h.trace" | cut -c1-160)"; a5b=1
+        fi
+    else
+        fail "axis 5b: the PE CLI does not cross-build: $(grep -m1 -E 'error' "$W/pe.err")"; a5b=1
+    fi
+    [ "$a5b" = 0 ] && echo "  ok: axis 5b (wine): cyrius.exe opens no /proc/self/environ, and with no home refuses by name instead of probing \\root\\.cyrius"
+else
+    echo "  SKIP: axis 5b — wine not found; the PE CLI's opens are checked where wine is installed (axis 5a still holds the source)"
+fi
+
 if [ "$FAIL" != 0 ]; then echo "FAIL: $NAME"; exit 1; fi
-echo "PASS $NAME (lib/regression.cyr's capture verbs create their file O_EXCL|O_NOFOLLOW 0600 under \$TMPDIR: a planted link or file is skipped, every name taken is refused by name, and no lib/ literal names a /tmp path outside the allowlist)"
+echo "PASS $NAME (lib/regression.cyr's capture verbs create their file O_EXCL|O_NOFOLLOW 0600 under \$TMPDIR: a planted link or file is skipped, every name taken is refused by name, and no lib/ literal names a /tmp path outside the allowlist; the PE CLI reads no drive-relative rooted path)"

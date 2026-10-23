@@ -2573,6 +2573,7 @@ fn _dep_wt_run(dir, a1, a2, a3, a4, outf): i64 {
         if (ceil != 0) { i = _ga(&argv, i, ceil); }
         i = _ga(&argv, i, "git");
         i = _ga(&argv, i, "--no-optional-locks");
+        i = _git_no_plaintext(&argv, i);   # ls-remote fetches (6.7.18)
         if (dir != 0) { i = _ga(&argv, i, "-C"); i = _ga(&argv, i, cdir); }
         i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.fsmonitor=false");
         i = _ga(&argv, i, "-c"); i = _ga(&argv, i, "core.hooksPath=/dev/null");
@@ -2704,10 +2705,53 @@ fn _dep_note_seen(name): i64 {
     return 0;
 }
 
+# The scheme of a PLAINTEXT git URL — "git", "http" or "ftp" (`<scheme>://…`, or a remote
+# helper's `<scheme>::…`, any case) — else 0. https://, ssh://, scp-like `[user@]host:path`,
+# file:// and local paths are not plaintext over a network. CHANGELOG [6.7.18]
+fn _dep_git_plaintext(g): i64 {
+    var i = 0;
+    while (i < 8 && load8(g + i) != 0 && load8(g + i) != 58) { i = i + 1; }
+    if (load8(g + i) != 58) { return 0; }
+    if (load8(g + i + 1) != 47 || load8(g + i + 2) != 47) {
+        if (load8(g + i + 1) != 58) { return 0; }   # neither `://` nor `::`
+    }
+    var lo = alloc(i + 1);
+    var k = 0;
+    while (k < i) {
+        var c = load8(g + k);
+        if (c >= 65 && c <= 90) { c = c + 32; }
+        store8(lo + k, c);
+        k = k + 1;
+    }
+    store8(lo + i, 0);
+    if (streq(lo, "git") == 1) { return "git"; }
+    if (streq(lo, "http") == 1) { return "http"; }
+    if (streq(lo, "ftp") == 1) { return "ftp"; }
+    return 0;
+}
+
 # THE SOURCE DECISION for one [deps.NAME] entry of the manifest being walked (`kind`, `owner`):
 # 1 = its `path` (a working tree), 0 = its git (a clone; nothing when it has no git), -1 = refused
 # by name. `mode` 0 = the local-mode prescan (silent), 1 = the resolve, 2 = the dry run.
+# ⛔ A git source over a PLAINTEXT transport (git://, http://, ftp://) is refused by name (the
+# user, 2026-10-22): an on-path attacker substituted the dependency on its first fetch, and the
+# lock then commit-pinned whatever arrived (Finding 26 of the 2026-10-22 audit). CHANGELOG [6.7.18]
 fn _dep_pick(name, rec, kind, owner, mode): i64 {
+    var r = _dep_pick_src(name, rec, kind, owner, mode);
+    if (r != 0) { return r; }
+    var git = load64(rec + _DS_GIT);
+    if (git == 0) { return 0; }
+    var pl = _dep_git_plaintext(git);
+    if (pl == 0) { return 0; }
+    if (mode == 0) { return 0 - 1; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, ", a plaintext ");
+    str_builder_add_cstr(sb, pl);
+    str_builder_add_cstr(sb, " URL — anyone on the network path can substitute the dependency (and the commit cyrius.lock pins); use https:// or ssh://; refused");
+    return _dep_refuse_entry(owner, name, "git", git, str_data(str_builder_build(sb)));
+}
+
+fn _dep_pick_src(name, rec, kind, owner, mode): i64 {
     var raw = load64(rec + _DS_RAW);
     var path = load64(rec + _DS_PATH);
     var git = load64(rec + _DS_GIT);
@@ -3363,9 +3407,10 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         # in-progress commit index — their commit then failed with
                         # "invalid object … Error building trees" and the cache was
                         # left with no index of its own. CHANGELOG [6.6.5].
-                        var gargv[384];   # N BYTES: up to ~40 ptrs (320 B) + slack
+                        var gargv[512];   # N BYTES: up to ~48 ptrs (384 B) + slack
                         var gai = _git_env_argv(&gargv, 0);
                         store64(&gargv + gai * 8, "git");       gai = gai + 1;
+                        gai = _git_no_plaintext(&gargv, gai);   # 6.7.18
                         store64(&gargv + gai * 8, "-c");        gai = gai + 1;
                         store64(&gargv + gai * 8, "advice.detachedHead=false"); gai = gai + 1;
                         store64(&gargv + gai * 8, "clone");     gai = gai + 1;
@@ -5142,6 +5187,13 @@ fn _dep_report_newer_tags(buf, n): i64 {
         var git = load64(rec + _DS_GIT);
         var tag = load64(rec + _DS_TAG);
         if (git == 0 || tag == 0 || _dep_git_remote(git) == 0) { continue; }
+        if (_dep_git_plaintext(git) != 0) {   # never asked over the clear (6.7.18)
+            sys_write(STDOUT_FD, "    ", 4);
+            var pn = _shown(nm);
+            sys_write(STDOUT_FD, pn, strlen(pn));
+            println(": not listed — its git is a plaintext URL (refused; use https:// or ssh://)");
+            continue;
+        }
         var mine = _dep_ver_parts(tag);
         sys_write(STDOUT_FD, "    ", 4);
         var sn = _shown(nm);
@@ -5622,6 +5674,17 @@ fn _cat2(a, b): i64 {
 # failed with "invalid object … Error building trees" and the cache was left with no
 # index. GIT_CONFIG* is deliberately KEPT: CI injects credentials that way and a
 # command-line `-c` outranks it (measured, git 2.55).
+# After "git" on a fetching argv: `-c protocol.<p>.allow=never` for the plaintext transports and
+# ext::, so a URL `_dep_git_plaintext` misreads — or an https redirect to http — still cannot
+# fetch in the clear. CHANGELOG [6.7.18]
+fn _git_no_plaintext(argv, i): i64 {
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "protocol.git.allow=never");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "protocol.http.allow=never");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "protocol.ftp.allow=never");
+    i = _ga(argv, i, "-c"); i = _ga(argv, i, "protocol.ext.allow=never");
+    return i;
+}
+
 fn _git_env_argv(argv, i): i64 {
     i = _ga(argv, i, "env");
     i = _ga(argv, i, "-u"); i = _ga(argv, i, "GIT_DIR");

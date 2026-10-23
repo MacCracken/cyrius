@@ -363,6 +363,10 @@ fn _tls_init_resolve(): i64 {
     # at toolchain install time). If the helper isn't present, TLS
     # is unavailable; callers see tls_available()==0 and fall back
     # to plain HTTP or error out.
+    # ⛔ A setuid / setgid (AT_SECURE) process never takes the invoker's $HOME copy: fdlopen
+    # resolves only the root-owned, verified /usr/lib/cyrius/dlopen-helper there, else
+    # tls_available()==0 (fail closed). Any program may ask for the same with
+    # fdlopen_trusted_only(1) before its first TLS use. CYRIUS-2026-0041, CHANGELOG [6.7.18]
     if (fdlopen_helper_available() == 0) { return 0; }
 
     var rc = fdlopen_init_full(&_tls_fdl_state);

@@ -49,6 +49,17 @@
 #           auto-resolved pre-signing 'latest', and a version at the TOFU floor; an explicit
 #           pre-signing version, the override and a first install still bootstrap (Linux; on
 #           macOS the fallback is refused outright and the axis checks only that nothing cloned).
+#   axis 9  STATIC (6.7.18, the 2026-10-22 audit's Finding 27): every http(s) URL install.sh, ci.sh
+#           and install.ps1 name is on github.com, api.github.com or raw.githubusercontent.com
+#           under the project (MacCracken/cyrius or ${REPO}). install.sh's header advertised
+#           `curl -sSf https://install.cyrius.dev | sh` — a host that does not resolve, on a domain
+#           nobody verified owning: one DNS record would make the documented command a live
+#           curl|sh. The README's raw.githubusercontent.com URL is the one advertised now.
+#   axis 10 STATIC (6.7.18, Finding 22): release.yml's top-level permissions are contents: read;
+#           exactly one job reads secrets.CYRIUS_RELEASE_SK, and it — like every job with
+#           contents: write — runs in `environment: release`, so the maintainer's required-reviewer
+#           rule on that environment stands between a tag push and the signing key. (The rule
+#           itself is a GitHub setting this gate cannot see.) Reader self-tested.
 #   Both verifier-discovery paths are exercised in each shell installer: install.sh with the
 #   verifier on PATH only (axis 1) and in $CYRIUS_HOME/bin (axes 1-2, 8); ci.sh with it on PATH
 #   (axis 3) and in $CYRIUS_HOME/bin only — a CI box with a cached ~/.cyrius (axis 3).
@@ -440,6 +451,56 @@ else
     [ "$a8" -eq 0 ] && echo "  ok axis 8 [$OSS]: with no tarball install.sh refuses before any clone (source bootstrap is Linux-only)"
 fi
 rm -f "$W/fakebin/git"
+
+# ── axis 9: STATIC — every URL an installer names is the project's own ──
+a9=0; n9=0
+for f in scripts/install.sh scripts/ci.sh scripts/install.ps1; do
+    [ -f "$ROOT/$f" ] || { bad "axis 9: $f is missing"; a9=1; continue; }
+    for u in $(grep -o 'https\{0,1\}://[^] "'"'"')`<>]*' "$ROOT/$f" || true); do
+        n9=$((n9 + 1))
+        case "$u" in
+            https://github.com/MacCracken/cyrius/*|https://github.com/MacCracken/cyrius.git) ;;
+            'https://github.com/${REPO}'/*|'https://github.com/${REPO}.git') ;;
+            https://api.github.com/repos/MacCracken/cyrius/*|'https://api.github.com/repos/${REPO}'/*) ;;
+            https://raw.githubusercontent.com/MacCracken/cyrius/*|'https://raw.githubusercontent.com/${REPO}'/*) ;;
+            *) bad "axis 9: $f names $u — not a URL of the project's own GitHub repository"; a9=1 ;;
+        esac
+    done
+done
+[ "$n9" -ge 8 ] || { bad "axis 9: read $n9 URLs from the three installers (floor 8) — the scan read nothing"; a9=1; }
+[ "$a9" -eq 0 ] && echo "  ok axis 9: every one of the $n9 URLs the three installers name is the project's own GitHub repository"
+
+# ── axis 10: STATIC — the signing key is reachable only from the `release` environment ──
+WFR="$ROOT/.github/workflows/release.yml"
+cat > "$W/wfjobs.awk" <<'AWK'
+# "<job>\t<secret_sk>\t<env_release>\t<contents_write>" per job, then "TOP\t<top-level contents>"
+/^jobs:[ \t]*$/ { injobs = 1; next }
+!injobs && /^  contents:[ \t]*/ { top = $2 }
+injobs && /^  [A-Za-z0-9_-]+:[ \t]*$/ { if (job != "") print job "\t" sk "\t" env "\t" cw; job = $1; sub(/:$/, "", job); sk = 0; env = 0; cw = 0; next }
+injobs && /secrets\.CYRIUS_RELEASE_SK/ { sk = 1 }
+injobs && /^    environment:[ \t]*release[ \t]*$/ { env = 1 }
+injobs && /^      name:[ \t]*release[ \t]*$/ && prev ~ /^    environment:[ \t]*$/ { env = 1 }
+injobs && /^      contents:[ \t]*write/ { cw = 1 }
+{ prev = $0 }
+END { if (job != "") print job "\t" sk "\t" env "\t" cw; print "TOP\t" top }
+AWK
+a10=0
+awk -f "$W/wfjobs.awk" "$WFR" > "$W/wfjobs"
+[ "$(awk -F'\t' '$1 == "TOP" { print $2 }' "$W/wfjobs")" = read ] \
+  || { bad "axis 10: release.yml's top-level permissions are 'contents: $(awk -F'\t' '$1 == "TOP" { print $2 }' "$W/wfjobs")' (want read: only the release job writes)"; a10=1; }
+nsk=$(awk -F'\t' '$1 != "TOP" && $2 == 1' "$W/wfjobs" | wc -l | tr -d ' ')
+[ "$nsk" = 1 ] || { bad "axis 10: $nsk jobs read secrets.CYRIUS_RELEASE_SK (want exactly 1)"; a10=1; }
+awk -F'\t' '$1 != "TOP" && $2 == 1 && $3 != 1 { print $1 }' "$W/wfjobs" | while read -r j; do
+    echo "  FAIL axis 10: job '$j' reads secrets.CYRIUS_RELEASE_SK outside 'environment: release' — a tag push alone reaches the signing key"
+done | grep . && { fail=$((fail + 1)); a10=1; }
+awk -F'\t' '$1 != "TOP" && $4 == 1 && $3 != 1 { print $1 }' "$W/wfjobs" | while read -r j; do
+    echo "  FAIL axis 10: job '$j' has contents: write outside 'environment: release'"
+done | grep . && { fail=$((fail + 1)); a10=1; }
+# self-test: the reader sees a job that reads the key with no environment
+printf 'permissions:\n  contents: write\njobs:\n  a:\n    runs-on: x\n  b:\n    environment: release\n    permissions:\n      contents: write\n    env:\n      K: ${{ secrets.CYRIUS_RELEASE_SK }}\n  c:\n    env:\n      K: ${{ secrets.CYRIUS_RELEASE_SK }}\n' > "$W/wf.fx"
+[ "$(awk -f "$W/wfjobs.awk" "$W/wf.fx" | tr '\t\n' ',;')" = 'a,0,0,0;b,1,1,1;c,1,0,0;TOP,write;' ] \
+  || { bad "axis 10 self-test: the workflow reader saw '$(awk -f "$W/wfjobs.awk" "$W/wf.fx" | tr '\t\n' ',;')'"; a10=1; }
+[ "$a10" -eq 0 ] && echo "  ok axis 10: release.yml is read-only at the top, and the one job that reads CYRIUS_RELEASE_SK (and writes) runs in 'environment: release' (reader self-tested)"
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: $NAME"; exit 1; fi
 echo "PASS: $NAME — a stripped signature at or above 6.2.31 is refused by name in install.sh, ci.sh and install.ps1 whenever a trusted verifier is present, and cyriusly runs an installer that refuses it"

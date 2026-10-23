@@ -15,6 +15,156 @@
 include "lib/pam.cyr"
 include "lib/assert.cyr"
 
+#ifdef CYRIUS_TARGET_LINUX
+# ⛔ CYRIUS-2026-0050 (6.7.18): pam_unix_authenticate wrote the whole password in one unchecked
+# write, the pipe's read end already closed in the parent. Past 64 KiB the write took EPIPE once
+# unix_chkpwd had read its prefix and exited, and SIGPIPE killed the CALLER (exit 141) — a remote
+# client of a password-checking daemon ended the server pre-auth; a helper that exits before
+# reading does the same to any length. Each case runs in a forked child (SIGPIPE at its default),
+# which exits 10 + the answer, so a death by signal is a failed row, not a dead test. These rows
+# run a STAND-IN helper (`_pam_chkpwd_test`) from a private 0700 directory — no real
+# authentication is attempted, so nothing is logged — except the audit's own repro, which is
+# refused before anything runs. CHANGELOG [6.7.18]
+var _pam_dir = 0;
+var _pam_sleep_ts[16];
+fn _pam_nap(): i64 {   # the `_pam_write_hook`: 300 ms, so the early-exiting helper is gone first
+    store64(&_pam_sleep_ts, 0);
+    store64(&_pam_sleep_ts + 8, 300000000);
+    sys_nanosleep(&_pam_sleep_ts, 0);
+    return 0;
+}
+fn _pam_join(name): i64 {   # "<_pam_dir>/<name>"
+    var dl = strlen(_pam_dir);
+    var nl = strlen(name);
+    var p = alloc(dl + nl + 2);
+    memcpy(p, _pam_dir, dl);
+    store8(p + dl, 47);
+    memcpy(p + dl + 1, name, nl);
+    store8(p + dl + 1 + nl, 0);
+    return p;
+}
+fn _pam_script(name, body): i64 {   # an executable stand-in helper; its path
+    var p = _pam_join(name);
+    var fd = sys_open(p, 0xC1, 0x1C0);   # O_WRONLY|O_CREAT|O_EXCL, 0700
+    if (fd < 0) { return 0; }
+    sys_write(fd, body, strlen(body));
+    sys_close(fd);
+    return p;
+}
+fn _pam_pw(n): i64 {   # n bytes of 'A', NUL-terminated
+    var b = alloc(n + 1);
+    memset(b, 65, n);
+    store8(b + n, 0);
+    return b;
+}
+# pam_unix_authenticate(user, a password of `n` bytes) in a forked child with `helper` as the
+# stand-in (0: the real lookup) and the write hook `hook` (0: none): the child's wait status.
+fn _pam_run(helper, n, hook): i64 {
+    var pw = _pam_pw(n);
+    var pid = sys_fork();
+    if (pid == 0) {
+        signal_default(SIGPIPE);
+        _pam_chkpwd_test = helper;
+        _pam_write_hook = hook;
+        var r = pam_unix_authenticate("cy-no-such-user", pw);
+        sys_exit(10 + r);
+    }
+    var st[8];
+    store64(&st, 0);
+    var w = sys_waitpid(pid, &st, 0);
+    while (w == 0 - 4) { w = sys_waitpid(pid, &st, 0); }
+    if (w != pid) { return 0 - 1; }
+    return load32(&st);
+}
+fn _pam_answer(status): i64 {   # the child's pam answer, or -100 - the signal that killed it
+    if (status < 0) { return 0 - 200; }
+    if (WIFSIGNALED(status) == 1) { return 0 - 100 - WTERMSIG(status); }
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status) - 10; }
+    return 0 - 300;
+}
+fn _pam_sigpipe_rows(): i64 {
+    test_group("pam: a long password or an early-exiting helper is an answer, never SIGPIPE");
+    var dn = alloc(64);
+    var dl = 0;
+    memcpy(dn, "/tmp/cyr_pam.", 13);
+    dl = 13;
+    var v = sys_getpid();
+    var dg[24];
+    var nd = 0;
+    while (nd == 0 || v > 0) { var q = v / 10; store8(&dg + nd, 48 + v - q * 10); nd = nd + 1; v = q; }
+    while (nd > 0) { nd = nd - 1; store8(dn + dl, load8(&dg + nd)); dl = dl + 1; }
+    store8(dn + dl, 0);
+    _pam_dir = dn;
+    # The name is predictable: only a directory THIS run created is private. One already there (a
+    # directory or link another user planted in /tmp) is never written into or run from — the
+    # stand-ins would be swappable there, and `rec` a link the piped bytes follow. CHANGELOG [6.7.18]
+    var mkr = sys_mkdir(_pam_dir, 0x1C0);
+    assert_eq(mkr, 0, "a private 0700 directory for the stand-in helpers");
+    if (mkr != 0) { return 0; }
+    var early = _pam_script("early.sh", "#!/bin/sh\nexit 1\n");
+    var drain = _pam_script("drain.sh", "#!/bin/sh\n/bin/cat > /dev/null\nexit 1\n");
+    assert(early != 0 && drain != 0, "the stand-in helpers are written");
+    # The audit's repro: 65,537 bytes against the real helper lookup — refused before it runs.
+    var want_long = PAM_AUTH_FAIL;
+    if (pam_unix_available() == 0) { want_long = PAM_AUTH_HELPER_MISSING; }
+    assert_eq(_pam_answer(_pam_run(0, 65537, 0)), want_long, "a 65,537-byte password is PAM_AUTH_FAIL, the caller alive (it died of SIGPIPE, exit 141)");
+    assert_eq(_pam_answer(_pam_run(drain, 513, 0)), PAM_AUTH_FAIL, "a password past PAM_MAX_PASSWORD (513 bytes) is PAM_AUTH_FAIL before any helper runs");
+    assert_eq(_pam_answer(_pam_run(drain, 512, 0)), PAM_AUTH_FAIL, "512 bytes reach the helper, whose verdict (exit 1) is the answer");
+    # The helper exits before reading, and the write lands after it is gone (the hook naps).
+    assert_eq(_pam_answer(_pam_run(early, 512, &_pam_nap)), PAM_AUTH_FAIL, "a helper that exits unread: PAM_AUTH_FAIL, never SIGPIPE");
+    assert_eq(_pam_answer(_pam_run(early, 1, &_pam_nap)), PAM_AUTH_FAIL, "... with a 1-byte password too");
+    # The bytes the helper reads: the password and ONE NUL (unix_chkpwd's pam_read_passwords takes
+    # a password only up to a NUL; unterminated bytes read as no password at all, so a correct
+    # password never verified and, with nullok, an empty-hash account took any password).
+    # CHANGELOG [6.7.18]
+    var recf = _pam_join("rec");
+    var rsb = alloc(256);
+    memcpy(rsb, "#!/bin/sh\n/bin/cat > ", 21);
+    memcpy(rsb + 21, recf, strlen(recf));
+    memcpy(rsb + 21 + strlen(recf), "\nexit 0\n", 8);
+    store8(rsb + 29 + strlen(recf), 0);
+    var rec = _pam_script("rec.sh", rsb);
+    assert(rec != 0, "the recording stand-in is written");
+    var pw7 = "hunter2";
+    var pid7 = sys_fork();
+    if (pid7 == 0) {
+        _pam_chkpwd_test = rec;
+        sys_exit(10 + pam_unix_authenticate("cy-no-such-user", pw7));
+    }
+    var st7[8];
+    store64(&st7, 0);
+    sys_waitpid(pid7, &st7, 0);
+    assert_eq(_pam_answer(load32(&st7)), PAM_AUTH_OK, "the helper's exit 0 is PAM_AUTH_OK");
+    var got = alloc(64);
+    var gfd = sys_open(recf, 0, 0);
+    var gn = 0 - 1;
+    if (gfd >= 0) { gn = sys_read(gfd, got, 64); sys_close(gfd); }
+    assert_eq(gn, 8, "the helper read 8 bytes: \"hunter2\" and its NUL");
+    if (gn == 8) {
+        assert_eq(memeq(got, "hunter2", 7), 1, "... the password");
+        assert_eq(load8(got + 7), 0, "... then the terminating NUL");
+    }
+    sys_unlink(recf);
+    var pid0 = sys_fork();
+    if (pid0 == 0) {
+        _pam_chkpwd_test = rec;
+        sys_exit(10 + pam_unix_authenticate("cy-no-such-user", ""));
+    }
+    store64(&st7, 0);
+    sys_waitpid(pid0, &st7, 0);
+    gn = 0 - 1;
+    gfd = sys_open(recf, 0, 0);
+    if (gfd >= 0) { gn = sys_read(gfd, got, 64); sys_close(gfd); }
+    assert_eq(gn, 1, "an empty password is one NUL (the blank password nullok checks, as pam_unix sends it)");
+    sys_unlink(recf);
+    sys_unlink(rec);
+    sys_unlink(early);
+    sys_unlink(drain);
+    sys_rmdir(_pam_dir);
+    return 0;
+}
+#endif
+
 fn main(): i64 {
     alloc_init();
     test_group("pam fails closed where Linux-PAM does not exist");
@@ -35,6 +185,7 @@ fn main(): i64 {
     } else {
         assert_eq(1, 1, "unix_chkpwd present on this Linux host (not run — see the header)");
     }
+    _pam_sigpipe_rows();
     #endif
     return assert_summary();
 }

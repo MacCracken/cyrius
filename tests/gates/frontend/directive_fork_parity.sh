@@ -75,20 +75,20 @@ FLAGS='_regalloc_pending|_must_use_pending|_deprecated_pending|_deprecated_msg_p
 bad=""
 for f in $FORKS; do
   # 1a — a fork that tests a directive token itself has re-grown its own dispatch
-  hits=$(grep -nE "PEEKT\(S\) == ($TOKS)\b" "src/$f" | cut -d: -f1 | tr '\n' ' ')
+  hits=$({ grep -nE "PEEKT\(S\) == ($TOKS)\b" "src/$f" || true; } | cut -d: -f1 | tr '\n' ' ')
   [ -n "$hits" ] && bad="$bad\n    src/$f:$hits tests a directive token (route it through _tl_directive)"
   # 1b — ... or arms a pending flag itself
-  hits=$(grep -nE "($FLAGS) = " "src/$f" | cut -d: -f1 | tr '\n' ' ')
+  hits=$({ grep -nE "($FLAGS) = " "src/$f" || true; } | cut -d: -f1 | tr '\n' ' ')
   [ -n "$hits" ] && bad="$bad\n    src/$f:$hits arms a directive flag itself"
   # 1c — the fork runs the SHARED scans (6.6.17), which make the consume and the arm call;
   # toplevel_scan_shared.sh pins the rest of that structure
-  n0=$(grep -c '^_tl_pass1(S, [01]);' "src/$f"); n1=$(grep -c '^_tl_pass2(S, [01]);' "src/$f")
+  n0=$(grep -c '^_tl_pass1(S, [01]);' "src/$f" || true); n1=$(grep -c '^_tl_pass2(S, [01]);' "src/$f" || true)
   [ "$n0" -eq 1 ] && [ "$n1" -eq 1 ] || bad="$bad\n    src/$f: _tl_pass1 x$n0, _tl_pass2 x$n1 (expected 1 and 1)"
 done
 # 1c' — the shared pass-1 scan consumes (arm=0) and the shared pass-2 scan arms (arm=1), once each
 for pr in "_tl_scan1 0" "_tl_scan2 1"; do
   set -- $pr
-  nb=$(awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' src/frontend/parse/fn/def.cyr | grep -c "_tl_directive(S, $2) == 1")
+  nb=$(awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' src/frontend/parse/fn/def.cyr | { grep -c "_tl_directive(S, $2) == 1" || true; })
   [ "$nb" -eq 1 ] || bad="$bad\n    src/frontend/parse/fn/def.cyr: $1 calls _tl_directive(S, $2) x$nb (expected 1)"
 done
 # 1d — PARSE_PROG (the post-first-statement path) goes through the same fn
@@ -244,7 +244,7 @@ rows=0
 for f in $RUNNABLE; do
   c="$T/cc_$f"
   for pos in pre post; do
-    "$c" < "$T/$pos.cyr" > "$T/o" 2>"$T/e"
+    "$c" < "$T/$pos.cyr" > "$T/o" 2>"$T/e" || true   # judged by the artifact below, not the status
     [ -s "$T/o" ] || { echo "FAIL directive_fork_parity axis2c: src/$f could not compile the $pos-position attribute fixture"; sed 's/^/      /' "$T/e" | grep -v 'routes n=' | head -3; exit 1; }
     for w in "$W1" "$W2" "$W3" "$W4"; do
       if ! grep -qF "$w" "$T/e"; then
@@ -256,16 +256,16 @@ for f in $RUNNABLE; do
     done
     rows=$((rows + 1))
   done
-  "$c" < "$T/ctl.cyr" > "$T/o" 2>"$T/e"
+  "$c" < "$T/ctl.cyr" > "$T/o" 2>"$T/e" || true   # judged by the artifact below, not the status
   if [ ! -s "$T/o" ] || grep -qE 'is deprecated|#must_use result|#pure fn calls' "$T/e"; then
     echo "FAIL directive_fork_parity axis2c: src/$f: the attribute-FREE control failed to build or printed attribute warnings"; exit 1
   fi
   # 2d — #assert is a declaration-phase directive
-  "$c" < "$T/assert.cyr" > "$T/o" 2>"$T/e"
+  "$c" < "$T/assert.cyr" > "$T/o" 2>"$T/e" || true   # judged by the artifact below, not the status
   if [ ! -s "$T/o" ]; then echo "FAIL directive_fork_parity axis2d: src/$f refuses a struct declared after a top-level #assert"; sed 's/^/      /' "$T/e" | grep -v 'routes n=' | head -3; exit 1; fi
-  "$c" < "$T/assert_false.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  rc=0; "$c" < "$T/assert_false.cyr" > "$T/o" 2>"$T/e" || rc=$?
   if [ "$rc" -eq 0 ] || ! grep -q '#assert failed: sz' "$T/e"; then echo "FAIL directive_fork_parity axis2d: src/$f accepted a FALSE top-level #assert (rc $rc)"; exit 1; fi
-  "$c" < "$T/assert_wrap.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  rc=0; "$c" < "$T/assert_wrap.cyr" > "$T/o" 2>"$T/e" || rc=$?
   if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then
     echo "FAIL directive_fork_parity axis2d: src/$f cannot compile a WRAPPED top-level #assert followed by a struct, an enum and a global (rc $rc)"
     sed 's/^/      /' "$T/e" | grep -v 'routes n=' | grep -E 'error' | head -3
@@ -274,21 +274,21 @@ for f in $RUNNABLE; do
     exit 1
   fi
   if [ "$f" = main.cyr ]; then
-    chmod +x "$T/o"; "$T/o"; rc=$?
+    chmod +x "$T/o"; rc=0; "$T/o" || rc=$?
     [ "$rc" -eq 42 ] || { echo "FAIL directive_fork_parity axis2d: the wrapped-#assert fixture built on x86 but ran to $rc, expected 42"; exit 1; }
   fi
-  "$c" < "$T/assert_wrap_false.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  rc=0; "$c" < "$T/assert_wrap_false.cyr" > "$T/o" 2>"$T/e" || rc=$?
   if [ "$rc" -eq 0 ] || ! grep -q '#assert failed: wrapped mid-comparison' "$T/e"; then echo "FAIL directive_fork_parity axis2d: src/$f accepted a FALSE wrapped #assert (rc $rc)"; exit 1; fi
   # 2e — bare #deprecated refused by name, both positions
   for pos in pre post; do
-    "$c" < "$T/bare_$pos.cyr" > "$T/o" 2>"$T/e"; rc=$?
+    rc=0; "$c" < "$T/bare_$pos.cyr" > "$T/o" 2>"$T/e" || rc=$?
     if [ "$rc" -eq 0 ] || ! grep -q '#deprecated needs a message' "$T/e"; then
       echo "FAIL directive_fork_parity axis2e: src/$f: bare #deprecated ($pos) rc $rc, not refused by name"; sed 's/^/      /' "$T/e" | grep -v 'routes n=' | head -3; exit 1
     fi
   done
   # 2f — #naked: inert on cx (compiles, framed), armed elsewhere (the framed `return` is refused)
   for pos in pre post; do
-    "$c" < "$T/naked_$pos.cyr" > "$T/o" 2>"$T/e"; rc=$?
+    rc=0; "$c" < "$T/naked_$pos.cyr" > "$T/o" 2>"$T/e" || rc=$?
     if [ "$f" = main_cx.cyr ]; then
       if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then echo "FAIL directive_fork_parity axis2f: cx armed #naked ($pos) — a naked body falls through into the next fn on a bytecode VM"; sed 's/^/      /' "$T/e" | head -3; exit 1; fi
     else

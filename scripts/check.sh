@@ -492,8 +492,8 @@ _chk_reap_stale_homes
 # The vocabulary is every `_cbt_tmpfile` name in cbt/ but those post-mortems and the three
 # directories (`deps`, `locked-deps`, `pin-move-deps`) — tests/gates/toolchain/check_stale_home_reaper.sh derives
 # it from cbt/ and fails when this list and the source part. `_N` names take a number
-# (`cpp_<pid>`, `dlverifyerr<t>`); any listed name may carry compile()'s `.tmp.<pid>` (its output
-# before the rename).
+# (`cpp_<pid>`, `dlverifyerr<t>`); any listed name may carry compile()'s `.tmp.<digits>` (its output
+# before the rename; the digits a random draw since 6.7.18, CYRIUS-2026-0046).
 _CHK_CLI_SCRATCH="cap_err cap_out cc_err covx_out dep_verify_conv dep_verify_index dep_verify_out dep_verify_paths distlib_err dt_src fuzz_err fuzz_errb fuzz_outa fuzz_outb git_err git_rev_out lint_err lint_out ls_remote pulsar_a pulsar_b pulsar_c self_b sha_out soak_b wprobe wt_err wt_out"
 _CHK_CLI_SCRATCH_N="check_ cov_ cpp_ distchk_ dlverifyerr dlverifyout"
 _chk_cli_scratch() {  # $1 = an entry's name: 0 when it is the CLI's compile scratch

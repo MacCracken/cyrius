@@ -19,16 +19,15 @@
 #   0 = the child exited with the returned status   1 = it did not exit normally
 #   2 = it exited 0 and wrote nothing               3 = its output could not be moved in
 #   4 = it could not be started (fork failed)       5 = its status was lost (wait failed)
-# CHANGELOG [6.6.9]; 4 and 5 CHANGELOG [6.6.20]
+#   6 = its output temp could not be created (named where it was refused)
+# CHANGELOG [6.6.9]; 4 and 5 CHANGELOG [6.6.20]; 6 CHANGELOG [6.7.18]
 var _raw_last_how = 0;
 var _raw_last_sig = 0;
 fn _pulsar_raw_compile(cc, src, out): i64 {
     _raw_last_how = 0;
     _raw_last_sig = 0;
-    var tmp_sb = str_builder_new();
-    str_builder_add_cstr(tmp_sb, out);
-    str_builder_add_cstr(tmp_sb, ".pulsar.new");
-    var tmp = str_data(str_builder_build(tmp_sb));
+    var tmp = 0;
+    var ofd = 0;
     # v6.6.6 — PE arm. `sys_fork` is a -1 stub on Windows, so the parent decoded an
     # uninitialised status slot: whenever that read as WIFEXITED/0 the rename below moved
     # a temp that was never written, or `_file_size` (a raw stat until 6.6.9, unrouted on PE)
@@ -39,6 +38,7 @@ fn _pulsar_raw_compile(cc, src, out): i64 {
     # 6.7.12 — every caller is a self-build (pulsar, `cyrius soak`'s steps): the compile-mode
     # switches are cleared on this process around the spawn, the POSIX child's `_envp_self_build`
     # (`_win_mode_switches_clear`, cbt/build.cyr). CHANGELOG [6.7.12]
+    tmp = _cbt_out_tmp_name(out);   # cmd's redirect is the open (CHANGELOG [6.7.18])
     var wsaved = _win_mode_switches_clear();
     prc = _win_compile_spawn(cc, src, tmp);
     _win_mode_switches_restore(wsaved);
@@ -47,18 +47,31 @@ fn _pulsar_raw_compile(cc, src, out): i64 {
     if (file_rename(tmp, out) != 0) { xunlink(tmp); _raw_last_how = 3; return 1; }
     return 0;
     #endif
-    # 6.6.20: a stale `<out>.pulsar.new` from an earlier, interrupted run must not survive into
-    # this one — a child that never runs writes nothing, and the size guard below would then
-    # rename the OLD temp into place. And a failed fork is named, not waited on.
-    sys_unlink(tmp);
+    # ⛔ CYRIUS-2026-0046: the temp is created HERE, exclusively, under an unpredictable name, and
+    # the child writes the fd it is handed (`_cbt_out_tmp_open`, cbt/core.cyr). It was the fixed
+    # `<out>.pulsar.new`, opened O_CREAT|O_TRUNC in the child — a link planted there was written
+    # through. A fresh name also retires 6.6.20's stale-temp unlink: no earlier run's temp can be
+    # renamed into place. HUP / INT / TERM are held across the create and the track, so the kill
+    # handler unlinks it and nothing it did not create. A failed fork is named, not waited on.
+    # CHANGELOG [6.6.20] [6.7.18]
+    var thold[8];
+    var thr = _cbt_sig_hold(&thold);
+    tmp = _cbt_out_tmp_open(out, 0x1ED, &ofd);
+    if (tmp != 0) { _cbt_scratch_track(tmp); }
+    if (thr == 0) { _cbt_sig_release(&thold); }
+    if (tmp == 0) { _cbt_out_tmp_refused(out, ofd); _raw_last_how = 6; return 1; }
     var pid = sys_fork();
-    if (pid < 0) { _cbt_fork_failed(cc, pid); _raw_last_how = 4; return 1; }
+    if (pid < 0) {
+        _cbt_fork_failed(cc, pid);
+        sys_close(ofd);
+        _cbt_scratch_drop(tmp);
+        _raw_last_how = 4;
+        return 1;
+    }
     if (pid == 0) {
         var sfd = sys_open(src, O_RDONLY, 0);
         if (sfd < 0) { sys_exit(126); }
         _cbt_redirect(sfd, 0);   # same-fd guard: CHANGELOG [6.7.16]
-        var ofd = sys_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
-        if (ofd < 0) { sys_exit(126); }
         _cbt_redirect(ofd, 1);
         var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
         store64(&argv, cc);
@@ -66,15 +79,17 @@ fn _pulsar_raw_compile(cc, src, out): i64 {
         sys_execve(cc, &argv, _envp);
         sys_exit(127);
     }
+    sys_close(ofd);
     var st = _cbt_wait_status(pid, cc);   # 6.6.20
-    if (st < 0) { sys_unlink(tmp); _raw_last_how = 5; return 1; }
+    if (st < 0) { _cbt_scratch_drop(tmp); _raw_last_how = 5; return 1; }
     var rc = 1;
     if (WIFEXITED(st) == 1) { rc = WEXITSTATUS(st); }
     else { _raw_last_how = 1; _raw_last_sig = WTERMSIG(st); }
-    if (rc != 0) { sys_unlink(tmp); return rc; }
-    if (_file_size(tmp) <= 0) { sys_unlink(tmp); _raw_last_how = 2; return 1; }
+    if (rc != 0) { _cbt_scratch_drop(tmp); return rc; }
+    if (_file_size(tmp) <= 0) { _cbt_scratch_drop(tmp); _raw_last_how = 2; return 1; }
     sys_chmod(tmp, 0x1ED);
-    if (file_rename(tmp, out) != 0) { sys_unlink(tmp); _raw_last_how = 3; return 1; }
+    if (file_rename(tmp, out) != 0) { _cbt_scratch_drop(tmp); _raw_last_how = 3; return 1; }
+    _cbt_scratch_untrack(tmp);
     return 0;
 }
 
@@ -101,6 +116,7 @@ fn _raw_fail_describe(sb, rc): i64 {
     if (_raw_last_how == 2) { str_builder_add_cstr(sb, "exited 0 but wrote no output"); return 0; }
     if (_raw_last_how == 4) { str_builder_add_cstr(sb, "could not be started (fork failed)"); return 0; }
     if (_raw_last_how == 5) { str_builder_add_cstr(sb, "ran, but its exit status was lost (wait failed)"); return 0; }
+    if (_raw_last_how == 6) { str_builder_add_cstr(sb, "was not run: its output temp could not be created"); return 0; }
     if (_raw_last_how == 3) {
         str_builder_add_cstr(sb, "exited 0 but its output could not be moved into place");
         return 0;

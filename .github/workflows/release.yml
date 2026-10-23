@@ -4,8 +4,10 @@ on:
   push:
     tags: ['*']
 
+# Read-only for every job; only `release` (below) may write — it alone creates the release.
+# (6.7.18, the 2026-10-22 audit's Finding 22.)
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # ── CI Gate (must pass before release) ──
@@ -355,6 +357,15 @@ jobs:
     name: Create GitHub Release
     needs: [build-x86, build-aarch64, build-macos, build-macos-arm64, build-windows]
     runs-on: ubuntu-26.04
+    # ⛔ The ONE job that holds the signing key (CYRIUS_RELEASE_SK) runs in the `release`
+    # environment, so a tag push alone cannot reach the key: the maintainer's required-reviewer
+    # rule on that environment (GitHub > Settings > Environments > release; deployment tags
+    # restricted to the release pattern) must approve it, and the key belongs in that
+    # environment's secrets, not the repository's. Until the rule exists in GitHub this gates
+    # nothing — any push credential still signs. (6.7.18, the 2026-10-22 audit's Finding 22.)
+    environment: release
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (pinned 2026-10-07, latest stable)
 

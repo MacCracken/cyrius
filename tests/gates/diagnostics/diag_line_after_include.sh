@@ -36,9 +36,9 @@ printf 'fn deep_ok(): i64 { return 9; }\n'   > lib/deep.cyr
 # $1 label · $2 program · $3 expected "file:line"
 chk() {
     printf "$2" > t.cyr
-    cat t.cyr | "$CC" > /dev/null 2>t.err
+    cat t.cyr | "$CC" > /dev/null 2>t.err || true   # the compile is MEANT to fail; t.err is the verdict
     # file:line only — drop the trailing :COLUMN. The obvious greedy regex keeps it.
-    got=$(grep -m1 -oE 'error:[^ ]+:[0-9]+:[0-9]+:' t.err | sed 's/^error://; s/:[0-9]*:$//')
+    got=$({ grep -m1 -oE 'error:[^ ]+:[0-9]+:[0-9]+:' t.err || true; } | sed 's/^error://; s/:[0-9]*:$//')
     if [ "$got" = "$3" ]; then echo "  ok: $1 ($got)"
     else echo "  FAIL: $1 — expected $3, got ${got:-<no error>}"; fails=$((fails + 1)); fi
 }

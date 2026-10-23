@@ -332,6 +332,61 @@ fn _status(msg): i64 {
 }
 
 # ================================================================
+# The sibling temp a build writes its output through
+# ================================================================
+# compile(), `_emit_js`, `_emit_cx`, `_cx_jit_build` and pulsar's raw compile write `<out>.tmp.<n>`
+# and rename it over `<out>`. ⛔ CYRIUS-2026-0046: the name was `<out>.tmp.<pid>`, unlinked with
+# the result unchecked and reopened O_CREAT|O_TRUNC — in a sticky or unwritable directory a link
+# another user planted there survived the unlink and the open wrote the build output through it.
+# Now `<n>` is 62 bits of the OS CSPRNG (the pid and a counter only when there is none), and the
+# parent creates the name O_EXCL|O_NOFOLLOW and hands that fd to the child: a name that exists —
+# a file, a link dangling or not — is never opened, followed or truncated; another is drawn, up
+# to 64. `<n>` stays all digits, the `<name>.tmp.<digits>` shape check.sh's reaper reads.
+# CHANGELOG [6.7.18]
+var _cbt_name_ctr = 0;
+
+fn _cbt_name_nonce(): i64 {
+    var b[8];
+    store64(&b, 0);
+    # Never flags 0 on Linux (a blocking draw before the CRNG seeds): GRND_INSECURE, then
+    # GRND_NONBLOCK on a pre-5.6 kernel's -EINVAL (lib/hashseed.cyr's draw).
+    #ifdef CYRIUS_TARGET_LINUX
+    var nr = sys_getrandom(&b, 8, 4);
+    if (nr == 0 - 22) { nr = sys_getrandom(&b, 8, 1); }
+    #else
+    var nr = sys_getrandom(&b, 8, 0);
+    #endif
+    if (nr == 8) { return load64(&b) & 0x3FFFFFFFFFFFFFFF; }
+    _cbt_name_ctr = _cbt_name_ctr + 1;
+    return sys_getpid() * 1000 + _cbt_name_ctr;
+}
+
+# A fresh `<out>.tmp.<n>` name — for a PE arm, where cmd.exe's redirect is the open.
+fn _cbt_out_tmp_name(out): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, out);
+    str_builder_add_cstr(sb, ".tmp.");
+    str_builder_add_int(sb, _cbt_name_nonce());
+    return str_data(str_builder_build(sb));
+}
+
+# Create `<out>.tmp.<n>` exclusively with `mode`; the name, its fd at `fdp` (moved above 2, so a
+# CLI started with a std fd closed never writes its own messages into it), or 0 with a negative
+# errno at `fdp`: -17 when every name drawn was taken, else the open's own error.
+fn _cbt_out_tmp_open(out, mode, fdp): i64 {
+    var tries = 0;
+    while (tries < 64) {
+        var tmp = _cbt_out_tmp_name(out);
+        var fd = sys_open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
+        if (fd >= 0) { store64(fdp, _cbt_lift_fd(fd)); return tmp; }
+        if (_io_tmp_taken(tmp, fd) == 0) { store64(fdp, fd); return 0; }
+        tries = tries + 1;
+    }
+    store64(fdp, 0 - 17);
+    return 0;
+}
+
+# ================================================================
 # Crash-safe streamed replace of a file the user or the tree owns
 # ================================================================
 # `_aw_open(path)` opens a unique sibling temp (lib/io.cyr's `_io_tmp_name`); `_aw_write`
@@ -592,13 +647,24 @@ fn read_file_str(path): i64 {
 # EMPTY vector — children ran with no PATH, HOME, TMPDIR or CYRIUS_*. Now Linux reads to EOF
 # into a growing buffer, and macOS takes the kernel's own entry-stack envp (`_macho_envp`),
 # NULL-terminated and live for the whole process, with no copy and no cap. CHANGELOG [6.6.11]
+# ⛔ CYRIUS-2026-0048: Windows has no /proc, and there "/proc/self/environ" is DRIVE-RELATIVE —
+# <current drive>:\proc\self\environ, which any local user can create — and it was read to EOF
+# through unchecked doubling allocations (a 2.3 GB plant faulted the PE CLI in the memcpy into a
+# failed alloc). A Windows spawn inherits the process environment and never uses `_envp`, so PE
+# gets an empty vector and opens nothing; elsewhere a refused allocation fails closed to the empty
+# vector too. CHANGELOG [6.7.18]
 fn load_environ(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return _envp_set_empty();
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     #ifdef CYRIUS_TARGET_MACOS
     _envp = _macho_envp();
     if (_envp != 0) { return 0; }
     #endif
     var cap = 16384;
     var buf = alloc(cap);
+    if (buf == 0) { return _envp_set_empty(); }
     var n = 0;
     var fd = file_open("/proc/self/environ", 0, 0);
     if (fd >= 0) {
@@ -606,6 +672,7 @@ fn load_environ(): i64 {
         while (more == 1) {
             if (n == cap - 1) {
                 var nb = alloc(cap * 2);
+                if (nb == 0) { file_close(fd); return _envp_set_empty(); }
                 memcpy(nb, buf, n);
                 buf = nb;
                 cap = cap * 2;
@@ -615,11 +682,7 @@ fn load_environ(): i64 {
         }
         file_close(fd);
     }
-    if (n <= 0) {
-        _envp = alloc(8);
-        store64(_envp, 0);
-        return 0;
-    }
+    if (n <= 0) { return _envp_set_empty(); }
     store8(buf + n, 0);
     var count = 0;
     var i = 0;
@@ -642,6 +705,15 @@ fn load_environ(): i64 {
         }
     }
     store64(_envp + ei * 8, 0);
+    return 0;
+    #endif
+}
+
+# `_envp` = an empty NULL-terminated vector (a static slot, so it needs no allocation); 0.
+var _envp_empty_slot = 0;
+fn _envp_set_empty(): i64 {
+    _envp_empty_slot = 0;
+    _envp = &_envp_empty_slot;
     return 0;
 }
 
@@ -714,8 +786,8 @@ fn _cbt_redirect(fd, target): i64 {
     return 0;
 }
 
-# In a CHILD, before its first redirect onto 0 / 1 / 2: move `fd` — one the PARENT opened for
-# this child — above 2 when it is one of them, and answer its number now. A parent started with
+# In a CHILD, before its first redirect onto 0 / 1 / 2 (or in the parent, as it opens the fd it
+# will hand a child): move `fd` above 2 when it is one of them, and answer its number now. A parent started with
 # fd 0 closed opens its capture AT 0, and the child's stdin redirect (/dev/null) overwrote it
 # before the capture redirect read it. F_DUPFD answers the lowest free fd >= 3; if even that is
 # refused, the child carries on with `fd` as it is. lib/regression.cyr's `_regression_lift_fd`
@@ -1004,9 +1076,18 @@ fn _cbt_environ(lenp): i64 {
     store64(lenp, mn);
     return mb;
     #endif
+    # Windows: no /proc — and a rooted "/proc/…" is drive-relative there, a file any local user
+    # can plant (CYRIUS-2026-0048). Its callers read the environment through `_win_getenv_*`; an
+    # empty block is the answer, and a refused allocation is one elsewhere too. CHANGELOG [6.7.18]
+    #ifdef CYRIUS_TARGET_WIN
+    store64(lenp, 0);
+    return "";
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_MACOS
     var cap = 65536;
     var buf = alloc(cap);
+    if (buf == 0) { store64(lenp, 0); return ""; }
     var n = 0;
     var fd = file_open("/proc/self/environ", 0, 0);
     if (fd >= 0) {
@@ -1014,6 +1095,7 @@ fn _cbt_environ(lenp): i64 {
         while (r > 0) {
             if (n + 1 >= cap) {
                 var nb = alloc(cap * 2);
+                if (nb == 0) { file_close(fd); store64(lenp, 0); return ""; }
                 memcpy(nb, buf, n);
                 buf = nb;
                 cap = cap * 2;
@@ -1026,6 +1108,7 @@ fn _cbt_environ(lenp): i64 {
     store8(buf + n, 0);
     store64(lenp, n);
     return buf;
+    #endif
     #endif
 }
 
@@ -1061,8 +1144,17 @@ fn find_tools(): i64 {
     # was set, and it reads nothing on PE — so `CYRIUS_RESOLVED=1`, the documented escape
     # from a pin, was ignored by cyrius.exe. CHANGELOG [6.6.11]
     if (_cbt_env_is_1("CYRIUS_RESOLVED") == 1) { _cyrius_resolved = 1; }
+    # ⛔ CYRIUS-2026-0048's class: the POSIX default home "/root" is DRIVE-RELATIVE on Windows
+    # (<current drive>:\root\.cyrius, which any local user can create, its bin\cycc.exe then run).
+    # With neither variable set there is no home to trust: refuse by name. CHANGELOG [6.7.18]
+    if (proc_home == 0 && cyrius_home == 0) {
+        _err("neither CYRIUS_HOME nor USERPROFILE is set, so there is no toolchain home (the POSIX default /root is drive-relative here) — set CYRIUS_HOME");
+        _cbt_exit(1);
+    }
     #endif
+    #ifndef CYRIUS_TARGET_WIN
     if (proc_home == 0) { proc_home = "/root"; }
+    #endif
     # CYRIUS_HOME overrides default ~/.cyrius
     if (cyrius_home != 0) {
         _home = cyrius_home;

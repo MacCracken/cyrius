@@ -1,7 +1,6 @@
 #!/bin/sh
 # Cyrius installer
-# Usage: curl -sSf https://install.cyrius.dev | sh
-#    or: curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh
+# Usage: curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | sh
 #
 # Installs the Cyrius toolchain to ~/.cyrius/
 # Structure:

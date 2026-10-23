@@ -72,8 +72,8 @@ note() { printf '  %s\n' "$1"; }
 # build <label> <srcfile> <outfile> [env assignments...] — refuses an empty artifact.
 build() {
     _lbl="$1"; _src="$2"; _out="$3"; shift 3
-    if [ $# -gt 0 ]; then env "$@" "$CC" < "$_src" > "$_out" 2> "$_out.err"; else "$CC" < "$_src" > "$_out" 2> "$_out.err"; fi
-    _rc=$?
+    _rc=0
+    if [ $# -gt 0 ]; then env "$@" "$CC" < "$_src" > "$_out" 2> "$_out.err" || _rc=$?; else "$CC" < "$_src" > "$_out" 2> "$_out.err" || _rc=$?; fi
     if [ "$_rc" -ne 0 ]; then echo "__CFAIL__$_rc"; return 0; fi
     if [ ! -s "$_out" ]; then echo "__CEMPTY__"; return 0; fi
     chmod +x "$_out"
@@ -100,7 +100,7 @@ run_case() {
       __CFAIL__*) printf '  FAIL: %-52s compile %s\n' "$_lbl" "${_st#__CFAIL__}"; sed -n 1,2p "$_o.err"; fail=$((fail+1)); return 0 ;;
       __CEMPTY__) printf '  FAIL: %-52s empty binary\n' "$_lbl"; fail=$((fail+1)); return 0 ;;
     esac
-    timeout 60 "$_o" >/dev/null 2>&1; _got=$?
+    _got=0; timeout 60 "$_o" >/dev/null 2>&1 || _got=$?
     rm -f "$_o" "$_o.err"
     if [ "$_got" = "$_want" ]; then printf '  ok:   %-52s exit=%s\n' "$_lbl" "$_got"; pass=$((pass+1));
     else printf '  FAIL: %-52s exit=%s (want %s)\n' "$_lbl" "$_got" "$_want"; fail=$((fail+1)); fi
@@ -171,7 +171,7 @@ fn f(): i64 {
 var r = f();
 syscall(60, r);
 EOF
-"$CC" < "$D/a2w.cyr" > "$D/a2w.x" 2> "$D/a2w.err"; a2wrc=$?
+a2wrc=0; "$CC" < "$D/a2w.cyr" > "$D/a2w.x" 2> "$D/a2w.err" || a2wrc=$?
 a2wline=$(grep -m1 'per-fn frame budget' "$D/a2w.err" | sed -n 's/^warning:<source>:\([0-9][0-9]*\):.*/\1/p')
 a2wwant=$(grep -n 'var bigbuf\[200000\];' "$D/a2w.cyr" | cut -d: -f1)
 if [ "$a2wrc" -eq 0 ] && [ -n "$a2wline" ] && [ "$a2wline" = "$a2wwant" ]; then
@@ -237,8 +237,8 @@ var b = h();
 syscall(60, b);
 EOF
 sed 's/var u: u128 = 0; return setup;/return setup;/' "$D/a5b.cyr" > "$D/a5bc.cyr"
-"$CC" < "$D/a5b.cyr"  > "$D/a5b.out"  2>/dev/null; sub_rc=$?
-"$CC" < "$D/a5bc.cyr" > "$D/a5bc.out" 2>/dev/null; ctl_rc=$?
+sub_rc=0; "$CC" < "$D/a5b.cyr"  > "$D/a5b.out"  2>/dev/null || sub_rc=$?
+ctl_rc=0; "$CC" < "$D/a5bc.cyr" > "$D/a5bc.out" 2>/dev/null || ctl_rc=$?
 if [ "$sub_rc" -eq "$ctl_rc" ] && [ "$ctl_rc" -ne 0 ]; then
     printf '  ok:   %-52s both refused (rc=%s)\n' "\`return setup;\` refused with and without a u128" "$ctl_rc"; pass=$((pass+1))
 else
@@ -300,7 +300,7 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
         chmod +x "$D/cc_a64"
         "$D/cc_a64" < "$D/a7.cyr" > "$D/a7.a64" 2>/dev/null
         if [ -s "$D/a7.a64" ]; then
-            chmod +x "$D/a7.a64"; timeout 60 qemu-aarch64 "$D/a7.a64" >/dev/null 2>&1; g=$?
+            chmod +x "$D/a7.a64"; g=0; timeout 60 qemu-aarch64 "$D/a7.a64" >/dev/null 2>&1 || g=$?
             if [ "$g" -eq 0 ]; then printf '  ok:   %-52s exit=0\n' "aarch64 (qemu-user, NOT hardware)"; pass=$((pass+1));
             else printf '  FAIL: %-52s exit=%s (1=dead_scope 2=two_b1 4=rec)\n' "aarch64 (qemu-user)" "$g"; fail=$((fail+1)); fi
         else printf '  FAIL: %-52s empty aarch64 binary\n' "aarch64 leg"; fail=$((fail+1)); fi
@@ -316,7 +316,7 @@ if [ -s "$D/cc_cx" ] && [ -s "$D/cxvm" ]; then
     chmod +x "$D/cc_cx" "$D/cxvm"
     "$D/cc_cx" < "$D/a7.cyr" > "$D/a7.cyx" 2>/dev/null
     if [ -s "$D/a7.cyx" ]; then
-        timeout 60 "$D/cxvm" < "$D/a7.cyx" >/dev/null 2>&1; g=$?
+        g=0; timeout 60 "$D/cxvm" < "$D/a7.cyx" >/dev/null 2>&1 || g=$?
         if [ "$g" -eq 0 ]; then printf '  ok:   %-52s exit=0\n' "cx (cxvm, the backend with no host)"; pass=$((pass+1));
         else printf '  FAIL: %-52s exit=%s (1=dead_scope 2=two_b1 4=rec)\n' "cx (cxvm)" "$g"; fail=$((fail+1)); fi
     else printf '  FAIL: %-52s empty .cyx\n' "cx leg"; fail=$((fail+1)); fi
@@ -343,8 +343,8 @@ if [ -s "$D/cc_cx" ]; then
     "$CC" < "$D/a8.cyr" > "$D/a8.x86" 2>/dev/null
     "$D/cc_cx" < "$D/a8.cyr" > "$D/a8.cyx" 2>/dev/null
     if [ -s "$D/a8.x86" ] && [ -s "$D/a8.cyx" ]; then
-        chmod +x "$D/a8.x86"; timeout 60 "$D/a8.x86" >/dev/null 2>&1; x86=$?
-        timeout 60 "$D/cxvm" < "$D/a8.cyx" >/dev/null 2>&1; cxr=$?
+        chmod +x "$D/a8.x86"; x86=0; timeout 60 "$D/a8.x86" >/dev/null 2>&1 || x86=$?
+        cxr=0; timeout 60 "$D/cxvm" < "$D/a8.cyx" >/dev/null 2>&1 || cxr=$?
         if [ "$x86" -eq "$cxr" ]; then printf '  ok:   %-52s x86=%s cx=%s\n' "signed narrow loads agree across backends" "$x86" "$cxr"; pass=$((pass+1));
         else printf '  FAIL: %-52s x86=%s cx=%s\n' "signed narrow loads DISAGREE" "$x86" "$cxr"; fail=$((fail+1)); fi
     else printf '  FAIL: %-52s a compile produced no binary\n' "axis 8"; fail=$((fail+1)); fi
@@ -386,7 +386,7 @@ else
     run_case "$FSCAP statics: the consumer's own probe == 3" "$D/a9.cyr" 3 CYRIUS_STACK_ARRAYS=0
     gen_statics "$((FSCAP + 1))" "$D/a9o.cyr"
     sed -i "s/var probe$FSCAP\[16\]/var probe[16]/; s/store64(\&probe$FSCAP,/store64(\&probe,/" "$D/a9o.cyr"
-    env CYRIUS_STACK_ARRAYS=0 "$CC" < "$D/a9o.cyr" > "$D/a9o.x" 2> "$D/a9o.err"; ovrc=$?
+    ovrc=0; env CYRIUS_STACK_ARRAYS=0 "$CC" < "$D/a9o.cyr" > "$D/a9o.x" 2> "$D/a9o.err" || ovrc=$?
     if [ "$ovrc" -ne 0 ] && grep -q "too many static array locals in one fn" "$D/a9o.err"; then
         printf '  ok:   %-52s refused (rc=%s)\n' "$((FSCAP + 1)) statics names the cap" "$ovrc"; pass=$((pass+1))
     else
@@ -457,7 +457,7 @@ run_case "control: the same, struct global == 102"   "$D/a10g.cyr" 102
 run_case "two captured 16 B structs == 4312 & 0xFF"  "$D/a10m.cyr" 216
 # no T_op: the same diagnostic the non-closure form gives, not a silent integer add.
 sed '/^fn Num_add/d' "$D/a10.cyr" > "$D/a10n.cyr"
-"$CC" < "$D/a10n.cyr" > "$D/a10n.x" 2> "$D/a10n.err"; a10rc=$?
+a10rc=0; "$CC" < "$D/a10n.cyr" > "$D/a10n.x" 2> "$D/a10n.err" || a10rc=$?
 if [ "$a10rc" -ne 0 ] && grep -q 'reachable undefined function' "$D/a10n.err"; then
     printf '  ok:   %-52s refused (rc=%s)\n' "captured struct with no Num_add" "$a10rc"; pass=$((pass+1))
 else

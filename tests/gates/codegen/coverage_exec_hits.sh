@@ -792,7 +792,9 @@ done
 # frame to call from); the control — the same exit in an ordinary fn — has the dump's one call
 # between its last argument and its `syscall` ──────────────────────────────────────────────────
 # ncalls <binary> <imm>: the `call`s between `mov $<imm>,%eax` and the next `syscall`
-ncalls() { objdump -d "$1" | awk -v im="\$$2,%eax" 'index($0, "mov    " im) { f = 1; c = 0; next } f && /\tcall/ { c++ } f && /\tsyscall/ { print c; exit }'; }
+# (awk reads to EOF rather than `exit` at the answer: an early exit SIGPIPEs objdump, and under
+# `bash -eo pipefail` the 141 ended the gate.)
+ncalls() { objdump -d "$1" | awk -v im="\$$2,%eax" 'd { next } index($0, "mov    " im) { f = 1; c = 0; next } f && /\tcall/ { c++ } f && /\tsyscall/ { print c; d = 1 }'; }
 if command -v objdump > /dev/null 2>&1; then
     printf '#naked\nfn nk() { syscall(60, 77); }\nfn okx(): i64 { syscall(60, 78); return 0; }\nvar sel = 0;\nif (sel == 1) { nk(); }\nokx();\n' > "$T/e10.cyr"
     printf '%s\n- <source>:2 nk\n1 <source>:3 okx\n' "$HDR" > "$T/e10.want"
@@ -826,7 +828,7 @@ fi
 # O_NONBLOCK | ... there): x86 Mach-O `mov eax, 0x209` (b8 09 02 00 00), arm64 Mach-O `movz x0,
 # #0x209` (20 41 80 d2) — and the Linux immediate in neither. Compile-verified here; the run is the
 # ach / ecb leg (P5B-7). ─────────────────────────────────────────────────────────────────────────
-hexs() { od -An -v -tx1 "$1" | tr -d '\n' | tr -s ' ' | grep -o "$2" | wc -l | tr -d ' '; }
+hexs() { od -An -v -tx1 "$1" | tr -d '\n' | tr -s ' ' | { grep -o "$2" || true; } | wc -l | tr -d ' '; }   # 0 matches is an answer
 dw() {   # <writer> <compiler> <darwin bytes> <linux bytes> [env...]
     w=$1; comp=$2; dk=$3; lk=$4; shift 4
     rc=0; (cd "$T" && env "$@" CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$T/dw_never_run.out" $comp < h2.cyr > dw.bin 2> /dev/null) || rc=$?
