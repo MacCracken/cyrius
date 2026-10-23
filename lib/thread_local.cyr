@@ -576,8 +576,8 @@ fn _tlocal_win_index(): i64 {
     var idx = atomic_load(&_tlocal_win_idx);
     if (idx >= 0) { return idx; }
     if (atomic_cas(&_tlocal_win_idx, 0 - 1, 0 - 2) == 1) {
-        idx = syscall(61452);                        # TlsAlloc → index
-        if (idx < 0 || idx == 0xFFFFFFFF) {          # TLS_OUT_OF_INDEXES
+        idx = syscall(61452) & 0xFFFFFFFF;           # TlsAlloc → a DWORD index (the upper half is not part of it)
+        if (idx == 0xFFFFFFFF) {                     # TLS_OUT_OF_INDEXES
             var m = "thread_local: refused: TlsAlloc has no index left for the thread-local slots\n";
             var n = 0;
             while (load8(m + n) != 0) { n = n + 1; }
