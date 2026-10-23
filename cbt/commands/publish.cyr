@@ -1,0 +1,233 @@
+# CLI — commands: `cyrius publish` — the retired-name scan, the version, the tag.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ================================================================
+# publish — tag, distlib, and create release
+# ================================================================
+
+# ⛔ v6.6.2 — `--allow-undef` IS A BLAST DOOR, AND A RETIRED NAME MUST NOT WALK THROUGH IT.
+#
+# The distlib self-check compiles the generated bundle with undefined functions downgraded, and
+# that is correct: a bundle deliberately omits the stdlib, so `alloc`/`strlen`/`sock_send` are
+# expected to be unresolved — the consumer supplies them. But the downgrade is BLANKET, so a
+# bundle referencing a name the stdlib no longer HAS also passed, and shipped.
+#
+# That is not hypothetical. At the v6.6.0 cut, `payload()` was deleted while 18 publisher bundles
+# still called it; every one of them would have self-checked GREEN and detonated at the consumer,
+# in a function the bundle's author never wrote.
+#
+# ⭐ THE DISCRIMINATOR: an undefined name the stdlib still exports is a consumer's job to supply.
+# An undefined name the stdlib has RETIRED can never be satisfied by anyone, on any version.
+#
+# ⚠ WHY A HARDCODED LIST AND NOT docs/api-surface.snapshot. `cyrius distlib` runs in DOWNSTREAM
+# repos, which have no copy of that file — a snapshot-based check would silently no-op exactly
+# where it is needed. This mirrors `_pin_has_known_critical` in cbt/cyrius.cyr: a short,
+# hand-maintained list of facts, with the reason written beside each, that has to be ADDED to
+# deliberately. Retiring a stdlib name means adding a row here and to
+# docs/retired-symbols.allow — which is the accounting the v6.6.0 survey never did.
+fn _distlib_retired_name(n): i64 {
+    # v6.6.0 deleted these from lib/tagged.cyr. `tag` was deleted at v6.6.2 (v6.6.0 kept the NAME
+    # and redefined the body, so on a box it silently returned the pointer).
+    # `tagged_new` is NOT here — it was RESTORED at v6.6.2 in lib/boxed.cyr.
+    if (streq(n, "payload") == 1) { return 1; }
+    if (streq(n, "tag") == 1) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.6.20 (CBT-02) — THE WHOLE CAPTURE, OR NO VERDICT. The self-check read its stderr capture
+# into a fixed 256 KB buffer and scanned that, so a bundle whose `--allow-undef` compile warned
+# more than 256 KB before reaching a RETIRED name (measured: 1,400 long undefined hook names, a
+# ~326 KB capture, `payload` on its last line) was written at rc 0 — the exact "self-checked GREEN,
+# detonated at the consumer" class the v6.6.2 blast door exists to stop. The capture is still on
+# disk when this runs, so it is read whole. Returns the RETIRED name, 0 when there is none, or -1
+# when the capture could not be read whole — never "none" for bytes nobody looked at.
+fn _distlib_scan_retired_file(path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0 - 1; }
+    if (n <= 0) { return 0; }
+    return _distlib_scan_retired(b, n);
+}
+
+# 6.6.20 (CBT-03): why a bundle failed its self-check, from the compiler's own capture. The
+# self-check runs under --allow-undef, so the capture leads with one `undefined function` warning
+# per hook the consumer supplies; relaying it whole buried the line that matters. Shown the way
+# the sidecar verify shows its failures — the `error` lines, at most 8 (_distlib_show_errors) —
+# and the WHOLE capture only when it holds no `error` line (a crash, a bare refusal), so the
+# compiler's last word is never dropped.
+fn _distlib_relay_selfcheck(path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b != 0 && n > 0) {
+        if (_distlib_show_errors(b, n) > 0) { return 0; }
+    }
+    _cbt_relay_file(path);
+    return 0;
+}
+
+# Scan a cycc stderr capture for `undefined function 'NAME'` and report the first RETIRED one.
+# Returns a pointer to the name, or 0. Names are bounded by the quote pair the compiler emits.
+fn _distlib_scan_retired(errbuf, n): i64 {
+    var i = 0;
+    var namebuf = alloc(256);
+    while (i < n) {
+        # match: undefined function '
+        if (load8(errbuf + i) == 117) {
+            if (i + 20 < n) {
+                if (_mem_starts(errbuf + i, "undefined function '", 20) == 1) {
+                    var j = i + 20;
+                    var k = 0;
+                    while (j < n) {
+                        var c = load8(errbuf + j);
+                        if (c == 39) { j = n; }
+                        else {
+                            if (k < 255) { store8(namebuf + k, c); k = k + 1; }
+                            j = j + 1;
+                        }
+                    }
+                    store8(namebuf + k, 0);
+                    if (_distlib_retired_name(namebuf) == 1) { return namebuf; }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _mem_starts(p, lit, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(lit + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 6.6.20 (REFACTOR-11): the version `cyrius publish` tags is the one the bundle stamps —
+# `_project_version()`: the manifest's `[package] version` (`${file:PATH}` expanded), else
+# ./VERSION. Publish read ./VERSION alone, so once distlib stamped the manifest's, a project whose
+# two disagreed tagged vVERSION over a bundle saying `# Version: <manifest>`. Two sources that
+# disagree are refused, not settled by precedence — one of them is stale and only the author knows
+# which — and before anything is generated. ⛔ the cyrius-publish VERSION quoting bug: the version is joined into a `git
+# tag`
+# shell line, and a ./VERSION holding `1.0;touch PWNED` RAN `touch` — so a version holding a byte
+# outside a tag name's charset is refused rather than run. Returns the version, or 0 after naming
+# the refusal.
+fn _publish_version(): i64 {
+    var mver = _dep_read_cyml_package_version();
+    if (mver < 0) { return 0; }   # 6.6.20 (SEC-04): refused, and named
+    if (mver != 0) {
+        if (load8(mver) == 0) { mver = 0; }
+    }
+    var fver = _dep_read_version_file();
+    if (fver < 0) { return 0; }
+    if (mver == 0 && fver == 0) {
+        _err("publish: no version — cyrius.cyml has no [package] version and there is no ./VERSION");
+        return 0;
+    }
+    if (mver != 0 && fver != 0) {
+        if (streq(mver, fver) == 0) {
+            var dsb = str_builder_new();
+            str_builder_add_cstr(dsb, mver);
+            str_builder_add_cstr(dsb, " (cyrius.cyml [package] version) vs ");
+            str_builder_add_cstr(dsb, fver);
+            str_builder_add_cstr(dsb, " (./VERSION)");
+            _err_ctx("publish: the project's two versions disagree — not tagging", str_data(str_builder_build(dsb)));
+            _info("      Make one follow the other: version = \"${file:VERSION}\" in cyrius.cyml.");
+            return 0;
+        }
+    }
+    var ver = _project_version();
+    if (ver == 0) { return 0; }
+    var ok = 1;
+    if (load8(ver) == 0) { ok = 0; }
+    var i = 0;
+    while (ok == 1 && load8(ver + i) != 0) {
+        var c = load8(ver + i);
+        var good = 0;
+        if (c >= 48 && c <= 57) { good = 1; }                          # 0-9
+        if (c >= 65 && c <= 90) { good = 1; }                          # A-Z
+        if (c >= 97 && c <= 122) { good = 1; }                         # a-z
+        if (c == 46 || c == 45 || c == 43 || c == 95) { good = 1; }    # . - + _
+        if (good == 0) { ok = 0; }
+        i = i + 1;
+    }
+    if (ok == 0) {
+        _err_ctx("publish: the version is not a tag name (0-9 A-Z a-z . - + _ only) — not tagging", ver);
+        return 0;
+    }
+    return ver;
+}
+
+fn cmd_publish(): i64 {
+    # 6.6.17: the one manifest reader; a malformed manifest is named before anything else.
+    if (_mf_load() < 0) { return 1; }
+    var ver = _publish_version();
+    if (ver == 0) { return 1; }
+
+    _status("=== cyrius publish ===");
+    sys_write(STDOUT_FD, "  version: ", 11);
+    println(ver);
+
+    # Step 1: distlib if manifest has modules. 6.6.17: asked of the one reader — `[build]` or
+    # `[lib]` declares `modules` — instead of a raw substring hunt for "modules" through the first
+    # 4,095 bytes, which a comment satisfied and a key past byte 4,095 did not.
+    if (_mf_has("build", "modules") == 1 || _mf_has("lib", "modules") == 1) {
+        _status("  distlib...");
+        # v6.5.19: was a bare `cmd_distlib(0);`. distlib's return value is
+        # its bundle self-check verdict (cbt/commands/distlib/distlib.cyr, "the generated
+        # bundle does not compile"), and dropping it meant publish printed
+        # that error, then went on to `git tag` the release and exit 0.
+        # A defective bundle must not get tagged. CHANGELOG [6.5.19].
+        var pub_dr = cmd_distlib(0);
+        if (pub_dr != 0) {
+            _err("publish: distlib failed — not tagging");
+            return pub_dr;
+        }
+    }
+
+    # Step 2: lock deps
+    _status("  locking deps...");
+    # v6.6.6: was a bare call — a lock that could not be written was followed by `git tag`.
+    if (cmd_deps_lock() != 0) {
+        _err("publish: cyrius.lock could not be written — not tagging");
+        return 1;
+    }
+
+    # Step 3: git tag
+    sys_write(STDOUT_FD, "  tag: v", 8);
+    println(ver);
+
+    var tag_sb = str_builder_new();
+    str_builder_add_cstr(tag_sb, "git tag -a v");
+    str_builder_add_cstr(tag_sb, ver);
+    str_builder_add_cstr(tag_sb, " -m 'Release v");
+    str_builder_add_cstr(tag_sb, ver);
+    str_builder_add_cstr(tag_sb, "'");
+    var tag_cmd = str_data(str_builder_build(tag_sb));
+    var tr = sys_system(tag_cmd);
+    if (tr != 0) {
+        _warn("git tag failed (may already exist)");
+    }
+
+    # Step 4: push tag
+    var push_sb = str_builder_new();
+    str_builder_add_cstr(push_sb, "git push origin v");
+    str_builder_add_cstr(push_sb, ver);
+    var push_cmd = str_data(str_builder_build(push_sb));
+
+    println("");
+    println("  Next steps:");
+    sys_write(STDOUT_FD, "    git push origin v", 21);
+    println(ver);
+    println("    # or if CI creates releases automatically, just push the tag");
+    println("");
+    println("  To create release manually:");
+    sys_write(STDOUT_FD, "    gh release create v", 23);
+    sys_write(STDOUT_FD, ver, strlen(ver));
+    println(" --generate-notes dist/* cyrius.lock");
+
+    return 0;
+}

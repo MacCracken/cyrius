@@ -348,13 +348,13 @@ EXCL="test_out lsp deps locked-deps pin-move-deps"
 # RETIRED: names cbt/ no longer writes that check.sh still reaps, because a dir an OLDER CLI left
 # can hold them — sha_out (the lock hasher's capture; in process since 6.7.12, CHANGELOG [6.7.12]).
 RETIRED="sha_out"
-grep -ho '_cbt_tmpfile("[^"]*")' "$ROOT"/cbt/*.cyr | sed 's/^_cbt_tmpfile("//; s/")$//' | sort -u > "$D/lit"
+grep -ho '_cbt_tmpfile("[^"]*")' $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort) | sed 's/^_cbt_tmpfile("//; s/")$//' | sort -u > "$D/lit"
 NLIT=$(wc -l < "$D/lit" | tr -d ' ')
 [ "$NLIT" -ge 25 ] || _fail "axis 16: only $NLIT _cbt_tmpfile(\"…\") literals found in cbt/ — the reader is not reading (floor 25)"
-NCOMP=$(grep -h '_cbt_tmpfile(' "$ROOT"/cbt/*.cyr | grep -v '_cbt_tmpfile("' | grep -vc '^fn _cbt_tmpfile' || true)
+NCOMP=$(grep -h '_cbt_tmpfile(' $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort) | grep -v '_cbt_tmpfile("' | grep -vc '^fn _cbt_tmpfile' || true)
 [ "$NCOMP" = 6 ] || _fail "axis 16: cbt/ has $NCOMP computed _cbt_tmpfile( names (6 classified: _cbt_tmpexe's two, _fuzz_cap_new, _covx_dump_path, dlverifyerr/out) — classify the new one here and in check.sh"
-grep -ho '_fuzz_leg([^,]*, "[^"]*")' "$ROOT"/cbt/*.cyr | sed 's/.*"\([^"]*\)")$/\1/' | sort -u > "$D/comp"
-for f in "$ROOT"/cbt/*.cyr; do
+grep -ho '_fuzz_leg([^,]*, "[^"]*")' $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort) | sed 's/.*"\([^"]*\)")$/\1/' | sort -u > "$D/comp"
+for f in $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort); do
     awk '/^fn / { if (inb) for (k in c) print k; inb = 0; split("", c); prev = "" }
          /_cbt_tmpfile\(str_data\(str_builder_build/ { inb = 1 }
          { if (prev != "" && $0 ~ /str_builder_add_int\(/) c[prev] = 1; prev = "" }

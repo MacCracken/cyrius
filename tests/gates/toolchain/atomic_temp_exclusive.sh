@@ -32,6 +32,10 @@
 #   5  STATIC: `_io_tmp_name` (the predictable name) is called only by `_io_tmp_open` and by
 #      cyriusly's `_relink_atomic` (symlink(2), which never follows and fails on a taken name);
 #      a new caller fails, and so does an allowlist entry matching no live site. Self-tested.
+#      The census reads lib/, cbt/, programs/ and src/ RECURSIVELY (6.7.18: it globbed
+#      lib/*.cyr, programs/*.cyr, src/*.cyr and src/*/*.cyr, which read 12 of src/'s 69 files —
+#      none of src/frontend/lex/, parse/ or backend/x86/ — and none of programs/checks/, dev/,
+#      folds/, release/ or lib/unicode/); each root must contribute, and the whole >= 300 files.
 #      (6.7.14's cbt/deps.cyr `_dep_scr_next_tmp`, which named the next temp for the kill
 #      handler without opening it, is gone: a scratch resolve records the temp `_aw_open`
 #      created, signals held across the create — a predicted name could be a file another
@@ -61,6 +65,8 @@
 #   e. `_cbt_name_nonce` answering the pid (a predictable name)                -> axis 7 RED
 #   f. `_cbt_out_tmp_open` opening O_CREAT|O_TRUNC (no O_EXCL|O_NOFOLLOW) with
 #      the name `<out>.tmp.<pid>`                                             -> axes 6, 7 RED
+# 6.7.18 (the recursive census): a `_io_tmp_name(` caller added to src/frontend/parse/ctrl.cyr
+#   -> axis 5 RED, naming it; the parent's globs read 253 files and passed it
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -178,18 +184,22 @@ mkdir -p "$W/fx"
 printf 'fn _io_tmp_name(path): i64 {\n    return 0;\n}\nfn good(p): i64 {\n    # _io_tmp_name(p) in a comment is not a call\n    var t = _io_tmp_name(p);\n}\n' > "$W/fx/a.cyr"
 st=0
 [ "$(_callers "$W/fx/a.cyr" lib/x.cyr)" = 'lib/x.cyr|good' ] || { fail "axis 5 self-test: the detector saw '$(_callers "$W/fx/a.cyr" lib/x.cyr | tr '\n' ' ')' (want lib/x.cyr|good)"; st=1; }
-: > "$W/sites"
+: > "$W/sites"; : > "$W/scanned"
 nfile=0
-for f in "$ROOT"/lib/*.cyr "$ROOT"/cbt/*.cyr "$ROOT"/programs/*.cyr "$ROOT"/src/*.cyr "$ROOT"/src/*/*.cyr; do
+for f in $(find "$ROOT/lib" "$ROOT/cbt" "$ROOT/programs" "$ROOT/src" -name '*.cyr' | LC_ALL=C sort); do
     [ -f "$f" ] || continue
     nfile=$((nfile + 1))
+    echo "${f#"$ROOT"/}" >> "$W/scanned"
     _callers "$f" "${f#"$ROOT"/}" >> "$W/sites"
 done
 echo "$ALLOW" | cut -d'|' -f1,2 | LC_ALL=C sort -u > "$W/allow.keys"
 bad=$(LC_ALL=C sort -u "$W/sites" | LC_ALL=C comm -23 - "$W/allow.keys")
 dead=$(LC_ALL=C sort -u "$W/sites" | LC_ALL=C comm -13 - "$W/allow.keys")
 a5=$st
-[ "$nfile" -ge 200 ] || { fail "axis 5: scanned $nfile files (floor 200) — the scan read nothing"; a5=1; }
+[ "$nfile" -ge 300 ] || { fail "axis 5: scanned $nfile files (floor 300) — the scan read nothing"; a5=1; }
+for r in lib cbt programs src; do
+    grep -q "^$r/" "$W/scanned" || { fail "axis 5: the census read nothing under $r/"; a5=1; }
+done
 [ -z "$bad" ] || { echo "$bad" | sed "s/^/FAIL: $NAME: axis 5: a new caller of the predictable temp name (create it through _io_tmp_open): /"; FAIL=1; a5=1; }
 [ -z "$dead" ] || { echo "$dead" | sed "s/^/FAIL: $NAME: axis 5: allowlist entry matches no live site (remove it): /"; FAIL=1; a5=1; }
 [ "$a5" = 0 ] && echo "  ok: axis 5: _io_tmp_name is called only by _io_tmp_open and cyriusly's symlink relink ($nfile files scanned; detector self-tested)"
@@ -268,7 +278,7 @@ a8=0
 [ "$(awk -v FILE=cbt/t.cyr -f "$W/tmplit.awk" "$W/fx/t.cyr" | tr '\n' ' ')" = 'cbt/t.cyr|_a|.tmp. cbt/t.cyr|_b|.pulsar.new ' ] \
   || { fail "axis 8 self-test: the detector saw '$(awk -v FILE=cbt/t.cyr -f "$W/tmplit.awk" "$W/fx/t.cyr" | tr '\n' ' ')'"; a8=1; }
 : > "$W/tsites"; ncb=0
-for f in "$ROOT"/cbt/*.cyr; do
+for f in $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort); do
     [ -f "$f" ] || continue
     ncb=$((ncb + 1))
     awk -v FILE="${f#"$ROOT"/}" -f "$W/tmplit.awk" "$f" >> "$W/tsites"

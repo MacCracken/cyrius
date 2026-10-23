@@ -1,7 +1,7 @@
 #!/bin/sh
 # Gate: `cyrius clean` never deletes a binary the repo TRACKS (6.6.20, CBT-04).
 #
-# THE DEFECT. cmd_clean's keep-set (cbt/commands.cyr) was cc, cycc, cybs, asm, cycc_aarch64 and
+# THE DEFECT. cmd_clean's keep-set (cbt/commands/clean.cyr) was cc, cycc, cybs, asm, cycc_aarch64 and
 # cyrius. The repo tracks three build/ binaries — .gitignore's `!/build/...` whitelist: cycc,
 # cc5 and cycc-native-aarch64 — so `cyrius clean` in the repo unlinked cc5 and
 # cycc-native-aarch64. The second is the one cross-bin that cannot be regenerated without ARM

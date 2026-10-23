@@ -1,0 +1,430 @@
+# CLI — commands / distlib: the output post-condition's unit — its includes, the snapshot mirror, its own names.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ⛔ v6.5.37 (A3) — THE OUTPUT POST-CONDITION. The design fix.
+#
+# Everything before this point INFERS the leaf set from source text: an include-scan, the
+# declared `[deps] stdlib`, and a prune that keeps a leaf only if the bundle appears to
+# reference one of its definitions. That inference is unverifiable by construction, and it is
+# the ONLY surviving record of what a fold needs — `cmd_distlib`'s own note
+# (cbt/commands/distlib/distlib.cyr) says folding destroys the `include` lines, and
+# `lib/sandhi.cyr` has zero of them. An unverifiable oracle that is also the sole source of
+# truth is a design defect, not a bug: when the prune drops a leaf, nothing downstream can
+# recover it — not the consumer, not the resolver, not a human reading the bundle.
+#
+# Measured at 6.5.36: 45 of 118 ecosystem sidecars FAIL a clean-room build from exactly the
+# leaves they declare; 13 with hard compiler errors. sigil-sha names
+# `alloc freelist string process thread thread_local` and NOT `syscalls`, while `freelist`
+# uses SYS_MMAP/SYS_MUNMAP four times and includes only mmap.cyr and atomic.cyr — nothing in
+# the graph can recover it.
+#
+# ⭐ THE ANSWER IS NOT A BETTER PREDICATE, IT IS A POST-CONDITION. The prune's blindness is
+# unbounded (333 `pub fn` and 2604 enum members are invisible to a `fn `/`var ` scan;
+# `security.cyr` has ZERO visible definitions), so refining the harvest is a treadmill.
+# Instead: COMPILE the bundle against exactly the kept leaf set, read back what is still
+# undefined, re-add the leaves that define those symbols, and iterate to fixpoint. The
+# sidecar then states a property that was CHECKED rather than inferred.
+#
+# ⚠ SELF-HEALING, NOT REJECTING. This repairs an under-report rather than failing on it, so
+# it does not turn 45 publishable bundles into 45 hard errors. It fails only when a symbol
+# resolves to no stdlib leaf at all — a real defect the old path reported as a clean sidecar.
+#
+# ⚠ TWO DIAGNOSTIC SHAPES, and only one of them is a warning:
+#     warning: undefined function 'NAME'                              (exit 0, --allow-undef)
+#     error:<src>:L:C: undefined variable 'NAME' (missing include or enum?)   (exit 1, abort)
+# An undefined VARIABLE is a parse-time abort that `--allow-undef` cannot reach (it gates the
+# fixup stage only), so the loop must read both and must not treat a non-zero exit as fatal
+# until the fixpoint says nothing more can be added. hisab's `F64_ONE` — the ordinary way to
+# write 1.0 in a language with no float literals — is exactly this shape.
+#
+# ⭐ 6.6.9 — THE UNIT IS WHAT A CONSUMER'S BUILD HAS IN SCOPE: the leaves, the leaves the named
+# deps bring, the NAMED DEPS' own modules, then the bundle. It used to be the leaves and the
+# bundle only, so every symbol the bundle takes from a named dep read as undefined,
+# the owner lookup credited it to the first stdlib file declaring that name — for libro's
+# thin sigil surface, the sigil MONOLITH — and the next round recorded the monolith's own needs
+# (`sys`) as libro's. `cyrius deps` records the module paths and the leaves it pulled for named
+# deps (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps/): the modules enter the unit, and a
+# named dep's own need is kept out of the sidecar (see the classification in the loop); a leaf
+# that IS a named dep (libro's umbrella includes `lib/patra.cyr`) is the consumer's pinned
+# module, not the stdlib snapshot's fold; and no named dep is ever an owner.
+#
+# ⛔ AND IT FAILS LOUD. compile()'s status was discarded, so any failure that printed no
+# `undefined` line — the compiler missing, a missing include, an entry that could not be written
+# — found zero names and returned "fixpoint": the sidecar was published UNVERIFIED and said
+# nothing. A negative return is now that verdict, and cmd_distlib refuses to write the sidecar.
+
+# Append a file's bytes to `sb`, followed by a newline so a file with no trailing newline
+# cannot weld its last line onto the next file's first. Returns 0, or -1 when the file cannot
+# be read. Read WHOLE: sizing the read with `_file_size` made it answer "empty" on the Windows
+# CLI (-38) and the verify compiled nothing. CHANGELOG [6.6.9]
+fn _distlib_splice_file(sb, path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0 - 1; }
+    if (n > 0) {
+        str_builder_add_cstr(sb, b);
+        str_builder_add_cstr(sb, "\n");
+    }
+    return 0;
+}
+
+# 1 iff the cstr vec `v` (0 = empty) holds `name`.
+fn _distlib_vec_has(v, name): i64 {
+    if (v == 0) { return 0; }
+    return _distlib_vec_has_n(v, vec_len(v), name);
+}
+
+# 1 when one of the first `n` entries of cstr vec `v` equals `name`.
+fn _distlib_vec_has_n(v, n, name): i64 {
+    if (v == 0) { return 0; }
+    var i = 0;
+    while (i < n && i < vec_len(v)) {
+        if (streq(vec_get(v, i), name) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⭐ THE UNIT IS BUILT FROM INCLUDES (6.6.9). Splicing leaf TEXT defeated include-once: a spliced
+# leaf arrived AGAIN whenever anything in the unit (the bundle, another leaf, a named dep's
+# module) carried `include "lib/<it>.cyr"`. Every fn became a `duplicate fn` warning, and every
+# `#define` was spent twice from cycc's 16-entry table: majra's `backends` profile (the sigil
+# fold's seven `#define LINUX`, pulled in again through tls_native) overflowed it — hidden while
+# compile()'s status was discarded, loud the moment it was not. So the unit is an entry file of
+# `include "lib/<leaf>.cyr"` lines plus the bundle's text, and include-once admits each file
+# exactly once. The entry lives in `dist/.dlverify-<pid>/` beside a copy of the PINNED snapshot's
+# lib/ (under the project, because the absolute-include path bug refuses absolute includes and
+# cycc an absolute `#@incdir`), and that copy is the compiler's lib/ overlay (CYRIUS_LIB_OVERLAY,
+# which READFILE tries FIRST) for the verify and for the bundle self-check alike.
+# ⛔ 6.7.14 — WHY THE OVERLAY. cycc resolves `lib/<leaf>.cyr` against the overlay, then the CWD,
+# then ONE store slot — CYRIUS_HOME/versions/<cycc's OWN version>/lib — and only then the entry's
+# directory (`#@incdir`, lex.cyr READFILE). So a leaf the project had not vendored read the CLI's
+# own slot, not the pin: with both slots present the bundle was verified against a stdlib it does
+# not pin, and with only the pinned slot the self-check (which had no mirror at all) failed
+# "cannot open include file". The mirror therefore holds the pinned snapshot MINUS what the
+# project's ./lib holds (so the CWD-first resolution of a vendored leaf is unchanged — a project's
+# lib/sakshi.cyr at another tag is not shadowed by the snapshot's fold copy), and, when this run
+# already set an overlay (a local-mode or --locked resolve), that overlay's files on top, so they
+# still win. CHANGELOG [6.7.14]
+# ⚠ A consequence, stated: a need of a recorded leaf that a named dep's module already brings
+# by its own include (bote-core's leaf bayan uses file_open; libro's bundle includes io) is met
+# in the unit and not recorded — as it is met in every consumer's build, through that dep.
+var _dl_mirror_files = 0;   # vec of cstr: every file the mirror holds (removed by _distlib_mirror_drop)
+var _dl_mirror_dirs = 0;    # vec of cstr: its directories, parents first
+var _dl_ov_set = 0;         # 1 while the mirror is the compiler's lib/ overlay (_distlib_mirror_make)
+var _dl_ov_prev = 0;        # the overlay this run had before (0 = none), restored by the drop
+
+# Copy `src` to `dst` whole. 0, or -1 (read or write failed). `dst` is recorded BEFORE the write
+# creates it, so the kill handler's walk and the drop see every file that can exist (a short
+# write's partial file included). CHANGELOG [6.7.13]
+fn _distlib_copy_whole(src, dst): i64 {
+    var n = 0;
+    var b = file_read_whole(src, &n);
+    if (b == 0) { return 0 - 1; }
+    vec_push(_dl_mirror_files, dst);
+    if (file_write_all(dst, b, n) != n) { return 0 - 1; }
+    return 0;
+}
+
+# `a` + "/" + `b`.
+fn _distlib_join(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# Make directory `d` (it must not exist) and remember it for the drop. 0, or -1.
+fn _distlib_mirror_mkdir(d): i64 {
+    if (sys_mkdir(d, 448) != 0) { return 0 - 1; }   # 0700
+    vec_push(_dl_mirror_dirs, d);
+    return 0;
+}
+
+# 1 when the mirror leaves `rel` (a path under lib/, e.g. `vec.cyr` or `<family>/x.cyr`) out: the
+# project's own ./lib holds it (the CWD resolves it, as in the project's build), or the overlay
+# `ov` this run already set holds it (copied over the mirror afterwards). CHANGELOG [6.7.14]
+fn _distlib_mirror_skips(rel, ov): i64 {
+    if (file_exists(_distlib_join("lib", rel)) == 1) { return 1; }
+    if (ov != 0) {
+        if (file_exists(_distlib_join(ov, rel)) == 1) { return 1; }
+    }
+    return 0;
+}
+
+# Copy every `.cyr` of directory `from` into `to` (created); one level of subdirectories (the
+# stdlib's family leaves) likewise. `rel` is `to`'s path under the mirror's lib/ ("" at the top,
+# "<family>/" below); a file _distlib_mirror_skips names is left out (`ov`: the overlay this run
+# already set, or 0). With `over` 1 the files are laid OVER an existing mirror — a directory that
+# exists is kept, nothing is skipped (the overlay's own copy). 0, or -1.
+fn _distlib_mirror_copy_dir(from, to, depth, rel, ov, over): i64 {
+    var mk = 1;
+    if (over == 1 && is_dir(str_from(to)) == 1) { mk = 0; }
+    if (mk == 1 && _distlib_mirror_mkdir(to) != 0) { return 0 - 1; }
+    # 6.6.10: an unlistable snapshot directory fails the mirror (it read as empty, so the
+    # verify compiled against a partial stdlib). CHANGELOG [6.6.10]
+    var ents = _cbt_list_dir(from, "the sidecar verify cannot mirror it");
+    if (ents == 0) { return 0 - 1; }
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = str_data(vec_get(ents, i));
+        i = i + 1;
+        var el = strlen(e);
+        if (el == 0 || load8(e) == 46) { continue; }          # '.', '..', dotfiles
+        var fp = _distlib_join(from, e);
+        var tp = _distlib_join(to, e);
+        if (el > 4 && memeq(e + el - 4, ".cyr", 4) == 1) {
+            if (over == 0 && _distlib_mirror_skips(_cat2(rel, e), ov) == 1) { continue; }
+            if (_distlib_copy_whole(fp, tp) != 0) { return 0 - 1; }
+        } elif (depth == 0 && is_dir(str_from(fp)) == 1) {
+            if (_distlib_mirror_copy_dir(fp, tp, 1, _cat2(e, "/"), ov, over) != 0) { return 0 - 1; }
+        }
+    }
+    return 0;
+}
+
+# Copy snapshot `root` to `dist/.dlverify-<pid>/lib/` minus what the project's ./lib holds, lay
+# the overlay this run already set (if any) over it, and make that lib/ the compiler's overlay
+# (CYRIUS_LIB_OVERLAY, relative and `..`-free as lex.cyr requires) until _distlib_mirror_drop
+# restores the previous one — see the WHY above. Returns the directory, or 0 after naming the
+# failure.
+fn _distlib_mirror_make(root): i64 {
+    _dl_mirror_files = vec_new();
+    _dl_mirror_dirs = vec_new();
+    var msb = str_builder_new();
+    str_builder_add_cstr(msb, "dist/.dlverify-");
+    str_builder_add_int(msb, sys_getpid());
+    var m = str_data(str_builder_build(msb));
+    if (_distlib_mirror_mkdir(m) != 0) {
+        var mkm = "distlib: cannot create the pinned-stdlib mirror (a stale one? remove it)";
+        _err_ctx(mkm, m);
+        return 0;
+    }
+    # The kill handler removes the mirror too: a SIGTERM mid-verify left all of it in the project's
+    # dist/. The drop clears the slot. CHANGELOG [6.7.13]
+    _cbt_sig_tree_set(_dl_mirror_files, _dl_mirror_dirs);
+    var ml = _distlib_join(m, "lib");
+    var ov = _dep_overlay;
+    if (_distlib_mirror_copy_dir(root, ml, 0, "", ov, 0) != 0) {
+        _err_ctx("distlib: cannot mirror the stdlib snapshot for the sidecar verify / bundle self-check", root);
+        _distlib_mirror_drop();
+        return 0;
+    }
+    if (ov != 0 && is_dir(str_from(ov)) == 1) {
+        if (_distlib_mirror_copy_dir(ov, ml, 0, "", 0, 1) != 0) {
+            _err_ctx("distlib: cannot mirror this run's lib/ overlay for the sidecar verify / bundle self-check", ov);
+            _distlib_mirror_drop();
+            return 0;
+        }
+    }
+    _dl_ov_prev = ov;
+    _dl_ov_set = 1;
+    _dep_overlay_env(ml);
+    return m;
+}
+
+# Remove everything _distlib_mirror_make created: files, then directories deepest first; the
+# compiler's lib/ overlay goes back to what this run had before the mirror.
+fn _distlib_mirror_drop(): i64 {
+    if (_dl_ov_set == 1) {
+        _dl_ov_set = 0;
+        _dep_overlay_env(_dl_ov_prev);
+        _dl_ov_prev = 0;
+    }
+    if (_dl_mirror_files == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dl_mirror_files)) { xunlink(vec_get(_dl_mirror_files, i)); i = i + 1; }
+    var d = vec_len(_dl_mirror_dirs);
+    while (d > 0) { d = d - 1; xrmdir(vec_get(_dl_mirror_dirs, d)); }
+    _cbt_sig_tree_set(0, 0);
+    _dl_mirror_files = 0;
+    _dl_mirror_dirs = 0;
+    return 0;
+}
+
+# Append the include line(s) for stdlib leaf `lf` to `esb`: `include "lib/<lf>.cyr"`, or
+# one line per `.cyr` of the family directory `<lib>/<lf>/` in name order. A leaf that is
+# neither (not in the snapshot) adds nothing. Answers the number of include lines added.
+# ⭐ 6.6.18 (D5): THE ONE EXPANDER — the verify
+# unit and the bundle's requires block (lib = the snapshot, for both since 6.7.14) both
+# call it, so the block can never drift from what was compile-verified.
+fn _distlib_unit_leaf(esb, lib, lf): i64 {
+    var lbase = _distlib_join(lib, lf);
+    var fsb = str_builder_new();
+    str_builder_add_cstr(fsb, lbase);
+    str_builder_add_cstr(fsb, ".cyr");
+    if (file_exists(str_data(str_builder_build(fsb))) == 1) {
+        str_builder_add_cstr(esb, "include \"lib/");
+        str_builder_add_cstr(esb, lf);
+        str_builder_add_cstr(esb, ".cyr\"\n");
+        return 1;
+    }
+    if (is_dir(str_from(lbase)) == 0) { return 0; }
+    # 6.6.10: named and counted in _err_count (the verify then fails) — it read as empty.
+    var fents = _cbt_list_dir(lbase, "the sidecar verify cannot include that family");
+    if (fents == 0) { return 0; }
+    vec_sort_by(fents, &_dep_name_cmp);   # v6.5.37 (A8): deterministic family order
+    var fi = 0;
+    var added = 0;
+    while (fi < vec_len(fents)) {
+        var fe = str_data(vec_get(fents, fi));
+        fi = fi + 1;
+        var fel = strlen(fe);
+        if (fel > 4 && memeq(fe + fel - 4, ".cyr", 4) == 1) {
+            str_builder_add_cstr(esb, "include \"lib/");
+            str_builder_add_cstr(esb, lf);
+            str_builder_add_cstr(esb, "/");
+            str_builder_add_cstr(esb, fe);
+            str_builder_add_cstr(esb, "\"\n");
+            added = added + 1;
+        }
+    }
+    return added;
+}
+
+# (6.6.10: the `_dl_ids_*` identifier set moved to cbt/srcscan.cyr as `_src_ids_*`, shared
+# with `cyrius coverage`. It keeps each token and confirms a hash hit byte for byte, and it
+# grows instead of saturating — a saturated set answered PRESENT for every name. CHANGELOG [6.6.10])
+
+# The identifiers that are OURS: the bundle, each recorded leaf in the snapshot `lib` (flat file
+# or family directory), and each leaf's private peers — the `include "lib/<leaf>_…"` files a
+# dispatcher such as syscalls.cyr brings (its per-arch peer is where `alloc` is used). (Read from
+# the snapshot itself since 6.7.14: the mirror is the snapshot minus what ./lib holds.)
+fn _distlib_own_ids(leaves, named_deps, out_path, lib): i64 {
+    var paths = vec_new();
+    vec_push(paths, out_path);
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var lf = vec_get(leaves, i);
+        i = i + 1;
+        if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
+        var fsb = str_builder_new();
+        str_builder_add_cstr(fsb, _distlib_join(lib, lf));
+        str_builder_add_cstr(fsb, ".cyr");
+        var flat = str_data(str_builder_build(fsb));
+        if (file_exists(flat) == 1) {
+            vec_push(paths, flat);
+            _distlib_own_peers(paths, lib, lf, flat);
+        } else {
+            var fam = _distlib_join(lib, lf);
+            if (is_dir(str_from(fam)) == 1) {
+                # 6.6.10: unlistable is named and fails the verify (_err_count). An unseen
+                # family file would make its identifiers look NOT ours — the unsafe direction.
+                var fents = _cbt_list_dir(fam, "the sidecar verify cannot read that leaf");
+                var fi = 0;
+                while (fents != 0 && fi < vec_len(fents)) {
+                    vec_push(paths, _distlib_join(fam, str_data(vec_get(fents, fi))));
+                    fi = fi + 1;
+                }
+            }
+        }
+    }
+    var total = 0;
+    var k = 0;
+    while (k < vec_len(paths)) {
+        var sz = _file_size(vec_get(paths, k));
+        if (sz > 0) { total = total + sz; }
+        k = k + 1;
+    }
+    var set = _src_ids_new(total);
+    if (set == 0) { _err("distlib: sidecar verify: out of memory"); return 0; }
+    k = 0;
+    while (k < vec_len(paths)) {
+        var n = 0;
+        var b = file_read_whole(vec_get(paths, k), &n);
+        if (b != 0 && n > 0) {
+            # Blanked IN PLACE — the buffer is a private copy, and the set keeps pointers into
+            # it, so it must stay (nothing is freed).
+            _src_blank_noncode(b, n);
+            if (_src_ids_add_text(set, b, n) != 0) { _err("distlib: sidecar verify: out of memory"); return 0; }
+        }
+        k = k + 1;
+    }
+    return set;
+}
+
+# Push onto `paths` the private peers `leaf` includes (`include "lib/<leaf>_…"`).
+fn _distlib_own_peers(paths, lib, leaf, path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0; }
+    var ll = strlen(leaf);
+    var p = 0;
+    while (p < n) {
+        var ls = _src_skip_ws(b, p, n);
+        var le = ls;
+        while (le < n && load8(b + le) != 10) { le = le + 1; }
+        if (le - ls > 13 + ll && memeq(b + ls, "include \"lib/", 13) == 1) {
+            if (memeq(b + ls + 13, leaf, ll) == 1 && load8(b + ls + 13 + ll) == 95) {
+                var ne = ls + 13;
+                while (ne < le && load8(b + ne) != 34) { ne = ne + 1; }
+                var nl = ne - (ls + 13);
+                var rel = alloc(nl + 1);
+                memcpy(rel, b + ls + 13, nl);
+                store8(rel + nl, 0);
+                vec_push(paths, _distlib_join(lib, rel));
+            }
+        }
+        p = le + 1;
+    }
+    return 0;
+}
+
+# Echo to stderr the lines of a captured compiler stream that contain `error` (at most 8).
+fn _distlib_show_errors(buf, n): i64 {
+    var shown = 0;
+    var p = 0;
+    while (p < n && shown < 8) {
+        var e = p;
+        while (e < n && load8(buf + e) != 10) { e = e + 1; }
+        var q = p;
+        var hit = 0;
+        while (q + 5 <= e && hit == 0) {
+            if (memeq(buf + q, "error", 5) == 1) { hit = 1; }
+            q = q + 1;
+        }
+        if (hit == 1) {
+            sys_write(STDERR_FD, "  ", 2);
+            sys_write(STDERR_FD, buf + p, e - p);
+            sys_write(STDERR_FD, "\n", 1);
+            shown = shown + 1;
+        }
+        p = e + 1;
+    }
+    return shown;
+}
+
+# Name why the verify could not run, and answer -1. `what` is a cstr; `path` may be 0.
+fn _distlib_verify_fail(what, path): i64 {
+    if (path != 0) { _err_ctx(what, path); } else { _err(what); }
+    return 0 - 1;
+}
+
+# The fixpoint loop itself. Returns the number of leaves RE-ADDED (0 = the inferred set was
+# already sufficient, which is the answer we want and cannot get any other way), or -1 when
+# the unit could not be built or compiled — the sidecar is then NOT verified and must not be
+# published as if it were. `named_deps` is the manifest's `[deps.<name>]` set (a cstr vec).
+fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
+    var root = _distlib_stdlib_root();
+    if (root == 0) {
+        # 6.6.18 (D4): the verify is the ONLY authority now — nothing else can vouch for the set.
+        var nsm = "distlib: no stdlib snapshot for the pinned cyrius (versions/<pin>/lib or <home>/lib) — the sidecar cannot be verified; NOT written";
+        return _distlib_verify_fail(nsm, out_path);
+    }
+    if (_distlib_verify_host_ok(out_path) == 0) { return 0 - 1; }
+    var m = _distlib_mirror_make(root);
+    if (m == 0) { return 0 - 1; }
+    var e0 = _err_count;
+    _dl_agnos_warned = 0;
+    var r = _distlib_verify_rounds(leaves, out_path, named_deps, root, m);
+    _distlib_mirror_drop();
+    # 6.6.10: a directory the verify could not list (named where it happened) means it
+    # verified against less than the snapshot — never a verified sidecar.
+    if (r >= 0 && _err_count > e0) {
+        var vfm = "distlib: sidecar verify could not read all of the stdlib snapshot (above) — sidecar NOT written";
+        return _distlib_verify_fail(vfm, out_path);
+    }
+    return r;
+}

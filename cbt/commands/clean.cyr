@@ -1,0 +1,55 @@
+# CLI — commands: `cyrius clean` — what build/ keeps.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# 1 when `cyrius clean` must leave build/<name> alone: the toolchain binaries it runs from, and
+# every binary the repo TRACKS (.gitignore's `!/build/...` whitelist: cycc, cc5,
+# cycc-native-aarch64). 6.6.20: cc5 and cycc-native-aarch64 were missing, so `cyrius clean` in
+# the repo unlinked both — and cycc-native-aarch64 cannot be rebuilt without ARM hardware
+# (release-gate step 1b keeps it in lockstep). CHANGELOG [6.6.20]
+fn _clean_keeps(name): i64 {
+    if (str_eq(name, str_from("cc")) == 1) { return 1; }
+    if (str_eq(name, str_from("cycc")) == 1) { return 1; }
+    if (str_eq(name, str_from("cybs")) == 1) { return 1; }
+    if (str_eq(name, str_from("asm")) == 1) { return 1; }
+    if (str_eq(name, str_from("cycc_aarch64")) == 1) { return 1; }
+    if (str_eq(name, str_from("cyrius")) == 1) { return 1; }
+    if (str_eq(name, str_from("cc5")) == 1) { return 1; }
+    if (str_eq(name, str_from("cycc-native-aarch64")) == 1) { return 1; }
+    return 0;
+}
+
+fn cmd_clean(): i64 {
+    # Remove build/ contents except the binaries _clean_keeps names
+    if (is_dir(str_from("build")) == 0) {
+        println("nothing to clean");
+        return 0;
+    }
+    var entries = _cbt_list_dir("build", "nothing was cleaned");   # 6.6.10: not "removed 0"
+    if (entries == 0) { return 1; }
+    var ci = 0;
+    var cleaned = 0;
+    while (ci < vec_len(entries)) {
+        var name = vec_get(entries, ci);
+        if (_clean_keeps(name) == 0) {
+            var full = make_path("build", str_data(name));
+            if (_dry_run == 1) {
+                sys_write(STDOUT_FD, "  would remove: ", 16);
+                println(full);
+            } else {
+                sys_unlink(full);
+            }
+            cleaned = cleaned + 1;
+        }
+        ci = ci + 1;
+    }
+    if (_dry_run == 1) {
+        sys_write(STDOUT_FD, "dry-run: would remove ", 22);
+    } else {
+        var cmsg = "cleaned build/ (preserved the toolchain and the tracked cycc, cc5, cycc-native-aarch64) — removed ";
+        sys_write(STDOUT_FD, cmsg, strlen(cmsg));
+    }
+    fmt_int(cleaned);
+    println(" files");
+    return 0;
+}

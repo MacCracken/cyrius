@@ -205,7 +205,7 @@ rm -rf "$EX"
 # CHANGELOG [6.7.7]
 # ⛔ 6.7.9 — LIB IS LINKED IN EVERY HOME, the plain-bin one included. Only the linked branch
 # re-pointed it, so a fresh CI home got bin/ and no $CYRIUS_HOME/lib at all: a manifest with no
-# `cyrius =` pin resolves its stdlib there (`_dep_find_stdlib_dir` fallback (c), cbt/deps.cyr) and
+# `cyrius =` pin resolves its stdlib there (`_dep_find_stdlib_dir` fallback (c), cbt/deps/stdlib.cyr) and
 # found none ("cannot find cyrius stdlib"), and a cached home kept the stdlib it had while its bins
 # moved on. tests/gates/toolchain/ci_installs_the_release_tarball.sh axes 6 and 7. CHANGELOG [6.7.9]
 # _point_lib — $CYRIUS_HOME/lib -> versions/<v>/lib as install.sh's `_relink_active` points it: a

@@ -23,7 +23,7 @@
 #
 # ⛔ WHAT AXIS 3 ENFORCES, EXACTLY: every scp-a-release-tarball site in `scripts/`. That is
 # TWO of the FOUR such sites in the tree, and the claim is written down narrowly because the
-# other two are the LIVE ones. `cbt/commands.cyr`'s `_cross_os_selfhost()` — what
+# other two are the LIVE ones. `cbt/commands/audit.cyr`'s `_cross_os_selfhost()` — what
 # `cyrius audit` actually runs — carries its own inline ecb and ach install pillars as shell
 # strings (the `ecb-install` mode of `cross-os-selfhost.sh` is reachable by hand and is
 # invoked by nothing in the repo, and there is no `ach-install` mode at all), and BOTH of
@@ -223,7 +223,7 @@ BAD=0
 # ratchet (axis 3b) only because the two install pillars lived in another lane this
 # release; bite 26a fixed them, the ratchet went red the way it was built to, and the
 # two halves are one claim again. CHANGELOG [6.6.6]
-for f in scripts/*.sh cbt/*.cyr; do
+for f in scripts/*.sh $(find cbt -name '*.cyr' | LC_ALL=C sort); do
     # Join backslash continuations so a multi-line scp is one record.
     sed -e 's/^[[:space:]]*#.*$//' -e :a -e '/\\$/N; s/\\\n//; ta' "$f" | grep -E '(^|[;&|"[:space:]])scp ' | while IFS= read -r line; do
         case "$line" in

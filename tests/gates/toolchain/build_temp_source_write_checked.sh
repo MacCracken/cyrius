@@ -259,7 +259,7 @@ st=0
 [ -z "$(_unchecked "$D/fx/d.cyr" x)" ] || { fail "axis 4 self-test: a comment or a checked call was flagged: '$(_unchecked "$D/fx/d.cyr" x)'"; st=1; }
 a4=$st
 nfile=0; : > "$D/sites"
-for f in $(ls cbt/*.cyr | LC_ALL=C sort); do
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do
     nfile=$((nfile + 1))
     _unchecked "$f" "$f" >> "$D/sites"
 done
@@ -281,7 +281,7 @@ for pat in 'could not create the preprocessed source' 'build module cannot be re
     grep -q "$pat" cbt/build.cyr || { fail "axis 4: cbt/build.cyr no longer refuses by name: \"$pat\""; a4=1; }
 done
 grep -q 'if (actual_source == 0) { return 1; }' cbt/build.cyr || { fail "axis 4: compile() no longer treats a failed materialisation as a failed build"; a4=1; }
-grep -q 'if (cap_source == 0) { return 1; }' cbt/commands.cyr || { fail "axis 4: cyrius capacity no longer treats a failed materialisation as a failure"; a4=1; }
+grep -q 'if (cap_source == 0) { return 1; }' cbt/commands/capacity.cyr || { fail "axis 4: cyrius capacity no longer treats a failed materialisation as a failure"; a4=1; }
 [ "$a4" = 0 ] && echo "  ok: axis 4: no unchecked temp-source write over $nfile cbt files; $nmw _mat_write + $nmc _mat_copy_fd + $ndt _dt_write_all sites, 4 named refusals, both callers fail closed (detector self-tested on 4 shapes)"
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: build_temp_source_write_checked"; exit 1; fi

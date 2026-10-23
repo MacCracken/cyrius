@@ -2,7 +2,7 @@
 # package_missing_entry.sh — 6.7.12 (the tools lane). `cyrius package` refuses a missing entry by
 # name and builds only a real one.
 #
-# WHY: cmd_package (cbt/deps.cyr) compiled the entry only `if (file_exists(entry) == 1)`, with no
+# WHY: cmd_package (cbt/deps/package.cyr) compiled the entry only `if (file_exists(entry) == 1)`, with no
 # else, and created build/ first: a `[build] entry` naming a file that does not exist printed
 # `package ready: build/<out>`, exited 0, wrote nothing and left an empty build/ behind (and with
 # no manifest and no src/main.cyr, `package ready: build/main`). `cyrius build` in the same

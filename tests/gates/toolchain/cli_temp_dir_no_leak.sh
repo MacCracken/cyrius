@@ -336,7 +336,7 @@ cat > "$T/exits.awk" <<'AWK'
     if (child >= 0 && depth <= child) { child = -1 }
 }
 AWK
-awk -f "$T/exits.awk" cbt/*.cyr > "$T/exits"
+awk -f "$T/exits.awk" $(find cbt -name '*.cyr' | LC_ALL=C sort) > "$T/exits"
 NEX=$(grep -c 'fn=' "$T/exits" || true)
 NCH=$(grep -c ' child$' "$T/exits" || true)
 check "the scan found cbt/'s sys_exit sites (floor 30, found $NEX)" yes \
@@ -387,7 +387,7 @@ check "  ⭐ ANTI-VACUOUS: an exit AFTER the child block is flagged" 1 \
 check "  ⭐ ANTI-VACUOUS: a fork-free exit is flagged" 1 \
     "$(grep -c 'fn=no_fork_at_all PARENT' "$T/ax5/out" || true)"
 
-# ── AXIS 6 — THE GIT QUERIES (6.7.10). `_dep_wt_run` (cbt/deps.cyr) captured git's stderr in
+# ── AXIS 6 — THE GIT QUERIES (6.7.10). `_dep_wt_run` (cbt/deps/local.cyr) captured git's stderr in
 # `<tmp>/wt_err` and kept it for the process's life, so the rmdir at exit failed and every local-mode
 # resolve (the checkout's state line, `check-ignore`) and `cyrius update`'s newer-tags listing left its
 # temp dir behind holding it — 17 of them after one check.sh run. Anti-vacuous: each row must show it
@@ -713,7 +713,7 @@ check "  …the shell reads \$? = 143" 143 "$(cat "$T/k7-cap.rc" 2>/dev/null || 
 check "  …its private dir is gone (no cap_err left)" 0 "$(k7_dirs cap "$TB")"
 check "  …the compiler it was running is stopped" gone "$(cat "$T/k7-cap.cc")"
 for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
-# A local-mode resolve's git queries (`_dep_wt_run`, cbt/deps.cyr) capture git's stderr in `wt_err`,
+# A local-mode resolve's git queries (`_dep_wt_run`, cbt/deps/local.cyr) capture git's stderr in `wt_err`,
 # which the child creates: a SIGTERM while git runs left it (and the dir) and git running until
 # 6.7.13. A stand-in `git` first on PATH (`_dep_wt_run` execs `env … git`) records its pid and
 # sleeps on `check-ignore` (no stdout capture: wt_err is the query's only scratch); every other
@@ -774,7 +774,7 @@ else
     echo "  SKIP (named): axis 7 --local git kill row — git is not installed (axis 6's fixture did not run)"
     K7_SKIPS=$((K7_SKIPS + 1))
 fi
-# A resolve's own git children (6.7.14): `_git_run` (cbt/deps.cyr — the cached checkout's verify:
+# A resolve's own git children (6.7.14): `_git_run` (cbt/deps/git_cache.cyr — the cached checkout's verify:
 # rev-parse, config, fsck, read-tree, …) and the clone fork. Until 6.7.14 neither git nor its
 # captures (`git_err`, `git_rev_out`, `dep_verify_out`) were tracked: a SIGTERM'd `cyrius deps` left
 # the captures (and the dir) and git running, and a clone went on to create the dep cache after
@@ -943,7 +943,7 @@ fi
 # A scratch resolve killed mid-way (6.7.14): `deps --locked` resolves into <tmp>/locked-deps and, at a
 # moved pin, `deps` first dry-runs into <tmp>/pin-move-deps; a SIGTERM there left the whole scratch
 # (16 files for this two-leaf project) and so the dir. The resolver now records each directory and
-# file of the scratch before it exists (cbt/deps.cyr `_dep_scr_*`), in the handler's scratch-tree
+# file of the scratch before it exists (cbt/deps/vendor.cyr `_dep_scr_*`), in the handler's scratch-tree
 # slot. The stand-in git (no real git needed) records its pid and sleeps in the named dep's clone,
 # after Phase 1 has copied the stdlib leaves into the scratch.
 # (issues/archived/2026-10-15-deps-scratch-resolve-left-in-temp-dir-on-kill.md)
@@ -1101,7 +1101,7 @@ fi
 for d in "$TB"/cyrius-*; do [ -d "$d" ] && rm -rf "$d"; done
 # A copy's temp name is free once it is renamed into place, so a kill must not unlink what another
 # same-user process puts there later: since 6.7.16 `_dep_copy_file` clears the temp's record when
-# `_aw_commit` / `_aw_abort` returns, under the same HUP / INT / TERM hold (cbt/deps.cyr
+# `_aw_commit` / `_aw_abort` returns, under the same HUP / INT / TERM hold (cbt/deps/vendor.cyr
 # `_dep_aw_finish`); 6.7.15 kept the record, and the kill unlinked one planted file per copy
 # (issues/archived/2026-10-18-scratch-resolve-keeps-a-renamed-temp-recorded.md). Once the stand-in git sleeps
 # in the clone, the gate plants forty `<file>.cyrtmp.<pid>.<n>` beside each copy and SIGTERMs.

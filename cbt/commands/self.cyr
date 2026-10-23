@@ -1,0 +1,101 @@
+# CLI — commands: `cyrius self` — the self-hosting check.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+fn cmd_self(): i64 {
+    _status("=== Self-Hosting Check ===");
+    # v6.6.6 — PE arm. The fork that the POSIX arm used to run a /bin/sh script through is
+    # a -1 stub on Windows (lib/syscalls_windows.cyr) whose wait decoded an uninitialised
+    # status slot — so on Windows `cyrius self` reported a verdict about a self-host that
+    # never happened. `_win_cmd_self` reproduces the SAME contract natively (two
+    # CreateProcessW redirects + a byte compare) rather than refusing, because cycc
+    # genuinely does self-host on cass and this verb is how a user checks it.
+    # CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_cmd_self();
+    #endif
+    # v6.6.6 — THE PER-TARGET FORK, on POSIX too. The old script named `src/main.cyr`
+    # unconditionally, and on aarch64 / either macOS that fork compiles cleanly into a
+    # host-native compiler carrying the x86 backend — so the verb printed a verdict about
+    # a compiler nobody ships (measured: "FAIL: cycc!=cycc" on pi for a compiler that
+    # self-hosts, and `Killed: 9` on ecb). `_self_host_src()` (cbt/build.cyr) owns the
+    # mapping; `cmd_soak` asks the same question there. CHANGELOG [6.6.6].
+    var self_src = _self_host_src();
+    if (file_exists(self_src) == 0) {
+        _err_ctx("self-host: the compiler source for this target is missing", self_src);
+        return 1;
+    }
+    if (_cc == 0) {
+        _err("self-host: cycc not found. Install Cyrius or set CYRIUS_HOME.");
+        return 1;
+    }
+    if (file_exists(_cc) == 0) {
+        _err_ctx("self-host: compiler not found", _cc);
+        return 1;
+    }
+    # 6.7.12 — both steps build the DEFAULT compiler: their children exec with `_envp` minus the
+    # compile-mode switches (cbt/core.cyr `_envp_self_build`), as `cyrius pulsar` does. Under an
+    # inherited CYRIUS_POISON=1 this printed PASS for two poison-mode compilers. CHANGELOG [6.7.12]
+    _envp = _envp_self_build();
+    # ⛔ 6.6.9 bite 10 (CYRIUS-2026-0009) — NATIVE, IN THE PRIVATE TEMP DIR. The POSIX arm used to
+    # fork `/bin/sh -c` over a script that staged all three compilers at PREDICTABLE SHARED
+    # names — `/tmp/cyr_cc5_$$`, `/tmp/cyr_ccr_$$`, `/tmp/cyr_cc4_$$` — writing them with `>`
+    # and `cp` (no O_EXCL, following a pre-planted symlink) and then EXECUTING `$ccr`. That
+    # is the CYRIUS-2026-0005/CYRIUS-2026-0006 class the 0700 exclusive-mkdir directory closed everywhere else
+    # at v6.4.81; this verb predated it and was never moved. Linux's protected_symlinks /
+    # protected_regular blunt it; macOS has no equivalent. Now the two steps and the
+    # verdict go through the SAME helpers `cmd_soak` uses — `_self_host_step` (raw pipe,
+    # never `compile()`'s prepend; signs a COPY on macOS so the compared pair stays
+    # pristine) and `_self_host_same` (a byte compare with a non-empty floor) — over
+    # `_cbt_tmpexe` / `_cbt_tmpfile` names, and every path removes what it staged.
+    # `tests/gates/toolchain/cbt_no_shared_tmp_paths.sh` fails on a `/tmp/` path in any cbt
+    # string literal. CHANGELOG [6.6.9]
+    var t1 = _cbt_tmpexe("self_a");
+    var t2 = _cbt_tmpfile("self_b");
+    var s1 = _self_host_step(_cc, self_src, t1);
+    if (s1 != 0) {
+        _self_step_failed(1, s1, self_src, _cc);
+        sys_unlink(t1);
+        return 1;
+    }
+    var s2 = _self_host_step(t1, self_src, t2);
+    if (s2 != 0) {
+        _self_step_failed(2, s2, self_src, 0);
+        sys_unlink(t1);
+        sys_unlink(t2);
+        return 1;
+    }
+    var same = _self_host_same(t1, t2);
+    sys_unlink(t1);
+    sys_unlink(t2);
+    if (same == 1) {
+        println("  PASS: cycc==cycc byte-identical");
+        return 0;
+    }
+    println("  FAIL: cycc!=cycc");
+    return 1;
+}
+
+# `cyrius self`'s named step failure: which step, WHICH compiler, what it did, and the
+# source. A step that already named its own failure (`_self_host_step_macos`'s stage
+# refusal returns -1 after `_err_ctx`) is not given a second, vaguer line.
+# ⚠ Step 1's compiler is NAMED, not described: it is `_cc`, which in this repo is
+# `./build/cycc` and elsewhere may be a sibling of the wrapper — calling it "the installed
+# compiler" sent the user to the wrong binary. `cc` = 0 means step 1's own output. What it
+# DID comes from `_raw_fail_describe` (cbt/pulsar.cyr): a signal or an empty output is said
+# as such, never quoted as "exited 1". CHANGELOG [6.6.9]
+fn _self_step_failed(step, rc, src, cc): i64 {
+    if (rc < 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "self-host step ");
+    str_builder_add_int(sb, step);
+    str_builder_add_cstr(sb, " (");
+    if (cc != 0) { str_builder_add_cstr(sb, cc); }
+    else { str_builder_add_cstr(sb, "the compiler step 1 built"); }
+    str_builder_add_cstr(sb, ", compiling ");
+    str_builder_add_cstr(sb, src);
+    str_builder_add_cstr(sb, ") ");
+    _raw_fail_describe(sb, rc);
+    _err(str_data(str_builder_build(sb)));
+    return 0;
+}

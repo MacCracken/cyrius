@@ -1,5 +1,5 @@
 #!/bin/sh
-# deps_leaf_name_one_rule.sh — a stdlib LEAF name obeys ONE rule (`_dep_leaf_ok`, cbt/deps.cyr)
+# deps_leaf_name_one_rule.sh — a stdlib LEAF name obeys ONE rule (`_dep_leaf_ok`, cbt/deps/names.cyr)
 # wherever it is produced or consumed: [A-Za-z0-9_/-], non-empty, no leading, trailing or
 # doubled `/`. A `/` is legal — `unicode/categories` is a leaf.
 #

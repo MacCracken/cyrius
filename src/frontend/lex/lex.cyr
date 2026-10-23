@@ -1935,8 +1935,8 @@ fn LEXID(S, p, npos): i64 {
 # included file named a line of nothing. FM_BUILD runs before LEX in every fork, so the
 # parser's own FM_LOOKUP maps the line and `_err_col` gives the column from the byte
 # offset. ⚠ The message text after the head is load-bearing: `cyrius lint` classifies
-# on it through `_lint_capture_has_syntax` (cbt/commands.cyr), which parses exactly this
-# shape. Kept small and separate: LEX is far past the size cybs compiles comfortably.
+# on it through `_lint_err_msg` / `_lint_capture_verdict` (cbt/commands/lint.cyr), which
+# parse exactly this shape. Kept small and separate: LEX is far past the size cybs compiles comfortably.
 # CHANGELOG [6.6.10]
 fn _lex_err_head(S, p): i64 {
     _ew("error:", 6);

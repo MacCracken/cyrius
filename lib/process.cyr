@@ -81,9 +81,9 @@ include "lib/io.cyr"
 #     cleanup, ever, so nothing parent-side can reach the child. The kernel has to do it.
 #   * a DEADLINE — OPT-IN, and OFF by default. This is the general-purpose process module,
 #     not a test runner: `lib/sigil.cyr` drives `cryptsetup luksFormat` / `veritysetup
-#     format` through `run_capture` and `cbt/deps.cyr` drives git through `exec_capture`, so
-#     a default timeout would kill legitimate long work. An embedder that wants a bound asks
-#     for one — `proc_set_timeout_ms(120000)` — which is what the check driver now does.
+#     format` through `run_capture`, so a default timeout would kill legitimate long work.
+#     An embedder that wants a bound asks for one — `proc_set_timeout_ms(120000)` — which
+#     is what the check driver now does.
 #     0 keeps the historical behaviour exactly.
 # CHANGELOG [6.6.6]
 var _PROC_DEADLINE_MS = 0;
@@ -174,7 +174,7 @@ fn _proc_child_signals(): i64 {
 # while a grandchild it started still holds the capture pipe (`_proc_end_cut_group`): by then the
 # child is reaped and its orphans reparented, so they are nobody's descendants. Only with a
 # deadline: a session of its own detaches the child from the terminal (no Ctrl-C, no /dev/tty),
-# which an unbounded call — `git` prompting for credentials through cbt/deps.cyr — must keep.
+# which an unbounded call — a `git` prompting for credentials, say — must keep.
 # PR_SET_PDEATHSIG still ends a Linux child when its parent dies. CHANGELOG [6.6.10] [6.6.11]
 fn _proc_child_guard(ppid_before): i64 {
     _proc_child_signals();
@@ -661,7 +661,7 @@ fn _proc_poll_in(fd, timeout_ms): i64 {
 # Drain `fd` into `buf` (at most `buflen`), never blocking longer than `timeout_ms` WITHOUT
 # PROGRESS. The deadline is an IDLE one by design and the distinction is worth stating: a
 # child that keeps producing output is working, and killing it at a wall-clock limit would
-# break `cbt/deps.cyr`'s git and sigil's cryptsetup; a child that produces nothing and does
+# break a long `git` clone and sigil's cryptsetup; a child that produces nothing and does
 # not exit is the hang this exists to stop. The total is bounded regardless because the loop
 # also stops at `buflen`. `timeout_ms <= 0` is the historical unbounded drain.
 # Set by `_proc_read_pipe`: 1 when it stopped because the idle deadline expired, 2 when poll

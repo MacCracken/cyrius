@@ -24,7 +24,7 @@
 #   3. Under a 150-block limit (76,800 or 153,600 bytes — above the first table, below the
 #      third) it fails PART-WAY: every table is either complete or exactly as seeded, never a
 #      prefix, and at least one is left as seeded.
-#   4. STATIC over programs/*.cyr + cbt/*.cyr: every `file_write_all(P, …)` and every O_TRUNC
+#   4. STATIC over programs/*.cyr + cbt/**/*.cyr: every `file_write_all(P, …)` and every O_TRUNC
 #      open (spelled O_TRUNC, 0x241 or 577) is keyed "<file>|<P>" and must be on an allowlist of
 #      temps / child-output captures / the linker's checked output, each with its reason; an
 #      entry matching no live site fails too. Self-tested on 4 shapes. The same sweep found the
@@ -186,16 +186,18 @@ cmp -s "$D/mid/_categories_data.cyr" "lib/unicode/_categories_data.cyr" || { fai
 ALLOW='programs/cyrld.cyr|out_path|the linker output: every write is checked and fails rc 1 (a build artifact, the class of cycc'"'"'s own output)
 cbt/build.cyr|_cc_stderr_to|a child'"'"'s stderr capture
 cbt/build.cyr|dst|_copy_binary'"'"'s staging copy of a compiler into the CLI'"'"'s OWN private temp dir (_cbt_tmpexe): not a user or tree file, every write checked (a short one returns rc 1) and an empty source refused, so temp+rename would only rename a temp onto a temp
-cbt/commands.cyr|tmperr|a child'"'"'s stderr capture in the private temp dir
-cbt/commands.cyr|entry|a _cbt_tmpfile probe source (short write checked: it then fails to compile)
-cbt/commands.cyr|dst|distlib'"'"'s verify mirror (dist/.dlverify-<pid>, 6.6.9): a scratch copy of the pinned snapshot, removed after the verify — not a user or tree file; a short write fails the verify
+cbt/commands/capacity.cyr|tmperr|a child'"'"'s stderr capture in the private temp dir
+cbt/commands/distlib/verify.cyr|entry|a _cbt_tmpfile probe source (short write checked: it then fails to compile)
+cbt/commands/distlib/unit.cyr|dst|distlib'"'"'s verify mirror (dist/.dlverify-<pid>, 6.6.9): a scratch copy of the pinned snapshot, removed after the verify — not a user or tree file; a short write fails the verify
 cbt/build.cyr|p|_cbt_tmp_probe'"'"'s 4 KB probe in the CLI'"'"'s OWN private temp dir, unlinked at once (6.6.9: is the temp dir writable?)
-cbt/commands.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
-cbt/commands.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
+cbt/commands/lint.cyr|errf|the lint pre-pass'"'"'s stderr capture, pre-created in the private temp dir by the parent (6.6.9)
+cbt/commands/distlib/distlib.cyr|dl_errf|distlib'"'"'s self-check stderr capture (_cbt_tmpfile, 0600), pre-created in the private temp dir by the parent so a compile() that bails early still leaves a file to read (6.6.20 CBT-02)
 cbt/quality.cyr|tmpf|a _cbt_tmpfile doctest source
-cbt/deps.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
-cbt/deps.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr
-cbt/deps.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)
+cbt/deps/git_cache.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout
+cbt/deps/git_cache.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr
+cbt/deps/git_cache.cyr|pl|a _cbt_tmpfile path list (length checked, unlinked on failure)
+cbt/deps/local.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout (the local-mode working-tree queries, _dep_wt_run)
+cbt/deps/local.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr (the local-mode working-tree queries, _dep_wt_run)
 programs/ark.cyr|path|_ark_append — the whole-record append: every write checked, a short one rolled back with ftruncate
 programs/cyrius-init.cyr|path|_append_whole — the whole-record append into the user'"'"'s starship.toml / .gitignore, same rule
 programs/cxvm.cyr|?|_cx_open_flags / _cx_flags_back (6.7.15): a cx GUEST'"'"'s open and fcntl flag bits mapped to the host'"'"'s O_TRUNC / O_APPEND and back — no open on the line, and cxvm writes nothing of its own: the guest'"'"'s own open passed through as it was until 6.7.15'
@@ -238,7 +240,7 @@ st=0
 [ "$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')" = 'programs/x.cyr|conf programs/x.cyr|ARK_LOG_PATH ' ] || { fail "axis 4 self-test: an unchecked append (file_append_locked / O_APPEND open) not seen: '$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')'"; st=1; }
 echo "$ALLOW" | cut -d'|' -f1,2 | LC_ALL=C sort -u > "$D/allow.keys"
 nfile=0; : > "$D/sites"
-for f in $(ls programs/*.cyr cbt/*.cyr | LC_ALL=C sort); do
+for f in $({ ls programs/*.cyr; find cbt -name '*.cyr'; } | LC_ALL=C sort); do
     nfile=$((nfile + 1))
     _trunc_sites "$f" "$f" >> "$D/sites"
 done

@@ -34,8 +34,8 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 fail() { echo "FAIL: deps_family_expansion_ordered: $1"; exit 1; }
-D="$ROOT/cbt/deps.cyr"
-C="$ROOT/cbt/commands.cyr"
+D="$ROOT/cbt/deps/stdlib.cyr"
+C="$ROOT/cbt/commands/distlib/unit.cyr"
 for f in "$D" "$C"; do [ -f "$f" ] || fail "missing $f"; done
 
 # ── axis 1: the comparator exists and orders by BYTES, not by anything incidental ───

@@ -2314,7 +2314,7 @@ fn _compile_via_wrapper_run(unit, root, deps, selector, no_redirect): i64 {
 }
 
 # 6.7.13 — this server's working directory (a fresh string), or 0 when it cannot be read: the
-# CLI's `_cwd_read` (cbt/deps.cyr) — Darwin has no getcwd syscall, so fcntl(F_GETPATH) on ".".
+# CLI's `_cwd_read` (cbt/deps/vendor.cyr) — Darwin has no getcwd syscall, so fcntl(F_GETPATH) on ".".
 fn _lsp_cwd(): i64 {
     var buf = alloc(4096);
     #ifdef CYRIUS_TARGET_MACOS

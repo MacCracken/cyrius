@@ -391,7 +391,7 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
 # scan, and it printed the value raw: a manifest pinning `"6.6<ESC>]0;owned<BEL>…../../x"` set the
 # terminal title and cleared the screen, and a traversal pin was reported as a valid pin while
 # `cyrius` itself refuses that manifest. The value now gets the CLI reader's rule
-# (`_dep_read_cyml_cyrius_field`, cbt/deps.cyr — `_` INCLUDED, so cyriusly never refuses a pin
+# (`_dep_read_cyml_cyrius_field`, cbt/deps/pin.cyr — `_` INCLUDED, so cyriusly never refuses a pin
 # `cyrius` accepts), a refusal shows it with non-printing bytes as \xNN, and a present pin that is
 # not a single-line quoted string is refused rather than read as "no pin". CHANGELOG [6.6.20]
 fn _print_resolved_version(): i64 {
@@ -469,7 +469,7 @@ fn _cy_report_pin(buf, n, a): i64 {
 }
 
 # The `n` bytes at `p` on stderr with every non-printing byte as `\xNN`, so a refusal cannot carry
-# a terminal escape out of a hostile manifest (cbt/deps.cyr `_ew_shown`, for a counted span).
+# a terminal escape out of a hostile manifest (cbt/deps/names.cyr `_ew_shown`, for a counted span).
 fn _cy_err_shown(p, n): i64 {
     var hx = "0123456789abcdef";
     var e[4];
@@ -714,7 +714,7 @@ fn _cy_version_ok(v): i64 {
 }
 
 # 1 when the `n` bytes at `v` have a version's shape: a leading digit, then only [0-9A-Za-z.-]
-# (plus `_` when `us` is 1 — the pin rule, `_dep_pin_shape_ok` in cbt/deps.cyr), no `..`. Counted,
+# (plus `_` when `us` is 1 — the pin rule, `_dep_pin_shape_ok` in cbt/deps/pin.cyr), no `..`. Counted,
 # not NUL-terminated, so a manifest value is checked in place; a NUL inside it is refused.
 fn _cy_shape_ok(v, n, us): i64 {
     if (n <= 0) { return 0; }

@@ -1,0 +1,134 @@
+# CLI — commands / distlib: profile names and the stdlib-leaf test.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ================================================================
+# distlib — bundle src/ modules into dist/{name}.cyr
+# ================================================================
+# With no profile: reads [build] modules or [lib] modules, writes
+# dist/{name}.cyr.
+# With profile=X: reads [lib.X] modules, writes dist/{name}-X.cyr.
+# Lets downstream libs (e.g. yukti) ship a kernel-safe core bundle
+# alongside the full userland bundle without duplicating the build
+# tool.
+# Profile names are restricted to [a-zA-Z0-9_-]+, max 32 chars
+# (output path safety — no "/", no "..", no shell metachars).
+
+# Validate a profile name. Returns 1 if safe, 0 if not.
+fn _distlib_valid_profile(p): i64 {
+    if (p == 0) { return 1; }
+    var len = strlen(p);
+    if (len == 0) { return 0; }
+    if (len > 32) { return 0; }
+    var i = 0;
+    while (i < len) {
+        var c = load8(p + i);
+        var ok = 0;
+        if (c >= 48 && c <= 57) { ok = 1; }     # 0-9
+        if (c >= 65 && c <= 90) { ok = 1; }     # A-Z
+        if (c >= 97 && c <= 122) { ok = 1; }    # a-z
+        if (c == 45) { ok = 1; }                # '-'
+        if (c == 95) { ok = 1; }                # '_'
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# v6.2.47 (deps lever 1, Phase A producer side): parse a stripped
+# `include "lib/<leaf>.cyr"` directive → `<leaf>`, dedup, append to
+# `leaves`. Only `lib/` stdlib includes are captured (the fold's
+# requirements); `src/` self-refs are internal to the fold and skipped.
+# `line` points at `fbuf+ls`; `ll` is the line length (NOT NUL-terminated).
+# ⛔ v6.5.37 (A2) — DOES THIS LEAF ACTUALLY EXIST IN THE STDLIB?
+#
+# THE FILED FAILURE. `include "lib/X.cyr"` in a bundled module means "X must be in scope",
+# but it does NOT mean X is a STDLIB leaf: a VENDORED dep lands in `lib/` too. dhancha's
+# sidecar carried `kashi_font_data` (from `[deps.kashi] modules = ["src/font_data.cyr"]`),
+# and a consumer's `cyrius deps` then hunted for it in the stdlib and failed outright:
+#
+#     error: dep dhancha requires 'kashi_font_data' but it is not in the cyrius stdlib
+#
+# crab and puka could not resolve dhancha at all, and diagnosing it cost three wrong answers
+# (a toolchain regression, then lib/ pollution, then dep ordering) before anyone read the
+# sidecar. Still live at 6.5.36 in shabda and shabdakosh, whose sidecars name `hisab`,
+# `goonj` and `naad` — all vendored, none stdlib.
+#
+# ⭐ THE ASYMMETRY THAT MAKES THIS THE FIRST THING TO FIX: an UNDER-reported sidecar fails
+# silently at the consumer's compile step, but an OVER-reported one — a name the stdlib does
+# not have — is a HARD resolver error before compilation is reached. Over-reporting is the
+# fatal direction, and it is the one a pure include-scan cannot avoid.
+#
+# The test is the resolver's own two-way test (`_dep_copy_stdlib_recursive`): a flat
+# `<dir>/<leaf>.cyr`, OR a package DIRECTORY `<dir>/<leaf>/` (the `unicode` family shape).
+# Checking only the flat form would drop `unicode` from every sidecar that legitimately
+# needs it — the exact family the v6.5.31 fix exists for.
+#
+# ⚠ Resolution mirrors the resolver's preference (repo `lib/` first, then the global
+# snapshot) rather than calling `_dep_find_stdlib_dir()`, which `sys_exit(1)`s when a pin is
+# not installed — a distlib run must not die on that.
+#
+# ⚠ FAIL OPEN, DELIBERATELY: with no `_home` and no repo `lib/`, nothing can be verified, so
+# every leaf is kept. Dropping leaves we merely failed to LOOK UP would turn an unreadable
+# environment into a silently narrowed sidecar — trading the fatal direction for the silent
+# one, which is the wrong trade.
+fn _distlib_leaf_is_stdlib(leaf): i64 {
+    # ⛔ THE REPO'S OWN `lib/` CANNOT ANSWER THIS. A vendored dep and a stdlib leaf are
+    # BOTH files in `lib/` — that is the whole reason the defect exists. The first cut of
+    # this helper checked `lib/<leaf>.cyr` first and therefore accepted `hisab`, `goonj`
+    # and `naad` in shabda, exactly the leaves it was written to drop: measured 26 leaves
+    # in, 26 out, all three bogus names surviving. Only the STDLIB SNAPSHOT can answer it,
+    # which is the same source `_dep_find_stdlib_dir` resolves for the consumer.
+    #
+    # Snapshot preference mirrors the resolver: the manifest-pinned version first, then the
+    # global `<_home>/lib` pointer. Deliberately NOT via `_dep_find_stdlib_dir()`, which
+    # `sys_exit(1)`s on an uninstalled pin — a distlib run must not die on that.
+    var pin = _dep_read_cyml_cyrius_field();
+    if (_home != 0) {
+        if (pin != 0) {
+            var psb = str_builder_new();
+            str_builder_add_cstr(psb, _home);
+            str_builder_add_cstr(psb, "/versions/");
+            str_builder_add_cstr(psb, pin);
+            str_builder_add_cstr(psb, "/lib/");
+            str_builder_add_cstr(psb, leaf);
+            var pbase = str_data(str_builder_build(psb));
+            var pfsb = str_builder_new();
+            str_builder_add_cstr(pfsb, pbase);
+            str_builder_add_cstr(pfsb, ".cyr");
+            if (file_exists(str_data(str_builder_build(pfsb))) == 1) { return 1; }
+            if (is_dir(str_from(pbase)) == 1) { return 1; }
+        }
+        var gsb = str_builder_new();
+        str_builder_add_cstr(gsb, _home);
+        str_builder_add_cstr(gsb, "/lib/");
+        str_builder_add_cstr(gsb, leaf);
+        var gbase = str_data(str_builder_build(gsb));
+        var gfsb = str_builder_new();
+        str_builder_add_cstr(gfsb, gbase);
+        str_builder_add_cstr(gfsb, ".cyr");
+        if (file_exists(str_data(str_builder_build(gfsb))) == 1) { return 1; }
+        if (is_dir(str_from(gbase)) == 1) { return 1; }
+        return 0;
+    }
+    # ⚠ In the cyrius source repo `./lib` IS the stdlib (branch (a) of _dep_find_stdlib_dir),
+    # and only there is the repo's own lib/ an authority. Guarded by the exact-name helper,
+    # never a filename probe — see the v6.5.37 pin-redirect fix for why that distinction is
+    # load-bearing.
+    if (_dep_is_cyrius_source_repo() == 1) {
+        var csb = str_builder_new();
+        str_builder_add_cstr(csb, "lib/");
+        str_builder_add_cstr(csb, leaf);
+        var cbase = str_data(str_builder_build(csb));
+        var cfsb = str_builder_new();
+        str_builder_add_cstr(cfsb, cbase);
+        str_builder_add_cstr(cfsb, ".cyr");
+        if (file_exists(str_data(str_builder_build(cfsb))) == 1) { return 1; }
+        if (is_dir(str_from(cbase)) == 1) { return 1; }
+        return 0;
+    }
+    # ⚠ FAIL OPEN: no snapshot reachable at all means nothing can be verified. Dropping
+    # leaves we merely failed to LOOK UP would trade the fatal over-report direction for the
+    # silent under-report one, which is the worse of the two.
+    return 1;
+}

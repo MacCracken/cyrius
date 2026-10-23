@@ -28,7 +28,7 @@
 # line, so the assertion reads the real output of the real resolver.
 #
 # MUTATION PROOF. Delete the `vec_sort_by(entries, &_dep_name_cmp)` line from
-# `_deps_lock_dir` in cbt/deps.cyr and this gate reddens: the lock comes back in readdir
+# `_deps_lock_dir` in cbt/deps/lock.cyr and this gate reddens: the lock comes back in readdir
 # order, which on this filesystem is not sorted. Verified before commit.
 #
 # See docs/development/issues/archived/2026-09-12-cyrius-lock-unstable-order.md

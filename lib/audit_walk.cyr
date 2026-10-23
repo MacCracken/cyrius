@@ -1,6 +1,6 @@
 # audit_walk.cyr — shared fmt/lint/doc walkers for `cyrius audit` + the check driver.
 #
-# Consumers: programs/checks/ (the check driver's fmt + lint suites) and cbt/commands.cyr
+# Consumers: programs/checks/ (the check driver's fmt + lint suites) and cbt/commands/audit.cyr
 # (`cyrius audit`). This is the only implementation — the bash twin it was ported from,
 # scripts/lib/audit-walk.sh, had no caller left and was deleted at 6.6.7.
 #

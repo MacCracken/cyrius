@@ -1,0 +1,938 @@
+# CLI — deps: cyrius.lock — commit pins, the lock's files, `deps --lock` and `deps --verify`.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# the release-integrity hardening item (v6.2.30) — look up the previously-locked commit SHA for a dep,
+# keyed on (name, git, tag) so a deliberate tag bump in cyrius.cyml does not
+# false-trip (different tag → no match → re-pin). Returns a NUL-terminated SHA
+# pointer, 0 if the lock has no matching commit line, or -1 if a commit line
+# FOR THIS dep name is present but malformed/truncated (fewer than the 4
+# tab-delimited fields) — the caller fails closed instead of silently TOFU-
+# re-pinning a corrupted pin.
+# Reads the WHOLE lock, as _dep_lock_load and cmd_deps_verify do: a 64 KB window returned 0
+# ("no pin") for a line past the cut, which TOFU-re-pins a repointed tag silently. Since 6.6.20
+# the commit block keeps an old tag's line after a bump, so it is no longer bounded by the dep
+# count, and ~700 such lines sorting before a dep's name carried its live pin past 64 KB.
+# CHANGELOG [6.6.20]
+fn _lock_commit_lookup(name, git, tag): i64 {
+    if (file_exists("cyrius.lock") == 0) { return 0; }
+    var cap = _file_size("cyrius.lock") + 1;
+    if (cap < 65536) { cap = 65536; }
+    var lbuf = alloc(cap);
+    var ln = file_read_all("cyrius.lock", lbuf, cap - 1);
+    if (ln <= 0) { return 0; }
+    store8(lbuf + ln, 0);
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lbuf + le) != 10) { le = le + 1; }
+        # A CRLF checkout (`git -c core.autocrlf=true clone`) leaves `\r` on the TAG field, so
+        # no line matched and this returned 0 — "no pin": the moved-tag refusal was skipped and
+        # the tag TOFU-re-pinned. Every field is read up to `lw`. CHANGELOG [6.6.20]
+        var lw = le;
+        if (lw > pos && load8(lbuf + lw - 1) == 13) { lw = lw - 1; }
+        # Commit line marker: "commit" + TAB (0x09).
+        if (lw - pos > 7 && memeq(lbuf + pos, "commit", 6) == 1 && load8(lbuf + pos + 6) == 9) {
+            var p = pos + 7;
+            # `well` stays 1 only if each of the 3 internal field separators
+            # (sha|name, name|git, git|tag) is actually a tab — a truncated line
+            # leaves it 0 and is treated as corruption when the name matches.
+            var well = 1;
+            var sha_s = p;
+            while (p < lw && load8(lbuf + p) != 9) { p = p + 1; }
+            var sha_e = p;
+            if (p < lw) { p = p + 1; } else { well = 0; }
+            var name_s = p;
+            while (p < lw && load8(lbuf + p) != 9) { p = p + 1; }
+            var name_e = p;
+            if (p < lw) { p = p + 1; } else { well = 0; }
+            var git_s = p;
+            while (p < lw && load8(lbuf + p) != 9) { p = p + 1; }
+            var git_e = p;
+            if (p < lw) { p = p + 1; } else { well = 0; }
+            var tag_s = p;
+            var tag_e = lw;
+            var nm_ok = 0;
+            if (name_e - name_s == strlen(name) && memeq(lbuf + name_s, name, name_e - name_s) == 1) { nm_ok = 1; }
+            if (nm_ok == 1 && well == 0) { return -1; }   # corrupt pin for this dep → fail closed
+            var gt_ok = 0;
+            # Suffix-normalised, like the origin comparison: the lock's url field and the
+            # manifest's are two spellings of ONE repository as often as the cache's origin is
+            # (`…/x` vs `…/x.git`). An exact compare here does not REFUSE, it silently
+            # TOFU-RE-PINS — the moved-tag check this pin exists for is skipped for that
+            # resolve, which is the release-integrity hardening item hole one spelling away. CHANGELOG [6.6.5].
+            if (_git_url_same_n(lbuf + git_s, git_e - git_s, git) == 1) { gt_ok = 1; }
+            var tg_ok = 0;
+            if (tag_e - tag_s == strlen(tag) && memeq(lbuf + tag_s, tag, tag_e - tag_s) == 1) { tg_ok = 1; }
+            if (nm_ok == 1 && gt_ok == 1 && tg_ok == 1) {
+                var slen = sha_e - sha_s;
+                var out = alloc(slen + 1);
+                memcpy(out, lbuf + sha_s, slen);
+                store8(out + slen, 0);
+                return out;
+            }
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
+# v6.6.4 — the stdlib pin this resolve vendors from, as recorded in cyrius.lock.
+# `[package].cyrius` when the manifest pins one, else the wrapper's own version (the
+# unpinned fallback resolves from `~/.cyrius/lib`, i.e. the current install) — the same
+# choice `_check_lib_freshness` makes.
+fn _dep_lock_pin_value(): i64 {
+    var pin = _dep_read_cyml_cyrius_field();
+    if (pin == 0) { return _VERSION_TOOLCHAIN; }
+    return pin;
+}
+
+# v6.6.4 — read cyrius.lock ONCE at cmd_deps entry (the WHOLE file — the pin line is the
+# trailer, so a 64 KB window would drop it on a large lock) and decide whether its recorded pin equals this
+# run's. A lock with no `cyrius\t<pin>` line (every lock written before 6.6.4) cannot
+# prove the pin unchanged, so the guard stays off for that one resolve and the lock it
+# writes carries the line from then on. Inert in the cyrius source repo, where
+# cmd_deps_lock never writes a lock at all.
+fn _dep_lock_load(): i64 {
+    _dep_lock_buf = 0;
+    _dep_lock_len = 0;
+    _dep_lock_pin_same = 0;
+    _dep_lock_refused = 0;
+    _dep_lock_has_trailer = 0;
+    _dep_lock_pin_rec = 0;
+    _dep_lock_new_leaf = 0;
+    _dep_lock_active = 0;
+    if (_dep_is_cyrius_source_repo() == 1) { return 0; }
+    _dep_lock_active = 1;
+    if (file_exists("cyrius.lock") == 0) { return 0; }
+    var cap = _file_size("cyrius.lock") + 1;   # whole file: the pin trailer is the LAST line
+    if (cap <= 1) { return 0; }
+    var lbuf = alloc(cap);
+    var ln = file_read_all("cyrius.lock", lbuf, cap - 1);
+    if (ln <= 0) { return 0; }
+    store8(lbuf + ln, 0);
+    _dep_lock_buf = lbuf;
+    _dep_lock_len = ln;
+    var want = _dep_lock_pin_value();
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lbuf + le) != 10) { le = le + 1; }
+        var lw = le;   # v6.6.4: tolerate a CRLF checkout — a `\r` must not turn the guard OFF
+        if (lw > pos && load8(lbuf + lw - 1) == 13) { lw = lw - 1; }
+        if (lw - pos > 7 && memeq(lbuf + pos, "cyrius", 6) == 1 && load8(lbuf + pos + 6) == 9) {
+            var vs = pos + 7;
+            if (lw - vs == strlen(want) && memeq(lbuf + vs, want, lw - vs) == 1) { _dep_lock_pin_same = 1; }
+            _dep_lock_has_trailer = 1;
+            _dep_lock_pin_rec = _git_cstr_copy(lbuf + vs, lw - vs);
+            return 0;
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
+# v6.6.4 — the sha256 cyrius.lock (as loaded above) records for `path`, or 0 if the lock
+# has no `<64hex>  <path>` line for it. Exact path match; returns a pointer INTO the
+# loaded buffer (64 bytes, not NUL-terminated).
+fn _lock_file_hash_lookup(path): i64 {
+    if (_dep_lock_buf == 0) { return 0; }
+    return _lock_buf_hash_lookup(_dep_lock_buf, _dep_lock_len, path);
+}
+
+# The same lookup over any lock text (`deps --verify` reads its own copy). CHANGELOG [6.6.9]
+fn _lock_buf_hash_lookup(lbuf, ln, path): i64 {
+    var plen = strlen(path);
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lbuf + le) != 10) { le = le + 1; }
+        var lw = le;
+        if (lw > pos && load8(lbuf + lw - 1) == 13) { lw = lw - 1; }   # CRLF-tolerant (v6.6.4)
+        if (lw - pos == 66 + plen && load8(lbuf + pos + 64) == 32 && load8(lbuf + pos + 65) == 32) {
+            if (memeq(lbuf + pos + 66, path, plen) == 1) { return lbuf + pos; }
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
+# ⭐ v6.6.4 — REFUSE to vendor a stdlib leaf whose SNAPSHOT bytes moved under an UNCHANGED pin.
+#
+# THE DEFECT (filed by hisab 2026-09-13, its 3.0.1 bump). A `cyrius build` with the manifest
+# pin unchanged and nothing edited printed the same two lines a no-op prints, rewrote the
+# tracked lib/ganita.cyr (1.2.4 -> 1.2.5) and moved its cyrius.lock hash. Only `git status`
+# noticed. The resolver copied Phase 1 from `versions/<pin>/lib` unconditionally and
+# cmd_deps_lock then re-hashed whatever was on disk with O_TRUNC — the lock was UPDATED TO
+# AGREE with the mutation, so `deps --verify` passed on it. The one situation a lock is for
+# was the one it could not see. The git-dep half has had this check since the release-integrity hardening item
+# (v6.2.30):
+# a tagged dep's resolved HEAD is compared against the lock's `commit\t` line and a mismatch
+# refuses. This is the stdlib half of the same rule, keyed on the pin instead of the tag.
+#
+# Fires only when ALL hold: the lock (as it stood at entry) records this pin; it carries a
+# hash for `dst`; the snapshot file's hash differs from it; `--relock` was not given. A pin
+# bump or a new entry re-locks silently, as a dependency-spec change should. Compared
+# against the SNAPSHOT, not the consumer's lib/ — the consumer's copy may be absent (fresh
+# CI checkout) and the question is whether a clean install of the pin reproduces the lock.
+# Counts into `_dep_lock_refused` (folded into cmd_deps' `errors`, so no lock is written and
+# `cyrius build` aborts); the caller keeps walking so every moved leaf is named in one run.
+fn _dep_lock_guard_stdlib_leaf(src, dst): i64 {
+    if (_dep_relock == 1) { return 0; }
+    if (_dep_lock_pin_same == 0) { return 0; }
+    var locked = _lock_file_hash_lookup(dst);
+    if (locked == 0) { return 0; }
+    var snap = _sha256sum_file(src);
+    if (snap == 0) {
+        # the snapshot file cannot be read: fail CLOSED, exactly as `--verify` does (`cannot
+        # hash`). A guard that goes silent when its input is missing shares its defect with the
+        # thing it checks (bite-5 review: then, no sha256sum on PATH → the moved leaf was vendored
+        # and the lock rewritten with ZERO hash lines, exit 0). The hash is in-process since
+        # 6.7.12, so this is the file itself. CHANGELOG [6.6.9]
+        sys_write(STDERR_FD, "error: ", 7);
+        sys_write(STDERR_FD, dst, strlen(dst));
+        _ew(": cannot hash the pinned snapshot (");
+        _sha_fail_why();
+        _ew(") — refusing to vendor or re-lock this leaf\n");
+        _dep_lock_refused = _dep_lock_refused + 1;
+        return 3;
+    }
+    if (memeq(snap, locked, 64) == 1) { return 0; }
+    var pin = _dep_lock_pin_value();
+    sys_write(STDERR_FD, "error: ", 7);
+    sys_write(STDERR_FD, dst, strlen(dst));
+    # worded as what is OBSERVED — the lock and the snapshot disagree — not as a cause: the
+    # same shape appears when the LOCK moved (`cyrius update` + `--lock`) and the snapshot
+    # did not; the `source:` line lets the reader tell which side moved
+    var m1 = ": cyrius.lock and the pinned stdlib snapshot DISAGREE under an unchanged pin ";
+    # 6.6.17: `lib sync` cannot tell an unchanged pin from one a verb re-stamped without
+    # re-vendoring this file (6.7.12: no longer `deps` / `build` — _dep_pin_move_refused); its own
+    # summary (_libsync_guard) says which advice fits which case.
+    if (streq(_dep_lock_guard_verb, "deps") == 0) { m1 = ": cyrius.lock and the pinned stdlib snapshot DISAGREE under the pin the lock records, "; }
+    sys_write(STDERR_FD, m1, strlen(m1));
+    _ew_shown(pin);   # 6.6.20: the lock's recorded pin, shown escaped
+    var m2 = "\n  cyrius.lock records  ";
+    sys_write(STDERR_FD, m2, strlen(m2));
+    sys_write(STDERR_FD, locked, 64);
+    var m3 = "\n  snapshot hashes      ";
+    sys_write(STDERR_FD, m3, strlen(m3));
+    sys_write(STDERR_FD, snap, 64);
+    var m4 = "\n  source: ";
+    sys_write(STDERR_FD, m4, strlen(m4));
+    sys_write(STDERR_FD, src, strlen(src));
+    if (streq(_dep_lock_guard_verb, "deps") == 0) {
+        _ew("\n  refusing to vendor or re-lock this leaf.\n");
+        _dep_lock_refused = _dep_lock_refused + 1;
+        return 3;
+    }
+    var m5 = "\n  refusing to vendor or re-lock this leaf. Either change the pin ([package].cyrius; an unpinned manifest follows the installed toolchain), or run";
+    sys_write(STDERR_FD, m5, strlen(m5));
+    var m6 = " `cyrius deps --relock` to accept the new content explicitly.\n";
+    sys_write(STDERR_FD, m6, strlen(m6));
+    _dep_lock_refused = _dep_lock_refused + 1;
+    return 3;
+}
+
+# v6.0.2 — is this invocation running inside the cyrius source repo
+# itself? Signal: `[package] name = "cyrius"` in cwd's cyrius.cyml.
+# Used to skip lock generation here — cyrius authors its own `lib/`
+# stdlib (folded sandhi-pattern deps + in-tree modules), so a lock of
+# that lib/ is self-referential AND churns the tracked `cyrius.lock`
+# on every `check.sh` `cyrius deps` run. cyrius's real external deps
+# (mabda) are pinned by tag in `cyrius.cyml`, not by lib-file hash.
+#
+# Why name-based, not the `src/main.cyr` priority-(a) signal: downstream
+# repos (gnoboot, kybernet) ALSO build from `src/main.cyr` + have a
+# `./lib` of resolved deps — that conflation was the v6.0.1 mkdir bug.
+# `[package] name` is unique to the cyrius project manifest.
+fn _dep_is_cyrius_source_repo(): i64 {
+    # 6.6.17: `[package] name` through the one reader — an exact match, so `cyrius-x` is not it.
+    var nm = _mf_str("package", "name");
+    if (nm == 0) { return 0; }
+    return streq(nm, "cyrius");
+}
+
+# ⛔ v6.6.6: a `.cyr` under lib/ that cannot be HASHED FAILS the lock — it is not dropped from
+# it. `if (hash != 0)` skipped the write and skipped the count, so `chmod 000 lib/m2.cyr` then
+# `cyrius deps --lock` printed "cyrius.lock: 2 deps locked" and exited 0 over a 3-file lib/,
+# with m2.cyr simply absent from cyrius.lock — and `deps --verify` then passes, because a file
+# with no line in the lock is a file with nothing to check. The lock is an INTEGRITY record:
+# "this file could not be read" is the one thing it must never record as "this file is fine".
+# The count is carried in globals because _deps_lock_dir recurses, and the abort is in
+# cmd_deps_lock so the old cyrius.lock is left exactly as it was. CHANGELOG [6.6.6]
+var _dep_lock_unhashable = 0;         # how many .cyr files _sha256sum_file could not hash
+var _dep_lock_unhashable_first = 0;   # the first such path, for the error
+var _dep_lock_unhashable_why = 0;     # its _sha_fail/_sha_errno, restored for the error (6.6.9)
+
+# Report the unhashable files and why the lock was not written.
+fn _dep_lock_unhashable_err(): i64 {
+    if (_dep_lock_soft == 1) { _ew("warning: cyrius.lock NOT written — "); }
+    else { _ew("error: "); }
+    sys_write(STDERR_FD, "cannot hash ", 12);
+    sys_write(STDERR_FD, _dep_lock_unhashable_first, strlen(_dep_lock_unhashable_first));
+    if (_dep_lock_unhashable > 1) {
+        sys_write(STDERR_FD, " (and ", 6);
+        fmt_int_fd(STDERR_FD, _dep_lock_unhashable - 1);
+        sys_write(STDERR_FD, " more)", 6);
+    }
+    # 6.6.9: say WHY (the first failure's reason) — a full temp dir is not an unreadable file.
+    if (_dep_lock_unhashable_why != 0) {
+        _sha_fail = load64(_dep_lock_unhashable_why);
+        _sha_errno = load64(_dep_lock_unhashable_why + 8);
+        _ew(": ");
+        _sha_fail_why();
+    }
+    if (_dep_lock_soft == 1) {
+        _ew(".\n  The lock is left as it was; `cyrius deps --verify` reports the files it does not cover.\n");
+        _ew("  Run `cyrius deps --relock` once every file reads.\n");
+        return 2;
+    }
+    sys_write(STDERR_FD, " — cyrius.lock would not cover it; left as it was\n", 52);
+    return 1;
+}
+
+# 1 iff the NUL-terminated `path` is in the vec of C strings `v`.
+fn _dep_path_in(v, path): i64 {
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (streq(vec_get(v, i), path) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.0.2 — recursively hash every `.cyr` under `dir`, writing
+# `<sha256hex>  <path>\n` per file to the `_aw_open` handle `lock_h`. Returns the count.
+# Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib modules
+# resolved by `cyrius deps` (v5.8.49 subdir-nested paths) are locked
+# too — a flat scan silently omitted them. Replaces the pre-v6.0.2
+# symlink-only filter, which was stale since v5.11.8 switched dep
+# resolution from symlink to file-copy (`_dep_copy_file`): every
+# resolved dep became a real file, `readlink` returned -EINVAL on all
+# of them, and the lock came out empty ecosystem-wide.
+fn _deps_lock_dir(dir, lock_h): i64 {
+    var count = 0;
+    # 6.6.9: the file list comes from `_deps_lock_files`, the ONE walker `deps --verify` also
+    # uses to find lib/ files the lock does not cover — so the writer and the checker cannot
+    # disagree about what "every .cyr under lib/" means. CHANGELOG [6.6.9]
+    var files = _deps_lock_files(dir);
+    var li = 0;
+    while (li < vec_len(files)) {
+        var path = vec_get(files, li);
+        li = li + 1;
+        # 6.6.17: `lib sync` re-locks only what it wrote; any other file keeps its row as
+        # loaded (none, if it had none). CHANGELOG [6.6.17]
+        if (_dep_lock_only != 0 && _dep_path_in(_dep_lock_only, path) == 0) {
+            var kept = _lock_file_hash_lookup(path);
+            if (kept != 0) {
+                _aw_write(lock_h, kept, 64);
+                _aw_write(lock_h, "  ", 2);
+                _aw_write(lock_h, path, strlen(path));
+                _aw_write(lock_h, "\n", 1);
+                count = count + 1;
+            }
+            continue;
+        }
+        var hash = _sha256sum_file(path);
+        if (hash == 0) {
+            # v6.6.6: RECORDED, not skipped — cmd_deps_lock aborts on it. CHANGELOG [6.6.6]
+            _dep_lock_unhashable = _dep_lock_unhashable + 1;
+            if (_dep_lock_unhashable_first == 0) {
+                _dep_lock_unhashable_first = path;
+                _dep_lock_unhashable_why = alloc(16);
+                store64(_dep_lock_unhashable_why, _sha_fail);
+                store64(_dep_lock_unhashable_why + 8, _sha_errno);
+            }
+            continue;
+        }
+        _aw_write(lock_h, hash, 64);
+        _aw_write(lock_h, "  ", 2);
+        _aw_write(lock_h, path, strlen(path));
+        _aw_write(lock_h, "\n", 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+# Every `.cyr` under `dir`, recursively, as "dir/…/name.cyr" paths in a vec — the set
+# cyrius.lock must cover. Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib
+# modules resolved by `cyrius deps` (v5.8.49 subdir-nested paths) are locked too — a flat
+# scan silently omitted them. Dotfiles are skipped.
+#
+# v6.6.3 — SORTED. `dir_list` returns readdir order, which is stable on one machine and
+# DIFFERENT on another, so the lock came out as the same hashes in a different SEQUENCE and
+# every consumer CI that gates the lock byte-for-byte (`git diff --exit-code -- cyrius.lock`)
+# failed for any lock committed elsewhere (agnostic 2026-09-12: "98 insertions(+), 98
+# deletions(-)" over identical hashes). See issues/archived/2026-09-12-cyrius-lock-unstable-order.md.
+# The commit-pin lines are sorted too, in cmd_deps_lock (_lock_commit_line_cmp): a resolve
+# carries forward the pins it did not re-verify, so resolve order would make the block's
+# order depend on which deps the run re-verified. CHANGELOG [6.6.20]
+#
+# ⛔ 6.6.10 — an unlistable directory under lib/ is named and COUNTED in _deps_lock_unlisted:
+# it read as empty, so `cyrius deps --lock` wrote a lock that silently did not cover its files
+# and `deps --verify` (same walker) reported every covered file verified — an integrity check
+# failing OPEN on the files it could not see. Both callers fail on the count.
+var _deps_lock_unlisted = 0;
+
+fn _deps_lock_files(dir): i64 {
+    var out = vec_new();
+    _deps_lock_unlisted = 0;
+    # An ABSENT root is an empty lock, as it always was (a project with no deps has no lib/);
+    # only an existing directory the walk cannot list counts. is_dir asks stat, so a mode-000
+    # lib/ is still 1 and still fails. CHANGELOG [6.6.10]
+    if (is_dir(str_from(dir)) == 0) { return out; }
+    _deps_lock_files_into(dir, out);
+    return out;
+}
+
+fn _deps_lock_files_into(dir, out): i64 {
+    var entries = _cbt_list_dir(dir, "cyrius.lock cannot cover its files");
+    if (entries == 0) { _deps_lock_unlisted = _deps_lock_unlisted + 1; return 0; }
+    vec_sort_by(entries, &_dep_name_cmp);
+    var li = 0;
+    while (li < vec_len(entries)) {
+        var name = str_data(vec_get(entries, li));
+        var nlen = str_len(vec_get(entries, li));
+        li = li + 1;
+        if (nlen == 0) { continue; }
+        if (load8(name) == 46) { continue; }   # skip ".", "..", dotfiles
+        var path = make_path(dir, name);
+        if (is_dir(str_from(path)) == 1) {
+            _deps_lock_files_into(path, out);
+            continue;
+        }
+        if (nlen < 5) { continue; }
+        if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
+        vec_push(out, path);
+    }
+    return 0;
+}
+
+# Field `k` (1 sha, 2 name, 3 git, 4 tag) of a `commit\t<sha>\t<name>\t<git>\t<tag>` line of
+# `n` bytes at `p` (no newline): its offset from `p`, or -1 when the line stops short of it. A
+# field runs to the next tab (_lock_commit_field_len); the TAG runs to the end of the line, the
+# way _lock_commit_lookup reads it.
+fn _lock_commit_field_at(p, n, k): i64 {
+    var i = 7;
+    var f = 1;
+    while (f < k) {
+        while (i < n && load8(p + i) != 9) { i = i + 1; }
+        if (i >= n) { return -1; }
+        i = i + 1;
+        f = f + 1;
+    }
+    return i;
+}
+
+fn _lock_commit_field_len(p, n, off): i64 {
+    var i = off;
+    while (i < n && load8(p + i) != 9) { i = i + 1; }
+    return i - off;
+}
+
+# 1 when commit lines `a` (`na` bytes) and `b` (`nb` bytes) pin the same (name, git, tag) — the
+# key _lock_commit_lookup reads a pin by: exact name, url-normalised git (`…/x` = `…/x.git`,
+# _git_url_same), exact tag. A line short of its tag field matches nothing. CHANGELOG [6.6.20]
+fn _lock_commit_same_key(a, na, b, nb): i64 {
+    var at = _lock_commit_field_at(a, na, 4);
+    var bt = _lock_commit_field_at(b, nb, 4);
+    if (at < 0 || bt < 0) { return 0; }
+    if (na - at != nb - bt) { return 0; }
+    if (memeq(a + at, b + bt, na - at) == 0) { return 0; }
+    var an = _lock_commit_field_at(a, na, 2);
+    var bn = _lock_commit_field_at(b, nb, 2);
+    var al = _lock_commit_field_len(a, na, an);
+    if (al != _lock_commit_field_len(b, nb, bn)) { return 0; }
+    if (memeq(a + an, b + bn, al) == 0) { return 0; }
+    var ag = _lock_commit_field_at(a, na, 3);
+    var bg = _lock_commit_field_at(b, nb, 3);
+    var bgc = _git_cstr_copy(b + bg, _lock_commit_field_len(b, nb, bg));
+    return _git_url_same_n(a + ag, _lock_commit_field_len(a, na, ag), bgc);
+}
+
+# 1 when THIS resolve pushed a fresh pin with the same (name, git, tag) as the inherited commit
+# line (`n` bytes at `p`) — cmd_deps_lock then writes the fresh line instead. CHANGELOG [6.6.20]
+fn _dep_commit_fresh_has(p, n): i64 {
+    if (_dep_commit_lines == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_commit_lines)) {
+        var fl = vec_get(_dep_commit_lines, i);
+        i = i + 1;
+        if (_lock_commit_same_key(p, n, fl, strlen(fl)) == 1) { return 1; }
+    }
+    return 0;
+}
+
+# 1 when commit lines `a` and `b` (NUL-terminated) pin the same dep NAME — the summary counts
+# deps, and an old tag's line stays after a bump, so the line count is not one. CHANGELOG [6.6.20]
+fn _lock_commit_name_same(a, b): i64 {
+    var na = strlen(a);
+    var nb = strlen(b);
+    var an = _lock_commit_field_at(a, na, 2);
+    var bn = _lock_commit_field_at(b, nb, 2);
+    if (an < 0 || bn < 0) { return 0; }
+    var al = _lock_commit_field_len(a, na, an);
+    if (al != _lock_commit_field_len(b, nb, bn)) { return 0; }
+    if (memeq(a + an, b + bn, al) == 1) { return 1; }
+    return 0;
+}
+
+# Distinct dep names among THIS resolve's fresh pins: the summary's `(K re-verified)`. The
+# `N commit-pinned` count is the merged lock's pin set, carried names included, so it no longer
+# tells a resolve that verified nothing (a pure `path =` override) from one that verified
+# everything; K does — 0 there, and 0 for the bare `--lock` verb. CHANGELOG [6.6.20]
+fn _dep_commit_fresh_count(): i64 {
+    if (_dep_commit_lines == 0) { return 0; }
+    var k = 0;
+    var i = 0;
+    while (i < vec_len(_dep_commit_lines)) {
+        var a = vec_get(_dep_commit_lines, i);
+        var seen = 0;
+        var j = 0;
+        while (j < i) {
+            if (_lock_commit_name_same(vec_get(_dep_commit_lines, j), a) == 1) { seen = 1; }
+            j = j + 1;
+        }
+        if (seen == 0) { k = k + 1; }
+        i = i + 1;
+    }
+    return k;
+}
+
+# 6.7.12 (D25) — record [deps.NAME]'s tag (rec, `_dep_sec_read`'s) as `name\ttag` in
+# `_dep_decl_all`, and in `_dep_decl_root` when the manifest is the project's own. CHANGELOG [6.7.12]
+fn _dep_decl_note(name, rec): i64 {
+    if (_dep_decl_all == 0) { return 0; }
+    var tag = load64(rec + _DS_TAG);
+    if (tag == 0) { return 0; }
+    var k = _cat2(_cat2(name, "\t"), tag);
+    vec_push(_dep_decl_all, k);
+    if (_dep_ctx_kind == 0) { vec_push(_dep_decl_root, k); }
+    return 0;
+}
+
+# The tag the root manifest declares for dep `name` (a `name\ttag` entry of `_dep_decl_root`), or 0.
+fn _dep_decl_root_tag(name): i64 {
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_decl_root)) {
+        var k = vec_get(_dep_decl_root, i);
+        i = i + 1;
+        if (memeq(k, name, nl) == 1 && load8(k + nl) == 9) { return k + nl + 1; }
+    }
+    return 0;
+}
+
+# ⭐ 6.7.12 (D25, the user, 2026-10-15) — A CARRIED PIN OF A ROOT DEP'S OTHER TAG IS NAMED, NEVER
+# DROPPED. cmd_deps_lock keeps every inherited `commit` line no fresh line supersedes (CYRIUS-2026-0030,
+# fail-closed: dropping by name lost a diamond's pin), so after `[deps.NAME] tag` moved the lock held
+# the old tag's line beside the new one, its summary counted one dep, `--locked` passed, and nothing
+# said the row was stale. Each carried line whose NAME the root manifest declares at ANOTHER tag, and
+# whose (name, tag) no manifest this resolve read declares (a diamond's transitive x@v1 is live, not
+# stale), now gets one note. Nothing written changes; `--locked` still passes. Only after a resolve
+# (`_dep_decl_root`): the bare `--lock` read no manifest. CHANGELOG [6.7.12]
+fn _dep_say_kept_pins(): i64 {
+    if (_dep_decl_root == 0 || _dep_lock_buf == 0 || _quiet == 1) { return 0; }
+    if (vec_len(_dep_decl_root) == 0) { return 0; }
+    var lb = _dep_lock_buf;
+    var ln = _dep_lock_len;
+    var pos = 0;
+    while (pos < ln) {
+        var le = pos;
+        while (le < ln && load8(lb + le) != 10) { le = le + 1; }
+        var lw = le;
+        if (lw > pos && load8(lb + lw - 1) == 13) { lw = lw - 1; }
+        if (lw - pos > 7 && memeq(lb + pos, "commit", 6) == 1 && load8(lb + pos + 6) == 9) {
+            if (_dep_commit_fresh_has(lb + pos, lw - pos) == 0) { _dep_say_kept_pin(lb + pos, lw - pos); }
+        }
+        pos = le + 1;
+    }
+    return 0;
+}
+
+# One carried commit line (`n` bytes at `p`): the note when its name is a root dep declared at
+# another tag and no manifest read declares its own (name, tag) — see above.
+fn _dep_say_kept_pin(p, n): i64 {
+    var no = _lock_commit_field_at(p, n, 2);
+    var to = _lock_commit_field_at(p, n, 4);
+    if (no < 0 || to < 0) { return 0; }
+    var name = _git_cstr_copy(p + no, _lock_commit_field_len(p, n, no));
+    var tag = _git_cstr_copy(p + to, n - to);
+    if (_dep_path_in(_dep_decl_all, _cat2(_cat2(name, "\t"), tag)) == 1) { return 0; }
+    var rt = _dep_decl_root_tag(name);
+    if (rt == 0 || streq(rt, tag) == 1) { return 0; }
+    _ew("note: cyrius.lock keeps ");
+    _ew_shown(name);
+    _ew("@");
+    _ew_shown(tag);
+    _ew("'s pin (the manifest declares ");
+    _ew_shown(name);
+    _ew(" at ");
+    _ew_shown(rt);
+    _ew("), fail-closed; delete cyrius.lock to re-pin\n");
+    return 0;
+}
+
+fn _lock_cstr_cmp(a, b): i64 {
+    var i = 0;
+    while (1 == 1) {
+        var ca = load8(a + i);
+        var cb = load8(b + i);
+        if (ca != cb) { return ca - cb; }
+        if (ca == 0) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The commit block's canonical order: by the bytes from the NAME field on — (name, git, tag),
+# the tab sorting below every byte a field holds — then by the whole line, so the order is
+# total and the block is a function of the pin SET, not of which deps a resolve re-verified.
+# CHANGELOG [6.6.20]
+fn _lock_commit_line_cmp(a, b): i64 {
+    var na = strlen(a);
+    var nb = strlen(b);
+    var oa = _lock_commit_field_at(a, na, 2);
+    var ob = _lock_commit_field_at(b, nb, 2);
+    if (oa < 0) { oa = na; }
+    if (ob < 0) { ob = nb; }
+    var c = _lock_cstr_cmp(a + oa, b + ob);
+    if (c != 0) { return c; }
+    return _lock_cstr_cmp(a, b);
+}
+
+# ⛔ 6.7.12 (D19, the user, 2026-10-15) — A RESOLVE DOES NOT RE-LOCK AT A PIN MOVE WHILE lib/ HOLDS
+# SNAPSHOT FILES IT DID NOT RE-VENDOR. The lock has ONE pin (the trailer, 6.6.4) and this writer
+# re-hashes all of lib/, so `deps` / `build` after `[package].cyrius` moved stamped the new pin over
+# the OLD pin's rows of every file outside the declared closure (a `lib sync --full` project's):
+# `--verify` and `--locked` agreed with that lock, and the next `lib sync --full` refused as if the
+# snapshot had moved under an unchanged pin. Now, when the inherited trailer names another pin, each
+# lib/ file outside this resolve's closure (`_dep_out_of_closure`) that the new pin's snapshot ships
+# with OTHER bytes is named and the lock is not opened: rc 1, cyrius.lock byte-unchanged, two
+# remedies (`lib sync --full` moves them, deleting them drops them). The lock never states a pin its
+# rows do not have, and its format does not change. A file the snapshot does not ship, or ships
+# with the same bytes, is pin-independent and re-locked as before. CHANGELOG [6.7.12]
+# 6.7.13 (D42, the user, 2026-10-15): every lock writer is held to it. The bare `--lock` (and
+# publish's lock) resolved nothing, so it wrote none of lib/: every lib/ file the new snapshot
+# ships with other bytes is named (`cyrius deps` re-vendors the closure first). A scoped
+# `lib sync` refuses before it copies (cbt/commands/lib_sync.cyr `_libsync_pin_move_refused`), so its re-lock
+# (`_dep_lock_only`) never meets the shape. A resolve is refused before Phase 1 writes
+# (`_deps_pin_move_dry`, D41); this check after it stays as the backstop. CHANGELOG [6.7.13]
+fn _dep_pin_move_refused(): i64 {
+    if (_dep_lock_only != 0) { return 0; }
+    if (_dep_lock_has_trailer == 0 || _dep_lock_pin_same == 1) { return 0; }
+    var bare = 0;
+    var scope = _dep_closure;
+    if (scope == 0) {
+        bare = 1;
+        scope = vec_new();
+    }
+    var stale = _dep_pin_move_stale(scope);
+    if (vec_len(stale) == 0) { return 0; }
+    _dep_pin_move_say(stale, bare);
+    return 1;
+}
+
+# D19's refusal text for `stale` (a vec of lib/ paths); `bare` 1 for a re-lock that resolved
+# nothing (6.7.13, D42): its first way is the resolve. CHANGELOG [6.7.12]
+fn _dep_pin_move_say(stale, bare): i64 {
+    var k = vec_len(stale);
+    var pin = _dep_lock_pin_value();
+    _ew("error: cyrius.lock not re-locked: [package].cyrius moved from ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(" to ");
+    _ew_shown(pin);
+    _ew(", and lib/ holds ");
+    fmt_int_fd(STDERR_FD, k);
+    if (k == 1) { _ew(" file"); } else { _ew(" files"); }
+    if (bare == 1) {
+        _ew(" that the ");
+        _ew_shown(pin);
+        _ew(" snapshot ships with other bytes (a bare re-lock vendors nothing):\n");
+    } else {
+        _ew(" this resolve did not vendor that the ");
+        _ew_shown(pin);
+        _ew(" snapshot ships with other bytes:\n");
+    }
+    _dep_pin_move_list(stale);
+    _ew("  cyrius.lock records ONE pin for every row; re-locking would stamp ");
+    _ew_shown(pin);
+    _ew(" over these rows. Either:\n");
+    if (bare == 1) {
+        _ew("    cyrius deps                re-vendors the declared closure at ");
+        _ew_shown(pin);
+        _ew(" and re-locks\n");
+        _ew("    cyrius lib sync --full     moves them to ");
+        _ew_shown(pin);
+        _ew(" and re-locks (a project that vendors the whole snapshot)\n");
+    } else {
+        _dep_pin_move_ways(pin);
+    }
+    _ew("  cyrius.lock is unchanged (it records ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(").\n");
+    return 0;
+}
+
+fn cmd_deps_lock(): i64 {
+    # v6.0.2: cyrius's own repo authors its lib/ — skip (self-referential
+    # + would churn the tracked cyrius.lock on every check.sh). See
+    # _dep_is_cyrius_source_repo above + CHANGELOG [6.0.2].
+    if (_dep_is_cyrius_source_repo() == 1) {
+        println("cyrius.lock: skipped (source repo — lib/ is authored stdlib, not resolved deps)");
+        return 0;
+    }
+    # v6.6.4: read the inherited lock BEFORE the lock is rewritten below — the bare `--lock` verb has no
+    # resolve behind it and needs the old lock's `commit\t` pins (carried forward below).
+    if (_dep_lock_buf == 0) { _dep_lock_load(); }
+    if (_dep_pin_move_refused() != 0) { return 1; }   # D19 (6.7.12; D42 6.7.13): before the lock opens
+    # Generate cyrius.lock by hashing every resolved .cyr under lib/
+    # (recursively). See _deps_lock_dir for the v5.11.8-era root cause.
+    # Crash-safe: the lock is built in a sibling temp and renamed over cyrius.lock only once
+    # every line landed — a short write used to leave a truncated lock and exit 0 (CHANGELOG [6.6.6]).
+    var lock_h = _aw_open_replace("cyrius.lock");
+    if (lock_h == 0) { _err("cannot create cyrius.lock"); return 1; }
+    # the release-integrity hardening item (v6.2.30): write the resolved git-dep commit pins FIRST (one
+    # "commit\t<sha>\t<name>\t<git>\t<tag>" line each), BEFORE the per-file
+    # content hashes. That placement once kept them inside _lock_commit_lookup's 64 KB read
+    # window; it is NOT what keeps them readable now. The merge below keeps an old tag's line
+    # after every bump, so the block grows without bound and can pass 64 KB on its own —
+    # _lock_commit_lookup reads the whole file since 6.6.20 (CHANGELOG [6.6.20]).
+    # cmd_deps_verify skips these lines; resolution checks them.
+    # ⛔ ALWAYS MERGE the inherited pins (CYRIUS-2026-0030, 6.6.20). A resolve pins only the tagged deps
+    # it verified THIS run, and this used to write those OR (bare `--lock`, v6.6.4) the inherited
+    # ones — so a resolve that skipped a dep dropped its pin and kept its lib/ hash row: an
+    # optional dep without its feature, a `target =` miss, every transitive dep of a gated-out
+    # dep, an existing `path =` override, any pin on a no-git (PE) host — through every auto-deps
+    # verb. The next resolve with a fresh cache then TOFU-re-pinned a repointed tag.
+    # An inherited line is dropped ONLY for a fresh line with its (name, git, tag) — the key
+    # _lock_commit_lookup reads a pin by, git url-normalised the same way, so a respelled
+    # `…/x.git` still replaces its line. Not by NAME: in a diamond, a gated root `x@v2` and a
+    # required dep's own `x@v1` share the name, and the feature-less resolve that pinned x@v1
+    # dropped the x@v2 pin a later `--features` resolve reads. So an old tag's line stays after a
+    # tag bump — fail-closed, what the release-integrity hardening item wants if the dep is moved back to that tag
+    # (delete
+    # cyrius.lock to re-pin). Not filtered to the manifest's names either: a transitive dep of a
+    # gated-out dep is declared only in that dep's own, unread manifest.
+    # 6.7.12 (D25, the user, 2026-10-15): kept AND NAMED — a carried line of a root dep's other tag
+    # gets a note after the summary (_dep_say_kept_pins); nothing written changes. CHANGELOG [6.7.12]
+    # SORTED (_lock_commit_line_cmp): fresh-then-carried order wrote one pin set in an order set
+    # by which deps the run re-verified — the 6.6.3 churn class. CHANGELOG [6.6.20]
+    var _pins = vec_new();
+    if (_dep_commit_lines != 0) {
+        var _ci = 0;
+        while (_ci < vec_len(_dep_commit_lines)) {
+            vec_push(_pins, vec_get(_dep_commit_lines, _ci));
+            _ci = _ci + 1;
+        }
+    }
+    if (_dep_lock_buf != 0) {
+        var _lp = 0;
+        while (_lp < _dep_lock_len) {
+            var _le = _lp;
+            while (_le < _dep_lock_len && load8(_dep_lock_buf + _le) != 10) { _le = _le + 1; }
+            if (_le - _lp > 7 && memeq(_dep_lock_buf + _lp, "commit", 6) == 1 && load8(_dep_lock_buf + _lp + 6) == 9) {
+                var _lw = _le;
+                if (_lw > _lp && load8(_dep_lock_buf + _lw - 1) == 13) { _lw = _lw - 1; }
+                if (_dep_commit_fresh_has(_dep_lock_buf + _lp, _lw - _lp) == 0) {
+                    vec_push(_pins, _git_cstr_copy(_dep_lock_buf + _lp, _lw - _lp));
+                }
+            }
+            _lp = _le + 1;
+        }
+    }
+    vec_sort_by(_pins, &_lock_commit_line_cmp);
+    var _cc = 0;
+    var _npinned = 0;   # distinct dep NAMES — a name's lines are adjacent in the sorted block
+    var _prev = 0;
+    while (_cc < vec_len(_pins)) {
+        var _line = vec_get(_pins, _cc);
+        _aw_write(lock_h, _line, strlen(_line));
+        _aw_write(lock_h, "\n", 1);
+        if (_prev == 0 || _lock_commit_name_same(_prev, _line) == 0) { _npinned = _npinned + 1; }
+        _prev = _line;
+        _cc = _cc + 1;
+    }
+    var count = _deps_lock_dir("lib", lock_h);
+    if (_deps_lock_unlisted != 0) {
+        _aw_abort(lock_h);
+        _err("cyrius.lock: a directory under lib/ could not be listed (named above) — left as it was");
+        return 1;
+    }
+    if (_dep_lock_unhashable != 0) {
+        _aw_abort(lock_h);
+        return _dep_lock_unhashable_err();
+    }
+    # v6.6.4: record the stdlib pin LAST — `cyrius\t<pin>` — so the next resolve can tell
+    # "the pin changed" (re-lock silently) from "the snapshot changed under the same pin"
+    # (refuse; see _dep_lock_guard_stdlib_leaf). Tab-delimited like the commit lines.
+    # LAST, not first, deliberately: a pre-6.6.4 `deps --verify` (reachable via a pin
+    # downgrade) parses every line as `<64hex>  <path>` and stops at `pos + 66 >= n`, so a
+    # 13-byte trailer is skipped by an old reader; at the head it would be misread as a
+    # hash line and fail one entry. _dep_lock_load reads the WHOLE file, so the trailer is
+    # never outside its window. cmd_deps_verify ALSO skips it by name — that only matters
+    # for a hand-merged lock where the trailer is not last (the last-line placement is what
+    # protects old readers; the explicit skip protects this reader).
+    var _pv = _dep_lock_pin_value();
+    _aw_write(lock_h, "cyrius\t", 7);
+    _aw_write(lock_h, _pv, strlen(_pv));
+    _aw_write(lock_h, "\n", 1);
+    if (_aw_commit(lock_h) != 0) { _err("write failed: cyrius.lock (left as it was)"); return 1; }
+    sys_write(STDOUT_FD, "cyrius.lock: ", 13);
+    fmt_int(count);
+    sys_write(STDOUT_FD, " deps locked", 12);
+    if (_npinned > 0) {
+        sys_write(STDOUT_FD, ", ", 2);
+        fmt_int(_npinned);
+        sys_write(STDOUT_FD, " commit-pinned (", 16);
+        fmt_int(_dep_commit_fresh_count());
+        sys_write(STDOUT_FD, " re-verified)", 13);
+    }
+    println("");
+    if (_dep_lock_only == 0) { _dep_say_kept_pins(); }   # 6.7.12 (D25): named, not dropped
+    return 0;
+}
+
+fn cmd_deps_verify(): i64 {
+    # the release-integrity hardening item (v6.2.30): 64 KB read window (was 8 KB). The old 8 KB cap silently
+    # stopped verifying file-hash lines past the cutoff for any lock >8 KB
+    # (real downstream locks already exceed it) — and the commit-pin lines now
+    # prepended by cmd_deps_lock ate into that budget. Match _lock_commit_lookup.
+    # v6.6.4: the WHOLE file — a lock past 64 KB silently stopped verifying at the cut, and
+    # the `cyrius\t<pin>` trailer is the last line.
+    # 6.6.9: the cyrius source repo writes no lock (cmd_deps_lock skips it; its tracked
+    # cyrius.lock is empty), so there is nothing here for the lib/ walk below to hold its
+    # authored stdlib against — say so instead of failing every file.
+    if (_dep_is_cyrius_source_repo() == 1) {
+        _err("cyrius.lock is not kept in the cyrius source repo (lib/ is authored stdlib, not resolved deps) — nothing to verify");
+        return 1;
+    }
+    var _vcap = _file_size("cyrius.lock") + 1;
+    if (_vcap < 65536) { _vcap = 65536; }
+    var buf = alloc(_vcap);
+    var n = file_read_all("cyrius.lock", buf, _vcap - 1);
+    if (n < 0 || file_exists("cyrius.lock") == 0) {
+        _err("no cyrius.lock found — run cyrius deps first");
+        return 1;
+    }
+    # 6.6.9: an EMPTY lock is present-but-empty (cyrius-bb tracks a 0-byte one over 53 lib/
+    # files), not "missing" — it verifies nothing, and the lib/ walk below names every file
+    # it leaves uncovered. CHANGELOG [6.6.9]
+    if (n == 0) { println("cyrius.lock is empty — it records no file"); }
+    store8(buf + n, 0);
+
+    var pass = 0;
+    var fail = 0;
+    var crlf = 0;   # 6.7.12 (D10): failures that are a CRLF checkout of the locked bytes
+    var pos = 0;
+    while (pos < n) {
+        # the release-integrity hardening item (v6.2.30): skip commit-pin lines ("commit\t<sha>\t...") — those
+        # are verified during resolution, not by this file-content-hash check.
+        if (pos + 7 <= n && memeq(buf + pos, "commit", 6) == 1 && load8(buf + pos + 6) == 9) {
+            while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+            pos = pos + 1;
+            continue;
+        }
+        # v6.6.4: skip the `cyrius\t<pin>` trailer line — the pin is checked at resolve time.
+        if (pos + 7 <= n && memeq(buf + pos, "cyrius", 6) == 1 && load8(buf + pos + 6) == 9) {
+            while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+            pos = pos + 1;
+            continue;
+        }
+        # Parse line: 64-char hash, 2 spaces, path, newline
+        if (pos + 66 >= n) { break; }
+        var expected_hash = buf + pos;
+        var path_start = pos + 66;
+        var path_end = path_start;
+        while (path_end < n && load8(buf + path_end) != 10) { path_end = path_end + 1; }
+
+        var plen = path_end - path_start;
+        # A CRLF checkout of the lock: the path stops before the `\r`, or every file failed
+        # "cannot hash" (`lib/x.cyr\r` does not exist). `path_end` itself stays on the `\n`
+        # the next line starts after. CHANGELOG [6.6.20]
+        if (plen > 0 && load8(buf + path_end - 1) == 13) { plen = plen - 1; }
+        var path = alloc(plen + 1);
+        memcpy(path, buf + path_start, plen);
+        store8(path + plen, 0);
+
+        # 6.7.13: a row whose file is gone — it cannot be opened, and lib/'s walk has no such entry
+        # (an unreadable or dangling file still has one, and goes to the hasher) — is named as
+        # that, not as a hasher failure. CHANGELOG [6.7.13]
+        var actual_hash = 0;
+        if (file_exists(path) == 0 && _dep_lib_entry(path) == 0) {
+            sys_write(STDERR_FD, "  FAIL: ", 8);
+            sys_write(STDERR_FD, path, plen);
+            _ew(" (missing from lib/)\n");
+            fail = fail + 1;
+            pos = path_end + 1;
+            continue;
+        }
+        actual_hash = _sha256sum_file(path);
+        if (actual_hash == 0) {
+            sys_write(STDERR_FD, "  FAIL: ", 8);
+            sys_write(STDERR_FD, path, plen);
+            _ew(" (cannot hash: ");
+            _sha_fail_why();
+            _ew(")\n");
+            fail = fail + 1;
+        } elif (memeq(actual_hash, expected_hash, 64) == 1) {
+            pass = pass + 1;
+        } elif (_sha_is_crlf_of(path, expected_hash) == 1) {
+            # 6.7.12 (D10): still a failure — the lock proves the exact bytes — but named.
+            sys_write(STDERR_FD, "  FAIL: ", 8);
+            sys_write(STDERR_FD, path, plen);
+            _ew(" (hash mismatch — CRLF checkout: add `lib/** -text` to .gitattributes)\n");
+            fail = fail + 1;
+            crlf = crlf + 1;
+        } else {
+            sys_write(STDERR_FD, "  FAIL: ", 8);
+            sys_write(STDERR_FD, path, plen);
+            sys_write(STDERR_FD, " (hash mismatch)\n", 17);
+            fail = fail + 1;
+        }
+
+        pos = path_end + 1;
+    }
+
+    # ⛔ 6.6.9 bite 9 — AND every .cyr under lib/ must HAVE a line. The loop above checks
+    # the lines the lock contains, so a file with no line had nothing to fail: patra's two
+    # newly declared leaves verified "29 verified, 0 failed" over 31 files — tampered, too.
+    # Walked with `_deps_lock_files`, the SAME walker cmd_deps_lock writes from, so the
+    # checker cannot drift from the writer (a check that shares its subject's blind spot
+    # reads green). CHANGELOG [6.6.9]
+    var files = _deps_lock_files("lib");
+    fail = fail + _deps_lock_unlisted;       # 6.6.10: an unlistable directory is not verified
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var fp = vec_get(files, fi);
+        fi = fi + 1;
+        if (_lock_buf_hash_lookup(buf, n, fp) != 0) { continue; }
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, fp, strlen(fp));
+        _ew(" (not in cyrius.lock — run cyrius deps --relock to lock it)\n");
+        fail = fail + 1;
+    }
+
+    fmt_int(pass);
+    sys_write(STDOUT_FD, " verified, ", 11);
+    fmt_int(fail);
+    println(" failed");
+    if (crlf > 0) { _deps_say_crlf(crlf); }
+    if (fail > 0) { return 1; }
+    return 0;
+}
+
+# 6.7.12 (D10) — after `deps --verify` / `--locked` named `n` files as a CRLF checkout, the one
+# explanation and its remedy, on stderr. A CRLF checkout stays a failure: the lock proves the
+# exact bytes (normalising would let a CRLF-only rewrite of a locked file pass — the laundering
+# `_git_cfg_bad_key` refuses in git's own hashing), and re-locking would churn cyrius.lock
+# between a Windows and a Linux checkout. `cyrius init` / `port` ship the `.gitattributes`.
+fn _deps_say_crlf(n): i64 {
+    _ew("note: ");
+    fmt_int_fd(STDERR_FD, n);
+    if (n == 1) { _ew(" file in lib/ differs"); } else { _ew(" files in lib/ differ"); }
+    _ew(" only by CRLF line endings: git converted lib/ on checkout (core.autocrlf), and cyrius.lock");
+    _ew(" holds the exact bytes. Commit `lib/** -text` in .gitattributes and check lib/ out again");
+    _ew(" (before any `cyrius deps`, which would lock the converted bytes)\n");
+    return 0;
+}

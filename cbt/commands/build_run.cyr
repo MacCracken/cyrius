@@ -1,0 +1,317 @@
+# CLI — commands: `cyrius build` (cmd_build and its running-compiler guard) and `cyrius run`.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ⛔ v6.6.2 — `cyrius build <foreign-src>` OVERWROTE THE RUNNING COMPILER, and did.
+#
+# In this repo `cyrius.cyml` declares `output = build/cycc` — correct, that IS how the compiler is
+# built — and the documented argument ladder says one positional argument means "that src + the
+# manifest's output". So `cyrius build tests/tcyr/.../foo.tcyr` compiled the TEST and wrote an
+# 842 KB test binary over `build/cycc` at the v6.6.0 cut. It was recoverable only because a
+# verified stage binary happened to still be in /tmp; from a clean tree it costs a bootstrap.
+#
+# ⭐ THE LADDER IS RIGHT AND DOCUMENTED, so the fix is narrower than changing it. Exactly one
+# combination is destructive: an EXPLICIT FOREIGN SRC plus an INHERITED output that resolves to
+# the compiler we are running. Nothing legitimate needs it. Building the manifest's own declared
+# entry still writes the compiler, which is the whole point of the key.
+#
+# Path comparison is tail-based on purpose: `current_cc()` may hand back `./build/cycc` or an
+# absolute path depending on how the wrapper resolved, while the manifest says `build/cycc`.
+# Comparing only the exact strings would let the guard miss the very case it exists for.
+fn _pb_tail_eq(a, b): i64 {
+    if (a == 0) { return 0; }
+    if (b == 0) { return 0; }
+    var la = strlen(a);
+    var lb = strlen(b);
+    var shortp = b;
+    var ls = lb;
+    var longp = a;
+    var ll = la;
+    if (lb > la) { shortp = a; ls = la; longp = b; ll = lb; }
+    if (ls == 0) { return 0; }
+    # the shorter must be a trailing segment of the longer, on a path boundary
+    if (memeq(longp + ll - ls, shortp, ls) == 0) { return 0; }
+    if (ll == ls) { return 1; }
+    if (load8(longp + ll - ls - 1) == 47) { return 1; }   # 47 = '/'
+    return 0;
+}
+
+fn cmd_build(source, output): i64 {
+    # Refuse to write the build output over a `.cyr` file. A compiled
+    # binary never has a `.cyr` name, so a `.cyr` output is almost always
+    # a misparsed CLI that would silently clobber a source (issue
+    # 2026-04-26). Hard error before any write. See CHANGELOG [6.0.36].
+    var _olen = strlen(output);
+    # v6.6.2 — refuse to overwrite the compiler we are currently running with a FOREIGN source.
+    # See _pb_tail_eq above for the incident. Ordered before the directory-creation below so the
+    # refusal happens before anything is written.
+    var _pb_cc = current_cc();
+    if (_pb_tail_eq(output, _pb_cc) == 1) {
+        var _pb_decl = _mf_key_str("build", "entry");   # `src` resolves as its synonym
+        var _pb_ok = 0;
+        if (_pb_decl != 0) { if (_pb_tail_eq(source, _pb_decl) == 1) { _pb_ok = 1; } }
+        if (_pb_ok == 0) {
+            sys_write(STDERR_FD, "error: refusing to overwrite the running compiler with a foreign source\n", 72);
+            sys_write(STDERR_FD, "  output:  ", 11);
+            sys_write(STDERR_FD, output, strlen(output));
+            sys_write(STDERR_FD, "\n  source:  ", 12);
+            sys_write(STDERR_FD, source, strlen(source));
+            sys_write(STDERR_FD, "\n  This is the manifest's [build] output inherited by a one-argument build.\n", 76);
+            sys_write(STDERR_FD, "  Building the declared entry still writes it; pass an explicit output otherwise.\n", 82);
+            return 1;
+        }
+    }
+    if (_olen >= 4 && memeq(output + _olen - 4, ".cyr", 4) == 1) {
+        sys_write(STDERR_FD, "error: refusing to write build output over a .cyr source file: ", 63);
+        sys_write(STDERR_FD, output, _olen);
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    # Ensure output directory exists
+    var oi = 0;
+    var last_slash = 0 - 1;
+    while (load8(output + oi) != 0) {
+        if (load8(output + oi) == 47) { last_slash = oi; }
+        oi = oi + 1;
+    }
+    if (last_slash > 0) {
+        var dir = alloc(last_slash + 1);
+        memcpy(dir, output, last_slash);
+        store8(dir + last_slash, 0);
+        sys_mkdir(dir, 0x1ED);
+    }
+    # v6.1.12: --target=js routes to cycc's TS/TSX → JS emitter (path-arg in,
+    # JS to stdout) rather than the native-binary compile path below.
+    if (_js_target == 1) {
+        if (_dry_run == 1) {
+            sys_write(STDOUT_FD, "dry-run: emit-js ", 17);
+            sys_write(STDOUT_FD, source, strlen(source));
+            sys_write(STDOUT_FD, " -> ", 4);
+            sys_write(STDOUT_FD, output, strlen(output));
+            sys_write(STDOUT_FD, "\n", 1);
+            return 0;
+        }
+        # v6.6.6 (bite 24d) — ASK BEFORE OPENING THE LINE. The header below is deliberately
+        # unterminated so `OK` lands on it, and bite 9's / bite 23b's refusals were written
+        # into the middle of it: `emit-js t.ts -> out.js [js] error: build --target=js is not
+        # available on this target`, four more stderr lines, then a bare `FAIL` — a named
+        # diagnostic reading as one corrupted line. `_target_cc_has_js()` is the same
+        # predicate `_emit_js` enforces with (it keeps its own copy: this one decides whether
+        # to PRINT, that one decides whether to RUN, and any other caller still needs it).
+        # CHANGELOG [6.6.6].
+        # Windows: cycc.exe has --emit-js since 6.7.15, but `_emit_js` has no PE spawn for it,
+        # so its refusal is asked here too, before the header. CHANGELOG [6.7.15]
+        #ifdef CYRIUS_TARGET_WIN
+        return _win_emit_js_refuse();
+        #endif
+        if (_target_cc_has_js() == 0) { return _emit_js_refuse(); }
+        if (_js_cc_is_host() == 0) { return _emit_js_not_host(); }   # 6.7.12, the same rule
+        sys_write(STDOUT_FD, "emit-js ", 8);
+        sys_write(STDOUT_FD, source, strlen(source));
+        sys_write(STDOUT_FD, " -> ", 4);
+        sys_write(STDOUT_FD, output, strlen(output));
+        sys_write(STDOUT_FD, " [js] ", 6);
+        _progress_open = 1;
+        var jr = _emit_js(source, output);
+        _progress_open = 0;
+        if (jr == 0) { println("OK"); } else { println("FAIL"); }
+        return jr;
+    }
+    # cx arc: --target=cx routes to the cx bytecode compiler (cycc_cx), producing
+    # a .cyx portable-bytecode file (run with `cyrius run <out>.cyx` via cxvm).
+    if (_cx_target == 1) {
+        if (_dry_run == 1) {
+            sys_write(STDOUT_FD, "dry-run: emit-cx ", 17);
+            sys_write(STDOUT_FD, source, strlen(source));
+            sys_write(STDOUT_FD, " -> ", 4);
+            sys_write(STDOUT_FD, output, strlen(output));
+            sys_write(STDOUT_FD, "\n", 1);
+            return 0;
+        }
+        # v6.6.6 (bite 24d) — same shape, same fix. `_emit_cx` opens with `_ensure_cc_cx()`,
+        # which can fail by name four ways (no cycc, cycc missing, src/main_cx.cyr missing,
+        # the cx compiler would not build) — all of them spliced into the header below.
+        # Hoisting it means the JIT build of cycc_cx also happens before the line opens.
+        # `_emit_cx` keeps its own call: it is a no-op once `_cc_cx` is set and it must stay
+        # correct for any other caller. CHANGELOG [6.6.6].
+        if (_ensure_cc_cx() != 0) { return 1; }
+        sys_write(STDOUT_FD, "emit-cx ", 8);
+        sys_write(STDOUT_FD, source, strlen(source));
+        sys_write(STDOUT_FD, " -> ", 4);
+        sys_write(STDOUT_FD, output, strlen(output));
+        sys_write(STDOUT_FD, " [cx] ", 6);
+        _progress_open = 1;
+        var xr = _emit_cx(source, output);
+        _progress_open = 0;
+        if (xr == 0) { println("OK"); } else { println("FAIL"); }
+        return xr;
+    }
+    if (_dry_run == 1) {
+        sys_write(STDOUT_FD, "dry-run: compile ", 17);
+        sys_write(STDOUT_FD, source, strlen(source));
+        sys_write(STDOUT_FD, " -> ", 4);
+        sys_write(STDOUT_FD, output, strlen(output));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 0;
+    }
+    sys_write(STDOUT_FD, "compile ", 8);
+    sys_write(STDOUT_FD, source, strlen(source));
+    sys_write(STDOUT_FD, " -> ", 4);
+    sys_write(STDOUT_FD, output, strlen(output));
+    sys_write(STDOUT_FD, " [", 2);
+    var an = arch_name();
+    sys_write(STDOUT_FD, an, strlen(an));
+    sys_write(STDOUT_FD, "] ", 2);
+    # v6.5.50 — say WHERE the paths came from. v6.5.49 let both be omitted and taken
+    # from [build] in ./cyrius.cyml, so the line above can name files the user never
+    # typed; without this note a wrong path in a stale manifest reads as a compiler bug.
+    if (_build_paths_from_manifest == 2) { sys_write(STDOUT_FD, "(src+output from cyrius.cyml) ", 30); }
+    if (_build_paths_from_manifest == 1) { sys_write(STDOUT_FD, "(output from cyrius.cyml) ", 26); }
+    # The header is deliberately left unterminated so the result lands on the same line.
+    # Under -v that does not work: compile() writes several [verbose] lines first, and the
+    # header ran straight into them ("... [x86_64] [verbose] compiler: ..."). Close the line
+    # when verbose so the trace starts clean.
+    if (_verbose == 1) { sys_write(STDOUT_FD, "\n", 1); }
+    # v6.6.6 (bite 24d) — and the same problem for compile()'s OWN named errors, which -v
+    # could not have covered: a missing output directory, an unwritable output, a rename
+    # that could not happen (bite 24a) all ran INTO this header. `_progress_open` tells
+    # `_err`/`_err_ctx` there is a line to close first. The compiler CHILD's diagnostics
+    # still land here mid-line — that is long-standing and deliberate, and the `FAILED
+    # (compiler exit N)` line below points at them. CHANGELOG [6.6.6].
+    if (_verbose == 0) { _progress_open = 1; }
+    # v6.6.6 (bite 24 review) — sample the named-diagnostic counter so the verdict below
+    # can tell "the compiler rejected the source" from "cbt itself refused, and said so".
+    # See `_err_count` (cbt/core.cyr). CHANGELOG [6.6.6].
+    var pre_err = _err_count;
+    var r = compile(source, output);
+    _progress_open = 0;
+    if (r == 0) {
+        # Apple Silicon AMFI-SIGKILLs an unsigned arm64 binary, so a fresh
+        # `cyrius build` output won't run until it carries an ad-hoc signature
+        # (CHANGELOG [6.0.38]). v6.0.66: hoisted into the shared _macho_codesign
+        # helper (also used by run_binary for test/run/bench/fuzz/doctest).
+        _macho_codesign(output);
+        # v6.5.50 — report the artifact size. `OK` alone cannot distinguish a real build
+        # from one that produced a do-nothing binary, which is the exact failure v6.5.7
+        # had to add a source-existence guard for (a missing entry file still yielded a
+        # valid translation unit of pure stdlib, printed OK and exited 0).
+        var osz = _artifact_size(output);
+        if (osz >= 0) {
+            sys_write(STDOUT_FD, "OK (", 4);
+            fmt_int(osz);
+            sys_write(STDOUT_FD, " bytes)\n", 8);
+        } else {
+            println("OK");
+        }
+        # v6.2.28 D6: expose the kernel entry/load-base VA via the triple. A
+        # freestanding kernel's loader/linker contract is the ELF e_entry the
+        # emitter writes; surface it so a consumer (agnos's boot, a GRUB cfg, a
+        # linker script) knows where the kernel lands without reverse-engineering
+        # _entry_base. The qemu-boot-gate asserts the x86 value (0x1000a8), so a
+        # drift between this line and the real e_entry fails D7. A non-canonical
+        # load base (env-settable) is deferred — 1 MiB / 0x40000000 are the
+        # canonical multiboot/AArch64 bases and no consumer needs another yet.
+        # v6.3.3 #5: the base may be overridden by `[sections] base` — print the REAL
+        # entry/base (canonical literal when unset) so the D6 report never drifts from
+        # the emitted e_entry. entry = base + 0xA8 (x86 ELF64) / base + 0x78 (aarch64).
+        # Linux hosts only: the Windows and macOS CLIs refuse a bare-metal --target before
+        # compiling (`_cli_foreign_target`) — this line once described a PE / Mach-O there.
+        # CHANGELOG [6.7.11]
+        # 6.7.12 — the line follows the compiler that RAN (current_cc() reads _arch), not the
+        # --target value: `--aarch64 --target=x86_64-bare-metal-elf` wrote an aarch64 ELF and
+        # reported the x86 entry. The CLI refuses that pair first (_cli_targets_exclusive).
+        # CHANGELOG [6.7.12]
+        if (_baremetal_target == 1) {
+            if (_arch == ARCH_AARCH64) {
+                var ab = _section_base_val;
+                if (ab == 0) { ab = 0x40000000; }
+                sys_write(STDOUT_FD, "  kernel: entry ", 16);
+                fmt_hex0x(ab + 0x78);
+                sys_write(STDOUT_FD, ", load base ", 12);
+                fmt_hex0x(ab);
+                sys_write(STDOUT_FD, " (aarch64 ELF64)\n", 17);
+            } else {
+                var xb = _section_base_val;
+                if (xb == 0) { xb = 0x100000; }
+                sys_write(STDOUT_FD, "  kernel: entry ", 16);
+                fmt_hex0x(xb + 0xA8);
+                sys_write(STDOUT_FD, ", load base ", 12);
+                fmt_hex0x(xb);
+                sys_write(STDOUT_FD, " (x86_64 ELF64 multiboot2)\n", 27);
+            }
+        }
+    } else {
+        # v6.5.50 — a bare `FAIL` told the user nothing: not which stage failed, not the
+        # compiler's exit status, and not where its diagnostics went. The compiler writes
+        # its own errors to stderr, so name the status and point at them.
+        # ⛔ v6.6.6 (bite 24 review) — BUT ONLY WHEN THE COMPILER IS WHAT FAILED, AND ONLY
+        # WITH ITS REAL STATUS. `compile()` returns a flat 1 for every failure, so this
+        # printed `FAILED (compiler exit 1)` plus "the compiler's diagnostics are above"
+        # for bite 24a's rename refusal — where the compiler had exited 0, written no
+        # diagnostics, and the only message above was cbt's own. Two questions, two
+        # answers: `_err_count` moved means cbt already NAMED this failure (say nothing
+        # more, the diagnostic is the message); otherwise `_cc_last_exit` is the child's
+        # real status, and -1 means it never exited normally, which is not a status to
+        # quote. CHANGELOG [6.6.6].
+        # 6.6.9 bite 10 — both questions now live in `_compile_fail_verdict`
+        # (cbt/build.cyr), shared with run / check / test. A failure cbt named still
+        # closes the header with a bare `FAILED`. CHANGELOG [6.6.9]
+        if (_compile_fail_verdict(pre_err, STDOUT_FD, "FAILED") == 1) { println("FAILED"); }
+        else { _compile_fail_hint(); }
+    }
+    return r;
+}
+
+fn cmd_run(source, args): i64 {
+    # cx arc: a .cyx is already-compiled portable bytecode — run it directly via
+    # cxvm (no compile step). Detect by extension; everything else is the native
+    # compile+exec path below. (A `.cyr` → cx compile-and-run in one shot could be
+    # an additive `--cx` flag later; keeping run <foo>.cyr the native path.)
+    if (str_ends_with(str_from(source), str_from(".cyx")) == 1) {
+        # v6.6.5 (round-2 review) — REFUSE program arguments for a .cyx. The first cut
+        # forwarded them onto cxvm's argv, which reads nothing but the .cyx on stdin: cx
+        # has no guest argv ABI (lib/args.cyr's args_init/argc are undefined under the cx
+        # backend), so `cyrius run p.cyx a b c` ran with the arguments DROPPED and exited
+        # with the guest's code — the one outcome the argument rule forbids. An operand
+        # that cannot be processed is rejected, by name. CHANGELOG [6.6.5].
+        if (args != 0) {
+            if (vec_len(args) > 0) {
+                var cxm = "run: a .cyx program cannot receive arguments (cx has no guest argv yet); refusing to drop";
+                _err_ctx(cxm, vec_get(args, 0));
+                return 1;
+            }
+        }
+        if (_dry_run == 1) {
+            sys_write(STDOUT_FD, "dry-run: run-cx ", 16);
+            sys_write(STDOUT_FD, source, strlen(source));
+            sys_write(STDOUT_FD, "\n", 1);
+            return 0;
+        }
+        return run_cx(source);
+    }
+    if (_dry_run == 1) {
+        sys_write(STDOUT_FD, "dry-run: compile + run ", 23);
+        sys_write(STDOUT_FD, source, strlen(source));
+        sys_write(STDOUT_FD, "\n", 1);
+        return 0;
+    }
+    var tmpbin = _cbt_tmpexe("run");
+    # 6.6.9 bite 10 — ONE verdict. This was an unconditional `_err("compile failed")`, a
+    # second, vaguer line after cbt or the compiler had already named the cause
+    # (`error: no such file: x.cyr` / `error: compile failed`). See
+    # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+    var pre_err = _err_count;
+    var r = compile(source, tmpbin);
+    if (r != 0) {
+        if (_compile_fail_verdict(pre_err, STDERR_FD, "error: compile failed") == 0) { _compile_fail_hint(); }
+        sys_unlink(tmpbin);
+        return 1;
+    }
+    # v6.6.5 — forward the program's own arguments (go-run style). Before this the
+    # child argv was [tmpbin, NUL] no matter what was typed, so a probe documented as
+    # `cyrius run dns-probe.cyr example.com` saw argc()==1 and silently used its
+    # built-in default host. CHANGELOG [6.6.5].
+    var exit_code = run_binary_args(tmpbin, args);
+    sys_unlink(tmpbin);
+    return exit_code;
+}

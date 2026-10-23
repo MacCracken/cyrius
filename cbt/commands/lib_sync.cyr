@@ -1,0 +1,598 @@
+# CLI — commands: `cyrius lib sync` — the declared leaves, the lib-freshness check, the pin-move guard.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# v6.2.40: `[deps] stdlib = [...]` from the cwd's cyrius.cyml as a vec of declared module-name
+# cstrings, or 0 if absent / empty. 6.6.20: through `_dep_declared_stdlib` (cbt/deps/keys.cyr), the
+# one reader `cyrius deps` uses — this was the third copy of a raw byte scan for `stdlib`.
+fn _libsync_declared_mods(): i64 {
+    # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
+    if (_mf_load() != 1) { return 0; }
+    var mods = _dep_declared_stdlib(_mf_buf, _mf_len);
+    # 6.7.6 (part T): the test scope's leaves are vendored into lib/ too, so `lib sync` refreshes them
+    var tl = _tc_resolve_leaves();
+    if (tl > 0) { mods = _tc_cat(mods, tl); }
+    if (mods != 0 && vec_len(mods) > 0) { return mods; }
+    return 0;
+}
+
+# v6.2.40: is snapshot file `name` (e.g. "sync_macos.cyr") wanted given
+# the declared module set? Matches the declared stem exactly OR as a
+# per-OS peer (`<decl>_*.cyr`) — e.g. declared "sync" pulls sync.cyr +
+# sync_macos.cyr + sync_windows.cyr; "syscalls" pulls
+# syscalls_x86_64_linux.cyr etc. (the "40 declared → 56 files" expansion
+# the thoth filing documents). No transitive include-following — that's
+# `cyrius deps`' job; `lib sync` vendors exactly the declared set.
+fn _libsync_wanted(name, declared): i64 {
+    var nlen = strlen(name);
+    if (nlen <= 4) { return 0; }
+    if (memeq(name + nlen - 4, ".cyr", 4) == 0) { return 0; }
+    var stem = nlen - 4;
+    var di = 0;
+    while (di < vec_len(declared)) {
+        var d = vec_get(declared, di);
+        var dl = strlen(d);
+        if (dl == stem && memeq(name, d, dl) == 1) { return 1; }
+        if (dl < stem && memeq(name, d, dl) == 1 && load8(name + dl) == 95) { return 1; }
+        di = di + 1;
+    }
+    return 0;
+}
+
+# v6.5.12: EXACT match of a snapshot entry against the declared list, with no
+# ".cyr" requirement — the package-DIRECTORY counterpart of `_libsync_wanted`,
+# which returns 0 for any name lacking the suffix (`:631`) and so could never see
+# `lib/unicode/`. Returns the declared INDEX (>= 0) so the caller can mark it
+# satisfied, or -1.
+fn _libsync_declared_idx(name, declared): i64 {
+    var nlen = strlen(name);
+    var di = 0;
+    while (di < vec_len(declared)) {
+        var d = vec_get(declared, di);
+        var dl = strlen(d);
+        if (dl == nlen) {
+            if (memeq(name, d, dl) == 1) { return di; }
+        }
+        di = di + 1;
+    }
+    return 0 - 1;
+}
+
+# v6.5.12: copy a stdlib PACKAGE DIRECTORY (`<snapshot>/lib/<name>/*.cyr`).
+#
+# ⛔ WHY THIS EXISTS. `cyrius deps` learned about package directories at v6.1.x —
+# `cbt/deps/stdlib.cyr:_dep_copy_stdlib_recursive` has the expansion and its comment names the
+# exact consumer bug ("declaring bare `unicode` in [deps].stdlib … dropped the whole
+# family"). `cyrius lib sync` was the UN-UPDATED TWIN and kept a flat, `.cyr`-only
+# scan, so a consumer declaring `unicode` got a SUCCESS message and no unicode:
+# reproduced at 6.5.11 as `copied 12 .cyr files` with `lib/unicode/` absent.
+#
+# This is the second time this pair has diverged — v6.4.77 found `cmd_lib_sync` was
+# likewise the unguarded twin of `_check_lib_freshness`'s source-repo carve-out.
+# When you change one, check the other.
+#
+# Appends each `.cyr` of the family to the plan (`ps` sources, `pd` destinations under
+# lib/<name>/) and returns how many; cmd_lib_sync creates lib/<name> and copies only after
+# its checks pass (6.6.17 — this copied as it went).
+fn _libsync_plan_pkg(src_dir, name, ps, pd): i64 {
+    var s_sb = str_builder_new();
+    str_builder_add_cstr(s_sb, src_dir);
+    str_builder_add_cstr(s_sb, "/");
+    str_builder_add_cstr(s_sb, name);
+    var pkg_src = str_builder_build(s_sb);          # Str
+    # 6.6.10: unlistable is named (and counted in _err_count, which cmd_lib_sync checks).
+    var entries = _cbt_list_dir(str_data(pkg_src), "the family was NOT copied");
+    if (entries == 0) { return 0; }
+    var pkg_src_c = str_data(pkg_src);
+    var dst_dir = make_path("lib", name);
+    var n = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var e = vec_get(entries, i);
+        var ed = str_data(e);
+        var el = str_len(e);
+        if (el > 4) {
+            if (memeq(ed + el - 4, ".cyr", 4) == 1) {
+                vec_push(ps, make_path(pkg_src_c, ed));
+                vec_push(pd, make_path(dst_dir, ed));
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+# ================================================================
+# v6.4.63 — version-aware lib-freshness check (yeo-cy-test filing
+# 2026-07-14-shadow-lib-silent-version-skew).
+#
+# WHY THIS EXISTS. A stale project-local ./lib/ shadows the version-pinned
+# snapshot. cycc's `_check_shadow_lib` (src/frontend/lex/lex.cyr) already emits a
+# note, but it (a) byte-SIZE-compares ONE hardcoded sentinel (lib/alloc.cyr) and
+# (b) names nothing when it fires — so a consumer cannot tell whether ./lib/ is
+# byte-identical to the snapshot or three minor versions behind it. yeo-cy-test
+# hit the latter, in CRYPTO: their lib/sigil.cyr was 3.9.8, predating sigil
+# 3.9.9's `_SIGIL_CBANK_SLOT` 0->8 fix — a fix that exists BECAUSE OF that same
+# consumer — while their patra declared TLS slot 0, the documented corruption
+# condition. The toolchain let them ship a known-bad crypto configuration and
+# said only "a shadow exists", which is true of every project using lib/ and so
+# reads as routine noise.
+#
+# WHY HERE AND NOT IN cycc. The wrapper already has cross-platform dir_list
+# (lib/fs.cyr) + file_read_all (lib/io.cyr) with the per-OS #ifdefs inside the
+# lib files, and audit_walk.cyr's bundle markers — so the check costs no new
+# syscall surface and works on Linux/macOS/Windows. cycc's frontend would need
+# hand-rolled per-OS enumeration, and its check is Linux-HOST-only today (the
+# #ifdef keys on host, not emit target), which is precisely the gap. `cyrius
+# build` is also the only sanctioned consumer entry point (CLAUDE.md: never raw
+# `cat | cycc` for projects), so this is where a consumer will see it.
+#
+# `lib sync`'s _libsync_wanted() scoping is deliberately NOT reused: sigil et al.
+# are FOLDED (vendored into lib/ and removed from [deps]), so they are absent
+# from [deps].stdlib and a wanted-filtered walk would skip the exact files that
+# matter. We walk every ./lib/*.cyr and let the version header be the filter.
+# ================================================================
+
+# The two shipped bundle-header formats. Kept local (not reusing audit_walk's
+# _AW_MARKER_*) because those answer "is this vendored?" while these answer
+# "what version?" — different prefixes, and only 12 of 99 libs carry either:
+#   1. `cyrius distlib`    -> `# Version: 3.11.1`                     (11 libs)
+#   2. `scripts/bundle.sh` -> `# Bundled distribution of sakshi v2.4.6` (sakshi
+#      only — predates cyrius distlib; a `# Version: ` parser silently skips it,
+#      and sakshi is the base logger, so that omission would itself be rot.)
+# The other 87 are hand-written stdlib with no version — nothing to compare.
+var _LIBFRESH_MARK_VER = "# Version: ";
+var _LIBFRESH_MARK_BUNDLE = "# Bundled distribution of ";
+
+# Copy the version token at `p` (up to `max` bytes) into a fresh cstr, stopping
+# at whitespace/EOL. Returns 0 for an empty token.
+fn _libfresh_take(p, max): i64 {
+    var len = 0;
+    while (len < max) {
+        var c = load8(p + len);
+        if (c == 10 || c == 13 || c == 32 || c == 9 || c == 0) { break; }
+        len = len + 1;
+    }
+    if (len == 0) { return 0; }
+    var out = alloc(len + 1);
+    var k = 0;
+    while (k < len) {
+        store8(out + k, load8(p + k));
+        k = k + 1;
+    }
+    store8(out + len, 0);
+    return out;
+}
+
+# Parse the bundled-lib version from the head of `path` (cstr). Returns an
+# alloc'd version cstr, or 0 when the file carries neither header format.
+# Scans line starts only, over the first 512 bytes — `# Profile:` is optional
+# and shifts the "Generated by" line, so fixed line numbers are not safe.
+fn _libfresh_version(path): i64 {
+    var buf = alloc(513);
+    var n = file_read_all(path, buf, 512);
+    if (n <= 0) { return 0; }
+    store8(buf + n, 0);
+    var vlen = strlen(_LIBFRESH_MARK_VER);
+    var blen = strlen(_LIBFRESH_MARK_BUNDLE);
+    var i = 0;
+    while (i < n) {
+        # `i` is at a line start.
+        if (str_starts_with_buf(buf + i, n - i, _LIBFRESH_MARK_VER) == 1) {
+            return _libfresh_take(buf + i + vlen, n - i - vlen);
+        }
+        if (str_starts_with_buf(buf + i, n - i, _LIBFRESH_MARK_BUNDLE) == 1) {
+            # `# Bundled distribution of <name> v2.4.6` — take the token after
+            # the " v" that precedes the version, bounded to this line.
+            var j = i + blen;
+            while (j < n) {
+                if (load8(buf + j) == 10) { break; }
+                if (load8(buf + j) == 32) {
+                    if (load8(buf + j + 1) == 118) {   # ' ' then 'v'
+                        return _libfresh_take(buf + j + 2, n - j - 2);
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        # Advance past this line.
+        while (i < n) {
+            if (load8(buf + i) == 10) { i = i + 1; break; }
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+# Compare every versioned ./lib/*.cyr against the version-pinned snapshot and
+# name the drift. Returns the number of skewed bundles (0 = fresh/not
+# applicable). `strict` = 1 makes any drift an error (exit 1) instead of a
+# warning — used by `cyrius build --check-lib-sync` for CI.
+fn _check_lib_freshness(strict): i64 {
+    # The cyrius source repo IS the stdlib — ./lib is canonical here, never a
+    # shadow. Use the NAME-based signal (`[package] name = "cyrius"`), NOT
+    # _dep_find_stdlib_dir's priority-(a) `file_exists("src/main.cyr")`: downstream
+    # repos (gnoboot, kybernet, yeo-cy-test) ALSO build from src/main.cyr and have
+    # a ./lib of resolved deps, so that conflation would silently disable this
+    # check for exactly the consumers it exists to protect. Same conflation was
+    # the v6.0.1 mkdir bug — see cbt/deps/lock.cyr:_dep_is_cyrius_source_repo.
+    if (_dep_is_cyrius_source_repo() == 1) { return 0; }
+    # Only a ./lib/ that actually shadows stdlib is in scope (an empty lib/, or
+    # one holding unrelated project-local modules, is not — the v5.11.57 lesson).
+    if (_dep_dir_has_stdlib("lib") == 0) { return 0; }
+    if (strict == 0) {
+        if (_cbt_env_is_1("CYRIUS_NO_WARN_SHADOW_LIB") == 1) { return 0; }
+    }
+    var ver = _dep_read_cyml_cyrius_field();
+    if (ver == 0) { ver = _VERSION_TOOLCHAIN; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, _home);
+    str_builder_add_cstr(sb, "/versions/");
+    str_builder_add_cstr(sb, ver);
+    str_builder_add_cstr(sb, "/lib");
+    var snap = str_data(str_builder_build(sb));
+    # No snapshot for this pin -> silent. `cyrius lib sync` already reports that
+    # case properly; a build-time check must not become noise. Probe via
+    # _dep_dir_has_stdlib, NOT is_dir — is_dir false-negatives on Darwin
+    # (CHANGELOG [6.0.40]).
+    if (_dep_dir_has_stdlib(snap) == 0) { return 0; }
+    var entries = dir_list(str_from("lib"));
+    if (entries == 0) { return 0; }
+    var list_sb = str_builder_new();
+    var drift = 0;
+    var li = 0;
+    while (li < vec_len(entries)) {
+        var name = str_data(vec_get(entries, li));
+        li = li + 1;
+        var nlen = strlen(name);
+        if (nlen <= 4) { continue; }
+        if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
+        var lv = _libfresh_version(make_path("lib", name));
+        if (lv == 0) { continue; }                    # unversioned stdlib module
+        var sv = _libfresh_version(make_path(snap, name));
+        if (sv == 0) { continue; }                    # absent/unversioned in the pin
+        if (streq(lv, sv) == 1) { continue; }
+        if (drift > 0) { str_builder_add_cstr(list_sb, ", "); }
+        var stem = alloc(nlen - 3);
+        var si = 0;
+        while (si < nlen - 4) {
+            store8(stem + si, load8(name + si));
+            si = si + 1;
+        }
+        store8(stem + nlen - 4, 0);
+        str_builder_add_cstr(list_sb, stem);
+        str_builder_add_cstr(list_sb, " ");
+        str_builder_add_cstr(list_sb, lv);
+        str_builder_add_cstr(list_sb, " (pinned: ");
+        str_builder_add_cstr(list_sb, sv);
+        str_builder_add_cstr(list_sb, ")");
+        drift = drift + 1;
+    }
+    if (drift == 0) { return 0; }
+    var listed = str_data(str_builder_build(list_sb));
+    if (strict == 1) {
+        sys_write(STDERR_FD, "error: ./lib/ is stale vs version-pinned ", 41);
+    } else {
+        sys_write(STDERR_FD, "warning: ./lib/ shadows version-pinned ", 39);
+    }
+    sys_write(STDERR_FD, snap, strlen(snap));
+    sys_write(STDERR_FD, " — ", 5);
+    fmt_int_fd(STDERR_FD, drift);
+    sys_write(STDERR_FD, " bundled lib(s) differ:\n      ", 30);
+    sys_write(STDERR_FD, listed, strlen(listed));
+    sys_write(STDERR_FD, "\n  run `cyrius lib sync --full` to re-sync", 42);
+    if (strict == 1) {
+        sys_write(STDERR_FD, " (--check-lib-sync)\n", 20);
+        return drift;
+    }
+    sys_write(STDERR_FD, ", or set CYRIUS_NO_WARN_SHADOW_LIB=1 to silence\n", 48);
+    return drift;
+}
+
+# v5.11.58: `cyrius lib sync` — vendor the pin snapshot's stdlib into
+# ./lib/. Closes the third-remediation gap from the iron-boot papercut
+# filing Item 4 (alternatives were destructive "delete ./lib/" or the
+# silencing CYRIUS_NO_WARN_SHADOW_LIB=1). Overwrites local copies with
+# the snapshot for pin-faithful builds.
+#
+# v6.2.40 (thoth filing 2026-06-11): scope to the project's declared
+# `[deps].stdlib` (+ per-OS peers) by default, so a curated committed
+# ./lib/ isn't blown up to the full ~88-module snapshot on every sync.
+# `--full` keeps the whole-snapshot behavior; a project with no
+# `[deps].stdlib` declaration also falls back to full (so it never ends
+# up with an empty lib/).
+#
+# Source version: cyrius.cyml [package].cyrius pin if present,
+# else the wrapper's own _VERSION_TOOLCHAIN. Snapshot must
+# exist at ~/.cyrius/versions/<v>/lib/ or we error out.
+fn cmd_lib_sync(): i64 {
+    _dep_vendor_mode = 1;   # v6.5.37 (A0): vendoring — symlinked destinations are refused
+    # v6.4.77 — REFUSE inside the cyrius source repo. `lib sync` copies
+    # ~/.cyrius/versions/<pin>/lib OVER ./lib, which is correct for a consumer
+    # (whose ./lib is a resolved-dep cache) and catastrophic here: in THIS repo
+    # ./lib IS the canonical source of every folded stdlib (the sandhi pattern —
+    # sandhi/sigil/patra/mabda/… are tracked byte-snapshots of upstream dists, not
+    # resolved deps). A sync would silently revert every fold to whatever the
+    # snapshot holds, and because the snapshot is refreshed FROM ./lib by
+    # install.sh --refresh-only, the damage can look like a no-op until a fold that
+    # landed after the last bump quietly disappears.
+    # `_check_lib_freshness` (above) already carves this repo out for exactly this
+    # reason; this fn was the unguarded twin. Erroring rather than returning 0
+    # silently — the user typed the command, so say why it is refused.
+    # See CLAUDE.md "Downstream repo setup" + cbt/deps/lock.cyr:_dep_is_cyrius_source_repo.
+    if (_dep_is_cyrius_source_repo() == 1) {
+        sys_write(STDERR_FD, "error: `lib sync` refused in the cyrius source repo\n", 52);
+        sys_write(STDERR_FD, "  ./lib/ here is the CANONICAL source of the folded stdlib (sandhi pattern),\n", 77);
+        sys_write(STDERR_FD, "  not a resolved-dep cache — syncing would revert every fold.\n", 64);
+        sys_write(STDERR_FD, "  To refresh a folded dep: cp <upstream>/dist/<name>.cyr lib/<name>.cyr\n", 72);
+        return 1;
+    }
+    var sync_ver = _dep_read_cyml_cyrius_field();
+    if (sync_ver == 0) { sync_ver = _VERSION_TOOLCHAIN; }
+    var src_sb = str_builder_new();
+    str_builder_add_cstr(src_sb, _home);
+    str_builder_add_cstr(src_sb, "/versions/");
+    str_builder_add_cstr(src_sb, sync_ver);
+    str_builder_add_cstr(src_sb, "/lib");
+    var src_dir = str_data(str_builder_build(src_sb));
+    if (is_dir(str_from(src_dir)) == 0) {
+        sys_write(STDERR_FD, "error: snapshot lib not found at ", 33);
+        sys_write(STDERR_FD, src_dir, strlen(src_dir));
+        sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
+        sys_write(STDERR_FD, sync_ver, strlen(sync_ver));
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
+    # Scope to declared [deps].stdlib (+ per-OS peers) unless --full.
+    # No declaration → full copy (a curated empty lib/ is never the intent).
+    var declared = 0;
+    if (_lib_sync_full == 0) {
+        declared = _libsync_declared_mods();
+        if (declared != 0) { if (vec_len(declared) == 0) { declared = 0; } }
+    }
+    # 6.6.10: an unlistable snapshot is an error by name, not "copied 0 files".
+    var _ls_e0 = _err_count;
+    var entries = _cbt_list_dir(src_dir, "nothing was copied");
+    if (entries == 0) { return 1; }
+    # 6.6.17: PLAN first, write last. Every (snapshot file, lib/ destination) pair is collected
+    # here; nothing is written until every declared module was found and the cyrius.lock guard
+    # (_libsync_guard) passed every destination. CHANGELOG [6.6.17]
+    var ps = vec_new();
+    var pd = vec_new();
+    var pkgs = vec_new();
+    var li = 0;
+    # v6.5.12: per-declared-module SATISFIED flags. Without this, a declared module
+    # the scan cannot see is dropped and the command still prints a success line —
+    # which is exactly how `unicode` went unnoticed. Same shape as the v6.5.10
+    # distlib-sidecar defect: an under-reporting producer silently disabling the
+    # check that exists to catch it.
+    var nd = 0;
+    if (declared != 0) { nd = vec_len(declared); }
+    var sat = 0;
+    if (nd > 0) {
+        sat = alloc(nd * 8);
+        var zi = 0;
+        while (zi < nd) { store64(sat + zi * 8, 0); zi = zi + 1; }
+    }
+    while (li < vec_len(entries)) {
+        var name_str = vec_get(entries, li);
+        var name = str_data(name_str);
+        var nlen = strlen(name);
+        var is_cyr = 0;
+        if (nlen > 4) {
+            if (load8(name + nlen - 4) == 46) {
+                if (load8(name + nlen - 3) == 99) {
+                    if (load8(name + nlen - 2) == 121) {
+                        if (load8(name + nlen - 1) == 114) {
+                            is_cyr = 1;
+                        }
+                    }
+                }
+            }
+        }
+        if (is_cyr == 1) {
+            var want = 1;
+            if (declared != 0) { want = _libsync_wanted(name, declared); }
+            if (want == 1) {
+                vec_push(ps, make_path(src_dir, name));
+                vec_push(pd, make_path("lib", name));
+                # Mark the declared entry this file satisfied. The stem may be a
+                # per-OS peer (`syscalls_macos.cyr` ← `syscalls`), so re-use the
+                # same prefix rule `_libsync_wanted` matched on.
+                if (nd > 0) {
+                    var mi = 0;
+                    while (mi < nd) {
+                        var dm = vec_get(declared, mi);
+                        var dml = strlen(dm);
+                        if (dml < nlen) {
+                            if (memeq(name, dm, dml) == 1) { store64(sat + mi * 8, 1); }
+                        }
+                        mi = mi + 1;
+                    }
+                }
+            }
+        } else {
+            # v6.5.12: PACKAGE DIRECTORY (`lib/<name>/*.cyr`, e.g. unicode). The
+            # `.cyr` filter above can never match one, and neither can
+            # `_libsync_wanted` — hence the dedicated path.
+            var pidx = 0 - 1;
+            if (declared != 0) { pidx = _libsync_declared_idx(name, declared); }
+            var pkg_want = 0;
+            if (declared == 0) { pkg_want = 1; }
+            if (pidx >= 0) { pkg_want = 1; }
+            if (pkg_want == 1) {
+                var pkg_path = make_path(src_dir, name);
+                if (is_dir(str_from(pkg_path)) == 1) {
+                    var got = _libsync_plan_pkg(src_dir, name, ps, pd);
+                    if (got > 0) {
+                        vec_push(pkgs, make_path("lib", name));
+                        if (pidx >= 0) { store64(sat + pidx * 8, 1); }
+                    }
+                }
+            }
+        }
+        li = li + 1;
+    }
+    # ⛔ v6.5.12: FAIL LOUD on a declared module the scan never satisfied. Reporting
+    # a copy count while silently dropping a declared dependency is the failure this
+    # whole change exists to end — the consumer then hits unresolved symbols with no
+    # link back to `lib sync`. (6.6.17: before anything is written.)
+    if (nd > 0) {
+        var missing = 0;
+        var ci = 0;
+        while (ci < nd) {
+            if (load64(sat + ci * 8) == 0) {
+                if (missing == 0) {
+                    sys_write(STDERR_FD, "error: declared [deps].stdlib module(s) not found in the snapshot:\n", 67);
+                }
+                sys_write(STDERR_FD, "  - ", 4);
+                var mn = vec_get(declared, ci);
+                sys_write(STDERR_FD, mn, strlen(mn));
+                sys_write(STDERR_FD, "\n", 1);
+                missing = missing + 1;
+            }
+            ci = ci + 1;
+        }
+        if (missing > 0) {
+            sys_write(STDERR_FD, "  snapshot: ", 12);
+            sys_write(STDERR_FD, src_dir, strlen(src_dir));
+            # 68, not 66: the em-dash is THREE UTF-8 bytes. A short count here
+            # silently truncates the tail of the message (this one lost ".\n" on
+            # first write) — the `ERR_MSG` hardcoded-length class.
+            sys_write(STDERR_FD, "\n  nothing was dropped silently — fix the declaration or the pin.\n", 68);
+            return 1;
+        }
+    }
+    # 6.6.10: a family directory that could not be listed (named above) fails the sync.
+    if (_err_count > _ls_e0) { return 1; }
+    # 6.6.17: the lock as it stood BEFORE the sync, and the guard over every destination.
+    var had_lock = file_exists("cyrius.lock");
+    _dep_lock_load();
+    if (_libsync_guard(ps, pd) != 0) { return 1; }
+    if (_libsync_pin_move_refused(src_dir, pd, declared) != 0) { return 1; }   # 6.7.13 (D42)
+    var copied = vec_len(pd);
+    if (_dry_run == 1) {
+        var wi = 0;
+        while (wi < copied) {
+            sys_write(STDOUT_FD, "  would sync: ", 14);
+            # the destination cstr, written as text: `println` of an i64 dispatched to println_int
+            # and printed the pointer. CHANGELOG [6.7.12]
+            var wd = vec_get(pd, wi);
+            sys_write(STDOUT_FD, wd, strlen(wd));
+            sys_write(STDOUT_FD, "\n", 1);
+            wi = wi + 1;
+        }
+        sys_write(STDOUT_FD, "dry-run: would sync ", 20);
+    } else {
+        # v6.6.5 — NOT under --dry-run: a dry run that creates ./lib changes the tree, and an
+        # empty lib/ is load-bearing (_dep_find_stdlib_dir branch (a) keys on `is_dir("./lib")`).
+        if (is_dir(str_from("lib")) == 0) { sys_mkdir("lib", 0x1ED); }
+        var ki = 0;
+        while (ki < vec_len(pkgs)) {
+            var pdir = vec_get(pkgs, ki);
+            if (is_dir(str_from(pdir)) == 0) { sys_mkdir(pdir, 0x1ED); }
+            ki = ki + 1;
+        }
+        var wj = 0;
+        while (wj < copied) {
+            _dep_copy_file(vec_get(ps, wj), vec_get(pd, wj));
+            wj = wj + 1;
+        }
+        sys_write(STDOUT_FD, "synced from ", 12);
+        sys_write(STDOUT_FD, src_dir, strlen(src_dir));
+        sys_write(STDOUT_FD, " — copied ", 12);
+    }
+    fmt_int(copied);
+    if (declared != 0) {
+        println(" .cyr files (declared [deps].stdlib subset; --full for whole snapshot)");
+    } else {
+        println(" .cyr files (full snapshot)");
+    }
+    # A project with no cyrius.lock gets its first one from `cyrius deps`, as before.
+    if (_dry_run == 1 || _no_lock == 1 || had_lock == 0) { return 0; }
+    return _libsync_relock(pd);
+}
+
+# 6.6.17 — the 6.6.4 stdlib-leaf guard over every file the sync WOULD write. Under an
+# UNCHANGED pin, a destination whose cyrius.lock hash differs from the snapshot's is refused
+# by name (the snapshot moved, or the lock's row is the previous pin's), and NOTHING is
+# written. A pin change re-locks as before; `cyrius lib sync --relock` accepts explicitly.
+# Until 6.6.17 `lib sync` never consulted the lock, and the first cut of its re-lock rehashed
+# all of lib/ — the silent re-lock the 6.6.4 guard exists to stop. CHANGELOG [6.6.17]
+fn _libsync_guard(ps, pd): i64 {
+    if (_dep_lock_buf == 0) { return 0; }
+    _dep_lock_guard_verb = "lib sync";
+    var i = 0;
+    while (i < vec_len(pd)) {
+        _dep_lock_guard_stdlib_leaf(vec_get(ps, i), vec_get(pd, i));
+        i = i + 1;
+    }
+    _dep_lock_guard_verb = "deps";
+    if (_dep_lock_refused == 0) { return 0; }
+    _ew("error: lib sync: ");
+    fmt_int_fd(STDERR_FD, _dep_lock_refused);
+    _ew(" file(s) refused above — NOTHING was written and cyrius.lock is unchanged.\n");
+    # 6.7.12 (D19): `deps` / `build` no longer re-stamp a moved pin over rows they did not write,
+    # so the old first branch ("you ran deps/build first") is no longer this release's doing.
+    # 6.7.13 (D42): nor `deps --lock` / a scoped `lib sync` — only a lock an older CLI wrote.
+    _ew("  The installed snapshot of the pin cyrius.lock records changed under it — reinstall that\n");
+    _ew("  version; do not `--relock`. Only a lock re-stamped at a pin move without these files\n");
+    _ew("  re-vendored (by `deps`/`build` before 6.7.12, or `deps --lock` / a scoped `lib sync` before\n");
+    # The scoped `--relock` first: a closure-only project re-locked by `deps --lock` gets back
+    # its declared files with it, where `--full` would vendor the whole snapshot. CHANGELOG [6.7.12]
+    _ew("  6.7.13) holds the previous pin's rows: `cyrius lib sync --relock` then\n");
+    _ew("  (`cyrius lib sync --full --relock` in a project that vendors the whole snapshot).\n");
+    return 1;
+}
+
+# ⛔ 6.7.13 (D42, the user, 2026-10-15) — D19 FOR THE SCOPED SYNC. Its re-lock keeps every row it
+# did not write byte for byte and stamps the pin it synced from, so at a pin move a lib/ file
+# outside the declared subset that the new snapshot ships with other bytes kept the OLD pin's row
+# under the NEW pin's trailer: `deps --verify` agreed, and the next `lib sync --full` refused as if
+# the snapshot had moved under an unchanged pin. Now those files are named BEFORE anything is
+# copied (a --dry-run refuses as the real run would), lib/ and cyrius.lock unchanged; `--full`
+# moves them. Only for a scoped sync (`declared`) that would re-lock (a lock with a trailer, not
+# --no-lock). Against the snapshot this sync copies from (`src_dir`). CHANGELOG [6.7.13]
+fn _libsync_pin_move_refused(src_dir, pd, declared): i64 {
+    if (declared == 0 || _no_lock == 1) { return 0; }
+    if (_dep_lock_has_trailer == 0 || _dep_lock_pin_same == 1) { return 0; }
+    var stale = _dep_pin_move_stale_in(src_dir, pd);
+    var k = vec_len(stale);
+    if (k == 0) { return 0; }
+    var pin = _dep_lock_pin_value();
+    _ew("error: lib sync: nothing was copied: [package].cyrius moved from ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(" to ");
+    _ew_shown(pin);
+    _ew(", and lib/ holds ");
+    fmt_int_fd(STDERR_FD, k);
+    if (k == 1) { _ew(" file"); } else { _ew(" files"); }
+    _ew(" outside the declared [deps].stdlib subset that the ");
+    _ew_shown(pin);
+    _ew(" snapshot ships with other bytes:\n");
+    _dep_pin_move_list(stale);
+    _ew("  cyrius.lock records ONE pin for every row; a scoped sync would stamp ");
+    _ew_shown(pin);
+    _ew(" over these rows. Instead:\n");
+    _ew("    cyrius lib sync --full     moves them to ");
+    _ew_shown(pin);
+    _ew(" and re-locks (a project that vendors the whole snapshot)\n");
+    _ew("  Nothing was written: cyrius.lock and lib/ are unchanged (the lock records ");
+    _ew_shown(_dep_lock_pin_rec);
+    _ew(").\n");
+    return 1;
+}
+
+# 6.6.17 — RE-LOCK after a sync: rows for the files the sync wrote are re-hashed, rows for
+# files no longer on disk are dropped, and every other row is kept byte for byte (a local edit
+# to a file the sync did not write stays visible to `deps --verify`). One writer: cmd_deps_lock,
+# with `_dep_lock_only` naming the written set; commit pins carried forward, the trailer names
+# the pin synced from. CHANGELOG [6.6.17]
+fn _libsync_relock(written): i64 {
+    _dep_lock_only = written;
+    var lr = cmd_deps_lock();
+    _dep_lock_only = 0;
+    if (lr != 0) { return 1; }
+    return 0;
+}

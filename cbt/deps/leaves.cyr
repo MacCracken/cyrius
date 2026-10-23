@@ -1,0 +1,416 @@
+# CLI — deps: string lists, named-dep leaves, the requires sidecar, groups, features, target matching.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# The value of the key at (or ending at) buf[pos] — a TOML array of strings, or a single string —
+# as a vec of cstrs. 6.6.17 (m6): elements are TOML strings (`'…'` literal, `"…"` with escapes;
+# a `'…'` element used to be DROPPED), a `#` comment inside the array is skipped (a `"…"` in it was
+# read as an element), and the search for the value stops at the end of the key's own line (it
+# used to skip to the next `[` wherever that was — a section header, when the value was not an
+# array). Empty vec when the line holds no string / array value.
+fn _parse_toml_str_array(buf, len, pos): i64 {
+    var result = vec_new();
+    while (pos < len) {
+        var k = load8(buf + pos);
+        if (k == 61 || k == 91 || k == 10) { break; }
+        pos = pos + 1;
+    }
+    if (pos < len && load8(buf + pos) == 61) { pos = _toml_skip_ws(buf, len, pos + 1); }
+    var e = 0;
+    if (pos < len && (load8(buf + pos) == 34 || load8(buf + pos) == 39)) {
+        var one = _toml_str_at(buf, len, pos, &e);
+        if (one != 0) { vec_push(result, one); }
+        return result;
+    }
+    if (pos >= len || load8(buf + pos) != 91) { return result; }
+    pos = pos + 1;
+    while (pos < len) {
+        var c = load8(buf + pos);
+        if (c == 93) { break; }
+        if (c == 35) {
+            while (pos < len && load8(buf + pos) != 10) { pos = pos + 1; }
+            continue;
+        }
+        if (c == 34 || c == 39) {
+            var s = _toml_str_at(buf, len, pos, &e);
+            if (s != 0) {
+                vec_push(result, s);
+                pos = e;
+                continue;
+            }
+        }
+        pos = pos + 1;
+    }
+    return result;
+}
+
+# v6.3.1 (dependency-model arc, lever 2): split a comma-separated CLI value
+# ("gpu,win-shell") into a vec<cstr> of feature names. Empty segments are
+# dropped, so a trailing/leading comma is tolerated. Used by the cyrius.cyr
+# pre-scan to parse `--features <list>` ahead of the dep resolver.
+fn _split_csv(s): i64 {
+    var out = vec_new();
+    var sl = strlen(s);
+    var i = 0;
+    var start = 0;
+    while (i <= sl) {
+        if (i == sl || load8(s + i) == 44) {
+            var seg = i - start;
+            if (seg > 0) {
+                var d = alloc(seg + 1);
+                memcpy(d, s + start, seg);
+                store8(d + seg, 0);
+                vec_push(out, d);
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+# v6.2.46/.47 (deps lever 1, Phase A): pull a vec of stdlib-leaf names into
+# scope via the recursive stdlib resolver (is_top=1 → each leaf's
+# `include "lib/<leaf>"` is pushed onto `_dep_includes`), deduped by
+# `_dep_stdlib_seen`. FAIL-LOUD: a leaf that doesn't resolve returns the error
+# count. Shared by the `requires` key (.46) and the `.deps` sidecar (.47).
+# Caller must have inited `_dep_stdlib_seen` + resolved a non-0 `stdlib_dir`.
+# Record a stdlib leaf pulled on behalf of a named dep (see _dep_nd_leaves), once.
+fn _dep_note_nd_leaf(leaf): i64 {
+    if (_dep_nd_leaves == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_nd_leaves)) {
+        if (streq(vec_get(_dep_nd_leaves, i), leaf) == 1) { return 0; }
+        i = i + 1;
+    }
+    vec_push(_dep_nd_leaves, leaf);
+    return 0;
+}
+
+fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
+    var errs = 0;
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var leaf = vec_get(leaves, i);
+        # 6.6.20: a `requires` entry or a sidecar line is a LEAF name, checked by the one leaf rule
+        # before it becomes a path — a sidecar's `../../x` used to reach `_dep_copy_file`'s
+        # destination guard and then this fn's "it IS in the stdlib (<a path outside it>)".
+        if (_dep_leaf_ok(leaf) == 0) {
+            _dep_refuse_leaf("dep ", dep_name, leaf);
+            errs = errs + 1;
+            i = i + 1;
+            continue;
+        }
+        _dep_note_nd_leaf(leaf);
+        var r = _dep_copy_stdlib_recursive(stdlib_dir, leaf, 1);
+        if (r == 1) {
+            # v6.5.24 — SAY WHICH CONDITION ACTUALLY HELD. This printed
+            # "but it is not in the cyrius stdlib" for every failure, which was FALSE
+            # for the ones consumers actually hit: `bench`, `test`, `patra`, `random`,
+            # `chrono`, `slice` and `ct` are all present in the stdlib, and the real
+            # condition was an unpopulated resolution dir. The line above it already
+            # said `cannot read <path>` — but this one is phrased as a CONCLUSION, so
+            # it wins, and it pointed maintainers at deleting a correct
+            # `[deps].stdlib` declaration. Filed from bote CI (also agnosai, majra).
+            # Probe the SOURCE dir: if the module is there, the stdlib is fine and the
+            # copy is what failed — a different problem with a different fix.
+            var _lp_sb = str_builder_new();
+            str_builder_add_cstr(_lp_sb, stdlib_dir);
+            str_builder_add_cstr(_lp_sb, "/");
+            str_builder_add_cstr(_lp_sb, leaf);
+            str_builder_add_cstr(_lp_sb, ".cyr");
+            var _lp_src = str_data(str_builder_build(_lp_sb));
+            sys_write(STDERR_FD, "error: dep ", 11);
+            _ew_shown(dep_name);
+            sys_write(STDERR_FD, " requires '", 11);
+            sys_write(STDERR_FD, leaf, strlen(leaf));
+            # ⚠ BOTH declared lengths here were off by one and BOTH truncated visibly —
+            # measured on the real bote tree at v6.5.24, which printed `(looked in./lib)`
+            # with the trailing space eaten. The em-dash in the first string is 3 UTF-8
+            # BYTES, so its literal is 27 bytes, not the 26 characters it looks like.
+            # This is the same hardcoded-length class the v6.5.24 `ERR_MSG` audit found 49
+            # of 104 wrong — and it slipped through because that gate scans
+            # `ERR_MSG(S, "...", N)` under `src/` only, so `sys_write(STDERR_FD, "...", N)`
+            # under `cbt/` is invisible to it. Gate widened at v6.5.25.
+            if (file_exists(_lp_src) == 1) {
+                sys_write(STDERR_FD, "' — it IS in the stdlib (", 27);
+                sys_write(STDERR_FD, _lp_src, strlen(_lp_src));
+                sys_write(STDERR_FD, ") but could not be brought into ./lib. Run `cyrius lib sync --full`; do NOT remove the declaration.\n", 100);
+            } else {
+                sys_write(STDERR_FD, "' but it is not in the cyrius stdlib (looked in ", 48);
+                sys_write(STDERR_FD, stdlib_dir, strlen(stdlib_dir));
+                sys_write(STDERR_FD, ")\n", 2);
+            }
+            errs = errs + 1;
+        }
+        i = i + 1;
+    }
+    return errs;
+}
+
+# v6.2.47 (deps lever 1, Phase A producer-side consumed): read a `cyrius
+# distlib` sidecar (`dist/<pkg>.deps`) — one stdlib leaf per line, `#` comments
+# + blank lines ignored, trailing CR/space trimmed — into a vec of leaf cstrs.
+# Returns 0 (not a vec) when the file is absent/empty. Lets a consumer that
+# declares just `[deps.<pkg>]` auto-pull the fold's leaves with no hand-authored
+# `requires` key.
+fn _dep_read_sidecar(path): i64 {
+    if (file_exists(path) == 0) { return 0; }
+    var sz = _file_size(path);
+    if (sz <= 0) { return 0; }
+    var buf = alloc(sz + 1);
+    var n = file_read_all(path, buf, sz);
+    if (n <= 0) { return 0; }
+    store8(buf + n, 0);
+    var leaves = vec_new();
+    var pos = 0;
+    while (pos < n) {
+        var ls = pos;
+        while (pos < n && load8(buf + pos) != 10) { pos = pos + 1; }
+        var le = pos;
+        if (pos < n) { pos = pos + 1; }
+        var lp = ls;
+        while (lp < le) {
+            var c = load8(buf + lp);
+            if (c != 32 && c != 9) { break; }
+            lp = lp + 1;
+        }
+        if (lp < le && load8(buf + lp) != 35) {
+            var ep = le;
+            while (ep > lp) {
+                var c2 = load8(buf + ep - 1);
+                if (c2 != 32 && c2 != 9 && c2 != 13) { break; }
+                ep = ep - 1;
+            }
+            var nl = ep - lp;
+            if (nl > 0) {
+                var leaf = alloc(nl + 1);
+                memcpy(leaf, buf + lp, nl);
+                store8(leaf + nl, 0);
+                vec_push(leaves, leaf);
+            }
+        }
+    }
+    return leaves;
+}
+
+# v6.2.49 (deps lever 1 / Phase B — named module groupings): generic membership.
+fn _dep_list_has(list, name): i64 {
+    if (list == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(list)) {
+        var v = vec_get(list, i);
+        if (strlen(v) == nl) { if (memeq(v, name, nl) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.2.49 Phase B: look up a `[groups]` name → its member vec, or 0 if not a group.
+fn _dep_group_lookup(name): i64 {
+    if (_dep_group_names == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_group_names)) {
+        var gn = vec_get(_dep_group_names, i);
+        if (strlen(gn) == nl) { if (memeq(gn, name, nl) == 1) { return vec_get(_dep_group_members, i); } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.2.49 Phase B: expand one name into `out`. If it names a `[groups]` group,
+# recurse over its members (groups may reference groups); else append the bare
+# name (deduped). A self/mutual cycle is skipped via the `seen` guard.
+fn _dep_expand_one(out, name, seen): i64 {
+    var members = _dep_group_lookup(name);
+    if (members == 0) {
+        if (_dep_list_has(out, name) == 0) { vec_push(out, name); }
+        return 0;
+    }
+    if (_dep_list_has(seen, name) == 1) { return 0; }   # cycle — skip
+    vec_push(seen, name);
+    var j = 0;
+    while (j < vec_len(members)) {
+        _dep_expand_one(out, vec_get(members, j), seen);
+        j = j + 1;
+    }
+    return 0;
+}
+
+# v6.2.49 Phase B: expand any `[groups]` references in a name list (`[deps].stdlib`
+# or a `[deps.NAME] requires`) into a flat, deduped list of leaf/dep names.
+# Passthrough (returns the SAME vec) when no groups are defined, so non-`[groups]`
+# manifests resolve byte-identical to before.
+fn _dep_expand_groups(names): i64 {
+    if (_dep_group_names == 0) { return names; }
+    if (vec_len(_dep_group_names) == 0) { return names; }
+    var out = vec_new();
+    var seen = vec_new();
+    var i = 0;
+    while (i < vec_len(names)) {
+        _dep_expand_one(out, vec_get(names, i), seen);
+        i = i + 1;
+    }
+    return out;
+}
+
+# v6.2.49 Phase B: parse a `[groups]` section into `_dep_group_names` /
+# `_dep_group_members` (parallel vecs). Each `name = ["a", "b", ...]` line defines
+# a group that expands at resolve time wherever it's named in `[deps].stdlib` or a
+# `[deps.NAME] requires` list. Members are whole stdlib-leaf / dep names (the
+# `pkg:submodule` sub-unit form awaits Phase C).
+fn _dep_parse_groups(buf, n): i64 {
+    _dep_group_names = vec_new();
+    _dep_group_members = vec_new();
+    _dep_parse_name_lists(buf, n, "groups", _dep_group_names, _dep_group_members);   # 6.6.20: the one reader
+    return 0;
+}
+
+# v6.3.32 Phase D (modularity arc, lever-1 COMPLETION — dissolve the "stdlib"
+# category): register the built-in `std` DEFAULT GROUP — the universal core stdlib
+# leaves every real program pulls (matches the `cyrius init` template core). This
+# makes `stdlib`/`requires` list a group like any other (`stdlib = ["std", <extras>]`)
+# instead of hand-ordering the whole leaf set: `std` expands at resolve time via the
+# Phase B `_dep_expand_groups` path (already applied to the stdlib list + `requires`).
+# Registered AFTER `_dep_parse_groups` so a manifest that defines its OWN `std` group
+# wins (override, not clobber). Member ORDER matches the init-template core so a
+# `["std", …]` list resolves the SAME leaves in the SAME order as the explicit form
+# → byte-identical. A manifest that never names `std` is unaffected (the expansion of
+# a std-free list is dedup-in-order = identity).
+fn _dep_register_default_std_group(): i64 {
+    if (_dep_group_names == 0) { return 0; }              # parse_groups not run yet
+    if (_dep_group_lookup("std") != 0) { return 0; }      # manifest defined its own `std`
+    var m = vec_new();
+    vec_push(m, "string");
+    vec_push(m, "fmt");
+    vec_push(m, "alloc");
+    vec_push(m, "io");
+    vec_push(m, "vec");
+    vec_push(m, "str");
+    vec_push(m, "syscalls");
+    vec_push(_dep_group_names, "std");
+    vec_push(_dep_group_members, m);
+    return 0;
+}
+
+# v6.3.1 (dependency-model arc, lever 2 — required vs optional deps): parse a
+# `[features]` table into `_dep_feature_names` / `_dep_feature_deps` (parallel
+# vecs), read like `_dep_parse_groups`. Each `name = ["dep", ...]`
+# line declares a feature whose members are optional-dep names and/or other
+# feature names (recursively expanded by `_dep_feature_expand` at resolve time).
+# The reserved `default = [...]` line is the set activated unless
+# `--no-default-features` is passed.
+# Absent `[features]` → empty vecs → no optional dep is ever activated (every
+# pre-existing manifest resolves byte-identical). Parse-only here; the active-set
+# computation + the skip gate live with the resolver (`_dep_feature_active`).
+fn _dep_parse_features(buf, n): i64 {
+    _dep_feature_names = vec_new();
+    _dep_feature_deps = vec_new();
+    _dep_parse_name_lists(buf, n, "features", _dep_feature_names, _dep_feature_deps);   # 6.6.20: the one reader
+    return 0;
+}
+
+# v6.3.1 lever 2: look up a `[features]` name → its member vec, or 0 if `name`
+# is not a declared feature (then it's treated as a bare dep name by the caller).
+fn _dep_feature_lookup(name): i64 {
+    if (_dep_feature_names == 0) { return 0; }
+    var nl = strlen(name);
+    var i = 0;
+    while (i < vec_len(_dep_feature_names)) {
+        var fnm = vec_get(_dep_feature_names, i);
+        if (strlen(fnm) == nl) { if (memeq(fnm, name, nl) == 1) { return vec_get(_dep_feature_deps, i); } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.3.1 lever 2: expand `name` into the active-dep set `out`. If `name` is a
+# declared feature, recurse over its members (features may name other features);
+# otherwise it's a dep name → append (deduped). Self/mutual cycles skip via the
+# `seen` guard. Mirrors `_dep_expand_one` (the [groups] analog).
+fn _dep_feature_expand(out, name, seen): i64 {
+    var members = _dep_feature_lookup(name);
+    if (members == 0) {
+        if (_dep_list_has(out, name) == 0) { vec_push(out, name); }
+        return 0;
+    }
+    if (_dep_list_has(seen, name) == 1) { return 0; }   # cycle — skip
+    vec_push(seen, name);
+    var j = 0;
+    while (j < vec_len(members)) {
+        _dep_feature_expand(out, vec_get(members, j), seen);
+        j = j + 1;
+    }
+    return 0;
+}
+
+# v6.3.1 lever 2: is the optional dep `dep_name` activated by the current feature
+# selection? Active set = the `[features]` `default = [...]` list (unless
+# `--no-default-features`) ∪ the `--features` request list, each fully expanded.
+# A `--features wgpu` naming an optional dep directly (no `[features]` entry)
+# activates it too (Cargo-style implicit feature). With no `[features]` table and
+# no `--features`, an optional dep is INACTIVE — it never resolves unless named.
+fn _dep_feature_active(dep_name): i64 {
+    var active = vec_new();
+    var seen = vec_new();
+    if (_cli_no_default == 0) {
+        var defs = _dep_feature_lookup("default");
+        if (defs != 0) {
+            var i = 0;
+            while (i < vec_len(defs)) {
+                _dep_feature_expand(active, vec_get(defs, i), seen);
+                i = i + 1;
+            }
+        }
+    }
+    if (_cli_features != 0) {
+        var k = 0;
+        while (k < vec_len(_cli_features)) {
+            _dep_feature_expand(active, vec_get(_cli_features, k), seen);
+            k = k + 1;
+        }
+    }
+    return _dep_list_has(active, dep_name);
+}
+
+# 1 when the build this run makes is aarch64: `--aarch64` (or the arm64 macOS CLI's default) set
+# `_arch`, or the CLI is the aarch64 Linux one, whose cycc emits aarch64 only while `_arch` stays
+# ARCH_X86 (`current_cc()` / the run path read it; see `arch_name`). `_arch` alone answered x86_64
+# there, so a plain `cyrius deps` vendored `target = "x86_64"` deps and skipped `"aarch64"` ones.
+# CHANGELOG [6.7.14]
+fn _dep_arch_is_a64(): i64 {
+    if (_arch == ARCH_AARCH64) { return 1; }
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 1;
+    #endif
+    #endif
+    return 0;
+}
+
+# v6.3.1 lever 2: does a dep's `target = "<arch|os>"` key match the current build
+# target? Arch axis reads `_dep_arch_is_a64()` (6.7.14; `_arch` before); OS axis reads the
+# `_win_target` / `_agnos_target` / `_baremetal_target` flags the cyrius.cyr
+# pre-scan set before resolution. "linux" means a native userland build (not
+# windows/agnos/bare-metal) — note it also matches a native macOS host today
+# (no separate macOS target flag yet; a follow-up if a consumer needs it). An
+# unrecognized target string never matches (a typo skips the dep, doesn't pull it
+# everywhere). Callers only invoke this when dep_target != 0.
+fn _dep_target_matches(t): i64 {
+    var tl = strlen(t);
+    var a64 = _dep_arch_is_a64();
+    if (tl == 7 && memeq(t, "aarch64", 7) == 1) { return a64; }
+    if (tl == 5 && memeq(t, "arm64", 5) == 1) { return a64; }
+    if (tl == 6 && memeq(t, "x86_64", 6) == 1) { return 1 - a64; }
+    if (tl == 3 && memeq(t, "x86", 3) == 1) { return 1 - a64; }
+    if (tl == 7 && memeq(t, "windows", 7) == 1) { if (_win_target == 1) { return 1; } return 0; }
+    if (tl == 5 && memeq(t, "agnos", 5) == 1) { if (_agnos_target == 1) { return 1; } return 0; }
+    if (tl == 10 && memeq(t, "bare-metal", 10) == 1) { if (_baremetal_target == 1) { return 1; } return 0; }
+    if (tl == 5 && memeq(t, "linux", 5) == 1) {
+        if (_win_target == 0 && _agnos_target == 0 && _baremetal_target == 0) { return 1; }
+        return 0;
+    }
+    return 0;
+}

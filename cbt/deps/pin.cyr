@@ -1,0 +1,177 @@
+# CLI — deps: the [package] cyrius pin, the package version and its ${file:…} interpolation.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# Read `[package].cyrius = "X.Y.Z"` from cwd's cyrius.cyml.
+# Returns a NUL-terminated cstr of the version, or 0 if the field
+# is absent (the field is optional — only set in downstream repos
+# that pin a specific toolchain version).
+#
+# See CHANGELOG [5.11.17]; 6.6.17 reads it through the one manifest reader.
+#
+# ⛔ the package-pin path bug (6.6.20) — THE PIN IS A PATH COMPONENT, AND AT THE REDIRECT IT IS EXECUTED.
+# Every caller joins it into `<home>/versions/<pin>/...`, and `_try_redirect_to_pinned`
+# execve's `<home>/versions/<pin>/bin/cyrius` before any verb runs. The value was never
+# checked, so a cloned repo's `cyrius = "../../(...)/proc/self/cwd/payload"` ran the repo's
+# own `payload/bin/cyrius` on `cyrius version` / fmt / lint / build (a backslash spelling did
+# the same on Windows). The shape is checked HERE, at the one reader, so the redirect, the
+# stdlib resolver, lib sync, the freshness check, both distlib resolvers, the cyrius.lock
+# trailer and the `manifest-pin:` line all get it — including under CYRIUS_RESOLVED=1, which
+# skips the redirect. A malformed pin is REFUSED (exit 1), never read as "no pin": that would
+# silently swap in this wrapper's own toolchain. Returns 0 only when the key is absent.
+fn _dep_read_cyml_cyrius_field(): i64 {
+    var pin = _mf_str("package", "cyrius");   # 6.6.17: the one reader (cbt/manifest.cyr)
+    if (pin == 0) {
+        if (_toml_bad == 0) { return 0; }   # absent: the field is optional
+        _ew("error: cyrius.cyml [package] cyrius must be a quoted version string (e.g. cyrius = \"");
+        _ew(_VERSION_TOOLCHAIN);
+        _ew("\") — refusing to run with an unreadable toolchain pin\n");
+        _cbt_exit(1);
+    }
+    if (_dep_pin_shape_ok(pin) == 0) {
+        _ew("error: cyrius.cyml [package] cyrius = '");
+        _ew_shown(pin);
+        _ew("' is not a version\n");
+        _ew("  a pin names a directory under <home>/versions: a leading digit, then only [0-9A-Za-z._-], no '..' (e.g. ");
+        _ew(_VERSION_TOOLCHAIN);
+        _ew(")\n  refusing to resolve a toolchain from it\n");
+        _cbt_exit(1);
+    }
+    return pin;
+}
+
+# 1 when `pin` has a version's shape — a leading digit, then only [0-9A-Za-z._-], no `..` — so
+# it is exactly one path component that cannot leave `<home>/versions` (`/`, `\` and `:` are
+# outside the set). scripts/version-bump.sh's charset plus `_` — which
+# `_released_slot_guard_current` (cbt/cyrius.cyr) already allows in a store version name — and a
+# `..` ban (version-bump.sh has none).
+fn _dep_pin_shape_ok(pin): i64 {
+    var c = load8(pin);
+    if (c < 48 || c > 57) { return 0; }   # leading digit (also refuses the empty string)
+    var i = 0;
+    while (c != 0) {
+        var ok = 0;
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (c >= 65 && c <= 90) { ok = 1; }
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c == 46 || c == 95 || c == 45) { ok = 1; }   # . _ -
+        if (ok == 0) { return 0; }
+        if (c == 46 && load8(pin + i + 1) == 46) { return 0; }   # '..'
+        i = i + 1;
+        c = load8(pin + i);
+    }
+    return 1;
+}
+
+# v6.5.21 — read `[package].version` and resolve it to a literal, for the
+# `#@pkgver` marker that surfaces `CYRIUS_PKG_VERSION` to source.
+#
+# ⚠ NOTHING in the toolchain resolved `[package].version` before this. The only
+# `${file:VERSION}` expander in the tree (`bayan_cyml_expand_value`,
+# lib/bayan.cyr) has ZERO callers, bayan is not in cbt's include set, and
+# `cyrius package` printed "unknown" for a manifest that plainly declares a
+# version. The roadmap's "which already resolves `${file:VERSION}`" described no
+# live code path — the expander had to be written, not merely plumbed.
+#
+# Handles the one interpolation the manifests actually use: `${file:PATH}` reads
+# PATH (relative to cwd) and trims surrounding whitespace. Returns 0 when the
+# field is absent or the referenced file is unreadable, so the caller emits NO
+# marker and the constant is simply ABSENT — a use site then fails honestly with
+# `undefined variable`. A silently WRONG version banner is the exact failure the
+# sit consumer filed; absent beats wrong.
+fn _dep_read_cyml_package_version(): i64 {
+    var raw = _mf_str("package", "version");   # 6.6.17: the one reader (cbt/manifest.cyr)
+    if (raw == 0) { return 0; }
+    return _dep_expand_file_interp(raw, strlen(raw));
+}
+
+# `${file:PATH}` → the trimmed contents of PATH. Anything else passes through unchanged, so a
+# plain `version = "1.2.3"` works with no special case. 0 when it resolves to nothing — the file
+# does not exist, or holds only whitespace — so the build carries no CYRIUS_PKG_VERSION (absent
+# beats wrong). -1 after NAMING a refusal.
+# ⛔ 6.6.20 (SEC-04) — the refusals. This was `file_exists` + `file_read_all(path, fb, 511)`, so
+# `${file:../x}`, `${file:/abs/x}`, `${file:.git/config}` and the ordinary `${file:VERSION}` over a
+# committed `VERSION -> ../x` link each put an out-of-project file into the binary (`#@pkgver`) and
+# onto `--print-config` — the very shapes 6.6.19 refuses for [embed]. Now PATH is checked by the
+# [embed] rules (`_proj_path_bad`) and read through the same link-free open (`_proj_read`: a
+# regular file with one link, at most 511 bytes). And the VALUE — read or literal — holds no
+# control byte: cbt writes it after `#@pkgver` on a line of its own, so a line break started a new
+# SOURCE line (a multi-line file's lines compiled, and the compiler echoed them — `.git/config`'s
+# `extraheader` included; `version = "1.0\nsyscall(...)"` ran). `label` names the value in the
+# refusal. CHANGELOG [6.6.20] (the file-include manifest read bug)
+fn _dep_expand_file_interp(raw, rlen): i64 {
+    return _dep_expand_file_interp_at(raw, rlen, "cyrius.cyml [package] version");
+}
+
+# The project's ./VERSION as a version, by the same rules (`_project_version`'s fallback, and
+# `cyrius publish`'s cross-check) — 0 when there is none, -1 after naming a refusal.
+fn _dep_read_version_file(): i64 {
+    return _dep_expand_file_interp_at("${file:VERSION}", 15, "the project's ./VERSION");
+}
+
+# "<label> = "<raw, shown escaped>": <why>" — named; answers -1.
+fn _dep_pkgver_refuse(label, raw, why): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, label);
+    str_builder_add_cstr(sb, " = \"");
+    str_builder_add_cstr(sb, _shown(raw));
+    str_builder_add_cstr(sb, "\": ");
+    str_builder_add_cstr(sb, why);
+    _err(str_data(str_builder_build(sb)));
+    return 0 - 1;
+}
+
+fn _dep_pkgver_e_ctl(): i64 {
+    return "holds a line break or another control character; a version is one line (it is written after #@pkgver, where a line break starts a new source line)";
+}
+
+fn _dep_expand_file_interp_at(raw, rlen, label): i64 {
+    var isf = 1;
+    if (rlen < 8) { isf = 0; }
+    elif (memeq(raw, "${file:", 7) == 0) { isf = 0; }
+    elif (load8(raw + rlen - 1) != 125) { isf = 0; }      # '}'
+    if (isf == 0) {
+        var j = 0;
+        while (j < rlen) {
+            var lc = load8(raw + j);
+            if (lc < 32 || lc == 127) { return _dep_pkgver_refuse(label, raw, _dep_pkgver_e_ctl()); }
+            j = j + 1;
+        }
+        return raw;
+    }
+    var plen = rlen - 8;
+    if (plen <= 0) { return 0; }
+    var path = alloc(plen + 1);
+    memcpy(path, raw + 7, plen);
+    store8(path + plen, 0);
+    var why = _proj_path_bad(path, _PP_FILE);
+    if (why != 0) { return _dep_pkgver_refuse(label, raw, why); }
+    var fn_read = 0;
+    var fb = _proj_read(path, &fn_read, &why, _PP_FILE);
+    if (fb == 0) {
+        if (why == _proj_e_missing()) { return 0; }       # no such file: absent, as before
+        return _dep_pkgver_refuse(label, raw, why);
+    }
+    var s = 0;
+    while (s < fn_read && (load8(fb + s) == 32 || load8(fb + s) == 10 || load8(fb + s) == 13 || load8(fb + s) == 9)) { s = s + 1; }
+    var e = fn_read;
+    while (e > s && (load8(fb + e - 1) == 32 || load8(fb + e - 1) == 10 || load8(fb + e - 1) == 13 || load8(fb + e - 1) == 9)) { e = e - 1; }
+    var olen = e - s;
+    if (olen <= 0) { return 0; }
+    var out = alloc(olen + 1);
+    var k = 0;
+    while (k < olen) {
+        var c = load8(fb + s + k);
+        # by LENGTH, not strlen: a NUL inside the file is a control byte too
+        if (c < 32 || c == 127) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "the file ");
+            str_builder_add_cstr(sb, _dep_pkgver_e_ctl());
+            return _dep_pkgver_refuse(label, raw, str_data(str_builder_build(sb)));
+        }
+        store8(out + k, c);
+        k = k + 1;
+    }
+    store8(out + olen, 0);
+    return out;
+}

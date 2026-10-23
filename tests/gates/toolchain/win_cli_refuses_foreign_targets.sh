@@ -79,7 +79,7 @@
 #   6.7.14 (issues/archived/2026-10-15-aarch64-linux-cli-deps-target-reads-x86-arch.md): the arch axis of a
 #      dep's `target` key read `_arch`, which stays ARCH_X86 on the aarch64 Linux CLI (its cycc emits
 #      aarch64 only), so a plain `cyrius deps` vendored the `target = "x86_64"` dep and skipped the
-#      `"aarch64"` one, rc 0 (qemu, pi). `_dep_target_matches` reads `_dep_arch_is_a64()` (cbt/deps.cyr).
+#      `"aarch64"` one, rc 0 (qemu, pi). `_dep_target_matches` reads `_dep_arch_is_a64()` (cbt/deps/leaves.cyr).
 #      The filed two-dep manifest (da: aarch64, dx: x86_64): L4 the x86_64 Linux CLI (control) plain ->
 #      lib/dx.cyr, `--aarch64` -> lib/da.cyr; A11 the aarch64 Linux CLI plain -> lib/da.cyr only, A12
 #      `--aarch64` -> lib/da.cyr only. pi runs the same manifest with the native CLI (the CHANGELOG)

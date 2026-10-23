@@ -332,8 +332,8 @@ rc=0; ( cd "$W/s" && PATH="$W/nohash" CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_
 _fn_body() { awk -v want="$2" '$0 ~ "^fn " want "\\(" { inb = 1 } inb && /^}/ { print; inb = 0 } inb { print }' "$1"; }
 x=0
 for f in _git_run; do
-    _fn_body cbt/deps.cyr "$f" > "$W/$f.body"
-    [ -s "$W/$f.body" ] || { fail "axis 7: $f not found in cbt/deps.cyr"; x=1; continue; }
+    _fn_body cbt/deps/git_cache.cyr "$f" > "$W/$f.body"
+    [ -s "$W/$f.body" ] || { fail "axis 7: $f not found in cbt/deps/git_cache.cyr"; x=1; continue; }
     ol=$(grep -n 'cfd = sys_open(' "$W/$f.body" | head -1 | cut -d: -f1)
     # the fork: `sys_fork()`, or since 6.7.14 `_cbt_fork_tracked(` (cbt/sigclean.cyr: a fork the kill
     # handler tracks, which answers as sys_fork() does)
@@ -361,14 +361,14 @@ grep -q "git could not verify it" "$W/a9.out" || { fail "axis 8: a failing updat
 
 # ── axis 9: STATIC — judged with the temps in place; the tool memo needs a real run ─────
 x=0
-_fn_body cbt/deps.cyr _git_cache_verify_raw > "$W/raw.body"
+_fn_body cbt/deps/git_cache.cyr _git_cache_verify_raw > "$W/raw.body"
 [ -s "$W/raw.body" ] || { fail "axis 9: _git_cache_verify_raw not found"; x=1; }
 grep -q '_git_verify_cleanup' "$W/raw.body" && { fail "axis 9: _git_cache_verify_raw cleans its temps up itself — the judge then probes a temp dir the cleanup just freed"; x=1; }
-_fn_body cbt/deps.cyr _git_cache_verify > "$W/cv.body"
+_fn_body cbt/deps/git_cache.cyr _git_cache_verify > "$W/cv.body"
 jl=$(grep -n '_git_cap_judge(' "$W/cv.body" | head -1 | cut -d: -f1)
 cl=$(grep -n '_git_verify_cleanup(' "$W/cv.body" | tail -1 | cut -d: -f1)
 { [ -n "$jl" ] && [ -n "$cl" ] && [ "$jl" -lt "$cl" ]; } || { fail "axis 9: _git_cache_verify does not judge BEFORE its final cleanup (judge line ${jl:-none}, cleanup line ${cl:-none})"; x=1; }
-_fn_body cbt/deps.cyr _sha256sum_file > "$W/sf.body"
+_fn_body cbt/deps/sha256.cyr _sha256sum_file > "$W/sf.body"
 [ -s "$W/sf.body" ] || { fail "axis 9: _sha256sum_file not found"; x=1; }
 grep -qE 'sys_fork|sys_execve|exec_capture|_cbt_tmpfile' "$W/sf.body" && { fail "axis 9: _sha256sum_file starts a process or opens a capture again"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 9: the cache verdict is judged before the verify's temps are removed; the lock's hasher starts no process"

@@ -271,7 +271,7 @@ fn _cwd_path(): i64 {
     # unrouted on both Macs: a SIGSYS kill on Intel, a stale-x16 call on Apple Silicon, reached
     # whenever $PWD was unset or empty. Derive it from the "." fd instead: fcntl(F_GETPATH = 50)
     # writes the absolute path (MAXPATHLEN 1024 fits the buffer) and returns 0 — the form
-    # cbt/deps.cyr's _abs_path has used on both Macs since 6.0.41. CHANGELOG [6.6.8]
+    # cbt/deps/vendor.cyr's _abs_path has used on both Macs since 6.0.41. CHANGELOG [6.6.8]
     var mbuf = alloc(4096);
     var dfd = sys_open(".", 0, 0);
     if (dfd >= 0) {

@@ -1,0 +1,227 @@
+# CLI — deps: the NAME rule and its refusals, module paths, source links, the clone dir, the escaping printer.
+# ================================================================
+# Split from cbt/deps.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# The NAME rule — a `[deps.NAME]` header (the deps-header dot-dot path bug) and a modular sub-module (the include
+# filename-capture overflow bug), silent:
+# 1 when `name` cannot be one path component — empty, `.`-led (`.` and `..` alias the parent:
+# `[deps..]` cloned into `<home>/deps/./<tag>`, i.e. ANOTHER dep's cache root), or holding `/`,
+# `\` (a Windows separator), `..` or a control byte (a header name is echoed in errors, and the
+# old scan ran across newlines). The same set the tag rule refuses (_dep_reject_unsafe_tag),
+# less the `/` a tag may hold. CHANGELOG [6.6.20] (the deps-name guard bug).
+fn _dep_name_unsafe(name): i64 {
+    if (load8(name) == 0 || load8(name) == 46) { return 1; }   # empty, '.'-led
+    var i = 0;
+    var c = load8(name);
+    while (c != 0) {
+        if (c == 47 || c == 92 || c < 32 || c == 127) { return 1; }   # '/', '\', control
+        if (c == 46 && load8(name + i + 1) == 46) { return 1; }      # '..'
+        i = i + 1;
+        c = load8(name + i);
+    }
+    return 0;
+}
+
+# 1 when a stdlib LEAF name may become a path under lib/ and an include line: non-empty,
+# [A-Za-z0-9_/-] only (so no `..`, no quote, no newline), no leading, trailing or doubled `/`.
+# A `/` stays legal: `unicode/categories` is a leaf. The ONE leaf rule (6.6.20): distlib's
+# requires block and `--modular` index (the producers), a `lib:` index entry, a `requires` key,
+# a `dist/<pkg>.deps` sidecar line and `[deps] stdlib` (the consumers). It was three rules — the
+# producer allowed `/`, the index emit checked nothing, and the consumer's `lib:` check was the
+# dep-NAME rule, which refused `/`, so `distlib --modular` wrote `lib:unicode/categories` and
+# every consumer refused it as path traversal; sidecar leaves had no check at all.
+fn _dep_leaf_ok(lf): i64 {
+    var n = strlen(lf);
+    if (n == 0 || load8(lf) == 47 || load8(lf + n - 1) == 47) { return 0; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(lf + i);
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        elif (c >= 65 && c <= 90) { ok = 1; }
+        elif (c >= 48 && c <= 57) { ok = 1; }
+        elif (c == 95 || c == 45) { ok = 1; }
+        elif (c == 47 && load8(lf + i + 1) != 47) { ok = 1; }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# "error: <who> names '<leaf>', which is not a stdlib leaf name …" — `who` is a fixed phrase,
+# `ctx` (0 or a manifest string) is shown escaped after it.
+fn _dep_refuse_leaf(who, ctx, leaf): i64 {
+    _ew("error: ");
+    _ew(who);
+    if (ctx != 0) { _ew_shown(ctx); }
+    _ew(" names '");
+    _ew_shown(leaf);
+    _ew("', which is not a stdlib leaf name ([A-Za-z0-9_/-], no leading, trailing or doubled /) — refused\n");
+    return 1;
+}
+
+# The refusal of a `[deps.NAME]` header whose NAME fails _dep_name_unsafe, shown escaped —
+# one line, shared by the resolver and `deps --dry-run`.
+fn _dep_refuse_name(name): i64 {
+    _ew("error: [deps.");
+    _ew_shown(name);
+    _ew("] is not a usable dep name (empty, `.`-led, or holding `/`, `\\`, `..` or a control byte,");
+    _ew(" it would make a path) — section refused\n");
+    return 1;
+}
+
+# the deps-tag dot-dot path bug (6.6.16): a `[deps.X] tag` is joined into the clone dir
+# `<home>/deps/<name>/<tag>`, so it must name a place INSIDE that dir — the deps-header dot-dot path bug's class
+# on the TAG field (the deps-header dot-dot path bug guarded the header name only). `../../../esc/sub` made git
+# mkdir the leading components OUTSIDE the cache before it rejected the ref, and a tag
+# naming an existing dir (`../../..`) skipped the clone and printed `rm -rf <that dir>`
+# advice. Refused: empty, `..` anywhere, a leading `/` or `-`, any component starting
+# with `.`, `\` (a Windows separator), control bytes. A `/` inside stays legal
+# (`release/1.0` is a valid git tag and stays under `<home>/deps/<name>/`); git refnames
+# can never hold `..`, a leading `-` or a `.`-led component, so no real tag is lost.
+# Returns 1 = unsafe (refuse). Called only when a `tag` key is present.
+fn _dep_reject_unsafe_tag(tag): i64 {
+    if (load8(tag) == 0) { return 1; }
+    if (load8(tag) == 47 || load8(tag) == 45) { return 1; }   # leading '/' or '-'
+    var i = 0;
+    var c = load8(tag);
+    while (c != 0) {
+        if (c < 32 || c == 127 || c == 92) { return 1; }       # control bytes, backslash
+        if (c == 46 && load8(tag + i + 1) == 46) { return 1; }  # '..'
+        if (c == 46 && (i == 0 || load8(tag + i - 1) == 47)) { return 1; }   # '.'-led component
+        i = i + 1;
+        c = load8(tag + i);
+    }
+    return 0;
+}
+
+# 1 when a `[deps.X] modules` entry could name a file outside the dep's tree: a leading `/` or
+# `\`, or a `..` component (split on `/` and on `\`, a separator on Windows). `./dist/x.cyr` and
+# `x..y.cyr` stay legal. An absolute path was never read (it is joined as `<dep>//abs`).
+fn _dep_mod_path_unsafe(m): i64 {
+    var c = load8(m);
+    if (c == 47 || c == 92) { return 1; }
+    var s = 0;
+    var i = 0;
+    while (1 == 1) {
+        c = load8(m + i);
+        if (c == 0 || c == 47 || c == 92) {
+            if (i - s == 2 && load8(m + s) == 46 && load8(m + s + 1) == 46) { return 1; }
+            if (c == 0) { return 0; }
+            s = i + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Name every unsafe entry of a `[deps.X] modules` list (_dep_mod_path_unsafe); the count.
+fn _dep_modules_refused(dep_name, mods): i64 {
+    var bad = 0;
+    var i = 0;
+    while (i < vec_len(mods)) {
+        var m = vec_get(mods, i);
+        i = i + 1;
+        if (_dep_mod_path_unsafe(m) == 1) {
+            _ew("error: [deps.");
+            _ew_shown(dep_name);
+            _ew("] modules entry \"");
+            _ew_shown(m);
+            _ew("\" is not a path inside the dep (absolute, or a `..` component) — section refused\n");
+            bad = bad + 1;
+        }
+    }
+    return bad;
+}
+
+# The first prefix of `full` BELOW its dep root (the first `rootlen` bytes) that is a symlink, as
+# a fresh cstr; 0 when none is. A dep's files — a module, the dist/<name>.cyr default, a modular
+# sub-module, its index.cyml, a .deps sidecar — are read only from inside the dep's own tree: the
+# copy opens with sys_open, which follows links, so a tag COMMITTING `dist/x.cyr -> /abs/secret`
+# (or `dist -> /dir`) vendored the target into lib/ with a verified commit pin and exit 0. The
+# the dep-cache tamper-check hardening item cache verify cannot see it — the link IS the tag's content. Every component
+# is checked,
+# as [embed] does (_proj_path_bad); the root itself is the operator's. CHANGELOG [6.6.20] (the modules dot-dot / symlink
+# vendoring bug)
+fn _dep_src_link(full, rootlen): i64 {
+    var n = strlen(full);
+    var j = rootlen;
+    while (j <= n) {
+        if (j > rootlen && (j == n || load8(full + j) == 47)) {
+            var pre = alloc(j + 1);
+            memcpy(pre, full, j);
+            store8(pre + j, 0);
+            if (is_symlink(str_from(pre)) == 1) { return pre; }
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+# "error: [deps.<dep>] <rel> passes through a symlink (<link>) — …" — both shown escaped; 1.
+fn _dep_refuse_src_link(dep, rel, link): i64 {
+    _ew("error: [deps.");
+    _ew_shown(dep);
+    _ew("] ");
+    _ew_shown(rel);
+    _ew(" passes through a symlink (");
+    _ew_shown(link);
+    _ew(") — a dependency's files are read only from inside its own tree; refused\n");
+    return 1;
+}
+
+# 6.6.17 — the git-dep cache key: `<base>/<name>/<tag>`, and `<base>/<name>/.untagged` for an
+# untagged dep (the remote's default branch). The untagged clone used to live at
+# `<name>/main`, the very dir a `tag = "main"` dep resolves to, so whichever ran first served
+# the other: the branch's bytes vendored for an untagged dep, or the default-branch clone
+# refused as a "tampered cache" for the tagged one. A `.`-led component is one
+# `_dep_reject_unsafe_tag` refuses in every tag, so no tag can name the untagged key. <base>
+# is `<home>/deps`, else the run's private temp dir (whose flat `<name>_<tag>` had the same
+# collision: `[deps.a_b]` untagged against `[deps.a] tag = "b"`); both levels are created here.
+fn _dep_clone_dir(name, tag): i64 {
+    var base = 0;
+    if (_home != 0) { base = _cat2(_home, "/deps"); } else { base = _cbt_tmpfile("deps"); }
+    sys_mkdir(base, 0x1ED);
+    var nd = _cat2(_cat2(base, "/"), name);
+    sys_mkdir(nd, 0x1ED);
+    var key = tag;
+    if (key == 0) { key = ".untagged"; }
+    return _cat2(_cat2(nd, "/"), key);
+}
+
+# A manifest string as it may be shown: `s` itself when every byte prints, else a fresh copy
+# with each non-printing byte (below 32, 127 and up) as `\xNN`, so an error line cannot carry a
+# terminal escape sequence (or a forged line) out of a hostile manifest. The ONE escaping rule
+# for manifest strings echoed in errors (the deps-tag dot-dot path bug's tag printer, generalised at 6.6.20).
+fn _shown(s): i64 {
+    var i = 0;
+    var c = load8(s);
+    while (c != 0) {
+        if (c < 32 || c >= 127) { break; }
+        i = i + 1;
+        c = load8(s + i);
+    }
+    if (c == 0) { return s; }
+    var hx = "0123456789abcdef";
+    var sb = str_builder_new();
+    i = 0;
+    c = load8(s);
+    while (c != 0) {
+        if (c < 32 || c >= 127) {
+            str_builder_add_cstr(sb, "\\x");
+            str_builder_add_byte(sb, load8(hx + (c >> 4)));
+            str_builder_add_byte(sb, load8(hx + (c & 15)));
+        } else {
+            str_builder_add_byte(sb, c);
+        }
+        i = i + 1;
+        c = load8(s + i);
+    }
+    return str_data(str_builder_build(sb));
+}
+
+# _shown, written to stderr.
+fn _ew_shown(s): i64 {
+    _ew(_shown(s));
+    return 0;
+}

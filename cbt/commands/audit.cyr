@@ -1,0 +1,353 @@
+# CLI — commands: `cyrius audit` — the cross-OS self-host legs and the project sweep.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# Cross-OS self-host gate (v6.0.33; all-4-hosts v6.0.45). The x86_64-Linux
+# self-host is covered by check.sh; this verifies cycc reproduces itself
+# BYTE-IDENTICAL on EVERY target it claims to support, on REAL hardware —
+# the gap that let the macOS/Windows/aarch64 ports rot behind green
+# hello-world CI jobs. Four hosts, each FAIL-LOUD (an unreachable host, a
+# compile failure, or a non-identical fixpoint is a FAILURE — "not
+# available" is never an excuse, that placebo IS the rot):
+#   ecb  macOS arm64 (Apple Silicon)   — self-hosts
+#   ach  macOS x86_64 (Intel)          — self-hosts
+#   pi   Linux aarch64 (real ARM)      — native self-host (NOT cross-compiler)
+#   cass Windows x86_64 (PE32+)        — PE self-host
+# Each per-host sequence lives in scripts/cross-os-selfhost.sh and runs via
+# _co_run_sh (real environment so ssh/scp have HOME + agent). The install-path
+# pillars (ecb, ach, cass) stay inline here — they are not part of the release gate.
+#
+# ⛔ 6.6.20 (CLN-05) — EVERY HOST'S LEG IS RELEASE-GATE STEP 4, VERBATIM. Only ach was given the
+# `crossos` selector, so the platform libtest (tests/tcyr/crossos/ on the native compiler) ran on
+# ach alone: pi and cass got a bare self-host, and ecb an inline self-host + exit-42 sequence that
+# predated the script's (no cx guards, no CLI-env check, no libtest) — while the ach comment said
+# the libtest ran "matching ecb/cass/pi". scripts/release-gate.sh runs
+# `cross-os-selfhost.sh "$H" crossos` for ecb ach cass pi; _co_selfhost_leg is that call, once per
+# host, so this verb can no longer be weaker than the gate it mirrors.
+# Gate: tests/gates/toolchain/audit_platform_check_matches_release_gate.sh. CHANGELOG [6.6.20]
+fn _co_selfhost_leg(host, label): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sh scripts/cross-os-selfhost.sh ");
+    str_builder_add_cstr(sb, host);
+    str_builder_add_cstr(sb, " crossos");
+    var rc = _co_run_sh(str_data(str_builder_build(sb)));
+    if (rc == 0) {
+        sys_write(STDOUT_FD, "  PASS: ", 8);
+        sys_write(STDOUT_FD, label, strlen(label));
+        println(" cycc self-host byte-identical + crossos libtest");
+        return 0;
+    }
+    sys_write(STDOUT_FD, "  FAIL: ", 8);
+    sys_write(STDOUT_FD, label, strlen(label));
+    if (rc == 3) {
+        println(" UNREACHABLE — host down/unresolvable, cannot verify (publish blocked)");
+    } else {
+        println(" self-host or crossos libtest FAILED");
+    }
+    return 1;
+}
+
+fn _cross_os_selfhost(): i64 {
+    var fails = 0;
+    println("");
+    println("── Cross-OS self-host (REAL hardware — fail-loud, no skip) ──");
+
+    # ecb (macOS, Apple Silicon). The script's ecb arm carries the v6.0.37 exit-code
+    # propagation guard (`fn main(){return 42;}` must exit 42 — the rot-class where main() is
+    # never called) that this verb used to run inline, plus the cx and CLI-environment legs.
+    fails = fails + _co_selfhost_leg("ecb", "ecb (macOS arm64)");
+
+    # Install-path verification (v6.0.38). The self-host check above proves
+    # the COMPILER works — but the rot that shipped EMPTY macOS installs for
+    # 9 minors was in PACKAGING (the release tarball had no bin/), which a
+    # self-host check by construction can't catch. This builds the real
+    # macOS tarball via the same scripts/build-macos-arm64-tarball.sh the
+    # release uses, runs the REAL install.sh on ecb, then `cyrius build`s
+    # `fn main(){return 42}` and asserts exit 42 — catching a missing
+    # compiler, a broken installer, an unsigned toolchain, OR a build output
+    # that isn't ad-hoc-signed/runnable. This is the gate that would have
+    # caught "installed on a Mac and got no cyrius".
+    #
+    # ⛔ v6.6.6 (bite 26a) — SHIP THE .sha256 SIDECAR, AND REQUIRE IT ON THE FAR SIDE.
+    # This arm scp'd the tarball alone, and install.sh's local-tarball hook verifies a
+    # checksum only IF a sidecar sits beside it (scripts/install.sh, the release-integrity hardening item branch).
+    # So the pillar that exists to prove "the published artifact installs" had never once
+    # verified that the artifact arrived intact — a truncated scp or a tampered file on the
+    # far side would have installed, and the gate would have gone green over it. The
+    # tarball builders have always WRITTEN the sidecar (build-macos-arm64-tarball.sh's
+    # `sha256sum "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256"`); nothing shipped it. The remote
+    # `[ -f …sha256 ]` is load-bearing: without it a sidecar that fails to copy silently
+    # returns the arm to the unverified path it is being moved off. CHANGELOG [6.6.6].
+    # ⛔ v6.6.6 — PER-RUN STAGING (here and in the ach arm): `$_T` is a private mktemp dir and
+    # `$_D` a per-pid remote dir, both removed at the end. Fixed names (/tmp/_co_*, ~/_coih*) let
+    # two audits, or an audit beside a cross-os-selfhost.sh run, overwrite each other's tarballs
+    # and sandboxed installs. CHANGELOG [6.6.6]
+    var ecb_install = "set -e; _T=$(mktemp -d) && [ -d $_T ] || exit 1; _D=_coins_$$; sh scripts/build-macos-arm64-tarball.sh $_T/dist >/dev/null 2>&1; V=$(tr -d '[:space:]' < VERSION); printf 'fn main() { return 42; }' > $_T/t.cyr; ssh -o ConnectTimeout=15 -o BatchMode=yes ecb 'rm -rf ~/'$_D' && mkdir ~/'$_D; scp -q scripts/install.sh $_T/t.cyr $_T/dist/cyrius-$V-aarch64-macos.tar.gz $_T/dist/cyrius-$V-aarch64-macos.tar.gz.sha256 ecb:~/$_D/; _rc=0; ssh ecb 'CYRIUS_VERSION='$V' D=$HOME/'$_D'; [ -f $D/cyrius-'$V'-aarch64-macos.tar.gz.sha256 ] && CYRIUS_HOME=$D/ih CYRIUS_INSTALL_TARBALL=$D/cyrius-'$V'-aarch64-macos.tar.gz sh $D/install.sh >/dev/null 2>&1 && CYRIUS_HOME=$D/ih $D/ih/bin/cyrius build $D/t.cyr $D/t.out >/dev/null 2>&1 && (r=0; $D/t.out || r=$?; [ $r -eq 42 ])' || _rc=$?; rm -rf $_T; ssh ecb 'rm -rf ~/'$_D >/dev/null 2>&1 || true; exit $_rc";
+    var ecb_inst_rc = _co_run_sh(ecb_install);
+    if (ecb_inst_rc == 0) {
+        println("  PASS: ecb (macOS arm64) REAL install -> cyrius build -> exit 42");
+    } else {
+        println("  FAIL: ecb (macOS arm64) real-install path — tarball missing the toolchain, installer broken, or build output not runnable");
+        fails = fails + 1;
+    }
+
+    # ach (macOS x86_64, Intel) — added v6.0.45. The x86 Mach-O cycc
+    # self-hosts byte-identical; the v6.0.44 "x86-macOS doesn't self-host"
+    # retraction was a codesign-comparison artifact (codesign mutates the
+    # binary with LC_CODE_SIGNATURE). The gate runs UNSIGNED — see
+    # scripts/cross-os-selfhost.sh. v6.4.59 gave ach the platform libtest; since
+    # 6.6.20 every host runs it (see _co_selfhost_leg). The ach recipe also carries
+    # the exit-42 rot-guard (scripts/cross-os-selfhost.sh).
+    fails = fails + _co_selfhost_leg("ach", "ach (macOS x86_64)");
+
+    # ach install pillar (v6.4.59) — the Intel-Mac analog of the ecb install gate.
+    # Self-host proves the COMPILER; this proves the USABLE TOOLCHAIN + PACKAGING:
+    # the real install.sh yields a `cyrius` wrapper that resolves argv/env/arch via
+    # the r15 park (v6.4.59) and `cyrius build`s fn main(){return 42} to a runnable
+    # Mach-O exiting 42. Catches a tarball missing cycc/wrapper (the found-by-ports
+    # hole this arc closed), a broken installer, or a wrapper that can't find cycc.
+    #
+    # ⛔ v6.6.6 (bite 26a) — the sidecar, and the far-side requirement, exactly as in the
+    # ecb arm above. This one had gone the longest without an integrity check of any kind:
+    # the Intel-Mac install pillar has verified a hash on NO release since it was added.
+    # CHANGELOG [6.6.6].
+    var ach_install = "set -e; _T=$(mktemp -d) && [ -d $_T ] || exit 1; _D=_coinsx_$$; sh scripts/build-macos-x86-tarball.sh $_T/distx >/dev/null 2>&1; V=$(tr -d '[:space:]' < VERSION); printf 'fn main() { return 42; }' > $_T/tx.cyr; ssh -o ConnectTimeout=15 -o BatchMode=yes ach 'rm -rf ~/'$_D' && mkdir ~/'$_D; scp -q scripts/install.sh $_T/tx.cyr $_T/distx/cyrius-$V-x86_64-macos.tar.gz $_T/distx/cyrius-$V-x86_64-macos.tar.gz.sha256 ach:~/$_D/; _rc=0; ssh ach 'CYRIUS_VERSION='$V' D=$HOME/'$_D'; [ -f $D/cyrius-'$V'-x86_64-macos.tar.gz.sha256 ] && CYRIUS_HOME=$D/ih CYRIUS_INSTALL_TARBALL=$D/cyrius-'$V'-x86_64-macos.tar.gz sh $D/install.sh >/dev/null 2>&1 && CYRIUS_HOME=$D/ih $D/ih/bin/cyrius build $D/tx.cyr $D/tx.out >/dev/null 2>&1 && (r=0; $D/tx.out || r=$?; [ $r -eq 42 ])' || _rc=$?; rm -rf $_T; ssh ach 'rm -rf ~/'$_D >/dev/null 2>&1 || true; exit $_rc";
+    var ach_inst_rc = _co_run_sh(ach_install);
+    if (ach_inst_rc == 0) {
+        println("  PASS: ach (macOS x86_64/Intel) REAL install -> cyrius build -> exit 42");
+    } else {
+        println("  FAIL: ach (macOS x86_64/Intel) real-install path — tarball missing the toolchain, installer broken, or wrapper can't find cycc");
+        fails = fails + 1;
+    }
+
+    # pi (Linux aarch64, REAL ARM hardware) — added v6.0.45. NATIVE self-host,
+    # not the cross-compiler. release.yml's "subtle QEMU codegen difference"
+    # excuse hid a real bug on real silicon (the native aarch64 cycc drops the
+    # _TARGET_MACHO global during its own compile). Gated for real now.
+    fails = fails + _co_selfhost_leg("pi", "pi (Linux aarch64)");
+
+    # cass (Windows x86_64, PE32+) — added v6.0.45, replacing the v6.0.34
+    # TODO no-op print (a silent skip is exactly the rot vector). Self-host
+    # via cmd.exe (the default ssh shell is PowerShell, which lacks `<`).
+    fails = fails + _co_selfhost_leg("cass", "cass (Windows x86_64)");
+
+    # cass install pillar (v6.0.85) — the Windows analog of the ecb install gate
+    # above. Self-host proves the COMPILER; this proves PACKAGING: the real
+    # install.ps1 yields a cyrius that `cyrius build`s fn main(){return 42} to a
+    # runnable PE exiting 42. Catches a tarball missing cyrius.exe, a broken
+    # installer, or a non-runnable build — the macOS-rot class, one platform over.
+    var cass_inst_rc = _co_run_sh("sh scripts/cass-install-gate.sh");
+    if (cass_inst_rc == 0) {
+        println("  PASS: cass (Windows x86_64) REAL install -> cyrius build -> exit 42");
+    } elif (cass_inst_rc == 3) {
+        println("  FAIL: cass (Windows x86_64) install gate UNREACHABLE — cannot verify (publish blocked)");
+        fails = fails + 1;
+    } else {
+        println("  FAIL: cass (Windows x86_64) real-install path — tarball missing cyrius.exe, installer broken, or build output not runnable");
+        fails = fails + 1;
+    }
+
+    if (fails > 0) { return 1; }
+    return 0;
+}
+
+# v6.2.12: split. `cyrius audit` (default) runs the LOCAL item suite — check.sh's
+# fmt/lint walk + format + the full .tcyr suite + every gate ("all items like
+# fmt/lint/doc/…"). The cross-OS REAL-hardware self-host (ecb/ach/pi/cass +
+# install gates) is the heavier maintainer/release verification — it needs the
+# wired SSH verification hosts — so it now lives behind
+# `cyrius audit --internal=platform-check`, which is the full gate this command
+# used to be (local suite + platform self-host). See issue/CHANGELOG [6.2.12].
+# v6.2.25: the PROJECT quality sweep — `cyrius audit` (default). Composes the
+# CLI's own tools (cyrfmt/cyrlint/cyrdoc via the audit_walk walkers + cmd_tests +
+# cmd_bench) over the current project, so it works in ANY cyrius project without
+# scripts/check.sh. Returns non-zero if fmt/lint/docs/tests fail (bench is a
+# non-fatal perf measurement). This is what `cyrius audit` was always meant to be;
+# the cyrius-internal full gate is `audit --internal` → check.sh.
+fn _audit_sweep(): i64 {
+    var rc = 0;
+    # Source dirs to fmt/lint/doc-walk — dirs the PROJECT AUTHORS, which is not the
+    # same as dirs that exist on disk.
+    #
+    # v6.4.78 — `lib/` is now walked ONLY in the cyrius source repo. The old comment
+    # here said "whichever exist in this project" and pushed `lib` unconditionally,
+    # conflating *exists* with *belongs to*. In THIS repo lib/ is the authored stdlib
+    # (106 tracked files); in every CONSUMER it is dependency code that `cyrius deps`
+    # vendors from the manifest and that .gitignore excludes precisely because it is
+    # reproducible rather than authored (stiva and sandhi each have 0 tracked files
+    # under lib/). So the sweep fmt-checked other people's bundles and blamed the
+    # consumer: stiva got a permanent `FAIL: files need reformatting` with all 41 of
+    # its own tracked files already clean, and the printed remedy was actively
+    # harmful — `cyrius fmt -w` would rewrite vendored files that the next
+    # `cyrius deps` overwrites, and in stiva's case break `deps --verify` lockfile
+    # hashes. This is the shape that hides best: correct in the cyrius repo, wrong in
+    # every project that consumes it.
+    #
+    # `_dep_is_cyrius_source_repo()` is the sanctioned predicate (cbt/deps/lock.cyr) — it
+    # reads `[package] name` from cyrius.cyml, and is already what `_check_lib_freshness`
+    # and (v6.4.77) `cmd_lib_sync` use for exactly this authored-vs-vendored question.
+    # Do NOT substitute `file_exists("src/main.cyr")` (the v6.0.1 conflation bug) and do
+    # NOT test for a `[deps]` section — cyrius.cyml HAS one, so that would wrongly drop
+    # lib/ here. Verified: predicate == 1 in this repo, 0 in stiva, 0 in /tmp.
+    # (issues/archived/2026-07-24-audit-sweep-fmt-lint-walks-vendored-lib.md)
+    var _in_cyrius_repo = _dep_is_cyrius_source_repo();
+    var dirs = vec_new();
+    if (_in_cyrius_repo == 1) {
+        if (is_dir(str_from("lib")) == 1) { vec_push(dirs, str_from("lib")); }
+    }
+    if (is_dir(str_from("src")) == 1) { vec_push(dirs, str_from("src")); }
+    if (is_dir(str_from("programs")) == 1) { vec_push(dirs, str_from("programs")); }
+    # ⛔ v6.5.42 — THE SUITE THAT GUARDS THE COMPILER WAS ITSELF UNAUDITED. `cyrius audit`
+    # walked src/ and programs/ (plus lib/ in this repo) and nothing else, so `tests/`,
+    # `benches/` and `fuzz/` were never formatted, linted or checked — 289 .tcyr files, every
+    # shell gate's fixtures, and every bench. The `scope:` banner below prints whatever is in
+    # this vec, so it stays honest for free as the list grows.
+    # ⚠ Needs the recursive descent added to lib/audit_walk.cyr in the same release: the suite
+    # lives at tests/tcyr/<bucket>/*.tcyr, two levels down, and a flat lister would report a
+    # clean verdict over a directory containing only subdirectories.
+    if (is_dir(str_from("tests")) == 1) { vec_push(dirs, str_from("tests")); }
+    if (is_dir(str_from("benches")) == 1) { vec_push(dirs, str_from("benches")); }
+    if (is_dir(str_from("fuzz")) == 1) { vec_push(dirs, str_from("fuzz")); }
+    if (_in_cyrius_repo == 1) {
+        if (is_dir(str_from("cbt")) == 1) { vec_push(dirs, str_from("cbt")); }
+    }
+    if (vec_len(dirs) == 0) { vec_push(dirs, str_from(".")); }
+    # Say what was walked. A stage that reports a verdict without its scope reads as
+    # authoritative when it is not — the same defect as the release gate's silent
+    # `vr01_` subset (issues/archived/2026-07-14-release-gate-cross-os-runs-only-vr01-glob.md).
+    sys_write(STDOUT_FD, "  scope:", 8);
+    var _sd = 0;
+    while (_sd < vec_len(dirs)) {
+        sys_write(STDOUT_FD, " ", 1);
+        var _sdn = vec_get(dirs, _sd);
+        sys_write(STDOUT_FD, str_data(_sdn), str_len(_sdn));
+        _sd = _sd + 1;
+    }
+    if (_in_cyrius_repo == 0) {
+        if (is_dir(str_from("lib")) == 1) {
+            sys_write(STDOUT_FD, "  (lib/ excluded — vendored deps, not project source)", 55);
+        }
+    }
+    println("");
+
+    var cyrfmt = _tool_path(_tools_dir, "cyrfmt");
+    var cyrlint = _tool_path(_tools_dir, "cyrlint");
+    var cyrdoc = _tool_path(_tools_dir, "cyrdoc");
+
+    # ⛔ 6.6.8 — THE WALKERS ARE BOUNDED. The fmt/lint/doc walkers report a tool killed at the
+    # deadline as an error (6.6.7), but nothing here ever SET one — lib/process.cyr defaults to
+    # no deadline — so a hung cyrfmt/cyrlint/cyrdoc hung `cyrius audit` for ever. Same knob and
+    # default as the other batch verbs (`CYRIUS_TEST_TIMEOUT`, seconds, 300 by default, 0 = no
+    # deadline), per tool run; put back before the tests stage, which bounds its own children.
+    # Windows has the deadline too since 6.6.8 (lib/process_win.cyr); agnos's process peer does
+    # not define it. CHANGELOG [6.6.8]
+    #ifndef CYRIUS_TARGET_AGNOS
+    var _aud_prev_dl = proc_set_timeout_ms(_run_timeout_ms());
+    #endif
+    _status("── fmt ──");
+    if (file_exists(cyrfmt) == 1) {
+        audit_fmt_walk(cyrfmt, dirs);
+        # 6.6.8: a file cyrfmt did not FINISH on is not formatted (lib/audit_walk.cyr).
+        if (AW_FMT_ERRORS > 0) {
+            println("  FAIL: cyrfmt did not finish on these files (NOT checked):");
+            audit_print_errors(AW_FMT_ERROR_FILES);
+            rc = 1;
+        }
+        if (AW_FMT_FAIL > 0) {
+            # `cyrius fmt <file>...` rewrites in place (the default mode). This printed
+            # `cyrius fmt -w`, which the v6.6.5 classifier refuses — `-w` is cyrfmt's
+            # spelling, not the CLI's (round-3 review).
+            println("  FAIL: files need reformatting (cyrius fmt <file>... rewrites in place)");
+            # v6.4.78 — NAME them. `audit_fmt_walk` has populated AW_FMT_FAIL_FILES
+            # since it was written, and NO caller ever printed it: the list was
+            # collected and thrown away, so the verdict was indistinguishable from a
+            # real failure and could not be triaged without re-deriving the walk by
+            # hand. That is precisely why this sat unexamined long enough for a
+            # consumer to file it. Capped so a large project cannot bury the rest of
+            # the sweep.
+            if (AW_FMT_FAIL_FILES != 0) {
+                var _ff = 0;
+                var _fn_tot = vec_len(AW_FMT_FAIL_FILES);
+                while (_ff < _fn_tot) {
+                    if (_ff >= 20) {
+                        sys_write(STDOUT_FD, "    … and ", 12);
+                        print_num(_fn_tot - 20);
+                        println(" more");
+                        _ff = _fn_tot;
+                    } else {
+                        var _fnm = vec_get(AW_FMT_FAIL_FILES, _ff);
+                        sys_write(STDOUT_FD, "    ", 4);
+                        sys_write(STDOUT_FD, str_data(_fnm), str_len(_fnm));
+                        println("");
+                        _ff = _ff + 1;
+                    }
+                }
+            }
+            rc = 1;
+        }
+        elif (AW_FMT_ERRORS == 0) { println("  ok: format clean"); }
+    } else { println("  skip: cyrfmt not built"); }
+
+    _status("── lint ──");
+    if (file_exists(cyrlint) == 1) {
+        audit_lint_walk(cyrlint, dirs);
+        if (AW_LINT_TOTAL > 0) { sys_write(STDOUT_FD, "  ", 2); print_num(AW_LINT_TOTAL); println(" lint warnings"); rc = 1; }
+        # ⛔ 6.6.7 — "clean" only when EVERY file was actually linted. A file cyrlint refused
+        # (too large, empty), crashed on or never ran for used to add 0 and print
+        # "ok: lint clean" — live in rekha over a 1.65 MB file cyrlint never read.
+        if (AW_LINT_ERRORS > 0) {
+            println("  FAIL: cyrlint did not finish on these files (NOT linted):");
+            audit_print_errors(AW_LINT_ERROR_FILES);
+            rc = 1;
+        }
+        if (AW_LINT_TOTAL == 0 && AW_LINT_ERRORS == 0) { println("  ok: lint clean"); }
+    } else { println("  skip: cyrlint not built"); }
+
+    _status("── docs ──");
+    if (file_exists(cyrdoc) == 1) {
+        audit_doc_walk(cyrdoc, dirs);
+        if (AW_DOC_TOTAL > 0) { sys_write(STDOUT_FD, "  ", 2); print_num(AW_DOC_TOTAL); println(" undocumented public fns"); rc = 1; }
+        if (AW_DOC_ERRORS > 0) {
+            println("  FAIL: cyrdoc did not finish on these files (NOT checked):");
+            audit_print_errors(AW_DOC_ERROR_FILES);
+            rc = 1;
+        }
+        if (AW_DOC_TOTAL == 0 && AW_DOC_ERRORS == 0) { println("  ok: docs complete"); }
+    } else { println("  skip: cyrdoc not built"); }
+
+    #ifndef CYRIUS_TARGET_AGNOS
+    proc_set_timeout_ms(_aud_prev_dl);
+    #endif
+
+    _status("── tests ──");
+    # 6.7.6 (part T): the sweep compiles its tests and benches in the TEST SCOPE, as `cyrius test`
+    # and `cyrius bench` do — a test leaning on [test] would otherwise fail here alone (the
+    # v6.4.73 class: audit reporting failures `cyrius test` does not have).
+    if (_tc_setup("audit") != 0) {
+        println("  FAIL: cyrius.cyml [test] was refused (above); tests and benches NOT run");
+        return 1;
+    }
+    var tdir = "tests/tcyr";
+    if (is_dir(str_from(tdir)) == 0) { tdir = "tests"; }
+    if (is_dir(str_from(tdir)) == 1) {
+        if (cmd_tests(tdir) != 0) { rc = 1; }
+    } else { println("  skip: no tests/ directory"); }
+
+    _status("── bench ──");
+    _bench_all(0);   # perf measurement — non-fatal; no benches is a `skip:` here (6.7.9)
+    _test_scope = 0;
+
+    return rc;
+}
+
+# `cyrius audit` dispatcher. mode: 0 = project sweep (default), 1 = the
+# cyrius-internal scripts/check.sh, 2 = check.sh + cross-OS platform self-host.
+fn cmd_audit(mode): i64 {
+    if (mode == 0) { return _audit_sweep(); }
+    var script = make_path(_scripts_dir, "check.sh");
+    var check_rc = run_script(script, 0, 0);
+    if (mode == 1) { return check_rc; }
+    var cross_rc = _cross_os_selfhost();
+    if (check_rc != 0) { return check_rc; }
+    return cross_rc;
+}

@@ -3,7 +3,7 @@
 # TARBALL to another machine and installs it there ships the `.sha256` sidecar with it, and
 # REQUIRES the sidecar on the far side.
 #
-# ⛔ THE DEFECT (found at 67ea9c17). `_cross_os_selfhost()` in cbt/commands.cyr carries the
+# ⛔ THE DEFECT (found at 67ea9c17). `_cross_os_selfhost()` in cbt/commands/audit.cyr carries the
 # two macOS install pillars inline — the ecb (Apple Silicon) arm added at v6.0.38 and the
 # ach (Intel) arm at v6.4.59. Both built the real release tarball, `scp`'d it to the Mac and
 # ran the REAL `scripts/install.sh` against it with `CYRIUS_INSTALL_TARBALL=…`. Neither ever
@@ -21,12 +21,12 @@
 # refuse to start without it.
 #
 # AXES
-#   1. STATIC over cbt/*.cyr: every `scp` that names a release tarball names the matching
+#   1. STATIC over cbt/**/*.cyr: every `scp` that names a release tarball names the matching
 #      `.sha256` in the SAME scp (sidecars counted separately from tarballs, so a sidecar
 #      cannot be mistaken for the artifact). Floor: at least 2 such scp sites. The detector
 #      is self-tested on both shapes.
 #   2. STATIC: every pillar that runs install.sh with `CYRIUS_INSTALL_TARBALL=` first tests
-#      that the sidecar is THERE — the two in `cbt/*.cyr` (same-line, inside the remote
+#      that the sidecar is THERE — the two in `cbt/**/*.cyr` (same-line, inside the remote
 #      command string) and the two `run: |` blocks in `.github/workflows/ci.yml` (the test a
 #      line of its own above it). Floor: 4 sites, scan self-tested on 4 shapes.
 #   3. BEHAVIOURAL, and the axis that makes axis 1 more than a string check: the REAL
@@ -81,7 +81,7 @@
 #
 # ⚠ NOT COVERED, and said plainly rather than implied — this enumeration is what a future
 # reader will trust, so it is the COMPLETE list. `grep -rn CYRIUS_INSTALL_TARBALL` finds five
-# live pillars. Four are covered here: `cbt/commands.cyr` ×2 (axes 1 + 2) and
+# live pillars. Four are covered here: `cbt/commands/audit.cyr` ×2 (axes 1 + 2) and
 # `.github/workflows/ci.yml` ×2 (axis 2 — they take their tarball from the artifact store,
 # not an scp, so axis 1 does not apply to them). The fifth,
 # `scripts/cross-os-selfhost.sh`'s `ecb-install` arm, and `scripts/cass-install-gate.sh`
@@ -129,7 +129,7 @@ a1=0
 [ "$(_scp_sites "$D/fx/good.cyr" x)" = 'x|1|1' ] || { fail "axis 1 self-test: an scp WITH a sidecar is miscounted: '$(_scp_sites "$D/fx/good.cyr" x)'"; a1=1; }
 [ -z "$(_scp_sites "$D/fx/cmt.cyr" x)" ]         || { fail "axis 1 self-test: a commented-out scp was counted"; a1=1; }
 : > "$D/sites"
-for f in $(ls cbt/*.cyr | LC_ALL=C sort); do _scp_sites "$f" "$f" >> "$D/sites"; done
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do _scp_sites "$f" "$f" >> "$D/sites"; done
 nsite=$(wc -l < "$D/sites" | tr -d ' ')
 [ "$nsite" -ge 2 ] || { fail "axis 1: found $nsite scp-a-release-tarball site(s) in cbt/ (floor 2 — the ecb and ach install pillars) — the scan read nothing, or a pillar was deleted"; a1=1; }
 while IFS='|' read -r f ntar nsc; do
@@ -141,7 +141,7 @@ done < "$D/sites"
 # ── axis 2: the far side REQUIRES the sidecar before it installs ─────────────
 # FOUR pillars, two shapes, one rule (bite 26 review widened this from cbt/ alone — the two
 # CI ones were absent from the sweep AND from the "not covered" note, which is what a future
-# reader would have trusted). In cbt/*.cyr a pillar is ONE remote command string, so the test
+# reader would have trusted). In cbt/**/*.cyr a pillar is ONE remote command string, so the test
 # sits on the same line. In .github/workflows/ci.yml it is a `run: |` block — the macos-14
 # funcgate and the self-hosted Intel-Mac (ach) funcgate, each installing a tarball downloaded
 # from the artifact store onto another machine — so the test is a line of its own above it,
@@ -169,7 +169,7 @@ _pillar_scan() {   # <file> -> "<file>:<line>:<0|1 guarded>" per live pillar
     ' "$1"
 }
 : > "$D/pillars"
-for f in $(ls cbt/*.cyr | LC_ALL=C sort) .github/workflows/ci.yml; do
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort) .github/workflows/ci.yml; do
     [ -f "$f" ] || { fail "axis 2: $f is missing — an install pillar's file is gone"; a2=1; continue; }
     _pillar_scan "$f" >> "$D/pillars"
 done

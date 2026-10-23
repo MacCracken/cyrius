@@ -15,7 +15,7 @@
 # distlib resolvers, the lib-freshness check — and `--version` / `build --print-config` printed
 # it raw, terminal escapes included.
 #
-# THE FIX. The one reader, `_dep_read_cyml_cyrius_field` (cbt/deps.cyr), refuses a pin that is
+# THE FIX. The one reader, `_dep_read_cyml_cyrius_field` (cbt/deps/pin.cyr), refuses a pin that is
 # not a version's shape — a leading digit, then only [0-9A-Za-z._-], no `..` — and a present
 # pin that is not a string, by name, exit 1. `build --print-config` routes the pin through it.
 #

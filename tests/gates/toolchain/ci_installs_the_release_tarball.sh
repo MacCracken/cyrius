@@ -262,7 +262,7 @@ for sh_ in "sh" "bash -eo pipefail"; do
         echo "  skip axis 3 [$sh_]: the x86_64-linux cycc cannot run on $(uname -s)-$(uname -m)"
     fi
     # axis 6: the fresh home's stdlib name — what a manifest with no `cyrius =` pin resolves
-    # (`_dep_find_stdlib_dir` fallback (c), cbt/deps.cyr)
+    # (`_dep_find_stdlib_dir` fallback (c), cbt/deps/stdlib.cyr)
     [ "$a2" -eq 0 ] || continue
     a6=0
     { [ -L "$H/lib" ] && [ "$(readlink "$H/lib")" = "$VD/lib" ] && diff -r "$EXP/lib" "$H/lib" > /dev/null 2>&1; } \

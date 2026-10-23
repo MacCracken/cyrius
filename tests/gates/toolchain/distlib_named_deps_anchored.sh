@@ -3,7 +3,7 @@
 # same text appearing in comment prose.
 #
 # THE BUG. The exclude-set scan matched the literal `[deps.` ANYWHERE in the manifest buffer
-# with no line anchoring (`cbt/commands.cyr`), so a comment explaining the layout registered
+# with no line anchoring (`_distlib_named_deps`, cbt/commands/distlib/modular.cyr), so a comment explaining the layout registered
 # its example dep as a real one. Because that set means "this is a fold, not a stdlib leaf",
 # the named leaf was then EXCLUDED from the generated `.deps` sidecar. Filed from patra
 # (11 leaves emitted against 12 declared, `sakshi` missing) and confirmed in libro.
@@ -23,8 +23,8 @@ fail=0
 # 6.6.20 — axes 1-3 were GREPS FOR THE OLD SCANNER'S TEXT (`bol == 1 && ndi + 6 …`, `in_cmt = 1`,
 # `vec_push(named_deps, nd)`), so they pinned an implementation, not the rule — and the rule had
 # a hole they could not see: a `[deps.X]` at the start of a line INSIDE a `"""` value registered
-# X. `_distlib_named_deps` now reads headers through the resolver's own rule (`_dep_hdr_name` on
-# `_toml_line`, cbt/deps.cyr), and these axes test the RULE: a built CLI, a manifest, and the
+# X. `_distlib_named_deps` now reads headers through the resolver's own rule (`_dep_hdr_name`, cbt/deps/keys.cyr, on
+# `_toml_line`, cbt/manifest.cyr), and these axes test the RULE: a built CLI, a manifest, and the
 # `--modular` index it writes (a named dep's leaf is left out of the index; any other is listed).
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "SKIP: distlib-named-deps-anchored: no compiler at $CC"; exit 77; }

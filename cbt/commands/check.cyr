@@ -1,0 +1,85 @@
+# CLI — commands: `cyrius check` — the syntax check.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+fn cmd_check(source, with_deps, no_redirect): i64 {
+    # v5.7.8: default skip_deps=1 (parse the file standalone — syntax-
+    # checking should not drag the manifest dep graph into the parse).
+    # Pass --with-deps to opt back into the legacy auto-prepend
+    # behavior, useful when checking a file that depends on stdlib
+    # modules pulled in by the manifest.
+    var actual = source;
+    if (with_deps == 1 && no_redirect == 1) {
+        # 6.7.12 — `--no-redirect`: the source itself is the unit (cyrius-lsp: the redirect below
+        # published src/main.cyr's diagnostics on an include-free module and never its own).
+        # CHANGELOG [6.7.12]
+    } elif (with_deps == 1) {
+        # Legacy module-redirect: if FILE has no include directives,
+        # try the project entry point so transitive symbols resolve.
+        var check_buf = alloc(4096);
+        var cn = file_read_all(source, check_buf, 4095);
+        if (cn > 0) {
+            store8(check_buf + cn, 0);
+            # Build needle at runtime so cybs vet does not detect the
+            # literal as an include directive in this source.
+            var needle = alloc(9);
+            store8(needle, 105); store8(needle + 1, 110); store8(needle + 2, 99);
+            store8(needle + 3, 108); store8(needle + 4, 117); store8(needle + 5, 100);
+            store8(needle + 6, 101); store8(needle + 7, 32); store8(needle + 8, 0);
+            var has_inc = 0;
+            var ci = 0;
+            while (ci < cn - 8) {
+                if (memeq(check_buf + ci, needle, 8) == 1) { has_inc = 1; break; }
+                ci = ci + 1;
+            }
+            if (has_inc == 0) {
+                if (file_exists("src/main.cyr") == 1) {
+                    actual = "src/main.cyr";
+                }
+            }
+        }
+        # Only print the redirect line when actual != source — the
+        # pre-v5.7.8 message fired even when source IS the entry,
+        # producing the confusing "src/main.cyr is a module" tautology.
+        if (streq(actual, source) == 0) {
+            sys_write(STDOUT_FD, "check via ", 10);
+            sys_write(STDOUT_FD, actual, strlen(actual));
+            sys_write(STDOUT_FD, " (", 2);
+            sys_write(STDOUT_FD, source, strlen(source));
+            sys_write(STDOUT_FD, " is a module)\n", 14);
+        }
+    } else {
+        # Default: parse standalone — skip the manifest auto-prepend.
+        _skip_deps = 1;
+    }
+    # v5.7.8: PID-suffixed tmp path under /tmp. The pre-v5.7.8 path
+    # `/dev/null` triggered a silent fork failure: compile() builds an
+    # intermediate `<output>.tmp.<pid>` for atomic-rename, but
+    # `/dev/null.tmp.<pid>` cannot be created (/dev/ is not writable),
+    # so the fork sys_open(ofd) failed and sys_exit(1) ran with no
+    # error message. cycc never actually ran in that path.
+    var ck_pid = sys_getpid();
+    var ck_sb = str_builder_new();
+    str_builder_add_cstr(ck_sb, _cbt_tmpfile("check_"));
+    str_builder_add_int(ck_sb, ck_pid);
+    var ck_out = str_data(str_builder_build(ck_sb));
+    var pre_err = _err_count;
+    _cbt_scratch_track(ck_out);   # 6.7.12: compile() renames onto it; the kill handler unlinks it
+    var r = compile(actual, ck_out);
+    _cbt_scratch_drop(ck_out);
+    _skip_deps = 0;
+    if (r == 0) {
+        sys_write(STDOUT_FD, "ok: ", 4);
+        println(source);
+    } else {
+        # 6.6.9 bite 10 — ONE verdict, whole on stderr. This printed `error: ` to stderr
+        # and the NAME to stdout (a split line), and printed it after a failure cbt had
+        # already named (`error: no such file: x.cyr` / `error: x.cyr`). See
+        # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+        var ckh = str_builder_new();
+        str_builder_add_cstr(ckh, "error: ");
+        str_builder_add_cstr(ckh, source);
+        _compile_fail_verdict(pre_err, STDERR_FD, str_data(str_builder_build(ckh)));
+    }
+    return r;
+}

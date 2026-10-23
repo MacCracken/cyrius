@@ -1,0 +1,141 @@
+# CLI — commands: `cyrius bench` — the .bcyr walk and its summary.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# Print the `=== N passed, M failed ===` tail. Factored out at v6.5.7 so EVERY
+# form that runs a harness prints it — it used to live inline in the no-arg path
+# only, which made the single-file form unscriptable.
+fn _bench_summary(passed, failed): i64 {
+    sys_write(STDOUT_FD, "\n=== ", 5);
+    fmt_int(passed);
+    sys_write(STDOUT_FD, " passed, ", 9);
+    fmt_int(failed);
+    println(" failed ===");
+    if (failed > 0) { return 1; }
+    return 0;
+}
+
+# Run one .bcyr file: compile, execute, propagate exit code.
+# Returns 0 on success, 1 on compile error, or the binary's exit code.
+fn _bench_run_one(path): i64 {
+    if (_tc_for(path) != 0) { return 1; }   # 6.7.6 (part T): named there; the bench fails
+    var tmpbin = _cbt_tmpexe("bench");
+    var pre_err = _err_count;
+    var r = compile(path, tmpbin);
+    if (r != 0) {
+        # 6.6.9 bite 10 — a failure cbt named is not relabelled a compile error; see
+        # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+        _compile_fail_verdict(pre_err, STDERR_FD, "FAIL: compile error");
+        sys_unlink(tmpbin);
+        return 1;
+    }
+    var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
+    sys_unlink(tmpbin);
+    return ec;
+}
+
+# One .bcyr for _corpus_walk_d: compile and run it, and count the verdict.
+fn _bench_walk_one(path, cd): i64 {
+    store64(load64(cd + 48), 1);
+    sys_write(STDOUT_FD, "  ", 2);
+    sys_write(STDOUT_FD, path, strlen(path));
+    sys_write(STDOUT_FD, "\n", 1);
+    var cnt = load64(cd + 40);
+    if (_bench_run_one(path) == 0) { cnt = load64(cd + 32); }
+    store64(cnt, load64(cnt) + 1);
+    return 0;
+}
+
+# Walk `dir` for `*.bcyr` files and run each via _bench_run_one.
+# Updates *passcnt / *failcnt / *found via caller-owned i64 storage.
+# Returns the number of benches attempted.
+# v6.5.7: RECURSIVE, matching `_tests_walk`. It was `dir_list`-flat, so a
+# benchmark in a subfolder was invisible — `benches/perf/core.bcyr` simply never
+# ran, and the command reported success over it. A subfolder callout has always
+# been intended to work; the plural `cyrius tests <dir>` verb has recursed since
+# v6.0.62 and bench/fuzz were never brought along.
+# v6.5.12: depth-bounded; the walk itself is _corpus_walk_d (6.6.20).
+fn _bench_walk_dir(dir, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
+    var cd = _corpus_cd(".bcyr", &_bench_walk_one, "bench", "its benchmarks were NOT run (counted as a failure)");
+    return _corpus_walk(dir, cd, passcnt_ptr, failcnt_ptr, found_ptr);
+}
+
+fn cmd_bench(source): i64 {
+    # v6.5.7: a DIRECTORY argument is now honoured — `cyrius bench benches/perf`
+    # walks that subtree, symmetric with `cyrius test <dir>`. It previously ran
+    # nothing, printed nothing and exited 0, so a gate written that way passed
+    # over zero benchmarks. A path that does not exist is refused rather than
+    # silently building the auto-prepended stdlib into a do-nothing program.
+    if (source != 0) {
+        if (file_exists(source) == 0 && is_dir(str_from(source)) == 0) {   # 6.6.10: see cmd_fuzz
+            _err_ctx("no such file or directory", source);
+            return 1;
+        }
+        if (is_dir(str_from(source)) == 1) {
+            _status("=== cyrius bench ===");
+            var dpass[1];
+            var dfail[1];
+            var dfound[1];
+            store64(&dpass, 0);
+            store64(&dfail, 0);
+            store64(&dfound, 0);
+            _bench_walk_dir(source, &dpass, &dfail, &dfound);
+            if (load64(&dfound) == 0) {
+                _err_ctx("no benchmarks found under", source);
+                return 1;
+            }
+            return _bench_summary(load64(&dpass), load64(&dfail));
+        }
+        var ec = _bench_run_one(source);
+        # Print the summary for the single-file form too — only the no-arg form
+        # used to, so a script grepping for it found nothing on a run that worked.
+        if (ec == 0) { return _bench_summary(1, 0); }
+        _bench_summary(0, 1);
+        return ec;
+    }
+    return _bench_all(1);
+}
+
+# The no-argument walk. `empty_fails` is 1 for the verb: an EMPTY corpus fails, as bare `cyrius
+# test`'s and `cyrius bench <empty dir>` do — a CI line over benches that moved or were renamed passed
+# vacuously (6.7.9). `cyrius audit`'s bench stage passes 0: a non-fatal perf measurement, it says
+# `skip:` as its other stages do instead of printing an error under a passing audit. CHANGELOG [6.7.9]
+fn _bench_all(empty_fails): i64 {
+    # No-arg mode: discover and run every `*.bcyr` in `benches/`
+    # and `tests/bcyr/`. Mirrors `cmd_fuzz` / `cmd_test` shape so
+    # downstream projects (takumi, majra, mabda, …) get the
+    # obvious behavior instead of the cyrius-repo-specific
+    # `bench-history.sh` shell script they never asked for. (The
+    # cyrius repo's own CI invokes that script directly via
+    # `sh scripts/bench-history.sh`.) (v5.5.27)
+    _status("=== cyrius bench ===");
+    var pass_store[1];
+    store64(&pass_store, 0);
+    var fail_store[1];
+    store64(&fail_store, 0);
+    var found_store[1];
+    store64(&found_store, 0);
+    # v6.4.78 added `tests/` alongside `benches/` + `tests/bcyr/` because a bench
+    # at `tests/<name>.bcyr` was invisible (stiva's layout). v6.5.7 made the walk
+    # RECURSIVE, which subsumes `tests/bcyr` under `tests` — so the explicit
+    # `tests/bcyr` walk is DROPPED here. Keeping it would double-count every
+    # bench under it, which the v6.4.78 comment's "no double-count: the walk is
+    # non-recursive" reasoning explicitly depended on and which is now false.
+    # `benches/` and `tests/` are sibling roots and a symlinked SUBDIRECTORY is never
+    # descended, so a linked subtree (`tests/b -> ../benches`) is not walked twice; a
+    # symlinked FILE under tests/ is a bench of its own and does run.
+    _bench_walk_dir("benches", &pass_store, &fail_store, &found_store);
+    _bench_walk_dir("tests", &pass_store, &fail_store, &found_store);
+    if (load64(&found_store) == 0) {
+        if (empty_fails == 0) {
+            println("  skip: no benchmarks (benches/ and tests/ hold no .bcyr)");
+            return 0;
+        }
+        _err("no benchmarks found (looked in benches/ and tests/, recursively)");
+        println("  Create `benches/*.bcyr` files, or pass an explicit path:");
+        println("    cyrius bench path/to/my_bench.bcyr");
+        println("    cyrius bench path/to/subfolder");
+        return 1;
+    }
+    return _bench_summary(load64(&pass_store), load64(&fail_store));
+}

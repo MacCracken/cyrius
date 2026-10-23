@@ -788,7 +788,7 @@ echo "axis 15 — Windows: every sibling tool resolves through the .exe-aware _t
 # "cyrlint") is refused by run_tool_vec's file_exists check before CreateProcess —
 # measured under wine: `error: tool not found`. So NO tool lookup may bypass
 # _tool_path. Comment lines are excluded; everything else counts.
-BYPASS=$(grep -n 'make_path(_tools_dir' cbt/*.cyr | grep -v ':[0-9]*:[[:space:]]*#' || true)
+BYPASS=$(grep -n 'make_path(_tools_dir' $(find cbt -name '*.cyr' | LC_ALL=C sort) | grep -v ':[0-9]*:[[:space:]]*#' || true)
 check "tool lookups in cbt/ that bypass _tool_path (the .exe arm)" 0 "$(printf '%s' "$BYPASS" | grep -c . || true)"
 [ -n "$BYPASS" ] && printf '%s\n' "$BYPASS" | sed 's/^/    /'
 echo "axis 15b — every cyrius.cyml [release] bins entry ships in the macOS and Windows tarballs, built for the target:"
@@ -809,7 +809,7 @@ echo "axis 15b — every cyrius.cyml [release] bins entry ships in the macOS and
 # stale and FAILS. The delegated tools (_tool_path, above) are held to the same unpacked bin/ (v6.6.5's
 # round-3 review: cyaudit and cyrius_api_surface were missing from all three, so `cyrius vet`, `deny`
 # and `api-surface` said "tool not found").
-TOOLS=$(grep -ho '_tool_path(_tools_dir, "[^"]*")' cbt/*.cyr | sed 's/.*"\(.*\)")/\1/' | LC_ALL=C sort -u)
+TOOLS=$(grep -ho '_tool_path(_tools_dir, "[^"]*")' $(find cbt -name '*.cyr' | LC_ALL=C sort) | sed 's/.*"\(.*\)")/\1/' | LC_ALL=C sort -u)
 check "tool census found the delegated tools (>= 8)" yes "$([ "$(printf '%s\n' "$TOOLS" | grep -c .)" -ge 8 ] && echo yes || echo no)"
 REL_EXEMPT_cybs='every target: the x86_64 assembly the 29 KB seed assembles (bootstrap/cybs.cyr) — it has no Mach-O or PE form'
 REL_EXEMPT_windows_cyrius_lsp='Windows: cycc_win refuses it (2 reachable undefined fns: sys_fstat and sys_readlink have no PE wrapper), and it forks its compiler child through pipes, which PE stubs as -1'

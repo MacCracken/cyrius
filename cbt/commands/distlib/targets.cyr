@@ -1,0 +1,282 @@
+# CLI — commands / distlib: the verify's compile for every target, concurrently, and the union.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# ⭐ 6.6.11 (K5) — THE SIDECAR IS THE UNION OVER EVERY TARGET, NOT THE HOST'S ANSWER.
+# The verify compiled its unit once, for the host, so the recorded set was whatever THIS
+# host's `#ifdef` arms left undefined: `distlib --check` drifted between a Mac or an ARM box
+# and Linux CI, and a fold published from Linux could be short on Windows. Measured over 60
+# ecosystem bundles: 15 have different undefined sets per target (14 on PE, nous on aarch64).
+# Each round now compiles the unit for all five targets the toolchain ships and classifies
+# the union, so the answer is the same whichever host runs it. That needs a compiler per
+# target, and only an x86_64-Linux CLI has them (cycc emits x86 Linux, PE and Mach-O by
+# environment; cycc_aarch64 emits aarch64 Linux and Mach-O). Any other host REFUSES by name
+# rather than publishing a host-shaped sidecar — the store slots of macOS, Windows and
+# aarch64 hosts carry only native compilers. CHANGELOG [6.6.11]
+# ⭐ 6.6.18 (D3) — AND agnos, the SIXTH. 10 of the 12 folds (49 ecosystem bundles) carry
+# `#ifdef CYRIUS_TARGET_AGNOS` arms the verify never compiled: mabda's `O_RDWR` is defined on
+# agnos only by lib/io.cyr's agnos arm, so its sidecar was short there. Target 5 is cycc with
+# CYRIUS_TARGET_AGNOS=1. Its undefined names are attributed like any target's, but a NON-symbol
+# failure on agnos ALONE is a named warning, not a refusal (_distlib_target_collect): the five
+# targets above stay authoritative, so ~62 producers never built for agnos are not refused at
+# their pin bump. CHANGELOG [6.6.18]
+var _DL_TGT_N = 6;
+var _DL_TGT_AGNOS = 5;
+
+fn _distlib_tgt_name(t): i64 {
+    if (t == 0) { return "x86_64-linux"; }
+    if (t == 1) { return "x86_64-windows"; }
+    if (t == 2) { return "x86_64-macos"; }
+    if (t == 3) { return "aarch64-linux"; }
+    if (t == 4) { return "aarch64-macos"; }
+    return "x86_64-agnos";
+}
+
+# The environment entry that selects target `t` for its compiler ("" = the compiler's default).
+fn _distlib_tgt_env(t): i64 {
+    if (t == 1) { return "CYRIUS_TARGET_WIN=1"; }
+    if (t == 2) { return "CYRIUS_MACHO=1"; }
+    if (t == 4) { return "CYRIUS_MACHO_ARM=1"; }
+    if (t == 5) { return "CYRIUS_TARGET_AGNOS=1"; }
+    return "";
+}
+
+fn _distlib_tgt_cc(t): i64 {
+    if (t == 3 || t == 4) { return _cc_arm; }
+    return _cc;
+}
+
+# 1 when this CLI can compile for every target; otherwise names why (the sidecar is not
+# written) and answers 0.
+fn _distlib_verify_host_ok(out_path): i64 {
+    var x86lin = 0;
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    x86lin = 1;
+    #endif
+    #endif
+    if (x86lin == 0) {
+        var hm = "distlib: the sidecar verify compiles the bundle for every target (x86_64 Linux, Windows, macOS and agnos; aarch64 Linux and macOS), and only an x86_64 Linux CLI has a compiler for each — regenerate or --check sidecars there. Sidecar NOT written";
+        _distlib_verify_fail(hm, out_path);
+        return 0;
+    }
+    if (_cc == 0) { _err("distlib: the sidecar verify needs cycc, and none was found — sidecar NOT written"); return 0; }
+    var t = 0;
+    while (t < _DL_TGT_N) {
+        var cc = _distlib_tgt_cc(t);
+        if (cc == 0 || file_exists(cc) == 0) {
+            var msb = str_builder_new();
+            str_builder_add_cstr(msb, "distlib: the sidecar verify compiles for ");
+            str_builder_add_cstr(msb, _distlib_tgt_name(t));
+            str_builder_add_cstr(msb, " too, and its compiler is missing (build/cycc_aarch64 comes from `cyrius pulsar`; an installed release ships it) — sidecar NOT written");
+            var cpath = cc;
+            if (cpath == 0) { cpath = "cycc_aarch64"; }
+            _err_ctx(str_data(str_builder_build(msb)), cpath);
+            return 0;
+        }
+        t = t + 1;
+    }
+    return 1;
+}
+
+# Fold the names in `got` into `names`, OR-ing `bit` into each one's entry in `masks`.
+fn _distlib_merge_names(names, masks, got, bit): i64 {
+    var i = 0;
+    while (i < vec_len(got)) {
+        var nm = vec_get(got, i);
+        i = i + 1;
+        var j = 0;
+        var at = 0 - 1;
+        while (j < vec_len(names) && at < 0) {
+            if (streq(vec_get(names, j), nm) == 1) { at = j; }
+            j = j + 1;
+        }
+        if (at < 0) { vec_push(names, nm); vec_push(masks, bit); }
+        else { vec_set(masks, at, vec_get(masks, at) | bit); }
+    }
+    return 0;
+}
+
+# ⚡ The five target compiles of a round run CONCURRENTLY — one forked CLI child per target, each
+# running compile() and exiting with its status — and are then read back in target order, so the
+# answer is exactly the sequential one. Sequentially, the union cost 4-5x a host-only verify
+# (agnosai's `guard` profile: 36 s -> 146 s); concurrently it costs about the slowest target.
+# Each child writes its own `dlverifyerr<t>` / `dlverifyout<t>`, and compile()'s own temps carry
+# the child's pid. POSIX only — `_distlib_verify_host_ok` has already refused anywhere else.
+
+var _dl_agnos_warned = 0;   # the agnos-only warning is printed once per verify (reset there)
+var _dl_agnos_skip = 0;     # this round's agnos compile failed without a symbol: it reports nothing
+
+# Fork the compile of `entry` for target `t` (stderr to `verr`); answers the child's pid, or -1.
+fn _distlib_target_spawn(entry, t, vout, verr): i64 {
+    # Unreachable on PE (`_distlib_verify_host_ok` refuses first), and `sys_fork` there is a -1
+    # stub that would read as a child — so the arm refuses by name rather than trusting that.
+    #ifdef CYRIUS_TARGET_WIN
+    _err("distlib: the per-target sidecar verify cannot run on Windows (no fork) — sidecar NOT written");
+    return 0 - 1;
+    #endif
+    # 6.7.12: a forked copy of this CLI — the kill handler forwards the signal, and the child's own
+    # handler stops its compiler and unlinks its scratch. Tracked with no signal window. CHANGELOG [6.7.13]
+    var pid = _cbt_fork_tracked(1);
+    if (pid == 0) {
+        # ⚠ _skip_deps = 1 is load-bearing: auto-prepend would put the whole declared stdlib
+        # in scope and the compile would succeed no matter how wrong the sidecar is. The
+        # entry must contain EXACTLY the leaves under test. (compile() still prepends the
+        # `#@incdir` of the entry's directory, the mirror: a leaf ./lib lacks resolves there.)
+        _skip_deps = 1;
+        # 6.6.19 (E3) — and nothing of the PRODUCER's own build either: its [embed] prelude would
+        # satisfy NAME() for a bundle that does not carry it, and its [build] modules (which
+        # _materialize_source prepends regardless of _skip_deps) put their own includes and
+        # globals in scope — a short sidecar or an uncompilable [lib.P] bundle verified green.
+        _embeds = 0;
+        _build_modules = 0;
+        _cc_allow_undef = 1;
+        _cc_stderr_to = verr;
+        _cc_override = _distlib_tgt_cc(t);
+        _cc_target_env = _distlib_tgt_env(t);
+        # 6.7.12: this child's own scratch for the kill handler (its first registration takes the
+        # tables over from the parent's copy); compile() registers its own temps. CHANGELOG [6.7.12]
+        _cbt_scratch_track(vout);
+        var crc = compile(entry, vout);
+        _cbt_scratch_drop(vout);
+        sys_exit(crc & 255);
+    }
+    if (pid < 0) {   # 6.6.20 — named here; _distlib_target_collect refuses it
+        var fsb = str_builder_new();
+        str_builder_add_cstr(fsb, "the sidecar verify's compile for ");
+        str_builder_add_cstr(fsb, _distlib_tgt_name(t));
+        _cbt_fork_failed(str_data(str_builder_build(fsb)), pid);
+    }
+    return pid;
+}
+
+# Read back target `t`'s compile (`pid`, stderr in `verr`) and merge what it left undefined into
+# names/masks. 0, or -1 after naming why (a compile that failed with nothing undefined — or a
+# child that never reported — is not verifiable).
+fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
+    # 6.6.20 — a compile that never started (its fork failed, named by _distlib_target_spawn)
+    # verified nothing for this target: refused for THAT reason. It used to fall through to
+    # "does not compile, and no symbol is missing" (or, for agnos, a not-required warning).
+    if (pid < 0) {
+        xunlink(verr);
+        _cbt_scratch_untrack(verr);
+        if (quiet == 1) { return 0 - 1; }
+        var nsb = str_builder_new();
+        str_builder_add_cstr(nsb, "distlib: sidecar verify: the compile for ");
+        str_builder_add_cstr(nsb, _distlib_tgt_name(t));
+        str_builder_add_cstr(nsb, " never started — sidecar NOT written");
+        return _distlib_verify_fail(str_data(str_builder_build(nsb)), out_path);
+    }
+    var crc = 1;
+    if (pid > 0) {
+        var st[1];
+        store64(&st, 0);
+        if (sys_waitpid(pid, &st, 0) == pid) {
+            var sv = load32(&st);
+            if (WIFEXITED(sv) == 1) { crc = WEXITSTATUS(sv); }
+        }
+        _cbt_child_untrack(pid);
+    }
+    var elen = 0;
+    var ebuf = file_read_whole(verr, &elen);
+    xunlink(verr);
+    _cbt_scratch_untrack(verr);
+    var got = vec_new();
+    if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, got); }
+    if (vec_len(got) == 0 && crc != 0 && t == _DL_TGT_AGNOS && quiet == 0) {
+        # 6.6.18 (D3): agnos is checked, not yet required — see _DL_TGT_N. Named once per run.
+        _dl_agnos_skip = 1;
+        if (_dl_agnos_warned == 0 && _quiet == 0) {
+            _dl_agnos_warned = 1;
+            if (ebuf != 0 && elen > 0) { _distlib_show_errors(ebuf, elen); }
+            var asb = str_builder_new();
+            str_builder_add_cstr(asb, "warn: distlib: ");
+            str_builder_add_cstr(asb, out_path);
+            str_builder_add_cstr(asb, ": the bundle with its leaves does not compile for x86_64-agnos (above), and no symbol is missing — agnos is checked but not required, so the sidecar does not cover agnos-only needs\n");
+            var am = str_data(str_builder_build(asb));
+            sys_write(STDERR_FD, am, strlen(am));
+        }
+        return 0;
+    }
+    if (vec_len(got) == 0 && crc != 0) {
+        if (quiet == 1) { return 0 - 1; }   # an earlier target already said it
+        # Failed, and not for a missing symbol: say what the compiler said — its `error`
+        # lines, not the first screenful of warnings — and for which target.
+        if (ebuf != 0 && elen > 0) { _distlib_show_errors(ebuf, elen); }
+        var fsb = str_builder_new();
+        str_builder_add_cstr(fsb, "distlib: sidecar verify: the bundle with its leaves does not compile for ");
+        str_builder_add_cstr(fsb, _distlib_tgt_name(t));
+        str_builder_add_cstr(fsb, ", and no symbol is missing — sidecar NOT written");
+        return _distlib_verify_fail(str_data(str_builder_build(fsb)), out_path);
+    }
+    _distlib_merge_names(names, masks, got, 1 << t);
+    return 0;
+}
+
+# Every target's compile of `entry`, concurrently; the union into names/masks. 0 or -1 (named).
+fn _distlib_verify_targets(entry, out_path, names, masks): i64 {
+    var pids = vec_new();
+    var errs = vec_new();
+    _dl_agnos_skip = 0;
+    var t = 0;
+    while (t < _DL_TGT_N) {
+        var tsb = str_builder_new();
+        str_builder_add_cstr(tsb, "dlverifyout");
+        str_builder_add_int(tsb, t);
+        var esb = str_builder_new();
+        str_builder_add_cstr(esb, "dlverifyerr");
+        str_builder_add_int(esb, t);
+        var verr = _cbt_tmpfile(str_data(str_builder_build(esb)));
+        sys_unlink(verr);
+        _cbt_scratch_track(verr);   # 6.7.12: the child's compiler creates it; collect drops it
+        vec_push(errs, verr);
+        vec_push(pids, _distlib_target_spawn(entry, t, _cbt_tmpfile(str_data(str_builder_build(tsb))), verr));
+        t = t + 1;
+    }
+    var rc = 0;
+    t = 0;
+    while (t < _DL_TGT_N) {
+        # Every child is reaped even after a failure, so none outlives the verify; only the
+        # first failing target is reported (a broken bundle fails on all five alike).
+        var quiet = 0;
+        if (rc != 0) { quiet = 1; }
+        if (_distlib_target_collect(out_path, t, vec_get(pids, t), vec_get(errs, t), names, masks, quiet) != 0) { rc = 0 - 1; }
+        t = t + 1;
+    }
+    return rc;
+}
+
+# -v: one line per leaf a verify round adds — which symbol, on which targets, and to what.
+fn _distlib_verify_trace(round, what, nm, mask, leaf): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  sidecar verify round ");
+    str_builder_add_int(sb, round);
+    str_builder_add_cstr(sb, ": ");
+    str_builder_add_cstr(sb, leaf);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, what);
+    str_builder_add_cstr(sb, " for '");
+    str_builder_add_cstr(sb, nm);
+    str_builder_add_cstr(sb, "' (");
+    if (mask == (1 << _DL_TGT_N) - 1) { str_builder_add_cstr(sb, "every target"); }
+    else { _distlib_add_targets(sb, mask); }
+    str_builder_add_cstr(sb, ")\n");
+    var line = str_data(str_builder_build(sb));
+    sys_write(STDOUT_FD, line, strlen(line));
+    return 0;
+}
+
+# The targets in `mask`, comma-separated, onto `sb`.
+fn _distlib_add_targets(sb, mask): i64 {
+    var t = 0;
+    var first = 1;
+    while (t < _DL_TGT_N) {
+        if ((mask & (1 << t)) != 0) {
+            if (first == 0) { str_builder_add_cstr(sb, ", "); }
+            str_builder_add_cstr(sb, _distlib_tgt_name(t));
+            first = 0;
+        }
+        t = t + 1;
+    }
+    return 0;
+}

@@ -119,7 +119,7 @@ grep -q '(and 1 more)' "$D/a3.out" || { fail "axis 3: the error does not count t
 
 # ── axis 4: STATIC — the failure is recorded, and the lock handle is ABORTED ──
 _fn_body() { awk -v want="$2" '$0 ~ "^fn " want "\\(" { inb = 1 } inb && /^}/ { print; inb = 0 } inb { print }' "$1"; }
-_judge() {   # _judge <deps.cyr> -> verdicts, empty when clean
+_judge() {   # _judge <lock.cyr> -> verdicts, empty when clean
     v=""
     _fn_body "$1" _deps_lock_dir > "$D/j.walk"
     _fn_body "$1" cmd_deps_lock > "$D/j.cmd"
@@ -132,7 +132,7 @@ _judge() {   # _judge <deps.cyr> -> verdicts, empty when clean
     printf '%s' "${v# }"
 }
 x=0
-verdict=$(_judge cbt/deps.cyr)
+verdict=$(_judge cbt/deps/lock.cyr)
 [ -z "$verdict" ] || { fail "axis 4: the lock walker can still drop a file it cannot hash:$verdict"; x=1; }
 cat > "$D/prefix.cyr" <<'CYR'
 fn _deps_lock_dir(dir, lock_h): i64 {

@@ -64,7 +64,7 @@ PY
 
 # --- 1b. aarch64 triple → ELF64: shape-verify the entry/base the D6 report claims ---
 # (no QEMU boot — cross-compiled from x86, shape-only, mirroring the x86 ELF64 leg;
-# this closes the drift window on the 0x40000078 value printed by cbt/commands.cyr.)
+# this closes the drift window on the 0x40000078 value printed by cbt/commands/build_run.cyr.)
 AA_OUT="$REPO/build/boot_serial_aa64"
 if "$CYRIUS" build --target=aarch64-bare-metal-elf "$SRC" "$AA_OUT" >/dev/null 2>&1; then
     python3 - "$AA_OUT" <<'PY' || exit 1

@@ -61,7 +61,7 @@ var _dep_commit_lines = 0;
 # 6.7.6 (lane C) — GIT FIRST, LOCAL DEVELOPMENT BY AN EXPLICIT SWITCH. A `[deps.X] path` beside
 # `git` / `tag` is a DEV OVERRIDE, read only in LOCAL MODE: `--local[=a,b]` > `--no-local` >
 # CYRIUS_LOCAL (1, 0 or a name list) > off — the manifest never switches it on. With no switch every
-# machine builds the tag. cbt/deps.cyr "local mode" has the whole rule; these are the run's state.
+# machine builds the tag. cbt/deps/local.cyr "local mode" has the whole rule; these are the run's state.
 var _dep_local_on = 0;       # the switch is on (and not forced off by --locked or a release verb)
 var _dep_local_names = 0;    # 0 = every declared override; else a vec of the selected names
 var _dep_local_active = 0;   # an override IS in use: this resolve vendors into build/local-deps/lib
@@ -74,7 +74,7 @@ var _dep_update_mode = 0;    # `cyrius update`: re-fetch untagged clones, report
 var _build_modules = 0;
 # 6.6.19: the [embed] entries every compile carries (cbt/manifest.cyr _embed_load; 0 = none).
 # _materialize_source renders them before `#@srcline`. A bundle verify clears it so the bundle
-# is checked ALONE (cbt/commands.cyr).
+# is checked ALONE (cbt/commands/distlib/).
 var _embeds = 0;
 # v5.7.8: when set, compile() skips the manifest-dep auto-prepend.
 # Used by `cyrius check` (default-on) and `cyrius build --no-deps`.
@@ -84,7 +84,7 @@ var _skip_deps = 0;
 var _no_lock = 0;
 # v6.6.4: `cyrius deps --relock` — explicitly ACCEPT a stdlib leaf whose bytes in the
 # pinned snapshot moved while `[package].cyrius` did not. Without it the resolver refuses
-# to vendor or re-lock that leaf (see _dep_lock_guard_stdlib_leaf in cbt/deps.cyr).
+# to vendor or re-lock that leaf (see _dep_lock_guard_stdlib_leaf in cbt/deps/lock.cyr).
 var _dep_relock = 0;
 # v6.6.4: cyrius.lock as it stood at cmd_deps ENTRY — read once, before any copy, so the
 # guard compares against the lock this run inherited, not the one it is about to write.
@@ -112,13 +112,13 @@ var _dep_lock_only = 0;
 # The verb the stdlib-leaf guard's refusal names in its `--relock` advice.
 var _dep_lock_guard_verb = "deps";
 # 6.7.12 — vec<cstr> of every path THIS resolve vendored (written, or already byte-identical),
-# recorded at the one write choke point (cbt/deps.cyr _dep_copy_file) so no resolve phase is left
+# recorded at the one write choke point (cbt/deps/vendor.cyr _dep_copy_file) so no resolve phase is left
 # out: stdlib leaves and their includes, the test scope's leaves, every named dep's modules. 0
 # outside cmd_deps. lib/ is read against it (_dep_out_of_closure). CHANGELOG [6.7.12]
 var _dep_closure = 0;
 # 6.7.12 (D25) — vec<cstr> of `name\ttag` for every tagged [deps.NAME] a manifest this resolve read
 # declares (resolved, skipped or gated), and the root manifest's own: the kept-pin notice reads a
-# carried commit pin against them (cbt/deps.cyr _dep_say_kept_pins). 0 outside cmd_deps.
+# carried commit pin against them (cbt/deps/lock.cyr _dep_say_kept_pins). 0 outside cmd_deps.
 var _dep_decl_all = 0;
 var _dep_decl_root = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
@@ -201,7 +201,7 @@ var _section_base_val = 0;
 # v6.3.1 (dependency-model arc, lever 2 — required vs optional deps):
 # `cyrius build --features a,b` populates _cli_features (vec<cstr> of requested
 # feature names); `--no-default-features` sets _cli_no_default. The dep resolver
-# (cbt/deps.cyr) reads these to decide which `optional = true` deps to fetch and
+# (cbt/deps/) reads these to decide which `optional = true` deps to fetch and
 # whether to apply the `[features]` `default = [...]` set. Parsed by a pre-scan in
 # cyrius.cyr BEFORE _auto_deps runs — the resolver fires ahead of each subcommand's
 # own flag loop. 0/0 = today's behavior (no optional dep activated unless named).

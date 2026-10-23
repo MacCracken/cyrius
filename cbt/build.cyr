@@ -1266,7 +1266,7 @@ fn _cbt_tmpdir_cleanup(): i64 {
 }
 
 # 6.7.13 (D41) — SILENCE this process's stdout and stderr, and what its children inherit, while
-# `cyrius deps` runs its pin-move dry pass (deps.cyr `_deps_pin_move_dry`): the user then sees
+# `cyrius deps` runs its pin-move dry pass (cbt/deps/resolve.cyr `_deps_pin_move_dry`): the user then sees
 # the real resolve's output alone, once. `_cbt_mute(1)` returns 1 when muted and 0 when it could
 # not be set up (the caller runs on unmuted); `_cbt_mute(0)` restores. Whatever is written while
 # muted is gone, so the caller takes every exit it can reach BEFORE muting (the dry pass runs
@@ -2870,7 +2870,7 @@ fn _win_cmd_self(): i64 {
     # PE cycc.exe the Linux fork compiles fine and produces a PE built from Linux syscall
     # numbers, which page-faults the moment the second step tries to RUN it (measured
     # under wine: "Unhandled page fault on write access ... at 0000000140001060"). Same
-    # rule the cross-OS legs already follow (cbt/commands.cyr's ecb sequence uses
+    # rule the cross-OS legs already follow (scripts/cross-os-selfhost.sh's ecb leg compiles
     # src/main_aarch64_macho.cyr). CHANGELOG [6.6.6].
     var self_src = _self_host_src();
     if (file_exists(self_src) == 0) {

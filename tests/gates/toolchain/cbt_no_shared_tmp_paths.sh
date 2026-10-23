@@ -22,7 +22,7 @@
 #   0. SCANNER SELF-TEST: the string-literal scanner flags the 6.6.8 script line and a string
 #      after a `'"'` char literal, and does NOT flag a `/tmp/` in a comment or the bare base
 #      `"/tmp"`. Without it axis 1's "0 found" could be a scanner that sees nothing.
-#   1. STATIC: no string literal in any cbt/*.cyr contains `/tmp/` (shell strings included).
+#   1. STATIC: no string literal in any cbt/**/*.cyr contains `/tmp/` (shell strings included).
 #      Floor: the scan must see at least 2000 literals.
 #   2. `cyrius self` with a stub compiler that writes itself: PASS, rc 0; step 2 ran from
 #      under $TMPDIR (the private dir), never from a `/tmp/cyr_*` name; $TMPDIR is empty after.
@@ -99,7 +99,7 @@ PROBE=$(awk -f "$D/lits.awk" "$D/probe.cyr" | awk -F'\t' '$2 ~ /\/tmp\//' | grep
   || bad "scanner self-test found $PROBE /tmp/ literals in the probe, expected 3"
 
 # 1 — static.
-awk -f "$D/lits.awk" cbt/*.cyr > "$D/lits"
+awk -f "$D/lits.awk" $(find cbt -name '*.cyr' | LC_ALL=C sort) > "$D/lits"
 NLIT=$(grep -c . "$D/lits")
 if [ "$NLIT" -lt 2000 ]; then bad "the scan saw only $NLIT string literals in cbt/ — did the scanner stop matching?"; fi
 HITS=$(awk -F'\t' '$2 ~ /\/tmp\//' "$D/lits")

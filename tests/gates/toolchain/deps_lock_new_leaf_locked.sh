@@ -183,9 +183,9 @@ grep -q 'cyrius.lock:' "$W/a5.out" && { fail "axis 5: a no-change cyrius deps re
 # ── axis 6: STATIC — one walker ────────────────────────────────────────────────────────
 _fn_body() { awk -v want="$2" '$0 ~ "^fn " want "\\(" { inb = 1 } inb && /^}/ { print; inb = 0 } inb { print }' "$1"; }
 x=0
-_fn_body cbt/deps.cyr cmd_deps_verify > "$W/v.body"
-_fn_body cbt/deps.cyr _deps_lock_dir > "$W/l.body"
-[ -s "$W/v.body" ] && [ -s "$W/l.body" ] || { fail "axis 6: cmd_deps_verify / _deps_lock_dir not found in cbt/deps.cyr"; x=1; }
+_fn_body cbt/deps/lock.cyr cmd_deps_verify > "$W/v.body"
+_fn_body cbt/deps/lock.cyr _deps_lock_dir > "$W/l.body"
+[ -s "$W/v.body" ] && [ -s "$W/l.body" ] || { fail "axis 6: cmd_deps_verify / _deps_lock_dir not found in cbt/deps/lock.cyr"; x=1; }
 grep -q '_deps_lock_files("lib")' "$W/v.body" || { fail "axis 6: cmd_deps_verify does not walk lib/ through _deps_lock_files"; x=1; }
 grep -q '_deps_lock_files(dir)' "$W/l.body" || { fail "axis 6: _deps_lock_dir does not take its list from _deps_lock_files"; x=1; }
 grep -q 'dir_list' "$W/l.body" && { fail "axis 6: _deps_lock_dir walks the directory itself again (a second walker)"; x=1; }

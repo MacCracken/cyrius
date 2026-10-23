@@ -12,7 +12,7 @@
 # honest fetches into "commit-pin mismatch" refusals. Measured at 6.7.17 (the audit's repro, a
 # local `git daemon`): "1 deps resolved", "1 commit-pinned (1 re-verified)", rc 0, no warning.
 #
-# THE FIX (cbt/deps.cyr). `_dep_pick` refuses a git source whose scheme is git / http / ftp
+# THE FIX (cbt/deps/local.cyr). `_dep_pick` refuses a git source whose scheme is git / http / ftp
 # (`<scheme>://` or a remote helper's `<scheme>::`, any case) with the dep, the owner and the URL
 # named; `_dep_report_newer_tags` never lists one; and every fetching git argv carries
 # `-c protocol.{git,http,ftp,ext}.allow=never` (`_git_no_plaintext`), so a URL the scheme check
@@ -158,10 +158,10 @@ fi
 # ── A5: STATIC — git itself refuses the plaintext transports on every fetching argv ──
 a5=0
 for p in git http ftp ext; do
-    grep -q "\"protocol\.$p\.allow=never\"" cbt/deps.cyr || { bad "A5: _git_no_plaintext does not name protocol.$p.allow=never"; a5=1; }
+    grep -q "\"protocol\.$p\.allow=never\"" cbt/deps/git_cache.cyr || { bad "A5: _git_no_plaintext does not name protocol.$p.allow=never"; a5=1; }
 done
-grep -q '_git_no_plaintext(&gargv, gai)' cbt/deps.cyr || { bad "A5: the clone argv does not carry _git_no_plaintext"; a5=1; }
-awk '/^fn _dep_wt_run\(/ { f = 1 } f && /_git_no_plaintext\(&argv, i\)/ { hit = 1 } /^}/ { f = 0 } END { exit hit ? 0 : 1 }' cbt/deps.cyr \
+grep -q '_git_no_plaintext(&gargv, gai)' cbt/deps/named.cyr || { bad "A5: the clone argv does not carry _git_no_plaintext"; a5=1; }
+awk '/^fn _dep_wt_run\(/ { f = 1 } f && /_git_no_plaintext\(&argv, i\)/ { hit = 1 } /^}/ { f = 0 } END { exit hit ? 0 : 1 }' cbt/deps/local.cyr \
   || { bad "A5: _dep_wt_run (ls-remote) does not carry _git_no_plaintext"; a5=1; }
 [ "$a5" = 0 ] && ok "A5: the clone and ls-remote argvs carry -c protocol.{git,http,ftp,ext}.allow=never"
 

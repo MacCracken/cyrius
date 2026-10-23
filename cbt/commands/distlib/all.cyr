@@ -1,0 +1,226 @@
+# CLI — commands / distlib: the undefined-name capture and `distlib --all` / `--check` over every profile.
+# ================================================================
+# Split from cbt/commands.cyr at 6.7.18, unchanged; cbt/cyrius.cyr includes the pieces in order. CHANGELOG [6.7.18]
+
+# Pull every undefined symbol name out of a captured cycc diagnostic stream.
+fn _distlib_collect_undefined(errbuf, elen, names): i64 {
+    var p = 0;
+    while (p < elen) {
+        var m = 0;
+        if (p + 20 < elen && memeq(errbuf + p, "undefined function '", 20) == 1) { m = 20; }
+        elif (p + 20 < elen && memeq(errbuf + p, "undefined variable '", 20) == 1) { m = 20; }
+        if (m > 0) {
+            var ns = p + m;
+            var ne = ns;
+            while (ne < elen && load8(errbuf + ne) != 39) { ne = ne + 1; }
+            var nl = ne - ns;
+            if (nl > 0) {
+                var nm = alloc(nl + 1);
+                memcpy(nm, errbuf + ns, nl);
+                store8(nm + nl, 0);
+                var dup = 0;
+                var j = 0;
+                while (j < vec_len(names)) {
+                    if (streq(vec_get(names, j), nm) == 1) { dup = 1; }
+                    j = j + 1;
+                }
+                if (dup == 0) { vec_push(names, nm); }
+            }
+            p = ne;
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+fn _distlib_capture_lib_leaf(leaves, line, ll): i64 {
+    if (ll < 14) { return 0; }                  # `include "lib/X` minimum
+    if (load8(line + 8) != 34) { return 0; }    # expect opening quote at [8]
+    if (memeq(line + 9, "lib/", 4) != 1) { return 0; }
+    var ns = 13;                                # past `include "lib/`
+    var ne = ns;
+    while (ne < ll && load8(line + ne) != 34) { ne = ne + 1; }
+    var nl = ne - ns;
+    if (nl > 4 && memeq(line + ne - 4, ".cyr", 4) == 1) { nl = nl - 4; }
+    if (nl <= 0) { return 0; }
+    var leaf = alloc(nl + 1);
+    memcpy(leaf, line + ns, nl);
+    store8(leaf + nl, 0);
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var ex = vec_get(leaves, i);
+        if (strlen(ex) == nl) { if (memeq(ex, leaf, nl) == 1) { return 0; } }
+        i = i + 1;
+    }
+    # v6.5.37 (A2): a vendored dep also lives in lib/ — only STDLIB leaves belong here.
+    if (_distlib_leaf_is_stdlib(leaf) == 0) { return 0; }
+    vec_push(leaves, leaf);
+    return 0;
+}
+
+var _distlib_modular = 0;   # v6.2.50 Phase C: `--modular` → per-module dist + index
+# v6.5.8: `--check` regenerates into a sibling temp and byte-compares instead of writing.
+var _distlib_check = 0;
+var _distlib_drift = 0;     # names of bundles that differed, for the final report
+
+# v6.5.8: enumerate every `[lib.<name>]` profile declared in the manifest.
+#
+# WHY THIS DID NOT EXIST AND WHY IT MATTERS. `cyrius distlib` regenerates exactly ONE
+# bundle per invocation, and nothing could ask the manifest which profiles exist — so
+# every multi-profile repo ran an N+1 ritual maintained by hand in its release script.
+# That is how sankoch 2.7.6's silent-data-corruption gzip fix nearly shipped with all NINE
+# sub-bundles still carrying the buggy encoder under a fresh version string: the main
+# bundle was regenerated, the profiles were not, and nothing compared them.
+#
+# ⚠ LINE-ANCHORED ON PURPOSE. The neighbouring `_distlib_named_deps` scans unanchored,
+# which would match `[lib.x]` inside a comment or a string. Skip leading whitespace,
+# skip `#` comment lines, then require the line to START with `[lib.`. Bare `[lib]`
+# correctly does not match, since the base bundle is not a profile.
+#
+# Writes NUL-terminated names into `out` (a caller-owned buffer of `outcap` bytes) and
+# returns the count, or -1 if the buffer would overflow.
+fn _distlib_enum_profiles(mbuf, mlen, out, outcap): i64 {
+    var count = 0;
+    var w = 0;
+    var p = 0;
+    while (p < mlen) {
+        var ls = p;
+        while (p < mlen && load8(mbuf + p) != 10) { p = p + 1; }
+        var le = p;
+        if (p < mlen) { p = p + 1; }
+        var lp = ls;
+        while (lp < le) {
+            var c = load8(mbuf + lp);
+            if (c != 32 && c != 9) { break; }
+            lp = lp + 1;
+        }
+        if (lp >= le) { continue; }
+        if (load8(mbuf + lp) == 35) { continue; }              # comment
+        if (le - lp < 6) { continue; }                          # shortest is `[lib.x]`
+        if (memeq(mbuf + lp, "[lib.", 5) == 0) { continue; }
+        var ns = lp + 5;
+        var ne = ns;
+        while (ne < le && load8(mbuf + ne) != 93) { ne = ne + 1; }   # `]`
+        if (ne >= le) { continue; }                             # unterminated header
+        var nlen = ne - ns;
+        if (nlen <= 0) { continue; }
+        # Dedup against what we already captured.
+        var dup = 0;
+        var q = 0;
+        var seen = 0;
+        while (seen < count) {
+            var slen = strlen(out + q);
+            if (slen == nlen) { if (memeq(out + q, mbuf + ns, nlen) == 1) { dup = 1; } }
+            q = q + slen + 1;
+            seen = seen + 1;
+        }
+        if (dup == 1) { continue; }
+        if (w + nlen + 1 > outcap) { return 0 - 1; }
+        memcpy(out + w, mbuf + ns, nlen);
+        store8(out + w + nlen, 0);
+        # Reuse the existing name-safety rule rather than a second copy of it.
+        if (_distlib_valid_profile(out + w) == 0) { continue; }
+        w = w + nlen + 1;
+        count = count + 1;
+    }
+    return count;
+}
+
+# v6.5.8: byte-compare two files. Returns 1 if identical, 0 otherwise (including when
+# either cannot be read). No such helper existed — and it is the load-bearing half of
+# `--check`: comparing VERSION STRINGS is exactly what let sankoch's stale profiles look
+# fresh. Content is the only thing that answers "was this bundle regenerated".
+# ⛔ v6.5.37 (A6) — SIZE FIRST, THEN THE WHOLE FILE. This read 1,048,575 bytes of each side
+# into fixed 1 MB buffers and compared only that prefix, so two files that are both longer
+# than the cap read back as identical truncated prefixes and `distlib --check` reported
+# "current". Measured on a 1,489,948-byte bundle: a byte flipped at offset 500,000 was
+# caught, the same flip at 1,200,000 was NOT (exit 0, "current"), and truncating the file to
+# exactly 1,048,575 bytes — dropping 441 KB — also passed.
+#
+# ⚠ SIX ECOSYSTEM BUNDLES ARE ALREADY PAST THE CAP: agnosai 1,606,588 · drishti 1,403,806 ·
+# mabda 1,304,858 · shravan 1,263,123 · avatara 1,163,428 · sigil 1,105,848. So `--check` was
+# a partial compare on every one of them — and this is the gate written to prevent a repeat
+# of the sankoch 2.7.6 incident, where a source fix reached the main bundle and none of the
+# nine profiles. v6.5.8's own comment calls content comparison "the only thing that answers
+# 'was this bundle regenerated'"; a prefix compare does not answer it.
+#
+# A size mismatch is decisive and free, so it goes first — that alone catches the truncation
+# case. Equal sizes then stream-compare in 64 KB chunks, so memory is bounded by the chunk,
+# not by the file: the old form would have needed an ever-growing literal to stay correct,
+# which is how it fell behind the tree in the first place.
+fn _distlib_files_same(a, b): i64 {
+    var asz = _file_size(a);
+    var bsz = _file_size(b);
+    if (asz < 0 || bsz < 0) { return 0; }
+    if (asz != bsz) { return 0; }
+    if (asz == 0) { return 1; }
+    var afd = sys_open(a, O_RDONLY, 0);
+    if (afd < 0) { return 0; }
+    var bfd = sys_open(b, O_RDONLY, 0);
+    if (bfd < 0) { sys_close(afd); return 0; }
+    var abuf = alloc(65536);
+    var bbuf = alloc(65536);
+    var same = 1;
+    var go = 1;
+    while (go == 1) {
+        var ar = syscall(0, afd, abuf, 65536);
+        var br = syscall(0, bfd, bbuf, 65536);
+        if (ar != br) { same = 0; go = 0; }
+        elif (ar <= 0) { go = 0; }
+        elif (memeq(abuf, bbuf, ar) == 0) { same = 0; go = 0; }
+    }
+    sys_close(afd);
+    sys_close(bfd);
+    return same;
+}
+
+# v6.5.8: regenerate (or verify) the base bundle AND every declared profile.
+#
+# `check` = 0 writes them; `check` = 1 regenerates into a sibling temp, byte-compares, and
+# reports every bundle that DIFFERS — the CI shape, so a release cannot ship a stale
+# profile the way sankoch 2.7.6 nearly did. Exits non-zero on drift, naming each offender.
+fn cmd_distlib_all(check): i64 {
+    var mf = "cyrius.cyml";
+    if (file_exists(mf) == 0) { mf = "cyrius.toml"; }
+    if (file_exists(mf) == 0) {
+        _err("no cyrius.cyml or cyrius.toml found");
+        return 1;
+    }
+    # 6.6.17: the WHOLE manifest through the one reader (this read 32,767 bytes).
+    if (_mf_load() != 1) { _err("cannot read manifest"); return 1; }
+    var mbuf = _mf_buf;
+    var mlen = _mf_len;
+
+    var names = alloc(4096);
+    var n = _distlib_enum_profiles(mbuf, mlen, names, 4096);
+    if (n < 0) { _err("too many [lib.*] profiles for the 4 KB name buffer"); return 1; }
+
+    _distlib_check = check;
+    _distlib_drift = 0;
+    var failures = 0;
+
+    # The base bundle first — it is the one every consumer resolves by default.
+    if (cmd_distlib(0) != 0) { failures = failures + 1; }
+
+    var i = 0;
+    var off = 0;
+    while (i < n) {
+        var nm = names + off;
+        if (cmd_distlib(nm) != 0) { failures = failures + 1; }
+        off = off + strlen(nm) + 1;
+        i = i + 1;
+    }
+    _distlib_check = 0;
+
+    sys_write(STDOUT_FD, "  ", 2);
+    fmt_int(n + 1);
+    if (check == 1) { println(" bundle(s) checked (base + profiles)"); }
+    else { println(" bundle(s) regenerated (base + profiles)"); }
+
+    if (_distlib_drift > 0) {
+        _err("distlib --check: bundle(s) are STALE — regenerate with `cyrius distlib --all`");
+        return 1;
+    }
+    if (failures > 0) { return 1; }
+    return 0;
+}
