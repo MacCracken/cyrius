@@ -4349,6 +4349,7 @@ sigil::x509_cert_pubkey_len/1
 sigil::x509_cert_rsa_pubkey/1
 sigil::x509_cert_sig_algo/1
 sigil::x509_name_constraints_check/2
+sigil::x509_name_constraints_check_ca/2
 sigil::x509_nc_subtree/3
 sigil::x509_nc_subtree_count/1
 sigil::x509_parse/3
