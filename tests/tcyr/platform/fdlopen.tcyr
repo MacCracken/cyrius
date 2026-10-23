@@ -206,7 +206,7 @@ if (frc == 0) {
     var pid_via_fdlopen = fncall0(fp_getpid);
     var pid_via_syscall = syscall(39);  # SYS_GETPID
     assert_eq(pid_via_fdlopen, pid_via_syscall,
-              "glibc getpid() via fdlopen == SYS_GETPID");
+      "glibc getpid() via fdlopen == SYS_GETPID");
 } else {
     # Allowed reasons to fall back: arch-unsupported, helper-missing,
     # or the three transient error codes that v5.5.34 didn't touch.
