@@ -755,6 +755,258 @@ is still not safe — sandhi's roadmap); the client and server transports dispat
 defers to WAL recovery instead of judging the header unlocked. With this release's LIB-1 (a re-taken lock stays held),
 a second handle's writes inside a transaction are no longer lost on Windows. Nothing to change in a caller.
 
+### 6.7.17
+
+Break 2, repair 7 — the cleanup: the 22 issues left open after 6.7.16, and the fold wave. Each block names its
+CHANGELOG [6.7.17] bite; the decisions are the user's (2026-10-22: D1 – D91 at the open, D92 – D109 at the finish pass,
+all as recommended) or the agent's defaults D110 / D111, which the CHANGELOG's head lists for the user's review — ⚠ its
+first item, D109's array of POINTERS passed by name (`var ap: *i64[4]; tp(ap)`), is the one valid program 6.7.16 ran
+right that stops compiling: write `tp(load64(&ap))`. D39 – D90 keep every change 6.7.16 shipped beyond its decisions'
+text, so nothing 6.7.16 changed is restored. Decision ids are 6.7.17's unless a block names another release ("6.7.16's
+D72"). Every refusal below is a frontend diagnostic, the same on x86_64, aarch64, cx, PE and Mach-O, unless the block
+names a target. The fold wave (bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9) is the last block.
+
+#### Generic binding (genr)
+
+- **GA2-1 (D1) — a rebound type-parameter name is its own untyped word.** A generic whose closure parameter, `for x in` variable or destructure later
+  name shares a name with one of its `T`-typed parameters, and that calls a method or reads a field on that inner name,
+  stops compiling: *no struct type in scope for 'x'* at the definition. Before 6.7.17 such a call ran the bound's impl on
+  the inner word (`g(7)` returned through `impl Show for i64`) or crashed at a struct `T`; a never-called one compiled.
+  Rename the inner name, or read the outer value under another name before the closure.
+- **GA3-1 (D2) — a struct field or method result binds `T` to the struct.** A generic called with a struct-typed field or a struct-returning method result
+  (`g(w.p)`, `g(o.mk())`, `g(o.w.p)`) now calls the struct's instance instead of the `i64` one: `sizeof(T)`, a `var y: T`,
+  a `: T` result and `T` arithmetic follow the struct (`sizeof(T)` 8 -> the struct's size). Calls that were refused for it
+  — a generic using `T` as a struct (`v.b`), `p: *T` given a struct field or method result, a `Box<T>` / `**Box<T>`
+  carrier given a field or method — now compile. Pointer-shaped method results change instance too (beside D2, the
+  same "as a free call does"): through `p: *T` a `: *S` method and a `*S` field after a method (`psz(b.mpp())`,
+  `psz(b.mw(&w).q)`), and through `pp: **T` / `ppp: ***T` a `: **S` / `: ***S` method and a `**S` field after a method
+  (`ppsz(b.mqq())`, `ppsz(b.mwq().qq)`), call S's instance — `sizeof(T)` 8 -> S's size. To keep the old instance, name
+  it: `g<i64>(w.p)`.
+- Nothing to migrate for the review's fixes (GA-r): a wrapped argument, a carrier's `T` field and a struct literal
+  argument only make refused generics compile or change an error's words.
+
+#### Type-parameter and type-argument lists (genb)
+
+- A declaration's type-parameter list with an entry that is no name — a number, a keyword, a string, `<T<i64>>`, an
+  empty entry, a trailing comma `fn f<T,>()` — is refused (D3). Write names only: `<T>`, `<T: Show>`, `<T, U>`.
+- A trait member whose bound names an undeclared trait (or a malformed bound) is refused at the member, as the fn's
+  spelling always was (D4).
+- A type parameter written with a list in any annotation — `u: U<i64>`, `var l: U<i8>`, `*U<..>`, `[U<..>]`,
+  `sizeof(U<..>)`, a `: *U<..>` return — is refused (D6); the list never meant anything: drop it (`U`).
+- `fn f<T: Show>(y: Show)` (a bound's trait used as a type) is refused "unknown type 'Show'"; under
+  CYRIUS_MONOMORPH=0, `fn f<T>>(x)` / `enum E<T>> {` (an extra closer) are refused.
+- Under CYRIUS_MONOMORPH=0 an explicit call `g<i32>(3)` keeps failing, with D7's words (no new failure).
+- An enum whose type-parameter bound names an undeclared trait (or a malformed bound), `enum E<T: Nope> { A }`, is
+  refused as a struct's or a fn's is (D101, finish pass): declare the trait or drop the bound.
+- Under CYRIUS_MONOMORPH=0, a list on a name that declares none — `Pt<i64>` with `struct Pt { x; }`, `i64<u8>`,
+  `Color<i64>`, `cstring<i64>`, also inside a generic's list (`Box<Pt<i64>>`) — is refused, as the default build has
+  refused it since 6.7.15 / 6.7.16 (D102, finish pass): drop the list.
+- Nothing to migrate for GB1-6 / GB1-7 / GB1-r: diagnostics on code that never compiled (one line where a cascade was).
+
+#### Fn-pointer and pointer types (genc)
+
+- **GB2-1 (D8).** Newly compiles: `*fn( .. )` locals / globals / fields / slice elements (nothing that
+  compiled changes for them). Stops compiling: a generic, async, const or `#naked` fn with a `*fn( .. )` parameter and a
+  tuple-typed or dyn-typed local / parameter after it (`fn g<T>(cb: *fn(i64): i64, x: T) { var t: (i64, i64) = ..; }`) —
+  the R4 / T11 refusal it escaped; hold the tuple / dyn in a non-generic helper, as without the parameter.
+- **GB2-3 (D9).** Stops compiling: a trait member declaring a multi-value return with a fn-pointer element
+  (`fn e(self): (*fn(i64): i64, i64);`) — no impl could implement it; return the pointer as an `i64` element.
+- Newly compiles: a slice whose pointer element has two or more `*` — `[**T]`, `slice<**T>`, `[**fn( .. )]` (the user's
+  D93). Nothing that compiled changes.
+- Newly compiles: `sizeof` of a pointer type — `sizeof(*T)`, `sizeof(**T)`, `sizeof(*fn( .. ))` — is 8, in expressions,
+  const contexts and `#assert` (the user's D94). Nothing that compiled changes.
+- Newly compiles: a slice of `Vec<T>` handles (`[Vec<T>]`, `slice<Vec<T>>`), of pointers to them (`[*Vec<T>]`) and of
+  `*u128` (the user's D105). Nothing that compiled changes.
+- Stops compiling: a slice annotation whose element's `<..>` is closed by one `>` too many — `[Box<i64>>]`,
+  `slice<Box<i64>>>` (and `[Result<..>>]`, behind `*`s too) — "expected ']', got '>>'" / "expected '=', got '>>>'";
+  delete the extra `>`.
+- Nothing to migrate for GB2-2 / GB2-4 / GB2-5: a false typed-pointer warning gone (`&f`, a closure literal into a
+  `*T`), diagnostics on refused source.
+
+#### Struct and pointer shapes (vala)
+
+- **VA1-1 (D10 / D11).** A typed pointer of another struct into a by-value struct parameter, and a typed pointer of
+  another depth (including `&h` of a handle into a `*S`) into any struct parameter, stop compiling — pass the struct
+  itself, `*pp` / `**pp`, or a pointer of the parameter's own struct and depth.
+- **VA1-2 (D12).** `var g: S = pp;` with pp a `**S` stops compiling — write `*pp`.
+- **VA1-3 (D13).** `*p = mk()` through an untyped pointer, mk returning a struct over 8 B, stops compiling — store
+  through a `*S`, or bind a field (`*p = mk().a`).
+- **VA1-4 (D16).** `w.n = mk()` / `a[i] = mk()` / `S { mk(), .. }` with a struct result over 8 B into a word slot
+  stop compiling — bind a field (`w.n = mk().a`).
+- **VA1-5 (D15).** `x OP= mk()` with a struct result over 8 B stops compiling — combine a field (`x += mk().a`).
+- **VA1-5 (D15, in a generic).** A generic doing `y OP= mk()` / `*p OP= mk()` / `p[i] OP= mk()` / `b.v OP= mk()` on a
+  T-typed destination, mk returning a struct over 8 B, has no scalar instance — calling it at i64 / i32 stops compiling.
+- **VA1-6 (D17).** `var p: *P = s;` (s an inline P) now points at s — it held s's first field before (a crash);
+  `var p: *P = u;` with u another struct stops compiling.
+- **VA1-7 (D14).** `*ppq = r` / `w.pq = r` with r a struct value now write into the pointee and keep the pointer
+  (they rebound it before); to rebind, assign an address (`*ppq = &r`).
+- **VA1-9 (D106).** Assigning, declaring or storing a struct value over 8 B into a scalar or pointer slot stops
+  compiling — bind a field (`y = q.a`) or take its address (`p = &q`).
+- **VA1-10 (D107).** `var u: *S = &h` (h a handle) / `= pp` (a `**S`) / `var pp: **S = u` stop compiling — write `h`,
+  `*pp` or `&u`.
+- **VA1-10 (D107, the assignment).** `p = &h` (h a handle) / `p = pp` into a `*S` name, and `pp = p` into a `**S` one, stop
+  compiling — assign `h`, `*pp` or `&p`.
+- **VA1-10 (D107, a `Str` handle).** `var p: *Str = &h` of a `Str` handle stops compiling — write `= h`, or
+  `var p: **Str = &h` for the slot (before D107 `p.len()` read the slot as the header: 0 where 3 is right).
+- **VA1-11 (D111, agent default).** Passing, returning or testing a whole struct over 8 B where a word is expected (a typed
+  integer / float parameter, a builtin's argument, a `: i64` fn's `return`, a condition, an index, a comparison's left
+  side) stops compiling — pass a field (`q.a`) or the address (`&q`).
+
+#### `Str` shapes (valb)
+
+- A struct value of another type into a `Str` slot stops compiling: `h = mkq();`, `w.s = q;`, `W { mkq(), 1 }`,
+  `*ps = q;`, `return q;` from a fn returning `Str` — and a generic body doing it at its `T = Str` instance. Store a
+  `Str`; to keep a pointer pun, store the struct's address (`&q`, a `*T`), which keeps the rebind.
+- A nested struct field's literal element `*pq` (pq a `*S`) is the whole struct: `O { *pq, 7, 9 }` with a 16-byte `v`
+  (was v.a = *pq's first word, v.b = 7, m = 9) stops compiling (`expected '}'`) — write `O { *pq, 9 }`; a dereference
+  of another struct type there stops compiling.
+- `O { *p, 1, 2 }` with p a `*Str` stores p in the nested `Str` leaf (was the data word); `*p` into a nested field
+  that opens with no `Str` leaf, and `O { *(&t), 1, 2 }`, stop compiling.
+- A closure's `*(&t) = v` (t a captured inline `Str`) changes the closure's t.len; `*(&t) += x` there stops compiling.
+- A top-level untyped `var bb = <call returning Str>` is a `Str`: `bb.len` compiles, a generic call `gg(bb)` binds
+  T = Str, and `bb = mkq();` (a struct of another type) stops compiling.
+- `var a = (p.area());` (an f64 method, wrapped) is an f64 — `a + 1.0` is f64 arithmetic now.
+- A zone global redeclared (`var g = mkf(1.5); var g = 7;`) takes the last declaration's type.
+- `O { a, 1, 2 }` / `O { gt, 1, 2 }` (a `Str` name into a nested `Str` leaf) now compiles; `O { t, 1, 2 }` of a frame's
+  inline `Str` changes its refusal to the would-dangle words.
+- A multi-value call into any `Str` slot stops compiling (`var h: Str = two();`, `h = two();`, `w.s = two();`,
+  `W { two(), 1 }`, `return two();` in a fn returning `Str`, `fs(two())` with `s: Str`) — bind it first
+  (`var a, b = two();`) and build the `Str` from the values.
+
+#### Vector values and `: stack` pairs (valc)
+
+- **VC1-1 (D25).** `return (v, k);` with a vector v stops compiling — return `&v` / a `*V`, or its lanes
+  (`load64(&v)`, `load64(&v + 8)`) as elements.
+- **VC1-2 (D23).** `*pv = v` now writes both lanes (code that relied on a one-word store through a `*V` changes);
+  `*pv = 5` / `*pv = load64(..)` / `*pv += x` through a `*V` stop compiling — store through a `*i64` view
+  (`store64(pv, x)`) for a word.
+- **VC1-3 (D24).** Code that read a vector local's lane 0 by naming it (`take(w)`, `1 + w`, `if (w)`, `var x: i64
+  = w;`, `*pv` as a word) stops compiling — read the lane through the address (`load64(&w)`, `load64(&w + 8)`,
+  `load64(pv)`). lib/simd.cyr and the corpus are unaffected (byte-identical).
+- **VC1-5 (D95).** `var x = w;` of a vector w now copies the vector — x is a vector (16 / 32 bytes), so code that
+  used it as a word (`take(x)`, `x + 1`, `if (x)`) stops compiling under D24 (read the lane: `load64(&w)`); a top-level
+  `var X = *GP;` of a `*V` stops compiling — copy it inside a fn, or read its lanes (`load64(GP)`, `load64(GP + 8)`).
+- **VC1-6 (D103).** An array of vectors read as a word (`take(wa)`, `x = wa`, `1 + wa`, `if (wa)`, `var x: i64 = wa;`,
+  a tuple / multi-value element) stops compiling — pass its address (`&wa`) or read a lane (`load64(&wa)`).
+- `var a, b, c = f(..);` (or `callptr(&f, ..)`) with f returning a `: stack` enum stops compiling — bind two names.
+- `var x = wa;` / top-level `var X = GA;` from an array of vectors stops compiling — take `&wa`.
+- An array's name passed to a pointer parameter (`tp(a)`, `o.m(a)`, `fncall1(fp, a)` through `*fn(*i64)`) stops
+  compiling — pass `&a` (it passed the first element as the address and faulted). An array of pointers passed by name
+  (`var ap: *i64[4]; tp(ap)`, which passed its element 0 and ran right) stops compiling too — write `tp(load64(&ap))`.
+- Inside a closure, a captured array's name read as a word is now its first element (it was the copy's address): code
+  that passed a captured array by name to an untyped parameter as an address must pass `&a`.
+- `var v = callptr(&f, ..);` / `fncallN(&f, ..)` (and `x = ..`, `store64(.., ..)`, a field / element / `*p` store,
+  `+=`, a struct-literal element) with f returning a `: stack` enum stops compiling ('bind both'), as `var v = f(..);`
+  does — destructure (`var tag, val = callptr(&f, ..);`) or propagate (`callptr(&f, ..)?`). lib/ and the corpus are
+  unaffected (byte-identical); only lib/fnptr.cyr spells `fncallN(&`.
+- `return f(x)?;` from a fn whose `?` makes it a `: stack` pair now warns "returns a `: stack` pair on another path
+  but a SINGLE value here" (VC2-2), as `var v = f(x)?; return v;` did; a caller's `var t, v = g();` read the value as
+  the tag. Return the pair on every path.
+
+#### Coroutines (vald)
+
+- **VD1-1 (D27).** A suspending `async fn` (CYRIUS_ASYNC=1, x86 targets) with an `i8` .. `u32`
+  parameter now reads that parameter at its width (`y: u8` given 0x1FF is 255, not 511; an `i16` `+= 1` wraps), and a
+  narrow local in such a fn, a compile error through 6.7.16, now compiles — as does a typed-pointer local whose
+  pointee is a word (`*i64` / `*u64` / `*f64` / `*bool` / an enum's `*E`, or any `**T`), refused through 6.7.16 by
+  the same "a sub-word local in an `async fn` is not supported yet".
+
+#### Directives and statements (fea)
+
+- **FA1-1 (D30).** `use` lines that are not `use module.name;` stop compiling (none in this repo's corpus).
+- **FA1-3 (D28).** An `#assert` with anything but `;` / a `#` comment after its message on the same line stops
+  compiling (none in this repo's corpus; `#derive`'s generated `#assert`s end in `; `).
+- **FA1-4 (D29).** An include line with code or a second include after the file name stops compiling; put each on
+  its own line (none in this repo's compiled corpus; tests/fixtures/lint_lexical/is_err_clash.cyr is a lint-only
+  fixture, never compiled).
+- **FA1-7 (D92).** A `#ref` line with code after its file name stops compiling; put the code on its own line (none
+  in this repo's corpus).
+- **FA1-8 (D100).** A `#ref` line in an included file now declares its keys there — a file that also declares one
+  of those names (or carried the line as a stale comment naming a file that no longer exists) stops compiling:
+  "cannot open #ref file", or the name's redeclaration (none in this repo's corpus; the one `#ref "` line in the tree,
+  tests/tcyr/crossos/pp_directive_inside_multiline_string.tcyr:63, is string data and stays so).
+- **FA2-1 (D32).** A statement that is only a value builtin — or headed by one (`load8(p) + 1;`) — stops compiling:
+  `load8` `load16` `load32` `load64`; `f64_add` `f64_sub` `f64_mul` `f64_div` `f64_from` `f64_to` `f64_eq` `f64_lt`
+  `f64_gt` `f64_le` `f64_ge` `f64_neg` `f64_abs` `f64_sqrt` `f64_floor` `f64_ceil` `f64_round` `f64_trunc` `f64_sin`
+  `f64_cos` `f64_exp` `f64_ln` `f64_log2` `f64_exp2` `f64_atan`; `f32_from` `f32_to`; `bitget` `bitset` `bitclr`;
+  `rethi`; `f64v_dot` `f32v_dot` `f32v8_dot` `f64v256_dot` `iv_dp8`. Use the value (`var v = load8(p);`) or drop the
+  line. In this repo: benches/bench_float.bcyr and two .tcyr files, adjusted.
+- Newly compiles, nothing that compiled changes: a file-level `private` line after the first top-level statement
+  (FA1-6, D31). Nothing to migrate for FA1-2 / FA1-5 / FA2-2 (diagnostics on refused source).
+
+#### Inner declarations and never-parsed bodies (feg)
+
+- **FA3-1 (D33).** Code that compiled now stops compiling — a `struct` / `enum` / `union` / `trait` / `impl` /
+  `mod` / `use` / `pub` declaration inside a trait default method that no impl inherits (or every impl overrides), or
+  inside a bounded generic fn or method that is never called. Move the declaration to the declaration section (top
+  level, before the first statement).
+- **FA3-4 (v6.5.17's rule, D110).** Code that compiled now stops compiling — a syntax error, or a name defined nowhere, inside a trait
+  default no impl inherits (or every impl overrides) or a generic fn / method no call instantiates. Fix the body.
+- Nothing to migrate for FA3-2 / FA3-3 (only refused source changes; `cyrius lint` accepts valid
+  `for y in x.a..10`).
+
+#### Platform (plat)
+
+- **PL1-1 (CYRIUS-2026-0037).** Nothing that compiled changes, and no handshake answer changes. One resource note: a
+  1.3 server now takes 8 KB more from its ctx's allocator for a ClientHello listing more than 32 groups (as 6.7.16's
+  extension walk does for more than 32 extensions); a server whose per-connection arena cannot spare it answers
+  `TLS_ERR_OOM` for such a hello.
+- **PL3-1 (D35 / D36).** Windows only: a rename of a directory onto an existing file that answered 0 (and
+  replaced the file) now answers -20 and changes nothing; a file onto a directory answers -21 where it answered -13.
+- **PL3-2 (D37).** Windows only: code that compared xflock's failure with -1 now reads -9 for a closed or
+  negative fd, and a table errno (-13, -22, …) for other failures; contention's -11 is unchanged. Windows only:
+  `xflock(h + 1, op)` with a bad op answers -22 again (6.7.16: -9).
+- **PL3-3 (D96).** Windows only: a `file_rename` / `sys_rename` to another volume answers -18 (EXDEV)
+  where it answered -1 — a copy-and-delete fallback keyed on -18 now runs there; code that compared the failure with -1
+  reads -18.
+- **PL3-4 (D97).** macOS only (natively and a cx guest on a Mac): `xflock(fd, op)` with an op that is not
+  LOCK_SH / LOCK_EX / LOCK_UN (+ LOCK_NB) answers -22 and leaves the lock as it was — 3 (`LOCK_SH | LOCK_EX`) took the
+  exclusive lock and answered 0, an op carrying LOCK_UN beside another lock bit unlocked, one with no lock bit answered
+  -9; a bad op on a non-descriptor is -22 (it was -9).
+- **PL3-4 (D104).** Linux only (x86_64, aarch64, and a cx guest on a Linux host): `xflock(fd, op)` with an
+  op carrying `LOCK_MAND` (32), or with bits above 31, answers -22 and leaves the lock as it was — it answered 0 (an op
+  with LOCK_MAND locked nothing, whatever the fd; one with high bits acted on its low 32 bits). Valid ops are unchanged.
+
+#### Diagnostics (fed, zr, plst, feb, fec)
+
+- **FD1-1 / FD1-2 / FD1-3 (D34).** Diagnostics' columns moved (no program's meaning changes): "undefined variable 'x'" is now at the name's own column
+  (`return zq + 1;` 1:25, was 1:28 — any tool or test pinning `:L:C:` of an undefined name moves to the name), a line
+  with a macro call or a `#derive` before the error now reports the source column, and a generic instance is named
+  `B<i32>` (was `B$i32`) in every refusal. The LSP publishes the name's position (it reads the column from the message).
+- **ZR1-1 — diagnostics in source order.** A tool that reads cycc's stderr sees the diagnostics in source order: a
+  refused program's lines (and a valid program's warnings) can come in a different ORDER than 6.7.16 printed them — the
+  same lines. `CYRIUS_DIAG_UNBUFFERED=1` restores the old order.
+- **PL2-2.** A tool that parsed `cycc --parse-ts`'s stderr sees real line numbers instead of 0.
+- Nothing to migrate for FB1 and FC1: a refused program reports fewer, truer errors (a missing `;` no longer takes the
+  next statement or the fn's `}` with it; a refused source no longer cascades into its uses); nothing that compiled
+  changes.
+
+Nothing to migrate (values fixed or no consumer-visible change): GA1-1 / GA1-2 (a by-value struct argument takes the
+copy it needed — a wrong value fixed — and a tail call through a non-writing helper keeps its `jmp`, so deep recursion
+runs in constant stack again, as before 6.7.7); PL2-1 / PL2-3 (the compiler's own self-compile advisory, the check
+driver's OVMF rows); TO1 (the repo's own developer, fold and release helpers, never shipped in a tarball: in a cyrius
+checkout `python3 scripts/…` and `sh scripts/{dev,folds}/…` become `cyrius run programs/{dev,folds,release}/<name>.cyr`
+from the checkout root, and `build-cycc-verify.sh --fixpoint|--install` becomes
+`cyrius run programs/dev/fixpoint.cyr --fixpoint|--install`).
+
+#### Folds — bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9
+
+- **bayan 1.9.0 → 1.11.0.** The flat lookups name their key type: `bayan_json_get_by_cstr` / `_by_str`,
+  `bayan_toml_get_by_cstr` / `_by_str` and their siblings; the 13 bare names and aliases are deprecated — they answer
+  as before and every call warns, and a null pairs or key now returns 0. Move a call to the typed name for its key (a
+  C string or a `Str`). A `#derive(Deserialize)` struct needs no change: the expansion now calls
+  `bayan_json_get_by_str`, so its deprecation warning is gone. New: `bayan_toml_v_parse` (+ `_a` / `_buf` / `_ctx`)
+  parses TOML 1.0.0 strictly into json's value tree. 1.10.0's 99 public constants are `const` and its 32 public
+  predicates return `: bool` — no value or answer changed. 27 public fns and 4 constants added, none removed.
+- **sandhi 1.13.3 → 1.13.6 — no public verb added or removed.** HTTP/2 flow control (a pooled connection no longer
+  stalls after ~64 KiB of responses), request bodies over 16 KB and header blocks over 8 KB on h2, each request's own
+  deadlines on h2 (a timeout is SANDHI_ERR_TIMEOUT), an h2 connection dropped from the pool when an exchange fails,
+  per-hop credential digests on redirects, the TLS session cache under a mutex. `SANDHI_H2_CONN_STRUCT_SIZE` 88 → 144:
+  size an h2 connection record by the constant, never a number. lib/sandhi.cyr's own includes gain lib/freelist.cyr
+  (nothing to add to a caller's list).
+- **sankoch 2.8.7 → 2.8.9 — no API or output change.** Batch inflate / deflate keep nothing on the global heap per
+  call; the pin moves to cyrius 6.7.16.
+
 ### 6.7.16
 
 Break 2, repair 6 — what 6.7.15 filed, and what 6.7.16's own lanes found. Each block names its CHANGELOG [6.7.16] bite;
