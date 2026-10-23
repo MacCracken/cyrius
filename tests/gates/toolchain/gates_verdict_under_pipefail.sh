@@ -78,6 +78,8 @@
 #   * test_runner_bounded.sh (6.7.18; `# check: serial`, so axis 2 runs it after the pool, alone) —
 #     `orphan_pids` piped `ps` through a grep that finds nothing on a clean box (rc 1 at axis 1b); a
 #     pid gone between ps and /proc, and a kill of an exited child, ended it the same way.
+#   * check_driver_bounded.sh (6.7.18) — axis 4 ran the check driver bare on suites that are RED by
+#     design (`( … "$T/drv" tcyr ) > out`): its exit 1 ended the gate before any 4a row.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -146,7 +148,8 @@ tests/gates/toolchain/distlib_bundle_selfcheck.sh
 tests/gates/toolchain/install_gates_ship_the_checksum.sh
 tests/gates/toolchain/scaffold_verb_discovery.sh
 tests/gates/toolchain/stdlib_key_scan_quoted.sh
-tests/gates/toolchain/test_runner_bounded.sh"
+tests/gates/toolchain/test_runner_bounded.sh
+tests/gates/toolchain/check_driver_bounded.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
