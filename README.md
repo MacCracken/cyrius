@@ -242,7 +242,7 @@ The twelve folded sibling libraries, at the versions `lib/` carries
 (storage) · sigil 3.13.14 (security / crypto) · vani 1.2.10 (audio) ·
 yukti 2.3.18 (hardware) · sankoch 2.8.9 (compression) · sandhi 1.13.7
 (HTTP/2, JSON-RPC, TLS policy) · niyama 1.1.0 (regex) · mabda 4.2.0
-(GPU / compute) · bayan 1.11.0 (data formats + big-int) · ganita 1.2.15
+(GPU / compute) · bayan 1.11.1 (data formats + big-int) · ganita 1.2.15
 (linear algebra + advanced math) · yantra 1.0.11 (UI / E2E testing).
 Each is opt-in with an explicit `include "lib/<name>.cyr"`;
 [docs/ecosystem.md](docs/ecosystem.md) records the tag each was folded from
