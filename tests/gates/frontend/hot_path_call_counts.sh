@@ -20,12 +20,19 @@
 #      called PP_SKIP_WS 7.6 M and PP_LEXST 13.6 M times for its 7.5 M walked bytes. This row's included file of
 #      4,000 lines of code and comments: under 2 PP_SKIP_WS calls per line and under 1 PP_LEXST call per 4 bytes
 #      (the parent: one PP_SKIP_WS per byte, two PP_LEXST per byte). src/frontend/lex/pp/pass.cyr, directive.cyr.
+#   S  a struct name is looked up through FINDSTRUCT's name index (FNV-1a chains, parse/types/struct.cyr), not
+#      compared with every registered struct: N struct declarations and a fn of each (`p: *SK`, `p.a`) cost STREQ
+#      calls O(N^2) — the parent: 1,836,928 at 450 structs, 7,319,002 at 900 (3.98x). Bound: 900 structs under
+#      3x the STREQ calls of 450 (the tree: 17,753 -> 38,117, 2.14x); the 900-struct program exits 42. A count
+#      ratio, not a timing one: under the 1,024-struct cap the quadratic part hides under the linear work in wall
+#      time (44 -> 119 ms, 2.7x).
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
 # P: the parent of its fix -> RED (180,782 PP_SKIP_WS calls for the 4,000 lines); PP_IFDEF_PASS's `dip` from every
 # byte again -> RED (the same count); PP_NEUT_FMARK's skip removed -> RED on the PP_LEXST bound (192,886 calls for
 # 180,670 bytes, bound 45,167; the tree reads 4,031 and 20,181).
+# S: the parent of its fix -> RED (398%); FINDSTRUCT scanning the table before its chain (same answer) -> RED (397%).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -45,8 +52,9 @@ chmod +x "$D/cc_cov"
 # run <program>: compile it with the instrumented compiler; the counts land in $D/cov.txt (one run's block only).
 run() {
     rm -f "$D/cov.txt"
-    "$D/cc_cov" < "$1" > "$D/prog" 2> "$D/prog.err"
+    crc=0; "$D/cc_cov" < "$1" > "$D/prog" 2> "$D/prog.err" || crc=$?
     if [ ! -s "$D/cov.txt" ]; then echo "FAIL: $G: no coverage block for $1"; sed -n 1,5p "$D/prog.err"; FAIL=1; return 1; fi
+    if [ "$crc" -ne 0 ]; then echo "FAIL: $G: $1 did not compile (rc $crc)"; sed -n 1,5p "$D/prog.err"; FAIL=1; return 1; fi
     return 0
 }
 # count <fn name>: its entries in the last run.
@@ -79,6 +87,26 @@ else
     elif [ "$W" -ge $((N * 2)) ]; then echo "FAIL: $G [P]: $W PP_SKIP_WS calls for $N included lines ($B bytes; bound $((N * 2)))"; FAIL=1
     elif [ "$X" -ge $((B / 4)) ]; then echo "FAIL: $G [P]: $X PP_LEXST calls for $B included bytes (bound $((B / 4)))"; FAIL=1
     else echo "  ok [P] $W PP_SKIP_WS calls for $N lines, $X PP_LEXST calls for $B bytes"; fi
+fi
+
+# ── S: struct names by index ─────────────────────────────────────────────────────────────────────────────────
+sgen() {  # sgen n > file: n structs, a fn taking a pointer to each, the last one called
+    awk -v n="$1" 'BEGIN { for (i = 0; i < n; i++) printf "struct S%d { a: i64; b: i64; }\n", i
+                           for (i = 0; i < n; i++) printf "fn f%d(p: *S%d): i64 { return p.a + p.b; }\n", i, i
+                           printf "fn main(): i64 { var g: S%d; g.a = 40; g.b = 2; return f%d(&g); }\n", n - 1, n - 1
+                           print "syscall(60, main());" }'
+}
+sgen 450 > "$D/s1.cyr"; sgen 900 > "$D/s2.cyr"
+if run "$D/s1.cyr"; then
+    S1=$(count STREQ)
+    if run "$D/s2.cyr"; then
+        S2=$(count STREQ)
+        chmod +x "$D/prog"; src=0; "$D/prog" || src=$?
+        if [ "$src" -ne 42 ]; then echo "FAIL: $G [S]: the 900-struct program exits $src, not 42"; FAIL=1
+        elif [ "$S1" -lt 1 ] || [ "$S2" -ge $((S1 * 3)) ]; then
+            echo "FAIL: $G [S]: STREQ calls $S1 (450 structs) -> $S2 (900): $((S2 * 100 / (S1 + 1)))% (bound 300%)"; FAIL=1
+        else echo "  ok [S] STREQ calls $S1 (450 structs) -> $S2 (900), $((S2 * 100 / S1))% (bound 300%)"; fi
+    fi
 fi
 
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
