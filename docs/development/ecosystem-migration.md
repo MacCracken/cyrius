@@ -792,7 +792,8 @@ folds are the last block.
 #### Local users, the CLI, the release channel (local)
 
 - **`cyrius deps` refuses plaintext dependency URLs (Finding 26, the user's decision):** `git://`, `http://`,
-  `ftp://` and a remote helper's `http::`, any case, by name (dep, owner, URL), before any fetch. Move the dependency's
+  `ftp://`, a remote helper's `http::`, and a helper's plaintext URL (`https::http://…`), any case, by name (dep,
+  owner, URL), before any fetch. Move the dependency's
   `git` URL in `cyrius.cyml` to `https://` or ssh (`git@host:owner/repo`).
 - **`cyrius build`'s output temp is `<out>.tmp.<n>`** — n random (62 bits of the OS CSPRNG), created exclusively
   (CYRIUS-2026-0046); it was `<out>.tmp.<pid>`. A script that looked for the pid-named temp matches `.tmp.<digits>`.
@@ -817,7 +818,7 @@ folds are the last block.
 - **install.sh's header** advertises the README's raw.githubusercontent.com command (Finding 27); the
   `install.cyrius.dev` URL never resolved. Use the README's command.
 
-#### Native TLS (tls)
+#### Native TLS (tls, refold)
 
 - **KeyUpdate (Finding 21).** A peer's KeyUpdate whose body is not exactly one byte of 0 or 1 fails the connection
   (`TLS_ERR_BAD_HANDSHAKE`); one that does not end its record, or the 33rd in a row with no application data between,
@@ -827,10 +828,17 @@ folds are the last block.
   Don't use a ctx after closing it.
 - **`TLS_CTX_LEN` 632 → 640** (`TLS_CTX_OFF_KEY_UPDATES` = 632). Size a ctx through `TLS_CTX_LEN`, never a number.
 - **CYRIUS-2026-0042 — nameConstraints.** A chain through a CA whose X.509 nameConstraints the leaf (or a lower CA)
-  violates is `TLS_ERR_CERT_INVALID`; a CA constraining a name form cyrius does not evaluate (rfc822Name, URI, …)
-  refuses the path; a CA with a CRITICAL nameConstraints now parses (sigil 3.13.13 refused the certificate, so such a
-  chain failed closed) and is enforced:
-⟪REVENDOR⟫
+  violates is `TLS_ERR_CERT_INVALID`, the trust root's constraints included; a CA constraining a name form cyrius does
+  not evaluate (rfc822Name, URI, …) refuses the path; a CA with a CRITICAL nameConstraints now verifies for its
+  permitted names (sigil 3.13.13 refused the certificate at parse). An intermediate is checked as a CA — its
+  commonName is never read as a host name; the leaf's is. A CA that does not allow the path below it is skipped while
+  the path is built, so a chain through an unconstrained twin still verifies; a path over 18 certificates (more than
+  16 intermediates, only from a direct API call) is refused; a trailing-dot name is matched with one dot dropped, so
+  it is refused where OpenSSL lets it out. Fix: a server whose chain is refused must be issued inside its CA's
+  constraints.
+- **The TLS 1.2 client keeps the server's intermediates** (up to 16; it kept only the leaf), so a TLS 1.2 server that
+  sends its intermediate now verifies — every such verifying connect failed. A malformed entry after the leaf is
+  `TLS_ERR_BAD_HANDSHAKE` (it was ignored). Nothing to change.
 
 #### Thread-local slots (tls-slots)
 
@@ -880,9 +888,11 @@ folds are the last block.
   carries `cbt/cyrius.cyr`'s cbt/ include list, in order. The `#derive` field-cap error names `lex/pp/derive.cyr`.
   `lib/` did not move, and no compiled program changes.
 
-#### Folds — sigil 3.13.14, sandhi 1.13.7, bayan 1.11.1
+#### Folds — sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1
 
-⟪REVENDOR⟫
+Vendored byte-identical from the user's tags: sigil 3.13.15 (`3c47656`), sandhi 1.13.7 (`6e649a3`), bayan 1.11.1
+(`965298d`). A hand-written include list needs `lib/slice.cyr` and `lib/hashseed.cyr` before `lib/bayan.cyr`, and
+`lib/slice.cyr` before `lib/sandhi.cyr`; sigil's is unchanged.
 
 - **bayan 1.11.0 → 1.11.1 — new requirements and refusals (the user's decisions).** `lib/bayan.cyr` needs
   `lib/slice.cyr` and `lib/hashseed.cyr` before it in a hand-written include list (its Requires block names them; a
@@ -904,22 +914,24 @@ folds are the last block.
   holding a NUL (`SANDHI_ERR_PROTOCOL`), on a decoded header list over 65,536 octets (saying why;
   CYRIUS-2026-0044), and on an HPACK integer past 2^32 − 1; an HTTP/1 header field holding a NUL is dropped (it was read
   cut at the NUL), as CR / LF fields were. A conforming server sees no change. The HPACK table record is 40 B (was 32).
-- **sigil 3.13.13 → 3.13.14 — crypto lanes.** Lanes are a pool of 64, held only while used, by one thread
+- **sigil 3.13.13 → 3.13.15 — crypto lanes.** Lanes are a pool of 64, held only while used, by one thread
   (CYRIUS-2026-0040). `cbank()` takes no lane any more: it answers the lane the thread holds, or 0 — a caller that
   indexed its own top-level array by `cbank()` now shares row 0 across threads: put the array on the fn's frame, or
   hold a lane with the new `crypto_lane_enter()` / `crypto_lane_leave()` (enter answers -1 when all 64 are busy).
   `crypto_bank_set` is a no-op; `crypto_banks_exhausted()` means a lane request was refused, `crypto_banks_claimed()`
   the lanes held now; `crypto_tls_main_init` no longer gives main lane 0. With all 64 busy, a 65th concurrent ECDSA
-  verify or on-curve check answers 0 (refused, not queued) — under heavy oversubscription a handshake can fail where it
-  waited before. A direct call into the P-256 / P-384 EC arithmetic outside any lane scope, with no lane free, exits
-  70: wrap it in `crypto_lane_enter()` / `crypto_lane_leave()`.
-- **sigil 3.13.14 — X.509 and Poly1305.** `X509Cert` is 304 B (was 272): size it by `X509_CERT_SIZE`, never a number.
-  nameConstraints are parsed critical or not and enforced by `x509_verify_chain` and the link check (CYRIUS-2026-0042):
-  a chain whose leaf falls outside a CA's permitted (or inside its excluded) dNSName / iPAddress subtrees, or under a
-  constrained form not evaluated, is refused; a critically-constrained CA that failed to parse now parses. A pathLen
-  that is no non-negative 1 – 7-byte INTEGER, and an empty TBS, are refused. New: `poly1305_init_into` /
-  `_update_into` / `_finalize_into` over a caller-owned `POLY1305_STATE_SIZE` (168) context, `x509_name_constraints_check`,
-  `x509_cert_has_name_constraints`, `x509_nc_subtree_count`, `x509_nc_subtree`, `X509_GN_*`. No symbol removed.
+  verify or on-curve check answers 0 (refused, not queued) — under heavy oversubscription a handshake can fail where,
+  on a shared lane, it went through before. A direct call into the P-256 / P-384 EC arithmetic outside any lane scope,
+  with no lane free, exits 70: wrap it in `crypto_lane_enter()` / `crypto_lane_leave()`.
+- **sigil 3.13.15 — X.509 and Poly1305.** `X509Cert` is 304 B (was 272): size it by `X509_CERT_SIZE`, never a number.
+  nameConstraints are parsed critical or not and enforced by `x509_verify_chain` and the link check
+  (CYRIUS-2026-0042): a chain whose leaf falls outside a CA's permitted (or inside its excluded) dNSName / iPAddress
+  subtrees, or under a constrained form not evaluated, is refused; an intermediate is checked as a CA
+  (`x509_name_constraints_check_ca`: every name but its commonName), the leaf as the leaf; a critically-constrained CA
+  that failed to parse now parses. A pathLen that is no non-negative 1 – 7-byte INTEGER, and an empty TBS, are
+  refused. New: `poly1305_init_into` / `_update_into` / `_finalize_into` over a caller-owned `POLY1305_STATE_SIZE`
+  (168) context, `x509_name_constraints_check`, `x509_name_constraints_check_ca`, `x509_cert_has_name_constraints`,
+  `x509_nc_subtree_count`, `x509_nc_subtree`, `X509_GN_*`. No symbol removed.
 
 ### 6.7.17
 

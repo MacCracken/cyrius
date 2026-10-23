@@ -18,11 +18,12 @@ keeps `nullok` (refusing empty passwords is placed at 6.8.0); the `ach` self-hos
 is fixed in this release — CYRIUS-2026-0039 by the repository's fork-PR approval setting, which the user sets in
 GitHub — and so is every bug and hardening finding but the `nullok` the user kept. All of it on the integration branch
 `l6718-integ` (not main): wave 0 the moves and the audit; then fourteen lanes, each reviewed once — wave 1 net, local,
-tls and splits, beside the three fold lanes in their own repos (sigil 3.13.14, sandhi 1.13.7 and bayan 1.11.1 — fixed
-and prepared here, tagged by the user); tls-slots (no thread shares another's thread-local slots, on any target); wave 2
-splits2 and cbtsplit (the frontend's and the CLI's largest files in folders); wave 3 pipefail, giantfns, optimize
-(self_compile 1,403 → 1,001 ms same-box, −29 %) and libs. The merged tree's check.sh reds were fixed on the
-integration branch.**
+tls and splits, beside the three fold lanes in their own repos (sigil, sandhi, bayan); tls-slots (no thread shares
+another's thread-local slots, on any target); wave 2 splits2 and cbtsplit (the frontend's and the CLI's largest files in
+folders); wave 3 pipefail, giantfns, optimize (self_compile 1,403 → 1,001 ms same-box, −29 %) and libs. Then the
+cleanup lane (the reviews' notes, fixed) and the refold lane (reviewed once): the folds vendored byte-identical from
+the user's tags — sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1 — and CYRIUS-2026-0042's native-TLS side. The merged
+tree's check.sh reds were fixed on the integration branch.**
 
 ⟪GATE⟫
 
@@ -55,9 +56,10 @@ repros and the verifiers' runs); the next ledger id is `CYRIUS-2026-0051`.
 - **CYRIUS-2026-0042 (P2)** — the X.509 chain verifiers ignored nameConstraints. *Attacker:* the holder of a
   name-constrained intermediate CA chaining to a trusted root, on path; *boundary:* server identity — a leaf for any
   host accepted. Fixed in sigil 3.13.14 (`1910602`, `0637b14`): parsed critical or not, enforced by
-  `x509_verify_chain` and the direct-issuer link check; native TLS's `_tn_verify_chain` checks every CA's constraints,
-  the anchor's included, over every certificate below it:
-⟪REVENDOR⟫
+  `x509_verify_chain` and the direct-issuer link check; and in native TLS (refold `8b244685d`): `_tn_verify_chain`
+  requires every CA on the selected path, the anchor included, to allow every certificate below it — the leaf always,
+  a self-issued intermediate exempt; an intermediate is checked as a CA, its commonName never read as a host name
+  (sigil 3.13.15 `3c47656`, refold `e91b099c1`). The audit's nc_probe: `tls_native_client_verify_chain` 0 → -6.
 - **CYRIUS-2026-0043 (P2)** — ws_server read every connection's frames into one process-global 1 MiB buffer.
   *Attacker:* any WebSocket client of a server that handles connections on more than one thread; *boundary:*
   connection isolation (A's PONG echoed B's message). Fixed: net, `5afff204d`, `ae53f9d3c`.
@@ -130,8 +132,8 @@ written here (each a fork the user can still turn):
    (the decoders return 0 as before); a failed PDF decode is sticky for its document ("no inflate hook installed"
    included) and every inflate attempt is charged in full (cap + 1), never refunded; repeated page references are
    bounded by a 512 MiB per-document content budget (`_PDF_MAX_CONTENT`, charged by the public
-   `bayan_pdf_page_content` too), not by refusing a `/Kids` that repeats a page; the json key set's hash is seeded
-   (`hashseed`, the review's must-fix), the TOML name indexes are not (developer config).
+   `bayan_pdf_page_content` too), not by refusing a `/Kids` that repeats a page; the json key set's hash and both TOML
+   key indexes take the per-process seed (`hashseed`: the review's must-fix, and its last note before the tag).
 6. **tls** — the KeyUpdate cap is 32 in a row, reset by non-empty application data (OpenSSL's and BoringSSL's limit),
    not a per-connection total, which would cut long-lived connections that rotate at the AEAD limits; a rotation
    overwrites the secret, key and IV in place (it allocates nothing); a malformed KeyUpdate body is
@@ -153,6 +155,18 @@ written here (each a fork the user can still turn):
 10. **libs** — `PAM_MAX_PASSWORD` follows the 6.7.6 / 6.7.9 twin doctrine (a const bounds the password and sizes the
     copy; writing the public var changes nothing); net.cyr's blocking resolver brought under D1 (the issue named the
     async and sandhi resolvers); stdlib_alloc_refusal_sentinels' http floor 7 → 6 (one allocation fewer per call).
+11. **refold** (CYRIUS-2026-0042's native side) — a CA that does not allow the path below it is SKIPPED while the path
+    is built, not fatal (the selection conjunction, as 6.6.16 did for EKU and as sigil's link check does for the direct
+    issuer), so a chain through an unconstrained twin with the same subject and key still verifies (OpenSSL fails on its
+    first candidate); the path cap is 18 (`_TN_CHAIN_PATH_MAX`: the leaf, the 16 intermediates the Certificate parsers
+    keep, one extra step), met only by a direct API caller passing more than 16 intermediates (refused); the trailing
+    dot follows sigil — one dot dropped from name and constraint, so a trailing-dot name is refused where OpenSSL 3.6.5
+    lets it out (the gate names it as the one divergence); the TLS 1.2 Certificate list is strict — a malformed entry
+    after the leaf is `TLS_ERR_BAD_HANDSHAKE` (it was ignored), an unparseable one skipped, as the 1.3 client skips one;
+    the harnesses are `fuzz/<fold>_<parser>.fcyr`, the driver keeps `fuzz/fz_driver.cyr`.
+12. **cleanup** — `http::https://…` stays refused (a helper NAMED http; the belt refuses it too), and `ext::` is never
+    refused by this check, only by the belt; `hc_write_new` replaces a symlink at its path rather than writing through
+    it (file_write_atomic's default; its callers write their own scratch, stage or new files).
 
 Also recorded by the lanes as their reading of a decision (each implemented as written here): local — Finding 26's
 refusal covers `ftp://` and a remote helper's `http::` as well as `git://` / `http://`, in any case, and every fetching
@@ -169,17 +183,22 @@ effective uid or gid mismatch, or an auxv the process may not read.
   keeps the frames that came with the 101 and refuses a header block over 8 KiB (the ws handle is 56 bytes);
   `async_resolve` refuses an empty name or one over 253 bytes (-1). The parsers read through slices: a read past the
   peer's bytes, should a parser's own checks miss one, stops at the slice (exit 134) where it read on.
-- **Local users, the CLI, the release channel (local)** — `cyrius deps` refuses `git://`, `http://`, `ftp://` and
-  `http::` dependency URLs by name before any fetch; the build's output temp is `<out>.tmp.<n>` (n random), created
+- **Local users, the CLI, the release channel (local, cleanup)** — `cyrius deps` refuses `git://`, `http://`,
+  `ftp://` and `http::` dependency URLs, and a remote helper's plaintext URL (`https::http://…`), by name before any
+  fetch; the build's output temp is `<out>.tmp.<n>` (n random), created
   exclusively; `file_write_atomic`'s temp is born at the destination's mode; the Windows CLI reads no
   `/proc/self/environ` and refuses a missing home (USERPROFILE and CYRIUS_HOME unset) by name; in a secure exec every
   fdlopen entry takes only the root-owned `/usr/lib/cyrius/dlopen-helper` (else -9), and `fdlopen_trusted_only(1)`
   asks for it anywhere; `pam_unix_authenticate` refuses a password over 512 bytes before forking, fails closed on a
   closed pipe, and sends the password NUL-terminated (a correct password now verifies; with an empty hash, ANY password
   no longer does); release.yml signs in `environment: release`; install.sh's header names the README's URL.
-- **Native TLS (tls)** — a peer's KeyUpdate with a body other than one byte 0 / 1 is `TLS_ERR_BAD_HANDSHAKE`, one that
-  does not end its record or the 33rd in a row `TLS_ERR_PROTOCOL`; `tls_native_close` zeroises every secret and a seal
-  or open after it is `TLS_ERR_PROTOCOL`; `TLS_CTX_LEN` 632 → 640.
+- **Native TLS (tls, refold)** — a peer's KeyUpdate with a body other than one byte 0 / 1 is `TLS_ERR_BAD_HANDSHAKE`,
+  one that does not end its record or the 33rd in a row `TLS_ERR_PROTOCOL`; `tls_native_close` zeroises every secret
+  and a seal or open after it is `TLS_ERR_PROTOCOL`; `TLS_CTX_LEN` 632 → 640; a chain through a CA whose
+  nameConstraints its leaf (or a lower CA) violates is `TLS_ERR_CERT_INVALID`, the anchor's constraints included
+  (CYRIUS-2026-0042); the TLS 1.2 client keeps the server's intermediates (up to 16), so a 1.2 server that sends its
+  intermediate verifies (every such verifying connect failed), and a malformed entry after the leaf is
+  `TLS_ERR_BAD_HANDSHAKE`.
 - **Thread-local slots (tls-slots)** — on arm64 macOS a thread past the 64th live one gets its own slots (it shared
   main's), and a slot access from a thread no `thread_create` started exits 70; in Linux foreign-TLS mode a thread
   other than the declaring one exits 70 on a slot access (it shared the owner's array); on Windows a thread's first
@@ -196,10 +215,12 @@ effective uid or gid mismatch, or an auxv the process may not read.
   `parse/` (`parse.cyr` and its eleven pieces, `ctrl.cyr`, `cov.cyr`, `fn/`, `decl/`, `expr/`, `types/`);
   `cbt/commands.cyr` and `cbt/deps.cyr` are `cbt/commands/` and `cbt/deps/`; the `#derive` field cap's error names
   `lex/pp/derive.cyr`. No compiled program changes; `lib/` did not move.
-- **Gates (pipefail, cbtsplit, splits)** — fifteen gates reach a verdict under `bash -eo pipefail`; every reader of
-  cbt/ reads it recursively; the CVE-05 scan fails by name on a file it cannot find.
-- **Folds** — sigil 3.13.14: crypto lanes are a pool held only while used (`cbank()`'s meaning above),
-  ChaCha20-Poly1305's state on the caller's frame, nameConstraints parsed and enforced, `X509Cert` 272 → 304 B.
+- **Gates (pipefail, cbtsplit, splits, cleanup, refold)** — fifteen gates reach a verdict under `bash -eo pipefail`;
+  every reader of cbt/ reads it recursively, and the two that read programs/ read it recursively; the CVE-05 scan
+  fails by name on a file it cannot find; fuzz/ carries 16 harnesses, the folds' parsers among them.
+- **Folds** (vendored from the tags) — sigil 3.13.15: crypto lanes are a pool held only while used (`cbank()`'s
+  meaning above), ChaCha20-Poly1305's state on the caller's frame, nameConstraints parsed and enforced (an
+  intermediate CA's commonName never read as a host name), `X509Cert` 272 → 304 B.
   sandhi 1.13.7: HPACK size updates over 4096 and decoded header lists over 65,536 octets fail the exchange, a NUL
   header field is dropped (HTTP/1) or refused (h2), HPACK integers past 2^32 − 1 are refused. bayan 1.11.1: invalid
   base64, malformed JSON numbers and duplicate JSON keys refused by name; PDF decoding bounded per document;
@@ -212,7 +233,9 @@ effective uid or gid mismatch, or an auxv the process may not read.
   In-flight; the release's record lives on `l6718-integ` until its close (26ce77662).
 - **7e6478b44** — filed and placed in the audit:
   [the network parsers' fuzz harnesses and bounds-checked builds](docs/development/issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
-  (HTTP, WebSocket, DNS, X.509 / DER, JSON) — the bounds-checked form its one question, answered by D1.
+  (HTTP, WebSocket, DNS, X.509 / DER, JSON) — the bounds-checked form its one question, answered by D1. Resolved in
+  this release: D1's slices in every network parser, net's five harnesses and the refold's five fold-parser harnesses
+  in fuzz/ (floor 16); the file archives at the close.
 
 ### Wave 0 — the moves (D2) and the audit, on `l6718-integ`
 
@@ -410,8 +433,8 @@ exec in a user namespace: the parent ran the planted helper as euid 0, the lane 
 Branch `l6718-tls` (cut from `d249d9bc1`), three commits, one review round: zero must-fix (head `6b6d7ef05`, merged
 `15cc88f32`). No `src/` change. Rows proven RED by mutation; live against openssl 3.6.5 s_server / s_client with a `K`
 KeyUpdate both ways. The lane also wrote the design for CYRIUS-2026-0042's native-TLS enforcement in
-`_tn_verify_chain` (RFC 5280 §6.1.3 (b)/(c), §6.1.4 (g), §4.2.1.10, and its OpenSSL-oracled PKI), applied at the sigil
-re-vendor.
+`_tn_verify_chain` (RFC 5280 §6.1.3 (b)/(c), §6.1.4 (g), §4.2.1.10, and its OpenSSL-oracled PKI), which the refold
+lane applied (`8b244685d`, below).
 
 #### Finding 21 — a post-handshake KeyUpdate flood (lane tls, commit 3b043ec6b)
 
@@ -844,14 +867,69 @@ the parent, file for file (123 crossos on all seven targets).
   pulling string.cyr", fdlopen "cyrius lacks bitwise AND"; syscall_wrapper_pass axis 4b counts `= strlen(`.
 - **tests/tcyr/platform/fdlopen.tcyr** formatted canonically (met; `cyrius fmt --check` parent 1, now 0).
 
+### The reviews' notes, fixed (the cleanup lane)
+
+Branch `l6718-cleanup` (cut from `6e4a82273`), six commits, merged `6c69e62fd`: the notes the lanes' reviews reported
+and left, each fixed. build/cycc rebuilt after the merge (1887cc792; the tcyr corpus vs the pre-cleanup compiler: 706
+files, 0 differ).
+
+#### The TLS contract's `tls_close` row (lane cleanup, commit 2fe9caadb)
+
+- **Docs: the TLS contract's `tls_close` row** still described native close as sending close_notify and freeing
+  nothing; it now says close zeroises every secret the ctx holds, whatever its state, and a seal / open after it is
+  `TLS_ERR_PROTOCOL` (the behaviour 3ad239fe6 shipped). Doc only.
+
+#### TLS 1.2's key_block sized by its const (lane cleanup, commit 332a5f4f9)
+
+- **lib: TLS 1.2's key_block buffer** was `secret var kb_b[96]` beside its own `kb_len > 96` guard — two copies of one
+  bound; both read the private `_TLS12_KEY_BLOCK_MAX` now (byte-identical builds). Row:
+  `lib_buffers_sized_by_const.sh` axes 1 + 2 (3 FAIL on the parent).
+
+#### compile()'s exits comment (lane cleanup, commit 1d10a5c62)
+
+- **CLI comment**: compile()'s "THERE ARE THREE EXITS" named a `probe_fd < 0` block that no longer exists (and listed
+  four sites under "three"); it names the `tmp_out == 0` block (build_temp_no_leak.sh's recipe too). Comment only.
+
+#### `cyrius deps` refuses every plaintext git transport spelling by name (lane cleanup, commit ef2300041)
+
+- **`cyrius deps` refuses every plaintext git transport spelling by name**: `_dep_git_plaintext` read only the leading
+  name, at most 8 characters, so `https::http://…`, `HTTPS::HTTP://…`, `https::ftp://…` and
+  `persistent-https::http://…` reached `git clone` (only the protocol.allow belt stopped them, unnamed). It now walks
+  each `<helper>::` (git's scheme-character run) and refuses a plaintext helper name or URL; `ext::` stays the belt's.
+  Row: `deps_plaintext_url_refused.sh` A2 (4 RED on the parent) + A2c controls (`https::https://`, `ext::true`).
+
+#### Two gates read programs/ recursively; `hc_write_new` is atomic (lane cleanup, commit aa14e8fc9)
+
+- **Two gates read programs/ flat**: `tool_writes_never_truncate.sh` and `manifest_read_whole_file.sh` globbed
+  `programs/*.cyr`, so programs/dev/, folds/ and release/ were outside both; both read recursively with floors on the
+  files read (programs/checks/ stays outside the first, as its header says). The recursive scan named three sites:
+  **helper_common's `hc_write_new`** (open O_TRUNC + one write: under RLIMIT_FSIZE an existing file came back a
+  2,048-byte prefix of the new bytes) is now `file_write_atomic`; hc_run's redirect (`_hc_open_out`, the shell's `>` /
+  `>>`) and sibci's CI log are child-output captures, allowlisted with reasons. Rows: tool_writes axis 4 (RED with the
+  parent's helper_common; RED on the flat glob, subdirectory floor), manifest axis 4's floors (RED on the flat glob).
+
+#### `_arr_fn_tparam` is linear (lane cleanup, commit fd8dcc155)
+
+- **The compiler: `_arr_fn_tparam` was quadratic** — it walked back to the nearest `fn` and scanned that fn's body to
+  its end per call, so N names no scope resolves in one body read O(N x body) tokens (1,600 impls over the 1,024-struct
+  cap: 72.7 M TOKTYP; 5,000 impls 8.0 s). One forward walk keeps each open `{`'s nearest enclosing fn and the next
+  query advances its cursor (2.35 M; 1.3 s); every answer is the walk's. Row: `hot_path_call_counts.sh` [W] (parent
+  386% RED, a restart-every-query mutant 395% RED, the tree 132%, bound 200%).
+- Proof: fixpoint c1 == c2 == c3; `seed-derive-cycc.sh` OK; the six forks build byte-identical with the parent and new
+  compilers; the 706 tests/tcyr files compile byte-identical (binary, diagnostics, rc) against the parent's compiler; a
+  checking compiler (both answers, exit on a difference) over 1,102 tree sources in both CYRIUS_MONOMORPH modes, 900
+  generated programs and hand shapes: 7,181 calls, no difference.
+
 ### Integration — on `l6718-integ`
 
-- **The merges**, each lane reviewed once and merged whole: splits `b144a5146`, net `b77c6f783`, local `d12610e26`,
-  tls `15cc88f32`; tls-slots `1154900a5`; splits2 `70c55f7ad`, cbtsplit `b425d65c5`; pipefail `bd78a4704`, libs
-  `054ec7cb8`, giantfns `bebd871fe`, optimize `d78062f35`. build/cycc was rebuilt to the fixpoint of the merged source
-  and build/cycc-native-aarch64 cross-built in lockstep after wave 1 (0f6ab0291) and wave 3 (09c0e1bb1: 2,923,656 B;
-  3,153,288 B; the whole tcyr corpus compiled by the pre-wave-3 compiler and by this one — 706 files, 2 differ,
-  giantfns' two new rows) and after the FINDLOCAL fix (7320148ab), seed-derive OK each time.
+- **The merges**, each lane merged whole: splits `b144a5146`, net `b77c6f783`, local `d12610e26`, tls `15cc88f32`;
+  tls-slots `1154900a5`; splits2 `70c55f7ad`, cbtsplit `b425d65c5`; pipefail `bd78a4704`, libs `054ec7cb8`, giantfns
+  `bebd871fe`, optimize `d78062f35`; cleanup `6c69e62fd`; refold `a01a554f9` (after the user's fold tags).
+  build/cycc was rebuilt to the fixpoint of the merged source and build/cycc-native-aarch64 cross-built in lockstep
+  after wave 1 (0f6ab0291), wave 3 (09c0e1bb1: 2,923,656 B; 3,153,288 B; the whole tcyr corpus compiled by the
+  pre-wave-3 compiler and by this one — 706 files, 2 differ, giantfns' two new rows), the FINDLOCAL fix (7320148ab)
+  and the cleanup (1887cc792: 2,929,832 B; 3,155,368 B; the corpus vs the pre-cleanup compiler, 706 files, 0 differ),
+  seed-derive OK each time.
 - **The merged tree's check.sh reds**, each fixed on integ: scaffold_verb_discovery.sh pinned 6 fuzz harnesses — net
   added five, so the row is a floor of 11, the fuzz gate's own (db6d96868); tool_writes_never_truncate.sh's allowlist
   entries `cbt/build.cyr|tmp_out` and `cbt/pulsar.cyr|tmp` matched no live site after CYRIUS-2026-0046 — removed, as
@@ -862,29 +940,32 @@ the parent, file for file (123 crossos on all seven targets).
   `fdlopen::fdlopen_trusted_only/1`, CYRIUS-2026-0041's caller opt-in — one addition, nothing removed (34c5211f7);
   preprocessor_scratch_bounds.sh's mktemp check in the checked form gates_never_write_tree axis 5 reads, after splits2
   rewrote the line (55cfd903a).
-- **Met in the merged tree's check.sh — a SIGSEGV optimize introduced** (0f5d18c2b): cycc faulted on
+- **Met in the merged tree's second check.sh — a cycc SIGSEGV optimize introduced** (0f5d18c2b): cycc faulted on
   `fn main(): i64 { var 140737488355327 = 1; ... }` — optimize's FINDLOCAL (4ee8da87d) read the looked-up name at
   entry, and a NUMBER token where a declared name belongs hands in a value that is no name-pool offset; the STREQ walk
   before it read nothing until a live slot. The name's length and first word are now read on the first live slot
   compared — the old fault surface exactly, the speedup kept. Row: intrinsic_names_reserved.sh's "a number as a
   declared name" (rc 139 → green); hot_path_call_counts.sh row L green; the corpus vs the pre-wave-3 compiler: the
   same 2 intended diffs.
-- **The reviews' notes, on integ**: the Windows TlsAlloc index masked to 32 bits (714e9e49c, above); the stdlib
+- **The Windows TlsAlloc mask** (714e9e49c, the tls-slots review's note): the TLS index, a DWORD, is masked to 32
+  bits rather than relying on the register's upper half being zero; first_access_concurrent green on x86_64 and PE
+  (wine).
+- **The reviews' other notes, on integ**: the stdlib
   reference says arm64 `thread_create` returns 0 when a registry chunk, the control block or the slot block cannot be
   allocated, or `pthread_create` fails — it said only the chunk (19debaba2); three source comments name
   parse/fn/def.cyr (402c36023).
 
-### Folds — sigil 3.13.14, sandhi 1.13.7, bayan 1.11.1
+### Folds — sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1
 
 Each fixed in its SOURCE repo on an `l6718-<fold>` branch, reviewed once, released by the user (the tags), and
-re-vendored byte-identical:
+vendored byte-identical from the tag by the refold lane (below).
 
-⟪REVENDOR⟫
-
-**sigil 3.13.13 → 3.13.14** (branch `l6718-sigil` from `2ed419c`, release line `050ff1b`; pin 6.7.9). Two rounds: the
-fixes and their review (zero must-fix), then a follow-up that fixed the review's four notes before the tag (its own
-review, zero must-fix). Suite 3,479 / 0 across 95 .tcyr; sibci `sigil @ 050ff1b: rc=0 ok=17 fail=0`. `lib/sigil.cyr`'s
-Requires block is unchanged.
+**sigil 3.13.13 → 3.13.15** (branch `l6718-sigil` from `2ed419c`, 3.13.14 tagged at `050ff1b`; branch
+`l6718-sigil-cn`, 3.13.15 tagged at `3c47656`; pin 6.7.9). Three rounds: the fixes and their review (zero must-fix); a
+follow-up that fixed the review's four notes before the 3.13.14 tag (its own review, zero must-fix); and 3.13.15, a
+PATCH for what the refold review met after 3.13.14 was tagged (below). 3.13.14: suite 3,479 / 0 across 95 .tcyr,
+sibci `sigil @ 050ff1b: rc=0 ok=17 fail=0`; 3.13.15: sibci `ok=17 fail=0`. `lib/sigil.cyr`'s Requires block is
+unchanged.
 
 #### CYRIUS-2026-0040 — ChaCha20-Poly1305's Poly1305 state on its own frame (lane sigil, commit ee7c75d)
 
@@ -948,6 +1029,15 @@ Requires block is unchanged.
   (`tests/tcyr/x509_pathlen_integer.tcyr`, 3 RED on the parent); certpin read one byte past `30 00` (`agnosys.tcyr`,
   exit 134 on the D1 parent).
 
+#### 3.13.15 — an intermediate CA's commonName is not read as a host name (lane sigil, commit 3c47656; the refold review's find)
+
+- **Native TLS / sigil 3.13.15: an intermediate CA's commonName was read as a host name under a dNSName constraint**
+  (met by the refold review) — a sub-CA named like a host outside its issuer's or the anchor's constraint refused every
+  valid chain through it (OpenSSL verifies them: it reads the CN at depth 0 only); intermediates are checked as CAs,
+  the leaf as the leaf. `x509_name_constraints_check_ca(ca, sub)` added (every name but the CN); `_x509_verify_link`
+  checks a CA child as a CA; `x509_verify_chain` its intermediates as CAs; the leaf's CN still read. Row:
+  x509_name_constraints.tcyr +12 (4 RED with 3.13.14's reading). cyrius's side is the refold's `e91b099c1`.
+
 **sandhi 1.13.6 → 1.13.7** (branch `l6718-sandhi` from `d5576bc`, release line `6e649a3`; pin 6.7.16). One review
 round: one find, fixed by the reviewer (f4632e3, the h2 NUL), and the release re-cut (6e649a3). sibci `sandhi @
 6e649a3: rc=0 ok=42 fail=0`. `lib/sandhi.cyr`'s Requires block gains `lib/slice.cyr`.
@@ -995,12 +1085,12 @@ round: one find, fixed by the reviewer (f4632e3, the h2 NUL), and the release re
   `--poison=ab`, invariants, and `FAIL case <k> seed <s>` / `FZ_CASE=<k>` replay. On 1.13.6 they fail (hpack case 31:
   0044; headers case 152: the NUL field). sandhi's CI runs `cyrius fuzz --poison=ab`; 9/9 pass plain and A/B.
 
-**bayan 1.11.0 → 1.11.1** (branch `l6718-bayan` from `6479739`, release line `6453614`; pin 6.7.16). One review round
-(one must-fix, the unseeded key hash, fixed in the lane: 32de3de, b5d52f8), then two follow-ups — the review's notes,
-and the other PDF decoders — each row RED on its parent. sibci `bayan @ 6453614: rc=0 ok=50 fail=0 skip=1` (the SKIP:
-"Install qemu-user", needs sudo; the aarch64 steps ran). `lib/bayan.cyr`'s Requires block gains `lib/slice.cyr` and
-`lib/hashseed.cyr`. The user's audit decisions are Findings 18, 16 and 24 here: invalid base64, malformed /
-out-of-range JSON numbers and duplicate JSON keys are refused by name.
+**bayan 1.11.0 → 1.11.1** (branch `l6718-bayan` from `6479739`, tagged at `965298d`; pin 6.7.16). One review round
+(one must-fix, the unseeded key hash, fixed in the lane: 32de3de, b5d52f8), then three follow-ups — the review's
+notes, the other PDF decoders, and the TOML key indexes seeded before the tag — each row RED on its parent. sibci
+`bayan @ 965298d: rc=0 ok=50 fail=0 skip=1` (the SKIP: "Install qemu-user", needs sudo; the aarch64 steps ran).
+`lib/bayan.cyr`'s Requires block gains `lib/slice.cyr` and `lib/hashseed.cyr`. The user's audit decisions are Findings
+18, 16 and 24 here: invalid base64, malformed / out-of-range JSON numbers and duplicate JSON keys are refused by name.
 
 #### CYRIUS-2026-0045 — a failed PDF decode is memoised and every attempt charged (lane bayan, commits 1672fbc, d301d58)
 
@@ -1078,29 +1168,106 @@ out-of-range JSON numbers and duplicate JSON keys are refused by name.
   it, and Flate's empty output is its own buffer. Rows: `tests/bayan.tcyr` "a filter chain gives back each stage's
   output once the next has read it" and `tests/pdf_flate.tcyr` "an empty Flate stage is its own buffer".
 
+#### The TOML key indexes' hashes are seeded (lane bayan, commits d1f68b2, 965298d)
+
+- **met (bayan)**: both TOML parsers' key indexes hashed a peer's keys with published constants — the flat parser's
+  dotted-key table index and the tree's key index, keyed by parent and key. Keys precomputed once to share a slot made
+  the parse quadratic: flat, 8,000 dotted keys (129 KB) took 140 ms, against 6 ms; tree, 8,000 keys of one table
+  (113 KB) took 370 ms, against 5.5 ms. The tree's parent cell did not protect it: the parent went in before a
+  multiply, so a slot read only the low bits of (FNV state ^ parent). Both hashes now take the stdlib's per-process
+  seed and finalizer (`lib/hashseed.cyr`), as json's key set does; toml.cyr's Requires and `bayan-toml.deps` name
+  hashseed. Rows: `tests/bayan.tcyr` "the dotted-key index's hash is seeded per process" and (toml tree) "the key
+  index's hash is seeded per process" — 400 names / keys the published hash puts in one slot of 1,024 must not form one
+  run (RED on 6453614: a run of 400 in each, against a limit of 64).
+
+### The folds vendored from their tags; CYRIUS-2026-0042's native-TLS side (the refold lane)
+
+Branch `l6718-refold` (cut from `38f3683a0`), ten commits, one review round: one must-fix — a valid chain refused,
+fixed in sigil 3.13.15 and `e91b099c1` — merged `a01a554f9` after the user's tags. No `src/` change. The reviewer
+probed 0042 with an extra PKI against `openssl verify` (21 rows: iPAddress at the anchor and an upper CA, excluded IP,
+multi-SAN, upper case, CN-only and self-issued non-CA leaves under the anchor, a self-issued intermediate exempt / its
+leaf refused, a non-self-issued intermediate's SAN, a directoryName anchor, the unconstrained root twin sent as an
+intermediate): all agree with OpenSSL.
+
+#### The three folds vendored byte-identical from their tags (lane refold, commits 4ec5b2414, a5aa7c3dd, 48fc2a219, 1c9bede70)
+
+- **Folds (refolded byte-identical from the release commits the user tagged):** sigil 3.13.15 (`3c47656`; 3.13.14 at
+  `050ff1b` first), sandhi 1.13.7 (`6e649a3`), bayan 1.11.1 (`965298d`) — `lib/<fold>.cyr`, the docs/ecosystem.md
+  rows, the README fold list; their own bullets are above. `lib/sandhi.cyr`'s Requires gains `lib/slice.cyr`,
+  `lib/bayan.cyr`'s `lib/hashseed.cyr` and `lib/slice.cyr`. api-surface +11 (5,932), 0 removed
+  (removed_symbol_census PASS).
+
+#### CYRIUS-2026-0042, native TLS — every CA's nameConstraints over every certificate below it (lane refold, commit 8b244685d)
+
+- **Native TLS: a CA's nameConstraints were never read (CYRIUS-2026-0042, the TLS side).** The chain verifier checked
+  window, keyUsage / pathLen, EKU and the trust policy only, so a sub-CA constrained to `permitted;DNS:good.test`
+  (non-critical) issued a leaf for victim-bank.test that `tls_native_client_verify_chain` accepted and a native
+  connect to `openssl s_server` completed (OpenSSL: error 47). sigil 3.13.14's link check catches the DIRECT issuer
+  only (and exempts a self-issued CA child); `_tn_verify_chain` now keeps the selected path and requires, in the
+  conjunction that selects each intermediate and each trust root, that the CA's constraints (sigil's
+  `x509_name_constraints_check`) allow every certificate below it — the leaf always, a self-issued intermediate exempt
+  (RFC 5280 §6.1.3(b)). A CA that does not is skipped, as a wrongly purposed one is; none left = TLS_ERR_CERT_INVALID.
+  Rows: `tests/tcyr/crossos/tls_native_name_constraints.tcyr` and
+  `tests/gates/platform/tls_native_name_constraints_openssl.sh` (registered; TLS 1.3 rows, each also graded by
+  `openssl verify`; RED on l6718-integ's lib); the audit's verbatim nc_probe: verify_chain 0 -> -6. The stale "272 B
+  per root" comments name `X509_CERT_SIZE` (304), and the contract's Verification rows say so.
+
+#### An intermediate CA is checked as a CA (lane refold, commit e91b099c1; the review's must-fix)
+
+- **Native TLS: an intermediate CA's commonName was read as a host name under a dNSName constraint** — root -> int_nc
+  (permitted;DNS:good.test) -> a CA `CN=sub.other.test` (no SAN) -> www.good.test, and the same under a constrained
+  anchor, verify with OpenSSL 3.6.5 (it reads the commonName at depth 0 only) and were refused by `8b244685d`'s
+  `_tn_nc_below_ok` and sigil 3.13.14's link check. `_tn_nc_below_ok` checks the leaf with
+  `x509_name_constraints_check` and every non-self-issued intermediate with sigil 3.13.15's
+  `x509_name_constraints_check_ca`; the leaf's CN is still read. Rows: `tls_native_name_constraints.tcyr` "a CA named
+  like a host" (5; both www rows RED on the parent; 84 green on x86_64, aarch64 under qemu, PE under wine);
+  `tls_native_name_constraints_openssl.sh` +2 TLS 1.3 rows (19, floor 19; both RED on the parent).
+
+#### The TLS 1.2 client keeps the server's intermediates (lane refold, commit b6c4bc5ba)
+
+- **Native TLS 1.2: the client kept only the server's leaf** (met making 0042's end-to-end rows).
+  `_tn_parse_certificate_12` dropped every certificate after the leaf, so against `s_server -tls1_2 -cert_chain int` a
+  valid chain failed TLS_ERR_CERT_INVALID (no path), and no 1.2 chain met a nameConstraint. It keeps up to 16 (as the
+  1.3 client), each entry a non-empty ASN.1Cert inside the list (else TLS_ERR_BAD_HANDSHAKE). Rows: the NC tcyr's two
+  TLS 1.2 groups (10; 7 RED on the parent) and the gate's 5 TLS 1.2 rows (the 2 that connect RED on the parent).
+
+#### The folds' parser fuzz harnesses in fuzz/ (lane refold, commit b72487656)
+
+- **fuzz/: the folds' parser harnesses run in cyrius against the vendored bundles** — sigil X.509 / DER, sandhi HPACK /
+  headers / DNS (+ fz_driver.cyr), bayan JSON (tree / stream / flat), adapted only in their includes (sigil's 14 seed
+  certs inline). Each green plain, `--poison` and `--poison=ab`. Row: `fuzz_corpus_plain_and_poison.sh` floor 11 ->
+  16; on l6718-integ's lib sandhi_hpack fails case 31 (0044), sandhi_headers case 152 (the NUL field), bayan_json 3,350
+  of 60,000 wrong; sigil_x509 aborts 134 with the vendored empty-TBS guard (Finding 20) removed; sandhi_dns FAILs case
+  60 (exit 134) with its label-length bound removed (the review).
+
+#### lib-tls-contract.md's lane bound describes the 3.13.14 pool (lane refold, commit 67d8cdb48)
+
+- **lib-tls-contract.md's lane bound described sigil 3.13.13** (a lane per thread for life, shared past 63 lifetime
+  threads, "reuse workers"); sigil 3.13.14's lanes are a pool held only while used, refused (fail closed) at 64
+  concurrent holders (lib/thread_agnos.cyr's comment that named `crypto_bank_set` too). Row:
+  `tests/tcyr/crossos/tls_crypto_lanes_reclaimed.tcyr` (100 retired crypto workers: every verify right, exhausted 0,
+  claimed 0; RED 3 with l6718-integ's lib: exhausted 1, claimed 100).
+
 ### Filed, not fixed
 
-- Filed by this release: [lib/pam.cyr's `nullok`](docs/development/issues/2026-10-22-pam-nullok-empty-password-authenticates.md)
-  — kept (the user, 2026-10-22), refusing empty passwords placed at 6.8.0.
-- The network parsers' issue filed at the open stays open until the fold parsers' harnesses are in cyrius `fuzz/`:
-⟪REVENDOR⟫
-- Reported by the reviews, not fixed in their lanes: `docs/development/lib-tls-contract.md`'s `tls_close` row does not
-  say native close now zeroises every secret and refuses a seal / open after it (tls); `tls_native_12_derive_keys`'
-  `secret var kb_b[96]` is a literal beside its own guard (tls); compile()'s "THREE EXITS" comment (cbt/build.cyr) still
-  names the "`probe_fd < 0` block", now `tmp_out == 0` (local); `_dep_git_plaintext` does not refuse `https::http://…`
-  by name — the `protocol.http.allow=never` belt refuses it (local); tool_writes_never_truncate.sh and
-  manifest_read_whole_file.sh read programs/*.cyr flat, so programs/dev/, folds/ and release/ are outside both —
-  recursively, tool_writes_never_truncate names three sites in programs/dev/helper_common.cyr and
-  programs/folds/sibci.cyr (cbtsplit); vidya's twelve mentions of cbt/commands.cyr / cbt/deps.cyr and the frontend's
-  old paths, for the vidya refresh at the close (cbtsplit, splits).
-- The optimize lane's "not done", each measured: `_arr_fn_tparam`'s walk for a type name no scope resolves is
-  quadratic on the struct-cap error path (1,600 impls over the 1,024-struct cap 550 ms; 5,000 structs ~10 s); the
-  local-slot snapshot around a generic instance stays O(enclosing locals) per instance; a plain-run fast path in
-  PP_IFDEF_PASS (pp 113 → 99 ms) and a table-driven DECODE_LEN (5.6 %) have no deterministic row, so neither was
-  committed; `_ra_frame_trim` scans a fn's code once per unused callee-saved register (~2 %); inside
-  `_PARSE_FN_DEF_IMPL`, the per-fn compaction's prefix sums over every NOP run (~4 %) and the inline-asm body scan
-  (~1.7 %), and a FINDLOCAL name index (25 writer sites behind one setter).
-- bayan's TOML name indexes (`_toml_name_hash`, toml_tree's index) are unseeded — developer config (bayan review).
+- [lib/pam.cyr's `nullok`](docs/development/issues/2026-10-22-pam-nullok-empty-password-authenticates.md) — kept (the
+  user, 2026-10-22), refusing empty passwords placed at 6.8.0. Nothing else was filed: every other find of the lanes
+  and their reviews is fixed above.
+
+### Measured, not taken
+
+The optimize lane's profile named these as well; none is a defect and none was filed — each is under ~5 % of a
+self-compile, has no deterministic row to hold it, or costs more to change than it saves (the reason per item):
+- a plain-run fast path in PP_IFDEF_PASS (pp 113 → 99 ms) and a table-driven DECODE_LEN (5.6 %): no calls to count, so
+  no deterministic row;
+- inside `_PARSE_FN_DEF_IMPL`, the per-fn compaction's sums over every earlier NOP run (~4 %) and the inline-asm body
+  scan (~1.7 %): under 5 % each;
+- `_ra_frame_trim`'s one scan per unused callee-saved register (~2 %): under 5 %, and one pass would change the order
+  of the NOP-run records the compactor reads;
+- a FINDLOCAL name index: after `4ee8da87d` a lookup compares a word per slot (2,000 locals in one fn: 9 STREQ calls),
+  and an exact index needs the 25 sites that write a local slot's name behind one setter;
+- the local-slot snapshot around a generic instance stays O(enclosing locals) per instance (word loops since
+  `92950f4cd`): the instance's locals start at slot 0, so moving them moves its frame offsets.
 
 ## [6.7.17] — 2026-10-22
 
