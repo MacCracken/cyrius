@@ -791,7 +791,7 @@ fn _slice_sub_addr(S, li, noff): i64 {
 # one of four places — `_arr_sub_addr` (a named array or `*T`), `_psub_addr` (a `*T` field or call),
 # `_slice_sub_read` and `_slice_sub_addr` (a slice) — and each asks `_bck_open` at its `[` and, when
 # told to, emits `_bck_site` once the index is in rax (before it is scaled): a call into the checker
-# the preprocessor injected (lex/pp.cyr `_bnd_finish`), which hands the index back. `<line>` is the
+# the preprocessor injected (lex/pp/preprocess.cyr `_bnd_finish`), which hands the index back. `<line>` is the
 # line of the `[` token itself, so an `#inline` replay, a `defer` replay, a generic instance and a
 # classic-for step all name the line the subscript is WRITTEN on; `<file>` is the name every cycc
 # diagnostic uses (`<source>` for the entry), interned once per file. `@unsafe` is LEXICAL — a `[`

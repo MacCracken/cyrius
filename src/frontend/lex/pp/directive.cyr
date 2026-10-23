@@ -1,0 +1,713 @@
+# LEXER — pp: the directive predicates (ISREF, ISINCLUDE, ISDEFINE, ISIFDEF .. ISENDPLAT, ISSRCLINE, PP_EVAL_IF), `#ref`
+# lines, a line's lexical state (PP_LEXST), the file-marker neutraliser (`PP_NEUT_*`) and the aarch64-native marks
+# (`PP_A64_*`).
+# ================================================================
+# Split from lex/pp.cyr at 6.7.18, unchanged; lex.cyr includes lex/pp/ in source order. CHANGELOG [6.7.18]
+
+fn ISREF(S, pos, bl): i64 {
+    if (pos + 5 >= bl) { return 0; }
+    if (load8(S + pos) != 35) { return 0; }
+    if (load8(S + pos + 1) != 114) { return 0; }
+    if (load8(S + pos + 2) != 101) { return 0; }
+    if (load8(S + pos + 3) != 102) { return 0; }
+    if (load8(S + pos + 4) != 32) { return 0; }
+    return 1;
+}
+
+# ⛔ 6.7.17 — ONE #ref LINE, AT EITHER SITE: the entry's (PP_REF_PASS, over the raw source) and an included file's
+# (PP_IFDEF_PASS — the user's D100, 2026-10-22: that pass had no #ref arm, so a #ref in an included file was a comment
+# and its keys "undefined variable"). `ip` is just past `#ref "` in `base` (`bl` bytes): the file name is read to its
+# closing quote, the rest of the line judged (PP_REF_TAIL, D92) and stepped, and the file's keys emitted at `out` +
+# `_pp_ref_op` through `buf` (PP_REF_EMIT). The name resolves as an include's does (READFILE: the entry's directory,
+# the path guards). The offset past the line; `_pp_ref_op` the new output offset. CHANGELOG [6.7.17]
+var _pp_ref_op = 0;
+fn PP_REF_LINE(S, base, ip, bl, buf, out): i64 {
+    var rfn = S + 0x190400;
+    var rfi = 0;
+    while (ip < bl) {
+        var rc = load8(base + ip);
+        if (rc == 34) { ip = ip + 1; break; }
+        if (rfi >= 767) { PP_FNAME_TOO_LONG(rfn, rfi, "#ref"); }
+        store8(rfn + rfi, rc); rfi = rfi + 1; ip = ip + 1;
+    }
+    store8(rfn + rfi, 0);
+    PP_REF_TAIL(S, base, ip, bl, rfn, rfi);   # D92: the line ends at the file name
+    while (ip < bl) { if (load8(base + ip) == 10) { ip = ip + 1; break; } ip = ip + 1; }
+    var nl = 0;
+    if (load8(base + ip - 1) == 10) { nl = 1; }
+    _pp_ref_op = PP_REF_EMIT(rfn, rfi, buf, out, _pp_ref_op, nl);
+    return ip;
+}
+# The #ref file `rfn` (`rfi` bytes of name, read into `buf`, 16 KB) as declarations at `out + op`: `var LINE; ` for each
+# line that starts with a letter (`#` comments, `[section]` lines and blanks skipped), all on the #ref's own line, then
+# its line break when `nl` — each took a line of its own through 6.7.16, so every later line was numbered off by the key
+# count less one. A file that does not open exits (an unclosed name said so). The new `op`. CHANGELOG [6.7.17]
+fn PP_REF_EMIT(rfn, rfi, buf, out, op, nl): i64 {
+    var rnr = READFILE(rfn, buf, 16384);
+    if (rnr < 0) {
+        PP_FNAME_UNCLOSED(rfn, rfi, "#ref");
+        _ew("error: cannot open #ref file: ", 30);
+        var n = 0;
+        while (load8(rfn + n) != 0) { n = n + 1; }
+        _ew(rfn, n);
+        _ew("\n", 1);
+        _die(1);
+    }
+    var ri = 0;
+    while (ri < rnr) {
+        var rch = load8(buf + ri);
+        if (rch <= 32) { ri = ri + 1; }
+        elif (rch == 35) { while (ri < rnr) { if (load8(buf + ri) == 10) { break; } ri = ri + 1; } }
+        elif (rch == 91) { while (ri < rnr) { if (load8(buf + ri) == 10) { break; } ri = ri + 1; } }
+        elif (rch >= 65) {
+            store8(out + op, 118); store8(out + op + 1, 97);
+            store8(out + op + 2, 114); store8(out + op + 3, 32); op = op + 4;
+            while (ri < rnr) {
+                rch = load8(buf + ri);
+                if (rch == 10) { ri = ri + 1; break; }
+                store8(out + op, rch); op = op + 1; ri = ri + 1;
+            }
+            while (load8(out + op - 1) == 32) { op = op - 1; }
+            store8(out + op, 59); store8(out + op + 1, 32); op = op + 2;
+        }
+        else { ri = ri + 1; }
+    }
+    if (nl == 1) { store8(out + op, 10); op = op + 1; }
+    return op;
+}
+# PP_IFDEF_PASS's #ref read buffer: alloc'd at the first included #ref (0x191800, PP_REF_PASS's, is the macro tables'
+# by then — main.cyr's heap map). CHANGELOG [6.7.17]
+var _pp_refb = 0;
+fn _pp_ref_buf(): i64 {
+    if (_pp_refb == 0) { _pp_refb = alloc(16384 + 8); }
+    return _pp_refb;
+}
+
+fn ISINCLUDE(S, pos, bl): i64 {
+    if (pos + 8 >= bl) { return 0; }
+    # i=69 n=6E c=63 l=6C u=75 d=64 e=65 space=20
+    if (load8(S + pos) != 105) { return 0; }
+    if (load8(S + pos + 1) != 110) { return 0; }
+    if (load8(S + pos + 2) != 99) { return 0; }
+    if (load8(S + pos + 3) != 108) { return 0; }
+    if (load8(S + pos + 4) != 117) { return 0; }
+    if (load8(S + pos + 5) != 100) { return 0; }
+    if (load8(S + pos + 6) != 101) { return 0; }
+    if (load8(S + pos + 7) != 32) { return 0; }
+    return 1;
+}
+
+# Preprocess: expand include directives in-place.
+# Reads the raw input at S + _SRCB, writes the expanded output to S+0x459D000 (24 MB).
+# Check if buffer at pos starts with a directive (returns length or 0)
+fn ISDEFINE(S, pos, bl): i64 {
+    # Leading whitespace tolerated (see PP_SKIP_WS). Note that the
+    # callers pass `ip + 8` to PP_DEFINE to reach the name — if we
+    # skipped whitespace here, that offset would be wrong. ISDEFINE
+    # stays strict; directive detection remains col-0 for #define.
+    if (pos + 8 >= bl) { return 0; }
+    # "#define " = 23 64 65 66 69 6E 65 20 — the separator may be a space or a tab (6.6.20;
+    # see PP_SEP)
+    if (load8(S + pos) != 35) { return 0; }
+    if (load8(S + pos + 1) != 100) { return 0; }
+    if (load8(S + pos + 2) != 101) { return 0; }
+    if (load8(S + pos + 3) != 102) { return 0; }
+    if (load8(S + pos + 4) != 105) { return 0; }
+    if (load8(S + pos + 5) != 110) { return 0; }
+    if (load8(S + pos + 6) != 101) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 7)) == 0) { return 0; }
+    return 1;
+}
+
+# Skip spaces/tabs starting at `pos`. Used by the `#`-prefixed
+# directive detectors so `    #ifdef FOO` (cyrfmt indents directives
+# to match the enclosing function body) still registers. Keeping
+# this separate from the plain ISINCLUDE path means `    include = 0;`
+# (a variable named `include` at indentation) stays an expression,
+# not a directive.
+fn PP_SKIP_WS(S, pos, bl): i64 {
+    while (pos < bl) {
+        var sc = load8(S + pos);
+        if (sc != 32) { if (sc != 9) { return pos; } }
+        pos = pos + 1;
+    }
+    return pos;
+}
+
+# ⛔ 6.6.20 — THE separator rule for a directive's operands: a RUN of blanks, spaces AND
+# tabs, skipped from `pos`. TAB is ordinary whitespace in the language (`var<TAB>r = 9;`
+# compiles) and PP_SKIP_WS / PP_NAMEBOUND / _pp_a64_sym already took it, but the predicates
+# (ISIFDEF, ISDEFINE, ...) wanted exactly one SPACE after the keyword and PP_HASH ended a
+# name at a space only — so, silently, with no diagnostic: `#ifdef CYRIUS_ARCH_X86<TAB>`
+# took the #else arm on x86, `#define FOO<TAB>1` left FOO undefined, `#ifdef<TAB>X` was a
+# comment (its body compiled unconditionally), and `#define FOO  1` (two spaces) defined
+# FOO as 0. Every operand reader now skips with this and every name ends at a tab.
+# CHANGELOG [6.6.20]
+fn PP_SEP(base, pos): i64 {
+    while (PP_DBLANK(load8(base + pos)) == 1) { pos = pos + 1; }
+    return pos;
+}
+
+# ⛔ 6.6.20 — `#else` / `#elif` / `#endif` / `#endplat` (`k` 0..3) with NO open block is an
+# ERROR. It was "ignored silently rather than abort", which is what let a malformed OPENER
+# pass unnoticed: `#ifdef<TAB>X` and `#if dbg == 1` were read as comments, so the code they
+# guarded compiled unconditionally and the `#endif` that should have closed them landed at
+# depth 0 and vanished. Reported at the stray's own line (`_pp_err_at`), and the build fails.
+# An ecosystem survey (19,635 .cyr/.tcyr/.bcyr/.fcyr under ~/Repos) found no depth-0 stray
+# and no block left open at the end of a file. CHANGELOG [6.6.20]
+fn _pp_stray(S, base, pos, k): i64 {
+    if (k == 0) { _pp_err_at(S, base, pos, "#else without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    if (k == 1) { _pp_err_at(S, base, pos, "#elif without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    if (k == 2) { _pp_err_at(S, base, pos, "#endif without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    if (k == 3) { _pp_err_at(S, base, pos, "#endplat without a matching #if / #ifdef / #ifndef / #ifplat"); }
+    return 0;
+}
+
+# The mirror: a block still open at the end of the pass. `pos` is the opener of the
+# OUTERMOST block left open. It was silent too — a false `#ifdef NOPE` with no `#endif`
+# dropped every line after it, the rest of an included file and everything that followed
+# it. In PP_IFDEF_PASS (`base` is its copy of the stream) the file attribution has moved on
+# to the last marker in the stream by now, so it is put back on the one the opener sits
+# under first — the nearest line `_pp_note_marker` ACCEPTS: a comment that merely starts
+# `#@f` (`#@foo`) is walked past, not taken for the marker. CHANGELOG [6.6.20]
+fn _pp_unclosed(S, base, pos, bl): i64 {
+    if (base != S + _SRCB) {
+        var q = pos;
+        var go = 1;
+        while (go == 1) {
+            if (q == 0) { go = 0; }
+            else {
+                q = q - 1;
+                var atbol = 0;
+                if (q == 0) { atbol = 1; }
+                elif (load8(base + q - 1) == 10) { atbol = 1; }
+                if (atbol == 1) {
+                    if (load8(base + q) == 35) {
+                        if (load8(base + q + 1) == 64) {
+                            if (load8(base + q + 2) == 102) { if (_pp_note_marker(base, q, bl) == 1) { go = 0; } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    _pp_err_at(S, base, pos, "this #if / #ifdef / #ifndef / #ifplat has no matching #endif");
+    return 0;
+}
+
+# v6.6.6 — THE preprocessor's lexical state machine. One copy, shared by all
+# FOUR line-oriented passes (PP_PASS, PP_IFDEF_PASS, PP_REF_PASS and the
+# `#host_only` scanner PP_IS_HOST_ONLY); advance it over every byte those passes
+# read and gate their beginning-of-line directive detection on "not inside a
+# string". ⚠ The first cut of this fix said THREE and missed PP_IS_HOST_ONLY,
+# which is the same shape one file away — if you add another pass that decides
+# anything from a line's first byte, it belongs on this list.
+#
+# ⭐ WHY THE STRING STATE SURVIVES A NEWLINE. Each pass decides "is this line a
+# directive?" from the line's first non-space byte. Until 6.6.6 each carried its
+# own inline copy of the state and RESET `in_string` at every newline, on the
+# written premise that "cyrius source uses single-line strings (`\n` escape, not
+# literal LF inside a string)". That premise was FALSE — src/main.cyr and
+# src/frontend/parse/expr/callee.cyr both hold error strings with a raw LF in them — so
+# a line sitting INSIDE a multi-line string was read as a fresh line of code and
+# its `#ifdef` / `#ifndef` / `#if` / `#else` / `#elif` / `#endif` / `#ifplat` /
+# `#define` / `#@srcline` / `#ref` were EXECUTED. The string's bytes then did not
+# match what the source spelled, with no diagnostic of any kind.
+#
+# The newline reset was only ever a blast-radius bound for a `"` the machine
+# mis-read. Both real sources of that are STATES here instead — a `"` inside a
+# `#` comment (the vyakarana 1.0.2 fix of v5.9.34) and a `"` inside a char
+# literal such as `var q = '"';` (tests/fixtures/lint_lexical/escapes.cyr) — so
+# the bound is no longer carrying anything.
+#
+# States: 0 code · 1 string · 2 string-after-backslash · 3 line comment
+#         4 char literal · 5 char-literal-after-backslash.
+# Mirrors src/frontend/lex/lex.cyr: `"` opens and closes a string and `\` escapes the
+# next byte inside one; `#` starts a comment that ends at the newline; a char
+# literal is single-line. CHANGELOG [6.6.6]
+fn PP_LEXST(st, c): i64 {
+    if (st == 2) { return 1; }
+    if (st == 5) { if (c == 10) { return 0; } return 4; }
+    if (st == 1) {
+        if (c == 92) { return 2; }
+        if (c == 34) { return 0; }
+        return 1;
+    }
+    if (st == 3) { if (c == 10) { return 0; } return 3; }
+    if (st == 4) {
+        if (c == 92) { return 5; }
+        if (c == 10) { return 0; }
+        if (c == 39) { return 0; }
+        return 4;
+    }
+    if (c == 35) { return 3; }
+    if (c == 34) { return 1; }
+    if (c == 39) { return 4; }
+    return 0;
+}
+
+# 1 iff PP_LEXST state `st` is inside a string literal (1 = string,
+# 2 = the byte after a backslash in one). CHANGELOG [6.6.6]
+fn PP_LEXST_INSTR(st): i64 {
+    if (st == 1) { return 1; }
+    if (st == 2) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.6.20 (the attribute-line desync bug) — PP_LEXST for the byte at `base + i` (`n` = the buffer's length),
+# with the one rule a byte-at-a-time machine cannot see: in code, a `#` that spells one of
+# the lexer's ten ATTRIBUTE words does not open a comment, because LEX keeps lexing that
+# line as code. Reading `#assert 1 == 1, "x<LF>"` as a comment put the PP one quote out of
+# step with the lexer for the whole next line — a forged `#@file` there defeated `private`,
+# and a real `#ifdef` there was skipped. The list is LEXATTRWORD, the lexer's own
+# (src/frontend/lex/attr.cyr), so the two cannot drift. CHANGELOG [6.6.20]
+# EVERY walk site guards it inline — `if (load8(B + I) == 35) { X = PP_LEXST_AT(B, I, N, X); }
+# else { X = PP_LEXST(X, load8(B + I)); }` — never a bare PP_LEXST: this differs from PP_LEXST
+# only on a `#`, and the per-byte call into it cost ~3 % of self_compile (#inline refuses a
+# 4-parameter fn). file_marker_forge_refused.sh axis 26 is the census. CHANGELOG [6.7.11]
+fn PP_LEXST_AT(base, i, n, st): i64 {
+    var c = load8(base + i);
+    if (st == 0) {
+        if (c == 35) {
+            if (LEXATTRWORD(base, i, n) != 0) { return 0; }
+        }
+    }
+    return PP_LEXST(st, c);
+}
+
+# ⛔ v6.6.6 (the file-marker forge (private visibility) bug) — NEUTRALISE a forged `#@file` marker in a region of bytes.
+#
+# FM_BUILD scans the FINAL buffer for `#@file` at ANY offset — no byte-0 rule and no
+# beginning-of-line rule, unlike `#@incdir`. So ANY source bytes that reach the
+# preprocessor's output can FORGE a file-map entry claiming their code came from
+# another file, which DEFEATS `private` file visibility.
+#
+# v6.5.21 closed that for the MAIN source by neutralising inside PP_PASS's copy loop.
+# That guard is only as wide as the loop, and bytes reach `out` by other routes: an
+# INCLUDED file is READFILE'd STRAIGHT INTO `out` (both passes), a `#define` macro body
+# is consumed by the directive handler and written out later by PP_EXPAND, and the
+# `#derive` handlers copy the struct and the line's tail through PP_COPY_TAIL. The
+# included-file route was live and complete: a file that opened with
+# `#@file "secret.cyr" 1` called a `private` fn belonging to secret.cyr, and the program
+# BUILT AND RAN (exit 42) where the same call without the forged line is correctly
+# refused with `'SECRET_ADD' is private to its file`.
+#
+# The `@` is OVERWRITTEN with a space rather than a byte being inserted, so the region
+# keeps its length and nothing shifts: `# file "x" 1` is an ordinary comment and is inert
+# to FM_BUILD's scan. Real markers are unaffected — PP_FMARK writes them straight to
+# `out`, never through a region this sees. String literals are skipped via PP_LEXST_AT, so a
+# program whose DATA contains `#@file` keeps its bytes — except at a line start, see
+# PP_NEUT_BOLMARK.
+#
+# Not a sandbox escape — a forger already controls the source being compiled — but
+# `private` is meant to be a checkable guarantee rather than a convention.
+# CHANGELOG [6.6.6]
+fn PP_NEUT_FMARK(base, n): i64 {
+    var i = 0;
+    var st = 0;
+    while (i < n) {
+        var c = load8(base + i);
+        if (c == 35) {
+            if (PP_LEXST_INSTR(st) == 0) {
+                if (i + 5 < n) {
+                    if (load8(base + i + 1) == 64 && load8(base + i + 2) == 102 && load8(base + i + 3) == 105 && load8(base + i + 4) == 108 && load8(base + i + 5) == 101) {
+                        store8(base + i + 1, 32);
+                    }
+                }
+                # 6.6.12: and a forged native-aarch64 region marker (`#@a+` / `#@a-`, see
+                # _pp_a64_open), which would only have silenced a warning.
+                if (PP_A64_MARK(base, i, n) != 0) { store8(base + i + 1, 32); }
+            } else {
+                # 6.6.20 — belt and braces for the string skip above. See PP_NEUT_BOLMARK.
+                if (PP_NEUT_BOLMARK(base, i, n) == 1) { store8(base + i + 1, 32); }
+            }
+        }
+        if (load8(base + i) == 35) { st = PP_LEXST_AT(base, i, n, st); } else { st = PP_LEXST(st, load8(base + i)); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⛔ 6.6.20 (the attribute-line desync bug) — 1 iff `base + i` STARTS A LINE and holds FM_BUILD's exact 8-byte
+# key `#@file "`, whatever the string state. FM_BUILD mints a marker at any line start
+# (FM_ATBOL) and has no idea of strings, so this is the one place a string skip can hide a
+# forgery from the neutraliser and not from the consumer.
+#
+# PP_NEUT_FMARK skips string literals so program DATA keeps its bytes, which makes it
+# exactly as safe as its idea of where a string is. Twice that idea has been wrong where the
+# lexer's was right (6.6.6: the per-line reset; 6.6.20: attribute lines, PP_LEXST_AT) and both
+# times a forged marker sat in the gap. The price is one byte of DATA in one shape that was
+# already mis-compiled: a literal whose next line opens `#@file "` ends on that quote, so its
+# data ended `#@file ` — and FM_BUILD minted a junk-named file span from it (the file-marker forge (private visibility)
+# bug
+# residual: every later diagnostic in the file named `; }` or similar as its file). Now the
+# data reads `# file ` and the span is gone. Keyed on the 8-byte key, not the 6-byte `#@file`
+# the in-code path uses, so `"a<LF>#@filex"` keeps every byte.
+# NOT applied to `#@a+` / `#@a-`: their one consumer, PP_A64_NATIVE_AT, walks strings with
+# the same PP_LEXST_AT as this pass, so whatever this skips as a string it skips too.
+# CHANGELOG [6.6.20]
+fn PP_NEUT_BOLMARK(base, i, n): i64 {
+    if (i > 0) { if (load8(base + i - 1) != 10) { return 0; } }
+    if (i + 7 >= n) { return 0; }
+    if (load8(base + i + 1) != 64) { return 0; }    # '@'
+    if (load8(base + i + 2) != 102) { return 0; }   # 'f'
+    if (load8(base + i + 3) != 105) { return 0; }   # 'i'
+    if (load8(base + i + 4) != 108) { return 0; }   # 'l'
+    if (load8(base + i + 5) != 101) { return 0; }   # 'e'
+    if (load8(base + i + 6) != 32) { return 0; }    # ' '
+    if (load8(base + i + 7) != 34) { return 0; }    # '"'
+    return 1;
+}
+
+# Neutralise forged markers across the WHOLE raw source, once, before any pass copies
+# or splices it. Doing it at the ENTRY POINT covers every route by which a source byte
+# reaches the output — the copy loop, a stored macro body, a `#derive` tail — instead of
+# needing one guard per emitter, which is exactly the shape that left three routes open
+# after v6.5.21. The other entry point is an include's READFILE; those two call sites
+# neutralise the bytes they just read. CHANGELOG [6.6.6]
+fn PP_NEUT_PASS(S): i64 {
+    return PP_NEUT_FMARK(S + _SRCB, GBL(S));
+}
+
+# ⛔ 6.6.12 — NATIVE-AARCH64 REGION MARKERS. The ELF-aarch64 raw-literal warning
+# (`_sysx_meant_here`, src/frontend/parse/expr/postfix.cyr) flagged a CORRECT native number too:
+# `syscall(8, ..)` under `#ifdef CYRIUS_ARCH_AARCH64` IS getxattr there, and naming it
+# through an enum constant still warned, because the parser runs after the #ifdef is gone.
+# So the preprocessor writes the fact into the stream: the blank line that replaces a
+# directive becomes `#@a+` where a TAKEN branch whose condition implies aarch64 opens, and
+# `#@a-` where it closes (`#else`, `#elif`, `#endif`). Native = the defined side of
+# CYRIUS_ARCH_AARCH64 (`#ifdef`, `#ifplat aarch64`, the `#else` of `#ifndef`) or the
+# undefined side of CYRIUS_ARCH_X86 (`#ifndef`, the `#else` of `#ifdef` / `#ifplat x86`) —
+# the rule tests/gates/platform/raw_syscall_literals_routed.sh applies to lib/. `#if <expr>`
+# and an `#elif` are neutral. Relative +/- rather than a state, so an included file's own
+# blocks (expanded by a LATER pass with a fresh depth counter) nest inside an outer region.
+# A marker is still one line (4 bytes + LF, never longer than the directive it replaces), so
+# the stream stays line-for-line with the source; to the lexer it is a comment. Source text
+# spelling a marker is neutralised by PP_NEUT_FMARK. CHANGELOG [6.6.12]
+#
+# 1 = `#@a+`, 2 = `#@a-` at `base + i` (a whole line), else 0.
+fn PP_A64_MARK(base, i, n): i64 {
+    if (i + 3 >= n) { return 0; }
+    if (load8(base + i) != 35) { return 0; }
+    if (load8(base + i + 1) != 64) { return 0; }
+    if (load8(base + i + 2) != 97) { return 0; }
+    if (i + 4 < n) { if (load8(base + i + 4) != 10) { return 0; } }
+    var m = load8(base + i + 3);
+    if (m == 43) { return 1; }
+    if (m == 45) { return 2; }
+    return 0;
+}
+
+# The replacement for a directive line: `#@a<m>` then LF, or a bare LF when m == 0.
+fn _pp_a64_line(out, op, m): i64 {
+    if (m != 0) {
+        store8(out + op, 35); store8(out + op + 1, 64); store8(out + op + 2, 97); store8(out + op + 3, m);
+        op = op + 4;
+    }
+    store8(out + op, 10);
+    return op + 1;
+}
+
+# 1 iff the symbol at `base + pos` is `name` (whole word).
+fn _pp_a64_sym(base, pos, name): i64 {
+    var k = 0;
+    while (load8(name + k) != 0) {
+        if (load8(base + pos + k) != load8(name + k)) { return 0; }
+        k = k + 1;
+    }
+    var c = load8(base + pos + k);
+    if (c == 32 || c == 10 || c == 13 || c == 9 || c == 0) { return 1; }
+    return 0;
+}
+
+# A block just opened at level `d`. `ks` = kind * 8 + st: `kind` 0 #ifdef, 1 #ifndef,
+# 2 #ifplat, 3 #if (its operand at `base + pos`), `st` its PP state (0 = the if-side emits).
+# Packed because cybs (the seed's compiler) refuses a CALL with more than six arguments.
+# Writes the directive's line.
+fn _pp_a64_open(base, pos, ks, d, out, op): i64 {
+    var kind = ks >> 3;
+    var st = ks & 7;
+    if (d < 0 || d > 62) { return _pp_a64_line(out, op, 0); }
+    var b = 1 << d;
+    var ni = 0;
+    var ne = 0;
+    pos = PP_SEP(base, pos);   # 6.6.20: a blank RUN, tabs included, before the operand (PP_SEP)
+    if (kind == 2) {
+        if (_pp_a64_sym(base, pos, "aarch64") == 1) { ni = 1; }
+        if (_pp_a64_sym(base, pos, "x86") == 1) { ne = 1; }
+    }
+    if (kind < 2) {
+        var a = _pp_a64_sym(base, pos, "CYRIUS_ARCH_AARCH64");
+        var x = _pp_a64_sym(base, pos, "CYRIUS_ARCH_X86");
+        if (kind == 1) { var t = a; a = x; x = t; }
+        if (a == 1) { ni = 1; }
+        if (x == 1) { ne = 1; }
+    }
+    _pp_a64_nif = _pp_a64_nif & (0 - 1 - b);
+    _pp_a64_nel = _pp_a64_nel & (0 - 1 - b);
+    _pp_a64_on = _pp_a64_on & (0 - 1 - b);
+    if (ne == 1) { _pp_a64_nel = _pp_a64_nel | b; }
+    if (ni == 1) {
+        _pp_a64_nif = _pp_a64_nif | b;
+        if (st == 0) { _pp_a64_on = _pp_a64_on | b; return _pp_a64_line(out, op, 43); }
+    }
+    return _pp_a64_line(out, op, 0);
+}
+
+# `ev` 0 #else, 1 #elif, 2 #endif / #endplat at level `d` (for #else / #elif AFTER the state
+# flip, read back from the PP state stack). Writes its line.
+fn _pp_a64_close(S, ev, d, out, op): i64 {
+    if (d < 0 || d > 62) { return _pp_a64_line(out, op, 0); }
+    var b = 1 << d;
+    if ((_pp_a64_on & b) != 0) {
+        _pp_a64_on = _pp_a64_on & (0 - 1 - b);
+        if (ev == 1) { _pp_a64_nel = _pp_a64_nel & (0 - 1 - b); }
+        return _pp_a64_line(out, op, 45);
+    }
+    if (ev == 1) { _pp_a64_nel = _pp_a64_nel & (0 - 1 - b); }
+    if (ev == 0) {
+        if ((_pp_a64_nel & b) != 0) {
+            if (load8(S + 0x197F10 + d) == 0) { _pp_a64_on = _pp_a64_on | b; return _pp_a64_line(out, op, 43); }
+        }
+    }
+    return _pp_a64_line(out, op, 0);
+}
+
+# 1 iff expanded-source offset `off` lies inside a native-aarch64 region: the `#@a+` /
+# `#@a-` lines before it (outside string literals) leave a positive depth. Linear, and
+# called only when the raw-literal warning would otherwise fire. CHANGELOG [6.6.12]
+fn PP_A64_NATIVE_AT(S, off): i64 {
+    var base = S + 0x459D000;
+    var n = GBL(S);
+    if (off > n) { off = n; }
+    var i = 0;
+    var st = 0;
+    var bol = 1;
+    var dep = 0;
+    while (i < off) {
+        var c = load8(base + i);
+        if (bol == 1 && c == 35 && PP_LEXST_INSTR(st) == 0) {
+            var m = PP_A64_MARK(base, i, n);
+            if (m == 1) { dep = dep + 1; }
+            if (m == 2) { if (dep > 0) { dep = dep - 1; } }
+        }
+        if (load8(base + i) == 35) { st = PP_LEXST_AT(base, i, n, st); } else { st = PP_LEXST(st, load8(base + i)); }
+        if (c == 10) { bol = 1; } else { bol = 0; }
+        i = i + 1;
+    }
+    if (dep > 0) { return 1; }
+    return 0;
+}
+
+fn ISIFDEF(S, pos, bl): i64 {
+    if (pos + 7 >= bl) { return 0; }
+    # "#ifdef " = 23 69 66 64 65 66 20
+    if (load8(S + pos) != 35) { return 0; }
+    if (load8(S + pos + 1) != 105) { return 0; }
+    if (load8(S + pos + 2) != 102) { return 0; }
+    if (load8(S + pos + 3) != 100) { return 0; }
+    if (load8(S + pos + 4) != 101) { return 0; }
+    if (load8(S + pos + 5) != 102) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 6)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
+    return 1;
+}
+
+# "#ifndef " = 23 69 66 6E 64 65 66 20 (v5.6.1) — inverse of #ifdef.
+# `#ifndef X` emits body iff X is NOT defined. Standard C-family shape;
+# with `#else` (ISELSE, also v5.6.1) a paired `#ifdef X` / `#ifndef X`
+# selector collapses to one `#ifdef X ... #else ... #endif`.
+fn ISIFNDEF(S, pos, bl): i64 {
+    if (pos + 8 >= bl) { return 0; }
+    if (load8(S + pos)     != 35)  { return 0; }
+    if (load8(S + pos + 1) != 105) { return 0; }
+    if (load8(S + pos + 2) != 102) { return 0; }
+    if (load8(S + pos + 3) != 110) { return 0; }
+    if (load8(S + pos + 4) != 100) { return 0; }
+    if (load8(S + pos + 5) != 101) { return 0; }
+    if (load8(S + pos + 6) != 102) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 7)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
+    return 1;
+}
+
+# "#else" = 23 65 6C 73 65 (v5.6.1). No arg. Must not accidentally
+# match "#elseif" or other prefixes — check byte 5 is non-identifier
+# (space, newline, or end of buffer).
+fn ISELSE(S, pos, bl): i64 {
+    if (pos + 5 > bl) { return 0; }
+    if (load8(S + pos)     != 35)  { return 0; }
+    if (load8(S + pos + 1) != 101) { return 0; }
+    if (load8(S + pos + 2) != 108) { return 0; }
+    if (load8(S + pos + 3) != 115) { return 0; }
+    if (load8(S + pos + 4) != 101) { return 0; }
+    if (pos + 5 < bl) {
+        var tc = load8(S + pos + 5);
+        # Terminator: whitespace, newline, or EOF. Reject identifier
+        # continuation so "#elseif" (hypothetical typo) doesn't match.
+        if (tc != 32) { if (tc != 9) { if (tc != 10) { if (tc != 13) { if (tc != 0) { return 0; } } } } }
+    }
+    return 1;
+}
+
+# "#elif " = 23 65 6C 69 66 20 (v5.6.1). Arg is a condition expression
+# parsed by the same PP_EVAL_IF used for `#if`.
+fn ISELIF(S, pos, bl): i64 {
+    if (pos + 6 >= bl) { return 0; }
+    if (load8(S + pos)     != 35)  { return 0; }
+    if (load8(S + pos + 1) != 101) { return 0; }
+    if (load8(S + pos + 2) != 108) { return 0; }
+    if (load8(S + pos + 3) != 105) { return 0; }
+    if (load8(S + pos + 4) != 102) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 5)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
+    return 1;
+}
+
+# "#if " = 23 69 66 20 — the separator may be a space or a tab (6.6.20, PP_SEP).
+# ⚠ 6.6.20 — this carried `if (load8(S + pos + 4) == 100) { return 0; }`, "must NOT be
+# #ifdef". It never did that job (`#ifdef` already fails at pos + 3, which must be a blank),
+# and the one thing it DID do was refuse every `#if` whose condition starts with a lower-case
+# `d`: `#if dbg == 1` was read as a comment, so BOTH arms compiled. Deleted. CHANGELOG [6.6.20]
+fn ISIF(S, pos, bl): i64 {
+    if (pos + 4 >= bl) { return 0; }
+    if (load8(S + pos) != 35) { return 0; }
+    if (load8(S + pos + 1) != 105) { return 0; }
+    if (load8(S + pos + 2) != 102) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 3)) == 0) { return 0; }
+    return 1;
+}
+
+# Evaluate #if condition: NAME OP VALUE
+# Supports: ==, !=, <, >, <=, >=
+# Returns 1 (true) or 0 (false)
+# v5.6.42: src_base for source reads (see PP_HASH above).
+fn PP_EVAL_IF(S, src_base, pos): i64 {
+    # Skip whitespace (spaces and tabs — 6.6.20, see PP_SEP)
+    pos = PP_SEP(src_base, pos);
+    # Get name value
+    var lhs = PP_GETVAL(S, src_base, pos);
+    # Skip name
+    while (PP_DBLANK(load8(src_base + pos)) == 0) {
+        if (load8(src_base + pos) == 10) { return lhs != 0; }
+        if (load8(src_base + pos) == 0) { return lhs != 0; }
+        pos = pos + 1;
+    }
+    # Skip whitespace
+    pos = PP_SEP(src_base, pos);
+    # Read operator
+    var op1 = load8(src_base + pos);
+    var op2 = load8(src_base + pos + 1);
+    var op = 0;
+    if (op1 == 61) { if (op2 == 61) { op = 1; pos = pos + 2; } }
+    if (op1 == 33) { if (op2 == 61) { op = 2; pos = pos + 2; } }
+    if (op1 == 62) { if (op2 == 61) { op = 5; pos = pos + 2; } elif (op2 != 61) { op = 3; pos = pos + 1; } }
+    if (op1 == 60) { if (op2 == 61) { op = 6; pos = pos + 2; } elif (op2 != 61) { op = 4; pos = pos + 1; } }
+    if (op == 0) { return lhs != 0; }
+    # Skip whitespace
+    pos = PP_SEP(src_base, pos);
+    # Parse RHS integer
+    var rhs = 0;
+    var rc = load8(src_base + pos);
+    while (rc >= 48) {
+        if (rc > 57) { break; }
+        rhs = rhs * 10 + rc - 48;
+        pos = pos + 1;
+        rc = load8(src_base + pos);
+    }
+    # Evaluate
+    if (op == 1) { return lhs == rhs; }
+    if (op == 2) { return lhs != rhs; }
+    if (op == 3) { return lhs > rhs; }
+    if (op == 4) { return lhs < rhs; }
+    if (op == 5) { return lhs >= rhs; }
+    if (op == 6) { return lhs <= rhs; }
+    return 0;
+}
+
+fn ISENDIF(S, pos, bl): i64 {
+    if (pos + 6 >= bl) { return 0; }
+    # "#endif" = 23 65 6E 64 69 66
+    if (load8(S + pos) != 35) { return 0; }
+    if (load8(S + pos + 1) != 101) { return 0; }
+    if (load8(S + pos + 2) != 110) { return 0; }
+    if (load8(S + pos + 3) != 100) { return 0; }
+    if (load8(S + pos + 4) != 105) { return 0; }
+    if (load8(S + pos + 5) != 102) { return 0; }
+    # v6.6.6 — the name must END here, or `#endifoo note` (a COMMENT) closes the
+    # conditional early and whatever should have been skipped is compiled in, with
+    # no diagnostic at all. ISELSE already carried this rule inline; every other
+    # unbounded probe was missing it. See PP_NAMEBOUND. CHANGELOG [6.6.6]
+    if (PP_NAMEBOUND(S, pos + 6, bl) == 0) { return 0; }
+    return 1;
+}
+
+# `#ifplat PLAT` (v5.4.19) — sugar for `#ifdef CYRIUS_ARCH_<PLAT>`.
+# Supported platform tokens: `x86`, `aarch64`. Unknown tokens fall
+# through as false (block skipped). `#endplat` is paired with
+# `#ifplat`; semantically identical to `#endif` but visually pairs.
+# "#ifplat " = 23 69 66 70 6C 61 74 20
+fn ISIFPLAT(S, pos, bl): i64 {
+    if (pos + 8 >= bl) { return 0; }
+    if (load8(S + pos)     != 35)  { return 0; }
+    if (load8(S + pos + 1) != 105) { return 0; }
+    if (load8(S + pos + 2) != 102) { return 0; }
+    if (load8(S + pos + 3) != 112) { return 0; }
+    if (load8(S + pos + 4) != 108) { return 0; }
+    if (load8(S + pos + 5) != 97)  { return 0; }
+    if (load8(S + pos + 6) != 116) { return 0; }
+    if (PP_DBLANK(load8(S + pos + 7)) == 0) { return 0; }   # space or tab (6.6.20, PP_SEP)
+    return 1;
+}
+
+# "#endplat" = 23 65 6E 64 70 6C 61 74
+fn ISENDPLAT(S, pos, bl): i64 {
+    if (pos + 8 >= bl) { return 0; }
+    if (load8(S + pos)     != 35)  { return 0; }
+    if (load8(S + pos + 1) != 101) { return 0; }
+    if (load8(S + pos + 2) != 110) { return 0; }
+    if (load8(S + pos + 3) != 100) { return 0; }
+    if (load8(S + pos + 4) != 112) { return 0; }
+    if (load8(S + pos + 5) != 108) { return 0; }
+    if (load8(S + pos + 6) != 97)  { return 0; }
+    if (load8(S + pos + 7) != 116) { return 0; }
+    # v6.6.6 — same word boundary as ISENDIF. See PP_NAMEBOUND. CHANGELOG [6.6.6]
+    if (PP_NAMEBOUND(S, pos + 8, bl) == 0) { return 0; }
+    return 1;
+}
+
+# v6.5.24 — `#@srcline`: "the entry file's own line 1 starts on the NEXT line".
+#
+# WHY. cbt prepends a variable number of lines in front of the entry file — `#@incdir`,
+# `#@pkgver`, one `include` per `[deps].stdlib` module, one `#define` per `-D`, and the
+# ENTIRE TEXT of every `[build].modules` file — and only `#@incdir` was ever compensated.
+# So `<source>` diagnostics were reported one line late per prepended line: measured at
+# 6.5.21, abaco's 18-module manifest shifted every diagnostic by +17, pointing PAST EOF
+# on a 23-line file, which reads as a compiler fault rather than a source defect. Filed as
+# 2026-08-13-source-diag-line-shift-scales-with-deps-stdlib.
+#
+# ⭐ WHY A POSITION MARKER AND NOT A COUNT. The obvious design — have cbt declare "I
+# prepended N lines" — makes N a hand-maintained value duplicating something derivable,
+# and this cycle alone three such values had all silently drifted (heap-map sizes, gate
+# counts, ERR_MSG lengths). It would also be wrong the moment `[build].modules` appears,
+# since those contribute whole FILES of unknown length. This marker instead says only
+# "the real source starts here" and the compiler DERIVES the bias from the marker's own
+# line position, so cbt counts nothing and cannot drift.
+#
+# ⚠ NOT the foreclosed remedy. The filing proposed re-emitting `#@file`, which v6.5.21
+# deliberately neutralises in PP_PASS/PP_MACRO_PASS to close a forged-marker bypass of
+# `private`. This is a distinct directive that cannot re-enter that hole: it carries no
+# filename, cannot open or rename a file span, and only ever moves `<source>` line
+# attribution. See the honour-once guard at the PP_PASS call site.
+fn ISSRCLINE(S, pos, bl): i64 {
+    if (pos + 9 >= bl) { return 0; }
+    if (load8(S + pos)     != 35)  { return 0; }   # '#'
+    if (load8(S + pos + 1) != 64)  { return 0; }   # '@'
+    if (load8(S + pos + 2) != 115) { return 0; }   # 's'
+    if (load8(S + pos + 3) != 114) { return 0; }   # 'r'
+    if (load8(S + pos + 4) != 99)  { return 0; }   # 'c'
+    if (load8(S + pos + 5) != 108) { return 0; }   # 'l'
+    if (load8(S + pos + 6) != 105) { return 0; }   # 'i'
+    if (load8(S + pos + 7) != 110) { return 0; }   # 'n'
+    if (load8(S + pos + 8) != 101) { return 0; }   # 'e'
+    # v6.6.6 — same word boundary as ISENDIF. See PP_NAMEBOUND. CHANGELOG [6.6.6]
+    if (PP_NAMEBOUND(S, pos + 9, bl) == 0) { return 0; }
+    return 1;
+}

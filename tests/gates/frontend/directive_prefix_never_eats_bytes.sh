@@ -202,8 +202,8 @@ fi
 # ── axis 7 — census, derived from the source. Every place that HANDLES an
 #    ISINCLUDE match must carry the pre-check; the two counts are read from two
 #    different strings so one cannot be satisfied by editing the other.
-nsites=$(grep -c 'if (ISINCLUDE(' src/frontend/lex/pp.cyr || true)
-nchecks=$(grep -c 'PP_INCLUDE_NEEDS_QUOTE();' src/frontend/lex/pp.cyr || true)
+nsites=$(grep -c 'if (ISINCLUDE(' src/frontend/lex/pp/pass.cyr || true)
+nchecks=$(grep -c 'PP_INCLUDE_NEEDS_QUOTE();' src/frontend/lex/pp/pass.cyr || true)
 if [ "$nsites" = "$nchecks" ] && [ "$nsites" -ge 2 ]; then
     printf '  ok: axis 7 — %s ISINCLUDE handler sites, %s with the quote pre-check\n' \
         "$nsites" "$nchecks"

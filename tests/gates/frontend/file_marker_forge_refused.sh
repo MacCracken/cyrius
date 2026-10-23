@@ -45,7 +45,7 @@
 #   7  REAL markers still work: a diagnostic inside an included file names that
 #      file and its own line number (the fix must not be "stop emitting markers")
 #   8  census: every READFILE-into-`out` include site is followed by a
-#      PP_NEUT_FMARK call, derived from src/frontend/lex/pp.cyr
+#      PP_NEUT_FMARK call, derived from src/frontend/lex/pp/
 #   9  THE CONSUMER HALF (bite 5g): a string literal cannot mint a span. The
 #      neutraliser skips string literals on purpose, so `var q = "#@file ";`
 #      used to mint one whose "filename" ran from the closing quote to the next
@@ -122,6 +122,13 @@ cd "$ROOT"
 CC=${CYRIUS_CC:-"$ROOT/build/cycc"}
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
 trap 'rm -rf "$D"' EXIT
+# 6.7.18: lex/pp.cyr is split by seam into lex/pp/ — axes 8 and 26 read its pieces, in lex.cyr's include order,
+# as the one file they were (a floor of 8 pieces: a list that reads nothing cannot pass). CHANGELOG [6.7.18]
+PPF=$(sed -n 's|^include "\(src/frontend/lex/pp/[a-z_]*\.cyr\)"$|\1|p' src/frontend/lex/lex.cyr)
+[ "$(printf '%s\n' "$PPF" | grep -c . || true)" -ge 8 ] \
+    || { echo "FAIL: file-marker-forge-refused — lex.cyr includes fewer than 8 files of src/frontend/lex/pp/"; exit 1; }
+LPP="$D/pp.cyr"
+for f in $PPF; do cat "$f"; done > "$LPP"
 
 pass=0; fail=0
 ulimit -c 0 2>/dev/null || true
@@ -291,9 +298,9 @@ rm -f "$D/7.bin"
 #    STRAIGHT into `out` must be followed by a PP_NEUT_FMARK call, and the raw
 #    source must get one too. Counted a different way from the code itself: the
 #    include sites are found by their READFILE shape, the guards by their call.
-nreads=$(grep -c 'READFILE(fname, out + op' src/frontend/lex/pp.cyr || true)
-nguards=$(grep -c 'PP_NEUT_FMARK(out + op, nr);' src/frontend/lex/pp.cyr || true)
-npass=$(grep -c 'PP_NEUT_PASS(S);' src/frontend/lex/pp.cyr || true)
+nreads=$(grep -c 'READFILE(fname, out + op' "$LPP" || true)
+nguards=$(grep -c 'PP_NEUT_FMARK(out + op, nr);' "$LPP" || true)
+npass=$(grep -c 'PP_NEUT_PASS(S);' "$LPP" || true)
 if [ "$nreads" = "$nguards" ] && [ "$nreads" -ge 2 ] && [ "$npass" -ge 1 ]; then
     printf '  ok: axis 8 — %s include READFILE sites, %s neutralised, raw-source pass wired\n' \
         "$nreads" "$nguards"
@@ -513,7 +520,6 @@ census26() {
     [ "$c_guard" -ge 9 ] && [ "$c_at" = $((c_guard+1)) ] && [ "$c_bare" = $((c_guard+2)) ] \
         && [ "$c_def" = 1 ] && [ "$c_tail" = 1 ] && [ "$c_lw" = 1 ] && [ "$c_lx" = 1 ]
 }
-LPP=src/frontend/lex/pp.cyr
 # M-bare: the first guard -> `X = PP_LEXST(X, load8(B + I));`
 awk '!d && /^ *if \(load8\(.* == 35\) \{ [a-z_]+ = PP_LEXST_AT\(/ {
     sub(/if \(load8\([^=]*\) == 35\) \{ [^}]*\} else \{ /, ""); sub(/ \}$/, ""); d=1 } { print }' "$LPP" > "$D/26m1.cyr"

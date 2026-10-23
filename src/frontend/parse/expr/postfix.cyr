@@ -959,7 +959,7 @@ fn _sc_arity_skip(sc_num, got): i64 {
 # ELF-aarch64 — unless the call sits inside a native-aarch64 region (`#ifdef
 # CYRIUS_ARCH_AARCH64`, `#ifndef CYRIUS_ARCH_X86`, ...), where the number is the native one
 # by construction: the preprocessor marks those regions (PP_A64_NATIVE_AT,
-# src/frontend/lex/pp.cyr). Same frame rule as tests/gates/platform/
+# src/frontend/lex/pp/directive.cyr). Same frame rule as tests/gates/platform/
 # raw_syscall_literals_routed.sh applies to lib/. The table is a `return 0` stub off the
 # aarch64 backend, so the scan runs only where a warning would otherwise print.
 # CHANGELOG [6.6.12]

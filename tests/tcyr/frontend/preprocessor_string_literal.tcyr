@@ -9,7 +9,7 @@
 # Pre-fix bug
 # ===========
 #
-# `PREPROCESS` in `src/frontend/lex/lex.cyr` (well, `lex/pp.cyr`)
+# `PREPROCESS` in `src/frontend/lex/lex.cyr` (well, `lex/pp/preprocess.cyr`)
 # scanned raw bytes for the literal `include "` pattern without
 # string-literal context. A source containing a string with the
 # include-pattern bytes — when those bytes happened to land at

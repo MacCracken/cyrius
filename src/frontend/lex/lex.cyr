@@ -40,7 +40,7 @@ var _tok_start = 0;
 # ⭐ PP_REANCHOR ALREADY SAID SO AND ENFORCED IT — `# A marker must own its line.` followed
 # by `if (op > 0) { if (load8(out + op - 1) != 10) { store8(out + op, 10); op = op + 1; } }`.
 # The producer has required this since v6.5.19; FM_BUILD simply never checked what
-# PP_FMARK already guarantees. (Same shape as ISELSE in lex/pp.cyr: an invariant written
+# PP_FMARK already guarantees. (Same shape as ISELSE in lex/pp/directive.cyr: an invariant written
 # down and enforced at one site while its siblings went without.) CHANGELOG [6.6.6]
 fn FM_ATBOL(buf, pos): i64 {
     if (pos == 0) { return 1; }
@@ -980,7 +980,17 @@ fn READFILE(path, dst, maxsz): i64 {
 # Check for "#ref " directive (5 bytes: # r e f space)
 
 # v5.5.38: preprocessor (PP_*) passes + predicates extracted.
-include "src/frontend/lex/pp.cyr"
+# 6.7.18: that file (lex/pp.cyr) is split along its seams into lex/pp/, each piece moved unchanged and included
+# HERE, one after another in its old order, so the token stream, and every compiler built from it, is the same.
+# One parent, no nesting. CHANGELOG [6.7.18]
+include "src/frontend/lex/pp/directive.cyr"
+include "src/frontend/lex/pp/include.cyr"
+include "src/frontend/lex/pp/derive.cyr"
+include "src/frontend/lex/pp/serialize.cyr"
+include "src/frontend/lex/pp/accessor.cyr"
+include "src/frontend/lex/pp/macro.cyr"
+include "src/frontend/lex/pp/pass.cyr"
+include "src/frontend/lex/pp/preprocess.cyr"
 
 # The `#` attribute words (LEXATTRWORD, LEXATTRBOUND, _lex_attr_is): their own pure file, so the
 # source-scanning tools include the SAME list rather than a hand copy. CHANGELOG [6.7.11]

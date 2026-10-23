@@ -19,7 +19,7 @@
 #   is BYTE-oriented (it has no `bol`), which is exactly how it was left out of
 #   that census.
 #
-# Fixed by `PP_MACRO_START` (src/frontend/lex/pp.cyr): the byte must start an
+# Fixed by `PP_MACRO_START` (src/frontend/lex/pp/macro.cyr): the byte must start an
 # identifier — `PP_IDBYTE` of the previous byte is 0, or it is byte 0 — and
 # `PP_LEXST_INSTR` of the shared PP_LEXST state must be 0.
 #

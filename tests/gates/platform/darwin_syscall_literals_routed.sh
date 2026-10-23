@@ -120,7 +120,7 @@ nfiles=$(echo "$files" | wc -l)
 
 cat > "$TMP/scan.awk" <<'AWK'
 # Emits "<num> <argc> <file>:<line>" for each literal site target T reaches.
-# Directive spellings mirror src/frontend/lex/pp.cyr exactly (one space after #ifdef/#ifndef/
+# Directive spellings mirror src/frontend/lex/pp/directive.cyr exactly (one space after #ifdef/#ifndef/
 # #ifplat/#if; a non-identifier byte after #else/#elif/#endif/#endplat; any other # line is a
 # comment) — the same rules raw_syscall_literals_routed.sh documents.
 function reach(sym, negated,   ifs, els) {

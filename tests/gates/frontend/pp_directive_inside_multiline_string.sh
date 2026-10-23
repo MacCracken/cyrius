@@ -14,7 +14,7 @@
 #   var s = "ab\n#ifdef NOPE\ncd\n#endif\nef";   →   the binary held ab\n\n\n\nef
 #
 # Silent: exit 0, no diagnostic, and the program's string data was simply not
-# what the source said. Fixed by PP_LEXST (src/frontend/lex/pp.cyr), whose string
+# what the source said. Fixed by PP_LEXST (src/frontend/lex/pp/directive.cyr), whose string
 # state crosses newlines and which learned char literals so the old reset is not
 # needed to bound a mis-read `"`.
 #

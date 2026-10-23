@@ -192,7 +192,7 @@ fn _sort_entries(): i64 {
 }
 
 # 1 iff `filebuf[q]` ENDS a `#derive(...)` name: whitespace, or end of the line.
-# Mirrors PP_NAMEBOUND / ISDERIVE in src/frontend/lex/pp.cyr — this scanner copies
+# Mirrors PP_NAMEBOUND / ISDERIVE in src/frontend/lex/pp/include.cyr / derive.cyr — this scanner copies
 # the compiler's derive detection, so it must copy the word boundary too or it
 # reports accessors for a line the compiler reads as a comment. CHANGELOG [6.6.6]
 fn _api_derive_bound(filebuf, q, eol): i64 {
@@ -252,7 +252,7 @@ fn _push_synthesized(module_off, module_len,
 }
 
 # ---------------------------------------------------------------------------------------
-# 6.6.8 — THE `#derive` SURFACE MIRRORS THE COMPILER'S EMITTER (src/frontend/lex/pp.cyr).
+# 6.6.8 — THE `#derive` SURFACE MIRRORS THE COMPILER'S EMITTER (src/frontend/lex/pp/).
 # This used to be a hand-kept approximation that had drifted on every axis: `_to_json` at
 # arity 1 (the emitter has taken `(ptr, sb)` since v5.9.31), no `_from_json_str`,
 # `#derive(Deserialize)` not recognised at all (and, stacked above `#derive(accessors)`,

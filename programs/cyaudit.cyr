@@ -46,7 +46,7 @@ fn is_trusted(path): i64 {
 }
 
 # The preprocessor's lexical state after byte `c` in state `st` — a copy of PP_LEXST
-# (src/frontend/lex/pp.cyr): 0 code, 1 string, 2 after `\` in a string, 3 `#` comment,
+# (src/frontend/lex/pp/directive.cyr): 0 code, 1 string, 2 after `\` in a string, 3 `#` comment,
 # 4 char literal, 5 after `\` in a char literal.
 fn _au_lexst(st, c): i64 {
     if (st == 2) { return 1; }

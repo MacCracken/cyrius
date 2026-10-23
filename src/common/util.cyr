@@ -3426,7 +3426,7 @@ fn _expect_step(S, t): i64 {
 # the EXPANDED line, which equals the source's only where nothing was expanded in-line before the token: past a
 # `#derive`'s generated fns (flattened onto the struct's closing-`}` line) `struct Q { y; } var w = zz;` reported
 # 2:258 with the generated fns as the excerpt, and past a macro call `var x = ADD(1, 2) + zz;` 2:39 with the expansion
-# as the excerpt. Each in-line expansion is recorded (lex/pp.cyr `_xm_add`): where its output sits in the final
+# as the excerpt. Each in-line expansion is recorded (lex/pp/pass.cyr `_xm_add`): where its output sits in the final
 # buffer, its output length, and the source text it replaced (a derive's appended fns replaced none). A column is
 # counted back from the token to its SOURCE line's start, an expansion's output read as its source text; a token inside
 # an expansion is at the expansion's start (the macro call). The excerpt is that source line, rebuilt the same way.

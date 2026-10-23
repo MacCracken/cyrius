@@ -987,7 +987,7 @@ error:<source>:1:66: $ZZ"
 
 # DV7 — 6.7.16 (the f16 review): ONLY THE NAMES THE DERIVE WROTE. `_dl_dname` took ANY `<Type>_..` / `_cy_..` on a DERIVED
 # refused declaration's line as the derive's, so a user's `fn Q_h` there was stepped and its body never parsed (DV6 is
-# the NON-derived struct). Now exactly the names that registration emitted (lex/pp.cyr PP_DERIVE_CODEC / PP_DERIVE_FAM):
+# the NON-derived struct). Now exactly the names that registration emitted (lex/pp/serialize.cyr PP_DERIVE_CODEC / PP_DERIVE_FAM):
 # the codecs `<T>_to_json`, `<T>_from_json_str`, a struct's `<T>_from_json`; the accessors `<T>_<field>` /
 # `<T>_set_<field>` for a field of the declaration; a `_cy_` helper only on the line that emitted it; each name once
 # (a second `fn Q_set_y` is the user's duplicate). DV7 the review's dq.cyr verbatim (module scope, accessors); DV7b in a

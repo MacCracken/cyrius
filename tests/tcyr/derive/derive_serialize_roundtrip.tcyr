@@ -11,7 +11,7 @@
 # undefined function 'i64_from_json'`; the runtime stub
 # crashed if anything called the deserializer.
 #
-# Fix at v5.9.35 (`src/frontend/lex/pp.cyr`
+# Fix at v5.9.35 (`src/frontend/lex/pp/serialize.cyr`
 # PP_DERIVE_SERIALIZE): `_from_json` and `_from_json_str` both
 # gain i64 primitive-integer detection mirroring the v5.9.30
 # `_to_json` `prim_load` block. i64 takes the `str_to_int(v)`

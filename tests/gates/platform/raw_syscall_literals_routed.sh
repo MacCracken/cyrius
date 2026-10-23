@@ -91,7 +91,7 @@ BEGIN {
     n = split(routed, r, " "); for (i = 1; i <= n; i++) ok[r[i]] = 1
     sites = 0; bad = 0
 }
-# Directive spellings mirror src/frontend/lex/pp.cyr EXACTLY: ISIFDEF/ISIFNDEF/ISIF/ISIFPLAT
+# Directive spellings mirror src/frontend/lex/pp/directive.cyr EXACTLY: ISIFDEF/ISIFNDEF/ISIF/ISIFPLAT
 # want ONE space after the keyword, ISELSE/ISENDIF/ISENDPLAT want a non-identifier byte
 # after it, and any other `#…` line is a COMMENT to the preprocessor — so `#ifdef\tX` or
 # `#ifdef  X` guards nothing and the code under it is compiled on every target. The first

@@ -1,0 +1,628 @@
+# LEXER — pp: `#define` and macros: the flag and macro tables, PP_EXPAND, PP_PREDEFINE, PP_DEFINE, PP_DEFINED, the
+# `#ifplat` match, PP_SKIPLINE.
+# ================================================================
+# Split from lex/pp.cyr at 6.7.18, unchanged; lex.cyr includes lex/pp/ in source order. CHANGELOG [6.7.18]
+
+# Feature flag table: up to 16 flags, stored as name hashes at S+0x190800
+var _pp_flag_count = 0;
+
+# Macro table: up to 16 macros with args
+# S+0x192000: 16 name hashes (128 bytes)
+# S+0x192080: 16 definition text offsets (128 bytes) — points into S+0x193000
+# S+0x192100: 16 definition text lengths (128 bytes)
+# S+0x193000: definition text storage (16KB)
+var _pp_macro_count = 0;
+var _pp_macro_text_pos = 0;
+
+# Hash stopping at ( for macro names
+fn PP_HASH_ID(S, pos): i64 {
+    var h = 0;
+    var pi = 0;
+    var pc = load8(S + pos + pi);
+    while (pc != 0) {
+        if (pc == 10) { return h; }
+        if (pc == 13) { return h; }
+        if (pc == 32) { return h; }
+        if (pc == 9) { return h; }    # 6.6.20, see PP_SEP
+        if (pc == 40) { return h; }
+        h = h * 31 + pc;
+        pi = pi + 1;
+        pc = load8(S + pos + pi);
+    }
+    return h;
+}
+
+# 1 iff `b` can appear INSIDE an identifier (letter, digit or `_`). The macro pass
+# needs this to tell the START of a name from its middle. CHANGELOG [6.6.6]
+fn PP_IDBYTE(b): i64 {
+    if (b >= 65) { if (b <= 90) { return 1; } }
+    if (b >= 97) { if (b <= 122) { return 1; } }
+    if (b >= 48) { if (b <= 57) { return 1; } }
+    if (b == 95) { return 1; }
+    return 0;
+}
+
+# ⛔ v6.6.6 — IS `ip` THE START OF A MACRO INVOCATION?
+#
+# PP_MACRO_PASS decided that from the bytes alone: any upper-case byte began a
+# candidate name. Two ways that is wrong, both silent, and both the shapes this
+# release keeps finding one pass over from where they were last fixed:
+#
+#   NO LEFT WORD BOUNDARY — `myID(5)` matched the macro `ID` in the MIDDLE of an
+#   identifier. With `#define ID(a) (a)`, `fn myID` became `fn my((a))` and the
+#   call became `my((5))`, so a program with both `myID` and `my` defined CALLED
+#   THE WRONG FUNCTION and exited 7 where 9 is correct — the only output a
+#   `duplicate fn 'my'` warning naming a fn the source never wrote twice.
+#   (The RIGHT side was never at risk: PP_HASH_ID hashes to the `(`, so `IDX(1)`
+#   hashes `IDX` and cannot match `ID`.)
+#
+#   NO LEXICAL STATE — an invocation inside a STRING LITERAL was expanded and the
+#   string's bytes rewritten: `"ID(5) literal"` measured 11 bytes, not 13. That is
+#   exactly the defect 6.6.6 bite 4 fixed, and PP_MACRO_PASS survived that census
+#   because it is the one preprocessor pass that is BYTE-oriented rather than
+#   line-oriented — it has no `bol`, so it was not one of "the four line-oriented
+#   passes". It shares PP_LEXST here, like the other four.
+#
+# ⛔ Comments are NOT excluded HERE, and the reason is NOT the one this comment gave
+# for one release. It read: "an expansion inside a comment cannot change the emitted
+# binary (a `#define` body stops at the newline, so no expansion can introduce one)".
+# That argues only about the bytes the expansion WRITES. The bytes it READS are the
+# other half, and PP_EXPAND's argument scan runs to the matching `)` with no line
+# bound — so with `#define M(a) 0` in scope, the comment
+#
+#     # TODO: fix M(
+#     var r = 42;
+#     var t = 1;
+#     syscall(60, r + t);
+#
+# expanded `M(` against the `)` of `syscall(...)` and DELETED every byte between
+# them: the whole program body vanished, exit 0 with an empty stderr where 43 is
+# correct. Reachable from a trailing comment on a real line too (`var r = 42;  # see M(`).
+# The claim is true only of a SINGLE-LINE invocation, which is why the bound — not the
+# exclusion — is the fix: see PP_ARGS_ON_LINE. (An ATTRIBUTE line such as `#inline fn f():
+# i64 { return N(5); }` is CODE to the PP since 6.6.20 — PP_LEXST_AT — so its macros expand,
+# wrapped invocations included, exactly as on any other line of code.) CHANGELOG [6.6.6]
+fn PP_MACRO_START(S, ip, lst): i64 {
+    if (PP_LEXST_INSTR(lst) == 1) { return 0; }
+    var c = load8(S + _SRCB + ip);
+    if (c < 65) { return 0; }
+    if (c > 90) { return 0; }
+    if (ip == 0) { return 1; }
+    if (PP_IDBYTE(load8(S + _SRCB + ip - 1)) == 1) { return 0; }
+    return 1;
+}
+
+# Offset of the `(` that closes the candidate macro name starting at `ip`, or -1 if
+# the name is followed by anything else. Lifted out of PP_MACRO_PASS unchanged (it
+# was an inline loop) so the callable test below can share it and so PP_MACRO_PASS
+# keeps few enough call/global references for cybs. CHANGELOG [6.6.6]
+fn PP_MACRO_LPAREN(S, ip, bl): i64 {
+    var mp = ip;
+    while (mp < bl) {
+        var mc = load8(S + _SRCB + mp);
+        if (mc == 40) { return mp; }
+        if (PP_IDBYTE(mc) == 0) { return 0 - 1; }
+        mp = mp + 1;
+    }
+    return 0 - 1;
+}
+
+# 1 iff the invocation whose `(` sits at `lp` closes on the SAME LINE.
+#
+# v6.6.6 — the bound that makes expanding inside a `#` comment safe. PP_EXPAND
+# consumes input to the matching `)` wherever it is, so an UNBALANCED `(` in a
+# comment swallowed the code that followed it — silently, and with exit 0. A comment
+# ends at the newline, so an invocation that starts in one is harmless exactly while
+# it also ENDS in one. Not applied to code: a wrapped invocation (`ADD(1,\n2)`) is
+# legitimate and PP_EXPAND has kept it line-faithful since v6.5.19. CHANGELOG [6.6.6]
+fn PP_ARGS_ON_LINE(S, lp, bl): i64 {
+    var depth = 0;
+    var q = lp;
+    while (q < bl) {
+        var c = load8(S + _SRCB + q);
+        if (c == 10) { return 0; }
+        if (c == 40) { depth = depth + 1; }
+        elif (c == 41) {
+            depth = depth - 1;
+            if (depth == 0) { return 1; }
+        }
+        q = q + 1;
+    }
+    return 0;
+}
+
+# 1 iff a candidate name at `ip` really is an invocation to expand: it is followed by
+# `(`, and — when it sits inside a `#` comment (PP_LEXST state 3) — the matching `)`
+# is on that same line. See PP_ARGS_ON_LINE. CHANGELOG [6.6.6]
+fn PP_MACRO_CALLABLE(S, ip, bl, lst): i64 {
+    var lp = PP_MACRO_LPAREN(S, ip, bl);
+    if (lp < 0) { return 0; }
+    if (lst != 3) { return 1; }
+    var ok = PP_ARGS_ON_LINE(S, lp, bl);
+    return ok;
+}
+
+# ⛔ 6.6.6 bite 19f — WHY PP_MACRO_PASS HAS TO RE-READ ITS INPUT.
+#
+# The preprocessor's buffers are TWO: the source buffer at `S+_SRCB` (input_buf, 24 MB) and
+# preprocess_out at `S+0x459D000` (24 MB). The documented contract for every pass is "write to
+# preprocess_out and copy BACK here" (see the heap map in src/main.cyr). PP_IFDEF_PASS does NOT
+# copy back — its header says so — and it leaves `S+_SRCB` holding its own INPUT, truncated to
+# the 1 MB helper window. PP_MACRO_PASS then reads `S+_SRCB` and writes preprocess_out.
+#
+# So merely HAVING one function-like `#define` anywhere in the source (`_pp_macro_count > 0` is
+# the pass's only entry condition) REPLACED the ifdef-filtered source with the unfiltered one:
+#
+#     #define M(a) (a)          <- never even used
+#     include "lib/alloc.cyr"
+#
+# put lib/atomic.cyr's `#ifdef CYRIUS_ARCH_AARCH64` arm back into an x86 build
+# (`error: lib/atomic.cyr:94:20: unexpected identifier 'x0'`), and with lib/assert.cyr it lost a
+# brace and reported `expected '}', got end of file` at a line number from the wrong buffer.
+# An OBJECT-like `#define` was fine — it never sets `_pp_macro_count` — which is why this stood
+# for as long as it did: the feature looked to work in every small test that had no `#ifdef`
+# below it, and the failure was content-dependent on the includes.
+#
+# Sync the source buffer from the previous pass's output before reading it. Gated by the
+# caller's `_pp_macro_count == 0` early return, so a program with no function-like macro pays
+# nothing. CHANGELOG [6.6.6]
+fn PP_SYNC_SRCB(S, bl): i64 {
+    var i = 0;
+    while (i < bl) { store8(S + _SRCB + i, load8(S + 0x459D000 + i)); i = i + 1; }
+    return 0;
+}
+
+# Find macro by name hash at input position, return index or -1
+fn PP_FIND_MACRO(S, ip): i64 {
+    var h = PP_HASH_ID(S + _SRCB, ip);
+    var mi = 0;
+    while (mi < _pp_macro_count) {
+        if (load64(S + 0x192000 + mi * 8) == h) { return mi; }
+        mi = mi + 1;
+    }
+    return 0 - 1;
+}
+
+# 6.6.20 — the slot for the function-like `#define` at `dip` (main source, PP_PASS), or -1
+# when it is refused BY NAME. Until 6.6.20 the 17th function-like macro was silently
+# DISCARDED (the store sat in `if (msi < 16)` with no else), so a same-name fn was called in
+# its place or the use failed as a misleading "undefined function". A redefinition took a
+# slot of its own and was never used either: PP_FIND_MACRO returns the first match, and the
+# expansion pass runs after every definition is in, so no later definition could ever apply.
+# Both are refused, located, report-and-continue like PP_DEFINE's cap. CHANGELOG [6.6.20]
+fn PP_MACRO_SLOT(S, dip, nm): i64 {
+    if (PP_FIND_MACRO(S, nm) >= 0) {
+        _pp_err_name_at(S, S + _SRCB, dip, "function-like macro '", nm, "' is already defined (a function-like #define cannot be redefined)");
+        return 0 - 1;
+    }
+    if (_pp_macro_count >= 16) {
+        _pp_err_name_at(S, S + _SRCB, dip, "too many function-like #define macros (max 16): '", nm, "' does not fit");
+        return 0 - 1;
+    }
+    return _pp_macro_count;
+}
+
+# ⛔ 6.6.20 (the PP_EXPAND buffer overflow bug) — refuse, naming the macro, an expansion PP_EXPAND cannot do inside its
+# fixed buffers. A hard error like PP_MACRO_TEXT_FULL: the expansion is mid-copy and has no
+# honest partial result. `def` is the stored definition, `NAME(params) body`. CHANGELOG [6.6.20]
+fn PP_MACRO_REFUSE(def, why): i64 {
+    PRSTR("error: function-like macro '");
+    _pp_write_ident(def);
+    PRSTR("': ");
+    PRSTR(why);
+    _ew("\n", 1);
+    _die(1);
+    return 0;
+}
+
+# 6.6.20 — refuse, naming the macro, an invocation whose argument count is not the macro's
+# parameter count, or that never closes. PP_EXPAND never compared the two: extra arguments
+# were dropped, and too few made the substitution walk past the last argument THIS call wrote
+# into stale bytes of `args` left by an earlier call (`PICK(9)` after `PICK(3, 4)`, with
+# `#define PICK(a, b) b`, compiled clean and took 4). A zero-parameter macro is invoked as
+# `Z()` / `Z( )`: one blank argument counts as none. `args` holds `acnt` NUL-terminated
+# arguments. Unlocated, like PP_MACRO_REFUSE. CHANGELOG [6.6.20]
+fn PP_MACRO_ARGCHECK(def, pcnt, acnt, args, closed): i64 {
+    if (closed == 0) { PP_MACRO_REFUSE(def, "an invocation has no closing ')'"); }
+    var given = acnt;
+    if (pcnt == 0) {
+        if (acnt == 1) {
+            var i = 0;
+            var blank = 1;
+            while (load8(args + i) != 0) {
+                var c = load8(args + i);
+                if (c != 32) { if (c != 9) { if (c != 10) { if (c != 13) { blank = 0; } } } }
+                i = i + 1;
+            }
+            if (blank == 1) { given = 0; }
+        }
+    }
+    if (given == pcnt) { return 0; }
+    PRSTR("error: function-like macro '");
+    _pp_write_ident(def);
+    PRSTR("': takes ");
+    PRNUM(pcnt);
+    if (pcnt == 1) { PRSTR(" argument, given "); }
+    else { PRSTR(" arguments, given "); }
+    PRNUM(given);
+    _ew("\n", 1);
+    _die(1);
+    return 0;
+}
+
+# Expand macro invocation: NAME(arg1, arg2)
+# Reads args from input at ip, substitutes into body, writes to out+op
+# Returns new ip position (after the closing paren)
+fn PP_EXPAND(S, mi, ip, bl, out, op): i64 {
+    # v6.5.19 — line-faithful expansion. This fn used to end with an
+    # unconditional `store8(out + op, 10)`, i.e. +1 output line per
+    # invocation. That was only ever *masked*: the `#define` directive line
+    # was consumed WITHOUT padding, contributing −1, so a single-invocation
+    # file happened to balance. v6.5.19 pads every consumed directive line
+    # (PP_PASS / PP_IFDEF_PASS), which is correct and fixes object-like
+    # `#define`, and thereby unmasked this: each function-like invocation
+    # became +1. Anchor the input/output positions here so the tail can emit
+    # exactly as many newlines as the invocation CONSUMED — 0 for the usual
+    # single-line call, N for a call whose arg list spans N+1 source lines.
+    var _ip_start = ip;
+    var _op_start = op;
+    var def = S + 0x193000 + load64(S + 0x192080 + mi * 8);
+    # Skip name in definition to find (
+    var dp = 0;
+    while (load8(def + dp) != 40) { dp = dp + 1; }
+    dp = dp + 1;  # skip (
+    # Read param names from definition.
+    # ⛔ 6.6.20 (the PP_EXPAND buffer overflow bug) — pnames and args below are fn-local `var x[512]`, i.e. 512 BYTES
+    # each, packed NUL-separated (there is no per-param stride — this line used to say "up to 8
+    # params, 64 bytes each", which described a layout that never existed). Neither copy was
+    # bounded: a 516-byte argument came out as an EMPTY expansion and compiled clean (a
+    # silent miscompile), 518+ smashed PP_EXPAND's frame and cycc died of SIGSEGV, and a
+    # ~600-byte parameter list did the same from the definition side. Each loop stores at most
+    # one byte per pass; both refuse past 511 bytes of names / arguments and separators, so
+    # the copy never writes past index 511. CHANGELOG [6.6.20]
+    var pnames[512];
+    var pcnt = 0;
+    var pp = 0;
+    while (load8(def + dp) != 41) {
+        if (pp >= 511) { PP_MACRO_REFUSE(def, "its parameter names exceed 511 bytes"); }
+        if (load8(def + dp) == 0) { PP_MACRO_REFUSE(def, "its parameter list has no closing ')'"); }
+        if (load8(def + dp) == 44) { store8(&pnames + pp, 0); pp = pp + 1; pcnt = pcnt + 1; dp = dp + 1; }
+        elif (PP_DBLANK(load8(def + dp)) == 1) { dp = dp + 1; }   # space or TAB (6.6.20, PP_SEP)
+        else { store8(&pnames + pp, load8(def + dp)); pp = pp + 1; dp = dp + 1; }
+    }
+    if (pp > 0) { store8(&pnames + pp, 0); pp = pp + 1; pcnt = pcnt + 1; }
+    dp = dp + 1;  # skip )
+    if (PP_DBLANK(load8(def + dp)) == 1) { dp = dp + 1; }  # skip a space or TAB after )
+    # Read body text from definition (rest after params)
+    var body = def + dp;
+    # Skip name in input to find (
+    while (ip < bl) {
+        if (load8(S + _SRCB + ip) == 40) { break; }
+        ip = ip + 1;
+    }
+    ip = ip + 1;  # skip (
+    # Read args from input (comma-separated, handle nested parens)
+    var args[512];    # 512 bytes, NUL-separated — bounded below (see pnames)
+    var acnt = 0;
+    var ap = 0;
+    var depth = 0;
+    var closed = 0;
+    while (ip < bl) {
+        var c = load8(S + _SRCB + ip);
+        if (ap >= 512) { PP_MACRO_REFUSE(def, "an invocation's arguments exceed 511 bytes"); }
+        if (c == 40) { depth = depth + 1; store8(&args + ap, c); ap = ap + 1; }
+        elif (c == 41) {
+            if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; ip = ip + 1; closed = 1; break; }
+            depth = depth - 1; store8(&args + ap, c); ap = ap + 1;
+        }
+        elif (c == 44) {
+            if (depth == 0) { store8(&args + ap, 0); ap = ap + 1; acnt = acnt + 1; }
+            else { store8(&args + ap, c); ap = ap + 1; }
+        }
+        else { store8(&args + ap, c); ap = ap + 1; }
+        ip = ip + 1;
+    }
+    PP_MACRO_ARGCHECK(def, pcnt, acnt, &args, closed);   # 6.6.20: count must match
+    # Substitute: walk body, replace param names with args
+    var bi = 0;
+    while (load8(body + bi) != 0) {
+        var bc = load8(body + bi);
+        var matched = 0 - 1;
+        # Check if current position matches a param name (alpha/underscore start)
+        if (bc >= 97) { if (bc <= 122) { matched = 0 - 2; } }
+        if (bc >= 65) { if (bc <= 90) { matched = 0 - 2; } }
+        if (bc == 95) { matched = 0 - 2; }
+        if (matched == 0 - 2) {
+            # Try each param
+            var pi2 = 0;
+            var poff = 0;
+            while (pi2 < pcnt) {
+                # Compare param at pnames+poff with body at bi
+                var pk = 0;
+                var pmatch = 1;
+                while (load8(&pnames + poff + pk) != 0) {
+                    if (load8(body + bi + pk) != load8(&pnames + poff + pk)) { pmatch = 0; break; }
+                    pk = pk + 1;
+                }
+                # Ensure not a longer identifier
+                if (pmatch == 1) {
+                    var nc = load8(body + bi + pk);
+                    if (nc >= 97) { if (nc <= 122) { pmatch = 0; } }
+                    if (nc >= 65) { if (nc <= 90) { pmatch = 0; } }
+                    if (nc >= 48) { if (nc <= 57) { pmatch = 0; } }
+                    if (nc == 95) { pmatch = 0; }
+                }
+                if (pmatch == 1) { matched = pi2; break; }
+                while (load8(&pnames + poff) != 0) { poff = poff + 1; }
+                poff = poff + 1;
+                pi2 = pi2 + 1;
+            }
+        }
+        if (matched >= 0) {
+            # Find arg text: walk args buffer to the matched index
+            var aoff = 0;
+            var ai2 = 0;
+            while (ai2 < matched) { while (load8(&args + aoff) != 0) { aoff = aoff + 1; } aoff = aoff + 1; ai2 = ai2 + 1; }
+            # Copy arg text to output. v6.5.19 — a newline INSIDE an arg (a call
+            # whose arg list wraps) is flattened to a space here so the substituted
+            # text can never inject a line of its own, and can never inject it a
+            # different number of times than the source had it (a param used twice
+            # would otherwise double the wrap's newline). The invocation's real line
+            # count is restored once, at the tail, from the consumed input.
+            while (load8(&args + aoff) != 0) {
+                var _ac = load8(&args + aoff);
+                if (_ac == 10) { _ac = 32; }
+                elif (_ac == 13) { _ac = 32; }
+                store8(out + op, _ac); op = op + 1; aoff = aoff + 1;
+            }
+            # Skip param name in body
+            var poff2 = 0;
+            var pi3 = 0;
+            while (pi3 < matched) { while (load8(&pnames + poff2) != 0) { poff2 = poff2 + 1; } poff2 = poff2 + 1; pi3 = pi3 + 1; }
+            var plen = 0;
+            while (load8(&pnames + poff2 + plen) != 0) { plen = plen + 1; }
+            bi = bi + plen;
+        } else {
+            store8(out + op, bc); op = op + 1; bi = bi + 1;
+        }
+    }
+    # v6.5.19 — emit exactly the newlines this invocation CONSUMED, no more.
+    # `_nl_in` counts source lines swallowed between the macro name and the
+    # closing paren (0 for the ordinary one-line call); `_nl_out` counts what
+    # the substitution already wrote, so a wrapped arg that carried its own
+    # newline through is not double-counted. The old unconditional newline
+    # here is what made every function-like invocation report one line late.
+    var _nl_in = 0;
+    var _sk = _ip_start;
+    while (_sk < ip) {
+        if (load8(S + _SRCB + _sk) == 10) { _nl_in = _nl_in + 1; }
+        _sk = _sk + 1;
+    }
+    var _nl_out = 0;
+    var _ok = _op_start;
+    while (_ok < op) {
+        if (load8(out + _ok) == 10) { _nl_out = _nl_out + 1; }
+        _ok = _ok + 1;
+    }
+    while (_nl_out < _nl_in) { store8(out + op, 10); op = op + 1; _nl_out = _nl_out + 1; }
+    # Return new ip via storing op in a known location
+    store64(S + 0x190700, op);
+    return ip;
+}
+
+# v5.6.42: src_base carries the SOURCE buffer base. PP_PASS path passes
+# `S + _SRCB` (the raw input). PP_IFDEF_PASS path passes the `tmp` mmap
+# buffer that holds the full uncapped expanded source — needed because
+# PP_IFDEF_PASS's S + _SRCB copy-back is bounded to 1048576 B and reads past
+# that boundary would land in stale heap bytes. Same shape as the
+# v5.6.30 PP_DERIVE_* fix; this closes the rest of the family
+# (PP_DEFINE / PP_DEFINED / PP_GETVAL / PP_EVAL_IF / PP_HASH).
+fn PP_HASH(src_base, pos): i64 {
+    var h = 0;
+    var pi = 0;
+    var pc = load8(src_base + pos + pi);
+    while (pc != 10) {
+        if (pc == 13) { return h; }
+        if (pc == 0) { return h; }
+        if (pc == 32) { return h; }
+        if (pc == 9) { return h; }    # 6.6.20: a TAB ends a name too — see PP_SEP
+        h = h * 31 + pc;
+        pi = pi + 1;
+        pc = load8(src_base + pos + pi);
+    }
+    return h;
+}
+
+# Hash a null-terminated cstr using the same polynomial as PP_HASH,
+# stopping at the first terminator byte (\0, \n, \r, space, tab). Used by
+# PP_PREDEFINE to register compiler-builtin defines (e.g. the
+# CYRIUS_ARCH_* marker) from a plain C string instead of a preprocessor
+# source position.
+fn PP_HASH_CSTR(name): i64 {
+    var h = 0;
+    var i = 0;
+    var c = load8(name + i);
+    while (c != 0) {
+        if (c == 10) { return h; }
+        if (c == 13) { return h; }
+        if (c == 32) { return h; }
+        if (c == 9) { return h; }     # same terminators as PP_HASH (6.6.20)
+        h = h * 31 + c;
+        i = i + 1;
+        c = load8(name + i);
+    }
+    return h;
+}
+
+# Register a builtin preprocessor symbol with value 0. Called from the
+# compiler's main entry point before PREPROCESS so that lib files can
+# `#ifdef CYRIUS_ARCH_AARCH64` / `#ifdef CYRIUS_ARCH_X86` to gate
+# architecture-specific asm blocks without per-arch lib files.
+fn PP_PREDEFINE(S, name): i64 {
+    var h = PP_HASH_CSTR(name);
+    # 6.6.20: a name already in the table keeps its slot — see PP_FLAG_SLOT. CHANGELOG [6.6.20]
+    var slot = PP_FLAG_SLOT(S, h);
+    if (slot < 0) {
+        # 6.6.10: ERR_MSG returns (v6.4.62), so the cap stops the store itself — the 17th hash
+        # landed on value[0] at S+0x190880. CHANGELOG [6.6.10]
+        if (_pp_flag_count >= 16) { _pp_err_at(S, 0, 0, "too many preprocessor #define/flag entries (max 16)"); return 0; }
+        slot = _pp_flag_count;
+        _pp_flag_count = _pp_flag_count + 1;
+    }
+    store64(S + 0x190800 + slot * 8, h);
+    store64(S + 0x190880 + slot * 8, 0);
+    return 0;
+}
+
+# 6.6.20 — the flag-table slot already holding name hash `h`, or -1. PP_DEFINE and
+# PP_PREDEFINE used to APPEND unconditionally, so every repeat of a name took a slot of its
+# own: lib/sigil.cyr's four unconditional `#define LINUX` cost four of the 16 (an
+# `include "lib/sandhi.cyr"` alone used 12, leaving a consumer 4), and a redefinition's
+# value was never read, because PP_GETVAL / PP_DEFINED return the FIRST match. A repeat now
+# reuses its slot and overwrites the value: the latest definition wins for the conditionals
+# after it in the same file. (Not across an include: a file's conditionals are evaluated
+# before an included file's #defines are registered — a known gap.) CHANGELOG [6.6.20]
+fn PP_FLAG_SLOT(S, h): i64 {
+    var di = 0;
+    while (di < _pp_flag_count) {
+        if (load64(S + 0x190800 + di * 8) == h) { return di; }
+        di = di + 1;
+    }
+    return 0 - 1;
+}
+
+# v5.6.42: src_base separated from S — see PP_HASH above. Source reads
+# come from src_base+pos; flag-table writes stay at S+0x190800/0x190880.
+fn PP_DEFINE(S, src_base, pos): i64 {
+    # 6.6.20: the name follows a RUN of blanks (space or TAB) — see PP_SEP.
+    pos = PP_SEP(src_base, pos);
+    var h = PP_HASH(src_base, pos);
+    # 6.6.20: a repeated name reuses its slot, so the cap counts NAMES — see PP_FLAG_SLOT.
+    var slot = PP_FLAG_SLOT(S, h);
+    if (slot < 0) {
+        # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
+        if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
+        slot = _pp_flag_count;
+        _pp_flag_count = _pp_flag_count + 1;
+    }
+    store64(S + 0x190800 + slot * 8, h);
+    # Check for value: #define NAME VALUE (skip name, find the blank run, parse int).
+    # 6.6.20: the name ends at a tab as well as a space, and the WHOLE run of blanks before
+    # the value is skipped — it skipped exactly one byte, so `#define FOO  1` defined FOO as
+    # 0 and `#if FOO == 1` took the other arm. See PP_SEP. CHANGELOG [6.6.20]
+    var vi = 0;
+    var vc = load8(src_base + pos + vi);
+    while (PP_DBLANK(vc) == 0) {
+        if (vc == 10) { break; }
+        if (vc == 0) { break; }
+        vi = vi + 1;
+        vc = load8(src_base + pos + vi);
+    }
+    var defval = 0;
+    if (PP_DBLANK(vc) == 1) {
+        vi = PP_SEP(src_base, pos + vi) - pos;
+        var dvc = load8(src_base + pos + vi);
+        while (dvc >= 48) {
+            if (dvc > 57) { break; }
+            defval = defval * 10 + dvc - 48;
+            vi = vi + 1;
+            dvc = load8(src_base + pos + vi);
+        }
+    }
+    store64(S + 0x190880 + slot * 8, defval);
+    return 0;
+}
+
+# 6.6.20 — a `#define` in INCLUDED content (PP_IFDEF_PASS, `dip` at the `#`). Only PP_PASS
+# stores function-like macros, and it reads the main source alone, so a function-like
+# `#define NAME(x) ...` in an included file went to PP_DEFINE and became a FLAG named NAME:
+# never a macro, a call to it compiled against a same-name fn if there was one, and it used
+# up a flag slot. Refused by name; an object-like define goes to PP_DEFINE as before. The
+# name ends at the first space, TAB or newline; a `(` before that makes it a function-like
+# macro. CHANGELOG [6.6.20]
+fn PP_DEFINE_INCLUDED(S, src_base, dip): i64 {
+    var dp = PP_SEP(src_base, dip + 8);
+    var nm = dp;
+    var dc = load8(src_base + dp);
+    while (dc != 0) {
+        if (dc == 40) {
+            _pp_err_name_at(S, src_base, dip, "function-like macro '", nm, "' is defined in an included file; a function-like #define is supported only in the main source");
+            return 0;
+        }
+        if (dc == 32 || dc == 9 || dc == 10) { break; }
+        dp = dp + 1;
+        dc = load8(src_base + dp);
+    }
+    PP_DEFINE(S, src_base, dip + 8);
+    return 0;
+}
+
+# Look up value of a #define'd name (returns 0 if not found)
+fn PP_GETVAL(S, src_base, pos): i64 {
+    var h = PP_HASH(src_base, PP_SEP(src_base, pos));
+    var di = 0;
+    while (di < _pp_flag_count) {
+        if (load64(S + 0x190800 + di * 8) == h) {
+            return load64(S + 0x190880 + di * 8);
+        }
+        di = di + 1;
+    }
+    return 0;
+}
+
+fn PP_DEFINED(S, src_base, pos): i64 {
+    var h = PP_HASH(src_base, PP_SEP(src_base, pos));   # 6.6.20: `#ifdef<TAB>X`, `#ifdef  X`
+    var di = 0;
+    while (di < _pp_flag_count) {
+        if (load64(S + 0x190800 + di * 8) == h) { return 1; }
+        di = di + 1;
+    }
+    return 0;
+}
+
+# Given the position right after "#ifplat " (i.e. pointing at PLAT),
+# resolve PLAT → CYRIUS_ARCH_<UPPER> and return 1 if that symbol is
+# defined. Supported: `x86` and `aarch64`. Unknown platforms return
+# 0 (fail-closed: block skipped). Used by the v5.4.19 `#ifplat`
+# directive; the comparison hashes are computed at call time from
+# the same literal strings that compiler bootstrap would register.
+# `base` is the buffer the directive sits in, as PP_DEFINED's `src_base`: S + _SRCB for
+# PP_PASS, PP_IFDEF_PASS's uncapped `tmp` (its S + _SRCB copy stops at 1 MiB). 6.6.20
+fn PP_IFPLAT_MATCH(S, base, pos): i64 {
+    # Skip leading whitespace (spaces and tabs — 6.6.20, see PP_SEP)
+    pos = PP_SEP(base, pos);
+    var target_hash = 0;
+    # "x86" = 78 38 36 — 3 chars, must be followed by a terminator
+    if (load8(base + pos) == 120 && load8(base + pos + 1) == 56 && load8(base + pos + 2) == 54) {
+        var nc = load8(base + pos + 3);
+        if (nc == 32 || nc == 9 || nc == 10 || nc == 13 || nc == 0) {
+            target_hash = PP_HASH_CSTR("CYRIUS_ARCH_X86");
+        }
+    }
+    # "aarch64" = 61 61 72 63 68 36 34 — 7 chars, must be followed by a terminator
+    if (target_hash == 0) {
+        if (load8(base + pos) == 97 && load8(base + pos + 1) == 97 && load8(base + pos + 2) == 114
+          && load8(base + pos + 3) == 99 && load8(base + pos + 4) == 104
+          && load8(base + pos + 5) == 54 && load8(base + pos + 6) == 52) {
+            var nc = load8(base + pos + 7);
+            if (nc == 32 || nc == 9 || nc == 10 || nc == 13 || nc == 0) {
+                target_hash = PP_HASH_CSTR("CYRIUS_ARCH_AARCH64");
+            }
+        }
+    }
+    if (target_hash == 0) { return 0; }
+    var di = 0;
+    while (di < _pp_flag_count) {
+        if (load64(S + 0x190800 + di * 8) == target_hash) { return 1; }
+        di = di + 1;
+    }
+    return 0;
+}
+
+fn PP_SKIPLINE(S, ip, bl): i64 {
+    while (ip < bl) {
+        if (load8(S + ip) == 10) { return ip + 1; }
+        ip = ip + 1;
+    }
+    return ip;
+}

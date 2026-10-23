@@ -9,7 +9,7 @@
 #   still warned (the constant folds to the same literal), so there was no way to say "native"
 #   (kriya's k_statx / its getxattr site). The parser runs after the #ifdef is gone, so the
 #   preprocessor now marks the regions (`#@a+` / `#@a-`, `_pp_a64_open`,
-#   src/frontend/lex/pp.cyr) and the warning skips a call inside one. Native = the defined side
+#   src/frontend/lex/pp/directive.cyr) and the warning skips a call inside one. Native = the defined side
 #   of CYRIUS_ARCH_AARCH64 or the undefined side of CYRIUS_ARCH_X86, the frame rule
 #   tests/gates/platform/raw_syscall_literals_routed.sh applies to lib/. Rows: `#ifdef`, the
 #   enum spelling, `#ifndef CYRIUS_ARCH_X86`, the `#else` of `#ifdef CYRIUS_ARCH_X86`,
