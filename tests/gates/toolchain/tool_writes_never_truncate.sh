@@ -24,7 +24,8 @@
 #   3. Under a 150-block limit (76,800 or 153,600 bytes — above the first table, below the
 #      third) it fails PART-WAY: every table is either complete or exactly as seeded, never a
 #      prefix, and at least one is left as seeded.
-#   4. STATIC over programs/*.cyr + cbt/**/*.cyr: every `file_write_all(P, …)` and every O_TRUNC
+#   4. STATIC over programs/**/*.cyr (programs/checks/ aside) + cbt/**/*.cyr: every
+#      `file_write_all(P, …)` and every O_TRUNC
 #      open (spelled O_TRUNC, 0x241 or 577) is keyed "<file>|<P>" and must be on an allowlist of
 #      temps / child-output captures / the linker's checked output, each with its reason; an
 #      entry matching no live site fails too. Self-tested on 4 shapes. The same sweep found the
@@ -35,7 +36,11 @@
 #      Since the bite-13 review it also keys every APPEND (file_append_locked, or an open with
 #      O_APPEND / 0x441 / 1089): an unchecked append tears the record on a full disk (measured:
 #      cyrius-init cut the user's starship.toml mid-string and printed "added"), so the only
-#      allowlisted appends are the two checked whole-record helpers that roll a short write back.
+#      allowlisted appends are the two checked whole-record helpers that roll a short write back
+#      (and hc_run's `>>` redirect, a child's output capture).
+#      6.7.18: the scan reads programs/ RECURSIVELY — it read programs/*.cyr flat, so the helpers
+#      in programs/dev/, programs/folds/ and programs/release/ (6.7.17: the helpers became cyrius)
+#      were outside it; floors on the files read in all and under programs' subdirectories.
 #   5-7. DYNAMIC, the replaced-file writers under a 2-block limit: `cyrfmt --write` (the user's
 #      source), `cyrius deps --lock` (cyrius.lock), `cyrius distlib` (the committed bundle) —
 #      each exits non-zero with the file byte-for-byte and no temp beside it, and unconstrained
@@ -75,6 +80,11 @@
 #   n. the append half of the axis-4 detector disabled          -> axis 4 self-test FAIL
 #   o. (6.6.6 bite 26c) the `cbt/commands.cyr|cc4_t` entry      -> axis 4 FAIL (allowlist entry
 #      restored                                                    matches no live site)
+#   p. (6.7.18) the parent's programs/dev/helper_common.cyr     -> axis 4 FAIL (helper_common|
+#      (hc_write_new = file_write_all; _hc_open_out's flags        pathc, helper_common|?, and
+#      on their own line) and no sibci.cyr allowlist entry         sibci|logp)
+#   q. (6.7.18) the scan back to `ls programs/*.cyr`            -> axis 4 FAIL (the subdirectory
+#                                                                 floor: 0 files read there)
 # Real tree -> PASS.
 #
 # ⚠ 6.6.6 bite 26c — THIS AXIS WAS RED AT 67ea9c17 AND IS NOW GREEN HONESTLY, not by
@@ -180,7 +190,9 @@ cmp -s "$D/mid/_categories_data.cyr" "lib/unicode/_categories_data.cyr" || { fai
 # Every `file_write_all(P, …)` and every open with O_TRUNC (spelled O_TRUNC, 0x241 or 577) is
 # keyed "<file>|<P>". A key must be in the allowlist below, each entry with its reason; an
 # entry that no longer matches a live site FAILS, so the list cannot rot into a blanket pass.
-# programs/checks/ (the check driver's own scratch files) is out of scope here.
+# programs/checks/ (the check driver's own scratch files) is out of scope here; every other
+# directory under programs/ is read (6.7.18 — the flat programs/*.cyr glob missed dev/, folds/,
+# release/).
 # 6.6.20 (SEC-05): the `cbt/core.cyr|tmp` entry is gone — _aw_open no longer opens its temp
 # O_TRUNC; lib/io.cyr `_io_tmp_open` creates it O_EXCL|O_NOFOLLOW (gate: atomic_temp_exclusive.sh).
 ALLOW='programs/cyrld.cyr|out_path|the linker output: every write is checked and fails rc 1 (a build artifact, the class of cycc'"'"'s own output)
@@ -200,6 +212,8 @@ cbt/deps/local.cyr|outf|a _cbt_tmpfile capture of git'"'"'s stdout (the local-mo
 cbt/deps/local.cyr|errf|a _cbt_tmpfile capture of git'"'"'s stderr (the local-mode working-tree queries, _dep_wt_run)
 programs/ark.cyr|path|_ark_append — the whole-record append: every write checked, a short one rolled back with ftruncate
 programs/cyrius-init.cyr|path|_append_whole — the whole-record append into the user'"'"'s starship.toml / .gitignore, same rule
+programs/dev/helper_common.cyr|redir|hc_run'"'"'s stdout / stderr redirect (_hc_open_out: the shell'"'"'s > and, after hc_run_append(1), >>): a child'"'"'s output capture — every caller names its own stage, scratch or log file, or /dev/null
+programs/folds/sibci.cyr|logp|the CI run'"'"'s log, <workdir>/<fold>/ci.log: a child'"'"'s output capture in the work dir sibci removes and re-creates each run
 programs/cxvm.cyr|?|_cx_open_flags / _cx_flags_back (6.7.15): a cx GUEST'"'"'s open and fcntl flag bits mapped to the host'"'"'s O_TRUNC / O_APPEND and back — no open on the line, and cxvm writes nothing of its own: the guest'"'"'s own open passed through as it was until 6.7.15'
 cat > "$D/trunc.awk" <<'AWK'
 # prints "<FILE>|<first arg>" for each truncating write on a non-comment line
@@ -239,17 +253,18 @@ st=0
 [ "$(_trunc_sites "$D/fx/d.cyr" cbt/core.cyr)" = 'cbt/core.cyr|tmp' ] || { fail "axis 4 self-test: comment/look-alike handling wrong: '$(_trunc_sites "$D/fx/d.cyr" cbt/core.cyr)'"; st=1; }
 [ "$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')" = 'programs/x.cyr|conf programs/x.cyr|ARK_LOG_PATH ' ] || { fail "axis 4 self-test: an unchecked append (file_append_locked / O_APPEND open) not seen: '$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')'"; st=1; }
 echo "$ALLOW" | cut -d'|' -f1,2 | LC_ALL=C sort -u > "$D/allow.keys"
-nfile=0; : > "$D/sites"
-for f in $({ ls programs/*.cyr; find cbt -name '*.cyr'; } | LC_ALL=C sort); do
+nfile=0; nsub=0; : > "$D/sites"
+for f in $({ find programs -path programs/checks -prune -o -name '*.cyr' -print; find cbt -name '*.cyr'; } | LC_ALL=C sort); do
     nfile=$((nfile + 1))
+    case "$f" in programs/*/*) nsub=$((nsub + 1)) ;; esac
     _trunc_sites "$f" "$f" >> "$D/sites"
 done
 nsite=$(wc -l < "$D/sites" | tr -d ' ')
 bad=$(LC_ALL=C sort -u "$D/sites" | LC_ALL=C comm -23 - "$D/allow.keys")
 dead=$(LC_ALL=C sort -u "$D/sites" | LC_ALL=C comm -13 - "$D/allow.keys")
 a4=$st
-if [ "$nfile" -lt 60 ] || [ "$nsite" -lt 15 ]; then
-    fail "axis 4: scanned $nfile files / $nsite sites (floors 60 / 15) — the scan read nothing"; a4=1
+if [ "$nfile" -lt 140 ] || [ "$nsub" -lt 15 ] || [ "$nsite" -lt 15 ]; then
+    fail "axis 4: scanned $nfile files ($nsub under programs/<dir>/) / $nsite sites (floors 140 / 15 / 15) — the scan read nothing, or not programs/' subdirectories"; a4=1
 fi
 if [ -n "$bad" ]; then
     echo "$bad" | sed 's/^/FAIL: axis 4: a truncating or appending write of a user or tree file (use file_write_atomic, cbt'"'"'s _aw_open for a stream, or a checked whole-record append): /'
@@ -259,7 +274,7 @@ if [ -n "$dead" ]; then
     echo "$dead" | sed 's/^/FAIL: axis 4: allowlist entry matches no live site (remove it): /'
     FAIL=1; a4=1
 fi
-[ "$a4" = 0 ] && echo "  ok: axis 4: $nsite truncating/appending writes over $nfile files in programs/ + cbt/, every one a temp, a child's output, the linker's checked output or a checked whole-record append ($(wc -l < "$D/allow.keys" | tr -d ' ') allowlisted keys, all live; detector self-tested on 5 shapes)"
+[ "$a4" = 0 ] && echo "  ok: axis 4: $nsite truncating/appending writes over $nfile files in programs/ ($nsub in its subdirectories) + cbt/, every one a temp, a child's output, the linker's checked output or a checked whole-record append ($(wc -l < "$D/allow.keys" | tr -d ' ') allowlisted keys, all live; detector self-tested on 5 shapes)"
 
 # ── axes 5-7: the replaced-file writers, run under the size limit ──
 # cyrfmt --write replaces the USER'S SOURCE; `cyrius deps --lock` replaces cyrius.lock;

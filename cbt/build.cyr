@@ -1788,14 +1788,13 @@ fn compile(source, output): i64 {
     # existed: 21,289 leftover /tmp/cyrius-* directories holding 2.8 GB, one per
     # compiling CLI invocation ever run. `test_bin` was always unlinked by the
     # callers; the preprocessed source never was.
-    # ⚠ THERE ARE THREE EXITS, NOT TWO. This comment used to say "on BOTH the success
-    # and failure paths — see the two sites below", counting only the split after
-    # `sys_waitpid`. The Windows branch is a third (it unlinks before its own returns),
-    # and the pre-fork output-probe bail-out is a fourth that was leaking: it returns
-    # above the fork, so the post-waitpid unlink is unreachable from it. When adding an
-    # early return anywhere after this point, add the unlink with it — the sites are
-    # the `#ifdef CYRIUS_TARGET_WIN` block, the `probe_fd < 0` block, the failed-fork
-    # block (6.6.20), and the one above the success/failure split.
+    # ⚠ THE SUCCESS / FAILURE SPLIT AFTER `sys_waitpid` IS NOT THE ONLY EXIT. The Windows
+    # branch unlinks before each of its own returns, and the bail-outs above the fork
+    # return before the post-waitpid unlink can run (the output-temp one leaked until
+    # v6.5.19). When adding an early return anywhere after this point, add the unlink
+    # with it — the sites are the `#ifdef CYRIUS_TARGET_WIN` block, the `tmp_out == 0`
+    # block (the output temp could not be created), the failed-fork block (6.6.20), and
+    # the one above the success/failure split.
     # (The directory itself is left to `_cbt_tmpdir_cleanup` at exit — one place, all
     # targets, PE included since 6.6.6's RemoveDirectoryW reroute. An empty 0700
     # directory costs an inode; the 2.8 GB was the files.)

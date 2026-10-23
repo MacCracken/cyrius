@@ -13,8 +13,9 @@
 # local `git daemon`): "1 deps resolved", "1 commit-pinned (1 re-verified)", rc 0, no warning.
 #
 # THE FIX (cbt/deps/local.cyr). `_dep_pick` refuses a git source whose scheme is git / http / ftp
-# (`<scheme>://` or a remote helper's `<scheme>::`, any case) with the dep, the owner and the URL
-# named; `_dep_report_newer_tags` never lists one; and every fetching git argv carries
+# (`<scheme>://`, a remote helper NAMED git / http / ftp, or a helper whose URL is one of those —
+# `https::http://…` — any case) with the dep, the owner and the URL named;
+# `_dep_report_newer_tags` never lists one; and every fetching git argv carries
 # `-c protocol.{git,http,ftp,ext}.allow=never` (`_git_no_plaintext`), so a URL the scheme check
 # misreads — or an https redirect to http — still cannot fetch in the clear.
 #
@@ -22,8 +23,12 @@
 #   A1  git://127.0.0.1:<port>/foo.git served by a live `git daemon`: rc != 0, the refusal names
 #       the dep and the URL, the daemon saw NO upload-pack request, lib/foo.cyr not vendored, no
 #       commit pin written
-#   A2  http://127.0.0.1:<port>/foo.git, HTTP://…, Git://… and http::http://… (nothing listening):
-#       each refused by name, no "git clone failed" (nothing was attempted)
+#   A2  http://127.0.0.1:<port>/foo.git, HTTP://…, Git://…, ftp://… and the remote-helper spellings
+#       http::http://…, http::host/…, git::git://…, https::http://…, HTTPS::HTTP://…,
+#       https::ftp://… and persistent-https::http://… (nothing listening): each refused by name, no
+#       "git clone failed" (nothing was attempted)
+#   A2c controls: https::https://… and ext::true are NOT refused as plaintext — the clone is
+#       attempted (ext:: is a command the developer chose; the protocol.ext.allow=never belt has it)
 #   A3  a dependency's OWN manifest naming git:// (resolved from a file:// origin): refused, the
 #       owner named
 #   A4  control: the same repository over file:// resolves (rc 0, lib/foo.cyr vendored)
@@ -39,6 +44,10 @@
 #   every protocol.<p>.allow — so a user who lists git or http there has opted in at the git
 #   level; the named refusal in `_dep_pick` still stands. This gate unsets it.
 #   `_git_no_plaintext` dropped from the clone argv  -> A5 RED
+#   (6.7.18, the cleanup lane) `_dep_git_plaintext` as the audit fix left it — the leading name
+#   only, at most 8 characters: https::http://, HTTPS::HTTP://, https::ftp:// and
+#   persistent-https::http:// fetched (git's belt then answered `Protocol "http" is disabled`,
+#   not the named refusal)                         -> those four A2 rows RED
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 G=deps_plaintext_url_refused
@@ -127,13 +136,29 @@ fi
 
 # ── A2: http:// and spellings, nothing listening ──
 n=0
-for url in "http://127.0.0.1:9/foo.git" "HTTP://127.0.0.1:9/foo.git" "Git://127.0.0.1:9/foo.git" "http::http://127.0.0.1:9/foo.git" "ftp://127.0.0.1:9/foo.git"; do
+for url in "http://127.0.0.1:9/foo.git" "HTTP://127.0.0.1:9/foo.git" "Git://127.0.0.1:9/foo.git" "http::http://127.0.0.1:9/foo.git" "ftp://127.0.0.1:9/foo.git" \
+           "http::127.0.0.1:9/foo.git" "git::git://127.0.0.1:9/foo.git" "https::http://127.0.0.1:9/foo.git" \
+           "HTTPS::HTTP://127.0.0.1:9/foo.git" "https::ftp://127.0.0.1:9/foo.git" "persistent-https::http://127.0.0.1:9/foo.git"; do
     n=$((n + 1)); P2="$W/p2_$n"; mkproj "$P2" foo "$url"
     rc=$(deps_in "$P2")
     if [ "$rc" != 0 ] && grep -qF "[deps.foo] git = \"$url\", a plaintext" "$P2/out.txt" && ! grep -q 'git clone failed' "$P2/out.txt"; then
         ok "A2: $url refused by name before any fetch (rc $rc)"
     else
         bad "A2: $url (rc $rc): $(grep -m2 -E 'error|resolved' "$P2/out.txt" | tr '\n' ' ')"
+    fi
+done
+
+# ── A2c: controls — a helper whose URL is not plaintext, and ext:: (a command the developer
+#    chose, refused by the belt, not by this check), are not refused AS plaintext: the clone is
+#    attempted (and fails: nothing listens on port 9, and protocol.ext.allow=never) ──
+n=0
+for url in "https::https://127.0.0.1:9/foo.git" "ext::true"; do
+    n=$((n + 1)); P2="$W/p2c_$n"; mkproj "$P2" foo "$url"
+    rc=$(deps_in "$P2")
+    if [ "$rc" != 0 ] && ! grep -q 'a plaintext' "$P2/out.txt" && grep -q 'git clone failed' "$P2/out.txt"; then
+        ok "A2c: control — $url is not refused as plaintext; the clone is attempted (rc $rc)"
+    else
+        bad "A2c: control $url (rc $rc): $(grep -m2 -E 'error|resolved|failed' "$P2/out.txt" | tr '\n' ' ')"
     fi
 done
 

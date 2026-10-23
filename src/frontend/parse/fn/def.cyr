@@ -6752,6 +6752,7 @@ fn _opp_off(S): i64 {
 fn _opp_put(S, i, t, v): i64 {
     if (t == 11 || t == 31 || t == 12) { return 0; }
     S64(S + 0x8C00000 + i * 8, v);
+    _aft_tok_set(i, t, v);   # 6.7.18: `_arr_fn_tparam`'s forward walk reads `*` `{` `}` `fn`
     return 0;
 }
 # The ends set (packed, 0 = none), put back to their own types and cleared; `_opp_unpark` sets them again.

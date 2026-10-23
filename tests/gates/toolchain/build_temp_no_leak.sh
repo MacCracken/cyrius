@@ -40,6 +40,8 @@
 #     block in cbt/build.cyr and rebuild the CLI -> axes 1 and 2 RED, each reporting
 #     delta 1 (one leaked temp per invocation, exactly one per early return); axes
 #     0, 3 and 4 stay green. Restored -> all green, CLI byte-identical.
+#     (Today the block is `if (tmp_out == 0)` — the output temp could not be created,
+#     6.7.18 — and the line is `if (tmp_src != 0) { _cbt_scratch_drop(tmp_src); }`.)
 #   This is a SEMANTIC mutation: it removes the cleanup, not a message.
 set -u
 # The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite

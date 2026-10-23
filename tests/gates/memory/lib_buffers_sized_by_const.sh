@@ -79,6 +79,7 @@
 # MUTATION LEDGER (6.7.18, the lib review, in the tree, each RED naming its site):
 #   pam.cyr as 6.7.18 opened it (`var PAM_MAX_PASSWORD = 512;`, `pbuf[520]`, `memset(&pbuf, 0, 520)`) -> axes 1 + 3
 #   pam.cyr the length check back to `plen > PAM_MAX_PASSWORD`                                  -> axes 1 + 6
+#   tls_native_hs12.cyr as the tls lane left it (`secret var kb_b[96]`, `kb_len > 96`)           -> axes 1 + 2
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -150,12 +151,17 @@ need lib/ws.cyr 1 '_net_os_recv\(sock, &resp \+ got, _WS_HS_MAX - got\)' "the ha
 need lib/pam.cyr 1 'var pbuf\[_PAM_MAX_PASSWORD \+ 8\];' "pam_unix_authenticate's password copy (the password and its NUL)"
 need lib/pam.cyr 1 'memset\(&pbuf, 0, _PAM_MAX_PASSWORD \+ 8\);' "...wiped at the size it holds"
 need lib/pam.cyr 1 'if \(plen > _PAM_MAX_PASSWORD\) \{ return PAM_AUTH_FAIL; \}' "...and refused past the bound it was sized by"
+# 6.7.18 (the cleanup lane): tls_native_12_derive_keys's key_block became a `secret var kb_b[96]`
+# beside its own `kb_len > 96` guard — two copies of one bound.
+need lib/tls_native_hs12.cyr 1 'secret var kb_b\[_TLS12_KEY_BLOCK_MAX\];' "the TLS 1.2 key_block (every key and IV of the epoch)"
+need lib/tls_native_hs12.cyr 1 'if \(kb_len > _TLS12_KEY_BLOCK_MAX\) \{ return TLS_ERR_INTERNAL; \}' "...refused past the size it holds"
 
 echo "axis 2 — each private bound is a const:"
 for row in "lib/log.cyr:_LOG_LINE_MAX" "lib/math.cyr:_F64P_DEC_CAP" "lib/process.cyr:_PROC_KILL_STATE" \
            "lib/thread_win.cyr:_chan_wp_cap" "lib/process_win.cyr:_WIN_JOB_SLOTS" "lib/async_macos.cyr:_KEV_BATCH" \
            "lib/tls_native_hs12.cyr:_TLS12_SEED_LEN" "lib/regex.cyr:_RE_MAX_SPLITS" "lib/freelist.cyr:_FL_NCLASSES" \
-           "lib/dynlib.cyr:_DYNLIB_MAX" "lib/ws_server.cyr:_WSS_CBUF" "lib/ws.cyr:_WS_HS_MAX"; do
+           "lib/dynlib.cyr:_DYNLIB_MAX" "lib/ws_server.cyr:_WSS_CBUF" "lib/ws.cyr:_WS_HS_MAX" \
+           "lib/tls_native_hs12.cyr:_TLS12_KEY_BLOCK_MAX"; do
     f=${row%%:*}; c=${row#*:}
     if grep -qE "^const $c *= " "$f" && ! grep -qE "^var $c\b" "$f"; then _ok "$f: $c is a const"
     else _fail "$f: $c is not a top-level const (or a var of its name is back) — a var cannot size a buffer, so the buffer and its bound split into two copies again"; fi

@@ -312,8 +312,69 @@ fn _arr_name_ebytes(S, ti): i64 {
 # so this is CYRIUS_MONOMORPH=0's case, where nothing is captured or bound: read from the tokens,
 # as _is_own_tparam (parse/types/struct_def.cyr) does for a struct. The enclosing fn is the nearest `fn`
 # before `ti` whose body spans it.
+# ⛔ 6.7.18 — the walk below (`_arr_fn_tparam_walk`) went back to the nearest `fn` and `_tok_body_spans` scanned that
+# fn's body to its END, per call: N names no scope resolves in one body read O(N x body) tokens (the struct-cap
+# error path: 1,600 impls over the 1,024-struct cap 550 ms, 5,000 structs ~10 s). Its answer reads only tokens
+# [0, ti] — a `fn`'s body is its first `{` after it, and it spans `ti` exactly when that `{` is still open at `ti` —
+# so ONE forward walk (`_aft_*`) keeps, for each `{` open at its cursor, the nearest enclosing fn: the last `fn`
+# (not a `*fn` type) between the `{` before it and it, else the level below's. A later `ti` advances the cursor,
+# so one parse's queries read each token once; an earlier `ti` restarts it. The answer is the walk's for every
+# token stream: a `}` at `ti` closes its own `{` there (no span, as the walk's `j > ti`), a stray `}` closes
+# nothing, and a nesting past the cursor's 256 levels asks the walk. It holds while the tokens it read stand: the
+# count is its key (the `dyn` fold moves tokens, before any fn is parsed) and `_opp_put`, the one in-place rewrite
+# of a `{` `}` `fn` or `*` during the parse, ends it (`_aft_tok_set`); `_dyn_bare` / `_dyn_where` rewrite a `dyn`
+# and a name, which it does not read. CHANGELOG [6.7.18]
+var _aft_p = 0 - 1;    # tokens [0, _aft_p) walked; -1 = no walk
+var _aft_tc = 0;       # the token count it walked under
+var _aft_d = 0;        # `{` open at the cursor
+var _aft_fn = 0 - 1;   # the last fn's `fn` token since the last `{`, else -1
+var _aft_own[256];     # open level L (1..256) at slot L - 1: its nearest enclosing fn's `fn` token, else -1
 fn _arr_fn_tparam(S, ti, noff): i64 {
     if (GINFN(S) != 1) { return 0; }
+    var n = GTCNT(S);
+    if (ti >= n) { return _arr_fn_tparam_walk(S, ti, noff); }
+    if (_aft_p < 0 || ti < _aft_p || _aft_tc != n) {
+        _aft_p = 0;
+        _aft_tc = n;
+        _aft_d = 0;
+        _aft_fn = 0 - 1;
+    }
+    var j = _aft_p;
+    while (j < ti) {
+        var t = TOKTYP(S, j);
+        if (t == 13) {
+            _aft_d = _aft_d + 1;
+            if (_aft_d <= 256) {
+                var o = _aft_fn;
+                if (o < 0) { if (_aft_d > 1) { o = load64(&_aft_own + (_aft_d - 2) * 8); } }
+                store64(&_aft_own + (_aft_d - 1) * 8, o);
+            }
+            _aft_fn = 0 - 1;
+        } elif (t == 14) {
+            if (_aft_d > 0) { _aft_d = _aft_d - 1; }
+        } elif (t == 32) {
+            if (_tn_fnptr_kw(S, j) == 0) { _aft_fn = j; }
+        }
+        j = j + 1;
+    }
+    _aft_p = ti;
+    var d = _aft_d;
+    if (d > 0) { if (TOKTYP(S, ti) == 14) { d = d - 1; } }
+    if (d == 0) { return 0; }
+    if (d > 256) { return _arr_fn_tparam_walk(S, ti, noff); }
+    var k = load64(&_aft_own + (d - 1) * 8);
+    if (k < 0) { return 0; }
+    return _fn_tp_has(S, k, noff);
+}
+# Token `i` rewritten in place from type `t` to `v` (`_opp_put`): the forward walk above ends when it read the token
+# and the token is one it reads (`*` `{` `}` `fn`). CHANGELOG [6.7.18]
+fn _aft_tok_set(i, t, v): i64 {
+    if (i >= _aft_p) { return 0; }
+    if (t == 8 || t == 13 || t == 14 || t == 32 || v == 8 || v == 13 || v == 14 || v == 32) { _aft_p = 0 - 1; }
+    return 0;
+}
+# The walk `_arr_fn_tparam` answers as: back from `ti` over each `fn`, the first whose body spans it.
+fn _arr_fn_tparam_walk(S, ti, noff): i64 {
     var k = ti - 1;
     while (k >= 0) {
         if (_tok_fn_kw(S, k) == 1) {   # 6.7.17 (D8): not a local's `*fn( .. )`

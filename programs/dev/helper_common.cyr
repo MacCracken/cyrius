@@ -561,12 +561,13 @@ fn hc_read_text(pathc): i64 {
     return hc_univ_nl(s);
 }
 
-# Write a file this tool creates (Python's open(path, 'w')): created 0644 & ~umask, or emptied
-# and rewritten. 0, or a negative errno.
+# Write a file this tool creates (Python's open(path, 'w')): created 0644 & ~umask, or replaced.
+# Crash-safe — a temp beside it, renamed over it — so a short write leaves no partial file and
+# never empties one that was there (it was open(O_TRUNC) + one write: a failed write left the
+# path a prefix, a new tree file of rc_wr's or an existing one emptied). A symlink at the path is
+# replaced, not followed. 0, or a negative errno. CHANGELOG [6.7.18]
 fn hc_write_new(pathc, s): i64 {
-    var r = file_write_all(pathc, hc_d(s), hc_n(s));
-    if (r < 0) { return r; }
-    return 0;
+    return file_write_atomic(pathc, hc_d(s), hc_n(s));
 }
 
 # Replace a file someone owns (a tree file, a user's file): a temp beside it renamed over it,
@@ -954,10 +955,11 @@ fn hc_which_in(namec, env): i64 {
 fn hc_which(namec): i64 { return hc_which_in(namec, 0); }
 
 fn _hc_open_in(pathc): i64 { return sys_open(pathc, O_RDONLY, 0); }
-fn _hc_open_out(pathc, append): i64 {
-    var fl = O_WRONLY | O_CREAT | O_TRUNC;
-    if (append == 1) { fl = O_WRONLY | O_CREAT | O_APPEND; }
-    return sys_open(pathc, fl, 0x1A4);
+# hc_run's stdout / stderr file: the shell's `>` (or `>>` after hc_run_append(1)) — a child's
+# output capture into a stage, scratch or log file its caller names.
+fn _hc_open_out(redir, append): i64 {
+    if (append == 1) { return sys_open(redir, O_WRONLY | O_CREAT | O_APPEND, 0x1A4); }
+    return sys_open(redir, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
 }
 
 # A child's redirect of `fd` onto std fd `target`, closing `fd` only when it is not `target`: a
