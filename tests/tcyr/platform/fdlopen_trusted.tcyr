@@ -165,6 +165,30 @@ while (mode_i < 2) {
     fdlopen_trusted_only(0);
     mode_i = mode_i + 1;
 }
+
+# The trusted helper is checked on the fd it is mapped from: `_fdlopen_verify_trusted` lstat'ed
+# the NAME and the mapper reopened it, so the inode mapped need not be the one checked.
+# Root-safe like the rows above (mode / type / link, and uid only when not root). CHANGELOG [6.7.18]
+test_group("the trusted helper is verified on the fd it is mapped from (CYRIUS-2026-0041)");
+var vinfo = alloc(64);
+var vww = _scratch("fdl_v_ww", "");
+var vfd = sys_open(vww, 0x41, 0x1B6);
+sys_write(vfd, "not an elf", 10);
+sys_close(vfd);
+sys_chmod(vww, 0x1B6);
+assert_eq(_fdlopen_mmap_elf_v(vww, vinfo, 1), 0 - 9, "verify 1: a world-writable file is refused -9 before it is mapped");
+assert_eq(_fdlopen_mmap_elf_v(vww, vinfo, 0), 0 - 4, "verify 0 (control): the same file is opened and mapped, then refused as not ELF (-4)");
+var vln = _scratch("fdl_v_link", "");
+sys_unlink(vln);
+sys_symlink("/etc/passwd", vln);
+assert_eq(_fdlopen_mmap_elf_v(vln, vinfo, 1), 0 - 9, "verify 1: a symlink at the name is refused -9 (O_NOFOLLOW), even to a root-owned file");
+assert_eq(_fdlopen_mmap_elf_v("/etc/passwd", vinfo, 1), 0 - 4, "verify 1: a root-owned 0644 regular file passes the check (refused only as not ELF, -4)");
+if (sys_geteuid() != 0) {
+    sys_chmod(vww, 0x1A4);
+    assert_eq(_fdlopen_mmap_elf_v(vww, vinfo, 1), 0 - 9, "verify 1: a file this (non-root) user owns is refused -9");
+}
+sys_unlink(vww);
+sys_unlink(vln);
 #endif
 #endif
 
