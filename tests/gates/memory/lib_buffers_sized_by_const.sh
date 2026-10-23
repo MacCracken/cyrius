@@ -165,7 +165,10 @@ for row in "lib/tls_native.cyr:TLS_RECORD_MAX_PLAINTEXT" "lib/tls_native.cyr:TLS
     if grep -qE "^const _$v *= *[^;]+;" "$f" && grep -qE "^var $v *= *_$v;" "$f"; then _ok "$f: $v = _$v"
     else _fail "$f: expected 'const _$v = N;' and 'var $v = _$v;' — a literal in the var is a second copy of the bound its buffers are sized by"; fi
 done
-need lib/thread_local.cyr 2 '^var _tls_(key|blk)\[_TLS_REG_MAX\];' "the arm64-macOS thread registry"
+# 6.7.18: the arm64-macOS registry is a chain of chunks (keys, blocks, next) that grows, and its
+# first chunk is the .bss array; the chunk's word count derives from the per-chunk entry count.
+need lib/thread_local.cyr 1 '^const _TLS_REG_WORDS = _TLS_REG_MAX \* 2 \+ 1;' "the arm64-macOS registry chunk's words derive from _TLS_REG_MAX"
+need lib/thread_local.cyr 1 '^var _tls_reg\[_TLS_REG_WORDS\];' "the arm64-macOS thread registry's first chunk"
 
 echo "axis 4 — no stale 'array size must be a literal' claim in cyrius's own lib/:"
 OWN=$(ls lib/*.cyr | grep -vE '^lib/(bayan|ganita|mabda|niyama|patra|sakshi|sandhi|sankoch|sigil|vani|yantra|yukti)\.cyr$')
