@@ -18,7 +18,8 @@
 #      one); a probe then feeds the message that check stopped. The parser must stop at the slice —
 #      exit 134 and `slice bounds violation` on stderr. The same probe on the real lib/ is the
 #      control: the graceful answer, exit 0.
-# Families: the async DNS answer parser (lib/async.cyr), the HTTP/1 response parser (lib/http.cyr).
+# Families: the async DNS answer parser (lib/async.cyr), the HTTP/1 response parser (lib/http.cyr),
+# the WebSocket client's frame reader (lib/ws.cyr).
 #
 # RED before 6.7.18: the static rows name every raw load, and with the same check removed the
 # parent's raw loads read on past the message (the probe exits 0 with whatever the heap held).
@@ -144,8 +145,41 @@ caught "http blank-line scan" lib/http.cyr 'while (pi < len - 3) {' 'while (pi <
 { echo '#define HTTP_SHORT'; cat "$T/http.cyr"; } > "$T/https.cyr"
 caught "http status line" lib/http.cyr 'if (len < 12) { return result; }' '# (removed)' https.cyr '0 0'
 
+# ── the WebSocket client's frame reader (lib/ws.cyr) ──
+echo "the WebSocket client's frame reader:"
+no_raw lib/ws.cyr ws_recv_frame _ws_header_end
+cat > "$T/wsc.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws.cyr"
+# a masked TEXT frame "abc" through a pipe (no file in the tree, no socket)
+fn main(): i64 {
+    alloc_init();
+    var fds[16];
+    sys_pipe(&fds);
+    var f[16];
+    store8(&f, 0x81); store8(&f + 1, 0x80 | 3);
+    store8(&f + 2, 1); store8(&f + 3, 2); store8(&f + 4, 3); store8(&f + 5, 4);
+    store8(&f + 6, 97 ^ 1); store8(&f + 7, 98 ^ 2); store8(&f + 8, 99 ^ 3);
+    sys_write(load32(&fds + 4), &f, 9);
+    sys_close(load32(&fds + 4));
+    var ws = ws_new(load32(&fds));
+    store64(ws + 8, WS_OPEN);
+    var m = ws_recv(ws);
+    if (m == 0) { syscall(1, 1, "(null)", 6); } else { syscall(1, 1, m, strlen(m)); }
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+caught "ws client unmask" lib/ws.cyr 'while (i < plen) {' 'while (i <= plen) {' wsc.cyr 'abc'
+
 # Floor: every family's rows ran.
-if [ "$ROWS" -lt 13 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 13) — the gate is reading nothing"; fi
+if [ "$ROWS" -lt 17 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 17) — the gate is reading nothing"; fi
 if [ "$FAILS" = 0 ]; then echo "PASS: $NAME ($ROWS rows: the parsers read through slices, and a bound they get wrong stops there)"; exit 0; fi
 echo "FAIL: $NAME ($FAILS)"
 exit 1

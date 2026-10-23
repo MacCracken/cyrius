@@ -361,27 +361,31 @@ fn _ws_recv_fail(ws): i64 {
 fn ws_recv_frame(ws, opcode_out, len_out): i64 {
     store64(len_out, 0);
     if (ws_state(ws) != WS_OPEN) { return 0; }
+    # 6.7.18 (D1): every header byte and every payload byte is read through a fn-local [u8] slice
+    # of exactly the bytes received, the extended lengths through slice_get_be — checked in every
+    # build, so a bound this fn gets wrong is `slice bounds violation`, never a read past the frame.
+    # CHANGELOG [6.7.18]
     var hdr[2];
     if (_ws_recv_ws(ws, &hdr, 2) != 0) { return _ws_recv_fail(ws); }
+    var h: [u8] = 0;
+    slice_set(&h, &hdr, 2);
 
-    var opcode = load8(&hdr) & 0x0F;
+    var opcode = h[0] & 0x0F;
     store64(opcode_out, opcode);
-    var masked = (load8(&hdr + 1) >> 7) & 1;
-    var plen = load8(&hdr + 1) & 0x7F;
+    var masked = (h[1] >> 7) & 1;
+    var plen = h[1] & 0x7F;
 
+    var ext[8];
+    var e: [u8] = 0;
     if (plen == 126) {
-        var ext[2];
         if (_ws_recv_ws(ws, &ext, 2) != 0) { return _ws_recv_fail(ws); }
-        plen = (load8(&ext) << 8) | load8(&ext + 1);
+        slice_set(&e, &ext, 2);
+        plen = slice_get_be(&e, 0, 2);
     } elif (plen == 127) {
-        var ext8[8];
-        if (_ws_recv_ws(ws, &ext8, 8) != 0) { return _ws_recv_fail(ws); }
-        var hi = load8(&ext8) | load8(&ext8 + 1) | load8(&ext8 + 2) | load8(&ext8 + 3);
-        if (hi != 0) { return _ws_recv_fail(ws); }
-        var _e4 = load8(&ext8 + 4) << 24;
-        var _e5 = load8(&ext8 + 5) << 16;
-        var _e6 = load8(&ext8 + 6) << 8;
-        plen = _e4 | _e5 | _e6 | load8(&ext8 + 7);
+        if (_ws_recv_ws(ws, &ext, 8) != 0) { return _ws_recv_fail(ws); }
+        slice_set(&e, &ext, 8);
+        if (slice_get_be(&e, 0, 4) != 0) { return _ws_recv_fail(ws); }
+        plen = slice_get_be(&e, 4, 4);
     }
     if (plen > WS_RECV_MAX_PAYLOAD) { return _ws_recv_fail(ws); }
 
@@ -390,7 +394,9 @@ fn ws_recv_frame(ws, opcode_out, len_out): i64 {
     if (masked == 1) {
         var mk[4];
         if (_ws_recv_ws(ws, &mk, 4) != 0) { return _ws_recv_fail(ws); }
-        mask = load8(&mk) | (load8(&mk + 1) << 8) | (load8(&mk + 2) << 16) | (load8(&mk + 3) << 24);
+        var m: [u8] = 0;
+        slice_set(&m, &mk, 4);
+        mask = m[0] | (m[1] << 8) | (m[2] << 16) | (m[3] << 24);
     }
 
     # Read payload
@@ -402,10 +408,12 @@ fn ws_recv_frame(ws, opcode_out, len_out): i64 {
 
     # Unmask if needed
     if (masked == 1) {
+        var p: [u8] = 0;
+        slice_set(&p, payload, plen);
         var i = 0;
         while (i < plen) {
             var mb = (mask >> ((i % 4) * 8)) & 0xFF;
-            store8(payload + i, load8(payload + i) ^ mb);
+            p[i] = p[i] ^ mb;
             i = i + 1;
         }
     }
