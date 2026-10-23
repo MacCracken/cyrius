@@ -22,6 +22,9 @@ include "lib/str.cyr"
 include "lib/net.cyr"
 include "lib/ws.cyr"
 include "lib/sha1.cyr"
+# 6.7.18 (D1): the frame header and the payload are read through fn-local [u8] slices, checked in
+# every build. CHANGELOG [6.7.18]
+include "lib/slice.cyr"
 include "lib/bayan.cyr"
 include "lib/sandhi.cyr"
 
@@ -158,31 +161,30 @@ fn _wss_recv_exact(fd, buf, n): i64 {
 # set (RFC 6455 §5.2: the MSB must be 0) composed to a NEGATIVE len that passed both
 # `len > max` bounds; it is refused by name now. CHANGELOG [6.6.10]
 fn _wss_recv_header(fd, max, h): i64 {
+    # 6.7.18 (D1): every byte is read through a fn-local [u8] slice of exactly the bytes received,
+    # the extended lengths through slice_get_be — checked in every build. CHANGELOG [6.7.18]
     # First two bytes: FIN/opcode + MASK/length
     var hdr[2];
     if (_wss_recv_exact(fd, &hdr, 2) != 0) { return 0 - 1; }
+    var hs: [u8] = 0;
+    slice_set(&hs, &hdr, 2);
 
-    var op = load8(&hdr) & 0x0F;
-    var mask_len = load8(&hdr + 1);
-    var has_mask = (mask_len & 0x80) >> 7;
-    var len = mask_len & 0x7F;
+    var op = hs[0] & 0x0F;
+    var has_mask = (hs[1] & 0x80) >> 7;
+    var len = hs[1] & 0x7F;
 
     # Extended length
+    var ext[8];
+    var e: [u8] = 0;
     if (len == 126) {
-        var ext[2];
         if (_wss_recv_exact(fd, &ext, 2) != 0) { return 0 - 1; }
-        len = (load8(&ext) << 8) | load8(&ext + 1);
+        slice_set(&e, &ext, 2);
+        len = slice_get_be(&e, 0, 2);
     } elif (len == 127) {
-        var ext[8];
         if (_wss_recv_exact(fd, &ext, 8) != 0) { return 0 - 1; }
-        var hi = load8(&ext) | load8(&ext + 1) | load8(&ext + 2) | load8(&ext + 3);
-        if (hi != 0) { return 0 - 1; }
-        len = 0;
-        var ei = 4;
-        while (ei < 8) {
-            len = (len << 8) | load8(&ext + ei);
-            ei = ei + 1;
-        }
+        slice_set(&e, &ext, 8);
+        if (slice_get_be(&e, 0, 4) != 0) { return 0 - 1; }
+        len = slice_get_be(&e, 4, 4);
     }
 
     if (len < 0 || len > max || len > WS_MAX_PAYLOAD) { return 0 - 1; }
@@ -192,7 +194,9 @@ fn _wss_recv_header(fd, max, h): i64 {
     if (has_mask == 1) {
         var mk[4];
         if (_wss_recv_exact(fd, &mk, 4) != 0) { return 0 - 1; }
-        mask = load8(&mk) | (load8(&mk + 1) << 8) | (load8(&mk + 2) << 16) | (load8(&mk + 3) << 24);
+        var m: [u8] = 0;
+        slice_set(&m, &mk, 4);
+        mask = m[0] | (m[1] << 8) | (m[2] << 16) | (m[3] << 24);
     }
     store64(h, op);
     store64(h + 8, len);
@@ -202,15 +206,18 @@ fn _wss_recv_header(fd, max, h): i64 {
 }
 
 # Read the `len`-byte payload of the frame whose header `h` describes into buf (len bytes) and
-# unmask it in place. Returns 0, or 0 - 1 on socket error / close.
+# unmask it in place, through a slice of buf[0, len) (D1, 6.7.18). Returns 0, or 0 - 1 on socket
+# error / close.
 fn _wss_recv_payload(fd, h, buf, len): i64 {
     # Payload — read in a loop because TCP may fragment
     if (_wss_recv_exact(fd, buf, len) != 0) { return 0 - 1; }
     if (load64(h + 16) == 1) {
         var mask = load64(h + 24);
+        var p: [u8] = 0;
+        slice_set(&p, buf, len);
         var pi = 0;
         while (pi < len) {
-            store8(buf + pi, load8(buf + pi) ^ ((mask >> ((pi & 3) * 8)) & 0xFF));
+            p[pi] = p[pi] ^ ((mask >> ((pi & 3) * 8)) & 0xFF);
             pi = pi + 1;
         }
     }

@@ -19,7 +19,8 @@
 #      exit 134 and `slice bounds violation` on stderr. The same probe on the real lib/ is the
 #      control: the graceful answer, exit 0.
 # Families: the async DNS answer parser (lib/async.cyr), the HTTP/1 response parser (lib/http.cyr),
-# the WebSocket client's frame reader (lib/ws.cyr).
+# the WebSocket client's frame reader (lib/ws.cyr), the WebSocket server's frame reader
+# (lib/ws_server.cyr).
 #
 # RED before 6.7.18: the static rows name every raw load, and with the same check removed the
 # parent's raw loads read on past the message (the probe exits 0 with whatever the heap held).
@@ -178,8 +179,42 @@ syscall(60, r);
 EOF
 caught "ws client unmask" lib/ws.cyr 'while (i < plen) {' 'while (i <= plen) {' wsc.cyr 'abc'
 
+# ── the WebSocket server's frame reader (lib/ws_server.cyr) ──
+echo "the WebSocket server's frame reader:"
+no_raw lib/ws_server.cyr _wss_recv_header _wss_recv_payload ws_server_recv_frame ws_server_recv
+cat > "$T/wss.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws_server.cyr"
+# a masked client TEXT frame "abc" through a pipe
+fn main(): i64 {
+    alloc_init();
+    var fds[16];
+    sys_pipe(&fds);
+    var f[16];
+    store8(&f, 0x81); store8(&f + 1, 0x80 | 3);
+    store8(&f + 2, 1); store8(&f + 3, 2); store8(&f + 4, 3); store8(&f + 5, 4);
+    store8(&f + 6, 97 ^ 1); store8(&f + 7, 98 ^ 2); store8(&f + 8, 99 ^ 3);
+    sys_write(load32(&fds + 4), &f, 9);
+    sys_close(load32(&fds + 4));
+    var ws = ws_server_new(load32(&fds));
+    var buf = alloc(256);
+    var op[8];
+    var n = ws_server_recv_frame(ws, buf, 255, &op);
+    if (n != 3) { syscall(1, 1, "(short)", 7); } else { syscall(1, 1, buf, 3); }
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+caught "ws server unmask" lib/ws_server.cyr 'while (pi < len) {' 'while (pi <= len) {' wss.cyr 'abc'
+
 # Floor: every family's rows ran.
-if [ "$ROWS" -lt 17 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 17) — the gate is reading nothing"; fi
+if [ "$ROWS" -lt 23 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 23) — the gate is reading nothing"; fi
 if [ "$FAILS" = 0 ]; then echo "PASS: $NAME ($ROWS rows: the parsers read through slices, and a bound they get wrong stops there)"; exit 0; fi
 echo "FAIL: $NAME ($FAILS)"
 exit 1
