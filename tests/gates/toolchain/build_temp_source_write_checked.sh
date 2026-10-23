@@ -116,7 +116,10 @@ _lim() { ( cd "$D/p" && trap '' XFSZ && ulimit -f 200 && HOME="$D/home" CYRIUS_H
 
 # ── the fixture: a big source in a SUBDIRECTORY, `fn main` on the last line ──
 mkdir -p "$D/p/src"
-{ yes '# filler ------------------------------------------------------------------' | head -n 15000
+# The filler is awk's own loop, not `yes | head`: head exits at its count while yes is still
+# writing, yes dies of SIGPIPE, and under `bash -eo pipefail` that ended the gate (rc 141, no
+# verdict). CHANGELOG [6.7.18]
+{ awk 'BEGIN { for (i = 0; i < 15000; i++) print "# filler ------------------------------------------------------------------" }'
   printf 'fn main(): i64 { return 42; }\n'; } > "$D/p/src/app.cyr"
 SRCB=$(wc -c < "$D/p/src/app.cyr" | tr -d ' ')
 [ "$SRCB" -gt 204800 ] || { echo "FAIL: the fixture is $SRCB bytes — it must exceed 200 blocks in BOTH ulimit units (204800)"; exit 1; }
@@ -130,8 +133,8 @@ a1=0
 # is invisible otherwise, which is how the wrong spelling survived (bite 26 review).
 if _envtool=$(command -v env); then
     _cli_real="$CLI"; CLI="$_envtool"
-    e1=$(_run 2>/dev/null | grep -E '^(HOME|CYRIUS_HOME)=' | LC_ALL=C sort)
-    e2=$(_lim 2>/dev/null | grep -E '^(HOME|CYRIUS_HOME)=' | LC_ALL=C sort)
+    e1=$(_run 2>/dev/null | grep -E '^(HOME|CYRIUS_HOME)=' | LC_ALL=C sort || true)
+    e2=$(_lim 2>/dev/null | grep -E '^(HOME|CYRIUS_HOME)=' | LC_ALL=C sort || true)
     CLI="$_cli_real"
     [ "$(printf '%s\n' "$e1" | grep -c .)" -eq 2 ] \
       || { fail "axis 1: _run does not export both HOME and CYRIUS_HOME to the child: [$(echo $e1)]"; a1=1; }
@@ -200,8 +203,11 @@ _nerr() { _n=$(grep -c '^error:' "$1" 2>/dev/null); echo "${_n:-0}"; }   # grep 
 _one_verdict() {  # _one_verdict <outfile> <case>
     n=$(_nerr "$1")
     [ "$n" -eq 1 ] || { fail "axis 3: the $2 case printed $n 'error:' lines, expected exactly 1 — a second, vaguer verdict after a precise one:"; grep '^error:' "$1" | sed 's/^/      /'; a3=1; }
-    grep -q 'could not write the preprocessed source' "$1" \
-      && { fail "axis 3: the $2 case was ALSO blamed on a failed write of the preprocessed source — nothing failed to write"; a3=1; }
+    # an `if`, not `grep -q … && { … }`: that list is the fn's last command, so on the PASSING case
+    # (no match) the fn returned 1 and `-e` ended the gate there. CHANGELOG [6.7.18]
+    if grep -q 'could not write the preprocessed source' "$1"; then
+        fail "axis 3: the $2 case was ALSO blamed on a failed write of the preprocessed source — nothing failed to write"; a3=1
+    fi
 }
 _manifest 'mod/absent.cyr'
 rm -f "$D/p/outm2"
@@ -270,9 +276,9 @@ if [ -n "$bad" ]; then
     FAIL=1; a4=1
 fi
 # the checked helpers, and a derived floor on their use (17 + 3 live at 6.6.6)
-nmw=$(grep -c '_mat_write' cbt/build.cyr)
-nmc=$(grep -c '_mat_copy_fd' cbt/build.cyr)
-ndt=$(grep -c '_dt_write_all' cbt/quality.cyr)
+nmw=$(grep -c '_mat_write' cbt/build.cyr || true)
+nmc=$(grep -c '_mat_copy_fd' cbt/build.cyr || true)
+ndt=$(grep -c '_dt_write_all' cbt/quality.cyr || true)
 [ "$nmw" -ge 14 ] || { fail "axis 4: only $nmw _mat_write references in cbt/build.cyr (floor 14) — the prepends were deleted, not checked"; a4=1; }
 [ "$nmc" -ge 3 ]  || { fail "axis 4: only $nmc _mat_copy_fd references in cbt/build.cyr (floor 3) — the two stream copies are not going through the checked helper"; a4=1; }
 [ "$ndt" -ge 2 ]  || { fail "axis 4: only $ndt _dt_write_all references in cbt/quality.cyr (floor 2)"; a4=1; }

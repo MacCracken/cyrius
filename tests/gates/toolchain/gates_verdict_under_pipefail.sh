@@ -47,6 +47,10 @@
 #     `X=0; cmd || X=$?` / `|| true` now.
 #   * coroutine_midbody_suspend.sh (6.7.17) — a probe run `timeout 30 "$T/a1"; got=$?`: the probe exits 42 when it
 #     passes, so `-e` ended the gate on its first passing probe with rc 42; each is `got=0; .. || got=$?` now.
+#   * build_temp_source_write_checked.sh (6.7.18) — its filler was `yes … | head -n 15000`: head exits at
+#     its count, yes dies of SIGPIPE, rc 141 with no output; behind it, `_one_verdict` ended
+#     `grep -q … && { … }`, so on the PASSING case (no match) the fn returned 1. awk writes the filler
+#     now, and the fn's last check is an `if`.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -105,7 +109,8 @@ tests/gates/platform/pe_lockfileex_reroute.sh
 tests/gates/platform/pe_reroute_failure_errno.sh
 tests/gates/frontend/stack_enum_closure_return_scope.sh
 tests/gates/frontend/stack_enum_mixed_return_warning.sh
-tests/gates/frontend/coroutine_midbody_suspend.sh"
+tests/gates/frontend/coroutine_midbody_suspend.sh
+tests/gates/toolchain/build_temp_source_write_checked.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
