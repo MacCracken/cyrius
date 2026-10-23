@@ -382,9 +382,7 @@ fn _ugc_open(S, lt): i64 {
         var t = TOKTYP(S, i);
         if (t == 2) { if (_ugc_tyname(S, TOKVAL(S, i)) == 0) { return 0 - 1; } }
         elif (t == 19) { d = d + 1; }
-        elif (t == 20) { d = d - 1; }
-        elif (t == 39) { d = d - 2; }
-        elif (t == 152) { d = d - 3; }
+        elif (_targ_gt_n(t) > 0) { d = d - _targ_gt_n(t); }
         elif (t != 31) { return 0 - 1; }
         i = i + 1;
     }

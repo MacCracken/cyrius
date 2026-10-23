@@ -956,9 +956,7 @@ fn _trs_type(S, i, q, tail, nm): i64 {
     while (i < q) {
         t = TOKTYP(S, i);
         if (t == 19) { d = d + 1; }
-        elif (t == 20) { d = d - 1; }
-        elif (t == 39) { d = d - 2; }
-        elif (t == 152) { d = d - 3; }
+        else { d = d - _targ_gt_n(t); }
         i = i + 1;
         if (d <= 0) { return i; }
     }
@@ -1641,9 +1639,7 @@ fn _bnd_fslot(S, fi, d, fnoff): i64 {
             } }
         if (t == 31) { if (dp == 1) { slot = slot + 1; } }
         if (t == 19) { dp = dp + 1; }
-        if (t == 20) { dp = dp - 1; }
-        if (t == 39) { dp = dp - 2; }
-        if (t == 152) { dp = dp - 3; }
+        dp = dp - _targ_gt_n(t);
         if (dp <= 0) { return 0 - 1; }
         j = j + 1;
     }
@@ -1974,9 +1970,7 @@ fn _targs_literal(S, j): i64 {
         if (t == 12 || t == 5 || t == 13 || t == 10) { return 1; }
         if (t == 2) { if (_tp_c0 != 0) { if (_tp_resolve(S, TOKVAL(S, j)) != 0) { return 0; } } }
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         if (d <= 0) { return 1; }
         j = j + 1;
     }

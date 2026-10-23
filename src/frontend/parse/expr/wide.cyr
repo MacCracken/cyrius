@@ -396,9 +396,7 @@ fn _gcall_syn(S, ti): i64 {
     while (i < n) {
         var t = TOKTYP(S, i);
         if (t == 19) { d = d + 1; }
-        elif (t == 20) { d = d - 1; }
-        elif (t == 39) { d = d - 2; }
-        elif (t == 152) { d = d - 3; }
+        elif (_targ_gt_n(t) > 0) { d = d - _targ_gt_n(t); }
         elif (t != 2 && t != 31) { return 0 - 1; }
         if (d <= 0) {
             if (TOKTYP(S, i + 1) != 10) { return 0 - 1; }

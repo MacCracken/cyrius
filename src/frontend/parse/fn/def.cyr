@@ -1101,9 +1101,7 @@ fn _dl_after_angles(S, j): i64 {
         var t = TOKTYP(S, j);
         if (t == 13 || t == 5 || t == 12) { return j; }
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         j = j + 1;
         if (d <= 0) { return j; }
     }
@@ -6437,9 +6435,8 @@ fn _gs_params_w(S, fi, open): i64 {
             if (t == 2) { pk = _gs_param(S, fi, i, pc, pk); }
         }
         if (t == 10 || t == 19 || t == 28) { d = d + 1; }
-        if (t == 11 || t == 20 || t == 29) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        d = d - _targ_gt_n(t);
         if (d < 0) { d = 0; }
         i = i + 1;
     }

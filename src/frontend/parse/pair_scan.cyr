@@ -276,9 +276,7 @@ fn _tok_targs_close(S, i): i64 {
         var t = TOKTYP(S, i);
         if (t == 5 || t == 10 || t == 11 || t == 12 || t == 13 || t == 14) { return 0 - 1; }
         if (t == 19) { d = d + 1; }
-        elif (t == 20) { d = d - 1; }
-        elif (t == 39) { d = d - 2; }
-        elif (t == 152) { d = d - 3; }
+        else { d = d - _targ_gt_n(t); }
         if (d <= 0) { return i; }
         i = i + 1;
     }
@@ -936,9 +934,7 @@ fn _tok_targ_at(S, k, slot): i64 {
         var t = TOKTYP(S, k);
         if (t == 5 || t == 10 || t == 11 || t == 12 || t == 13 || t == 14) { return 0 - 1; }
         if (t == 19) { d = d + 1; }
-        elif (t == 20) { d = d - 1; }
-        elif (t == 39) { d = d - 2; }
-        elif (t == 152) { d = d - 3; }
+        elif (_targ_gt_n(t) > 0) { d = d - _targ_gt_n(t); }
         elif (t == 31) { if (d == 0) { return k + 1; } }
         if (d < 0) { return 0 - 1; }
         k = k + 1;

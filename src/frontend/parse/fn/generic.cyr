@@ -122,9 +122,7 @@ fn _gcr_note(S, fi, noff, ti, pp): i64 {
                 } } }
         if (t == 31) { if (d == 1) { slot = slot + 1; } }
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         if (d <= 0) { return 0; }
         j = j + 1;
     }
@@ -321,9 +319,7 @@ fn _gs_carrier(S, fi, ti, pc, pk, pb): i64 {
                 } } }
         if (t == 31) { if (d == 1) { slot = slot + 1; } }
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         if (d <= 0) { return pk; }
         j = j + 1;
     }
@@ -343,16 +339,12 @@ fn _gs_sc_rec(pk, tn, tp, f): i64 {
     if (tn == ((tp >> 32) & 0xFFFFFFFF) - 1) { if (((pk >> 44) & 255) == 0) { pk = pk | (f << 44); } }
     return pk;
 }
-# From token i (past the parameter list) to the token after the body's `{`, or -1 (no body).
+# From token i (past the parameter list) to the token after the body's `{`, or -1 (no body). 6.7.18: read by
+# `_tok_body_open`, the one reader of a body's `{` (this fn and pass 1's `_pre_body_open` each walked it). CHANGELOG [6.7.18]
 fn _gs_body_open(S, i): i64 {
-    var n = GTCNT(S);
-    while (i < n) {
-        var t = TOKTYP(S, i);
-        if (t == 13) { return i + 1; }
-        if (t == 12 || t == 5) { return 0 - 1; }
-        i = i + 1;
-    }
-    return 0 - 1;
+    var b = _tok_body_open(S, i);
+    if (b < 0) { return b; }
+    return b + 1;
 }
 # Walk the body from token i (just past its `{`) to the matching `}`. mode 0: 1 iff a T-typed name
 # is used as a struct. mode 1: 1 iff the body forwards a T-typed value, or T, to a stub generic.
@@ -970,9 +962,7 @@ fn _gs_targs_fwd(S, fi, j): i64 {
         if (t == 12 || t == 10 || t == 5) { return 0; }
         if (t == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) { return 1; } }
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         if (d <= 0) { return 0; }
         j = j + 1;
     }
@@ -1742,9 +1732,7 @@ fn _targs_end(S, i): i64 {
     while (i < n) {
         var t = TOKTYP(S, i);
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         if (d <= 0) { return i; }
         i = i + 1;
     }
@@ -1761,9 +1749,7 @@ fn _targs_resolvable(S, i): i64 {
         if (t == 12 || t == 13 || t == 5 || t == 10) { return 0; }
         if (t == 2) { if (_targ_name_ok(S, TOKVAL(S, i)) == 0) { return 0; } }
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         if (d <= 0) { return 1; }
         i = i + 1;
     }

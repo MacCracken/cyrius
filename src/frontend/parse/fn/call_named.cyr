@@ -144,9 +144,8 @@ fn _pl_dflt_end(S, i): i64 {
 # three (`Vec<Vec<i64>>`).
 fn _pl_tdepth(t, d): i64 {
     if (t == 10 || t == 28 || t == 13 || t == 19) { return d + 1; }
-    if (t == 11 || t == 29 || t == 14 || t == 20) { d = d - 1; }
-    if (t == 39) { d = d - 2; }
-    if (t == 152) { d = d - 3; }
+    if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+    d = d - _targ_gt_n(t);
     if (d < 0) { return 0; }
     return d;
 }
