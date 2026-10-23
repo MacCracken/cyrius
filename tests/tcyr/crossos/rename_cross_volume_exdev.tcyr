@@ -78,7 +78,10 @@ file_close(fd);
 var rr = file_rename(src, dst);
 if (rr == 0 - 18) {
     assert_eq(rr, 0 - 18, "file_rename into /tmp, another volume, is -18 (Windows answered -1)");
+#ifndef CYRIUS_TARGET_AGNOS
+    # agnos's sys_rename is its kernel's own call, (old, oldlen, new, newlen): file_rename above is the portable one
     assert_eq(sys_rename(src, dst), 0 - 18, "sys_rename into /tmp, another volume, is -18 (Windows answered -1)");
+#endif
     assert_eq(_xv_exists(src), 1, "the source is still there");
     assert_eq(_xv_exists(dst), 0, "nothing was made at the target");
 } else {
