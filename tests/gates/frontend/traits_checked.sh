@@ -67,7 +67,8 @@
 #   TRC (6.7.16) a return refusal does not end the impl's check: `_tr_check_impl` returned on the first method whose
 #      return differs, so a second mismatch and a required method left out each appeared only once the line before it
 #      was fixed. The refusal sets no panic latch (it consumes nothing), so the walk goes on. TRC1 the filed repro
-#      verbatim: exactly three lines (3:28 `P.a`, 3:58 `P.b`, the missing `c`); TRC2 a parameter-count mismatch and
+#      verbatim: exactly three lines, in source order since 6.7.17's ZR1 (3:16 the missing `c`, 3:28 `P.a`,
+#      3:58 `P.b`); TRC2 a parameter-count mismatch and
 #      TRC3 a method the trait does not declare, each after a return refusal — two lines. Filed:
 #      docs/development/issues/archived/2026-10-18-impl-check-stops-at-first-differing-return.md
 #      Mutant (2026-10-20): the lane's base compiler (b73e8d5fe, the early return) -> RED 3: TRC1 TRC2 TRC3 (one line)
@@ -403,15 +404,15 @@ impl T for P { fn a(self): i64 { return 1; } fn b(self): i64 { return 2; } }
 fn main(): i64 { return 0; }
 EOF
 lines_are trc1 "TRC1: the filed repro verbatim — both mismatches and the missing method" \
-    "3:28: 'P.a' returns i64, trait 'T' declares f64" "3:58: 'P.b' returns i64, trait 'T' declares f64" \
-    "3:16: impl is missing method 'c', required by trait 'T'"
+    "3:16: impl is missing method 'c', required by trait 'T'" \
+    "3:28: 'P.a' returns i64, trait 'T' declares f64" "3:58: 'P.b' returns i64, trait 'T' declares f64"
 printf 'struct P { x; }\ntrait T { fn a(self): f64; fn b(self, k): i64; }\nimpl T for P { fn a(self): i64 { return 1; } fn b(self): i64 { return 2; } }\nfn main(): i64 { return 0; }\n' > "$T/trc2.cyr"
 lines_are trc2 "TRC2: a parameter-count mismatch after a return refusal" \
-    "3:28: 'P.a' returns i64, trait 'T' declares f64" \
-    "3:16: method 'b' takes a different number of parameters than its declaration in trait 'T'"
+    "3:16: method 'b' takes a different number of parameters than its declaration in trait 'T'" \
+    "3:28: 'P.a' returns i64, trait 'T' declares f64"
 printf 'struct P { x; }\ntrait T { fn a(self): f64; }\nimpl T for P { fn a(self): i64 { return 1; } fn z(self): i64 { return 3; } }\nfn main(): i64 { return 0; }\n' > "$T/trc3.cyr"
 lines_are trc3 "TRC3: a method the trait does not declare after a return refusal" \
-    "3:28: 'P.a' returns i64, trait 'T' declares f64" "3:16: method 'z' is not declared in trait 'T'"
+    "3:16: method 'z' is not declared in trait 'T'" "3:28: 'P.a' returns i64, trait 'T' declares f64"
 
 cat > "$T/trk.cyr" <<'EOF'
 include "lib/syscalls.cyr"

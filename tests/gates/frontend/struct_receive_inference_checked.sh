@@ -1414,7 +1414,9 @@ for zw in zone after; do
     refused "GZ21$zw" "generic 'G1': its type argument does not implement trait 'Show'" "the $zw: a bounded G whose argument fails the bound is the bound's one refusal (judged once)"
 done
 awk '/^var x = /{print "var e = nope;"} {print}' "$T/GZ21zone.cyr" > "$T/GZ21b.cyr"
-refused GZ21b "undefined variable 'nope'" "the zone: the bound is judged at the call's replay, after an earlier line's error (not at the end of pass 1)" 2
+# 6.7.17 (ZR1): the parse's diagnostics print in source order, so the bound's refusal — reported at 7:24, the `G1<T>` of
+# mkb's signature — prints before line 9's 'nope' whenever it is judged; the row keeps its count (judged once: 2).
+refused GZ21b "generic 'G1': its type argument does not implement trait 'Show'" "the zone: the bound judged once beside an earlier line's error, in source order" 2
 
 # 6.7.16 — A ZONE GENERIC CALL WITH A NEGATED-LITERAL CARRIER OR A REFUSED TYPE ARGUMENT TYPES ITS GLOBAL AS THE LINE AFTER
 # THE FIRST STATEMENT DOES (issues/archived/2026-10-18-zone-generic-instance-refused-type-argument-or-negated-literal-unbound.md).

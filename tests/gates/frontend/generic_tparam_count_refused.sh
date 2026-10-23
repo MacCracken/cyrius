@@ -216,8 +216,8 @@ lines trm "1:22: a third type parameter 'C': $M" "T4: --syntax-only reports it" 
 printf 'trait T { fn g<A, B, C>(self, a: A, b: B, c: C): i64; }\nstruct P { x; }\nimpl T for P { fn g<A, B, C>(self, a: A, b: B, c: C): i64 { return 4; } }\nfn main(): i64 { var p = P { 1 }; return p.g(1, 2, 3); }\n' > "$D/t5.cyr"
 lines t5 "1:22: a third type parameter 'C': $M|3:27: a third type parameter 'C': $M" "T5: member and impl both <A, B, C> — one line per declaration, in source order"
 printf 'trait Show { fn show(self): i64; }\ntrait T { fn g<A, B, C, D>(self, a: A): i64; fn h<X, Y, Z: Show>(self): i64; fn i<U, V: Nope, W>(self): i64; fn k<U>(self, cb: *fn(i64): i64, u: U): i64; }\nfn main(): i64 { return 3; }\n' > "$D/t6.cyr"
-# 6.7.17 (the user's D4): the member's unknown bound `V: Nope` is its own line now, after the third's, as a fn's is
-lines t6 "2:22: a third type parameter 'C': $M|2:57: a third type parameter 'Z': $M|2:95: a third type parameter 'W': $M|2:89: unknown trait 'Nope' in the bound on type parameter 'V'" \
+# 6.7.17 (the user's D4): the member's unknown bound `V: Nope` is its own line now — in source order (ZR1), before W's
+lines t6 "2:22: a third type parameter 'C': $M|2:57: a third type parameter 'Z': $M|2:89: unknown trait 'Nope' in the bound on type parameter 'V'|2:95: a third type parameter 'W': $M" \
     "T6: four parameters, a bounded third, a third after a bounded second — one line per member, at its third (+ D4's bound line)"
 printf 'fn g4<A, B, C>(a: A): i64 { return 1; }\ntrait T { fn g<A, B, C>(self): i64; }\nstruct F<A, B, C> { a: A; }\nfn main(): i64 { return 2; }\n' > "$D/t7.cyr"
 lines t7 "1:13: a third type parameter 'C': $M|2:22: a third type parameter 'C': $M|3:16: a third type parameter 'C': $M" \
@@ -256,9 +256,9 @@ printf 'struct P { a; }\nimpl P { fn m<T>>(self, x: T): i64 { return 1; } }\nfn 
 printf 'struct P { a; }\nimpl P { fn m<T> >(self, x: T): i64 { return 1; } }\nfn main(): i64 { var y = 1 2; return 0; }\nsyscall(60, main());\n' > "$D/gt6.cyr"
 printf 'fn f 5 (a): i64 { return a; }\nfn main(): i64 { var y = 1 2; return f(3); }\nsyscall(60, main());\n' > "$D/gt7.cyr"
 FOO="3:15: unknown type 'Foo' for struct field 'a'"
-lines gt4 "2:9: a trait in a bound takes no type arguments: 'Show'|$FOO|2:17: expected '(', got '>>>'|4:28: expected ';', got number 2" \
+lines gt4 "2:9: a trait in a bound takes no type arguments: 'Show'|2:17: expected '(', got '>>>'|$FOO|4:28: expected ';', got number 2" \
     "GT4 [plain]: fn f<T: Show<i64>>>(x: T) — no \"fn 'main' is defined inside fn 'f'\""
-lines gt4 "$FOO|2:17: expected '(', got '>>>'|4:28: expected ';', got number 2" "GT4 [mono0]: the same under the flag" "CYRIUS_MONOMORPH=0 $CC"
+lines gt4 "2:17: expected '(', got '>>>'|$FOO|4:28: expected ';', got number 2" "GT4 [mono0]: the same under the flag (source order, ZR1)" "CYRIUS_MONOMORPH=0 $CC"
 for leg in plain mono0; do
     cc="$CC"; [ "$leg" = mono0 ] && cc="CYRIUS_MONOMORPH=0 $CC"
     lines gt5 "2:16: expected '(', got '>>'|$NX3" "GT5 [$leg]: impl P { fn m<T>>(self, x: T) } — no \"undefined variable 'T'\" / 'x'" "$cc"
