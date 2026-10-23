@@ -1734,8 +1734,7 @@ fn _tl_decl2(S, t): i64 {
     var p0 = _panic;
     var ti = GTI(S);
     if (t == 60) { PARSE_ENUM_DEF(S, 2); }   # constructor bodies, before the jmp patch
-    elif (t == 40) { _tl_skip_struct(S); }
-    else { _tl_skip_union(S); }
+    else { _tl_skip_struct(S); }   # a struct or a union: one reader (6.7.18: `_tl_skip_union` was its copy)
     _tl_decl_end(S, p0, ti);
     return 1;
 }
@@ -1964,7 +1963,9 @@ fn _tl_skip_use(S): i64 {
     return 0;
 }
 
-# A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`.
+# A struct (with its optional `<T>` list) or a union was parsed in pass 1: skip to its `}`. A union's `<..>` was refused
+# by pass 1 (`_union_tp_refuse`, 6.7.17 D5) and is stepped here, silent. 6.7.18: one reader for both; the union's own
+# copy of it (`_tl_skip_union`) is gone. CHANGELOG [6.7.18]
 # ⛔ 6.7.17 — the list is stepped NESTED, as pass 1 reads it (`_skip_targ_list`, its EOF guard): it stopped at the
 # first `>`, so `struct B<T: Show<i64>>` (one `>>` token) ran pass 2 to the end of the file — every later fn unparsed,
 # "undefined function 'main'" — and `<T: Show<i64> >` left a `>` for "expected '{', got '>'". A `>>` closing more than
@@ -1972,13 +1973,6 @@ fn _tl_skip_use(S): i64 {
 fn _tl_skip_struct(S): i64 {
     STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
     _tpl_skip(S);
-    _tl_skip_body(S);
-    return 0;
-}
-
-fn _tl_skip_union(S): i64 {
-    STI(S, GTI(S) + 1); STI(S, GTI(S) + 1);
-    _tpl_skip(S);   # 6.7.17 (D5): pass 1 refused its `<..>` (`_union_tp_refuse`); stepped here, silent
     _tl_skip_body(S);
     return 0;
 }
@@ -6235,7 +6229,7 @@ fn _tpl_fin(S): i64 {
     return 0;
 }
 # ⛔ 6.7.17 (D5) — A UNION TAKES NO TYPE PARAMETERS: `union U<T> { a; }` was refused by pass 2 alone, as a parse error
-# ("expected '{', got '<'": `_tl_skip_union` stepped no list) after pass 1 had read the header and registered the union.
+# ("expected '{', got '<'": pass 2's union skip stepped no list) after pass 1 had read the header and registered the union.
 # Refused by name at the `<` in pass 1 (the user's D5, 2026-10-22: "Refuse it by name") — "a union takes no type
 # parameters" — once; both passes step the list (`_tpl_skip`), so the next declaration reports its own errors.
 # Cursor on the `<`. CHANGELOG [6.7.17]
