@@ -45,6 +45,11 @@
 #   T2 the same programs: pass 1's re-read of a signature named a struct declared after it by scanning every struct
 #      slot from its own (`_psig_late_name`, parse/fn/def.cyr); FINDSTRUCT's index answers it. The parent: 87,211
 #      STREQ calls at 200 impls, 334,603 at 400 (3.84x; the gate reads 383%). Bound: under 3x (the tree: 8,208 -> 16,624, 2.03x).
+#   F  a fn looked up by a C-string name (`_FINDFN_CSTR`: every slice index's `_slice_idx_get_N`, every `&x` first
+#      argument's `<name>_ptr` sibling, every `await`, every closure's `alloc`) goes through the fn name hash, not a
+#      walk of the whole fn table: 2,000 fns each called once as `fK(&p)` cost O(N^2) — the walk read each fn's name
+#      through L64, so the parent made 5,305,335 L64 calls (80 per lexed token), the tree 1,301,335 (19). Bound:
+#      under 40 L64 calls per token; the program exits 8. util.cyr.
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -58,6 +63,7 @@
 # T: the parent of its fix -> RED (399%); `_tix_cands` handing back every impl below `_ti_n` (the walk's list, the
 # same answers) -> RED.
 # T2: the parent of its fix -> RED (383%); `_tr_providers` walking every impl again (same answer) -> RED.
+# F: the parent of its fix -> RED (80 per token); `_FINDFN_CSTR` taking its walk again (the hash skipped) -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -186,6 +192,21 @@ if run "$D/t1.cyr"; then
             else echo "  ok [T2] STREQ calls $Q1 (200 impls) -> $Q2 (400), $((Q2 * 100 / Q1))% (bound 300%)"; fi
         fi
     fi
+fi
+
+# ── F: a fn by C-string name ───────────────────────────────────────────────────────────────────────────────
+awk 'BEGIN { print "struct P { a: i64; b: i64; }"
+             for (i = 0; i < 2000; i++) printf "fn f%d(p: *P): i64 { return p.a + p.b + %d; }\n", i, i
+             print "fn main(): i64 { var p: P; p.a = 1; p.b = 2; var s = 0;"
+             for (i = 0; i < 2000; i++) printf "    s = s + f%d(&p);\n", i
+             print "    return s & 255; }"; print "syscall(60, main());" }' > "$D/f.cyr"
+if run "$D/f.cyr"; then
+    chmod +x "$D/prog"; frc=0; "$D/prog" || frc=$?
+    FL=$(count L64); FT=$(count ADDTOK); FC=$(count _FINDFN_CSTR)
+    if [ "$frc" -ne 8 ]; then echo "FAIL: $G [F]: the 2,000-fn program exits $frc, not 8"; FAIL=1
+    elif [ "$FC" -lt 2000 ] || [ "$FT" -lt 1 ]; then echo "FAIL: $G [F]: $FC _FINDFN_CSTR calls — the fixture no longer takes the path"; FAIL=1
+    elif [ "$FL" -ge $((FT * 40)) ]; then echo "FAIL: $G [F]: $FL L64 calls for $FT tokens ($((FL / FT)) per token, bound 40)"; FAIL=1
+    else echo "  ok [F] $FL L64 calls for $FT tokens ($((FL / FT)) per token, bound 40; $FC _FINDFN_CSTR lookups)"; fi
 fi
 
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
