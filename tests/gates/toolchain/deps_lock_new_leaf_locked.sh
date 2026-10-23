@@ -88,7 +88,7 @@ mkdir -p "$H/versions/6.6.6" && cp -r lib "$H/versions/6.6.6/lib" && printf '6.6
   || { echo "FAIL: cannot stage the throwaway home"; exit 1; }
 # CYRIUS_RESOLVED=1: never re-exec into a pinned version's CLI; this tree's is under test.
 _cy() { _d=$1; shift; ( cd "$_d" && CYRIUS_HOME="$H" CYRIUS_RESOLVED=1 CYRIUS_NO_WARN_PIN_DRIFT=1 exec "$CLI" "$@" ); }
-_hashlines() { _n=$(grep -c '^[0-9a-f]\{64\}  ' "$1" 2>/dev/null); echo "${_n:-0}"; }   # grep -c exits 1 on 0
+_hashlines() { _n=$(grep -c '^[0-9a-f]\{64\}  ' "$1" 2>/dev/null || true); echo "${_n:-0}"; }   # grep -c exits 1 on 0
 _ncyr() { find "$1/lib" -name '*.cyr' | wc -l | tr -d ' '; }
 _manifest() { printf '[package]\nname = "r"\nversion = "0.0.1"\ncyrius = "6.6.6"\n\n[deps]\nstdlib = [%s]\n' "$2" > "$1/cyrius.cyml"; }
 
@@ -114,7 +114,9 @@ sed -i 's/"string"\]/"string", "chrono"]/' "$P/cyrius.cyml"
 grep -q '"chrono"' "$P/cyrius.cyml" || { echo "FAIL: axis 1 setup: the manifest edit did not land"; exit 1; }
 rc=0; _cy "$P" deps > "$W/a1b.out" 2>&1 || rc=$?
 [ -f "$P/lib/chrono.cyr" ] || { fail "axis 1: chrono was not vendored (rc=$rc)"; x=1; }
-n=$(grep -c 'lib/chrono.cyr' "$P/cyrius.lock" 2>/dev/null); n=${n:-0}
+# Every zero-able `grep -c` ends `|| true`: it prints 0 AND exits 1, and under `bash -eo pipefail`
+# the assignment ended the gate at axis 9's PASSING row (the remedy leaves 0 vec rows). CHANGELOG [6.7.18]
+n=$(grep -c 'lib/chrono.cyr' "$P/cyrius.lock" 2>/dev/null || true); n=${n:-0}
 [ "$n" = 1 ] || { fail "axis 1 (case 1): lib/chrono.cyr — declared and vendored — has $n lines in cyrius.lock, expected 1"; x=1; }
 want=$(_ncyr "$P"); got=$(_hashlines "$P/cyrius.lock")
 [ "$got" = "$want" ] || { fail "axis 1 (case 1): the lock has $got hash lines for $want .cyr files"; x=1; }
@@ -262,7 +264,7 @@ stdlib = ["syscalls", "alloc", "vec"]
 EOM
 printf 'syscall(SYS_EXIT, 0);\n' > "$P9/main.cyr"
 _cy "$P9" deps > "$W/a9a.out" 2>&1
-n=$(grep -c 'lib/vec.cyr' "$P9/cyrius.lock" 2>/dev/null); n=${n:-0}
+n=$(grep -c 'lib/vec.cyr' "$P9/cyrius.lock" 2>/dev/null || true); n=${n:-0}
 [ "$n" = 1 ] || { fail "axis 9 (anti-vacuous): the first lock has $n lib/vec.cyr rows"; x=1; }
 sed -i 's/, "vec"\]/]/' "$P9/cyrius.cyml"
 rm "$P9/lib/vec.cyr"
@@ -274,7 +276,7 @@ rc=0; _cy "$P9" deps --locked > "$W/a9c.out" 2>&1 || rc=$?
 { [ "$rc" -ne 0 ] && grep -q 'lists lib/vec.cyr' "$W/a9c.out" && grep -q 'run `cyrius deps` and commit the result' "$W/a9c.out"; } \
   || { fail "axis 9: --locked before the resolve does not name the row with its remedy (rc=$rc):"; sed 's/^/      /' "$W/a9c.out" | head -3; x=1; }
 rc=0; _cy "$P9" deps > "$W/a9d.out" 2>&1 || rc=$?
-n=$(grep -c 'lib/vec.cyr' "$P9/cyrius.lock" 2>/dev/null); n=${n:-0}
+n=$(grep -c 'lib/vec.cyr' "$P9/cyrius.lock" 2>/dev/null || true); n=${n:-0}
 { [ "$rc" -eq 0 ] && [ "$n" = 0 ]; } || { fail "axis 9: rm lib/vec.cyr && cyrius deps kept the row ($n rows, rc=$rc)"; x=1; }
 [ "$(_hashlines "$P9/cyrius.lock")" = "$(_ncyr "$P9")" ] || { fail "axis 9: the re-written lock has $(_hashlines "$P9/cyrius.lock") rows for $(_ncyr "$P9") files"; x=1; }
 rc=0; _cy "$P9" deps --verify > "$W/a9e.out" 2>&1 || rc=$?

@@ -60,6 +60,9 @@
 #   * deps_git_cache_verified.sh (6.7.18) — `tmpn` counted leftovers with `ls <names> | wc -l`: ls exits 2
 #     when nothing is left (the CLEAN case), so the first refusal axis ended the gate (rc 2). It also
 #     ended on a bare `[ "$fail" -eq 0 ]` with no verdict line; it prints PASS / FAIL now.
+#   * deps_lock_new_leaf_locked.sh (6.7.18) — `n=$(grep -c 'lib/vec.cyr' …)` at axis 9's PASSING row
+#     (the remedy leaves 0 rows): grep -c prints 0 and exits 1 (rc 1). Every zero-able count is
+#     `|| true` now.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -122,7 +125,8 @@ tests/gates/frontend/coroutine_midbody_suspend.sh
 tests/gates/toolchain/build_temp_source_write_checked.sh
 tests/gates/toolchain/cbt_no_shared_tmp_paths.sh
 tests/gates/toolchain/cyrius_soak_describes_failures.sh
-tests/gates/toolchain/deps_git_cache_verified.sh"
+tests/gates/toolchain/deps_git_cache_verified.sh
+tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
