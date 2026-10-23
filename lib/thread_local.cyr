@@ -111,16 +111,23 @@ var _tlocal_macos[_TLOCAL_MAX_SLOTS];     # i64 slots (top-level var[N] = N*8 by
 # x86-macOS (6.6.19) has real threads too and keys its blocks on the gs base instead — see its
 # arm below.
 #
-# ⚠ `_tls_live` is the fast path and it matters: a single-threaded program (every arm64 one
-# before its first thread_create) pays ONE load instead of a 64-entry scan on every
-# thread_local_get/set.
+# ⛔ 6.7.18 — NO LIVE-THREAD COUNTER DECIDES WHO GETS MAIN'S SLOTS. The fast path was
+# `_tls_live == 0`, a count that thread_create raised and each exiting thread lowered with plain
+# read-modify-writes. A creator's increment racing an exiting thread's decrement lost one of them.
+# The count then ran below the live threads, and a live worker that read 0 was handed main's
+# array. Now the first thread_create records its caller, the only thread then, as main.
+# Before that call the program has one thread; after it, main is matched by key.
+# CHANGELOG [6.7.18]
+#
+# ⚠ `_tls_main == 0` is the fast path and it matters: a program before its first thread_create
+# pays ONE load on every thread_local_get/set. Main later pays one compare.
 #ifdef CYRIUS_ARCH_AARCH64
 const _TLS_REG_MAX = 64;
 # Read-only mirror of `_TLS_REG_MAX`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var TLS_REG_MAX = _TLS_REG_MAX;   # tells; the scans below are bounded by the const (6.7.9)
 var _tls_key[_TLS_REG_MAX]; # TPIDRRO_EL0 of the owning thread, 0 = free slot
 var _tls_blk[_TLS_REG_MAX]; # its _TLOCAL_MAX_SLOTS-slot block
-var _tls_live = 0;          # count of registered worker threads
+var _tls_main = 0;          # the main thread's key, recorded by the first thread_create
 
 # Thread identity. The asm block is the fn's TAIL deliberately: cyrius's aarch64 epilogue is
 # `ldp x29,x30,[sp],#16` (+ `add sp`) + `ret`, none of which touch x0, so the value the `mrs`
@@ -166,8 +173,9 @@ fn _tls_unbind(): i64 {
 
 # The calling thread's slot base.
 fn _tlocal_base(): i64 {
-    if (_tls_live == 0) { return &_tlocal_macos; }     # fast path: no worker threads live
+    if (_tls_main == 0) { return &_tlocal_macos; }     # fast path: no thread_create yet, one thread
     var me = _thr_self();
+    if (me == _tls_main) { return &_tlocal_macos; }
     var i = 0;
     while (i < _TLS_REG_MAX) {
         if (load64(&_tls_key + i * 8) == me) {

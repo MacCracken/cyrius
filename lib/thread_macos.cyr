@@ -64,13 +64,7 @@ fn _thr_entry(ctl): i64 {
     _tls_unbind();
     atomic_fence();                 # release: the body's writes happen-before done=1
     atomic_store(ctl, 1);
-    _threads_live_dec();
     sys_ulock_wake(0x101, ctl, 0);  # UL_COMPARE_AND_WAIT | ULF_WAKE_ALL — wake every joiner
-    return 0;
-}
-
-fn _threads_live_dec(): i64 {
-    if (_tls_live > 0) { _tls_live = _tls_live - 1; }
     return 0;
 }
 
@@ -97,15 +91,15 @@ fn thread_create(fp, arg): i64 {
     store64(ctl + 16, arg);
     store64(ctl + 24, 0);           # pthread_t out
     store64(ctl + 32, blk);
-    _tls_live = _tls_live + 1;      # published BEFORE the thread can call thread_local_get
+    # The first thread_create runs while its caller is the only thread, so that caller is main.
+    # A plain store: the new thread reads it after pthread_create, and no other thread exists yet.
+    # (It replaces a racy live-thread count; lib/thread_local.cyr, CHANGELOG [6.7.18].)
+    if (_tls_main == 0) { _tls_main = _thr_self(); }
     atomic_fence();
     # pthread_create(&pthread_t, attr=NULL, _thr_entry, ctl) via __got[5]. 1700 is the
     # libSystem-routine sub-band (see src/frontend/parse/expr.cyr) — NOT a BSD syscall number.
     var rc = syscall(1700, ctl + 24, 0, &_thr_entry, ctl);
-    if (rc != 0) {
-        _threads_live_dec();
-        return 0;
-    }
+    if (rc != 0) { return 0; }
     return ctl;
 }
 
