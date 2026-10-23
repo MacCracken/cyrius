@@ -1,0 +1,149 @@
+# http_get_deadlines.tcyr — CYRIUS-2026-0049 (6.7.18): http_get / http_get_r / http_get_a end when a
+# server stays silent or dribbles, on every host target.
+#
+# ⛔ WHY. The three calls connected and read with no deadline and kept the socket private: a server
+# that accepted (the listen backlog completes the handshake) and never answered held the call for
+# ever (the audit's repro: `timeout 8 ./hang` exit 124), and the caller had no way to bound it. Now
+# HTTP_IDLE_TIMEOUT_MS (default 5000) bounds every wait and HTTP_TIMEOUT_MS (default 30000) the
+# whole exchange; running out of either is a failure, never a truncated response. CHANGELOG [6.7.18]
+#
+# Loopback TCP in this process: a listener that never accepts (the silent server) and a thread that
+# accepts and sends one byte every 100 ms (the dribbler). A watchdog thread fails the file instead of
+# hanging the suite if a call never returns.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/http.cyr"
+include "lib/thread.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _hd_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A listening loopback socket on a kernel-picked port, or -1.
+fn _hd_listen(): i64 {
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    if (is_err_result(bt) == 1) { return 0 - 1; }
+    var st, sv = sock_listen(lfd, 8);
+    if (is_err_result(st) == 1) { return 0 - 1; }
+    return lfd;
+}
+
+# "http://127.0.0.1:<port>/x"
+fn _hd_url(port): i64 {
+    var u = alloc(64);
+    memset(u, 0, 64);
+    memcpy(u, "http://127.0.0.1:", 17);
+    var d[8];
+    var nd = 0;
+    var pv = port;
+    while (pv > 0) { store8(&d + nd, 48 + pv % 10); pv = pv / 10; nd = nd + 1; }
+    var i = 0;
+    while (i < nd) { store8(u + 17 + i, load8(&d + nd - 1 - i)); i = i + 1; }
+    memcpy(u + 17 + nd, "/x", 2);
+    return u;
+}
+
+var _hd_done = 0;
+
+# Watchdog: a call that never returns fails the file (exit 1) instead of hanging the suite.
+fn _hd_watchdog(arg): i64 {
+    var waited = 0;
+    while (_hd_done == 0 && waited < 20000) { sleep_ms(50); waited = waited + 50; }
+    if (_hd_done == 0) {
+        var m = "  FAIL: watchdog - an http_get call never returned\n";
+        syscall(SYS_WRITE, 1, m, strlen(m));
+        sys_exit_group(1);                 # every thread: the main one is the one stuck
+    }
+    return 0;
+}
+
+# The dribbler: accept one connection, then send a byte every 100 ms until the client goes away
+# (a send fails) or 5 s pass.
+fn _hd_dribbler(lfd): i64 {
+    var at, afd = sock_accept(lfd);
+    if (is_err_result(at) == 1) { return 0; }
+    var n = 0;
+    while (n < 50) {
+        if (sock_send_all(afd, "H", 1) != 1) { n = 50; }
+        else { sleep_ms(100); n = n + 1; }
+    }
+    sock_close(afd);
+    return 0;
+}
+
+fn _hd_group(): i64 {
+    test_group("CYRIUS-2026-0049 — the deadlines' defaults");
+    assert_eq(HTTP_IDLE_TIMEOUT_MS, 5000, "HTTP_IDLE_TIMEOUT_MS: 5000");
+    assert_eq(HTTP_TIMEOUT_MS, 30000, "HTTP_TIMEOUT_MS: 30000");
+    var wd = thread_create(&_hd_watchdog, 0);
+    assert(wd != 0, "thread_create (the watchdog)");
+
+    test_group("a server that never answers: the idle bound ends each call");
+    var lfd = _hd_listen();
+    assert(lfd >= 0, "a silent listener (never accepts)");
+    var url = _hd_url(_hd_port(lfd));
+    HTTP_IDLE_TIMEOUT_MS = 300;
+    var t0 = clock_now_ns();
+    var r0 = http_get(url);
+    var ms = (clock_now_ns() - t0) / 1000000;
+    assert(r0 != 0, "http_get returns");
+    if (r0 != 0) { assert_eq(http_status(r0), HTTP_ERROR, "… HTTP_ERROR"); }
+    assert(ms >= 250, "… after the idle bound (>= 250 ms)");
+    assert(ms < 3000, "… not long after it (< 3 s)");
+    var t1, v1 = http_get_r(url);
+    assert_eq(is_err_result(t1), 1, "http_get_r: Err");
+    assert_eq(v1, HttpNetErr, "… HttpNetErr");
+    var r2 = http_get_a(arena_allocator(131072), url);
+    assert(r2 != 0, "http_get_a returns");
+    if (r2 != 0) { assert_eq(http_status(r2), HTTP_ERROR, "… HTTP_ERROR"); }
+    sock_close(lfd);
+
+    test_group("a server that dribbles: the whole-exchange bound ends the call");
+    var dfd = _hd_listen();
+    assert(dfd >= 0, "a dribbling listener");
+    var dth = thread_create(&_hd_dribbler, dfd);
+    assert(dth != 0, "thread_create (the dribbler)");
+    HTTP_IDLE_TIMEOUT_MS = 1000;
+    HTTP_TIMEOUT_MS = 700;
+    t0 = clock_now_ns();
+    var r3 = http_get(_hd_url(_hd_port(dfd)));
+    ms = (clock_now_ns() - t0) / 1000000;
+    assert(r3 != 0, "http_get returns");
+    if (r3 != 0) { assert_eq(http_status(r3), HTTP_ERROR, "… HTTP_ERROR, not the bytes so far as a response"); }
+    assert(ms >= 600, "… after the whole-exchange bound (>= 600 ms), though each byte came within the idle bound");
+    assert(ms < 4000, "… not long after it (< 4 s)");
+    thread_join(dth);
+    sock_close(dfd);
+    _hd_done = 1;
+    thread_join(wd);
+    HTTP_IDLE_TIMEOUT_MS = 5000;
+    HTTP_TIMEOUT_MS = 30000;
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    _hd_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);
