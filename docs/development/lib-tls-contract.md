@@ -738,11 +738,17 @@ libssl rule is a limit, not a guarantee.
   valid; `tls_init_main()` covers it and more.
 - **Process-global configuration is set once, before any thread connects**: `tls_set_backend`,
   `tls_native_set_transport`, `tls_native_set_entropy`. They are plain stores, not per-ctx state.
-- **Lane bound.** sigil hands each crypto-touching thread a scratch lane on its first use and
-  never takes it back: after **63 lifetime** crypto threads lanes are shared and
-  `crypto_banks_exhausted()` reads 1. Two threads in one lane can corrupt each other's digest or
-  handshake — fail-closed noise, not a forged acceptance (the asymmetric stack is stack-local).
-  Reuse workers rather than retiring them, or cap the pool.
+- **Lane bound (sigil 3.13.14, cyrius 6.7.18 — CYRIUS-2026-0040).** sigil's 64 crypto scratch
+  lanes are a POOL: an operation that needs one — an ECDSA verify, the on-curve check of a
+  certificate parse, a chain link — takes a free lane for its own duration and gives it back, so
+  no two threads ever share a lane and a retired thread holds none (`crypto_banks_claimed()` is
+  the lanes held right now). Native TLS's ECDHE, signing and ChaCha20-Poly1305 need no lane. With
+  all 64 held at once, the next request is REFUSED, not queued: that verify or parse fails, so its
+  handshake fails closed, and `crypto_banks_exhausted()` reads 1 from then on — size a pool of
+  concurrently handshaking threads below 64. Through sigil 3.13.13 (cyrius 6.7.17) a thread kept a
+  lane for life from a counter that only went up: past 63 lifetime crypto threads lanes were
+  shared, and two threads on one lane rejected genuine ECDSA signatures and could accept a forged
+  ChaCha20-Poly1305 tag. Pinned by `tests/tcyr/crossos/tls_crypto_lanes_reclaimed.tcyr`.
 
 **libssl backend (`-D CYRIUS_TLS_LIBSSL`, or `tls_set_backend(TLS_BACKEND_LIBSSL)`): MAIN THREAD
 ONLY, and it FAILS CLOSED off it (6.6.14).**

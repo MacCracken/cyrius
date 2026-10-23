@@ -1,0 +1,101 @@
+# tls_crypto_lanes_reclaimed.tcyr — 6.7.18: the crypto lanes native TLS's signature checks run in
+# are a POOL (sigil 3.13.14, CYRIUS-2026-0040), so a process that retires crypto threads never runs
+# out of them and never shares one — what docs/development/lib-tls-contract.md's "Lane bound" says.
+#
+# THE DEFECT (sigil 3.13.13, folded through cyrius 6.7.17): `cbank()` drew a lane for the calling
+# thread's LIFE from a counter that only went up. Past 63 lifetime crypto-touching threads every
+# new one shared a lane with a live or retired one, `crypto_banks_exhausted()` read 1 for good, and
+# two threads on one lane shared ECDSA's module-global verify scratch (genuine signatures rejected)
+# and the streaming Poly1305 state (a forged ChaCha20-Poly1305 tag accepted). The contract told a
+# caller to "reuse workers rather than retiring them". 3.13.14: a lane-scoped operation — an ECDSA
+# verify, the on-curve check of a certificate parse, a chain link — takes a free lane for its
+# duration and gives it back; `cbank()` takes nothing; with every lane held the next request is
+# refused (fail closed), never handed a shared lane.
+#
+# ROWS (THREADS_CONCURRENT-agnostic: the workers are created and joined one at a time, so a target
+# whose thread_create runs the body inline is the same test):
+#   - 100 workers, each a fresh thread: an ECDSA P-256 sign (constant-time, no lane) and two
+#     verifies (lane-scoped) of the signed and of an altered message, and the `cbank()` sigil's
+#     per-call scratch reads. Every verify answers right; afterwards `crypto_banks_exhausted()` is
+#     0 and `crypto_banks_claimed()` (lanes held now) is 0. MEASURED RED with l6718-integ's lib/
+#     (sigil 3.13.13): exhausted 1, claimed 100 (lanes handed out, never back).
+#   - the main thread afterwards: its verifies still answer right and leave no lane held.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/thread.cyr"
+include "lib/tls.cyr"
+
+enum LanesReclaimedK {
+    LR_WORKERS = 100;      # more than the 64 lanes, so a lane kept for life would run out
+    LR_REC = 32;           # per-worker record, bytes: +0 sign rc, +8 verify(signed), +16 verify(altered)
+}
+
+var _lr_G = 0;             # P-256 base point G (x || y): the public key for d = 1
+var _lr_d1 = 0;            # the private scalar 1, 32 bytes big-endian
+
+fn _lr_worker(rec): i64 {
+    var sig[64];
+    cbank();
+    store64(rec, ecdsa_p256_sign(_lr_d1, "lanes", 5, &sig));
+    store64(rec + 8, ecdsa_p256_verify(_lr_G, "lanes", 5, &sig));
+    store64(rec + 16, ecdsa_p256_verify(_lr_G, "lanez", 5, &sig));
+    return 0;
+}
+
+fn test_retired_workers(): i64 {
+    test_group("100 crypto workers, one after another, each retired");
+    var recs = alloc(LR_WORKERS * LR_REC);
+    var i = 0;
+    var started = 0;
+    var signed = 0;
+    var good = 0;
+    var bad_refused = 0;
+    while (i < LR_WORKERS) {
+        var rec = recs + i * LR_REC;
+        store64(rec, 0 - 1);
+        store64(rec + 8, 0 - 1);
+        store64(rec + 16, 0 - 1);
+        var t = thread_create(&_lr_worker, rec);
+        if (t != 0) {
+            started = started + 1;
+            thread_join(t);
+        }
+        if (load64(rec) >= 0) { signed = signed + 1; }
+        if (load64(rec + 8) == 1) { good = good + 1; }
+        if (load64(rec + 16) == 0) { bad_refused = bad_refused + 1; }
+        i = i + 1;
+    }
+    assert_eq(started, LR_WORKERS, "every worker started");
+    assert_eq(signed, LR_WORKERS, "every worker signed");
+    assert_eq(good, LR_WORKERS, "every worker's verify of its own signature answered 1");
+    assert_eq(bad_refused, LR_WORKERS, "every worker's verify of an altered message answered 0");
+    assert_eq(crypto_banks_exhausted(), 0, "no lane request was refused or shared (crypto_banks_exhausted 0)");
+    assert_eq(crypto_banks_claimed(), 0, "the retired workers hold no lane (crypto_banks_claimed 0)");
+    return 0;
+}
+
+fn test_main_after(): i64 {
+    test_group("the main thread, after them");
+    var sig[64];
+    assert(ecdsa_p256_sign(_lr_d1, "main", 4, &sig) >= 0, "main signs");
+    assert_eq(ecdsa_p256_verify(_lr_G, "main", 4, &sig), 1, "main's verify answers 1");
+    assert_eq(ecdsa_p256_verify(_lr_G, "mainx", 5, &sig), 0, "main's verify of an altered message answers 0");
+    assert_eq(crypto_banks_claimed(), 0, "and holds no lane afterwards");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _lr_G = alloc(64);     # SEC 2 / FIPS 186-4 D.1.2.3: Gx || Gy
+    hex_decode_into("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 64, _lr_G);
+    hex_decode_into("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 64, _lr_G + 32);
+    _lr_d1 = hex_decode("0000000000000000000000000000000000000000000000000000000000000001", 64);
+    test_retired_workers();
+    test_main_after();
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
