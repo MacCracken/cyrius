@@ -59,11 +59,7 @@ fn ws_new(fd): i64 {
     if (ws == 0) { return 0; }
     store64(ws, fd);
     store64(ws + 8, WS_CONNECTING);
-    store64(ws + 16, 0);
-    store64(ws + 24, 0);
-    store64(ws + 32, 0);
-    store64(ws + 40, 0);
-    store64(ws + 48, 0);
+    memset(ws + 16, 0, 40);            # mask, flags and the pending bytes: none yet
     return ws;
 }
 
@@ -95,36 +91,45 @@ fn _ws_handshake_request(path, host, key_out): i64 {
     if (sys_getrandom(&raw, 16, 0) != 16) { return 0; }
     var key = base64_encode(&raw, 16);
     if (key == 0) { return 0; }
-    memcpy(key_out, key, strlen(key));
-    store8(key_out + strlen(key), 0);
+    var kl = strlen(key);
+    memcpy(key_out, key, kl);
+    store8(key_out + kl, 0);
 
     # 6.6.10: sized from the request, not a fixed 512. The path and host were memcpy'd into a
     # 512-byte buffer with no length check, so a long path overran the heap (the CYRIUS-2026-0010 shape
     # in lib/http.cyr); the fixed text below is 114 bytes plus the NUL. CHANGELOG [6.6.10]
-    var buf = alloc(strlen(path) + strlen(host) + strlen(key) + 160);
+    var pl = strlen(path);
+    var hl = strlen(host);
+    var buf = alloc(pl + hl + kl + 160);
     if (buf == 0) { return 0; }
     var pos = 0;
     # GET path HTTP/1.1\r\n
-    memcpy(buf + pos, "GET ", 4); pos = pos + 4;
-    memcpy(buf + pos, path, strlen(path)); pos = pos + strlen(path);
-    memcpy(buf + pos, " HTTP/1.1\r\n", 11); pos = pos + 11;
+    memcpy(buf + pos, "GET ", 4); pos += 4;
+    memcpy(buf + pos, path, pl); pos += pl;
+    memcpy(buf + pos, " HTTP/1.1\r\n", 11); pos += 11;
     # Host
-    memcpy(buf + pos, "Host: ", 6); pos = pos + 6;
-    memcpy(buf + pos, host, strlen(host)); pos = pos + strlen(host);
-    memcpy(buf + pos, "\r\n", 2); pos = pos + 2;
+    memcpy(buf + pos, "Host: ", 6); pos += 6;
+    memcpy(buf + pos, host, hl); pos += hl;
+    memcpy(buf + pos, "\r\n", 2); pos += 2;
     # Upgrade headers
-    memcpy(buf + pos, "Upgrade: websocket\r\n", 20); pos = pos + 20;
-    memcpy(buf + pos, "Connection: Upgrade\r\n", 21); pos = pos + 21;
-    memcpy(buf + pos, "Sec-WebSocket-Version: 13\r\n", 27); pos = pos + 27;
-    memcpy(buf + pos, "Sec-WebSocket-Key: ", 19); pos = pos + 19;
-    memcpy(buf + pos, key, strlen(key)); pos = pos + strlen(key);
-    memcpy(buf + pos, "\r\n\r\n", 4); pos = pos + 4;
+    memcpy(buf + pos, "Upgrade: websocket\r\n", 20); pos += 20;
+    memcpy(buf + pos, "Connection: Upgrade\r\n", 21); pos += 21;
+    memcpy(buf + pos, "Sec-WebSocket-Version: 13\r\n", 27); pos += 27;
+    memcpy(buf + pos, "Sec-WebSocket-Key: ", 19); pos += 19;
+    memcpy(buf + pos, key, kl); pos += kl;
+    memcpy(buf + pos, "\r\n\r\n", 4); pos += 4;
     store8(buf + pos, 0);
     return buf;
 }
 
 # The largest response header block ws_connect reads (8 KiB, the common server limit).
 const _WS_HS_MAX = 8192;
+
+# ws_connect's answer for a handshake that failed: the handle, marked WS_CLOSED.
+fn _ws_hs_fail(ws): i64 {
+    store64(ws + 8, WS_CLOSED);
+    return ws;
+}
 
 # Perform WebSocket handshake on connected socket
 fn ws_connect(sock, path, host): i64 {
@@ -133,11 +138,11 @@ fn ws_connect(sock, path, host): i64 {
     var key[32];
     var req = _ws_handshake_request(path, host, &key);
     # the entropy-fallback hardening item: no entropy → fail closed
-    if (req == 0) { store64(ws + 8, WS_CLOSED); return ws; }
+    if (req == 0) { return _ws_hs_fail(ws); }
     # v6.6.8: the whole request or nothing — a short write left the server reading half a
     # handshake. CHANGELOG [6.6.8]
     var qlen = strlen(req);
-    if (sock_send_all(sock, req, qlen) != qlen) { store64(ws + 8, WS_CLOSED); return ws; }
+    if (sock_send_all(sock, req, qlen) != qlen) { return _ws_hs_fail(ws); }
 
     # Read the response through the end of its header block (CRLF CRLF).
     # ⛔ 6.7.18 (audit finding 19): this was ONE read of at most 511 bytes, the "101" checked and
@@ -150,23 +155,23 @@ fn ws_connect(sock, path, host): i64 {
     var got = 0;
     var hend = 0 - 1;
     while (hend < 0) {
-        if (got >= _WS_HS_MAX) { store64(ws + 8, WS_CLOSED); return ws; }
+        if (got >= _WS_HS_MAX) { return _ws_hs_fail(ws); }
         var n = _net_os_recv(sock, &resp + got, _WS_HS_MAX - got);   # not sys_read: see _ws_recv_exact
         if (n == 0 - 4) { continue; }
-        if (n <= 0) { store64(ws + 8, WS_CLOSED); return ws; }
+        if (n <= 0) { return _ws_hs_fail(ws); }
         var from = got - 3;
         if (from < 0) { from = 0; }
-        got = got + n;
+        got += n;
         hend = _ws_header_end(&resp, from, got);
     }
     var r: [u8] = 0;
     slice_set(&r, &resp, got);
     # 6.6.10: a header block shorter than 12 bytes cannot hold "HTTP/1.1 101". CHANGELOG [6.6.10]
-    if (hend < 12) { store64(ws + 8, WS_CLOSED); return ws; }
+    if (hend < 12) { return _ws_hs_fail(ws); }
     var left = got - hend;
     if (left > 0) {
         var pend = alloc(left);
-        if (pend == 0) { store64(ws + 8, WS_CLOSED); return ws; }
+        if (pend == 0) { return _ws_hs_fail(ws); }
         memcpy(pend, &resp + hend, left);
         store64(ws + 32, pend);
         store64(ws + 40, left);
@@ -187,7 +192,7 @@ fn _ws_header_end(buf, from, n): i64 {
     var i = from;
     while (i + 3 < n) {
         if (s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10) { return i + 4; }
-        i = i + 1;
+        i += 1;
     }
     return 0 - 1;
 }
@@ -249,7 +254,7 @@ fn _ws_send_frame(ws, opcode, data, len): i64 {
     store8(&buf + hlen + 1, (mask >> 8) & 0xFF);
     store8(&buf + hlen + 2, (mask >> 16) & 0xFF);
     store8(&buf + hlen + 3, (mask >> 24) & 0xFF);
-    hlen = hlen + 4;
+    hlen += 4;
 
     # Send header and masked payload. v6.6.8: every write goes through sock_send_all — they used
     # to be bare sys_write calls whose counts were dropped, so a short write (SO_SNDTIMEO, a
@@ -265,10 +270,10 @@ fn _ws_send_frame(ws, opcode, data, len): i64 {
         while (i < n) {
             var mb = (mask >> (((off + i) % 4) * 8)) & 0xFF;
             store8(&buf + pos + i, load8(data + off + i) ^ mb);
-            i = i + 1;
+            i += 1;
         }
         if (sock_send_all(fd, &buf, pos + n) < 0) { return 0 - 1; }
-        off = off + n;
+        off += n;
         pos = 0;
         if (off >= len) { more = 0; }
     }
@@ -308,7 +313,7 @@ fn _ws_recv_exact(fd, buf, n): i64 {
         var r = _net_os_recv(fd, buf + got, n - got);
         if (r == 0 - 4) { continue; }
         if (r <= 0) { return 0 - 1; }
-        got = got + r;
+        got += r;
     }
     return 0;
 }
@@ -325,7 +330,7 @@ fn _ws_recv_ws(ws, buf, n): i64 {
         if (take > avail) { take = avail; }
         memcpy(buf, pend + off, take);
         got = take;
-        off = off + take;
+        off += take;
         store64(ws + 48, off);
         if (off >= load64(ws + 40)) {
             store64(ws + 32, 0);
@@ -414,7 +419,7 @@ fn ws_recv_frame(ws, opcode_out, len_out): i64 {
         while (i < plen) {
             var mb = (mask >> ((i % 4) * 8)) & 0xFF;
             p[i] = p[i] ^ mb;
-            i = i + 1;
+            i += 1;
         }
     }
     store8(payload + plen, 0);
