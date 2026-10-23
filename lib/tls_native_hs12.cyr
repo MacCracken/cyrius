@@ -631,9 +631,14 @@ fn _tn_build_certificate_12(ctx, out, out_max): i64 {
 # Explicit ordered bounds checks; rejects an empty certificate_list
 # (the server MUST authenticate) and a zero inner cert length; bounds
 # the cert against the list, not just the message. Parses the leaf via
-# sigil x509 and stores it at OFF_SERVER_CERT. Chain path-validation
-# is not performed in .74 (single-leaf only). Returns TLS_OK or a
+# sigil x509 and stores it at OFF_SERVER_CERT, and the certificates after it
+# (TLS order, up to 16; one that does not parse is skipped, as the TLS 1.3
+# client skips one) at OFF_SERVER_INTERS for _tn_verify_chain. Every entry
+# must be a non-empty ASN.1Cert inside the list. Returns TLS_OK or a
 # negative TLS_ERR_*.
+# ⛔ 6.7.18 — WHY the intermediates: this kept the leaf only, so a TLS 1.2 server
+# that sent its intermediate (most do) failed every verifying connect — no path
+# to a root — and no 1.2 chain ever met a CA's nameConstraints. CHANGELOG [6.7.18]
 fn _tn_parse_certificate_12(ctx, body, blen): i64 {
     if (blen < 3) { return TLS_ERR_BAD_HANDSHAKE; }
     var list_len = _tn_be24_r(body);
@@ -650,6 +655,29 @@ fn _tn_parse_certificate_12(ctx, body, blen): i64 {
     if (leaf == 0) { return TLS_ERR_OOM; }
     if (x509_parse_into(body + cp, cert_len, leaf, _tn_arena(ctx)) != 1) { return TLS_ERR_CERT_INVALID; }
     store64(ctx + TLS_CTX_OFF_SERVER_CERT, leaf);
+    var list_end = 3 + list_len;
+    cp = cp + cert_len;
+    var inters = _tn_alloc(ctx, 8 + 16 * 8);
+    if (inters == 0) { return TLS_ERR_OOM; }
+    var nint = 0;
+    while (cp < list_end) {
+        if (cp + 3 > list_end) { return TLS_ERR_BAD_HANDSHAKE; }
+        var il = _tn_be24_r(body + cp);
+        cp = cp + 3;
+        if (il == 0) { return TLS_ERR_BAD_HANDSHAKE; }                 # ASN.1Cert<1..2^24-1>
+        if (il > list_end - cp) { return TLS_ERR_BAD_HANDSHAKE; }
+        if (nint < 16) {
+            var ic = x509_cert_alloc_into(_tn_arena(ctx));
+            if (ic == 0) { return TLS_ERR_OOM; }
+            if (x509_parse_into(body + cp, il, ic, _tn_arena(ctx)) == 1) {
+                store64(inters + 8 + nint * 8, ic);
+                nint = nint + 1;
+            }
+        }
+        cp = cp + il;
+    }
+    store64(inters, nint);
+    store64(ctx + TLS_CTX_OFF_SERVER_INTERS, inters);
     return TLS_OK;
 }
 

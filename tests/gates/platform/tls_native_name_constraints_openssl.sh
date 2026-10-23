@@ -13,7 +13,7 @@
 # below it. The verdict table at every depth, offline on every host target, is
 # tests/tcyr/crossos/tls_native_name_constraints.tcyr.
 #
-# ROWS — the native client (TLS 1.3) against `s_server -naccept 1 -rev`; each row
+# ROWS — the native client (TLS 1.3; the 1.2 rows below) against `s_server -naccept 1 -rev`; each row
 # also asks `openssl verify -purpose sslserver` for its verdict on the same files, and a row whose
 # native verdict differs from OpenSSL's fails unless it is the named divergence:
 #   the audit's repro: victim-bank.test <- int_nc (non-critical permitted;DNS:good.test) <- root
@@ -29,13 +29,18 @@
 #     (so the literal hostname check passes), under nc-lower <- int_xv (excluded;DNS:victim-bank.test)
 #     REFUSED — OpenSSL 3.6.5 compares literally and lets it out (the named divergence);
 #   control: victim-bank.test <- int_plain <- root connects (the PKI is sound without constraints).
+#   TLS 1.2 (6.7.18, met here — the 1.2 client's Certificate parser kept the leaf only, so it
+#     failed every server that sends an intermediate, the 1.2 control row 6.7.17 failed): the
+#     control and www.good.test <- nc-lower <- int_nc connect; the audit's repro, the upper-CA and
+#     the anchor refusals are REFUSED.
 # SKIP (exit 77, named): openssl(1) missing. ANTI-VACUITY: the rows run are counted and floored.
 #
 # MEASURED RED (6.7.18): with l6718-integ's lib/ (sigil 3.13.13, no walker check) 5 rows fail —
 # the audit's repro and the upper-CA refusal connect (and echo), and every row through a CRITICAL
 # constraint fails to install or parse it (int_ncc's permitted row, both anchor rows); with sigil
 # 3.13.14 refolded and no walker check 3 fail — the anchor, upper-CA and trailing-dot refusals
-# connect (the direct issuer's constraints are already caught by sigil's link check).
+# connect (the direct issuer's constraints are already caught by sigil's link check). The 1.2 rows
+# that connect fail on the parent of the 1.2 fix (connect -6: no path without the intermediates).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -50,7 +55,7 @@ BGP=""
 trap 'for p in $BGP; do kill "$p" 2>/dev/null || true; done; rm -rf "$T"' EXIT
 FAILS=0
 NROWS=0
-FLOOR=12
+FLOOR=17
 TO=""
 command -v timeout >/dev/null 2>&1 && TO="timeout 30"
 
@@ -247,6 +252,11 @@ row 13 root    leaf_l_victim lower,int_nc    victim-bank.test  refused 47 "an UP
 row 13 root    leaf_l_www    lower,int_nc    www.good.test     ok      ok "an UPPER CA: www.good.test <- nc-lower <- int_nc <- root"
 row 13 root    leaf_l_dot    lower,int_xv    victim-bank.test. refused ok-diverges "the trailing dot: victim-bank.test. <- nc-lower <- int_xv (excluded victim-bank.test)"
 row 13 root    leaf_l_victim lower,int_plain victim-bank.test  ok      ok "control: victim-bank.test <- nc-lower <- int_plain <- root connects"
+row 12 root    leaf_victim   int_plain       victim-bank.test  ok      ok "control: victim-bank.test <- int_plain <- root connects"
+row 12 root    leaf_victim   int_nc          victim-bank.test  refused 47 "the audit's repro: victim-bank.test <- int_nc <- root"
+row 12 root    leaf_l_www    lower,int_nc    www.good.test     ok      ok "an UPPER CA: www.good.test <- nc-lower <- int_nc <- root"
+row 12 root    leaf_l_victim lower,int_nc    victim-bank.test  refused 47 "an UPPER CA: victim-bank.test <- nc-lower <- int_nc <- root"
+row 12 root_nc leaf_victim   int_plain       victim-bank.test  refused 47 "the ANCHOR: victim-bank.test <- int_plain <- root_nc"
 
 if [ "$NROWS" -lt "$FLOOR" ]; then _fail "only $NROWS rows ran (floor $FLOOR)"; fi
 if [ "$FAILS" = 0 ]; then echo "PASS: $G: $NROWS rows"; exit 0; fi

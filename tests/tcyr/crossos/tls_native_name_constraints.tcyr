@@ -335,6 +335,91 @@ fn test_self_issued_and_paths(): i64 {
     return 0;
 }
 
+
+# A TLS 1.2 Certificate body (certificate_list<0..2^24-1> of ASN.1Cert<1..2^24-1>) carrying `leaf`
+# then the parsed certificates of `l` ([count][cert ptrs]; 0 = none), each `extra` byte appended
+# inside the list as written (the malformed rows), for _tn_parse_certificate_12.
+fn _nc_12_body(leaf, l, extra, extra_n): i64 {
+    var n = 0;
+    if (l != 0) { n = load64(l); }
+    var total = 3 + load64(leaf + 8);
+    var i = 0;
+    while (i < n) { total = total + 3 + load64(load64(l + 8 + i * 8) + 8); i = i + 1; }
+    total = total + extra_n;
+    var b = alloc(3 + total);
+    _tn_be24_w(b, total);
+    var p = b + 3;
+    _tn_be24_w(p, load64(leaf + 8));
+    memcpy(p + 3, load64(leaf), load64(leaf + 8));
+    p = p + 3 + load64(leaf + 8);
+    i = 0;
+    while (i < n) {
+        var c = load64(l + 8 + i * 8);
+        _tn_be24_w(p, load64(c + 8));
+        memcpy(p + 3, load64(c), load64(c + 8));
+        p = p + 3 + load64(c + 8);
+        i = i + 1;
+    }
+    if (extra_n > 0) { memcpy(p, extra, extra_n); }
+    return b;
+}
+
+# _tn_parse_certificate_12 into a fresh client ctx trusting `root` for `host`, then the client's
+# chain verdict; the parser's own result when it refuses.
+fn _nc_12(root, host, leaf, l, extra, extra_n): i64 {
+    var c = tls_native_new_client(host, strlen(host));
+    tls_native_set_ca_bundle(c, load64(root), load64(root + 8), 1);
+    var b = _nc_12_body(leaf, l, extra, extra_n);
+    var r = _tn_parse_certificate_12(c, b, 3 + _tn_be24_r(b));
+    if (r != TLS_OK) { return r; }
+    return tls_native_client_verify_chain(c, NC_NOW);
+}
+
+# The number of intermediates the 1.2 parser kept, or -1 when it refused the body.
+fn _nc_12_kept(leaf, l): i64 {
+    var c = tls_native_new_client("x.test", 6);
+    var b = _nc_12_body(leaf, l, 0, 0);
+    if (_tn_parse_certificate_12(c, b, 3 + _tn_be24_r(b)) != TLS_OK) { return 0 - 1; }
+    var k = load64(c + TLS_CTX_OFF_SERVER_INTERS);
+    if (k == 0) { return 0; }
+    return load64(k);
+}
+
+# 6.7.18 (met with this file's end-to-end gate): the TLS 1.2 client's Certificate parser stored the
+# leaf only, so a 1.2 server sending its intermediate failed every verifying connect
+# (TLS_ERR_CERT_INVALID: no path) — and nameConstraints never reached a 1.2 chain.
+fn test_tls12_chain(): i64 {
+    test_group("TLS 1.2: the client's Certificate parser keeps the server's intermediates");
+    _nc_ok(_nc_12(_nc_root, "victim-bank.test", _nc_leaf_victim, _nc_inters(_nc_int_plain, 0, 0), 0, 0),
+      "victim-bank.test <- int_plain <- root, as a 1.2 Certificate: verifies");
+    _nc_ok(_nc_12(_nc_root, "www.good.test", _nc_leaf_l_www, _nc_inters(_nc_lower, _nc_int_nc, 0), 0, 0),
+      "www.good.test <- nc-lower <- int_nc <- root, as a 1.2 Certificate: verifies");
+    _nc_no(_nc_12(_nc_root, "victim-bank.test", _nc_leaf_victim, _nc_inters(_nc_int_nc, 0, 0), 0, 0),
+      "the audit's repro as a 1.2 Certificate: REFUSED");
+    _nc_no(_nc_12(_nc_root, "victim-bank.test", _nc_leaf_l_victim, _nc_inters(_nc_lower, _nc_int_nc, 0), 0, 0),
+      "victim-bank.test <- nc-lower <- int_nc, as a 1.2 Certificate: REFUSED");
+    assert_eq(_nc_12_kept(_nc_leaf_l_www, _nc_inters(_nc_lower, _nc_int_nc, 0)), 2, "two intermediates sent, two kept");
+    assert_eq(_nc_12_kept(_nc_leaf_www, 0), 0, "a leaf alone: none kept");
+    var m = alloc(8 + 17 * 8);
+    store64(m, 17);
+    var i = 0;
+    while (i < 17) { store64(m + 8 + i * 8, _nc_int_plain); i = i + 1; }
+    assert_eq(_nc_12_kept(_nc_leaf_www, m), 16, "seventeen sent: sixteen kept, as the TLS 1.3 client keeps");
+    test_group("TLS 1.2: a malformed entry after the leaf is a malformed message");
+    var z = alloc(8);
+    store64(z, 0);
+    assert_eq(_nc_12(_nc_root, "www.good.test", _nc_leaf_www, _nc_inters(_nc_int_nc, 0, 0), z, 3),
+      TLS_ERR_BAD_HANDSHAKE, "a zero-length ASN.1Cert: TLS_ERR_BAD_HANDSHAKE");
+    store8(z, 0);
+    store8(z + 1, 0);
+    store8(z + 2, 9);
+    assert_eq(_nc_12(_nc_root, "www.good.test", _nc_leaf_www, _nc_inters(_nc_int_nc, 0, 0), z, 5),
+      TLS_ERR_BAD_HANDSHAKE, "an entry running past the list: TLS_ERR_BAD_HANDSHAKE");
+    assert_eq(_nc_12(_nc_root, "www.good.test", _nc_leaf_www, _nc_inters(_nc_int_nc, 0, 0), z, 2),
+      TLS_ERR_BAD_HANDSHAKE, "a length cut short at the list's end: TLS_ERR_BAD_HANDSHAKE");
+    return 0;
+}
+
 fn _nc_all(): i64 {
     alloc_init();
     _nc_fixtures();
@@ -346,6 +431,7 @@ fn _nc_all(): i64 {
     test_upper_ca();
     test_trailing_dot();
     test_self_issued_and_paths();
+    test_tls12_chain();
     return 0;
 }
 
