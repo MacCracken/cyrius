@@ -623,6 +623,10 @@ check "  (premise: the 93-column box line is 275 bytes and its newline)" 276 "$(
 check "only the 121-column lines warn (box 121 cols on line 3, ASCII 121 on line 5)" "3 5" "$(llen "$T/cols.cyr")"
 lint_run --strict-deferrals "$ROOT/lib/async_agnos.cyr" || :
 check "lib/async_agnos.cyr: no untracked deferral (its _async_step comment describes task state)" "0 0 untracked deferrals" "$LRC $(grep 'untracked deferrals' "$T/lo" "$T/le" | sed 's/^[^:]*://')"
+# 6.7.18: lib/slice.cyr's header said dot syntax was "NOT yet wired" ("for now" use the accessors)
+# and element-typed `s[i]` was "a follow-up" — three untracked notes for features shipped in 5.8.x.
+lint_run --strict-deferrals "$ROOT/lib/slice.cyr" || :
+check "lib/slice.cyr: no untracked deferral (its header describes the slice surface as it is)" "0 0 untracked deferrals" "$LRC $(grep 'untracked deferrals' "$T/lo" "$T/le" | sed 's/^[^:]*://')"
 
 echo ""
 nhard=$(wc -l < "$T/hard" | tr -d ' ')
