@@ -2,6 +2,1537 @@
 # ================================================================
 # Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
 
+# 6.7.18 — _PARSE_FACTOR_IMPL's largest arms, each its own fn (an identifier here; `&`, `syscall(..)`, `await` and a
+# closure literal below): that fn had used 898 of its 1024 per-fn x86 jump sources. Each arm ended in a `return` on
+# every path, so `return _pf_X(S);` is the arm. Moved verbatim (one level less indent). CHANGELOG [6.7.18]
+# An identifier: a variable load or a call.
+fn _pf_ident(S): i64 {
+    # IDENT — variable load or function call
+    var noff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    if (_cur_iself_sid > 0) { _iself_arith_check(S, noff); }   # 6.7.0 (A4)
+    if (_call_field(S) == 1) { return 0; }   # 6.6.12: `f(..).field` / `f<T>(..).field`
+    # v6.3.10 (explicit): `foo<i64>(x)` explicit type-arguments. Gated on the
+    # monomorph flag AND a generic-fn callee AND the `foo<...>(` lookahead shape,
+    # so `a < b`, chained comparisons, and calls to non-generic fns are never
+    # misread (flag-off / non-generic → byte-identical default path). v6.3.10
+    # bite-1 supports i64 type-args (the base IS the i64 instance → normal call);
+    # non-i64 type-args (instantiate-once) land in a follow-on bite.
+    # 6.7.17 (D7): under CYRIUS_MONOMORPH=0 too — refused there by name, the base call parsed (`_eta_arm`).
+    if (PEEKT(S) == 19) { if (_eta_arm(S, noff) == 1) { return 0; } }
+    # Check for function call
+    if (PEEKT(S) == 10) {
+        PARSE_FNCALL(S, noff);
+        # v6.4.55: if the callee returns scalar f64 (sentinel -9), the double is in
+        # xmm0 (SysV/Win64) — bring it back into rax (cyrius's f64-boxing register)
+        # and tag the expr F64_TYID so a bare +,-,*,/,compare on the call result
+        # dispatches to the f64 emitters, not integer ops. EMOVQ_A_X0 = `movq rax,
+        # xmm0` on x86/PE/macho, a no-op on aarch64/cx (value already in x0/r0).
+        _call_ret_marks(S, FINDFN(S, noff));   # 6.6.17: + a `*T` return's pointer scale
+        _cfo = 0;
+        return 0;
+    }
+    # Check for enum.variant or struct.field access.
+    # v6.3.36: `..` (range) is NOT field access — a `.` immediately followed by
+    # another `.` belongs to the enclosing `for i in start..end`. Skip the
+    # field-access branch so the identifier falls through to the normal scalar
+    # load below (leaving `..` for the range parser). Fixes `for i in IDENT..hi`.
+    if (PEEKT(S) == 41 && TOKTYP(S, GTI(S) + 1) != 41) {
+        # v6.4.24 (P1 fix): `Enum.VARIANT` ignores the base and loads VARIANT (a
+        # global const) whenever the field name is ALSO a global var. But that
+        # over-matches `struct_var.field` when `field` SHADOWS a global var name:
+        # `bc.exit_code` silently loaded the global `exit_code` (=0) instead of the
+        # Container field @+72 (the size-dependent silent-wrong-read — only bites
+        # when the field name happens to also be a top-level var, so small repros
+        # passed). The base of an enum-variant access is a bare ENUM TYPE NAME, never
+        # a variable — so if the base IS a known local/global var, `.field` is a
+        # FIELD access, full stop. Guard the enum-variant branch on that.
+        var _base_is_var = 0;
+        if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { _base_is_var = 1; } }
+        if (_base_is_var == 0) { if (FINDVAR(S, noff) >= 0) { _base_is_var = 1; } }
+        # Peek: is the second ident a known global var? (enum variant)
+        var dot_ti = GTI(S);
+        STI(S, GTI(S) + 1);
+        if (_base_is_var == 0 && PEEKT(S) == 2) {
+            # 6.6.11: the base must be the variant's own enum (_enum_qual_resolve).
+            var vi = _enum_qual_resolve(S, dot_ti - 1);
+            if (vi >= 0) {
+                # Enum.VARIANT — load the variant's global value.
+                # v5.5.2: if this gvar was registered by PARSE_ENUM_DEF
+                # as an enum constant (GVECP presence flag set; raw
+                # value in _vecv_base), fold to EMOVI and mark _cfo=1 so
+                # callers like the syscall sc_num dispatch can read
+                # the compile-time value. (6.6.8: at any var index —
+                # the old 1024-slot cap is gone, see util.cyr GVECP.)
+                STI(S, GTI(S) + 1);
+                if (vi >= 0) {
+                    if (GVECP(S, vi) == 1) {
+                        var _evq = L64(_vecv_base + vi * 8);
+                        _cfp = GCP(S);
+                        EMOVI(S, _evq);
+                        if (_evq < 0x10000) { _cfv = _evq; _cfo = 1; }
+                        else { _cfo = 0; }
+                        return 0;
+                    }
+                }
+                EVLOAD(S, vi);
+                _cfo = 0;
+                return 0;
+            }
+            if (_enum_qual_said(S, vi) == 1) { return 0; }   # 6.7.16: a member of no enum, reported
+        }
+        # Not an enum — rewind and do struct field load
+        STI(S, dot_ti);
+        PARSE_FIELD_LOAD(S, noff);
+        _cfo = 0;
+        return 0;
+    }
+    if (_arr_sub_read(S, noff) == 1) { return 0; }   # 6.6.12: `a[i]` (see _arr_sub_addr)
+    # Variable load — check local first if in function
+    SPSC(S, 0);
+    if (_cst_read_local(S, noff) == 1) { return 0; }   # 6.7.2 (B1): a local const is its value
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (_slice_sub_read(S, li) == 1) { return 0; }   # v5.8.15: `s[i]` on a slice local
+            var lt = _load_lt(S, li);   # 6.6.17: a typed pointer's value is a plain word
+            # v6.2.19 math arc: f64/f32 locals — load the 8-byte value and tag
+            # the expression f64/f32 so PEXPR/PARSE_TERM route operators to the
+            # f64 builtins (skip the SPSC pointer-scale + sub-word paths below).
+            if (lt == F64_TYID) { SESTYPE(S, F64_TYID); EFLLOAD(S, li); return 0; }
+            # v6.4.56 (scalar-float D2): f32 now has scalar arithmetic — load the
+            # 8-byte value and propagate F32_TYID so PEXPR/PARSE_TERM route +,-,*,/
+            # and comparisons to EMIT_F32_BINOP / EF32_CMP (single-precision).
+            if (lt == F32_TYID) { EFLLOAD(S, li); SESTYPE(S, F32_TYID); return 0; }
+            _lt_spsc(S, li, lt);   # SPSC(S, lt); 6.7.8: a step-8 `*T` local's step word
+            # Width-correct load for scalar types (1=i8, 2=i16, 4=i32)
+            # v6.3.34: a sub-i64 SCALAR local (SLTYPE 1/2/4 for i8/i16/i32) is NOT
+            # a pointer — the SPSC(S, lt) above sets a step of lt, which would make
+            # `a + 2` on a plain `var a: i32` add 2*sizeof(i32). Reset for lt < 8 ONLY:
+            # SLTYPE 8 is a `*i64` typed pointer (scalar i64 is SLTYPE 0), which needs
+            # its step for `p + i`. 6.7.11: reset to 0, an integer's — it was 1, which
+            # scales nothing but answers "a pointer" to every `> 0` test, so `w - q32`
+            # was refused as a pointer difference and `var r: *u32 = w;` did not warn,
+            # where an i64 local, a narrow global and a narrow parameter are integers.
+            # CHANGELOG [6.7.11]
+            if (lt > 0) { if (lt <= 8) {
+                    if (lt < 8) { SPSC(S, 0); }
+                    SEXW(S, lt);
+                    # v6.3.35: a SIGNED sub-i64 local (marked by a negative slice-width
+                    # sentinel) loads via movsx (negative width); unsigned stays movzx.
+                    var _lw = lt;
+                    if (lt < 8) { if (GSLICE_W(S, li) < 0) { _lw = 0 - lt; } }
+                    EFLLOAD_W(S, li, _lw);
+                    return 0;
+                } }
+            # ⛔ 6.6.5 — OPERATOR OVERLOADING WORKED FOR GLOBALS AND NOT FOR LOCALS, and the
+            # difference was invisible: `var a: Num; a.v = 1; ... a + b` compiled clean and
+            # did an INTEGER ADD of the two struct words, while the identical top-level
+            # declaration dispatched `Num_add`. Measured 3 against 102 for the same source
+            # moved inside a fn. Only an INLINE local dispatches — a pointer-mode one holds
+            # an address, where `+` is pointer arithmetic (the global half of this rule is
+            # a few lines below). A multi-word value is passed BY ADDRESS, matching what
+            # `EMIT_OP_DISPATCH` already does for a >8 B global. CHANGELOG [6.6.5]
+            if (lt < 0) { if (lt > 0 - 2048) { if (_op_local_dispatches(S, li) == 1) {
+                        SESTYPE(S, 0 - lt);
+                        if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
+                        _esv_name = 0 - 2 - li;   # 6.6.20: see `_op_operand_sv`
+                    } } }
+            EFLLOAD(S, li);
+            if (lt == 0) { _sl_load_marks(S, li); }   # 6.6.10 the float flag, 6.6.16 the *iN mark
+            return 0;
+        }
+    }
+    # v6.3.8 — captured free variable. Inside a capturing closure body, an
+    # identifier that is NOT a closure local (FINDLOCAL failed above) but IS an
+    # enclosing local reads from the heap env object — the hidden first param at
+    # slot `_cl_env_lidx`, captured value at env[1 + capture_index].
+    if (_cl_capturing == 1) {
+        if (_cl_env_lidx >= 0) {
+            var cl_esl = _cl_snap_find(S, noff);
+            if (cl_esl >= 0) {
+                var cl_capi = _cl_cap_find(cl_esl);
+                if (cl_capi >= 0) {
+                    _CL_CAP_OPTYPE(S, cl_esl, cl_capi);              # see the fn's note
+                    _CL_CAP_WORDS_RA(S, cl_capi);                    # rax = &env[woff]
+                    if (_cl_cap_w128(S, cl_esl) == 1) { return 0; }   # 6.7.14: a u128 is its value
+                    # 6.6.5: a multi-word capture IS those words — its value is its
+                    # address, the same convention an enclosing inline aggregate has in
+                    # its own frame. A single-word capture is a value; load it.
+                    if (L64(&_cl_cap_w + cl_capi * 8) > 1) {
+                        if (_cl_snap_arr(cl_esl) == 1) { ELOAD64(S); return 0; }   # 6.7.17: its first word
+                        SPSC(S, 1);
+                        return 0;
+                    }
+                    _cl_cap_load(S, cl_esl);                         # rax = captured value (6.7.3: + a bool's mark)
+                    return 0;
+                }
+            }
+        }
+    }
+    var idx = FINDVAR(S, noff);
+    if (idx >= 0) { if (_cst_read_global(S, idx) == 1) { return 0; } }   # 6.7.2: an f64 / string const
+    if (idx < 0) {
+        if (_slit_stray(S, noff) == 1) { return 0; }   # 6.7.14 (D12 (a)): `P { .. }` here
+        # v6.5.19: under --syntax-only an unresolved read becomes the constant 0
+        # and we return exactly as the sibling success paths above do, so the
+        # token stream stays in sync and no cascade is invented. See _syntax_only
+        # (src/common/util.cyr) for why report-and-continue was rejected here.
+        _undef_read(S, noff);   # 6.7.14: once per token (ERR_UNDEF); 6.7.16: `nofn<i64>(1)` is a call (`_ugc_call`)
+        return 0;
+    }
+    var vt = GVTYPE(S, idx);
+    _gv_load_ps(S, idx, vt);
+    if (vt > 0) {
+        # Disambiguate scalar types from struct IDs using var_sizes:
+        # Scalar i8/i16/i32 have var_sizes 1/2/4. Structs have var_sizes >= 8.
+        var gvsz = L64(_vars_base + idx * 8);
+        if (gvsz < 8) {
+            _gv_narrow_sx(S, idx, vt, gvsz);   # 6.7.10: a struct value under 8 B dispatches
+            # v6.4.23: a SIGNED sub-i64 global (i8/i16/i32) loads via movsx —
+            # pass a NEGATIVE width so EVLOAD_W's _EMIT_NLOAD_RCX (x86) / signed
+            # arms (aarch64) sign-extend. Unsigned (uN) stays zero-extend. Mirrors
+            # the local negative-width sentinel (the local load's `_lw` above).
+            var _gw = gvsz;
+            if (GVSGN(S, idx) == 1) { _gw = 0 - gvsz; }
+            EVLOAD_W(S, idx, _gw);
+            return 0;
+        }
+        # 6.6.5 — ONLY AN INLINE STRUCT VALUE DISPATCHES AN OPERATOR. A pointer-mode
+        # struct global (`var s: Str = 0;`) holds an ADDRESS, so `s + 8` is pointer
+        # arithmetic; setting the expression's struct type here sent it to a `Str_add`
+        # that does not exist and failed the COMPILE. `_var_ptrmode` is the recorded
+        # layout (1 = the slot holds an address). CHANGELOG [6.6.5]
+        if (GVPM(S, idx) != 1) {
+            SESTYPE(S, vt);
+            if (gvsz > 8) { SESVAR(S, idx); }
+            _esv_name = idx;   # 6.6.20: see `_op_operand_sv`
+        }
+    }
+    # v5.5.2: bare identifier resolving to an enum constant folds to
+    # EMOVI with _cfo=1 so the syscall-reroute dispatch (and any
+    # other _cfv-driven optimization) can see the value at parse
+    # time. Enum registration stores the raw value in _vecv_base and
+    # sets the slot's GVECP presence flag; a flagged gvar is a fold
+    # candidate. (6.6.8: at any var index — the 1024-slot cap is gone,
+    # see util.cyr GVECP.)
+    if (idx >= 0) {
+        if (GVECP(S, idx) == 1) {
+            var _ev = L64(_vecv_base + idx * 8);
+            _cfp = GCP(S);
+            EMOVI(S, _ev);
+            if (_ev < 0x10000) { _cfv = _ev; _cfo = 1; }
+            else { _cfo = 0; }
+            return 0;
+        }
+    }
+    EVLOAD(S, idx);
+    if (vt == 0) { _UFV_G(S, idx); }   # 6.6.10: an untyped float variable (kind 3)
+    return 0;
+}
+# `&var` / `&fn`. Out of _PARSE_FACTOR_IMPL (see _pf_ident). CHANGELOG [6.7.18]
+fn _pf_amp(S): i64 {
+    # &var or &fn — address of variable or function
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 2) { _amp_not_name(S); return 0; }   # 6.7.15: one error, the factor ends there
+    var anoff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    # 6.7.2 (B1): a const has no address; 6.7.3: nor has an enum constant (parse/fn.cyr).
+    if (_addr_lvalue_refused(S, anoff) == 1) { EMOVI(S, 0); return 0; }
+    # Resolution order is local → global → function: a VALUE of a
+    # given name shadows a function of the same name (correct lexical
+    # scoping). Pre-v6.0.35 this checked FINDFN *first*, so a local
+    # array named `argv` (shadowing stdlib `fn argv`) had `&argv`
+    # resolve to the function's __TEXT code address; the subsequent
+    # store wrote into __TEXT — silently masked on Linux (the load
+    # segment is RWX) but a hard SIGBUS on macOS (W^X). See
+    # CHANGELOG [6.0.35].
+    # Local (innermost scope) wins.
+    if (GINFN(S) == 1) {
+        var ali = FINDLOCAL(S, anoff);
+        if (ali >= 0) {
+            # ⛔ 6.6.6 (bite 16 review) — `&q` ON AN ADDRESS-PASSED BY-VALUE STRUCT PARAMETER
+            # IS THE STRUCT, NOT THE SLOT. `q` in `fn h(q: P3)` denotes the caller's struct
+            # (that is why `q.z` already reads the caller's field), but `&q` took the
+            # rbp-relative address of the word that HOLDS the pointer: `load64(&q + 16)`
+            # returned 0 on 6.6.5 and on the compiler 16b shipped, where the identical code
+            # on an inline local returns 9. So `&q` and `q.z` addressed two different things.
+            # The slot's CONTENT already IS the struct's address — load it. No `_fn_local_addr`
+            # here, deliberately: this frame's address does NOT escape (the pointer is the
+            # CALLER's), so a tail call in this fn stays legal. CHANGELOG [6.6.6]
+            # 6.7.9: never for a `q: *P` parameter, whose `&q` is its slot (`_addr_is_slot_content`).
+            if (_addr_is_slot_content(S, ali) == 1) { EFLLOAD(S, ali); SPSC(S, 1); return 0; }
+            var adisp = 0 - ((ali + 1) * 8);
+            # v4.9.1: shift past all reserved callee-saved slots
+            if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }
+            if (_cur_fn_ret_stash > 0) { adisp = adisp - _cur_fn_ret_stash; }
+            # v5.11.36 path-A: dispatch lives in
+            # <backend>/emit.cyr::ELOAD_LOCAL_ADDR.
+            # v6.5.14: this frame's address has now escaped into a value.
+            # Any tail call in this fn would free the frame before the
+            # callee dereferences it — disable TCO for the rest of the fn.
+            _fn_local_addr = 1;
+            ELOAD_LOCAL_ADDR(S, adisp);
+            # v6.5.29 — `&x` IS a pointer, so say so. This branch never set a pointer
+            # scale, so `var p: *i64 = &nodes;` — the canonical address-of idiom — tripped
+            # `assigning non-pointer to typed pointer`, the compiler warning about the one
+            # expression form that cannot possibly be a non-pointer.
+            # ⚠ Scale 1 (BYTE-addressed), deliberately, not 8. Pointer arithmetic in this
+            # tree is written in BYTES at the source level (`&nodes + i * 16`), and
+            # EPTR_SCALE multiplies the addend by the scale — so any value above 1 would
+            # silently re-scale every existing `&x + n` site and change what compiled code
+            # DOES. Scale 1 multiplies by 1 and divides by 1: arithmetic-neutral by
+            # construction, which is why the self-host stays byte-identical.
+            SPSC(S, 1);
+            return 0;
+        }
+    }
+    # 6.6.5 — `&name` on a CAPTURED enclosing local. A closure could not take the address
+    # of an enclosing stack array at all (`&buf` inside `|a| ... load64(&buf)` reported
+    # "undefined variable 'buf'"), because this ladder went local → global → fn with no
+    # rung for the env object. The captured words live at `env + woff*8`.
+    if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
+            var acap_esl = _cl_snap_find(S, anoff);
+            if (acap_esl >= 0) {
+                var acap_i = _cl_cap_find(acap_esl);
+                if (acap_i >= 0) {
+                    _CL_CAP_WORDS_RA(S, acap_i);
+                    SPSC(S, 1);
+                    return 0;
+                }
+            }
+        } }
+    # Global next.
+    var aidx = FINDVAR(S, anoff);
+    if (aidx >= 0) {
+        EVADDR(S, aidx);
+        SPSC(S, 1);   # v6.5.29 — see the note above: `&global` is a pointer too.
+        return 0;
+    }
+    # Neither a local nor a global of this name → function pointer
+    # (&fn_name), emitted as a fixup-type-3 function address.
+    var fni = FINDFN(S, anoff);
+    if (fni >= 0) {
+        if (_amp_targs(S, fni) == 1) { return 0; }   # 6.7.17: `&g<i32>` refused by name, `&nf<i32>` stepped
+        # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
+        # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
+        _callee_site_checks_here(S, fni, anoff, 1);   # 6.6.16: and `#deprecated` — `&old_f` was silent
+        _gen_addr_check(S, fni, anoff);   # 6.6.10: `&g` of a stub generic reaches the stub
+        var fc = GFCNT(S);
+        if (fc >= 1048576) {
+            _ew("error: fixup table full (1048576)\n", 34);
+            _die(1);
+        }
+        # Register the function-address fixup (common to both
+        # backends — only the placeholder bytes differ).
+        var fnaddr = _fixup_base + fc * 16;
+        # v5.11.36 path-A: parser-to-emit named-op refactor.
+        # Dispatch + fixup record + SFCNT all live in
+        # <backend>/emit.cyr::ELOAD_FN_ADDR.
+        _lfa_load(S, fnaddr, fc, fni);   # 6.7.6 (FE): ELOAD_FN_ADDR, recording `f` for fncallN
+        return 0;
+    }
+    # Nothing of this name exists in any scope.
+    if (_syntax_only == 1) { if (_unp_names == 0) { EMOVI(S, 0); return 0; } }   # v6.5.19: see _syntax_only; 6.7.17 (D110)
+    _undef_var_report(S, _nm_ti(S, GTI(S) - 1, anoff), anoff, "");   # 6.7.14: once per token (ERR_UNDEF)
+    EMOVI(S, 0); return 0;
+}
+# `syscall(..)`, every target's lowering. Out of _PARSE_FACTOR_IMPL (see _pf_ident). CHANGELOG [6.7.18]
+fn _pf_syscall(S): i64 {
+    # syscall(args...)
+    STI(S, GTI(S) + 1);
+    _expect_step(S, 10);
+    var argc = 0;
+    var sc_num = 0 - 1;
+    var scgo = 1;
+    while (scgo == 1) {
+        PCMPE(S);
+        if (argc == 0) { if (_cfo == 1) { sc_num = _cfv; } }
+        EPUSHR(S);
+        argc = argc + 1;
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+        else { scgo = 0; }
+    }
+    _expect_step(S, 11);   # 6.7.14: a miss keeps a `;` / keyword (and see `_sc_arity_warn`)
+    # Mach-O ARM target: the aarch64 ESYSXLAT chain translates the
+    # BSD SVC whitelist (read, write, open, close, mmap, mprotect,
+    # munmap, exit). Non-whitelisted syscalls fall through to svc with
+    # a Linux number, which is either nonexistent on XNU or carries
+    # different semantics — a real runtime hazard. v5.5.15 demoted
+    # this from a hard parse-time error to a warning because the old
+    # error rejected syscalls inside UNCALLED stdlib helpers (e.g.
+    # `lib/io.cyr`'s `syscall(73)` flock wrappers) and blocked
+    # cross-compiling Cyrius tool binaries whose hot paths only touch
+    # the whitelist. If the warned syscall is actually reachable at
+    # runtime, the resulting binary faults visibly on macOS — which
+    # is a strictly better failure mode than a compile-time refusal
+    # to build something that would have worked. v5.5.17 pins the
+    # follow-up that adds ESYSXLAT translations or `__got` reroutes
+    # for specific syscalls the tools actually exercise.
+    # v6.5.43 put the x86 Mach-O half beside it; v6.6.8 made both ARITY-aware and moved them
+    # into _macho_warn_unrouted (below _PE_ROUTE_PERFCOUNTER) so this fn does not grow; 6.7.10
+    # wraps it with the execution-coverage exit hook (parse/cov.cyr `_sc_args_done`).
+    _sc_args_done(S, sc_num, argc);
+    # v6.5.51 — ELF-aarch64: a raw syscall NUMBER that is really an x86_64 number.
+    # ESYSXLAT's aarch64 arm passes unmatched numbers through to the `svc` verbatim,
+    # which is correct by design (native numbers must not be rewritten) — but it means
+    # a stray x86_64 number is indistinguishable from an intended native one, so the
+    # build succeeds and a DIFFERENT, VALID syscall runs. Filed from darshana; the
+    # `var SYS_* = <x86 number>` shadow half was diagnosed at v6.5.50.
+    #
+    # ⛔ THIS NEEDS REAL DATA, NOT A HEURISTIC. "warn if the number is not a valid
+    # SYS_* value here" catches 61 of the 71 differing syscalls and misses the 10 that
+    # matter most, because those x86 numbers ARE real aarch64 syscalls: uname 63 is
+    # read, kill 62 is lseek, execve 59 is pipe2, wait4 61 is getdents64. The table is
+    # DERIVED (src/common/syscall_xlat.cyr, generated by programs/gen_syscall_xlat.cyr):
+    # which numbers warn comes from the two stdlib peers, so it cannot drift from the
+    # stdlib it describes, and what each number MEANS on ARM comes from the committed
+    # kernel table, because the peer cannot name calls the stdlib has no wrapper for.
+    #
+    # Gated implicitly, not by a target flag: `_SYSX_MEANT` is the real table only on
+    # the aarch64 backend and a `return 0;` stub on x86/PE/cx, so this costs those
+    # forks nothing. `_TARGET_MACHO == 0` keeps it off the Mach-O ARM arm, which has
+    # its own routing diagnostic above.
+    if (_TARGET_MACHO == 0) { _sysx_raw_warn(S, sc_num); }
+    # PE32+ (Windows): reroute recognised Linux syscall numbers to
+    # kernel32 IAT calls so the generic `ESCPOPS` path below
+    # (which would emit the x86_64 `syscall` instruction, 0F 05,
+    # a Linux-only encoding) is bypassed. Mappings:
+    #   syscall(0, fd, buf, len)       → GetStdHandle+ReadFile   (v5.5.1)
+    #   syscall(1, fd, buf, len)       → GetStdHandle+WriteFile  (v5.4.7)
+    #   syscall(2, path, flags, mode)  → CreateFileW             (v5.5.1)
+    #   syscall(3, fd)                 → CloseHandle             (v5.5.1)
+    #   syscall(8, fd, off, whence)    → SetFilePointerEx        (v5.5.1)
+    #   syscall(9, addr, len, ...)     → VirtualAlloc            (v5.5.1)
+    #   syscall(11, addr, len)         → VirtualFree(MEM_RELEASE) (6.6.20,
+    #                                    via _PE_ROUTE_FLUSH — no inline arm)
+    #   syscall(60, code)              → ExitProcess             (v5.4.4)
+    # Other syscall numbers still fall through with a warning and
+    # produce a non-functional binary; wrap them in syscalls_windows.cyr
+    # shape helpers as they're needed.
+    # Mach-O arm64 __got reroutes — syscalls whose libSystem equivalents
+    # are bound into __DATA_CONST.__got[N] in EMITMACHO_ARM64 get short-
+    # circuited here instead of falling through to ESYSXLAT+svc (which
+    # needs BSD-number translation and has lingering edge cases). Slot
+    # indices must match the symbol order in macho/emit_arm64.cyr's symtab +
+    # bind opcodes + indirect symtab. Mirror of the PE syscall-reroute
+    # block below (v5.4.4/5.4.7/5.5.1/5.5.2 bundle).
+    #   syscall(0, fd, buf, len) → __got[2] = libSystem._read   (v5.5.14)
+    #   syscall(1, fd, buf, len) → __got[1] = libSystem._write  (v5.5.14)
+    #   syscall(60, code)        → __got[0] = libSystem._exit   (v5.5.13)
+    if (_TARGET_MACHO == 2) {
+        # v6.5.44 (band J phase 2): syscall(1700, &tid, attr, &start, arg) → __got[5]
+        # libSystem `pthread_create`. This is the arm64-macOS thread primitive, and it is
+        # here rather than in ESYSXLAT because pthread_create is NOT A SYSCALL — the
+        # ≥1000 alias band so far has meant "1000 + the native BSD number", which cannot
+        # spell a libSystem routine. 1700+ is therefore a distinct sub-band meaning
+        # "__got-bound libSystem function"; do not read 1700 as BSD 700.
+        # ⛔ bsdthread_create is NOT usable here even though v6.5.43 routed it:
+        # bsdthread_register is one-shot per process and libpthread takes it first in any
+        # binary linking libSystem, which every cyrius arm64 Mach-O does. Measured EINVAL
+        # on real ecb. The v6.5.43 routes remain correct and are what x86-macOS (a static
+        # no-libSystem binary, where registration DOES work) will use.
+        if (sc_num == 1700) {
+            if (argc == 5) {
+                EMACHO_PTHREAD_CREATE_ARM(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # 1701 = libSystem fork (__got[7]), the second routine in the 1700+ sub-band.
+        # 6.6.13: syscall(1701) → libSystem `fork()` (errno via __got[8] ___error), so the
+        # child gets libSystem's own fork handling. The raw BSD fork the clone row still
+        # translates to skips it, and the child's first pthread_create then SIGSEGVs. See
+        # EMACHO_FORK_ARM (src/backend/aarch64/emit.cyr). CHANGELOG [6.6.13]
+        if (sc_num == 1701) {
+            if (argc == 1) {
+                EMACHO_FORK_ARM(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 60) {
+            if (argc == 2) {
+                EMACHO_EXIT_ARM(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 1) {
+            if (argc == 4) {
+                EMACHO_WRITE_ARM(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 0) {
+            if (argc == 4) {
+                EMACHO_READ_ARM(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v5.6.6: syscall(228, clock_id, _) → _clock_gettime_nsec_np
+        # for CYRIUS_PROF profiling. Returns u64 ns in x0 (no
+        # timespec buffer — macOS gives ns directly).
+        if (sc_num == 228) {
+            if (argc == 3) {
+                EMACHO_CLOCK_ARM(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+    }
+    # v6.5.16: the x86-macOS twin of the 228 reroute above. Darwin has NO
+    # clock_gettime syscall on either architecture, so this cannot be an
+    # EMACHO_SYSXLAT row; arm64 binds libSystem through __got, and the x86
+    # Mach-O writer has no __got, so it composes ns from gettimeofday instead.
+    # Same contract either way: ns in the return register. See EMACHO_CLOCK_X86
+    # (src/backend/x86/emit.cyr). Without this, syscall(228) fell through to
+    # ESCPOPS + an unrouted number and SIGSYS'd — five of ach's twelve failures.
+    if (_TARGET_MACHO == 1) {
+        if (sc_num == 228) {
+            if (argc == 3) {
+                EMACHO_CLOCK_X86(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.5.16: nanosleep(35) → poll(NULL, 0, ms). Darwin has no nanosleep
+        # either; the PE fork has rerouted this to Sleep() since v6.1.17 and
+        # x86-macOS never got the twin, so the number reached Darwin unclassed
+        # and SIGSYS'd (lib/sakshi.cyr's TSC calibration window — sakshi_full
+        # on ach). See EMACHO_NANOSLEEP_X86.
+        if (sc_num == 35) {
+            if (argc == 3) {
+                EMACHO_NANOSLEEP_X86(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+    }
+    if (_TARGET_PE == 1) {
+        if (sc_num == 60) {
+            if (argc == 2) {
+                # Stack top-down: [exit_code] [syscall_nr=60]
+                EPOPR(S);                    # pop rax = exit code
+                # v5.11.35 path-A: discard syscall_nr via named op.
+                EDROPI64(S);
+                EEXIT(S);                    # emits Win64 ExitProcess call
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 1) {
+            if (argc == 4) {
+                # EWRITE_PE consumes [len][buf][fd][sc_nr=1] from
+                # the stack and emits the GetStdHandle+WriteFile
+                # sequence. Registers GetStdHandle + WriteFile as
+                # pending IAT imports on first use.
+                EWRITE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 0) {
+            if (argc == 4) {
+                # syscall(0, fd, buf, len) → GetStdHandle + ReadFile.
+                EREAD_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 2) {
+            if (argc == 4) {
+                # syscall(2, path, flags, mode) → CreateFileW.
+                EOPEN_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 3) {
+            if (argc == 2) {
+                # syscall(3, fd) → CloseHandle.
+                ECLOSE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 8) {
+            if (argc == 4) {
+                # syscall(8, fd, offset, whence) → SetFilePointerEx.
+                ELSEEK_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 9) {
+            if (argc == 7) {
+                # syscall(9, addr, len, prot, flags, fd, offset) → VirtualAlloc.
+                EMMAP_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v5.6.6: syscall(228, _, _) → GetTickCount64 for CYRIUS_PROF.
+        # 3-arg form chosen to match the Linux `syscall(228,
+        # CLOCK_MONOTONIC, &ts)` shape in _prof_clock_ns; the 2
+        # cyrius-side args are dropped by EGETTICKS_PE before the
+        # kernel32 call.
+        if (sc_num == 228) {
+            if (argc == 3) {
+                EGETTICKS_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.1.17: syscall(35, &req, &rem) → Sleep(req ms). nanosleep —
+        # completes the v6.1.16 PE var-dispatch (35 was the routable-arity
+        # gap). ENANOSLEEP_PE reads the timespec and converts to flat ms.
+        if (sc_num == 35) {
+            if (argc == 3) {
+                ENANOSLEEP_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v5.11.22: SYS_MKDIR (83) → CreateDirectoryW;
+        # SYS_UNLINK (87) → DeleteFileW. ai-hwaccel 2.2.2
+        # surfaced both via cache.cyr.
+        if (sc_num == 83) {
+            if (argc == 3) {
+                ECREATEDIR_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 87) {
+            if (argc == 2) {
+                EDELETEF_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.0.51: PE-internal Win32 process-creation reroutes (the
+        # ai-hwaccel spawn arc). 0xF00N is an out-of-band block (Linux
+        # syscalls top out ~450) reserved for kernel32 calls whose arity
+        # exceeds the syscall(n, ≤6) form — process_win.cyr drives them
+        # via named consts (WIN_SYS_*). See lib/process_win.cyr + the
+        # EWIN*_PE emit fns in backend/x86/emit.cyr.
+        if (sc_num == 61441) {
+            if (argc == 3) {
+                # syscall(0xF001, handle, timeout) → WaitForSingleObject.
+                EWAIT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61442) {
+            if (argc == 3) {
+                # syscall(0xF002, handle, &code) → GetExitCodeProcess.
+                EGETEXIT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61443) {
+            if (argc == 4) {
+                # syscall(0xF003, handle, mask, flags) → SetHandleInformation.
+                ESETHANDLE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61444) {
+            if (argc == 5) {
+                # syscall(0xF004, &rd, &wr, &sa, size) → CreatePipe.
+                ECREATEPIPE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61445) {
+            if (argc == 2) {
+                # syscall(0xF005, &args) → CreateProcessW (10 args from *args).
+                ECREATEPROC_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.0.54: GetCommandLineW for the Windows args.cyr branch
+        # (lib/args_win.cyr) + cycc's own command-line flags. 0 args,
+        # returns the UTF-16LE command-line LPWSTR in rax.
+        if (sc_num == 61446) {
+            if (argc == 1) {
+                # syscall(0xF006) → GetCommandLineW (no args, LPWSTR in rax).
+                EGETCMDLINE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.0.61: real Windows threading reroutes (lib/thread_win.cyr) —
+        # CreateThread + SRWLOCK mutexes (join reuses 0xF001/WaitForSingleObject
+        # + syscall(3)/CloseHandle). See thread + nuances issues.
+        if (sc_num == 61447) {
+            if (argc == 2) {
+                # syscall(0xF007, &args6) → CreateThread (6 args via struct).
+                ECREATETHREAD_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61448) {
+            if (argc == 2) {
+                # syscall(0xF008, &lock) → InitializeSRWLock.
+                EINITSRW_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61449) {
+            if (argc == 2) {
+                # syscall(0xF009, &lock) → AcquireSRWLockExclusive.
+                EACQSRW_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61450) {
+            if (argc == 2) {
+                # syscall(0xF00A, &lock) → ReleaseSRWLockExclusive.
+                ERELSRW_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.0.61: thread-local storage reroutes (lib/thread_local.cyr) —
+        # per-thread slot block keyed off one TlsAlloc'd index + gettid.
+        if (sc_num == 61451) {
+            if (argc == 1) {
+                # syscall(0xF00B) → GetCurrentThreadId (no args, DWORD in rax).
+                EGETCURTID_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.3.44: syscall(0xF01C) → GetCurrentProcessId (no args, DWORD in rax).
+        # Backs getpid() on Windows (lib/process_win.cyr; was a 0-stub).
+        if (sc_num == 61468) {
+            if (argc == 1) {
+                EGETCURPID_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.26: syscall(0xF01D, hProcess, uExitCode) → TerminateProcess
+        # (2-arg, argc==3). The Windows timeout-kill primitive (thoth). See
+        # 2026-07-08-windows-pe-surface-no-terminateprocess.md.
+        if (sc_num == 61469) {
+            if (argc == 3) {
+                ETERMINATE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43: syscall(0xF01E, wVersionRequested, lpWSAData) → ws2_32!WSAStartup
+        # (2-arg, argc==3). Winsock init for the async IOCP backend. See
+        # 2026-07-08-async-epoll-only-blocks-win-transport.md.
+        if (sc_num == 61470) {
+            if (argc == 3) {
+                EWSASTARTUP_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43: IOCP core (kernel32) — the async reactor's completion engine.
+        # 0xF01F CreateIoCompletionPort (4-arg → argc 5); 0xF020
+        # GetQueuedCompletionStatus (5-arg → argc 6); 0xF021
+        # PostQueuedCompletionStatus (4-arg → argc 5).
+        if (sc_num == 61471) {
+            if (argc == 5) {
+                ECREATEIOCP_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61472) {
+            if (argc == 6) {
+                EGETQCS_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61473) {
+            if (argc == 5) {
+                EPOSTQCS_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43: ws2_32 socket foundation. 0xF022 WSASocketW (6-arg → argc 7);
+        # 0xF023 closesocket (1-arg → argc 2); 0xF024 WSAGetLastError (0-arg → argc 1).
+        if (sc_num == 61474) {
+            if (argc == 7) {
+                EWSASOCKET_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61475) {
+            if (argc == 2) {
+                ECLOSESOCKET_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61476) {
+            if (argc == 1) {
+                EWSALASTERR_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43: ws2_32 connect prerequisites. 0xF025 bind (3-arg → argc 4);
+        # 0xF026 getsockopt (5-arg → argc 6).
+        if (sc_num == 61477) {
+            if (argc == 4) {
+                EBIND_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.66: 0xF036 getpeername / 0xF037 getsockname (3-arg → argc 4) —
+        # the peer/local-address reroutes so sandhi's per-IP rate limiting works
+        # on PE. Same 3-arg shape as bind.
+        if (sc_num == 61494) {
+            if (argc == 4) {
+                EGETPEERNAME_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61495) {
+            if (argc == 4) {
+                EGETSOCKNAME_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.44 R3: 0xF033 listen(s, backlog) (2-arg → argc 3) — AcceptEx server listener.
+        if (sc_num == 61491) {
+            if (argc == 3) {
+                ELISTEN_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.57: 0xF034 MoveFileExW(old, new) (2-arg → argc 3) — the Windows
+        # half of lib/io.cyr's portable file_rename / file_write_atomic. Widens
+        # both UTF-8 paths to UTF-16 and calls kernel32!MoveFileExW with
+        # MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH (the write-through
+        # bit since 6.6.7; the flags dword is baked into the emitter,
+        # so file_rename passes only the two paths). See issue
+        # 2026-07-12-thoth-portable-atomic-file-write.md.
+        if (sc_num == 61492) {
+            if (argc == 3) {
+                EMOVEFILEEX_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.58: 0xF035 DeleteFileW(path) (1-arg → argc 2) — the Windows temp
+        # cleanup for lib/io.cyr's xunlink / file_write_atomic on-failure unlink.
+        # 6.6.20: the same emitter as unlink (87); EDELETEFILEW_PE was its byte-for-byte copy.
+        if (sc_num == 61493) {
+            if (argc == 2) {
+                EDELETEF_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.6.6: 0xF03B RemoveDirectoryW(path) (1-arg → argc 2) — lib/io.cyr's
+        # xrmdir on PE, which degraded to -1 with no reroute wired. That is why the
+        # CLI's private temp directory (`<TEMP>/cyrius-<pid>-t<nonce>`) leaked one
+        # empty directory per run on Windows. Same shape as DeleteFileW above.
+        if (sc_num == 61499) {
+            if (argc == 2) {
+                EREMOVEDIRW_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61478) {
+            if (argc == 6) {
+                EGETSOCKOPT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43: ws2_32 WSAIoctl (9-arg → argc 10) — fetch the ConnectEx pointer
+        # via SIO_GET_EXTENSION_FUNCTION_POINTER.
+        if (sc_num == 61479) {
+            if (argc == 10) {
+                EWSAIOCTL_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43: ws2_32 client I/O. 0xF028 connect (3-arg → argc 4); 0xF029
+        # WSARecv (7-arg → argc 8); 0xF02A WSASend (7-arg → argc 8).
+        if (sc_num == 61480) {
+            if (argc == 4) {
+                ECONNECT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61481) {
+            if (argc == 8) {
+                EWSARECV_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61482) {
+            if (argc == 8) {
+                EWSASEND_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43: ws2_32 name resolution. 0xF02B getaddrinfo (4-arg → argc 5);
+        # 0xF02C freeaddrinfo (1-arg → argc 2).
+        if (sc_num == 61483) {
+            if (argc == 5) {
+                EGETADDRINFO_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61484) {
+            if (argc == 2) {
+                EFREEADDRINFO_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43 R2: the non-IOCP-event → IOCP bridge (kernel32). 0xF02D
+        # RegisterWaitForSingleObject (6-arg → argc 7); 0xF02E CreateWaitableTimerW
+        # (3-arg → argc 4); 0xF02F SetWaitableTimer (6-arg → argc 7).
+        if (sc_num == 61485) {
+            if (argc == 7) {
+                EREGWAIT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61486) {
+            if (argc == 4) {
+                ECREATETIMER_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61487) {
+            if (argc == 7) {
+                ESETTIMER_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.4.43 R2: reactor teardown. 0xF030 UnregisterWaitEx (2-arg → argc 3);
+        # 0xF031 CancelIoEx (2-arg → argc 3); 0xF032 setsockopt (5-arg → argc 6).
+        if (sc_num == 61488) {
+            if (argc == 3) {
+                EUNREGWAIT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61489) {
+            if (argc == 3) {
+                ECANCELIO_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61490) {
+            if (argc == 6) {
+                ESETSOCKOPT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61452) {
+            if (argc == 1) {
+                # syscall(0xF00C) → TlsAlloc (no args, slot index in rax).
+                ETLSALLOC_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61453) {
+            if (argc == 2) {
+                # syscall(0xF00D, idx) → TlsGetValue (LPVOID in rax).
+                ETLSGET_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61454) {
+            if (argc == 3) {
+                # syscall(0xF00E, idx, val) → TlsSetValue (BOOL in rax).
+                ETLSSET_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61455) {
+            if (argc == 2) {
+                # syscall(0xF00F, ms) → Sleep(ms). v6.0.65 portable sleep_ms
+                # (lib/chrono.cyr) on Windows — poll isn't routed on PE.
+                ESLEEP_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61456) {
+            if (argc == 3) {
+                # syscall(0xF010, cmdline, &argc) → CommandLineToArgvW
+                # (shell32). v6.0.69 §3 — full-fidelity argv (lib/args_win.cyr).
+                ECMDTOARGV_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61457) {
+            if (argc == 2) {
+                # syscall(0xF011, ptr) → LocalFree (kernel32) — frees the
+                # LPWSTR* CommandLineToArgvW returned. v6.0.69 §3.
+                ELOCALFREE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61458) {
+            if (argc == 3) {
+                # syscall(0xF012, &iid, &ppFactory) → CreateDXGIFactory1
+                # (dxgi.dll). v6.0.70 §0 — the factory entry for GPU enum;
+                # its methods are dispatched via callptr over the vtable.
+                ECREATEDXGI_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61459) {
+            if (argc == 2) {
+                # syscall(0xF013, name) → GetModuleHandleA. v6.0.71.
+                EGETMODH_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61460) {
+            if (argc == 3) {
+                # syscall(0xF014, hmod, name) → GetProcAddress. v6.0.71.
+                EGETPROC_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61461) {
+            if (argc == 4) {
+                # syscall(0xF015, name, buf, size) → GetEnvironmentVariableA.
+                # v6.0.85 — the Windows env-read path (cyrius wrapper cycc
+                # resolution; no /proc/self/environ on Windows).
+                EGETENV_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.1.18: directory enumeration for lib/fs_win.cyr (dir_list/is_dir
+        # on Windows). 0xF016 FindFirstFileW(pattern,&data) / 0xF017
+        # FindNextFileW(h,&data) are 2-arg (argc==3); 0xF018 FindClose(h) /
+        # 0xF019 GetFileAttributesW(path) are 1-arg (argc==2). 6.6.12: the
+        # pattern / path of 0xF016 / 0xF019 is NARROW UTF-8 (widened by the
+        # emitter, long paths included), no longer a stdlib-widened one.
+        if (sc_num == 61462) {
+            if (argc == 3) {
+                EFINDFIRST_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61463) {
+            if (argc == 3) {
+                EFINDNEXT_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61464) {
+            if (argc == 2) {
+                EFINDCLOSE_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        if (sc_num == 61465) {
+            if (argc == 2) {
+                EGETFATTR_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.2.12: ProcessPrng CSPRNG for sys_getrandom on Windows. 0xF01A
+        # (61466) ProcessPrng(pbData, cbData) is 2-arg (argc==3). See issue
+        # 2026-06-11-windows-entropy-primitive.md.
+        if (sc_num == 61466) {
+            if (argc == 3) {
+                EPROCPRNG_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.2.13: GetSystemTimeAsFileTime for the Windows wall-clock
+        # (chrono.clock_epoch_*). 0xF01B (61467) GetSystemTimeAsFileTime(&ft)
+        # is 1-arg (argc==2). See 2026-06-16 clock issue.
+        if (sc_num == 61467) {
+            if (argc == 2) {
+                EGETSYSTIME_PE(S);
+                _cfo = 0;
+                return 0;
+            }
+        }
+        # v6.6.5: 0xF038/0xF039 QueryPerformanceCounter/Frequency — the Windows
+        # MONOTONIC clock (lib/chrono.cyr, lib/bench.cyr). Routed through a helper
+        # rather than two more inline arms; see _PE_ROUTE_PERFCOUNTER's header for
+        # the cybs per-function reference limit that makes that matter.
+        if (_PE_ROUTE_PERFCOUNTER(S, sc_num, argc) == 1) {
+            _cfo = 0;
+            return 0;
+        }
+        # v6.6.6: 0xF03A GetModuleFileNameW — the Windows "path of this executable",
+        # which is what made `cyrius init`/`cyrius port` buildable for PE at all.
+        # Same helper-fn treatment, same cybs reason.
+        if (_PE_ROUTE_MODULEPATH(S, sc_num, argc) == 1) {
+            _cfo = 0;
+            return 0;
+        }
+        # v6.6.7: fsync (74) / fdatasync (75) → FlushFileBuffers; 6.6.20: munmap (11) →
+        # VirtualFree. Same helper-fn treatment, same cybs reason.
+        if (_PE_ROUTE_FLUSH(S, sc_num, argc) == 1) {
+            _cfo = 0;
+            return 0;
+        }
+        # v6.1.16: non-literal (var) syscall number. The `sc_num ==`
+        # cases above only fire for a constant-folded first arg; a
+        # number held in a `var` (the portable arch-dispatch idiom)
+        # leaves sc_num == -1 and would otherwise fall through to the
+        # `0F 05` Linux syscall below — a silent no-op / fault on
+        # Windows. Emit a runtime switch over the routable syscalls of
+        # this arity instead. v6.1.17: an arity with NO routable syscall
+        # (EPE_SYSCALL_DYNAMIC → 2) no longer hard-errors — that blocked the
+        # whole PE tarball build for a call almost always on a Linux-only
+        # path dead on Windows (e.g. `syscall(SYS_GETDENTS64, fd, buf, 4096,
+        # basep)` — arity 5 — in lib/fs.cyr's dir-listing; Windows enumerates
+        # dirs via FindFirstFile, not a syscall). It emits an honest
+        # -38/-ENOSYS there and we WARN rather than refuse to compile. See
+        # issue 2026-06-09-pe-syscall-variable-number-not-rerouted.md.
+        if (sc_num < 0) {
+            var _dynrc = EPE_SYSCALL_DYNAMIC(S, argc);
+            if (_dynrc == 2) { _pe_warn_dyn(S, argc); }
+            _cfo = 0;
+            return 0;
+        }
+        # Non-mapped syscalls: emitting the generic ESCPOPS path
+        # below would produce an `0F 05` syscall that faults
+        # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
+        # (0xC000001D). Routed numbers (v5.11.22, +v6.0.51, +v6.0.54):
+        # 0=read, 1=write, 2=open, 3=close, 8=lseek, 9=mmap,
+        # 60=exit, 74/75=fsync/fdatasync (v6.6.7), 83=mkdir,
+        # 87=unlink, 228=clock_gettime, and
+        # 0xF001-0xF005 = Win32 process creation (Wait/GetExit/
+        # SetHandle/CreatePipe/CreateProcessW; see process_win.cyr),
+        # 0xF006 = GetCommandLineW (args.cyr; see args_win.cyr).
+        # Others crash; gate with `#ifdef CYRIUS_TARGET_WIN`
+        # at the call site, or file an upstream issue for a
+        # new PE reroute.
+        _pe_warn_unrouted(S, sc_num, argc);   # 6.6.10: names n, its arity and the call site
+        # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
+        #
+        # A LITERAL unrouted syscall number used to warn and then emit a raw Linux
+        # `syscall` instruction, which on Windows is STATUS_ILLEGAL_INSTRUCTION
+        # (0xC000001D) — a hard crash at the first call, from a warning nobody sees in a
+        # 600-byte wall of text. The NON-literal arm directly above has emitted an honest
+        # -38/-ENOSYS since v6.1.17 for exactly this reason; the literal arm never got
+        # the same treatment, so the two halves of one decision disagreed.
+        #
+        # This is what made `SYS_IOCTL` unfixable in the stdlib: adding the constant to
+        # the Windows peer so `lib/yukti.cyr` would COMPILE would have converted a loud
+        # compile error into a runtime crash. With this in place the constant is safe —
+        # yukti's Linux-only CD-ROM eject path returns -38 on Windows and its caller's
+        # existing `if (r < 0)` check reports the failure it already knows how to report.
+        #
+        # Reusing EPE_SYSCALL_DYNAMIC rather than minting a new emitter is deliberate:
+        # it already ends in `_pe_dyn_nomatch` (drop args, `mov rax, -38`), and a NEW
+        # cross-fork symbol called from parse/expr/ would need return-0 stubs in the
+        # aarch64 AND cx forks — a miss only real cass/cycc_cx catches. A known-unrouted
+        # literal cannot match any comparison in the emitted switch, so it lands on that
+        # -38 tail by construction; the dead compares cost bytes on a path that is by
+        # definition dead on Windows.
+        EPE_SYSCALL_DYNAMIC(S, argc);
+        _cfo = 0;
+        return 0;
+    }
+    ESCPOPS(S, argc, sc_num);   # sc_num >= 0: aarch64 folds the ESYSXLAT chain (6.6.18)
+    _cfo = 0;
+    # Syscall arity check — warn if arg count doesn't match the
+    # well-known arity for common Linux x86_64 syscalls.
+    #
+    # v5.8.7 (phylax #3 + sakshi): gate the check to x86_64 only.
+    # The _SC_ARITY table maps x86_64 syscall numbers to expected
+    # user-arg counts. On aarch64 the SAME numerical values mean
+    # different syscalls with different arities (e.g. aarch64
+    # SYS_NEWFSTATAT = 79 = x86's getcwd; aarch64 SYS_FSTAT = 80 =
+    # x86's chdir; aarch64 SYS_OPENAT = 56 = x86's clone). Stdlib's
+    # at-family wrappers in `lib/syscalls_aarch64_linux.cyr` then
+    # call `syscall(SYS_NEWFSTATAT, AT_FDCWD, path, buf, 0)` (4
+    # user args) and the parser flagged it as mismatching getcwd's
+    # 2-arg expectation — false positive.
+    #
+    # Pre-v5.8.7 phylax + sakshi saw 9-11 spurious warnings on a
+    # 4-line stdlib-only `cyrius build --aarch64` invocation
+    # (sakshi `2026-04-30-cyrius-lang-blockers.md`, phylax
+    # `2026-04-30-cyrius-stdlib-issues.md` §3). Same fix shape as
+    # v5.7.8 SYS_SETSID 1→0 in spirit: pin the check to the arch
+    # the table actually describes. Hand-written aarch64 syscalls
+    # with wrong arity now get the runtime error rather than a
+    # compile warning — acceptable tradeoff; the warning was
+    # best-effort, not load-bearing.
+    _sc_arity_warn(S, sc_num, argc);
+    return 0;
+}
+# `await e`. Out of _PARSE_FACTOR_IMPL (see _pf_ident). CHANGELOG [6.7.18]
+fn _pf_await(S): i64 {
+    # v6.3.11 (G): await e — force a Future to its value. Lowers to
+    # future_force(e): eval the operand factor (→ rax = the Future object built
+    # by an async-fn constructor), then call the runtime forcer. Binds tightly
+    # (factor-level prefix), so `await f() + 1` is `(await f()) + 1`. Gated on
+    # _ASYNC_OK; needs lib/async.cyr (future_force).
+    _ensure_async_gate(S);
+    # A refused `await` still parses its operand (so the next token is where the caller
+    # expects it) and emits no call: ERR_MSG does not exit, and falling through reached
+    # either a second, misleading "needs lib/async.cyr" or ECALLFIX(-1) — rc 139 on
+    # aarch64/cx after the correct diagnostic. Same for a missing future_force. CHANGELOG [6.6.9]
+    if (_ASYNC_OK == 0) {
+        ERR_MSG(S, "await requires CYRIUS_ASYNC=1 (async/await are gated)", 53);
+        STI(S, GTI(S) + 1);
+        PARSE_FACTOR(S);
+        return 0;
+    }
+    STI(S, GTI(S) + 1);                       # consume `await`
+    # v6.5.69 — INSIDE A COROUTINE, `await e` IS A SUSPEND POINT, not a force.
+    # ⛔ It used to be a force here too, and that is the defect this release closes: a
+    # body that awaited mid-loop compiled clean, ran its awaited call to completion, and
+    # on the next reactor turn re-entered FROM THE TOP with every local reset. Measured on
+    # the shipped compiler, a two-direction TTY relay written that way relays ZERO bytes
+    # and hangs — a shipped syntax with nothing behind it, the v6.5.63 `#inline` class.
+    # Now: evaluate the operand (the park call), stamp the resume state into the coroutine
+    # object, and return through the shared epilogue. The landing pad recorded here is
+    # where the fn-end dispatch will send the next entry. CHANGELOG [6.5.69]
+    if (_cur_fn_coro == 1) {
+        var _aw_ti = GTI(S);
+        PARSE_FACTOR(S);                      # evaluate the operand
+        var _sk = _coro_nsusp + 1;
+        if (_sk >= _CORO_MAX_SUSP) {
+            # ERR_MSG returns (multi-error, v6.4.62), so the cap must stop here itself: the
+            # stores below indexed _coro_rcp past its bound. CHANGELOG [6.6.10]
+            ERR_MSG(S, "too many `await` suspend points in one `async fn` (max 63)", 58);
+            return 0;
+        }
+        _await_coro_suspend(S, _sk, _await_operand_is_future(S, _aw_ti));
+        return 0;
+    }
+    var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);
+    if (_aw_ff < 0) {
+        ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 52);
+        PARSE_FACTOR(S);
+        return 0;
+    }
+    return _await_force(S, _aw_ff);
+}
+# A closure literal, `|params| body` (typ 35) or `|| body` (typ 54). Out of _PARSE_FACTOR_IMPL (see _pf_ident).
+# CHANGELOG [6.7.18]
+fn _pf_closure(S, typ): i64 {
+    # token 54 is `||`. At a factor position (no left operand) it is a
+    # zero-param closure `|| body`; binary `a || b` is consumed at the
+    # expression level and never reaches here as a leading token.
+    var cl_zero = 0;
+    if (typ == 54) { cl_zero = 1; }
+    # Mark the ENCLOSING fn as containing a closure so its regalloc post-pass
+    # is skipped (it would byte-scan + corrupt the inline closure code). This
+    # global is NOT in the save/reset set below, so it persists past the
+    # closure to the enclosing fn's PARSE_FN_DEF end.
+    _cur_fn_has_closure = 1;
+    STI(S, GTI(S) + 1);  # consume `|` (or the whole `||` for a zero-param closure)
+    # Generate a UNIQUE anonymous name __clNNNNN (5 zero-padded decimal digits
+    # of the fn count). The old `__cl<clid%10>` was single-digit, so the 11th
+    # closure reused __cl0 and REGFN silently MERGED it with the first.
+    NPOS_GUARD(S, 16);
+    var clid = GFNC(S);
+    var clnoff = GNPOS(S);
+    var cwp = clnoff;
+    store8(S + 0xEC00000 + cwp, 95); cwp = cwp + 1;    # _
+    store8(S + 0xEC00000 + cwp, 95); cwp = cwp + 1;    # _
+    store8(S + 0xEC00000 + cwp, 99); cwp = cwp + 1;    # c
+    store8(S + 0xEC00000 + cwp, 108); cwp = cwp + 1;   # l
+    store8(S + 0xEC00000 + cwp, 48 + (clid / 10000) % 10); cwp = cwp + 1;
+    store8(S + 0xEC00000 + cwp, 48 + (clid / 1000) % 10); cwp = cwp + 1;
+    store8(S + 0xEC00000 + cwp, 48 + (clid / 100) % 10); cwp = cwp + 1;
+    store8(S + 0xEC00000 + cwp, 48 + (clid / 10) % 10); cwp = cwp + 1;
+    store8(S + 0xEC00000 + cwp, 48 + clid % 10); cwp = cwp + 1;
+    store8(S + 0xEC00000 + cwp, 0); cwp = cwp + 1;
+    SNPOS(S, cwp);
+    # Register the closure function
+    var clfi = REGFN(S, clnoff);
+    # Snapshot the enclosing local tables before the closure overwrites slot 0+.
+    var cl_saved_flc = GFLC(S);
+    var cl_locsnap = _cl_save_locals(S, cl_saved_flc);
+    var cl_saved_fs_floor = _fs_floor;   # 6.6.5: the closure body's fn-static mark
+    _fs_floor = _fs_n;
+    # ⭐ 6.6.7 — the closure is its OWN fn: snapshot EVERY per-fn global and enter a fresh
+    # fn (parse/state.cyr `_fnst_save`). This used to be a hand-kept list that had drifted — it
+    # saved rp_vec by LENGTH then truncated it to 0 (an early `return` before the closure
+    # lost its patch and fell through), and it never isolated the defer table (a closure's
+    # `defer` zeroed an ENCLOSING slot and ran, if at all, from the enclosing epilogue). The
+    # v6.3.7 regalloc leak (`|a,b| a+b` reading an unloaded rbx) was the same family.
+    var cl_st = _fnst_save(S);
+    _cur_fn_ix = clfi;
+    # v6.3.8 — save capture state and run the free-var pre-scan BEFORE the
+    # prologue/params, so the env-param decision is made in one pass. The
+    # cursor is at the first param (the opening `|` was consumed above); the
+    # pre-scan seeds the shadow set with params, collects captured enclosing
+    # slots, and restores the cursor.
+    # 6.6.17: the whole enclosing capture context, and a snapshot that also lists the
+    # enclosing closure's captures (`_cl_ctx_enter`).
+    var cl_ctx = _cl_ctx_enter(S, cl_locsnap, cl_saved_flc, cl_st);
+    _cl_prescan_captures(S, cl_zero);
+    var cl_cap_shift = 0;
+    if (_cl_capturing == 1) { cl_cap_shift = 1; }
+    # Emit function prologue
+    var cl_jmp = EJMP0(S);
+    S64(_fnt_offsets + clfi * 8, GCP(S));
+    EFNPRO(S);
+    # v6.3.8 — a capturing closure takes the heap env object as a HIDDEN param;
+    # captured-var reads in the body load from its slot (see PARSE_FACTOR).
+    # v6.5.17 — that param moved from FIRST to LAST. The frame slot is still
+    # allocated here (the body needs `_cl_env_lidx` while parsing), but the
+    # arg-register store is emitted after the user params, once `clpc` is known.
+    # Why last: the call site cannot know at compile time whether a callee is a
+    # closure, so it always passes the env — and only a TRAILING extra argument
+    # is invisible to a callee that does not want it. Leading it would shift
+    # every user argument of every non-closure indirect call.
+    _cl_env_lidx = 0 - 1;
+    var cl_env_slot = 0 - 1;
+    if (_cl_capturing == 1) {
+        cl_env_slot = _cl_param_slot(S, 0 - 1);   # 6.7.16: its type words reset too (parse/fn.cyr)
+        SFLC(S, cl_env_slot + 1);
+        _cl_env_lidx = cl_env_slot;
+    }
+    # Parse params until | (a zero-param `||` closure has no param list)
+    # ⚠ The pair scans (parse/pair_scan.cyr `_tok_is_closure_body`) recognise a closure BODY as a `{`
+    # immediately preceded by the closing `|` or by `||`. Typed params or a return annotation
+    # between the bars and the body would break that predicate — move it with the grammar.
+    # v6.5.46: remember the first param's local index — the deferred stack-param pass
+    # below needs it, and inside the loop `cpli` is re-read each iteration.
+    var cl_p0 = GFLC(S);
+    var clpc = 0;
+    if (cl_zero == 0 && PEEKT(S) != 35) {
+        var cpgo = 1;
+        while (cpgo == 1) {
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var cpnoff = PEEKV(S);
+            _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
+            STI(S, GTI(S) + 1);
+            _cl_param_tail(S);   # 6.7.7 (B6): D18, a default; 6.7.14: a type (parse/fn.cyr)
+            var cpli = _cl_param_slot(S, cpnoff);   # 6.7.16: an untyped slot, whatever an earlier fn left
+            if (clpc < 6) { ESTOREPARM(S, clpc, cpli, 0); }
+            SFLC(S, cpli + 1);
+            clpc = clpc + 1;
+            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+            else { cpgo = 0; }
+        }
+    }
+    # v6.5.17 — the hidden env param lands in arg register `clpc`, i.e. one past
+    # the user params, matching the call site's trailing push. Emitting it here
+    # (rather than at slot-allocation time) is safe: every ESTOREPARM is an
+    # independent arg-register → frame-slot store, so their order is free.
+    # The env must land in an argument REGISTER — see the matching note in
+    # PINDIRECT_CALL: under SysV an extra STACK argument would slide the stack
+    # arguments of every ordinary callee, so the call site only appends the env
+    # below the register ceiling. A capturing closure with more parameters than
+    # that is rejected HERE, loudly, instead of receiving a garbage environment.
+    # This is not a new restriction: with the env as the hidden FIRST argument
+    # (v6.3.8 - v6.5.16) the user params occupied registers 1..5 and the
+    # `clpc + cl_cap_shift < 6` guard dropped anything beyond, silently.
+    if (_cl_capturing == 1) {
+        if (clpc >= _ARG_REG_COUNT()) {
+            ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 124);
+        }
+        ESTOREPARM(S, clpc, cl_env_slot, clpc + 1);
+    }
+    # ⛔ v6.5.46 — DEFERRED STACK-PARAM PASS. Without it a NON-capturing closure silently
+    # dropped every parameter past the 6th: the in-loop `clpc < 6` guard is correct (the
+    # overflow cannot be homed until the TOTAL count is known, because SysV's stack slot is
+    # `16 + (pc - 6 - 1 - (pidx - 6)) * 8` — it counts DOWN from the total), but nothing ever
+    # ran the second pass that `PARSE_FN` has had all along (src/frontend/parse/fn.cyr, since
+    # 6.6.6 `_stkp_flush`). So the 7th+ parameter was never stored and the body read an
+    # uninitialised frame slot. (A closure's params are all untyped int-class, one slot each,
+    # with no retptr, so `cl_p0 + cspi` / `clpc` below ARE the slot and the total — the
+    # re-derivation 6.6.6 removed from PARSE_FN_DEF's pass cannot drift here.)
+    # ⚠ IT DID NOT FAIL RELIABLY, which is why it survived: measured at v6.5.46, a 7-param
+    # closure returned the RIGHT answer — the argument register still happened to hold the
+    # value — while an 8-param one returned garbage. An intermittent wrong answer reads as
+    # "closures are fine" until someone adds one more parameter.
+    # ⚠ NON-CAPTURING ONLY, and that is not an omission: a CAPTURING closure needs its env in
+    # an argument register (see the note above), so it already refuses `clpc >= _ARG_REG_COUNT()`
+    # LOUDLY. This pass is what the non-capturing case never had.
+    # ⚠ The first attempt at this fix simply deleted the in-loop guard. That is WRONG — it
+    # calls ESTOREPARM with pc = 0, so `nstack = -6` and the displacement is garbage. The
+    # count has to be known first, which is the whole reason the pass is deferred.
+    if (_cl_capturing == 0) {
+        if (clpc > 6) {
+            var cspi = 6;
+            while (cspi < clpc) {
+                ESTOREPARM(S, cspi, cl_p0 + cspi, clpc);
+                cspi = cspi + 1;
+            }
+        }
+    }
+    S64(_fnt_params + clfi * 8, clpc + cl_cap_shift);
+    # A `||` zero-param closure already consumed both bars as one token 54;
+    # only the `|params|` form has a separate closing bar to consume.
+    if (cl_zero == 0) {
+        if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
+        STI(S, GTI(S) + 1);  # consume closing |
+    }
+    # v6.2.41 dropped ESUBRSP's 2nd arg and claimed the frame "is patched
+    # later via EPATCHFRAME" — but the closure path NEVER called EPATCHFRAME
+    # (closures were untested), so `sub rsp, imm32` kept its 0 placeholder. The
+    # closure then ran on a 0-byte frame: the first push in the body wrote at
+    # [rsp-8] == [rbp-8], clobbering param slot 0, so `|x| x` returned garbage.
+    # v6.3.7 — capture the patch handle and patch the real frame size below
+    # (mirrors PARSE_FN_DEF's prologue ESUBRSP → EPATCHFRAME).
+    var cl_frame_patch = _cl_frame_open(S, clfi);   # 6.7.10 (P5-B): ESUBRSP, then the coverage hit
+    # 6.6.7 — defer-flag init jmp, resolved at the closure's end exactly as PARSE_FN_DEF does.
+    var cl_dij = EJMP0(S);
+    var cl_bcp = GCP(S);
+    # Parse body: { stmts } or single expression
+    if (PEEKT(S) == 13) {
+        STI(S, GTI(S) + 1);
+        _cur_fn_has_defer = _body_has_defer(S);   # 6.6.7: as PARSE_FN_DEF (0 from the snapshot otherwise)
+        PARSE_PROG(S);
+        if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+        STI(S, GTI(S) + 1);
+    } else {
+        var cl_vb = _vop_clb;
+        _vop_clb = GTI(S);   # 6.7.16 (D101): the expression body is the closure's return value
+        PCMPE(S);
+        _vop_clb = cl_vb;
+    }
+    # Defer init, return landing, defer walk, epilogue — the same shared epilogue as
+    # PARSE_FN_DEF, over the closure's own ranges. CHANGELOG [6.6.7]
+    _defer_emit_init(S, cl_dij, cl_bcp);
+    _tcp_resolve(S);   # 6.7.3: as PARSE_FN_DEF
+    _rp_patch_here(S);
+    _defer_emit_walk(S);
+    EFNEPI(S);
+    # v6.3.7 — patch the closure frame size now that GFLC is final (param +
+    # body local count) and the high-water is known: `_cl_frame_bytes`.
+    var cl_fsz = _cl_frame_bytes(S);
+    EPATCHFRAME(S, cl_frame_patch, cl_fsz);
+    EPATCH(S, cl_jmp);
+    # Restore state
+    _fs_popto(S, _fs_floor);             # 6.6.5: close the closure body's fn-statics
+    _fs_floor = cl_saved_fs_floor;
+    _fnst_restore(S, cl_st);             # 6.6.7: every enclosing per-fn global
+    # Restore the enclosing fn's local tables clobbered by the closure's slots.
+    _cl_restore_locals(S, cl_locsnap, cl_saved_flc);
+    # v6.3.8 — restore capture state so the enclosing context resolves
+    # identifiers normally again (and nested closures see their own state).
+    # 6.6.17: this closure's capture list is kept aside for its env, below.
+    var cl_inner = _cl_ctx_save();
+    _cl_ctx_restore(cl_ctx);
+    if (cl_cap_shift == 1) {
+        # v6.3.8 — CAPTURING closure: build the heap env object (the closure
+        # value) — a (1+ncap)-word block with the fn pointer at [0] and the
+        # captured-by-value locals at [1..]. The object pointer is left in rax.
+        # Requires lib/alloc.cyr. (Dispatched via callptr: load64(obj) → fn,
+        # obj passed as the hidden first arg — see the callptr handler.)
+        var cl_alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
+        if (cl_alloc_fi < 0) {
+            ERR_MSG(S, "a capturing closure needs include \"lib/alloc.cyr\" for its heap env", 66);
+            # v6.6.4: ERR_MSG reports and CONTINUES (the v6.4.62 multi-error contract),
+            # so falling through handed -1 to ECALLFIX — a SIGSEGV on cx after a correct
+            # diagnostic. The compile is already failed; there is nothing to emit.
+            return 0;
+        }
+        EMOVI(S, _cl_env_bytes(cl_inner));   # rax = size (6.6.5: words, not captures)
+        EPUSHR(S);
+        ECALLPOPS(S, 1);                 # → rdi
+        ECALLFIX(S, cl_alloc_fi);        # rax = obj
+        ECALLCLEAN(S, 1);                # 6.6.5: was missing (see ECALLCLEAN)
+        var cl_obj_slot = GFLC(S);
+        # Anonymous scratch — the name table isn't cleared per-fn, so an unnamed
+        # slot would keep a STALE name from a prior fn and a later `var` with that
+        # name would falsely trip the duplicate-var check.
+        S64(S + 0x5D9D000 + cl_obj_slot * 8, 0 - 1);
+        SLDEP(S, cl_obj_slot, 0);
+        EFLSTORE(S, cl_obj_slot);        # spill the object pointer
+        SFLC(S, cl_obj_slot + 1);
+        # obj[0] = closure fn address
+        EFLLOAD(S, cl_obj_slot);
+        EPUSHR(S);                       # push dest = obj + 0
+        var clfc = GFCNT(S);
+        if (clfc >= 1048576) {
+            _ew("error: fixup table full (1048576)\n", 34);
+            _die(1);
+        }
+        ELOAD_FN_ADDR(S, _fixup_base + clfc * 16, clfc, clfi);   # rax = fn addr
+        EPOPC(S);                        # rcx = dest
+        ESTORE64(S);                     # [obj+0] = fn addr
+        # obj[1+i] = captured enclosing local (cap_slots[i]); state is restored,
+        # so EFLLOAD reads the enclosing fn's local — capture BY VALUE.
+        # 6.6.5: an AGGREGATE capture copies all its words. Word k of an enclosing
+        # inline aggregate — the word at `&base + k*8` (on the stack slot base - k; in a
+        # coroutine frame not, see `_cl_emit_cap_word`) — lands at env[woff + k], so
+        # `env + woff*8 + k*8` addresses field k exactly as `&base + k*8` does in the
+        # enclosing frame — which is what lets the body reuse the ordinary field math.
+        # 6.6.17: a capture of the enclosing closure's own capture copies from its env.
+        _cl_emit_env_caps(S, cl_obj_slot, cl_inner);
+        EFLLOAD(S, cl_obj_slot);          # closure value = the object pointer
+        # v6.5.17 — TAG IT. Bit 63 makes the value self-identifying, so any
+        # indirect call site can dispatch it (load [obj+0], pass obj as the
+        # trailing env arg) without knowing where the value came from. Without
+        # this bit the whole scheme is the old static SLTYPE peek, which the
+        # value outlives the moment it is passed, returned or stored.
+        ECLTAG(S);
+    } else {
+        # Non-capturing closure: a bare fn pointer (same fixup-type-3 op as
+        # `&fn_name`). v6.3.7-stable path.
+        var clfc = GFCNT(S);
+        if (clfc >= 1048576) {
+            _ew("error: fixup table full (1048576)\n", 34);
+            _die(1);
+        }
+        var clfaddr = _fixup_base + clfc * 16;
+        ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
+    }
+    # v6.5.17 — nothing to hand back to the enclosing var-decl any more: the
+    # closure value carries its own tag (ECLTAG above), so no SLTYPE is needed.
+    return 0;
+}
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -131,228 +1662,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         return 0;
     }
     if (typ == 2) {
-        # IDENT — variable load or function call
-        var noff = PEEKV(S);
-        STI(S, GTI(S) + 1);
-        if (_cur_iself_sid > 0) { _iself_arith_check(S, noff); }   # 6.7.0 (A4)
-        if (_call_field(S) == 1) { return 0; }   # 6.6.12: `f(..).field` / `f<T>(..).field`
-        # v6.3.10 (explicit): `foo<i64>(x)` explicit type-arguments. Gated on the
-        # monomorph flag AND a generic-fn callee AND the `foo<...>(` lookahead shape,
-        # so `a < b`, chained comparisons, and calls to non-generic fns are never
-        # misread (flag-off / non-generic → byte-identical default path). v6.3.10
-        # bite-1 supports i64 type-args (the base IS the i64 instance → normal call);
-        # non-i64 type-args (instantiate-once) land in a follow-on bite.
-        # 6.7.17 (D7): under CYRIUS_MONOMORPH=0 too — refused there by name, the base call parsed (`_eta_arm`).
-        if (PEEKT(S) == 19) { if (_eta_arm(S, noff) == 1) { return 0; } }
-        # Check for function call
-        if (PEEKT(S) == 10) {
-            PARSE_FNCALL(S, noff);
-            # v6.4.55: if the callee returns scalar f64 (sentinel -9), the double is in
-            # xmm0 (SysV/Win64) — bring it back into rax (cyrius's f64-boxing register)
-            # and tag the expr F64_TYID so a bare +,-,*,/,compare on the call result
-            # dispatches to the f64 emitters, not integer ops. EMOVQ_A_X0 = `movq rax,
-            # xmm0` on x86/PE/macho, a no-op on aarch64/cx (value already in x0/r0).
-            _call_ret_marks(S, FINDFN(S, noff));   # 6.6.17: + a `*T` return's pointer scale
-            _cfo = 0;
-            return 0;
-        }
-        # Check for enum.variant or struct.field access.
-        # v6.3.36: `..` (range) is NOT field access — a `.` immediately followed by
-        # another `.` belongs to the enclosing `for i in start..end`. Skip the
-        # field-access branch so the identifier falls through to the normal scalar
-        # load below (leaving `..` for the range parser). Fixes `for i in IDENT..hi`.
-        if (PEEKT(S) == 41 && TOKTYP(S, GTI(S) + 1) != 41) {
-            # v6.4.24 (P1 fix): `Enum.VARIANT` ignores the base and loads VARIANT (a
-            # global const) whenever the field name is ALSO a global var. But that
-            # over-matches `struct_var.field` when `field` SHADOWS a global var name:
-            # `bc.exit_code` silently loaded the global `exit_code` (=0) instead of the
-            # Container field @+72 (the size-dependent silent-wrong-read — only bites
-            # when the field name happens to also be a top-level var, so small repros
-            # passed). The base of an enum-variant access is a bare ENUM TYPE NAME, never
-            # a variable — so if the base IS a known local/global var, `.field` is a
-            # FIELD access, full stop. Guard the enum-variant branch on that.
-            var _base_is_var = 0;
-            if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { _base_is_var = 1; } }
-            if (_base_is_var == 0) { if (FINDVAR(S, noff) >= 0) { _base_is_var = 1; } }
-            # Peek: is the second ident a known global var? (enum variant)
-            var dot_ti = GTI(S);
-            STI(S, GTI(S) + 1);
-            if (_base_is_var == 0 && PEEKT(S) == 2) {
-                # 6.6.11: the base must be the variant's own enum (_enum_qual_resolve).
-                var vi = _enum_qual_resolve(S, dot_ti - 1);
-                if (vi >= 0) {
-                    # Enum.VARIANT — load the variant's global value.
-                    # v5.5.2: if this gvar was registered by PARSE_ENUM_DEF
-                    # as an enum constant (GVECP presence flag set; raw
-                    # value in _vecv_base), fold to EMOVI and mark _cfo=1 so
-                    # callers like the syscall sc_num dispatch can read
-                    # the compile-time value. (6.6.8: at any var index —
-                    # the old 1024-slot cap is gone, see util.cyr GVECP.)
-                    STI(S, GTI(S) + 1);
-                    if (vi >= 0) {
-                        if (GVECP(S, vi) == 1) {
-                            var _evq = L64(_vecv_base + vi * 8);
-                            _cfp = GCP(S);
-                            EMOVI(S, _evq);
-                            if (_evq < 0x10000) { _cfv = _evq; _cfo = 1; }
-                            else { _cfo = 0; }
-                            return 0;
-                        }
-                    }
-                    EVLOAD(S, vi);
-                    _cfo = 0;
-                    return 0;
-                }
-                if (_enum_qual_said(S, vi) == 1) { return 0; }   # 6.7.16: a member of no enum, reported
-            }
-            # Not an enum — rewind and do struct field load
-            STI(S, dot_ti);
-            PARSE_FIELD_LOAD(S, noff);
-            _cfo = 0;
-            return 0;
-        }
-        if (_arr_sub_read(S, noff) == 1) { return 0; }   # 6.6.12: `a[i]` (see _arr_sub_addr)
-        # Variable load — check local first if in function
-        SPSC(S, 0);
-        if (_cst_read_local(S, noff) == 1) { return 0; }   # 6.7.2 (B1): a local const is its value
-        if (GINFN(S) == 1) {
-            var li = FINDLOCAL(S, noff);
-            if (li >= 0) {
-                if (_slice_sub_read(S, li) == 1) { return 0; }   # v5.8.15: `s[i]` on a slice local
-                var lt = _load_lt(S, li);   # 6.6.17: a typed pointer's value is a plain word
-                # v6.2.19 math arc: f64/f32 locals — load the 8-byte value and tag
-                # the expression f64/f32 so PEXPR/PARSE_TERM route operators to the
-                # f64 builtins (skip the SPSC pointer-scale + sub-word paths below).
-                if (lt == F64_TYID) { SESTYPE(S, F64_TYID); EFLLOAD(S, li); return 0; }
-                # v6.4.56 (scalar-float D2): f32 now has scalar arithmetic — load the
-                # 8-byte value and propagate F32_TYID so PEXPR/PARSE_TERM route +,-,*,/
-                # and comparisons to EMIT_F32_BINOP / EF32_CMP (single-precision).
-                if (lt == F32_TYID) { EFLLOAD(S, li); SESTYPE(S, F32_TYID); return 0; }
-                _lt_spsc(S, li, lt);   # SPSC(S, lt); 6.7.8: a step-8 `*T` local's step word
-                # Width-correct load for scalar types (1=i8, 2=i16, 4=i32)
-                # v6.3.34: a sub-i64 SCALAR local (SLTYPE 1/2/4 for i8/i16/i32) is NOT
-                # a pointer — the SPSC(S, lt) above sets a step of lt, which would make
-                # `a + 2` on a plain `var a: i32` add 2*sizeof(i32). Reset for lt < 8 ONLY:
-                # SLTYPE 8 is a `*i64` typed pointer (scalar i64 is SLTYPE 0), which needs
-                # its step for `p + i`. 6.7.11: reset to 0, an integer's — it was 1, which
-                # scales nothing but answers "a pointer" to every `> 0` test, so `w - q32`
-                # was refused as a pointer difference and `var r: *u32 = w;` did not warn,
-                # where an i64 local, a narrow global and a narrow parameter are integers.
-                # CHANGELOG [6.7.11]
-                if (lt > 0) { if (lt <= 8) {
-                        if (lt < 8) { SPSC(S, 0); }
-                        SEXW(S, lt);
-                        # v6.3.35: a SIGNED sub-i64 local (marked by a negative slice-width
-                        # sentinel) loads via movsx (negative width); unsigned stays movzx.
-                        var _lw = lt;
-                        if (lt < 8) { if (GSLICE_W(S, li) < 0) { _lw = 0 - lt; } }
-                        EFLLOAD_W(S, li, _lw);
-                        return 0;
-                    } }
-                # ⛔ 6.6.5 — OPERATOR OVERLOADING WORKED FOR GLOBALS AND NOT FOR LOCALS, and the
-                # difference was invisible: `var a: Num; a.v = 1; ... a + b` compiled clean and
-                # did an INTEGER ADD of the two struct words, while the identical top-level
-                # declaration dispatched `Num_add`. Measured 3 against 102 for the same source
-                # moved inside a fn. Only an INLINE local dispatches — a pointer-mode one holds
-                # an address, where `+` is pointer arithmetic (the global half of this rule is
-                # a few lines below). A multi-word value is passed BY ADDRESS, matching what
-                # `EMIT_OP_DISPATCH` already does for a >8 B global. CHANGELOG [6.6.5]
-                if (lt < 0) { if (lt > 0 - 2048) { if (_op_local_dispatches(S, li) == 1) {
-                            SESTYPE(S, 0 - lt);
-                            if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
-                            _esv_name = 0 - 2 - li;   # 6.6.20: see `_op_operand_sv`
-                        } } }
-                EFLLOAD(S, li);
-                if (lt == 0) { _sl_load_marks(S, li); }   # 6.6.10 the float flag, 6.6.16 the *iN mark
-                return 0;
-            }
-        }
-        # v6.3.8 — captured free variable. Inside a capturing closure body, an
-        # identifier that is NOT a closure local (FINDLOCAL failed above) but IS an
-        # enclosing local reads from the heap env object — the hidden first param at
-        # slot `_cl_env_lidx`, captured value at env[1 + capture_index].
-        if (_cl_capturing == 1) {
-            if (_cl_env_lidx >= 0) {
-                var cl_esl = _cl_snap_find(S, noff);
-                if (cl_esl >= 0) {
-                    var cl_capi = _cl_cap_find(cl_esl);
-                    if (cl_capi >= 0) {
-                        _CL_CAP_OPTYPE(S, cl_esl, cl_capi);              # see the fn's note
-                        _CL_CAP_WORDS_RA(S, cl_capi);                    # rax = &env[woff]
-                        if (_cl_cap_w128(S, cl_esl) == 1) { return 0; }   # 6.7.14: a u128 is its value
-                        # 6.6.5: a multi-word capture IS those words — its value is its
-                        # address, the same convention an enclosing inline aggregate has in
-                        # its own frame. A single-word capture is a value; load it.
-                        if (L64(&_cl_cap_w + cl_capi * 8) > 1) {
-                            if (_cl_snap_arr(cl_esl) == 1) { ELOAD64(S); return 0; }   # 6.7.17: its first word
-                            SPSC(S, 1);
-                            return 0;
-                        }
-                        _cl_cap_load(S, cl_esl);                         # rax = captured value (6.7.3: + a bool's mark)
-                        return 0;
-                    }
-                }
-            }
-        }
-        var idx = FINDVAR(S, noff);
-        if (idx >= 0) { if (_cst_read_global(S, idx) == 1) { return 0; } }   # 6.7.2: an f64 / string const
-        if (idx < 0) {
-            if (_slit_stray(S, noff) == 1) { return 0; }   # 6.7.14 (D12 (a)): `P { .. }` here
-            # v6.5.19: under --syntax-only an unresolved read becomes the constant 0
-            # and we return exactly as the sibling success paths above do, so the
-            # token stream stays in sync and no cascade is invented. See _syntax_only
-            # (src/common/util.cyr) for why report-and-continue was rejected here.
-            _undef_read(S, noff);   # 6.7.14: once per token (ERR_UNDEF); 6.7.16: `nofn<i64>(1)` is a call (`_ugc_call`)
-            return 0;
-        }
-        var vt = GVTYPE(S, idx);
-        _gv_load_ps(S, idx, vt);
-        if (vt > 0) {
-            # Disambiguate scalar types from struct IDs using var_sizes:
-            # Scalar i8/i16/i32 have var_sizes 1/2/4. Structs have var_sizes >= 8.
-            var gvsz = L64(_vars_base + idx * 8);
-            if (gvsz < 8) {
-                _gv_narrow_sx(S, idx, vt, gvsz);   # 6.7.10: a struct value under 8 B dispatches
-                # v6.4.23: a SIGNED sub-i64 global (i8/i16/i32) loads via movsx —
-                # pass a NEGATIVE width so EVLOAD_W's _EMIT_NLOAD_RCX (x86) / signed
-                # arms (aarch64) sign-extend. Unsigned (uN) stays zero-extend. Mirrors
-                # the local negative-width sentinel (the local load's `_lw` above).
-                var _gw = gvsz;
-                if (GVSGN(S, idx) == 1) { _gw = 0 - gvsz; }
-                EVLOAD_W(S, idx, _gw);
-                return 0;
-            }
-            # 6.6.5 — ONLY AN INLINE STRUCT VALUE DISPATCHES AN OPERATOR. A pointer-mode
-            # struct global (`var s: Str = 0;`) holds an ADDRESS, so `s + 8` is pointer
-            # arithmetic; setting the expression's struct type here sent it to a `Str_add`
-            # that does not exist and failed the COMPILE. `_var_ptrmode` is the recorded
-            # layout (1 = the slot holds an address). CHANGELOG [6.6.5]
-            if (GVPM(S, idx) != 1) {
-                SESTYPE(S, vt);
-                if (gvsz > 8) { SESVAR(S, idx); }
-                _esv_name = idx;   # 6.6.20: see `_op_operand_sv`
-            }
-        }
-        # v5.5.2: bare identifier resolving to an enum constant folds to
-        # EMOVI with _cfo=1 so the syscall-reroute dispatch (and any
-        # other _cfv-driven optimization) can see the value at parse
-        # time. Enum registration stores the raw value in _vecv_base and
-        # sets the slot's GVECP presence flag; a flagged gvar is a fold
-        # candidate. (6.6.8: at any var index — the 1024-slot cap is gone,
-        # see util.cyr GVECP.)
-        if (idx >= 0) {
-            if (GVECP(S, idx) == 1) {
-                var _ev = L64(_vecv_base + idx * 8);
-                _cfp = GCP(S);
-                EMOVI(S, _ev);
-                if (_ev < 0x10000) { _cfv = _ev; _cfo = 1; }
-                else { _cfo = 0; }
-                return 0;
-            }
-        }
-        EVLOAD(S, idx);
-        if (vt == 0) { _UFV_G(S, idx); }   # 6.6.10: an untyped float variable (kind 3)
-        return 0;
+        return _pf_ident(S);
     }
     if (typ == 10) {
         if (_paren_field(S) == 1) { return 0; }   # 6.7.14 (D24 (a)): `(s).a`, `(mk1()).a`, `(s).m()`
@@ -366,110 +1676,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         return 0;
     }
     if (typ == 27) {
-        # &var or &fn — address of variable or function
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 2) { _amp_not_name(S); return 0; }   # 6.7.15: one error, the factor ends there
-        var anoff = PEEKV(S);
-        STI(S, GTI(S) + 1);
-        # 6.7.2 (B1): a const has no address; 6.7.3: nor has an enum constant (parse/fn.cyr).
-        if (_addr_lvalue_refused(S, anoff) == 1) { EMOVI(S, 0); return 0; }
-        # Resolution order is local → global → function: a VALUE of a
-        # given name shadows a function of the same name (correct lexical
-        # scoping). Pre-v6.0.35 this checked FINDFN *first*, so a local
-        # array named `argv` (shadowing stdlib `fn argv`) had `&argv`
-        # resolve to the function's __TEXT code address; the subsequent
-        # store wrote into __TEXT — silently masked on Linux (the load
-        # segment is RWX) but a hard SIGBUS on macOS (W^X). See
-        # CHANGELOG [6.0.35].
-        # Local (innermost scope) wins.
-        if (GINFN(S) == 1) {
-            var ali = FINDLOCAL(S, anoff);
-            if (ali >= 0) {
-                # ⛔ 6.6.6 (bite 16 review) — `&q` ON AN ADDRESS-PASSED BY-VALUE STRUCT PARAMETER
-                # IS THE STRUCT, NOT THE SLOT. `q` in `fn h(q: P3)` denotes the caller's struct
-                # (that is why `q.z` already reads the caller's field), but `&q` took the
-                # rbp-relative address of the word that HOLDS the pointer: `load64(&q + 16)`
-                # returned 0 on 6.6.5 and on the compiler 16b shipped, where the identical code
-                # on an inline local returns 9. So `&q` and `q.z` addressed two different things.
-                # The slot's CONTENT already IS the struct's address — load it. No `_fn_local_addr`
-                # here, deliberately: this frame's address does NOT escape (the pointer is the
-                # CALLER's), so a tail call in this fn stays legal. CHANGELOG [6.6.6]
-                # 6.7.9: never for a `q: *P` parameter, whose `&q` is its slot (`_addr_is_slot_content`).
-                if (_addr_is_slot_content(S, ali) == 1) { EFLLOAD(S, ali); SPSC(S, 1); return 0; }
-                var adisp = 0 - ((ali + 1) * 8);
-                # v4.9.1: shift past all reserved callee-saved slots
-                if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }
-                if (_cur_fn_ret_stash > 0) { adisp = adisp - _cur_fn_ret_stash; }
-                # v5.11.36 path-A: dispatch lives in
-                # <backend>/emit.cyr::ELOAD_LOCAL_ADDR.
-                # v6.5.14: this frame's address has now escaped into a value.
-                # Any tail call in this fn would free the frame before the
-                # callee dereferences it — disable TCO for the rest of the fn.
-                _fn_local_addr = 1;
-                ELOAD_LOCAL_ADDR(S, adisp);
-                # v6.5.29 — `&x` IS a pointer, so say so. This branch never set a pointer
-                # scale, so `var p: *i64 = &nodes;` — the canonical address-of idiom — tripped
-                # `assigning non-pointer to typed pointer`, the compiler warning about the one
-                # expression form that cannot possibly be a non-pointer.
-                # ⚠ Scale 1 (BYTE-addressed), deliberately, not 8. Pointer arithmetic in this
-                # tree is written in BYTES at the source level (`&nodes + i * 16`), and
-                # EPTR_SCALE multiplies the addend by the scale — so any value above 1 would
-                # silently re-scale every existing `&x + n` site and change what compiled code
-                # DOES. Scale 1 multiplies by 1 and divides by 1: arithmetic-neutral by
-                # construction, which is why the self-host stays byte-identical.
-                SPSC(S, 1);
-                return 0;
-            }
-        }
-        # 6.6.5 — `&name` on a CAPTURED enclosing local. A closure could not take the address
-        # of an enclosing stack array at all (`&buf` inside `|a| ... load64(&buf)` reported
-        # "undefined variable 'buf'"), because this ladder went local → global → fn with no
-        # rung for the env object. The captured words live at `env + woff*8`.
-        if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
-                var acap_esl = _cl_snap_find(S, anoff);
-                if (acap_esl >= 0) {
-                    var acap_i = _cl_cap_find(acap_esl);
-                    if (acap_i >= 0) {
-                        _CL_CAP_WORDS_RA(S, acap_i);
-                        SPSC(S, 1);
-                        return 0;
-                    }
-                }
-            } }
-        # Global next.
-        var aidx = FINDVAR(S, anoff);
-        if (aidx >= 0) {
-            EVADDR(S, aidx);
-            SPSC(S, 1);   # v6.5.29 — see the note above: `&global` is a pointer too.
-            return 0;
-        }
-        # Neither a local nor a global of this name → function pointer
-        # (&fn_name), emitted as a fixup-type-3 function address.
-        var fni = FINDFN(S, anoff);
-        if (fni >= 0) {
-            if (_amp_targs(S, fni) == 1) { return 0; }   # 6.7.17: `&g<i32>` refused by name, `&nf<i32>` stepped
-            # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
-            # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
-            _callee_site_checks_here(S, fni, anoff, 1);   # 6.6.16: and `#deprecated` — `&old_f` was silent
-            _gen_addr_check(S, fni, anoff);   # 6.6.10: `&g` of a stub generic reaches the stub
-            var fc = GFCNT(S);
-            if (fc >= 1048576) {
-                _ew("error: fixup table full (1048576)\n", 34);
-                _die(1);
-            }
-            # Register the function-address fixup (common to both
-            # backends — only the placeholder bytes differ).
-            var fnaddr = _fixup_base + fc * 16;
-            # v5.11.36 path-A: parser-to-emit named-op refactor.
-            # Dispatch + fixup record + SFCNT all live in
-            # <backend>/emit.cyr::ELOAD_FN_ADDR.
-            _lfa_load(S, fnaddr, fc, fni);   # 6.7.6 (FE): ELOAD_FN_ADDR, recording `f` for fncallN
-            return 0;
-        }
-        # Nothing of this name exists in any scope.
-        if (_syntax_only == 1) { if (_unp_names == 0) { EMOVI(S, 0); return 0; } }   # v6.5.19: see _syntax_only; 6.7.17 (D110)
-        _undef_var_report(S, _nm_ti(S, GTI(S) - 1, anoff), anoff, "");   # 6.7.14: once per token (ERR_UNDEF)
-        EMOVI(S, 0); return 0;
+        return _pf_amp(S);
     }
     if (typ == 30) {
         # STRING literal
@@ -493,879 +1700,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     # is defined inside fn 'main'" and "expected '}', got end of file" (`store8(p;`, `syscall;`, `f64_sqrt;` .. the same),
     # and g's own error was never reported. CHANGELOG [6.7.17]
     if (typ == 24) {
-        # syscall(args...)
-        STI(S, GTI(S) + 1);
-        _expect_step(S, 10);
-        var argc = 0;
-        var sc_num = 0 - 1;
-        var scgo = 1;
-        while (scgo == 1) {
-            PCMPE(S);
-            if (argc == 0) { if (_cfo == 1) { sc_num = _cfv; } }
-            EPUSHR(S);
-            argc = argc + 1;
-            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-            else { scgo = 0; }
-        }
-        _expect_step(S, 11);   # 6.7.14: a miss keeps a `;` / keyword (and see `_sc_arity_warn`)
-        # Mach-O ARM target: the aarch64 ESYSXLAT chain translates the
-        # BSD SVC whitelist (read, write, open, close, mmap, mprotect,
-        # munmap, exit). Non-whitelisted syscalls fall through to svc with
-        # a Linux number, which is either nonexistent on XNU or carries
-        # different semantics — a real runtime hazard. v5.5.15 demoted
-        # this from a hard parse-time error to a warning because the old
-        # error rejected syscalls inside UNCALLED stdlib helpers (e.g.
-        # `lib/io.cyr`'s `syscall(73)` flock wrappers) and blocked
-        # cross-compiling Cyrius tool binaries whose hot paths only touch
-        # the whitelist. If the warned syscall is actually reachable at
-        # runtime, the resulting binary faults visibly on macOS — which
-        # is a strictly better failure mode than a compile-time refusal
-        # to build something that would have worked. v5.5.17 pins the
-        # follow-up that adds ESYSXLAT translations or `__got` reroutes
-        # for specific syscalls the tools actually exercise.
-        # v6.5.43 put the x86 Mach-O half beside it; v6.6.8 made both ARITY-aware and moved them
-        # into _macho_warn_unrouted (below _PE_ROUTE_PERFCOUNTER) so this fn does not grow; 6.7.10
-        # wraps it with the execution-coverage exit hook (parse/cov.cyr `_sc_args_done`).
-        _sc_args_done(S, sc_num, argc);
-        # v6.5.51 — ELF-aarch64: a raw syscall NUMBER that is really an x86_64 number.
-        # ESYSXLAT's aarch64 arm passes unmatched numbers through to the `svc` verbatim,
-        # which is correct by design (native numbers must not be rewritten) — but it means
-        # a stray x86_64 number is indistinguishable from an intended native one, so the
-        # build succeeds and a DIFFERENT, VALID syscall runs. Filed from darshana; the
-        # `var SYS_* = <x86 number>` shadow half was diagnosed at v6.5.50.
-        #
-        # ⛔ THIS NEEDS REAL DATA, NOT A HEURISTIC. "warn if the number is not a valid
-        # SYS_* value here" catches 61 of the 71 differing syscalls and misses the 10 that
-        # matter most, because those x86 numbers ARE real aarch64 syscalls: uname 63 is
-        # read, kill 62 is lseek, execve 59 is pipe2, wait4 61 is getdents64. The table is
-        # DERIVED (src/common/syscall_xlat.cyr, generated by programs/gen_syscall_xlat.cyr):
-        # which numbers warn comes from the two stdlib peers, so it cannot drift from the
-        # stdlib it describes, and what each number MEANS on ARM comes from the committed
-        # kernel table, because the peer cannot name calls the stdlib has no wrapper for.
-        #
-        # Gated implicitly, not by a target flag: `_SYSX_MEANT` is the real table only on
-        # the aarch64 backend and a `return 0;` stub on x86/PE/cx, so this costs those
-        # forks nothing. `_TARGET_MACHO == 0` keeps it off the Mach-O ARM arm, which has
-        # its own routing diagnostic above.
-        if (_TARGET_MACHO == 0) { _sysx_raw_warn(S, sc_num); }
-        # PE32+ (Windows): reroute recognised Linux syscall numbers to
-        # kernel32 IAT calls so the generic `ESCPOPS` path below
-        # (which would emit the x86_64 `syscall` instruction, 0F 05,
-        # a Linux-only encoding) is bypassed. Mappings:
-        #   syscall(0, fd, buf, len)       → GetStdHandle+ReadFile   (v5.5.1)
-        #   syscall(1, fd, buf, len)       → GetStdHandle+WriteFile  (v5.4.7)
-        #   syscall(2, path, flags, mode)  → CreateFileW             (v5.5.1)
-        #   syscall(3, fd)                 → CloseHandle             (v5.5.1)
-        #   syscall(8, fd, off, whence)    → SetFilePointerEx        (v5.5.1)
-        #   syscall(9, addr, len, ...)     → VirtualAlloc            (v5.5.1)
-        #   syscall(11, addr, len)         → VirtualFree(MEM_RELEASE) (6.6.20,
-        #                                    via _PE_ROUTE_FLUSH — no inline arm)
-        #   syscall(60, code)              → ExitProcess             (v5.4.4)
-        # Other syscall numbers still fall through with a warning and
-        # produce a non-functional binary; wrap them in syscalls_windows.cyr
-        # shape helpers as they're needed.
-        # Mach-O arm64 __got reroutes — syscalls whose libSystem equivalents
-        # are bound into __DATA_CONST.__got[N] in EMITMACHO_ARM64 get short-
-        # circuited here instead of falling through to ESYSXLAT+svc (which
-        # needs BSD-number translation and has lingering edge cases). Slot
-        # indices must match the symbol order in macho/emit_arm64.cyr's symtab +
-        # bind opcodes + indirect symtab. Mirror of the PE syscall-reroute
-        # block below (v5.4.4/5.4.7/5.5.1/5.5.2 bundle).
-        #   syscall(0, fd, buf, len) → __got[2] = libSystem._read   (v5.5.14)
-        #   syscall(1, fd, buf, len) → __got[1] = libSystem._write  (v5.5.14)
-        #   syscall(60, code)        → __got[0] = libSystem._exit   (v5.5.13)
-        if (_TARGET_MACHO == 2) {
-            # v6.5.44 (band J phase 2): syscall(1700, &tid, attr, &start, arg) → __got[5]
-            # libSystem `pthread_create`. This is the arm64-macOS thread primitive, and it is
-            # here rather than in ESYSXLAT because pthread_create is NOT A SYSCALL — the
-            # ≥1000 alias band so far has meant "1000 + the native BSD number", which cannot
-            # spell a libSystem routine. 1700+ is therefore a distinct sub-band meaning
-            # "__got-bound libSystem function"; do not read 1700 as BSD 700.
-            # ⛔ bsdthread_create is NOT usable here even though v6.5.43 routed it:
-            # bsdthread_register is one-shot per process and libpthread takes it first in any
-            # binary linking libSystem, which every cyrius arm64 Mach-O does. Measured EINVAL
-            # on real ecb. The v6.5.43 routes remain correct and are what x86-macOS (a static
-            # no-libSystem binary, where registration DOES work) will use.
-            if (sc_num == 1700) {
-                if (argc == 5) {
-                    EMACHO_PTHREAD_CREATE_ARM(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # 1701 = libSystem fork (__got[7]), the second routine in the 1700+ sub-band.
-            # 6.6.13: syscall(1701) → libSystem `fork()` (errno via __got[8] ___error), so the
-            # child gets libSystem's own fork handling. The raw BSD fork the clone row still
-            # translates to skips it, and the child's first pthread_create then SIGSEGVs. See
-            # EMACHO_FORK_ARM (src/backend/aarch64/emit.cyr). CHANGELOG [6.6.13]
-            if (sc_num == 1701) {
-                if (argc == 1) {
-                    EMACHO_FORK_ARM(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 60) {
-                if (argc == 2) {
-                    EMACHO_EXIT_ARM(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 1) {
-                if (argc == 4) {
-                    EMACHO_WRITE_ARM(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 0) {
-                if (argc == 4) {
-                    EMACHO_READ_ARM(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v5.6.6: syscall(228, clock_id, _) → _clock_gettime_nsec_np
-            # for CYRIUS_PROF profiling. Returns u64 ns in x0 (no
-            # timespec buffer — macOS gives ns directly).
-            if (sc_num == 228) {
-                if (argc == 3) {
-                    EMACHO_CLOCK_ARM(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-        }
-        # v6.5.16: the x86-macOS twin of the 228 reroute above. Darwin has NO
-        # clock_gettime syscall on either architecture, so this cannot be an
-        # EMACHO_SYSXLAT row; arm64 binds libSystem through __got, and the x86
-        # Mach-O writer has no __got, so it composes ns from gettimeofday instead.
-        # Same contract either way: ns in the return register. See EMACHO_CLOCK_X86
-        # (src/backend/x86/emit.cyr). Without this, syscall(228) fell through to
-        # ESCPOPS + an unrouted number and SIGSYS'd — five of ach's twelve failures.
-        if (_TARGET_MACHO == 1) {
-            if (sc_num == 228) {
-                if (argc == 3) {
-                    EMACHO_CLOCK_X86(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.5.16: nanosleep(35) → poll(NULL, 0, ms). Darwin has no nanosleep
-            # either; the PE fork has rerouted this to Sleep() since v6.1.17 and
-            # x86-macOS never got the twin, so the number reached Darwin unclassed
-            # and SIGSYS'd (lib/sakshi.cyr's TSC calibration window — sakshi_full
-            # on ach). See EMACHO_NANOSLEEP_X86.
-            if (sc_num == 35) {
-                if (argc == 3) {
-                    EMACHO_NANOSLEEP_X86(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-        }
-        if (_TARGET_PE == 1) {
-            if (sc_num == 60) {
-                if (argc == 2) {
-                    # Stack top-down: [exit_code] [syscall_nr=60]
-                    EPOPR(S);                    # pop rax = exit code
-                    # v5.11.35 path-A: discard syscall_nr via named op.
-                    EDROPI64(S);
-                    EEXIT(S);                    # emits Win64 ExitProcess call
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 1) {
-                if (argc == 4) {
-                    # EWRITE_PE consumes [len][buf][fd][sc_nr=1] from
-                    # the stack and emits the GetStdHandle+WriteFile
-                    # sequence. Registers GetStdHandle + WriteFile as
-                    # pending IAT imports on first use.
-                    EWRITE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 0) {
-                if (argc == 4) {
-                    # syscall(0, fd, buf, len) → GetStdHandle + ReadFile.
-                    EREAD_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 2) {
-                if (argc == 4) {
-                    # syscall(2, path, flags, mode) → CreateFileW.
-                    EOPEN_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 3) {
-                if (argc == 2) {
-                    # syscall(3, fd) → CloseHandle.
-                    ECLOSE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 8) {
-                if (argc == 4) {
-                    # syscall(8, fd, offset, whence) → SetFilePointerEx.
-                    ELSEEK_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 9) {
-                if (argc == 7) {
-                    # syscall(9, addr, len, prot, flags, fd, offset) → VirtualAlloc.
-                    EMMAP_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v5.6.6: syscall(228, _, _) → GetTickCount64 for CYRIUS_PROF.
-            # 3-arg form chosen to match the Linux `syscall(228,
-            # CLOCK_MONOTONIC, &ts)` shape in _prof_clock_ns; the 2
-            # cyrius-side args are dropped by EGETTICKS_PE before the
-            # kernel32 call.
-            if (sc_num == 228) {
-                if (argc == 3) {
-                    EGETTICKS_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.1.17: syscall(35, &req, &rem) → Sleep(req ms). nanosleep —
-            # completes the v6.1.16 PE var-dispatch (35 was the routable-arity
-            # gap). ENANOSLEEP_PE reads the timespec and converts to flat ms.
-            if (sc_num == 35) {
-                if (argc == 3) {
-                    ENANOSLEEP_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v5.11.22: SYS_MKDIR (83) → CreateDirectoryW;
-            # SYS_UNLINK (87) → DeleteFileW. ai-hwaccel 2.2.2
-            # surfaced both via cache.cyr.
-            if (sc_num == 83) {
-                if (argc == 3) {
-                    ECREATEDIR_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 87) {
-                if (argc == 2) {
-                    EDELETEF_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.0.51: PE-internal Win32 process-creation reroutes (the
-            # ai-hwaccel spawn arc). 0xF00N is an out-of-band block (Linux
-            # syscalls top out ~450) reserved for kernel32 calls whose arity
-            # exceeds the syscall(n, ≤6) form — process_win.cyr drives them
-            # via named consts (WIN_SYS_*). See lib/process_win.cyr + the
-            # EWIN*_PE emit fns in backend/x86/emit.cyr.
-            if (sc_num == 61441) {
-                if (argc == 3) {
-                    # syscall(0xF001, handle, timeout) → WaitForSingleObject.
-                    EWAIT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61442) {
-                if (argc == 3) {
-                    # syscall(0xF002, handle, &code) → GetExitCodeProcess.
-                    EGETEXIT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61443) {
-                if (argc == 4) {
-                    # syscall(0xF003, handle, mask, flags) → SetHandleInformation.
-                    ESETHANDLE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61444) {
-                if (argc == 5) {
-                    # syscall(0xF004, &rd, &wr, &sa, size) → CreatePipe.
-                    ECREATEPIPE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61445) {
-                if (argc == 2) {
-                    # syscall(0xF005, &args) → CreateProcessW (10 args from *args).
-                    ECREATEPROC_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.0.54: GetCommandLineW for the Windows args.cyr branch
-            # (lib/args_win.cyr) + cycc's own command-line flags. 0 args,
-            # returns the UTF-16LE command-line LPWSTR in rax.
-            if (sc_num == 61446) {
-                if (argc == 1) {
-                    # syscall(0xF006) → GetCommandLineW (no args, LPWSTR in rax).
-                    EGETCMDLINE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.0.61: real Windows threading reroutes (lib/thread_win.cyr) —
-            # CreateThread + SRWLOCK mutexes (join reuses 0xF001/WaitForSingleObject
-            # + syscall(3)/CloseHandle). See thread + nuances issues.
-            if (sc_num == 61447) {
-                if (argc == 2) {
-                    # syscall(0xF007, &args6) → CreateThread (6 args via struct).
-                    ECREATETHREAD_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61448) {
-                if (argc == 2) {
-                    # syscall(0xF008, &lock) → InitializeSRWLock.
-                    EINITSRW_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61449) {
-                if (argc == 2) {
-                    # syscall(0xF009, &lock) → AcquireSRWLockExclusive.
-                    EACQSRW_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61450) {
-                if (argc == 2) {
-                    # syscall(0xF00A, &lock) → ReleaseSRWLockExclusive.
-                    ERELSRW_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.0.61: thread-local storage reroutes (lib/thread_local.cyr) —
-            # per-thread slot block keyed off one TlsAlloc'd index + gettid.
-            if (sc_num == 61451) {
-                if (argc == 1) {
-                    # syscall(0xF00B) → GetCurrentThreadId (no args, DWORD in rax).
-                    EGETCURTID_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.3.44: syscall(0xF01C) → GetCurrentProcessId (no args, DWORD in rax).
-            # Backs getpid() on Windows (lib/process_win.cyr; was a 0-stub).
-            if (sc_num == 61468) {
-                if (argc == 1) {
-                    EGETCURPID_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.26: syscall(0xF01D, hProcess, uExitCode) → TerminateProcess
-            # (2-arg, argc==3). The Windows timeout-kill primitive (thoth). See
-            # 2026-07-08-windows-pe-surface-no-terminateprocess.md.
-            if (sc_num == 61469) {
-                if (argc == 3) {
-                    ETERMINATE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43: syscall(0xF01E, wVersionRequested, lpWSAData) → ws2_32!WSAStartup
-            # (2-arg, argc==3). Winsock init for the async IOCP backend. See
-            # 2026-07-08-async-epoll-only-blocks-win-transport.md.
-            if (sc_num == 61470) {
-                if (argc == 3) {
-                    EWSASTARTUP_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43: IOCP core (kernel32) — the async reactor's completion engine.
-            # 0xF01F CreateIoCompletionPort (4-arg → argc 5); 0xF020
-            # GetQueuedCompletionStatus (5-arg → argc 6); 0xF021
-            # PostQueuedCompletionStatus (4-arg → argc 5).
-            if (sc_num == 61471) {
-                if (argc == 5) {
-                    ECREATEIOCP_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61472) {
-                if (argc == 6) {
-                    EGETQCS_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61473) {
-                if (argc == 5) {
-                    EPOSTQCS_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43: ws2_32 socket foundation. 0xF022 WSASocketW (6-arg → argc 7);
-            # 0xF023 closesocket (1-arg → argc 2); 0xF024 WSAGetLastError (0-arg → argc 1).
-            if (sc_num == 61474) {
-                if (argc == 7) {
-                    EWSASOCKET_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61475) {
-                if (argc == 2) {
-                    ECLOSESOCKET_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61476) {
-                if (argc == 1) {
-                    EWSALASTERR_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43: ws2_32 connect prerequisites. 0xF025 bind (3-arg → argc 4);
-            # 0xF026 getsockopt (5-arg → argc 6).
-            if (sc_num == 61477) {
-                if (argc == 4) {
-                    EBIND_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.66: 0xF036 getpeername / 0xF037 getsockname (3-arg → argc 4) —
-            # the peer/local-address reroutes so sandhi's per-IP rate limiting works
-            # on PE. Same 3-arg shape as bind.
-            if (sc_num == 61494) {
-                if (argc == 4) {
-                    EGETPEERNAME_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61495) {
-                if (argc == 4) {
-                    EGETSOCKNAME_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.44 R3: 0xF033 listen(s, backlog) (2-arg → argc 3) — AcceptEx server listener.
-            if (sc_num == 61491) {
-                if (argc == 3) {
-                    ELISTEN_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.57: 0xF034 MoveFileExW(old, new) (2-arg → argc 3) — the Windows
-            # half of lib/io.cyr's portable file_rename / file_write_atomic. Widens
-            # both UTF-8 paths to UTF-16 and calls kernel32!MoveFileExW with
-            # MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH (the write-through
-            # bit since 6.6.7; the flags dword is baked into the emitter,
-            # so file_rename passes only the two paths). See issue
-            # 2026-07-12-thoth-portable-atomic-file-write.md.
-            if (sc_num == 61492) {
-                if (argc == 3) {
-                    EMOVEFILEEX_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.58: 0xF035 DeleteFileW(path) (1-arg → argc 2) — the Windows temp
-            # cleanup for lib/io.cyr's xunlink / file_write_atomic on-failure unlink.
-            # 6.6.20: the same emitter as unlink (87); EDELETEFILEW_PE was its byte-for-byte copy.
-            if (sc_num == 61493) {
-                if (argc == 2) {
-                    EDELETEF_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.6.6: 0xF03B RemoveDirectoryW(path) (1-arg → argc 2) — lib/io.cyr's
-            # xrmdir on PE, which degraded to -1 with no reroute wired. That is why the
-            # CLI's private temp directory (`<TEMP>/cyrius-<pid>-t<nonce>`) leaked one
-            # empty directory per run on Windows. Same shape as DeleteFileW above.
-            if (sc_num == 61499) {
-                if (argc == 2) {
-                    EREMOVEDIRW_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61478) {
-                if (argc == 6) {
-                    EGETSOCKOPT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43: ws2_32 WSAIoctl (9-arg → argc 10) — fetch the ConnectEx pointer
-            # via SIO_GET_EXTENSION_FUNCTION_POINTER.
-            if (sc_num == 61479) {
-                if (argc == 10) {
-                    EWSAIOCTL_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43: ws2_32 client I/O. 0xF028 connect (3-arg → argc 4); 0xF029
-            # WSARecv (7-arg → argc 8); 0xF02A WSASend (7-arg → argc 8).
-            if (sc_num == 61480) {
-                if (argc == 4) {
-                    ECONNECT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61481) {
-                if (argc == 8) {
-                    EWSARECV_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61482) {
-                if (argc == 8) {
-                    EWSASEND_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43: ws2_32 name resolution. 0xF02B getaddrinfo (4-arg → argc 5);
-            # 0xF02C freeaddrinfo (1-arg → argc 2).
-            if (sc_num == 61483) {
-                if (argc == 5) {
-                    EGETADDRINFO_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61484) {
-                if (argc == 2) {
-                    EFREEADDRINFO_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43 R2: the non-IOCP-event → IOCP bridge (kernel32). 0xF02D
-            # RegisterWaitForSingleObject (6-arg → argc 7); 0xF02E CreateWaitableTimerW
-            # (3-arg → argc 4); 0xF02F SetWaitableTimer (6-arg → argc 7).
-            if (sc_num == 61485) {
-                if (argc == 7) {
-                    EREGWAIT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61486) {
-                if (argc == 4) {
-                    ECREATETIMER_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61487) {
-                if (argc == 7) {
-                    ESETTIMER_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.4.43 R2: reactor teardown. 0xF030 UnregisterWaitEx (2-arg → argc 3);
-            # 0xF031 CancelIoEx (2-arg → argc 3); 0xF032 setsockopt (5-arg → argc 6).
-            if (sc_num == 61488) {
-                if (argc == 3) {
-                    EUNREGWAIT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61489) {
-                if (argc == 3) {
-                    ECANCELIO_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61490) {
-                if (argc == 6) {
-                    ESETSOCKOPT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61452) {
-                if (argc == 1) {
-                    # syscall(0xF00C) → TlsAlloc (no args, slot index in rax).
-                    ETLSALLOC_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61453) {
-                if (argc == 2) {
-                    # syscall(0xF00D, idx) → TlsGetValue (LPVOID in rax).
-                    ETLSGET_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61454) {
-                if (argc == 3) {
-                    # syscall(0xF00E, idx, val) → TlsSetValue (BOOL in rax).
-                    ETLSSET_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61455) {
-                if (argc == 2) {
-                    # syscall(0xF00F, ms) → Sleep(ms). v6.0.65 portable sleep_ms
-                    # (lib/chrono.cyr) on Windows — poll isn't routed on PE.
-                    ESLEEP_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61456) {
-                if (argc == 3) {
-                    # syscall(0xF010, cmdline, &argc) → CommandLineToArgvW
-                    # (shell32). v6.0.69 §3 — full-fidelity argv (lib/args_win.cyr).
-                    ECMDTOARGV_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61457) {
-                if (argc == 2) {
-                    # syscall(0xF011, ptr) → LocalFree (kernel32) — frees the
-                    # LPWSTR* CommandLineToArgvW returned. v6.0.69 §3.
-                    ELOCALFREE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61458) {
-                if (argc == 3) {
-                    # syscall(0xF012, &iid, &ppFactory) → CreateDXGIFactory1
-                    # (dxgi.dll). v6.0.70 §0 — the factory entry for GPU enum;
-                    # its methods are dispatched via callptr over the vtable.
-                    ECREATEDXGI_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61459) {
-                if (argc == 2) {
-                    # syscall(0xF013, name) → GetModuleHandleA. v6.0.71.
-                    EGETMODH_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61460) {
-                if (argc == 3) {
-                    # syscall(0xF014, hmod, name) → GetProcAddress. v6.0.71.
-                    EGETPROC_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61461) {
-                if (argc == 4) {
-                    # syscall(0xF015, name, buf, size) → GetEnvironmentVariableA.
-                    # v6.0.85 — the Windows env-read path (cyrius wrapper cycc
-                    # resolution; no /proc/self/environ on Windows).
-                    EGETENV_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.1.18: directory enumeration for lib/fs_win.cyr (dir_list/is_dir
-            # on Windows). 0xF016 FindFirstFileW(pattern,&data) / 0xF017
-            # FindNextFileW(h,&data) are 2-arg (argc==3); 0xF018 FindClose(h) /
-            # 0xF019 GetFileAttributesW(path) are 1-arg (argc==2). 6.6.12: the
-            # pattern / path of 0xF016 / 0xF019 is NARROW UTF-8 (widened by the
-            # emitter, long paths included), no longer a stdlib-widened one.
-            if (sc_num == 61462) {
-                if (argc == 3) {
-                    EFINDFIRST_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61463) {
-                if (argc == 3) {
-                    EFINDNEXT_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61464) {
-                if (argc == 2) {
-                    EFINDCLOSE_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            if (sc_num == 61465) {
-                if (argc == 2) {
-                    EGETFATTR_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.2.12: ProcessPrng CSPRNG for sys_getrandom on Windows. 0xF01A
-            # (61466) ProcessPrng(pbData, cbData) is 2-arg (argc==3). See issue
-            # 2026-06-11-windows-entropy-primitive.md.
-            if (sc_num == 61466) {
-                if (argc == 3) {
-                    EPROCPRNG_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.2.13: GetSystemTimeAsFileTime for the Windows wall-clock
-            # (chrono.clock_epoch_*). 0xF01B (61467) GetSystemTimeAsFileTime(&ft)
-            # is 1-arg (argc==2). See 2026-06-16 clock issue.
-            if (sc_num == 61467) {
-                if (argc == 2) {
-                    EGETSYSTIME_PE(S);
-                    _cfo = 0;
-                    return 0;
-                }
-            }
-            # v6.6.5: 0xF038/0xF039 QueryPerformanceCounter/Frequency — the Windows
-            # MONOTONIC clock (lib/chrono.cyr, lib/bench.cyr). Routed through a helper
-            # rather than two more inline arms; see _PE_ROUTE_PERFCOUNTER's header for
-            # the cybs per-function reference limit that makes that matter.
-            if (_PE_ROUTE_PERFCOUNTER(S, sc_num, argc) == 1) {
-                _cfo = 0;
-                return 0;
-            }
-            # v6.6.6: 0xF03A GetModuleFileNameW — the Windows "path of this executable",
-            # which is what made `cyrius init`/`cyrius port` buildable for PE at all.
-            # Same helper-fn treatment, same cybs reason.
-            if (_PE_ROUTE_MODULEPATH(S, sc_num, argc) == 1) {
-                _cfo = 0;
-                return 0;
-            }
-            # v6.6.7: fsync (74) / fdatasync (75) → FlushFileBuffers; 6.6.20: munmap (11) →
-            # VirtualFree. Same helper-fn treatment, same cybs reason.
-            if (_PE_ROUTE_FLUSH(S, sc_num, argc) == 1) {
-                _cfo = 0;
-                return 0;
-            }
-            # v6.1.16: non-literal (var) syscall number. The `sc_num ==`
-            # cases above only fire for a constant-folded first arg; a
-            # number held in a `var` (the portable arch-dispatch idiom)
-            # leaves sc_num == -1 and would otherwise fall through to the
-            # `0F 05` Linux syscall below — a silent no-op / fault on
-            # Windows. Emit a runtime switch over the routable syscalls of
-            # this arity instead. v6.1.17: an arity with NO routable syscall
-            # (EPE_SYSCALL_DYNAMIC → 2) no longer hard-errors — that blocked the
-            # whole PE tarball build for a call almost always on a Linux-only
-            # path dead on Windows (e.g. `syscall(SYS_GETDENTS64, fd, buf, 4096,
-            # basep)` — arity 5 — in lib/fs.cyr's dir-listing; Windows enumerates
-            # dirs via FindFirstFile, not a syscall). It emits an honest
-            # -38/-ENOSYS there and we WARN rather than refuse to compile. See
-            # issue 2026-06-09-pe-syscall-variable-number-not-rerouted.md.
-            if (sc_num < 0) {
-                var _dynrc = EPE_SYSCALL_DYNAMIC(S, argc);
-                if (_dynrc == 2) { _pe_warn_dyn(S, argc); }
-                _cfo = 0;
-                return 0;
-            }
-            # Non-mapped syscalls: emitting the generic ESCPOPS path
-            # below would produce an `0F 05` syscall that faults
-            # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
-            # (0xC000001D). Routed numbers (v5.11.22, +v6.0.51, +v6.0.54):
-            # 0=read, 1=write, 2=open, 3=close, 8=lseek, 9=mmap,
-            # 60=exit, 74/75=fsync/fdatasync (v6.6.7), 83=mkdir,
-            # 87=unlink, 228=clock_gettime, and
-            # 0xF001-0xF005 = Win32 process creation (Wait/GetExit/
-            # SetHandle/CreatePipe/CreateProcessW; see process_win.cyr),
-            # 0xF006 = GetCommandLineW (args.cyr; see args_win.cyr).
-            # Others crash; gate with `#ifdef CYRIUS_TARGET_WIN`
-            # at the call site, or file an upstream issue for a
-            # new PE reroute.
-            _pe_warn_unrouted(S, sc_num, argc);   # 6.6.10: names n, its arity and the call site
-            # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
-            #
-            # A LITERAL unrouted syscall number used to warn and then emit a raw Linux
-            # `syscall` instruction, which on Windows is STATUS_ILLEGAL_INSTRUCTION
-            # (0xC000001D) — a hard crash at the first call, from a warning nobody sees in a
-            # 600-byte wall of text. The NON-literal arm directly above has emitted an honest
-            # -38/-ENOSYS since v6.1.17 for exactly this reason; the literal arm never got
-            # the same treatment, so the two halves of one decision disagreed.
-            #
-            # This is what made `SYS_IOCTL` unfixable in the stdlib: adding the constant to
-            # the Windows peer so `lib/yukti.cyr` would COMPILE would have converted a loud
-            # compile error into a runtime crash. With this in place the constant is safe —
-            # yukti's Linux-only CD-ROM eject path returns -38 on Windows and its caller's
-            # existing `if (r < 0)` check reports the failure it already knows how to report.
-            #
-            # Reusing EPE_SYSCALL_DYNAMIC rather than minting a new emitter is deliberate:
-            # it already ends in `_pe_dyn_nomatch` (drop args, `mov rax, -38`), and a NEW
-            # cross-fork symbol called from parse/expr/ would need return-0 stubs in the
-            # aarch64 AND cx forks — a miss only real cass/cycc_cx catches. A known-unrouted
-            # literal cannot match any comparison in the emitted switch, so it lands on that
-            # -38 tail by construction; the dead compares cost bytes on a path that is by
-            # definition dead on Windows.
-            EPE_SYSCALL_DYNAMIC(S, argc);
-            _cfo = 0;
-            return 0;
-        }
-        ESCPOPS(S, argc, sc_num);   # sc_num >= 0: aarch64 folds the ESYSXLAT chain (6.6.18)
-        _cfo = 0;
-        # Syscall arity check — warn if arg count doesn't match the
-        # well-known arity for common Linux x86_64 syscalls.
-        #
-        # v5.8.7 (phylax #3 + sakshi): gate the check to x86_64 only.
-        # The _SC_ARITY table maps x86_64 syscall numbers to expected
-        # user-arg counts. On aarch64 the SAME numerical values mean
-        # different syscalls with different arities (e.g. aarch64
-        # SYS_NEWFSTATAT = 79 = x86's getcwd; aarch64 SYS_FSTAT = 80 =
-        # x86's chdir; aarch64 SYS_OPENAT = 56 = x86's clone). Stdlib's
-        # at-family wrappers in `lib/syscalls_aarch64_linux.cyr` then
-        # call `syscall(SYS_NEWFSTATAT, AT_FDCWD, path, buf, 0)` (4
-        # user args) and the parser flagged it as mismatching getcwd's
-        # 2-arg expectation — false positive.
-        #
-        # Pre-v5.8.7 phylax + sakshi saw 9-11 spurious warnings on a
-        # 4-line stdlib-only `cyrius build --aarch64` invocation
-        # (sakshi `2026-04-30-cyrius-lang-blockers.md`, phylax
-        # `2026-04-30-cyrius-stdlib-issues.md` §3). Same fix shape as
-        # v5.7.8 SYS_SETSID 1→0 in spirit: pin the check to the arch
-        # the table actually describes. Hand-written aarch64 syscalls
-        # with wrong arity now get the runtime error rather than a
-        # compile warning — acceptable tradeoff; the warning was
-        # best-effort, not load-bearing.
-        _sc_arity_warn(S, sc_num, argc);
-        return 0;
+        return _pf_syscall(S);
     }
     if (typ == 25) {
         # load8(addr)
@@ -1449,324 +1784,13 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     }
     if (typ == 8) { return _deref_read(S); }   # *expr
     if (typ == 135) {
-        # v6.3.11 (G): await e — force a Future to its value. Lowers to
-        # future_force(e): eval the operand factor (→ rax = the Future object built
-        # by an async-fn constructor), then call the runtime forcer. Binds tightly
-        # (factor-level prefix), so `await f() + 1` is `(await f()) + 1`. Gated on
-        # _ASYNC_OK; needs lib/async.cyr (future_force).
-        _ensure_async_gate(S);
-        # A refused `await` still parses its operand (so the next token is where the caller
-        # expects it) and emits no call: ERR_MSG does not exit, and falling through reached
-        # either a second, misleading "needs lib/async.cyr" or ECALLFIX(-1) — rc 139 on
-        # aarch64/cx after the correct diagnostic. Same for a missing future_force. CHANGELOG [6.6.9]
-        if (_ASYNC_OK == 0) {
-            ERR_MSG(S, "await requires CYRIUS_ASYNC=1 (async/await are gated)", 53);
-            STI(S, GTI(S) + 1);
-            PARSE_FACTOR(S);
-            return 0;
-        }
-        STI(S, GTI(S) + 1);                       # consume `await`
-        # v6.5.69 — INSIDE A COROUTINE, `await e` IS A SUSPEND POINT, not a force.
-        # ⛔ It used to be a force here too, and that is the defect this release closes: a
-        # body that awaited mid-loop compiled clean, ran its awaited call to completion, and
-        # on the next reactor turn re-entered FROM THE TOP with every local reset. Measured on
-        # the shipped compiler, a two-direction TTY relay written that way relays ZERO bytes
-        # and hangs — a shipped syntax with nothing behind it, the v6.5.63 `#inline` class.
-        # Now: evaluate the operand (the park call), stamp the resume state into the coroutine
-        # object, and return through the shared epilogue. The landing pad recorded here is
-        # where the fn-end dispatch will send the next entry. CHANGELOG [6.5.69]
-        if (_cur_fn_coro == 1) {
-            var _aw_ti = GTI(S);
-            PARSE_FACTOR(S);                      # evaluate the operand
-            var _sk = _coro_nsusp + 1;
-            if (_sk >= _CORO_MAX_SUSP) {
-                # ERR_MSG returns (multi-error, v6.4.62), so the cap must stop here itself: the
-                # stores below indexed _coro_rcp past its bound. CHANGELOG [6.6.10]
-                ERR_MSG(S, "too many `await` suspend points in one `async fn` (max 63)", 58);
-                return 0;
-            }
-            _await_coro_suspend(S, _sk, _await_operand_is_future(S, _aw_ti));
-            return 0;
-        }
-        var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);
-        if (_aw_ff < 0) {
-            ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 52);
-            PARSE_FACTOR(S);
-            return 0;
-        }
-        return _await_force(S, _aw_ff);
+        return _pf_await(S);
     }
     # |params| body / || body — closure/lambda. v6.3.7 makes the non-capturing
     # base actually work (param passing, zero-param, unique naming); lexical
     # capture is the follow-up slot.
     if (typ == 35 || typ == 54) {
-        # token 54 is `||`. At a factor position (no left operand) it is a
-        # zero-param closure `|| body`; binary `a || b` is consumed at the
-        # expression level and never reaches here as a leading token.
-        var cl_zero = 0;
-        if (typ == 54) { cl_zero = 1; }
-        # Mark the ENCLOSING fn as containing a closure so its regalloc post-pass
-        # is skipped (it would byte-scan + corrupt the inline closure code). This
-        # global is NOT in the save/reset set below, so it persists past the
-        # closure to the enclosing fn's PARSE_FN_DEF end.
-        _cur_fn_has_closure = 1;
-        STI(S, GTI(S) + 1);  # consume `|` (or the whole `||` for a zero-param closure)
-        # Generate a UNIQUE anonymous name __clNNNNN (5 zero-padded decimal digits
-        # of the fn count). The old `__cl<clid%10>` was single-digit, so the 11th
-        # closure reused __cl0 and REGFN silently MERGED it with the first.
-        NPOS_GUARD(S, 16);
-        var clid = GFNC(S);
-        var clnoff = GNPOS(S);
-        var cwp = clnoff;
-        store8(S + 0xEC00000 + cwp, 95); cwp = cwp + 1;    # _
-        store8(S + 0xEC00000 + cwp, 95); cwp = cwp + 1;    # _
-        store8(S + 0xEC00000 + cwp, 99); cwp = cwp + 1;    # c
-        store8(S + 0xEC00000 + cwp, 108); cwp = cwp + 1;   # l
-        store8(S + 0xEC00000 + cwp, 48 + (clid / 10000) % 10); cwp = cwp + 1;
-        store8(S + 0xEC00000 + cwp, 48 + (clid / 1000) % 10); cwp = cwp + 1;
-        store8(S + 0xEC00000 + cwp, 48 + (clid / 100) % 10); cwp = cwp + 1;
-        store8(S + 0xEC00000 + cwp, 48 + (clid / 10) % 10); cwp = cwp + 1;
-        store8(S + 0xEC00000 + cwp, 48 + clid % 10); cwp = cwp + 1;
-        store8(S + 0xEC00000 + cwp, 0); cwp = cwp + 1;
-        SNPOS(S, cwp);
-        # Register the closure function
-        var clfi = REGFN(S, clnoff);
-        # Snapshot the enclosing local tables before the closure overwrites slot 0+.
-        var cl_saved_flc = GFLC(S);
-        var cl_locsnap = _cl_save_locals(S, cl_saved_flc);
-        var cl_saved_fs_floor = _fs_floor;   # 6.6.5: the closure body's fn-static mark
-        _fs_floor = _fs_n;
-        # ⭐ 6.6.7 — the closure is its OWN fn: snapshot EVERY per-fn global and enter a fresh
-        # fn (parse/state.cyr `_fnst_save`). This used to be a hand-kept list that had drifted — it
-        # saved rp_vec by LENGTH then truncated it to 0 (an early `return` before the closure
-        # lost its patch and fell through), and it never isolated the defer table (a closure's
-        # `defer` zeroed an ENCLOSING slot and ran, if at all, from the enclosing epilogue). The
-        # v6.3.7 regalloc leak (`|a,b| a+b` reading an unloaded rbx) was the same family.
-        var cl_st = _fnst_save(S);
-        _cur_fn_ix = clfi;
-        # v6.3.8 — save capture state and run the free-var pre-scan BEFORE the
-        # prologue/params, so the env-param decision is made in one pass. The
-        # cursor is at the first param (the opening `|` was consumed above); the
-        # pre-scan seeds the shadow set with params, collects captured enclosing
-        # slots, and restores the cursor.
-        # 6.6.17: the whole enclosing capture context, and a snapshot that also lists the
-        # enclosing closure's captures (`_cl_ctx_enter`).
-        var cl_ctx = _cl_ctx_enter(S, cl_locsnap, cl_saved_flc, cl_st);
-        _cl_prescan_captures(S, cl_zero);
-        var cl_cap_shift = 0;
-        if (_cl_capturing == 1) { cl_cap_shift = 1; }
-        # Emit function prologue
-        var cl_jmp = EJMP0(S);
-        S64(_fnt_offsets + clfi * 8, GCP(S));
-        EFNPRO(S);
-        # v6.3.8 — a capturing closure takes the heap env object as a HIDDEN param;
-        # captured-var reads in the body load from its slot (see PARSE_FACTOR).
-        # v6.5.17 — that param moved from FIRST to LAST. The frame slot is still
-        # allocated here (the body needs `_cl_env_lidx` while parsing), but the
-        # arg-register store is emitted after the user params, once `clpc` is known.
-        # Why last: the call site cannot know at compile time whether a callee is a
-        # closure, so it always passes the env — and only a TRAILING extra argument
-        # is invisible to a callee that does not want it. Leading it would shift
-        # every user argument of every non-closure indirect call.
-        _cl_env_lidx = 0 - 1;
-        var cl_env_slot = 0 - 1;
-        if (_cl_capturing == 1) {
-            cl_env_slot = _cl_param_slot(S, 0 - 1);   # 6.7.16: its type words reset too (parse/fn.cyr)
-            SFLC(S, cl_env_slot + 1);
-            _cl_env_lidx = cl_env_slot;
-        }
-        # Parse params until | (a zero-param `||` closure has no param list)
-        # ⚠ The pair scans (parse/pair_scan.cyr `_tok_is_closure_body`) recognise a closure BODY as a `{`
-        # immediately preceded by the closing `|` or by `||`. Typed params or a return annotation
-        # between the bars and the body would break that predicate — move it with the grammar.
-        # v6.5.46: remember the first param's local index — the deferred stack-param pass
-        # below needs it, and inside the loop `cpli` is re-read each iteration.
-        var cl_p0 = GFLC(S);
-        var clpc = 0;
-        if (cl_zero == 0 && PEEKT(S) != 35) {
-            var cpgo = 1;
-            while (cpgo == 1) {
-                if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-                var cpnoff = PEEKV(S);
-                _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
-                STI(S, GTI(S) + 1);
-                _cl_param_tail(S);   # 6.7.7 (B6): D18, a default; 6.7.14: a type (parse/fn.cyr)
-                var cpli = _cl_param_slot(S, cpnoff);   # 6.7.16: an untyped slot, whatever an earlier fn left
-                if (clpc < 6) { ESTOREPARM(S, clpc, cpli, 0); }
-                SFLC(S, cpli + 1);
-                clpc = clpc + 1;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                else { cpgo = 0; }
-            }
-        }
-        # v6.5.17 — the hidden env param lands in arg register `clpc`, i.e. one past
-        # the user params, matching the call site's trailing push. Emitting it here
-        # (rather than at slot-allocation time) is safe: every ESTOREPARM is an
-        # independent arg-register → frame-slot store, so their order is free.
-        # The env must land in an argument REGISTER — see the matching note in
-        # PINDIRECT_CALL: under SysV an extra STACK argument would slide the stack
-        # arguments of every ordinary callee, so the call site only appends the env
-        # below the register ceiling. A capturing closure with more parameters than
-        # that is rejected HERE, loudly, instead of receiving a garbage environment.
-        # This is not a new restriction: with the env as the hidden FIRST argument
-        # (v6.3.8 - v6.5.16) the user params occupied registers 1..5 and the
-        # `clpc + cl_cap_shift < 6` guard dropped anything beyond, silently.
-        if (_cl_capturing == 1) {
-            if (clpc >= _ARG_REG_COUNT()) {
-                ERR_MSG(S, "capturing closure has too many parameters — its captured environment needs one more argument register than this target has", 124);
-            }
-            ESTOREPARM(S, clpc, cl_env_slot, clpc + 1);
-        }
-        # ⛔ v6.5.46 — DEFERRED STACK-PARAM PASS. Without it a NON-capturing closure silently
-        # dropped every parameter past the 6th: the in-loop `clpc < 6` guard is correct (the
-        # overflow cannot be homed until the TOTAL count is known, because SysV's stack slot is
-        # `16 + (pc - 6 - 1 - (pidx - 6)) * 8` — it counts DOWN from the total), but nothing ever
-        # ran the second pass that `PARSE_FN` has had all along (src/frontend/parse/fn.cyr, since
-        # 6.6.6 `_stkp_flush`). So the 7th+ parameter was never stored and the body read an
-        # uninitialised frame slot. (A closure's params are all untyped int-class, one slot each,
-        # with no retptr, so `cl_p0 + cspi` / `clpc` below ARE the slot and the total — the
-        # re-derivation 6.6.6 removed from PARSE_FN_DEF's pass cannot drift here.)
-        # ⚠ IT DID NOT FAIL RELIABLY, which is why it survived: measured at v6.5.46, a 7-param
-        # closure returned the RIGHT answer — the argument register still happened to hold the
-        # value — while an 8-param one returned garbage. An intermittent wrong answer reads as
-        # "closures are fine" until someone adds one more parameter.
-        # ⚠ NON-CAPTURING ONLY, and that is not an omission: a CAPTURING closure needs its env in
-        # an argument register (see the note above), so it already refuses `clpc >= _ARG_REG_COUNT()`
-        # LOUDLY. This pass is what the non-capturing case never had.
-        # ⚠ The first attempt at this fix simply deleted the in-loop guard. That is WRONG — it
-        # calls ESTOREPARM with pc = 0, so `nstack = -6` and the displacement is garbage. The
-        # count has to be known first, which is the whole reason the pass is deferred.
-        if (_cl_capturing == 0) {
-            if (clpc > 6) {
-                var cspi = 6;
-                while (cspi < clpc) {
-                    ESTOREPARM(S, cspi, cl_p0 + cspi, clpc);
-                    cspi = cspi + 1;
-                }
-            }
-        }
-        S64(_fnt_params + clfi * 8, clpc + cl_cap_shift);
-        # A `||` zero-param closure already consumed both bars as one token 54;
-        # only the `|params|` form has a separate closing bar to consume.
-        if (cl_zero == 0) {
-            if (PEEKT(S) != 35) { ERR_EXPECT(S, 35); }
-            STI(S, GTI(S) + 1);  # consume closing |
-        }
-        # v6.2.41 dropped ESUBRSP's 2nd arg and claimed the frame "is patched
-        # later via EPATCHFRAME" — but the closure path NEVER called EPATCHFRAME
-        # (closures were untested), so `sub rsp, imm32` kept its 0 placeholder. The
-        # closure then ran on a 0-byte frame: the first push in the body wrote at
-        # [rsp-8] == [rbp-8], clobbering param slot 0, so `|x| x` returned garbage.
-        # v6.3.7 — capture the patch handle and patch the real frame size below
-        # (mirrors PARSE_FN_DEF's prologue ESUBRSP → EPATCHFRAME).
-        var cl_frame_patch = _cl_frame_open(S, clfi);   # 6.7.10 (P5-B): ESUBRSP, then the coverage hit
-        # 6.6.7 — defer-flag init jmp, resolved at the closure's end exactly as PARSE_FN_DEF does.
-        var cl_dij = EJMP0(S);
-        var cl_bcp = GCP(S);
-        # Parse body: { stmts } or single expression
-        if (PEEKT(S) == 13) {
-            STI(S, GTI(S) + 1);
-            _cur_fn_has_defer = _body_has_defer(S);   # 6.6.7: as PARSE_FN_DEF (0 from the snapshot otherwise)
-            PARSE_PROG(S);
-            if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-            STI(S, GTI(S) + 1);
-        } else {
-            var cl_vb = _vop_clb;
-            _vop_clb = GTI(S);   # 6.7.16 (D101): the expression body is the closure's return value
-            PCMPE(S);
-            _vop_clb = cl_vb;
-        }
-        # Defer init, return landing, defer walk, epilogue — the same shared epilogue as
-        # PARSE_FN_DEF, over the closure's own ranges. CHANGELOG [6.6.7]
-        _defer_emit_init(S, cl_dij, cl_bcp);
-        _tcp_resolve(S);   # 6.7.3: as PARSE_FN_DEF
-        _rp_patch_here(S);
-        _defer_emit_walk(S);
-        EFNEPI(S);
-        # v6.3.7 — patch the closure frame size now that GFLC is final (param +
-        # body local count) and the high-water is known: `_cl_frame_bytes`.
-        var cl_fsz = _cl_frame_bytes(S);
-        EPATCHFRAME(S, cl_frame_patch, cl_fsz);
-        EPATCH(S, cl_jmp);
-        # Restore state
-        _fs_popto(S, _fs_floor);             # 6.6.5: close the closure body's fn-statics
-        _fs_floor = cl_saved_fs_floor;
-        _fnst_restore(S, cl_st);             # 6.6.7: every enclosing per-fn global
-        # Restore the enclosing fn's local tables clobbered by the closure's slots.
-        _cl_restore_locals(S, cl_locsnap, cl_saved_flc);
-        # v6.3.8 — restore capture state so the enclosing context resolves
-        # identifiers normally again (and nested closures see their own state).
-        # 6.6.17: this closure's capture list is kept aside for its env, below.
-        var cl_inner = _cl_ctx_save();
-        _cl_ctx_restore(cl_ctx);
-        if (cl_cap_shift == 1) {
-            # v6.3.8 — CAPTURING closure: build the heap env object (the closure
-            # value) — a (1+ncap)-word block with the fn pointer at [0] and the
-            # captured-by-value locals at [1..]. The object pointer is left in rax.
-            # Requires lib/alloc.cyr. (Dispatched via callptr: load64(obj) → fn,
-            # obj passed as the hidden first arg — see the callptr handler.)
-            var cl_alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
-            if (cl_alloc_fi < 0) {
-                ERR_MSG(S, "a capturing closure needs include \"lib/alloc.cyr\" for its heap env", 66);
-                # v6.6.4: ERR_MSG reports and CONTINUES (the v6.4.62 multi-error contract),
-                # so falling through handed -1 to ECALLFIX — a SIGSEGV on cx after a correct
-                # diagnostic. The compile is already failed; there is nothing to emit.
-                return 0;
-            }
-            EMOVI(S, _cl_env_bytes(cl_inner));   # rax = size (6.6.5: words, not captures)
-            EPUSHR(S);
-            ECALLPOPS(S, 1);                 # → rdi
-            ECALLFIX(S, cl_alloc_fi);        # rax = obj
-            ECALLCLEAN(S, 1);                # 6.6.5: was missing (see ECALLCLEAN)
-            var cl_obj_slot = GFLC(S);
-            # Anonymous scratch — the name table isn't cleared per-fn, so an unnamed
-            # slot would keep a STALE name from a prior fn and a later `var` with that
-            # name would falsely trip the duplicate-var check.
-            S64(S + 0x5D9D000 + cl_obj_slot * 8, 0 - 1);
-            SLDEP(S, cl_obj_slot, 0);
-            EFLSTORE(S, cl_obj_slot);        # spill the object pointer
-            SFLC(S, cl_obj_slot + 1);
-            # obj[0] = closure fn address
-            EFLLOAD(S, cl_obj_slot);
-            EPUSHR(S);                       # push dest = obj + 0
-            var clfc = GFCNT(S);
-            if (clfc >= 1048576) {
-                _ew("error: fixup table full (1048576)\n", 34);
-                _die(1);
-            }
-            ELOAD_FN_ADDR(S, _fixup_base + clfc * 16, clfc, clfi);   # rax = fn addr
-            EPOPC(S);                        # rcx = dest
-            ESTORE64(S);                     # [obj+0] = fn addr
-            # obj[1+i] = captured enclosing local (cap_slots[i]); state is restored,
-            # so EFLLOAD reads the enclosing fn's local — capture BY VALUE.
-            # 6.6.5: an AGGREGATE capture copies all its words. Word k of an enclosing
-            # inline aggregate — the word at `&base + k*8` (on the stack slot base - k; in a
-            # coroutine frame not, see `_cl_emit_cap_word`) — lands at env[woff + k], so
-            # `env + woff*8 + k*8` addresses field k exactly as `&base + k*8` does in the
-            # enclosing frame — which is what lets the body reuse the ordinary field math.
-            # 6.6.17: a capture of the enclosing closure's own capture copies from its env.
-            _cl_emit_env_caps(S, cl_obj_slot, cl_inner);
-            EFLLOAD(S, cl_obj_slot);          # closure value = the object pointer
-            # v6.5.17 — TAG IT. Bit 63 makes the value self-identifying, so any
-            # indirect call site can dispatch it (load [obj+0], pass obj as the
-            # trailing env arg) without knowing where the value came from. Without
-            # this bit the whole scheme is the old static SLTYPE peek, which the
-            # value outlives the moment it is passed, returned or stored.
-            ECLTAG(S);
-        } else {
-            # Non-capturing closure: a bare fn pointer (same fixup-type-3 op as
-            # `&fn_name`). v6.3.7-stable path.
-            var clfc = GFCNT(S);
-            if (clfc >= 1048576) {
-                _ew("error: fixup table full (1048576)\n", 34);
-                _die(1);
-            }
-            var clfaddr = _fixup_base + clfc * 16;
-            ELOAD_FN_ADDR(S, clfaddr, clfc, clfi);
-        }
-        # v6.5.17 — nothing to hand back to the enclosing var-decl any more: the
-        # closure value carries its own tag (ECLTAG above), so no SLTYPE is needed.
-        return 0;
+        return _pf_closure(S, typ);
     }
     ERR(S);
     return 0;
