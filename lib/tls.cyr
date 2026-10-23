@@ -10,7 +10,7 @@
 #
 # 6.6.9: this file INCLUDES lib/fdlopen.cyr (below). It used to tell callers to include it first,
 # on the grounds that the preprocessor's 1 MB output cap could not absorb it; that cap is 24 MB
-# (lex_pp.cyr), and a caller that skipped the include got fdlopen_helper_available /
+# (lex/pp.cyr), and a caller that skipped the include got fdlopen_helper_available /
 # fdlopen_init_full / fdlopen_dlopen / fdlopen_dlsym as ud2 stubs — every libssl call a SIGILL.
 # CHANGELOG [6.6.9]
 #

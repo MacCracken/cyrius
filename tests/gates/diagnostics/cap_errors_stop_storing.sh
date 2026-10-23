@@ -233,9 +233,9 @@ grep -q 'too many preprocessor #define/flag entries' "$D/err" || bad "pp define:
 grep -q 'pp_marker_past_the_cap' "$D/err" && bad "pp define: #define past the cap was stored (D19 is defined)"
 
 # ── PP_PREDEFINE: only builtin callers (no user input reaches it) — source premise ──
-awk '/^fn PP_PREDEFINE\(/ { f = 1 } f && /_pp_flag_count >= 16/ { print; exit }' src/frontend/lex_pp.cyr | grep -q 'return 0;' \
+awk '/^fn PP_PREDEFINE\(/ { f = 1 } f && /_pp_flag_count >= 16/ { print; exit }' src/frontend/lex/pp.cyr | grep -q 'return 0;' \
     || bad "pp predefine: the cap in PP_PREDEFINE does not return after ERR_MSG"
-awk '/^fn PP_DEFINE\(/ { f = 1 } f && /_pp_flag_count >= 16/ { print; exit }' src/frontend/lex_pp.cyr | grep -q 'return 0;' \
+awk '/^fn PP_DEFINE\(/ { f = 1 } f && /_pp_flag_count >= 16/ { print; exit }' src/frontend/lex/pp.cyr | grep -q 'return 0;' \
     || bad "pp define: the cap in PP_DEFINE does not return after ERR_MSG"
 
 [ "$fail" = 0 ] || exit 1

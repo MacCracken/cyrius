@@ -11,8 +11,8 @@
 # go-to-definition that could not find any of yukti's 322 `pub fn`s. CHANGELOG [6.6.10]
 #
 # Needs lib/string.cyr (memeq), lib/alloc.cyr and lib/vec.cyr from its includer, and includes
-# the lexer's attribute list itself (src/frontend/lex_attr.cyr, pure). CHANGELOG [6.7.11]
-include "src/frontend/lex_attr.cyr"
+# the lexer's attribute list itself (src/frontend/lex/attr.cyr, pure). CHANGELOG [6.7.11]
+include "src/frontend/lex/attr.cyr"
 
 # ================================================================
 # Source scanning shared by the reference tools (coverage, header, distlib's sidecar
@@ -41,7 +41,7 @@ fn _src_ident_char(c): i64 {
 # Length of the `#`-attribute TOKEN at buf[p] (`#inline`, `#naked`, …) — one of the words the
 # lexer turns into tokens and keeps lexing the same line after — or 0: the `#` opens a
 # comment. The list and its word boundary are the lexer's OWN — LEXATTRWORD, included from
-# src/frontend/lex_attr.cyr above — not a copy that can drift from it. CHANGELOG [6.7.11]
+# src/frontend/lex/attr.cyr above — not a copy that can drift from it. CHANGELOG [6.7.11]
 fn _src_attr_len(buf, p, lim): i64 {
     var w = LEXATTRWORD(buf, p, lim);
     if (w == 0) { return 0; }

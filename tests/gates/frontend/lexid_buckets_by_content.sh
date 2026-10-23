@@ -3,7 +3,7 @@
 # lexid_buckets_by_content.sh — v6.5.50. LEXID's dedup index must bucket identifiers by
 # CONTENT, not by length alone, so a unit full of same-length names does not degenerate.
 #
-# WHAT THIS PINS. LEXID (src/frontend/lex.cyr) keys its dedup chains with what used to be
+# WHAT THIS PINS. LEXID (src/frontend/lex/lex.cyr) keys its dedup chains with what used to be
 # `bucket = klen` saturated at 255. Every identifier of the SAME LENGTH therefore shared one
 # chain, and the per-lookup walk over that chain is exactly the O(N²) scan the index was added
 # at v5.10.40 to remove — reintroduced for any realistic unit, because real code is full of

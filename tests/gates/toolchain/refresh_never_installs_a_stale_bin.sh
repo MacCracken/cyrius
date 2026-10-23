@@ -180,8 +180,8 @@ cp "$ROOT/scripts/install.sh" "$L/scripts/"
 cp -RL "$ROOT/lib" "$ROOT/cbt" "$L/"
 cp "$ROOT/programs/cyrius-lsp.cyr" "$ROOT/programs/ark.cyr" "$ROOT/programs/nous_stub.cyr" "$L/programs/"
 cp "$ROOT/src/version_str.cyr" "$L/src/"
-# 6.7.11: cbt/srcscan.cyr includes the lexer's attribute list (src/frontend/lex_attr.cyr).
-mkdir -p "$L/src/frontend"; cp "$ROOT/src/frontend/lex_attr.cyr" "$L/src/frontend/"
+# 6.7.11: cbt/srcscan.cyr includes the lexer's attribute list (src/frontend/lex/attr.cyr).
+mkdir -p "$L/src/frontend/lex"; cp "$ROOT/src/frontend/lex/attr.cyr" "$L/src/frontend/lex/"
 cp "$CC" "$L/build/cycc"; chmod +x "$L/build/cycc"
 printf '9.9.9\n' > "$L/VERSION"
 printf '[release]\nbins = ["cycc", "cyrius", "cyrius-lsp", "ark"]\ncross_bins = []\nscripts = []\n' > "$L/cyrius.cyml"

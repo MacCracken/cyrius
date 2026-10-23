@@ -16,14 +16,14 @@
 #   * a path that exists but cannot be read (a directory) read as "no dependencies", rc 0.
 #
 # THE RULE, from the compiler: an include is a directive only in COLUMN 0 (ISINCLUDE in
-# src/frontend/lex_pp.cyr — an indented `include` is an expression) and only outside a string
+# src/frontend/lex/pp.cyr — an indented `include` is an expression) and only outside a string
 # literal (PP_PASS gates on the PP_LEXST string state), and the directive consumes its line.
 # 6.7.3 (axis 7): that state machine is PP_LEXST_AT since 6.6.20 — a `#` that spells one of the
 # lexer's ten attribute words keeps its line in CODE, strings included. cyaudit's copy read it
 # as a comment, so after `#assert 1 == 1, "x<LF>y"` vet said `no dependencies` and deny
 # `0 violations` (rc 0) for an include the compiler opens, and vet reported a false MISSING
 # (rc 1) on a valid program. Axis 7 derives the word list and its `(` rule from LEXATTRWORD
-# (src/frontend/lex_attr.cyr since 6.7.11) and probes every word; cyaudit INCLUDES that list
+# (src/frontend/lex/attr.cyr since 6.7.11) and probes every word; cyaudit INCLUDES that list
 # rather than keeping its own copy, and axis 7 checks the include and that no hand row is back.
 # ⭐ AXIS 1 ASKS THE COMPILER, NOT cyaudit, what an include is: a file whose only mentions of a
 # MISSING include are a comment and a raw line inside a string must COMPILE (so the compiler
@@ -48,7 +48,7 @@
 #   M10 the wrong fix: every `#` in code stays code                               2
 #       (the `#ioctl "notes` and `#io("notes` guards)
 #   M11/M12 (6.7.3) dropped a `(` rule / a row from cyaudit's own copy; 6.7.11 removed the
-#       copy (cyaudit includes src/frontend/lex_attr.cyr), so their successor is M13:
+#       copy (cyaudit includes src/frontend/lex/attr.cyr), so their successor is M13:
 #   M13 (6.7.11) a hand row restored in _au_attr_len (`"#io"` read as a comment)  2
 #       (the include/hand-row census, the #io row)
 set -u
@@ -165,24 +165,24 @@ echo "axis 7 — an ATTRIBUTE line is CODE, its strings included (PP_LEXST_AT; 6
 # the line as code, and since 6.6.20 so does the preprocessor (PP_LEXST_AT asks LEXATTRWORD). A
 # string literal opened there may span lines, and cyaudit, reading the line as a comment, fell
 # one quote out of step with the compiler for the rest of the file. 6.7.11: cyaudit no longer
-# carries a copy of the list — it INCLUDES the lexer's own (src/frontend/lex_attr.cyr), so the
+# carries a copy of the list — it INCLUDES the lexer's own (src/frontend/lex/attr.cyr), so the
 # drift guard is that include: present as a column-0 directive, and no hand row of any word
 # DERIVED from LEXATTRWORD's rows (a `"<word>", 0|1)` row or a `"#<word>"` literal) anywhere in
 # the source. Every derived word is probed — an attribute added to the lexer reaches cyaudit
 # through the include, and is asked of it here. The compiler is the oracle on every row.
 CYS="${CYAUDIT_SRC:-$ROOT/programs/cyaudit.cyr}"
-LEXROWS=$(grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+", [01]\)' "$ROOT/src/frontend/lex_attr.cyr" \
+LEXROWS=$(grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+", [01]\)' "$ROOT/src/frontend/lex/attr.cyr" \
     | sed 's/.*"\([a-z_]*\)", \([01]\))/\1 \2/' | sort | paste -sd',' -)
 ATTRS=$(printf '%s' "$LEXROWS" | tr ',' '\n' | sed 's/ .*//')
-check "  (premise: LEXATTRWORD in src/frontend/lex_attr.cyr lists at least the ten attribute words)" yes \
+check "  (premise: LEXATTRWORD in src/frontend/lex/attr.cyr lists at least the ten attribute words)" yes \
     "$([ "$(printf '%s\n' $ATTRS | grep -c .)" -ge 10 ] && echo yes || echo no)"
-AUINC=$(grep -cE '^include "src/frontend/lex_attr\.cyr"' "$CYS" || true)
+AUINC=$(grep -cE '^include "src/frontend/lex/attr\.cyr"' "$CYS" || true)
 AUHAND=0
 for w in $ATTRS; do
     n=$(grep -cE "\"#$w\"|\"$w\", [01]\\)" "$CYS" || true)
     AUHAND=$((AUHAND + n))
 done
-check "cyaudit includes the lexer's own list (src/frontend/lex_attr.cyr) and holds no hand row of its words (include, hand rows)" \
+check "cyaudit includes the lexer's own list (src/frontend/lex/attr.cyr) and holds no hand row of its words (include, hand rows)" \
     "1 0" "$AUINC $AUHAND"
 for w in $ATTRS; do
     printf 'fn f(): i64 { return 1; }\n#%s 1 == 1, "x\ny"\ninclude "lib/missing_mod.cyr"\nsyscall(60, f());\n' "$w" > "$W/at_$w.cyr"

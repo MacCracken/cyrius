@@ -24,7 +24,7 @@
 #      (the v6.0.1 conflation bug).
 # PATTERN NOTE (v6.4.64): match `warning: ./lib/ shadows` EXACTLY, not the looser
 # "shadows version-pinned". cycc still emits its own legacy sentinel note
-# (`note: cwd ./lib/ shadows version-pinned ...`, src/frontend/lex.cyr
+# (`note: cwd ./lib/ shadows version-pinned ...`, src/frontend/lex/lex.cyr
 # _check_shadow_lib) which contains the same phrase — a loose grep here reports
 # cycc's note as ours and fails the fresh-lib case. The two mechanisms are
 # redundant by design for now; see

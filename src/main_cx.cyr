@@ -32,7 +32,7 @@ include "src/backend/cx/emit.cyr"
 # never to main_cx.cyr; parse_expr.cyr references IR_RAW_EMIT.
 # Same shape as v5.6.32's main_aarch64_native.cyr fix.
 include "src/common/ir.cyr"
-include "src/frontend/lex.cyr"
+include "src/frontend/lex/lex.cyr"
 
 # v6.0.7 — alloc + vec for return-patch vec storage. Must precede
 # parse.cyr so converted call sites resolve at parse time.

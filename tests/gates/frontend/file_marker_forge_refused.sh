@@ -45,7 +45,7 @@
 #   7  REAL markers still work: a diagnostic inside an included file names that
 #      file and its own line number (the fix must not be "stop emitting markers")
 #   8  census: every READFILE-into-`out` include site is followed by a
-#      PP_NEUT_FMARK call, derived from src/frontend/lex_pp.cyr
+#      PP_NEUT_FMARK call, derived from src/frontend/lex/pp.cyr
 #   9  THE CONSUMER HALF (bite 5g): a string literal cannot mint a span. The
 #      neutraliser skips string literals on purpose, so `var q = "#@file ";`
 #      used to mint one whose "filename" ran from the closing quote to the next
@@ -109,7 +109,7 @@
 #
 # 6.7.11 ADDENDUM (the per-byte PP_LEXST_AT call layer; cycc 2,118,472 B, measured the same
 # way — each tree mutant built with the good cycc and the gate run from that tree):
-#   M10 the fix reverted (6.7.10's lex_pp.cyr: ten bare PP_LEXST_AT walks) → 1 FAIL: axis 26
+#   M10 the fix reverted (6.7.10's lex/pp.cyr: ten bare PP_LEXST_AT walks) → 1 FAIL: axis 26
 #       (0 guarded sites; its in-gate mutants report not-applied)
 #   M11 PP_NEUT_FMARK's walk unguarded to a bare PP_LEXST → 1 FAIL: axis 26. Every behaviour
 #       axis stays GREEN — PP_NEUT_BOLMARK catches the forge — which is why 26 is a census.
@@ -291,9 +291,9 @@ rm -f "$D/7.bin"
 #    STRAIGHT into `out` must be followed by a PP_NEUT_FMARK call, and the raw
 #    source must get one too. Counted a different way from the code itself: the
 #    include sites are found by their READFILE shape, the guards by their call.
-nreads=$(grep -c 'READFILE(fname, out + op' src/frontend/lex_pp.cyr || true)
-nguards=$(grep -c 'PP_NEUT_FMARK(out + op, nr);' src/frontend/lex_pp.cyr || true)
-npass=$(grep -c 'PP_NEUT_PASS(S);' src/frontend/lex_pp.cyr || true)
+nreads=$(grep -c 'READFILE(fname, out + op' src/frontend/lex/pp.cyr || true)
+nguards=$(grep -c 'PP_NEUT_FMARK(out + op, nr);' src/frontend/lex/pp.cyr || true)
+npass=$(grep -c 'PP_NEUT_PASS(S);' src/frontend/lex/pp.cyr || true)
 if [ "$nreads" = "$nguards" ] && [ "$nreads" -ge 2 ] && [ "$npass" -ge 1 ]; then
     printf '  ok: axis 8 — %s include READFILE sites, %s neutralised, raw-source pass wired\n' \
         "$nreads" "$nguards"
@@ -332,8 +332,8 @@ rm -f "$D/9.bin"
 
 # ── axis 10 — census for the consumer half: FM_BUILD's marker scan must be gated
 #    on FM_ATBOL. Counted from the source, a different way from axis 9's behaviour.
-nbol=$(grep -c 'FM_ATBOL(buf, pos) == 1' src/frontend/lex.cyr || true)
-nfmb=$(grep -c 'fn FM_ATBOL(buf, pos)' src/frontend/lex.cyr || true)
+nbol=$(grep -c 'FM_ATBOL(buf, pos) == 1' src/frontend/lex/lex.cyr || true)
+nfmb=$(grep -c 'fn FM_ATBOL(buf, pos)' src/frontend/lex/lex.cyr || true)
 if [ "$nbol" -ge 1 ] && [ "$nfmb" = 1 ]; then
     printf '  ok: axis 10 — FM_BUILD gates its marker scan on FM_ATBOL (%s call site)\n' "$nbol"
     pass=$((pass+1))
@@ -508,12 +508,12 @@ census26() {
     c_def=$(grep -c '^fn PP_LEXST(st, c): i64 {$' "$D/26.code" || true)
     c_tail=$(grep -c '^    return PP_LEXST(st, c);$' "$D/26.code" || true)
     c_lw=$(grep -c 'LEXATTRWORD(base, i, n)' "$D/26.code" || true)
-    c_lx=$(grep -c 'LEXATTRWORD(S + 0x459D000, p, bl)' src/frontend/lex.cyr || true)
+    c_lx=$(grep -c 'LEXATTRWORD(S + 0x459D000, p, bl)' src/frontend/lex/lex.cyr || true)
     c_why="guarded sites $c_guard (want >=9), PP_LEXST_AT( $c_at (want guards+1), PP_LEXST( $c_bare (want guards+2), definition $c_def / tail $c_tail (want 1 / 1), LEXATTRWORD in PP $c_lw / LEX $c_lx (want 1 / 1)"
     [ "$c_guard" -ge 9 ] && [ "$c_at" = $((c_guard+1)) ] && [ "$c_bare" = $((c_guard+2)) ] \
         && [ "$c_def" = 1 ] && [ "$c_tail" = 1 ] && [ "$c_lw" = 1 ] && [ "$c_lx" = 1 ]
 }
-LPP=src/frontend/lex_pp.cyr
+LPP=src/frontend/lex/pp.cyr
 # M-bare: the first guard -> `X = PP_LEXST(X, load8(B + I));`
 awk '!d && /^ *if \(load8\(.* == 35\) \{ [a-z_]+ = PP_LEXST_AT\(/ {
     sub(/if \(load8\([^=]*\) == 35\) \{ [^}]*\} else \{ /, ""); sub(/ \}$/, ""); d=1 } { print }' "$LPP" > "$D/26m1.cyr"

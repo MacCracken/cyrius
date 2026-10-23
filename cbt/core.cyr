@@ -958,7 +958,7 @@ fn _cbt_env_str(name): i64 {
 
 # ── The home: ONE rule with cycc's `lib/` include fallback ──────────────────────────────
 # CYRIUS_HOME when set and non-empty, else HOME/.cyrius — the rule of `_init_cyrius_lib`
-# (src/frontend/lex.cyr, C10 at 6.6.16): the FIRST occurrence of a name wins (as getenv and
+# (src/frontend/lex/lex.cyr, C10 at 6.6.16): the FIRST occurrence of a name wins (as getenv and
 # cycc), an EMPTY value is unset, and the WHOLE environment is read. Until 6.6.17 the CLI took
 # the LAST duplicate, kept an empty CYRIUS_HOME as the home "" (root-anchored paths), and read
 # only the first 32 KB of the environment, so a CYRIUS_HOME past it was invisible to the CLI

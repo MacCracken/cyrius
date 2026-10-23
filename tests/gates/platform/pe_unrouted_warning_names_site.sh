@@ -17,15 +17,15 @@ fail=0
 bad() { echo "FAIL: pe_unrouted_warning_names_site: $*"; fail=1; }
 
 # 6.6.20: the PE compiler's own build (install.sh's cycc_win recipe) does not warn at READFILE's
-# three openat shims in src/frontend/lex.cyr. Each is the `else` arm of `if (SYS_OPEN == 2)`,
+# three openat shims in src/frontend/lex/lex.cyr. Each is the `else` arm of `if (SYS_OPEN == 2)`,
 # dead in a PE compiler (main_win.cyr: SYS_OPEN = 2), and its 4-argument open is not a PE
 # route, so every cycc_win build printed three "not routed" warnings for calls that cannot run
 # — noise that buries a real one. They are compiled out under CYRIUS_TARGET_WIN.
 ( cd "$ROOT" && CYRIUS_TARGET_WIN=1 "$CC" < src/main_win.cyr > "$D/cycc_win" 2> "$D/cw.err" ) \
     || bad "the PE compiler (CYRIUS_TARGET_WIN=1, src/main_win.cyr) did not build:"
 [ -s "$D/cycc_win" ] || bad "the PE compiler build produced no binary"
-nlex=$(grep -c '^warning:src/frontend/lex\.cyr:[0-9]*:[0-9]*: syscall [0-9]* with [0-9]* argument(s) is not routed' "$D/cw.err" || true)
-[ "$nlex" = 0 ] || { bad "the cycc_win build warns $nlex unrouted syscall(s) in src/frontend/lex.cyr:"; grep 'lex\.cyr:' "$D/cw.err" | head -c 400; echo; }
+nlex=$(grep -c '^warning:src/frontend/lex/lex\.cyr:[0-9]*:[0-9]*: syscall [0-9]* with [0-9]* argument(s) is not routed' "$D/cw.err" || true)
+[ "$nlex" = 0 ] || { bad "the cycc_win build warns $nlex unrouted syscall(s) in src/frontend/lex/lex.cyr:"; grep 'lex\.cyr:' "$D/cw.err" | head -c 400; echo; }
 # Anti-vacuous: the sub.cyr rows below run the SAME compiler and require it to warn at two real
 # unrouted sites, so a compiler that stopped warning altogether cannot pass this row with them.
 
@@ -63,7 +63,7 @@ fi
 # install.sh's cycc_win recipe (src/main_win.cyr through `CYRIUS_TARGET_WIN=1 build/cycc`); the
 # warnings are the source's, so the tarball's two-step build prints the same ones. runtime.cyr's
 # CYRIUS_SYMS openat shim is the `SYS_OPEN != 2` arm, dead in a PE compiler (main_win.cyr:
-# SYS_OPEN = 2), and is compiled out under CYRIUS_TARGET_WIN; lex_pp.cyr's munmap of its 24 MB
+# SYS_OPEN = 2), and is compiled out under CYRIUS_TARGET_WIN; lex/pp.cyr's munmap of its 24 MB
 # preprocessor buffer is routed (VirtualFree) and now frees it. Before 6.6.20 both warned in
 # every PE compiler build. Built once per run: a row that already made "$D/cycc_win" and its
 # stderr "$D/cw.err" is reused.
@@ -72,7 +72,7 @@ if [ ! -s "$D/cycc_win" ]; then
         || bad "the PE compiler (CYRIUS_TARGET_WIN=1, src/main_win.cyr) did not build:"
 fi
 [ -s "$D/cycc_win" ] || bad "the PE compiler build produced no binary"
-for f in runtime.cyr lex_pp.cyr; do
+for f in runtime.cyr lex/pp.cyr; do
     if grep -q "^warning:src/[a-z/]*/$f:[0-9]*:[0-9]*: syscall [0-9]* with [0-9]* argument(s) is not routed" "$D/cw.err"; then
         bad "the PE compiler build still warns an unrouted syscall in $f:"; grep "/$f:" "$D/cw.err" | head -c 300; echo
     fi
@@ -129,4 +129,4 @@ _rf5=$(grep '^warning' "$D/rf5.err" | sed 's/: syscall(<non-literal number>, ...
     || { bad "RF5: want one sited warning per non-literal call (1:23 3:12 5:30), got: $_rf5"; }
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex_pp.cyr (6.6.20); the stdlib's sys_brk / cyr_mprotect stubs warn at nothing (6.7.9); a refused call warns at nothing (6.7.16)"
+echo "PASS: PE unrouted-syscall warning names n, its arity and <file>:<line>:<col>; the routed list is one note (6.6.10); a literal munmap is routed, unwarned, and the PE compiler build warns at neither runtime.cyr nor lex/pp.cyr (6.6.20); the stdlib's sys_brk / cyr_mprotect stubs warn at nothing (6.7.9); a refused call warns at nothing (6.7.16)"

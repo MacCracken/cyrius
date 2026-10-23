@@ -5,7 +5,7 @@
 #
 # THE DEFECT. cycc resolves `lib/<leaf>.cyr` against CYRIUS_LIB_OVERLAY, then the CWD, then ONE
 # store slot — CYRIUS_HOME/versions/<cycc's OWN version>/lib — and only then the entry's own
-# directory (`#@incdir`, src/frontend/lex.cyr READFILE). The verify mirrored the pinned snapshot
+# directory (`#@incdir`, src/frontend/lex/lex.cyr READFILE). The verify mirrored the pinned snapshot
 # into `dist/.dlverify-<pid>/lib` and reached it only through `#@incdir`, AFTER the CLI's slot; the
 # self-check had no mirror at all. With CYRIUS_RESOLVED=1 (no re-exec into the pin's own CLI) and a
 # pin other than the CLI's version: a home holding only the pinned slot failed the self-check

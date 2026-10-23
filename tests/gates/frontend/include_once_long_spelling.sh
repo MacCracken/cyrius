@@ -20,7 +20,7 @@
 # compilers built from this tree by the compiler under test. The Mach-O compilers (and every host's own) meet the
 # shape on hardware in tests/tcyr/crossos/include_once_long_spelling.tcyr.
 #
-# MUTATION LEDGER (2026-10-18; each a one-edit copy of src/frontend/lex_pp.cyr, its compiler built 2-stage by the
+# MUTATION LEDGER (2026-10-18; each a one-edit copy of src/frontend/lex/pp.cyr, its compiler built 2-stage by the
 # fixed one, this gate run with CYCC= it, so the cross legs are built from the mutated src too):
 #   the 6.7.14 PP_MARK_INCLUDED / PP_ALREADY_INCLUDED (128 B entries)  -> RED F1 F3 F4 D N1 on every leg, 25 rows (F 42,
 #                                                                         D 44, N1 refused: its re-include counted

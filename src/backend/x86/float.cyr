@@ -161,7 +161,7 @@ fn EMIT_F32_BINOP(S, fop): i64 {
 }
 
 # A float literal: `fval` indexes the side table, whose FLIT_NUM is the literal's binary64
-# BITS, correctly rounded by the lexer (_flit_bits in src/frontend/lex.cyr). One movabs.
+# BITS, correctly rounded by the lexer (_flit_bits in src/frontend/lex/lex.cyr). One movabs.
 # ⛔ 6.6.10 — this was movabs/cvtsi2sd/movabs/cvtsi2sd/divsd over an i64 numer/denom pair:
 # garbage past 18 fraction digits or a 2^63 digit string, and a double rounding that put
 # 16-18 digit literals 1 ulp off. CHANGELOG [6.6.10]

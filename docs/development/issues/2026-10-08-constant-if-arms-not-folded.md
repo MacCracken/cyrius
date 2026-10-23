@@ -16,7 +16,7 @@ from roadmap.md.
 The compiler's own portability idiom `if (SYS_OPEN == 2) { open(path, …) } else { openat(-100, path, …) }` picks the
 arm from an **enum constant** (`enum Sys { … SYS_OPEN = 2; … }` in each driver), so one arm is dead in every fork —
 yet both arms and the compare are emitted. Live sites: **13** in `src/` (`grep -rn "if (SYS_OPEN == 2)" src/ | grep
--v ':\s*#'` — `src/main.cyr:777, 945`, `src/frontend/lex.cyr:470, 578, 775, 844, 874, 906`,
+-v ':\s*#'` — `src/main.cyr:777, 945`, `src/frontend/lex/lex.cyr:470, 578, 775, 844, 874, 906`,
 `src/backend/common/env.cyr:56`, `src/backend/common/runtime.cyr:217`, and one in each of `main_win.cyr:83`,
 `main_aarch64.cyr:69`, `main_aarch64_native.cyr:75`); 10 of them are in `build/cycc`. The dead arm also reaches the
 backend's diagnostics: the PE compiler's own build warned "syscall 2 with 4 argument(s) is not routed" four times

@@ -2235,7 +2235,7 @@ fn _compile_via_wrapper(unit, root, deps, selector): i64 {
 # `envp` (a NULL-terminated array, or 0 for none) for a check that reads no pin of its working
 # directory: `CYRIUS_RESOLVED=1` — the CLI's own loop guard, which skips its version redirect
 # (cbt/cyrius.cyr `_try_redirect_to_pinned`) — and `CYRIUS_NO_WARN_PIN_DRIFT=1` (cycc's drift
-# warning, src/frontend/lex.cyr `_check_cyml_pin_drift`), any inherited entry of either name dropped
+# warning, src/frontend/lex/lex.cyr `_check_cyml_pin_drift`), any inherited entry of either name dropped
 # (each reader takes the first). A fresh array. CHANGELOG [6.7.14]
 fn _lsp_envp_unpinned(envp): i64 {
     var n = 0;
@@ -3667,7 +3667,7 @@ fn _lsp_is_keyword(buf, off, len, total): i64 {
         if (memeq(buf + off, "while", 5) == 1) { return 1; }
         if (memeq(buf + off, "break", 5) == 1) { return 1; }
         if (memeq(buf + off, "match", 5) == 1) { return 1; }
-        # v6.1.24: keyword-set refresh — the lexer's LEXKW_EXT (src/frontend/lex.cyr)
+        # v6.1.24: keyword-set refresh — the lexer's LEXKW_EXT (src/frontend/lex/lex.cyr)
         # reserves these too, but the highlighter had never colored them.
         if (memeq(buf + off, "union", 5) == 1) { return 1; }   # union type
         if (memeq(buf + off, "stack", 5) == 1) { return 1; }   # stack-local array qualifier (v5.5.36)

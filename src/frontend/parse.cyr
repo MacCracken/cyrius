@@ -8523,7 +8523,7 @@ fn PARSE_PROG(S): i64 {
     }
     # v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4), reported
     # HERE rather than at the include site. The preprocessor records which host-only
-    # module was pulled (PP_IS_HOST_ONLY / PP_NOTE_HOST_ONLY in lex_pp.cyr) but CANNOT
+    # module was pulled (PP_IS_HOST_ONLY / PP_NOTE_HOST_ONLY in lex/pp.cyr) but CANNOT
     # decide: `PREPROCESS(S)` runs at main.cyr:1189 and the CYRIUS_KERNEL env is not read
     # until :1217, so kernel_mode (S+0x18FCA0) is still 0 while includes expand — the
     # first cut checked it there and the gate never fired.

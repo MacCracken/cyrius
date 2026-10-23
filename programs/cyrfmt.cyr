@@ -25,7 +25,7 @@ include "lib/alloc.cyr"
 include "lib/io.cyr"
 include "lib/vec.cyr"    # v6.6.5: N-file argument list
 include "lib/args.cyr"
-include "src/frontend/lex_attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
+include "src/frontend/lex/attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
 
 var _out_buf: i64 = 0;
 var _out_pos: i64 = 0;
@@ -86,7 +86,7 @@ fn emit_spaces(n): i64 {
 # a comment, that `{` was never counted and `cyrius fmt` rewrote the whole fn body flush
 # left (tests/tcyr/codegen/naked_fn_attribute.tcyr). CHANGELOG [6.6.5].
 # Returns the token's length, `#` included, or 0 (a comment). The list and its word boundary
-# are the lexer's OWN — LEXATTRWORD, included from src/frontend/lex_attr.cyr — not a copy
+# are the lexer's OWN — LEXATTRWORD, included from src/frontend/lex/attr.cyr — not a copy
 # that can drift from it. CHANGELOG [6.7.11]
 fn _cf_attr_len(buf, p, lim): i64 {
     var w = LEXATTRWORD(buf, p, lim);

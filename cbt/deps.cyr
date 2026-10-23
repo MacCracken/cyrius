@@ -2158,7 +2158,7 @@ fn _dep_parse_name_lists(buf, n, section, names, lists): i64 {
 # whole resolution is vendored into build/local-deps/lib/ and cyrius.lock is not written, so lib/
 # and the lock stay what the tag resolution wrote and switching modes churns nothing. Every include
 # string stays `lib/<file>`; the compiler reads lib/ through CYRIUS_LIB_OVERLAY=build/local-deps/lib
-# (src/frontend/lex.cyr `_rf_ov_open`), which is what makes a source's own `include "lib/sigil.cyr"`
+# (src/frontend/lex/lex.cyr `_rf_ov_open`), which is what makes a source's own `include "lib/sigil.cyr"`
 # read the override instead of compiling the tag copy beside it. CHANGELOG [6.7.6]
 
 # A [deps.NAME] section's keys, from the line at buf[si] up to the next table header of either
@@ -2882,7 +2882,7 @@ fn _dep_local_begin(): i64 {
     return 0;
 }
 
-# The compiler's lib/ overlay (src/frontend/lex.cyr `_rf_ov_open`): set to `dir` — build/local-deps/lib
+# The compiler's lib/ overlay (src/frontend/lex/lex.cyr `_rf_ov_open`): set to `dir` — build/local-deps/lib
 # for a local-mode resolve, build/locked-deps/lib for a --locked one in a checkout with no vendored
 # lib/ — or, with `dir` 0, REMOVED from what every child inherits: an overlay is this CLI's to set,
 # never one left in a shell. POSIX rebuilds `_envp`; Windows sets this process's own environment,

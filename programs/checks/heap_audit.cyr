@@ -122,7 +122,7 @@ fn _cap_drift_gate(): i64 {
     if (main_n <= 0) { _check(label, 1); return 1; }
     var lex_cap = 524288;
     var lex_buf = alloc(lex_cap);
-    var lex_n = file_read_all(_root_path("src/frontend/lex.cyr"), lex_buf, lex_cap);
+    var lex_n = file_read_all(_root_path("src/frontend/lex/lex.cyr"), lex_buf, lex_cap);
     if (lex_n <= 0) { _check(label, 1); return 1; }
 
     var fail = 0;

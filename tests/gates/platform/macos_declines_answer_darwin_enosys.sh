@@ -72,7 +72,7 @@ cat > "$TMP/scan.awk" <<'AWK'
 #   R38ALL <n>             every `return 0 - 38;` in the walked files, reached or not
 #   FILES <n> FOREIGN <n>  files walked / files judged foreign
 #   UNBAL <file> <depth>   a walked file whose braces do not balance (its fn walk cannot be trusted)
-# Directive spellings mirror src/frontend/lex_pp.cyr (one space after #ifdef / #ifndef / #ifplat /
+# Directive spellings mirror src/frontend/lex/pp.cyr (one space after #ifdef / #ifndef / #ifplat /
 # #if; a non-identifier byte after #else / #elif / #endif / #endplat; any other # line is a
 # comment), as darwin_syscall_literals_routed.sh's scanner does.
 function reach(sym, negated,   ifs, els) {

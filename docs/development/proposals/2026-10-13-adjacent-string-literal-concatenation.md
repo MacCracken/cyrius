@@ -6,7 +6,7 @@
 **Severity:** Quality-of-life. Nobody is blocked, but every consumer that writes a long message, help text or test
 fixture has to choose between a lint warning, a `#skip-lint` that mutes every rule on the line, text assembled at run
 time, or wording cut down to fit the column.
-**Affects:** `src/frontend/lex.cyr`, the string-literal arm of `LEX`. One concentrated change. No token-stream, parser,
+**Affects:** `src/frontend/lex/lex.cyr`, the string-literal arm of `LEX`. One concentrated change. No token-stream, parser,
 IR or backend change, so every target inherits it. Tooling follow-ups: `programs/cyrfmt.cyr` (continuation indent)
 and `programs/cyrlint.cyr` (an optional same-line warning).
 
@@ -82,7 +82,7 @@ in its lint count. A literal longer than the space left on its line has no compl
 
 ## Implementation sketch
 
-All in `LEX`'s string arm (`src/frontend/lex.cyr`, the `else { if (c == 34) {` branch):
+All in `LEX`'s string arm (`src/frontend/lex/lex.cyr`, the `else { if (c == 34) {` branch):
 
 - At the closing quote (`if (sc == 34) { p = p + 1; sgo = 0; }`), call a helper before ending, something like
   `_lex_str_join(S, p, in_attr)`. It scans forward over space / tab / CR / LF and stops at the LF when `in_attr`. If the

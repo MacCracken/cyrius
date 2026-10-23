@@ -158,7 +158,7 @@ enum SysNr {
     # (there is nothing to renumber to), so the "Linux arm must sit LAST" ordering
     # rule above has no arm to apply to here. That is safe ONLY because every call
     # site sits inside `#ifdef CYRIUS_TARGET_MACOS` and cyrius's #ifdef is a real
-    # preprocessor (src/frontend/lex_pp.cyr) — the lines are REMOVED before parse
+    # preprocessor (src/frontend/lex/pp.cyr) — the lines are REMOVED before parse
     # on Linux, so an untranslated `svc x8=1202` can never be emitted for
     # aarch64-Linux. Calling either outside that guard breaks the invariant.
     # Still requires the macho ESYSXLAT row + the `_macho_arm_routes` row, because

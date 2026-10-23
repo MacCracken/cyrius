@@ -2,7 +2,7 @@
 #
 # `#derive(accessors)` stacked directly ABOVE `#derive(Deserialize)` emits the JSON codecs.
 #
-# The accessors entry point (lex_pp.cyr PP_DERIVE_ACCESSORS) ran the codec body only when the
+# The accessors entry point (lex/pp.cyr PP_DERIVE_ACCESSORS) ran the codec body only when the
 # SERIALIZE bit (1) was stacked below it; Deserialize is bit 2. So of the eight stacking orders
 # this one alone emitted just the accessors, and the first use of a codec failed to compile
 # with `undefined function 'ad_pt_from_json_str'` — a message about a fn, not about the stack.

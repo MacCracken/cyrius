@@ -7,7 +7,7 @@
 # cost its bytes in .rodata whether or not anything referenced it (+16 B for "use new_f"; the
 # `#derive` layout backstop's 120-byte message rode along in every program including a #derive'd
 # struct). The lexer now moves a directive's message to a side table the two diagnostics read
-# (`_lex_dir_msg_fix` / `_lit_ptr`, src/frontend/lex.cyr).
+# (`_lex_dir_msg_fix` / `_lit_ptr`, src/frontend/lex/lex.cyr).
 #
 # Rows, through x86, the aarch64 cross, PE (CYRIUS_TARGET_WIN=1) and cx:
 #   I  the same program with long messages, with different short ones, and with no #assert at

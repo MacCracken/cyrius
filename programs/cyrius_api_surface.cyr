@@ -38,7 +38,7 @@ include "lib/str.cyr"
 include "lib/fs.cyr"
 include "lib/syscalls.cyr"
 include "lib/args.cyr"
-include "src/frontend/lex_attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
+include "src/frontend/lex/attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
 
 var DEFAULT_SNAPSHOT = "docs/api-surface.snapshot";
 var SNAPSHOT_BUF = 0;
@@ -192,7 +192,7 @@ fn _sort_entries(): i64 {
 }
 
 # 1 iff `filebuf[q]` ENDS a `#derive(...)` name: whitespace, or end of the line.
-# Mirrors PP_NAMEBOUND / ISDERIVE in src/frontend/lex_pp.cyr — this scanner copies
+# Mirrors PP_NAMEBOUND / ISDERIVE in src/frontend/lex/pp.cyr — this scanner copies
 # the compiler's derive detection, so it must copy the word boundary too or it
 # reports accessors for a line the compiler reads as a comment. CHANGELOG [6.6.6]
 fn _api_derive_bound(filebuf, q, eol): i64 {
@@ -252,7 +252,7 @@ fn _push_synthesized(module_off, module_len,
 }
 
 # ---------------------------------------------------------------------------------------
-# 6.6.8 — THE `#derive` SURFACE MIRRORS THE COMPILER'S EMITTER (src/frontend/lex_pp.cyr).
+# 6.6.8 — THE `#derive` SURFACE MIRRORS THE COMPILER'S EMITTER (src/frontend/lex/pp.cyr).
 # This used to be a hand-kept approximation that had drifted on every axis: `_to_json` at
 # arity 1 (the emitter has taken `(ptr, sb)` since v5.9.31), no `_from_json_str`,
 # `#derive(Deserialize)` not recognised at all (and, stacked above `#derive(accessors)`,
@@ -292,7 +292,7 @@ fn _asf_blank(c): i64 {
 
 # Length of the `#`-attribute TOKEN at b[p] — one of the words the lexer turns into a token
 # and keeps lexing the same line after — or 0: the `#` opens a comment. The list and its
-# word boundary are the lexer's OWN — LEXATTRWORD, included from src/frontend/lex_attr.cyr —
+# word boundary are the lexer's OWN — LEXATTRWORD, included from src/frontend/lex/attr.cyr —
 # not a copy that can drift from it (this was the fifth hand copy). CHANGELOG [6.7.11]
 fn _asf_attr_len(b, p, lim): i64 {
     var w = LEXATTRWORD(b, p, lim);

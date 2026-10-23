@@ -43,7 +43,7 @@ include "src/backend/x86/float.cyr"
 include "src/backend/x86/jump.cyr"
 include "src/backend/x86/decode.cyr"
 include "src/common/ir.cyr"
-include "src/frontend/lex.cyr"
+include "src/frontend/lex/lex.cyr"
 # The TypeScript front end and the JS emitter, as src/main.cyr includes them (6.7.15's D38:
 # --lex-ts / --parse-ts / --emit-js run them on every compiler). CHANGELOG [6.7.15]
 include "src/frontend/ts/lex.cyr"

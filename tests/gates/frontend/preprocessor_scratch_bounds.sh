@@ -21,14 +21,14 @@
 # PROPERTY: every one of these loops is bounded, and bounded by the space that is ACTUALLY free.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-PP="$ROOT/src/frontend/lex_pp.cyr"
+PP="$ROOT/src/frontend/lex/pp.cyr"
 MAIN="$ROOT/src/main.cyr"
 fail() { echo "FAIL preprocessor_scratch_bounds: $1" >&2; exit 1; }
 
 # ── axis 1: the include_fname bound equals the distance to the first LIVE writer above it ──
 # Derived, never quoted: grep the real store/load addresses in that band and take the lowest.
 BASE=$((0x190400))
-# ⚠ COMMENTS ARE STRIPPED FIRST, and this gate's own first run is why. src/frontend/lex_pp.cyr
+# ⚠ COMMENTS ARE STRIPPED FIRST, and this gate's own first run is why. src/frontend/lex/pp.cyr
 # carries a v6.4.81 note explaining that the heap map once documented a phantom scratch at
 # 0x190500 "an address NO code has ever written" — and the unfiltered grep read that sentence as
 # a live writer, computed a 256-byte span, and failed a correct bound. Reading a number out of

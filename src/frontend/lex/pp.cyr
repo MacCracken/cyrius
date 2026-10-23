@@ -2,7 +2,7 @@
 # #derive / #regalloc / #pe_import handling, macro expansion,
 # ref-expansion pass.
 # ================================================================
-# Split out of src/frontend/lex.cyr in v5.5.38 to keep single-file
+# Split out of src/frontend/lex/lex.cyr in v5.5.38 to keep single-file
 # LOC under ~1500. The lexer proper (LEX / LEXID / LEXNUM etc.)
 # stays in lex.cyr; this file owns everything that runs in the
 # PREPROCESS orchestrator before LEX sees the output buffer.
@@ -227,7 +227,7 @@ fn _pp_unclosed(S, base, pos, bl): i64 {
 #
 # States: 0 code · 1 string · 2 string-after-backslash · 3 line comment
 #         4 char literal · 5 char-literal-after-backslash.
-# Mirrors src/frontend/lex.cyr: `"` opens and closes a string and `\` escapes the
+# Mirrors src/frontend/lex/lex.cyr: `"` opens and closes a string and `\` escapes the
 # next byte inside one; `#` starts a comment that ends at the newline; a char
 # literal is single-line. CHANGELOG [6.6.6]
 fn PP_LEXST(st, c): i64 {
@@ -265,7 +265,7 @@ fn PP_LEXST_INSTR(st): i64 {
 # line as code. Reading `#assert 1 == 1, "x<LF>"` as a comment put the PP one quote out of
 # step with the lexer for the whole next line — a forged `#@file` there defeated `private`,
 # and a real `#ifdef` there was skipped. The list is LEXATTRWORD, the lexer's own
-# (src/frontend/lex_attr.cyr), so the two cannot drift. CHANGELOG [6.6.20]
+# (src/frontend/lex/attr.cyr), so the two cannot drift. CHANGELOG [6.6.20]
 # EVERY walk site guards it inline — `if (load8(B + I) == 35) { X = PP_LEXST_AT(B, I, N, X); }
 # else { X = PP_LEXST(X, load8(B + I)); }` — never a bare PP_LEXST: this differs from PP_LEXST
 # only on a `#`, and the per-byte call into it cost ~3 % of self_compile (#inline refuses a
@@ -5000,7 +5000,7 @@ fn PP_PASS(S): i64 {
                                 # the gap to the NEXT marker. That made `private`
                                 # mis-scope in BOTH directions in cycc's own build
                                 # (lib/alloc.cyr and lib/atomic.cyr shared an id;
-                                # src/frontend/lex.cyr split across two), and it is also
+                                # src/frontend/lex/lex.cyr split across two), and it is also
                                 # a live DX bug — diagnostics reported the wrong file for
                                 # anything after an include.
                                 # PP_PASS only ever expands TOP-LEVEL includes (an

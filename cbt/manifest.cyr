@@ -758,7 +758,7 @@ fn _mf_key_str(section, key): i64 {
 # CHANGELOG [6.6.19].
 #
 # cycc's string pool `str_data` is 2,097,152 bytes (heap map 0x21A000, src/main.cyr), and LEX
-# (src/frontend/lex.cyr) refuses a literal once `spos + 1 >= 2097152` after its NUL: the pool
+# (src/frontend/lex/lex.cyr) refuses a literal once `spos + 1 >= 2097152` after its NUL: the pool
 # holds 2,097,151 bytes, NULs included, so one literal is at most 2,097,150. It is SHARED with
 # the program's own literals (the pkgver, the stdlib, the entry), so real embeds stay well under.
 var _EMBED_POOL = 2097151;

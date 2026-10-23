@@ -5,7 +5,7 @@
 # nothing written — on Windows (cycc.exe) and both macOS compilers as on Linux.
 #
 # THE DEFECT (issues/archived/2026-10-10-strict-pin-and-pie-inert-off-linux.md). `_check_cyml_pin_drift` and
-# `_env_var_is_1` (src/frontend/lex.cyr) were wrapped in `#ifdef CYRIUS_TARGET_LINUX`, and the one
+# `_env_var_is_1` (src/frontend/lex/lex.cyr) were wrapped in `#ifdef CYRIUS_TARGET_LINUX`, and the one
 # call sat in `_init_cyrius_lib`'s Linux arm, so cycc.exe and the two Mach-O compilers never warned
 # and never failed: `--strict-pin` built green on a drifted pin, rc 0, no message (measured on cass
 # and under wine). The fix drops the two guards — `_read_env` has a macOS and a PE arm, and the raw

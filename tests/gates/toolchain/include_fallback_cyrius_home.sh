@@ -4,7 +4,7 @@
 # set and non-empty, else HOME/.cyrius/versions/<VERSION>/lib/ — and it reads the WHOLE
 # environment to find them.
 #
-# ⛔ WHY. `_init_cyrius_lib` (src/frontend/lex.cyr) built the fallback from `HOME=` only, out of
+# ⛔ WHY. `_init_cyrius_lib` (src/frontend/lex/lex.cyr) built the fallback from `HOME=` only, out of
 # ONE 4096-B read of /proc/self/environ, while the comments beside it said CYRIUS_HOME. cbt
 # resolves its home as CYRIUS_HOME, else $HOME/.cyrius, so under a CYRIUS_HOME that is not
 # ~/.cyrius the CLI and the compiler read two different stdlibs: `cyrius distlib`'s verify

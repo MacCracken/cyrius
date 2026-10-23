@@ -11,7 +11,7 @@ fn _cx_token_offsets_gate(): i64 {
     var fail = 0;
 
     var lex_n[1];
-    var lex_buf = _read_source_for_grep(_root_path("src/frontend/lex.cyr"), &lex_n);
+    var lex_buf = _read_source_for_grep(_root_path("src/frontend/lex/lex.cyr"), &lex_n);
     var util_n[1];
     var util_buf = _read_source_for_grep(_root_path("src/common/util.cyr"), &util_n);
     # v6.0.8 — TOKTYP / TOKVAL extracted from per-backend emit.cyr

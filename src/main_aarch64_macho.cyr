@@ -48,7 +48,7 @@ include "src/backend/aarch64/jump.cyr"
 # already include this. The Mach-O variant was overlooked when
 # ir.cyr was added — same shape as the v5.6.32 fix.
 include "src/common/ir.cyr"
-include "src/frontend/lex.cyr"
+include "src/frontend/lex/lex.cyr"
 # The TypeScript front end and the JS emitter, as src/main.cyr includes them (6.7.15's D38:
 # --lex-ts / --parse-ts / --emit-js run them on every compiler). CHANGELOG [6.7.15]
 include "src/frontend/ts/lex.cyr"

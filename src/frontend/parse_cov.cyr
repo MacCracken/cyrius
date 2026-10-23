@@ -3,7 +3,7 @@
 # THE SWITCH. `CYRIUS_COVERAGE=1` turns the mode on for one compile, and `CYRIUS_COVERAGE_FILE`
 # names the file the program appends its coverage to when it exits. The mode is decided once, in
 # the shared PREPROCESS right after the bounds-checked mode's `_bnd_setup` (so every fork reads it
-# the same way): `1` on; `0`, unset or empty off; any other value refused by name (lex_pp.cyr
+# the same way): `1` on; `0`, unset or empty off; any other value refused by name (lex/pp.cyr
 # `_pp_env_rung`, the rung CYRIUS_BOUNDS uses). On, it predefines CYRIUS_COVERAGE for `#ifdef`.
 # There is no source spelling: a plain `#define CYRIUS_COVERAGE` is an ordinary define and
 # switches nothing, and `cyrius coverage --exec` is the CLI's only switch.
@@ -15,7 +15,7 @@
 #
 # The mode needs a process exit to dump at, so a kernel / EFI image and a `shared;` / `object;`
 # build are refused by name after pass 1 (`_cov_pass1`), as the bounds-checked mode is.
-# The `__cyrius_` names stay the compiler's (lex_pp.cyr, C2's reservation). CHANGELOG [6.7.10]
+# The `__cyrius_` names stay the compiler's (lex/pp.cyr, C2's reservation). CHANGELOG [6.7.10]
 
 var _cov_mode = 0;   # 1 when the execution-coverage mode is on for this compile
 var _cov_path = 0;   # CYRIUS_COVERAGE_FILE, copied out of _read_env's shared scratch (mode on only)

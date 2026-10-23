@@ -2119,7 +2119,7 @@ fn _efi_stdlib_fallback_gate(): i64 {
         _p(": found ud2/ud2/nop sentinel (0F 0B 0F 0B 90) at offset ");
         print_num(ud2_at);
         println(" — lib/fnptr.cyr did not resolve via version-pinned fallback");
-        println("    (rename-skip regression — check src/frontend/lex.cyr `vp =` constant)");
+        println("    (rename-skip regression — check src/frontend/lex/lex.cyr `vp =` constant)");
         fail = 1;
     } else {
         _p("  "); _p(ANSI_GREEN); _p("PASS"); _p(ANSI_RESET);

@@ -9,7 +9,7 @@
 # writes nothing while `_ew_mute` is set unless `_ew_say` is. A raw `syscall(SYS_WRITE, 2, ..)` in these files would
 # print through the mute: a valid program's never-instantiated generic body could print a refusal about T = i64.
 #
-# THE FILES: everything the parse reaches — src/frontend/{parse,lex}*.cyr (the file map's writers a diagnostic's head
+# THE FILES: everything the parse reaches — src/frontend/parse*.cyr + src/frontend/lex/*.cyr (the file map's writers a diagnostic's head
 # calls live in the preprocessor), src/common/util.cyr, src/common/ir.cyr, and src/backend/<target>/{emit,jump,float}.cyr
 # and src/backend/common/*.cyr (not js/, the TypeScript front end's). (FIXUP / the image writers and the drivers run
 # outside a parse.) The one raw write left is `_ew`'s.
@@ -19,7 +19,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 fail=0
-FILES=$(ls src/frontend/parse*.cyr src/frontend/lex*.cyr src/common/util.cyr src/common/ir.cyr src/backend/*/emit.cyr \
+FILES=$(ls src/frontend/parse*.cyr src/frontend/lex/*.cyr src/common/util.cyr src/common/ir.cyr src/backend/*/emit.cyr \
     src/backend/*/jump.cyr src/backend/*/float.cyr src/backend/common/*.cyr 2> /dev/null | grep -v '^src/backend/js/' || true)
 nf=$(printf '%s\n' "$FILES" | grep -c '\.cyr$' || true)
 [ "$nf" -ge 21 ] || { echo "  FAIL: the census reads $nf files (floor 21)"; fail=$((fail+1)); }

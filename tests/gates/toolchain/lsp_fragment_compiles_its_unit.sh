@@ -104,7 +104,7 @@
 #   this repo's cyrius.cyml without src/main_aarch64_native.cyr in [lsp] skip (the tools lane's review,
 #       6.7.16)  S: the fork's own duplicate SYS_* warnings, and its SELF unit's `syscall arity
 #       mismatch` warnings republished on the shared src/common/util.cyr, src/backend/common/env.cyr,
-#       runtime.cyr, src/frontend/lex.cyr, ts/driver_input.cyr and lib/syscalls_*.cyr — which their
+#       runtime.cyr, src/frontend/lex/lex.cyr, ts/driver_input.cyr and lib/syscalls_*.cyr — which their
 #       FIRST publish (the grading before) showed empty
 #   the note recorded as a list (the wave-3 open server, 0ba98b3bf)  F8 F24 F25 F26 F27 F28 F29
 #   a PEER's other open documents cleared, not republished  F26

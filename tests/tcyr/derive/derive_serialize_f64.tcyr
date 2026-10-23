@@ -4,7 +4,7 @@
 # for every f64 field — fns that never existed → `error: refusing to emit binary with
 # reachable undefined function(s)`. Same bug class as the i64 gap fixed at v5.9.35.
 #
-# Fix (src/frontend/lex_pp.cyr PP_DERIVE_SERIALIZE): f64 detection in all three emitted
+# Fix (src/frontend/lex/pp.cyr PP_DERIVE_SERIALIZE): f64 detection in all three emitted
 # fns — `_to_json` formats via bayan_f64_to_json (round-trip-correct Grisu2, v6.4.69;
 # was the lossy 6-decimal fmt_float_buf) into a shared scratch; `_from_json` (pairs)
 # and `_from_json_str` (single-pass) parse via bayan_f64_from_json (correctly-rounded,

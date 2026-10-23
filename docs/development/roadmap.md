@@ -108,7 +108,7 @@ cannot pack filed.
     (HTTP, WebSocket, DNS, X.509 / DER, JSON; the user, 2026-10-22) — the bounds-checked form is its one question at
     the open.
 - **The refactor / optimization review — elevate the large files.** The frontend has outgrown its files
-  (`parse_fn.cyr` ~13.9 K lines, `parse_expr.cyr` ~6.4 K, `parse_decl.cyr` ~6.2 K, `lex_pp.cyr` ~5.3 K, `parse.cyr`
+  (`parse_fn.cyr` ~13.9 K lines, `parse_expr.cyr` ~6.4 K, `parse_decl.cyr` ~6.2 K, `lex/pp.cyr` ~5.3 K, `parse.cyr`
   ~4.5 K; `cbt/commands.cyr` / `deps.cyr` ~6.6 K each): split them along their real seams (the trait / generic /
   const-fn modules, the call path, the statement dispatch), shrink the giant fns that sit near cybs's per-fn
   reference ceiling (PARSE_FNCALL, PARSE_RETURN, `_PARSE_FN_DEF_IMPL`, `_PARSE_FACTOR_IMPL`, `_field_load_on`), dedupe

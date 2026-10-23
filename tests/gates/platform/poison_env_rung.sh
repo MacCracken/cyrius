@@ -12,7 +12,7 @@
 # and `no` all built the poisoned binary (redzones, poison fill, quarantine-on-free) without a
 # word: the repro exited 7 for each, 0 only when unset. The fix decides it ONCE, in the shared
 # PREPROCESS beside `_bnd_setup` / `_cov_setup` (src/frontend/parse_cov.cyr `_poison_setup`,
-# through lex_pp.cyr's `_pp_env_rung`), and the seven fork reads are gone.
+# through lex/pp.cyr's `_pp_env_rung`), and the seven fork reads are gone.
 #
 # THE ROWS.
 #   S   static: no src/main*.cyr fork reads CYRIUS_POISON in code (floor 7 forks); src/ reads it
@@ -94,7 +94,7 @@ check "S1 no fork reads CYRIUS_POISON in code" 0 "$nread"
 check "S2 no _read_env(\"CYRIUS_POISON\") anywhere in src/" 0 "$(grep -rh '_read_env("CYRIUS_POISON")' src | sed 's/#.*//' | grep -c '_read_env' || :)"
 check "S2 one rung read, in parse_cov.cyr" "src/frontend/parse_cov.cyr" "$(grep -rl '_pp_env_rung(S, "CYRIUS_POISON") == 1' src | paste -sd' ' -)"
 check "S2 one predefine of it, in parse_cov.cyr" "src/frontend/parse_cov.cyr:1" "$(grep -rc 'PP_PREDEFINE(S, "CYRIUS_POISON")' src | grep -v ':0$' | paste -sd' ' -)"
-order=$(awk '/^fn PREPROCESS\(S\)/ {on = 1} on && /_poison_setup\(S\);/ && !p {p = NR} on && /PP_PASS\(S\);/ && !q {q = NR} on && /^}/ {exit} END {if (p && q && p < q) print "before"; else print "p=" p " q=" q}' src/frontend/lex_pp.cyr)
+order=$(awk '/^fn PREPROCESS\(S\)/ {on = 1} on && /_poison_setup\(S\);/ && !p {p = NR} on && /PP_PASS\(S\);/ && !q {q = NR} on && /^}/ {exit} END {if (p && q && p < q) print "before"; else print "p=" p " q=" q}' src/frontend/lex/pp.cyr)
 check "S3 PREPROCESS calls _poison_setup before PP_PASS" before "$order"
 
 echo "== R: the filed repro on every fork that can execute here =="

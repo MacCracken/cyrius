@@ -492,7 +492,7 @@ var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attrib
 
 # v6.5.28 — FLOAT LITERAL side table, one i64 slot per literal: its correctly rounded binary64
 # BITS (since 6.6.10 — the lexer converts the digits exactly, _flit_bits in
-# src/frontend/lex.cyr). The EMIT_FLOAT_LIT backends load FLIT_NUM as a 64-bit immediate. The
+# src/frontend/lex/lex.cyr). The EMIT_FLOAT_LIT backends load FLIT_NUM as a 64-bit immediate. The
 # history below is why the table exists; the i64 numer/denom pair it describes overflowed in
 # its turn (past 18 fraction digits or a 2^63 digit string) and was double-rounded by the
 # runtime divide, both silently. CHANGELOG [6.6.10] (6.6.12: the unused denominator slot and
@@ -2649,7 +2649,7 @@ fn TOKNAME_BUILTIN(typ): i64 {
     if (typ == 151) { return "f32v8_dot"; }
     # v6.5.24 — the 256-bit packed-double kernel. Named for its register width, not its
     # lane count, because the lane-count name (`f64v4_add`) is a pre-existing lib fn; see
-    # LEXKW_EXT in src/frontend/lex.cyr. IS_KEYWORD_TOK derives from this table, so these
+    # LEXKW_EXT in src/frontend/lex/lex.cyr. IS_KEYWORD_TOK derives from this table, so these
     # four entries are what actually reserves the names.
     if (typ == 154) { return "f64v256_add"; }
     if (typ == 155) { return "f64v256_sub"; }
@@ -2823,7 +2823,7 @@ fn TOKNAME(typ): i64 {
     if (bn != 0) { return bn; }
     return "unknown";
 }
-# 6.7.17 — the `#` attribute tokens (LEXATTRWORD, src/frontend/lex_attr.cyr; `#deprecated` is 124, `?`'s, named there):
+# 6.7.17 — the `#` attribute tokens (LEXATTRWORD, src/frontend/lex/attr.cyr; `#deprecated` is 124, `?`'s, named there):
 # `var g = 1` then `#assert ..` said "expected ';', got unknown". A fn of its own (cybs's per-fn string-literal
 # ceiling). CHANGELOG [6.7.17]
 fn TOKNAME_ATTR(typ): i64 {
@@ -3426,7 +3426,7 @@ fn _expect_step(S, t): i64 {
 # the EXPANDED line, which equals the source's only where nothing was expanded in-line before the token: past a
 # `#derive`'s generated fns (flattened onto the struct's closing-`}` line) `struct Q { y; } var w = zz;` reported
 # 2:258 with the generated fns as the excerpt, and past a macro call `var x = ADD(1, 2) + zz;` 2:39 with the expansion
-# as the excerpt. Each in-line expansion is recorded (lex_pp.cyr `_xm_add`): where its output sits in the final
+# as the excerpt. Each in-line expansion is recorded (lex/pp.cyr `_xm_add`): where its output sits in the final
 # buffer, its output length, and the source text it replaced (a derive's appended fns replaced none). A column is
 # counted back from the token to its SOURCE line's start, an expansion's output read as its source text; a token inside
 # an expansion is at the expansion's start (the macro call). The excerpt is that source line, rebuilt the same way.

@@ -1465,7 +1465,7 @@ fn _libsync_plan_pkg(src_dir, name, ps, pd): i64 {
 # 2026-07-14-shadow-lib-silent-version-skew).
 #
 # WHY THIS EXISTS. A stale project-local ./lib/ shadows the version-pinned
-# snapshot. cycc's `_check_shadow_lib` (src/frontend/lex.cyr) already emits a
+# snapshot. cycc's `_check_shadow_lib` (src/frontend/lex/lex.cyr) already emits a
 # note, but it (a) byte-SIZE-compares ONE hardcoded sentinel (lib/alloc.cyr) and
 # (b) names nothing when it fires — so a consumer cannot tell whether ./lib/ is
 # byte-identical to the snapshot or three minor versions behind it. yeo-cy-test

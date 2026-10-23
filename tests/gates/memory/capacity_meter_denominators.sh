@@ -30,10 +30,10 @@ num() { grep -oE "$2" "$ROOT/$1" | grep -oE '[0-9]+' | tail -1; }
 
 # ── the caps as ENFORCED, each read from the site that raises the hard error ────────
 CAP_FN=$(num      src/frontend/parse_fn.cyr  'if \(nc > [0-9]+\)')
-GUARD_ID=$(num    src/frontend/lex.cyr       'if \(npos >= [0-9]+\)')
+GUARD_ID=$(num    src/frontend/lex/lex.cyr       'if \(npos >= [0-9]+\)')
 CAP_VAR=$(num     src/common/util.cyr        'if \(_var_cap \* 2 > [0-9]+\)')
 CAP_FIX=$(num     src/frontend/parse_expr.cyr 'fixup table full \([0-9]+\)')
-CAP_STR=$(num     src/frontend/lex.cyr       'if \(spos >= [0-9]+\)')
+CAP_STR=$(num     src/frontend/lex/lex.cyr       'if \(spos >= [0-9]+\)')
 # ⚠ NOT via num(): `_capacity_warnings(S, 67108864, 1)` contains TWO numbers and num()'s
 # `tail -1` picks the trailing `1`, silently deriving a cap of 1. Take the first argument.
 CAP_CODE=$(grep -oE '_capacity_warnings\(S, [0-9]+, 1\)' "$ROOT/src/main.cyr" \

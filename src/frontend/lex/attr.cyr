@@ -1,7 +1,7 @@
-# src/frontend/lex_attr.cyr — THE ONE LIST of the lexer's `#` attribute words (LEXATTRWORD) with
+# src/frontend/lex/attr.cyr — THE ONE LIST of the lexer's `#` attribute words (LEXATTRWORD) with
 # its word boundary (LEXATTRBOUND) and row matcher (_lex_attr_is).
 #
-# WHY A FILE OF ITS OWN: it is included by src/frontend/lex.cyr (the lexer's `#` branch, and the
+# WHY A FILE OF ITS OWN: it is included by src/frontend/lex/lex.cyr (the lexer's `#` branch, and the
 # preprocessor's PP_LEXST_AT through it) AND by every tool that scans cyrius source — cyrlint,
 # cyrfmt, cyrdoc, cbt/srcscan.cyr (the CLI and cyrius-lsp), cyrius_api_surface and cyaudit. Each
 # tool kept a hand-copied ten-row table until 6.7.11, and only cyaudit's was held to this list,

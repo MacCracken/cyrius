@@ -4,7 +4,7 @@
 # and Vec: a u8..u32 / f32 field fell into the nested-struct arm and the build was refused
 # (`undefined function 'u8_to_json'`). 6.7.10 packs them (1 / 2 / 4 / 4 bytes, B7-2) and the codecs
 # take them, through one classifier for the three emitted fns (PP_DFIELD_INT / PP_DFIELD_FLT,
-# src/frontend/lex_pp.cyr):
+# src/frontend/lex/pp.cyr):
 #   - u8 / u16 / u32: a bare JSON number, read ZERO-extended (a u32 4000000000 is written so, not
 #     -294967296); decoded with a store at the field's width (it truncates: 300 into a u8 is 44).
 #   - f32: written WIDENED to f64 (the user's decision, 2026-10-12): 0.1f is 0.10000000149011612,

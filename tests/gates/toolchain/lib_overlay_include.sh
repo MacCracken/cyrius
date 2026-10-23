@@ -1,7 +1,7 @@
 #!/bin/sh
 # lib_overlay_include.sh — 6.7.6 (lane C). The compiler's local-development overlay,
 # CYRIUS_LIB_OVERLAY: an include of `lib/<rest>` tries `<overlay>/<rest>` FIRST, then resolves as it
-# always did (src/frontend/lex.cyr `_rf_ov_open`, called from READFILE).
+# always did (src/frontend/lex/lex.cyr `_rf_ov_open`, called from READFILE).
 #
 # WHY IT EXISTS. `cyrius` in local mode (CYRIUS_LOCAL / --local) builds a [deps.X] `path` beside
 # git/tag from the sibling working tree and vendors that resolution into build/local-deps/lib/,

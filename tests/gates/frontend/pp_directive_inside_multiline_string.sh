@@ -14,7 +14,7 @@
 #   var s = "ab\n#ifdef NOPE\ncd\n#endif\nef";   →   the binary held ab\n\n\n\nef
 #
 # Silent: exit 0, no diagnostic, and the program's string data was simply not
-# what the source said. Fixed by PP_LEXST (src/frontend/lex_pp.cyr), whose string
+# what the source said. Fixed by PP_LEXST (src/frontend/lex/pp.cyr), whose string
 # state crosses newlines and which learned char literals so the old reset is not
 # needed to bound a mis-read `"`.
 #
@@ -40,7 +40,7 @@
 #      file is still recorded and still refuses the bare-metal build
 #
 # MUTATION LEDGER (2026-09-19, cycc 1,310,856 B). A scratch tree built with
-# `git archive HEAD src bootstrap lib`, the fixed lex_pp.cyr overlaid, and the
+# `git archive HEAD src bootstrap lib`, the fixed lex/pp.cyr overlaid, and the
 # single line `if (c == 10) { bol = 1; } else { bol = 0; }` in PP_PASS and
 # PP_IFDEF_PASS re-armed to also reset the string state:
 #   mutated compiler → axes 1,2,3,5 FAIL (axis 1 prints ab\n\n\n\nef); the rest pass

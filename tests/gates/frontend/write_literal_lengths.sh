@@ -24,7 +24,7 @@
 #
 # ⚠ ESCAPES MUST BE RESOLVED LEFT-TO-RIGHT, NOT WITH INDEPENDENT SUBSTITUTIONS. The first cut of
 # this gate used `sed 's/\n/…/; s/\t/…/'`, which does not handle `\"` or `\\` and therefore
-# reported 19 FALSE positives in `src/frontend/lex.cyr` and `cbt/` — every one a literal that
+# reported 19 FALSE positives in `src/frontend/lex/lex.cyr` and `cbt/` — every one a literal that
 # legitimately contains an escaped quote or backslash. A gate that cries wolf is how a real
 # finding gets ignored.
 #

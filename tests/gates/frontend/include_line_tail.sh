@@ -11,7 +11,7 @@
 # include on the line (`include "a.cyr"; include "b.cyr";`) was never read. The guide says "file contents replace the
 # include line", so an include is a whole-line directive; the user's D29 refuses the tail by name.
 #
-# THE FIX: PP_INCLUDE_TAIL (src/frontend/lex_pp.cyr), called by BOTH include sites — PP_PASS (the entry's own lines) and
+# THE FIX: PP_INCLUDE_TAIL (src/frontend/lex/pp.cyr), called by BOTH include sites — PP_PASS (the entry's own lines) and
 # PP_IFDEF_PASS (an included file's, expanded later) — right after the file name is read: only blanks, one `;`, a `#`
 # comment and the line's end may follow; anything else is "expected the end of the line after an include's file name"
 # at its first byte (`_pp_err_at`: <file>:<line>:<col>, the build fails, the line is still included, later errors

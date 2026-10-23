@@ -13,7 +13,7 @@
 #
 # The second shape is what `[embed]` produces (cbt puts the embed in the prelude, ahead of every
 # other literal). Fixed with an alloc'd FNV-1a index of the pool's NUL-delimited segments
-# (src/frontend/lex.cyr, `_lex_intern*` / `_lex_ix_*`), synced lazily; a literal holding a NUL
+# (src/frontend/lex/lex.cyr, `_lex_intern*` / `_lex_ix_*`), synced lazily; a literal holding a NUL
 # keeps the 6.6.15 scan verbatim. The output is byte-identical (the first segment equal to a
 # NUL-free literal is the scan's first match) — proven by the self-host fixpoint and an old-vs-new
 # compile of every tests/tcyr file, not by this gate.

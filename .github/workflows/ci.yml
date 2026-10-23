@@ -38,7 +38,7 @@ jobs:
         run: |
           echo "build/cycc: $(wc -c < ./build/cycc) bytes"
           echo "build/cycc md5: $(md5sum build/cycc | cut -d' ' -f1)"
-          echo "lex.cyr md5: $(md5sum src/frontend/lex.cyr | cut -d' ' -f1)"
+          echo "lex.cyr md5: $(md5sum src/frontend/lex/lex.cyr | cut -d' ' -f1)"
           echo "main_aarch64 md5: $(md5sum src/main_aarch64.cyr | cut -d' ' -f1)"
           ./build/cycc --version || echo "cycc --version failed"
           cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
@@ -444,7 +444,7 @@ jobs:
           chmod +x build/cycc
           echo "build/cycc: $(wc -c < ./build/cycc) bytes"
           echo "build/cycc md5: $(md5sum build/cycc | cut -d' ' -f1)"
-          echo "lex.cyr md5: $(md5sum src/frontend/lex.cyr | cut -d' ' -f1)"
+          echo "lex.cyr md5: $(md5sum src/frontend/lex/lex.cyr | cut -d' ' -f1)"
           ./build/cycc --version || echo "cycc --version failed with exit $?"
           cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
           echo "cycc_aarch64: $(wc -c < ./build/cycc_aarch64) bytes"

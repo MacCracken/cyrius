@@ -18,7 +18,7 @@
 #     -> axis 1 RED (every `@` shape compiles, rc 0); axes 2-3 green.
 #   * make `_lex_err_head` print `PRNUM(GCLINE(S))` instead of FM_LOOKUP + column
 #     -> axes 1, 3 and 4 RED on every row.
-#   * in lex_pp.cyr PP_DEFINE, pass `ERR_MSG(S, ...)` back instead of `_pp_err_at`
+#   * in lex/pp.cyr PP_DEFINE, pass `ERR_MSG(S, ...)` back instead of `_pp_err_at`
 #     -> axis 5 RED (`error:0:1:` is back).
 #   * (6.6.11) drop the `if (sc == 10) SCLINE(...)` in LEX's string loop -> axis 6 RED
 #     (ml_undef/ml_dollar/ml_inc1/ml_private); drop the `ec == 10` arm's SCLINE -> ml_bslf RED;

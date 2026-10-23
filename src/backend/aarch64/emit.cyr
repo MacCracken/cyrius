@@ -4193,7 +4193,7 @@ fn EMIT_F32_BINOP(S, fop): i64 {
 
 # Load a float literal into x0 as IEEE 754 bits. `fval` indexes the side table, whose
 # FLIT_NUM is the literal's binary64 bits, correctly rounded by the lexer (_flit_bits in
-# src/frontend/lex.cyr), so this is one movz/movk immediate — the same bits as x86's movabs.
+# src/frontend/lex/lex.cyr), so this is one movz/movk immediate — the same bits as x86's movabs.
 # ⛔ 6.6.10 — it was scvtf/scvtf/fdiv over an i64 numer/denom pair, which overflowed and
 # double-rounded silently. CHANGELOG [6.6.10]
 fn EMIT_FLOAT_LIT(S, fval): i64 {

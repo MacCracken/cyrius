@@ -9,7 +9,7 @@
 # bite-3 review while confirming the derive path is visibility-marker-independent.
 #
 # Mutation that reddens this file: `_pp_decl_is_enum = is_enum;` -> `S64(S + 0x197F10,
-# is_enum);` in src/frontend/lex_pp.cyr (the 6.6.3 shape) — pick() is never defined,
+# is_enum);` in src/frontend/lex/pp.cyr (the 6.6.3 shape) — pick() is never defined,
 # so the build fails on an undefined fn (or, with --allow-undef, returns 0 for 3).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

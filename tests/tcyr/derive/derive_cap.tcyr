@@ -1,7 +1,7 @@
 # derive_cap.tcyr — v5.9.5 regression for derive(accessors) past
 # the pre-v5.9.5 32-struct cap.
 #
-# Bug history: pre-v5.9.5, src/frontend/lex_pp.cyr's derive emitter
+# Bug history: pre-v5.9.5, src/frontend/lex/pp.cyr's derive emitter
 # stored per-struct sizes/names in [32]-capped tables that overlapped
 # with the shared parse-state buffer (op at S+0x197400 fell inside
 # struct_names entries 23+; struct[33+]'s size store at

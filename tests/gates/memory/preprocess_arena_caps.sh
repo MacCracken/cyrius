@@ -35,9 +35,9 @@ SRC_CAP=$(grep -E '^var _SRC_CAP = [0-9]+;' "$ROOT/src/common/util.cyr" | grep -
 # ⚠ Take the MAXIMUM, not the first: `if (op > 0)` is an unrelated emptiness test in the same
 # file, and a lexical `sort -u | head -1` picks it, yielding a cap of 0 that fails the gate for
 # the wrong reason. (It did exactly that on this gate's first run.)
-PP_CAP=$(grep -oE 'if \(op > [0-9]+\) \{' "$ROOT/src/frontend/lex_pp.cyr" | grep -oE '[0-9]+' | sort -n | tail -1)
+PP_CAP=$(grep -oE 'if \(op > [0-9]+\) \{' "$ROOT/src/frontend/lex/pp.cyr" | grep -oE '[0-9]+' | sort -n | tail -1)
 [ -n "$SRC_CAP" ] || fail "axis 2: could not read _SRC_CAP from src/common/util.cyr"
-[ -n "$PP_CAP" ]  || fail "axis 2: could not read the preprocess_out cap from src/frontend/lex_pp.cyr"
+[ -n "$PP_CAP" ]  || fail "axis 2: could not read the preprocess_out cap from src/frontend/lex/pp.cyr"
 [ "$SRC_CAP" = "$PP_CAP" ] \
     || fail "axis 2: _SRC_CAP ($SRC_CAP) != preprocess_out cap ($PP_CAP) — PP_REF_PASS copies expanded output from preprocess_out back into _SRCB, so a larger preprocess cap overruns the input buffer and, since it now sits at the arena top, the arena"
 

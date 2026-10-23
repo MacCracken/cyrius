@@ -4223,7 +4223,7 @@ fn _sc_arity_skip(sc_num, got): i64 {
     # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
     # flags, mode) — 4 user args instead of open()'s 3.
     # Source: arch-conditional wrappers in
-    # lib/syscalls_*_linux.cyr and src/frontend/lex.cyr
+    # lib/syscalls_*_linux.cyr and src/frontend/lex/lex.cyr
     # keep both open()/openat() shapes for cross-arch
     # source compatibility; the dead branch on the
     # running arch is not a bug. Open() is never called
@@ -4266,7 +4266,7 @@ fn _sc_arity_skip(sc_num, got): i64 {
 # ELF-aarch64 — unless the call sits inside a native-aarch64 region (`#ifdef
 # CYRIUS_ARCH_AARCH64`, `#ifndef CYRIUS_ARCH_X86`, ...), where the number is the native one
 # by construction: the preprocessor marks those regions (PP_A64_NATIVE_AT,
-# src/frontend/lex_pp.cyr). Same frame rule as tests/gates/platform/
+# src/frontend/lex/pp.cyr). Same frame rule as tests/gates/platform/
 # raw_syscall_literals_routed.sh applies to lib/. The table is a `return 0` stub off the
 # aarch64 backend, so the scan runs only where a warning would otherwise print.
 # CHANGELOG [6.6.12]
@@ -5067,7 +5067,7 @@ fn _slice_sub_addr(S, li, noff): i64 {
 # one of four places — `_arr_sub_addr` (a named array or `*T`), `_psub_addr` (a `*T` field or call),
 # `_slice_sub_read` and `_slice_sub_addr` (a slice) — and each asks `_bck_open` at its `[` and, when
 # told to, emits `_bck_site` once the index is in rax (before it is scaled): a call into the checker
-# the preprocessor injected (lex_pp.cyr `_bnd_finish`), which hands the index back. `<line>` is the
+# the preprocessor injected (lex/pp.cyr `_bnd_finish`), which hands the index back. `<line>` is the
 # line of the `[` token itself, so an `#inline` replay, a `defer` replay, a generic instance and a
 # classic-for step all name the line the subscript is WRITTEN on; `<file>` is the name every cycc
 # diagnostic uses (`<source>` for the entry), interned once per file. `@unsafe` is LEXICAL — a `[`

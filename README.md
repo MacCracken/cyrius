@@ -267,7 +267,7 @@ src/
   version_str.cyr       Auto-generated version string
 
   frontend/
-    lex.cyr             Lexer (+ lex_pp.cyr preprocessor: include-once, #derive, #@incdir, #bounds, #ifdef/#elif/#else/#ifndef/#ifplat)
+    lex/                lex.cyr (the lexer) + pp.cyr (the preprocessor: include-once, #derive, #@incdir, #bounds, #ifdef/#elif/#else/#ifndef/#ifplat) + attr.cyr (the `#` attribute words)
     parse.cyr           Parser + codegen dispatch (split into parse_decl, parse_expr, parse_fn, parse_ctrl, parse_types)
     ts/                 TypeScript frontend (lex + parse + JS emit; .ts/.tsx → JS via `cycc --emit-js`)
 

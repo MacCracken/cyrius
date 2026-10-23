@@ -32,7 +32,7 @@
 #   ZG  a refusal inside a sizeof operand behind a `*` is one line, sizeof's words: an unknown name (an expression, a
 #       const, `#assert` — no "#assert failed" beside it), a fn-pointer type's unknown name, `*( .. )`, `*[T]`, no type
 #       at all; ZG8 a control (a false `#assert` on the value 8 is "#assert failed", once)
-#   ZM  (met landing D94) an `#assert`'s message is filed aside by the lexer (`_lex_is_dir_msg`, src/frontend/lex.cyr),
+#   ZM  (met landing D94) an `#assert`'s message is filed aside by the lexer (`_lex_is_dir_msg`, src/frontend/lex/lex.cyr),
 #       never the program's string pool — but its `sizeof ( .. )` atom stepped ONE name inside, so `sizeof(*T)`,
 #       `sizeof(*fn( .. ))` and 6.6.17's `sizeof(Box<i64>)` missed the message (and the 12-token look-back missed a long
 #       operand): each output carried the message's bytes. ZM1-ZM3 build on every leg with no marker in the output;

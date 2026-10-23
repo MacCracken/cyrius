@@ -30,7 +30,7 @@
 # the included content has a `\"`-bearing comment somewhere
 # upstream of an include directive.
 #
-# Fix at v5.9.34 (`src/frontend/lex_pp.cyr` PP_PASS +
+# Fix at v5.9.34 (`src/frontend/lex/pp.cyr` PP_PASS +
 # PP_IFDEF_PASS): comment-aware state machine. `#` outside a
 # string starts a line comment; comments end at the next
 # newline. Inside a comment `"` does NOT toggle in_string.

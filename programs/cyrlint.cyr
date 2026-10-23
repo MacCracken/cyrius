@@ -9,7 +9,7 @@ include "lib/io.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/args.cyr"
-include "src/frontend/lex_attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
+include "src/frontend/lex/attr.cyr"    # LEXATTRWORD — the lexer's own `#` attribute list
 
 var _warnings = 0;
 var _errors = 0;
@@ -144,7 +144,7 @@ fn _lx_skip_char(buf, p, lim): i64 {
     return p + 1;
 }
 
-# A `#` is NOT always a comment. The lexer (src/frontend/lex.cyr) turns ten byte
+# A `#` is NOT always a comment. The lexer (src/frontend/lex/lex.cyr) turns ten byte
 # prefixes into attribute/statement TOKENS and keeps lexing the same line after them, so
 # `#naked fn isr() {` opens a real brace and `#inline fn g(): i64 {` a real fn body.
 # Reading them as comments drew 15 false "unmatched closing brace" on
@@ -154,7 +154,7 @@ fn _lx_skip_char(buf, p, lim): i64 {
 # (`#include`/`#ifdef`/`#derive`/… are preprocessor LINES — comments to this scanner,
 # as before.)
 # The list and its word boundary are the lexer's OWN — LEXATTRWORD, included from
-# src/frontend/lex_attr.cyr — not a copy that can drift from it. CHANGELOG [6.7.11]
+# src/frontend/lex/attr.cyr — not a copy that can drift from it. CHANGELOG [6.7.11]
 fn _lx_attr_len(buf, p, lim): i64 {
     var w = LEXATTRWORD(buf, p, lim);
     if (w == 0) { return 0; }
@@ -1888,7 +1888,7 @@ fn _ov_nspell(buf, rec): i64 {
 # The byte length the lexer stores for the string literal body buf[a, b) (between the quotes):
 # a raw byte is one byte, never decoded, so a UTF-8 em dash is 3; `\xHH` is one byte, `\u####`
 # and `\u{...}` the code point's UTF-8 length, and every other `\X` one byte (`\<LF>` keeps its
-# LF) — src/frontend/lex.cyr's string arm.
+# LF) — src/frontend/lex/lex.cyr's string arm.
 fn _wl_lit_len(buf, a, b): i64 {
     var n = 0;
     var i = a;

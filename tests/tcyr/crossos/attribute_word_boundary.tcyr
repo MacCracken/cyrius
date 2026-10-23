@@ -4,7 +4,7 @@
 # kept lexing the SAME line, so a comment whose first word merely STARTS with an
 # attribute name was parsed as code. `#ioctl numbers` lexed as `#io` + the
 # identifier `ctl`; the diagnostic pointed at the comment's second word. Fixed by
-# LEXATTRBOUND (src/frontend/lex_attr.cyr): an attribute name must be followed by
+# LEXATTRBOUND (src/frontend/lex/attr.cyr): an attribute name must be followed by
 # whitespace, end of input or `(`.
 #
 # ⚠ THIS FILE'S REAL ASSERTIONS ARE THE COMMENTS THEMSELVES. Every `#` line below
@@ -33,7 +33,7 @@
 #      in — silently, with no diagnostic. (ISENDIF, ISENDPLAT and ISSRCLINE, bite
 #      5h; ISELSE already carried the boundary inline.)
 #   6. the SAME root cause in the PREPROCESSOR (review round): the three ISDERIVE*
-#      probes in src/frontend/lex_pp.cyr matched `#derive(Serialize)` as an 18-byte
+#      probes in src/frontend/lex/pp.cyr matched `#derive(Serialize)` as an 18-byte
 #      prefix, so `#derive(Serialize)x note` — a COMMENT — armed the derive
 #      machinery and CHANGED THE EMITTED BINARY with rc=0 either way. That one is
 #      codegen-visible, which is why it belongs on the cross-OS hosts and not only

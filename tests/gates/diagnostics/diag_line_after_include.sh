@@ -9,7 +9,7 @@
 # WHY THE FIRST ATTEMPT FAILED, since that is the reusable part. The obvious fix — have
 # the preprocessor's RESUME marker carry the line to resume on — is CORRECT, and it was
 # implemented, verified present in the built compiler, and reverted as "disproved"
-# because the output did not change. It did not change because `lex_pp.cyr` had a
+# because the output did not change. It did not change because `lex/pp.cyr` had a
 # SECOND, hand-rolled marker emitter (the `source_marked` one-shot) that fired at the
 # very same point, emitting a base-less `#@file "<source>"` immediately after the
 # correct one. FM_LOOKUP matched the base-less duplicate and restarted numbering at 1.

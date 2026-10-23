@@ -1491,7 +1491,7 @@ fn _cx_float_unsupported(S): i64 {
     return 0;
 }
 # float literal: `v` indexes the side table, whose FLIT_NUM is the literal's binary64 bits,
-# correctly rounded by the lexer (_flit_bits in src/frontend/lex.cyr) — one 64-bit movi,
+# correctly rounded by the lexer (_flit_bits in src/frontend/lex/lex.cyr) — one 64-bit movi,
 # the same bits as the x86 movabs. ⛔ 6.6.10 — it was i2f/i2f/fdiv over an i64 numer/denom
 # pair, which overflowed and double-rounded silently. CHANGELOG [6.6.10]
 fn EMIT_FLOAT_LIT(S, v): i64 {

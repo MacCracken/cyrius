@@ -2,7 +2,7 @@
 # lexer_attribute_word_boundary.sh — v6.6.6 bite 5a.
 #
 # A COMMENT WHOSE FIRST WORD MERELY STARTS WITH AN ATTRIBUTE NAME WAS PARSED AS
-# CODE. The `#` branch of src/frontend/lex.cyr compared a byte PREFIX for each of
+# CODE. The `#` branch of src/frontend/lex/lex.cyr compared a byte PREFIX for each of
 # its ten attributes (`#assert`, `#regalloc`, `#deprecated`, `#must_use`, `#pure`,
 # `#io`, `#alloc`, `#naked`, `#inline`, `#pe_import`) and, on a match, emitted the
 # token and kept lexing the SAME line — with no check that the name had ENDED. So
@@ -38,7 +38,7 @@
 # form to produce a BYTE-IDENTICAL binary. The oracle is a different program.
 #
 # Group B is the over-correction guard: every attribute must still ARM. Its
-# attribute list is DERIVED from src/frontend/lex.cyr itself (the
+# attribute list is DERIVED from src/frontend/lex/lex.cyr itself (the
 # `token NNN = HASH_*` table above LEXATTRWORD), and the gate fails if that
 # census does not match the probe table below or the rows of LEXATTRWORD (6.6.20;
 # before that, the LEXATTRBOUND call sites) — so a new attribute added without a
@@ -70,7 +70,7 @@
 #           stays code, so the call after it still counts
 #   C0      (6.7.11) census: the six source-scanning tools (cyrlint, cyrfmt, cyrdoc,
 #           cbt/srcscan.cyr, cyrius_api_surface, cyaudit) each include
-#           src/frontend/lex_attr.cyr and none carries a hand row of a word derived from
+#           src/frontend/lex/attr.cyr and none carries a hand row of a word derived from
 #           LEXATTRWORD's rows
 #   C8..C12 (6.7.11) every derived word, as `#<w> q`, `#<w>(q)` and `#<w>x q`, reads as the
 #           lexer reads it in cyrlint (C8), cyrfmt (C9), cyrdoc (C10), the cbt CLI's
@@ -91,7 +91,7 @@
 #           (PP_LEXST_AT), so a string opened there hides the `}` and the fn below
 #           it, as it does for the compiler; F8b is anti-vacuous.
 #   D1..D6  the SAME root cause in the preprocessor (review round): PP_IS_HOST_ONLY
-#           and the three ISDERIVE* probes in src/frontend/lex_pp.cyr, plus the
+#           and the three ISDERIVE* probes in src/frontend/lex/pp.cyr, plus the
 #           fourth reader of `#derive` (programs/cyrius_api_surface.cyr). These
 #           fail SILENTLY rather than with a diagnostic, which is why they are here
 #           and not left to the filing's table: `#host_onlyish note` marked a module
@@ -159,7 +159,7 @@
 #   M19 the 6.7.2 tool (_asf_body_close walks with _asf_lexst: every `#` a comment)
 #       → 1 FAIL: F8 (it lists `ghost`)
 #   6.7.11 (C0, C8..C12, F9; real tree → 58/58). The six tools now INCLUDE
-#   src/frontend/lex_attr.cyr, so the per-tool `_*_attr_bound` copies that M5, M6 and M11..M16
+#   src/frontend/lex/attr.cyr, so the per-tool `_*_attr_bound` copies that M5, M6 and M11..M16
 #   forced are gone; a mirror defect now means a hand row coming back, or a tool not
 #   including the list. Each mutant is a scratch copy of the tree, its compiler built from it:
 #   M20 a hand row restored in one tool (cyrlint: `"#io"` read as a comment)
@@ -245,9 +245,9 @@ done
 #        the preprocessor's PP_LEXST_AT; it was ten inline byte chains, one
 #        LEXATTRBOUND call site each)
 #    (c) the probe table below
-#    6.7.11: both (a) and (b) live in src/frontend/lex_attr.cyr, the pure file lex.cyr and the
+#    6.7.11: both (a) and (b) live in src/frontend/lex/attr.cyr, the pure file lex.cyr and the
 #    six source-scanning tools include (axis C0).
-LEXATTR=src/frontend/lex_attr.cyr
+LEXATTR=src/frontend/lex/attr.cyr
 grep -oE 'token [0-9]+ = HASH_[A-Z_]+' "$LEXATTR" \
     | sed 's/.*HASH_//' | tr 'A-Z' 'a-z' | sort -u > "$D/census.txt"
 ncensus=$(grep -c . "$D/census.txt" || true)
@@ -259,11 +259,11 @@ for a in $PROBED; do printf '%s\n' "$a"; done | sort > "$D/probed.txt"
 nprobed=$(grep -c . "$D/probed.txt" || true)
 missing="$(comm -3 "$D/probed.txt" "$D/census.txt" | tr -d '\t' | tr '\n' ' ')$(comm -3 "$D/probed.txt" "$D/rows.txt" | tr -d '\t' | tr '\n' ' ')"
 if [ "$ncensus" = "$nbound" ] && [ "$ncensus" = "$nprobed" ] && [ -z "$(printf '%s' "$missing" | tr -d ' ')" ]; then
-    printf '  ok: axis B0 — %s attributes in lex_attr.cyr, %s LEXATTRWORD rows, %s probed\n' \
+    printf '  ok: axis B0 — %s attributes in lex/attr.cyr, %s LEXATTRWORD rows, %s probed\n' \
         "$ncensus" "$nbound" "$nprobed"
     pass=$((pass+1))
 else
-    printf '  FAIL: axis B0 — census mismatch: lex_attr.cyr lists %s, %s LEXATTRWORD rows, %s probed; set difference: %s\n' \
+    printf '  FAIL: axis B0 — census mismatch: lex/attr.cyr lists %s, %s LEXATTRWORD rows, %s probed; set difference: %s\n' \
         "$ncensus" "$nbound" "$nprobed" "$missing"
     fail=$((fail+1))
 fi
@@ -341,7 +341,7 @@ arm B11 '#assert failed' \
 
 # ── Group C — the tools that scan cyrius source must take the same boundary as the lexer,
 #    or a tool disagrees with the compiler about which `#` lines are comments. Since 6.7.11
-#    they include the lexer's own list (src/frontend/lex_attr.cyr; C0 below).
+#    they include the lexer's own list (src/frontend/lex/attr.cyr; C0 below).
 build_tool() {
     "$CC" < "programs/$1.cyr" > "$D/$1" 2> "$D/$1.buildlog" || {
         printf '  FAIL: could not build %s\n' "$1"; fail=$((fail+1)); return 1; }
@@ -466,7 +466,7 @@ fi
 #    (cyrlint, cyrfmt, cyrdoc, cbt/srcscan.cyr — the CLI and cyrius-lsp —, cyrius_api_surface
 #    and cyaudit) each carried a hand-copied ten-row table of the lexer's attribute words, and
 #    only cyaudit's was held to LEXATTRWORD; a word added to the lexer would have left five of
-#    them reading its line as a comment. They now INCLUDE src/frontend/lex_attr.cyr.
+#    them reading its line as a comment. They now INCLUDE src/frontend/lex/attr.cyr.
 #    C0 is the census: each of the six includes it (a column-0 directive) and none carries a
 #    hand row of its own — a `"#<word>"` literal (the memeq form) or a `"<word>", 0|1)` row
 #    (the _attr_is form) for any word DERIVED from LEXATTRWORD's rows.
@@ -480,7 +480,7 @@ grep -oE '_lex_attr_is\(base, q, n, "[a-z_]+", [01]\)' "$LEXATTR" \
 nwords=$(grep -c . "$D/wordap.txt" || true)
 c0bad=""
 for t in $TOOLS6; do
-    grep -qE '^include "src/frontend/lex_attr\.cyr"' "$t" || c0bad="$c0bad $t:no-include"
+    grep -qE '^include "src/frontend/lex/attr\.cyr"' "$t" || c0bad="$c0bad $t:no-include"
     while read -r w ap; do
         hits=$(grep -nE "\"#$w\"|\"$w\", [01]\\)" "$t" | cut -d: -f1 | paste -sd, - || true)
         [ -z "$hits" ] || c0bad="$c0bad $t:$hits(#$w)"
@@ -490,7 +490,7 @@ if [ "$nwords" -lt 10 ]; then
     printf '  FAIL: axis C0 — only %s rows derived from LEXATTRWORD (want >= 10): the derivation is broken\n' "$nwords"
     fail=$((fail+1))
 elif [ -z "$c0bad" ]; then
-    printf '  ok: axis C0 — the six tools include src/frontend/lex_attr.cyr and carry no hand row of the %s words\n' "$nwords"
+    printf '  ok: axis C0 — the six tools include src/frontend/lex/attr.cyr and carry no hand row of the %s words\n' "$nwords"
     pass=$((pass+1))
 else
     printf '  FAIL: axis C0 — a tool holds its own attribute list or lacks the include:%s\n' "$c0bad"
@@ -594,7 +594,7 @@ fi
 
 # ── Group D — THE SAME ROOT CAUSE IN THE PREPROCESSOR (v6.6.6, review round).
 #    LEXATTRBOUND fixed the lexer's `#` branch. Two more `#`-name probes in
-#    src/frontend/lex_pp.cyr matched a byte PREFIX with no boundary, and there the
+#    src/frontend/lex/pp.cyr matched a byte PREFIX with no boundary, and there the
 #    failure is SILENT rather than a diagnostic: `#host_onlyish note` marked a module
 #    host-only (breaking every bare-metal build that included it) and
 #    `#derive(Serialize)x note` armed the derive machinery and CHANGED THE EMITTED

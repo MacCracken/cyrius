@@ -6,7 +6,7 @@
 # Filed: docs/development/issues/archived/2026-09-22-agnostik-derive-serialize-comment-in-struct-body.md
 # (agnostik; latent in argonaut's 5 trailing-comment Serialize structs). Root cause: the body
 # was scanned byte by byte — a field began only after a `{` / `;` byte and `#`, tab, CR, `,`,
-# `=` were in no stop set. Fix: PP_DERIVE_FIELDS in src/frontend/lex_pp.cyr. CHANGELOG [6.6.7]
+# `=` were in no stop set. Fix: PP_DERIVE_FIELDS in src/frontend/lex/pp.cyr. CHANGELOG [6.6.7]
 #
 # ⚠ The tabs, the K&R brace and the unusual spacing below ARE the inputs under test — do not
 # `cyrius fmt` them away.

@@ -20,7 +20,7 @@
 # leaves `S+_SRCB` holding its own INPUT, truncated to the 1 MB helper window. PP_MACRO_PASS —
 # whose ONLY entry condition is `_pp_macro_count > 0` — reads `S+_SRCB` and writes
 # preprocess_out, so running it REPLACED the filtered source with the unfiltered one, and
-# threw away everything past 1 MB while it was at it. Fix: PP_SYNC_SRCB (src/frontend/lex_pp.cyr).
+# threw away everything past 1 MB while it was at it. Fix: PP_SYNC_SRCB (src/frontend/lex/pp.cyr).
 #
 # EXPECTED VALUES are computed a DIFFERENT WAY from the actual. Rows A/B/E/F compare against
 # the SAME source with the `#define` line deleted, compiled by the same compiler; row C is a
