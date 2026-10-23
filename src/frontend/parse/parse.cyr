@@ -4116,7 +4116,7 @@ fn _assert_tail(S, rep): i64 {
     if (rep == 1) { _asrt_tail_err(S, m); }
     var a = GTI(S);
     var r = _ln_rest(S, ln, blk);
-    _asrt_tail_names(S, a, GTI(S), rep);   # 6.7.17: what it declares, as reported (parse/fn_def.cyr)
+    _asrt_tail_names(S, a, GTI(S), rep);   # 6.7.17: what it declares, as reported (parse/fn/def.cyr)
     return r;
 }
 # The line the string token `ti` ends on: its first line (the token's) plus the line breaks inside it, a raw LF or
@@ -8582,7 +8582,7 @@ fn PARSE_PROG(S): i64 {
     # See _vis_check (src/frontend/parse/fn.cyr). CHANGELOG [6.6.5]
     _vis_check_deferred(S);
     _pp_depth = _pp_depth - 1;
-    _dl_pw_end(S);   # 6.7.16: the top-level call's end — a pre-walk name's unreported declaration (parse/fn_def.cyr)
+    _dl_pw_end(S);   # 6.7.16: the top-level call's end — a pre-walk name's unreported declaration (parse/fn/def.cyr)
     # With no marker (raw `cat | cycc`) every include is the user's, so the plain latch
     # applies. See PP_NOTE_HOST_ONLY.
     var _ho = _pp_hostonly_hit;
