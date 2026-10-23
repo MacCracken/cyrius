@@ -89,34 +89,35 @@ fn _STR_FROM_NOFF(S): i64 {
 # one's dyn named its type. `_cl_snap_extend`'s copies carry no such word — they are never restored.
 # CHANGELOG [6.7.8]
 fn _cl_snap_ps_off(n): i64 { return (n * 33 + 7) & (0 - 8); }
+# 6.7.18: the copies are word loops (`_cl_wcopy`): every closure and every generic instance parsed inside
+# a fn copies its n slots out and back, and through L64 / S64 that was 16 calls per slot — 29 % of a
+# compile of 800 instances in a fn of 1,600 locals (tests/gates/frontend/hot_path_call_counts.sh row G).
+# The four tables are 0x20000 apart (names, depths, types, slice widths), each n words here. CHANGELOG [6.7.18]
+fn _cl_wcopy(dst, src, n): i64 {
+    var i = 0;
+    while (i < n) { store64(dst + i * 8, load64(src + i * 8)); i = i + 1; }
+    return 0;
+}
 fn _cl_save_locals(S, n): i64 {
     if (n <= 0) { return 0; }
     var buf = alloc(_cl_snap_ps_off(n) + 16);
-    S64(buf + _cl_snap_ps_off(n), _cur_fn_pslots);
-    S64(buf + _cl_snap_ps_off(n) + 8, _dsc_snap(n));
-    var i = 0;
-    while (i < n) {
-        S64(buf + i * 8,          L64(S + 0x5D9D000 + i * 8));
-        S64(buf + n * 8 + i * 8,  L64(S + 0x5DBD000 + i * 8));
-        S64(buf + n * 16 + i * 8, L64(S + 0x5DDD000 + i * 8));
-        S64(buf + n * 24 + i * 8, L64(S + 0x5DFD000 + i * 8));
-        i = i + 1;
-    }
+    store64(buf + _cl_snap_ps_off(n), _cur_fn_pslots);
+    store64(buf + _cl_snap_ps_off(n) + 8, _dsc_snap(n));
+    _cl_wcopy(buf,          S + 0x5D9D000, n);
+    _cl_wcopy(buf + n * 8,  S + 0x5DBD000, n);
+    _cl_wcopy(buf + n * 16, S + 0x5DDD000, n);
+    _cl_wcopy(buf + n * 24, S + 0x5DFD000, n);
     _cl_lfi_copy(buf + n * 32, _lfi_base, n);
     return buf;
 }
 fn _cl_restore_locals(S, buf, n): i64 {
     if (n <= 0) { return 0; }
-    var i = 0;
-    while (i < n) {
-        S64(S + 0x5D9D000 + i * 8, L64(buf + i * 8));
-        S64(S + 0x5DBD000 + i * 8, L64(buf + n * 8 + i * 8));
-        S64(S + 0x5DDD000 + i * 8, L64(buf + n * 16 + i * 8));
-        S64(S + 0x5DFD000 + i * 8, L64(buf + n * 24 + i * 8));
-        i = i + 1;
-    }
+    _cl_wcopy(S + 0x5D9D000, buf,          n);
+    _cl_wcopy(S + 0x5DBD000, buf + n * 8,  n);
+    _cl_wcopy(S + 0x5DDD000, buf + n * 16, n);
+    _cl_wcopy(S + 0x5DFD000, buf + n * 24, n);
     _cl_lfi_copy(_lfi_base, buf + n * 32, n);
-    _dsc_unsnap(L64(buf + _cl_snap_ps_off(n) + 8), n);
+    _dsc_unsnap(load64(buf + _cl_snap_ps_off(n) + 8), n);
     return 0;
 }
 # A closure's frame bytes: the larger of its final GFLC and the `_flc_hwm` high-water, rounded to

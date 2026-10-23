@@ -33,6 +33,10 @@
 #      STREQ calls per local. ⚠ The walk itself is still O(locals) per lookup — this row bounds its constant, not
 #      its order; an index needs every write of a slot's name (25 sites, two inside `_PARSE_FN_DEF_IMPL`) to go
 #      through one setter. src/frontend/parse/fn/table.cyr.
+#   G  a closure or generic instance parsed inside a fn snapshots the fn's n local slots (four tables) and puts
+#      them back after (`_cl_save_locals` / `_cl_restore_locals`, parse/expr/closure.cyr) with word loops, not an
+#      L64 and an S64 call per word: 100 struct instances of `id<T>` in a fn of 1,000 locals made 1,918,276 L64 +
+#      S64 calls (the tree 156,376). Bound: under 600,000; the program exits 86.
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -42,6 +46,7 @@
 # S: the parent of its fix -> RED (398%); FINDSTRUCT scanning the table before its chain (same answer) -> RED (397%).
 # L: the parent of its fix -> RED (1,999,011 STREQ calls); FINDLOCAL's word test skipped (every non-identical slot
 # to STREQ, same answer) -> RED.
+# G: the parent of its fix -> RED (1,918,276 calls); `_cl_wcopy` through L64 / S64 again -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -128,6 +133,21 @@ if run "$D/l.cyr"; then
     elif [ "$F" -lt 2000 ]; then echo "FAIL: $G [L]: only $F FINDLOCAL calls — the fixture no longer exercises the walk"; FAIL=1
     elif [ "$Q" -ge 20000 ]; then echo "FAIL: $G [L]: $Q STREQ calls for 2,000 locals (bound 20,000; 6.7.17 read 1,999,011)"; FAIL=1
     else echo "  ok [L] $Q STREQ calls for 2,000 locals ($F FINDLOCAL calls; bound 20,000)"; fi
+fi
+
+# ── G: the local-slot snapshot around an instance ────────────────────────────────────────────────────────────
+awk 'BEGIN { print "fn id<T>(x: T): T { return x; }"; for (k = 0; k < 100; k++) printf "struct T%d { a: i64; }\n", k
+             print "fn main(): i64 {"; for (i = 0; i < 1000; i++) printf "    var v%d = %d;\n", i, i
+             print "    var s = 0;"
+             for (k = 0; k < 100; k++) printf "    var p%d: T%d; p%d.a = %d; var q%d = id<T%d>(p%d); s = s + q%d.a;\n", k, k, k, k, k, k, k, k
+             print "    return s & 255;"; print "}"; print "syscall(60, main());" }' > "$D/g.cyr"
+if run "$D/g.cyr"; then
+    chmod +x "$D/prog"; grc=0; "$D/prog" || grc=$?
+    GL=$(count L64); GS=$(count S64); GN=$(count _cl_save_locals)
+    if [ "$grc" -ne 86 ]; then echo "FAIL: $G [G]: the instance program exits $grc, not 86"; FAIL=1
+    elif [ "$GN" -lt 100 ]; then echo "FAIL: $G [G]: only $GN snapshots (_cl_save_locals) — the fixture no longer takes the path"; FAIL=1
+    elif [ $((GL + GS)) -ge 600000 ]; then echo "FAIL: $G [G]: $((GL + GS)) L64 + S64 calls for $GN snapshots of 1,000+ slots (bound 600,000)"; FAIL=1
+    else echo "  ok [G] $((GL + GS)) L64 + S64 calls for $GN snapshots of 1,000+ slots (bound 600,000)"; fi
 fi
 
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
