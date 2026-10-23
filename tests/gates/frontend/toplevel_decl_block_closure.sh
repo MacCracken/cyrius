@@ -143,7 +143,7 @@ elif ! grep -q "nosuchname_m" "$WORK/m.err"; then
 fi
 
 # S — static 7-fork parity: every fork runs the ONE shared pass-2 scan (6.6.17: _tl_pass2,
-#     src/frontend/parse/fn_def.cyr), whose `var` arm calls the shared skip, and none still carries
+#     src/frontend/parse/fn/def.cyr), whose `var` arm calls the shared skip, and none still carries
 #     the old first-`;` loop. The fork list is derived, not listed.
 NROWS=$((NROWS + 1))
 NFORK=0
@@ -154,7 +154,7 @@ for fk in "$ROOT"/src/main*.cyr; do
     if grep -q 'while (vsk == 1)' "$fk"; then bad "row S: $(basename "$fk") still carries the first-';' pass-2 skip"; fi
 done
 [ "$NFORK" -ge 7 ] || bad "row S: found $NFORK src/main*.cyr forks, want at least 7"
-n=$(awk 'index($0, "fn _tl_scan2_def(") == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse/fn_def.cyr" | grep -c '_skip_gvar_decl(S, GTI(S));' || true)   # 6.7.17 (FB1): the skip takes its start token
+n=$(awk 'index($0, "fn _tl_scan2_def(") == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse/fn/def.cyr" | grep -c '_skip_gvar_decl(S, GTI(S));' || true)   # 6.7.17 (FB1): the skip takes its start token
 [ "$n" = "1" ] || bad "row S: the shared pass-2 scan calls _skip_gvar_decl $n times, want 1"
 
 # ---- cx leg: the tree's own cx compiler + cxvm ----

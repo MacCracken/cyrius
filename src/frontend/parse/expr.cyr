@@ -1920,7 +1920,7 @@ fn _await_paren_wraps(S, ti, te): i64 {
 # the await was reached — `b` in `b + await f()`, `1000` in `add(1000, await f())`, the address
 # in `store64(m + 8, await f())` — was gone at the landing, and the parser's pending pop took
 # whatever sat at the new rsp: `b + await five()` gave 5, and the store64 form SIGSEGV'd.
-# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse/fn_def.cyr
+# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse/fn/def.cyr
 # refuses aarch64 and cx), so those `_xdepth` words are popped into coroutine-frame words
 # before the suspend and pushed back, in order, at the landing. CHANGELOG [6.6.10]
 fn _await_coro_suspend(S, sk, fut): i64 {
@@ -2736,7 +2736,7 @@ fn _W128_IS(S): i64 {
 }
 # rax (rcx 0) or rcx (rcx 1) = the address of the u128 `(k, v)`: a local's canonical slot (k 1), a
 # global (k 2), a temporary (k 3: a frame slot, or `-2 - vi` for a dead global at top level). A
-# frame slot is reached by `lea`, which keeps it out of the register picker (parse/fn_def.cyr).
+# frame slot is reached by `lea`, which keeps it out of the register picker (parse/fn/def.cyr).
 fn _w128_addr(S, k, v, rcx): i64 {
     var fr = 0;
     if (k == 1) { fr = 1; }
@@ -4889,7 +4889,7 @@ fn _step_asg_at(S): i64 {
 # per-fn reference ceiling: each is one call there, so C2's subscript, `*p` and step-word work
 # grows these and not the giant. Each emits exactly what its inline arm emitted; moving them out
 # also took the giant under the per-fn NOP compactor's 1024-entry caps (`_nrn` / `_jsn`,
-# parse/fn_def.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
+# parse/fn/def.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
 
 # v5.8.15 §7: the slice subscript `s[i]` as a value, for the slice-typed local `li`. _slice_lw
 # returns the element byte-width captured at PARSE_VAR time (v5.8.14 §6); 0 means not a slice.

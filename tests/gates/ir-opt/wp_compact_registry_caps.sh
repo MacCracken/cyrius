@@ -40,12 +40,12 @@
 #
 # THE THREE READERS. Growing the registry moved it off S+0x60000, so every loop that walks it
 # must go through _wpjs_base: wp_compact's stage 1 (axes 1, 2), its re-entrancy rebase (axis 4)
-# and the per-fn NOP-compaction adjust in parse/fn_def.cyr (axes 1, 2). That last one only runs
+# and the per-fn NOP-compaction adjust in parse/fn/def.cyr (axes 1, 2). That last one only runs
 # for a fn that leaves NOP runs, so every g fn carries a hot loop local: the fn then leaves
 # NOP runs, and the per-fn pass shifts that fn's registry entries — the last fns' entries
 # sit above index 49,152, in the storage the registry grew into.
 # 6.7.14 mutations (axis 3, the switch-table registry): no grow -> RED (declined, named); the
-# per-fn NOP pass's reader (parse/fn_def.cyr) on the fixed S+0xF0000 base -> RED (exit 139). Stage 4
+# per-fn NOP pass's reader (parse/fn/def.cyr) on the fixed S+0xF0000 base -> RED (exit 139). Stage 4
 # and the re-entrancy rebase on the fixed base are NOT seen: a table and its targets always move
 # together here, so stage 4 rewrites each entry to its own value (its comment in ir.cyr says so).
 # Mutation-proven: on the pre-fix compiler axes 1 and 2 report "more than 49152 rel32/disp32

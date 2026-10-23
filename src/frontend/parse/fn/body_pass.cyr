@@ -3,7 +3,6 @@
 # ================================================================
 # Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
 
-# Parse fn name<T>(params) { body }
 # Dead store elimination: scan codebuf for consecutive stores to the same
 # [rbp-N] offset, NOP out the first store when redundant.
 # Pattern: store [rbp-N] (7) + load_imm (2/5/10) + store [rbp-N] (7) → NOP first store.

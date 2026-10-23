@@ -7,7 +7,7 @@
 # B by-value argument was pushed as its first word (SIGSEGV, 139), `h(t)` into `x: *R2` was refused ("cannot pass 't'
 # ... pass &t"), a `: Pq` return took no hidden result pointer (139; untyped, "no struct type in scope for 't'"), and
 # a struct named like a vector was the vector ("vector return type does not match the declared type"). The fix reads
-# such a signature again once every struct is registered (`_psig_reread`, src/frontend/parse/fn_def.cyr).
+# such a signature again once every struct is registered (`_psig_reread`, src/frontend/parse/fn/def.cyr).
 #
 # Every row compares a call made ABOVE its callee against a value computed another way (the literal fields, or the
 # same callee called from BELOW its definition). The structs named B* / Q* / f32v4 / Low are declared at the END of

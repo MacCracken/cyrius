@@ -7122,7 +7122,7 @@ fn _vis_check_var(S, vi, noff): i64 {
 # = 0`, or net `var SYS_SOCKET = 41` vs syscalls `enum { SYS_SOCKET = 198 }`),
 # whichever loses gets the other's value substituted into its code with no
 # warning — the owl/patra `TK_IDENT`-aliases-`TK_EOF` corruption. This mirrors
-# the duplicate-`fn` warning (parse/fn_def.cyr) for data symbols: called at the
+# the duplicate-`fn` warning (parse/fn/def.cyr) for data symbols: called at the
 # enum-member + literal-`var` registration sites with the NEW name+value BEFORE
 # the new entry is written, so the lookup sees only PRIOR definitions. (6.6.6: the
 # lookup is `_findvar_core`, not FINDVAR — see the note on the call below.) The prior's

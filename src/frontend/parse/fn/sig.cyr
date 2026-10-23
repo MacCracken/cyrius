@@ -1602,5 +1602,5 @@ fn _gtype_param_mask(S, mask, pc, base, inst, isptr): i64 {
 }
 
 # The top-level scans (pass 1 / pass 2), the definition identity and duplicate checks, and the fn
-# definition itself (`_PARSE_FN_DEF_IMPL`) continue in src/frontend/parse/fn_def.cyr, which
+# definition itself (`_PARSE_FN_DEF_IMPL`) continue in src/frontend/parse/fn/def.cyr, which
 # src/frontend/parse/parse.cyr includes right after this file. CHANGELOG [6.7.15]

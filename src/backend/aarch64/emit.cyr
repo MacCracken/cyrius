@@ -3009,7 +3009,7 @@ fn ECALLTO(S, target): i64 {
 # 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `b new_off`, so every reference
 # already compiled against it (ECALLTO bakes the entry it saw) reaches the last definition.
 # Returns 1, writing nothing, when the earlier body is too short to hold the branch. See
-# `_fn_redirect` (parse/fn_def.cyr). CHANGELOG [6.6.20]
+# `_fn_redirect` (parse/fn/def.cyr). CHANGELOG [6.6.20]
 fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
     if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
     var rel = (new_off - old_off) / 4;
@@ -3577,7 +3577,7 @@ fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
 
 # v6.4.31 — Win64-only value-form SIMD param store (MS x64 by-pointer ABI).
 # Never reached off-PE (_TARGET_PE==0 on aarch64); stub so the shared
-# parse/fn_def.cyr reference resolves in the aarch64 forks. [[project_v6426]]
+# parse/fn/def.cyr reference resolves in the aarch64 forks. [[project_v6426]]
 # ETERMINATE_PE cross-fork-stub lesson.
 fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 { return 0; }
 
@@ -4671,7 +4671,7 @@ fn EMIT_F64V_AXPY(S, vbase): i64 {
 }
 
 # v6.5.35 — stub. `RA_SCAN_LOOPS` really lives in src/backend/x86/decode.cyr, which this
-# fork does not include; `parse/fn_def.cyr` is shared by every fork and calls it. Returning -1
+# fork does not include; `parse/fn/def.cyr` is shared by every fork and calls it. Returning -1
 # means "no loop information", which the caller must already handle by falling back to the
 # conservative whole-function interval extent — so the picker behaves exactly as it did
 # before v6.5.35 here. (The x86 regalloc post-pass does not run on these targets anyway;

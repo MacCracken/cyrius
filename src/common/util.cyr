@@ -344,7 +344,7 @@ var _fnt_is_async = 0;
 # byte-identical (async/await tokens never appear in cycc src; the gated lowering
 # is unreachable). Lazily set to 1 by _ensure_async_gate when CYRIUS_ASYNC=1, the
 # first time an `async`/`await` token reaches pass 2 (PARSE_FN_DEF / PEXPR). Same
-# opt-in shape as _MONOMORPH_OK, but lazy (no per-fork driver edit) — see parse/fn_def.cyr.
+# opt-in shape as _MONOMORPH_OK, but lazy (no per-fork driver edit) — see parse/fn/def.cyr.
 var _ASYNC_OK = 0;
 # --- v6.5.69: coroutine frames (mid-body suspend) ------------------------------------
 # ⛔ WHY THIS EXISTS. `async`/`await` shipped at v6.3.11 as deferred-then-forced Futures:
@@ -365,7 +365,7 @@ var _ASYNC_OK = 0;
 #   [0] impl fn ptr   [8] argc word (1 | FUT_CORO 512)   [16] SELF   [24] state
 #   [32 + i*8] local slot i   [32 + flc*8] completion value. The argc word was the declared
 #   parameter count until 6.6.10, so a 0-parameter coroutine was forced with fncall0 (SIGSEGV).
-#   (parse/fn_def.cyr `_async_argc_word`; CHANGELOG [6.6.10])
+#   (parse/fn/def.cyr `_async_argc_word`; CHANGELOG [6.6.10])
 var _cur_fn_coro = 0;       # 1 while emitting a coroutine body
 var _coro_base = 0;         # stack slot holding the heap frame base (always 0)
 var _coro_lo = 0;           # locals with idx >= this live in the heap frame
@@ -611,7 +611,7 @@ fn _fnt_copy_table(old, oc, nc): i64 {
 # is up; `_codebuf_cap==0` guards any pre-init call. Byte-identical under the old cap.
 var _codebuf_base = 0;
 # --- v6.5.68: whole-program compaction registries ---------------------------------
-# The per-fn NOP compactor (parse/fn_def.cyr) repairs positions from three tables that are
+# The per-fn NOP compactor (parse/fn/def.cyr) repairs positions from three tables that are
 # ZEROED AT EVERY FUNCTION START — jump_src_tbl, sw_tbl, nop_run_tbl. That is fine for a
 # pass that runs inside `_PARSE_FN_DEF_IMPL`, and useless for one that runs after all
 # parsing: the IR fixpoint writes its NOPs into a table that has already been consumed
@@ -771,7 +771,7 @@ fn _wpsw_add(S, table_cp, nent): i64 {
     return 0;
 }
 
-# 6.7.14 — THE LOSING BODIES OF REDEFINED FNS. `_fn_redirect` (parse/fn_def.cyr) turns a redefined
+# 6.7.14 — THE LOSING BODIES OF REDEFINED FNS. `_fn_redirect` (parse/fn/def.cyr) turns a redefined
 # fn's earlier entry into a jump to the last definition and moves the fn table past it, so the
 # earlier body [old, old_end) lies in no fn's range — and the dead-code seed pass took every call
 # in it as a ROOT, keeping alive whatever only the losing body called. The ranges are recorded
@@ -2197,11 +2197,11 @@ fn SEXW(S, v): i64 { S64(S + 0x1903F0, v); return 0; }
 # ⛔ 6.7.17 — EVERY DIAGNOSTIC BYTE THE PARSER AND THE EMITTERS WRITE GOES THROUGH `_ew` (stderr, fd 2): the parse*
 # files, util, ir and the backends' emit / jump / common files (diagnostic_writer_census.sh holds them to it). One
 # writer is what lets a read be MUTED: a trait default no impl inherits and a generic base pass 2 steps are parsed once
-# for their syntax after the image is built (`_unp_run`, parse/fn_def.cyr), every report but a syntax error's or an
+# for their syntax after the image is built (`_unp_run`, parse/fn/def.cyr), every report but a syntax error's or an
 # undefined name's silent (`_ew_say`). Bytes written are unchanged. CHANGELOG [6.7.17]
 var _ew_mute = 0;   # 1: nothing is written ...
 var _ew_say = 0;    # ... but the report being printed while this is 1
-var _unp_on = 0;    # 1 while a body pass 2 never parsed is read (`_unp_run`, parse/fn_def.cyr)
+var _unp_on = 0;    # 1 while a body pass 2 never parsed is read (`_unp_run`, parse/fn/def.cyr)
 var _unp_said = 0;  # the reports that read said (a syntax error, an undefined name)
 var _unp_names = 0; # 1: the read says an undefined name too (D110; not under --syntax-only, whose names are a sibling's)
 var _unp_v = 0;     # per body pass 2 stepped: kind (0 a generic base, 1 a trait default), fi, its `(`, its first token, its `fn`
@@ -3103,7 +3103,7 @@ fn _rd_inst_exit(d): i64 {
 # argument, every left operand of a binary/comparison operator, every spilled temporary
 # goes on the machine stack with `push rax` (8 bytes) and comes back with a pop. The ONLY
 # alignment invariant the compiler had was the frame rounding `fsz = (flc*8+15) & -16`
-# (parse/fn_def.cyr), which makes rsp 16-aligned BETWEEN statements. Nothing padded for values
+# (parse/fn/def.cyr), which makes rsp 16-aligned BETWEEN statements. Nothing padded for values
 # still pushed when a CALL was emitted, so a call made with an odd number of them pending
 # entered its callee 8 bytes off — and both x86 ABIs require rsp ≡ 0 (mod 16) at the call
 # instruction. `f(0, c())` was misaligned; `var t = c(); f(0, t);` was not. The shift is

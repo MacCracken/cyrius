@@ -598,7 +598,7 @@ refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q
 # whose annotation was refused says nothing more: each `.field` read, field store and `.m()` on it printed "no struct type
 # in scope for 'x'; a '.field' access needs its struct declaration" after the "unknown type 'Foo'" line (the declaration
 # parses on as a plain i64). `_tn_refuse_var` (parse/types.cyr) marks it with the late-declaration refusal's stand-down
-# (`_ann_refd_mark` / `_ann_refd_said`, parse/fn_def.cyr), per (fn, name) — a local / parameter in its fn, a global at top
+# (`_ann_refd_mark` / `_ann_refd_said`, parse/fn/def.cyr), per (fn, name) — a local / parameter in its fn, a global at top
 # level and in every fn body. The controls: an untyped `y.a`, another fn's untyped `x`, a global named like a refused
 # parameter of a fn — each still "no struct type in scope". A top-level `var P: *Foo` global took a garbage struct type
 # through 6.7.15 (`P.a` added "unknown field 'a' on struct '<some name>'"); 6.7.16 stands it down too
@@ -656,7 +656,7 @@ syscall(60, g());
 # SH1-SH12 (6.7.16, issues/archived/2026-10-18-refused-annotation-stand-down-silences-a-shadowing-block-variable.md) — THE STAND-DOWN
 # IS THE VARIABLE'S, NOT ITS NAME'S. U13-U28's record was (fn, name), so a same-named variable in a nested or sibling
 # block had its own genuine "no struct type in scope" silenced: SH1 (the filed repro, verbatim) printed only 4:12. The
-# record now holds the refused declaration's slot, bound when it registers (`_ann_refd_bind`, parse/fn_def.cyr: a
+# record now holds the refused declaration's slot, bound when it registers (`_ann_refd_bind`, parse/fn/def.cyr: a
 # local, a parameter, a slice, a global after the fold), and a use stands down only on that slot. Each row: the exact
 # error lines — the refused variable's own uses (SH2's outer `x.a`) still say nothing, the shadow's are reported.
 #   the tree before (`_ann_refd_said` matching (scope, name) only)   -> RED 10: SH1 SH3-SH11 (the shadow's line missing)
@@ -1876,7 +1876,7 @@ fn g(): i64 { var q = Q { 3, 4 }; var r = q + q; var a, b = fw(); return r.b - 4
 # — AN UNTYPED `var y = x;` HOLDING A VALUE OF T TAKES T'S TYPE IN EACH INSTANCE. The stub scan saw no T-typed name in y,
 # so the i64 base parsed `y.b` at the definition: the filed repro (TV0) was rc 1, "no struct type in scope for 'y'",
 # though valid at T = Q, and `y = mkp();` on it had 6.7.15's D33 words. y is now a T-typed name (`_gs_uvar` /
-# `_gs_vkind`, parse/fn_def.cyr) — from x, wrapped, another untyped var, a generic call's `: U` / `: G<..U..>` result bound
+# `_gs_vkind`, parse/fn/def.cyr) — from x, wrapped, another untyped var, a generic call's `: U` / `: G<..U..>` result bound
 # to such a value, a carrier `b: Box<T>` by value — so its struct uses make the generic a stub, refused at a scalar call
 # with the stub's note (TV1-TV5), compiled when never called (TV6), and a bounded `y.show()` is a bounded site
 # (`_bnr_uvar`; tests/tcyr/crossos/generic_struct_only_lines.tcyr V1-V15 run the struct instances on every backend). A
@@ -1999,7 +1999,7 @@ syscall(60, main());
 # `|b|`): y counted as T-typed, so a never-called g compiled (TV11, the review's repro verbatim, and TV11c-TV11f; each
 # refused at the definition before D102), `g(5)` named a field of a T value in its note (TV11b), and a bounded
 # `y.show()` called the bound's impl on the word — SIGSEGV at T = Pt (TV11g-TV11i). Each is again the no-struct line at
-# the definition (`_gs_rebound`, parse/fn_def.cyr); the same name read after the closure, after the loop, or after a
+# the definition (`_gs_rebound`, parse/fn/def.cyr); the same name read after the closure, after the loop, or after a
 # block holding the destructure is the T value (TV11j-TV11l; generic_struct_only_lines.tcyr V19-V21 on every backend).
 #   MTV8 the tree before this fix (d458f47dc)               -> RED 9: TV11 TV11b-TV11i (TV11g-TV11i: rc 0, exit 139)
 #   MTV9 `_gs_rebound` without its for-in / destructure arms -> RED 4: TV11e TV11f TV11h TV11i
@@ -2070,7 +2070,7 @@ accept "TV11l var q, x in a closed block: x's" "$TVR"'fn g<T>(x: T): i64 { var r
 # `return &n;`, `p[0] = mkp();`, a forward into a stub, a carrier's `b.v.b` / `gx(b)` on the rebound name made the generic
 # a stub — compiled never called (RB4-RB14; RB16 / RB16b a rebound struct receiver `|p| p.pick(t)` / `p.mk()` read as
 # g's `p: P`), refused at a scalar call with a note blaming T. Each is now the plain fn's
-# refusal at the definition (`_gsn_live`, `_gcr_live`, `_gs_rebound_at`, parse/fn_def.cyr). The rebinding's own reach
+# refusal at the definition (`_gsn_live`, `_gcr_live`, `_gs_rebound_at`, parse/fn/def.cyr). The rebinding's own reach
 # is the parser's: a range's end bound reads the loop variable (RB15-RB15c), a destructure's right-hand side the enclosing
 # name (RBK6, which the new readers had refused), a range's start bound the enclosing one (RBK7). Controls RBK1-RBK5:
 # g's own x after a rebinding closes, a captured T value in a closure, a carrier after `|b|` (RBK8: a captured `p`) — unchanged
@@ -2233,7 +2233,7 @@ accept "RBK7 for x in x.a..5: the start's x" "$RBH"'fn g<T>(x: T): i64 { var s =
 # a destructure's later name) compiled when never called; D1 refuses them at the definition, called or not, as the
 # same body with `impl Show for i64` (a parsed base) does. RBN rows: never called x {closure, for-in, destructure} x
 # {method, field} x {an i64 impl, none, a stub base}: each exactly the parsed base's line (`_rbs_begin` / `_rbs_tok`,
-# parse/fn_def.cyr). RBNC: called at Pt with no i64 impl, still exactly one line (the instance's report at the same
+# parse/fn/def.cyr). RBNC: called at Pt with no i64 impl, still exactly one line (the instance's report at the same
 # token is the same report). RBNK: g's own x past the rebindings, a destructure's right-hand side and a range's start
 # in a skipped base still compile and run. RBNX: RBN on aarch64 / cx / PE.
 # (each a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it; MRBN1 the compiler
@@ -2355,7 +2355,7 @@ accept "WRc var r = idp((&x)); r.b at Q" "$WRH$WR3G$WRQ" 4 'syscall(60, 4);'
 accept "WRd var r = first((b)); r.a at Box<Q>" "$WRH$WR4G$WRQB" 3 'syscall(60, 3);'
 
 # CF (6.7.17, the genr review, beside the user's D2): inside a generic a struct carrier's T field `b.v` (`b: Box<T>`,
-# `v: T`), whole in an argument, is a value of T as a T-typed name is (`_gs_cfv`, parse/fn_def.cyr). Since D2 the
+# `v: T`), whole in an argument, is a value of T as a T-typed name is (`_gs_cfv`, parse/fn/def.cyr). Since D2 the
 # instance binds it (`rdb(b.v)` at `Box<Q>` calls `rdb$Q`), but the stub scan read only a name: `rdb(b.v)` and
 # `var r = idt(b.v); r.b` kept the i64 base, refused at the definition naming rdb / "no struct type in scope for 'r'",
 # called or not, where `var y: T = b.v; rdb(y)` was a stub. Now the struct call runs (CFa, CFb; the tcyr's F17 rows on

@@ -1930,7 +1930,7 @@ fn _meth_sid0_said(S, noff, pfl_beg, idx): i64 {
 }
 # The `sid == 0` arms' stand-downs (the method call, the `.field` read and store; out of their cybs-ceiling fns): a
 # refused const fn's run-time body (`_ce_fld_said`, 6.7.14), and 6.7.15 a variable `noff` (resolved to `idx`)
-# whose annotation named a type a refused declaration declared (`_ann_refd_said`, parse/fn_def.cyr). 1 = said.
+# whose annotation named a type a refused declaration declared (`_ann_refd_said`, parse/fn/def.cyr). 1 = said.
 # 6.7.17: and a zone global the sweep judged refused, before the replay has said (`_gu_phold`, report `kind`).
 fn _fld_sid0_said(S, noff, idx, kind): i64 {
     if (_ce_fld_said(S) == 1) { return 1; }

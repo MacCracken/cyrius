@@ -8,7 +8,7 @@
 # direct emit (`EB(S, 0x..`) in their tails was never seen and the row read PASS.
 #
 # ROWS — the driver built from this tree, its `--parse-drift-row` mode run over a staged root
-# holding a copy of src/frontend/parse/ (6.7.10: parse/cov.cyr joined the six; 6.7.15: parse/fn_def.cyr,
+# holding a copy of src/frontend/parse/ (6.7.10: parse/cov.cyr joined the six; 6.7.15: parse/fn/def.cyr,
 # split from parse/fn.cyr; 6.7.18: parse/fn.cyr split into parse/fn/):
 #   list     the row's files (programs/checks/lint_fmt.cyr) == `find src/frontend/parse -name '*.cyr'`
 #            -> a file the tree has and the row does not, or the reverse, FAILS by name (6.7.18: the

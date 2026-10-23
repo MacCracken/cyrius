@@ -3,7 +3,7 @@
 #
 # WHY. A trait default no impl inherits and a generic base pass 2 steps (a stub, or a bounded generic i64 does not
 # satisfy) are never parsed by the build; 6.7.17 reads each once for its syntax after the image is built
-# (`_unp_run`, src/frontend/parse/fn_def.cyr), and that read must say NOTHING but a syntax error or an undefined
+# (`_unp_run`, src/frontend/parse/fn/def.cyr), and that read must say NOTHING but a syntax error or an undefined
 # name: every other refusal, note and warning it meets is about an instance that does not exist. The parser is the
 # emitter, so the only mute is the one writer every diagnostic byte goes through — `_ew` (src/common/util.cyr), which
 # writes nothing while `_ew_mute` is set unless `_ew_say` is. A raw `syscall(SYS_WRITE, 2, ..)` in these files would
@@ -47,7 +47,7 @@ grep -q '^fn _ew(b, n): i64 {' src/common/util.cyr || { echo "  FAIL: \`_ew\` is
 # in source order (zone-replay, `_eb_end`), so a raw `syscall(SYS_EXIT, ..)` reached mid-parse — an error's own exit, a
 # cap's refusal, an internal error — would end the process with them unwritten. Raw exits: `syscall(SYS_EXIT|60|93, `
 # and agnos's two-argument `syscall(0, x)`, comments and string literals excluded. The one left is `_die`'s own.
-# MUTATION (2026-10-22): one `_die(1)` in parse/fn_def.cyr put back as `syscall(SYS_EXIT, 1)` -> RED.
+# MUTATION (2026-10-22): one `_die(1)` in parse/fn/def.cyr put back as `syscall(SYS_EXIT, 1)` -> RED.
 rawx=$(grep -nE 'syscall\((SYS_EXIT|60|93), |syscall\(0, [^,()]*\)' $FILES | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' \
     | grep -vE '"[^"]*syscall\(' || true)
 nrawx=$(printf '%s\n' "$rawx" | grep -c . || true)

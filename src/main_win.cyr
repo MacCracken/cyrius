@@ -398,7 +398,7 @@ if (_efi_env != 0) {
 
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn_def.cyr)
+_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn/def.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE with the parse-time
 # body skip it fed. See src/main.cyr for the full note.
@@ -462,7 +462,7 @@ _tl_enum_inits(S);
 EMIT_GVAR_INITS(S);
 STI(S, gvar_save_ti);
 
-# 6.6.5 — ONE shared emitter (src/frontend/parse/fn_def.cyr). Three forks carried this loop
+# 6.6.5 — ONE shared emitter (src/frontend/parse/fn/def.cyr). Three forks carried this loop
 # inline and it needed a fix in all three: pass 1 now prescans relaxed-ordering fns, which
 # PARSE_PROG defines BELOW this point, so an un-guarded loop warns about every one of them.
 _warn_undefined_prepass(S);
@@ -584,7 +584,7 @@ if (_stats_env != 0) {
 # _capacity_warnings (util.cyr) since v6.4.50; 64 MiB growable codebuf here.
 _capacity_warnings(S, 67108864, 1);
 EMITELF(S);
-_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn_def.cyr)
+_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn/def.cyr)
 # Write ELF output (loop on partial writes)
 # v6.6.6 — the loop that used to sit here stopped on the first failing `write` and
 # then exited 0 with a TRUNCATED image. _write_out_all (src/common/util.cyr) is the

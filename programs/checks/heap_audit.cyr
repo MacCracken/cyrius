@@ -94,7 +94,7 @@ fn _cve05_guard_gate(): i64 {
     fail = fail + _cve05_scan(_root_path("src/main_aarch64_native.cyr"));
     fail = fail + _cve05_scan(_root_path("src/main_cx.cyr"));
     fail = fail + _cve05_scan(_root_path("src/main_win.cyr"));
-    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn_def.cyr"));   # 6.7.15: split from parse/fn.cyr
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/def.cyr"));   # 6.7.15: split from parse/fn.cyr
 
     if (fail == 0) {
         _p("  ");

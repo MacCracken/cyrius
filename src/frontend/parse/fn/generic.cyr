@@ -406,7 +406,7 @@ fn _gs_ppvar(S, fi, ni, ti): i64 {
 var _gvk_at = 0;        # `_gs_vkind` 2: the carrier annotation's G token, or -1 for a call's result (`_gvk_call`)
 var _gvk_call = 0;      # ... the call's name token
 var _gvk_tp = 0;        # `_gs_vkind` 1: the type parameter's name, 0 when the scan does not know which
-# The readers (`_gs_uvar`, `_gs_vkind` .. `_gcr_slot`, and the bounded scan's `_bnr_uvar`) live in parse/fn_def.cyr, so
+# The readers (`_gs_uvar`, `_gs_vkind` .. `_gcr_slot`, and the bounded scan's `_bnr_uvar`) live in parse/fn/def.cyr, so
 # this file keeps its 64 KB of fmt / lint headroom (tracked_sources_canonically_formatted.sh).
 # ⛔ 6.7.16 (the user's D1, 2026-10-19) — TWO MORE SHAPES OF A BODY THAT ONLY WORKS WHEN T IS A STRUCT. `return &n;` in
 # a fn returning a struct, n typed by T (`var n: T`, `p: *T`, an untyped `var n = x;` from one): `&n` is that struct

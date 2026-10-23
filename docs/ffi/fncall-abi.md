@@ -34,7 +34,7 @@ alignment AAPCS64 and AArch64 SPAlignmentCheck require, and go
 back from `[x29+16+16*(N-1-i)]` in `ESTORESTACKPARM`).
 
 Cyrius pads the local frame to a 16-byte boundary
-(`src/frontend/parse/fn_def.cyr`: `fsz = (flc*8 + 15) & ~15`), so RSP / SP
+(`src/frontend/parse/fn/def.cyr`: `fsz = (flc*8 + 15) & ~15`), so RSP / SP
 is 16-byte aligned in a function body **between statements**.
 `fncall7` / `fncall8`'s x86 variants reserve 16 bytes via
 `sub rsp, 16` to hold the stack arg(s) plus padding; aarch64 pushes
@@ -278,7 +278,7 @@ Sandhi-filed: `sandhi/docs/issues/2026-04-25-cyrius-7arg-frame-tls-connect-segfa
    entry rsp at the landing — `lea r13, [rsp]`, before the seed — and
    emits `mov rsp, r13; ret` at every exit, which is depth-independent.
    r13 is reserved from the register allocator on that target
-   (`_ra_cap = 2` in `src/frontend/parse/fn_def.cyr`); a parked register the
+   (`_ra_cap = 2` in `src/frontend/parse/fn/def.cyr`); a parked register the
    allocator may assign to a hot local is not parked. Hand-written asm in
    a UEFI image that returns through its own `ret` must carry the same
    correction itself — see `programs/efi_probe.cyr`'s deliberately

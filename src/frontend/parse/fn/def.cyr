@@ -1,4 +1,4 @@
-# PARSER — the top-level scans and the fn definition:
+# PARSER — fn: the top-level scans and the fn definition:
 # _warn_undefined_prepass / _tl_directive / _tl_use / _tl_pass1 / _tl_pass2 / _tl_enum_inits /
 # the declaration-after-the-first-statement rule (_decl_late, _dl_*) / _fn_redirect / the
 # duplicate-definition checks (_dsg_*) / _PARSE_FN_DEF_IMPL.
@@ -7,6 +7,9 @@
 # reached its last 3 KB under cyrfmt's / cyrlint's 1028 KB read cap. parse.cyr includes this file
 # right after parse/fn/'s files, so the token stream — and cycc — are unchanged (self-host
 # byte-identical). The 6.7.17 layout review gives the frontend its folders. CHANGELOG [6.7.15]
+# 6.7.18: moved from parse/fn_def.cyr into parse/fn/ (D2's layout — the definitions piece beside the call path, the
+# return / tail path, traits, generics and the const-fn evaluator), unchanged and still included last.
+# CHANGELOG [6.7.18]
 
 # 6.6.5 — the pre-PARSE_PROG "registered but never defined" warning, extracted from the
 # three forks (main, main_win, main_cx) that each carried a copy of it inline.

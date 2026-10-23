@@ -202,7 +202,7 @@
 #
 # 6.7.15 (issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) — A CALL ABOVE A FN WHOSE
 # PARAMETER NAMES A STRUCT DECLARED BELOW THAT FN reads the signature the definition reads (`_psig_reread`,
-# src/frontend/parse/fn_def.cyr): FB1, the filed repro 2 verbatim, `h(t)` into `x: *R2` passes `&t` (77; refused "cannot
+# src/frontend/parse/fn/def.cyr): FB1, the filed repro 2 verbatim, `h(t)` into `x: *R2` passes `&t` (77; refused "cannot
 # pass 't' ... pass &t" before); FB2, another struct into such a `x: R2`, is refused as it is with R2 declared above
 # (compiled clean before: pass 1 recorded no struct, so nothing was checked); FB3, a redefined callee whose FIRST
 # definition names a struct below it, checks against its LAST definition's record (7). The run-time rows (8 / 16 / 24

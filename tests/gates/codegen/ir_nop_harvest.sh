@@ -11,7 +11,7 @@
 # ⭐ THE GATE IS NOT ABOUT NOP COUNT — IT IS ABOUT CP REPAIR. The gate could not simply be
 # lifted: the IR records a code position per node, the compactor MOVES code, and the IR
 # fixpoint then reads and rewrites at stale offsets. Lifting the gate WITHOUT the stage-3c
-# repair in parse/fn_def.cyr produces a cycc that dies at startup with `alloc_init: mmap failed`.
+# repair in parse/fn/def.cyr produces a cycc that dies at startup with `alloc_init: mmap failed`.
 # So step 3 below — the IR-built compiler must reproduce the default compiler byte-identically
 # — is the real assertion; the NOP bound just proves the pass actually ran.
 #
@@ -40,7 +40,7 @@ chmod +x "$T/ir3"
 # hold a real instruction count before its NOP count means anything, and then 0 NOPs is the
 # fully harvested build, not a missing tool: the gate read `0` as "llvm-objdump missing?" and
 # went RED when 6.7.8's C2-1 extraction took `_PARSE_FACTOR_IMPL` under the per-fn compactor's
-# 1024-entry caps (`_nrn` / `_jsn`, parse/fn_def.cyr) and its last 499 NOPs went. CHANGELOG [6.7.8]
+# 1024-entry caps (`_nrn` / `_jsn`, parse/fn/def.cyr) and its last 499 NOPs went. CHANGELOG [6.7.8]
 command -v llvm-objdump >/dev/null 2>&1 || { echo "FAIL ir_nop_harvest: llvm-objdump is not installed - the NOP count cannot be taken"; exit 1; }
 llvm-objdump -d "$T/ir3" > "$T/dis" 2>/dev/null || true   # its failure is read below, by the instruction count
 NI=$(grep -cE '^ *[0-9a-f]+:' "$T/dis" || true)
@@ -82,7 +82,7 @@ if [ $rc -ne 0 ]; then
 fi
 if ! cmp -s "$T/ir3out" "$T/stage1"; then
   echo "FAIL ir_nop_harvest: the IR=3-built cycc does not reproduce the default cycc."
-  echo "  This is the stale-IR_NODE_CP failure (stage 3c in parse/fn_def.cyr)."
+  echo "  This is the stale-IR_NODE_CP failure (stage 3c in parse/fn/def.cyr)."
   exit 1
 fi
 

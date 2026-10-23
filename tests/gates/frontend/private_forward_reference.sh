@@ -117,7 +117,7 @@ forks=$(ls "$ROOT"/src/main*.cyr 2>/dev/null | grep -v version_str)
 nf=$(printf '%s\n' "$forks" | grep -c .)
 [ "$nf" -ge 7 ] || { echo "  FAIL: private_forward_reference axis1 — expected >= 7 src/main*.cyr forks, found $nf"; fail=1; }
 # 6.6.17: the two calls live in the ONE shared pass-1 scan every fork runs (_tl_pass1,
-# src/frontend/parse/fn_def.cyr); toplevel_scan_shared.sh refuses a fork that re-grows its own.
+# src/frontend/parse/fn/def.cyr); toplevel_scan_shared.sh refuses a fork that re-grows its own.
 for f in $forks; do
   b=$(basename "$f")
   cp1=$(grep -c '^_tl_pass1(S, [01]);' "$f" || true)
@@ -126,7 +126,7 @@ for f in $forks; do
   [ "$cp1" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — $b calls the shared pass-1 scan $cp1 x, want exactly 1"; fail=1; }
   [ "$cs" = "0" ] || { echo "  FAIL: private_forward_reference axis1 — $b still carries the inline pass-1 impl brace-skip ('var idep = 0')"; fail=1; }
 done
-_pfbody() { awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse/fn_def.cyr"; }
+_pfbody() { awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse/fn/def.cyr"; }
 ci=$(_pfbody _tl_scan1_mode | grep -c '_prescan_impl(S)' || true)
 ct=$(_pfbody _tl_pass1 | grep -c '_prescan_tail(S)' || true)
 [ "$ci" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — the shared pass-1 scan has $ci x _prescan_impl(S), want exactly 1"; fail=1; }

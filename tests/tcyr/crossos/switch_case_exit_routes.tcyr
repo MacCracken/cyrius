@@ -7,7 +7,7 @@
 #      path for aarch64 and cx). The dispatch is
 #          movsxd rax,[rcx+rax*4] ; add rax,rcx ; jmp rax
 #      over a table of `target_cp - table_cp` displacements. The v5.6.27 regalloc
-#      NOP-harvest compactor (parse/fn_def.cyr) deletes the 4-byte NOPs the register
+#      NOP-harvest compactor (parse/fn/def.cyr) deletes the 4-byte NOPs the register
 #      picker leaves behind and repairs jump disp32s, fixup CPs and jump-target CPs
 #      — but it never knew about that table. Every harvested NOP between the table
 #      and a case body pushed that body's entry 4 bytes further out, CUMULATIVELY:

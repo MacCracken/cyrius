@@ -260,7 +260,7 @@
 #                                        Reset at fn start. Populated by EJCC/EJMP/EJMP0/ECALLTO.
 #                                        Read by compact_nops to remap intra-fn jump disps.
 #                                        The count saturates at 1024 and the `_jsn < 1024` gate
-#                                        (parse/fn_def.cyr) then skips that fn's NOP compaction —
+#                                        (parse/fn/def.cyr) then skips that fn's NOP compaction —
 #                                        correct, unoptimised. One fn in cycc itself saturates it
 #                                        (measured 6.6.20).
 #   0x1A2008  nop_run_cnt   [8]           v5.6.27: per-fn count of NOP runs
@@ -1333,7 +1333,7 @@ if (_efi_env != 0) {
 # cycc: opt-in IR recording via CYRIUS_IR=1|2
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn_def.cyr)
+_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn/def.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap that used to be built here
 # is GONE with the parse-time body skip it fed (see the `fn` dispatch in pass 2).
@@ -1400,14 +1400,14 @@ EPATCH(S, jmp_patch);
 # is only correct where rsp is exactly the entry rsp. It never is — the seed moved it, and
 # `syscall(60, x)` inside a fn body is a whole frame below. EEXIT therefore emits
 # `mov rsp, r13; ret`, correct at any depth. r13 is reserved from the register allocator on
-# this target (`_ra_cap` in src/frontend/parse/fn_def.cyr), which is what makes the park
+# this target (`_ra_cap` in src/frontend/parse/fn/def.cyr), which is what makes the park
 # survive an arbitrary call chain. See EPARK_EFI_RSP (src/backend/x86/emit.cyr) for why the
 # park is a 4-byte `lea` rather than the 3-byte `mov`. CHANGELOG [6.6.5]
 if (_TARGET_EFI_APPLICATION == 1) { EPARK_EFI_RSP(S); }   # lea r13, [rsp]  (4C 8D 2C 24)
 if (_TARGET_PE == 1) { ESUB_RSP_IMM8(S, 8); }
 
 # v6.1.30: x86-macho argv — park the init rsp in r15 (reserved from regalloc, see
-# parse/fn_def.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The entry
+# parse/fn/def.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The entry
 # jmp preserves rsp, so here rsp is still the init stack ([rsp]=argc, inline
 # argv/envp) — captured before EMIT_GVAR_INITS / EFNPRO below push anything. r15 is
 # never clobbered, so it survives into argc()/argv()/_read_env. cycc ignores it.
@@ -1439,7 +1439,7 @@ if (_TARGET_MACHO == 1) { EALIGN_RSP_16(S); }   # and rsp, -16   (48 83 E4 F0)
 # _agnos_capture_rsp` was emitted AFTER EMIT_GVAR_INITS (below), so for that
 # entry shape main() ran with _agnos_init_rsp still 0 → argc()==0 (attn11 issue
 # 2026-06-10-cyrius-agnos-capture-after-gvar-init-call). r15 is reserved from
-# regalloc (parse/fn_def.cyr cap on _TARGET_AGNOS==1); lib/args_agnos.cyr reads it.
+# regalloc (parse/fn/def.cyr cap on _TARGET_AGNOS==1); lib/args_agnos.cyr reads it.
 if (_TARGET_AGNOS == 1) { E3(S, 0xE78949); }   # mov r15, rsp   (49 89 E7)
 
 # v5.11.52: under CYRIUS_TARGET_EFI=1, save firmware-supplied entry
@@ -1520,7 +1520,7 @@ if (_init_km == 1) {
 }
 if (_prof_on == 1) { _prof_gvar_end = _prof_clock_ns(); }
 
-# 6.6.5 — ONE shared emitter (src/frontend/parse/fn_def.cyr). Three forks carried this loop
+# 6.6.5 — ONE shared emitter (src/frontend/parse/fn/def.cyr). Three forks carried this loop
 # inline and it needed a fix in all three: pass 1 now prescans relaxed-ordering fns, which
 # PARSE_PROG defines BELOW this point, so an un-guarded loop warns about every one of them.
 _warn_undefined_prepass(S);
@@ -1895,7 +1895,7 @@ if (_stats_env != 0) {
 # _capacity_warnings (util.cyr) since v6.4.50; 64 MiB growable codebuf here.
 _capacity_warnings(S, 67108864, 1);
 EMITELF(S);
-_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn_def.cyr)
+_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn/def.cyr)
 if (_prof_on == 1) { _prof_emit_end = _prof_clock_ns(); }
 # Write ELF output (loop on partial writes)
 # v6.6.6 — the loop that used to sit here stopped on the first failing `write` and

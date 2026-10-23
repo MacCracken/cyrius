@@ -3185,7 +3185,7 @@ fn _PRIV_PRESCAN_TOK(S, ti): i64 {
     return 0;
 }
 # 1 = the `private` at token `ti` is the per-item form (reported by the pre-pass). Also the statement parser's test
-# (`_dl_priv`, parse/fn_def.cyr), so the token it steps is the one reported.
+# (`_dl_priv`, parse/fn/def.cyr), so the token it steps is the one reported.
 # THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
 # file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
 # too. Anything else sharing the token's line is the per-item misread.
@@ -3398,8 +3398,9 @@ include "src/frontend/parse/fn/impl.cyr"
 include "src/frontend/parse/fn/generic.cyr"
 include "src/frontend/parse/fn/body_pass.cyr"
 include "src/frontend/parse/fn/sig.cyr"
-# 6.7.15: the top-level scans and PARSE_FN_DEF, split from parse/fn.cyr (its fmt / lint read cap).
-include "src/frontend/parse/fn_def.cyr"
+# 6.7.15: the top-level scans and PARSE_FN_DEF, split from parse/fn.cyr (its fmt / lint read cap); 6.7.18: moved
+# from parse/fn_def.cyr into the folder, still last.
+include "src/frontend/parse/fn/def.cyr"
 
 
 # ASM_MNEMONIC, ASM_KW_IN and helpers are in arch-specific emit files:

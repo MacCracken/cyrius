@@ -210,7 +210,7 @@ fn _parse_drift_scan(path): i64 {
 
 fn _parse_emit_drift_gate(): i64 {
     var fail = 0;
-    # Scope: every parse file — src/frontend/parse/ and its folders (6.7.15: parse/fn_def.cyr, split from
+    # Scope: every parse file — src/frontend/parse/ and its folders (6.7.15: parse/fn/def.cyr, split from
     # parse/fn.cyr; 6.7.18: parse/fn.cyr split into parse/fn/). tests/gates/toolchain/check_parse_drift_reads_whole.sh
     # holds this list to the tree's own (`find src/frontend/parse -name '*.cyr'`), so a file added there and not
     # here, or named here and gone, fails by name. CHANGELOG [6.7.18]
@@ -237,7 +237,7 @@ fn _parse_emit_drift_gate(): i64 {
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/generic.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/body_pass.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/sig.cyr"));
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn_def.cyr"));   # 6.7.15: split from parse/fn.cyr
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/def.cyr"));   # 6.7.15: split from parse/fn.cyr
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types.cyr"));
     if (fail == 0) {
         _p("  ");
