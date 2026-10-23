@@ -4,7 +4,7 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — 6.7.18 in flight
+## [6.7.18] — 2026-10-23
 
 **The full security audit + the refactor / optimization review (roadmap § 6.7.18, the user 2026-10-09; opened
 2026-10-22: "lets continue with 6.7.18 work"). Two decisions at the open, in one round: D1 — the network parsers read
