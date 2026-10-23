@@ -20,7 +20,9 @@
 #      control: the graceful answer, exit 0.
 # Families: the async DNS answer parser (lib/async.cyr), the HTTP/1 response parser (lib/http.cyr),
 # the WebSocket client's frame reader (lib/ws.cyr), the WebSocket server's frame reader and its
-# upgrade handshake's key (lib/ws_server.cyr).
+# upgrade handshake's key (lib/ws_server.cyr), and the blocking resolver's DNS reply parser
+# (lib/net.cyr's _net_dns_answer / _net_dns_skip: a datagram from whoever answers the query,
+# brought under D1 by the 6.7.18 lib review).
 #
 # RED before 6.7.18: the static rows name every raw load, and with the same check removed the
 # parent's raw loads read on past the message (the probe exits 0 with whatever the heap held).
@@ -112,6 +114,42 @@ EOF
 caught "dns answer" lib/async.cyr 'if (off + 10 > blen) { return 0 - 1; }' '# (removed)' dns.cyr '-1'
 { echo '#define DNS_LABEL'; cat "$T/dns.cyr"; } > "$T/dnsl.cyr"
 caught "dns name" lib/async.cyr 'if (p < 0 || p >= blen) { return 0 - 1; }' '# (removed)' dnsl.cyr '-1'
+
+# ── the blocking resolver's DNS reply parser (lib/net.cyr) ──
+echo "the net.cyr DNS reply parser:"
+no_raw lib/net.cyr _net_dns_skip _net_dns_answer
+cat > "$T/ndns.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/net.cyr"
+# The reply to the query for "a": the question echoed, ANCOUNT 1, the answer's name a pointer, its
+# TYPE, then nothing — cut 7 bytes short of its fixed fields. NDNS_LABEL: the answer's name is a
+# 63-byte label in the 5 bytes left.
+fn main(): i64 {
+    alloc_init();
+    var q = alloc(512);
+    var ql = _net_dns_build(q, 0x4342, "a");
+    var b = alloc(128);
+    memset(b, 0, 128);
+    memcpy(b, q, ql);
+    store8(b + 2, 0x81); store8(b + 3, 0x80);              # QR + RD, RA, rcode 0
+    store8(b + 7, 1);                                       # ANCOUNT 1
+    store8(b + ql, 0xC0); store8(b + ql + 1, 12);           # answer name: a pointer
+    store8(b + ql + 3, 1);                                  # TYPE A, then nothing
+    #ifdef NDNS_LABEL
+    store8(b + ql, 63);
+    #endif
+    fmt_int(_net_dns_answer(b, ql + 5, q, ql));
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+caught "net dns answer" lib/net.cyr 'if (off + 10 > n) { return 0 - 1; }' '# (removed)' ndns.cyr '-1'
+{ echo '#define NDNS_LABEL'; cat "$T/ndns.cyr"; } > "$T/ndnsl.cyr"
+caught "net dns name" lib/net.cyr 'while (off < n) {' 'while (off < n + 64) {' ndnsl.cyr '-1'
 
 # ── the HTTP/1 response parser (lib/http.cyr) ──
 echo "the HTTP/1 response parser:"
@@ -238,7 +276,7 @@ EOF
 caught "ws handshake key" lib/ws_server.cyr 'if (klen != 24) { return 0; }' '# (removed)' wsh.cyr '0'
 
 # Floor: every family's rows ran.
-if [ "$ROWS" -lt 27 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 27) — the gate is reading nothing"; fi
+if [ "$ROWS" -lt 33 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 33) — the gate is reading nothing"; fi
 if [ "$FAILS" = 0 ]; then echo "PASS: $NAME ($ROWS rows: the parsers read through slices, and a bound they get wrong stops there)"; exit 0; fi
 echo "FAIL: $NAME ($FAILS)"
 exit 1

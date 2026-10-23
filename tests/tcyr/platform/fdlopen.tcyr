@@ -125,6 +125,32 @@ if (pl > 0) {
     assert(1, "skipped path check: no HOME in /proc/self/environ");
 }
 
+test_group("the stack ld.so starts on ends below the strings it points at");
+
+# 6.7.18: argc, argv[0..3) and its NULL, the empty envp's NULL, 16 auxv pairs and AT_NULL are 40
+# words (320 bytes), and the stack builder budgeted 304: AT_NULL landed on the first bytes of the
+# helper path above it, so argv[0] and AT_EXECFN named "". Built here from a zeroed auxv and
+# zeroed ELF infos — the layout is the row, nothing is run.
+if (pl > 0) {
+    var sreg = alloc(8192);
+    var hinfo = alloc(64);
+    var linfo = alloc(64);
+    var saux = alloc(64);
+    memset(hinfo, 0, 64);
+    memset(linfo, 0, 64);
+    memset(saux, 0, 64);
+    var srsp = _fdlopen_build_stack(sreg, 8192, hinfo, linfo, saux, 64, 0, 0);
+    assert(srsp != 0, "the stack is built");
+    var sa0 = load64(srsp + 8);                  # argv[0]: the helper path
+    assert_eq(strlen(sa0), pl, "argv[0] is the whole helper path");
+    assert_eq(memeq(sa0, pbuf, pl), 1, "...byte for byte");
+    assert(srsp + 320 <= sa0, "the 40 stack words end below it");
+    assert_eq(load64(srsp + 304), 0, "...the last two of them AT_NULL's tag");
+    assert_eq(load64(srsp + 312), 0, "...and value");
+} else {
+    assert(1, "skipped the stack layout check: no HOME in /proc/self/environ");
+}
+
 test_group("fdlopen_init returns a clean status code");
 
 var st2 = alloc(256);
@@ -180,7 +206,7 @@ if (frc == 0) {
     var pid_via_fdlopen = fncall0(fp_getpid);
     var pid_via_syscall = syscall(39);  # SYS_GETPID
     assert_eq(pid_via_fdlopen, pid_via_syscall,
-              "glibc getpid() via fdlopen == SYS_GETPID");
+      "glibc getpid() via fdlopen == SYS_GETPID");
 } else {
     # Allowed reasons to fall back: arch-unsupported, helper-missing,
     # or the three transient error codes that v5.5.34 didn't touch.

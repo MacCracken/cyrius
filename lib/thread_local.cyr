@@ -93,6 +93,16 @@ include "lib/atomic.cyr"
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 
+# Write the refusal `m` (NUL-terminated) to stderr; the caller then exits 70. The one body the
+# three refusals below (an unregistered thread, a foreign-TLS stranger, no TlsAlloc index) each
+# open-coded with their own strlen loop.
+fn _tlocal_say(m): i64 {
+    var n = 0;
+    while (load8(m + n) != 0) { n += 1; }
+    sys_write(2, m, n);
+    return 0;
+}
+
 #ifdef CYRIUS_TARGET_MACOS
 var _tlocal_macos[_TLOCAL_MAX_SLOTS];     # i64 slots (top-level var[N] = N*8 bytes), zero-init .bss
 
@@ -161,7 +171,7 @@ fn _tls_grow(c): i64 {
     var i = 0;
     while (i < _TLS_REG_WORDS) {
         store64(fresh + i * 8, 0);
-        i = i + 1;
+        i += 1;
     }
     atomic_fence();                                    # zeroed before it is reachable
     if (atomic_cas(c + _TLS_REG_NEXT, 0, fresh) == 1) { return fresh; }
@@ -183,7 +193,7 @@ fn _tls_claim(blk): i64 {
                     return k;
                 }
             }
-            i = i + 1;
+            i += 1;
         }
         c = _tls_grow(c);
     }
@@ -206,10 +216,7 @@ fn _tls_unbind(ent): i64 {
 # A thread that no thread_create started asked for its slots. It has none, and handing it
 # another thread's (main's, as until 6.7.18) is the corruption the registry exists to prevent.
 fn _tls_refuse(): i64 {
-    var m = "thread_local: refused: a thread not started by thread_create has no slots of its own\n";
-    var n = 0;
-    while (load8(m + n) != 0) { n = n + 1; }
-    sys_write(2, m, n);
+    _tlocal_say("thread_local: refused: a thread not started by thread_create has no slots of its own\n");
     sys_exit(70);                                      # Darwin exit(2) ends the process
     return 0;
 }
@@ -224,7 +231,7 @@ fn _tlocal_base(): i64 {
         var i = 0;
         while (i < _TLS_REG_MAX) {
             if (load64(c + i * 8) == me) { return load64(c + _TLS_REG_BLKS + i * 8); }
-            i = i + 1;
+            i += 1;
         }
         c = load64(c + _TLS_REG_NEXT);
     }
@@ -359,10 +366,7 @@ fn _tlocal_foreign_base(): i64 {
     if (t != _tlocal_foreign_tid) {
         var p = syscall(SYS_GETPID);
         if (p == _tlocal_foreign_pid || t != p) {
-            var m = "thread_local: refused: in foreign-TLS mode the slots are the declaring thread's alone\n";
-            var n = 0;
-            while (load8(m + n) != 0) { n = n + 1; }
-            sys_write(2, m, n);
+            _tlocal_say("thread_local: refused: in foreign-TLS mode the slots are the declaring thread's alone\n");
             sys_exit_group(70);
         }
         _tlocal_foreign_tid = t;    # a fork child's first thread: the owner's copy is its own now
@@ -458,7 +462,7 @@ fn thread_local_init(): i64 {
     var i = 0;
     while (i < TLOCAL_BLOCK_SIZE) {
         store8(tls + i, 0);
-        i = i + 1;
+        i += 1;
     }
     var rc = _tlocal_install(tls);
     if (rc != 0) { return 0; }
@@ -578,10 +582,7 @@ fn _tlocal_win_index(): i64 {
     if (atomic_cas(&_tlocal_win_idx, 0 - 1, 0 - 2) == 1) {
         idx = syscall(61452) & 0xFFFFFFFF;           # TlsAlloc → a DWORD index (the upper half is not part of it)
         if (idx == 0xFFFFFFFF) {                     # TLS_OUT_OF_INDEXES
-            var m = "thread_local: refused: TlsAlloc has no index left for the thread-local slots\n";
-            var n = 0;
-            while (load8(m + n) != 0) { n = n + 1; }
-            sys_write(2, m, n);
+            _tlocal_say("thread_local: refused: TlsAlloc has no index left for the thread-local slots\n");
             sys_exit(70);
         }
         atomic_fence();
@@ -603,7 +604,7 @@ fn _tlocal_win_block(): i64 {
         blk = alloc(NB);
         if (blk == 0) { return 0; }
         var i = 0;
-        while (i < NB) { store8(blk + i, 0); i = i + 1; }
+        while (i < NB) { store8(blk + i, 0); i += 1; }
         syscall(61454, idx, blk);                    # TlsSetValue(idx, blk)
     }
     return blk;

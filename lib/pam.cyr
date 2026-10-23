@@ -45,7 +45,11 @@ var PAM_AUTH_EXEC_FAILED    = 0 - 5;
 
 # The longest password pam_unix_authenticate passes on: unix_chkpwd reads at most
 # PAM_MAX_RESP_SIZE (512) bytes, so a longer one could never be checked whole. CHANGELOG [6.7.18]
-var PAM_MAX_PASSWORD = 512;
+# The const is the bound and sizes the stack copy the password is written from; the public var
+# only tells a caller the value — read as the bound, raising it memcpy'd a longer password over
+# that copy (lib_buffers_sized_by_const.sh axis 6). CHANGELOG [6.7.18]
+const _PAM_MAX_PASSWORD = 512;
+var PAM_MAX_PASSWORD = _PAM_MAX_PASSWORD;
 
 # Test-only seams (nothing outside tests/ sets them): `_pam_chkpwd_test`, a stand-in helper path
 # used instead of unix_chkpwd; `_pam_write_hook`, a fn the parent calls just before it writes the
@@ -114,7 +118,7 @@ fn pam_unix_authenticate(user, password): i64 {
     # SIGPIPE; a write that still fails is PAM_AUTH_FAIL once the helper is reaped. nullok is
     # kept (the user, 2026-10-22). CHANGELOG [6.7.18]
     var plen = strlen(password);
-    if (plen > PAM_MAX_PASSWORD) { return PAM_AUTH_FAIL; }
+    if (plen > _PAM_MAX_PASSWORD) { return PAM_AUTH_FAIL; }
 
     var fds[8];
     var pr = sys_pipe(&fds);
@@ -159,7 +163,7 @@ fn pam_unix_authenticate(user, password): i64 {
     # ANY password. Measured against a stand-in /etc/shadow (user + mount namespace): "hunter2"
     # unterminated -> 7, "hunter2\0" -> 0; an empty hash, "anything" unterminated -> 0. pam_unix
     # writes the password then "" the same way (support.c). CHANGELOG [6.7.18]
-    var pbuf[520];   # PAM_MAX_PASSWORD + the NUL, in BYTES; wiped after the write
+    var pbuf[_PAM_MAX_PASSWORD + 8];   # the password + its NUL, in BYTES; wiped after the write
     memcpy(&pbuf, password, plen);
     store8(&pbuf + plen, 0);
     var tlen = plen + 1;
@@ -170,9 +174,9 @@ fn pam_unix_authenticate(user, password): i64 {
         var wn = sys_write(wfd, &pbuf + off, tlen - off);
         if (wn == 0 - 4) { continue; }       # EINTR
         if (wn <= 0) { wbad = 1; break; }
-        off = off + wn;
+        off += wn;
     }
-    memset(&pbuf, 0, 520);
+    memset(&pbuf, 0, _PAM_MAX_PASSWORD + 8);
     sys_close(rfd);
     sys_close(wfd);
 
@@ -202,8 +206,7 @@ fn pam_unix_authenticate(user, password): i64 {
 # 0 otherwise. Consumers should gate on this before advertising
 # that they support password auth.
 fn pam_unix_available(): i64 {
-    if (_pam_find_chkpwd() == 0) { return 0; }
-    return 1;
+    return _pam_find_chkpwd() != 0;
 }
 
 # v5.8.31 — PamError variants. Maps the int-return contract of

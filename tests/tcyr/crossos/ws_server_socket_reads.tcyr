@@ -5,13 +5,15 @@
 # and the sockets lib/net.cyr makes there are overlapped Winsock sockets; ReadFile with no
 # OVERLAPPED on one returns 0 while data is waiting — measured on cass — so a Windows server read
 # a false EOF at the first frame and dropped every client. It reads through lib/net.cyr's
-# _net_os_recv now (recv on Windows, sys_read elsewhere).
+# _net_os_recv now (recv on Windows, sys_read elsewhere) — since 6.7.18 through lib/ws.cyr's
+# _ws_recv_exact, of which _wss_recv_exact was a copy.
 #
 # The client is a plain loopback socket in this process: its writes land in the kernel buffer
 # before the server reads, so no thread or child is needed. (A separate file from the client's
 # twin: lib/ws.cyr and lib/ws_server.cyr each declared the WS_OP_* names until 6.7.12.)
 #
-# MUTATION (6.6.11): _wss_recv_exact back to sys_read fails the frame rows on cass and under wine.
+# MUTATION (6.6.11): _wss_recv_exact (now _ws_recv_exact) back to sys_read fails the frame rows on
+# cass and under wine.
 # CHANGELOG [6.6.11]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

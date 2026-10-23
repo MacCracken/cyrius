@@ -914,6 +914,11 @@ Legacy return constants:
 | `PAM_AUTH_FORK_FAILED` | `-4` | `sys_fork` errored |
 | `PAM_AUTH_EXEC_FAILED` | `-5` | Helper present but couldn't run |
 
+`PAM_MAX_PASSWORD` (`512`, 6.7.18): the longest password `pam_unix_authenticate` passes on —
+`unix_chkpwd` reads at most `PAM_MAX_RESP_SIZE` (512) bytes, so a longer one is `PAM_AUTH_FAIL`
+before anything runs. It tells the value only: the bound is the private const `_PAM_MAX_PASSWORD`,
+which also sizes the stack copy the password is written from, so writing the var changes nothing.
+
 `enum PamError { PamAuthFail; PamHelperMissing; PamPipeFailed; PamForkFailed; PamExecFailed; PamOther; }`.
 `pam_unix_authenticate_r` maps `PAM_AUTH_OK`→`Ok(0)` and every
 non-zero code to its corresponding variant. `pam_unix_available`

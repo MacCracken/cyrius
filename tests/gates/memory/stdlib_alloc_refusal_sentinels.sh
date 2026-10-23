@@ -437,9 +437,11 @@ CYR
 # ── the HTTP client's whole call (lib/http.cyr http_get_r), 6.7.18 ──
 # A forked child serves a canned 200 on a loopback listener, one connection per request, so its
 # own allocations never touch this process's count. http_get_r's allocations, in order: the URL
-# struct and its host copy (k=1, 2), the request slot (k=3), the request (k=4), the 64 KiB
-# receive buffer (k=5) and the response struct (k=6). Until 6.7.18 a refused response struct was
-# read through (load64(0): SIGSEGV) — k=6 is the row for that.
+# struct and its host copy (k=1, 2), the request (k=3), the 64 KiB receive buffer (k=4) and the
+# response struct (k=5). Until 6.7.18 a refused response struct was read through (load64(0):
+# SIGSEGV) — k=5 is the row for that; and _http_prepare's two results went through a 16-byte heap
+# slot each call (one more allocation, its own refusal path), on the stack since the 6.7.18 lib
+# review (_http_fetch).
 cat > "$W/fi/http_probe.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -507,21 +509,21 @@ fn main(): i64 {
     memcpy(url + 17 + e, "/", 1);
 
     var k = 1;
-    while (k <= 4) {
+    while (k <= 3) {
         _fi_arm(k);
         var t0, v0 = http_get_r(url);
-        _refused("http_get_r url / slot / request", k, is_err_result(t0), 1);
+        _refused("http_get_r url / request", k, is_err_result(t0), 1);
         k = k + 1;
     }
-    _fi_arm(5);
+    _fi_arm(4);
     var t5, v5 = http_get_r(url);
-    _refused("http_get_r receive buffer", 5, is_err_result(t5) == 1 && v5 == HttpOther, 1);
-    _fi_arm(6);
+    _refused("http_get_r receive buffer", 4, is_err_result(t5) == 1 && v5 == HttpOther, 1);
+    _fi_arm(5);
     var t6, v6 = http_get_r(url);
-    _refused("http_get_r response struct", 6, is_err_result(t6) == 1 && v6 == HttpOther, 1);
-    _fi_arm(7);
+    _refused("http_get_r response struct", 5, is_err_result(t6) == 1 && v6 == HttpOther, 1);
+    _fi_arm(6);
     var t7, v7 = http_get_r(url);
-    _served("http_get_r", 7, is_err_result(t7) == 0 && http_status(v7) == 200);
+    _served("http_get_r", 6, is_err_result(t7) == 0 && http_status(v7) == 200);
     sys_kill(load64(&pid), 9);
     sys_waitpid(load64(&pid), 0, 0);
     return _rows_done();
@@ -554,5 +556,5 @@ _run_probe ws_probe; nw=$_n
 _run_probe wss_probe; ns=$_n
 [ "$ns" -ge 15 ] || fail "only $ns rows ran in wss_probe (floor 15; 11 until 6.6.19 added the four header-lookup rows)"
 _run_probe http_probe; nh=$_n
-[ "$nh" -ge 7 ] || fail "only $nh rows ran in http_probe (floor 7)"
+[ "$nh" -ge 6 ] || fail "only $nh rows ran in http_probe (floor 6)"
 echo "PASS: stdlib_alloc_refusal_sentinels ($n + $nw ws + $ns ws_server + $nh http rows: every refused alloc returned its sentinel, every count exact)"

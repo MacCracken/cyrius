@@ -26,6 +26,7 @@ include "lib/assert.cyr"
 # authentication is attempted, so nothing is logged — except the audit's own repro, which is
 # refused before anything runs. CHANGELOG [6.7.18]
 var _pam_dir = 0;
+var _pam_raise = 0;     # nonzero: the child first sets PAM_MAX_PASSWORD to it (6.7.18)
 var _pam_sleep_ts[16];
 fn _pam_nap(): i64 {   # the `_pam_write_hook`: 300 ms, so the early-exiting helper is gone first
     store64(&_pam_sleep_ts, 0);
@@ -66,6 +67,7 @@ fn _pam_run(helper, n, hook): i64 {
         signal_default(SIGPIPE);
         _pam_chkpwd_test = helper;
         _pam_write_hook = hook;
+        if (_pam_raise != 0) { PAM_MAX_PASSWORD = _pam_raise; }
         var r = pam_unix_authenticate("cy-no-such-user", pw);
         sys_exit(10 + r);
     }
@@ -101,6 +103,12 @@ fn _pam_sigpipe_rows(): i64 {
     assert_eq(_pam_answer(_pam_run(0, 65537, 0)), want_long, "a 65,537-byte password is PAM_AUTH_FAIL, the caller alive (it died of SIGPIPE, exit 141)");
     assert_eq(_pam_answer(_pam_run(drain, 513, 0)), PAM_AUTH_FAIL, "a password past PAM_MAX_PASSWORD (513 bytes) is PAM_AUTH_FAIL before any helper runs");
     assert_eq(_pam_answer(_pam_run(drain, 512, 0)), PAM_AUTH_FAIL, "512 bytes reach the helper, whose verdict (exit 1) is the answer");
+    # A caller that RAISES PAM_MAX_PASSWORD does not raise the bound: the stack copy the password
+    # is written from is sized by the const. It was the var, so 4,096 bytes were memcpy'd over the
+    # copy's 520 and the frame (6.7.18).
+    _pam_raise = 1048576;
+    assert_eq(_pam_answer(_pam_run(drain, 4096, 0)), PAM_AUTH_FAIL, "PAM_MAX_PASSWORD raised to 1 MiB: a 4,096-byte password is still PAM_AUTH_FAIL, the caller alive");
+    _pam_raise = 0;
     # The helper exits before reading, and the write lands after it is gone (the hook naps).
     assert_eq(_pam_answer(_pam_run(early, 512, &_pam_nap)), PAM_AUTH_FAIL, "a helper that exits unread: PAM_AUTH_FAIL, never SIGPIPE");
     assert_eq(_pam_answer(_pam_run(early, 1, &_pam_nap)), PAM_AUTH_FAIL, "... with a 1-byte password too");

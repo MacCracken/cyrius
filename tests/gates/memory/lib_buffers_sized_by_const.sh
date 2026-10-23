@@ -76,6 +76,9 @@
 # MUTATION LEDGER (6.7.14, in the tree, each RED naming its site):
 #   tls_native_lowlevel.cyr the SHA-256 clone copy back to `TLS_SHA256_CTX_LEN`                 -> axis 6
 #   tls_native_lowlevel.cyr `var TLS_SHA256_CTX_LEN = 144;` (the twin undone)                  -> axes 3 + 6 (floor)
+# MUTATION LEDGER (6.7.18, the lib review, in the tree, each RED naming its site):
+#   pam.cyr as 6.7.18 opened it (`var PAM_MAX_PASSWORD = 512;`, `pbuf[520]`, `memset(&pbuf, 0, 520)`) -> axes 1 + 3
+#   pam.cyr the length check back to `plen > PAM_MAX_PASSWORD`                                  -> axes 1 + 6
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -141,6 +144,12 @@ need lib/ws_server.cyr 1 'var cbuf\[_WSS_CBUF\];' "ws_server_recv's control-fram
 need lib/ws_server.cyr 1 'if \(part > _WSS_CBUF\) \{ part = _WSS_CBUF; \}' "the reserved-opcode drain reads the chunk it sized"
 need lib/ws.cyr 1 'var resp\[_WS_HS_MAX\];' "ws_connect's header-block buffer (audit finding 19)"
 need lib/ws.cyr 1 '_net_os_recv\(sock, &resp \+ got, _WS_HS_MAX - got\)' "the handshake read fills no more than it sized"
+# 6.7.18 (the lib review): pam_unix_authenticate's password copy was `pbuf[520]` beside the public
+# PAM_MAX_PASSWORD, which was also its bound — a caller that raised the var had a longer password
+# memcpy'd over the copy and the frame.
+need lib/pam.cyr 1 'var pbuf\[_PAM_MAX_PASSWORD \+ 8\];' "pam_unix_authenticate's password copy (the password and its NUL)"
+need lib/pam.cyr 1 'memset\(&pbuf, 0, _PAM_MAX_PASSWORD \+ 8\);' "...wiped at the size it holds"
+need lib/pam.cyr 1 'if \(plen > _PAM_MAX_PASSWORD\) \{ return PAM_AUTH_FAIL; \}' "...and refused past the bound it was sized by"
 
 echo "axis 2 — each private bound is a const:"
 for row in "lib/log.cyr:_LOG_LINE_MAX" "lib/math.cyr:_F64P_DEC_CAP" "lib/process.cyr:_PROC_KILL_STATE" \
@@ -160,7 +169,8 @@ for row in "lib/tls_native.cyr:TLS_RECORD_MAX_PLAINTEXT" "lib/tls_native.cyr:TLS
            "lib/tls_native_hs12.cyr:TLS12_VERIFY_DATA_LEN" "lib/tls_native_hs12.cyr:TLS12_RANDOM_LEN" \
            "lib/tls_native_hs13.cyr:TLS_RANDOM_LEN" "lib/async_macos.cyr:KEV_SIZE" \
            "lib/thread_local.cyr:TLS_REG_MAX" "lib/syscalls_x86_64_agnos.cyr:SPAWN_ARGV_MAX" \
-           "lib/syscalls_x86_64_agnos.cyr:SPAWN_ENV_MAX" "lib/thread_local.cyr:TLOCAL_MAX_SLOTS"; do
+           "lib/syscalls_x86_64_agnos.cyr:SPAWN_ENV_MAX" "lib/thread_local.cyr:TLOCAL_MAX_SLOTS" \
+           "lib/pam.cyr:PAM_MAX_PASSWORD"; do
     f=${row%%:*}; v=${row#*:}
     if grep -qE "^const _$v *= *[^;]+;" "$f" && grep -qE "^var $v *= *_$v;" "$f"; then _ok "$f: $v = _$v"
     else _fail "$f: expected 'const _$v = N;' and 'var $v = _$v;' — a literal in the var is a second copy of the bound its buffers are sized by"; fi

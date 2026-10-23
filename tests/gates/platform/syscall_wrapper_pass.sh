@@ -184,13 +184,14 @@ check "Linux arm sits after setsockopt 54→208 (else re-caught)" after "$ord"
 # compiles clean on agnos and is simply wrong at runtime — mutation-verified, the
 # cross-compile axis stayed green against exactly that edit. Nothing short of running on
 # agnos catches it behaviourally, so assert the SHAPE: every agnos arm of a
-# length-carrying wrapper must compute a strlen (`while (load8(... ) != 0)`) before the
+# length-carrying wrapper must compute a strlen (`= strlen(...)`, or the hand-rolled
+# `while (load8(... ) != 0)` lib/io.cyr spelled it as until the 6.7.18 lib review) before the
 # call. Same class as the trap xrmdir was added for at v6.5.2.
 echo "axis 4b — each x* agnos arm computes a length (arity matches, so nothing else can see this):"
 for fn in xmkdir xsymlink xreadlink xlink; do
     body=$(awk "/^fn $fn\(/,/^}/" lib/io.cyr)
     agnos=$(printf '%s\n' "$body" | awk '/#ifdef CYRIUS_TARGET_AGNOS/,/#endif/')
-    n_len=$(printf '%s\n' "$agnos" | grep -c 'while (load8(' || true)
+    n_len=$(printf '%s\n' "$agnos" | grep -cE 'while \(load8\(|= strlen\(' || true)
     want=1
     if [ "$fn" = "xsymlink" ] || [ "$fn" = "xlink" ]; then want=2; fi
     check "$fn agnos arm computes $want length(s)" "$want" "$n_len"
