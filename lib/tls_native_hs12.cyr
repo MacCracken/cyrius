@@ -151,6 +151,9 @@ const _TLS12_RANDOM_LEN     = 32;       # client/server Random (RFC 5246 §7.4.1
 # Read-only mirror of `_TLS12_RANDOM_LEN`: lib/ reads the const; a write changes nothing (D16). CHANGELOG [6.7.12]
 var TLS12_RANDOM_LEN        = _TLS12_RANDOM_LEN;
 const _TLS12_SEED_LEN       = 2 * _TLS12_RANDOM_LEN;   # the PRF seed: one Random after the other
+# The key_block an AEAD suite needs (2 * key_len + 2 * iv_len, at most 2 * 32 + 2 * 12 = 88), rounded up to
+# whole words: tls_native_12_derive_keys's buffer and its guard. CHANGELOG [6.7.18]
+const _TLS12_KEY_BLOCK_MAX  = 96;
 
 # TLS 1.2 "fixed_iv_length" per ciphersuite — distinct from the 1.3
 # 12-byte IV: AES-GCM uses a 4-byte implicit salt (the 8-byte explicit
@@ -1151,7 +1154,7 @@ fn tls_native_12_compute_premaster(ctx, peer_pub, out): i64 {
 fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
     # The key_block (every key and IV of the epoch, at most 2 * 32 + 2 * 12 = 88 bytes) is a
     # `secret var`, zeroised on every return (it was a _tn_alloc abandoned un-wiped). CHANGELOG [6.7.18]
-    secret var kb_b[96];
+    secret var kb_b[_TLS12_KEY_BLOCK_MAX];
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
     var master = _tn_alloc(ctx, TLS12_MASTER_SECRET_LEN);
     if (master == 0) { return TLS_ERR_OOM; }
@@ -1186,7 +1189,7 @@ fn tls_native_12_derive_keys(ctx, premaster, pm_len): i64 {
     var sr = load64(ctx + TLS_CTX_OFF_SERVER_RANDOM);
     var kb_len = tls_native_12_key_block_len(identity);
     if (kb_len < 0) { return TLS_ERR_CIPHER_NOT_SUPPORTED; }
-    if (kb_len > 96) { return TLS_ERR_INTERNAL; }
+    if (kb_len > _TLS12_KEY_BLOCK_MAX) { return TLS_ERR_INTERNAL; }
     var kb = &kb_b;
     if (tls_native_12_key_block(identity, master, cr, sr, kb, kb_len) != TLS_OK) {
         return TLS_ERR_INTERNAL;
