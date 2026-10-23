@@ -3562,241 +3562,11 @@ fn _fn_nop_compact(S, fi, fn_start, bp_x86): i64 {
     }
     return 0;
 }
-fn _PARSE_FN_DEF_IMPL(S): i64 {
-    var _is_async = 0;
-    var _async_noff_f = 0;
-    var _cfn_here = _pending_cfn;   # 6.7.2 (C1): the dispatch consumed a `const` prefix
-    _pending_cfn = 0;
-    # v6.3.11 (G): the pass-2 dispatch already consumed the leading `async` (token
-    # 134) and set _pending_async, so the cursor is at `fn` here. (The async token is
-    # consumed in the dispatch, not here, so the DCE pre-check reads the real fn name.)
-    if (_pending_async == 1) {
-        _pending_async = 0;
-        _ensure_async_gate(S);
-        # A refused `async fn` compiles as a plain fn: lowering it anyway needed lib/alloc.cyr
-        # for a Future nothing will run, and reported a second error for it. CHANGELOG [6.6.9]
-        if (_ASYNC_OK == 0) { ERR_MSG(S, "async fn requires CYRIUS_ASYNC=1 (async/await are gated)", 56); }
-        else { _is_async = 1; }
-    }
-    var _defstart_ti = GTI(S);   # v6.3.10: the `fn`-keyword token, for instance re-emit
-    STI(S, GTI(S) + 1);  # consume FN
-    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-    var noff = PEEKV(S);
-    STI(S, GTI(S) + 1);
-    # Skip generic parameters if present: fn foo<T, U>(...)
-    # v6.3.9 (F-fns): capture <T> names (flag-off = old SKIP_GENERICS skip); stored
-    # into _fnt_tparams[fi] once fi is resolved below (fi isn't known until the name
-    # is mangled + registered, so the packed names ride _gtp until then).
-    var _gtp = _capture_tparams(S);
-    # Mangle name if inside a module: mod_fn
-    var mmod = GMOD(S);
-    # v6.3.10 (instantiate-once): re-emitting a specialized instance — the mangled
-    # name `foo$ty` is already fully formed, so use it verbatim and skip module
-    # mangling. (_inst_name is set only by the instantiate trigger's re-invoke.)
-    if (_inst_name != 0) { noff = _inst_name; mmod = 0; }
-    # 6.6.5 — one mangler, shared with pass 1 (see _mod_name_intern). Pass 1 now mints
-    # `Type_method` / `mod_fn` first, so this call finds that exact string and REUSES it
-    # instead of minting a second copy; pool growth is unchanged either way.
-    noff = _mod_name_intern(S, mmod, noff);
-    _RSV_INTRINSIC_DECL(S, noff, _defstart_ti + 1, 1);   # 6.6.20: `fn mulh64` / `fn fncallN` / `fn sizeof`
-    # v6.3.11 (G): async fn — the user name `f` becomes a Future constructor
-    # (synthesized after the body, below); the body itself is emitted under `f$impl`.
-    # Generic async (`async fn f<T>`) is deferred — error rather than miscompile.
-    if (_is_async == 1) {
-        if (_gtp != 0) { ERR_MSG(S, "async generic fns not yet supported", 35); }
-        _async_noff_f = noff;
-        noff = _mint_impl_name(S, noff);
-    }
-    # Register or find fn.
-    # v5.7.9: detect duplicate fn definitions across translation
-    # units. If FINDFN returns an existing slot AND that slot already
-    # has a non-(-1) body offset, this is a re-definition that
-    # silently overwrites the previous body. Pre-v5.7.9, the
-    # overwrite was completely silent — `lib/json.cyr fn json_build/1`
-    # vs `lib/patra.cyr fn json_build/6` was the surfaced case
-    # (last-include wins; the build appeared to succeed; calls to
-    # the losing arity miscompiled). Forward declarations (slot
-    # registered with offset=-1 by an earlier call site that landed
-    # before the definition) leave the offset at -1, so the call
-    # below does not fire on them — only on actual re-definitions.
-    # v6.5.38 — visibility is now needed BEFORE the duplicate decision, so it is computed
-    # here rather than after `fi` resolves (where Phase 1 originally stamped it). Whether
-    # this definition is private decides whether a same-named definition SPLITS into its
-    # own symbol or overwrites the existing one.
-    var _vis_fid = FM_FILEID(S, GTLINE(S, _defstart_ti));
-    var _this_priv = 0;
-    if (_pub_pending == 0) { if (_PRIV_FILE(_vis_fid) == 1) { _this_priv = 1; } }
-    # v6.6.4: a monomorphized INSTANCE inherits its BASE's visibility. The instance is
-    # emitted by re-parsing the base's tokens from its `fn` keyword, so `_pub_pending`
-    # is long consumed and `_PRIV_FILE` answers for the lib file — which stamped every
-    # instance of a `public fn pgen<T>` in a private file PRIVATE, and refused
-    # `pgen<i32>(42)` from another file while `pgen(42)` (the i64 base) was accepted.
-    if (_inst_name != 0) {
-        _this_priv = 0;
-        if ((GFLG(S, _inst_base_fi) & 64) != 0) { _this_priv = 1; }
-    }
-
-    _dup_prev_pc = 0 - 1;
-    _dsg_on = 0;
-    # 6.6.5 — PASS 1 IS THE AUTHORITY. `_fn_by_defti` finds the entry pass 1 registered for
-    # THIS definition (matched on its `fn` token), which does two things:
-    #   * the entry is this definition's own, so the v6.5.38 per-file split has already
-    #     happened in pass 1 — before any forward call could bind to the wrong one;
-    #   * `_this_priv` is taken from that stamp rather than recomputed. Pass 2 computes
-    #     visibility a SECOND time and gets it wrong in one case: its top-level `var` skip
-    #     re-arms `public` and never consumes it, so the next fn was stamped public in a
-    #     private file. That was masked only because the pass-1 bit was never cleared;
-    #     clearing it (below, at the stamp) without this would have exposed it.
-    # An instance (`_inst_name != 0`) is re-parsed from the BASE's tokens, so its def-start
-    # names the base — it deliberately bypasses this and keeps the v6.6.4 inherited bit.
-    var fi = 0 - 1;
-    if (_inst_name == 0) { fi = _fn_def_find(S, noff, _defstart_ti); }
-    if (fi >= 0) {
-        # ⚠ Only when nothing has CLAIMED the entry yet. Two same-file definitions of one
-        # name share an entry (that is a redefinition, not a collision — it must keep
-        # warning), and an entry holds ONE bit, so after the first definition emitted its
-        # body the bit describes whichever definition wrote last. Measured: `public fn h()`
-        # followed by `fn h()` in a private file came out PUBLIC, where every release since
-        # v6.5.0 made it private. An offset >= 0 means an earlier definition owns this slot,
-        # so this one keeps the visibility it computed for itself.
-        if (L64(_fnt_offsets + fi * 8) < 0) {
-            _this_priv = 0;
-            if ((GFLG(S, fi) & 64) != 0) { _this_priv = 1; }
-        }
-    } else {
-        # Not found — a monomorphized instance, an async fn's `f$impl`, or an earlier definition
-        # of a redefined fn (pass 1 keeps the last one's start). A fn inside a top-level block is
-        # prescanned since 6.6.17 (`_prescan_block_fn`; one inside a fn body is refused, parse/stmt.cyr
-        # `_refuse_nested_fn`). The v6.5.38 identity rule still applies; it lives in
-        # `_fn_def_slot` now so pass 1 and pass 2 cannot drift apart about what a definition owns.
-        fi = _fn_def_slot(S, noff, _vis_fid, _this_priv);
-        _pd_late(S, fi, GTI(S), _is_async);   # 6.7.7 (B6): an instance's defaults are its base's
-    }
-    var _dup_off = L64(_fnt_offsets + fi * 8);
-    if (_dup_off >= 0) {
-        # v6.5.37: remember the loser's arity + file; the comparison happens once this
-        # definition's own parameter list has been counted (see _fnt_params store below).
-        _dup_prev_pc = L64(_fnt_params + fi * 8);
-        _dup_prev_fid = GFFI(S, fi);
-        _dsg_save(S, fi);   # 6.6.20: and the rest of its call signature (see _dsg_check)
-        # v6.5.19 (agnosai filing) — TWO fixes to this one warning:
-        #  * `_err_head_at(S, _defstart_ti)` instead of `_err_head(S)`. The cursor
-        #    has already consumed `fn` and the NAME by here, so the plain head put
-        #    the column on the `(` of the parameter list rather than on the
-        #    definition. `_defstart_ti` is the `fn` keyword itself.
-        #  * name the file the FIRST definition came from. GFFI still holds it —
-        #    SFFI for THIS definition is written further down, after `fi` resolves —
-        #    so the consumer gets both ends of the collision instead of having to
-        #    infer "which copy wins" from a single position, which is the wrong
-        #    inference the filing had to retract twice.
-        _ew("warning:", 8);
-        _err_head_at(S, _defstart_ti);
-        _ew(": duplicate fn '", 16);
-        PRSTR(S + 0xEC00000 + noff);
-        _ew("' (last definition wins; first defined in ", 42);
-        _fm_print_fid(S, GFFI(S, fi));
-        _ew(")\n", 2);
-    }
-    if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
-    if (_cfn_here == 1) {   # 6.7.2 (C1): `const fn` — marked (pass 1 did too) and checked ONCE, here
-        SFCFN(S, fi, 1);
-        if (_inst_name == 0) { _ce_check_fn(S, fi); }
-    }
-    # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid). 6.6.20: NOT over a redefinition's
-    # (flag 2048) — pass 1 left the LAST definition's start, so an instance minted between the
-    # definitions is minted from the one that wins, not from the body in hand.
-    if (_gtp != 0) { if ((GFLG(S, fi) & 2048) == 0) { SFDS(S, fi, _defstart_ti + 1); } }
-    if (_gtp != 0) { if (_inst_name == 0) { _bnd_fn_record(S, fi, _gtp, _gen_def_open(S, fi)); } }   # 6.7.1 (C3): once (pass 1 did)
-    # v6.5.0 Phase 1 (public/private): stamp this fn's ORIGIN FILE, derived from the
-    # line of its `fn` keyword via the file map the preprocessor already builds for
-    # diagnostics (`#@file` markers -> FM_BUILD -> FM_FILEID). RECORDED ONLY — nothing
-    # reads this for a decision yet, so program codegen is unchanged; Phase 2 is what
-    # turns it into a visibility boundary.
-    #
-    # `_defstart_ti` is the `fn`-keyword token and is set unconditionally at the top of
-    # PARSE_FN_DEF, so this is exact for every definition rather than approximated from
-    # whatever token happens to be current. Deliberately placed HERE, after `fi` is
-    # resolved: a forward reference registers a slot from a CALL SITE, and attributing
-    # the fn to the caller's file would be precisely backwards.
-    SFFI(S, fi, _vis_fid + 1);   # v6.5.38: _vis_fid is computed above, before the dup split
-    # v6.5.0 Phase 2 — fn_flags bit 6 = PRIVATE. Set when this fn's own file opted in
-    # AND no `public` moniker preceded it. Default (no `private` anywhere) leaves the
-    # bit clear for every fn, so the whole feature is inert and byte-identical until a
-    # file asks for it.
-    #
-    # `_pub_pending` is cleared UNCONDITIONALLY, exactly like `_must_use_pending` and
-    # friends below. ⚠ That clear alone did NOT stop a stale marker from re-exposing an
-    # unrelated fn: a `public` on a struct / union / enum / impl / `use` was armed and
-    # never reached a definition until the NEXT fn or var — the hisab 2026-09-13 leak.
-    # Since v6.6.4 _TL_VIS arms the marker only for tokens that can carry it (see
-    # _PUB_CAN_ARM), PARSE_IMPL and the relaxed-ordering path clear it on entry, and the
-    # array + destructure var paths consume it themselves.
-    # 6.6.5 r3: a deferred reference can only become REPORTABLE when a new PRIVATE stamp
-    # lands (`_vis_report_late` reports nothing for a public callee), so the sweep's seq
-    # guard keys on this branch and not on SFFI. A compiland with no `private` anywhere —
-    # which is nearly all of them — then sweeps exactly ONCE instead of once per fn body.
-    if (_this_priv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); _vis_stamp_seq = _vis_stamp_seq + 1; }
-    # ⛔ 6.6.5 — and CLEAR it otherwise. The bit was only ever set, never cleared, so a
-    # stale pass-1 private stamp survived onto a PUBLIC definition. That is not
-    # hypothetical: with pass 1 keeping one entry per NAME, a private `_helper` in file A
-    # stamped the shared entry, and file B's public `_helper` inherited the bit — the
-    # guide's own two-file example was REFUSED, with no forward call involved, purely on
-    # include order, and the "omitted from the exported symbol table" promise applied to
-    # the wrong fn. CHANGELOG [6.6.5]
-    else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }
-    # An unattributable fn (FM_FILEID -1) can never be marked private, so enforcement
-    # would quietly stop applying. Say so once rather than degrade in silence.
-    if (_vis_fid < 0) { _vis_degraded_note(); }
-    _pub_pending = 0;
-    if (_fileid_dump_arm() != 0) { _fileid_dump_note(S, fi, noff); }
-    # v5.11.62: track the current fn for per-fn array-byte attribution.
-    # Initialize the slot to 0 — fn body may have been touched by an earlier
-    # forward-decl scan; this is the start of the body parse proper.
-    _cur_fn_ix = fi;
-    SFVB(S, fi, 0);
-    # v5.5.36 Phase 2b — clear fn's struct-return slot. The `: StructName`
-    # annotation after `)` sets it later if present; otherwise this fn
-    # returns a scalar value in rax as usual.
-    SFRS(S, fi, 0);
-    _bx_fn_reset(S, fi);   # 6.7.3: bit 4096 / the multi-return bits / the bool parameter row
-    # v5.5.36 Phase 3 — clear fn's variadic flag. Set to 1 in the
-    # param loop below if the user writes `fn f(a, ...)`.
-    SFVA(S, fi, 0);
-    # v4.8.4-alpha4: transfer any pending `#regalloc` directive onto
-    # this fn's metadata slot. Cleared whether consumed or not so a
-    # stale flag from a prior parse error can't leak to the next fn.
-    # v4.9.1: store 5 (max register count: rbx, r12-r15) for #regalloc fns.
-    # v5.6.22 O4c (partial): infrastructure for auto-enable shipped
-    # but DISABLED by default. CYRIUS_REGALLOC_AUTO_CAP=N opts in:
-    #   -1 = disabled (default; back to explicit #regalloc opt-in only)
-    #    N = first N fns get auto-enabled (bisection knob)
-    # v5.6.22 attempt at default-on auto-enable surfaced a global-array
-    # alignment regression (v5.5.21 fix interacts with auto-enable's
-    # code-size growth in some shape that v5.5.21's per-array pad
-    # misses; reproduces with `var rk[240]` + SSE m128 ops in
-    # the inline-asm-discard regression — then
-    # `tests/regression-inline-asm-discard.sh`, now the check driver's
-    # `_inline_asm_discard_gate` over tests/fixtures/inline_asm_discard/).
-    # Investigation pinned
-    # to v5.6.23 with proper alignment-debug budget. The picker
-    # correctness fix (loop-back time-share — extend last_cp = ra_end)
-    # is shipped here for opt-in #regalloc fns.
-    #
-    # x86-ONLY when enabled: the `_cur_fn_regalloc >= N` save/restore
-    # emits below are RAW x86 bytes (`mov [rbp-8], rbx` etc.).
-    #
-    # v5.6.23: scan body for inline asm (token 48). Inline asm blocks
-    # hardcode stack offsets like `mov rax, [rbp-0x08]` to read params
-    # and locals. The regalloc prologue reserves [rbp-8]..[rbp-40] for
-    # callee-saved register saves (rbx, r12-r15), shifting every
-    # subsequent local-var slot by N*8 bytes. Asm reading the old
-    # offsets gets the saved RBX value instead of its expected param —
-    # SIGSEGV when the asm dereferences it. lib/fnptr.cyr,
-    # lib/thread.cyr, lib/atomic.cyr, lib/hashmap_fast.cyr, lib/u128.cyr,
-    # lib/thread_local.cyr, lib/fdlopen.cyr, lib/args_macos.cyr all
-    # carry asm blocks that depend on the standard prologue layout.
-    # Skip regalloc when body contains asm. Misframed at v5.6.22 ship as
-    # an "alignment regression" — the actual bug is layout mismatch.
+# 6.7.18 — _PARSE_FN_DEF_IMPL's signature-side and body-side pieces, each its own fn (this one and the eight below),
+# so that fn keeps headroom under the per-fn x86 jump tables (see _fn_lase). Moved verbatim; each call site keeps its
+# place. CHANGELOG [6.7.18]
+# 1 when the fn's body (from the cursor at its parameter list) holds inline asm (token 48).
+fn _fn_has_inline_asm(S): i64 {
     var _has_inline_asm = 0;
     var _ia_save_ti = GTI(S);
     if (PEEKT(S) == 10) {
@@ -3823,18 +3593,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
     }
     STI(S, _ia_save_ti);
-
-    # v5.6.24 default-on: _ra_auto_cap semantics:
-    #   < 0  → uncapped (every eligible fn) — DEFAULT
-    #   == 0 → disabled (explicit #regalloc opt-in only)
-    #   > N  → first N eligible fns (bisection knob)
-    # "Eligible" = x86 backend + no inline asm in body.
-    # v5.6.23 fixed misdiagnosed asm/regalloc layout collision.
-    # v5.6.24 fixed the picker bug surfaced by the default-on attempt:
-    # SysV ECALLPOPS used r12-r14 as scratch for 8+ arg calls; under
-    # regalloc the picker pinned caller's locals to those callee-saved
-    # regs, so calls silently corrupted the locals. Rewrote ECALLPOPS
-    # to use only r10 + direct [rsp+offset] addressing.
+    return _has_inline_asm;
+}
+# The pending attributes (#regalloc and its auto-enable, #must_use .. #naked, #inline) applied to fn `fi`; returns
+# 1 when `fi` asked to be inlined. Out of _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm). CHANGELOG [6.7.18]
+fn _fn_attrs(S, fi, noff, _has_inline_asm): i64 {
     var _auto_enable = 0;
     if (_AARCH64_BACKEND == 0) {
         if (_has_inline_asm == 0) {
@@ -3936,28 +3699,11 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_fn_inline_req == 0) {
         if (_pp_inl_has(S + 0xEC00000 + noff) == 1) { _fn_inline_req = 1; }
     }
-    _cur_fn_is_pure = (GFLG(S, fi) >> 3) & 1;
-    # v4.8.4-alpha5: mirror fn_regalloc[fi] into _cur_fn_regalloc so
-    # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
-    # the end of PARSE_FN_DEF.
-    _cur_fn_regalloc = GFRA(S, fi);
-    _ra_used_n = 0;            # v6.3.29 frame-trim: max callee-saved reg the picker assigns, +1
-    _cur_fn_has_closure = 0;   # v6.3.7 — set by PARSE_FACTOR when this fn emits a closure
-    # v5.5.36 Phase 2b — look ahead past the param list to see whether
-    # the fn signature carries a `: StructName` return annotation. We
-    # need the answer BEFORE param parse begins so local-disp shifts
-    # account for the retptr stash slot (reserved immediately after
-    # regalloc saves, before any regular local). Cheap one-pass scan
-    # that pops TI back to its original position; parenthesis depth
-    # tracking handles nested parens in default-value expressions
-    # (future-proof; current cyrius fn params are name-only or
-    # `name: Type`).
-    _cur_fn_ret_stash = 0;
-    _cur_fn_ret_scalar = 0;
-    _cur_fn_ret_pair = 0;
-    _cur_fn_pslots = 0;   # 6.6.6 — recorded at the end of the parameter loop
-    _cur_fn_ptrp = 0;     # 6.6.10 — `p: *T` parameters, set in the parameter loop
-    _cur_iself_sid = 0;   # 6.7.0 (A4) — an impl method's untyped `self`, set in the parameter loop
+    return _fn_inline_req;
+}
+# The return-stash look-ahead (sets _cur_fn_ret_stash / _cur_fn_ret_pair; the cursor is left where it was). Out of
+# _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm). CHANGELOG [6.7.18]
+fn _fn_ret_stash_scan(S, fi): i64 {
     var _rs_save_ti = GTI(S);
     if (PEEKT(S) == 10) {
         STI(S, GTI(S) + 1);
@@ -4226,6 +3972,555 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
     }
     STI(S, _rs_save_ti);
+    return 0;
+}
+# A duplicate definition whose arity disagrees with the earlier one is refused. Out of _PARSE_FN_DEF_IMPL (see
+# _fn_has_inline_asm). CHANGELOG [6.7.18]
+fn _fn_dup_arity(S, noff, pc, _defstart_ti): i64 {
+    if (_dup_prev_pc >= 0) {
+        if (_dup_prev_pc != pc) {
+            _ew("error:", 6);
+            _err_head_at(S, _defstart_ti);
+            _ew(": duplicate fn '", 16);
+            PRSTR(S + 0xEC00000 + noff);
+            _ew("' disagrees about arity: this one takes ", 40);
+            PRNUM(pc);
+            _ew(", the one in ", 13);
+            _fm_print_fid(S, _dup_prev_fid);
+            _ew(" takes ", 7);
+            PRNUM(_dup_prev_pc);
+            _ew(" (last definition wins, so calls to the other arity would silently mis-bind)\n", 77);
+            _had_error = 1;
+        }
+        _dup_prev_pc = 0 - 1;
+    }
+    return 0;
+}
+# The `: T` return annotation. Out of _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm). CHANGELOG [6.7.18]
+fn _fn_ret_ann(S, fi): i64 {
+    # v5.5.36 Phase 2b — optional `: StructName` return-type annotation:
+    # `fn make(): Point { ... return p; }`. Sets fn_ret_sid[fi] = sid;
+    # PARSE_RETURN + call-site consult it to emit the Win64 hidden-RCX /
+    # SysV-RDI retptr convention (see main.cyr heap map 0x15A000).
+    if (PEEKT(S) == 49) {
+        STI(S, GTI(S) + 1);                         # consume ':'
+        # v6.5.21 — multi-value return `: (T1, T2[, T3])`. Handled before the
+        # single-type path because that path requires an IDENT and would report
+        # `expected identifier, got '('`.
+        if (PEEKT(S) == 10) {
+            _parse_multiret_sig(S, fi, 0);
+            _cur_fn_ret_scalar = MULTIRET_SID;
+        } elif (_ret_ann_alt(S, fi) == 0) {   # `: *T` (6.6.17) and a slice (6.7.8, refused) are taken there
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var rt_noff = PEEKV(S);
+            # v6.3.5 CO-01 — classify the return type via the shared
+            # _classify_return_type so the pass-1 _prescan_fn_sig records the
+            # identical struct-return / scalar ABI. Positive = struct sid;
+            # negative = scalar/extended encoding; 0 = unrecognized.
+            var _rtc = _classify_return_type(S, rt_noff);
+            if (_rtc == 0) {
+                # v6.3.9 (F-fns): `: T` where T is a captured type-param is a valid
+                # GENERIC return. The base signature treats it as an i64-scalar return
+                # (-8); the concrete return is per-instantiation (the inline-replay body
+                # leaves the value in rax). Struct-typed generic returns (retptr ABI)
+                # ride the struct-interaction work (v6.3.10). Non-tparam unknowns error.
+                if (_is_tparam_of(S, fi, rt_noff) == 1) {
+                    _rtc = _gtype_tp_ret(S, fi, rt_noff);   # 6.6.10: an instance's `: T`, T = Pt
+                    if (_rtc == 0) { _rtc = 0 - 8; }
+                }
+                # v6.5.19: `: T` where T is a struct declared in a SIBLING FILE is a
+                # RESOLUTION failure, and under --syntax-only it must not become an error at
+                # all. Measured on agnosai, which BUILDS GREEN yet had 3 of its files
+                # condemned by `cyrius lint`: this ERR_MSG sets _panic, _sync_skip then
+                # resyncs mid-declaration, and the desynced parse MANUFACTURES
+                # `expected ';', got '='` — which IS in the syntax class, so lint refused a
+                # module whose only sin was lacking its includes. Same shape as the struct
+                # FIELD sites fixed earlier this release, at the return-type site they
+                # missed; and the same cascade hazard `_syntax_only`'s comment documents.
+                # Treating it as an i64 scalar return keeps the token stream in sync, which
+                # is all the pre-pass needs. A real build is untouched — _syntax_only is 0.
+                # 6.6.16 (C8): _tn_ret_refuse names the type, once, with no cascade (and skips
+                # a `<..>` after it); under --syntax-only it refuses nothing and answers -8.
+                else { _rtc = _bx_ret_or_refuse(S, fi, rt_noff); }   # 6.7.3: `: bool` is an i64, bit 4096
+            }
+            if (_rtc > 0) { _rtc = _gtype_sid_def(S, fi, _rtc); }   # 6.6.10: `: Box<Pt>`; 6.7.14 (D6): checked
+            SFRS(S, fi, _rtc);
+            if (_rtc > 0) {
+                _cur_fn_ret_sid = _rtc;
+                STI(S, GTI(S) + 1);
+                _ngt_refuse(S, GTI(S) - 1);   # 6.7.15 (D6): `: Pt<..>` refused at the name
+                SKIP_GENERICS(S);
+            } else {
+                _cur_fn_ret_scalar = _rtc;
+                STI(S, GTI(S) + 1);
+                _ngt_skip(S);   # 6.7.16 (D7): `: i64<u8>` refused at the name (it was "expected '{', got '<'")
+            }
+        }
+    }
+    return 0;
+}
+# An `async fn`'s coroutine setup at its body's top. Out of _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm).
+# CHANGELOG [6.7.18]
+fn _fn_coro_open(S): i64 {
+    # v6.5.69 — COROUTINE SETUP. An `async fn` body becomes a state machine: its locals live
+    # in the heap object the runtime hands back on every resume, and the fn top dispatches to
+    # the suspend point it left from. Stack slot 0 holds the frame base (param 0 = SELF); every
+    # local from slot 1 up is a coroutine-frame slot.
+    # ⚠ x86 family only. The redirect and the dispatch are emitted through x86-specific paths,
+    # and a coroutine compiled without them would read a frame destroyed at the last suspend.
+    # A hard error is the contract; a quiet stack-frame body is the miscompile.
+    if (_pending_coro == 1) {
+        if (_AARCH64_BACKEND != 0) {
+            ERR_MSG(S, "`async fn` mid-body suspend is x86-only so far (aarch64 has no coroutine frame yet)", 83);
+        }
+        if (_TARGET_CX != 0) {
+            ERR_MSG(S, "`async fn` mid-body suspend is x86-only so far (the cx backend has no coroutine frame yet)", 90);
+        }
+        _cur_fn_coro = 1;
+        _coro_base = 0;
+        _coro_lo = 1;
+        _coro_nsusp = 0;
+        # The regalloc picker's post-emit byte peephole matches `[rbp+disp32]` moves; a coro
+        # body's locals are `[r11+disp32]`, and its stack frame does not survive a suspend.
+        # Reuse the existing "do not run the picker over this body" signal.
+        _cur_fn_has_closure = 1;
+        # Home the ONE incoming register argument — SELF, the coroutine frame — into the
+        # reserved stack slot 0. Every `[r11+off]` local access loads its base from here.
+        ESTOREPARM(S, 0, _coro_base, 1);
+        _coro_top_jmp = EJMP0(S);   # jmp DISPATCH — patched at fn end
+        _coro_entry_cp = GCP(S);    # state 0 lands here
+    }
+    return 0;
+}
+# A generic base fn's body that no i64 instance compiles: walked, not parsed, and a dead `rax = 0` stub emitted. Out
+# of _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm). CHANGELOG [6.7.18]
+fn _fn_b3_stub(S, fi, _defstart_ti): i64 {
+    _unp_rec(S, 0, fi, _gen_def_open(S, fi), GTI(S), _defstart_ti);   # 6.7.17: read when no instance parses it
+    var _b3_bd = 1;
+    _rbs_begin(S, fi);   # 6.7.17 (D1): a rebound T-typed name's `x.f` / `x.m(` here, refused as a plain fn's
+    while (_b3_bd > 0) {
+        var _b3t = PEEKT(S);
+        if (_b3t == 12) { break; }               # EOF guard
+        _rbs_tok(S);
+        # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
+        # instance ever re-parses this body. See `_refuse_nested_fn` (parse/stmt.cyr).
+        if (_b3_skip_tok(S) == 0) {   # 6.7.16 (D2): and a `return &n;` (`_ret_amp_stub`)
+            if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
+            elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
+            STI(S, GTI(S) + 1);
+        }
+    }
+    EMOVI(S, 0);                                  # dead stub: rax = 0
+    return 0;
+}
+# An `async fn`'s resume dispatch at its body's end. Out of _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm).
+# CHANGELOG [6.7.18]
+fn _fn_coro_dispatch(S): i64 {
+    # v6.5.69 — THE RESUME DISPATCH, emitted at fn END where every landing pad is already a
+    # known code position, so only the single forward jump from the fn top needs patching.
+    # ⚠ A COMPARE CHAIN, NOT A JUMP TABLE. `PARSE_SWITCH`'s table path is x86-only — it sets
+    # `use_table = 0` for aarch64 and cx — and the table is DATA inside `.text`, which the
+    # whole-program compactor's own notes flag as the thing a linear decoder walks into. The
+    # chain is what that parser itself falls back to and it needs no new machinery.
+    if (_cur_fn_coro == 1) {
+        # 6.6.10 — A BODY THAT FALLS OFF ITS END COMPLETES with 0, through the return landing
+        # (its defers, then `_coro_mark_done`). The dispatch below sits right after the body, so
+        # a fall-off ran into it, read C[state] and jumped back to the last resume label: the
+        # force that should have completed the coroutine never returned. The plain-fn path got
+        # this routing in 6.6.7 (`_defer_emit_init`); the coroutine path never did.
+        EMOVI(S, 0);
+        vec_push(rp_vec, EJMP0(S));
+        EPATCH(S, _coro_top_jmp);
+        _coro_flc = GFLC(S);
+        _coro_done_check(S);
+        var _dk = 1;
+        while (_dk <= _coro_nsusp) {
+            EFLLOAD(S, _coro_base);           # rax = C  (slot < _coro_lo: the stack path)
+            EADDRA_IMM(S, _CORO_STATE_OFF);
+            ELOAD64(S);                       # rax = C[state]
+            EPUSHR(S);
+            EMOVI(S, _dk);
+            EPOPC(S);                         # rcx = _dk
+            ECMPR(S);
+            var _dp = EJCC(S, 0x85);          # jne -> next comparison
+            EJMP(S, L64(&_coro_rcp + _dk * 8));
+            EPATCH(S, _dp);
+            _dk = _dk + 1;
+        }
+        # 6.6.7 — state 0 (first entry) zeroes the defer flags, which live in the heap frame and
+        # so could not be zeroed at fn entry (SELF is homed only after it), and must NOT be
+        # re-zeroed on a resume or a defer registered before an await would be forgotten.
+        _defer_zero_flags(S);
+        EJMP(S, _coro_entry_cp);              # state 0 -> the top of the real body
+        # Hand the frame size to the constructor, which is emitted AFTER this body and so
+        # already knows how big the coroutine frame has to be — the one piece of luck in the
+        # whole layout, and the reason no second pass is needed.
+        # (`_coro_flc` was taken at the top of this dispatch, before `_coro_done_check`.)
+        _coro_was = 1;
+        # 6.6.7: `_cur_fn_coro` stays 1 until the defer walker is emitted (see the epilogue).
+    }
+    return 0;
+}
+# The body's end recorded and fn `fi` classified as an inline candidate (and an #inline that cannot be honoured
+# warned). Out of _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm). CHANGELOG [6.7.18]
+fn _fn_inline_decide(S, fi, pc, _is_async, _ipt_pack, _fn_inline_req, _async_noff_f): i64 {
+    # Record body end and classify inline candidate. v6.4.0 DECOUPLE: generic fns only.
+    if (_INLINE_OK == 1 || _fn_inline_req == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) {
+        SFBE(S, fi, GTI(S));
+        var btokens = GTI(S) - GFBS(S, fi);
+        var can_inline = 1;
+        var _inl_why = 0;
+        if (pc > 2) { can_inline = 0; _inl_why = 1; }
+        if (_is_async == 1) { can_inline = 0; _inl_why = 8; }   # 6.7.14: first — never replayed
+        if (_pd_row(fi) != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 7; } }   # 6.7.7 (B6): a call may fill
+        # v6.3.9 (F-fns): ceiling 16->32 — admits slightly larger straight-line
+        # generic/inline bodies. pc<=2 (above) + the forbidden-token scan below
+        # (no control-flow / var-decl) are UNCHANGED, so inl_packed (2 param
+        # offsets) capacity is untouched. Only fires under _INLINE_OK/_MONOMORPH_OK
+        # (this whole block is gated) → default cycc self-host is byte-identical.
+        if (btokens > 32) { can_inline = 0; if (_inl_why == 0) { _inl_why = 2; } }
+        # v6.3.37 (C1) — a struct-typed or `*T` parameter cannot ride the inline replay;
+        # `_inl_param_why` says why and walks the parameter SLOTS.
+        if (can_inline == 1) {
+            var _pwhy = _inl_param_why(S);   # 6.6.20: by SLOT, and a `*T` parameter too (see there)
+            if (_pwhy != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = _pwhy; } }
+        }
+        if (can_inline == 1) {
+            var sci = GFBS(S, fi);
+            while (sci < GTI(S)) {
+                var st = TOKTYP(S, sci);
+                if (st == 15) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                if (st == 16) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                if (st == 55) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                # 6.7.5 (B5): `do`, and the contextual `loop {` — no token, so the three tests above
+                # never see it, and a body holding a `loop` was the one loop form replayed.
+                if (st == 172 || _TOK_IS_LOOP_AT(S, sci) == 1) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                # 6.6.7 — a `defer` / `secret var` belongs to the fn that REGISTERS it, and the
+                # replay re-parses this body inside the CALLER, so the block would join the
+                # caller's defer table and run at the CALLER's return (measured: `g(5); seen =
+                # cran;` read 0, the block ran twice at the caller's end). Not opt-in: every small
+                # generic fn and SIMD-param fn is a candidate. It also has to stay out because
+                # the caller's `_body_has_defer` prescan cannot see a replayed block, so the
+                # caller could still tail-call past it. CHANGELOG [6.6.7]
+                if (st == 106 || st == 108) { can_inline = 0; if (_inl_why == 0) { _inl_why = 5; } }
+                # v6.5.52 — a body `var` decl is allowed for SIMD-param fns. The value-form
+                # wrappers all declare a scratch (`var r: f32v4; f32v_add(&r,&a,&b,4); return r;`),
+                # so the blanket exclusion kept out exactly the fns this arc needs. Body locals
+                # allocate at GFLC, which the replay has already advanced past the param slots,
+                # so they land above them. Kept for every other fn: this stays scoped to the
+                # targeted admission rather than widening general inlining.
+                if (st == 3) { if (_fn_has_simd_param(S, pc) == 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } } }
+                sci = sci + 1;
+            }
+        }
+        if (can_inline == 1) {
+            # v6.5.52: the replay needs param TYPES as well as names — GFINL carries only the
+            # two name offsets, which is why a wide param was bound into an 8-byte slot.
+            SFIPT(S, fi, _ipt_pack);
+            # v6.5.52 — pack the NAMED slot of each param, not slots 0 and 1.
+            # ⛔ THIS IS WHY WIDE PARAMS CRASHED THE COMPILER. A param occupies
+            # `_ipt_slots` slots with (n-1) ANON fillers BEFORE its named slot, so for a
+            # 16-byte param the name lives at slot 1, not slot 0 — and slot 0 holds the anon
+            # marker `0 - 1`. Packed through `& 0xFFFFFFFF` that becomes 0xFFFFFFFF, which is
+            # POSITIVE as an i64, so FINDLOCAL's `if (sn >= 0)` guard lets it through and hands
+            # 4294967295 to STREQ as a name offset. Measured at the fault: rsi = 0xffffffff.
+            var _n0 = _ipt_slots(S, _ipt_sltype(_ipt_pack, 0)) - 1;
+            var _n1 = _n0 + _ipt_slots(S, _ipt_sltype(_ipt_pack, 1));
+            if (pc == 2) { SFINL(S, fi, (L64(S + 0x5D9D000 + _n1 * 8) << 32) | (L64(S + 0x5D9D000 + _n0 * 8) & 0xFFFFFFFF)); }
+            elif (pc == 1) { SFINL(S, fi, L64(S + 0x5D9D000 + _n0 * 8)); }
+            elif (pc == 0) { SFINL(S, fi, 1); }
+        } else { SFINL(S, fi, 0); }
+        # v6.5.63 — AN IGNORED `#inline` MUST SAY SO. The whole reason this directive exists
+        # is that consumers were annotating for an optimisation that was not there; a request
+        # that silently does nothing is that same defect with a token in front of it. Name the
+        # constraint that refused it so the author can restructure or drop the marker.
+        if (_fn_inline_req == 1) {
+            if (can_inline == 0) {
+                if (_inl_why == 1) { WARN(S, "#inline ignored: fn takes more than 2 parameters", 48); }
+                if (_inl_why == 2) { WARN(S, "#inline ignored: body exceeds 32 tokens", 39); }
+                if (_inl_why == 3) { WARN(S, "#inline ignored: struct/aggregate parameter", 43); }
+                if (_inl_why == 4) { WARN(S, "#inline ignored: body has control flow or a var declaration", 59); }
+                if (_inl_why == 5) { WARN(S, "#inline ignored: body has a defer/secret block", 46); }
+                if (_inl_why == 6) { WARN(S, "#inline ignored: pointer (*T) parameter", 39); }
+                if (_inl_why == 7) { WARN(S, "#inline ignored: fn has parameter defaults", 42); }
+                if (_inl_why == 8) { _inl_async_warn(S, _async_noff_f); }
+            }
+        }
+    }
+    return 0;
+}
+fn _PARSE_FN_DEF_IMPL(S): i64 {
+    var _is_async = 0;
+    var _async_noff_f = 0;
+    var _cfn_here = _pending_cfn;   # 6.7.2 (C1): the dispatch consumed a `const` prefix
+    _pending_cfn = 0;
+    # v6.3.11 (G): the pass-2 dispatch already consumed the leading `async` (token
+    # 134) and set _pending_async, so the cursor is at `fn` here. (The async token is
+    # consumed in the dispatch, not here, so the DCE pre-check reads the real fn name.)
+    if (_pending_async == 1) {
+        _pending_async = 0;
+        _ensure_async_gate(S);
+        # A refused `async fn` compiles as a plain fn: lowering it anyway needed lib/alloc.cyr
+        # for a Future nothing will run, and reported a second error for it. CHANGELOG [6.6.9]
+        if (_ASYNC_OK == 0) { ERR_MSG(S, "async fn requires CYRIUS_ASYNC=1 (async/await are gated)", 56); }
+        else { _is_async = 1; }
+    }
+    var _defstart_ti = GTI(S);   # v6.3.10: the `fn`-keyword token, for instance re-emit
+    STI(S, GTI(S) + 1);  # consume FN
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var noff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    # Skip generic parameters if present: fn foo<T, U>(...)
+    # v6.3.9 (F-fns): capture <T> names (flag-off = old SKIP_GENERICS skip); stored
+    # into _fnt_tparams[fi] once fi is resolved below (fi isn't known until the name
+    # is mangled + registered, so the packed names ride _gtp until then).
+    var _gtp = _capture_tparams(S);
+    # Mangle name if inside a module: mod_fn
+    var mmod = GMOD(S);
+    # v6.3.10 (instantiate-once): re-emitting a specialized instance — the mangled
+    # name `foo$ty` is already fully formed, so use it verbatim and skip module
+    # mangling. (_inst_name is set only by the instantiate trigger's re-invoke.)
+    if (_inst_name != 0) { noff = _inst_name; mmod = 0; }
+    # 6.6.5 — one mangler, shared with pass 1 (see _mod_name_intern). Pass 1 now mints
+    # `Type_method` / `mod_fn` first, so this call finds that exact string and REUSES it
+    # instead of minting a second copy; pool growth is unchanged either way.
+    noff = _mod_name_intern(S, mmod, noff);
+    _RSV_INTRINSIC_DECL(S, noff, _defstart_ti + 1, 1);   # 6.6.20: `fn mulh64` / `fn fncallN` / `fn sizeof`
+    # v6.3.11 (G): async fn — the user name `f` becomes a Future constructor
+    # (synthesized after the body, below); the body itself is emitted under `f$impl`.
+    # Generic async (`async fn f<T>`) is deferred — error rather than miscompile.
+    if (_is_async == 1) {
+        if (_gtp != 0) { ERR_MSG(S, "async generic fns not yet supported", 35); }
+        _async_noff_f = noff;
+        noff = _mint_impl_name(S, noff);
+    }
+    # Register or find fn.
+    # v5.7.9: detect duplicate fn definitions across translation
+    # units. If FINDFN returns an existing slot AND that slot already
+    # has a non-(-1) body offset, this is a re-definition that
+    # silently overwrites the previous body. Pre-v5.7.9, the
+    # overwrite was completely silent — `lib/json.cyr fn json_build/1`
+    # vs `lib/patra.cyr fn json_build/6` was the surfaced case
+    # (last-include wins; the build appeared to succeed; calls to
+    # the losing arity miscompiled). Forward declarations (slot
+    # registered with offset=-1 by an earlier call site that landed
+    # before the definition) leave the offset at -1, so the call
+    # below does not fire on them — only on actual re-definitions.
+    # v6.5.38 — visibility is now needed BEFORE the duplicate decision, so it is computed
+    # here rather than after `fi` resolves (where Phase 1 originally stamped it). Whether
+    # this definition is private decides whether a same-named definition SPLITS into its
+    # own symbol or overwrites the existing one.
+    var _vis_fid = FM_FILEID(S, GTLINE(S, _defstart_ti));
+    var _this_priv = 0;
+    if (_pub_pending == 0) { if (_PRIV_FILE(_vis_fid) == 1) { _this_priv = 1; } }
+    # v6.6.4: a monomorphized INSTANCE inherits its BASE's visibility. The instance is
+    # emitted by re-parsing the base's tokens from its `fn` keyword, so `_pub_pending`
+    # is long consumed and `_PRIV_FILE` answers for the lib file — which stamped every
+    # instance of a `public fn pgen<T>` in a private file PRIVATE, and refused
+    # `pgen<i32>(42)` from another file while `pgen(42)` (the i64 base) was accepted.
+    if (_inst_name != 0) {
+        _this_priv = 0;
+        if ((GFLG(S, _inst_base_fi) & 64) != 0) { _this_priv = 1; }
+    }
+
+    _dup_prev_pc = 0 - 1;
+    _dsg_on = 0;
+    # 6.6.5 — PASS 1 IS THE AUTHORITY. `_fn_by_defti` finds the entry pass 1 registered for
+    # THIS definition (matched on its `fn` token), which does two things:
+    #   * the entry is this definition's own, so the v6.5.38 per-file split has already
+    #     happened in pass 1 — before any forward call could bind to the wrong one;
+    #   * `_this_priv` is taken from that stamp rather than recomputed. Pass 2 computes
+    #     visibility a SECOND time and gets it wrong in one case: its top-level `var` skip
+    #     re-arms `public` and never consumes it, so the next fn was stamped public in a
+    #     private file. That was masked only because the pass-1 bit was never cleared;
+    #     clearing it (below, at the stamp) without this would have exposed it.
+    # An instance (`_inst_name != 0`) is re-parsed from the BASE's tokens, so its def-start
+    # names the base — it deliberately bypasses this and keeps the v6.6.4 inherited bit.
+    var fi = 0 - 1;
+    if (_inst_name == 0) { fi = _fn_def_find(S, noff, _defstart_ti); }
+    if (fi >= 0) {
+        # ⚠ Only when nothing has CLAIMED the entry yet. Two same-file definitions of one
+        # name share an entry (that is a redefinition, not a collision — it must keep
+        # warning), and an entry holds ONE bit, so after the first definition emitted its
+        # body the bit describes whichever definition wrote last. Measured: `public fn h()`
+        # followed by `fn h()` in a private file came out PUBLIC, where every release since
+        # v6.5.0 made it private. An offset >= 0 means an earlier definition owns this slot,
+        # so this one keeps the visibility it computed for itself.
+        if (L64(_fnt_offsets + fi * 8) < 0) {
+            _this_priv = 0;
+            if ((GFLG(S, fi) & 64) != 0) { _this_priv = 1; }
+        }
+    } else {
+        # Not found — a monomorphized instance, an async fn's `f$impl`, or an earlier definition
+        # of a redefined fn (pass 1 keeps the last one's start). A fn inside a top-level block is
+        # prescanned since 6.6.17 (`_prescan_block_fn`; one inside a fn body is refused, parse/stmt.cyr
+        # `_refuse_nested_fn`). The v6.5.38 identity rule still applies; it lives in
+        # `_fn_def_slot` now so pass 1 and pass 2 cannot drift apart about what a definition owns.
+        fi = _fn_def_slot(S, noff, _vis_fid, _this_priv);
+        _pd_late(S, fi, GTI(S), _is_async);   # 6.7.7 (B6): an instance's defaults are its base's
+    }
+    var _dup_off = L64(_fnt_offsets + fi * 8);
+    if (_dup_off >= 0) {
+        # v6.5.37: remember the loser's arity + file; the comparison happens once this
+        # definition's own parameter list has been counted (see _fnt_params store below).
+        _dup_prev_pc = L64(_fnt_params + fi * 8);
+        _dup_prev_fid = GFFI(S, fi);
+        _dsg_save(S, fi);   # 6.6.20: and the rest of its call signature (see _dsg_check)
+        # v6.5.19 (agnosai filing) — TWO fixes to this one warning:
+        #  * `_err_head_at(S, _defstart_ti)` instead of `_err_head(S)`. The cursor
+        #    has already consumed `fn` and the NAME by here, so the plain head put
+        #    the column on the `(` of the parameter list rather than on the
+        #    definition. `_defstart_ti` is the `fn` keyword itself.
+        #  * name the file the FIRST definition came from. GFFI still holds it —
+        #    SFFI for THIS definition is written further down, after `fi` resolves —
+        #    so the consumer gets both ends of the collision instead of having to
+        #    infer "which copy wins" from a single position, which is the wrong
+        #    inference the filing had to retract twice.
+        _ew("warning:", 8);
+        _err_head_at(S, _defstart_ti);
+        _ew(": duplicate fn '", 16);
+        PRSTR(S + 0xEC00000 + noff);
+        _ew("' (last definition wins; first defined in ", 42);
+        _fm_print_fid(S, GFFI(S, fi));
+        _ew(")\n", 2);
+    }
+    if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
+    if (_cfn_here == 1) {   # 6.7.2 (C1): `const fn` — marked (pass 1 did too) and checked ONCE, here
+        SFCFN(S, fi, 1);
+        if (_inst_name == 0) { _ce_check_fn(S, fi); }
+    }
+    # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid). 6.6.20: NOT over a redefinition's
+    # (flag 2048) — pass 1 left the LAST definition's start, so an instance minted between the
+    # definitions is minted from the one that wins, not from the body in hand.
+    if (_gtp != 0) { if ((GFLG(S, fi) & 2048) == 0) { SFDS(S, fi, _defstart_ti + 1); } }
+    if (_gtp != 0) { if (_inst_name == 0) { _bnd_fn_record(S, fi, _gtp, _gen_def_open(S, fi)); } }   # 6.7.1 (C3): once (pass 1 did)
+    # v6.5.0 Phase 1 (public/private): stamp this fn's ORIGIN FILE, derived from the
+    # line of its `fn` keyword via the file map the preprocessor already builds for
+    # diagnostics (`#@file` markers -> FM_BUILD -> FM_FILEID). RECORDED ONLY — nothing
+    # reads this for a decision yet, so program codegen is unchanged; Phase 2 is what
+    # turns it into a visibility boundary.
+    #
+    # `_defstart_ti` is the `fn`-keyword token and is set unconditionally at the top of
+    # PARSE_FN_DEF, so this is exact for every definition rather than approximated from
+    # whatever token happens to be current. Deliberately placed HERE, after `fi` is
+    # resolved: a forward reference registers a slot from a CALL SITE, and attributing
+    # the fn to the caller's file would be precisely backwards.
+    SFFI(S, fi, _vis_fid + 1);   # v6.5.38: _vis_fid is computed above, before the dup split
+    # v6.5.0 Phase 2 — fn_flags bit 6 = PRIVATE. Set when this fn's own file opted in
+    # AND no `public` moniker preceded it. Default (no `private` anywhere) leaves the
+    # bit clear for every fn, so the whole feature is inert and byte-identical until a
+    # file asks for it.
+    #
+    # `_pub_pending` is cleared UNCONDITIONALLY, exactly like `_must_use_pending` and
+    # friends below. ⚠ That clear alone did NOT stop a stale marker from re-exposing an
+    # unrelated fn: a `public` on a struct / union / enum / impl / `use` was armed and
+    # never reached a definition until the NEXT fn or var — the hisab 2026-09-13 leak.
+    # Since v6.6.4 _TL_VIS arms the marker only for tokens that can carry it (see
+    # _PUB_CAN_ARM), PARSE_IMPL and the relaxed-ordering path clear it on entry, and the
+    # array + destructure var paths consume it themselves.
+    # 6.6.5 r3: a deferred reference can only become REPORTABLE when a new PRIVATE stamp
+    # lands (`_vis_report_late` reports nothing for a public callee), so the sweep's seq
+    # guard keys on this branch and not on SFFI. A compiland with no `private` anywhere —
+    # which is nearly all of them — then sweeps exactly ONCE instead of once per fn body.
+    if (_this_priv == 1) { SFLG(S, fi, GFLG(S, fi) | 64); _vis_stamp_seq = _vis_stamp_seq + 1; }
+    # ⛔ 6.6.5 — and CLEAR it otherwise. The bit was only ever set, never cleared, so a
+    # stale pass-1 private stamp survived onto a PUBLIC definition. That is not
+    # hypothetical: with pass 1 keeping one entry per NAME, a private `_helper` in file A
+    # stamped the shared entry, and file B's public `_helper` inherited the bit — the
+    # guide's own two-file example was REFUSED, with no forward call involved, purely on
+    # include order, and the "omitted from the exported symbol table" promise applied to
+    # the wrong fn. CHANGELOG [6.6.5]
+    else { SFLG(S, fi, GFLG(S, fi) & (0 - 65)); }
+    # An unattributable fn (FM_FILEID -1) can never be marked private, so enforcement
+    # would quietly stop applying. Say so once rather than degrade in silence.
+    if (_vis_fid < 0) { _vis_degraded_note(); }
+    _pub_pending = 0;
+    if (_fileid_dump_arm() != 0) { _fileid_dump_note(S, fi, noff); }
+    # v5.11.62: track the current fn for per-fn array-byte attribution.
+    # Initialize the slot to 0 — fn body may have been touched by an earlier
+    # forward-decl scan; this is the start of the body parse proper.
+    _cur_fn_ix = fi;
+    SFVB(S, fi, 0);
+    # v5.5.36 Phase 2b — clear fn's struct-return slot. The `: StructName`
+    # annotation after `)` sets it later if present; otherwise this fn
+    # returns a scalar value in rax as usual.
+    SFRS(S, fi, 0);
+    _bx_fn_reset(S, fi);   # 6.7.3: bit 4096 / the multi-return bits / the bool parameter row
+    # v5.5.36 Phase 3 — clear fn's variadic flag. Set to 1 in the
+    # param loop below if the user writes `fn f(a, ...)`.
+    SFVA(S, fi, 0);
+    # v4.8.4-alpha4: transfer any pending `#regalloc` directive onto
+    # this fn's metadata slot. Cleared whether consumed or not so a
+    # stale flag from a prior parse error can't leak to the next fn.
+    # v4.9.1: store 5 (max register count: rbx, r12-r15) for #regalloc fns.
+    # v5.6.22 O4c (partial): infrastructure for auto-enable shipped
+    # but DISABLED by default. CYRIUS_REGALLOC_AUTO_CAP=N opts in:
+    #   -1 = disabled (default; back to explicit #regalloc opt-in only)
+    #    N = first N fns get auto-enabled (bisection knob)
+    # v5.6.22 attempt at default-on auto-enable surfaced a global-array
+    # alignment regression (v5.5.21 fix interacts with auto-enable's
+    # code-size growth in some shape that v5.5.21's per-array pad
+    # misses; reproduces with `var rk[240]` + SSE m128 ops in
+    # the inline-asm-discard regression — then
+    # `tests/regression-inline-asm-discard.sh`, now the check driver's
+    # `_inline_asm_discard_gate` over tests/fixtures/inline_asm_discard/).
+    # Investigation pinned
+    # to v5.6.23 with proper alignment-debug budget. The picker
+    # correctness fix (loop-back time-share — extend last_cp = ra_end)
+    # is shipped here for opt-in #regalloc fns.
+    #
+    # x86-ONLY when enabled: the `_cur_fn_regalloc >= N` save/restore
+    # emits below are RAW x86 bytes (`mov [rbp-8], rbx` etc.).
+    #
+    # v5.6.23: scan body for inline asm (token 48). Inline asm blocks
+    # hardcode stack offsets like `mov rax, [rbp-0x08]` to read params
+    # and locals. The regalloc prologue reserves [rbp-8]..[rbp-40] for
+    # callee-saved register saves (rbx, r12-r15), shifting every
+    # subsequent local-var slot by N*8 bytes. Asm reading the old
+    # offsets gets the saved RBX value instead of its expected param —
+    # SIGSEGV when the asm dereferences it. lib/fnptr.cyr,
+    # lib/thread.cyr, lib/atomic.cyr, lib/hashmap_fast.cyr, lib/u128.cyr,
+    # lib/thread_local.cyr, lib/fdlopen.cyr, lib/args_macos.cyr all
+    # carry asm blocks that depend on the standard prologue layout.
+    # Skip regalloc when body contains asm. Misframed at v5.6.22 ship as
+    # an "alignment regression" — the actual bug is layout mismatch.
+    var _has_inline_asm = _fn_has_inline_asm(S);
+
+    # v5.6.24 default-on: _ra_auto_cap semantics:
+    #   < 0  → uncapped (every eligible fn) — DEFAULT
+    #   == 0 → disabled (explicit #regalloc opt-in only)
+    #   > N  → first N eligible fns (bisection knob)
+    # "Eligible" = x86 backend + no inline asm in body.
+    # v5.6.23 fixed misdiagnosed asm/regalloc layout collision.
+    # v5.6.24 fixed the picker bug surfaced by the default-on attempt:
+    # SysV ECALLPOPS used r12-r14 as scratch for 8+ arg calls; under
+    # regalloc the picker pinned caller's locals to those callee-saved
+    # regs, so calls silently corrupted the locals. Rewrote ECALLPOPS
+    # to use only r10 + direct [rsp+offset] addressing.
+    var _fn_inline_req = _fn_attrs(S, fi, noff, _has_inline_asm);
+    _cur_fn_is_pure = (GFLG(S, fi) >> 3) & 1;
+    # v4.8.4-alpha5: mirror fn_regalloc[fi] into _cur_fn_regalloc so
+    # codegen (EFNEPI, ETAILJMP) can emit rbx save/restore. Reset at
+    # the end of PARSE_FN_DEF.
+    _cur_fn_regalloc = GFRA(S, fi);
+    _ra_used_n = 0;            # v6.3.29 frame-trim: max callee-saved reg the picker assigns, +1
+    _cur_fn_has_closure = 0;   # v6.3.7 — set by PARSE_FACTOR when this fn emits a closure
+    # v5.5.36 Phase 2b — look ahead past the param list to see whether
+    # the fn signature carries a `: StructName` return annotation. We
+    # need the answer BEFORE param parse begins so local-disp shifts
+    # account for the retptr stash slot (reserved immediately after
+    # regalloc saves, before any regular local). Cheap one-pass scan
+    # that pops TI back to its original position; parenthesis depth
+    # tracking handles nested parens in default-value expressions
+    # (future-proof; current cyrius fn params are name-only or
+    # `name: Type`).
+    _cur_fn_ret_stash = 0;
+    _cur_fn_ret_scalar = 0;
+    _cur_fn_ret_pair = 0;
+    _cur_fn_pslots = 0;   # 6.6.6 — recorded at the end of the parameter loop
+    _cur_fn_ptrp = 0;     # 6.6.10 — `p: *T` parameters, set in the parameter loop
+    _cur_iself_sid = 0;   # 6.7.0 (A4) — an impl method's untyped `self`, set in the parameter loop
+    _fn_ret_stash_scan(S, fi);
     _fn_redirect(S, fi, noff, _defstart_ti);   # 6.6.20: a redefinition takes over the earlier entry
     # Set fn offset to current CP
     S64(_fnt_offsets + fi * 8, GCP(S));
@@ -4699,23 +4994,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # arity-differing pair was two tests defining a local `fn run()` over lib/process.cyr's
     # `run(cmd, arg1, arg2)` — renamed in the same change, because a generic name shadowing
     # a stdlib fn at a different arity is precisely the hazard this now refuses.
-    if (_dup_prev_pc >= 0) {
-        if (_dup_prev_pc != pc) {
-            _ew("error:", 6);
-            _err_head_at(S, _defstart_ti);
-            _ew(": duplicate fn '", 16);
-            PRSTR(S + 0xEC00000 + noff);
-            _ew("' disagrees about arity: this one takes ", 40);
-            PRNUM(pc);
-            _ew(", the one in ", 13);
-            _fm_print_fid(S, _dup_prev_fid);
-            _ew(" takes ", 7);
-            PRNUM(_dup_prev_pc);
-            _ew(" (last definition wins, so calls to the other arity would silently mis-bind)\n", 77);
-            _had_error = 1;
-        }
-        _dup_prev_pc = 0 - 1;
-    }
+    _fn_dup_arity(S, noff, pc, _defstart_ti);
     if (_b3_pl_bound == 1) { _tp_clear(S); }   # v6.3.39 (B3): end the param-loop binding
     # v6.2.x: a #naked fn may take up to 6 register-passed params (the arg-home
     # stores are gated above, so they stay in x0../rdi.. for the asm body — e.g.
@@ -4741,65 +5020,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     S64(_fnt_simdmask + fi * 8, simd_mask);
     # v6.3.36 (issue [5]) — plain struct >8 B param mask (bit N = address-passed).
     S64(_fnt_structmask + fi * 8, struct_mask);
-    # v5.5.36 Phase 2b — optional `: StructName` return-type annotation:
-    # `fn make(): Point { ... return p; }`. Sets fn_ret_sid[fi] = sid;
-    # PARSE_RETURN + call-site consult it to emit the Win64 hidden-RCX /
-    # SysV-RDI retptr convention (see main.cyr heap map 0x15A000).
-    if (PEEKT(S) == 49) {
-        STI(S, GTI(S) + 1);                         # consume ':'
-        # v6.5.21 — multi-value return `: (T1, T2[, T3])`. Handled before the
-        # single-type path because that path requires an IDENT and would report
-        # `expected identifier, got '('`.
-        if (PEEKT(S) == 10) {
-            _parse_multiret_sig(S, fi, 0);
-            _cur_fn_ret_scalar = MULTIRET_SID;
-        } elif (_ret_ann_alt(S, fi) == 0) {   # `: *T` (6.6.17) and a slice (6.7.8, refused) are taken there
-            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-            var rt_noff = PEEKV(S);
-            # v6.3.5 CO-01 — classify the return type via the shared
-            # _classify_return_type so the pass-1 _prescan_fn_sig records the
-            # identical struct-return / scalar ABI. Positive = struct sid;
-            # negative = scalar/extended encoding; 0 = unrecognized.
-            var _rtc = _classify_return_type(S, rt_noff);
-            if (_rtc == 0) {
-                # v6.3.9 (F-fns): `: T` where T is a captured type-param is a valid
-                # GENERIC return. The base signature treats it as an i64-scalar return
-                # (-8); the concrete return is per-instantiation (the inline-replay body
-                # leaves the value in rax). Struct-typed generic returns (retptr ABI)
-                # ride the struct-interaction work (v6.3.10). Non-tparam unknowns error.
-                if (_is_tparam_of(S, fi, rt_noff) == 1) {
-                    _rtc = _gtype_tp_ret(S, fi, rt_noff);   # 6.6.10: an instance's `: T`, T = Pt
-                    if (_rtc == 0) { _rtc = 0 - 8; }
-                }
-                # v6.5.19: `: T` where T is a struct declared in a SIBLING FILE is a
-                # RESOLUTION failure, and under --syntax-only it must not become an error at
-                # all. Measured on agnosai, which BUILDS GREEN yet had 3 of its files
-                # condemned by `cyrius lint`: this ERR_MSG sets _panic, _sync_skip then
-                # resyncs mid-declaration, and the desynced parse MANUFACTURES
-                # `expected ';', got '='` — which IS in the syntax class, so lint refused a
-                # module whose only sin was lacking its includes. Same shape as the struct
-                # FIELD sites fixed earlier this release, at the return-type site they
-                # missed; and the same cascade hazard `_syntax_only`'s comment documents.
-                # Treating it as an i64 scalar return keeps the token stream in sync, which
-                # is all the pre-pass needs. A real build is untouched — _syntax_only is 0.
-                # 6.6.16 (C8): _tn_ret_refuse names the type, once, with no cascade (and skips
-                # a `<..>` after it); under --syntax-only it refuses nothing and answers -8.
-                else { _rtc = _bx_ret_or_refuse(S, fi, rt_noff); }   # 6.7.3: `: bool` is an i64, bit 4096
-            }
-            if (_rtc > 0) { _rtc = _gtype_sid_def(S, fi, _rtc); }   # 6.6.10: `: Box<Pt>`; 6.7.14 (D6): checked
-            SFRS(S, fi, _rtc);
-            if (_rtc > 0) {
-                _cur_fn_ret_sid = _rtc;
-                STI(S, GTI(S) + 1);
-                _ngt_refuse(S, GTI(S) - 1);   # 6.7.15 (D6): `: Pt<..>` refused at the name
-                SKIP_GENERICS(S);
-            } else {
-                _cur_fn_ret_scalar = _rtc;
-                STI(S, GTI(S) + 1);
-                _ngt_skip(S);   # 6.7.16 (D7): `: i64<u8>` refused at the name (it was "expected '{', got '<'")
-            }
-        }
-    }
+    _fn_ret_ann(S, fi);
     # 6.6.6 — the Future carries one i64, so neither a by-value struct return nor a value-form
     # vector return ever arrives. See `_refuse_async_struct_return` / `_refuse_async_vec_return`
     # (two fns, because the struct test reads `GFRS` as a sid and the vector test reads the same
@@ -4890,182 +5111,16 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_gen_base == 1 && _inst_conc0 == 0) {
         if (_gen_stub(S, fi) != 0 || _bnd_base_bad(S, fi) == 1) { _b3_skip = _fn_has_body(S); }   # 6.7.1: or not a valid i64 instance of its bounds
     }
-    # v6.5.69 — COROUTINE SETUP. An `async fn` body becomes a state machine: its locals live
-    # in the heap object the runtime hands back on every resume, and the fn top dispatches to
-    # the suspend point it left from. Stack slot 0 holds the frame base (param 0 = SELF); every
-    # local from slot 1 up is a coroutine-frame slot.
-    # ⚠ x86 family only. The redirect and the dispatch are emitted through x86-specific paths,
-    # and a coroutine compiled without them would read a frame destroyed at the last suspend.
-    # A hard error is the contract; a quiet stack-frame body is the miscompile.
-    if (_pending_coro == 1) {
-        if (_AARCH64_BACKEND != 0) {
-            ERR_MSG(S, "`async fn` mid-body suspend is x86-only so far (aarch64 has no coroutine frame yet)", 83);
-        }
-        if (_TARGET_CX != 0) {
-            ERR_MSG(S, "`async fn` mid-body suspend is x86-only so far (the cx backend has no coroutine frame yet)", 90);
-        }
-        _cur_fn_coro = 1;
-        _coro_base = 0;
-        _coro_lo = 1;
-        _coro_nsusp = 0;
-        # The regalloc picker's post-emit byte peephole matches `[rbp+disp32]` moves; a coro
-        # body's locals are `[r11+disp32]`, and its stack frame does not survive a suspend.
-        # Reuse the existing "do not run the picker over this body" signal.
-        _cur_fn_has_closure = 1;
-        # Home the ONE incoming register argument — SELF, the coroutine frame — into the
-        # reserved stack slot 0. Every `[r11+off]` local access loads its base from here.
-        ESTOREPARM(S, 0, _coro_base, 1);
-        _coro_top_jmp = EJMP0(S);   # jmp DISPATCH — patched at fn end
-        _coro_entry_cp = GCP(S);    # state 0 lands here
-    }
+    _fn_coro_open(S);
     if (_b3_skip == 1) {
-        _unp_rec(S, 0, fi, _gen_def_open(S, fi), GTI(S), _defstart_ti);   # 6.7.17: read when no instance parses it
-        var _b3_bd = 1;
-        _rbs_begin(S, fi);   # 6.7.17 (D1): a rebound T-typed name's `x.f` / `x.m(` here, refused as a plain fn's
-        while (_b3_bd > 0) {
-            var _b3t = PEEKT(S);
-            if (_b3t == 12) { break; }               # EOF guard
-            _rbs_tok(S);
-            # 6.6.16: a nested fn is refused here too (consumed whole), whether or not an
-            # instance ever re-parses this body. See `_refuse_nested_fn` (parse/stmt.cyr).
-            if (_b3_skip_tok(S) == 0) {   # 6.7.16 (D2): and a `return &n;` (`_ret_amp_stub`)
-                if (_b3t == 13) { _b3_bd = _b3_bd + 1; }
-                elif (_b3t == 14) { _b3_bd = _b3_bd - 1; if (_b3_bd == 0) { break; } }
-                STI(S, GTI(S) + 1);
-            }
-        }
-        EMOVI(S, 0);                                  # dead stub: rax = 0
+        _fn_b3_stub(S, fi, _defstart_ti);
     } else {
         _cov_body(S, fi, _defstart_ti);   # 6.7.10 (P5-B): the coverage hit, then PARSE_PROG
     }
-    # v6.5.69 — THE RESUME DISPATCH, emitted at fn END where every landing pad is already a
-    # known code position, so only the single forward jump from the fn top needs patching.
-    # ⚠ A COMPARE CHAIN, NOT A JUMP TABLE. `PARSE_SWITCH`'s table path is x86-only — it sets
-    # `use_table = 0` for aarch64 and cx — and the table is DATA inside `.text`, which the
-    # whole-program compactor's own notes flag as the thing a linear decoder walks into. The
-    # chain is what that parser itself falls back to and it needs no new machinery.
-    if (_cur_fn_coro == 1) {
-        # 6.6.10 — A BODY THAT FALLS OFF ITS END COMPLETES with 0, through the return landing
-        # (its defers, then `_coro_mark_done`). The dispatch below sits right after the body, so
-        # a fall-off ran into it, read C[state] and jumped back to the last resume label: the
-        # force that should have completed the coroutine never returned. The plain-fn path got
-        # this routing in 6.6.7 (`_defer_emit_init`); the coroutine path never did.
-        EMOVI(S, 0);
-        vec_push(rp_vec, EJMP0(S));
-        EPATCH(S, _coro_top_jmp);
-        _coro_flc = GFLC(S);
-        _coro_done_check(S);
-        var _dk = 1;
-        while (_dk <= _coro_nsusp) {
-            EFLLOAD(S, _coro_base);           # rax = C  (slot < _coro_lo: the stack path)
-            EADDRA_IMM(S, _CORO_STATE_OFF);
-            ELOAD64(S);                       # rax = C[state]
-            EPUSHR(S);
-            EMOVI(S, _dk);
-            EPOPC(S);                         # rcx = _dk
-            ECMPR(S);
-            var _dp = EJCC(S, 0x85);          # jne -> next comparison
-            EJMP(S, L64(&_coro_rcp + _dk * 8));
-            EPATCH(S, _dp);
-            _dk = _dk + 1;
-        }
-        # 6.6.7 — state 0 (first entry) zeroes the defer flags, which live in the heap frame and
-        # so could not be zeroed at fn entry (SELF is homed only after it), and must NOT be
-        # re-zeroed on a resume or a defer registered before an await would be forgotten.
-        _defer_zero_flags(S);
-        EJMP(S, _coro_entry_cp);              # state 0 -> the top of the real body
-        # Hand the frame size to the constructor, which is emitted AFTER this body and so
-        # already knows how big the coroutine frame has to be — the one piece of luck in the
-        # whole layout, and the reason no second pass is needed.
-        # (`_coro_flc` was taken at the top of this dispatch, before `_coro_done_check`.)
-        _coro_was = 1;
-        # 6.6.7: `_cur_fn_coro` stays 1 until the defer walker is emitted (see the epilogue).
-    }
+    _fn_coro_dispatch(S);
     if (_gen_base == 1) { _tp_clear(S); }
     _fn_body_close(S);   # 6.7.16: its `}`, or a refused `;` body's latch released
-    # Record body end and classify inline candidate. v6.4.0 DECOUPLE: generic fns only.
-    if (_INLINE_OK == 1 || _fn_inline_req == 1 || (_MONOMORPH_OK == 1 && GFTP(S, fi) != 0) || _fn_has_simd_param(S, pc) == 1) {
-        SFBE(S, fi, GTI(S));
-        var btokens = GTI(S) - GFBS(S, fi);
-        var can_inline = 1;
-        var _inl_why = 0;
-        if (pc > 2) { can_inline = 0; _inl_why = 1; }
-        if (_is_async == 1) { can_inline = 0; _inl_why = 8; }   # 6.7.14: first — never replayed
-        if (_pd_row(fi) != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 7; } }   # 6.7.7 (B6): a call may fill
-        # v6.3.9 (F-fns): ceiling 16->32 — admits slightly larger straight-line
-        # generic/inline bodies. pc<=2 (above) + the forbidden-token scan below
-        # (no control-flow / var-decl) are UNCHANGED, so inl_packed (2 param
-        # offsets) capacity is untouched. Only fires under _INLINE_OK/_MONOMORPH_OK
-        # (this whole block is gated) → default cycc self-host is byte-identical.
-        if (btokens > 32) { can_inline = 0; if (_inl_why == 0) { _inl_why = 2; } }
-        # v6.3.37 (C1) — a struct-typed or `*T` parameter cannot ride the inline replay;
-        # `_inl_param_why` says why and walks the parameter SLOTS.
-        if (can_inline == 1) {
-            var _pwhy = _inl_param_why(S);   # 6.6.20: by SLOT, and a `*T` parameter too (see there)
-            if (_pwhy != 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = _pwhy; } }
-        }
-        if (can_inline == 1) {
-            var sci = GFBS(S, fi);
-            while (sci < GTI(S)) {
-                var st = TOKTYP(S, sci);
-                if (st == 15) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
-                if (st == 16) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
-                if (st == 55) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
-                # 6.7.5 (B5): `do`, and the contextual `loop {` — no token, so the three tests above
-                # never see it, and a body holding a `loop` was the one loop form replayed.
-                if (st == 172 || _TOK_IS_LOOP_AT(S, sci) == 1) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
-                # 6.6.7 — a `defer` / `secret var` belongs to the fn that REGISTERS it, and the
-                # replay re-parses this body inside the CALLER, so the block would join the
-                # caller's defer table and run at the CALLER's return (measured: `g(5); seen =
-                # cran;` read 0, the block ran twice at the caller's end). Not opt-in: every small
-                # generic fn and SIMD-param fn is a candidate. It also has to stay out because
-                # the caller's `_body_has_defer` prescan cannot see a replayed block, so the
-                # caller could still tail-call past it. CHANGELOG [6.6.7]
-                if (st == 106 || st == 108) { can_inline = 0; if (_inl_why == 0) { _inl_why = 5; } }
-                # v6.5.52 — a body `var` decl is allowed for SIMD-param fns. The value-form
-                # wrappers all declare a scratch (`var r: f32v4; f32v_add(&r,&a,&b,4); return r;`),
-                # so the blanket exclusion kept out exactly the fns this arc needs. Body locals
-                # allocate at GFLC, which the replay has already advanced past the param slots,
-                # so they land above them. Kept for every other fn: this stays scoped to the
-                # targeted admission rather than widening general inlining.
-                if (st == 3) { if (_fn_has_simd_param(S, pc) == 0) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } } }
-                sci = sci + 1;
-            }
-        }
-        if (can_inline == 1) {
-            # v6.5.52: the replay needs param TYPES as well as names — GFINL carries only the
-            # two name offsets, which is why a wide param was bound into an 8-byte slot.
-            SFIPT(S, fi, _ipt_pack);
-            # v6.5.52 — pack the NAMED slot of each param, not slots 0 and 1.
-            # ⛔ THIS IS WHY WIDE PARAMS CRASHED THE COMPILER. A param occupies
-            # `_ipt_slots` slots with (n-1) ANON fillers BEFORE its named slot, so for a
-            # 16-byte param the name lives at slot 1, not slot 0 — and slot 0 holds the anon
-            # marker `0 - 1`. Packed through `& 0xFFFFFFFF` that becomes 0xFFFFFFFF, which is
-            # POSITIVE as an i64, so FINDLOCAL's `if (sn >= 0)` guard lets it through and hands
-            # 4294967295 to STREQ as a name offset. Measured at the fault: rsi = 0xffffffff.
-            var _n0 = _ipt_slots(S, _ipt_sltype(_ipt_pack, 0)) - 1;
-            var _n1 = _n0 + _ipt_slots(S, _ipt_sltype(_ipt_pack, 1));
-            if (pc == 2) { SFINL(S, fi, (L64(S + 0x5D9D000 + _n1 * 8) << 32) | (L64(S + 0x5D9D000 + _n0 * 8) & 0xFFFFFFFF)); }
-            elif (pc == 1) { SFINL(S, fi, L64(S + 0x5D9D000 + _n0 * 8)); }
-            elif (pc == 0) { SFINL(S, fi, 1); }
-        } else { SFINL(S, fi, 0); }
-        # v6.5.63 — AN IGNORED `#inline` MUST SAY SO. The whole reason this directive exists
-        # is that consumers were annotating for an optimisation that was not there; a request
-        # that silently does nothing is that same defect with a token in front of it. Name the
-        # constraint that refused it so the author can restructure or drop the marker.
-        if (_fn_inline_req == 1) {
-            if (can_inline == 0) {
-                if (_inl_why == 1) { WARN(S, "#inline ignored: fn takes more than 2 parameters", 48); }
-                if (_inl_why == 2) { WARN(S, "#inline ignored: body exceeds 32 tokens", 39); }
-                if (_inl_why == 3) { WARN(S, "#inline ignored: struct/aggregate parameter", 43); }
-                if (_inl_why == 4) { WARN(S, "#inline ignored: body has control flow or a var declaration", 59); }
-                if (_inl_why == 5) { WARN(S, "#inline ignored: body has a defer/secret block", 46); }
-                if (_inl_why == 6) { WARN(S, "#inline ignored: pointer (*T) parameter", 39); }
-                if (_inl_why == 7) { WARN(S, "#inline ignored: fn has parameter defaults", 42); }
-                if (_inl_why == 8) { _inl_async_warn(S, _async_noff_f); }
-            }
-        }
-    }
+    _fn_inline_decide(S, fi, pc, _is_async, _ipt_pack, _fn_inline_req, _async_noff_f);
     STI(S, GTI(S) + 1);
     # Defer flag init (zeroing trampoline), return landing, LIFO defer walk — the shared
     # epilogue authority (parse/state.cyr `_defer_emit_init` / `_rp_patch_here` / `_defer_emit_walk`),
