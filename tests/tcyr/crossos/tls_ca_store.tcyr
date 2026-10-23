@@ -173,23 +173,24 @@ fn test_malformed_blocks_skipped(): i64 {
 fn test_sized_read(path, pem, plen): i64 {
     test_group("tls_ctx_load_verify_locations: a buffer the file's size, from the ctx's allocator");
     # The helper alone: exact size, exact bytes, exactly one allocation of that size.
-    var n = 0;
     var r0 = alloc_used();
     alloc(plen);
     var ref = alloc_used() - r0;
     var u0 = alloc_used();
-    var buf = _tls_read_file_in(0, path, TLS_CAFILE_MAX, &n);
+    var buf, n = _tls_read_file_in(0, path, TLS_CAFILE_MAX);
     assert_neq(buf, 0, "the file reads");
     assert_eq(n, plen, "the whole file");
     assert_eq(memeq(buf, pem, plen), 1, "byte for byte");
     assert_eq(alloc_used() - u0, ref, "one allocation of exactly the file's size");
     u0 = alloc_used();
-    assert_eq(_tls_read_file_in(0, path, plen - 1, &n), 0, "a file over max is refused");
-    assert_eq(n, 0, "with length 0");
+    var b2, n2 = _tls_read_file_in(0, path, plen - 1);
+    assert_eq(b2, 0, "a file over max is refused");
+    assert_eq(n2, 0, "with length 0");
     assert_eq(alloc_used() - u0, 0, "and allocates nothing");
     var nx = test_scratch("tls_ca_store_missing.pem");
     u0 = alloc_used();
-    assert_eq(_tls_read_file_in(0, nx, TLS_CAFILE_MAX, &n), 0, "a missing file is refused");
+    var b3, n3 = _tls_read_file_in(0, nx, TLS_CAFILE_MAX);
+    assert_eq(b3, 0, "a missing file is refused");
     assert_eq(alloc_used() - u0, 0, "and allocates nothing");
     # The verb, on fresh ctxs (the filed repro's shape): the per-call cost is the file, not 1 MiB.
     var w = tls_native_new_client("localhost", 9);
