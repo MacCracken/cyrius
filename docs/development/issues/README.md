@@ -277,11 +277,12 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 - [`cyrius fuzz --poison` has no guard pages: a read that jumps a whole redzone is invisible](2026-10-08-poison-guard-pages-unbuilt.md)
 - [The TypeScript front end is measured against one project's files (secureyeoman's corpus), not the language — it needs true, in-tree language support](2026-10-19-typescript-support-measured-against-one-projects-files.md)
 
-**Unplaced** (3)
+**Unplaced** (4)
 
 - [The seed (`bootstrap/asm`) truncates input at 131,072 B, overruns its 512-label table and its 65,536 B CODE buffer — all unchecked](2026-10-08-seed-asm-silent-caps-input-labels-code.md)
 - [sigil (the crypto / trust fold) has no runtime logging: none of its 68 `src/` files calls sakshi](2026-10-12-sigil-has-no-runtime-logging.md)
 - [cybs names neither the construct it refused nor the file and line](2026-10-13-cybs-per-construct-refusal-and-file-line.md)
+- [`pam_unix_authenticate` passes `nullok`: an account with an empty password field authenticates](2026-10-22-pam-nullok-empty-password-authenticates.md)
 
 ## Recommended security floor
 
