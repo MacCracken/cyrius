@@ -34,7 +34,9 @@
 #   4. STATIC, programs/ + cbt/: no function that writes a path back — or unlinks it — reads
 #      that same path through a fixed numeric cap. DERIVED per function from the source, so a
 #      new read-modify-write site is covered the day it lands, and self-tested on the two
-#      pre-fix bodies.
+#      pre-fix bodies. 6.7.18: programs/ is read RECURSIVELY (it read programs/*.cyr and
+#      programs/checks/*.cyr, so programs/dev/, programs/folds/ and programs/release/ — the
+#      helpers, cyrius since 6.7.17 — were outside it), with floors on the files read.
 #   5. A FAILED READ IS NOT END-OF-FILE (added by the bite-17 review). RUNTIME: over a path that
 #      OPENS but cannot be READ — a directory, where read(2) is -EISDIR — `file_read_whole`
 #      returns 0 with a NEGATIVE length (the errno, passed through since 6.6.12 — it was
@@ -78,6 +80,8 @@
 #   n. (6.6.7) _env_load's open failure caches 0 again  -> axis 6 FAIL (runtime rc 2; static)
 #   o. (6.6.12) file_read_whole's `store64(len_out, 0)` -> axes 5 and 6 FAIL (runtime rc 2: the
 #      on failure restored                                 errno is overwritten with 0)
+#   p. (6.7.18) axis 4 back to the flat                 -> axis 4 FAIL (the floors: 150 files,
+#      `programs/*.cyr programs/checks/*.cyr` glob         15 under programs/<dir>/)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -216,11 +220,18 @@ cbt/commands/capacity.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capt
 cbt/deps/git_cache.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
 x=0
 found=""
-for f in programs/*.cyr programs/checks/*.cyr $(find cbt -name '*.cyr' | LC_ALL=C sort); do
+nfile=0; nsub=0
+for f in $({ find programs -name '*.cyr'; find cbt -name '*.cyr'; } | LC_ALL=C sort); do
+    nfile=$((nfile + 1))
+    case "$f" in programs/*/*) nsub=$((nsub + 1)) ;; esac
     r=$(_rmw "$f")
     [ -n "$r" ] && found="$found$r
 "
 done
+if [ "$nfile" -lt 160 ] || [ "$nsub" -lt 30 ]; then
+    fail "axis 4: read $nfile files, $nsub under programs/<dir>/ (floors 160 / 30) — the scan read nothing, or not programs/' subdirectories"
+    x=1
+fi
 # strip the cap from the key, then subtract the allowlist
 printf '%s' "$found" | grep . | sed 's/|[0-9]*$//' | LC_ALL=C sort > "$D/keys.live"
 printf '%s\n' "$ALLOW" | grep . | cut -d'|' -f1-3 | LC_ALL=C sort > "$D/keys.allow"
@@ -268,7 +279,7 @@ x.cyr|_write_pin_in_tree|"cyrius.cyml"|65535
 x.cyr|cmd_update|"cyrius.toml"|32767'
 got=$(_rmw "$D/prefix.cyr" x.cyr | LC_ALL=C sort)
 [ "$got" = "$(printf '%s' "$want" | LC_ALL=C sort)" ] || { fail "axis 4 self-test: the pre-fix bodies judged:"; printf '%s\n' "$got" | sed 's/^/      /'; fail "axis 4 self-test: expected exactly the three read-modify-write sites (and NOT the read-only one)"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 4: no read-modify-write site in programs/ or cbt/ reads through a fixed cap outside the $(printf '%s\\n' "$ALLOW" | grep -c .) allowlisted tool-own temps (detector self-tested on the two pre-fix bodies and the 6.6.20 in-tree replace)"
+[ "$x" = 0 ] && echo "  ok: axis 4: no read-modify-write site in programs/ or cbt/ ($nfile files, $nsub in programs/' subdirectories) reads through a fixed cap outside the $(printf '%s\\n' "$ALLOW" | grep -c .) allowlisted tool-own temps (detector self-tested on the two pre-fix bodies and the 6.6.20 in-tree replace)"
 
 # ── axis 5: a read that FAILS is never handed back as content ──
 # The read side of the same defect: `file_read_whole` (and `file_read_all`) exited the loop on
