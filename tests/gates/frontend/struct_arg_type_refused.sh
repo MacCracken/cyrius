@@ -305,7 +305,7 @@
 #   `_ppd_zval` answering 0                             -> RED 1: PY8
 #   real tree                                           -> GREEN (242 refusal rows — floor 242 — and 49 acceptance rows)
 # 6.7.17 (D107's ASSIGNMENT twin, covered by D107) — `u = &h;` / `v = pp;` / `pp = u;` into a name declared a struct
-# pointer of another depth (`_ppd_asg`, parse/types.cyr), "cannot assign 'u: *Pt' from '&h', a '**Pt' - a pointer of
+# pointer of another depth (`_ppd_asg`, parse/types/ptr_ann.cyr), "cannot assign 'u: *Pt' from '&h', a '**Pt' - a pointer of
 # another depth": PZ1-PZ7, PZK1. Mutations (2026-10-22, the same method):
 #   the tree before it (the integration head)           -> RED 7: PZ1-PZ7 (compiled; PZ1 exited 88 where 6 is right)
 #   `_ppd_asg` answering 0                              -> RED 7: PZ1-PZ7
@@ -1342,7 +1342,7 @@ fn go(): i64 { var l: P3; l = GPQ; return l.x; } syscall(60, go());"
 
 echo "=== 6.7.16 (D97): a pointer to another struct into a \`*S\` / \`**S\` parameter (x86_64, aarch64, cx, PE) ==="
 # issues/archived/2026-10-20-pointer-to-other-struct-argument-unchecked.md — refused at the argument in 6.7.3's words (`_pa_chk`,
-# parse/types.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
+# parse/types/ptr_ann.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
 accept4() {  # $1 label  $2 source  $3 expected x86_64 exit
     printf '%s' "$2" > "$D/k4.cyr"
     naccept=$((naccept+1))
@@ -1501,7 +1501,7 @@ accept4 "PDK5 an if-expression with a 0 branch" \
     "${PD}fn go(): i64 { var p = Pt { 1, 7 }; var c = 1; return nc4(if (c == 1) { &p } else { 0 }); } syscall(60, go());" 7
 
 echo "=== 6.7.17 (D10 / D11): a pointer to another struct into a by-value struct, a pointer of another depth (x86_64, aarch64, cx, PE) ==="
-# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md rows A1 / A2 — `_pa_chk` (parse/types.cyr)
+# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md rows A1 / A2 — `_pa_chk` (parse/types/ptr_ann.cyr)
 # now reads a BY-VALUE struct parameter as depth 0 (it takes a `*S` of its own struct: B7-1b's copy) and refuses a
 # pointer whose stars differ from the parameter's (`_pa_derr`, both types named); `&h` of a handle is a `**S`
 # (`_pa_hamp`). PV1 / PX1 / PX2 the filed repros verbatim.
@@ -1632,7 +1632,7 @@ accept4 "PVK5 an untyped pointer, alloc(), 0" \
     "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u = &p; var a = alloc(16); store64(a + 8, 3); return nc4(u) + nc4(a) + bp(u) + n2(&u) + n2(0); } syscall(60, go());" 11
 
 # 6.7.17 (D107, the user's decision, 2026-10-22: "refuse it, naming both pointer types, as an argument of another depth
-# is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION (`_ppd_val`, parse/types.cyr; the zone's
+# is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION (`_ppd_val`, parse/types/ptr_ann.cyr; the zone's
 # `_ppd_zval`): "cannot initialise 'u: *Pt' from '&h', a '**Pt' - a pointer of another depth". PY1 the vala review's
 # blocked repro verbatim (`u.x` read the handle's slot as the Pt: exit 0 where 3 is right); PY2-PY12 every source and
 # path, both ways; PYK1 what stays: the annotation's depth (to any struct), `*pp`, `&h` into `**Pt`, untyped, `0`,

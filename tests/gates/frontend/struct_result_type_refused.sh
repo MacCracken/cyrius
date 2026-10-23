@@ -597,7 +597,7 @@ refuse "U12 var x: i64 = b.mk()  (D24 kept)" "cannot initialise 'x: i64' from 'Q
 # U13-U28 (6.7.15, issues/archived/2026-10-17-refused-annotation-type-cascades-at-field-uses.md) — a USE of a variable or parameter
 # whose annotation was refused says nothing more: each `.field` read, field store and `.m()` on it printed "no struct type
 # in scope for 'x'; a '.field' access needs its struct declaration" after the "unknown type 'Foo'" line (the declaration
-# parses on as a plain i64). `_tn_refuse_var` (parse/types.cyr) marks it with the late-declaration refusal's stand-down
+# parses on as a plain i64). `_tn_refuse_var` (parse/types/type.cyr) marks it with the late-declaration refusal's stand-down
 # (`_ann_refd_mark` / `_ann_refd_said`, parse/fn/def.cyr), per (fn, name) — a local / parameter in its fn, a global at top
 # level and in every fn body. The controls: an untyped `y.a`, another fn's untyped `x`, a global named like a refused
 # parameter of a fn — each still "no struct type in scope". A top-level `var P: *Foo` global took a garbage struct type

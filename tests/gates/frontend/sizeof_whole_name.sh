@@ -8,7 +8,7 @@
 #   sizeof(i8zz) 1, sizeof(i32q) 4, and `#assert sizeof(i16v8) == 2` PASSED. 6.6.10 fixed the
 #   same prefix test for struct/union/Vec FIELDS (`_field_scalar_width`) only. A name that is no
 #   type is refused by name. 6.6.16 (C8): both sites resolve through the one type-name resolver
-#   (parse/types.cyr `_tn_resolve`) — a vector type like i16v8 now sizes 16 (axis 2) and the
+#   (parse/types/type.cyr `_tn_resolve`) — a vector type like i16v8 now sizes 16 (axis 2) and the
 #   refusal names the type (tests/gates/diagnostics/type_name_refused.sh has every site).
 # AXIS 2 — ANTI-VACUOUS: sizeof(i8/i16/i32/i64) and a struct still size, in an expression,
 #   in a fn, at top level and under #assert.

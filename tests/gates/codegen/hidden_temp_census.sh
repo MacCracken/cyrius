@@ -50,7 +50,7 @@ fail=0
 
 # ── axis 1 — no construct registers a GLOBAL slot under name offset 0 ─────────────────────
 # The legal sites are `_HTEMP`'s own top-level arm in src/frontend/parse/switch.cyr, which marks the slot
-# dead so FINDVAR skips it, and (6.7.8, the checked dyn) `_dyn_vt_reg` in parse/types.cyr — a trait
+# dead so FINDVAR skips it, and (6.7.8, the checked dyn) `_dyn_vt_reg` in parse/types/dyn.cyr — a trait
 # object's VTABLE, marked dead the same way and program-wide by design: every forming site, in every
 # call, thread and file, stores the same fn addresses into it. And (6.7.10, P5-B) `_cov_greg` in
 # parse/cov.cyr — the execution-coverage mode's counter band and fn map, marked dead the same way and
@@ -237,7 +237,7 @@ fi
 # (`var G: (i64, i64) = f();`, `_tup_cap_global`). Both are reached from PARSE_VAR's `_tup_var` only
 # under GINFN != 1 (in a fn each is a frame block, `_tup_lres`): top level, never inside a fn.
 #
-# 6.7.8 (the checked dyn, D5): `_dyn_vt_reg` (parse/types.cyr) registers a trait object's VTABLE at
+# 6.7.8 (the checked dyn, D5): `_dyn_vt_reg` (parse/types/dyn.cyr) registers a trait object's VTABLE at
 # the first forming of a (trait, type) pair — usually inside a fn body, and DELIBERATELY one global
 # for the whole program: it holds only fn addresses, every forming site stores the same words before
 # the dyn is built (so recursion, threads and files share nothing a writer could disagree on), and it
@@ -280,7 +280,7 @@ fi
 # ── axis 4 — FINDVAR still skips dead slots ──────────────────────────────────────────────
 # The top-level arm of _HTEMP relies on it; without the skip, a top-level `switch` puts a
 # name-0 global back in the lookup table and axis 1 would pass while the defect is live.
-if grep -q 'GVDEAD(S, vi)' src/frontend/parse/types.cyr; then
+if grep -q 'GVDEAD(S, vi)' src/frontend/parse/types/lookup.cyr; then
     echo "  ok: axis 4 — FINDVAR consults GVDEAD"
 else
     echo "FAIL hidden_temp_census axis 4: FINDVAR no longer skips dead global slots (GVDEAD)"

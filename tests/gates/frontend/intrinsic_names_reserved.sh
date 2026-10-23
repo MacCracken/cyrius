@@ -48,7 +48,7 @@
 #   * parse/fn/def.cyr _tl_use: the _RSV_INTRINSIC_DECL call dropped -> the four use_* rows RED, 14
 #     assertions (use_mh / use_mh_top compile and run 2, use_fc compiles and SIGSEGVs, use_sz is
 #     only the bare `expected identifier` parse error).
-#   * parse/types.cyr PARSE_ENUM_DEF: the _RSV_INTRINSIC_DECL call dropped -> the six en_* rows RED,
+#   * parse/types/enum.cyr PARSE_ENUM_DEF: the _RSV_INTRINSIC_DECL call dropped -> the six en_* rows RED,
 #     24 assertions (each compiles rc 0 and emits a binary).
 #   Re-measured with the enum rows: refusal disabled 162 RED (= the 6.6.19 compiler); exemption
 #   never / always 17 / 52; _tl_use call dropped 14.

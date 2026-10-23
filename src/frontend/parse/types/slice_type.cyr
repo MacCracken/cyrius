@@ -1,0 +1,447 @@
+# PARSER — types: slice types (`_tn_slice_*`, `_sl_*`), sizeof (_sizeof_type) and the parameter and return type checks
+# (`_tn_param_check`, `_tn_ret_*`).
+# ================================================================
+# Split from parse/types.cyr at 6.7.18, unchanged; parse.cyr includes parse/types/ in source order. CHANGELOG [6.7.18]
+
+# A slice element `[T]` / `slice<T>` at token `ti`: its width. A bound type parameter is its
+# argument's size; a name that is no type is refused (it was 8, silently).
+fn _tn_slice_w(S, ti, vnoff): i64 {
+    if (TOKTYP(S, ti) == 10) {                    # 6.7.7 (R3): `[( .. )]` / `slice<( .. )>`
+        _tup_pos_refuse(S, "a slice element");
+        STI(S, GTI(S) - 1);                       # on the `)`: the caller steps past it
+        return 8;
+    }
+    if (_sl_ann_at(S, ti) == 1) {                 # 6.7.8 (C2-6a): `[[T]]`, `slice<slice<T>>`, ..
+        _sl_err(S, ti, "a slice cannot be the element of a slice (6.7.8: slices are fn-locals)",
+          " - keep each inner slice's slice_ptr / slice_len in a struct array");
+        _sl_ann_skip(S);
+        STI(S, GTI(S) - 1);                       # on its last token: the caller steps past it
+        return 8;
+    }
+    if (TOKTYP(S, ti) == 105) { return 16; }      # u128
+    if (TOKTYP(S, ti) != 2) { return 8; }
+    _tn_slice_tpa(S, ti);                         # 6.7.17 (D6): `[U<i8>]`, `slice<U<i8>>`
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { return _tn_bytes(S, _tn_from_rc(b)); }
+    var c = _tn_resolve_at(S, ti);
+    if (c == 0) {
+        _tn_refuse(S, ti, " as the element of slice ", vnoff);
+        return 8;
+    }
+    if (_vec_ann_at(S, ti) == 1) { return _tn_slice_vec(S, ti, vnoff); }   # 6.7.17 (D105): `[Vec<T>]`
+    var g = _tn_slice_gen(S, ti);   # 6.7.16 (D89): `[Box<i64>]`, the instance
+    if (g > 0) { return _tn_bytes(S, _tn_code(6, g)); }
+    _tn_slice_ngt(S, ti);   # 6.7.16 (D7): `[Pt<i64>]`
+    return _tn_bytes(S, c);
+}
+# ⛔ 6.7.16 (the user's D89, 2026-10-20) — A GENERIC STRUCT INSTANCE AS A SLICE ELEMENT: `[Box<i64>]` and
+# `slice<Box<i64>>` were "expected ']', got '<'" (the word form went on to "expected '='" and "undefined variable
+# 'i64'"), where `[Pt]` declares. The element is the instance, read as `var b: Box<i64>` reads it (`_gen_ann_sid`: found
+# or minted, each refusal in its list reported — an unknown type, D5's extra argument), its width the instance's size.
+# Token `ti` the name, its `<` next: the instance's sid with the cursor on the list's last token (the caller steps past
+# it), or 0 when not the shape, nothing moved (a non-generic struct's list is D7's, `_tn_slice_ngt`). A `>>` that also
+# closes `slice<` owes that `>` (`_ta_pending_gt`): the slice's own close, taken. CYRIUS_MONOMORPH=0 steps the list
+# and reads the base, as the annotation does there. CHANGELOG [6.7.16]
+fn _tn_slice_gen(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return 0; }
+    if (_MONOMORPH_OK == 1) { if (GSTP(S, sid - 1) == 0) { return 0; } }
+    var over = _targ_over(S, ti + 1);   # 6.7.17: an over-closer is the slice's error (`_sl_el_over`)
+    STI(S, ti + 1);
+    var g = _gen_ann_sid(S, sid);
+    _ta_pending_gt = 0;
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
+    return g;
+}
+# The levels the `<..>` at token `k` closes beyond itself with its last closer (`_skip_targ_list`'s answer); the cursor
+# does not move.
+fn _targ_over(S, k): i64 {
+    var sv = GTI(S);
+    STI(S, k);
+    var o = _skip_targ_list(S);
+    STI(S, sv);
+    return o;
+}
+# ⛔ 6.7.17 (the user's D105, 2026-10-22) — A SLICE ELEMENT IS ANY TYPE VALID ELSEWHERE: `[Vec<i64>]` / `slice<Vec<T>>`
+# declare the 8-byte `vec_new()` handle `var v: Vec<i64>` does, `[*Vec<T>]` / `[**Vec<T>]` and `[*u128]` the 8-byte
+# pointer element (D93's). Each was a parse error — "expected ']', got '<'" / "expected ']', got u128" (the word form
+# "expected '=', got .." and "undefined variable 'i64'") — while `[u128]`, `[Box<i64>]` and the same annotations on a
+# local compiled. T is read as that annotation reads it (`_vec_ann_chk`: "unknown type 'Nope' as the Vec element of
+# 's'", a tuple, a pointer, a second argument refused by name) and the list stepped, the cursor on its last token (the
+# caller steps past it). CHANGELOG [6.7.17]
+fn _tn_slice_vec(S, ti, vnoff): i64 {
+    _vec_ann_chk(S, ti, vnoff);
+    STI(S, ti + 1);
+    var over = _skip_targ_list(S);
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
+    return 8;
+}
+# A slice element's `<..>` (`nti` its name; the cursor just past the list) whose last closer closed `over` levels beyond
+# it (`>>` / `>>>`): 1 when that is more than the slice may take — `slice<T<..>>`'s own `>` (one), none in `[T<..>]` (the
+# slice's opening token is the one before the element's `*`s). The caller then leaves the cursor so the slice's own read
+# meets that closer and reports it ("expected ']', got '>>'", "expected '=', got '>>>'"), as a declaration's list does
+# (6.7.17, `_tpl_skip`). A `>` after a closer that closed the slice too (`slice<Vec<i64>>>`) is reported here, where the
+# word form's read would take it as the slice's own: "expected '=', got '>'". Every element list asks it — Vec<T>, a
+# generic struct's (`[Box<i64>>]` compiled through 6.7.16, D89's), Result<..>, behind `*`s or not. CHANGELOG [6.7.17]
+fn _sl_el_over(S, nti, over): i64 {
+    var k = nti - 1;
+    while (TOKTYP(S, k) == 8) { k = k - 1; }
+    var lim = 1;
+    if (TOKTYP(S, k) == 28) { lim = 0; }
+    if (over > lim) { return 1; }
+    if (over == 1) { if (PEEKT(S) == 20) { ERR_EXPECT(S, 4); } }
+    return 0;
+}
+# 6.7.17 (D6): a slice element that is a type parameter with a list (`[U<i8>]`): refused (`_tp_targs_refuse`) and
+# stepped as `_tn_slice_ngt` steps one, before a bound parameter's early width — it was "expected ']', got '<'".
+fn _tn_slice_tpa(S, ti): i64 {
+    if (_tp_targs_refuse(S, ti) == 0) { return 0; }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    STI(S, GTI(S) - 1);
+    return 0;
+}
+# A slice element's non-generic `<..>` (`ti` the name): refused at the name and stepped, the cursor on the list's last
+# token (the caller steps past it). It was "expected ']', got '<'". CHANGELOG [6.7.16]
+fn _tn_slice_ngt(S, ti): i64 {
+    if (_ngt_refuse(S, ti) == 0) { return 0; }
+    STI(S, ti + 1);
+    var over = _skip_targ_list(S);   # 6.7.17: an over-closer is the slice's error (`_sl_el_over`)
+    STI(S, GTI(S) - 1 - _sl_el_over(S, ti, over));
+    return 0;
+}
+
+# ⛔ 6.7.8 (C2-6a) — SLICES STAY FN-LOCALS, AND EVERY OTHER POSITION SAYS SO BY NAME (the user's
+# decision, 2026-10-10: "a slice PARAMETER and a slice declared in the declaration zone" refused
+# by name; a top-level slice after the first statement keeps compiling, through the helper API).
+# Only a fn-local `var` (PARSE_VAR) reads `[T]` / `slice<T>`; a parameter (`expected ')', got
+# identifier 'u8'`, and pass 1 counted the list short), a return (`expected identifier, got '['`),
+# a struct field, a declaration-zone global (`expected '=', got identifier 'u8'` /
+# `unknown type 'slice'`), a pointer to a slice `*[T]`, a slice of slices and a type argument
+# met generic parse errors. Each is now refused at its `[` / `slice`, once, and the whole type is
+# consumed so nothing cascades. (issues/2026-10-09-slice-type-outside-fn-local-misdiagnosed.md)
+# 1 when token `ti` begins a slice type: `[` or the word `slice` with its `<` (a program's own
+# `struct slice` keeps its name).
+fn _sl_ann_at(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 28) { return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF) != 0x006563696C73) { return 0; }   # "slice\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.11 — PARSE_VAR's `slice` word, cursor on it: 1 for the built-in `slice<T>` / bare `slice` slot,
+# 0 when the program declares a `struct slice` (or `slice<T>`), which a fn-local annotation now names as
+# a parameter, a pointer target, a field, a global and a type argument already did (`_sl_ann_at`, 6.7.8
+# row K2) — the built-in stays reachable as `[T]`. The ladder compared the word before any struct
+# lookup, so `var x: slice = 0;` was the built-in 16-byte slot and `x.a` "no struct type in scope for
+# 'x'" (the user's decision (b), 2026-10-13). A helper, so PARSE_VAR's reference count does not grow
+# (cybs's per-fn ceiling). CHANGELOG [6.7.11] (issues/archived/2026-10-10-user-struct-named-slice-shadowed-in-locals.md)
+fn _sl_word_builtin(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    var noff = PEEKV(S);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF) != 0x006563696C73) { return 0; }   # "slice\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
+# Cursor on a slice type's first token: consumes it whole — `[ .. ]` with any nesting, or
+# `slice<..>` (`>>` closing two). Stops, consuming nothing more, at a token no type holds.
+fn _sl_ann_skip(S): i64 {
+    if (PEEKT(S) != 28) {
+        STI(S, GTI(S) + 1);
+        SKIP_GENERICS(S);
+        return 0;
+    }
+    var d = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12 || t == 5 || t == 13 || t == 14 || t == 4) { return 0; }
+        if (t == 28) { d = d + 1; }
+        if (t == 29) { d = d - 1; }
+        STI(S, GTI(S) + 1);
+        if (d <= 0) { go = 0; }
+    }
+    return 0;
+}
+# The refusal `a` + `b` at token `ti`, once per token (a generic body and the two passes read the
+# same tokens). A grammar refusal: reported under --syntax-only too. The parse goes on in sync.
+fn _sl_err(S, ti, a, b): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": ", 2);
+    PRSTR(a);
+    PRSTR(b);
+    _ew("\n", 1);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# `*[T]` / `*slice<T>` at token `ti` (the slice's first token).
+fn _sl_err_ptr(S, ti): i64 {
+    return _sl_err(S, ti, "a pointer to a slice is not a type (6.7.8: slices are fn-locals)",
+      " - pass &s as a plain pointer and read slice_ptr / slice_len");
+}
+# A slice's pointer element `[*T]` / `slice<*T>`, cursor past its `*`: T checked by name and
+# consumed; `*[U]` / `*slice<U>` refused by name and consumed whole.
+# ⛔ 6.7.17 (the user's D93, 2026-10-22) — ANY NUMBER OF `*`: `[**i64]`, `[**fn( .. )]`, `slice<**T>` (deeper too) read
+# the rest as `[*T]` reads T, an 8-byte element (a pointer's), as `var p: **i64` is a pointer elsewhere. The second `*`
+# was taken for T: "expected ']', got '*'" (`slice<**T>`: "expected '=', got '*'") and a cascade. CHANGELOG [6.7.17]
+fn _tn_slice_ptr_el(S, noff): i64 {
+    while (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }
+    if (_sl_ann_at(S, GTI(S)) == 1) {
+        _sl_err_ptr(S, GTI(S));
+        _sl_ann_skip(S);
+        return 0;
+    }
+    if (PEEKT(S) == 32) {   # 6.7.17 (D8): `[*fn( .. )]`, an 8-byte element (`_ptr_fnp_end`)
+        STI(S, _ptr_fnp_end(S, GTI(S) - 1, noff, 0, " for variable "));
+        return 0;
+    }
+    if (PEEKT(S) == 10) {   # 6.7.17: `[*( .. )]` is R3's refusal, as `var p: *(i64, i64)` is ("expected ']'" before)
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
+        return 0;
+    }
+    if (PEEKT(S) == 105) {   # 6.7.17 (D105): `[*u128]`, as `var p: *u128` (see `_tn_slice_vec`)
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    if (PEEKT(S) == 2) { _tn_ptr(S, GTI(S), noff); STI(S, GTI(S) + 1); }
+    if (_tn_slice_vptr(S, noff) == 1) { return 0; }   # 6.7.17 (D105): `[*Vec<T>]`
+    if (_tn_slice_gptr(S) == 1) { return 0; }   # 6.7.16 (D89): `[*Box<i64>]`
+    # 6.7.16: `[*Pt<i64>]` refused at the name (D7's words; it was "expected ']', got '<'"), `[*Result<..>]` read
+    if (PEEKT(S) == 19) { if (_ngt_refuse(S, GTI(S) - 1) != 0) { _tn_slice_pskip(S); } }
+    return 0;
+}
+# ... `[*Vec<T>]` / `slice<**Vec<T>>`, cursor on the `<` after `Vec`: T read as `var p: *Vec<T>` reads it, the list
+# stepped (the cursor past it, or on a closer that closes more than the slice may: `_sl_el_over`). 1 = stepped.
+fn _tn_slice_vptr(S, noff): i64 {
+    var nti = GTI(S) - 1;
+    if (_vec_ann_at(S, nti) == 0) { return 0; }
+    _vec_ann_chk(S, nti, noff);
+    _tn_slice_pskip(S);
+    return 1;
+}
+# ... `[*Box<i64>]` / `slice<*Box<i64>>`, cursor on the `<` after a generic struct's name: its list read as a pointer
+# field's is (`_targ_chk`: every refusal in it, nothing minted — a pointer is 8 bytes whatever it points at) and
+# stepped; a `>>` closing `slice<` too is the slice's (its caller takes no `>` after it). 1 = stepped. CHANGELOG [6.7.16]
+fn _tn_slice_gptr(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    if (TOKTYP(S, GTI(S) - 1) != 2) { return 0; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, GTI(S) - 1));
+    if (sid <= 0) { return 0; }
+    if (_MONOMORPH_OK == 1) {
+        if (GSTP(S, sid - 1) == 0) { return 0; }
+        _targ_chk(S, GTI(S));
+    } else {
+        # 6.7.17 (D102): under CYRIUS_MONOMORPH=0 a non-generic's list is refused (`_ngt_skip`), as the default build's
+        if (_struct_gen_tok(S, TOKVAL(S, GTI(S) - 1)) == 0) { return 0; }
+        _ngt_fl_args(S, GTI(S) - 1);
+    }
+    _tn_slice_pskip(S);
+    return 1;
+}
+# A pointer element's `<..>` (cursor on its `<`): stepped; a closer that closes more than the slice may is left for the
+# slice's own read (`_sl_el_over`). CHANGELOG [6.7.17]
+fn _tn_slice_pskip(S): i64 {
+    var nti = GTI(S) - 1;
+    var over = _skip_targ_list(S);
+    if (_sl_el_over(S, nti, over) == 1) { STI(S, GTI(S) - 1); }
+    return 0;
+}
+# A slice local's canonical slot `li` (PARSE_VAR, `ann` the annotation's `[` / `slice`): its element
+# width `w` and, above bit 31, its element descriptor (`_slice_led`) — a slice store checks and
+# stores by it. 6.7.8 (C2-6a)
+fn _sl_slice(S, li, w, ann): i64 {
+    if (w <= 0) { return SLSLICE(S, li, w); }
+    var et = ann + 1;                              # `[T]`
+    if (TOKTYP(S, ann) != 28) { et = ann + 2; }    # `slice<T>`
+    return SLSLICE(S, li, w | (_slice_ek(S, et, w) << 32));
+}
+# The element descriptor of a slice of `w`-byte elements whose type is token `et`: an integer /
+# f64 / f32 / bool's (`_ek_at`); 8 for any other 8-byte element but a struct — a pointer `[*T]`,
+# an enum, a cstring: a word; 0 for a struct (a slice store refuses it by name), 16 for u128.
+fn _slice_ek(S, et, w): i64 {
+    if (TOKTYP(S, et) == 8) { return 8; }
+    var ed = _ek_at(S, et);
+    if (ed != 0) {
+        if (_ek_w(ed) == w) { return ed; }
+        return 0;
+    }
+    if (w != 8) { return 0; }
+    if (TOKTYP(S, et) != 2) { return 0; }
+    var c = 0;
+    var b = _tp_resolve(S, TOKVAL(S, et));
+    if (b != 0) { c = _tn_from_rc(b); } else { c = _tn_resolve_at(S, et); }
+    if (_tn_class(c) == 6) { return 0; }   # a struct
+    return 8;
+}
+
+# sizeof(T) at token `ti` — an expression (`asrt` 0) or an `#assert` operand (1): T's bytes, or 0
+# after the refusal. A bound type parameter is its argument's size (f64 is 8: it read 9).
+fn _tn_sizeof(S, ti, asrt): i64 {
+    if (TOKTYP(S, ti) == 105) { return 16; }      # u128
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { return _tn_bytes(S, _tn_from_rc(b)); }
+    var c = _tn_resolve_at(S, ti);
+    if (c != 0) { return _tn_bytes(S, c); }
+    if (asrt == 0) {
+        _tn_refuse(S, ti, " in sizeof", 0 - 1);
+        return 0;
+    }
+    # An `#assert` operand: leave the latch set, as the error it replaces did — the #assert
+    # handler then drops its own "#assert failed" for the operand it could not evaluate.
+    _tn_refuse(S, ti, " in #assert sizeof", 0 - 1);
+    _panic = 1;
+    return 0;
+}
+
+# ⛔ 6.6.17 — `sizeof(T<..>)` did not parse (`expected ')', got '<'`). Cursor on T: its size, T
+# and any `<..>` consumed. A generic struct with arguments is the INSTANCE `var b: Box<i32>`
+# declares (`_gen_ann_sid`), so `sizeof(Box<i32>)` is what that variable occupies; any other
+# `T<..>` (`Vec<i64>`, a handle) is T's own size. `asrt` as _tn_sizeof's.
+fn _sizeof_type(S, asrt): i64 {
+    if (PEEKT(S) == 8) { return _sizeof_ptr(S, asrt); }   # 6.7.17 (D94): `sizeof(*T)`
+    if (PEEKT(S) == 10) {                         # 6.7.7 (R3): `sizeof(( .. ))`
+        _tup_pos_refuse(S, "a sizeof operand");
+        if (asrt == 1) { _panic = 1; }            # as _tn_sizeof's #assert operand: no "#assert failed"
+        return 0;
+    }
+    if (PEEKT(S) != 2) { if (PEEKT(S) != 105) { ERR_EXPECT(S, 2); } }   # 6.7.7: moved out of _PARSE_FACTOR_IMPL
+    var ti = GTI(S);
+    var sz = _tn_sizeof(S, ti, asrt);
+    STI(S, ti + 1);
+    if (PEEKT(S) != 19) { return sz; }
+    var sid = 0;
+    if (TOKTYP(S, ti) == 2) { sid = FINDSTRUCT(S, TOKVAL(S, ti)); }
+    var g = _gen_ann_sid(S, sid);
+    if (g > 0) { if (g != sid) { sz = STRUCTSZ(S, g - 1); } }
+    return sz;
+}
+# ⛔ 6.7.17 (the user's D94, 2026-10-22) — sizeof(*T) IS 8: a pointer type — `*i64`, `**T`, `*Pt`, `*Box<i64>`, a
+# `*fn( .. )` (a bare `*fn` too) — is the one 8-byte word it declares everywhere else. sizeof read a name only:
+# `sizeof(*i64)` was "expected identifier, got '*'" (and `*fn(..)` a cascade). Cursor on the first `*`: the `*`s and
+# T stepped, T read as its own position reads it — a name as `sizeof(T)` does (an unknown one "unknown type 'Nope' in
+# sizeof", a `<..>` read), a `*fn( .. )` by the parameter grammar with sizeof's words (`_ptr_fnp_end`), `*[T]` / `*( ..
+# )` refused as a pointer annotation's are, no type at all "expected identifier". 8, or 0 after a refusal (an `#assert`
+# operand's latch set, as `_tn_sizeof`'s). CHANGELOG [6.7.17]
+fn _sizeof_ptr(S, asrt): i64 {
+    var ti0 = GTI(S);
+    while (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }
+    var t = PEEKT(S);
+    if (_sl_ann_at(S, GTI(S)) == 1) {
+        _sl_err_ptr(S, GTI(S));
+        _sl_ann_skip(S);
+    } elif (t == 2 || t == 105) {
+        _sizeof_type(S, asrt);
+    } elif (t == 32) {
+        var w = " in sizeof";
+        if (asrt == 1) { w = " in #assert sizeof"; }
+        STI(S, _ptr_fnp_end(S, ti0, 0 - 1, 0, w));
+    } elif (t == 10) {
+        _tup_pos_refuse(S, "a pointer target `*( .. )`");
+    } else {
+        ERR_EXPECT(S, 2);
+        return 0;
+    }
+    if (_ann_said(S, ti0, GTI(S)) == 0) { return 8; }
+    if (asrt == 1) { _panic = 1; }
+    return 0;
+}
+
+# A parameter's type name at the cursor (PARSE_FN_DEF; `ptc` its _classify_param_type class).
+# Str, cstring, Result, Option, Tagged and the vector names stay accepted BY NAME (`ptc != 0`):
+# `s: Str` in a unit without lib/str.cyr is the by-name handle the param ABI has always taken.
+# So is a type parameter of the fn (captured, or read from its `<..>`) and any name the resolver
+# knows. Anything else is refused by name — `fn f(a: Nonexist)` / `fn f(a: i16q)` compiled with
+# no ABI at all. Widths still have no effect on a param. Pass 1 (_prescan_params) reads the same
+# names and reports nothing, so each is reported once.
+fn _tn_param_check(S, pnoff, fi, ptc): i64 {
+    _dsc_param(S, GTI(S));   # 6.7.8 (D5): a declared scalar, stamped on its slot by `_param_record`
+    if (ptc != 0) { return _tn_byname_refd(S, pnoff); }
+    var ti = GTI(S);
+    if (_sl_ann_at(S, ti) == 1) { return _sl_param_refuse(S, ti); }   # 6.7.8 (C2-6a): `s: slice<T>`
+    if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { return 0; }   # the captured `<T>` first: no scan. CHANGELOG [6.7.16]
+    if (_tn_resolve_at(S, ti) != 0) { return 0; }
+    _tn_refuse_var(S, ti, " for parameter ", pnoff);
+    return 0;
+}
+
+# 6.7.16 — a by-name handle (`s: Str`, `s: *Str`; Result, Option, Tagged) is accepted unread, so when the struct of
+# that name was declared by a refused declaration (a late `include "lib/str.cyr"`, `_dl_refd_at`) and no struct
+# answers it, the parameter took no annotation refusal and no mark: its `s.len` was "no struct type in scope for 's'"
+# after the inclusion's one error. It is marked as a refused annotation's variable (`_ann_refd_mark`), so its uses
+# stand down. A name a struct answers, or one no refused declaration declared, is untouched. CHANGELOG [6.7.16]
+fn _tn_byname_refd(S, pnoff): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    if (_dl_refd_at(S, noff) == 0) { return 0; }
+    _ann_refd_mark(S, pnoff);
+    return 0;
+}
+
+# A return type _classify_return_type does not take (cursor on it): an unknown name is
+# `unknown type 'X' as a fn return type`; a type that exists but is not a return type (u8..u64,
+# f32, an enum) says so by name — both used to be the one unnamed "fn return type must be
+# struct or ..." line, and its panic resync could cascade. The ACCEPTED set is unchanged. The
+# note lists all of it, the forms taken before the classifier is asked too (bool, a multi-value,
+# `*T`, a type parameter; `dyn Tr` is a struct to it). CHANGELOG [6.7.11]
+# Returns the return code to record: 0 after the refusal, and -8 (an i64) under --syntax-only,
+# which resolves nothing and refuses nothing (see the v6.5.19 note at the call site). Either
+# way a `<..>` after the name (`fn f(): Vec<i64>`) is skipped with it — the cursor is left on its
+# last token, the one the caller steps past — so its type arguments are not parsed as the body
+# (a second and third error, `expected '{', got '<'` and `undefined variable 'i64'`).
+fn _tn_ret_refuse(S): i64 {
+    var ti = GTI(S);
+    var rc = 0;
+    if (_syntax_only == 1) { rc = 0 - 8; }
+    elif (_tp_targs_refuse(S, ti) == 0) { _tn_ret_report(S, ti); }   # 6.7.17 (D6): `: U<i64>` is D6's line alone
+    if (TOKTYP(S, ti + 1) != 19) { return rc; }
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    STI(S, GTI(S) - 1);
+    return rc;
+}
+fn _tn_ret_report(S, ti): i64 {
+    var c = _tn_resolve_at(S, ti);
+    if (c == 0) {
+        _tn_refuse(S, ti, " as a fn return type", 0 - 1);
+        return 0;
+    }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    if (c == _tn_code(4, 7)) {
+        ERR_IDENT(S, "type parameter ", TOKVAL(S, ti), " cannot be this fn's return type", 0 - 1);
+        PRSTR("  note: a generic fn returns its first or second type parameter, and none under CYRIUS_MONOMORPH=0\n");
+    } else {
+        ERR_IDENT(S, "type ", TOKVAL(S, ti), " cannot be a fn return type", 0 - 1);
+        _tn_ret_note();
+    }
+    _panic = 0;
+    return 0;
+}
+# The fn return set, under a refused return type (a trait member's `*fn( .. )` return too, 6.7.16).
+fn _tn_ret_note(): i64 {
+    PRSTR("  note: a return type is a struct, i8/i16/i32/i64, f64, bool, a vector type, Result, Option, Tagged, cstring, a pointer *T, a multi-value (T1, T2[, T3]), dyn Trait or a generic fn's first or second type parameter; return an i64 (no annotation) for the others\n");
+    return 0;
+}
+
+# A multi-value return element (`: (T1, T2)`) _classify_return_type does not take: every TYPE
+# name stays accepted as a plain i64 slot (as it always was); a name that is no type is refused
+# — `fn f(): (i64, Nonexist)` compiled silently. Pass 2 only (pass 1 is `quiet`).
+fn _tn_mret_check(S, ti): i64 {
+    if (_tn_resolve_at(S, ti) != 0) { return 0; }
+    _tn_refuse(S, ti, " in a multi-value return type", 0 - 1);
+    return 0;
+}

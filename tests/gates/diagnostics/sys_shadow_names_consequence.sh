@@ -29,9 +29,9 @@
 # ⚠ MUTATING THIS GATE TAKES TWO DIFFERENT MOVES, and neither alone reddens every axis.
 # Measured 2026-09-04:
 #   * swap `build/cycc` for a pre-fix compiler  -> axis 1 RED, axis 3 still GREEN
-#   * revert src/frontend/parse/types.cyr       -> axis 3 RED, axis 1 still GREEN
+#   * revert src/frontend/parse/types/lookup.cyr       -> axis 3 RED, axis 1 still GREEN
 # Axis 3 BUILDS the aarch64 emitter from the WORKING-TREE source, so an old host compiler
-# still picks up the current parse/types.cyr and the axis passes vacuously — the same trap
+# still picks up the current parse/types/lookup.cyr and the axis passes vacuously — the same trap
 # CLAUDE.md records for tests/gates/codegen/cx_multi_return.sh. Axis 1 runs the INSTALLED
 # build/cycc, so it survives a source revert. If you are proving this gate still bites,
 # do BOTH; concluding from one that an axis is broken is the mistake to avoid.

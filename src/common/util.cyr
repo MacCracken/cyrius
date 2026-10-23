@@ -1943,7 +1943,7 @@ fn GLBARR(S, li): i64 {
 # slot inherited the width of whatever slice last sat there, in ANY earlier fn: `fn b(x, y) {
 # return y[0]; }` compiled as a slice read of `&y` (y.len, y.len = v likewise; `y += 1` was refused
 # as "compound assignment to slice"). The width is now trusted only behind this bit (_slice_lw,
-# parse/types.cyr), which clears itself at the next registration's SLDEP like bits 56..61. SLSLICE
+# parse/types/ptr.cyr), which clears itself at the next registration's SLDEP like bits 56..61. SLSLICE
 # is the one writer of a slice's width (PARSE_VAR, after its SLAGG). CHANGELOG [6.7.8]
 fn SLSLICE(S, li, w): i64 {
     SSLICE_W(S, li, w);
@@ -1955,7 +1955,7 @@ fn GLSLICE(S, li): i64 {
     return (L64(S + 0x5DBD000 + li * 8) >> 62) & 1;
 }
 # 6.7.8 (the checked dyn, D5) — bit 63: the slot is a DECLARED SCALAR whose annotation's name sits in
-# `_dsc_tn` (parse/types.cyr), the type a dyn formed from it names. The bit is that side table's
+# `_dsc_tn` (parse/types/dyn.cyr), the type a dyn formed from it names. The bit is that side table's
 # VALIDITY: every registration writes SLDEP's whole word first, so a slot reused by an undeclared
 # local never reads a stale name. Written last at registration, like bits 58-62.
 # ⛔ NOT bit 62 — that is SLSLICE's (above): the dyn lane took it independently, so every declared
@@ -2013,7 +2013,7 @@ fn SUSEC(S, v): i64 { S64(S + 0x1903D0, v); return 0; }
 # of the program and the block's own code already stores into it); only the NAME goes away,
 # which is what `_var_dead` already expresses for compiler temporaries and fn-local statics.
 # The mark is 2 rather than 1 so the diagnostic can tell "out of scope" from "internal" and
-# name the variable — see _gv_blockscoped in parse/types.cyr.
+# name the variable — see _gv_blockscoped in parse/types/lookup.cyr.
 #
 # The marks are kept per scope DEPTH, and a depth whose push happened inside a fn stores -1
 # so its pop does nothing: push/pop are balanced by depth, so the value a pop reads is always
@@ -2092,7 +2092,7 @@ fn SSLICE_W(S, li, w): i64 { S64(S + 0x5DFD000 + li * 8, w); return 0; }
 # v6.4.3+ (SIMD arc, Phase 1) — structured SIMD vector descriptor decoder.
 # A SIMD vector local/param/return is tagged by a NEGATIVE SLTYPE sentinel. ALL vector
 # types (f64v2/f64v4/f32v4/f32v8 + the int lanes) live in a reserved band BELOW -2048
-# — collision-free because struct sids cap at 1024 (parse/types.cyr), so their pscale
+# — collision-free because struct sids cap at 1024 (parse/types/struct.cyr), so their pscale
 # (0-sid) never reaches -2048. (v6.4.14 moved f64v2/f64v4 off the old flat -20/-21,
 # which collided with struct-ids 20/21.) `desc = (0 - sltype) - 2048` packs the shape:
 #   bit 0     is_float (1 = float lanes, 0 = integer lanes)
@@ -4002,7 +4002,7 @@ fn _undef_ident_at(S, ti, noff, tail): i64 {
 # ERRDUPVAR, ERR_UNDEF) record each report as (its token, its identity — the emitter and what its message
 # names, which determine the text) and print a repeat as nothing: `_had_error` and the panic latch are set
 # as before, and `_err_quiet` keeps the caller's note quiet with it. A table of its own, apart from
-# `_tn_once`'s byte map (parse/types.cyr), so a type-name refusal and a different later error at the same
+# `_tn_once`'s byte map (parse/types/type.cyr), so a type-name refusal and a different later error at the same
 # token both print, and two different errors in one body each print once. CHANGELOG [6.7.14]
 var _edup = 0;       # (token + 1, identity) pairs, open addressing; alloc'd at the first report
 var _edup_cap = 0;   # its slots, a power of two

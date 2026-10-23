@@ -12,7 +12,7 @@
 # of src/frontend/ and src/main*.cyr:
 #   tree     the real files                                    -> PASS, "files scanned"
 #   missing  src/frontend/parse/expr/factor.cyr removed        -> FAIL, naming it as missing
-#   planted  `NPOS_GUARD(S, 256)` appended to parse/types.cyr  -> FAIL, naming it
+#   planted  `NPOS_GUARD(S, 256)` appended to parse/types/type.cyr -> FAIL, naming it
 # MUTATION (measured, a scratch copy of the tree): `_cve05_scan`'s missing-file arm back to the silent
 # skip (`return 0`) -> RED on row missing (the row passes, as it did through 6.7.17).
 #
@@ -36,8 +36,8 @@ strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 ( cd "$ROOT" && "$CC" < programs/checks/main.cyr > "$T/drv" 2> "$T/drv.err" ) \
     || { echo "FAIL: $NAME — the check driver does not compile"; sed 's/^/    /' "$T/drv.err"; exit 1; }
 chmod +x "$T/drv"
-[ -f "$ROOT/src/frontend/parse/expr/factor.cyr" ] && [ -f "$ROOT/src/frontend/parse/types.cyr" ] \
-    || { echo "FAIL: $NAME — the rows edit parse/expr/factor.cyr and parse/types.cyr, and one is gone"; exit 1; }
+[ -f "$ROOT/src/frontend/parse/expr/factor.cyr" ] && [ -f "$ROOT/src/frontend/parse/types/type.cyr" ] \
+    || { echo "FAIL: $NAME — the rows edit parse/expr/factor.cyr and parse/types/type.cyr, and one is gone"; exit 1; }
 
 # stage <dir>: a root holding copies of src/frontend/ and the compiler forks
 stage() { mkdir -p "$1/src" && cp -R "$ROOT/src/frontend" "$1/src/" && cp "$ROOT"/src/main*.cyr "$1/src/"; }
@@ -56,12 +56,12 @@ check "the row fails" 1 "$(row "$T/miss")"
 check "  naming parse/expr/factor.cyr as missing" yes \
     "$(grep -q "the scan's file is missing.*src/frontend/parse/expr/factor.cyr" "$T/miss.out" && echo yes || echo no)"
 
-echo "row planted: NPOS_GUARD(S, 256) appended to src/frontend/parse/types.cyr"
+echo "row planted: NPOS_GUARD(S, 256) appended to src/frontend/parse/types/type.cyr"
 stage "$T/plant"
-printf '\n# NPOS_GUARD(S, 256)\n' >> "$T/plant/src/frontend/parse/types.cyr"
+printf '\n# NPOS_GUARD(S, 256)\n' >> "$T/plant/src/frontend/parse/types/type.cyr"
 check "the row fails" 1 "$(row "$T/plant")"
-check "  naming parse/types.cyr" yes \
-    "$(grep -q 'NPOS_GUARD reappeared in .*src/frontend/parse/types.cyr' "$T/plant.out" && echo yes || echo no)"
+check "  naming parse/types/type.cyr" yes \
+    "$(grep -q 'NPOS_GUARD reappeared in .*src/frontend/parse/types/type.cyr' "$T/plant.out" && echo yes || echo no)"
 
 if [ "$fails" -gt 0 ]; then
     echo "FAIL: $NAME: $fails problem(s)"

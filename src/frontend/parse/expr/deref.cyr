@@ -407,7 +407,7 @@ fn _dlo_note(S, d): i64 {
 
 # A global's load (global `idx`, GVTYPE `vt`): a typed-pointer global (6.6.17: GVTYPE = 0 - its
 # step) puts its step into the pointer-scale word, so `g + n` steps by the pointee — 6.7.8: as the
-# step word, with T's kind from `_gv_ped` (parse/types.cyr).
+# step word, with T's kind from `_gv_ped` (parse/types/ptr.cyr).
 fn _gv_load_ps(S, idx, vt): i64 {
     if (vt < 0) { SPSC(S, _gv_ptr_word(S, idx)); }
     return 0;

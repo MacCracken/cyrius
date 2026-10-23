@@ -346,7 +346,7 @@
 #                                                   through `return` (v6.5.67)
 #                                        bit9 (512) NULLARY stack-variant ctor: returns
 #                                                   the tag alone, a whole variant
-#                                                   value (6.6.9, parse/types.cyr)
+#                                                   value (6.6.9, parse/types/enum.cyr)
 #                                        bit10 (1024) the body provably returns ONE
 #                                                   value (6.6.17, _prescan_ret_single)
 #                                        bit11 (2048) REDEFINED: a later definition of

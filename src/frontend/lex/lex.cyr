@@ -1566,7 +1566,7 @@ fn NPOS_GUARD(S, need): i64 {
 }
 
 # ⛔ 6.7.8 — `dyn` IS A RESERVED WORD, token 173 (the checked trait object: `o: dyn Show`, the user's
-# decision 2026-10-07). It is counted here so the token fold (`_dyn_fold`, parse/types.cyr) — which
+# decision 2026-10-07). It is counted here so the token fold (`_dyn_fold`, parse/types/dyn.cyr) — which
 # turns `dyn Show` into ONE identifier token naming its struct — runs only for a unit that spells
 # it: every other program's tokens are untouched. One call from LEXID (the cybs reference ceiling).
 # CHANGELOG [6.7.8]

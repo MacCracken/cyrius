@@ -7,7 +7,7 @@
 # identifier; rename the variable/field/fn)", then "undefined variable 'i64'" and "assigning non-pointer to typed
 # pointer"; a declaration-zone global added "expected '=', got '('"; `struct H { cb: *fn(i64): i64; k; }` the keyword
 # line. Measured on 6.7.16 (main 4a3c510f3), x86_64; the parse is every target's. The readers now read the type by the
-# parameter's grammar (`_ptr_fnp_end`, src/frontend/parse/types.cyr), its names checked with the declaration's words,
+# parameter's grammar (`_ptr_fnp_end`, src/frontend/parse/types/ptr_ann.cyr), its names checked with the declaration's words,
 # once, and step a pointer's 8 (`fncallN` / `callptr` call through the word as through a parameter). A `fn` behind a
 # `*` is a fn-pointer type to the token scans too (`_skip_nested_body`, src/frontend/parse/pair_scan.cyr; `_tok_fn_kw`).
 # Filed: docs/development/issues/archived/2026-10-21-fn-pointer-type-outside-a-parameter.md

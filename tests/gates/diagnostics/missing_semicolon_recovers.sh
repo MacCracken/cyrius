@@ -309,7 +309,7 @@ row F11 "an empty init" "${FH}    for (; b < 3; b = b + 1) { b = zz; }
 ${FT}" "error:<source>:4:10: $FE
 error:<source>:4:36: $UZ"
 
-# ---- D: a `dyn` initializer's `;` (src/frontend/parse/types.cyr)
+# ---- D: a `dyn` initializer's `;` (src/frontend/parse/types/dyn.cyr)
 DH='trait Show { fn show(self): i64; }
 struct P { a; b; }
 impl Show for P { fn show(self): i64 { return self.a; } }

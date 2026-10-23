@@ -13,7 +13,7 @@
 #     enum members         1212 ms   5060 ms
 #     deferred `= f(N)`    refused past 4096 ("too many initialized globals")
 #
-# Fixed with an alloc'd FNV-1a name index (parse/types.cyr, _fvh_*), a growing gvar_toks and a
+# Fixed with an alloc'd FNV-1a name index (parse/types/lookup.cyr, _fvh_*), a growing gvar_toks and a
 # per-name supersede list (parse/decl/gvar.cyr). After: 20k constants 90 ms, 20k enum members 78 ms,
 # 20k deferred 135 ms.
 #

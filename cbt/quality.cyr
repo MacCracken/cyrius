@@ -1412,7 +1412,7 @@ fn _hdr_only_ellipsis(b, s, e): i64 {
 # A type this scanner cannot size — another file's, a generic instance, a struct holding one, a
 # struct declared twice or whose fields sit under a preprocessor conditional — is refused by name
 # on stderr: no prototype, rc 1 (never guessed). Field widths are the compiler's (FIELDSZ /
-# STRUCTSZ, src/frontend/parse/types.cyr): packed; i8/u8 1, i16/u16 2, i32/u32/f32 4, a tuple 8
+# STRUCTSZ, src/frontend/parse/types/struct.cyr): packed; i8/u8 1, i16/u16 2, i32/u32/f32 4, a tuple 8
 # per element, a dyn 16, a nested struct its size, a union its widest field, every other field 8
 # (a `Str` FIELD and a `Vec<T>` FIELD are their 8-byte handle; a bare `Vec` FIELD is the file's
 # own `struct Vec` when one is declared above it, else the 8-byte handle).

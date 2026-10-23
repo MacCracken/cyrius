@@ -9,15 +9,15 @@
 #
 # ROWS — the driver built from this tree, its `--parse-drift-row` mode run over a staged root
 # holding a copy of src/frontend/parse/ (6.7.10: parse/cov.cyr joined the six; 6.7.15: parse/fn/def.cyr,
-# split from parse/fn.cyr; 6.7.18: parse/fn.cyr, parse/decl.cyr and parse/expr.cyr split into parse/fn/,
-# parse/decl/ and parse/expr/, and parse.cyr's own body into the pieces beside it):
+# split from parse/fn.cyr; 6.7.18: parse/fn.cyr, parse/decl.cyr, parse/expr.cyr and parse/types.cyr split into
+# parse/fn/, parse/decl/, parse/expr/ and parse/types/, and parse.cyr's own body into the pieces beside it):
 #   list     the row's files (programs/checks/lint_fmt.cyr) == `find src/frontend/parse -name '*.cyr'`
 #            -> a file the tree has and the row does not, or the reverse, FAILS by name (6.7.18: the
 #            row's list was held to `ls parse/*.cyr | wc -l` = 8, a top-level count a split defeats)
 #   tree     the real files                                    -> PASS, "read whole"
 #   tail     a direct emit appended to parse/fn/def.cyr (past 256 KB) -> FAIL naming parse/fn/def.cyr
 #            (parse/expr.cyr until 6.7.18 split it into pieces under 256 KB)
-#   huge     parse/types.cyr replaced by a 17 MiB (sparse) file    -> FAIL, refused by name
+#   huge     parse/types/type.cyr replaced by a 17 MiB (sparse) file -> FAIL, refused by name
 #   missing  parse/ctrl.cyr removed                               -> FAIL, "missing"
 #   window   the read-back window opens on a mid-line `fn `      -> PASS (6.6.17 review: offset 0
 #            of the window used to count as a line start, a spurious "truncated" FAIL)
@@ -76,14 +76,14 @@ check "the row fails" 1 "$(row "$T/tail")"
 check "  naming parse/fn/def.cyr's direct emit" yes \
     "$(grep -q 'parse/fn/def.cyr — direct-emit site' "$T/tail.out" && echo yes || echo no)"
 
-echo "row huge: parse/types.cyr replaced by a 17 MiB file"
+echo "row huge: parse/types/type.cyr replaced by a 17 MiB file"
 stage "$T/huge"
-rm -f "$T/huge/src/frontend/parse/types.cyr"
-truncate -s 17M "$T/huge/src/frontend/parse/types.cyr" 2>/dev/null \
-    || dd if=/dev/zero of="$T/huge/src/frontend/parse/types.cyr" bs=1 count=0 seek=17825792 2>/dev/null
+rm -f "$T/huge/src/frontend/parse/types/type.cyr"
+truncate -s 17M "$T/huge/src/frontend/parse/types/type.cyr" 2>/dev/null \
+    || dd if=/dev/zero of="$T/huge/src/frontend/parse/types/type.cyr" bs=1 count=0 seek=17825792 2>/dev/null
 check "the row fails" 1 "$(row "$T/huge")"
-check "  refusing parse/types.cyr by name" yes \
-    "$(grep -q 'parse/types.cyr — refused: empty, or larger than' "$T/huge.out" && echo yes || echo no)"
+check "  refusing parse/types/type.cyr by name" yes \
+    "$(grep -q 'parse/types/type.cyr — refused: empty, or larger than' "$T/huge.out" && echo yes || echo no)"
 
 echo "row missing: parse/ctrl.cyr removed"
 stage "$T/miss"

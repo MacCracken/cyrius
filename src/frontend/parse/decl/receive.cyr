@@ -1042,7 +1042,7 @@ fn _svin_judge(S, ti, e, ann, noff): i64 {
     if (r == 1) { if (ps == 1) { _ptr_refd_ti = ann; } }
     return r;
 }
-# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse/types.cyr): `var GU: *Pt = GPP;`. 1 = refused.
+# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse/types/ptr_ann.cyr): `var GU: *Pt = GPP;`. 1 = refused.
 fn _ppd_zval(S, st): i64 {
     var i = _vrcv_dbeg(S, st);
     if (i < 0) { return 0; }

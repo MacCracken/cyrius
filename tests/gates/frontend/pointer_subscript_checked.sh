@@ -11,7 +11,7 @@
 # `&y` as a slice header (exit 7 for a buffer holding 7), `y.len` read the frame word above `y`,
 # `y.len = 5` wrote it, and the valid `y += 1` was refused as "compound assignment to slice 'y'".
 # A slice is now marked by bit 62 of the slot's depth word (SLSLICE, util.cyr), which clears itself
-# at the next registration's SLDEP; every slice reader asks `_slice_lw` (parse/types.cyr), which
+# at the next registration's SLDEP; every slice reader asks `_slice_lw` (parse/types/ptr.cyr), which
 # trusts the width only behind the bit.
 #   ST1  `y[0]` on an untyped parameter after a slice local in an earlier fn: refused (today's
 #        "cannot subscript 'y'"), one error line; ST1b the same on a third parameter's slot

@@ -5,7 +5,7 @@
 # must keep compiling.
 #
 # WHY. sizeof, `#assert sizeof` and each annotation site had a ladder of its own (src/frontend/
-# parse/types.cyr `_tn_resolve` replaces them). Most matched a name's PREFIX (`var a: i8x = 300`
+# parse/types/type.cyr `_tn_resolve` replaces them). Most matched a name's PREFIX (`var a: i8x = 300`
 # was an i8 and read 44, `var a: f64zz` an f64, `fn f(a: i16q)` compiled) and almost all read an
 # unknown name as a silent i64: `var a: Nonexist`, `var p: *Nonexist`, `var s: [Nonexist]`,
 # `fn f(a: Nonexist)`, `fn f(): (i64, Nonexist)` all compiled rc 0 with no diagnostic. A return

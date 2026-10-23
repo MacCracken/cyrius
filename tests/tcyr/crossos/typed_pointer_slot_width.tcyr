@@ -16,7 +16,7 @@
 #
 # Mutation ledger (6.6.16, measured on x86): the slot-open compiler fails 6 rows — `p == &buf` and
 # the above-4-GiB address for each of the local `*i8` / `*i16` / `*i32` (the file reports them and
-# skips the loads that would fault: 34 passed, 6 failed); with parse/types.cyr _sl_ptr_type writing
+# skips the loads that would fault: 34 passed, 6 failed); with parse/types/ptr.cyr _sl_ptr_type writing
 # the scale back as the SLTYPE, the same 6 rows go red again. The above-4-GiB rows exist because a
 # Windows stack address can sit below 4 GiB, where a 4-byte `*i32` slot would still compare equal.
 include "lib/syscalls.cyr"

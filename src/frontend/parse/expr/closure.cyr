@@ -84,7 +84,7 @@ fn _STR_FROM_NOFF(S): i64 {
 # `_cur_fn_pslots`, read here because `_fnst_save` zeroes it right after. See `_cl_snap_is_sptr`.
 # CHANGELOG [6.6.13]
 # 6.7.8: a second trailer word (+ 8) points at a copy of the declared scalars' names `_dsc_tn[0..n)`
-# (`_dsc_snap`, parse/types.cyr), read only behind depth-word bit 63, which this snapshot restores: a
+# (`_dsc_snap`, parse/types/dyn_call.cyr), read only behind depth-word bit 63, which this snapshot restores: a
 # closure's (or an inline generic instance's) own declared scalar overwrote the name and the enclosing
 # one's dyn named its type. `_cl_snap_extend`'s copies carry no such word — they are never restored.
 # CHANGELOG [6.7.8]

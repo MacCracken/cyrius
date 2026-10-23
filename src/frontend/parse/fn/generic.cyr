@@ -1417,7 +1417,8 @@ fn _gsc_deref(S, a): i64 {
 # A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
 # or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
-# i64 base, `Box<i64>`'s layout, silently (4 for 8). The walk is `_chain_leaf` (parse/types.cyr). CHANGELOG [6.7.8]
+# i64 base, `Box<i64>`'s layout, silently (4 for 8). The walk is `_chain_leaf` (parse/types/ptr_ann.cyr).
+# CHANGELOG [6.7.8]
 # ⛔ 6.7.17 — AN INLINE `G<X>` FIELD AND A METHOD RETURNING `G<X>` / `*G<X>` BIND X TOO, on any receiver head, as a G<X>
 # local or a free call does (the user's D2, 2026-10-22: a struct-typed field and a struct-returning method bind as a
 # struct local or a free call): `gx(h.b)`, `gx(o.mkb())`, `gpx(o.mpb())`, `gx(w.gp().b)` were refused "a different

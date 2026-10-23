@@ -50,7 +50,7 @@
 # stays, as diagnostic hygiene for the refused program — `_warn_mixed_pair_returns` runs at the
 # end of a parse that has errors, and without the skip a refused fn's `return h(x)` would put a
 # bogus mixed-return warning on the OUTER fn beside the refusal. CHANGELOG [6.6.16]
-# ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse/types.cyr). The prescan is
+# ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse/types/enum.cyr). The prescan is
 # demand-driven, and the first demand can arrive BEFORE the enum declaration has been reached —
 # measured: the pass ran with a complete 3,498-token stream and flagged nothing, because no
 # constructor carried the flag yet for it to propagate FROM. Re-running on each new stack enum
@@ -1331,7 +1331,7 @@ fn _tok_body_open(S, i): i64 {
 # resolves names in) has a `return f(..)` / `return g<..>(..)` / `return x.m(..)` whose callee is
 # flagged 256: it forwards a `: stack` pair. Closure bodies are their own units, skipped, as is a
 # refused nested fn. `_pair_prescan`'s scan of one fn, and (6.7.8) the dyn pair check's of a slot
-# method whose body pass 2 has not reached (`_dyn_slot_pair`, parse/types.cyr).
+# method whose body pass 2 has not reached (`_dyn_slot_pair`, parse/types/dyn_call.cyr).
 # ⛔ 6.7.14 — A `?` ON A PAIR CALL IS A PAIR ROUTE TOO (`_tok_q_is_pair`): pass 2 flags the fn 256
 # at its `?`, so a fn whose only pair route was a `?` was a pair only BELOW its definition — a
 # caller above took `qb(x)?` as boxed (rc 139) and `var v = qb(x);` kept the tag. CHANGELOG [6.7.14]

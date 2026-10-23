@@ -27,7 +27,7 @@ fn _gv_owner(S, ti): i64 {
 # The live, plain global below index `below` that a top-level redeclaration of `noff` must
 # reuse, or -1. An enum constant has no storage to share (CHK_ENUM_SHADOW / CHKDUPVAL own
 # that case), and a prior with a different visibility owner is a different global.
-# 6.6.9: walks only the slots of this name, through the name index (_fvh_head, parse/types.cyr)
+# 6.6.9: walks only the slots of this name, through the name index (_fvh_head, parse/types/lookup.cyr)
 # — it used to STREQ every global below `below`, the second of the two O(N) walks each
 # registration paid. CHANGELOG [6.6.9]
 fn _gv_prior(S, noff, below, owner): i64 {
@@ -217,7 +217,7 @@ fn _gv_supersede(S, noff, lists): i64 {
 }
 
 # The per-name list of deferred-entry targets: name -> newest record + 1 (a name map, see
-# _nm_new in parse/types.cyr); record r = entry * 4 + target, chained through _gvx_nxt.
+# _nm_new in parse/types/lookup.cyr); record r = entry * 4 + target, chained through _gvx_nxt.
 var _gvx_m = 0;
 var _gvx_rec = 0;
 var _gvx_nxt = 0;
@@ -305,7 +305,7 @@ fn _gv_ent_slot(S, gi, k, noff): i64 {
 # Hide the top-level program's globals from FINDVAR while the replay runs (on = 1) or stop
 # (on = 0). Only a kernel build sets _gv_zone_top (main.cyr): every other build replays before
 # the program has registered anything. Globals the replay itself registers (sinks, hidden
-# temps) sit above the range and stay visible. See _fv_hidden (parse/types.cyr).
+# temps) sit above the range and stay visible. See _fv_hidden (parse/types/lookup.cyr).
 fn _gv_hide_program(S, on): i64 {
     _fv_hide_lo = 0;
     _fv_hide_hi = 0;

@@ -1084,7 +1084,7 @@ fn _prescan_sig_facts(S, fi, start_ti, pasync): i64 {
 # sid (a generic instance's), -9 an f64, a multi-value signature, a `*T`'s pointee, a bool (the
 # cursor is left where those readers stop: `_prescan_ret_single` scans on to the `{`). Extracted from
 # `_prescan_fn_sig` (6.7.8): a trait-object call's prototype is recorded from its trait member's
-# signature the same way (`_dyn_proto`, parse/types.cyr).
+# signature the same way (`_dyn_proto`, parse/types/dyn_call.cyr).
 fn _prescan_ret_type(S, fi): i64 {
     _ret_redef_reset(S, fi);   # 6.7.16: a redefinition's return is its own (parse/types.cyr)
     if (PEEKT(S) != 49) { return 0; }   # optional `: ReturnType`

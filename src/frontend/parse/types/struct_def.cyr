@@ -1,0 +1,932 @@
+# PARSER — types: struct and union definitions (PARSE_STRUCT_DEF, PARSE_UNION_DEF): field lookup, redefinition, field
+# types and kinds, narrow and vector fields, the generic and tuple prescans.
+# ================================================================
+# Split from parse/types.cyr at 6.7.18, unchanged; parse.cyr includes parse/types/ in source order. CHANGELOG [6.7.18]
+
+# Get field count for struct (0-based index). High bit = union flag.
+fn GETFCOUNT(S, si): i64 { return L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF; }
+fn ISUNION(S, si): i64 { return L64(S + 0x1A8018 + si * 8) >> 63; }
+
+# Find field index in struct (0-based struct index), return field index or -1
+fn FINDFIELD(S, si, fnoff): i64 {
+    var fc = GETFCOUNT(S, si);
+    var fbase = L64(S + 0x1AA018 + si * 8);
+    var i = 0;
+    while (i < fc) {
+        var fn_off = L64(S + 0x92A000 + (fbase + i) * 8);
+        if (STREQ(S, fn_off, fnoff) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Parse: struct Name<T> { field; field; ... }
+# 6.6.9 — A SECOND `struct X` / `union X` WITH A DIFFERENT LAYOUT. REGSTRUCT appends and
+# FINDSTRUCT returns the FIRST match, so the second definition was registered and never read:
+# sizeof(X) and every field offset came from the first, silently. Measured: two `SP` structs of
+# 5 and 3 fields built rc 0 with sizeof(SP) = 40, and code written against the 3-field one read
+# the 5-field offsets. Live in the older kavach several repos still vendor (two
+# `struct SpawnedProcess`). A WARNING, so those builds keep compiling; an identical
+# redefinition (same kind, same field names and types, in order) stays silent. CHANGELOG [6.6.9]
+fn _struct_same_layout(S, a, b): i64 {
+    if (L64(S + 0x1A8018 + a * 8) != L64(S + 0x1A8018 + b * 8)) { return 0; }   # count + union bit
+    var n = GETFCOUNT(S, a);
+    var i = 0;
+    while (i < n) {
+        if (STREQ(S, GETFNAME(S, a, i), GETFNAME(S, b, i)) == 0) { return 0; }
+        if (GETFTYPE(S, a, i) != GETFTYPE(S, b, i)) { return 0; }
+        # 6.7.10 (B7): i8 / u8 and i32 / u32 / f32 share a width — the kind tells them apart.
+        if (GETFTYPE(S, a, i) < 0) {
+            if (GFUNS(S, a, i) != GFUNS(S, b, i)) { return 0; }
+            if (GFFK(S, a, i) != GFFK(S, b, i)) { return 0; }
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# `prev` = FINDSTRUCT before this definition registered (1-based, 0 = new name); `sid` = this one.
+fn _chk_struct_redef(S, prev, sid, name_ti): i64 {
+    if (prev == 0) { return 0; }
+    if (_struct_same_layout(S, prev - 1, sid - 1) == 1) { return 0; }
+    _ew("warning:", 8);
+    _err_head_at(S, name_ti);
+    if (ISUNION(S, sid - 1) == 1) { _ew(": union '", 9); }
+    else { _ew(": struct '", 10); }
+    _sn_pr(S, sid);
+    _ew("' redefined with a different layout — the FIRST definition is the one used (sizeof, field offsets, every access)\n", 115);
+    return 0;
+}
+
+# 6.6.10 — REGSTRUCT refused the definition (table full, already reported): consume its
+# `{ ... }` body without registering anything, so the caller never indexes with sid - 1 = -1.
+# Stops at EOF; a body that does not start with `{` is left for the caller's error path.
+fn _skip_refused_body(S): i64 {
+    if (PEEKT(S) != 13) { return 0; }
+    var depth = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        STI(S, GTI(S) + 1);
+        if (t == 13) { depth = depth + 1; }
+        if (t == 14) {
+            depth = depth - 1;
+            if (depth == 0) { return 0; }
+        }
+    }
+    return 0;
+}
+
+# ⛔ 6.6.10 — A FIELD TYPE THAT NAMES NOTHING WAS SILENTLY AN 8-BYTE i64. The ladder's last
+# arm was `ADDFIELDTYPED(.., FINDSTRUCT(name))`, and FINDSTRUCT answers 0 — the i64 encoding —
+# for a name it does not know. So `a: Nonexist` compiled (sizeof 16 for `{ a: Nonexist; x; }`),
+# a struct declared BELOW its use gave its user a different layout than the same text declared
+# above (sizeof(A) = 16 vs 24 for `struct A { b: B; x; }`, and `a.b` loaded 8 bytes with no
+# diagnostic), and `f64` / `f32` — never in the ladder — lost their float type.
+# A field type is now one of: a struct or union declared ABOVE it; i8/i16/i32/i64 and
+# u8/u16/u32/u64 (their widths); cstring, Result/Option/Tagged or an enum (8 bytes); f64 (8 bytes)
+# / f32 (4 bytes), typed — see SFFK; Vec<T> or a bare Vec; or a type parameter of the struct being
+# declared. An enum may be declared on either side (its values are i64, so its position
+# changes nothing). Anything else is refused by name. CHANGELOG [6.6.10]
+# 6.7.10 (B7): u8/u16/u32 and f32 fields are their widths (they were 8-byte slots through 6.7.9;
+# `_add_narrow_field`). CHANGELOG [6.7.10]
+var _sdef_tp_ti = 0;   # the token after the declaring struct's name (its `<` when generic)
+
+# The float kind of an accepted non-struct field type name (0 = plain 8 bytes, 1 = f64, 2 = f32),
+# or -1 when the name is not a field type at all (a vector, or no type). 6.6.16: through the one
+# type-name resolver (_tn_resolve), so `bool` — an 8-byte array element and sizeof 8 — is an
+# 8-byte field too (it was refused here alone), and `Vec` is a `Vec<T>` element (`Vec<Vec>`, a
+# vector of 8-byte handles). A bare `Vec` / `Vec<T>` FIELD never reaches here (PARSE_STRUCT_DEF
+# takes it first). CHANGELOG [6.6.16]
+fn _field_name_kind(S, tnoff): i64 {
+    var c = _tn_resolve(S, tnoff);
+    if (c == 0) {
+        if (_is_own_tparam(S, tnoff) == 1) { return 0; }
+        return 0 - 1;
+    }
+    var k = _tn_class(c);
+    if (k == 3) {
+        if (_tn_val(c) == 8) { return 1; }   # f64
+        return 2;                            # f32
+    }
+    if (k == 5) { return 0 - 1; }            # a vector: _refuse_field_type names it
+    if (_tn_bool(c) == 1) { return 3; }      # 6.7.3: bool (an 8-byte word, writes checked)
+    return 0;   # u8..u64 (u8..u32 their widths: _add_narrow_field), cstring, Result, Option, Tagged, an enum
+}
+
+# Is `noff` one of the type parameters of the struct being declared (`struct Box<T> { v: T; }`)?
+# Read from the tokens, not the monomorph binding: the default build never captures them.
+fn _is_own_tparam(S, noff): i64 {
+    var k = _sdef_tp_ti;
+    if (k <= 0) { return 0; }
+    if (TOKTYP(S, k) != 19) { return 0; }
+    return _tpl_has(S, k, noff);   # 6.7.17: nested lists stepped (6.7.1: not a bound's trait)
+}
+
+# Is a declaration of this name — keyword token `ta` or `tb` (struct 40, union 101, enum 60; only those, the
+# keywords `_dlx_pos` holds) followed by the name — LATER in the token stream?
+# ⛔ 6.7.16 — read from `_dlx_pos`, the declarations' positions, not every token from the cursor to the end of the
+# file: a type parameter in a generic fn's signature reaches this once per resolution (`x: *T` three times), so N
+# generic definitions cost N x the file — 3000 `fn oK<T>(x: *T)` took 6.2 s. CHANGELOG [6.7.16]
+fn _declared_later(S, noff, ta, tb): i64 {
+    _dlx_build(S);
+    var i = _dlx_from(GTI(S));
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
+        var t = TOKTYP(S, k);
+        if (t == ta || t == tb) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when a struct, union or enum of this name is declared anywhere in the token stream (above or below the cursor):
+# a name a type-argument list can take before pass 1 has registered it (`_bnd_tyname`). CHANGELOG [6.7.16]
+fn _declared_any(S, noff): i64 {
+    _dlx_build(S);
+    var i = 0;
+    while (i < _dlx_n) {
+        if (STREQ(S, TOKVAL(S, L64(_dlx_pos + i * 8) + 1), noff) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 when a GENERIC struct or union of this name (`struct NAME <`) is declared later in the token stream. 6.7.15
+fn _declared_later_gen(S, noff): i64 {
+    _dlx_build(S);
+    var n = GTCNT(S);
+    var i = _dlx_from(GTI(S));
+    while (i < _dlx_n) {
+        var k = L64(_dlx_pos + i * 8);
+        var t = TOKTYP(S, k);
+        if (t == 40 || t == 101) { if (k + 2 < n) { if (TOKTYP(S, k + 2) == 19) {
+                    if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; }
+                } } }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The token positions `k` of every `struct`, `union` or `enum` keyword followed by a name (`k + 1` an identifier),
+# ascending — what the two scans above test, built once per token stream (`_dlx_tc`, its token count + 1; the only
+# rewrite after the lexer, `_dyn_fold`, changes the count, and none touches a keyword or the name after one).
+var _dlx_pos = 0;
+var _dlx_n = 0;
+var _dlx_tc = 0;
+fn _dlx_build(S): i64 {
+    var n = GTCNT(S);
+    if (_dlx_tc == n + 1) { return 0; }
+    var c = 0;
+    var k = 0;
+    while (k + 1 < n) {
+        c = c + _dlx_at(S, k);
+        k = k + 1;
+    }
+    _dlx_pos = alloc(c * 8 + 8);
+    _dlx_n = 0;
+    k = 0;
+    while (k + 1 < n) {
+        if (_dlx_at(S, k) == 1) {
+            S64(_dlx_pos + _dlx_n * 8, k);
+            _dlx_n = _dlx_n + 1;
+        }
+        k = k + 1;
+    }
+    _dlx_tc = n + 1;
+    return 0;
+}
+fn _dlx_at(S, k): i64 {
+    var t = TOKTYP(S, k);
+    if (t != 40 && t != 101 && t != 60) { return 0; }
+    if (TOKTYP(S, k + 1) == 2) { return 1; }
+    return 0;
+}
+# The first index of `_dlx_pos` at or after token `g`.
+fn _dlx_from(g): i64 {
+    var lo = 0;
+    var hi = _dlx_n;
+    while (lo < hi) {
+        var m = (lo + hi) / 2;
+        if (L64(_dlx_pos + m * 8) < g) { lo = m + 1; } else { hi = m; }
+    }
+    return lo;
+}
+
+# The refusal. The cursor is already past the type name, so the declaration parses on: the
+# panic latch THIS error set is cleared again, and every bad field of every struct is reported
+# (not only the first of the file). An error that already held the latch is left alone.
+fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
+    _fld_rtype_add(S, snoff, fnoff);   # 6.7.16: a `.name` past this field stands down (`_fld_tail_bad`)
+    if (_panic == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, _fty_at(S, tnoff));   # 6.7.16: at the type's name
+    _refuse_fty_say(S, tnoff, fnoff, snoff);
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+# 6.7.16 — the token of field type `tnoff` at or before the cursor (a refusal reports at it: the cursor is past the
+# name, or past its `Vec<..>` / `<..>`, and the caret stood one token past the type it names — `a: Zt;` at the `;`);
+# the cursor when no such name is within reach. CHANGELOG [6.7.16]
+fn _fty_at(S, tnoff): i64 {
+    var k = GTI(S);
+    var lo = k - 16;
+    if (lo < 0) { lo = 0; }
+    while (k >= lo) {
+        if (TOKTYP(S, k) == 2) { if (STREQ(S, TOKVAL(S, k), tnoff) == 1) { return k; } }
+        k = k - 1;
+    }
+    return GTI(S);
+}
+# "field 'a' makes a struct contain itself: 'own'", at field type `tnoff`'s name; the latch put back.
+fn _fty_self(S, fnoff, tnoff, own): i64 {
+    var sv = GTI(S);
+    STI(S, _fty_at(S, tnoff));
+    ERR_IDENT(S, "field ", fnoff, " makes a struct contain itself: ", own);
+    PRSTR("  note: a link to another one is an i64 (pointer) field\n");
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+fn _refuse_fty_say(S, tnoff, fnoff, snoff): i64 {
+    if (_classify_return_type(S, tnoff) <= 0 - 2048) {
+        ERR_IDENT(S, "vector type ", tnoff, " cannot be a struct field type; field ", fnoff);
+    } elif (_declared_later(S, tnoff, 40, 101) == 1) {
+        ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", snoff);
+    } else {
+        ERR_IDENT(S, "unknown type ", tnoff, " for struct field ", fnoff);
+        # 6.7.14: a generic struct's fields are parsed again per instance, and the error latch prints a
+        # repeat as nothing — its notes stay quiet with it (`_err_quiet`), never orphaned. CHANGELOG [6.7.14]
+        if (_err_quiet == 0) {
+            _tn_prefix_note(S, tnoff);   # 6.6.16
+            PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a pointer *T (missing include?)\n");
+        }
+    }
+    return 0;
+}
+
+# The ladder's named-type arm, shared by struct and union: a struct/union declared above, or
+# an accepted scalar name (float kind recorded), or a refusal naming the type.
+# ⛔ A struct naming ITSELF as a field type (`struct Node { next: Node; }`) is refused too: FINDSTRUCT
+# finds the struct being declared, and STRUCTSZ then recursed through that field forever — the
+# compiler died with SIGSEGV, no diagnostic. A link to another node is an i64 (pointer) field.
+fn _add_named_field(S, si, fnoff, tnoff): i64 {
+    var fsid = FINDSTRUCT(S, tnoff);
+    if (fsid == si + 1) {
+        if (_panic == 0) { _fty_self(S, fnoff, tnoff, tnoff); }
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
+    if (fsid > 0) {
+        _dyn_field_chk(S, si, fsid, GTI(S) - 1);   # 6.7.8: a dyn in a union / a generic struct
+        ADDFIELDTYPED(S, si, fnoff, fsid);
+        return 0;
+    }
+    var k = _field_name_kind(S, tnoff);
+    if (k < 0) {
+        _refuse_field_type(S, tnoff, fnoff, L64(S + 0x1A6018 + si * 8));
+        SKIP_GENERICS(S);   # 6.7.16: `a: Zt<i64>` — the refused name's list, else "expected identifier, got '<'"
+        k = 0;
+    }
+    var nw = _ek_w(_ek_of_code(_tn_scalar(L64(S + 0xEC00000 + tnoff))));
+    if (nw > 0) { if (nw < 8) { return _add_narrow_field(S, si, fnoff, nw, k); } }
+    ADDFIELDFK(S, si, fnoff, k);
+    return 0;
+}
+
+# A bare `Vec` field (no `<T>`; struct and union): the file's own `struct Vec` / `union Vec` when it is
+# declared ABOVE the field, else lib's 8-byte handle. Declared BELOW it is refused by name, as any field
+# type declared after its use is (6.6.10): it was silently the handle there, so one text had two layouts
+# (D10 (b), the user 2026-10-15). The cursor is past the name. CHANGELOG [6.7.13]
+fn _bare_vec_field(S, si, fnoff, tnoff): i64 {
+    var bsid = FINDSTRUCT(S, tnoff);
+    if (bsid == si + 1) { return _add_named_field(S, si, fnoff, tnoff); }   # `struct Vec { v: Vec; }`: refused, not a SIGSEGV
+    if (bsid == 0) {
+        if (_declared_later(S, tnoff, 40, 101) == 1) { _fld_rtype_add(S, L64(S + 0x1A6018 + si * 8), fnoff); }   # 6.7.16
+        if (_panic == 0) { if (_declared_later(S, tnoff, 40, 101) == 1) {
+                var sv = GTI(S);
+                STI(S, _fty_at(S, tnoff));   # 6.7.16: at `Vec`
+                ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", _ei_sid(si + 1));
+                STI(S, sv);
+                _panic = 0;
+            } }
+    }
+    ADDFIELDTYPED(S, si, fnoff, bsid);
+    return 0;
+}
+
+# ⛔ 6.7.10 (B7) — u8 / u16 / u32 / f32 FIELDS ARE THEIR WIDTHS (the user's decision, 2026-10-08:
+# packed, no padding — the rule i8 / i16 / i32 fields follow). A u8..u32 field is `0 - width`
+# (the i8..i32 encoding, so FIELDSZ / FIELDOFF / STRUCTSZ / every store take the width) plus the
+# unsigned mark (SFUNS: read zero-extended, `_fld_lw`); an f32 is `0 - 4` plus float kind 2
+# (SFFK: its binary32 bits, zero-extended, typed F32_TYID). Through 6.7.9 each was an 8-byte slot.
+# The entry is computed the way ADDFIELDTYPED computes it, and marked only when it stored (a
+# refused field leaves the pool top where it was), as ADDFIELDFK does. CHANGELOG [6.7.10]
+fn _add_narrow_field(S, si, fnoff, nw, k): i64 {
+    var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
+    var top = L64(S + 0x1AC018);
+    ADDFIELDTYPED(S, si, fnoff, 0 - nw);
+    if (L64(S + 0x1AC018) == top) { return 0; }
+    SFBOOL(S, ent, 0);
+    if (k == 2) { SFUNS(S, ent, 0); SFFK(S, ent, 2); return 0; }
+    SFUNS(S, ent, 1);
+    return 0;
+}
+
+# A `Vec<T>` element type in the same vocabulary: its field-type encoding, refusing a name
+# that is none of them.
+fn _vec_elem_code(S, si, fnoff, etoff): i64 {
+    var ew = _field_scalar_width(L64(S + 0xEC00000 + etoff));
+    if (ew > 0) {
+        if (ew < 8) { return 0 - ew; }
+        return 0;
+    }
+    var es = FINDSTRUCT(S, etoff);
+    if (es > 0) { return es; }
+    if (_field_name_kind(S, etoff) < 0) { _refuse_field_type(S, etoff, fnoff, L64(S + 0x1A6018 + si * 8)); }
+    return 0;
+}
+
+# A `Vec<T>` field's element, cursor on T: its code (`_vec_elem_code`, which refuses an unknown
+# name), T and the `>` closing `Vec<` consumed. 6.6.17: T may take type arguments of its own —
+# `items: Vec<Box<i64>>` was `expected '>', got '<'`. They are skipped, not instantiated: this
+# runs inside a struct definition, whose fields must stay contiguous in the field pool, and the
+# element code is read only by the derive codecs. The lexer's `>>` closes T's list AND the
+# `Vec<` one, which `_ta_pending_gt` carries.
+fn _vec_field_elem(S, si, fnoff): i64 {
+    if (PEEKT(S) == 10) {                   # 6.7.7 (R3): `Vec<( .. )>`, refused by name
+        _tup_pos_refuse(S, "a Vec element");
+        if (PEEKT(S) == 20) { STI(S, GTI(S) + 1); }
+        return 0;
+    }
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var etoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                     # consume the element type name
+    var elemc = _vec_elem_code(S, si, fnoff, etoff);
+    _ta_pending_gt = 0;
+    if (PEEKT(S) == 19) { _vec_el_args(S, GTI(S) - 1, fnoff); }   # 6.7.14 (D4 / D5)
+    else { _vec_el_bare(S, GTI(S) - 1); }                          # 6.7.15 (D10)
+    if (PEEKT(S) == 19) { _ta_pending_gt = _skip_targ_list(S); }
+    if (_ta_pending_gt > 0) { _ta_pending_gt = _ta_pending_gt - 1; return elemc; }
+    if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
+    STI(S, GTI(S) + 1);                     # consume >
+    return elemc;
+}
+
+# ⛔ 6.7.11 — A `Vec<T>` ANNOTATION READS ITS T AS THE FIELD FORM DOES (the user's decision (a),
+# 2026-10-13). A local, a global (either zone), a parameter, a `*Vec<T>` and `sizeof(Vec<T>)` skipped
+# their `<..>` unread (SKIP_GENERICS), so `Vec<(i64, i64)>`, `Vec<nosuchtype>` and `Vec<1 + 2>`
+# compiled where a field `items: Vec<..>` refused each by name. T is now one of the field vocabulary's
+# names (`_vec_elem_code`'s: a struct or union, an integer or float, bool, cstring, Result / Option /
+# Tagged, an enum, Vec) or a type parameter in scope; a nested `Vec<..>` is read the same way, any
+# other element's own `<..>` is skipped as the field form skips it. Anything else is refused by name,
+# once per token. The check only reads: the cursor is put back, so each site consumes the list exactly
+# as it did and the two passes agree. CHANGELOG [6.7.11]
+# 1 when token `ti` is the built-in word `Vec` (no program struct of that name) with a `<` after it.
+fn _vec_ann_at(S, ti): i64 {
+    if (ti < 0) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) != 0x00636556) { return 0; }   # "Vec\0"
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return 1;
+}
+# The check of the `Vec` annotation at token `ti` (`vnoff` the variable or parameter it declares, -1
+# for none); nothing when `ti` is not one. The cursor does not move.
+fn _vec_ann_chk(S, ti, vnoff): i64 {
+    if (_vec_ann_at(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti + 1);
+    _vec_ann_list(S, vnoff);
+    STI(S, sv);
+    return 0;
+}
+# The variable an annotation at token `ti` declares — `name : <ti>` — else -1 (`sizeof(Vec<..>)`).
+fn _vec_ann_vn(S, ti): i64 {
+    if (ti < 2) { return 0 - 1; }
+    if (TOKTYP(S, ti - 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, ti - 2) != 2) { return 0 - 1; }
+    return TOKVAL(S, ti - 2);
+}
+# Cursor on the `<` after `Vec`: the element read, its first problem reported. Returns the levels the
+# last closer closed BEYOND this list (the `>>` of `Vec<Vec<i64>>`, seen from the inner one), or -1
+# after a refusal (the enclosing list reads nothing more).
+fn _vec_ann_list(S, vnoff): i64 {
+    STI(S, GTI(S) + 1);                     # `<`
+    var ti = GTI(S);
+    var t = PEEKT(S);
+    if (t == 10) {
+        _tup_pos_refuse(S, "a Vec element");
+        return 0 - 1;
+    }
+    if (_sl_ann_at(S, ti) == 1) {
+        _sl_err(S, ti, "a slice cannot be a Vec element (6.7.8: slices are fn-locals)", "");
+        return 0 - 1;
+    }
+    if (t != 2) {
+        _vec_tok_err(S, ti, vnoff, "a Vec element type");
+        return 0 - 1;
+    }
+    STI(S, ti + 1);
+    var p = 0;
+    if (_vec_ann_at(S, ti) == 1) { p = _vec_ann_list(S, vnoff); }
+    else {
+        if (_vec_elem_ok(S, ti, vnoff) == 0) { return 0 - 1; }
+        if (PEEKT(S) == 19) {
+            _vec_el_args(S, ti, vnoff);   # 6.7.14 (D5): a generic element's own `<..>`
+            p = _skip_targ_list(S);
+        } else { _vec_el_bare(S, ti); }   # 6.7.15 (D10): a bare generic element's i64 base
+    }
+    if (p < 0) { return p; }
+    if (p > 0) { return p - 1; }
+    t = PEEKT(S);
+    STI(S, GTI(S) + 1);
+    if (t == 20) { return 0; }
+    if (t == 39) { return 1; }
+    if (t == 152) { return 2; }
+    _vec_tok_err(S, GTI(S) - 1, vnoff, "'>' after the Vec element type");
+    return 0 - 1;
+}
+# ⛔ 6.7.14 (D4 / D5) — A Vec element's own `<..>` (the element name at token `ti`, its `<` after it; `vnoff` the
+# declared name or -1): read, not consumed. A nested `Vec<..>` is checked as the annotation is (a field's
+# `items: Vec<Vec<nosuch>>` was skipped unread); a generic struct's list is read as that struct's annotation reads
+# it, instantiating nothing (`_targ_chk`): `Vec<Box<nosuch>>`, `Vec<Box<(i64, i64)>>`. Any other element's list is
+# skipped as a non-generic `Pt<..>` annotation's is, refused at the name (6.7.15 D6). CHANGELOG [6.7.14]
+fn _vec_el_args(S, ti, vnoff): i64 {
+    if (_vec_ann_at(S, ti) == 1) { _vec_ann_chk(S, ti, vnoff); return 0; }
+    if (_ngt_refuse(S, ti) == 1) { return 0; }   # 6.7.15 (D6): `Vec<Pt<..>>`, `Vec<i64<..>>`
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var es = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (es <= 0) { return 0; }
+    if (GSTP(S, es - 1) == 0) { return 0; }
+    _vec_el_targs(S, es, ti);   # 6.7.15 (D10): and held to its bounds
+    return 0;
+}
+# The generic element `es` (its name at token `ti`, `<` next): its list read by `_targ_chk` with the bounds judged
+# (`_ta_vbnd`, parse/fn/generic.cyr's D10 note) — each nested struct's while it is read, the element's own after.
+# CHANGELOG [6.7.15]
+fn _vec_el_targs(S, es, ti): i64 {
+    var sv_vb = _ta_vbnd;
+    var sv_nj = _tck_nj;
+    var sv_rf = _ta_refd;
+    _ta_vbnd = 1;
+    _tck_nj = 0;
+    _ta_refd = 0;
+    _targ_chk(S, ti + 1);
+    if (_tck_nj == 0) { if (_ta_refd == 0) {
+            _vbnd_judge(S, es, _tck_c0, _tck_c1, _targs_literal(S, ti + 2), ti);
+        } }
+    _ta_vbnd = sv_vb;
+    _tck_nj = sv_nj;
+    _ta_refd = sv_rf | _ta_refd;
+    return 0;
+}
+# A bare generic element (`Vec<Box>`, token `ti`): its i64 base, held to the bounds as `var b: Box;` is (`_bnd_sbase`).
+fn _vec_el_bare(S, ti): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var es = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (es <= 0) { return 0; }
+    if (GSTP(S, es - 1) == 0) { return 0; }
+    return _vbnd_judge(S, es, 0 - 8, 0, 1, ti);
+}
+# The element name at token `ti`: 1 when it is one (see above), else refused by name and 0.
+fn _vec_elem_ok(S, ti, vnoff): i64 {
+    var c = _tn_resolve_at(S, ti);
+    if (c != 0) { if (_tn_class(c) != 5) { return 1; } }
+    if (c == 0) { if (_cur_fn_ix >= 0) { if (_is_tparam_of(S, _cur_fn_ix, TOKVAL(S, ti)) == 1) { return 1; } } }
+    _vec_elem_refuse(S, ti, vnoff, c);
+    return 0;
+}
+# The refusal of the element name at token `ti` (`c` its code: a vector's, or 0 for no type), as
+# `_tn_refuse` reports one: once, at the name, the cursor put back, the latch it set cleared, nothing
+# under `--syntax-only`.
+fn _vec_elem_refuse(S, ti, vnoff, c): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    var sv = GTI(S);
+    STI(S, ti);
+    var tail = " as a Vec element";
+    if (vnoff >= 0) { tail = " as the Vec element of "; }
+    if (c != 0) {
+        tail = " cannot be a Vec element";
+        if (vnoff >= 0) { tail = " cannot be the Vec element of "; }
+        ERR_IDENT(S, "vector type ", noff, tail, vnoff);
+    } elif (_declared_later(S, noff, 40, 101) == 1) {
+        ERR_IDENT(S, "type ", noff, " is declared after its use; declare it above the first use", 0 - 1);
+    } else {
+        ERR_IDENT(S, "unknown type ", noff, tail, vnoff);
+        if (_err_quiet == 0) {   # 6.7.14: a repeat the error latch printed as nothing keeps its notes quiet
+            _tn_prefix_note(S, noff);
+            PRSTR("  note: a Vec element is a struct or union declared above it, i8..i64, u8..u64, f32, f64, ");
+            PRSTR("bool, cstring, Result, Option, Tagged, an enum, Vec / Vec<T>, or a type parameter in scope");
+            PRSTR(" (missing include?)\n");
+        }
+    }
+    STI(S, sv);
+    _panic = 0;
+    return 0;
+}
+# "expected <what> for 'v', got <token>" at token `ti`: a token no Vec element is (`Vec<1 + 2>`), or
+# what follows the element where its `>` belongs (`Vec<i64, i64>`). Once per token; not a panic, so
+# the declaration reads on.
+fn _vec_tok_err(S, ti, vnoff, what): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": expected ");
+    PRSTR(what);
+    if (vnoff >= 0) {
+        PRSTR(" for '");
+        PRSTR(S + 0xEC00000 + vnoff);
+        PRSTR("'");
+    }
+    PRSTR(", got ");
+    var t = TOKTYP(S, ti);
+    PRSTR(TOKNAME(t));
+    if (t == 1) {
+        PRSTR(" ");
+        PRNUM(TOKVAL(S, ti));
+    }
+    if (t == 2) {
+        PRSTR(" '");
+        PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+        PRSTR("'");
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+
+# ⛔ 6.7.1 (C3) — A FIELD WHOSE TYPE IS A GENERIC STRUCT INSTANCE, `b: Box<i32>`. It was `expected
+# identifier, got '<'`: the field parse took the name `Box` and stopped at its `<`. The instance cannot
+# be minted where the field is read — a struct's fields fill a contiguous slice of the field pool from
+# the pool top REGSTRUCT recorded, and a new instance registered mid-definition would land its own
+# fields inside that slice. So every generic field type is instantiated FIRST, by a pre-scan of the
+# body before the outer struct registers (`_sdef_gen_prescan`), and the field parse then finds the
+# instance deduped (`_sfield_named`). In a generic struct's base definition its own type parameters are
+# the i64 base's (`b: Box<T>` in `W<T>` is the base `Box`); an instance binds them to its arguments.
+# A field naming the struct being defined — itself, or inside its type arguments — is refused: the
+# struct would contain itself. CHANGELOG [6.7.1]
+fn _sfield_gen(S, fs, stp): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    var sv_q = _bnd_quiet;
+    var sv_qh = _bnd_quiet_hit;
+    if (stp != 0) { if (_tp_c0 == 0) {
+            var t0 = stp & 0xFFFFFFFF;
+            if (t0 != 0) { _tp_bind(S, 0, t0 - 1, 0 - 8); }
+            var t1 = (stp >> 32) & 0xFFFFFFFF;
+            if (t1 != 0) { _tp_bind(S, 1, t1 - 1, 0 - 8); }
+            # 6.7.1 (C3): `Box<T>` in the BASE definition — its T is the base's i64, which `W<Pt>`
+            # does not share. A failing bound there is recorded on W (`_sdef_bb`), judged where W's
+            # base is used; a field not naming T (`Box<Pt>`) is checked for real.
+            if (_targs_literal(S, GTI(S) + 1) == 0) { _bnd_quiet = 1; _bnd_quiet_hit = 0; }
+        } }
+    var g = _gen_ann_sid(S, fs);
+    if (_bnd_quiet == 1) { if (_bnd_quiet_hit > 0) { if (_sdef_bb == 0) { _sdef_bb = _bnd_quiet_hit; } } }
+    _bnd_quiet = sv_q;
+    _bnd_quiet_hit = sv_qh;
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return g;
+}
+# 1 iff the type-argument list starting at token j (just past its `<`) names `own` anywhere.
+fn _targs_name(S, j, own): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 5 || t == 13) { return 0; }
+        if (t == 2) { if (STREQ(S, TOKVAL(S, j), own) == 1) { return 1; } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return 0; }
+        j = j + 1;
+    }
+    return 0;
+}
+# Cursor on a struct body's `{` (`own` its source name, `stp` its type parameters): instantiate every
+# `name: Generic<..>` field type before the struct registers. The cursor is put back.
+fn _sdef_gen_prescan(S, stp, own): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (PEEKT(S) != 13) { return 0; }
+    var sv = GTI(S);
+    var sv_in = _inst_name;
+    var n = GTCNT(S);
+    var i = sv + 1;
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { break; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { break; } }
+        if (d == 1) { if (t == 49) { if (TOKTYP(S, i - 1) == 2) { if (TOKTYP(S, i + 1) == 2) { if (TOKTYP(S, i + 2) == 19) {
+                            var fn0 = TOKVAL(S, i + 1);
+                            var fs = FINDSTRUCT(S, fn0);
+                            if (fs > 0) { if (GSTP(S, fs - 1) != 0) { if (STREQ(S, fn0, own) == 0) { if (_targs_name(S, i + 3, own) == 0) {
+                                            STI(S, i + 2);
+                                            _sfield_gen(S, fs, stp);
+                                            _inst_name = sv_in;
+                                        } } } }
+                        } } } } }
+        i = i + 1;
+    }
+    _ta_pending_gt = 0;
+    STI(S, sv);
+    return 0;
+}
+# 1 iff struct si's name is a minted instance (`Box$i32`): '$' is never a source identifier byte.
+fn _sname_minted(S, si): i64 {
+    var p = S + 0xEC00000 + L64(S + 0x1A6018 + si * 8);
+    var i = 0;
+    while (load8(p + i) != 0) {
+        if (load8(p + i) == 36) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# A field typed by a struct name (`tnoff`, cursor after it): a generic one's `<..>` is its instance
+# (`_sdef_gen_prescan` minted it already, so this finds it); anything else is `_add_named_field`.
+fn _sfield_named(S, si, fnoff, tnoff, stp, own): i64 {
+    if (PEEKT(S) == 19) { if (_MONOMORPH_OK == 1) {
+            var fs = FINDSTRUCT(S, tnoff);
+            if (fs > 0) { if (GSTP(S, fs - 1) != 0) {
+                    if (STREQ(S, tnoff, own) == 1 || _targs_name(S, GTI(S) + 1, own) == 1) {
+                        # Reported at the definition; an instance re-parse (`W$i32`) stays quiet.
+                        if (_panic == 0 && _sname_minted(S, si) == 0) { _fty_self(S, fnoff, tnoff, own); }
+                        _ta_pending_gt = 0;
+                        _skip_targ_list(S);
+                        ADDFIELD(S, si, fnoff);
+                        return 0;
+                    }
+                    var g = _sfield_gen(S, fs, stp);
+                    ADDFIELDTYPED(S, si, fnoff, g);
+                    return 0;
+                } }
+        } }
+    return _add_named_field(S, si, fnoff, tnoff);
+}
+
+# ⛔ 6.7.7 (B4) — a struct field typed by a tuple (`t: (i64, f64)`). Cursor on the struct body's
+# `{` (`sname_ti` the struct's name): every depth-1 `name: (` field type is interned HERE, before the
+# struct registers — interning registers a struct, whose fields would land inside this one's slice of
+# the packed field pool (the reason `_sdef_gen_prescan` exists). The field arm then only looks the
+# type up (`_sfield_tup`). A generic struct (`struct S<T>`, read from the tokens) is refused by
+# name: a tuple field there has no rule yet (R4). The cursor is put back. CHANGELOG [6.7.7]
+fn _sdef_tup_prescan(S, sname_ti): i64 {
+    if (PEEKT(S) != 13) { return 0; }
+    var sv = GTI(S);
+    var n = GTCNT(S);
+    var i = sv + 1;
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { break; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { break; } }
+        if (d == 1) { if (t == 49) { if (TOKTYP(S, i - 1) == 2) { if (TOKTYP(S, i + 1) == 10) {
+                        if (TOKTYP(S, sname_ti + 1) == 19) {
+                            _tup_err(S, i + 1, "a tuple field in a generic struct is refused - a type parameter and a tuple do not combine yet", 0 - 1, 0);
+                        }
+                        STI(S, i + 1);
+                        _tup_type(S, 0);
+                        i = GTI(S);
+                    } } } }
+        i = i + 1;
+    }
+    STI(S, sv);
+    return 0;
+}
+# 1 when a field's annotation (cursor on its `:`) is a tuple's `(` (6.7.7) or, 6.7.8 (C2-6a), a slice:
+# both are `_sfield_tup`'s.
+fn _sfield_alt(S): i64 {
+    var ti = GTI(S) + 1;
+    if (TOKTYP(S, ti) == 10) { return 1; }
+    if (TOKTYP(S, ti) == 105) { return 1; }   # 6.7.14: `w: u128`, refused below
+    return _sl_ann_at(S, ti);
+}
+# The field `fnoff: ( .. )`, cursor on its `:` — the interned tuple (`_sdef_tup_prescan`), looked up;
+# a union's (`uni` 1) is refused by name and kept as an i64 word. The `)` is consumed. 6.7.8 (C2-6a):
+# a slice field `fnoff: [T]` / `slice<T>` is refused by name and kept as an i64 word (no cascade).
+fn _sfield_tup(S, si, fnoff, uni): i64 {
+    STI(S, GTI(S) + 1);   # consume ':'
+    var ti = GTI(S);
+    # ⛔ 6.7.14 — a `u128` field is refused by name until u128 is carried as a 16-byte value (the user's decision D10
+    # (a), 2026-10-16, with the parameter): it was "expected identifier, got reserved keyword 'u128' (cannot be used as
+    # an identifier ...)", which names a non-problem. Kept as an i64 word, so its uses read on. CHANGELOG [6.7.14]
+    if (TOKTYP(S, ti) == 105) {
+        _u128_refuse(S, ti, "a field type yet");
+        STI(S, ti + 1);
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
+    if (_sl_ann_at(S, ti) == 1) {
+        _sl_err(S, ti, "a slice cannot be a struct or union field (6.7.8: slices are fn-locals)",
+          " - keep its slice_ptr / slice_len in two fields");
+        _sl_ann_skip(S);
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
+    if (uni == 1) {
+        _tup_err(S, ti, "union field ", fnoff, " cannot be a tuple");
+        STI(S, _call_close(S, ti) + 1);
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
+    var tsid = _tup_type(S, 1);
+    if (tsid == 0) {
+        if (_had_error == 0) { ERR_MSG(S, "internal error: a tuple field type was not interned before its struct", 69); }
+        ADDFIELD(S, si, fnoff);
+    } else { ADDFIELDTYPED(S, si, fnoff, tsid); }
+    STI(S, GTI(S) + 1);   # consume ')'
+    return 0;
+}
+
+fn PARSE_STRUCT_DEF(S): i64 {
+    var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
+    STI(S, GTI(S) + 1);  # consume STRUCT
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var noff = PEEKV(S);
+    var _sname_ti = GTI(S);
+    STI(S, GTI(S) + 1);
+    # Skip generic parameters if present: struct Foo<T, U>
+    # v6.3.10 (generic structs): capture <T> (flag-off / non-generic = old SKIP_GENERICS).
+    var _stp = _capture_tparams(S);
+    var _sbnd = 0;   # 6.7.1 (C3): `struct Box<T: Show>` — read now, before the pre-scan re-captures
+    if (_stp != 0) { if (_inst_name == 0) { _sbnd = _bnd_make(S, _stp); } }
+    var _sv_sbb = _sdef_bb;
+    _sdef_bb = 0;
+    # v6.3.10: re-emitting a `Box$ty` instance uses the mangled name verbatim.
+    if (_inst_name != 0) { noff = _inst_name; }
+    var _sown = TOKVAL(S, _sname_ti);
+    _sdef_gen_prescan(S, _stp, _sown);   # 6.7.1 (C3): `b: Box<i32>` fields, before REGSTRUCT
+    _sdef_tup_prescan(S, _sname_ti);     # 6.7.7 (B4): `t: (i64, f64)` fields, before REGSTRUCT
+    var _sprev = FINDSTRUCT(S, noff);
+    var sid = REGSTRUCT(S, noff);
+    if (sid == 0) { _sdef_bb = _sv_sbb; return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
+    var si = sid - 1;
+    var _sv_tp_ti = _sdef_tp_ti;
+    _sdef_tp_ti = _sname_ti + 1;   # 6.6.10: its `<T>`, for _is_own_tparam
+    if (_stp != 0) { SSTP(S, si, _stp); SSDS(S, si, _sdefstart + 1); }   # record for instantiation
+    if (_sbnd != 0) { SSBND(S, si, _sbnd); }
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    STI(S, GTI(S) + 1);  # consume {
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 14) { go = 0; }
+        # v6.5.19: EOF guard — same class as the enum member loop above (the include-length ifdef bug).
+        # `struct`, `struct S`, `struct S {`, `struct S { a` all SIGSEGV'd at 6.5.18.
+        elif (PEEKT(S) == 12) { go = 0; }
+        else {
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var fnoff = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            # Check for type annotation: field: Type
+            if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49 && _sfield_alt(S) == 1) { _sfield_tup(S, si, fnoff, 0); }   # 6.7.7: `: (T, ..)`
+            elif (PEEKT(S) == 49) {
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+                var tnoff = PEEKV(S);
+                # v6.3.10 (generic structs): a field `: T` under an active instance
+                # binding resolves to the concrete type — canonical token <0 = scalar
+                # -width, >0 = struct sid. Inert (no binding) → the normal field parse.
+                var _ftc = 0;
+                if (_tp_c0 != 0) { _ftc = _tp_resolve(S, tnoff); }
+                if (_ftc != 0) {
+                    STI(S, GTI(S) + 1);   # consume the type name
+                    _ngt_skip(S);         # 6.7.17 (D6): an instance's `a: T<i64>` — its list stepped (the base said it)
+                    if (_ftc == 0 - 9) {
+                        ADDFIELDFK(S, si, fnoff, 1);   # 6.6.10: `T` bound to f64 is an f64 field
+                    } elif (_ftc < 0) {
+                        var _fw = 0 - _ftc;
+                        if (_fw < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - _fw); }
+                        else { ADDFIELD(S, si, fnoff); }
+                    } else {
+                        ADDFIELDTYPED(S, si, fnoff, _ftc);
+                    }
+                } else {
+                    # Check scalar types first
+                    var ftname = L64(S + 0xEC00000 + tnoff);
+                    var fscalar = _field_scalar_width(ftname);
+                    STI(S, GTI(S) + 1);
+                    # v6.4.x Pin 2 — Vec<T> array-typed field. `Vec` (0x636556)
+                    # followed by `<` (token 19) is a typed handle field: an
+                    # 8-byte pointer slot (like Str), element type T recorded in
+                    # a far-negative sentinel via MKVEC. Non-generic structs only.
+                    if (ftname & 0xFFFFFFFF == 0x636556) {
+                        if (PEEKT(S) == 19) {
+                            STI(S, GTI(S) + 1);   # consume <
+                            var elemc = _vec_field_elem(S, si, fnoff);   # 6.6.17: + a nested `<..>`
+                            var _vsent = MKVEC(S, elemc);
+                            ADDFIELDTYPED(S, si, fnoff, _vsent);
+                        } else {
+                            _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
+                        }
+                    } elif (fscalar > 0) {
+                        _ngt_skip(S);   # 6.7.16 (D7): `g: i64<u8>`
+                        # Store as negative width for sized scalars, 0 for i64 (default)
+                        if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
+                        else { ADDFIELD(S, si, fnoff); }
+                    } else {
+                        _ngt_skip(S);   # 6.7.16 (D7): `f: Pt<i64>`, `h: f64<u8>` (a generic struct's list is `_sfield_named`'s)
+                        _sfield_named(S, si, fnoff, tnoff, _stp, _sown);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
+                    }
+                }
+            } else {
+                ADDFIELD(S, si, fnoff);
+            }
+            _fld_sep(S, 0);   # 6.7.16 (D69): `;` between fields
+        }
+    }
+    # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    STI(S, GTI(S) + 1);  # consume }
+    _fld_pp_end(S, si);   # 6.7.16: its `**G<..>` fields' pins, the run closed
+    _sdef_tp_ti = _sv_tp_ti;
+    if (_sdef_bb > 0) { SSBB(S, si, _sdef_bb); }   # 6.7.1 (C3)
+    _sdef_bb = _sv_sbb;
+    _chk_struct_redef(S, _sprev, sid, _sname_ti);
+    return 0;
+}
+
+# Parse union — same as struct but sets high bit in fcount to mark as union
+fn PARSE_UNION_DEF(S): i64 {
+    STI(S, GTI(S) + 1);  # consume UNION
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var noff = PEEKV(S);
+    var _uname_ti = GTI(S);
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 19) { _union_tp_refuse(S); }   # 6.7.17 (D5): "a union takes no type parameters"
+    _tpl_skip(S);
+    _sdef_gen_prescan(S, 0, noff);   # 6.7.1 (C3): `b: Box<i32>` fields, before REGSTRUCT
+    var _uprev = FINDSTRUCT(S, noff);
+    var sid = REGSTRUCT(S, noff);
+    if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
+    var si = sid - 1;
+    var _sv_tp_ti = _sdef_tp_ti;
+    _sdef_tp_ti = _uname_ti + 1;   # 6.6.10: its `<T>`, for _is_own_tparam
+    # Set union flag (high bit of fcount)
+    S64(S + 0x1A8018 + si * 8, 1 << 63);
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) == 14) { go = 0; }
+        # v6.5.19: EOF guard — the union twin of the struct loop above (the include-length ifdef bug).
+        elif (PEEKT(S) == 12) { go = 0; }
+        else {
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var fnoff = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) == 49 && TOKTYP(S, GTI(S) + 1) == 8) { _add_ptr_field(S, si, fnoff); }   # 6.6.17: `: *T`
+            elif (PEEKT(S) == 49 && _sfield_alt(S) == 1) { _sfield_tup(S, si, fnoff, 1); }   # 6.7.7: refused
+            elif (PEEKT(S) == 49) {
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+                var tnoff = PEEKV(S);
+                var ftname = L64(S + 0xEC00000 + tnoff);
+                var fscalar = _field_scalar_width(ftname);
+                STI(S, GTI(S) + 1);
+                # v6.4.x Pin 2 — Vec<T> array-typed field (PARSE_UNION_DEF
+                # parallel copy of the PARSE_STRUCT_DEF branch).
+                if (ftname & 0xFFFFFFFF == 0x636556) {
+                    if (PEEKT(S) == 19) {
+                        STI(S, GTI(S) + 1);   # consume <
+                        var elemc = _vec_field_elem(S, si, fnoff);   # 6.6.17: + a nested `<..>`
+                        var _vsent = MKVEC(S, elemc);
+                        ADDFIELDTYPED(S, si, fnoff, _vsent);
+                    } else {
+                        _bare_vec_field(S, si, fnoff, tnoff);   # 6.7.13: declared below refused (D10 (b))
+                    }
+                } elif (fscalar > 0) {
+                    _ngt_skip(S);   # 6.7.16: `g: i64<u8>`, as PARSE_STRUCT_DEF's (D7)
+                    if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
+                    else { ADDFIELD(S, si, fnoff); }
+                } else {
+                    _ngt_skip(S);   # 6.7.16: `f: Pt<i64>`, as PARSE_STRUCT_DEF's (D7)
+                    _sfield_named(S, si, fnoff, tnoff, 0, noff);   # 6.6.10: refuses an unknown name; 6.7.1: `Box<i32>`
+                }
+            } else {
+                ADDFIELD(S, si, fnoff);
+            }
+            _fld_sep(S, 1);   # 6.7.16 (D69): `;` between fields
+        }
+    }
+    # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    STI(S, GTI(S) + 1);
+    _fld_pp_end(S, si);   # 6.7.16: as PARSE_STRUCT_DEF's
+    _sdef_tp_ti = _sv_tp_ti;
+    _chk_struct_redef(S, _uprev, sid, _uname_ti);
+    return 0;
+}
