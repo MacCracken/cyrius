@@ -17,7 +17,7 @@ fn L64(a): i64 {
 # The hot accessors (these, the token-stream ones in backend/common/tokens.cyr, the local-slot and
 # line ones below) read and write their cell with load64 / store64 itself, not through L64 / S64:
 # each wrapper is one more call, and L64's frame saves five registers. A self-compile made 108 M
-# L64 calls, ~12 % of its time (tests/gates/frontend/token_accessors_direct.sh). CHANGELOG [6.7.18]
+# L64 calls, ~12 % of its time (tests/gates/frontend/hot_path_call_counts.sh row A). CHANGELOG [6.7.18]
 
 fn GBL(S): i64 { return load64(S + 0x18C100); }
 fn SBL(S, v): i64 { store64(S + 0x18C100, v); return 0; }
