@@ -21,11 +21,21 @@ release was finished on the integration branch `l6717-integ`: wave 1's reviews a
 six reds, the finish-pass decisions D92 – D111, feg's stderr writer sweep and the never-parsed-body check, then waves 2
 and 3 and one check.sh on the merged tree. CYRIUS-2026-0037 (6.7.16's P3) is fixed.**
 
-⟪GATE⟫
+**Release gate GREEN** (`release-gate.sh` on `9c3f413cf`, 2026-10-22): fixpoint 2,923,536 B; ARM lockstep 3,153,176 B;
+seed-derive OK; check.sh 129 / 129 driver rows, 591 / 591 shell gates (0 SKIPs); ecb, ach, cass and pi `SELFHOST_OK` +
+`LIBTEST_OK` on the full `tests/tcyr` corpus.
 
-⟪SIZE⟫
+**Size:** cycc **2,923,536 B** (`.text` **2,760,176**), +101,256 B over 6.7.16's 2,822,280 (`.text` 2,592,616;
++167,560) — the refusals, the cascade stand-downs and the held, source-ordered diagnostics (7,248 of the 8,187 lines
+added under src/ since 6.7.16 are in src/frontend). `build/cycc-native-aarch64` **3,153,176 B** (+68,592 B over
+6.7.16's 3,084,584; 1.079× the x86 compiler). Dead-code floor 51 fns / 10,376 B (x86; 6.7.16: 51 / 10,408).
 
-⟪BENCH⟫
+**Bench:** self_compile **1,544 ms** (the gate's run; `bench-history.sh` 1,560 ms). Same-box A/B (min of 6, load ~0.4):
+6.7.16 compiling its own sources 1,384 ms → 6.7.17 compiling its own 1,565 ms (**+13.1 %**). On the SAME input (6.7.16's
+sources) the compiler is **+7.4 %** (1,384 → 1,487 ms); the input grew +5.6 % (6.7.16's compiler takes 1,461 ms on
+6.7.17's sources). Growth tax by default, not bisected; the release found and fixed one 40× compile-time regression
+(D107's assignment twin and D111's operand check walking back through the file for every name, `dd47e6c22`), and the
+refactor / optimization review (6.7.18, D91) is where the rest is measured.
 
 **Security:** **CYRIUS-2026-0037** (P3, recorded at the 6.7.16 close) is **fixed** — the native TLS 1.3 server checked
 each ClientHello key_share against supported_groups by a re-validating linear scan, so a network peer's 16,166-byte
@@ -1386,7 +1396,15 @@ differ only in the ORDER of the same stderr lines; every compiled binary byte-id
 - **At the release**: D109 narrowed and the `&pa` depth hole (the user; `e3c4fc15c`, head item 1);
   version_bump_doc_anchors.sh stopped under `bash -eo pipefail` (`diff` exits 1 on the anchor it is meant to find;
   `19a75276d`).
-⟪CHECK⟫
+- **The merged tree's check.sh** (`dd9c88a1a`: 591 gates, 11 red) and what it led to: ZR1's source order re-pinned in
+  three more gates (traits_checked TRC1-TRC3, generic_tparam_count_refused T6 / GT4, struct_receive_inference_checked
+  GZ21b; `69d3b88ad`); the two scan gates read FB1's `_skip_gvar_decl(S, GTI(S))` (`5440295a7`); `_eb_fault` in the
+  dead-code floor (`07b44d459`); diagnostic_writer_census (`39f170ba8`); the state.md stamp. The gates that hit the 900 s
+  deadline or their timing bound led to a 40× compile-time regression from vala's round 4 — D107's assignment twin and
+  D111's operand check walked back through the file for every name, so `s = s + gN` over 10,000 globals compiled in
+  6 s (147 ms in 6.7.16); now 172 ms (`dd47e6c22`; globals_scale_linear green, bounds_mode_checked 875 → 250 s) — and,
+  with the deadline gone, tcyr_corpus_cross_compiles named one agnos compile failure (rename_cross_volume_exdev.tcyr's
+  direct `sys_rename`, agnos's own kernel call; `433ab2b8a`). Then the release gate, GREEN (above).
 
 ### Folds — bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9
 
