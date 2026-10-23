@@ -110,7 +110,8 @@ check "_bench_walk_dir roots (benches + tests, NOT tests/bcyr)" 2 "$n_bench"
 n_bcyr=$(grep -c '_bench_walk_dir("tests/bcyr"' cbt/commands.cyr || true)
 check "no explicit tests/bcyr walk" 0 "$n_bcyr"
 n_repo=$(ls fuzz/*.fcyr 2>/dev/null | wc -l | tr -d ' ')
-check "fuzz/*.fcyr on disk" 6 "$n_repo"
+n_fl=0; [ "$n_repo" -ge 11 ] && n_fl=1   # a floor, never a pinned count (6.7.18 added five harnesses)
+check "fuzz/*.fcyr on disk (floor 11)" 1 "$n_fl"
 
 
 # ── v6.5.8: ARGUMENT HYGIENE ACROSS THE VERB SURFACE.
