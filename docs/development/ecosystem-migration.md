@@ -755,6 +755,184 @@ is still not safe — sandhi's roadmap); the client and server transports dispat
 defers to WAL recovery instead of judging the header unlocked. With this release's LIB-1 (a re-taken lock stays held),
 a second handle's writes inside a transaction are no longer lost on Windows. Nothing to change in a caller.
 
+### 6.7.18
+
+The full security audit + the refactor / optimization review. Each block names its CHANGELOG [6.7.18] bite; the
+decisions are the user's (2026-10-22: D1 — the network parsers read through slices, D2 — the folder layout, and the
+audit's four: bayan's refusals, `cyrius deps` over plaintext, pam's `nullok` kept, the `ach` CI job kept) or the lanes'
+agent defaults, which the CHANGELOG's head lists for the user's review. No language rule changed: beyond two codegen
+fixes (an inline-asm fn's frame, a named argument after `>>>`) and one `CYRIUS_DCE=1` fix, the compiler's own changes
+leave every program's bytes as 6.7.17's compiler made them. What a program meets is in the stdlib and the folds; the
+folds are the last block.
+
+#### Networking (net, D1)
+
+- **`http_get` / `http_get_r` / `http_get_a` have deadlines (CYRIUS-2026-0049).** Every connect, send and read waits
+  at most `HTTP_IDLE_TIMEOUT_MS` (5000) and the whole exchange `HTTP_TIMEOUT_MS` (30000); running out is HTTP_ERROR /
+  `Err(HttpNetErr)`, never a truncated response. A fetch from a server slower than that now fails: raise either
+  variable before the call, or set it to 0 to turn that bound off.
+- **`http_get_r` on a refused allocation** returns `Err(HttpOther)` (it crashed). Nothing to change.
+- **A non-digit HTTP status reads 0** (`2x0` read 920, `!!!` -1665). Treat 0 as "no valid status".
+- **`ws_server_recv` (CYRIUS-2026-0043)** fails the call on a control frame (PING / PONG / CLOSE) over 125 bytes —
+  RFC 6455 §5.5's limit — and returns each data frame in its own allocation (it was one process-global buffer every
+  call and thread overwrote). A peer sending longer control frames must send ≤ 125 bytes; a caller no longer has to
+  copy a payload out before the next call.
+- **`ws_server_handshake` refuses a Sec-WebSocket-Key that is not 22 base64 characters and "=="** (RFC 6455 §4.1; any
+  24 bytes passed). A client must send the RFC's key: 16 random bytes, base64.
+- **`ws_connect` (finding 19)** reads the 101's whole header block, at most 8 KiB (longer: CLOSED), and keeps the
+  frames that arrived with it for the first `ws_recv` (they were dropped). The ws handle is 56 bytes (was 32): take
+  it from `ws_connect` / `ws_new`, never size it by a number.
+- **`async_resolve` (CYRIUS-2026-0038)** refuses an empty name or one over 253 bytes (-1) before writing anything.
+  Nothing to change for a valid DNS name.
+- **D1** — the network parsers (async DNS, net.cyr's blocking resolver, the HTTP response parser, both WebSocket frame
+  readers, the handshake key) read through slices checked in every build: a read past the peer's bytes, should a
+  parser's own checks miss one, stops the program (SIGABRT, exit 134) where it read on. New: `slice_get_be(&s, i, w)`
+  in lib/slice.cyr.
+
+#### Local users, the CLI, the release channel (local)
+
+- **`cyrius deps` refuses plaintext dependency URLs (Finding 26, the user's decision):** `git://`, `http://`,
+  `ftp://`, a remote helper's `http::`, and a helper's plaintext URL (`https::http://…`), any case, by name (dep,
+  owner, URL), before any fetch. Move the dependency's
+  `git` URL in `cyrius.cyml` to `https://` or ssh (`git@host:owner/repo`).
+- **`cyrius build`'s output temp is `<out>.tmp.<n>`** — n random (62 bits of the OS CSPRNG), created exclusively
+  (CYRIUS-2026-0046); it was `<out>.tmp.<pid>`. A script that looked for the pid-named temp matches `.tmp.<digits>`.
+- **`file_write_atomic`'s temp is born at the destination's mode** (0644 for a new file; CYRIUS-2026-0047). Nothing
+  to change.
+- **The Windows CLI** reads no `/proc/self/environ` and, with USERPROFILE and CYRIUS_HOME both unset, refuses by name
+  (it used the drive-relative home `/root`; CYRIUS-2026-0048). Set USERPROFILE or CYRIUS_HOME.
+- **fdlopen in a secure exec (CYRIUS-2026-0041).** When AT_SECURE is set, the real and effective uid or gid differ,
+  or the auxv cannot be read, every fdlopen entry — lib/tls.cyr's libssl backend among them — takes only the
+  root-owned, verified `/usr/lib/cyrius/dlopen-helper` and answers -9 without it; `$HOME/.cyrius/dlopen-helper` is
+  never run there. `fdlopen_trusted_only(1)` (new) asks for the trusted helper in any process. A setuid program on the
+  libssl backend installs the helper at `/usr/lib/cyrius/dlopen-helper`, root-owned.
+- **`pam_unix_authenticate` (CYRIUS-2026-0050)** answers PAM_AUTH_FAIL for a password over 512 bytes (all unix_chkpwd
+  reads) before anything runs, and a helper that exits unread is an authentication failure, never a SIGPIPE. The
+  password is now sent NUL-terminated: a correct password verifies (before, unix_chkpwd read NO password, so it never
+  did), and an account with an empty hash no longer accepts ANY password — with `nullok` kept, it still accepts the
+  empty one (refusing that is placed at 6.8.0). `PAM_MAX_PASSWORD` (512) tells the bound; writing it changes nothing.
+  Re-test a login path that relied on what pam answered before.
+- **The release workflow signs in `environment: release` (Finding 22):** release.yml is `contents: read`, and only
+  the job holding CYRIUS_RELEASE_SK writes. Releases are signed with the same key and verified as before; a fork that
+  runs cyrius's release.yml needs a `release` environment holding that secret.
+- **install.sh's header** advertises the README's raw.githubusercontent.com command (Finding 27); the
+  `install.cyrius.dev` URL never resolved. Use the README's command.
+
+#### Native TLS (tls, refold)
+
+- **KeyUpdate (Finding 21).** A peer's KeyUpdate whose body is not exactly one byte of 0 or 1 fails the connection
+  (`TLS_ERR_BAD_HANDSHAKE`); one that does not end its record, or the 33rd in a row with no application data between,
+  fails it with `TLS_ERR_PROTOCOL`. A conforming peer (OpenSSL's, BoringSSL's limit is the same 32) sees no change.
+- **`tls_native_close` zeroises every secret the ctx holds (Finding 28)**, after the close_notify: a seal or open on
+  the ctx after it is `TLS_ERR_PROTOCOL` (it sealed under the live key), and its key schedule answers no secrets.
+  Don't use a ctx after closing it.
+- **`TLS_CTX_LEN` 632 → 640** (`TLS_CTX_OFF_KEY_UPDATES` = 632). Size a ctx through `TLS_CTX_LEN`, never a number.
+- **CYRIUS-2026-0042 — nameConstraints.** A chain through a CA whose X.509 nameConstraints the leaf (or a lower CA)
+  violates is `TLS_ERR_CERT_INVALID`, the trust root's constraints included; a CA constraining a name form cyrius does
+  not evaluate (rfc822Name, URI, …) refuses the path; a CA with a CRITICAL nameConstraints now verifies for its
+  permitted names (sigil 3.13.13 refused the certificate at parse). An intermediate is checked as a CA — its
+  commonName is never read as a host name; the leaf's is. A CA that does not allow the path below it is skipped while
+  the path is built, so a chain through an unconstrained twin still verifies; a path over 18 certificates (more than
+  16 intermediates, only from a direct API call) is refused; a trailing-dot name is matched with one dot dropped, so
+  it is refused where OpenSSL lets it out. Fix: a server whose chain is refused must be issued inside its CA's
+  constraints.
+- **The TLS 1.2 client keeps the server's intermediates** (up to 16; it kept only the leaf), so a TLS 1.2 server that
+  sends its intermediate now verifies — every such verifying connect failed. A malformed entry after the leaf is
+  `TLS_ERR_BAD_HANDSHAKE` (it was ignored). Nothing to change.
+
+#### Thread-local slots (tls-slots)
+
+- **arm64 macOS.** A thread past the 64th live one has its own slots (it shared main's, and every other overflow
+  thread's). A slot access from a thread no `thread_create` started is refused by name (exit 70), and `thread_create`
+  returns 0 when the thread's registry chunk, control block or slot block cannot be allocated, or `pthread_create`
+  fails. Start threads with `thread_create` and check its 0.
+- **Linux foreign-TLS mode (`thread_local_use_foreign_tls()`).** The slot array belongs to the thread that declared
+  the mode; any other thread's slot access is refused by name (exit 70) — every thread shared the one array. A fork
+  child's first thread takes the array over. Touch thread-local state, directly or through a library, only from the
+  declaring thread in this mode.
+- **Windows.** A thread's first slot writes are no longer lost to another thread's concurrent first access; a failed
+  `TlsAlloc` is refused by name. Nothing to change.
+
+#### The libs (libs)
+
+- **`exec_capture_str` returns -1 with nothing run when no pipe can be made** (with no fd free it closed fd 0, read it
+  as output, and ran the command uncaptured). Check its -1.
+- **fdlopen's loader** gives the helper its path in argv[0] / AT_EXECFN (they read ""). Nothing to change.
+- No public symbol's signature, semantics or presence changed in the 13 audited libs (net, http, ws, ws_server, async,
+  fs, io, process, thread_local, fdlopen, tls, pam, slice); added: `fdlopen_trusted_only`, `slice_get_be`.
+
+#### The compiler (giantfns, optimize)
+
+- **An inline-asm fn returning `: *T`, `: (T1, T2)` or `: Box<T>` keeps the standard frame**, so its `[rbp - 8]` reads
+  its argument (each such fn returned 0; a one-name return type was right before). Asm that worked around it reads the
+  argument at `[rbp - 8]` again.
+- **A named argument after a parameter whose type closes with `>>>`** (`nb3(x, b: 8)` with `a: Box<Box<Box<Pt>>>`)
+  compiles; it was refused "'nb3' has no parameter named 'b'".
+- **`CYRIUS_DCE=1`** no longer NOP-fills live fns in a program whose reachability took more than 512 rounds (a
+  callee-first call chain deeper than that died of SIGILL); such a program's binary changes, every other one's does
+  not.
+- cybs (the bootstrap compiler) refuses a 17th open loop and a 321st pending `break` by name — they compiled to a wrong
+  program. Only code built by cybs meets it.
+
+#### Source layout (moves, splits, splits2, cbtsplit) — for anyone who reads cyrius's `src/` or `cbt/` paths
+
+- `src/frontend/lex.cyr`, `lex_pp.cyr`, `lex_attr.cyr` are `src/frontend/lex/lex.cyr`, `lex/pp/` (directive,
+  include, derive, serialize, accessor, macro, pass, preprocess) and `lex/attr.cyr`.
+- `src/frontend/parse.cyr` is `src/frontend/parse/parse.cyr`, the entry the forks include, with its body in eleven
+  files beside it (`stmt.cyr`, `prog.cyr`, …); `parse_ctrl.cyr` / `parse_cov.cyr` are `parse/ctrl.cyr` /
+  `parse/cov.cyr`; `parse_fn.cyr` and `parse_fn_def.cyr` are `parse/fn/` (`def.cyr` the former fn_def);
+  `parse_decl.cyr`, `parse_expr.cyr` and `parse_types.cyr` are `parse/decl/`, `parse/expr/` and `parse/types/`.
+- `cbt/commands.cyr` is `cbt/commands/` (one file per verb; distlib's stages in `cbt/commands/distlib/`);
+  `cbt/deps.cyr` is `cbt/deps/` (one file per stage).
+- A tool, script or doc that names one of those paths reads the folder, recursively; a test that compiles a CLI module
+  carries `cbt/cyrius.cyr`'s cbt/ include list, in order. The `#derive` field-cap error names `lex/pp/derive.cyr`.
+  `lib/` did not move, and no compiled program changes.
+
+#### Folds — sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1
+
+Vendored byte-identical from the user's tags: sigil 3.13.15 (`3c47656`), sandhi 1.13.7 (`6e649a3`), bayan 1.11.1
+(`965298d`). A hand-written include list needs `lib/slice.cyr` and `lib/hashseed.cyr` before `lib/bayan.cyr`, and
+`lib/slice.cyr` before `lib/sandhi.cyr`; sigil's is unchanged.
+
+- **bayan 1.11.0 → 1.11.1 — new requirements and refusals (the user's decisions).** `lib/bayan.cyr` needs
+  `lib/slice.cyr` and `lib/hashseed.cyr` before it in a hand-written include list (its Requires block names them; a
+  `[deps] stdlib` / `cyrius deps` build needs nothing) — add both. Refused by name where they were accepted:
+  - invalid or non-canonical base64 / base64url (`=` anywhere, `====`, a dangling character, mixed alphabets) — the
+    decoders return 0 as before, and the new `bayan_base64_last_error()` says why;
+  - a malformed JSON number — a leading zero (`01`), no digits, an out-of-range integer (the streaming parser wrapped
+    it) — in the tree and streaming parsers;
+  - a duplicate JSON object key, in the tree, flat (returns 0, "duplicate key" in `bayan_json_last_error`) and
+    streaming parsers, keys compared decoded (the first one was answered). A `#derive(Deserialize)` `_from_json` of
+    such a document gets 0 pairs, so every field takes its default.
+
+  Fix the producer of such data; check `bayan_json_parse`'s 0 and read the last error. PDF: a stream that fails to
+  decode is tried once per document; page content handed out is charged to a 512 MiB per-document budget and refused
+  by name past it (`bayan_pdf_page_content` too); a refused filter stage names why. `bayan_base64url_encode` returns 0
+  on a refused allocation (it wrote through it).
+- **sandhi 1.13.6 → 1.13.7.** `lib/sandhi.cyr` needs `lib/slice.cyr` in a hand-written include list (its Requires block
+  names it) — add it. An h2 exchange fails on a server's HPACK table-size update above 4096 and on an HPACK string
+  holding a NUL (`SANDHI_ERR_PROTOCOL`), on a decoded header list over 65,536 octets (saying why;
+  CYRIUS-2026-0044), and on an HPACK integer past 2^32 − 1; an HTTP/1 header field holding a NUL is dropped (it was read
+  cut at the NUL), as CR / LF fields were. A conforming server sees no change. The HPACK table record is 40 B (was 32).
+- **sigil 3.13.13 → 3.13.15 — crypto lanes.** Lanes are a pool of 64, held only while used, by one thread
+  (CYRIUS-2026-0040). `cbank()` takes no lane any more: it answers the lane the thread holds, or 0 — a caller that
+  indexed its own top-level array by `cbank()` now shares row 0 across threads: put the array on the fn's frame, or
+  hold a lane with the new `crypto_lane_enter()` / `crypto_lane_leave()` (enter answers -1 when all 64 are busy).
+  `crypto_bank_set` is a no-op; `crypto_banks_exhausted()` means a lane request was refused, `crypto_banks_claimed()`
+  the lanes held now; `crypto_tls_main_init` no longer gives main lane 0. With all 64 busy, a 65th concurrent ECDSA
+  verify or on-curve check answers 0 (refused, not queued) — under heavy oversubscription a handshake can fail where,
+  on a shared lane, it went through before. A direct call into the P-256 / P-384 EC arithmetic outside any lane scope,
+  with no lane free, exits 70: wrap it in `crypto_lane_enter()` / `crypto_lane_leave()`.
+- **sigil 3.13.15 — X.509 and Poly1305.** `X509Cert` is 304 B (was 272): size it by `X509_CERT_SIZE`, never a number.
+  nameConstraints are parsed critical or not and enforced by `x509_verify_chain` and the link check
+  (CYRIUS-2026-0042): a chain whose leaf falls outside a CA's permitted (or inside its excluded) dNSName / iPAddress
+  subtrees, or under a constrained form not evaluated, is refused; an intermediate is checked as a CA
+  (`x509_name_constraints_check_ca`: every name but its commonName), the leaf as the leaf; a critically-constrained CA
+  that failed to parse now parses. A pathLen that is no non-negative 1 – 7-byte INTEGER, and an empty TBS, are
+  refused. New: `poly1305_init_into` / `_update_into` / `_finalize_into` over a caller-owned `POLY1305_STATE_SIZE`
+  (168) context, `x509_name_constraints_check`, `x509_name_constraints_check_ca`, `x509_cert_has_name_constraints`,
+  `x509_nc_subtree_count`, `x509_nc_subtree`, `X509_GN_*`. No symbol removed.
+
 ### 6.7.17
 
 Break 2, repair 7 — the cleanup: the 22 issues left open after 6.7.16, and the fold wave. Each block names its

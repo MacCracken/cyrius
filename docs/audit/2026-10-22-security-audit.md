@@ -78,7 +78,7 @@ The scanner's fix direction is right: reject strlen(host) > 253 before any store
 
 **Fix (planned).** Bound the host before writing, mirroring net.cyr's safe sibling: in _async_dns_encode_labels (or at async_resolve's entry) reject a host whose total length exceeds the wire limit up front (strlen(host) > 253 -> -1), and bound each byte-write so wi cannot exceed the caller's buffer capacity (the encoder takes no out-size parameter today — add one, or cap and check before every store8, not after the loop). The per-label and final wi>255 checks must become pre-write preconditions. Add a fuzz harness for _async_dns_encode_labels / _async_dns_parse_a.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `608b89369` (net): the encoder refuses an empty name or one over 253 bytes before writing and stores through a slice of exactly the encoded length; the answer parser through slices (`186e3eddb`, D1); row `tests/tcyr/stdlib/async_dns_query_bounded.tcyr`.
 
 ## `CYRIUS-2026-0039` — Fork PRs can run code on the self-hosted 'ach' runner: the only guard is an `if:` inside the workflow file the PR itself controls
 
@@ -99,7 +99,7 @@ I could not read the fork-PR approval setting (GET /repos/MacCracken/cyrius/acti
 
 **Fix (planned).** Take the self-hosted runner out of reach of pull_request workflows. Best: move the ach job to a separate workflow triggered only by `push` to main / `workflow_dispatch`, with a dedicated label the pull_request workflow never names. Then set the repo's fork-PR approval to 'Require approval for all external contributors'. A user-owned repo cannot use runner groups, so if any PR-triggered workflow can name the runner's labels, the runner stays exposed. Also run the runner ephemeral (--ephemeral, re-registered per job) under a dedicated low-privilege macOS user with no SSH keys or access to the dev box. Give ci.yml an explicit top-level `permissions: contents: read`, so the release-time call does not hand the self-hosted job a write token. Add a main-branch ruleset (no direct pushes from GITHUB_TOKEN, no force-push).
 
-**Status:** OPEN — 6.7.18.
+**Status:** MITIGATED in 6.7.18 — no code change: the `ach` self-hosted CI job stays (the user, 2026-10-22: GitHub has no x86 macOS runner), and the control is the repository's fork-PR approval setting (approval required for outside contributors), which the user sets in GitHub. Beside it, release.yml's top-level `contents: read` (`392197ca7`, local; Finding 22) means the CI gate a tag push calls, the ach job among them, no longer holds a `contents: write` token.
 
 ## `CYRIUS-2026-0040` — sigil ChaCha20-Poly1305 accepts forged records (all-zero tag) when two threads share a crypto lane: the streaming Poly1305 state is a process-global lane that another thread's finalize wipes to an all-zero key
 
@@ -126,7 +126,7 @@ ECDSA twin (ecdsa_lane_alias100k.cyr: garbage signature under key A, valid signa
 
 **Fix (planned).** Make the streaming Poly1305 state caller-owned, the same move sigil 3.12.3 made for RSA and 3.13.12 for hash_file_into. Add poly1305_init_into(st, key) / poly1305_update_into(st, p, n) / poly1305_finalize_into(st, out) over a 168-byte context, have _cp_tag declare `var st[168]` on its own frame (wiped at return), and keep the old poly1305_init/update/finalize as wrappers over a per-call context, or retire them. Localise the ECDSA P-256/P-384 verify scratch (the _ecv*/_ecv384* sets and the lazily allocated _p256_*/_p384_*/_pt*_aff_* lanes) onto the verify frame in the same patch. The security half should not wait for the 3.14.0 'retire cbank()' minor. Correct the crypto_banks_exhausted comment, which says aliasing is fail-closed noise. Fix it in the sigil source repo, cut 3.13.14, regenerate dist/ and re-vendor lib/sigil.cyr byte-identical. Turn the probe above into a regression .tcyr (forged acceptance must be 0 on aliased lanes) in sigil's suite and cyrius's crypto bucket.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — sigil 3.13.14 `ee7c75d` (the AEAD's Poly1305 state on its own frame) and `6d95d4c` (crypto lanes a pool held only while used) / 3.13.15, vendored byte-identical by the refold (`4ec5b2414`, `1c9bede70`); the arm64-macOS alias path, tls-slots `ea9bda1e1` / `97d9be17d`. The audit's v_p1305: 0 / 300,000 forged accepted; v_ecdsa_alias: 0 forged, 0 valid rejected.
 
 ## `CYRIUS-2026-0041` — lib/tls.cyr's libssl backend runs the INVOKING user's $HOME/.cyrius/dlopen-helper in-process: fdlopen_init_full has no setuid / AT_SECURE check, so a setuid program using the libssl backend runs a local user's code as root
 
@@ -148,7 +148,7 @@ Separately, $D/fdl_home with HOME=$D/fakehome prints `helper path: .../fakehome/
 
 **Fix (planned).** Close it in fdlopen itself, so lib/tls.cyr and every other caller are covered. In fdlopen_init_full and fdlopen_helper_available, detect secure execution from the real auxv (AT_SECURE, tag 23, via dynlib_auxv_get on /proc/self/auxv), with getuid()!=geteuid() || getgid()!=getegid() as the fallback. When secure, never consult $HOME: resolve only /usr/lib/cyrius/dlopen-helper through _fdlopen_verify_trusted and return FDL_ERR_UNTRUSTED (-9) otherwise, so lib/tls.cyr reports tls_available()==0 and fails closed. Open the helper once and verify ownership and mode with fstat on that fd rather than lstat-then-reopen-by-name, and forward the real AT_SECURE into the synthesised auxv instead of 0. Add a regression test with an injected 'secure' flag that asserts a planted $HOME helper is never opened, and update threat-model.md.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `fa7d68639`, `fa111fc34` (local): in a secure exec (AT_SECURE, a real / effective uid or gid mismatch, an unreadable auxv) every fdlopen entry takes only the root-owned, verified `/usr/lib/cyrius/dlopen-helper`, verified on the fd it is mapped from; `fdlopen_trusted_only(1)` asks for it anywhere (api-surface `34c5211f7`); row `fdlopen_trusted.tcyr`.
 
 ## `CYRIUS-2026-0042` — X.509 chain verifier ignores nameConstraints (RFC 5280 §6.1 path-validation gap; the CYRIUS-2026-0002 class)
 
@@ -175,7 +175,7 @@ I set the severity to P2 rather than 0002's P1 because the attacker needs a key 
 
 **Fix (planned).** Parse nameConstraints in _xp_parse_extensions (store permitted/excluded GeneralSubtrees) and apply them during path building in _x509_verify_link's callers / x509_verify_chain / _tn_verify_chain: for each CA in the path carrying constraints, every subordinate certificate's subject DN and subjectAltName dNSName/iPAddress/rfc822/directoryName must fall within the permitted set and outside the excluded set, per RFC 5280 §6.1.4(g)/§4.2.1.10, else refuse the chain. A minimal interim hardening that costs almost nothing: since the conformant (critical) case already fail-closes, the only exposure is non-critical nameConstraints — treating a PRESENT-but-ignored nameConstraints extension (critical or not) as a refusal would close the bypass fail-closed until full subtree matching is implemented. Decision for the user: whether this is tracked as the CYRIUS-2026-0002 validation-bypass class (id) or a documented hardening backlog item.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — sigil 3.13.14 `1910602`, `0637b14` / 3.13.15 `3c47656` (sigil): nameConstraints parsed critical or not and enforced by `x509_verify_chain` and `_x509_verify_link`, an intermediate checked as a CA (`x509_name_constraints_check_ca`); vendored byte-identical by the refold (`4ec5b2414`, `1c9bede70`). Row: sigil `tests/tcyr/x509_name_constraints.tcyr`.
 
 ## `CYRIUS-2026-0042` — Native TLS chain verifier ignores a CA's X.509 nameConstraints: a non-critically name-constrained intermediate under a trusted root can impersonate any host
 
@@ -205,7 +205,7 @@ Severity: I raise it from P3 to P2. It is the same class and attacker shape as l
 
 **Fix (planned).** Parse nameConstraints (OID 2.5.29.30) in sigil's x509 parser (store permitted/excluded dNSName and iPAddress subtrees rather than rejecting it as unhandled-critical), and in _tn_verify_chain enforce, at each CA selected on the path and the anchor, that the leaf's dNSName/iPAddress SANs fall within every ancestor CA's permitted subtrees and outside its excluded subtrees (RFC 5280 §6.1.4). Until then the critical-rejection is only accidental fail-closed coverage. Whether to spend a ledger id vs. track as a capability gap is the maintainer's call given the non-conforming (non-critical) issuance precondition.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `8b244685d`, `e91b099c1` (refold), with sigil 3.13.15: `_tn_verify_chain` requires every CA on the selected path, the trust anchor included, to allow every certificate below it (the leaf always, a self-issued intermediate exempt, an intermediate checked as a CA); the TLS 1.2 client keeps the intermediates (`b6c4bc5ba`). The audit's nc_probe: `tls_native_client_verify_chain` 0 → -6. Rows: `tests/tcyr/crossos/tls_native_name_constraints.tcyr`, `tests/gates/platform/tls_native_name_constraints_openssl.sh`.
 
 ## `CYRIUS-2026-0043` — ws_server's receive buffer is a single process-global, so two concurrent WebSocket connections in a multi-threaded server read and echo each other's payloads
 
@@ -238,7 +238,7 @@ P2 is consistent with CYRIUS-2026-0004 (a library-level flaw that needs a partic
 
 **Fix (planned).** Give each connection (or each worker thread) its own receive buffer instead of a process-global. Either allocate the recv buffer inside the ws handle struct at ws_server_new / ws_server_handshake (sized WS_MAX_PAYLOAD+1), or make _wss_recv_buf thread-local via thread_local_alloc/thread_local_set the way sandhi's pooled loop already threads per-worker arenas. Add a regression driving two ws_server handles concurrently that asserts payload isolation.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `5afff204d`, `ae53f9d3c` (net): each frame has its own buffer — a data frame its own allocation, a control frame (≤ 125 bytes) the call's stack; row `tests/tcyr/crossos/ws_server_connections_isolated.tcyr`.
 
 ## `CYRIUS-2026-0044` — HPACK decoder accepts an unbounded Dynamic-Table-Size-Update: peer grows the client's decode table with no limit and amplifies a 16 KiB header block
 
@@ -270,7 +270,7 @@ Fix: the decoded header-list bound in _h2_decode_response_headers_a is the prima
 
 **Fix (planned).** In the §6.3 Dynamic-Table-Size-Update branch of sandhi_hpack_decode_field_a, reject (return _SANDHI_HPACK_ERR_MALFORMED) any value greater than the size sandhi advertised for its decoder — the default SANDHI_HPACK_DEFAULT_TABLE_SIZE (4096), or whatever it sends in SETTINGS_HEADER_TABLE_SIZE if that is ever added — before calling sandhi_hpack_table_set_max_size on the decode table, per RFC 7541 §6.3. Keep the primitive sandhi_hpack_table_set_max_size uncapped (the encoder legitimately follows the peer's larger SETTINGS value). Additionally bound the decoded header list in _h2_decode_response_headers_a against a MAX_HEADER_LIST_SIZE so references cannot amplify a 16 KiB block without limit. Add an .fcyr harness over sandhi_hpack_decode_field_a as the already-filed parser-fuzzing issue calls for.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — sandhi 1.13.7 `a683fb7`, `d69944b` (sandhi), vendored byte-identical by the refold (`a5aa7c3dd`): a size update above the advertised 4096 is a decoding error, an h2 response's decoded header list is bounded at 65,536 octets; the audit's `hpack_tbl.cyr` prints `ok: capped`.
 
 ## `CYRIUS-2026-0045` — PDF Flate bomb guard bypassed: a failed decode is never cached or charged to the per-document budget, so every page reference re-inflates it into fresh, never-freed buffers
 
@@ -323,7 +323,7 @@ On classification: the documented untrusted-PDF use, the explicit bomb guard it 
 
 **Fix (planned).** Make a failed decode as sticky as a successful one: bayan_pdf_stream_data_a should record a failure on the stream cell (a sentinel in the cache slot) and return the empty Str at once on later calls. In _pdfz_inflate_a, charge the budget for what each attempt costs: before calling the hook, charge `cap` (the buffer about to be allocated) against _PDF_MAX_INFTOT, or clamp cap to the remaining budget and fail when it is exhausted. Do not wait for a successful final n. Reuse one buffer across retries (realloc_via) rather than allocating a fresh one per doubling. Also stop trusting /DL beyond the remaining budget. Add a regression row with a page tree whose pages share one failing Flate stream, asserting that alloc_used stays bounded as pages grow.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — bayan 1.11.1 `1672fbc`, `d301d58` (bayan), vendored byte-identical by the refold (`48fc2a219`): a failed decode is memoised, each inflate attempt charged before its buffer exists, rejected buffers freed; the audit's files: 42 MB / 7.9 MB.
 
 ## `CYRIUS-2026-0046` — compile() and its sibling emitters open the predictable '<output>.tmp.<pid>' temp with O_CREAT|O_TRUNC, without O_EXCL or O_NOFOLLOW: this is the CYRIUS-2026-0034 class, left unfixed in the CLI's own build path
 
@@ -344,7 +344,7 @@ The 2026-07-27 audit text (lines 193-199) covers only the rename, not the open b
 
 **Fix (planned).** Create the output temp exclusively, the way lib/io.cyr already does. In the parent, replace the probe open with `_io_tmp_open(output, &fd)`, or with an open using O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW over '<output>.tmp.<pid>[.N]' that skips a taken name up to a bound and then refuses by name. Keep that fd and hand it to the child: open it before the fork and dup2 it to fd 1 in the child, instead of reopening by name. Apply the same change to _emit_js (build.cyr:105-112), the cx emit (build.cyr:306) and _pulsar_raw_compile (pulsar.cyr:60). Add a row to tests/gates/toolchain/atomic_temp_exclusive.sh that plants a link at the output's '.tmp.<pid>' name and checks that the target is untouched.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `5e72dfb10` (local): the output temp is `<out>.tmp.<n>` (62 bits of the OS CSPRNG), created O_EXCL|O_NOFOLLOW in the parent and handed to the child; row `atomic_temp_exclusive.sh` axes 6–8.
 
 ## `CYRIUS-2026-0047` — file_write_atomic / _aw_open create the temp at 0644 & ~umask and only then fchmod it to the destination's mode: for a moment, the temp beside a 0600 file is world-readable
 
@@ -367,7 +367,7 @@ Fix caveat: creating the temp at 0600 and only widening changes what a NEW file 
 
 **Fix (planned).** Create the temp with the narrowest mode and widen it afterwards, never the reverse. In `_io_tmp_open`, pass 0600 (0x180), or the destination's current mode masked with 0777 when it can be stat'ed before the create, as the create mode. After that, `_io_keep_mode` only ever widens, for example to 0644 or 0755 for a non-secret file. The fd is held from the create onward, so no other user can open the inode while it is narrow. Add a row to tests/tcyr/crossos/atomic_write_temp_exclusive.tcyr that asserts the temp's mode right after `_io_tmp_open` is never wider than the destination's.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `7c71c6075` (local): the temp is created at the destination's mode and only ever widened; row `atomic_write_temp_exclusive.tcyr`.
 
 ## `CYRIUS-2026-0048` — On Windows, the CLI's load_environ() opens the drive-relative rooted path '/proc/self/environ' (that is, <current drive>:\proc\self\environ, which any local user can create) and reads it to EOF with unchecked doubling allocations
 
@@ -394,7 +394,7 @@ I reclassify the finding from hardening to vulnerability. The DoS the finder onl
 
 **Fix (planned).** Under CYRIUS_TARGET_WIN, have load_environ() set `_envp` to an empty NULL-terminated vector and return before any file_open, because Windows spawns inherit the process environment and never use `_envp`. As defence in depth, check the growth `alloc` (fail closed with an empty envp). Extend the static axis of tests/gates/toolchain/regression_capture_exclusive.sh (the one that refuses rooted literals in lib/) to cover cbt/, so that a rooted POSIX path reachable in the PE build is refused unless it sits under #ifndef CYRIUS_TARGET_WIN.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `10f77cb09`, `811e7d9a9` (local): the PE CLI opens no `/proc/self/environ`, refuses a missing home by name, and fails closed on a refused allocation; row `regression_capture_exclusive.sh` axis 5.
 
 ## `CYRIUS-2026-0049` — http_get / http_get_r / http_get_a set no connect or read deadline and keep the socket private, so a malicious or slow server pins the fetching thread forever with no caller remedy
 
@@ -413,7 +413,7 @@ Classification: this is the weakest of the three. Mainstream HTTP clients withou
 
 **Fix (planned).** Apply a default SO_RCVTIMEO (and SO_SNDTIMEO) to the socket in _http_prepare/http_get before the connect+recv loop, and/or add a timeout parameter to the http_get family so a caller fetching untrusted URLs can bound the exchange; net_connect_nb would also cap the connect phase. Document the default. Mirror the deadline discipline CYRIUS-2026-0017 added to the TLS stack.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `83eca3cd0` (net): every wait bounded by `HTTP_IDLE_TIMEOUT_MS` (5 s) and the exchange by `HTTP_TIMEOUT_MS` (30 s); row `tests/tcyr/crossos/http_get_deadlines.tcyr`.
 
 ## `CYRIUS-2026-0050` — pam_unix_authenticate kills its own process with SIGPIPE when the password exceeds the pipe capacity (or the helper exits before reading): a remote client can crash a password-checking daemon pre-auth
 
@@ -433,7 +433,7 @@ The probe calls pam_unix_authenticate("cyraudit_no_such_user", <n x 'A'>) agains
 
 **Fix (planned).** (1) Refuse a password longer than PAM_MAX_RESP_SIZE (512 bytes, the most unix_chkpwd reads) up front with PAM_AUTH_FAIL, before forking. That bounds the write well under any pipe capacity and matches what the helper could ever check. (2) Make the write unable to raise SIGPIPE. Give the helper its stdin through socketpair(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC) and write with send(..., MSG_NOSIGNAL), or block SIGPIPE on the calling thread around the write and consume any pending one with sigtimedwait. Loop over short writes. (3) Treat EPIPE as 'the helper did not take the bytes' and still waitpid for the verdict, failing closed unless it exits 0, so the exec-failure path reports PAM_AUTH_EXEC_FAILED. Add a crossos/linux .tcyr with a 65,537-byte password that must return PAM_AUTH_FAIL, not die.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `f347bdbc9` (local): a password over 512 bytes is PAM_AUTH_FAIL before anything runs, and the parent holds the pipe's read end through its write; with `bf8e1ed52` (the password sent NUL-terminated) and `e90c9ff84` (libs: the bound a const); row `pam_fail_closed.tcyr`.
 
 ## Finding 15 (bug) — YAML parser is quadratic in mapping size: each key's duplicate check walks the whole object
 
@@ -461,7 +461,7 @@ That is about 4x per doubling, so quadratic. The same key count through the JSON
 
 **Fix (planned).** Keep duplicate-key refusal, which is the right semantics (yaml.cyr:840-847), but answer it with a per-parse hash index keyed on (object, key bytes), as toml_tree.cyr's _tv_index / _tv_find do, instead of a linear bayan_json_v_obj_get_by_str per insert. The index can live in a small context next to ps. A regression row should parse 40k keys within a time bound, or assert linear scaling.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — bayan 1.11.1 `2d0240b` (bayan; the key set's hash seeded, `32de3de`): 40,000 keys 14.4 s → 0.04 s; row `tests/parse_scaling.cyr`.
 
 ## Finding 16 (bug) — Streaming JSON parser wraps out-of-range integers and accepts digitless numbers: the tree parser's 1.5.1 fixes were never applied to its sibling
 
@@ -497,7 +497,7 @@ Code at lib/bayan.cyr:6670-6719 matches the claim: the only check is `pos == sta
 
 **Fix (planned).** Give both descents one number scanner. Factor the lex half of _jp_parse_number_a (sign; at least one integer digit; a fraction needs a digit; an exponent needs a digit) into a helper that returns the end position and an is_float flag, or -1. Have _js_parse_number use it and refuse through _js_emit_error. On the integer path, call _jp_int_fits(buf+start, int_end-start) before _jp_atoi and emit 'integer is out of range for i64', exactly as the tree parser does. While in that scanner, decide whether to refuse a leading zero followed by a digit (RFC 8259 section 6) in both parsers. That is a behaviour change, so it is bayan's call. Add regression rows for each of the inputs above to both parsers.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — bayan 1.11.1 `93b98d0` (bayan; the user's decision): one RFC 8259 number scanner for tree and stream, malformed and out-of-range numbers refused by name.
 
 ## Finding 17 (bug) — Flat TOML parser is quadratic in dotted-key tables: each new dotted key scans every section opened since the header
 
@@ -524,7 +524,7 @@ The strict tree parser (mode v, bayan_toml_v_parse_buf) takes 37 ms on the same 
 
 **Fix (planned).** Index the sections opened since `scope` by name, so a dotted key's table lookup is O(1). A small open-addressing table keyed on the joined name, reset when a header moves `scope`, is enough, and toml_tree.cyr's _tv_hash / _tv_find shape can be reused. The O(n^2) str_eq walk then remains only for the rare duplicate-name check. A regression row should time 20k dotted keys.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — bayan 1.11.1 `6585949`, `a733bbe`, `c2b9404`, `d1f68b2` (bayan): dotted-key tables indexed by name, the index zeroed, freed and seeded; 20,000 keys 4.0 s → 0.02 s.
 
 ## Finding 18 (bug) — Base64 decoders accept invalid and non-canonical input: '=' anywhere decodes as zero bits, '====' gives one 0x00 byte, and base64url silently drops a dangling character
 
@@ -563,7 +563,7 @@ Code reading confirms the cause. _b64_dec_at (lib/bayan.cyr:72-80) returns 0 for
 
 **Fix (planned).** Refuse in bayan_base64_decode any '=' outside the final group, and in the final group a '=' at position 0 or 1 or a non-'=' after an '='. In bayan_base64url_decode, refuse an unpadded length with remainder 1 and more than two '=' of padding. In both, refuse non-zero trailing bits in the last sextet (RFC 4648 section 3.5 canonical encoding), at least behind a strict flag if lenient decoding is a kept contract. Check the two unchecked `alloc` results in the url decoder. Add rows for each of the inputs above.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — bayan 1.11.1 `cd55398`, `eb5b084` (bayan; the user's decision): the decoders refuse non-canonical input by name (`bayan_base64_last_error()`), every allocation checked.
 
 ## Finding 19 (bug) — ws_connect discards any bytes received in the same TCP segment as the 101 handshake, silently dropping the server's first frame(s)
 
@@ -584,7 +584,7 @@ One fix covers both: read exactly to \r\n\r\n, or keep the leftover bytes in the
 
 **Fix (planned).** After ws_connect confirms the 101, carry any bytes of resp beyond the end of the header block (the \r\n\r\n boundary) into the frame reader as a pending buffer, or restructure the handshake read to stop exactly at the end of headers so no frame bytes are consumed. Alternatively buffer the leftover in the ws handle and have _ws_recv_exact drain it first.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `aeecfd70e` (net): ws_connect reads the 101's header block to CRLF CRLF (≤ 8 KiB) and keeps the rest for the frame reader; row `tests/tcyr/crossos/ws_client_handshake_leftover.tcyr`.
 
 ## Finding 20 (bug) — x509_parse_into: 1-byte out-of-bounds read on a crafted empty-TBS certificate
 
@@ -605,7 +605,7 @@ The call sites match the scanner's description. tls_native_hs13.cyr:887/909 and 
 
 **Fix (planned).** Guard the version-tag read against the TBS/buffer bound before dereferencing: add `if (cur >= tbs_end) { return 0; }` (equivalently `cur >= der_len`) immediately before the `load8(der + cur)` at sig/src/x509.cyr:949, mirroring the guarded `if (cur < tbs_end)` the extensions step already uses. Fix upstream in sigil/src/x509.cyr, release the fold, regenerate dist and re-vendor byte-identical; add a regression cert (`30 02 30 00`) to tests/tcyr/ed25519_strict.tcyr's sibling x509 harness or sigil's x509 test.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — sigil 3.13.14 `7dbd6c2` (sigil): an empty TBS refused before the version-tag read; row sigil `tests/tcyr/x509_guard_page.tcyr`.
 
 ## Finding 21 (bug) — Post-handshake KeyUpdate flood: unbounded KeyUpdate messages per record drive key-rotation allocations and response amplification with no rate limit
 
@@ -631,7 +631,7 @@ The finding's own repro is 'reasoned from source (no live flood run)'. Its cost 
 
 **Fix (planned).** Bound post-handshake handshake-message processing per connection (cap the number of KeyUpdate / total post-handshake messages, as OpenSSL/BoringSSL do), and/or reject a record coalescing more than a couple of post-handshake messages (RFC 8446 §5.1). Validate the KeyUpdate body is exactly one byte of value 0/1. Reuse the rotated-out secret/key/IV buffers in place instead of allocating fresh so a bounded flood cannot leak on the no-free heap.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `3b043ec6b` (tls): a KeyUpdate's body exactly one byte 0 / 1, one per record, at most 32 in a row without application data, the keys rotated in place; row `tests/tcyr/crypto/tls_native_key_update.tcyr`.
 
 ## Finding 22 (hardening) — Any tag push yields a signed release, and the long-term Ed25519 signing key is handed to code built from the pushed tag (no environment, no tag protection)
 
@@ -650,7 +650,7 @@ Action pins: for each pin, curl -s https://api.github.com/repos/<owner>/<action>
 
 **Fix (planned).** Put the sign step in a job with `environment: release` and a required reviewer (the maintainer), and move CYRIUS_RELEASE_SK from a repository secret to that environment's secret. Restrict the environment's deployment tags to the release pattern. Add a tag ruleset limiting creation, update and deletion of `*.*.*` tags to the maintainer, so a tag cannot be repointed under `cyriusly install`. Sign with a verifier whose code does not come from the tag being released, e.g. the previous release's pinned cyrsign. Strongest: keep the key out of CI entirely: CI publishes SHA256SUMS, and the maintainer signs it offline and uploads the .sig. Narrow top-level permissions to `contents: read` and grant `contents: write` only to the final release job.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 (the repository half) — `392197ca7` (local): release.yml is `contents: read` and the one job that holds CYRIUS_RELEASE_SK runs in `environment: release` with `contents: write`. The required-reviewer rule on that environment and the key in its secrets are the user's GitHub settings; until they exist the environment gates nothing.
 
 ## Finding 23 (hardening) — pam_unix_authenticate hard-codes unix_chkpwd's "nullok": an account with an empty password field authenticates with an empty password, and a consumer cannot ask for "nonull"
 
@@ -665,7 +665,7 @@ Action pins: for each pin, curl -s https://api.github.com/repos/<owner>/<action>
 
 **Fix (planned).** Default to "nonull" and refuse plen == 0 before forking. Add an explicit opt-in (e.g. pam_unix_authenticate_opts(user, password, PAM_ALLOW_EMPTY)) for the console-login case that wants nullok. Document the change in the CHANGELOG / ecosystem-migration, because it changes what an existing caller gets for an empty-password account.
 
-**Status:** OPEN — 6.7.18.
+**Status:** KEPT (the user, 2026-10-22) — `nullok` stays; refusing empty passwords is placed at 6.8.0 (`docs/development/issues/2026-10-22-pam-nullok-empty-password-authenticates.md`). Since `bf8e1ed52` (local) the password is sent NUL-terminated, so an account with an empty hash accepts the empty password only, no longer ANY password.
 
 ## Finding 24 (hardening) — JSON accepts duplicate object keys and answers the FIRST, the opposite of most JSON readers; the flat and tree parsers also disagree on escaped keys
 
@@ -698,7 +698,7 @@ The same duplicate document in YAML gives 'duplicate mapping key', and in TOML t
 
 **Fix (planned).** Pick one rule for the fold. The consistent choice is to refuse duplicate keys in bayan_json_v_parse* ('duplicate key', as YAML and TOML do), using a per-parse hash index so it stays O(n); that also covers the YAML quadratic finding's index. If refusal breaks a contract, offer it as a strict flag on the _ctx entry. Document that the flat API compares raw, undecoded keys, which already holds for values, and must not be used for allowlist or denylist checks. Whether to change JSON's default is the maintainer's call, because it changes what parses.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — bayan 1.11.1 `91440f4`, `32de3de` (bayan; the user's decision): a duplicate key refuses the document in the tree, flat and stream parsers, keys compared decoded.
 
 ## Finding 25 (hardening) — PDF text extraction work multiplies with repeated page references to one shared content stream
 
@@ -720,7 +720,7 @@ The page walk accepted all 128 repeats; err_count=0. The cost is linear in page 
 
 **Fix (planned).** Charge decoded-content bytes scanned by text extraction against a per-document budget, alongside _PDF_MAX_INFTOT, and stop or refuse once it is exhausted. Alternatively, have the page walk refuse a /Kids that references an already-visited page object: a page with two parents is malformed, and PDF 32000-1 section 7.7.3 requires each page object to have exactly one /Parent. Either change bounds work by file size rather than by reference count.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — bayan 1.11.1 `1128283` (bayan): page content handed out is charged to a 512 MiB per-document budget, refused by name.
 
 ## Finding 26 (hardening) — `cyrius deps` silently fetches git:// and http:// dependencies over plaintext and commit-pins whatever arrived
 
@@ -739,7 +739,7 @@ Actual: "1 deps resolved" / "cyrius.lock: 1 deps locked, 1 commit-pinned (1 re-v
 
 **Fix (planned).** Before the clone, refuse remote URLs whose scheme is git:// or http://, naming the dep and URL; allow https://, ssh:// and scp-like `host:path`, plus local paths and file://. Belt and braces: pass `-c protocol.git.allow=never -c protocol.http.allow=never -c protocol.ext.allow=never` on the clone argv, so a URL the scheme check misreads still cannot go plaintext. Whether to offer an explicit opt-in key for a plaintext mirror is the user's call; this changes what manifests resolve, so ask first per the language-change rule.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `1ea3e6530` (local; the user's decision) and `ef2300041` (cleanup): `git://`, `http://`, `ftp://` and every plaintext remote-helper spelling (`http::`, `https::http://…`) refused by name before any fetch; fetching argvs carry `protocol.*.allow=never`; row `deps_plaintext_url_refused.sh`.
 
 ## Finding 27 (hardening) — install.sh's header advertises `curl -sSf https://install.cyrius.dev | sh`, a host that does not resolve, on a domain whose ownership is unverified
 
@@ -758,7 +758,7 @@ curl -s http://cyrius.dev/ -> <title>Site not installed - OVHcloud</title>
 
 **Fix (planned).** If the maintainer owns cyrius.dev: keep it but point install.cyrius.dev at the tag-pinned raw URL, or delete the line until it exists. If not owned: replace line 3 with the README's raw.githubusercontent.com URL, preferably tag-pinned. Either way it is a one-line comment edit.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `a41d88eda` (local): the header advertises the README's raw.githubusercontent.com URL; row `install_signature_required.sh` axis 9.
 
 ## Finding 28 (hardening) — Rotated-out and handshake-end TLS traffic secrets/keys are abandoned un-zeroized (defense-in-depth gap)
 
@@ -779,4 +779,4 @@ The classification as hardening is correct: dead copies of traffic keys persist 
 
 **Fix (planned).** memset the previous secret/key/IV buffers in _tn_rotate_app_keys before replacing the pointers (or rotate in place), and zeroize the app-traffic secrets/keys/IVs in tls_native_close, matching the ephemeral-secret wipe discipline already used for ECDHE and Ed25519 key material.
 
-**Status:** OPEN — 6.7.18.
+**Status:** FIXED in 6.7.18 — `3b043ec6b`, `3ad239fe6`, `6b6d7ef05` (tls): rotation in place, `tls_native_close` zeroises every secret the ctx holds, the handshake's working copies are `secret var`s; row `tests/tcyr/crypto/tls_native_close_wipe.tcyr`.

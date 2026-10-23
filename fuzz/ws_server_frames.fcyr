@@ -1,7 +1,7 @@
 # Fuzz: the WebSocket server's frame reads — lib/ws_server.cyr ws_server_recv_frame and
 # ws_server_recv (_wss_recv_header: header, 16 / 64-bit length, mask; _wss_recv_payload), which
 # take whatever any client of the server sends (6.7.18;
-# issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+# issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
 #
 # A VALID client stream is the seed: masked TEXT, a 300-byte masked BINARY (16-bit length), a masked
 # empty PING, a masked BINARY in the 64-bit length form, a masked CLOSE. Each iteration mutates a

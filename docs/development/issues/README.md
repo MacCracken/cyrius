@@ -264,9 +264,8 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.17 — the cleanup of the remaining issues (the user, 2026-10-22)** (0)
 
 
-**6.7.18 — the full security audit + the refactor / optimization review (D91)** (1)
+**6.7.18 — the full security audit + the refactor / optimization review (D91)** (0)
 
-- [The network parsers are unfuzzed, and bounds mode cannot see how they read](2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
 
 **6.8.0 — the first release after v6.7.x (roadmap_6.md)** (1)
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: EVERY fuzz/*.fcyr harness passes plain AND under `cyrius fuzz --poison`, in bounded time,
-# before a tag (6.7.18; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md,
+# before a tag (6.7.18; issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md,
 # acceptance 4).
 #
 # ⛔ WHY. The harnesses ran in CI only (`./build/cyrius fuzz`) and, plain, in one check-driver gate

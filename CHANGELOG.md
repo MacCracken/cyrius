@@ -4,6 +4,1271 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 6.7.18 in flight
+
+**The full security audit + the refactor / optimization review (roadmap § 6.7.18, the user 2026-10-09; opened
+2026-10-22: "lets continue with 6.7.18 work"). Two decisions at the open, in one round: D1 — the network parsers read
+the peer's bytes through fn-local `[u8]` slices, checked in every build (not an extended `#bounds`); D2 — the folder
+layout as the roadmap wrote it, the moves first as their own byte-identical bites, then the splits. The audit
+(`docs/audit/2026-10-22-security-audit.md`: eight read-only scanners, one per attack surface, each finding then
+re-verified once from scratch) found 28 — 13 vulnerabilities, `CYRIUS-2026-0038` – `0050` (one P1), and 15 bugs and
+hardening items — and the user decided four at it (2026-10-22): bayan refuses invalid base64, malformed / out-of-range
+JSON numbers and duplicate JSON keys, by name; `cyrius deps` refuses plaintext `git://` / `http://`; `lib/pam.cyr`
+keeps `nullok` (refusing empty passwords is placed at 6.8.0); the `ach` self-hosted CI job stays. Every vulnerability
+is fixed in this release — CYRIUS-2026-0039 by the repository's fork-PR approval setting, which the user sets in
+GitHub — and so is every bug and hardening finding but the `nullok` the user kept. All of it on the integration branch
+`l6718-integ` (not main): wave 0 the moves and the audit; then fourteen lanes, each reviewed once — wave 1 net, local,
+tls and splits, beside the three fold lanes in their own repos (sigil, sandhi, bayan); tls-slots (no thread shares
+another's thread-local slots, on any target); wave 2 splits2 and cbtsplit (the frontend's and the CLI's largest files in
+folders); wave 3 pipefail, giantfns, optimize (self_compile 1,403 → 1,001 ms same-box, −29 %) and libs. Then the
+cleanup lane (the reviews' notes, fixed) and the refold lane (reviewed once): the folds vendored byte-identical from
+the user's tags — sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1 — and CYRIUS-2026-0042's native-TLS side. The merged
+tree's check.sh reds were fixed on the integration branch.**
+
+⟪GATE⟫
+
+⟪SIZE⟫
+
+⟪BENCH⟫
+
+**Security:** the 2026-10-22 audit's 13 vulnerabilities, each with its attacker and boundary (the audit report has the
+repros and the verifiers' runs); the next ledger id is `CYRIUS-2026-0051`.
+- **CYRIUS-2026-0038 (P1)** — the async DNS query encoder wrote every hostname byte before checking the total, so a
+  long host overran the resolver task's 288-byte stack buffer onto its return address. *Attacker:* whoever supplies a
+  hostname a program resolves on the async reactor (an attacker-influenced URL); *boundary:* the hostname into the
+  resolver's stack (Linux). Fixed: net, `608b89369`.
+- **CYRIUS-2026-0039 (P2)** — a fork PR can run code on the self-hosted `ach` runner: the only guard was an `if:` in
+  the workflow file the PR itself controls. *Attacker:* any GitHub account that opens a fork PR; *boundary:* code
+  execution on ach, one of the four release-gate hosts. **No code change:** the `ach` job stays (the user, 2026-10-22 —
+  GitHub has no x86 macOS runner), and the remedy is the repository's fork-PR approval setting (approval required for
+  outside contributors), which the user sets in GitHub. Beside it, release.yml's read-only default (Finding 22,
+  `392197ca7`) means the CI gate a tag push calls — the ach job among them — no longer runs with a `contents: write`
+  token.
+- **CYRIUS-2026-0040 (P2)** — sigil's ChaCha20-Poly1305 accepted forged records (an all-zero tag) when two threads
+  shared a crypto lane: the streaming Poly1305 state was a process-global lane another thread's finalize wiped.
+  *Attacker:* an on-path network attacker with no key; *boundary:* the AEAD integrity check of a ChaCha20-Poly1305
+  session served by a process whose lanes alias (after 63 crypto threads; the default pooled TLS server). Fixed: sigil
+  3.13.14 — `ee7c75d` (the AEAD's state on its own frame) and `6d95d4c` (lanes a pool held only while used) — and the
+  arm64-macOS alias path, tls-slots `ea9bda1e1` / `97d9be17d`.
+- **CYRIUS-2026-0041 (P2)** — lib/tls.cyr's libssl backend ran the invoking user's `$HOME/.cyrius/dlopen-helper`
+  in-process, with no setuid check. *Attacker:* a local unprivileged user running a setuid-root cyrius program that
+  uses the libssl backend; *boundary:* user → root. Fixed: local, `fa7d68639`, `fa111fc34`.
+- **CYRIUS-2026-0042 (P2)** — the X.509 chain verifiers ignored nameConstraints. *Attacker:* the holder of a
+  name-constrained intermediate CA chaining to a trusted root, on path; *boundary:* server identity — a leaf for any
+  host accepted. Fixed in sigil 3.13.14 (`1910602`, `0637b14`): parsed critical or not, enforced by
+  `x509_verify_chain` and the direct-issuer link check; and in native TLS (refold `8b244685d`): `_tn_verify_chain`
+  requires every CA on the selected path, the anchor included, to allow every certificate below it — the leaf always,
+  a self-issued intermediate exempt; an intermediate is checked as a CA, its commonName never read as a host name
+  (sigil 3.13.15 `3c47656`, refold `e91b099c1`). The audit's nc_probe: `tls_native_client_verify_chain` 0 → -6.
+- **CYRIUS-2026-0043 (P2)** — ws_server read every connection's frames into one process-global 1 MiB buffer.
+  *Attacker:* any WebSocket client of a server that handles connections on more than one thread; *boundary:*
+  connection isolation (A's PONG echoed B's message). Fixed: net, `5afff204d`, `ae53f9d3c`.
+- **CYRIUS-2026-0044 (P2)** — sandhi's HPACK decoder accepted any Dynamic-Table-Size-Update and an unbounded decoded
+  header list. *Attacker:* a malicious HTTP/2 server (or an on-path attacker on h2c) a sandhi client reaches;
+  *boundary:* HPACK decoding of its response headers → the client's memory. Fixed: sandhi 1.13.7, `a683fb7`, `d69944b`.
+- **CYRIUS-2026-0045 (P2)** — bayan's PDF Flate bomb guard was bypassed: a failed decode was never cached or charged.
+  *Attacker:* whoever uploads a PDF a service extracts text from; *boundary:* the upload → the service's memory (OOM).
+  Fixed: bayan 1.11.1, `1672fbc` (and `d301d58`).
+- **CYRIUS-2026-0046 (P3)** — the build's output temp `<output>.tmp.<pid>` was opened O_CREAT|O_TRUNC, no O_EXCL /
+  O_NOFOLLOW (the 0034 class). *Attacker:* another local user, across a shared sticky directory the build's output
+  points into; *boundary:* the build written through a planted link. Fixed: local, `5e72dfb10`.
+- **CYRIUS-2026-0047 (P3)** — `file_write_atomic`'s temp was born 0644 & ~umask and fchmod'ed to a 0600
+  destination's mode only after. *Attacker:* another local user who opens the temp in that window; *boundary:* the
+  bytes written for a 0600 file. Fixed: local, `7c71c6075`.
+- **CYRIUS-2026-0048 (P3)** — the Windows CLI opened the drive-relative `/proc/self/environ` and read it to EOF through
+  unchecked doubling allocations. *Attacker:* another local Windows user who plants `C:\proc\self\environ` (the class
+  of 0012 / 0014 / 0020); *boundary:* a file read into another user's CLI. Fixed: local, `10f77cb09`, `811e7d9a9`.
+- **CYRIUS-2026-0049 (P3)** — `http_get` / `_r` / `_a` set no deadline and kept the socket private. *Attacker:* the
+  server a program fetches from; *boundary:* the fetching thread held forever. Fixed: net, `83eca3cd0`.
+- **CYRIUS-2026-0050 (P3)** — `pam_unix_authenticate` died of SIGPIPE on a password over the pipe's capacity.
+  *Attacker:* a remote unauthenticated client of a password-checking daemon; *boundary:* the daemon killed before
+  authentication. Fixed: local, `f347bdbc9` (and `bf8e1ed52`, the NUL below).
+
+The audit's 15 bugs and hardening items (no id): 15 yaml quadratic in mapping keys (bayan `2d0240b`), 16 the streaming
+JSON parser's numbers (bayan `93b98d0`), 17 flat TOML quadratic in dotted keys (bayan `6585949`), 18 base64 accepting
+non-canonical input (bayan `cd55398`), 19 ws_connect dropping the frames that came with the 101 (net `aeecfd70e`), 20
+x509_parse_into's one-byte over-read (sigil `7dbd6c2`), 21 the KeyUpdate flood (tls `3b043ec6b`), 22 release.yml
+handing the signing key to any tag (local `392197ca7`), 23 pam's `nullok` (kept by the user; refusal placed at 6.8.0),
+24 JSON's duplicate keys (bayan `91440f4`), 25 PDF work multiplied by repeated page references (bayan `1128283`), 26
+`cyrius deps` over plaintext (local `1ea3e6530`), 27 install.sh's unresolvable header URL (local `a41d88eda`), 28
+traffic secrets abandoned un-zeroised (tls `3b043ec6b`, `3ad239fe6`, `6b6d7ef05`).
+
+**Agent defaults for the user's review** — the lanes' readings where no decision's text reached, each implemented as
+written here (each a fork the user can still turn):
+1. **net** — a WebSocket control frame over 125 bytes fails `ws_server_recv` (RFC 6455 §5.5), and each data frame is
+   its own allocation rather than a per-thread buffer (no 1 MiB per connection on a never-freeing heap); `http_get` /
+   `_r` / `_a` wait at most 5 s per connect / send / read (`HTTP_IDLE_TIMEOUT_MS`) and 30 s per exchange
+   (`HTTP_TIMEOUT_MS`) — module vars, 0 turns a bound off, a deadline is a failure, never a partial response;
+   `ws_connect` reads a handshake header block of at most 8 KiB (longer: CLOSED); `ws_server_handshake` refuses a key
+   that is not 22 base64 characters and "=="; a non-digit HTTP status reads 0; the ws handle grew 32 → 56 bytes (the
+   pending bytes).
+2. **tls-slots** — arm64 macOS refuses (exit 70, a named line) a thread-local slot access from a thread no
+   `thread_create` started, and `thread_create` returns 0 when the thread's registry chunk, control block or slot block
+   cannot be allocated, or `pthread_create` fails; Linux foreign-TLS mode has ONE owner — the declaring thread, keyed by
+   thread id at one `gettid` per access (282 ns here; the thread pointer moves under `fdlopen_init_full`), every other
+   thread's slot access refused (exit 70), a fork child's first thread taking the array over (with a copy of the
+   owner's values when a non-owner forked); the arm64-macOS live-thread counter is replaced (main recorded at the first
+   `thread_create`), not made atomic.
+3. **sigil 3.13.14** — `cbank()` takes no lane: it answers the lane the thread holds, or 0; `crypto_lane_enter()` /
+   `crypto_lane_leave()` (new) open and close a nesting lane scope, enter answering -1 and holding nothing when all 64
+   are busy, so a 65th concurrent verify is refused (fail closed), not queued; `crypto_bank_set` is a no-op,
+   `crypto_banks_exhausted()` means a lane request was refused, `crypto_banks_claimed()` the lanes held now, and
+   `crypto_tls_main_init` no longer gives main lane 0; exit 70 only on a raw P-256 / P-384 EC-arithmetic call outside
+   any scope with no lane free — not reachable from TLS (the review: native TLS takes scoped lanes for verify and none
+   for ECDHE, signing or ChaCha20-Poly1305; 200 threads × 3 rounds of every sigil call a peer can cause, exit 0, no
+   lane left held); nameConstraints — directoryName `permitted` is evaluated, any other constrained form (rfc822Name,
+   URI, …) refuses a certificate carrying it, a self-issued intermediate is exempt (RFC 5280 §6.1.3(b)), and one
+   trailing dot is dropped from the name and the constraint before matching.
+4. **sandhi 1.13.7** — a NUL in an h2 HPACK string refuses the exchange (`SANDHI_ERR_PROTOCOL`, RFC 9113 §8.2.1; the
+   reviewer's: dropping an incrementally-indexed field would desync the decode table), where an HTTP/1 header field
+   holding a NUL is dropped, as CR / LF fields were; the decoded header-list bound is 65,536 octets, local only (the
+   preface does not advertise MAX_HEADER_LIST_SIZE); the size-update limit is the decode table's construction size
+   (4096; the table record 32 → 40 B), with `sandhi_hpack_table_set_max_size` uncapped for the encoder; an HPACK
+   integer is at most 2^32 − 1 and five continuation bytes.
+5. **bayan 1.11.1** — a duplicate JSON key refuses the whole document in the flat parser (returns 0, "duplicate key"
+   in `bayan_json_last_error`, which a successful flat parse now clears) and in the streaming parser (before the key's
+   event fires), not only in the tree; a leading zero (`01`) is a malformed number in tree and stream; the flat parser's
+   bare values stay unvalidated (its documented contract); base64's "by name" is a new `bayan_base64_last_error()`
+   (the decoders return 0 as before); a failed PDF decode is sticky for its document ("no inflate hook installed"
+   included) and every inflate attempt is charged in full (cap + 1), never refunded; repeated page references are
+   bounded by a 512 MiB per-document content budget (`_PDF_MAX_CONTENT`, charged by the public
+   `bayan_pdf_page_content` too), not by refusing a `/Kids` that repeats a page; the json key set's hash and both TOML
+   key indexes take the per-process seed (`hashseed`: the review's must-fix, and its last note before the tag).
+6. **tls** — the KeyUpdate cap is 32 in a row, reset by non-empty application data (OpenSSL's and BoringSSL's limit),
+   not a per-connection total, which would cut long-lived connections that rotate at the AEAD limits; a rotation
+   overwrites the secret, key and IV in place (it allocates nothing); a malformed KeyUpdate body is
+   `TLS_ERR_BAD_HANDSHAKE`, a misaligned one or the 33rd `TLS_ERR_PROTOCOL`, and no alert is sent (the post-handshake
+   read path sends none for any failure); the close wipe covers every secret the ctx holds, not only the
+   application-traffic set the finding named, and clears the slots, so a seal after close is refused rather than
+   sealed under a zero key.
+7. **pipefail** — deps_git_cache_verified ends on a `PASS:` / `FAIL:` line; tracked_paths_portable FAILs on grep
+   rc ≥ 2; gates_verdict_under_pipefail is `# check: serial` (its own workers, as coverage_mode_corpus).
+8. **giantfns** — "comfortable headroom" is under 3/4 of each per-fn x86 table (jump_target_cap.sh H), so
+   PARSE_FNCALL, PARSE_RETURN and `_field_load_on` (at most 14 %) were not split; the row measures through a probe copy
+   of the compiler, not a new `CYRIUS_STATS` output (no diagnostic surface changed); not deduped, being no walkers or
+   not one construct: the PP keyword probes, `_icall_slot` / `_dyn_cslot`, `_spi_is_nested` / `_sl_named_nest`,
+   `_call_close` vs `_tok_close_paren`.
+9. **splits, splits2, cbtsplit** (D2's layout) — the piece boundaries and names are the lanes': `parse_fn_def.cyr` is
+   `parse/fn/def.cyr`; `ctrl.cyr` and `cov.cyr`, which fn.cyr included, are included by parse.cyr (one parent per
+   folder); parse.cyr's own body is eleven files BESIDE it, parse.cyr kept as the entry the seven forks include;
+   `cbt/commands/` is one file per verb with distlib's stages in `cbt/commands/distlib/`, `cbt/deps/` one per stage.
+10. **libs** — `PAM_MAX_PASSWORD` follows the 6.7.6 / 6.7.9 twin doctrine (a const bounds the password and sizes the
+    copy; writing the public var changes nothing); net.cyr's blocking resolver brought under D1 (the issue named the
+    async and sandhi resolvers); stdlib_alloc_refusal_sentinels' http floor 7 → 6 (one allocation fewer per call).
+11. **refold** (CYRIUS-2026-0042's native side) — a CA that does not allow the path below it is SKIPPED while the path
+    is built, not fatal (the selection conjunction, as 6.6.16 did for EKU and as sigil's link check does for the direct
+    issuer), so a chain through an unconstrained twin with the same subject and key still verifies (OpenSSL fails on its
+    first candidate); the path cap is 18 (`_TN_CHAIN_PATH_MAX`: the leaf, the 16 intermediates the Certificate parsers
+    keep, one extra step), met only by a direct API caller passing more than 16 intermediates (refused); the trailing
+    dot follows sigil — one dot dropped from name and constraint, so a trailing-dot name is refused where OpenSSL 3.6.5
+    lets it out (the gate names it as the one divergence); the TLS 1.2 Certificate list is strict — a malformed entry
+    after the leaf is `TLS_ERR_BAD_HANDSHAKE` (it was ignored), an unparseable one skipped, as the 1.3 client skips one;
+    the harnesses are `fuzz/<fold>_<parser>.fcyr`, the driver keeps `fuzz/fz_driver.cyr`.
+12. **cleanup** — `http::https://…` stays refused (a helper NAMED http; the belt refuses it too), and `ext::` is never
+    refused by this check, only by the belt; `hc_write_new` replaces a symlink at its path rather than writing through
+    it (file_write_atomic's default; its callers write their own scratch, stage or new files).
+
+Also recorded by the lanes as their reading of a decision (each implemented as written here): local — Finding 26's
+refusal covers `ftp://` and a remote helper's `http::` as well as `git://` / `http://`, in any case, and every fetching
+argv carries `-c protocol.{git,http,ftp,ext}.allow=never`; local — a "secure exec" for 0041 is AT_SECURE, a real /
+effective uid or gid mismatch, or an auxv the process may not read.
+
+⚠ **Behaviour changes** — each decided by the user (D1, D2 and the audit's four, 2026-10-22), taken as an agent default
+(above), or fixed to what the source and its RFC say. The migration is
+[ecosystem-migration.md § 6.7.18](docs/development/ecosystem-migration.md).
+- **Network (net, D1)** — `http_get` / `_r` / `_a` give up after 5 s with no progress or 30 s per exchange
+  (HTTP_ERROR / `Err(HttpNetErr)`); `http_get_r` on a refused allocation is `Err(HttpOther)` (it crashed); a non-digit
+  HTTP status reads 0 (it read 920 / -1665); `ws_server_recv` fails a control frame over 125 bytes and returns each data
+  frame in its own allocation; `ws_server_handshake` refuses a key that is not 22 base64 characters and "=="; `ws_connect`
+  keeps the frames that came with the 101 and refuses a header block over 8 KiB (the ws handle is 56 bytes);
+  `async_resolve` refuses an empty name or one over 253 bytes (-1). The parsers read through slices: a read past the
+  peer's bytes, should a parser's own checks miss one, stops at the slice (exit 134) where it read on.
+- **Local users, the CLI, the release channel (local, cleanup)** — `cyrius deps` refuses `git://`, `http://`,
+  `ftp://` and `http::` dependency URLs, and a remote helper's plaintext URL (`https::http://…`), by name before any
+  fetch; the build's output temp is `<out>.tmp.<n>` (n random), created
+  exclusively; `file_write_atomic`'s temp is born at the destination's mode; the Windows CLI reads no
+  `/proc/self/environ` and refuses a missing home (USERPROFILE and CYRIUS_HOME unset) by name; in a secure exec every
+  fdlopen entry takes only the root-owned `/usr/lib/cyrius/dlopen-helper` (else -9), and `fdlopen_trusted_only(1)`
+  asks for it anywhere; `pam_unix_authenticate` refuses a password over 512 bytes before forking, fails closed on a
+  closed pipe, and sends the password NUL-terminated (a correct password now verifies; with an empty hash, ANY password
+  no longer does); release.yml signs in `environment: release`; install.sh's header names the README's URL.
+- **Native TLS (tls, refold)** — a peer's KeyUpdate with a body other than one byte 0 / 1 is `TLS_ERR_BAD_HANDSHAKE`,
+  one that does not end its record or the 33rd in a row `TLS_ERR_PROTOCOL`; `tls_native_close` zeroises every secret
+  and a seal or open after it is `TLS_ERR_PROTOCOL`; `TLS_CTX_LEN` 632 → 640; a chain through a CA whose
+  nameConstraints its leaf (or a lower CA) violates is `TLS_ERR_CERT_INVALID`, the anchor's constraints included
+  (CYRIUS-2026-0042); the TLS 1.2 client keeps the server's intermediates (up to 16), so a 1.2 server that sends its
+  intermediate verifies (every such verifying connect failed), and a malformed entry after the leaf is
+  `TLS_ERR_BAD_HANDSHAKE`.
+- **Thread-local slots (tls-slots)** — on arm64 macOS a thread past the 64th live one gets its own slots (it shared
+  main's), and a slot access from a thread no `thread_create` started exits 70; in Linux foreign-TLS mode a thread
+  other than the declaring one exits 70 on a slot access (it shared the owner's array); on Windows a thread's first
+  slot writes are no longer lost to a concurrent first access, and a failed `TlsAlloc` is refused by name.
+- **The libs (libs)** — `exec_capture_str` returns -1 with nothing run when no pipe can be made (it closed fd 0 and
+  ran the command uncaptured); fdlopen's loader stack carries the helper path in argv[0] / AT_EXECFN (they read "").
+  No public symbol's signature, semantics or presence changed.
+- **The compiler (giantfns, optimize)** — an inline-asm fn returning `: *T`, `: (T1, T2)` or `: Box<T>` keeps the
+  standard frame (each returned 0, not its argument); a named argument after a parameter whose type closes with `>>>`
+  is found; under `CYRIUS_DCE=1` a program whose reachability took more than 512 rounds keeps its live fns (they were
+  NOP-filled: SIGILL); cybs refuses a 17th open loop and a 321st pending `break` by name. Beyond those, the
+  compiler's changes leave every program's bytes as they were (the corpus differentials, 8 modes).
+- **Source layout (moves, splits, splits2, cbtsplit)** — `src/frontend/` is `lex/` (`lex.cyr`, `attr.cyr`, `pp/`) and
+  `parse/` (`parse.cyr` and its eleven pieces, `ctrl.cyr`, `cov.cyr`, `fn/`, `decl/`, `expr/`, `types/`);
+  `cbt/commands.cyr` and `cbt/deps.cyr` are `cbt/commands/` and `cbt/deps/`; the `#derive` field cap's error names
+  `lex/pp/derive.cyr`. No compiled program changes; `lib/` did not move.
+- **Gates (pipefail, cbtsplit, splits, cleanup, refold)** — fifteen gates reach a verdict under `bash -eo pipefail`;
+  every reader of cbt/ reads it recursively, and the two that read programs/ read it recursively; the CVE-05 scan
+  fails by name on a file it cannot find; fuzz/ carries 16 harnesses, the folds' parsers among them.
+- **Folds** (vendored from the tags) — sigil 3.13.15: crypto lanes are a pool held only while used (`cbank()`'s
+  meaning above), ChaCha20-Poly1305's state on the caller's frame, nameConstraints parsed and enforced (an
+  intermediate CA's commonName never read as a host name), `X509Cert` 272 → 304 B.
+  sandhi 1.13.7: HPACK size updates over 4096 and decoded header lists over 65,536 octets fail the exchange, a NUL
+  header field is dropped (HTTP/1) or refused (h2), HPACK integers past 2^32 − 1 are refused. bayan 1.11.1: invalid
+  base64, malformed JSON numbers and duplicate JSON keys refused by name; PDF decoding bounded per document;
+  `lib/bayan.cyr` requires `lib/slice.cyr` and `lib/hashseed.cyr`, `lib/sandhi.cyr` `lib/slice.cyr`.
+
+### The open — the plan and the decisions (on main)
+
+- **bd79c7482** — the open (the user, 2026-10-22): D1, the network parsers read through fn-local slices, checked in
+  every build (not an extended `#bounds`); D2, the folder layout as the roadmap wrote it, moves first. state.md
+  In-flight; the release's record lives on `l6718-integ` until its close (26ce77662).
+- **7e6478b44** — filed and placed in the audit:
+  [the network parsers' fuzz harnesses and bounds-checked builds](docs/development/issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
+  (HTTP, WebSocket, DNS, X.509 / DER, JSON) — the bounds-checked form its one question, answered by D1. Resolved in
+  this release: D1's slices in every network parser, net's five harnesses and the refold's five fold-parser harnesses
+  in fuzz/ (floor 16); archived with its banner.
+
+### Wave 0 — the moves (D2) and the audit, on `l6718-integ`
+
+- **The moves**, each `git mv` + the include lines + every path reference, no content change, cycc byte-identical and
+  seed-derive OK: `src/frontend/lex/` — `lex.cyr`, `lex_pp.cyr` → `lex/pp.cyr`, `lex_attr.cyr` → `lex/attr.cyr`
+  (229741f6d); `src/frontend/parse/` — `parse.cyr` and `parse_{cov,ctrl,decl,expr,fn,fn_def,types}.cyr` →
+  `parse/{cov,ctrl,decl,expr,fn,fn_def,types}.cyr` (b873a1eca; the gates that globbed the top level name the folder,
+  cyrius_type_audit scans `lex/` and `parse/`, the per-file counts the pre-move run's). CLAUDE.md's Project Structure
+  names the folders (the user allowed the edit, 2026-10-22; 47eb741d3).
+- **The audit** (6f744d433): `docs/audit/2026-10-22-security-audit.md`, 28 findings across eight surfaces (27
+  confirmed, 1 uncertain — the KeyUpdate flood), `CYRIUS-2026-0038` – `0050` recorded; the four decisions above.
+  `lib/pam.cyr`'s `nullok` kept and filed:
+  [2026-10-22-pam-nullok-empty-password-authenticates.md](docs/development/issues/2026-10-22-pam-nullok-empty-password-authenticates.md),
+  refusing empty passwords placed at 6.8.0 (the user: "6.8.0 sorry"; 6ccb60584, 47eb741d3).
+
+### The network parsers and libs — CYRIUS-2026-0038, 0043, 0049, finding 19, D1 (the net lane)
+
+Branch `l6718-net` (cut from `6ccb60584`), 18 commits, one review round: zero must-fix (head `dad8597c8`, merged
+`b77c6f783`). No `src/` change. Decision D1. The reviewer rebuilt every audit and verifier repro against the lane's
+`lib/`: each fixed, each row RED on the parent.
+
+#### CYRIUS-2026-0038 — the async DNS query encoder refuses a name over 253 bytes before writing (lane net, commit 608b89369)
+
+- **CYRIUS-2026-0038 (P1)** — lib/async.cyr's DNS query encoder wrote every host byte before checking the total, so a
+  long host (or 300 one-byte labels) wrote host length + 12 bytes past the resolver task's 288-byte stack buffer, onto
+  its return address. It now refuses a name over 253 bytes (or empty) before writing, as net.cyr's `_net_dns_build`
+  does, and stores through a slice of exactly the encoded length. Row: tests/tcyr/stdlib/async_dns_query_bounded.tcyr
+  (28; parent: 5 FAIL + SIGSEGV); the audit's three repros and the verifier's two give -1, nothing past 288.
+
+#### CYRIUS-2026-0043 — ws_server_recv reads each frame into its own buffer (lane net, commits 5afff204d, ae53f9d3c)
+
+- **CYRIUS-2026-0043 (P2)** — ws_server_recv read every connection's frames into ONE process-global 1 MiB buffer, so
+  two connections on two threads read into each other and a PING's PONG echoed another client's message. Each frame
+  now has its own buffer: a data frame the allocation returned (no copy), a control frame the call's stack (RFC 6455
+  §5.5: ≤ 125 bytes, longer fails the call; its buffer and the drain chunk sized by the private const `_WSS_CBUF`); a
+  reserved non-control opcode is drained and dropped as before. Rows:
+  tests/tcyr/crossos/ws_server_connections_isolated.tcyr (31; parent: A's PONG carries B's message);
+  stdlib_alloc_refusal_sentinels.sh counts one allocation per data frame; lib_buffers_sized_by_const.sh pins
+  `cbuf[_WSS_CBUF]`.
+
+#### CYRIUS-2026-0049 — http_get / _r / _a are bounded by deadlines (lane net, commit 83eca3cd0)
+
+- **CYRIUS-2026-0049 (P3)** — http_get / http_get_r / http_get_a connected and read with no deadline and kept the
+  socket private. Every wait (connect via `net_connect_nb`, the send under SO_SNDTIMEO, each read via `fd_wait_ready` —
+  SO_RCVTIMEO where there is no poll) is bounded by `HTTP_IDLE_TIMEOUT_MS` (5000) and the exchange by
+  `HTTP_TIMEOUT_MS` (30000); running out is HTTP_ERROR / `Err(HttpNetErr)`, never a truncated response; 0 turns a
+  bound off. One `_http_exchange` body replaces three open-coded copies. Row: tests/tcyr/crossos/http_get_deadlines.tcyr
+  (18; mutant: watchdog FAIL); the audit's repro exits 124 on the parent, returns in 5 s now.
+
+#### Finding 19 — ws_connect keeps the bytes that came with the 101 (lane net, commit aeecfd70e)
+
+- **Audit finding 19** — ws_connect did one 511-byte read and dropped everything after the "101": a frame sent with
+  the 101 was lost, a header block over 511 bytes was parsed as frames. It reads to CRLF CRLF (≤ 8 KiB, `_WS_HS_MAX`;
+  longer is CLOSED) and keeps the rest in the handle (now 56 bytes), drained by the frame reader first. Row:
+  tests/tcyr/crossos/ws_client_handshake_leftover.tcyr (28; parent 6 FAIL); alloc-refusal rows for the kept buffer.
+
+#### D1 — the network parsers read through fn-local slices (lane net, commits 186e3eddb, 6698d1cb0, 530be3bc0, ee7c4ef29, 1108df72a)
+
+- **D1 (the user's decision)** — the network parsers read the peer's bytes through fn-local `[u8]` slices, checked in
+  every build: `_async_dns_parse_a` / `_async_dns_skip_name`, the HTTP response parser (now one body,
+  `_http_parse_into`), `ws_recv_frame`, the ws_server frame reader, `ws_server_handshake`'s key. Multi-byte big-endian
+  fields go through the new `slice_get_be(&s, i, w)` (lib/slice.cyr; API snapshot + `slice::slice_get_be/3`). Row:
+  tests/gates/memory/net_parsers_read_through_slices.sh (registered; 27 rows — per family no load8/16/32 in the parser
+  fns, and with one of the parser's own checks removed or loosened in a copy of lib/ the probe stops at the slice, exit
+  134; on the parent the same probes exit 0 having read past the message); tests/tcyr/crossos/slice_get_be.tcyr.
+
+#### ws_server_handshake's key is 22 base64 characters and "==" (lane net, commit 1108df72a)
+
+- **ws_server_handshake key** — any 24-byte Sec-WebSocket-Key was accepted; it must be 22 base64 characters and "=="
+  (RFC 6455 §4.1). Row: tests/tcyr/formats/ws_server_handshake.tcyr (parent: 3 FAIL).
+
+#### http_get_r on a refused response struct is Err(HttpOther) (lane net, commit 467cbb6f8)
+
+- **http_get_r** read a refused response struct (load64(0), SIGSEGV); it is `Err(HttpOther)`. Row:
+  stdlib_alloc_refusal_sentinels.sh http_probe (k=1..6 refused, 7 served; parent exit 139).
+
+#### A non-digit HTTP status reads 0 (lane net, commit 150c62b27)
+
+- **HTTP status** — the three status bytes were taken as digits unchecked ("2x0" → 920, "!!!" → -1665); a non-digit
+  status reads 0. Row: tests/tcyr/formats/http.tcyr (parent 3 FAIL).
+
+#### The network parsers' fuzz harnesses and their gate (lane net, commits dcf666ffb, cb835f8f2)
+
+- **Fuzz harnesses** — fuzz/dns_answer, http_response, ws_client_frames (incl. ws_connect over a socketpair),
+  ws_server_frames, ws_server_handshake: a valid seed, deterministic per-iteration mutation, a forked child that
+  reports each seed so the parent prints the one that faulted (`_fz_replay` replays it), a contract check, one digest
+  for `--poison=ab`. All 11 fuzz/*.fcyr pass plain, `--poison`, `--poison=ab`, `--bounds`.
+- **Gate** tests/gates/memory/fuzz_corpus_plain_and_poison.sh (registered beside the poison gates): every fuzz/*.fcyr
+  plain and under `--poison`, floor 11, `--timeout 120` per harness and 900 s per run, a faulting corpus FAILs, a
+  one-byte heap overwrite passes plain and FAILs under `--poison`; the driver's plain-only `_fuzz_harness_gate` is
+  retired into it (parent: floor 6 < 11).
+
+#### Met: slice.cyr's header, two tests, the stdlib reference (lane net, commits ada4618ef, 33e2c896a, dad8597c8, 4dfec5183)
+
+- **lib/slice.cyr** header said dot syntax was "NOT yet wired" and `s[i]` "a follow-up slot" (shipped 5.8.15/16). Row:
+  cyrlint_cross_line.sh axis 15 (strict-deferrals 0; parent 3).
+- **tests** — http.tcyr's continuation lines rewritten canonically (cyrfmt --check: parent exit 1, now 0);
+  async_relay_once_socket.tcyr removes its fixture on the no-socket early return (a cx run left
+  `cyrius_ar_relay.<pid>` in the cwd; now none). docs/stdlib-reference.md names the above.
+
+### Local users, the CLI's temps, fdlopen, pam, the release channel — CYRIUS-2026-0041, 0046 – 0048, 0050, findings 22, 26, 27 (the local lane)
+
+Branch `l6718-local` (cut from `6ccb60584`), 12 commits, one review round: two must-fix in the lane's own tests,
+fixed by the reviewer (head `91572da68`, merged `d12610e26`). No `src/` change. Decisions: Finding 26 (`cyrius deps`
+refuses plaintext) and `nullok` kept (the user, 2026-10-22). The reviewer checked 0041 with a real setuid-root secure
+exec in a user namespace: the parent ran the planted helper as euid 0, the lane never runs it.
+
+#### CYRIUS-2026-0046 — the build's output temp is created exclusively, under an unpredictable name (lane local, commit 5e72dfb10)
+
+- **CYRIUS-2026-0046 (P3) fixed** — `cyrius build`'s output temp was `<out>.tmp.<pid>`, unlinked with its result
+  ignored and opened O_CREAT|O_TRUNC (parent probe and child), so a link planted there in a sticky or unwritable
+  directory had the build written through it (measured: a 0600 victim became the ELF). compile(), `_emit_js`,
+  `_emit_cx`, `_cx_jit_build` and pulsar's raw compile now create `<out>.tmp.<n>` — n 62 bits of the OS CSPRNG, still
+  the reaper's `.tmp.<digits>` shape — O_EXCL|O_NOFOLLOW in the parent (`_cbt_out_tmp_open`), a taken name drawing
+  again, and hand the fd to the child; pulsar's fixed `.pulsar.new` is gone. Row: `atomic_temp_exclusive.sh` axes 6–8
+  (the audit's 0555-dir repro, a stand-in compiler recording the temp name, a static axis).
+
+#### CYRIUS-2026-0047 — the atomic-write temp is born at the destination's mode (lane local, commit 7c71c6075)
+
+- **CYRIUS-2026-0047 (P3) fixed** — `file_write_atomic` / `_aw_open` created the temp 0644 & ~umask and fchmod'ed it
+  to a 0600 destination's mode only after (a world-readable window). `_io_tmp_open` now creates it at the destination's
+  mode (`_io_tmp_mode`; 0644 for a new file) and `_io_keep_mode` only widens. Row: `atomic_write_temp_exclusive.tcyr`
+  "the temp is never wider than the file it replaces" (parent: got 36).
+
+#### CYRIUS-2026-0048 — the Windows CLI opens no drive-relative POSIX path (lane local, commits 10f77cb09, 811e7d9a9)
+
+- **CYRIUS-2026-0048 (P3) fixed** — on Windows the CLI read the drive-relative `/proc/self/environ` to EOF through
+  unchecked doubling allocations, and with USERPROFILE and CYRIUS_HOME unset used the drive-relative home `/root`. PE
+  now gives the empty environment and opens nothing, refuses a missing home by name (exiting through `_cbt_exit`), and
+  a refused allocation fails closed. Row: `regression_capture_exclusive.sh` axis 5 (static over cbt/: no rooted POSIX
+  path in code the PE build compiles outside 5 allowlisted fork-child sites; wine: no `/proc/self/environ` open, the
+  no-home refusal).
+
+#### CYRIUS-2026-0041 — fdlopen takes only the trusted helper in a secure exec (lane local, commits fa7d68639, fa111fc34)
+
+- **CYRIUS-2026-0041 (P2) fixed** — lib/tls.cyr's libssl backend reached `fdlopen_init_full`, which ran the invoker's
+  `$HOME/.cyrius/dlopen-helper` inside a setuid program, with no way to ask for the trusted path. Every fdlopen entry
+  now takes the root-owned, verified `/usr/lib/cyrius/dlopen-helper` (else -9) in a secure exec — AT_SECURE, a
+  real/effective uid or gid mismatch, or an auxv the process may not read — `fdlopen_trusted_only(1)` asks for it
+  anywhere, ld.so gets the real AT_SECURE, and the helper is verified on the fd it is mapped from (O_NOFOLLOW + fstat),
+  not lstat-then-reopen. threat-model.md updated. Rows: `fdlopen_trusted.tcyr` (secure-exec seam + knob; fd
+  verification); mutant (secure exec ignored): 4 rows RED.
+
+#### CYRIUS-2026-0050 — pam_unix_authenticate fails closed, never by SIGPIPE (lane local, commit f347bdbc9)
+
+- **CYRIUS-2026-0050 (P3) fixed** — `pam_unix_authenticate` died of SIGPIPE on a password over 64 KiB or a helper
+  that exited unread. A password over 512 bytes (all unix_chkpwd reads) is PAM_AUTH_FAIL before anything runs, and the
+  parent holds the pipe's read end through its write, so a closed pipe is an authentication failure. nullok kept. Row:
+  `pam_fail_closed.tcyr` (forked-child rows: the audit's 65,537-byte repro, a stand-in helper exiting unread).
+
+#### pam sends the password NUL-terminated (lane local, commit bf8e1ed52)
+
+- **pam: the password is sent NUL-terminated** — unix_chkpwd (Linux-PAM ≥ 1.1) takes a password only up to a NUL and
+  reads unterminated bytes as NO password, so a correct password never verified and, with nullok, an account with an
+  empty hash accepted ANY password (measured with a stand-in shadow in a user+mount namespace: "hunter2" → 7
+  unterminated, 0 terminated; empty hash + "anything" → 0 unterminated). Row: `pam_fail_closed.tcyr` recording
+  stand-in (8 bytes / 1 byte; parent 7 / 0); mutant (no NUL): 2 rows RED.
+
+#### Finding 26 — `cyrius deps` refuses plaintext dependency URLs (lane local, commit 1ea3e6530)
+
+- **`cyrius deps` refuses plaintext dependency URLs (Finding 26, the user's decision)** — git://, http://, ftp:// and
+  a remote helper's `http::`, any case, refused by name (dep, owner, URL) before any fetch; fetching argvs carry
+  `-c protocol.{git,http,ftp,ext}.allow=never`. Row: new `tests/gates/toolchain/deps_plaintext_url_refused.sh`
+  (registered).
+
+#### Finding 27 — install.sh's header names the README's URL (lane local, commit a41d88eda)
+
+- **install.sh's header URL (Finding 27)** — the unresolvable `https://install.cyrius.dev` is gone; the README's
+  raw.githubusercontent.com URL is advertised. Row: `install_signature_required.sh` axis 9.
+
+#### Finding 22 — release.yml signs behind `environment: release` (lane local, commit 392197ca7)
+
+- **release.yml signing behind `environment: release` (Finding 22)** — top-level `contents: read`; the release job
+  alone has `contents: write` and runs in the `release` environment. ⛔ The maintainer must add the required-reviewer
+  rule (and deployment-tag restriction) in GitHub and move CYRIUS_RELEASE_SK into that environment's secrets — until
+  then it gates nothing. Row: `install_signature_required.sh` axis 10.
+
+#### Seven gates reach a verdict under `bash -eo pipefail` (lane local, commit 7a55f5926)
+
+- **Seven gates pipefail-safe** — fn_local_storage_class, directive_fork_parity, coverage_exec_hits,
+  diag_line_after_include, duplicate_fn_attribution, cx_compiler_reads_env, include_fallback_cyrius_home: each RED (no
+  verdict, rc 6/1/141/1/22/1/22) under `bash -eo pipefail` before, same output under sh after.
+
+#### The review's fixes — two lane tests wrote through predictable /tmp names (lane local, commits ad08e05dd, 91572da68)
+
+- pam_fail_closed.tcyr asserted the mkdir of the predictable `/tmp/cyr_pam.<pid>` and then carried on, writing its
+  stand-in helpers into a directory that was already there and running them from it (a planted `rec` link received
+  "hunter2\0"); the rows now stop when the run did not create the directory (ad08e05dd; on integ the fixture moved to
+  `test_scratch`, 033988b10). fdlopen_trusted.tcyr opened `/tmp/fdl_v_ww.<pid>` O_CREAT, without O_EXCL, and chmod'ed it
+  0666 by name (a 0600 file behind a planted link was overwritten); it is created O_EXCL|O_NOFOLLOW and its modes set
+  through the fd (91572da68).
+
+### Native TLS — the KeyUpdate flood and secrets left behind, findings 21 and 28 (the tls lane)
+
+Branch `l6718-tls` (cut from `d249d9bc1`), three commits, one review round: zero must-fix (head `6b6d7ef05`, merged
+`15cc88f32`). No `src/` change. Rows proven RED by mutation; live against openssl 3.6.5 s_server / s_client with a `K`
+KeyUpdate both ways. The lane also wrote the design for CYRIUS-2026-0042's native-TLS enforcement in
+`_tn_verify_chain` (RFC 5280 §6.1.3 (b)/(c), §6.1.4 (g), §4.2.1.10, and its OpenSSL-oracled PKI), which the refold
+lane applied (`8b244685d`, below).
+
+#### Finding 21 — a post-handshake KeyUpdate flood (lane tls, commit 3b043ec6b)
+
+- **Native TLS: a post-handshake KeyUpdate flood** (the 2026-10-22 audit's Finding 21). `_tn_handle_post_handshake`
+  rotated the receive keys once per KeyUpdate however many one record packed, with any body, and every rotation
+  allocated a fresh secret, key and IV (the update_requested answer a 64-byte record too), abandoning the old ones: one
+  16 KiB record of 3276 KeyUpdate(update_requested) made one `tls_native_read` allocate 838,656 bytes (never freed on
+  the default no-free heap) and write 88,452 bytes of answers. Now (RFC 8446 §4.6.3, §5.1) a KeyUpdate whose body is
+  not exactly one byte of 0 or 1 is `TLS_ERR_BAD_HANDSHAKE`; one that does not end its record is `TLS_ERR_PROTOCOL` (so
+  a record carries at most one); the 33rd with no application data between them is `TLS_ERR_PROTOCOL`
+  (`TLS_CTX_OFF_KEY_UPDATES` at +632, `TLS_CTX_LEN` 632 → 640; OpenSSL's and BoringSSL's limit); and a rotation
+  overwrites the secret, key and IV in place — it allocates nothing and leaves no copy of the rotated-out keys. Row:
+  `tests/tcyr/crypto/tls_native_key_update.tcyr` (51 rows, 23 RED on the parent). Live: openssl s_server's and
+  s_client's KeyUpdate(update_requested) answered, data both ways after it. docs/development/lib-tls-contract.md's
+  read-error table names the new refusals.
+
+#### Finding 28 — tls_native_close wipes every secret the ctx holds (lane tls, commit 3ad239fe6)
+
+- **Native TLS: `tls_native_close` wiped nothing** (Finding 28). A closed session's application-traffic secrets, keys
+  and IVs, the handshake keys, the key schedule's nine secrets, the TLS 1.2 master secret, the server's parsed private
+  key (a 48-byte copy per accepted connection), the ticket key and the ephemeral secrets outlived it in the no-free heap
+  or its arena, and a seal after close still sealed under the live key. Close now zeroises each at the size it was
+  allocated with (TLS 1.2's GCM IV is 4 bytes) and clears its slot, whatever the state (a failed ctx too), after the
+  close_notify — so a seal or open after close is `TLS_ERR_PROTOCOL`. Row:
+  `tests/tcyr/crypto/tls_native_close_wipe.tcyr` groups 1–3 (11 rows RED on the parent).
+
+#### The handshake's working copies of session secrets are `secret var`s (lane tls, commit 6b6d7ef05)
+
+- **Native TLS: the handshake's working copies of session secrets were abandoned un-wiped** (met making Finding 28's
+  row, which scans the connection's whole arena: 12 copies left after both closes on a TLS 1.3 pair, 2 on TLS 1.2, 3
+  per `tls_native_psk_binder` call on the global heap). The handshake-traffic secrets fetched to derive keys and
+  Finished keys, the Finished keys, the key schedule's "derived" bridges, the TLS 1.2 key block, the ticket's
+  resumption secret and PSK, and the binder's early secret / binder key / Finished key are now `secret var`s in eight
+  fns, zeroised on every return and no longer allocations (the binder's were a no-free global leak per call). Row:
+  `tls_native_close_wipe.tcyr`'s arena group (4 rows RED on the parent).
+
+### The frontend's two largest files in folders — parse/fn/, parse/decl/ (the splits lane, D2)
+
+Branch `l6718-splits` (cut from `d249d9bc1`), six commits, one review round: zero must-fix (head `938f92c3e`, merged
+`b144a5146`). The reviewer rebuilt every fork with the base's compiler: byte-identical through `dfa457871`, one byte
+(the message below) after.
+
+#### parse/fn.cyr and parse/decl.cyr split along their seams (lane splits, commits a354c30dc, 2fd396ad7, dfa457871)
+
+- **The frontend's two largest files split along their seams (refactor review, D2's layout).** `parse/fn.cyr`
+  (979,633 B, 7.5 KB under the fmt / lint headroom row) is `parse/fn/` — table, ret, call_args, ret_agg, call_named,
+  call_kind, call_agg, call, traits, const_eval, impl, generic, body_pass, sig, and `def` (the former
+  `parse/fn_def.cyr`); `parse/decl.cyr` (894,107 B) is `parse/decl/` — array, field, struct_lit, tuple_lit,
+  static_init, gvar, gvar_init, struct_copy, vector, receive, var, handle. Each piece is a contiguous run of the old
+  file, moved unchanged; parse.cyr includes them in order (ctrl.cyr and cov.cyr, which fn.cyr included, now from
+  parse.cyr: one parent). Every compiler fork builds byte-identical; seed-derive OK (71 distinct includes of cybs's
+  256, 2 deep, largest file parse/expr.cyr 522,971 B); the tests/tcyr corpus compiles byte-, exit- and
+  stderr-identical. Gates that globbed `parse/*.cyr` read the folders recursively; the path-A drift row's file list is
+  held to `find src/frontend/parse` as a set (was a count of 8). Rows: check_parse_drift_reads_whole.sh row list (a
+  mutant dropping fn/impl.cyr is named).
+
+#### The CVE-05 NPOS_GUARD scan fails by name on a file it cannot find (lane splits, commit 5abd89705)
+
+- **The CVE-05 NPOS_GUARD scan fails by name on a file it names and cannot find** — it skipped one in silence, so a
+  split or rename under its list scanned nothing and read PASS. Row: check_cve05_scan_names_missing.sh (RED on the
+  silent-skip mutant).
+
+#### The `#derive` field cap's error names a live file (lane splits, commits 9ce478333, 938f92c3e)
+
+- **The `#derive` field cap's error names `lex/pp.cyr`** (it said `lex_pp.cyr`, a file the moves renamed); every
+  `.cyr` a compiled message names must exist. Row: compiled_messages_name_live_files.sh (RED on the parent: N names
+  lex_pp.cyr, D shows the old text). splits2 moved it again (below). 938f92c3e: three top-level pointer comments in
+  backend/cx/emit.cyr the in-body filter had wrongly kept.
+
+### Thread-local slots — no thread shares another's, on any target (the tls-slots lane)
+
+Branch `l6718-tls-slots` (cut from `01fba74f5`), four commits, one review round: zero must-fix (head `5e43a936e`,
+merged `1154900a5`); the review's two notes fixed on integ (714e9e49c, 19debaba2). Met by the sigil review (the
+arm64-macOS half of CYRIUS-2026-0040's attacker line); the premise check found the Linux foreign-TLS and Windows
+defects beside it. No `src/` change. ecb runs the macOS rows at the release gate; RED-before for arm64 macOS comes from
+a simulation that runs the parent's registry and `thread_create` verbatim on Linux threads.
+
+#### arm64 macOS: the live-thread counter is gone (lane tls-slots, commit 97d9be17d)
+
+- **arm64-macOS thread-local slots, the live-thread counter.** The lookup handed main's slots to any thread that read
+  `_tls_live == 0`. The counter was raised and lowered with racy plain read-modify-writes, so it could read 0 while
+  workers ran. Now there is no counter: main is recorded by key at the first `thread_create`. Row:
+  `tests/tcyr/crossos/thread_local_churn_keeps_slots.tcyr` (16 relay chains × 1000 threads; each checks a fresh slot,
+  writes, starts its successor, joins its predecessor, and reads back; main's slot must survive). RED-before, from the
+  parent's registry and `thread_create` extracted verbatim and run on Linux threads: 32 of 55 runs RED on x86, 3 of 3
+  under qemu-aarch64 (every RED run counted 0 registry overflows); with the fix, 0 of 260.
+
+#### arm64 macOS: the 64-thread registry grows — CYRIUS-2026-0040's macOS alias path (lane tls-slots, commit ea9bda1e1)
+
+- **arm64-macOS thread-local slots, the 64-thread registry.** A thread past the 64th live one used the main thread's
+  slot array, sharing every library's per-thread state (sigil's lane word among them) with main and with every other
+  overflow thread. Now the registry is a chain of 64-entry chunks that grows, and `thread_create` claims each thread's
+  entry before the thread starts. The only refusals: the thread itself, when it cannot be set up; any slot access from
+  a thread that no `thread_create` started (refused by name, exit 70). Row:
+  `tests/tcyr/crossos/thread_local_many_live_threads.tcyr` (150 threads held live, two rounds). RED-before, by the
+  same harness at its parent and at `01fba74f5`, on x86 and qemu-aarch64: per round, 86 threads saw foreign slots, 85
+  read back another thread's value, and main's slots came back as worker 149's. With the fix: 0 / 0.
+
+#### Linux foreign-TLS mode: one owner (lane tls-slots, commit ab4b0618c)
+
+- **Linux foreign-TLS mode.** `thread_local_use_foreign_tls()` handed its one slot array to every thread. Now the
+  declaring thread owns it, and any other thread's slot access is refused by name (exit 70). A fork child's first
+  thread takes the array over. Each access in this mode costs one `gettid`. Row:
+  `tests/tcyr/concurrency/thread_local_foreign_one_owner.tcyr` (F1: a worker is refused, 70, with the named line; F2:
+  the owner keeps its slots; F3: the owner's fork child keeps working). On the parent, F1 exits 3 (the worker read the
+  owner's 0x51) on x86 and qemu-aarch64.
+
+#### Windows: one thread allocates the TLS index (lane tls-slots, commit 5e43a936e; integ 714e9e49c)
+
+- **Windows thread-local first access.** Threads whose first slot access overlapped each allocated a TLS index, and a
+  thread's earlier writes vanished. Now one thread allocates the index (elected by CAS), and a failed `TlsAlloc` is
+  refused by name; the index, a DWORD, is masked to 32 bits rather than relying on the register's upper half (integ,
+  the review's note). Row: `tests/tcyr/crossos/thread_local_first_access_concurrent.tcyr` (40 rounds × 8
+  barrier-released workers). On the parent under wine: 271 of 320 writes were lost in 39 of 40 rounds; with the fix,
+  none.
+
+### The frontend's remaining large files in folders — parse/expr/, parse/types/, lex/pp/, parse.cyr's pieces (the splits2 lane, D2)
+
+Branch `l6718-splits2` (cut from `14344f03f`), six commits, one review round: one must-fix, stale references, fixed by
+the reviewer (head `6cd3b4f3c`, merged `70c55f7ad`). Each split built with the parent's compiler: every fork
+byte-identical to the base, stderr identical, seed-derive OK, the 701-file corpus identical.
+
+#### parse/expr.cyr, parse/types.cyr, lex/pp.cyr and parse.cyr's body split along their seams (lane splits2, commits e84a26571, 14c2ef0d1, 62b3a84bd, 2550554ba)
+
+- **The frontend's remaining large files split along their seams (refactor review, D2's layout).** `parse/expr.cyr`
+  (522,971 B) is `parse/expr/` (12 pieces: closure, callee, stamp, wide, postfix, subscript, deref, undef, factor,
+  intrin, term, pexpr), `parse/types.cyr` (353,497 B) is `parse/types/` (`type.cyr` beside `struct.cyr`, `tuple.cyr`,
+  `dyn.cyr`, `enum.cyr`, …; 11), `lex/pp.cyr` (318,167 B) is `lex/pp/` (8: directive, include, derive, serialize,
+  accessor, macro, pass, preprocess), and `parse/parse.cyr`'s own body (441,884 B) is 11 files beside it — the
+  statement dispatch `stmt.cyr`, the program walk `prog.cyr` — with `parse.cyr` kept as the entry the seven forks
+  include (the pending attribute flags, then every piece and folder in order). Each piece is a contiguous run of the
+  old file, moved unchanged; one parent per folder, 2 deep, 110 distinct includes of cybs's 256; every compiler fork
+  byte-identical; seed-derive OK; the tests/tcyr corpus compiles byte-, exit- and stderr-identical; cyrlint findings
+  and the type audit's totals unchanged. Largest frontend file now `parse/fn/def.cyr` (389,113 B). Gates that read a
+  split file read its piece, or the pieces as the one file they were (floored); the drift row and CVE-05 scan name
+  every piece.
+- **`pe_unrouted_warning_names_site`'s "the preprocessor's munmap is routed" row could no longer fail** once
+  `lex/pp.cyr` was split — it looked for `lex/pp.cyr:` in the PE compiler's warnings; it names `lex/pp/pass.cyr` now.
+
+#### The drift scan passes a parse file with no `fn` (lane splits2, commit 1fba34dab)
+
+- **The drift scan refused a parse file with no `fn` as "truncated"** (its read-back answered -1 for "none" and for
+  "failed"); a failed read-back is -2, and a file with no fn passes when the scan saw none. Row: nofn (RED on the
+  parent driver).
+
+#### The `#derive` field cap's error names `lex/pp/derive.cyr` (lane splits2, commit 67033dd12)
+
+- **The `#derive` field cap's error names `lex/pp/derive.cyr`** (the split moved the cap there; `_ew` length 95 →
+  102). Rows: compiled_messages_name_live_files N / D (RED on the parent).
+
+#### The review's fix — no comment names a split file (lane splits2, commit 6cd3b4f3c)
+
+- 58 comment lines in cbt/, lib/, the backends, util.cyr, main_cx.cyr, lex.cyr, lex/pp/pass.cyr and 18 parse files
+  still named parse/expr.cyr, parse/types.cyr, lex/pp.cyr, or bare `parse.cyr` for code the body split moved out; each
+  now names the piece holding the named code (the folder where it spans pieces); history mentions kept. Every fork and
+  the CLI byte-identical, seed-derive OK. No row: comment-only.
+
+### The CLI's two largest files in folders — cbt/commands/, cbt/deps/ (the cbtsplit lane, D2)
+
+Branch `l6718-cbtsplit` (cut from `14344f03f`), five commits, one review round: one must-fix, stale references, fixed
+by the reviewer (head `3d42e99f0`, merged `b425d65c5`). The CLI builds byte-identical, stderr included, for Linux, PE
+(both routes), both Mach-O targets, aarch64 ELF and agnos; every compiler fork byte-identical; seed-derive OK.
+
+#### cbt/commands.cyr and cbt/deps.cyr split along their seams (lane cbtsplit, commits 293bc49b7, 58022df15)
+
+- **The CLI's two largest files split along their seams (refactor review, D2's layout).** `cbt/commands.cyr`
+  (335,403 B) is `cbt/commands/` — one file per verb (build_run, tests, fuzz, benches, check, self, lib_sync, clean,
+  fmt_hooks, lint, api_doc_vet, audit, capacity, soak_smoke, publish) and distlib's stages in `cbt/commands/distlib/`
+  (profile, unit, targets, verify, snapshot, embed, all, modular, distlib); `cbt/deps.cyr` (369,429 B) is `cbt/deps/`
+  by stage (vendor, pin, stdlib, leaves, names, submodule, keys, local, named, dry_run, resolve, package, update,
+  sha256, git_cache, lock). Each piece is a contiguous run of the old file, moved unchanged; cbt/cyrius.cyr includes
+  them in order. The CLI builds byte-identical (stderr included) for Linux, PE (both routes), both Mach-O targets,
+  aarch64 ELF and agnos; its output on a fixed 26-command script is identical; the five crossos tests that compile its
+  modules build byte-identical. Gates that read the files follow (allowlist keys name the piece holding each site;
+  fn-body reads read their piece). Row: cbt_readers_recursive.sh axis 2 — every cbt/ file is included exactly once and
+  every test compiling a split piece carries cbt/cyrius.cyr's cbt/ include list in order (RED on the parent, on a piece
+  dropped from a mirror, and on one dropped from the entry).
+
+#### Every reader of the CLI's source reads cbt/ recursively (lane cbtsplit, commit 229b81562)
+
+- **Every reader of the CLI's source reads cbt/ recursively.** 22 gates globbed `cbt/*.cyr` (fork / exec sites, temp
+  names, write lengths, manifest reads, scp pillars, raw syscalls, tool lookups, the auto-deps verb graph, the include
+  census); after the split they would have skipped most of the CLI and their 8- / 10-file floors would not have
+  noticed. Row: cbt_readers_recursive.sh — no flat cbt/ glob in any gate, script or workflow (RED on the parent, 35
+  lines named).
+
+#### atomic_temp_exclusive's census reads every source tree recursively (lane cbtsplit, commit b2f91671a)
+
+- **atomic_temp_exclusive's predictable-temp-name census reads lib/, cbt/, programs/ and src/ recursively** — it read
+  12 of src/'s 69 files (no src/frontend/lex/, parse/, backend/*/) and no programs/ subfolder. Row: a `_io_tmp_name(`
+  caller added to src/frontend/parse/ctrl.cyr is named RED (the parent's gate passed it).
+
+#### Three compiler comments name the lint pre-pass's live fns (lane cbtsplit, commit 7858f532c)
+
+- **Three compiler comments name the lint pre-pass's live fns** (`_lint_err_msg`, `_lint_capture_verdict`,
+  `_lint_msg_is_context`, cbt/commands/lint.cyr) instead of `_lint_msg_is_syntax` / `_lint_capture_has_syntax`, gone
+  since 6.6.11. Comments only (every fork byte-identical, seed-derive OK).
+
+#### The review's fix — no source comment points at the split files (lane cbtsplit, commit 3d42e99f0)
+
+- **No source comment points at the split files.** Fourteen comments in cbt/, lib/ and programs/ still sent a reader
+  to cbt/commands.cyr or cbt/deps.cyr, and four more pointed into them by line number; they name the piece holding the
+  code (lib/process.cyr's three no longer claim cbt's resolver runs git through it — it never calls it). Row:
+  cbt_readers_recursive.sh axis 3 — no line of cbt/ lib/ programs/ src/ scripts/ names the split files but the 6.7.18
+  split notes and six pinned history sentences, each of which must still be found.
+
+### Fifteen gates that stopped with no verdict under `bash -eo pipefail` (the pipefail lane)
+
+Branch `l6718-pipefail` (cut from `b425d65c5`), 16 commits, one review round: ACCEPT, zero must-fix (head
+`8c8520d7a`, merged `bd78a4704`). `tests/gates/toolchain/` and a check.sh comment only.
+
+#### Fifteen gates reach their verdict under GitHub's shell (lane pipefail, commits d1f26e88c, c6528f89c, 1de34e1c9, dd4d9d4d9, 0f431c6c6, c9151e1de, e4bfa8487, a1e14840e, acc56c03a, 8c3185ebd, 1f3c59d99, 62e06a780, 065875f2d, ac8159c2f, 8c8520d7a)
+
+- Fifteen gates stopped with NO verdict under `bash -eo pipefail` (GitHub's `run:` shell; CLAUDE.md requires it)
+  while passing under sh: an expected failure captured `OUT=$(cmd); RC=$?` / `cmd; rc=$?` (cbt_no_shared_tmp_paths,
+  cyrius_soak_describes_failures, distlib_bundle_selfcheck, scaffold_verb_discovery) or run bare / piped on
+  (check_driver_bounded, check_driver_requires_summary); a wait on a SIGKILLed job and a kill of a gone pid
+  (check_driver_dies_with_check_sh — in its EXIT trap too, which then skipped its `rm -rf`); a grep that finds nothing
+  in the passing case (deps_lock_new_leaf_locked, stdlib_key_scan_quoted, install_gates_ship_the_checksum,
+  tracked_paths_portable, test_runner_bounded); `ls <absent> | wc -l` (deps_git_cache_verified,
+  check_sh_targeted_path_cleans_up); `yes | head` and a fn ending `grep -q … && {…}`
+  (build_temp_source_write_checked). Each now captures `X=0; cmd || X=$?` or ends `|| true` / `{ grep … || true; }`.
+  Every one's sh output is line-for-line the pre-fix gate's (no row weakened). Row: gates_verdict_under_pipefail axis 2
+  lists all fifteen (29 gates) — RED with all fifteen at their pre-fix text (each STOPPED, rc 1 / 2 / 141, named).
+- deps_git_cache_verified ends on a `PASS:` / `FAIL:` verdict line (was a bare `[ "$fail" -eq 0 ]`);
+  tracked_paths_portable reads grep's status, so a grep without -P (rc 2) FAILs by name instead of reading as a clean
+  scan.
+
+#### The guard runs in a bounded pool, in check.sh's serial tail (lane pipefail, commits c90dbf223, 8c3185ebd)
+
+- gates_verdict_under_pipefail runs its list in a pool bounded like check.sh's (it started one process per gate), runs
+  a `# check: serial` gate after the pool alone, and is itself `# check: serial` (its own workers + test_runner_bounded's
+  timing run). ~90-100 s standalone; it now sits in check.sh's serial tail.
+
+### The giant fns and the walkers (the giantfns lane)
+
+Branch `l6718-giantfns` (rebased onto `4504f6ca1`), ten commits, one review round: PASS, zero must-fix (head
+`870b6e05f`, merged `bebd871fe`). Measured first, with instrumented scratch copies of cybs and cycc: cybs has no per-fn
+reference cap; the live per-fn caps are cycc's own x86 tables (jump targets 1023, jump sources 1024, NOP runs 1024).
+Every `src/` commit: the self-host fixpoint, seed-derive OK, all seven forks, and a whole-corpus byte differential —
+cumulative, parent vs head, 706 files × 8 modes: 13 diffs, exactly the two fix rows.
+
+#### The giant fns shrunk along their seams, logic-preserving (lane giantfns, commits feba0df57, c0acbf5f6, d20fbc71e, d2f643aea)
+
+- **The giant fns shrunk along their seams, logic-preserving.** `_PARSE_FN_DEF_IMPL` had SATURATED its per-fn
+  jump-source table (1024 of 1024 — cycc skipped its own NOP compaction) and carried ~2,300 frame slots; its
+  post-body x86 passes and its signature / body pieces are twelve fns now (2,524 lines -> ~980; sources 406, targets
+  154). `_PARSE_FACTOR_IMPL` (898 sources) gave its five largest arms their own fns (`_pf_syscall` alone 874 lines; 203
+  sources now). PARSE_FNCALL, PARSE_RETURN and `_field_load_on` were measured far from every cap and left. Row:
+  jump_target_cap.sh H (every fn of cycc's source under 3/4 of each per-fn x86 table; RED on the 6.7.17 tree).
+
+#### cybs refuses past its per-fn tables by name (lane giantfns, commit 95b24cd09)
+
+- **cybs refuses past its per-fn tables by name** (rc 1, nothing written): a 17th open loop wrote the outermost loop's
+  break base (its break fell through; the row's program exited 141) and a 321st pending `break` was overwritten by the
+  next nested `for` (SIGSEGV); both compiled with exit 0. No new seed label. Row: cybs_diagnostics_named.sh F.
+
+#### The walkers read through one reader each (lane giantfns, commits a35c1c6b1, 8c659453a, 870b6e05f)
+
+- **The walkers read through one reader each** (the vidya class a_token_walker_must_read_a_construct_as_its_parser_does):
+  a fn body's `{` (`_tok_body_open`; pass 1's `_pre_body_open` gone), a body's tokens (`_body_has_tok`;
+  `_body_has_await` gone, `_body_has_defer` a wrapper), how many `<..>` levels a closer closes (`_targ_gt_n`; 26 inline
+  copies folded), and one struct / union skip (`_tl_skip_union` gone; toplevel_scan_shared.sh H repointed).
+  Logic-preserving.
+
+#### An inline-asm fn returning any type keeps the standard frame (lane giantfns, commit b7ab03078)
+
+- **An inline-asm fn returning `: *T`, `: (T1, T2)` or `: Box<T>` keeps the standard frame.** The look-ahead read a
+  one-name return type only, so it missed the asm and x86 reserved the register picker's save area: the asm's
+  hardcoded `[rbp - 8]` read a saved register (each such fn returned 0, not its argument). Row:
+  tests/tcyr/codegen/inline_asm_frame_any_return_type.tcyr (5 of 6 checks fail on the parent).
+
+#### A named argument after a `>>>`-closed parameter type is found (lane giantfns, commit 098e52911)
+
+- **A named argument after a parameter whose type closes with `>>>` is found** (`nb3(x, b: 8)` with
+  `a: Box<Box<Box<Pt>>>` was refused "'nb3' has no parameter named 'b'"): `_bx_pname`, `_tr_arity`, `_tr_paren` and
+  `_bnd_sites` took `>>` as two closes and `>>>` as none. Row: tests/tcyr/lang/generic_nested_shift_close.tcyr.
+
+### The self-compile profile (the optimize lane)
+
+Branch `l6718-optimize` (cut from `b425d65c5`), 12 commits, one review round: PASS, zero must-fix, one comment
+repaired (head `cc92b202e`, merged `d78062f35`). The costs were found with a gdb sampling profiler (frame chain at
+2 ms, mapped through `CYRIUS_SYMS`) on self-compile and on generated shapes, plus the coverage-mode call counts at N
+and 2N. Each `src/` bite: the fixpoint, seed-derive OK, the five forks byte-identical on a 47-file sample, the
+705-file corpus binary + exit + stderr identical. The review: 800 inputs × 8 modes, 0 diffs; a shadow compiler that
+runs the parent's algorithm beside every new lookup, over 844 inputs and the lane's 68 scale shapes: 0 mismatches.
+`tests/gates/frontend/hot_path_call_counts.sh` (registered after double_pointer_pin_scale_linear) builds the tree's
+compiler in the coverage mode and bounds call counts on fixed programs — deterministic, ~1.5 s; every row RED on the
+parent of its fix and on a one-edit mutant.
+
+A/B, same box (min of 12, interleaved; load 0.4): self_compile 1,403 → 1,001 ms (the review reproduced 1,521 → 1,076
+at load ~2.5); 10,000 locals in one fn 650 → 213; 900 structs + a fn each 109 → 32; 800 struct generic instances in
+one fn 383 → 110; 800 trait impls 234 → 61; 10,000 fns called `f(&p)` 1,204 → 370; a generic fn of 4,000
+`var vK: T = x;` 2,640 → 104; 20,000 globals 91 → 66; 10,000 fns 343 → 272; 20,000 statements 202 → 156; a 700-deep
+callee-first chain 66 → 26. 6.7.16's compiler on the same input: 1,341 ms (6.7.17's +7-10 % growth tax is repaid).
+Phases: pp 254-276 → 118-125 ms, lex 107-112 → 84-91, gvar+parse 1,011-1,029 → 804-844, fixup 127-129 → 60-63. The
+lane's cycc: 2,923,544 → 2,931,848 B, `.text` +5,736 (the indexes and worklists).
+
+#### The token-stream and state accessors read their cells directly (lane optimize, commit 2716e41af)
+
+- **The token-stream and state accessors made calls.** TOKTYP, TOKVAL, GTI/STI, GTCNT/STCNT, GCP/SCP, GBL/SBL and the
+  other hot one-line accessors went through L64 / S64, and PEEKT through GTI twice, GTCNT and TOKTYP: eight calls per
+  peek, 108 M L64 calls in a self-compile. They read and write their cells with load64 / store64 (25 M). Row:
+  `hot_path_call_counts.sh` [A] (under 24 L64 calls per lexed token; 6.7.17: 141).
+
+#### The preprocessor's per-byte calls (lane optimize, commit df3866a2a)
+
+- **The preprocessor paid per-byte calls over included text.** PP_IFDEF_PASS skipped blanks from every byte (7.6 M
+  PP_SKIP_WS calls), it and PP_NEUT_FMARK advanced the lexical machine on every byte (13.6 M PP_LEXST calls for 7.5 M
+  bytes), and the unit was copied a byte at a time twice per include round. Blanks are skipped only at a line start,
+  the machine advances only for a byte that can move it (the rule is written once, above PP_LEXST_INSTR; the guarded
+  walk line axis 26 counts is unchanged), copies are word loops. pp phase 287 -> 131 ms. Row: [P].
+
+#### FIXUP's dead-code reachability is a worklist, with no round cap (lane optimize, commit 1d2129df6)
+
+- **FIXUP's dead-code reachability stopped at 512 rounds.** The propagation re-walked every live body per round until
+  a round marked nothing, capped at 512 rounds; a call chain defined callee-first needs a round per link, so a
+  700-deep chain's tail was noted unreachable (187 live fns) and `CYRIUS_DCE=1` NOP-filled it (the program died of
+  SIGILL). A worklist now, on x86 and aarch64: each live body scanned once, no cap (a self-compile walked ~28 M bytes
+  in 10 rounds; fixup phase 143 -> 70 ms). The output changes only for a program whose reachability needed more than
+  512 rounds — where the old output was wrong. Row: `tests/gates/codegen/dce_propagation_closure.sh` (C1 x86, C2
+  aarch64 under qemu-aarch64).
+
+#### FINDSTRUCT through a name index (lane optimize, commit f91ed367e)
+
+- **FINDSTRUCT compared a name with every struct.** N struct declarations, each looked up, cost O(N^2) STREQ calls
+  (450 -> 900 structs: 1.84 M -> 7.32 M). An FNV-1a name index filed lazily from the name table (REGSTRUCT is its only
+  writer); the same first struct of the name. Row: [S].
+
+#### FINDLOCAL compares the slot's offset, then a masked first word (lane optimize, commit 4ee8da87d; integ 0f5d18c2b)
+
+- **FINDLOCAL called STREQ on every live slot.** It compares the slot's offset (identifiers are interned), then the
+  name's first word masked to its length, and calls STREQ only for a match of 8+ bytes: 2,000 locals in one fn
+  1,999,011 STREQ calls -> 9. Still a walk per lookup. Row: [L]. (The merged tree's check.sh met a SIGSEGV this bite
+  introduced, fixed on integ — below.)
+
+#### Closure and generic-instance snapshots copy with word loops (lane optimize, commit 92950f4cd)
+
+- **A closure or generic instance inside a fn copied the fn's local slots through calls.** `_cl_save_locals` /
+  `_cl_restore_locals` and `_dsc_snap` / `_dsc_unsnap` made an L64 and an S64 call per word (100 struct instances in a
+  fn of 1,000 locals: 1.92 M calls, 29 % of a compile of 800 instances); word loops now (`_cl_wcopy`). Row: [G].
+
+#### Trait impls indexed by type name (lane optimize, commit 78db8fad1)
+
+- **Trait impls were found by walking every impl.** `_tr_providers` (each impl method's prefix) and FINDFN's miss path
+  (`_tr_fb_qual` / `_tr_fb_ambig`, every name that is not a fn) tested all N impls: O(N^2). An FNV-1a index of the
+  impls by type name; the miss path takes its candidates in the walk's order. Row: [T].
+
+#### Pass 1's late-name re-read answered by FINDSTRUCT's index (lane optimize, commit 03879511b)
+
+- **Pass 1's re-read of a signature STREQ-scanned every later struct** (`_psig_late_name`): FINDSTRUCT's index answers
+  it (`FINDSTRUCT(noff) > sc0`). Row: [T2].
+
+#### `_FINDFN_CSTR` probes FINDFN's name hash (lane optimize, commit 06242fa45)
+
+- **`_FINDFN_CSTR` walked the whole fn table**, once per slice index, `&x` first argument, `await`, closure: N fns and
+  N such sites O(N^2) (10,000 fns each called `f(&p)`: 67 % of the compile). It probes FINDFN's name hash; the lowest
+  index of equal names is met first. Row: [F].
+
+#### The lexer classifies bytes by a table (lane optimize, commit dbd526ee9)
+
+- **The lexer called CCLASS per byte** (and ISALNUM -> CCLASS per identifier byte: 4.4 M calls). A 256-byte table
+  filled once from CCLASS. Row: [C].
+
+#### `_ti_by_ti` bisects the impl tokens (lane optimize, commit 2633797ea)
+
+- **`_ti_by_ti` scanned every impl, twice per impl.** It bisects the `impl` tokens, which `_tr_prepass` records
+  ascending and now checks. Row: [T3].
+
+#### A generic fn's T-typed stores stop walking the unit twice each (lane optimize, commit 3538cb3f5)
+
+- **A generic fn's T-typed stores each walked the unit twice** (6.7.17's D106 `_gs_sval_big`): back for the
+  declaration (`_tok_name_decl`) and forward for a rebinding (`_gs_rebound`) — 4,000 stores 1,870 ms. `_tok_name_decl`
+  (27 callers) reuses its last walk when a new one reaches its start with no block open (dropped by the two in-place
+  token rewrites in dyn.cyr); `_gs_rebound` runs only behind `_rbn_has` (`_gs_rebound_at`'s filter). 104 ms. Row: [D].
+
+#### The review's fix (lane optimize, commit cc92b202e)
+
+- util.cyr's accessor comment cited `tests/gates/frontend/token_accessors_direct.sh` (it does not exist); it names
+  `hot_path_call_counts.sh` row A. Comment only; cycc byte-identical, seed-derive OK.
+
+### The audited libs (the libs lane)
+
+Branch `l6718-libs` (cut from `4504f6ca1`), 19 commits, one review round: PASS, zero must-fix (head `97a758909`,
+merged `054ec7cb8`). Roadmap § 6.7.18's "improve the libs with what the last months added", bounded to the 13 libs this
+release audited: net, http, ws, ws_server, async, fs, io, process, thread_local, fdlopen, tls, pam, slice. No `src/`
+change (none of the 13 is in src/'s include graph). `cyrius_api_surface` "5921 public fns, surface matches snapshot
+exactly"; removed_symbol_census.sh "0 removed vs 6.7.17". All 229 .tcyr that include one of the 13 libs exit as on
+the parent, file for file (123 crossos on all seven targets).
+
+#### pam_unix_authenticate's bound is a const (lane libs, commits e90c9ff84, 97a758909)
+
+- **pam_unix_authenticate's bound was a writable public var** — PAM_MAX_PASSWORD (added with CYRIUS-2026-0050) was
+  both the length check and, as a literal, the 520-byte stack copy and its wipe; a caller that raised the var to 1 MiB
+  had a 4,096-byte password (the client's bytes) memcpy'd over the caller's frame. Now
+  `const _PAM_MAX_PASSWORD = 512; var PAM_MAX_PASSWORD = _PAM_MAX_PASSWORD;` — the const bounds the password and sizes
+  the copy, the var only tells the value. Rows: crossos/pam_fail_closed.tcyr (parent: child SIGSEGV, -111);
+  lib_buffers_sized_by_const.sh axes 1 + 3 (+ axis 6 derived; parent 4 FAIL).
+
+#### exec_capture_str checks its pipe (lane libs, commit 60c5851ec)
+
+- **exec_capture_str ignored a failed pipe** — with no fd free it closed fd 0 (the caller's stdin), read it as output
+  and ran the command uncaptured; now -1 with nothing run, as exec_capture_status. Row: platform/process_exec_str.tcyr
+  (Linux; RLIMIT_NOFILE 16, fd table full; parent: answer 0, fd 0 closed, mark file written — 3 FAIL).
+
+#### fdlopen's loader stack fits its budget (lane libs, commit 88bb8d7dc)
+
+- **fdlopen's loader stack overran its budget** — 6 + 2×17 = 40 words (320 B) written below a 304 B budget, so AT_NULL
+  landed on the helper path: argv[0] and AT_EXECFN read "". `_FDL_STACK_WORDS` names the count. Row:
+  platform/fdlopen.tcyr stack-layout group (parent: strlen(argv[0]) 0 — 3 FAIL).
+
+#### D1 extended to net.cyr's blocking resolver (lane libs, commit 990c5ae23)
+
+- **D1 extended to net.cyr's blocking resolver** — `_net_dns_answer` / `_net_dns_skip` read the UDP reply through
+  fn-local slices + `slice_get_be` (net.cyr includes slice.cyr; `_net_be16` gone). Rows: net_parsers_read_through_slices.sh
+  gains the family (2 S + 4 M rows; floor 27 -> 33; parent 4 FAIL); fuzz/dns_answer.fcyr feeds each mutated answer to
+  `_net_dns_answer` too.
+
+#### The lib review — refactor, no behaviour change (lane libs, commits f9920393e, 97ad41005, 4c32d27d0, 41590f9c3, 3029cb64b, 23d73800a, 657172e59, b34f3d178, 871bfc1c5, 893a817e5, 1e61a58c0, 319ff8cb6, 071e061fd, 1f6301374)
+
+- **The lib review (refactor, no behaviour change)** — the 13 libs use the 6.7.x language where it is clearer: consts
+  for private constants (net, http, ws_server, process, fdlopen, tls), `: bool` internal predicates (net, http,
+  ws_server, fs, tls), multi-value returns for out-parameter pairs (`_http_exchange`, `_http_fetch`, `_io_tmp_open`,
+  `_tls_read_file_in`), default + named arguments (`_dir_walk_d`'s `prunes = 0`, `_proc_ptrs(..., strs: true)`),
+  `loop` for flag loops and `while (1 == 1)`, `OP=`; duplication retired: one sockaddr fill per layout and one
+  int-setsockopt body (net), one fetch body + one error response + no per-call heap slot (http;
+  stdlib_alloc_refusal_sentinels http_probe now 6 rows), `_ws_recv_exact` shared by ws_server, one walker (fs),
+  argv/envp/wait/capture helpers across seven exec verbs (process), FdlopenOff names for every state offset (fdlopen),
+  strlen/memcpy/memset/memeq for hand-rolled loops (io, slice, fdlopen, net). Stale comments retired: slice.cyr "avoid
+  pulling string.cyr", fdlopen "cyrius lacks bitwise AND"; syscall_wrapper_pass axis 4b counts `= strlen(`.
+- **tests/tcyr/platform/fdlopen.tcyr** formatted canonically (met; `cyrius fmt --check` parent 1, now 0).
+
+### The reviews' notes, fixed (the cleanup lane)
+
+Branch `l6718-cleanup` (cut from `6e4a82273`), six commits, merged `6c69e62fd`: the notes the lanes' reviews reported
+and left, each fixed. build/cycc rebuilt after the merge (1887cc792; the tcyr corpus vs the pre-cleanup compiler: 706
+files, 0 differ).
+
+#### The TLS contract's `tls_close` row (lane cleanup, commit 2fe9caadb)
+
+- **Docs: the TLS contract's `tls_close` row** still described native close as sending close_notify and freeing
+  nothing; it now says close zeroises every secret the ctx holds, whatever its state, and a seal / open after it is
+  `TLS_ERR_PROTOCOL` (the behaviour 3ad239fe6 shipped). Doc only.
+
+#### TLS 1.2's key_block sized by its const (lane cleanup, commit 332a5f4f9)
+
+- **lib: TLS 1.2's key_block buffer** was `secret var kb_b[96]` beside its own `kb_len > 96` guard — two copies of one
+  bound; both read the private `_TLS12_KEY_BLOCK_MAX` now (byte-identical builds). Row:
+  `lib_buffers_sized_by_const.sh` axes 1 + 2 (3 FAIL on the parent).
+
+#### compile()'s exits comment (lane cleanup, commit 1d10a5c62)
+
+- **CLI comment**: compile()'s "THERE ARE THREE EXITS" named a `probe_fd < 0` block that no longer exists (and listed
+  four sites under "three"); it names the `tmp_out == 0` block (build_temp_no_leak.sh's recipe too). Comment only.
+
+#### `cyrius deps` refuses every plaintext git transport spelling by name (lane cleanup, commit ef2300041)
+
+- **`cyrius deps` refuses every plaintext git transport spelling by name**: `_dep_git_plaintext` read only the leading
+  name, at most 8 characters, so `https::http://…`, `HTTPS::HTTP://…`, `https::ftp://…` and
+  `persistent-https::http://…` reached `git clone` (only the protocol.allow belt stopped them, unnamed). It now walks
+  each `<helper>::` (git's scheme-character run) and refuses a plaintext helper name or URL; `ext::` stays the belt's.
+  Row: `deps_plaintext_url_refused.sh` A2 (4 RED on the parent) + A2c controls (`https::https://`, `ext::true`).
+
+#### Two gates read programs/ recursively; `hc_write_new` is atomic (lane cleanup, commit aa14e8fc9)
+
+- **Two gates read programs/ flat**: `tool_writes_never_truncate.sh` and `manifest_read_whole_file.sh` globbed
+  `programs/*.cyr`, so programs/dev/, folds/ and release/ were outside both; both read recursively with floors on the
+  files read (programs/checks/ stays outside the first, as its header says). The recursive scan named three sites:
+  **helper_common's `hc_write_new`** (open O_TRUNC + one write: under RLIMIT_FSIZE an existing file came back a
+  2,048-byte prefix of the new bytes) is now `file_write_atomic`; hc_run's redirect (`_hc_open_out`, the shell's `>` /
+  `>>`) and sibci's CI log are child-output captures, allowlisted with reasons. Rows: tool_writes axis 4 (RED with the
+  parent's helper_common; RED on the flat glob, subdirectory floor), manifest axis 4's floors (RED on the flat glob).
+
+#### `_arr_fn_tparam` is linear (lane cleanup, commit fd8dcc155)
+
+- **The compiler: `_arr_fn_tparam` was quadratic** — it walked back to the nearest `fn` and scanned that fn's body to
+  its end per call, so N names no scope resolves in one body read O(N x body) tokens (1,600 impls over the 1,024-struct
+  cap: 72.7 M TOKTYP; 5,000 impls 8.0 s). One forward walk keeps each open `{`'s nearest enclosing fn and the next
+  query advances its cursor (2.35 M; 1.3 s); every answer is the walk's. Row: `hot_path_call_counts.sh` [W] (parent
+  386% RED, a restart-every-query mutant 395% RED, the tree 132%, bound 200%).
+- Proof: fixpoint c1 == c2 == c3; `seed-derive-cycc.sh` OK; the six forks build byte-identical with the parent and new
+  compilers; the 706 tests/tcyr files compile byte-identical (binary, diagnostics, rc) against the parent's compiler; a
+  checking compiler (both answers, exit on a difference) over 1,102 tree sources in both CYRIUS_MONOMORPH modes, 900
+  generated programs and hand shapes: 7,181 calls, no difference.
+
+### Integration — on `l6718-integ`
+
+- **The merges**, each lane merged whole: splits `b144a5146`, net `b77c6f783`, local `d12610e26`, tls `15cc88f32`;
+  tls-slots `1154900a5`; splits2 `70c55f7ad`, cbtsplit `b425d65c5`; pipefail `bd78a4704`, libs `054ec7cb8`, giantfns
+  `bebd871fe`, optimize `d78062f35`; cleanup `6c69e62fd`; refold `a01a554f9` (after the user's fold tags).
+  build/cycc was rebuilt to the fixpoint of the merged source and build/cycc-native-aarch64 cross-built in lockstep
+  after wave 1 (0f6ab0291), wave 3 (09c0e1bb1: 2,923,656 B; 3,153,288 B; the whole tcyr corpus compiled by the
+  pre-wave-3 compiler and by this one — 706 files, 2 differ, giantfns' two new rows), the FINDLOCAL fix (7320148ab)
+  and the cleanup (1887cc792: 2,929,832 B; 3,155,368 B; the corpus vs the pre-cleanup compiler, 706 files, 0 differ),
+  seed-derive OK each time.
+- **The merged tree's check.sh reds**, each fixed on integ: scaffold_verb_discovery.sh pinned 6 fuzz harnesses — net
+  added five, so the row is a floor of 11, the fuzz gate's own (db6d96868); tool_writes_never_truncate.sh's allowlist
+  entries `cbt/build.cyr|tmp_out` and `cbt/pulsar.cyr|tmp` matched no live site after CYRIUS-2026-0046 — removed, as
+  the gate's dead-entry arm requires (0f3075c6e); two lane-written fixtures gates_never_write_tree flagged —
+  pam_fail_closed.tcyr built `/tmp/cyr_pam.<pid>` by hand (now `test_scratch("cyr_pam")` in the run's own cwd) and
+  regression_capture_exclusive.sh ran wine through a shell-function wrapper the detector cannot read (the private
+  WINEPREFIX / HOME / XDG_CACHE_HOME now inline on each call line; 033988b10); the api-surface snapshot takes
+  `fdlopen::fdlopen_trusted_only/1`, CYRIUS-2026-0041's caller opt-in — one addition, nothing removed (34c5211f7);
+  preprocessor_scratch_bounds.sh's mktemp check in the checked form gates_never_write_tree axis 5 reads, after splits2
+  rewrote the line (55cfd903a).
+- **Met in the merged tree's second check.sh — a cycc SIGSEGV optimize introduced** (0f5d18c2b): cycc faulted on
+  `fn main(): i64 { var 140737488355327 = 1; ... }` — optimize's FINDLOCAL (4ee8da87d) read the looked-up name at
+  entry, and a NUMBER token where a declared name belongs hands in a value that is no name-pool offset; the STREQ walk
+  before it read nothing until a live slot. The name's length and first word are now read on the first live slot
+  compared — the old fault surface exactly, the speedup kept. Row: intrinsic_names_reserved.sh's "a number as a
+  declared name" (rc 139 → green); hot_path_call_counts.sh row L green; the corpus vs the pre-wave-3 compiler: the
+  same 2 intended diffs.
+- **The Windows TlsAlloc mask** (714e9e49c, the tls-slots review's note): the TLS index, a DWORD, is masked to 32
+  bits rather than relying on the register's upper half being zero; first_access_concurrent green on x86_64 and PE
+  (wine).
+- **The reviews' other notes, on integ**: the stdlib
+  reference says arm64 `thread_create` returns 0 when a registry chunk, the control block or the slot block cannot be
+  allocated, or `pthread_create` fails — it said only the chunk (19debaba2); three source comments name
+  parse/fn/def.cyr (402c36023).
+
+### Folds — sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1
+
+Each fixed in its SOURCE repo on an `l6718-<fold>` branch, reviewed once, released by the user (the tags), and
+vendored byte-identical from the tag by the refold lane (below).
+
+**sigil 3.13.13 → 3.13.15** (branch `l6718-sigil` from `2ed419c`, 3.13.14 tagged at `050ff1b`; branch
+`l6718-sigil-cn`, 3.13.15 tagged at `3c47656`; pin 6.7.9). Three rounds: the fixes and their review (zero must-fix); a
+follow-up that fixed the review's four notes before the 3.13.14 tag (its own review, zero must-fix); and 3.13.15, a
+PATCH for what the refold review met after 3.13.14 was tagged (below). 3.13.14: suite 3,479 / 0 across 95 .tcyr,
+sibci `sigil @ 050ff1b: rc=0 ok=17 fail=0`; 3.13.15: sibci `ok=17 fail=0`. `lib/sigil.cyr`'s Requires block is
+unchanged.
+
+#### CYRIUS-2026-0040 — ChaCha20-Poly1305's Poly1305 state on its own frame (lane sigil, commit ee7c75d)
+
+- **sigil 3.13.14 (CYRIUS-2026-0040):** ChaCha20-Poly1305 accepted a forged record (all-zero tag) when two threads
+  shared a crypto lane — the streaming Poly1305 state was one process-global array per lane and a sibling's finalize
+  zeroed it. The AEAD's state is now on its own stack frame (`poly1305_init_into` / `_update_into` / `_finalize_into`,
+  caller-owned, `POLY1305_STATE_SIZE` 168); the handle-less `poly1305_init` trio holds its lane from init to finalize.
+  Row: sigil `tests/tcyr/chacha20poly1305_lane_race.tcyr` (3.13.13: 108 / 20,000 forged accepted); the audit's v_p1305
+  probe: 14,991 / 300,000 → 0 / 300,000.
+
+#### CYRIUS-2026-0040, its cause — crypto lanes are a pool held only while used (lane sigil, commit 6d95d4c)
+
+- **sigil 3.13.14 (CYRIUS-2026-0040, its cause):** `cbank()` drew lanes from a never-decremented counter, so the 64th
+  crypto thread shared the 1st one's lane, live or not; ECDSA P-256 / P-384 verify (module-global lane state) then
+  rejected every genuine signature (20,023 / 20,023). Lanes are now a pool held only while used, by one thread
+  (`crypto_lane_enter` / `_leave`); the lane-state entry points refuse when none is free; a direct unscoped
+  EC-arithmetic call with none free exits 70. Rows: sigil `tests/tcyr/ecdsa_lane_alias.tcyr` (1,000 P-256 / 200 P-384
+  genuine verifies after 62 retired threads; 0 / 1,000 and 0 / 200 on 45b3f2b), `tests/tcyr/crypto_lane_exhaustion.tcyr`
+  (64 lanes held by open streams, the 65th thread refused, lanes returned, unscoped call exits 70; 6 failures on
+  45b3f2b). The audit's `v_ecdsa_alias`: forged accepted 0 / 20,000, valid rejected 0 / 19,999. `cbank()` takes
+  nothing (the held lane or 0), `crypto_bank_set` is a no-op, `crypto_banks_exhausted()` = a lane request was refused,
+  `crypto_banks_claimed()` = lanes held now, `crypto_tls_main_init` no longer gives main lane 0; `_crypto_lane_alias`
+  is a tests-only hook. No symbol removed.
+
+#### CYRIUS-2026-0042, sigil's side — nameConstraints parsed, enforced, exported (lane sigil, commits 1910602, 0637b14)
+
+- **sigil 3.13.14 (CYRIUS-2026-0042, sigil side):** nameConstraints (2.5.29.30) parsed whether critical or not,
+  enforced by `x509_verify_chain` (every CA, the anchor's included, over every cert below; self-issued intermediates
+  exempt) and by `_x509_verify_link` (direct issuer); dNSName / iPAddress permitted + excluded, directoryName
+  permitted; any other constrained form refuses a cert carrying it. Exported: `x509_name_constraints_check`,
+  `x509_cert_has_name_constraints`, `x509_nc_subtree_count`, `x509_nc_subtree`, `X509_GN_*`. `X509Cert` 272 → 304 B.
+  Row: sigil `tests/tcyr/x509_name_constraints.tcyr` (54; fixtures + OpenSSL verdicts in
+  `tests/data/name_constraints/`); the audit's nc probe: `x509_verify_chain` 1 → 0, `tls_native_client_verify_chain`
+  0 → -6.
+- **sigil 3.13.14 (CYRIUS-2026-0042):** a trailing-dot dNSName (`victim.example.`) escaped an excluded
+  `victim.example` (as in OpenSSL); one trailing dot is now dropped from the name and the constraint in
+  `_x509_nc_match`, the one DNS matcher behind `x509_verify_chain`, `_x509_verify_link` and the exported
+  `x509_name_constraints_check`. Row: `tests/tcyr/x509_name_constraints.tcyr` (14 new assertions over a new throwaway
+  PKI `tests/data/name_constraints/d_*.hex`; 6 RED on 6d95d4c; 68 / 0).
+
+#### Finding 20 — an empty TBS refused before the version-tag read (lane sigil, commit 7dbd6c2)
+
+- **sigil 3.13.14 (Finding 20):** x509_parse_into read der[der_len] on an empty TBS (`30 02 30 00`); refused first.
+  Row: `tests/tcyr/x509_guard_page.tcyr` (SIGSEGV on 3.13.13); the audit's guard probe: 139 → x509_parse 0.
+
+#### D1 — the X.509 / DER parsers read through fn-local slices (lane sigil, commits f168c80, 6680f6f)
+
+- **sigil 3.13.14 (D1):** the X.509 / DER parsers (der_walk, x509_parse_into + its helpers, the time parser,
+  `_ecdsa_der_int_w`, certpin's walker, the NC/SAN readers) read through fn-local slices, multi-byte big-endian fields
+  through `_x509_be_uint`, every inner walk bounded by its parent (a child running past its parent is refused). Row:
+  `fuzz/fuzz_x509.fcyr` (200,000 mutants; green plain + `--poison`; with the Finding-20 guard removed it aborts 134
+  where the parent exited 0).
+- **sigil 3.13.14 (D1):** `rsa_pubkey_from_der` (every RSA SPKI from `x509_parse_into`) read through load8 / memcpy
+  with every walk bounded by the whole buffer; it reads through a slice, each element inside its parent. Row:
+  `tests/tcyr/rsa.tcyr` (3 child-past-parent shapes REFUSED; RED on 0637b14); `fuzz/fuzz_x509.fcyr` now drives it with
+  RSA seeds (green plain + `--poison`).
+
+#### Met in D1 — pathLen and certpin (lane sigil, commits dfc6bbe, 0da9318)
+
+- **sigil 3.13.14 (met):** pathLen 8×0xFF decoded to -1 ("unlimited") — refused now
+  (`tests/tcyr/x509_pathlen_integer.tcyr`, 3 RED on the parent); certpin read one byte past `30 00` (`agnosys.tcyr`,
+  exit 134 on the D1 parent).
+
+#### 3.13.15 — an intermediate CA's commonName is not read as a host name (lane sigil, commit 3c47656; the refold review's find)
+
+- **Native TLS / sigil 3.13.15: an intermediate CA's commonName was read as a host name under a dNSName constraint**
+  (met by the refold review) — a sub-CA named like a host outside its issuer's or the anchor's constraint refused every
+  valid chain through it (OpenSSL verifies them: it reads the CN at depth 0 only); intermediates are checked as CAs,
+  the leaf as the leaf. `x509_name_constraints_check_ca(ca, sub)` added (every name but the CN); `_x509_verify_link`
+  checks a CA child as a CA; `x509_verify_chain` its intermediates as CAs; the leaf's CN still read. Row:
+  x509_name_constraints.tcyr +12 (4 RED with 3.13.14's reading). cyrius's side is the refold's `e91b099c1`.
+
+**sandhi 1.13.6 → 1.13.7** (branch `l6718-sandhi` from `d5576bc`, release line `6e649a3`; pin 6.7.16). One review
+round: one find, fixed by the reviewer (f4632e3, the h2 NUL), and the release re-cut (6e649a3). sibci `sandhi @
+6e649a3: rc=0 ok=42 fail=0`. `lib/sandhi.cyr`'s Requires block gains `lib/slice.cyr`.
+
+#### CYRIUS-2026-0044 — the HPACK size update and the decoded header list are bounded (lane sandhi, commits a683fb7, d69944b)
+
+- **sandhi 1.13.7 — CYRIUS-2026-0044 (P2) fixed.** The HPACK decoder applied any Dynamic-Table-Size-Update a server
+  sent (2^28 accepted, the decode table grown without eviction); a size above the 4096 sandhi's decoder advertises is
+  now a decoding error (RFC 7541 §6.3 / §4.2) and the exchange fails as `SANDHI_ERR_PROTOCOL`. An h2 response's decoded
+  header list had no bound (a 16 KiB block of one-byte references decoded into 16,383 headers, 135 MB on the default
+  allocator); past 65,536 octets (RFC 7540 §6.5.2 sizing) the exchange fails, saying why. Rows: sandhi `tests/h2.tcyr`
+  `test_hpack_size_update_capped_at_advertised` (4 FAIL on 1.13.6), `tests/alloc.tcyr` `test_h2_response_hpack_bounded`
+  (loopback peer; 3 FAIL on 1.13.6). The audit's `hpack_tbl.cyr` prints `ok: capped` (rc -4); its e2e mode 0 resp2
+  fails with 1.2 MB allocated (135 MB before), modes 1 / 2 keep the table at 4096.
+
+#### HPACK integers past 2^32 − 1 are refused (lane sandhi, commit 34f645a)
+
+- **sandhi 1.13.7 — HPACK integers wrapped negative:** nine continuation bytes were accepted (a length decoded as
+  -9223372036854775682); past 2^32 - 1 is now `_SANDHI_HPACK_ERR_INT_OVERFLOW`. Row: `test_hpack_int_decode_bounded`
+  (3 FAIL before).
+
+#### A header field holding a NUL — dropped on HTTP/1, refused on h2 (lane sandhi, commits 6d760ee, f4632e3)
+
+- **sandhi 1.13.7 — a header field holding a NUL was kept cut at the NUL** (`Content-Length\0x: 5` read as
+  Content-Length: 5); it is now dropped, as CR / LF fields were. Row: `test_headers_parse_drops_nul_fields` (5 FAIL
+  before).
+- **sandhi 1.13.7: an HPACK string holding a NUL was kept cut at the NUL.** A literal name `content-length\0x` decoded
+  as `content-length`, the h2 sibling of the HTTP/1 NUL fix. Such a string is now refused, and the exchange fails as
+  `SANDHI_ERR_PROTOCOL` (RFC 9113 §8.2.1). Row: `test_hpack_nul_field_refused` (4 FAIL before).
+
+#### D1 — the header, HPACK and DNS parsers read through fn-local slices (lane sandhi, commits 6485541, 94089ff, 2e88fb2)
+
+- **sandhi 1.13.7 — D1:** the header (`sandhi_headers_parse_a`, `_sandhi_hdr_trim_copy_a`), HPACK (`_hpack_int_decode`,
+  `_hpack_string_decode_a`, `sandhi_hpack_huffman_decode_a`, `sandhi_hpack_decode_field_a`) and DNS
+  (`_sandhi_resolve_parse_response_a` / `_aaaa_a`, `_skip_name`, `_read_label`, `_find_rr_a`) parsers read through
+  fn-local `[u8]` slices, checked in every build; 16-bit fields through `_sandhi_resolve_be16`; header copies through
+  `_sandhi_hdr_copy_checked`. Rows (forked probes from one byte before the buffer, exit 134 required; 0 on raw loads):
+  `test_hpack_overread_caught` (3), `test_headers_overread_caught` (1), `test_resolve_overread_caught` (2).
+
+#### Fuzz — hpack / headers / dns as seeded mutation corpora (lane sandhi, commit 19ccb72)
+
+- **sandhi 1.13.7 — fuzz:** `fuzz/hpack.fcyr`, `headers.fcyr`, `dns.fcyr` are seeded mutation corpora (20,000 / 10,000
+  / 20,000 cases: valid seeds, edge lengths 0 / end / past / 2^31 / 2^63, pointer and CNAME chains past their budgets,
+  byte mutation), each case an exact-size copy through the `_a` entry points with a fresh arena, a printed digest for
+  `--poison=ab`, invariants, and `FAIL case <k> seed <s>` / `FZ_CASE=<k>` replay. On 1.13.6 they fail (hpack case 31:
+  0044; headers case 152: the NUL field). sandhi's CI runs `cyrius fuzz --poison=ab`; 9/9 pass plain and A/B.
+
+**bayan 1.11.0 → 1.11.1** (branch `l6718-bayan` from `6479739`, tagged at `965298d`; pin 6.7.16). One review round
+(one must-fix, the unseeded key hash, fixed in the lane: 32de3de, b5d52f8), then three follow-ups — the review's
+notes, the other PDF decoders, and the TOML key indexes seeded before the tag — each row RED on its parent. sibci
+`bayan @ 965298d: rc=0 ok=50 fail=0 skip=1` (the SKIP: "Install qemu-user", needs sudo; the aarch64 steps ran).
+`lib/bayan.cyr`'s Requires block gains `lib/slice.cyr` and `lib/hashseed.cyr`. The user's audit decisions are Findings
+18, 16 and 24 here: invalid base64, malformed / out-of-range JSON numbers and duplicate JSON keys are refused by name.
+
+#### CYRIUS-2026-0045 — a failed PDF decode is memoised and every attempt charged (lane bayan, commits 1672fbc, d301d58)
+
+- **CYRIUS-2026-0045 (bayan 1.11.1)** — the PDF Flate bomb guard was bypassed: a failed decode was neither memoised
+  nor charged, so every page naming a failing stream re-inflated it into fresh buffers (25 KB -> 1.9 GB). A failure is
+  memoised, each inflate attempt is charged before its buffer exists (shrunk to the room left; no room is the
+  refusal), rejected buffers are freed. Row: bayan `tests/pdf_flate.tcyr` "a failing Flate stream is decoded once, and
+  charged" (RED: 576 hook calls for 64 pages, not 9). The audit's files: 42 MB / 7.9 MB.
+- **CYRIUS-2026-0045 (bayan)** — a rejected inflate attempt's buffer goes back on every refusal, `n > cap` among them;
+  a refused Str header is named. Row: `tests/pdf_flate.tcyr` "an inflate attempt's buffer goes back on every refusal"
+  (RED: 4,097 bytes held on both paths, no reason).
+
+#### Finding 25 — page content charged to a per-document budget (lane bayan, commit 1128283)
+
+- **Finding 25** — PDF text extraction rescanned a shared content stream per page reference (15.8 KB -> 11.6 s at 128
+  refs, linear to 1M): page content handed out is charged to a 512 MiB per-document budget, refused by name. Row:
+  `tests/pdf_flate.tcyr` "page content is charged to a per-document budget" (RED: 64/64 references read). Repro: 2.9 s,
+  flat in references.
+
+#### Finding 15 — yaml linear in mapping keys (lane bayan, commit 2d0240b)
+
+- **Finding 15** — yaml was quadratic in mapping keys (40,000 keys: 14.4 s -> 0.04 s). Row: `tests/parse_scaling.cyr`
+  yaml row (RED 7.2-7.5, now 1.0), a CI step.
+
+#### Finding 16 — one RFC 8259 number scanner (lane bayan, commit 93b98d0)
+
+- **Finding 16** — the streaming JSON parser wrapped out-of-range integers and accepted digitless numbers; both
+  parsers accepted a leading zero. One scanner, refused by name. Row: `tests/bayan.tcyr` "both parsers refuse the same
+  malformed numbers, by name" (RED 16/22).
+
+#### Finding 17 — flat toml linear in dotted-key tables (lane bayan, commits 6585949, a733bbe, c2b9404)
+
+- **Finding 17** — flat toml quadratic in dotted-key tables (20,000: 4.0 s -> 0.02 s). Row: `tests/parse_scaling.cyr`
+  flat toml row (RED 7.1-7.7, now 1.0) + `tests/bayan.tcyr` index rows.
+- **Finding 17 (bayan)** — the flat toml dotted-key index is the parse's scratch: zeroed before first use (its stack
+  array was read uninitialised and the garbage handed to `free_via`) and freed when a header drops it and when the parse
+  returns. Row: `tests/bayan.tcyr` "the dotted-key index frees only what it built", under a freeing allocator swapped
+  into the default vtable with a stack pattern laid first (RED: 1 foreign free; then 1 of 2 indexes freed).
+
+#### Finding 18 — base64 refuses what is not canonical, by name (lane bayan, commits cd55398, eb5b084)
+
+- **Finding 18** — base64 decoders accepted invalid / non-canonical input; refused by name
+  (`bayan_base64_last_error()`), alphabets never mix, every allocation checked. Row: `tests/bayan.tcyr` "the decoders
+  refuse what is not canonical, by name" (RED: 64 / 4,096 tails accepted, 3,132 re-encoding differently, SIGSEGV on
+  the refused url-decoder table).
+- **met** — `bayan_base64url_encode` stored through a refused allocation; returns 0. Row: `tests/bayan.tcyr`
+  ALLOC_MAX = 0 (RED: SIGSEGV).
+
+#### Finding 24 — a duplicate JSON key refuses the document, in every parser (lane bayan, commits 91440f4, 32de3de)
+
+- **Finding 24** — JSON accepted duplicate keys and answered the first: refused by the tree, flat (returns 0 +
+  `bayan_json_last_error()`) and stream parsers, keys compared decoded. Row: `tests/bayan.tcyr` "a duplicate key
+  refuses the document, in every parser" (RED 20/27) + `tests/json.fcyr` property (f) (RED: 26,468 wrong).
+- **The review's must-fix** — the key set's hash `_jk_hash` was unseeded, so offline-precomputed keys made all three
+  JSON parsers and yaml quadratic (10,000 keys / 147 KB: 309 ms against 6 ms); it is seeded (`hashseed` + `_hm_mix`;
+  the same keys 7 ms). Row RED: one run of 400 against a limit of 64.
+
+#### D1 — json's three parsers read through fn-local slices; the JSON harness (lane bayan, commits acb1e2d, aee8805)
+
+- **D1 (bayan)** — json's three parsers read through fn-local bounds-checked slices; lib/slice.cyr is now a bayan
+  requirement; ~1.5x parse cost. Row: `tests/json_slice_trap.cyr` + CI step (exit 134 in both modes); RED as a mutant
+  (`true` guard one short: parent read past and carried on, D1 traps 134).
+- **JSON harness** — `tests/json_parsers.fcyr` (60,000 mutants; tree/stream agreement, round trip, flat members,
+  fence vs embedded); green plain, `--poison`, `--poison=ab`, `--bounds` (RED on the pre-fix JSON code: 3,350 wrong).
+
+#### Met — the PDF writer and decoders give their buffers back (lane bayan, commits cdb6a74, d1d505c, 648d026, 4992255, f7cc50d, 1ca5062)
+
+- **met (bayan)** — the PDF writer's deflate loop freed none of its attempt buffers; every buffer but the output's goes
+  back, the header refusal named. Row: `tests/pdf_flate.tcyr` "a deflate attempt's buffer goes back unless it is the
+  output" (RED: 4/4, 1/1, 3 of 3 where 1, 1 held).
+- **met (bayan)**: the other PDF decoders (ASCIIHex, ASCII85, RunLength, the predictors) kept their output buffer when
+  they refused, and a refused header recorded no reason. Each now frees the buffer and names the refusal. Row:
+  `tests/bayan.tcyr` "a filter decoder's output buffer goes back on every refusal".
+- **met (bayan)**: a stream's `/Filter` chain kept every stage's output. Each stage is now freed once the next has read
+  it, and Flate's empty output is its own buffer. Rows: `tests/bayan.tcyr` "a filter chain gives back each stage's
+  output once the next has read it" and `tests/pdf_flate.tcyr` "an empty Flate stage is its own buffer".
+
+#### The TOML key indexes' hashes are seeded (lane bayan, commits d1f68b2, 965298d)
+
+- **met (bayan)**: both TOML parsers' key indexes hashed a peer's keys with published constants — the flat parser's
+  dotted-key table index and the tree's key index, keyed by parent and key. Keys precomputed once to share a slot made
+  the parse quadratic: flat, 8,000 dotted keys (129 KB) took 140 ms, against 6 ms; tree, 8,000 keys of one table
+  (113 KB) took 370 ms, against 5.5 ms. The tree's parent cell did not protect it: the parent went in before a
+  multiply, so a slot read only the low bits of (FNV state ^ parent). Both hashes now take the stdlib's per-process
+  seed and finalizer (`lib/hashseed.cyr`), as json's key set does; toml.cyr's Requires and `bayan-toml.deps` name
+  hashseed. Rows: `tests/bayan.tcyr` "the dotted-key index's hash is seeded per process" and (toml tree) "the key
+  index's hash is seeded per process" — 400 names / keys the published hash puts in one slot of 1,024 must not form one
+  run (RED on 6453614: a run of 400 in each, against a limit of 64).
+
+### The folds vendored from their tags; CYRIUS-2026-0042's native-TLS side (the refold lane)
+
+Branch `l6718-refold` (cut from `38f3683a0`), ten commits, one review round: one must-fix — a valid chain refused,
+fixed in sigil 3.13.15 and `e91b099c1` — merged `a01a554f9` after the user's tags. No `src/` change. The reviewer
+probed 0042 with an extra PKI against `openssl verify` (21 rows: iPAddress at the anchor and an upper CA, excluded IP,
+multi-SAN, upper case, CN-only and self-issued non-CA leaves under the anchor, a self-issued intermediate exempt / its
+leaf refused, a non-self-issued intermediate's SAN, a directoryName anchor, the unconstrained root twin sent as an
+intermediate): all agree with OpenSSL.
+
+#### The three folds vendored byte-identical from their tags (lane refold, commits 4ec5b2414, a5aa7c3dd, 48fc2a219, 1c9bede70)
+
+- **Folds (refolded byte-identical from the release commits the user tagged):** sigil 3.13.15 (`3c47656`; 3.13.14 at
+  `050ff1b` first), sandhi 1.13.7 (`6e649a3`), bayan 1.11.1 (`965298d`) — `lib/<fold>.cyr`, the docs/ecosystem.md
+  rows, the README fold list; their own bullets are above. `lib/sandhi.cyr`'s Requires gains `lib/slice.cyr`,
+  `lib/bayan.cyr`'s `lib/hashseed.cyr` and `lib/slice.cyr`. api-surface +11 (5,932), 0 removed
+  (removed_symbol_census PASS).
+
+#### CYRIUS-2026-0042, native TLS — every CA's nameConstraints over every certificate below it (lane refold, commit 8b244685d)
+
+- **Native TLS: a CA's nameConstraints were never read (CYRIUS-2026-0042, the TLS side).** The chain verifier checked
+  window, keyUsage / pathLen, EKU and the trust policy only, so a sub-CA constrained to `permitted;DNS:good.test`
+  (non-critical) issued a leaf for victim-bank.test that `tls_native_client_verify_chain` accepted and a native
+  connect to `openssl s_server` completed (OpenSSL: error 47). sigil 3.13.14's link check catches the DIRECT issuer
+  only (and exempts a self-issued CA child); `_tn_verify_chain` now keeps the selected path and requires, in the
+  conjunction that selects each intermediate and each trust root, that the CA's constraints (sigil's
+  `x509_name_constraints_check`) allow every certificate below it — the leaf always, a self-issued intermediate exempt
+  (RFC 5280 §6.1.3(b)). A CA that does not is skipped, as a wrongly purposed one is; none left = TLS_ERR_CERT_INVALID.
+  Rows: `tests/tcyr/crossos/tls_native_name_constraints.tcyr` and
+  `tests/gates/platform/tls_native_name_constraints_openssl.sh` (registered; TLS 1.3 rows, each also graded by
+  `openssl verify`; RED on l6718-integ's lib); the audit's verbatim nc_probe: verify_chain 0 -> -6. The stale "272 B
+  per root" comments name `X509_CERT_SIZE` (304), and the contract's Verification rows say so.
+
+#### An intermediate CA is checked as a CA (lane refold, commit e91b099c1; the review's must-fix)
+
+- **Native TLS: an intermediate CA's commonName was read as a host name under a dNSName constraint** — root -> int_nc
+  (permitted;DNS:good.test) -> a CA `CN=sub.other.test` (no SAN) -> www.good.test, and the same under a constrained
+  anchor, verify with OpenSSL 3.6.5 (it reads the commonName at depth 0 only) and were refused by `8b244685d`'s
+  `_tn_nc_below_ok` and sigil 3.13.14's link check. `_tn_nc_below_ok` checks the leaf with
+  `x509_name_constraints_check` and every non-self-issued intermediate with sigil 3.13.15's
+  `x509_name_constraints_check_ca`; the leaf's CN is still read. Rows: `tls_native_name_constraints.tcyr` "a CA named
+  like a host" (5; both www rows RED on the parent; 84 green on x86_64, aarch64 under qemu, PE under wine);
+  `tls_native_name_constraints_openssl.sh` +2 TLS 1.3 rows (19, floor 19; both RED on the parent).
+
+#### The TLS 1.2 client keeps the server's intermediates (lane refold, commit b6c4bc5ba)
+
+- **Native TLS 1.2: the client kept only the server's leaf** (met making 0042's end-to-end rows).
+  `_tn_parse_certificate_12` dropped every certificate after the leaf, so against `s_server -tls1_2 -cert_chain int` a
+  valid chain failed TLS_ERR_CERT_INVALID (no path), and no 1.2 chain met a nameConstraint. It keeps up to 16 (as the
+  1.3 client), each entry a non-empty ASN.1Cert inside the list (else TLS_ERR_BAD_HANDSHAKE). Rows: the NC tcyr's two
+  TLS 1.2 groups (10; 7 RED on the parent) and the gate's 5 TLS 1.2 rows (the 2 that connect RED on the parent).
+
+#### The folds' parser fuzz harnesses in fuzz/ (lane refold, commit b72487656)
+
+- **fuzz/: the folds' parser harnesses run in cyrius against the vendored bundles** — sigil X.509 / DER, sandhi HPACK /
+  headers / DNS (+ fz_driver.cyr), bayan JSON (tree / stream / flat), adapted only in their includes (sigil's 14 seed
+  certs inline). Each green plain, `--poison` and `--poison=ab`. Row: `fuzz_corpus_plain_and_poison.sh` floor 11 ->
+  16; on l6718-integ's lib sandhi_hpack fails case 31 (0044), sandhi_headers case 152 (the NUL field), bayan_json 3,350
+  of 60,000 wrong; sigil_x509 aborts 134 with the vendored empty-TBS guard (Finding 20) removed; sandhi_dns FAILs case
+  60 (exit 134) with its label-length bound removed (the review).
+
+#### lib-tls-contract.md's lane bound describes the 3.13.14 pool (lane refold, commit 67d8cdb48)
+
+- **lib-tls-contract.md's lane bound described sigil 3.13.13** (a lane per thread for life, shared past 63 lifetime
+  threads, "reuse workers"); sigil 3.13.14's lanes are a pool held only while used, refused (fail closed) at 64
+  concurrent holders (lib/thread_agnos.cyr's comment that named `crypto_bank_set` too). Row:
+  `tests/tcyr/crossos/tls_crypto_lanes_reclaimed.tcyr` (100 retired crypto workers: every verify right, exhausted 0,
+  claimed 0; RED 3 with l6718-integ's lib: exhausted 1, claimed 100).
+
+### Filed, not fixed
+
+- [lib/pam.cyr's `nullok`](docs/development/issues/2026-10-22-pam-nullok-empty-password-authenticates.md) — kept (the
+  user, 2026-10-22), refusing empty passwords placed at 6.8.0. Nothing else was filed: every other find of the lanes
+  and their reviews is fixed above.
+
+### Measured, not taken
+
+The optimize lane's profile named these as well; none is a defect and none was filed — each is under ~5 % of a
+self-compile, has no deterministic row to hold it, or costs more to change than it saves (the reason per item):
+- a plain-run fast path in PP_IFDEF_PASS (pp 113 → 99 ms) and a table-driven DECODE_LEN (5.6 %): no calls to count, so
+  no deterministic row;
+- inside `_PARSE_FN_DEF_IMPL`, the per-fn compaction's sums over every earlier NOP run (~4 %) and the inline-asm body
+  scan (~1.7 %): under 5 % each;
+- `_ra_frame_trim`'s one scan per unused callee-saved register (~2 %): under 5 %, and one pass would change the order
+  of the NOP-run records the compactor reads;
+- a FINDLOCAL name index: after `4ee8da87d` a lookup compares a word per slot (2,000 locals in one fn: 9 STREQ calls),
+  and an exact index needs the 25 sites that write a local slot's name behind one setter;
+- the local-slot snapshot around a generic instance stays O(enclosing locals) per instance (word loops since
+  `92950f4cd`): the instance's locals start at slot 0, so moving them moves its frame offsets.
+
 ## [6.7.17] — 2026-10-22
 
 **Break 2, repair 7 — the cleanup: the 22 issues still open after 6.7.16 (the triage at the open — five read-only

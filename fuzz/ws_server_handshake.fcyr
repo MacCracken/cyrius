@@ -1,7 +1,7 @@
 # Fuzz: the WebSocket server's upgrade handshake — lib/ws_server.cyr ws_server_handshake (the
 # Upgrade / Connection / Sec-WebSocket-Version / Sec-WebSocket-Key lookups, through the sandhi fold's
 # sandhi_server_find_header, and the key's check and Accept), which reads the request any client
-# sends (6.7.18; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+# sends (6.7.18; issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
 #
 # A VALID upgrade request is the seed (RFC 6455's sample key). Each iteration mutates a fresh copy
 # from its own seed — a truncation, a header's ':' or CR LF dropped or doubled, a header name's case

@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.17** (2026-10-22) — the cleanup, every remaining placed issue: 22 issues closed in seventeen lanes over four waves (wave 0 on main: the fold wave bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9, and D39–D90 keeping each 6.7.16 change beyond the decisions' text); 111 decisions (D1–D109 the user's, all as recommended; D110, D111 the agent's recommended defaults, for the user's review); CYRIUS-2026-0037 fixed; the helper scripts converted to cyrius · cycc **2,923,536 B** · `cycc-native-aarch64` **3,153,176 B** · **694** `.tcyr`, **382** in `crossos/` · **106** `lib/*.cyr` · **587** shell gates under `tests/gates/<bucket>/` · api-surface **5,919** · **10** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0038**
+**Current head: v6.7.17** (2026-10-22) — the full security audit + the refactor / optimization review: the 2026-10-22 audit's 28 findings fixed in sixteen lanes after the moves (CYRIUS-2026-0038 – 0050; 0039 mitigated by the repository's fork-PR approval setting; pam's `nullok` kept, placed at 6.8.0); D1 the network parsers through fn-local slices and a fuzz harness per family; D2 the frontend's and the CLI's largest files in folders; self_compile −29 % same-box; the folds sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1 · cycc **⟪SIZE⟫ B** · `cycc-native-aarch64` **⟪ARM-SIZE⟫ B** · **708** `.tcyr`, **391** in `crossos/` · **106** `lib/*.cyr` · **596** shell gates under `tests/gates/<bucket>/` · api-surface **5,932** · **10** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0051**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -50,8 +50,7 @@ v6.6.x closed at 6.6.20. 6.7.0–6.7.6 shipped (2026-10-07 → 2026-10-08): [com
 
 | Release | Content |
 |---|---|
-| 6.7.0 – 6.7.17 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) · repair 6: what 6.7.15 filed and what 6.7.16's own waves found (6.7.16) · the cleanup: every remaining placed issue, the fold wave bayan / sandhi / sankoch (6.7.17) |
-| 6.7.18 | **the full security audit + the refactor / optimization review** (user, 2026-10-09): the audit the 2–3-minor rule owes (last: 6.5.45), its findings fixed in the release · the largest files elevated · the libs improved with what the last months added |
+| 6.7.0 – 6.7.18 | ✅ shipped — A traits · C3 trait-bounded generics · B1 `const` + C1 `const fn` · B2 `bool` · B3 the if-expression · B5 `loop` / `do` + B8 `OP=` on every lvalue · the W2 stdlib wave + Break 1 · B4 tuples + B6 default / named arguments (6.7.7) · checked `dyn` + C2 the bounds-checked mode (6.7.8) · the repair batch (6.7.9) · B7 packed narrow fields + the handle line + P5-B execution coverage (6.7.10) · Break 2 repair 1: multi-value receives, call arguments, struct copies and operators, generics + the frontend, cybs, the tools (6.7.11) · Break 2 repair 2: the platform release (6.7.12) · repair 3: struct values (6.7.13) · repair 4: generics, the frontend, infra (6.7.14) · repair 5: what 6.7.14 filed (6.7.15) · repair 6: what 6.7.15 filed and what 6.7.16's own waves found (6.7.16) · the cleanup: every remaining placed issue, the fold wave bayan / sandhi / sankoch (6.7.17) · the full security audit + the refactor / optimization review: the audit's findings fixed, the largest files in folders, the network parsers through slices and fuzzed (6.7.18) |
 | 6.7.19 → | what the 6.7.18 reviews produce — the number of releases is open, set at 6.7.18's close (user, 2026-10-09) |
 | closeout | **after the review follow-ups** (number open): the closeout checklist ([cycle-discipline.md](cycle-discipline.md)) — the checklist, not an audit campaign |
 
@@ -87,61 +86,7 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 
 6.7.17 — the cleanup — ✅ shipped: its record (the 22 issues, the decisions D1–D111, the fold wave) is CHANGELOG [6.7.17], one line in [completed-phases.md](completed-phases.md); the issues are in [issues/archived/](issues/archived/).
 
-### 6.7.18 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18; and from 6.7.17 at the 6.7.17 open, 2026-10-22 — D91: the cleanup first)
-
-**Opened 2026-10-22** (the user: "lets continue with 6.7.18 work"). Decided at the open, in one round: **D1** — the
-network parsers read through fn-local slices (checked in every build), not an extended `#bounds`; **D2** — the
-layout direction below is settled as written: folders with direct names, the moves first as their own byte-identical
-bites, then the splits.
-
-Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
-set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what
-cannot pack filed.
-
-- **The full security audit** (CLAUDE.md § *Security Audit Process*; last full audit
-  `docs/audit/2026-09-03-security-audit.md` at 6.5.45 — the 2–3-minor rule is due): map the attack surfaces (the TLS
-  stacks, `net` / `http` / `ws` / sandhi, DNS, shared temp paths and Windows plantable paths, the release / download
-  channel and the seed → cybs → cycc chain, `pam`, secrets in memory) as they stand after 6.7.x's growth; scan; report
-  in `docs/audit/<date>-security-audit.md`; a ledger id only for an actual vulnerability (attacker + boundary named);
-  P0 / P1 fixed in the release, each with a regression test.
-  - [The network parsers' fuzz harnesses and bounds-checked builds](issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
-    (HTTP, WebSocket, DNS, X.509 / DER, JSON; the user, 2026-10-22) — the bounds-checked form is its one question at
-    the open.
-- **The refactor / optimization review — elevate the large files.** The frontend has outgrown its files
-  (`parse/fn.cyr` ~13.9 K lines, `parse/expr.cyr` ~6.4 K, `parse/decl.cyr` ~6.2 K, `lex/pp.cyr` ~5.3 K, `parse/parse.cyr`
-  ~4.5 K; `cbt/commands.cyr` / `deps.cyr` ~6.6 K each): split them along their real seams (the trait / generic /
-  const-fn modules, the call path, the statement dispatch), shrink the giant fns that sit near cybs's per-fn
-  reference ceiling (PARSE_FNCALL, PARSE_RETURN, `_PARSE_FN_DEF_IMPL`, `_PARSE_FACTOR_IMPL`, `_field_load_on`), dedupe
-  the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
-  differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
-  measured same-box before / after.
-  - **The layout direction (user, 2026-10-09 — "just thoughts"; SETTLED at 6.7.18's open, D2, 2026-10-22):** folders with direct
-    names instead of prefixed files, as `backend/` already does — `src/frontend/parse/expr.cyr` for `parse_expr.cyr`,
-    `parse/types/type.cyr` (beside `struct.cyr`, `tuple.cyr`, …) for `parse_types.cyr`, `parse/fn/` for the pieces of
-    `parse_fn.cyr` (definitions, the call path, the return / tail path, traits, generics, the const-fn evaluator),
-    `lex/` for `lex.cyr` + `lex_pp.cyr`; `cbt/` likewise (`commands.cyr` / `deps.cyr` by verb and stage). Measured
-    2026-10-09: cycc embeds no `src/frontend/` path (a pure move rebuilds byte-identical); the include chain is the
-    seven forks' `lex.cyr` / `parse.cyr` lines plus `parse.cyr`'s own; cybs's include handler takes a 4 KB name per
-    nesting level; ~90 gate files and the docs name these paths. How:
-    1. **Moves first, as their own bites — `git mv` + include lines + every path reference, no content change** (the
-       grep covers `tests/gates/`, `scripts/`, `.github/workflows/`, `programs/`, `cbt/`, docs, vidya, the open issues'
-       `file:line` pointers); byte-identical cycc and seed-derive prove it. Then the splits, each its own bite, so
-       history follows (`git log --follow`) and every diff stays reviewable.
-    2. **Keep the include graph as flat as today** — one parent includes a folder's files — since cybs's nesting
-       depth is bounded; seed-derive on every bite.
-    3. **Watch basename collisions** (`lex/lex.cyr` beside `ts/lex.cyr`) wherever a tool or diagnostic keys on a
-       basename (`#@file` markers, `CYRIUS_SYMS`, crash localization, cyrdoc).
-    4. **`src/`, `cbt/` and `programs/` are internal — free to move. `lib/` paths are the stdlib's public contract**
-       (`include "lib/str.cyr"`, `[deps] stdlib`, distlib): reorganizing `lib/` keeps every old path working (a
-       one-line include of the new home) and is the user's call per module.
-    5. **At 6.7.18, not before** — with no lanes in flight, and after the repair releases, whose issue files cite
-       today's `file:line`.
-- **Improve the libs with what the last months added**: where it makes `lib/` clearer or safer, use the 6.7.x
-  language (traits, `const` / `const fn`, `bool`, tuples, default / named arguments, `loop` / `do`, `OP=`), fill the
-  gaps the folds and the repair releases exposed, and retire hand-rolled patterns the language now covers. ⚠ A lib
-  file `src/` includes must stay compilable by cybs (no new syntax there); a public symbol's removal or semantic change
-  is the user's call (`removed_symbol_census.sh`); a fold's improvement lands in its SOURCE repo and is re-vendored.
-
+6.7.18 — the full security audit + the refactor / optimization review — ✅ shipped: its record (the audit's 28 findings and CYRIUS-2026-0038 – 0050, the decisions D1 / D2 and the audit's four, the sixteen lanes, the folds sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1) is CHANGELOG [6.7.18], one line in [completed-phases.md](completed-phases.md); the audit is [docs/audit/2026-10-22-security-audit.md](../audit/2026-10-22-security-audit.md); its issue is in [issues/archived/](issues/archived/). D2's standing rule stays: `src/`, `cbt/` and `programs/` are internal, free to move; `lib/` paths are the stdlib's public contract — reorganizing `lib/` keeps every old path working (a one-line include of the new home) and is the user's call per module.
 
 ### 6.7.19 → — what the reviews produce, then the closeout (number open)
 
