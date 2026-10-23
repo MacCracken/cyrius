@@ -176,7 +176,7 @@ trap 'rm -rf "$T"' EXIT
 # Compile $1 (relative to $T) and print the file:line the FIRST duplicate-fn warning
 # names, as "file line". Never merges stderr into the binary.
 warn_at() {
-    ( cd "$T" && "$CC" < "$1" > out.bin 2> err.txt )
+    ( cd "$T" && "$CC" < "$1" > out.bin 2> err.txt ) || true   # judged by the artifact / err text below
     sed -n 's/^warning:\(.*\):\([0-9]*\):[0-9]*: duplicate fn.*/\1 \2/p' "$T/err.txt" | head -1
 }
 true_line() { grep -n "^fn $2" "$T/$1" | tail -1 | cut -d: -f1; }
@@ -331,7 +331,7 @@ check "reported line <= $nlines (file length)" "yes" "$in_file"
 printf 'fn dup_eof() { return 1; }\nfn eof_mid() { return 5; }\nfn dup_eof() { return 2; }' > "$T/noeol.cyr"
 check "noeol: fixture really is unterminated" "1" \
       "$([ "$(tail -c1 "$T/noeol.cyr" | od -An -tu1 | tr -d ' ')" = "10" ] && echo 0 || echo 1)"
-( cd "$T" && "$CC" < noeol.cyr > out.bin 2> err.txt )
+( cd "$T" && "$CC" < noeol.cyr > out.bin 2> err.txt ) || true   # judged by the artifact / err text below
 eof_true=$(awk '/^fn dup_eof/{n=NR} END{print n}' "$T/noeol.cyr")
 eof_len=$(awk 'END{print NR}' "$T/noeol.cyr")
 # One assertion, both halves: the pattern REQUIRES the `<source>:` prefix, so a report
@@ -356,7 +356,7 @@ fn clean_one() { return 1; }
 fn main() { return clean_one(); }
 var r = main();
 EOF
-( cd "$T" && "$CC" < clean.cyr > out.bin 2> err.txt )
+( cd "$T" && "$CC" < clean.cyr > out.bin 2> err.txt ) || true   # judged by the artifact / err text below
 check "clean: duplicate warnings" 0 "$(grep -c 'duplicate fn' "$T/err.txt" || true)"
 check "clean: still compiles" 0 "$([ -s "$T/out.bin" ] && echo 0 || echo 1)"
 
@@ -440,8 +440,8 @@ fn main() {
 }
 var r = main();
 EOF
-( cd "$T" && "$CC" < def_sem.cyr > sem.bin 2> sem.err && chmod +x sem.bin )
-( cd "$T" && ./sem.bin ); check "macro expansion still evaluates correctly" 22 "$?"
+( cd "$T" && "$CC" < def_sem.cyr > sem.bin 2> sem.err && chmod +x sem.bin ) || true   # judged by the artifact / err text below
+_semrc=0; ( cd "$T" && ./sem.bin ) || _semrc=$?; check "macro expansion still evaluates correctly" 22 "$_semrc"
 
 # ── AXIS 8 — `#ifdef` inside an INCLUDED file with NO `#derive` after it. Axis 4 cannot
 # see the PP_IFDEF_PASS half of the padding, because its `#derive` re-anchor recomputes
@@ -489,7 +489,7 @@ in_struct_case() {
         echo "var r = main();"
     } > "$T/ins.cyr"
     want=$(grep -n 'bad = ;' "$T/ins.cyr" | cut -d: -f1)
-    ( cd "$T" && "$CC" < ins.cyr > out.bin 2> err.txt )
+    ( cd "$T" && "$CC" < ins.cyr > out.bin 2> err.txt ) || true   # judged by the artifact / err text below
     got=$(sed -n 's/^error:<source>:\([0-9]*\):[0-9]*: .*/\1/p' "$T/err.txt" | head -1)
     check "in-struct ($1, $3 fields before): line" "$want" "${got:-none}"
 }
@@ -522,7 +522,7 @@ struct Dup {
 fn main() { return 0; }
 var r = main();
 EOF
-( cd "$T" && "$CC" < syn.cyr > out.bin 2> err.txt )
+( cd "$T" && "$CC" < syn.cyr > out.bin 2> err.txt ) || true   # judged by the artifact / err text below
 syn_n=$(awk 'END{print NR}' "$T/syn.cyr")
 syn_cnt=$(grep -c "duplicate fn 'Dup_" "$T/err.txt" || true)
 check "synthesized: all four accessors warn" 4 "$syn_cnt"
@@ -549,14 +549,14 @@ echo "axis 11 — code after the struct's } survives (no silent code loss):"
 tail_case() {
     # $1 label, $2 expected exit code, $3 program text
     printf '%s' "$3" > "$T/tail.cyr"
-    ( cd "$T" && "$CC" < tail.cyr > tail.bin 2> tail.err )
+    ( cd "$T" && "$CC" < tail.cyr > tail.bin 2> tail.err ) || true   # judged by the artifact below
     if [ ! -s "$T/tail.bin" ]; then
         check "tail ($1): compiles" "yes" "no"
         return
     fi
     chmod +x "$T/tail.bin"
-    ( cd "$T" && ./tail.bin )
-    check "tail ($1): exit" "$2" "$?"
+    _tlrc=0; ( cd "$T" && ./tail.bin ) || _tlrc=$?
+    check "tail ($1): exit" "$2" "$_tlrc"
 }
 tail_case "fn after }" 2 '#derive(accessors)
 struct Z { a; } fn helper() { return 2; }
@@ -721,9 +721,9 @@ fn main() {
 }
 var r = main();
 EOF
-( cd "$T" && "$CC" < deskeep.cyr > deskeep.bin 2> deskeep.err )
+( cd "$T" && "$CC" < deskeep.cyr > deskeep.bin 2> deskeep.err ) || true   # judged by the artifact / err text below
 if [ -s "$T/deskeep.bin" ]; then
-    chmod +x "$T/deskeep.bin"; ( cd "$T" && ./deskeep.bin ); dkrc=$?
+    chmod +x "$T/deskeep.bin"; dkrc=0; ( cd "$T" && ./deskeep.bin ) || dkrc=$?
 else
     dkrc="compile-fail: $(sed -n 1p "$T/deskeep.err")"
 fi
@@ -734,9 +734,9 @@ check "Deserialize: the struct is a usable type" 60 "$dkrc"
 # BELOW `#derive(Deserialize)` was dropped whole. (The reverse order always worked —
 # measured green on every compiler here — which is why it went unnoticed.)
 printf 'var zbuf[16];\n#derive(Deserialize)\n#derive(accessors)\nstruct D { u; v; }\nfn main() { D_set_v(&zbuf, 44); return D_v(&zbuf); }\nvar r = main();\n' > "$T/desstack.cyr"
-( cd "$T" && "$CC" < desstack.cyr > desstack.bin 2> desstack.err )
+( cd "$T" && "$CC" < desstack.cyr > desstack.bin 2> desstack.err ) || true   # judged by the artifact / err text below
 if [ -s "$T/desstack.bin" ]; then
-    chmod +x "$T/desstack.bin"; ( cd "$T" && ./desstack.bin ); dsrc=$?
+    chmod +x "$T/desstack.bin"; dsrc=0; ( cd "$T" && ./desstack.bin ) || dsrc=$?
 else
     dsrc="compile-fail: $(sed -n 1p "$T/desstack.err")"
 fi
@@ -745,7 +745,7 @@ check "Deserialize-first stacking runs the stacked handler" 44 "$dsrc"
 for kind in Deserialize Serialize accessors; do
     printf '#derive(%s)\nstruct D { x; y = ; }\nfn main() { return 3; }\nvar r = main();\n' \
         "$kind" > "$T/desbad.cyr"
-    ( cd "$T" && "$CC" < desbad.cyr > desbad.bin 2> desbad.err )
+    ( cd "$T" && "$CC" < desbad.cyr > desbad.bin 2> desbad.err ) || true   # judged by the artifact / err text below
     check "$kind: malformed field is REFUSED (binary not emitted)" "yes" \
           "$([ -s "$T/desbad.bin" ] && echo no || echo yes)"
     check "$kind: malformed field names line 2" "2" \
@@ -767,7 +767,7 @@ echo "axis 12 — a diagnostic on the flattened line is windowed, short lines ar
     echo 'var r = main();'
 } > "$T/big.cyr"
 big_want=$(grep -n 'var q = ;' "$T/big.cyr" | cut -d: -f1)
-( cd "$T" && "$CC" < big.cyr > out.bin 2> err.txt )
+( cd "$T" && "$CC" < big.cyr > out.bin 2> err.txt ) || true   # judged by the artifact / err text below
 big_got=$(sed -n 's/^error:<source>:\([0-9]*\):[0-9]*: .*/\1/p' "$T/err.txt" | head -1)
 check "windowed: line still exact" "$big_want" "${big_got:-none}"
 big_len=$(awk 'NR==2{print length($0)}' "$T/err.txt")
@@ -776,7 +776,7 @@ check "windowed: excerpt line <= 300 bytes" "yes" \
 check "windowed: whole diagnostic <= 2048 bytes" "yes" \
       "$([ "$(wc -c < "$T/err.txt")" -le 2048 ] && echo yes || echo no)"
 printf 'fn shortline() { var q = ; }\nfn main() { return 0; }\nvar r = main();\n' > "$T/short.cyr"
-( cd "$T" && "$CC" < short.cyr > out.bin 2> err.txt )
+( cd "$T" && "$CC" < short.cyr > out.bin 2> err.txt ) || true   # judged by the artifact / err text below
 check "short line printed in FULL (not truncated)" "    fn shortline() { var q = ; }" \
       "$(sed -n 2p "$T/err.txt")"
 
@@ -804,9 +804,9 @@ fn after_nested() { return 21; }
 fn main() { return after_nested(); }
 var r = main();
 EOF
-( cd "$T" && "$CC" < nested.cyr > nested.bin 2> nested.err )
+( cd "$T" && "$CC" < nested.cyr > nested.bin 2> nested.err ) || true   # judged by the artifact / err text below
 if [ -s "$T/nested.bin" ]; then
-    chmod +x "$T/nested.bin"; ( cd "$T" && ./nested.bin ); nrc=$?
+    chmod +x "$T/nested.bin"; nrc=0; ( cd "$T" && ./nested.bin ) || nrc=$?
 else
     nrc="compile-fail"
 fi

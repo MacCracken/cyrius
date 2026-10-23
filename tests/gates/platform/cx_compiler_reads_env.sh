@@ -52,11 +52,14 @@ pass=0
 _bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 
 # run <env-assignment|-> <dir> <fixture> — compile with cycc_cx from <dir>; sets rc, leaves .cyx in $T/o.cyx
+# (`rc=0; … || rc=$?`: a refused compile is an answer here, and under `bash -eo pipefail` a bare
+# failing command ended the gate.)
 run() {
-  if [ "$1" = - ]; then (cd "$2" && env -u CYRIUS_ALLOW_PARENT_INCLUDES -u CYRIUS_ASYNC -u CYRIUS_POISON "$T/cycc_cx" < "$3" > "$T/o.cyx" 2> "$T/e"); rc=$?
-  else (cd "$2" && env "$1" "$T/cycc_cx" < "$3" > "$T/o.cyx" 2> "$T/e"); rc=$?; fi
+  rc=0
+  if [ "$1" = - ]; then (cd "$2" && env -u CYRIUS_ALLOW_PARENT_INCLUDES -u CYRIUS_ASYNC -u CYRIUS_POISON "$T/cycc_cx" < "$3" > "$T/o.cyx" 2> "$T/e") || rc=$?
+  else (cd "$2" && env "$1" "$T/cycc_cx" < "$3" > "$T/o.cyx" 2> "$T/e") || rc=$?; fi
 }
-vm() { "$T/cxvm" < "$T/o.cyx" > /dev/null 2>&1; vrc=$?; }
+vm() { vrc=0; "$T/cxvm" < "$T/o.cyx" > /dev/null 2>&1 || vrc=$?; }
 
 # ── lex.cyr: CYRIUS_ALLOW_PARENT_INCLUDES ──────────────────────────────────────────────────
 mkdir -p "$T/inc/sub"

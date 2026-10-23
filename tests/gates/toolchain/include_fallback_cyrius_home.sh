@@ -116,9 +116,9 @@ _bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 row() {
     _e=$1; _m=$2; _d=$3; _n=$4; shift 4
     if [ "$RUN" = - ]; then
-        ( cd "$_d" && env -i "$@" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" ); _rc=$?
+        _rc=0; ( cd "$_d" && env -i "$@" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" ) || _rc=$?
     else
-        ( cd "$_d" && env -i "$@" "$RUN" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" ); _rc=$?
+        _rc=0; ( cd "$_d" && env -i "$@" "$RUN" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" ) || _rc=$?
     fi
     case "$_e" in
         ok)
@@ -127,7 +127,7 @@ row() {
                 return
             fi
             if [ "$NATIVE" = 1 ]; then
-                chmod +x "$T/o"; "$T/o" < /dev/null; _x=$?
+                chmod +x "$T/o"; _x=0; "$T/o" < /dev/null || _x=$?
                 _want=22; [ "$_m" = mh ] && _want=11
                 [ "$_x" -eq "$_want" ] || { _bad "[$LBL] $_n: the $_m binary exited $_x, not $_want"; return; }
             fi ;;
@@ -152,12 +152,14 @@ row() {
 # when no home did — neither variable set, or an over-long CYRIUS_HOME.
 drift() {
     _w=$1; _m=$2; _n=$3; shift 3
+    # The warnings are the verdict, not the status (`|| true`; `grep -c` exits 1 on a count of 0):
+    # under `bash -eo pipefail` either ended the gate.
     if [ "$RUN" = - ]; then
-        ( cd "$T/pin" && env -i "$@" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" )
+        ( cd "$T/pin" && env -i "$@" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" ) || true
     else
-        ( cd "$T/pin" && env -i "$@" "$RUN" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" )
+        ( cd "$T/pin" && env -i "$@" "$RUN" "$BIN" < "$_m.cyr" > "$T/o" 2> "$T/e" ) || true
     fi
-    _c=$(grep -c 'cyrius.cyml pins 0.0.1' "$T/e")
+    _c=$(grep -c 'cyrius.cyml pins 0.0.1' "$T/e" || true)
     [ "$_c" -eq "$_w" ] && _ok || _bad "[$LBL] $_n: $_c pin-drift warnings, expected $_w"
 }
 
