@@ -121,7 +121,9 @@ fn _fo_run(which): i64 {
 fn main(): i64 {
     alloc_init();
     test_group("foreign-TLS mode: the slots are the declaring thread's alone");
+    var armed = 0;
     #ifdef CYRIUS_TARGET_LINUX
+    armed = 1;
     var f1 = _fo_run(1);
     assert_eq(f1, 70, "F1: a worker's slot access is refused (70; 3 = it read the owner's slot)");
     var named = 0;
@@ -131,8 +133,11 @@ fn main(): i64 {
     assert_eq(_fo_run(3), 0, "F3: a fork child's first thread takes the array over; the owner's slots are untouched");
     #endif
     #ifndef CYRIUS_TARGET_LINUX
-    println("  not run: foreign-TLS mode is the Linux thread-pointer path");
+    println("  SKIP: foreign-TLS mode is the Linux thread-pointer path");
+    armed = 1;
     #endif
+    # 6.7.18: a target arm ran — the rows, or a SKIP by name (0 assertions failed the corpus on ecb)
+    assert_eq(armed, 1, "a target arm ran: the foreign-mode rows, or a SKIP by name");
     var r = assert_summary();
     return r;
 }

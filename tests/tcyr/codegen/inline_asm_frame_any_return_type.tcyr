@@ -11,6 +11,7 @@
 # x86 only: the picker and its save area are x86's, and the asm is x86 bytes; elsewhere the fns are not compiled.
 include "lib/assert.cyr"
 
+var _armed = 0;
 #ifdef CYRIUS_ARCH_X86
 struct Box<T> { v: T; }
 # x is the first slot ([rbp - 8]) and r the second ([rbp - 16]): `mov rax, [rbp - 8]; mov [rbp - 16], rax`.
@@ -50,6 +51,13 @@ assert_eq(bx.v, 45, "asm in a fn returning `: Box<i64>` reads its first slot");
 var a, b = f_two(46);
 assert_eq(a, 46, "asm in a fn returning `: (i64, i64)` reads its first slot");
 assert_eq(b, 47, "and its second value is the first plus one");
+_armed = 1;
 #endif
+#ifndef CYRIUS_ARCH_X86
+println("  SKIP: the rows are x86 inline asm");
+_armed = 1;
+#endif
+# 6.7.18: a target arm ran — the rows, or a SKIP by name (0 assertions failed the corpus on ecb)
+assert_eq(_armed, 1, "a target arm ran: the x86 asm rows, or a SKIP by name");
 var rc = assert_summary();
 syscall(60, rc);
