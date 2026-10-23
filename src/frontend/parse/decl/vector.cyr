@@ -7,7 +7,7 @@
 #
 # The DECLARATION form `var r: f64v2 = f(...)` has had a 16/32-byte receive since v5.10.28
 # (the `_is_simd128` / `_is_simd256` paths in PARSE_VAR below). The ASSIGNMENT form never got
-# one: it fell through to the generic `EFLSTORE(S, idx)` in parse.cyr, an 8-BYTE store, so a
+# one: it fell through to the generic `EFLSTORE(S, idx)` in parse/assign.cyr, an 8-BYTE store, so a
 # correctly-declared `var r: f64v2;` followed by `r = f64v2_add(a, b);` kept at most the low
 # half and read back as zero — with only a misleading "assigning non-pointer to typed pointer"
 # warning to show for it.

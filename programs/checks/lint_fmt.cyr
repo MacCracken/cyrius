@@ -95,16 +95,19 @@ fn _pd_last_fn(buf, n, bol0): i64 {
 }
 
 # The file's last `fn ` offset, read back from its END (a window that doubles until it holds one
-# or covers the file) — a read path that shares nothing with the scan's buffer. -1 if none.
+# or covers the file) — a read path that shares nothing with the scan's buffer. -1 if the file holds
+# none, -2 if the read-back itself failed: a file with no fn (parse.cyr once its own body is split
+# into pieces: the pending flags and the includes) is whole when the scan saw none either, and was
+# refused as "truncated" when the two answers were one. CHANGELOG [6.7.18]
 fn _pd_tail_last_fn(path, size): i64 {
     var k = 65536;
     while (1 == 1) {
         if (k > size) { k = size; }
         var fd = file_open(path, 0, 0);
-        if (fd < 0) { return 0 - 1; }
+        if (fd < 0) { return 0 - 2; }
         var t = alloc(k + 1);
-        if (t == 0) { file_close(fd); return 0 - 1; }
-        if (sys_lseek(fd, size - k, 0) != size - k) { file_close(fd); return 0 - 1; }
+        if (t == 0) { file_close(fd); return 0 - 2; }
+        if (sys_lseek(fd, size - k, 0) != size - k) { file_close(fd); return 0 - 2; }
         var got = 0;
         var go = 1;
         while (go == 1) {
@@ -176,7 +179,7 @@ fn _parse_drift_load(path, len_out): i64 {
     store8(buf + total, 0);
     var seen = _pd_last_fn(buf, total, 1);
     var real = _pd_tail_last_fn(path, size);
-    if (real < 0 || seen != real) {
+    if (real < 0 - 1 || seen != real) {
         _pd_fail(path, "the scan did not reach the file's last fn (read from its end): a truncated file");
         return 0;
     }
@@ -211,7 +214,8 @@ fn _parse_drift_scan(path): i64 {
 fn _parse_emit_drift_gate(): i64 {
     var fail = 0;
     # Scope: every parse file — src/frontend/parse/ and its folders (6.7.15: parse/fn/def.cyr, split from
-    # parse/fn.cyr; 6.7.18: parse/fn.cyr and parse/decl.cyr split into parse/fn/ and parse/decl/).
+    # parse/fn.cyr; 6.7.18: parse/fn.cyr, parse/decl.cyr, parse/expr.cyr and parse/types.cyr split into parse/fn/,
+    # parse/decl/, parse/expr/ and parse/types/, and parse.cyr's own body into the pieces beside it).
     # tests/gates/toolchain/check_parse_drift_reads_whole.sh
     # holds this list to the tree's own (`find src/frontend/parse -name '*.cyr'`), so a file added there and not
     # here, or named here and gone, fails by name. CHANGELOG [6.7.18]
@@ -220,6 +224,17 @@ fn _parse_emit_drift_gate(): i64 {
     # switch-jump-table direct emits. parse.cyr now joins the gate.
     # 6.7.10: parse/cov.cyr (the execution-coverage mode) joins it too.
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/parse.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/pair_scan.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/pair_check.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/state.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/vis.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/switch.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/builtin.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/assign.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/deref_store.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/assign_copy.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/stmt.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/prog.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/cov.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/ctrl.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/array.cyr"));
@@ -234,7 +249,18 @@ fn _parse_emit_drift_gate(): i64 {
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/receive.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/var.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/handle.cyr"));
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/closure.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/callee.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/stamp.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/wide.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/postfix.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/subscript.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/deref.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/undef.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/factor.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/intrin.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/term.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/pexpr.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/table.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/ret.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/call_args.cyr"));
@@ -250,7 +276,17 @@ fn _parse_emit_drift_gate(): i64 {
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/body_pass.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/sig.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/def.cyr"));   # 6.7.15: split from parse/fn.cyr
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/type.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/tuple.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/dyn.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/dyn_call.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/ptr.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/ptr_ann.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/slice_type.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/struct.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/enum.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/struct_def.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/types/lookup.cyr"));
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);

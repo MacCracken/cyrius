@@ -908,7 +908,7 @@ fn PARSE_DO(S): i64 {
 }
 
 # A `for` opens its `continue` range: forward-jump mode, its jumps appended above every
-# enclosing `for`'s (see `_cont_vec`, parse.cyr). Returns its base. CHANGELOG [6.6.20]
+# enclosing `for`'s (see `_cont_vec`, parse/state.cyr). Returns its base. CHANGELOG [6.6.20]
 fn _cont_open(S): i64 {
     if (_cont_vec == 0) { _cont_vec = vec_new(); }
     S64(S + 0x18F898, 1);
@@ -1031,7 +1031,7 @@ fn _for_step_assign(S, noff): i64 {
     if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
     # 6.6.12: the statement arm's width-dispatched store (_asg_store_slot), not an 8-byte copy.
     # 6.7.6 (D2): a plain step rounds an f64 into an f32 and refuses a whole typed array, as the
-    # statement does (_asg_plain_chk, parse.cyr).
+    # statement does (_asg_plain_chk, parse/assign.cyr).
     if (idx >= 0) { _for_step_tpw(S, idx, 0, step_ti, aps); _asg_plain_chk(S, idx, 0, step_ti); _asg_store_slot(S, idx, 0); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
     else {
         idx = FINDVAR(S, noff);
@@ -1338,7 +1338,7 @@ fn PARSE_FOR(S): i64 {
     var fsm = _for_semis(S, he);   # 6.7.17: a header missing a `;`
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
-    _PARSE_STMT_NESTED(S);   # 6.6.16: the init is inside the `for` (parse.cyr)
+    _PARSE_STMT_NESTED(S);   # 6.6.16: the init is inside the `for` (parse/stmt.cyr)
     _for_init_end(S, fsm, he);
     var slt = L64(S + 0x18F838);
     var sbk = L64(S + 0x18F840);
@@ -1351,7 +1351,7 @@ fn PARSE_FOR(S): i64 {
     # it then OVERWROTE one, the inner `continue` was patched to the OUTER step and the
     # outer one never patched (a no-op on x86, `b .` on aarch64). v6.6.3 fixed it for a
     # `for` directly in a `for`, 6.6.20 through a `while` / closure / generic instance —
-    # the base is the length of `_cont_vec` (parse.cyr). CHANGELOG [6.6.3] [6.6.20]
+    # the base is the length of `_cont_vec` (parse/state.cyr). CHANGELOG [6.6.3] [6.6.20]
     var cfwb = _cont_open(S);
     # v5.6.14: IR_NOP landing pad at classic-for loop top.
     var _ire_for = IR_ENABLED(S);

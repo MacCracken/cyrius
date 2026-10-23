@@ -13,9 +13,9 @@
 # `qq[0]`. Only 6.7.11's pair refusal (`_pair_sync_ti`) and 6.7.14's const ones recorded that they were in sync.
 # (issues/archived/2026-10-18-in-sync-refusal-in-assignment-swallows-next-statement.md)
 #
-# THE FIX. `_refuse_in_sync` (src/frontend/parse/parse.cyr) records the mark `_stmt_resync` reads, called just before each
+# THE FIX. `_refuse_in_sync` (src/frontend/parse/pair_check.cyr) records the mark `_stmt_resync` reads, called just before each
 # such refusal latches: `_arr_sub_addr`'s undefined-base and u128 arms, `_sub_err`, `_psub_err` and `_deref_u128_err`
-# (src/frontend/parse/expr.cyr). `_stmt_resync` is unchanged: it clears only the latch when the statement ended at
+# (src/frontend/parse/expr/subscript.cyr, expr/deref.cyr). `_stmt_resync` is unchanged: it clears only the latch when the statement ended at
 # its own `;` / `}` past the mark, and still skips to the next recovery point when it did not.
 #
 #   F   the filing's programs verbatim: F1 latch4 (three errors, lines 5 6 7), F2 latch5 (three, lines 5 6 7)
@@ -294,7 +294,7 @@ okrow() {
 
 # AS — 6.7.16 (issues/archived/2026-10-19-refused-assert-after-first-statement-swallows-next-statement.md): AN #assert IS
 # LINE-TERMINATED, SO A REFUSED ONE ENDS IN SYNC AT ITS LINE, not only at its `;`. `_assert_end` (src/frontend/
-# parse.cyr) put the caller's latch back only when the tail ended at a `;`: `#assert zz9 == 1` with no `;` kept it,
+# parse/builtin.cyr) put the caller's latch back only when the tail ended at a `;`: `#assert zz9 == 1` with no `;` kept it,
 # and the statement on the next line was skipped by the resync with its own error (after the first top-level
 # statement and in a fn body; the declaration zone's resync stops at the next declaration keyword). The refused
 # expression is now stepped to its grammar's end (`_ce_extent`, what pass 1 skips) when that is a well-bracketed

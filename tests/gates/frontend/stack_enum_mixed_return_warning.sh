@@ -3,7 +3,7 @@
 # `: stack` pair on another path but a SINGLE value here") fires on a dropped TAG, and not on
 # a nullary variant, which IS a whole value.
 #
-# ⛔ WHY. `_warn_mixed_pair_returns` (src/frontend/parse/parse.cyr) treated `return IDENT(...)` as
+# ⛔ WHY. `_warn_mixed_pair_returns` (src/frontend/parse/pair_check.cyr) treated `return IDENT(...)` as
 # a pair return only when the callee had fn flag 256. Nullary `: stack` variant constructors
 # (`None()`, any `Nope();`) never get 256, and correctly so, because they return the tag
 # alone. So `return None();` beside `return Some(v);` was reported as a dropped tag and
@@ -223,7 +223,7 @@ fn f(x) { var g = |y| { if (y > 5) { return Ok(5); } return (gd<i32>(y)); }; ret
 # 6.7.15 (issues/archived/2026-10-17-mixed-pair-return-warning-skips-impl-methods.md): an impl METHOD and an inherited trait
 # DEFAULT are judged as a fn is — the walk took depth-0 `fn` tokens only, so the filed method (im_repro: exit 50, `t = 5`
 # the plain return read as the tag) built silent where its free-fn twin (im_free) warns. `_warn_mixed_impls`
-# (parse.cyr): each impl's methods (`_impl_method_entry`, read only) and each default it inherits, an untyped `self`
+# (parse/pair_scan.cyr): each impl's methods (`_impl_method_entry`, read only) and each default it inherits, an untyped `self`
 # typed as the impl's struct (`_pbs_iself`), named as the source spells it (`Pt.qm`); a default inherited by two impls
 # warns once (im_default2), an override is judged as its own method (im_override, im_override_ok). Mutations (a scratch
 # copy of the tree, the gate run from it, both compilers built from the mutated src; 2026-10-18):

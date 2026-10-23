@@ -1,0 +1,1049 @@
+# PARSER — stores through a dereference — `*p = v` (`_dst_*`, `_dsr_*`), a struct value's source and operator checks
+# (`_ssv_*`, `_ssc_*`, `_sop_*`), _deref_store.
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+# ⛔ 6.7.11 — `*p = v` THROUGH A `*S` COPIES THE STRUCT (the user's decision (a), 2026-10-13; issues/2026-10-11-
+# deref-store-through-struct-pointer-decision.md). Decision 6 makes `*p` a struct value at every size, and since
+# 6.7.10 `p = l` copies `l` INTO `*p`; the store wrote the 8-byte word whatever S: a zero-size or 3..7 B struct
+# overran into its neighbour, one over 8 B kept only its first 8 bytes, `*p = q` stored the pointer, and `*p += a`
+# added to the first word. The cursor past the operand of the `*` at `d`, rax = the pointer: when the operand is
+# typed `*S` by the compiler's own typing (`_hl_dpsid`, its step the struct's size; not `Str` / tuple / dyn),
+# `*p OP= v` is refused by name as `l += a` is (the statement parses on: 0), and for `=` the pointer is parked in a
+# hidden temp and the statement's assignment arms run with that temp as their destination (`_agc_ovr`), so
+# `*p = v` copies exactly what `G = v` copies — a local, parameter, global, field, call, method or operator result,
+# a handle or a `*T` (copied, never rebound), `*q` — `sizeof(S)` bytes (none for a zero-size struct), another
+# struct refused by name; any other value (untyped, an integer) is stored as the struct's word at `sizeof(S)` bytes,
+# at most 8, never past the object (`_dst_word`). 1 = done (`term` consumed); 0 = not this shape (cursor untouched).
+fn _dst_struct(S, term, d): i64 {
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    if (PEEKT(S) != 4) {
+        if (_asg_pair_at(S) == 1) { _dst_cop_err(S, nm, _sval_stars(S, d + 1)); }   # 6.7.15: `**pp` names '*pp'
+        return 0;
+    }
+    STI(S, GTI(S) + 1);   # `=`
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (_dst_arms(S, term, sid, h, nm) == 1) { return 1; }
+    _dst_word(S, h, STRUCTSZ(S, sid - 1));
+    _expect_step(S, term);
+    return 1;
+}
+# ⛔ 6.7.17 (D14, the user's decision, 2026-10-22: "copy through the slot") — A STRUCT VALUE STORED INTO A `*S` SLOT
+# REACHED THROUGH A DEREFERENCE OR A FIELD IS COPIED INTO THE S THE SLOT POINTS AT, as `pq = r` into a `*Q` name copies
+# (6.7.10's decision 6, B7-1c): `*ppq = r;` / `*ppq = mkp();` (ppq a `**Q`) and `w.pq = r;` (a `*Q` field) REBOUND the
+# slot to the value's own storage and left q unchanged (the filed repro exited 113 where 34 is right). The slot's
+# address in rax (the operand of the `*`, typed `**S` by its pin, `_pp_sid`; or the field's), the cursor on the `=`:
+# the value, unless it is provably no struct value (`_psv_not`) or another struct's whole call (D99's refusal,
+# `_psv_other`), runs the statement's assignment arms against the slot's pointee as a HANDLE (`_agc_ovr_pp` 2) — a
+# struct value of S is copied in (another struct's refused by name), a handle or a `*S` rebinds the slot, as for a
+# `*Q` name; anything else is stored into the slot as before. 1 = done (`term` consumed). CHANGELOG [6.7.17]
+fn _dst_pslot(S, term, d): i64 {
+    if (PEEKT(S) != 4) { return 0; }
+    var sid = _pp_sid(S, _ps_pin(_hl_pw(S, d + 1, GTI(S))));
+    if (sid <= 0) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    if (_psv_not(S, GTI(S) + 1, term) == 1) { return 0; }
+    if (_psv_other(S, GTI(S) + 1, term, sid) == 1) { return 0; }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    STI(S, GTI(S) + 1);   # `=`
+    return _psl_store(S, term, sid, nm);
+}
+# rax = the `*S` slot's address, the cursor past the `=`: the slot and its pointee parked, the arms run against the
+# pointee (a handle: `_agc_ovr_pp` 2) named `nm`; a value they leave in rax is stored into the slot. 1.
+fn _psl_store(S, term, sid, nm): i64 {
+    var hs = _HTEMP(S);
+    _HTSTORE(S, hs);
+    ELOAD64(S);
+    var ho = _HTEMP(S);
+    _HTSTORE(S, ho);
+    var sv = _agc_ovr_pp;
+    _agc_ovr_pp = 2;
+    var r = _dst_arms(S, term, sid, ho, nm);
+    _agc_ovr_pp = sv;
+    if (r == 1) { return 1; }
+    _dst_word(S, hs, 8);
+    _expect_step(S, term);
+    return 1;
+}
+# 1 = the value [st, its `term`) is provably no struct value, by its tokens: empty, an address `&x`, a literal, a name
+# that is no inline struct (a handle, a `*T`, an untyped or scalar name), a typed pointer (`_hl_pw`: a `*T` field,
+# call, `p + n`), or a whole call of a fn that returns no struct (not a known `&f` through fncallN / callptr).
+# CHANGELOG [6.7.17]
+fn _psv_not(S, st, term): i64 {
+    var e = _hl_dx_end(S, st, term);
+    if (e < 0) { return 1; }
+    var a = _ie_unparen(S, st, e);
+    var pe = _ie_pe;
+    if (pe <= a) { return 1; }
+    var t = TOKTYP(S, a);
+    if (t == 27) { return 1; }
+    if (pe == a + 1) {
+        if (t != 2) { return 1; }
+        if (_hl_amp_sid(S, TOKVAL(S, a)) > 0) { return 0; }
+        return 1;
+    }
+    if (_hl_pw(S, a, pe) > 0) { return 1; }
+    if (t != 2) { return 0; }
+    if (_icall_sid_at(S, a) > 0) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    if (_icall_open_at(S, a) >= 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }
+    if (GFRS(S, fi) != 0) { return 0; }
+    return 1;
+}
+# 1 = the value [st, its `term`) is a whole free call returning ANOTHER struct than `sid` by value: D99's refusal
+# (`_dsr_sres`), in its words, not the arms'. CHANGELOG [6.7.17]
+fn _psv_other(S, st, term, sid): i64 {
+    var e = _hl_dx_end(S, st, term);
+    if (e < 0) { return 0; }
+    var a = _ie_unparen(S, st, e);
+    var pe = _ie_pe;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != pe) { return 0; }
+    if (_icall_open_at(S, a) >= 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (rs >= 2048) { return 0; }
+    if (rs == sid) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.17 (D23 A, the user's decision, 2026-10-22: "The whole vector") — `*pv = v` THROUGH A `*V` COPIES THE VECTOR,
+# as `w = u` does and as a store through a `*S` copies the struct (6.7.11); 6.7.13's D34 made `*pv` the vector when read.
+# The store wrote one word: from a local its lane 0 (`*pv = u;` 42 on x86_64 / aarch64 / cx / PE where 47 is right), from
+# a call the word its result register held (`*pv = mk2(4, 7);` x86_64 / aarch64 2, cx / PE 42), and `*(&w) = ..` the
+# same (issues/archived/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 1). The cursor past the
+# operand of the `*` at `d`, rax = the pointer: when the operand points at a vector (`_dop_vd`: its step word — a `*V`
+# local, parameter, capture, field, global, `: *V` call, `pv + n`, `*ppv` of a `**V` — or `&w` of a vector, `*(&w)`
+# being w), `*pv OP= v` is refused as `w OP= v` is (the statement parses on: 0), and for `=` the pointer is parked in a
+# hidden temp and the value received as `w = <src>` receives it (`_dvec_rcv`). 1 = done (`term` consumed). CHANGELOG
+# [6.7.17]
+fn _dst_vec(S, term, d): i64 {
+    var vd = _dop_vd(S, d + 1, GTI(S));
+    if (vd == 0) { return 0; }
+    if (PEEKT(S) != 4) {
+        if (_asg_pair_at(S) == 1) { _dvec_cop_err(S, d); }
+        return 0;
+    }
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    STI(S, GTI(S) + 1);   # `=`
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (_dvec_rcv(S, term, 0 - vd, h, nm) == 1) { return 1; }
+    _expect_step(S, term);
+    return 1;
+}
+# `*pv OP= v` through a pointer to a vector, refused by name as `w OP= v` is (`_asg_wide_refused`): `*(&w)` is w; else
+# "the vector 'pv' points at" (`**ppv`: '*ppv'). In sync, as the struct's (`_dst_cop_err`). 0.
+fn _dvec_cop_err(S, d): i64 {
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    _cop_rti = GTI(S) + 2;   # 6.7.17: past the `op =` the cursor is on
+    if (_amp_vd(S, d + 1, GTI(S)) != 0) {
+        _err_in_sync(S, "compound assignment to vector ", nm,
+          " is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)");
+        return 0;
+    }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": compound assignment to the vector '");
+    _dst_spell(S, nm, _sval_stars(S, d + 1));
+    PRSTR("' points at is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# The value at the cursor (ended by `term`) stored into the vector of type `vt` the parked pointer `h` points at, as `w =
+# <src>` stores it (`_vrcv_asg`): a call declared to return `vt` — by name, an explicit instance, a method, `callptr(&f,
+# ..)` / `fncallN(&f, ..)`, inside parentheses — received into a frame temporary (SysV / AAPCS64 / cx: its vector
+# registers; Win64: the temporary is its hidden result pointer) and copied (at top level there is no frame: refused as a
+# top-level declaration is); a dereference `*q` of a pointer to `vt` (`_vrcv_demit`'s), copied through; a vector local,
+# parameter or capture of `vt`, copied (`_try_aggregate_copy_assign` with the parked pointer its destination,
+# `_agc_ovr`, as `_dst_struct`'s); another vector refused by name; anything else by the receive's words
+# (`_vrcv_other`). 1 = `term` consumed; 0 = the cursor on `term`.
+fn _dvec_rcv(S, term, vt, h, nm): i64 {
+    var ti = GTI(S);
+    var k = _vrcv_src(S, ti, vt, term);
+    _vec_desc(S, vt);
+    var n = GVEC_NSLOTS(S);
+    if (k == 4) { return _dvec_deref(S, vt, h, nm, n * 8); }
+    if (k != 0) {
+        if (GINFN(S) != 1) {
+            _vcall_vt(S, ti, term, 0);
+            _svc_toplevel_at(S, _vcv_a, _vcv_nt);
+            PCMPE(S);
+            return 0;
+        }
+        var t = _agg_temp_t(S, n, vt);
+        _vrcv_emit(S, t, vt, k);
+        _agc_copy_bytes(S, _dh_li(h), _dh_gv(h), t, 0 - 1, n * 8);
+        return 0;
+    }
+    if (_vval_at(S, ti, _hl_dx_end(S, ti, term)) != 0) {   # a vector name, wrapped too: copied, or refused by name
+        if (_vvl_arr == 0) {   # 6.7.17 (D103): an array of vectors is the receive's own refusal
+            if (_dvec_name(S, term, vt, h, nm) == 1) { return 1; }
+        }
+    }
+    _vrcv_bad(S, ti, vt, term, 1);   # a call of another vector, wrapped or not
+    if (_vrcv_other(S, term, vt) == 1) { return 1; }
+    PCMPE(S);   # a call naming no fn: the undefined-function path's
+    return 0;
+}
+# ... a vector name: the statement's copy (`_try_aggregate_copy_assign`) into the parked pointer. 1 = done.
+fn _dvec_name(S, term, vt, h, nm): i64 {
+    var sv = _agc_ovr;
+    var svn = _agc_ovr_nm;
+    var svh = _agc_ovr_h;
+    var svt = _agc_ovr_t;
+    _agc_ovr = 1;
+    _agc_ovr_nm = nm;
+    _agc_ovr_h = h;
+    _agc_ovr_t = vt;
+    var r = _try_aggregate_copy_assign(S, nm, term);
+    _agc_ovr = sv;
+    _agc_ovr_nm = svn;
+    _agc_ovr_h = svh;
+    _agc_ovr_t = svt;
+    return r;
+}
+# ... a dereference `*q` (`_vrcv_k` parentheses, then `*`): q parsed and its vector read (`_vrcv_dparse`) — `vt`'s, the
+# `nb` bytes copied from where q points to where `h` points; another vector refused by name; none, the receive's words.
+fn _dvec_deref(S, vt, h, nm, nb): i64 {
+    var ti = GTI(S);
+    var a = ti + _vrcv_k + 1;
+    var vd = _vrcv_dparse(S);
+    if (vd == 0) { return _vrcv_err(S, ti, "assigned", 0); }
+    if (0 - vd != vt) { return _vrcv_dbad(S, ti, vt, vd, nm, _hl_lastnm(S, a, _vrcv_dpe, TOKVAL(S, a))); }
+    _agc_copy_bytes(S, _dh_li(h), _dh_gv(h), _dh_li(_vrcv_dh), _dh_gv(_vrcv_dh), nb);
+    return 0;
+}
+# A hidden temp `h` holding an address (`_HTEMP`: a frame slot in a fn, a hidden global at top level) as
+# `_agc_copy_bytes`' operand: the slot's band (`_AGC_DREF`), else -1 — and the global's (`0 - 1000 - gvi`), else -1.
+fn _dh_li(h): i64 {
+    if (h >= 0) { return _AGC_DREF(h); }
+    return 0 - 1;
+}
+fn _dh_gv(h): i64 {
+    if (h >= 0) { return 0 - 1; }
+    return 0 - 1000 - (0 - 2 - h);
+}
+# `*p OP= v` through a `*S` refused by name. ⛔ 6.7.14 — `*(&s) OP= v` (the `&` arm, `_hl_damp`) is the struct value
+# s (6.7.13), so it is refused as `s OP= v` is (the user's D17 (a), 2026-10-16): it kept 6.7.5's word op, on s's
+# first word, through 6.7.13. CHANGELOG [6.7.14]
+# `star`: the `*`s the operand of the outer `*` opens with (`_sval_stars`) — 1 for `**pp`, whose operand is `*pp`.
+fn _dst_cop_err(S, nm, star): i64 {
+    _cop_rti = GTI(S) + 2;   # 6.7.17: past the `op =` the cursor is on
+    if (_hl_damp == 1) {
+        _err_in_sync(S, "compound assignment to struct ", nm,
+          " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+        return 0;
+    }
+    if (star > 0) { return _dst_cop_pp(S, nm, star); }
+    _err_in_sync(S, "compound assignment to the struct ", nm,
+      " points at is refused - a struct value is not an integer or a float (write `*p = *p + b`)");
+    return 0;
+}
+# ⛔ 6.7.15 — `**pp OP= v` THROUGH A `**S` NAMES ITS OPERAND AS WRITTEN: the outer `*`'s operand is `*pp` (`star` `*`s
+# before the name `nm`), so the struct '*pp' points at, and the hint in that spelling (`**pp = **pp + b`). It named
+# 'pp', which points at a pointer (and `*p = *p + b`). `_err_in_sync`'s rules: once at the token (a generic's
+# instances parse it again), the panic latch left as it was. CHANGELOG [6.7.15]
+fn _dst_cop_pp(S, nm, star): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": compound assignment to the struct '");
+    _dst_spell(S, nm, star);
+    PRSTR("' points at is refused - a struct value is not an integer or a float (write `*");
+    _dst_spell(S, nm, star);
+    PRSTR(" = *");
+    _dst_spell(S, nm, star);
+    PRSTR(" + b`)\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# `star` `*`s, then the name `nm`, on stderr.
+fn _dst_spell(S, nm, star): i64 {
+    while (star > 0) {
+        PRSTR("*");
+        star = star - 1;
+    }
+    PRSTR(S + 0xEC00000 + nm);
+    return 0;
+}
+# The statement's assignment arms (`_PARSE_STMT_IMPL`'s order) with the parked pointer `h` as their destination
+# `nm` (`_agc_ovr`). 1 = a copy (`term` consumed); 0 = the value is in rax, the cursor on `term`.
+fn _dst_arms(S, term, sid, h, nm): i64 {
+    var sv = _agc_ovr;
+    var svn = _agc_ovr_nm;
+    var svh = _agc_ovr_h;
+    var svt = _agc_ovr_t;
+    _agc_ovr = 1;
+    _agc_ovr_nm = nm;
+    _agc_ovr_h = h;
+    _agc_ovr_t = 0 - sid;
+    var r = _try_aggregate_copy_assign(S, nm, term);
+    if (r == 0) { r = _try_struct_call_assign(S, nm, term); }
+    if (r == 0) {
+        _refuse_lossy_pair(S);   # 6.7.7 (T5b), as the word store refused it
+        r = _pcmpe_struct_assign(S, nm, term);
+    }
+    _agc_ovr = sv;
+    _agc_ovr_nm = svn;
+    _agc_ovr_h = svh;
+    _agc_ovr_t = svt;
+    return r;
+}
+# rax = a value that is no struct of `*p`'s type: stored as the struct's word through the parked pointer `h` at
+# `sz` bytes, at most 8 — 8 / 4 / 2 / 1-byte chunks, each shifted down into place (the `_fst_odd` shape) — so a
+# struct under 8 B is never written past (a zero-size one not at all).
+fn _dst_word(S, h, sz): i64 {
+    var dli = 0 - 1;
+    var dgv = 0 - 1;
+    if (h >= 0) { dli = _AGC_DREF(h); } else { dgv = 0 - 1000 - (0 - 2 - h); }
+    var nb = sz;
+    if (nb > 8) { nb = 8; }
+    EPUSHR(S);
+    var o = 0;
+    while (o < nb) {
+        var w = 8;
+        if (nb - o < 8) { w = 4; }
+        if (nb - o < 4) { w = 2; }
+        if (nb - o < 2) { w = 1; }
+        if (o > 0) { EMOVI(S, o * 8); EMOVCA(S); }
+        EPOPR(S);
+        EPUSHR(S);
+        if (o > 0) { ESHRCL(S); }
+        EPUSHR(S);
+        _agc_addr_x1(S, dli, dgv, o);
+        EPOPR(S);
+        if (w == 1) { ESTORE8(S); }
+        elif (w == 2) { ESTORE16(S); }
+        elif (w == 4) { ESTORE32(S); }
+        else { ESTOC(S); }
+        o = o + w;
+    }
+    EPOPR(S);
+    return 0;
+}
+
+# `*expr = v` / `*expr OP= v` (cursor on the `*`), ending at `term` — `;` for a statement, `)` for
+# a classic-for step: the address once, before the value, then the store. 6.7.5 (B8): the compound
+# form — it was "expected '=', got '+'" — loads, `_asg_compound_op`s it and stores it back. Out of
+# _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling. CHANGELOG [6.7.5]
+# 6.7.8 (C2-5): through a narrow `*T` (`_deref_ed`, parse/expr/deref.cyr) the element is written at its
+# width, as `p[0] = v` / `p[0] OP= v` write it: `=` checks the value as a store into an f32 element
+# (an f64 rounds, an integer constant warns), `OP=` loads the element at its width (sign- /
+# zero-extended; an f32 combines as an f32), a wider integer warns "narrowing". Every other operand
+# keeps the WORD store (`_asg_store_w` at width 0 is EPOPC + ESTORE64). Before, `*q = 5` through a
+# `*i32` zeroed the next element. CHANGELOG [6.7.8]
+# 6.7.11: through a `*S` (a struct), `*p = v` copies the struct and `*p OP= v` is refused (`_dst_struct`).
+# 6.7.16: `*(&pi) OP= n` of a typed pointer steps as `pi OP= n` does — `*(&p)` is p, its type kept (6.7.15's D21 A,
+# `_amp_pw`), as `*(&pi) + n` already stepped; it stepped one byte. CHANGELOG [6.7.16]
+# 6.7.16 (D70): the value just stored by `*E = v` (`ti` its first token, `d` the `*`) through the element kind `ed` — an
+# f32's checks (an integer constant warns, an f64 rounds), and for `*(&x)` of an f64 x the integer-constant warning and
+# of a bool x the refusal of a non-bool, named at x, as `x = v` takes them.
+fn _dst_fk_chk(S, ed, ti, d): i64 {
+    var k = _ek_fk(ed);
+    if (k == 0) { return 0; }
+    if (k == 16) { return _bx_asg(S, _dst_amp_nm(S, d), ti); }
+    return _ifs_bx(S, k, ti, 0);
+}
+# `*(&b) OP= v` of a bool b: refused as `b OP= v` is (6.7.16, D70).
+fn _dst_fk_cop(S, ed, d): i64 {
+    if (_ek_fk(ed) != 16) { return 0; }
+    return _bx_compound(S, _dst_amp_nm(S, d));
+}
+# The NAME of `*(& NAME)` / `*&NAME` whose `*` is token `d` (the shape `_amp_ew` vouched for: a bool kind is its alone).
+fn _dst_amp_nm(S, d): i64 {
+    var i = d + 1;
+    while (TOKTYP(S, i) == 10) { i = i + 1; }
+    return TOKVAL(S, i + 1);
+}
+# ⛔ 6.7.16 (D99, the user's decision, 2026-10-20) — A STRUCT RESULT OVER 8 B STORED THROUGH A POINTER TO A SCALAR IS
+# REFUSED, as its sibling stores are: `*p = mkp();` with `p: *i64` and mkp returning a 16-byte Q stored Q's first word
+# (the filed repro exited 77), silently, where `var y: i64 = mkp();` (6.7.11's D24), `y = mkp();` (6.7.14's D27) and
+# `p = mkp();` (6.7.15's D32) are refused. The dereference `*E` at token `d` (its operand ends at `oe`) whose operand is
+# a typed pointer to no struct, by its declared word (`_hl_pw`: a `*i64` / `*u8` / `*f64` / `*bool` name, field, call
+# or `p + n`; `**pp` of a `**i64`; `*pp` of a `**i64` or of a `**S` of another struct: a pointer slot, D32's own), and
+# the value [ti, cursor) one whole struct result over 8 B (a free or generic call, a method, an operator, a known `&f`
+# call, wrapped; not a `Str`, a dyn, 8 B or less): "cannot assign '*p: i64' from 'mkp', which returns the struct 'Q' -
+# store it through a '*Q' or bind a field", at the call, once. `*(&x) = mkp()` is `x = mkp()` (D27 / D33 judge x). In
+# a generic's base parse a destination typed by its type parameter is the stub rule's (D1: `g(5)` has no scalar
+# instance, `_gs_asg_sres`); each instance judges its own. CHANGELOG [6.7.16]
+fn _dsr_sres(S, d, oe, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_dsr_amp(S, d, oe, ti, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid) == 1) { return 1; }
+    return _dsr_judge(S, d + 1, oe, d, d, oe);
+}
+# ⛔ 6.7.16 (D99, the s16 review) — AND A SUBSCRIPT STORE `p[i] = mkp();` THROUGH A TYPED POINTER TO A SCALAR, as
+# `*(p + i) = mkp();` is refused: `p[0] = mkp();` (p `*i64`), `w.pi[0] = ..` (a `*i64` field), `gi()[0] = ..` (gi `:
+# *i64`) stored Q's first word silently (exit 77). `_esub_assign`, the `=` at token `eq` and the value [ti, cursor): the
+# destination is the statement's `B[..]` (its `[` at `lb`), B a typed pointer by its declared word (`_hl_pw`; an array
+# has none — a local array's element is no store through a pointer); judged as `*B = ..` is, named as spelled ('p[0]:
+# i64'). CHANGELOG [6.7.16]
+# ⛔ 6.7.17 (D16, the user's decision, 2026-10-22) — AND AN ARRAY'S ELEMENT: `buf[0] = mkp();` (a local or global
+# `i64[N]`, a `u8[N]`, ..; `_hl_pw` answers 0 for an array) stored Q's first word (77), silently. `ed` the element kind
+# (`_esub_assign`'s): named as spelled with it, 'buf[0]: i64'; a bool element is its own refusal (`_ifs_bx_el`).
+# CHANGELOG [6.7.17]
+fn _dsr_esub(S, eq, ti, ed): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (TOKTYP(S, eq - 1) != 29) { return 0; }
+    var s = _vsl_sbeg(S, eq);
+    if (s < 0) { return 0; }
+    var lb = _dsr_lbr(S, eq - 1);
+    if (lb <= s) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_hl_pw(S, s, lb) <= 0) { return _dsr_earr(S, s, lb, eq, ed); }
+    return _dsr_judge(S, s, lb, s, s, eq);
+}
+# The array arm: refused unless a bool element or, in a generic's base parse, a base typed by its type parameter.
+fn _dsr_earr(S, s, lb, eq, ed): i64 {
+    if (_ek_fk(ed) == 16) { return 0; }
+    if (_dsr_tdep(S, s, lb, s) == 1) { return 0; }
+    _dsr_tm = 1;
+    _dsr_tk = ed;
+    return _dsr_err(S, s, eq, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# ⛔ 6.7.17 (D16) — A STRUCT RESULT OVER 8 B INTO A SCALAR OR POINTER FIELD is refused, as every sibling store is:
+# `w.n = mkp();`, `GW.n = mkp();`, through a `*W` (`pw.n`), a chain (`v.w.n`), a capture, a for step, at top level, a
+# narrow / float / `*i64` / `*Pt` / `**Q` field — stored Q's first word (77; the globals 154), silently. `_fst_on`'s
+# value [ti, cursor), its field `lfd` (`(si + 1) << 16 | fi`, read before the value can re-resolve a field):
+# "cannot assign 'w.n: i64' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field". A
+# struct-typed field is `_fsc_src`'s, a bool its own refusal, a `*Q` field of the result's own struct D14's copy. In a
+# generic's base parse a destination typed by its type parameter is the stub rule's (`_gs_fst_sres`). CHANGELOG [6.7.17]
+fn _dsr_fld(S, ti, eq, lfd): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (lfd <= 0) { return 0; }
+    var si = (lfd >> 16) - 1;
+    var fi = lfd & 0xFFFF;
+    if (GETFTYPE(S, si, fi) > 0) { return 0; }
+    if (GFBOOL(S, si, fi) == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_fld_ptr_sid(S, si, fi) == _dsr_sid) { return 0; }
+    var s = _vsl_sbeg(S, eq);
+    if (s < 0) { return 0; }
+    if (_dsr_tdep(S, s, eq, s) == 1) { return 0; }
+    _dsr_tm = 2;
+    _dsr_tk = lfd;
+    return _dsr_err(S, s, eq, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# ... a struct literal's element (`W { mkp(), 0 }`, `W { n: mkp(), .. }`, a global's), its value [ti, cursor) into
+# field `fi` of struct `si`, named by the field: 'n: i64'. In a generic fn's base parse a generic struct's element is
+# each instance's to judge. CHANGELOG [6.7.17]
+fn _dsr_lit(S, ti, si, fi): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (si < 0) { return 0; }
+    if (fi < 0) { return 0; }
+    if (GETFTYPE(S, si, fi) > 0) { return 0; }
+    if (GFBOOL(S, si, fi) == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    if (_fld_ptr_sid(S, si, fi) == _dsr_sid) { return 0; }
+    if (_dsr_lit_tp(S, si) == 1) { return 0; }
+    _dsr_tm = 2;
+    _dsr_tk = ((si + 1) << 16) | fi;
+    _dsr_tnm = GETFNAME(S, si, fi);
+    return _dsr_err(S, ti, ti, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# 1 = in a generic fn's base parse, struct `si` is a generic struct's base: its elements are each instance's.
+fn _dsr_lit_tp(S, si): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (GSTP(S, si) == 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (GFTP(S, _cur_fn_ix) == 0) { return 0; }
+    return 1;
+}
+# ... a slice's `.ptr` / `.len` (`s.len = mkp();`), its value [ti, cursor), the destination ending at `eq`: 's.len:
+# i64'. CHANGELOG [6.7.17]
+fn _dsr_slf(S, ti, eq): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    var s = _vsl_sbeg(S, eq);
+    if (s < 0) { return 0; }
+    _dsr_tm = 1;
+    _dsr_tk = 8;
+    return _dsr_err(S, s, eq, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# The `[` matching the `]` at token j.
+fn _dsr_lbr(S, j): i64 {
+    var d = 0;
+    while (j >= 0) {
+        var t = TOKTYP(S, j);
+        if (t == 29 || t == 11) { d = d + 1; }
+        if (t == 28 || t == 10) {
+            d = d - 1;
+            if (d == 0) { return j; }
+        }
+        j = j - 1;
+    }
+    return 0 - 1;
+}
+# The value [ti, cursor) when it is one whole struct result over 8 B (a free or generic call, a method, an operator, a
+# known `&f` call, wrapped; not a `Str`, a dyn, 8 B or less): 1, its struct `_dsr_sid`, the call's name `_dsr_fno`, token
+# `_dsr_at` and fn `_dsr_afi`; else 0.
+var _dsr_sid = 0;
+var _dsr_fno = 0;
+var _dsr_at = 0;
+var _dsr_afi = 0;
+fn _dsr_rec(S, ti): i64 {
+    var sid = 0;
+    var fno = 0;
+    var at = ti;
+    var afi = 0 - 1;
+    if (_sc_whole(S, ti) != 0 - 2) {
+        sid = _sc_sid;
+        fno = _sc_fn;
+        afi = _sc_fi;
+        at = _sc_beg;
+    } else {
+        var c = _dsr_call(S, ti);
+        if (c < 0) { return _dsr_val(S, ti); }   # 6.7.17 (D106): a struct value that is no call
+        var cfi = _pair_gen_inst(S, c);   # parsed already: the instance its call made (a dedup hit)
+        if (cfi < 0) { return 0; }
+        sid = GFRS(S, cfi);
+        fno = TOKVAL(S, c);
+        afi = cfi;
+        at = c;
+    }
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    _dsr_sid = sid;
+    _dsr_fno = fno;
+    _dsr_at = at;
+    _dsr_afi = afi;
+    _dsr_isv = 0;
+    return 1;
+}
+# ⛔ 6.7.17 (D106, the user's decision, 2026-10-22: "refuse it as the struct call is there", the struct twin of D24)
+# — A STRUCT VALUE THAT IS NO CALL INTO A WORD SLOT: `y = q;`, `var z: i64 = q;`, `w.n = q;`, `buf[0] = q;`, `*p = q;`,
+# `y += q;` and `W { q, 0 }` kept q's first word (77 for `q = Q { 333, 444 }`), silently, where each refuses `mkp()`.
+# The value [a0, e), inside any parentheses wrapping it whole, is one struct value over 8 B (`_rcv_big`: not a `Str`,
+# a dyn, 8 B or less, which keep their word as the call's result does; not a tuple): an inline local, a by-value
+# parameter, a captured copy or an inline global (`_hl_amp_sid` — a handle, a `*T` and a `Str` hold an address), a
+# dereference of a pointer to a struct (`*pq`, `**ppq`, `*(&q)`, `*w.pq`: `_hl_dpsid`) or a chain ending in a
+# struct-typed field (`w.q`, `pw.v.q`: `_hl_pchain`). Its struct, `_ssv_a` / `_ssv_e` the span a refusal names
+# (`_ssv_pr`), else 0. Each struct-call refusal reads it beside its call record (`_dsr_rec`, `_dsr_isv` 1), and the
+# name assignment (`_asa_sval`) and the typed declaration (`_svin_val`, the zone's `_svin_zval`) ask it: the call's
+# words with "which is the struct 'Q'" for "which returns the struct 'Q'". CHANGELOG [6.7.17]
+var _dsr_isv = 0;
+var _ssv_a = 0;
+var _ssv_e = 0;
+fn _ssv_at(S, a0, e): i64 {
+    if (_syntax_only == 1) { return 0; }
+    var a = _ie_unparen(S, a0, e);
+    var pe = _ie_pe;
+    if (pe <= a) { return 0; }
+    var t = TOKTYP(S, a);
+    var sid = 0;
+    if (t == 2) {
+        if (pe == a + 1) {
+            # 6.7.17: the struct test (a table lookup) before the declaration's annotation (`_asa_ann`, a token walk back
+            # through the file for a global) — the walk on every name operand made `s = s + gN` over N globals
+            # quadratic (10,000: 147 ms through 6.7.16, 6 s; globals_scale_linear.sh [ref]). Same answer: both must hold.
+            sid = _hl_amp_sid(S, TOKVAL(S, a));
+            if (sid <= 0) { return 0; }
+            if (_ssv_scal(S, a) == 1) { return 0; }   # declared a scalar: its own line's refusal stands alone
+        }
+        else { sid = _ssv_fld(S, a, pe); }
+    } elif (t == 8) {
+        if (pe - a >= 2) { if (_gz_split(S, a, pe) == 0 - 1) { sid = _hl_dpsid(S, a + 1, pe); } }
+    }
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (_dx_plain(S, sid) == 0) { return 0; }
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    _ssv_a = a;
+    _ssv_e = pe;
+    return sid;
+}
+# 1 = the name at token `a` is declared with a scalar or `bool` annotation (`var b: bool = P { 7, true };`, refused
+# at its own line, leaves b a P): it is no struct value here, so its uses add no refusal of their own.
+# CHANGELOG [6.7.17]
+fn _ssv_scal(S, a): i64 {
+    var an = _asa_ann(S, TOKVAL(S, a), a);
+    if (an <= 0) { return 0; }
+    if (_asa_scalar(S, an) == 1) { return 1; }
+    if (TOKTYP(S, an) != 2) { return 0; }
+    return _tn_bool(_tn_resolve_at(S, an));
+}
+# ... a chain [a, pe) whose last step is a struct-typed FIELD (no call after it): that field's struct, else 0.
+fn _ssv_fld(S, a, pe): i64 {
+    var dot = _hl_lastdot(S, a, pe);
+    if (dot < 0) { return 0; }
+    if (dot + 2 != pe) { return 0; }
+    if (TOKTYP(S, dot + 1) != 2) { return 0; }
+    var t = _hl_pchain(S, a, pe);
+    if (t <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    return t;
+}
+# The span `_ssv_at` read, as the source spells it, on stderr.
+fn _ssv_pr(S): i64 {
+    var nm = TOKVAL(S, _ssv_a);
+    if (_ssv_e != _ssv_a + 1) { nm = _src_span_nm(S, _ssv_a, _ssv_e, TOKVAL(S, _ssv_e - 1)); }
+    PRSTR(S + 0xEC00000 + nm);
+    return 0;
+}
+# ... `_dsr_rec`'s twin for the value [ti, cursor): 1 with `_dsr_isv` 1, its struct `_dsr_sid`, reported at its first
+# token. CHANGELOG [6.7.17]
+fn _dsr_val(S, ti): i64 {
+    var sid = _ssv_at(S, ti, GTI(S));
+    if (sid <= 0) { return 0; }
+    _dsr_sid = sid;
+    _dsr_fno = TOKVAL(S, _ssv_a);
+    _dsr_at = _ssv_a;
+    _dsr_afi = 0 - 1;
+    _dsr_isv = 1;
+    return 1;
+}
+# ⛔ 6.7.17 (D111, AGENT DEFAULT — the struct twin of D24 / 6.7.16's D101, where no written rule decides the slot) — A
+# STRUCT VALUE OR CALL OVER 8 B IS NO WORD THERE EITHER. As an argument to a parameter declared an integer or a float
+# (`take(q)`, `take(mkp())` with `x: i64`), a builtin's argument (`syscall(60, q)`, `store64(p, q)`), a `return` from
+# a fn declared a scalar (`: i64`, `: f64`, an enum), the LEFT operand of an operator that does not dispatch (`q == r`,
+# `q % 2`; `+ - * /` call its operator fn), a condition (`if (q)`, `while`, a `for` condition, a `match` subject), an
+# index (`b[q]`) or a range bound, a struct value (`_ssv_at`) or a whole struct call (`_dsr_rec`; by tokens at a
+# `return`, `_ssc_tok`) passed its first word, silently (`take(q) + take(mkp()) + (1 + q) - 999` exited 1). Refused at
+# the value, naming it, in D101's shape: "a struct value cannot be passed to an integer parameter - 'q' is the struct
+# 'Q', passed to parameter 'x' of 'take'" (a call: "'mkp' returns the struct 'Q'"), ".. passed to 'syscall'", ".. cannot
+# be returned as i64 - ..", "a struct value cannot be used as an integer - ..". UNCHANGED, each by a written rule: an
+# untyped parameter and an indirect call's argument (`fncall1(&f, q)`, `callptr(f, q)`) take the word (guide § D5: "an
+# untyped parameter the word"); a fn with no declared return hands back both words (`var a, b = f();` of a struct
+# pair, crossos/struct_pair_multi_value_crossing.tcyr); an operand after an integer one or under a unary `-` / `~` /
+# `!` is word arithmetic (guide § "An integer operator's result is an integer", 6.7.11; unary minus the user's
+# decision of 2026-10-13). D106's carve-outs: 8 B or less, a `Str`, a handle, a `*T`, a field of the value; a struct,
+# pointer (D5's), bool (its own) or generic parameter. `_ssc_err` reports with the panic latch, the statement in sync,
+# as `_vsc_err` does. CHANGELOG [6.7.17]
+var _sop_rti = 0 - 1;   # the first token of a dispatching operator's right operand (EMIT_OP_DISPATCH)
+var _sop_bo = 0 - 1;    # the `(` of the builtin / indirect call whose argument `_sop_ctx` found
+fn _ssc_err(S, kind, x, y): i64 {
+    var sv = GTI(S);
+    STI(S, _dsr_at);
+    _refuse_in_sync(S);
+    var tg = "_ssc_err";
+    if (_err_once(S, (tg * 31 + kind) * 8 + 4) == 1) {
+        _ew("error:", 6);
+        _err_head(S);
+        if (kind == 0) {
+            PRSTR(": a struct value cannot be returned as ");
+            _vsc_rtype(S);
+        } elif (kind == 3) {
+            PRSTR(": a struct value cannot be used as an integer");
+        } else {
+            PRSTR(": a struct value cannot be passed to ");
+            PRSTR(_vsc_pkind(x, y, kind));
+            PRSTR(" parameter");
+        }
+        PRSTR(" - '");
+        if (_dsr_isv == 1) {
+            _ssv_pr(S);
+            PRSTR("' is the struct '");
+        } else {
+            PRSTR(S + 0xEC00000 + _fn_src_name(S, _dsr_afi, _dsr_fno));
+            PRSTR("' returns the struct '");
+        }
+        PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_dsr_sid - 1) * 8));
+        PRSTR("'");
+        if (kind == 1) { _vsc_pof(S, x, y); }
+        if (kind == 2) { _vsc_bname(S, x); }
+        PRSTR("\n");
+        _err_excerpt(S);
+        _had_error = 1;
+        _panic = 1;
+    }
+    STI(S, sv);
+    return 1;
+}
+# PARSE_FACTOR, the factor [ti0, cursor) just parsed: refused when it is a struct value or call over 8 B in a word
+# slot `_sop_ctx` finds. 0 / 1.
+fn _sop_rchk(S, ti0): i64 {
+    if (_panic == 1) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (ti0 < 2) { return 0; }
+    var e = GTI(S);
+    if (e <= ti0) { return 0; }
+    var k = _sop_ctx(S, ti0, e);
+    if (k == 0) { return 0; }
+    if (_dsr_rec(S, ti0) == 0) { return 0; }
+    if (_ssc_rown(S, ti0) == 1) { return 0; }
+    if (k == 2) { return _ssc_err(S, 2, _sop_bo, 0); }
+    return _ssc_err(S, 3, 0, 0);
+}
+# 1 = the factor at `ti0` is in a `return`'s value (`_vop_ctx` 3) of a fn whose return judges it in its own words: a
+# struct fn (the 9-16 B pair's "takes a local of that struct or a call returning it - got `mk2`", 6.7.11's R16-R22),
+# a vector, multi-value or refused return (`_vsc_rskip`).
+fn _ssc_rown(S, ti0): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (_vop_ctx(S, ti0) != 3) { return 0; }
+    if (_cur_fn_ret_sid != 0) { return 1; }
+    return _vsc_rskip(S);
+}
+# The word slot the factor [ti0, e) fills, by its tokens: 3 the left operand of an operator that does not dispatch (all
+# but `+ - * /`), a condition, an index, a range bound, a `match` subject, a `for` condition; 2 a builtin's whole
+# argument (`_sop_bo` its `(`; not `callptr` / fncallN, whose callee's parameter takes it); else 0.
+fn _sop_ctx(S, ti0, e): i64 {
+    if (ti0 == _sop_rti) { return 0; }
+    var n = TOKTYP(S, e);
+    if (_tal_binop(n) == 1) {
+        if (n >= 6) { if (n <= 9) { return 0; } }
+        return 3;
+    }
+    var p = TOKTYP(S, ti0 - 1);
+    if (p == 28) {
+        if (n == 29) { return 3; }
+        return 0;
+    }
+    if (p == 75) { return 3; }
+    if (_vsl_range(S, ti0, e) == 1) { return 3; }
+    if (p == 10) { if (n == 11) { if (_vsl_cond(S, ti0 - 1) == 1) { return 3; } } }
+    if (p == 5) { if (n == 5) { if (_vsl_forc(S, ti0 - 1) == 1) { return 3; } } }
+    if (p == 10 || p == 31) {
+        var bo = _vsl_bopen(S, ti0, e);
+        if (bo < 1) { return 0; }
+        var h = TOKTYP(S, bo - 1);
+        if (h == 137) { return 0; }
+        if (h == 2) { return 0; }   # fncallN: the callee's parameter
+        _sop_bo = bo;
+        return 2;
+    }
+    return 0;
+}
+# `_bx_pcmpe_arg`, the argument [t, cursor) for parameter `ord` of fn `fi` just parsed: a struct value or call over 8
+# B into a parameter declared an integer or a float (`_pbool_get` 2 / 3 / 4; an untyped one takes the word). 0 / 1.
+fn _ssc_arg(S, fi, ord, t): i64 {
+    if (_panic == 1) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (fi < 0) { return 0; }
+    if (GFDS(S, fi) == 0) { return 0; }
+    if (GFTP(S, fi) != 0) { return 0; }   # a generic's base: T binds at the call
+    var pk = _pbool_get(fi, ord);
+    if (pk < 2) { return 0; }   # untyped (the word, guide § D5) or bool (its own refusal)
+    if (pk > 4) { return 0; }
+    if (GFPSID(S, fi, ord) != 0) { return 0; }   # a struct, `Str`, tuple, dyn parameter
+    if (_pptr_param(S, fi, ord) == 1) { return 0; }
+    if (_pps_param(S, fi, ord) > 0) { return 0; }
+    if (_pps_uself(S, fi, ord) == 1) { return 0; }
+    if (_vk_param(S, fi, ord) != 0) { return 0; }
+    if (_pvec_param(S, fi, ord) != 0) { return 0; }
+    if (_pvf_param(S, fi, ord) != 0) { return 0; }
+    if (_dsr_rec(S, t) == 0) { return 0; }
+    return _ssc_err(S, 1, fi, ord);
+}
+# PARSE_RETURN (`st` the value's first token, nothing parsed yet): the whole value a struct value or call over 8 B in
+# a fn DECLARED to return a scalar (no struct, `Str`, pointer, vector, bool, multi-value or generic return; a fn with
+# no declared return, a closure, forwards what it returns). 0 / 1.
+fn _ssc_ret(S, st): i64 {
+    if (_panic == 1) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (_vsc_rskip(S) == 1) { return 0; }
+    if (_bx_cur_is_bool(S) == 1) { return 0; }
+    if (_cur_fn_ret_sid != 0) { return 0; }
+    if (_cur_fn_ix >= 0) { if (GFTP(S, _cur_fn_ix) != 0) { return 0; } }
+    var c = _vsc_rt_at(S);
+    if (c < 0) { return 0; }
+    if (TOKTYP(S, c + 1) == 8) { return 0; }
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var e = _hl_dx_end(S, st, 5);
+    if (e < 0) { return 0; }
+    if (_ssc_tok(S, st, e) == 0) { return 0; }
+    return _ssc_err(S, 0, 0, 0);
+}
+# ... [a0, e) by its tokens: a struct value (`_ssv_at`), or a whole call or method chain ending in a by-value struct
+# result (`_hl_pchain`): 1 with `_dsr_*` set as `_dsr_rec` sets them; else 0.
+fn _ssc_tok(S, a0, e): i64 {
+    var sid = _ssv_at(S, a0, e);
+    if (sid > 0) {
+        _dsr_sid = sid;
+        _dsr_at = _ssv_a;
+        _dsr_afi = 0 - 1;
+        _dsr_isv = 1;
+        return 1;
+    }
+    var a = _ie_unparen(S, a0, e);
+    var pe = _ie_pe;
+    if (pe <= a) { return 0; }
+    if (TOKTYP(S, pe - 1) != 11) { return 0; }
+    var t = _hl_pchain(S, a, pe);
+    if (t <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    if (_dx_plain(S, t) == 0) { return 0; }
+    if (_rcv_big(S, t) == 0) { return 0; }
+    _dsr_sid = t;
+    _dsr_at = a;
+    _dsr_fno = _hl_lastnm(S, a, pe, TOKVAL(S, a));
+    _dsr_afi = 0 - 1;
+    _dsr_isv = 0;
+    return 1;
+}
+# `y = q;` (`_pcmpe_struct_assign`, the value [st, cursor) just parsed, `noff` no struct): refused as `y = mkp();` is
+# (`_asa_refuse`: D27 / D32 / D33's words), naming the value. 1 = refused, `term` consumed. CHANGELOG [6.7.17]
+fn _asa_sval(S, noff, st, term): i64 {
+    var sid = _ssv_at(S, st, GTI(S));
+    if (sid <= 0) { return 0; }
+    _rcv_isv = 1;
+    var r = _asa_refuse(S, noff, st - 1, _ssv_a, TOKVAL(S, _ssv_a), sid);
+    _rcv_isv = 0;
+    if (r == 0) { return 0; }
+    return _asa_term(S, term);
+}
+# The store through the pointer [a, e) (`from` the destination's first token, for `_dsr_tdep`), spelled [na, ne), of
+# `_dsr_rec`'s result: refused when the pointer reaches no struct of its own (a scalar, a pointer slot of another
+# struct). 1 = refused.
+# ⛔ 6.7.17 (D13, the user's decision, 2026-10-22) — AND THROUGH AN UNTYPED POINTER: `*p = mkp();` with `var p = &x;`
+# (or `alloc(..)`, `p + 8`, an untyped global, at top level, a for step) stored Q's first word (77), silently, where
+# D33 refuses `x = mkp()` into an untyped x and D99 the typed pointer. An operand no typed-pointer reader types
+# (`_hl_pw` 0) and whose pointee is no struct (`_hl_dpsid`: `_dst_struct`'s) is refused in D99's words without the
+# type: "cannot assign '*p' from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field".
+# `*p = mkp().a` and a result of 8 B or less are no `_dsr_rec`. CHANGELOG [6.7.17]
+fn _dsr_judge(S, a, e, from, na, ne): i64 {
+    var w = _hl_pw(S, a, e);
+    if (w <= 0) { return _dsr_untyped(S, a, e, from, na, ne); }
+    if (_ps_pinned(w) == 1) {
+        if (_pp_sid(S, _ps_pin(w)) == _dsr_sid) { return 0; }   # a `*Q` slot of Q itself: B7-1c's copy, not this rule
+    } else {
+        if (_hl_dpsid(S, a, e) > 0) { return 0; }   # a struct pointee: `_dst_struct`'s
+        if (_ps_vdesc(w) != 0) { return 0; }
+    }
+    if (_dsr_tdep(S, a, e, from) == 1) { return 0; }
+    return _dsr_err(S, na, ne, w, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# `_dsr_judge`'s untyped operand [a, e): refused unless its pointee is a struct or, in a generic's base parse, it may be
+# typed by the type parameter (`_dsr_tdep`). 1 = refused. CHANGELOG [6.7.17]
+fn _dsr_untyped(S, a, e, from, na, ne): i64 {
+    if (_hl_dpsid(S, a, e) > 0) { return 0; }
+    if (_dsr_tdep(S, a, e, from) == 1) { return 0; }
+    return _dsr_err(S, na, ne, 0, _dsr_at, _dsr_fno, _dsr_afi, _dsr_sid);
+}
+# The whole free call (`f(..)` / `g<..>(..)`, not dotted) the value at token ti is, inside any parentheses that wrap
+# all of it up to the cursor: its name token, else -1.
+fn _dsr_call(S, ti): i64 {
+    var k = 0;
+    while (TOKTYP(S, ti + k) == 10) { k = k + 1; }
+    var c = ti + k;
+    if (TOKTYP(S, c) != 2) { return 0 - 1; }
+    var o = _gcall_open(S, c);
+    if (o < 0) { return 0 - 1; }
+    if (_icall_open_at(S, c) >= 0) { return 0 - 1; }
+    var e = _call_close(S, o) + 1;
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, e + i) != 11) { return 0 - 1; }
+        i = i + 1;
+    }
+    if (e + k != GTI(S)) { return 0 - 1; }
+    return c;
+}
+# `*(&x) = E` / `*&x = E` (the operand exactly `& NAME` inside any parentheses) is `x = E`: judged as that assignment is
+# (D27 / D32 / D33, `_asa_refuse`). 1 = this shape (refused or not).
+fn _dsr_amp(S, d, oe, ti, at, fno, afi, sid): i64 {
+    var b = _ie_unparen(S, d + 1, oe);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    _rcv_fi = afi;
+    _rcv_isv = _dsr_isv;   # 6.7.17 (D106): `*(&x) = q`
+    _asa_refuse(S, TOKVAL(S, b + 1), d, at, fno, sid);
+    _rcv_isv = 0;
+    _rcv_fi = 0 - 1;
+    return 1;
+}
+# 1 = in a generic's BASE parse (`_inst_name` 0) the operand [a, e) may be typed by its type parameter: a name that is
+# one, a name declared with one (`_asa_ann` back from `from`), a call of a generic fn — each instance judges it.
+fn _dsr_tdep(S, a, e, from): i64 {
+    if (_inst_name != 0) { return 0; }
+    var i = a;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) { if (TOKTYP(S, i - 1) != 41) {
+                if (_rcv_tp_base(S, i) == 1) { return 1; }
+                var gf = FINDFN(S, TOKVAL(S, i));
+                if (gf >= 0) { if (GFTP(S, gf) != 0) { return 1; } }
+                var an = _asa_ann(S, TOKVAL(S, i), from);
+                if (an > 0) { if (_dsr_ann_tp(S, an) == 1) { return 1; } }
+            } }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _dsr_ann_tp(S, an): i64 {
+    var e = _asa_end(S, an);
+    var i = an;
+    while (i < e) {
+        if (TOKTYP(S, i) == 2) { if (_rcv_tp_base(S, i) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# The refusal at the call token `at` (fn `fn` / `afi`, struct `sid`), the destination `*E` spelled from its `*` at d,
+# its type from the operand's declared word `w`. 1.
+# 6.7.17 (D16): `_dsr_tm` 1 names an element kind `_dsr_tk` (an array's, a slice field's), 2 the field `_dsr_tk` packs
+# (`_dsr_fld`), with `_dsr_tnm` the destination's name when no span spells it (a literal's field); 0 the word `w`.
+var _dsr_tm = 0;
+var _dsr_tk = 0;
+var _dsr_tnm = 0;
+fn _dsr_err(S, d, oe, w, at, fno, afi, sid): i64 {
+    var tm = _dsr_tm;
+    var tk = _dsr_tk;
+    var tnm = _dsr_tnm;
+    _dsr_tm = 0;
+    _dsr_tnm = 0;
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, at) == 0) { return 1; }
+    var dn = tnm;
+    if (dn == 0) { dn = _src_span_nm(S, d, oe, TOKVAL(S, oe - 1)); }
+    var sv = GTI(S);
+    STI(S, at);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot assign '");
+    PRSTR(S + 0xEC00000 + dn);
+    _dsr_ty(S, w, tm, tk);
+    PRSTR("' from '");
+    if (_dsr_isv == 1) {   # 6.7.17 (D106): a struct value, named as written
+        _ssv_pr(S);
+        PRSTR("', which is the struct '");
+    } else {
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, fno));
+        PRSTR("', which returns the struct '");
+    }
+    _sn_pr(S, sid);
+    PRSTR("' - store it through a '*");
+    _sn_pr(S, sid);
+    PRSTR("' or bind a field\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 1;
+}
+# `_dsr_err`'s type: mode `tm` (see `_dsr_tm`) of `tk`, else `_dsr_tn` of `w`.
+fn _dsr_ty(S, w, tm, tk): i64 {
+    if (tm == 2) { return _dsr_ftn(S, (tk >> 16) - 1, tk & 0xFFFF); }
+    if (tm == 0) { return _dsr_tn(S, w, 1); }
+    var nm = _dsr_kname(tk, 8);
+    if (nm == 0) { return 0; }
+    PRSTR(": ");
+    PRSTR(nm);
+    return 0;
+}
+# Field `fi` of struct `si`'s type, after ": ": a `*T` field's pointer (`*Pt`, `*i64`, `**Q`), an f64 / f32, a narrow
+# signed or unsigned width, else `i64`. CHANGELOG [6.7.17]
+fn _dsr_ftn(S, si, fi): i64 {
+    PRSTR(": ");
+    var ps = _fld_ptr_sid(S, si, fi);
+    if (ps > 0) {
+        PRSTR("*");
+        PRSTR(S + 0xEC00000 + _fsn_one(S, ps));
+        return 0;
+    }
+    var pw = _fld_ps_get(S, si, fi);
+    if (pw > 0) {
+        PRSTR("*");
+        return _dsr_tn(S, pw, 0);
+    }
+    var k = GFFK(S, si, fi);
+    if (k == 1) { PRSTR("f64"); return 0; }
+    if (k == 2) { PRSTR("f32"); return 0; }
+    var ft = GETFTYPE(S, si, fi);
+    if (ft >= 0) { PRSTR("i64"); return 0; }
+    var ed = 0 - ft;
+    if (GFUNS(S, si, fi) == 0) { ed = ed | 0x40; }
+    PRSTR(_dsr_kname(ed, 0));
+    return 0;
+}
+# The type a dereference of step word `w` reaches, after ": " when `lead` is 1: a scalar by its element kind (`i64`,
+# `u8`, `i32`, `f64`, `f32`, `bool`), a pointer slot `*` and its pointee (a struct by name); nothing for a kind the word
+# does not carry.
+fn _dsr_tn(S, w, lead): i64 {
+    if (_ps_pinned(w) == 1) {
+        var ps = _pp_sid(S, _ps_pin(w));
+        var iw = _pp_inner(S, w);
+        if (ps <= 0) { if (iw <= 0) { return 0; } }
+        if (lead == 1) { PRSTR(": "); }
+        PRSTR("*");
+        if (ps > 0) { _sn_pr(S, ps); return 0; }
+        return _dsr_tn(S, iw, 0);
+    }
+    var ed = (w >> 40) & 0xFF;
+    var nm = _dsr_kname(ed, _ps_step(w));
+    if (nm == 0) { return 0; }
+    if (lead == 1) { PRSTR(": "); }
+    PRSTR(nm);
+    return 0;
+}
+fn _dsr_kname(ed, st): i64 {
+    var k = _ek_fk(ed);
+    if (k == 1) { return "f64"; }
+    if (k == 2) { return "f32"; }
+    if (k == 16) { return "bool"; }
+    var wd = _ek_w(ed);
+    if (wd == 0) { if (st == 8) { return "i64"; } return 0; }
+    if (wd == 8) { return "i64"; }
+    if ((ed & 0x40) != 0) {
+        if (wd == 1) { return "i8"; }
+        if (wd == 2) { return "i16"; }
+        if (wd == 4) { return "i32"; }
+        return 0;
+    }
+    if (wd == 1) { return "u8"; }
+    if (wd == 2) { return "u16"; }
+    if (wd == 4) { return "u32"; }
+    return 0;
+}
+fn _deref_store(S, term): i64 {
+    if (_istr_amp_dst(S, term) == 1) { return 0; }   # 6.7.16 (D71): `*(&t) = v` of an inline `Str` is `t = v`
+    var d = GTI(S);
+    STI(S, GTI(S) + 1);   # `*`
+    PARSE_FACTOR(S);
+    var oe = GTI(S);   # 6.7.16 (D99): the operand's end, for `_dsr_sres`
+    if (_dst_struct(S, term, d) == 1) { return 0; }
+    if (_dst_pslot(S, term, d) == 1) { return 0; }   # 6.7.17 (D14): a struct value into a `*S` slot copies through it
+    if (_dst_vec(S, term, d) == 1) { return 0; }   # 6.7.17 (D23): through a `*V`, the whole vector
+    _deref_u128(S, d);   # 6.7.15 (D20): `*pu = v` through a `*u128` refused by name; the statement parses on
+    var ed = _deref_ed(S);   # before the push: the operand's own kind
+    if (ed == 0) { ed = _amp_ew(S, d + 1, GTI(S)); }   # 6.7.16 (D21): `*(&x)` of a narrow x, at x's width
+    var iw = _pp_inner(S, _pk_word(S));   # 6.7.13 (D9 (a)): `*pp += n` steps a `**T`'s pointee
+    if (iw == 0) { iw = _amp_pw(S, d + 1, GTI(S)); }   # `*(&pi)` is pi
+    EPUSHR(S);            # the address
+    var cop = _asg_compound_tok(S);
+    if (cop == 0) {
+        if (_masg_not_plain(S, " - `*p` is not one") == 0) {   # 6.7.7 (T5): `*p, q = f();`
+            if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+            STI(S, GTI(S) + 1);
+            _refuse_lossy_pair(S);   # 6.7.7 (T5b): `*p = f();` stored the tag
+            var ti = GTI(S);
+            if (_istr_dsdx(S, d, ti, term) == 0) {   # 6.7.16 (D73): `*q = *p` through a `*Str` stores p
+                _sc_beg = 0 - 1;   # 6.7.16 (D99): only this value's own struct-call record may match
+                _istr_dsvc(S, d, ti, term);   # PCMPE; 6.7.17 (D18): a struct value of another type through a `*Str`
+                _dsr_sres(S, d, oe, ti);   # 6.7.16 (D99): a struct result over 8 B through a `*i64`
+                _dst_fk_chk(S, ed, ti, d);   # an f32 element: the field's checks; 6.7.16 (D70): `*(&f)` / `*(&b)`
+                _istr_dsto(S, d, ti);   # 6.7.13 (D7 (1)): an inline `Str` through a `*Str`
+            }
+        }
+    } elif (ed != 0) {
+        _dst_fk_cop(S, ed, d);   # 6.7.16 (D70): `*(&b) OP= v` of a bool refused as `b OP= v`
+        _arr_sub_load(S, _ek_lw(ed));   # rax = the element at the address
+        _asg_compound_op(S, cop, _ek_lt(ed));
+    } else {
+        ELOAD64(S);       # rax = the word at the address
+        _asg_cstep = _ps_step(iw);
+        _asg_compound_op(S, cop, 0);
+    }
+    if (_ek_fk(ed) == 2) { SEXW(S, 0); }   # a float has no integer width to narrow from
+    _asg_store_w(S, _ek_lw(ed));   # rcx = the address, rax = the value; a word when ed is 0
+    _expect_step(S, term);
+    return 0;
+}

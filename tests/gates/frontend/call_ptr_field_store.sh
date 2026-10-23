@@ -65,7 +65,7 @@
 # (6.7.13's D16 (a) with D8 (a)); `callptr` is token 137, and PARSE_STMT's 136-137 band sent its statement to PCMPE,
 # which read `.b` as a value and left the `=` over: "expected ';', got '='" (`+= 40` "unexpected '='"; a by-value callee
 # the same, where the fncall1 form is refused by name). PARSE_STMT now makes one call for token 137,
-# `_stmt_callptr_field` (parse/expr.cyr): a call followed by `.name` takes `_stmt_call_field`, whose `_call_field`
+# `_stmt_callptr_field` (parse/expr/postfix.cyr): a call followed by `.name` takes `_stmt_call_field`, whose `_call_field`
 # routes 137 to `_icall_stmt_chain` (no fncallN arity read: `callptr` is variadic). CP1 the filed repro verbatim (40);
 # CP2 `+= 40`; CP3 / CP3c a by-value result refused by name once; CP4 `callptr(&mk3, 5).tot();` (control: worked
 # before); CP5 the callee wrapped; CP6 two arguments; CP7 in a closure; CP8 at top level; CP9 a callee in a variable
@@ -589,7 +589,7 @@ done
 # `^error` lines for "undefined function 'mulh64'", so it passed while the statement still printed "warning: undefined
 # function 'mulh64'" twice and "error: refusing to emit binary" (a check that shared the defect read green); it is now
 # `refused`'s exact count (issues/archived/2026-10-19-intrinsic-call-with-field-statement-still-undefined-function.md:
-# `_stmt_intrinsic_dot`, src/frontend/parse/parse.cyr — the statement no longer reaches the call statement's field arm).
+# `_stmt_intrinsic_dot`, src/frontend/parse/builtin.cyr — the statement no longer reaches the call statement's field arm).
 row U14 'fn go(): i64 { mulh64(2, 3).n = 5; return 0; }'
 refused U14 "expected ';', got '.'" "control: \`mulh64(2, 3).n = 5;\`, an intrinsic, is no undefined fn"
 row U15 'fn go(): i64 { var x = mulh64(2, 3).n; return x; }'

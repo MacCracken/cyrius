@@ -3,7 +3,7 @@
 # reinterpreted as a file-level declaration.
 #
 # THE DEFECT, twelve releases live. `private` flips the FILE it sits in (`_TL_VIS`,
-# src/frontend/parse/parse.cyr) — deliberately, because a running per-item flag would leak into every
+# src/frontend/parse/vis.cyr) — deliberately, because a running per-item flag would leak into every
 # file included after it. But the per-item spelling `private fn h(): i64 { ... }` parsed with
 # **no diagnostic** and privatised the ENTIRE FILE, `main` included. It reads exactly like the
 # per-item visibility other languages have, so it is the spelling a user reaches for first.
@@ -101,7 +101,7 @@ fi
 #     code for a mistake made elsewhere in the file, which is worse than the original
 #     silence because it points the reader at the wrong line.
 # Both are fixed by doing the work once, in the pre-pass that runs before either parser
-# pass (`_PRIV_PRESCAN`, src/frontend/parse/parse.cyr), and marking ONLY the accepted form.
+# pass (`_PRIV_PRESCAN`, src/frontend/parse/vis.cyr), and marking ONLY the accepted form.
 mkdir -p "$T/c/lib"
 cat > "$T/c/lib/a4.cyr" <<'EOF'
 fn a4_g(): i64 { return 7; }

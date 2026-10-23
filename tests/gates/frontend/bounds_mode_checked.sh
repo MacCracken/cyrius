@@ -5,7 +5,7 @@
 # seven forks, like CYRIUS_POISON); a CYRIUS_BOUNDS predefine for #ifdef; --bounds on build / test /
 # run / fuzz; [build] bounds = true; #bounds as a whole-program directive line. Precedence: argument
 # > env > manifest > source."). The mode is decided once, in the shared PREPROCESS before the first
-# `#ifdef` (src/frontend/lex/pp.cyr `_bnd_setup`): CYRIUS_BOUNDS 1 / 0 (unset or empty: no rung;
+# `#ifdef` (src/frontend/lex/pp/preprocess.cyr `_bnd_setup`): CYRIUS_BOUNDS 1 / 0 (unset or empty: no rung;
 # anything else refused by name), else a `#bounds` line in the ENTRY file's LEADING BLOCK (blank
 # lines, `#` comments, `include` lines before it). On, it predefines CYRIUS_BOUNDS. A `#bounds`
 # anywhere else is refused by name — the line switches the whole program, so an included library
@@ -17,8 +17,8 @@
 # LEN) at <file>:<line>` to stderr and exits 134 ... typed arrays a[i] against their exact N; slice
 # reads AND writes; a *T subscript checked for a NEGATIVE index only ... A constant index provably
 # out of range WARNS in every mode and is an ERROR under the mode. @unsafe { } turns checks off
-# inside it."). Every subscript asks src/frontend/parse/expr.cyr `_bck_open` at its `[` and calls the
-# checker the preprocessor appends to the finished unit (lex/pp.cyr `_bnd_finish`) once the index is
+# inside it."). Every subscript asks src/frontend/parse/expr/subscript.cyr `_bck_open` at its `[` and calls the
+# checker the preprocessor appends to the finished unit (lex/pp/preprocess.cyr `_bnd_finish`) once the index is
 # in rax — so every target lowers the violation through its own write / exit paths.
 #
 #   B1  `#bounds` in the leading block — line 1, after comments / blank lines, indented with a
@@ -520,7 +520,7 @@ done
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
-# C2-8 — WHAT THE MODE CHECKS (src/frontend/parse/expr.cyr `_bck_*`; the checker lex/pp.cyr
+# C2-8 — WHAT THE MODE CHECKS (src/frontend/parse/expr/subscript.cyr `_bck_*`; the checker lex/pp/preprocess.cyr
 # `_bnd_finish`): a typed array `a[i]` against its exact N, a slice's reads and writes against its
 # length, a `*T` subscript for a negative index only; `bounds: index N out of [0, LEN) at
 # <file>:<line>` on stderr and exit 134; a constant index judged at compile time; `@unsafe` lexical.

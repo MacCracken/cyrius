@@ -1,0 +1,811 @@
+# PARSER — the parser's per-fn and per-expression state — inline parameter provenance (`_prov_*`), the current fn's
+# flags, frame and return, fn-local statics (`_fs_*`), the parenthesised-source marks (`_pwrap_*`), the fn-state save /
+# restore (`_fnst_*`), the epilogue's defers, coroutine suspends and loop bodies.
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+# v6.5.65 — INLINE PARAM PROVENANCE. When the inline replay binds a value-form SIMD argument it
+# COPIES 16/32 bytes from the caller's local into a fresh callee param slot, and the direct vector
+# emitter then RELOADS that slot two instructions later. Measured at 6.5.64 that reload is a
+# 16-byte store-to-load FORWARD, and forwards are what the critical path is made of — two per
+# chain link, the only ones left after `.64`.
+#
+# These record "callee param slot P currently holds a verbatim copy of caller local C", so the
+# emitter can read C directly and the forward disappears. Two entries is the whole capacity
+# needed: the inline path admits at most 2 params (`pc > 2` is structural — SFINL packs two
+# 32-bit name offsets in one 64-bit word).
+#
+# ⚠ INVALIDATED ON ANY STORE TO THE SLOT (see EFLSTORE / EFLSTORE_F64V2_PAIR /
+# EFLSTORE_F64V4_PAIR). If the inlined body ever assigns to a param, the caller's local no longer
+# holds the param's value and redirecting the read would silently return a stale vector. That
+# invalidation is the correctness argument — not an assumption about what stdlib wrappers happen
+# to do today.
+var _prov_s0 = 0 - 1;
+var _prov_c0 = 0 - 1;
+var _prov_s1 = 0 - 1;
+var _prov_c1 = 0 - 1;
+# Clear a recorded provenance whose param slot is being written. Called from the local-store
+# emitters; a plain integer compare on the hot path.
+# v6.5.66 — the copy's CODE RANGE and whether anything actually READ the param slot. With the
+# v6.5.65 redirect in place the copy is usually DEAD: nothing reads the slot, because the emitter
+# reads the caller local instead. Recording [cp_start, cp_end) lets the replay NOP it out at the
+# end, once it knows no read occurred.
+#
+# ⭐ AND THE DEAD COPY IS NOT MERELY WASTED BYTES — IT IS THE LAST DEPENDENCY. Its load clobbers
+# xmm0 between a chain link's result store and the next link's read of it, which is precisely what
+# stops the value staying in a register. Deleting the copy puts that store and load ADJACENT, so
+# the v6.5.53 SLASE peephole removes the reload and the value becomes register-resident across the
+# link. That is why eliminating the copies and achieving residency are ONE piece of work, not two.
+var _prov_p0 = 0;
+var _prov_e0 = 0;
+var _prov_l0 = 0;
+var _prov_d0 = 0;
+var _prov_w0 = 0;
+var _prov_p1 = 0;
+var _prov_e1 = 0;
+var _prov_l1 = 0;
+var _prov_d1 = 0;
+var _prov_w1 = 0;
+# ⚠ THE DISPLACEMENT IS RECORDED, NOT RE-DERIVED FROM THE EMITTED BYTES. The first cut read it
+# back at a fixed byte offset into the copy, which is correct for a 128-bit copy (one load + one
+# store) and WRONG for a 256-bit one (TWO loads + TWO stores) — the offset landed inside the
+# second load, so the liveness scan searched for the wrong slot and deleted a live copy. Caught by
+# tests/tcyr/crossos/simd_param_then_scalar.tcyr's flat-body control.
+# `nsl` is carried too because a 256-bit slot spans TWO displacements (d and d+16) and a reference
+# to the HIGH half must keep the copy alive just as surely as one to the low half.
+fn _prov_record(slot, src, cps, cpe, disp, nsl): i64 {
+    if (_prov_s0 < 0) {
+        _prov_s0 = slot; _prov_c0 = src; _prov_p0 = cps; _prov_e0 = cpe; _prov_l0 = 0;
+        _prov_d0 = disp; _prov_w0 = nsl;
+        return 0;
+    }
+    _prov_s1 = slot; _prov_c1 = src; _prov_p1 = cps; _prov_e1 = cpe; _prov_l1 = 0;
+    _prov_d1 = disp; _prov_w1 = nsl;
+    return 0;
+}
+fn _prov_reset(): i64 {
+    _prov_s0 = 0 - 1; _prov_c0 = 0 - 1; _prov_p0 = 0; _prov_e0 = 0; _prov_l0 = 0; _prov_d0 = 0; _prov_w0 = 0;
+    _prov_s1 = 0 - 1; _prov_c1 = 0 - 1; _prov_p1 = 0; _prov_e1 = 0; _prov_l1 = 0; _prov_d1 = 0; _prov_w1 = 0;
+    return 0;
+}
+# Any DIRECT read of a param slot — a load, or taking its address — makes the copy live. The
+# redirect never comes through here: it resolves to the CALLER's local index, so a redirected
+# operand load marks the caller's slot (which has no provenance entry), not the param slot.
+fn _prov_read(idx): i64 {
+    if (_prov_s0 == idx) { _prov_l0 = 1; }
+    if (_prov_s1 == idx) { _prov_l1 = 1; }
+    return 0;
+}
+# NOP out any copy that was never read and never written. Called once, at the end of the inline
+# replay, when the whole body has been emitted and the question is finally answerable.
+#
+# ⚠ CONSERVATIVE BY CONSTRUCTION: a slot that was WRITTEN has already had its entry cleared by
+# `_prov_kill` (so it is not harvested), and a slot that was READ is marked live here. Only a copy
+# that is provably neither survives to be deleted. Straight-line arg binding, so nothing jumps
+# into the range; NOP-filling is the same idiom DSE_PASS uses, and PARSE_FN_DEF's compactor
+# collects the runs afterwards with full jump/fixup repair.
+# ⛔ THE EMITTER HOOKS ABOVE ARE NOT SUFFICIENT ON THEIR OWN, AND SHIPPING ONLY THEM MISCOMPILED.
+# Enumerating every emitter that READS a local is open-ended: the first cut hooked seven of them
+# and still missed `ELOAD_F64V2_TO_XMM` / `ELOAD_F64V4_TO_XMM` (a vector local passed to a REAL,
+# non-inlined call), so six SIMD tests read an unwritten slot. A whitelist of readers is the wrong
+# shape for a liveness question.
+#
+# So the harvest is gated on a CLOSED-FORM check as well: scan the emitted bytes of the whole
+# replay window for ANY `[rbp+disp32]` reference carrying this slot's displacement, excluding the
+# copy's own range. That is the same idiom the register-allocator safety scan uses, and it cannot
+# miss an emitter because it looks at the instruction stream rather than at who wrote it.
+# Conservative in the safe direction: a false positive only means the copy is kept.
+fn _prov_refs(win_s, win_e, cp_s, cp_e, disp): i64 {
+    var q = win_s;
+    while (q + 7 <= win_e) {
+        if (q >= cp_s) { if (q < cp_e) { q = cp_e; } }
+        if (q + 7 > win_e) { return 0; }
+        if ((load8(_codebuf_base + q + 2) & 0xC7) == 0x85) {
+            if (load32(_codebuf_base + q + 3) == disp) { return 1; }
+        }
+        q = q + 1;
+    }
+    return 0;
+}
+fn _prov_dead(win_s, win_e, cps, cpe, disp, nsl): i64 {
+    if (_prov_refs(win_s, win_e, cps, cpe, disp & 0xFFFFFFFF) == 1) { return 0; }
+    if (nsl == 4) {
+        if (_prov_refs(win_s, win_e, cps, cpe, (disp + 16) & 0xFFFFFFFF) == 1) { return 0; }
+    }
+    return 1;
+}
+fn _prov_harvest(win_s, win_e): i64 {
+    if (_prov_s0 >= 0) { if (_prov_l0 == 0) {
+            if (_prov_dead(win_s, win_e, _prov_p0, _prov_e0, _prov_d0, _prov_w0) == 1) {
+                var h0 = _prov_p0;
+                while (h0 < _prov_e0) { store8(_codebuf_base + h0, 0x90); h0 = h0 + 1; }
+            }
+        } }
+    if (_prov_s1 >= 0) { if (_prov_l1 == 0) {
+            if (_prov_dead(win_s, win_e, _prov_p1, _prov_e1, _prov_d1, _prov_w1) == 1) {
+                var h1 = _prov_p1;
+                while (h1 < _prov_e1) { store8(_codebuf_base + h1, 0x90); h1 = h1 + 1; }
+            }
+        } }
+    return 0;
+}
+fn _prov_kill(idx): i64 {
+    if (_prov_s0 == idx) { _prov_s0 = 0 - 1; _prov_c0 = 0 - 1; }
+    if (_prov_s1 == idx) { _prov_s1 = 0 - 1; _prov_c1 = 0 - 1; }
+    return 0;
+}
+# Map a callee param slot to the caller local it was copied from, or return the slot unchanged.
+fn _prov_src(idx): i64 {
+    if (_prov_s0 == idx) { return _prov_c0; }
+    if (_prov_s1 == idx) { return _prov_c1; }
+    return idx;
+}
+var _cur_fn_is_pure = 0;
+
+# v4.9.1: current-fn #regalloc register count, set inside PARSE_FN_DEF.
+# 0 = default ABI, 1 = rbx only (4.8.4 behavior), 2 = rbx+r12,
+# 3 = rbx+r12+r13, 4 = rbx+r12+r13+r14, 5 = rbx+r12+r13+r14+r15.
+# Codegen uses this to compute displacement shifts (N*8 bytes reserved)
+# and to save/restore the correct set of callee-saved registers.
+var _cur_fn_regalloc = 0;
+# v6.3.37 (A3) — per-fn frame-slot high-water mark. The monomorph/inline-replay
+# path (parse/fn/call.cyr, gated _INLINE_OK||_MONOMORPH_OK) transiently bumps GFLC to
+# materialize callee args into enclosing-frame slots, then restores it — so the
+# frame-size patch (which reads the FINAL GFLC) under-reserves, and a live runtime
+# `push rax` (a binary operand) aliases the transient inline param slot. This
+# records the peak so the frame reserves it. Raised ONLY in the flagged replay
+# path; stays 0 on default builds → frame size byte-identical.
+var _flc_hwm = 0;
+# v6.5.14 — set when this fn materialises the address of one of its OWN locals
+# (`&local`, incl. `&arr` / `&param`). The tail-call epilogue frees the frame
+# BEFORE jumping, so a callee reading through such a pointer sees dead stack.
+# v5.8.16 §8 guarded only the SYNTACTIC form `return f(&local)`; a pointer
+# laundered through a variable (`var p = &buf; ... return f(p);`) walked straight
+# past it. Reset per fn in PARSE_FN_DEF; read by the tail-call guard in
+# parse/fn/ret.cyr. See CHANGELOG [6.5.14]. 6.6.20: also set where an address in this
+# frame is pushed WITHOUT a `&` — an inline aggregate argument, a temp, a field of a
+# frame aggregate, a method's `self`, an operator's operand — and can outlive the call
+# (`_sarg_escapes`). It is set SO FAR, so inside a loop a tail call waits for the end of its
+# outermost loop to read it (`_tcp_site` / `_tcp_loop_end`, parse/fn/ret.cyr). CHANGELOG [6.7.3]
+var _fn_local_addr = 0;
+# v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
+# emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
+# fn's regalloc post-pass — a byte-scan that NOP-patches + reallocates locals —
+# would rewrite the closure's instructions and corrupt them (SIGILL on call).
+# A fn that emits a closure therefore skips the regalloc post-pass (it keeps a
+# correct, un-reallocated frame; the only cost is losing the optimization).
+var _cur_fn_has_closure = 0;
+# v6.3.8 — lexical-capture state for the closure currently being parsed. A closure
+# whose body references an enclosing local (a free variable) captures it BY VALUE
+# into a heap env object `[fn_ptr, cap0, cap1, …]`; the closure value is that
+# object (vtable-shaped, fn_ptr at offset 0), dispatched via callptr. `_cl_snap`
+# / `_cl_snap_n` point at the enclosing-locals name snapshot (taken in the closure
+# setup); `_cl_cap_slots[0.._cl_ncap)` holds the enclosing slot index of each
+# capture (capture index = position in this array); `_cl_shadow` tracks body-local
+# `var` names so they shadow enclosing names during the pre-scan.
+var _cl_capturing = 0;
+var _cl_ncap = 0;
+var _cl_snap = 0;
+var _cl_snap_n = 0;
+# 6.6.17 — entries [0, _cl_snap_nl) of `_cl_snap` are the enclosing fn's LOCALS; entries
+# [_cl_snap_nl, _cl_snap_n) are the enclosing closure's own CAPTURES, so a closure nested in a
+# capturing closure can capture them in turn (`_cl_ctx_enter`). CHANGELOG [6.6.17]
+var _cl_snap_nl = 0;
+var _cl_nshadow = 0;
+var _cl_env_lidx = 0;
+# ⛔ 6.6.5 — A fn-LOCAL STATIC ARRAY IS NOT A PROGRAM-WIDE GLOBAL NAME.
+#
+# An array local over the per-fn frame budget (or any array under CYRIUS_STACK_ARRAYS=0)
+# falls back to shared static storage, and it used to be registered with an ORDINARY GLOBAL
+# NAME. FINDVAR is one flat last-match table over every file, so `fn f() { var big[200000]; }`
+# in one file captured every later reference to `big` anywhere in the program — returning 7
+# where 3 is right, silently. v6.6.4 additionally stamped it with the declaring file's
+# visibility, which turned the same collision into an error naming the CONSUMER's variable.
+# It was also invisible to FINDLOCAL, so an outer LOCAL of the same name shadowed it inside
+# its own fn and `&big` wrote into that scalar.
+#
+# The STORAGE stays static (raising the budget is a heap-layout change, and the two
+# consumers over it bank their buffers on purpose) — only the NAME is scoped: the slot is
+# marked dead when its block closes, and an enclosing local it shadows is hidden for the
+# duration and restored after. The note it used to print is now a WARNING that says the
+# storage is static and shared across calls and threads, because that is the part a caller
+# has to know. CHANGELOG [6.6.5]
+# ⛔ THE OVERFLOW IS A DIAGNOSTIC, NOT A `return 0`. The first cut of this table was 64 deep
+# and opened `if (_fs_n >= 64) { return 0; }` — so the 65th fn-local static in one body got
+# NEITHER the new scoping NOR the v6.6.4 `_GVAR_VIS` stamp the else-arm applies, i.e. it
+# silently reverted to the exact 6.6.3 shape this release removes, in a `private` file as a
+# program-wide PUBLIC global. Measured with `CYRIUS_STACK_ARRAYS=0` (where every array local
+# is static, so the cap is reachable): N=64 answered 3, N=65 answered 64. A fail-open guard
+# on the defect under repair is the defect. The bound is 256 and hitting it stops the compile.
+# The gate derives this number from the declaration below rather than quoting it.
+# CHANGELOG [6.6.5]
+var _fs_n = 0;
+var _fs_floor = 0;
+var _fs_vi[256];
+var _fs_dep[256];
+var _fs_hidli[256];
+var _fs_hidnm[256];
+fn _fs_push(S, vi, noff): i64 {
+    if (_fs_n >= 256) {
+        ERR_MSG(S, "too many static array locals in one fn (limit 256); move some to top level", 74);
+        return 0;
+    }
+    S64(&_fs_vi + _fs_n * 8, vi);
+    S64(&_fs_dep + _fs_n * 8, GSDEP(S));
+    var _fh = FINDLOCAL(S, noff);
+    S64(&_fs_hidli + _fs_n * 8, _fh);
+    if (_fh >= 0) {
+        S64(&_fs_hidnm + _fs_n * 8, L64(S + 0x5D9D000 + _fh * 8));
+        S64(S + 0x5D9D000 + _fh * 8, 0 - 1);
+    }
+    _fs_n = _fs_n + 1;
+    return 0;
+}
+fn _fs_kill(S, k): i64 {
+    SVDEAD(S, L64(&_fs_vi + k * 8), 1);
+    var _fh = L64(&_fs_hidli + k * 8);
+    if (_fh >= 0) { S64(S + 0x5D9D000 + _fh * 8, L64(&_fs_hidnm + k * 8)); }
+    return 0;
+}
+# Close every fn-static whose block depth is >= `dep`, never crossing into the enclosing
+# fn's entries (`_fs_floor` is the current fn/closure body's mark).
+fn _fs_pop(S, dep): i64 {
+    var go = 1;
+    while (go == 1) {
+        if (_fs_n <= _fs_floor) { go = 0; }
+        else {
+            var k = _fs_n - 1;
+            if (L64(&_fs_dep + k * 8) < dep) { go = 0; }
+            else { _fs_kill(S, k); _fs_n = k; }
+        }
+    }
+    return 0;
+}
+fn _fs_popto(S, mark): i64 {
+    while (_fs_n > mark) {
+        var k = _fs_n - 1;
+        _fs_kill(S, k);
+        _fs_n = k;
+    }
+    return 0;
+}
+
+var _cl_cap_slots[64];
+# 6.6.5 — the WORD COUNT of each capture. A closure captured every free variable as ONE
+# word, which is right for a scalar and wrong for an aggregate: an enclosing struct local or
+# stack array is `n` words, and the closure body addresses its fields relative to the base.
+# With one word copied, the body either read a single word as if it were the whole struct or
+# (once struct literals became real locals) failed to resolve the name at all. The env is now
+# `1 + sum(widths)` words and each capture copies its own width.
+var _cl_cap_w[64];
+var _cl_shadow[64];
+# v5.5.36 Phase 2b — nonzero (= 8) when the current fn returns a
+# struct by value. Reserves one 8-byte frame slot for the hidden
+# retptr stash, living immediately after the regalloc save area
+# and before any regular locals. All local-access emits shift disp
+# by this amount so the retptr slot doesn't collide with locals.
+var _cur_fn_ret_stash = 0;
+# Mirrors the same fn's return-struct sid so PARSE_RETURN can emit
+# the struct-copy sequence without re-scanning the fn table. 0 when
+# scalar return. Set/reset in parallel with _cur_fn_ret_stash.
+var _cur_fn_ret_sid = 0;
+
+# v5.10.45 Phase 1 of struct-byval ABI arc — nonzero when the
+# current fn returns a 9-16B int-class value-type struct (Str's
+# 16B handle-shape is special-cased out via `_STR_SID(S)` check).
+# Triggers PARSE_RETURN's pair-emit path (rax = lo, rdx = hi)
+# instead of the scalar PCMPE path. Mutually exclusive with
+# `_cur_fn_ret_stash > 0` (the >16B retptr path). Set/reset in
+# parallel with `_cur_fn_ret_stash` and `_cur_fn_ret_sid` in the
+# fn rough-scan + PARSE_FN_DEF teardown.
+var _cur_fn_ret_pair = 0;
+
+# ⭐ 6.6.6 — HOW MANY FRAME SLOTS THE CURRENT FN'S PARAMETER LIST OWNS. Parameters are
+# registered first, from slot 0 up, so `li < _cur_fn_pslots` IS "this local is a parameter" —
+# the one fact that separates an ADDRESS-PASSED by-value struct parameter (its slot holds a
+# pointer to the caller's copy) from the other pointer-mode struct local, `var a = str_from(x)`,
+# whose slot holds a heap handle and for which `a = b` must stay a pointer rebind. Recorded
+# rather than re-derived because a value-form vector parameter owns 2-4 slots, so the parameter
+# COUNT is not the slot count. Set once at the end of the parameter loop; zeroed by the fn
+# teardown, and saved/restored around the async constructor and the generic-instance re-emit
+# exactly like `_cur_fn_ix` (the constructor's save was added at bite 16's review — until then
+# this line described a save/restore that did not exist, and the constructor was correct only
+# because the teardown happens to zero this four lines before it runs). See
+# `_local_is_sptr_param`. CHANGELOG [6.6.6]
+var _cur_fn_pslots = 0;
+
+# ⭐ 6.6.6 (bite 14 review) — THE STRUCT-RESULT RECORD, for the two call paths whose callee a
+# destination cannot see in its tokens: a method call `s.m(..)` (the callee depends on `s`'s
+# type) and an overloaded operator `a + b`. Each puts a struct result in a frame temp and
+# records it here; a destination (`var p: S = ..`, `x = ..`, a by-value struct argument,
+# `return ..` in a struct fn) arms `_sc_want` with the token it is about to parse, and after
+# the parse takes the temp when the record spans EXACTLY that expression (`_sc_whole`). See
+# `_sc_pre` in parse/fn/call_agg.cyr. A free fn needs none of this — its name is the next token.
+var _sc_want = 0 - 1;   # first token of the expression a destination is parsing
+var _sc_beg = 0 - 1;    # first token of the last recorded struct-valued call
+var _sc_end = 0 - 1;    # the token after it
+var _sc_tmp = 0 - 1;    # its temp's field-0 slot; -1 at top level (no frame)
+var _sc_sid = 0;        # the struct it returned
+var _scv_un = 0 - 1;    # 6.7.11: the token an untyped declaration's wrap stepped to (`_scv_un_peel`)
+var _sc_fn = 0;         # the callee's name offset, for a top-level refusal
+var _sc_fi = 0 - 1;     # 6.7.14: its fn (-1: none), so an argument refusal names a method `S2.dup` (`_fn_src_name`)
+var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
+var _sc_vbeg = 0 - 1;   # 6.7.13 (D29): the receiver token of a method whose vector a receive takes (`_sc_vret`)
+var _sc_vdst = 0;       # ... and that receive's slot
+# The span of the last >16 B call `_sc_pre` REFUSED at top level (not recorded above, so no
+# destination re-refuses it): a positional literal's nested field takes it as the whole field,
+# instead of descending and reporting the values it is then short. CHANGELOG [6.6.12]
+var _sc_rbeg = 0 - 1;
+var _sc_rend = 0 - 1;
+var _sc_rsid = 0;   # 6.7.15 (D34): ... and the struct it returns, for an untyped top-level global (`_gu_rec`)
+# ⛔ 6.7.6 — A STRUCT RESULT AS THE LEFT OPERAND (`p.dup() + p`, `mk3(4) - s`, `a + b + c`): the
+# last struct-valued call result, stamped where it ENDS (a free call in `_call_scale_fix`, a method
+# or operator in `_sc_post` / `_sc_post_small`) with the code pointer, so it describes the value in
+# rax only while nothing has been emitted since. `_op_lst` matches it against a left operand. The
+# `_fnc_l*` record is `_fnc_agg`'s temp for a >16 B free call. CHANGELOG [6.7.6]
+var _lsc_beg = 0 - 1;   # its first token
+var _lsc_end = 0 - 1;   # the token after it
+var _lsc_cp = 0 - 1;    # the code pointer where it ended
+var _lsc_sid = 0;       # its struct
+var _lsc_tmp = 0 - 1;   # its frame temp; -1 / -4 = in rax (rax:rdx over 8 B) or no frame
+var _lsc_hit = 0;       # 1 = `_op_lst` matched the left operand just classified
+# ⛔ 6.7.10 — A STRUCT-TYPED FIELD OR A `*T` DEREFERENCE AS THE LEFT OPERAND (the user's decision 11):
+# the last whole struct-typed field read (`_flo_note`, at its load) and the last dereference of a `*S`
+# an operator may follow (`_dlo_park`: its pointer parked in a hidden temp before the load), each
+# stamped with the code pointer after its load, as `_lsc_*` is. `_op_lst` matches them. CHANGELOG [6.7.10]
+var _flo_beg = 0 - 1;   # the field read's first token (the chain's)
+var _flo_end = 0 - 1;   # the token after it
+var _flo_cp = 0 - 1;    # the code pointer after its load
+var _flo_sid = 0;       # the field's struct
+var _flo_idx = 0;       # its base, PARSE_FIELD_LOAD's encoding (idx, sid) ...
+var _flo_bsid = 0;
+var _flo_off = 0;       # ... and the field's byte offset in it
+var _flo_hit = 0;       # 1 = `_op_lst` matched it
+var _dlo_beg = 0 - 1;   # the dereference's `*`
+var _dlo_end = 0 - 1;   # the token after its operand
+var _dlo_cp = 0 - 1;    # the code pointer after its load
+var _dlo_sid = 0;       # the struct its `*S` operand points at
+var _dlo_h = 0;         # the hidden temp holding that pointer (`_HTEMP`)
+var _dlo_hit = 0;       # 1 = `_op_lst` matched it
+var _dro_want = 0 - 1;  # the `*` an address-passed argument / right operand asks `_dlo_park` to park (ops-5)
+var _dro_vt = 0 - 1;    # 6.7.12: ... the same `*` when that argument's parameter is a `*V` (`_dlo_vec`)
+var _dro_vo = 0 - 1;    # 6.7.14: the `*` starting an argument to a pointer of another kind or a small by-value struct
+var _dro_vod = 0;       # ... the vector its dereference read (`_dro_vnote`: its descriptor), 0 = none
+var _dro_vend = 0;      # ... the token after that dereference's operand
+var _dvi_want = 0 - 1;  # 6.7.14 (D36): the `*` of an untyped declaration's whole `*p` (`_dvi_arm`, fn/call_agg.cyr)
+var _dvi_got = 0 - 1;   # ... that `*` once its `*V` operand's pointer is parked (`_dvi_park`)
+var _fnc_lo = 0 - 1;    # `_fnc_agg`'s last emitted call: its `(`,
+var _fnc_lt = 0 - 1;    #   its temp,
+var _fnc_lcp = 0 - 1;   #   and the code pointer after it
+
+# ⭐ 6.7.6 — REDUNDANT PARENTHESES AROUND A WHOLE STRUCT SOURCE ARE TRANSPARENT. Every struct
+# destination (an address-passed argument, a struct-typed field, a struct variable) picks its copy
+# from the source's FIRST token — a name, a call, a field — so `rd3((a))`, `o.i = (z.k)` and
+# `u = (j)` were an expression whose value is the struct's first word: pushed and dereferenced
+# (SIGSEGV), or stored as one word (silent). `_pwrap_k` counts the parentheses at token `st` that
+# wrap one expression — each `(` closing right before its enclosing `)` — and leaves the token after
+# the outermost `)` in `_pw_end`; a destination whose terminator is that token runs its arms on the
+# inside (`st + k`) and closes the `k` parentheses after (`_pw_close`). `(a) + (b)` is not a wrap.
+# CHANGELOG [6.7.6]
+var _pw_end = 0 - 1;
+# The first token of a parenthesised declaration initialiser's inside (`_scv_peel`): a whole free
+# call starting there records its struct temp (`_fnc_agg`), as a method call's does. -1 = none.
+var _sc_fcw = 0 - 1;
+# 6.7.6 — the last WHOLE `Str` field read (`h.name`): its first token, the token after it, the Str
+# struct id and the field's name (`_fls_note`, parse/decl/field.cyr). Passive — the load is unchanged.
+var _fls_beg = 0 - 1;
+var _fls_end = 0 - 1;
+var _fls_sid = 0;
+var _fls_name = 0;
+fn _pwrap_k(S, st): i64 {
+    var k = 0;
+    var c = 0;
+    _pw_end = 0 - 1;
+    while (TOKTYP(S, st + k) == 10) {
+        var ck = _call_close(S, st + k);
+        if (k > 0) { if (ck != c - 1) { break; } }
+        if (k == 0) { _pw_end = ck + 1; }   # after the OUTERMOST `)`
+        c = ck;
+        k = k + 1;
+    }
+    return k;
+}
+# 6.7.11 — the first token inside parentheses that wrap the WHOLE argument at token `a` (up to its `,`
+# / `)`, any depth), `a` itself when it opens none, or -1: `(x) + 1` and a tuple literal `(x, 3)` wrap
+# nothing. Reads tokens only; `_pw_end` is kept. For the struct-carrier inference (`_gsc_wrap`) and its
+# token mirror (`_tok_gen_sc_sid`). CHANGELOG [6.7.11]
+fn _pwrap_in(S, a): i64 {
+    if (TOKTYP(S, a) != 10) { return a; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, a);
+    var e = TOKTYP(S, _pw_end);
+    _pw_end = pe;
+    if (e != 31) { if (e != 11) { return 0 - 1; } }
+    if (_tup_commas(S, a + k - 1) != 0) { return 0 - 1; }
+    return a + k;
+}
+# Consume the `k` closing parentheses of a wrap whose inside was just parsed.
+fn _pw_close(S, k): i64 {
+    var i = 0;
+    while (i < k) {
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); return 0; }
+        STI(S, GTI(S) + 1);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v5.10.28 — current fn's return-type scalar tag (negative encodings
+# from `_rt_scalar`: -1=i8, -2=i16, -4=i32, -8=i64, -16=Result,
+# -17=Option, -18=Tagged, -19=cstring, -2093=f64v2). PARSE_RETURN
+# checks this to dispatch f64v2 multi-register pair return ABI.
+# (v6.4.14: f64v2 moved off -20 -> descriptor -2093; f64v4 -> -2125.)
+# 0 when fn returns a struct (use _cur_fn_ret_sid) or no annotation.
+var _cur_fn_ret_scalar = 0;
+
+# v5.6.19 O4a: 1 if CYRIUS_REGALLOC_DUMP=1 was set at compile start.
+# Read once early in main.cyr; consulted by PARSE_FN_DEF to print
+# per-fn live-interval table for inspection. Foundation for v5.6.20
+# Poletto-Sarkar linear-scan picker — letting us verify intervals
+# match expectations before wiring the algorithm.
+var _ra_dump_enabled = 0;
+
+# v5.6.20 O4b: CYRIUS_REGALLOC_PICKER_CAP=N — caps total picker
+# assignments per fn for bisection (per v5.6.17 saved methodology).
+# -1 = uncapped (default; algorithm assigns up to _cur_fn_regalloc).
+# 0 = disabled (no picker assignments — falls back to all-stack).
+# Used to bisect any codegen bug the new picker might surface.
+var _ra_picker_cap = 0 - 1;
+
+# v5.6.22 O4c: CYRIUS_REGALLOC_AUTO_CAP=N — caps how many fns get
+# auto-regalloc enabled (per-fn counter increments inside PARSE_FN_DEF).
+# -1 = uncapped (every fn auto-enabled). 0 = no auto-enable (back to
+# explicit #regalloc opt-in only). Bisection knob for the auto-enable
+# codegen bug — find first fn where output diverges.
+var _ra_auto_cap = 0 - 1;
+var _ra_auto_count = 0;
+
+# v5.11.62: current fn index for the per-fn array-byte attribution
+# tracked at 0x1C8000 (reclaimed v5.11.19 fn_regalloc slot). PARSE_FN_DEF
+# sets to the fn's fi at entry and resets to -1 at exit. parse/decl/array.cyr's
+# array-registration path (parse/decl/array.cyr `PARSE_ARRAY`) adds the aligned
+# size into the slot when this is >= 0; top-level `var foo[N]` declarations
+# (no enclosing fn) skip the accounting. Read by FIXUP's `large static
+# data` warning emitter (src/backend/x86/fixup.cyr) to compute "M bytes
+# inside N unreachable fns" attribution after the DCE pass identifies dead
+# hosts. See CHANGELOG [5.11.62].
+var _cur_fn_ix = 0 - 1;
+
+# ⭐ 6.6.7 — PER-FN STATE ISOLATION for the three emitters that emit a fn body WHILE another
+# fn is still being emitted: a closure literal, a first generic instantiation `f<T>(..)`, and
+# the async constructor. Each used to save its own hand-picked subset of the per-fn globals,
+# and each subset had drifted. The return-patch vector was saved by LENGTH, truncated to 0 and
+# pushed over, so an early `return` before a closure or a first `f<T>()` kept rel32 = 0 and fell
+# through (x86/PE) or hung (aarch64); the defer table was not saved at all, so a closure's
+# `defer`/`secret` landed on the ENCLOSING fn (zeroing an enclosing slot, never running at the
+# closure's return) and an instantiation DROPPED the enclosing fn's defers; `_fn_local_addr`,
+# the loop context and the coroutine mode leaked as well. ONE snapshot now covers
+# every per-fn global, and the nested fn owns only the range it appends:
+#   _rp_base    — first rp_vec index owned by the fn being emitted (0 at top level)
+#   _defer_base — first defer-table entry owned by the fn being emitted (0 at top level)
+# PARSE_FN_DEF truncates to / patches from these instead of index 0. CHANGELOG [6.6.7]
+var _rp_base = 0;
+var _defer_base = 0;
+# 6.6.7 — how many loops (`_loop_depth`) and break targets (`_brk_depth` = loops + switch +
+# match) enclose the current statement IN THE CURRENT FN. A `break`/`continue` with none used to
+# compile clean: `break` stayed an unpatched chain link, `continue` jumped to the stale loop top
+# of whatever fn last had a loop (SIGSEGV). Zeroed for every nested fn body and for a defer body,
+# so neither can jump out of its own frame. `_in_defer` only picks the diagnostic.
+var _loop_depth = 0;
+var _brk_depth = 0;
+var _in_defer = 0;
+# 6.6.20 — the pending `continue` jumps of EVERY enclosing `for` (C-style, range, collection) in
+# one growable vector. A `for` owns the entries from its base (the length when it opened,
+# `_cont_open`) up, patches them to its step and truncates back (`_cont_close`, parse/ctrl.cyr),
+# so the ranges of a nest are disjoint at any depth, across a `while`, a closure body or a
+# generic instance emitted mid-loop. It replaces the flat array at S+0x18F8A0, whose next-free
+# index 0x18F898 a `while` had to ZERO (0 was also its mode flag): a `for` inside that `while`
+# restarted at entry 0 and stole the outer `for`'s pending jump. 0x18F898 is now the mode only
+# (0 = `continue` jumps to the loop top, 1 = it is pushed here). CHANGELOG [6.6.20]
+var _cont_vec = 0;
+# 6.6.7 — 1 when the fn being emitted has a `defer` / `secret var` anywhere in its body
+# (`_body_has_defer`, set at the body's `{`): its `return f(..);` must reach the walker, so it
+# never tail-calls (`_tc_frame_divert`). Per-fn: in the snapshot below.
+var _cur_fn_has_defer = 0;
+# 6.6.7 — a coroutine suspend exit returns 0 to the runtime WITHOUT completing the body, so it
+# must skip the defer walker; its jmp is recorded here (per suspend index) instead of rp_vec.
+var _coro_sjp[64];
+
+fn _fnst_put_cg(b): i64 {
+    store64(b + 88, _fn_local_addr);    _fn_local_addr = 0;
+    store64(b + 96, _flc_hwm);          _flc_hwm = 0;
+    store64(b + 104, _cur_fn_regalloc); _cur_fn_regalloc = 0;
+    store64(b + 112, _cur_fn_ret_stash); _cur_fn_ret_stash = 0;
+    store64(b + 120, _cur_fn_ret_sid);  _cur_fn_ret_sid = 0;
+    store64(b + 128, _cur_fn_ret_scalar); _cur_fn_ret_scalar = 0;
+    store64(b + 136, _cur_fn_ret_pair); _cur_fn_ret_pair = 0;
+    store64(b + 144, _cur_fn_naked);    _cur_fn_naked = 0;
+    store64(b + 152, _cur_fn_ix);
+    store64(b + 160, _cur_fn_pslots);   _cur_fn_pslots = 0;
+    # b + 168 was _cur_fn_tp_pmask (retired 6.6.10: the B3 stub fact is recorded per fn, GFGM).
+    store64(b + 168, _cur_fn_ptrp);     _cur_fn_ptrp = 0;
+    store64(b + 176, _cur_fn_is_pure);  _cur_fn_is_pure = 0;
+    return 0;
+}
+fn _fnst_get_cg(b): i64 {
+    _fn_local_addr = load64(b + 88);
+    _flc_hwm = load64(b + 96);
+    _cur_fn_regalloc = load64(b + 104);
+    _cur_fn_ret_stash = load64(b + 112);
+    _cur_fn_ret_sid = load64(b + 120);
+    _cur_fn_ret_scalar = load64(b + 128);
+    _cur_fn_ret_pair = load64(b + 136);
+    _cur_fn_naked = load64(b + 144);
+    _cur_fn_ix = load64(b + 152);
+    _cur_fn_pslots = load64(b + 160);
+    _cur_fn_ptrp = load64(b + 168);
+    _cur_fn_is_pure = load64(b + 176);
+    return 0;
+}
+# The coroutine mode: a closure inside an `async fn` body is NOT a coroutine, and with the mode
+# leaked its locals were addressed through the enclosing coroutine's heap frame (SIGSEGV).
+fn _fnst_put_coro(b): i64 {
+    store64(b + 184, _cur_fn_coro);     _cur_fn_coro = 0;
+    store64(b + 192, _coro_base);
+    store64(b + 200, _coro_lo);
+    store64(b + 208, _coro_nsusp);
+    store64(b + 216, _coro_top_jmp);
+    store64(b + 224, _coro_entry_cp);
+    return 0;
+}
+fn _fnst_get_coro(b): i64 {
+    _cur_fn_coro = load64(b + 184);
+    _coro_base = load64(b + 192);
+    _coro_lo = load64(b + 200);
+    _coro_nsusp = load64(b + 208);
+    _coro_top_jmp = load64(b + 216);
+    _coro_entry_cp = load64(b + 224);
+    return 0;
+}
+# The pending `&&` false-exit patches (count + 8 entries) belong to the enclosing statement's
+# condition; a nested body re-runs ECOND/PATCHXP, which zero the count. Carried across for
+# completeness — no miscompile through this path was measured (a closure literal in a
+# condition did not reach it in the probes that were tried).
+fn _fnst_put_xp(S, b): i64 {
+    store64(b + 232, GXPC(S));
+    var i = 0;
+    while (i < 8) { store64(b + 240 + i * 8, L64(S + 0x18F848 + i * 8)); i = i + 1; }
+    SXPC(S, 0);
+    return 0;
+}
+fn _fnst_get_xp(S, b): i64 {
+    SXPC(S, load64(b + 232));
+    var i = 0;
+    while (i < 8) { S64(S + 0x18F848 + i * 8, load64(b + 240 + i * 8)); i = i + 1; }
+    return 0;
+}
+# Save EVERY per-fn global into a snapshot and enter a fresh fn: in-fn, no locals, scope 0, no
+# loop, the return-patch and defer ranges starting where the enclosing fn's end. The caller then
+# sets what is specific to it (`_cur_fn_ix`, captures, locals snapshot). Returns the snapshot.
+fn _fnst_save(S): i64 {
+    var b = alloc(328);
+    store64(b, GLVAR(S));
+    store64(b + 8, GINFN(S));
+    store64(b + 16, GFLC(S));
+    store64(b + 24, GSDEP(S));
+    store64(b + 32, _rp_base);
+    store64(b + 40, _defer_base);
+    store64(b + 48, _loop_depth);
+    store64(b + 56, _brk_depth);
+    store64(b + 64, L64(S + 0x18F838));
+    store64(b + 72, L64(S + 0x18F840));
+    store64(b + 80, _in_defer);
+    store64(b + 304, _cur_fn_has_defer);
+    store64(b + 312, _cur_iself_sid);   # 6.7.0 (A4): kept, not cleared — a closure inherits it
+    store64(b + 320, _tcp_base);        # 6.7.3: the in-loop tail calls' range, as rp_vec's
+    _fnst_put_cg(b);
+    _fnst_put_coro(b);
+    _fnst_put_xp(S, b);
+    SINFN(S, 1);
+    SFLC(S, 0);
+    SSDEP(S, 0);
+    _rp_base = vec_len(rp_vec);
+    _tcp_base = _tcp_len();
+    _defer_base = L64(S + 0x1AC020);
+    _loop_depth = 0;
+    _brk_depth = 0;
+    _in_defer = 0;
+    _cur_fn_has_defer = 0;
+    S64(S + 0x18F840, 0);
+    return b;
+}
+# 1 when snapshot `b` was taken inside a fn (the enclosing GINFN), 0 at top level.
+fn _fnst_was_infn(b): i64 { return load64(b + 8); }
+# The enclosing fn's `_cur_fn_ix` snapshot `b` saved (`_fnst_put_cg`). 6.7.16
+fn _fnst_fn_ix(b): i64 { return load64(b + 152); }
+# Leave the nested fn: drop its return patches and defer entries (both already emitted and
+# patched by it), then put every enclosing global back.
+fn _fnst_restore(S, b): i64 {
+    vec_truncate(rp_vec, _rp_base);
+    _tcp_drop(S);   # 6.7.3: its in-loop tail calls were resolved at its end (`_tcp_resolve`)
+    S64(S + 0x1AC020, _defer_base);
+    SLVAR(S, load64(b));
+    SINFN(S, load64(b + 8));
+    SFLC(S, load64(b + 16));
+    SSDEP(S, load64(b + 24));
+    _rp_base = load64(b + 32);
+    _defer_base = load64(b + 40);
+    _loop_depth = load64(b + 48);
+    _brk_depth = load64(b + 56);
+    S64(S + 0x18F838, load64(b + 64));
+    S64(S + 0x18F840, load64(b + 72));
+    _in_defer = load64(b + 80);
+    _cur_fn_has_defer = load64(b + 304);
+    _cur_iself_sid = load64(b + 312);
+    _tcp_base = load64(b + 320);
+    _fnst_get_cg(b);
+    _fnst_get_coro(b);
+    _fnst_get_xp(S, b);
+    return 0;
+}
+
+# 6.6.7 — the fn EPILOGUE's defer machinery, shared by PARSE_FN_DEF and the closure path so
+# there is ONE authority (the closure path had none: no zeroing trampoline and no walker, which
+# is why a closure's defer ran in the enclosing frame). All three walk [_defer_base, count).
+fn _defer_zero_flags(S): i64 {
+    var dc = L64(S + 0x1AC020);
+    var i = _defer_base;
+    while (i < dc) {
+        EMOVI(S, 0);
+        EFLSTORE(S, L64(S + 0x1AC028 + i * 24 + 16));
+        i = i + 1;
+    }
+    return 0;
+}
+# Resolve the fn-entry `jmp` (emitted just before the body) — to a flag-zeroing trampoline that
+# returns to `body_cp` when this fn registered defers, else to `body_cp` itself. The body's
+# FALL-THROUGH end is routed round the trampoline to the return landing: without that jmp a body
+# that ended without `return` ran into the trampoline and re-entered the body forever (and every
+# expression-bodied closure falls through). A coroutine zeroes its flags at the state-0 landing
+# instead (see the dispatch in PARSE_FN_DEF), because its flags live in the heap frame, which is
+# not reachable yet at fn entry — and must not be re-zeroed on each resume.
+fn _defer_emit_init(S, init_jmp, body_cp): i64 {
+    var dc = L64(S + 0x1AC020);
+    if (dc > _defer_base) {
+        # The body's fall-through jumps round the trampoline to the return landing. Only a
+        # plain fn / closure needs it: a coroutine's body end is already routed there (PARSE_FN_DEF),
+        # and the resume dispatch before this ends in an unconditional jmp, so the jmp was
+        # unreachable (`e9 00000000`). CHANGELOG [6.6.12]
+        if (_cur_fn_coro == 0) {
+            vec_push(rp_vec, EJMP0(S));
+            EPATCH(S, init_jmp);
+            _defer_zero_flags(S);
+            EJMP(S, body_cp);
+            return 0;
+        }
+    }
+    var saved_cp = GCP(S);
+    SCP(S, body_cp);
+    EPATCH(S, init_jmp);
+    SCP(S, saved_cp);
+    return 0;
+}
+# Land every return jmp this fn recorded ([_rp_base, len)) at the current position.
+fn _rp_patch_here(S): i64 {
+    var n = vec_len(rp_vec);
+    var i = _rp_base;
+    while (i < n) {
+        EPATCH(S, vec_get(rp_vec, i));
+        i = i + 1;
+    }
+    return 0;
+}
+# ⛔ 6.6.20 — THE f64 RETURN BOX, ONCE, AT THE LANDING (`rs` = the return scalar of the fn whose
+# returns land here). A `: f64` fn carries its value boxed in rax (x0 / r0) and the x86-family
+# ABI wants it in xmm0, which every call site reads back (`_call_ret_marks`). The box used to sit
+# on three PARSE_RETURN arms only, so a bare `return;`, falling off the end, the `ret2` builtin,
+# a `?` early return and an inlined `: f64` callee all handed back whatever the last f64 op left
+# in xmm0 on x86 / PE / x86 Mach-O, while aarch64 / cx (a no-op box) were right. Every return of
+# the fn jmps to the landing, so one box here covers every arm, present and future; a tail call
+# never reaches it and is diverted unless its callee boxes too (`_tc_f64_ret_divert`). The defer
+# walker runs after this and EDEFER_SAVE keeps xmm0. CHANGELOG [6.6.20]
+fn _ret_box_f64(S, rs): i64 {
+    if (rs == 0 - 9) { EMOVQ_X0_A(S); }
+    return 0;
+}
+# Run the reached defer blocks LIFO: save the return convention, check each flag, jmp to the
+# block, which jmps back. ⚠ EDEFER_SAVE/RESTORE (per backend) keep EVERY return register of
+# EVERY return convention — the pair, the arity-3 slot, the f64 / vector registers — because a
+# block is ordinary code and any call in it clobbers them; saving rax alone lost an `Ok`
+# payload to a `sys_write` in the block. CHANGELOG [6.6.7]
+fn _defer_emit_walk(S): i64 {
+    var dc = L64(S + 0x1AC020);
+    if (dc <= _defer_base) { return 0; }
+    EDEFER_SAVE(S);
+    var di = dc - 1;
+    while (di >= _defer_base) {
+        EFLLOAD(S, L64(S + 0x1AC028 + di * 24 + 16));
+        ETESTAZ(S);
+        var dskip = EJCC(S, 0x84);                  # je skip — flag 0: never reached
+        EJMP(S, L64(S + 0x1AC028 + di * 24));        # run the block ...
+        EPATCH(S, L64(S + 0x1AC028 + di * 24 + 8));  # ... whose end-jmp returns here
+        EPATCH(S, dskip);
+        di = di - 1;
+    }
+    EDEFER_RESTORE(S);
+    return 0;
+}
+# 6.6.7 — a coroutine suspend exit (`await` inside a coroutine body, parse/expr/stamp.cyr): record the
+# `jmp` to the fn end per suspend index, not in rp_vec, so it bypasses the defer walker. An
+# `await` inside a DEFER body is refused: the walker is mid-run with rax pushed on a stack frame
+# that the suspend destroys.
+fn _coro_suspend_jmp(S, sk): i64 {
+    if (_in_defer == 1) { ERR_MSG(S, "await cannot suspend inside a defer body", 40); }
+    var j = EJMP0(S);
+    if (sk < 64) { store64(&_coro_sjp + sk * 8, j); }   # past 63 the caller has already errored
+    return 0;
+}
+# ⛔ 6.6.8 — A COMPLETED COROUTINE IS DONE. Completion never wrote the state word, so forcing a
+# finished future re-entered at its LAST suspend: the tail of the body ran again, with its
+# defers, and a loop kept counting past its own exit (forces 5..10 of a 3-await loop returned
+# 4..9). The body's real return now stamps C[state] = DONE (-1) and keeps its value in a word
+# past the frame (`_CORO_LOCAL_OFF + _coro_flc * 8`, which the constructor sizes for); the
+# dispatch answers a DONE entry with that value and leaves through the suspend exit, so no
+# statement and no defer runs twice. CHANGELOG [6.6.8]
+fn _coro_res_off(): i64 { return _CORO_LOCAL_OFF + _coro_flc * 8; }
+# The first link of the resume dispatch (`_coro_flc` is already final: every local exists).
+fn _coro_done_check(S): i64 {
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _CORO_STATE_OFF);
+    ELOAD64(S);                       # rax = C[state]
+    EPUSHR(S);
+    EMOVI(S, 0 - 1);
+    EPOPC(S);
+    ECMPR(S);
+    var skip = EJCC(S, 0x85);         # jne -> the resume chain
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _coro_res_off());
+    ELOAD64(S);                       # rax = the completion value
+    store64(&_coro_sjp, EJMP0(S));    # -> the suspend exit (slot 0 is no suspend index)
+    EPATCH(S, skip);
+    return 0;
+}
+# At the real return, after the defer walker: rax is the completion value.
+fn _coro_mark_done(S): i64 {
+    EPUSHR(S);
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _CORO_STATE_OFF);
+    EPUSHR(S);
+    EMOVI(S, 0 - 1);
+    EPOPC(S);
+    ESTORE64(S);                      # C[state] = DONE
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _coro_res_off());
+    EPUSHR(S);
+    EPOPC(S);
+    EPOPR(S);
+    ESTORE64(S);                      # C[res] = rax
+    return 0;
+}
+fn _coro_land_suspends(S): i64 {
+    EPATCH(S, load64(&_coro_sjp));    # the DONE exit from _coro_done_check
+    var k = 1;
+    while (k <= _coro_nsusp && k < 64) {
+        EPATCH(S, load64(&_coro_sjp + k * 8));
+        k = k + 1;
+    }
+    return 0;
+}
+# A loop body: one more loop and one more break target for the statements inside it.
+fn _loop_body(S, scoped): i64 { return _loop_body_b(S, scoped, 1); }
+# ... `bb` 0: a body of one statement, no braces (`_blk_open`, parse/ctrl.cyr). CHANGELOG [6.7.16]
+fn _loop_body_b(S, scoped, bb): i64 {
+    _loop_depth = _loop_depth + 1;
+    _brk_depth = _brk_depth + 1;
+    if (scoped == 1) { SCOPE_PUSH(S); }
+    _blk_body(S, bb);
+    if (scoped == 1) { SCOPE_POP(S); }
+    _loop_depth = _loop_depth - 1;
+    _brk_depth = _brk_depth - 1;
+    return 0;
+}

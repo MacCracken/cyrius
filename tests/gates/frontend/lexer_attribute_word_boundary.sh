@@ -91,7 +91,7 @@
 #           (PP_LEXST_AT), so a string opened there hides the `}` and the fn below
 #           it, as it does for the compiler; F8b is anti-vacuous.
 #   D1..D6  the SAME root cause in the preprocessor (review round): PP_IS_HOST_ONLY
-#           and the three ISDERIVE* probes in src/frontend/lex/pp.cyr, plus the
+#           and the three ISDERIVE* probes in src/frontend/lex/pp/derive.cyr and accessor.cyr, plus the
 #           fourth reader of `#derive` (programs/cyrius_api_surface.cyr). These
 #           fail SILENTLY rather than with a diagnostic, which is why they are here
 #           and not left to the filing's table: `#host_onlyish note` marked a module

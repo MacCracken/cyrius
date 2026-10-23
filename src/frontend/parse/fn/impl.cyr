@@ -357,7 +357,7 @@ fn _mark_ptr_param(S): i64 {
     # 6.6.17: and its step, sizeof(T), as a mark on the slot the parameter takes next — read only
     # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
     # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
-    # 6.7.8 (C2-3a): and T's kind with it (`_ps_word`, parse/types.cyr), under the same binding.
+    # 6.7.8 (C2-3a): and T's kind with it (`_ps_word`, parse/types/ptr.cyr), under the same binding.
     var ps = 8;
     var ed = 0;
     if (PEEKT(S) != 8) {

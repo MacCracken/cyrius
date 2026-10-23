@@ -78,7 +78,7 @@
 # argued. Every mutant is caught, and each is caught on a DIFFERENT axis, which is what
 # makes the axes non-redundant:
 #   * delete the `elif (c == 10) { store8(out + op, 10); op = op + 1; }` skip-padding in
-#     PP_PASS only (src/frontend/lex/pp.cyr)
+#     PP_PASS only (src/frontend/lex/pp/pass.cyr)
 #         -> RED: axis 1 (12->4), axis 1 taken-branch (9->8), axis 3 (14->13)
 #         -> green: 0, 2, 4, 5, 5b, 6, 7, 8
 #   * delete the same skip-padding in PP_IFDEF_PASS only
@@ -101,7 +101,7 @@
 #
 # v6.5.20 MUTATION PROOF for axes 9-13. Nine more mutant compilers, each ONE hunk off the
 # shipped source, each BUILT AND RUN against this gate. Measured, not argued:
-#   * M1  drop the `#derive` directive-line PADDING (lex/pp.cyr PP_PARSE_STRUCT_DEF)
+#   * M1  drop the `#derive` directive-line PADDING (lex/pp/derive.cyr PP_PARSE_STRUCT_DEF)
 #         -> RED: axis 9 (6->5, 9->8 on every kind), and 2/3/4/10 -- everything shifts −1
 #   * M2  restore the whitespace DUPLICATION in the field look-ahead scan
 #         -> RED: axis 9 (6->9), axis 5 (past EOF), 2/3/4/10 -- the original +N is back

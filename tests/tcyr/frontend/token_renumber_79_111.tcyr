@@ -17,7 +17,7 @@
 # this a ZERO-FORK-EDIT change (main.cyr and main_win.cyr both compare against 79 for `object;`).
 #
 # ⚠ THE TRAP THIS FILE EXISTS FOR. `f64_sqrt` was inside the `62..105` STATEMENT BAND in
-# parse.cyr. Renumbering it to 136 without adding a band entry silently regressed `f64_sqrt(x);`
+# parse/stmt.cyr. Renumbering it to 136 without adding a band entry silently regressed `f64_sqrt(x);`
 # as a statement — and **no test in the tree covered that form**, so the regression would have
 # shipped green. Since 6.7.17 (the user's D32) a value builtin as a whole statement is refused by
 # name — "the value of 'f64_sqrt(..)' is discarded" names token 136's spelling — and that refusal
@@ -74,7 +74,7 @@ fn _tr_stack_local() {
 }
 assert_eq(_tr_stack_local(), 4242, "`stack var` still parses and works");
 
-# `: stack` enums read token 111 too (parse/types.cyr) — a second, independent consumer of the
+# `: stack` enums read token 111 too (parse/types/enum.cyr) — a second, independent consumer of the
 # number, and the one the whole v6.6.0 value-form arc rests on.
 test_group(": stack enum still parses (the other 111 consumer)");
 var tt, tv = TOk(7);

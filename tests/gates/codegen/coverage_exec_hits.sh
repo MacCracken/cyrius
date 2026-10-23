@@ -7,7 +7,7 @@
 #
 # GROUP S — THE SWITCH (P5B-1). The mode is decided once, in the shared PREPROCESS right after the
 # bounds-checked mode's `_bnd_setup` (src/frontend/parse/cov.cyr `_cov_setup`): CYRIUS_COVERAGE 1
-# on; 0, unset or empty off; any other value refused by name (lex/pp.cyr `_pp_env_rung`, the rung
+# on; 0, unset or empty off; any other value refused by name (lex/pp/preprocess.cyr `_pp_env_rung`, the rung
 # CYRIUS_BOUNDS uses). On, it needs CYRIUS_COVERAGE_FILE (no default: a predictable relative name
 # is a symlink-plantable target in a shared directory) and predefines CYRIUS_COVERAGE. A kernel /
 # EFI image and a `shared;` / `object;` build have no process exit to dump at: refused by name after

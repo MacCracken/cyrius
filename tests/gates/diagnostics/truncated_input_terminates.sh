@@ -48,7 +48,7 @@
 #     axes 1 and 3 (`fn`, `var x`, `async`, all six generics shapes); axes 2/4/5 green.
 #   * delete the `elif (PEEKT(S) == 12)` EOF guard from PARSE_ENUM_DEF's member loop
 #     -> axis 1 `enum` RED (SIGSEGV) and axis 5 RED (1027 lines); everything else green.
-#   * delete `_ends_guard(S, ec);` from the four call sites in parse.cyr -> axis 3
+#   * delete `_ends_guard(S, ec);` from the four call sites in parse/switch.cyr -> axis 3
 #     bigmatch/bigswitch RED (SIGSEGV); axis 4 stays green, which is the point — the
 #     cap-boundary cases are unaffected, so only the overflow assertion moves.
 #   * lower `_ends_guard`'s limit from 256 to 200 -> axis 4 RED (both boundary cases

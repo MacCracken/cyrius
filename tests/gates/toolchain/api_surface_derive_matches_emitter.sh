@@ -7,7 +7,7 @@
 # THE DEFECT (agnodrm, docs/development/issues/archived/2026-09-22-agnodrm-api-surface-
 # derive-serialize-arity.md). programs/cyrius_api_surface.cyr re-implemented the derive
 # emission by hand ("Mirrors PP_DERIVE_SERIALIZE") and nothing checked it against
-# src/frontend/lex/pp.cyr, so it had drifted on every axis:
+# src/frontend/lex/pp/serialize.cyr, so it had drifted on every axis:
 #   * `_to_json` listed at arity 1 — the emitter has taken `(ptr, sb)` since v5.9.31 — so a
 #     hand-roll → derive migration read as `BREAKING … _to_json/2 removed`;
 #   * `_from_json_str` never listed; `#derive(Deserialize)` not recognised at all (and,

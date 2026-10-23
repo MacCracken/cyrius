@@ -4,7 +4,7 @@
 #   CYRIUS_KERNEL=1) that includes it now FAILS with a clear error instead of
 #   compiling silently and faulting at runtime inside the kernel. `#` opens a comment
 #   in cyrius, so this line is inert for every host target. See PP_IS_HOST_ONLY in
-#   src/frontend/lex/pp.cyr; remove the marker if this module is ever made
+#   src/frontend/lex/pp/include.cyr; remove the marker if this module is ever made
 #   freestanding.
 # net.cyr — TCP/UDP network sockets. Uses the Linux x86_64 socket syscall
 # numbers; the Mach-O backends translate them to Darwin BSD (ESYSXLAT /
@@ -821,7 +821,7 @@ fn sock_recv(fd, buf, len) : Result {
 #
 # ⭐ The real fix is upstream of all of this and is a different size class: the allocation is
 # not a `Result` or a net.cyr property at all — the enum payload-variant constructor lowering
-# (`src/frontend/parse/types.cyr:386`) unconditionally calls the global `alloc`, so EVERY
+# (`src/frontend/parse/types/enum.cyr`) unconditionally calls the global `alloc`, so EVERY
 # payload-carrying enum in the language does this. Changing that representation touches 24 enum
 # declarations and 516 construction sites. See lib/result.cyr's `ok_via` header.
 # Send on a socket, boxing the Result through the caller's allocator. Returns Ok(n)/Err(errno).

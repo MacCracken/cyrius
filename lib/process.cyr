@@ -4,7 +4,7 @@
 #   CYRIUS_KERNEL=1) that includes it now FAILS with a clear error instead of
 #   compiling silently and faulting at runtime inside the kernel. `#` opens a comment
 #   in cyrius, so this line is inert for every host target. See PP_IS_HOST_ONLY in
-#   src/frontend/lex/pp.cyr; remove the marker if this module is ever made
+#   src/frontend/lex/pp/include.cyr; remove the marker if this module is ever made
 #   freestanding.
 # process.cyr — process management
 # Usage: include "lib/process.cyr"

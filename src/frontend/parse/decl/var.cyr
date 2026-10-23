@@ -205,7 +205,7 @@ fn PARSE_VAR(S): i64 {
         } else {
             var _gs_sid = 0;   # v6.3.10: base sid if `: StructName` resolved (for generic-struct instantiation below)
             if (_tn_head_var(S, noff) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.14: else refused by name
-                # ⛔ 6.6.16 (C8): the one type-name resolver (parse/types.cyr _tn_var_ann).
+                # ⛔ 6.6.16 (C8): the one type-name resolver (parse/types/type.cyr _tn_var_ann).
                 # This ladder matched PREFIXES (`i8x` an i8, `f64zz` an f64, the struct
                 # `u8pair` a u8 scalar before the struct lookup) and read an unknown name as a
                 # silent i64; a bound type parameter took its argument's raw code as a WIDTH
@@ -479,7 +479,7 @@ fn PARSE_VAR(S): i64 {
         if (TOKTYP(S, _look_ti) == 2) {
             # v6.3.37 (B1 half-B / B2): recognize a struct-returning call in BOTH the
             # plain `IDENT (` and the monomorph generic `IDENT < ... > (` shapes. The
-            # RHS-consume path (parse/expr.cyr:375) already handles the generic call;
+            # RHS-consume path (parse/expr/) already handles the generic call;
             # only this LHS receive-type inference needed the `<`-token widening.
             # 6.6.12: `_var_rhs_call` — and not a call followed by `.field` (`mkp(3).y`).
             # 6.7.6: the WHOLE initialiser (6.7.11: or the whole inside of its wrap).
@@ -777,7 +777,7 @@ fn PARSE_VAR(S): i64 {
         } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
     # closure now identifies itself at RUNTIME (bit 63 of its value; see the callptr
-    # lowering in parse/expr.cyr), so a `var` holding one needs no special type — and
+    # lowering in parse/expr/callee.cyr), so a `var` holding one needs no special type — and
     # `var g = f;` needs no hand-written tag propagation, because there is nothing
     # left to propagate. Two bugs die with it: every escape the stamp could not
     # follow (param / return / global / memory / plain assignment) used to dispatch
@@ -892,7 +892,7 @@ fn PARSE_VAR(S): i64 {
                 # `var n = strlen(s);` where strlen is `: i64`) was
                 # tried at v5.10.5 with SLTYPE = positive width
                 # (8 for i64), but that encoding tripped the
-                # parse/expr.cyr:263 width-aware load path which
+                # parse/expr/ width-aware load path which
                 # SEXW(S, 8) marks expr_width = 8 and downstream
                 # arithmetic emit narrowed incorrectly (`hlen -
                 # nlen` returned -29 instead of 6 in the tcyr
@@ -914,7 +914,7 @@ fn PARSE_VAR(S): i64 {
                     # ⚠ This is deliberately NARROWER than the scalar-return
                     # inference reverted at v5.10.5 (see the note above): that one
                     # encoded `: i64` as a positive WIDTH (8), which tripped the
-                    # width-aware load path at parse/expr.cyr:263 and narrowed
+                    # width-aware load path in parse/expr/ and narrowed
                     # downstream arithmetic. F64_TYID is 0x40000001, not a small
                     # positive width, so it cannot reach that path.
                     SLTYPE(S, li, F64_TYID);

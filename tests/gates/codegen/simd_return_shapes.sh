@@ -498,7 +498,7 @@
 #   M-VCO1 `_vop_rchk` without the exemption (the tree before) -> RED VCO1-VCO6 (two errors)
 #   M-VCO2 the exemption taking a call an operator follows    -> RED VCO8 (one error)
 # 6.7.17 (D23 A, the user's decision, 2026-10-22; issues/archived/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md
-# row 1) — a store through a pointer to a vector copies the whole vector (`_dst_vec` / `_dvec_rcv`, parse.cyr), as `w = u`
+# row 1) — a store through a pointer to a vector copies the whole vector (`_dst_vec` / `_dvec_rcv`, parse/deref_store.cyr), as `w = u`
 # does: the store wrote one word — `*pv = u;` 42 on every leg, `*pv = mk2(4, 7);` and `*(&w) = mk2(4, 7);` x86_64 /
 # IR=3 / aarch64 2, cx / PE 42, where 47 is right; VS5's spellings 149, VS6 (top level) 42 — and `*pv OP= v` added to lane
 # 0 silently; `*pv = 5`, another vector, a callee held in a variable (PE: exit 5) compiled. Rows VS (run: 47, VS5 161)

@@ -498,7 +498,7 @@ tp5() {   # <name> <what> <source (printf %b)> <want warnings: `L:C` per line, o
 # The local arm kept ANY struct a call is declared to return (v6.5.28), whatever the local points at and whatever followed
 # the call, so `p = str_from(..);` into a `*P` local said nothing where the declaration and a `*P` global warn — p held a
 # `Str` header's address and `p.b` read its length. Into a `*T` local or `p: *T` parameter (the typed-pointer bit) the
-# value is now typed as one whole primary and kept only when it is T (`_asg_ret_peek` / `_tpv_sid`, parse.cyr); a handle
+# value is now typed as one whole primary and kept only when it is T (`_asg_ret_peek` / `_tpv_sid`, parse/assign_copy.cyr); a handle
 # (`var a: P3 = ..`, no `*`) keeps the call arm: a struct call into it is a rebind at any type (6.6.16 (C2)), quiet as its
 # declaration and a handle global are. Warning text only: each row's binary and exit are the ones before.
 #   the lane's compiler before the bite (54f7790b)                          -> RED SC5 (11:24 missing) SC6 (none of 5)

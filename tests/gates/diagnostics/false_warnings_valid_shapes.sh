@@ -377,7 +377,7 @@ fw5() {   # <row> <file in $D> <want warnings: `L:C` per line, or empty> <want e
 # is a pointer slot (its value is the header's address), so a `: Str` field into a `*Str` declaration (in a fn, the zone,
 # after the first statement) or a `*Str` global's assignment is quiet, as `l = h.name;` into the local already was
 # (6.6.17). `_tp_call_pointee` took calls only (the value had to end `)`); it now reads what the local's arm reads
-# (`_tpv_sid`, parse.cyr), so with the field came the rest of that class: a `Str`-typed name (`GS`), a field or a method
+# (`_tpv_sid`, parse/assign_copy.cyr), so with the field came the rest of that class: a `Str`-typed name (`GS`), a field or a method
 # of a call's result (`mkh().name`, `mkh().nm()`), and each of them and the call under parentheses that wrap the value
 # whole (`(h.name)`, `((str_from(..)))` — into the local and a handle too, where a wrapped value warned while the bare
 # one did not). SF0 the filed repro verbatim (2 warnings before, exit 6); SF1 nested `w.h.name` (5 before); SF2 the

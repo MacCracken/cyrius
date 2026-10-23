@@ -4,7 +4,7 @@
 # A BUILTIN'S OR AN IDENTIFIER INTRINSIC'S MALFORMED ARGUMENT LIST IS ONE ERROR: THE BLOCK AROUND IT STILL CLOSES.
 #
 # THE DEFECT (measured 6.7.17 at the fea lane's base, 0d291492b; x86_64, aarch64, cx and PE alike — the shared
-# frontend). Each builtin's lowering in PARSE_FACTOR (src/frontend/parse/expr.cyr) checked its `(` and `,` with
+# frontend). Each builtin's lowering in PARSE_FACTOR (src/frontend/parse/expr/stamp.cyr) checked its `(` and `,` with
 # `if (PEEKT(S) != t) { ERR_EXPECT(S, t); } STI(S, GTI(S) + 1);`, stepping the token found whatever it was (6.7.14 had
 # made most `)` checks `_expect_step`). A malformed call at the end of a block took the statement's `;` and the block's
 # `}`: `var y = load8;` (or `f64_sqrt;`, `syscall;`, `callptr;`, `rethi;`, `store8(p;`, `ret2(p;`, `iv_add(p, p;`, ..)
@@ -18,7 +18,7 @@
 # THE SAME STEP IN THE ASSIGNMENT ARM (met with these rows). A bare name as a statement — `p;`, `zq;` — is the
 # assignment arm's "expected '='"; the arm then stepped the `;`, its value read the block's `}`, and the next fn was
 # "defined inside fn 'main'" (`zq;` added "undefined variable" at the next line). Now `_asg_eq_step` (src/frontend/
-# parse.cyr): a missing `=` is one error and the statement ends in sync — nothing read as a value, the rest stepped to
+# parse/assign.cyr): a missing `=` is one error and the statement ends in sync — nothing read as a value, the rest stepped to
 # its `;` with its brackets balanced (`_stmt_rest_skip`) — so the next statement is parsed with its own errors (`p 5;`
 # lost the next statement's error to the resync).
 #

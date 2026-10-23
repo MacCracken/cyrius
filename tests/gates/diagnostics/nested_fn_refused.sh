@@ -17,7 +17,7 @@
 # `undefined function 'inner'` plus "refusing to emit binary". Zero nested fns exist in the 7
 # compiler forks, cyrius's tests/programs/lib/cbt, or 1,350 ecosystem units (instrumented survey).
 #
-# ⭐ THE FIX (src/frontend/parse/parse.cyr `_refuse_nested_fn`), reached from PARSE_PROG's `fn` arm when
+# ⭐ THE FIX (src/frontend/parse/stmt.cyr `_refuse_nested_fn`), reached from PARSE_PROG's `fn` arm when
 # GINFN == 1, from the end of _PARSE_STMT_IMPL (positions that bypass PARSE_PROG: a switch case,
 # `@unsafe { }`, `async fn`) and from PARSE_FN_DEF's generic stub-body skip. It reports
 #   error:<loc>: fn 'inner' is defined inside fn 'outer'; define it at top level

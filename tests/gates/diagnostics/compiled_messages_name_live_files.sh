@@ -9,11 +9,13 @@
 #
 # ROWS — cycc built from this tree (the gate builds it: build/cycc may lag the sources inside a release):
 #   N  every `.cyr` name in the compiler's own strings resolves to a file: a path from the root, from src/ or
-#      from src/frontend/ (`lex/pp.cyr`), or a bare basename some file under src/ or lib/ has. `name.cyr` (the
-#      include error's placeholder) is the one exception.
+#      from src/frontend/ (`lex/pp/derive.cyr`), or a bare basename some file under src/ or lib/ has. `name.cyr`
+#      (the include error's placeholder) is the one exception.
 #   F  the floor: the scan finds at least 8 names (a broken extraction is not a pass)
-#   D  the filed message itself: a 257-field `#derive(accessors)` struct is refused naming lex/pp.cyr
+#   D  the filed message itself: a 257-field `#derive(accessors)` struct is refused naming lex/pp/derive.cyr (6.7.18:
+#      lex/pp.cyr until the split by seam moved the cap into lex/pp/derive.cyr)
 # MEASURED (6.7.18): on the parent (the string unfixed) N is RED naming lex_pp.cyr and D is RED.
+# MEASURED again at the lex/pp.cyr split (the string still naming lex/pp.cyr): N RED naming lex/pp.cyr, D RED.
 #
 # Exit 77 (named) when there is no compiler. CHANGELOG [6.7.18]
 set -u
@@ -50,8 +52,8 @@ done < "$T/names"
   i=0; while [ "$i" -lt 257 ]; do printf '    f%d;\n' "$i"; i=$((i + 1)); done
   printf '}\nvar r = 0;\n'; } > "$T/big.cyr"
 rc=0; "$T/cycc" < "$T/big.cyr" > "$T/big.out" 2> "$T/big.err" || rc=$?
-if [ "$rc" -ne 0 ] && grep -q 'struct field cap exceeded (max 256 — raise in lex/pp.cyr / S+0x1FC000 region)' "$T/big.err"; then
-    echo "  ok: D — a 257-field #derive struct is refused naming lex/pp.cyr (exit $rc)"
+if [ "$rc" -ne 0 ] && grep -q 'struct field cap exceeded (max 256 — raise in lex/pp/derive.cyr / S+0x1FC000 region)' "$T/big.err"; then
+    echo "  ok: D — a 257-field #derive struct is refused naming lex/pp/derive.cyr (exit $rc)"
 else
     bad "D: a 257-field #derive struct gave exit $rc and: $(head -c 200 "$T/big.err")"
 fi

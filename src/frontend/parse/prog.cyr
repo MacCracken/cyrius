@@ -1,0 +1,89 @@
+# PARSER — the program walk, PARSE_PROG.
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+fn PARSE_PROG(S): i64 {
+    # v6.6.4: a `public` marker armed before the first top-level statement is STALE here —
+    # pass 2's inline `var` skip re-arms it at `public var` and consumes nothing, and this
+    # loop never parses `public` (a syntax error after top-level code). Without this the
+    # FIRST PARSE_PROG-path declaration (`var`, array, struct literal, destructure) in a
+    # private file consumed it and was stamped public. Found by the bite-3 review.
+    _pub_pending = 0;
+    _pp_depth = _pp_depth + 1;   # 6.6.16 (C1): 1 = module scope (parse/decl.cyr _gai_stmt)
+    var go = 1;
+    while (go == 1) {
+        var typ = PEEKT(S);
+        if (typ == 12) { go = 0; }
+        else { if (typ == 14) { go = 0; }
+            else { if (_tl_directive(S, 1) == 1) {
+                    # 6.6.9: the SAME dispatcher the pass-2 scan (_tl_scan2) calls, so an attribute written
+                    # after the first top-level statement behaves exactly like one written before it.
+                    # (This was a 15th copy; bare `#deprecated` errored here and was a silent no-op
+                    # there.) `#assert` also lands here and is evaluated via PARSE_STMT. See _tl_directive.
+                }
+                else { if (typ == 32 || _IS_FN_KW(S) == 1) {
+                        # 6.7.2 (C1): `const fn` too — its prefix consumed, PARSE_FN_DEF told.
+                        if (PEEKT(S) == 168) { STI(S, GTI(S) + 1); _pending_cfn = 1; }
+                        # 6.6.16: THIS loop is also the fn-body and block parser, so a `fn` here
+                        # inside a fn body is a nested fn — refused (`_refuse_nested_fn`). The
+                        # relaxed-ordering arm below is for top-level code only (GINFN == 0).
+                        if (_refuse_nested_fn(S) == 0) {
+                            _tl_async_prefix(S);   # 6.7.14 (D14 (a)): `async fn` too
+                            # fn definition inside top-level code (relaxed ordering)
+                            # Emit jmp over fn body, compile fn, patch jmp
+                            # v6.6.4: this loop never parses `public` (a `public` after
+                            # top-level code is a syntax error), so any armed marker here
+                            # is STALE — pass 2's `var` skip re-arms it at `public var` and
+                            # nothing on this path consumed it, re-exposing the first
+                            # relaxed-ordering fn in a private file.
+                            _pub_pending = 0;
+                            var fn_skip = EJMP0(S);
+                            PARSE_FN_DEF(S);
+                            EPATCH(S, fn_skip);
+                        }
+                    }
+                    else { PARSE_STMT(S); } } } }
+    }
+    # v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4), reported
+    # HERE rather than at the include site. The preprocessor records which host-only
+    # module was pulled (PP_IS_HOST_ONLY / PP_NOTE_HOST_ONLY in lex/pp/include.cyr) but CANNOT
+    # decide: `PREPROCESS(S)` runs at main.cyr:1189 and the CYRIUS_KERNEL env is not read
+    # until :1217, so kernel_mode (S+0x18FCA0) is still 0 while includes expand — the
+    # first cut checked it there and the gate never fired.
+    # ⭐ End-of-PARSE_PROG catches BOTH declaration paths: the
+    # `--target=<arch>-bare-metal-elf` triple (env, set before parse) AND the source
+    # `kernel;` directive, which is only known once every top-level statement above has
+    # been parsed. One shared site, so no per-fork duplication.
+    # ⛔ Only the USER's own includes count. cbt prepends one `include` per `[deps].stdlib`
+    # module to EVERY build regardless of target, so when a `#@srcline` marker is present
+    # (i.e. cbt materialised this compiland) the pre-marker prepends are NOT the kernel
+    # author's choice and must not fail the build — the first cut ignored that and turned
+    # this repo's own `programs/boot_serial.cyr` red via a manifest-supplied `lib/fs.cyr`.
+    # 6.6.5 — re-judge the references whose callee had no owner when they were parsed.
+    # Here rather than in each fork: every fork calls PARSE_PROG, so there is no per-fork
+    # edit to forget. ⚠ THIS FN IS THE BLOCK PARSER **AND THE FN-BODY PARSER** — it runs at
+    # the end of every `if` / `while` body and of every fn definition, so `_vis_check_deferred`
+    # consumes each entry as it reports it; the LAST invocation is the end of the fork's
+    # top-level call, by which point everything is parsed. Because it is entered that often,
+    # the sweep itself is guarded by a PRIVATE-stamp sequence (see `_vis_stamp_seq` in
+    # parse/fn.cyr) — without it the walk is quadratic in the deferral count.
+    # See _vis_check (src/frontend/parse/fn.cyr). CHANGELOG [6.6.5]
+    _vis_check_deferred(S);
+    _pp_depth = _pp_depth - 1;
+    _dl_pw_end(S);   # 6.7.16: the top-level call's end — a pre-walk name's unreported declaration (parse/fn/def.cyr)
+    # With no marker (raw `cat | cycc`) every include is the user's, so the plain latch
+    # applies. See PP_NOTE_HOST_ONLY.
+    var _ho = _pp_hostonly_hit;
+    if (_pp_srcline_seen == 1) { _ho = _pp_hostonly_user; }
+    if (_ho == 1) {
+        if (L64(S + 0x18FCA0) == 1) {
+            _ew("error: bare-metal build includes host-only module: ", 51);
+            var _hol = 0;
+            while (load8(&_pp_hostonly_name + _hol) != 0) { _hol = _hol + 1; }
+            _ew(&_pp_hostonly_name, _hol);
+            _ew(" (marked #host_only; not available under CYRIUS_KERNEL)\n", 56);
+            _die(1);
+        }
+    }
+    return 0;
+}

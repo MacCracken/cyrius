@@ -463,7 +463,7 @@ syscall(60, run());
 # binds the generic's T to nothing, so the call became the i64 one and was refused as that: a bounded `g(P { .. })`
 # "generic 'g': its type argument does not implement trait 'Show'" with a note asking for `impl Show for i64`, a stub
 # `rdb(P { .. })` "has no i64 (or other scalar) instance" — naming a type the source never wrote. `_slit_arg_err`
-# (parse/expr.cyr) reports the literal first from the scalar-call refusals. SGK: a scalar argument keeps them.
+# (parse/expr/undef.cyr) reports the literal first from the scalar-call refusals. SGK: a scalar argument keeps them.
 #   the tree before the fix (4cca110c7's compiler)      -> RED 9: SG1-SG9 (the bound's / the stub's words)
 #   `_slit_arg_err` without its method arm (the `(`)   -> RED 1: SG5
 SGH='struct P { a; b; }

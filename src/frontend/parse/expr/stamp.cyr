@@ -1,0 +1,809 @@
+# PARSER — expr: `await`, PARSE_FACTOR's depth entry, unary `-` / `~`, and the value stamps — integer results, float
+# builtins (`_FBR_*`), booleans (`_bx_*`) — with the multi-value return checks (`_mret_*`).
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# v6.5.19 (the define-body copy overflow bug): the bottom expression tier, and the last of the five chokepoints.
+# Unary `-` recurses HERE, not in PARSE_TERM — `- - - … 1` compiled fine at 1024 with the
+# PEXPR and PARSE_TERM bounds in place and still SIGSEGV'd at 16384, because a unary
+# operand descends straight back into this tier. Guarding PEXPR/PARSE_TERM/PARSE_FACTOR
+# together covers the whole expression ladder named in this file's header comment.
+# See _rd_enter (src/common/util.cyr).
+# 6.6.10 — WHAT `await e` YIELDS INSIDE A COROUTINE. The suspend used to keep nothing: the
+# operand was evaluated, the state stamped, and at the landing rax held whatever the resume
+# dispatch left there — C[state], the suspend INDEX. `var s = await five();` x3 returned 123 for
+# 555, and `var v = await inner(a);` never ran inner's body at all.
+# The operand now goes to a coroutine-frame word (which survives the suspend) and the landing
+# reloads it. What the landing does with it depends on the operand's SHAPE:
+#   * a call to an `async fn` (`await inner(a)`), or a bare variable (`await F` — the operand of
+#     `await` is a Future by definition, as it is outside a coroutine): FORCE it with
+#     future_force, and while it is a coroutine Future that has not completed (future_pending),
+#     suspend again at the same point, so a nested coroutine is driven to its value;
+#   * anything else — a call to a plain fn, the park idiom `await async_wait_fd(rt, fd)`: the
+#     operand's own value.
+# Pass 1 marks every `async fn` (`_prescan_fn_sig`), so a callee defined later still classifies.
+# The shape test looks through balanced enclosing parentheses: `await (inner(a))` is the same
+# operand as `await inner(a)` and forces too (it yielded the raw Future pointer). Any OTHER road
+# to a Future — a field, `vec_get`, an index — is "anything else": bind it to a variable first.
+fn _await_operand_is_future(S, ti0): i64 {
+    var te = GTI(S);
+    while (_await_paren_wraps(S, ti0, te) == 1) {
+        ti0 = ti0 + 1;
+        te = te - 1;
+    }
+    if (TOKTYP(S, ti0) != 2) { return 0; }
+    if (te == ti0 + 1) { return 1; }                      # a bare variable
+    if (TOKTYP(S, ti0 + 1) != 10) { return 0; }           # not `name(`
+    if (TOKTYP(S, te - 1) != 11) { return 0; }            # the factor is more than the call
+    if (_await_paren_wraps(S, ti0 + 1, te) == 0) { return 0; }   # `f(a)(b)`, `f(a).x`
+    var fi = FINDFN(S, TOKVAL(S, ti0));
+    if (fi < 0) { return 0; }
+    return GFAS(S, fi);
+}
+# 1 when the token at `ti` is a `(` whose matching `)` is the last token before `te`.
+fn _await_paren_wraps(S, ti, te): i64 {
+    if (te - ti < 2) { return 0; }
+    if (TOKTYP(S, ti) != 10) { return 0; }
+    var depth = 0;
+    var i = ti;
+    while (i < te) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { depth = depth + 1; }
+        if (t == 11) {
+            depth = depth - 1;
+            if (depth == 0) {
+                if (i == te - 1) { return 1; }
+                return 0;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# The suspend and its landing. rax = the operand on entry; rax = the `await` value on exit.
+# ⛔ THE EXPRESSION STACK DOES NOT SURVIVE A SUSPEND. The suspend returns through the fn end and
+# the resume re-enters from the top, so every word the enclosing expression had pushed before
+# the await was reached — `b` in `b + await f()`, `1000` in `add(1000, await f())`, the address
+# in `store64(m + 8, await f())` — was gone at the landing, and the parser's pending pop took
+# whatever sat at the new rsp: `b + await five()` gave 5, and the store64 form SIGSEGV'd.
+# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse/fn/def.cyr
+# refuses aarch64 and cx), so those `_xdepth` words are popped into coroutine-frame words
+# before the suspend and pushed back, in order, at the landing. CHANGELOG [6.6.10]
+fn _await_coro_suspend(S, sk, fut): i64 {
+    var ff = 0;
+    var fpend = 0;
+    if (fut == 1) {
+        ff = _FINDFN_CSTR(S, "future_force", 12);
+        fpend = _FINDFN_CSTR(S, "future_pending", 14);
+        if (ff < 0 || fpend < 0) {
+            ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force and future_pending", 71);
+            return 0;
+        }
+    }
+    var slot = _HTEMP(S);                 # a coroutine-frame word: it survives the suspend
+    EFLSTORE(S, slot);
+    var d = _xdepth;                      # the enclosing expression's pending pushes
+    var s0 = _await_spill(S, d);
+    EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
+    EADDRA_IMM(S, _CORO_STATE_OFF);
+    EPUSHR(S);
+    EMOVI(S, sk);
+    EPOPC(S);
+    ESTORE64(S);                          # C[state] = sk
+    var again = GCP(S);                   # a still-pending coroutine Future suspends from here
+    EMOVI(S, 0);                          # a suspended task returns 0
+    _coro_suspend_jmp(S, sk);             # jump to the fn end, past the defer walker (6.6.7)
+    S64(&_coro_rcp + sk * 8, GCP(S));     # the resume label for state sk
+    _coro_nsusp = sk;
+    var vslot = slot;
+    if (fut == 1) { vslot = _await_coro_force(S, slot, ff, fpend, again); }
+    _await_unspill(S, s0, d);
+    EFLLOAD(S, vslot);
+    SPSC(S, 0);                           # the awaited value is an untyped word (_await_force)
+    return 0;
+}
+# Pop `d` pending expression words into consecutive fresh coroutine-frame words (top of stack
+# first); returns the first word's slot. The landing's `_await_unspill` pushes them back.
+fn _await_spill(S, d): i64 {
+    var s0 = 0;
+    var i = 0;
+    while (i < d) {
+        var s = _HTEMP(S);
+        if (i == 0) { s0 = s; }
+        EPOPR(S);
+        EFLSTORE(S, s);
+        i = i + 1;
+    }
+    return s0;
+}
+fn _await_unspill(S, s0, d): i64 {
+    var i = d;
+    while (i > 0) {
+        i = i - 1;
+        EFLLOAD(S, s0 + i);
+        EPUSHR(S);
+    }
+    return 0;
+}
+# The landing of a Future operand: force it, and while it is a coroutine Future that has not
+# completed, suspend again from `again`. Returns the slot holding the forced value.
+fn _await_coro_force(S, slot, ff, fpend, again): i64 {
+    EFLLOAD(S, slot);
+    _await_call1(S, ff);                  # rax = future_force(operand)
+    var vslot = _HTEMP(S);
+    EFLSTORE(S, vslot);
+    EFLLOAD(S, slot);
+    _await_call1(S, fpend);               # rax = future_pending(operand)
+    EPUSHR(S);
+    EMOVI(S, 0);
+    EPOPC(S);
+    ECMPR(S);
+    var done = EJCC(S, 0x84);             # je -> completed
+    EJMP(S, again);
+    EPATCH(S, done);
+    return vslot;
+}
+fn _await_call1(S, fi): i64 {
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, fi);
+    ECALLCLEAN(S, 1);                     # 6.6.5: was missing (see ECALLCLEAN)
+    return 0;
+}
+# `await e` outside a coroutine: rax = future_force(e). The value is an untyped word, so it leaves
+# no pointer step: with `f: *i32`, `(await f) + 1` added 4 — the step the operand factor left
+# (6.6.17-6.7.10). Inside a coroutine `_await_coro_suspend` resets it the same way. CHANGELOG [6.7.11]
+fn _await_force(S, ff): i64 {
+    PARSE_FACTOR(S);                      # rax = the Future object
+    _await_call1(S, ff);                  # rax = future_force(future)
+    SPSC(S, 0);
+    return 0;
+}
+
+fn PARSE_FACTOR(S): i64 {
+    _rd_enter(S);
+    var _xd0 = _xdepth;
+    var _xt0 = PEEKT(S);
+    var _ti0 = GTI(S);
+    var _rc = 0;
+    if (_tup_lit_stray(S, _ti0) == 0) { _rc = _PARSE_FACTOR_IMPL(S); }   # 6.7.7 (B4): R9
+    _call_scale_fix(S, _ti0);   # 6.6.17: a call's result scales by its declared return only
+    _addr_field_post(S, _ti0);  # 6.7.13 (D3 (b)): `&x.f` refused by name
+    if (PEEKT(S) == 28) { _sub_post(S, _ti0); }   # 6.7.8 (C2-4b): `h.p[i]`, `f()[i]`, `o.m()[i]`
+    _w128_rchk(S, _ti0);        # 6.7.6 (D2): a u128 as the right operand of a refused operator
+    _tup_rchk(S, _ti0);         # 6.7.7 (B4): a whole tuple is not a value
+    _vop_rchk(S, _ti0);         # 6.7.16 (D100 / D101): a vector call is no operand, no word argument or slot
+    _sop_rchk(S, _ti0);         # 6.7.17 (D111): nor a struct value or call over 8 B
+    _pk_post(S, _ti0);          # 6.7.8 (C2-5): a name's, a `*T` field's, a call's kind is its own
+    _rd_exit();
+    # 6.6.5 — `syscall(…)` (token 24) is stack-NEUTRAL by construction: it pushes its
+    # arguments and every backend's emitter consumes exactly those, leaving the result in
+    # rax. But the PE reroutes consume them with RAW pops, and `EPE_SYSCALL_DYNAMIC` emits
+    # several MUTUALLY-EXCLUSIVE arms over the SAME pushed args — a linear counter cannot
+    # follow that, and pretending otherwise would make every reroute frame parity wrong.
+    # So the one construct whose net effect is known exactly is re-synced from the outside,
+    # here, rather than at the ~20 early returns inside the builtin. See `_xdepth`.
+    if (_xt0 == 24) { _xdepth = _xd0; }
+    _xd_check(S, _xd0, "expression factor");
+    return _rc;
+}
+
+# Unary minus on an f32 value (bits in the low 32 of rax, the pushed 0 still on the stack):
+# flip bit 31. Composed from the generic emitters so every backend has it. CHANGELOG [6.6.8]
+fn _NEG_F32(S): i64 {
+    EPOPC(S);
+    EPUSHR(S);
+    EMOVI(S, 0x80000000);
+    EMOVCA(S);
+    EPOPR(S);
+    EXORR(S);
+    return 0;
+}
+
+# Unary minus on an integer operand (the pushed 0 below it): `0 - x`. 6.7.6 (D2): on a u128 it is the
+# u128 `0 - x`, all 128 bits (_w128_ilhs). Out of _PARSE_FACTOR_IMPL (cybs's per-fn reference limit).
+# ⛔ `_cfo = 0`: a constant operand (`K`, `E.K`, a `const`) armed the run-time fold, and the next
+# literal operator rewound the code to it, so `-K + 10` folded `5 + 10` (and left the pushed 0 on
+# the stack: `1 + -K * 2` was 10). A unary result is never a foldable constant. CHANGELOG [6.7.9]
+# ⛔ 6.7.11 — `-s` ON A STRUCT IS INTEGER NEGATION OF ITS WORD, WITH NO STRUCT TYPE (the user's decision
+# (a), 2026-10-13). The negation kept s's struct type and slot, so `-s + t` dispatched `S_add`: over 8 B
+# from s's slot, the minus dropped (the filed repro: 6, `s + t`), at 8 B with the negated word as the
+# struct (13), while the field form `-w.s + t` negated a word and added (252, documented in 6.7.10).
+# `_int_res` clears both, as for `~s` and `n - s`: `-s + t` is an integer add at every size (252), and
+# `t + -s` passes the negated word, not s. Nothing is refused. CHANGELOG [6.7.11]
+fn _neg_int(S): i64 {
+    _cfo = 0;
+    if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }
+    if (_FBR_KIND(S) == 3) { _FLT_TYPE_WARN(S, 3); }
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);
+    _int_res(S);   # 6.7.9: `-q` is a plain integer — no step (see _pexpr_bit_ps); 6.7.11: nor a struct
+    return 0;
+}
+# Unary `~` on an integer operand: a plain integer, so no pointer step survives it (`(~q) + 1`
+# adds 1; see _pexpr_bit_ps), and no armed constant fold either (`~5 * 2` folded `5 * 2`; see
+# _neg_int). CHANGELOG [6.7.9] 6.7.11: nor a struct type — `(~s) + 10` dispatched (_int_res).
+fn _bnot_int(S): i64 {
+    _cfo = 0;
+    ENOTR(S);
+    _int_res(S);
+    return 0;
+}
+# ⛔ 6.7.11 — AN INTEGER OPERATOR'S RESULT IS AN INTEGER. The expression type is the LAST operand's, and an
+# integer operator never wrote its result's, so after `n - s` (s a struct) the result kept s's struct type
+# and slot: the next `+ - * /` dispatched on it — `n - s + 10` called `P3_add(&s, 10)`, `n - s` discarded
+# (the filed repro: SIGSEGV), and so after `* / % << >> >>>`, `& | ^`, a comparison, `&&` / `||`, `+| +?
+# -| -? *| *?` and `~` (`!` always cleared it). Each clears a STRUCT expression type and the struct slot
+# that goes with it (`_int_st`), where 6.7.9 clears the pointer step (`_int_res`): `n - s` is first-word
+# arithmetic with an integer result. An f64 / f32 type is kept (kind 2's design: the result type is left
+# as it was, ADR-002). issues/archived/2026-10-08-struct-operator-results.md #2. CHANGELOG [6.7.11]
+fn _int_st(S): i64 {
+    var t = GESTYPE(S);
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    SESTYPE(S, 0);
+    SESVAR(S, 0 - 1);
+    return 0;
+}
+fn _int_res(S): i64 {
+    SPSC(S, 0);
+    _int_st(S);
+    return 0;
+}
+# ⛔ 6.7.13 — A COMPARISON (and an `&&` / `||` link) IS 0 OR 1, WHATEVER ITS OPERANDS: its integer arm never
+# wrote its result's type, so with an f64 RIGHT operand (`(n < x) * 3`) the result kept the f64 type and the
+# next operator took the f64 arm (0 where 3 is right, and a false kind-1 warning). An f64 LEFT operand was
+# right (its arm sets 0). And `& | ^ % << >> >>>` give an integer too — they have no f64 form (the user's
+# decision D12 (a), 2026-10-15) — where kind 2 keeps the f64 type for `+ - * /` (`_int_st` leaves floats).
+# `_int_res`, and no expression type at all. issues/2026-10-14-integer-comparison-result-keeps-f64-right-
+# operand-type.md. CHANGELOG [6.7.13]
+fn _int_resb(S): i64 {
+    _int_res(S);
+    SESTYPE(S, 0);
+    return 0;
+}
+# PARSE_TERM's tail after operator token `typ`: `% << >> >>>` give an integer (`_int_resb`); `* /`, whose
+# f64 arms keep their type, clear the step and a struct (`_int_res`); `*| *?` reach here as integers
+# (EMIT_OVF_CALL cleared the type: 6.7.16's D104). CHANGELOG [6.7.16]
+fn _int_rest(S, typ): i64 {
+    if (typ == 34) { return _int_resb(S); }
+    if (typ == 38) { return _int_resb(S); }
+    if (typ == 39) { return _int_resb(S); }
+    if (typ == 152) { return _int_resb(S); }
+    return _int_res(S);
+}
+
+# _NEG_INTRIN_KIND — 1 when token `t` is a builtin whose RESULT is a scalar f64, 2 when it is
+# a scalar f32 bit pattern, else 0. Those builtins inherit their ARGUMENT's estype (the
+# i64-boxed idiom leaves it 0), so GESTYPE alone negated `-f64_exp(u)` as an integer (-4.0 for
+# -1.0). The compiler knows these calls return a float, whatever the argument was typed.
+# f64_to/eq/lt/gt return integers and are absent. Since 6.6.10 it drives the float-builtin
+# RESULT flag (PARSE_INTRIN, _FBR_MARK), which unary minus reads through _FBR_ST.
+# Kept a flat compare chain: cybs compiles this file. CHANGELOG [6.6.8] [6.6.10]
+fn _NEG_INTRIN_KIND(t): i64 {
+    if (t >= 62) { if (t <= 66) { return 1; } }     # f64_add/sub/mul/div, f64_from
+    if (t == 71) { return 1; }                       # f64_neg
+    if (t >= 80) { if (t <= 88) { return 1; } }     # f64_abs..f64_exp2
+    if (t == 92) { return 1; }                       # f64_round
+    if (t == 99) { return 1; }                       # f64_atan
+    if (t == 128) { return 1; }                      # f64v_dot
+    if (t == 132) { return 1; }                      # f32_to
+    if (t == 136) { return 1; }                      # f64_sqrt
+    if (t == 159) { return 1; }                      # f64v256_dot
+    if (t == 166) { return 1; }                      # f64_trunc (6.6.13; f64_le/ge are kind 0)
+    if (t == 131) { return 2; }                      # f32_from
+    if (t == 142) { return 2; }                      # f32v_dot
+    if (t == 151) { return 2; }                      # f32v8_dot
+    return 0;
+}
+
+# ⛔ 6.6.10 — THE FLOAT-BUILTIN RESULT FLAG (option D). A float-returning builtin left the
+# estype of its LAST ARGUMENT (0 under the i64-boxed idiom), so every `+ - * /` on its result
+# took the INTEGER arm, silently: `f64_sqrt(u) * f64_sqrt(u)` was 0, `f64_sin(0) - f64_cos(0)`
+# was -4.0, `f64_mul(u, v) / v` was 1, and `f64_add(p, u) * 2.0` differed from
+# `f64_add(u, p) * 2.0` because the argument ORDER leaked the type.
+# The result is marked instead of typed: `_fbr_k` (1 = f64, 2 = f32) stamped with the code
+# pointer and token index at the end of the call. It reads as valid (_FBR_KIND) only while
+# NOTHING has been emitted or consumed since — so it survives a parenthesised factor (whose
+# `)` re-stamps the token index) and unary minus (which re-marks), and dies at any other
+# operator. The `+ - * /` arms read their LEFT operand through _FBR_ST, the kind-1 check its
+# RIGHT operand, and the kind-2 check (_INT_F64_MIX) the right operand captured by _RHS_F /
+# _RHS_T before the integer op is emitted.
+# ⚠ WHY NOT TYPE THE RESULT F64 (option A): that also turns ORDERED and equality compares of
+# builtin results into float compares, and 41 ecosystem sites compare those bit patterns on
+# purpose (hex constants, hisab's -0 check, ganita's `f64_floor(v) == v`) — NaN and ±0 would
+# change meaning. So a builtin-vs-builtin `<` stays an INTEGER compare (wrong for negative
+# values); the guide says so. A leaked argument estype that is not the builtin's own float
+# type is dropped (a struct id there dispatched an operator overload; an f32 one an f32 op).
+# Kind 3 is the untyped-float-variable load marker (_UFV_*), which types nothing: it only
+# lets unary minus warn. CHANGELOG [6.6.10]
+var _fbr_k = 0;
+var _fbr_cp = 0;
+var _fbr_ti = 0;
+var _fbr_rhs = 0;
+fn _FBR_MARK(S, k): i64 {
+    if (k == 1) { if (GESTYPE(S) != F64_TYID) { SESTYPE(S, 0); } }
+    if (k == 2) { if (GESTYPE(S) != F32_TYID) { SESTYPE(S, 0); } }
+    _fbr_k = k;
+    _fbr_cp = GCP(S);
+    _fbr_ti = GTI(S);
+    return 0;
+}
+fn _FBR_KIND(S): i64 {
+    if (_fbr_k == 0) { return 0; }
+    if (GCP(S) != _fbr_cp) { return 0; }
+    if (GTI(S) != _fbr_ti) { return 0; }
+    return _fbr_k;
+}
+# The operand's effective type: its estype, else the builtin-result flag's.
+fn _FBR_ST(S): i64 {
+    var t = GESTYPE(S);
+    if (t != 0) { return t; }
+    var k = _FBR_KIND(S);
+    if (k == 1) { return F64_TYID; }
+    if (k == 2) { return F32_TYID; }
+    return 0;
+}
+# The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
+fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); _ifm_rhs = _ifm_at(S); return 0; }
+# The `+` / `-` arms' right operand: a term, the flag captured as `_RHS_F` does; `_rhs_b` its first
+# token, set after the parse (a nested `+` inside it has finished), for `_add_rb1` (6.7.11).
+var _rhs_b = 0 - 1;
+fn _RHS_T(S): i64 {
+    var b = GTI(S);
+    PARSE_TERM(S);
+    _rhs_b = b;
+    _fbr_rhs = _FBR_KIND(S);
+    _ifm_rhs = _ifm_at(S);
+    return 0;
+}
+# ⛔ 6.7.11 — ONE INTEGER + F64 MIX WARNS ONCE. Kind 2 leaves the result's type as it was (an f64 right
+# operand's), so an enclosing integer operator saw an f64 right operand and warned again for the same
+# mix: `x = x + (x + 1.5)` and `2 * (x + 1.5)` twice, `x += x + 1.5` twice at one column, `x - (x * (x +
+# 1.5))` three times. The mix that warned stamps the code pointer it ended at (`_ifm_cp`); a right operand
+# that ends there IS that mix's result (`_ifm_at`, captured by `_RHS_F` / `_RHS_T` and the compound
+# assignment before anything more is emitted), already reported. Typing and code are unchanged (the
+# user's decision, 2026-10-13: the roadmap's default, kind 2's 6.6.8 design). CHANGELOG [6.7.11]
+var _ifm_cp = 0 - 1;
+var _ifm_rhs = 0;
+fn _ifm_at(S): i64 {
+    if (_ifm_cp == GCP(S)) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.7.3 (B2) — THE BOOLEAN STAMP. The user's decision (2026-10-07): a WRITE into a bool (a
+# variable, field, parameter, fn return or const) takes only a boolean value — true / false, a
+# comparison, `!`, `&&` / `||`, or another bool — and a bool READS as the integer 0 or 1. A value is
+# boolean iff the last thing parsed was a boolean producer that ENDED AT THIS EXACT code pointer and
+# token index (_BX_MARK at its last emission, _BX_IS at the write site). It is the float-builtin
+# flag's pattern (_FBR_MARK above) and needs no state cleared anywhere: every construct that ends in
+# a boolean operand either EMITS after it (a binary operator, unary minus or `~`, a call, a push) or
+# CONSUMES a token (`+ 0` / `* 1` fold away but are tokens, `?`, `.f`), so `(a < b) + 1`, `-ok`,
+# `ok + 0` are not boolean. A parenthesised boolean is (`)` re-stamps the token, _paren_post).
+# SESTYPE is deliberately untouched: 48 readers, and EMIT_OP_DISPATCH takes any nonzero estype for a
+# struct id. Producers: _bx_factor_tok, a comparison (_PLOGIC_ATOM, and the f64_eq/lt/gt/le/ge
+# builtins), each `&&` / `||` link, a bool local / global / field / capture read, a bool fn's call,
+# a bool const. The checks are skipped under --syntax-only (a sibling file's names are unknown) and
+# in an #inline replay (the definition already checked its own body). CHANGELOG [6.7.3]
+fn _BX_MARK(S): i64 { _bxr_cp = GCP(S); _bxr_ti = GTI(S); return 0; }
+fn _BX_IS(S): i64 {
+    if (_bxr_cp == 0) { return 0; }
+    if (GCP(S) != _bxr_cp) { return 0; }
+    if (GTI(S) != _bxr_ti) { return 0; }
+    return 1;
+}
+fn _bx_live(S): i64 {
+    if (_syntax_only != 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    return 1;
+}
+# The one refusal: at the value's first token `ti`, once per token (a generic base and its
+# instances parse the same tokens), with the note; the parse is in sync, so _panic is cleared and
+# every bad write in a file is reported.
+fn _bx_refuse(S, ti, msg, noff, tail, noff2): i64 {
+    if (_bx_live(S) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_bx_undef_ti >= ti) { if (_bx_undef_ti <= GTI(S)) { return 0; } }   # an undefined name inside: reported
+    if (_tn_once(S, ti) == 0) { return 0; }
+    _bnd_err_at(S, ti, msg, noff, tail, noff2);
+    PRSTR("  note: a bool takes true / false, a comparison, !x, && / || or another bool - write `x != 0` for an integer\n");
+    _panic = 0;
+    return 0;
+}
+# `var b: bool = e;` — checked right after e is parsed.
+fn _bx_decl(S, lbool, noff, ti): i64 {
+    if (lbool == 0) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot initialize bool ", noff, " with a value that is not a bool", 0 - 1);
+}
+# Is the destination named `noff` a bool? A local (in a fn), else a global.
+fn _bx_dest(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return GLBOOL(S, li); }
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi >= 0) { return GVBOOL(S, vi); }
+    return 0;
+}
+# `b = e;` (a statement or a classic-for step) — the stamp is read first; only a value that is not
+# boolean looks the destination up.
+fn _bx_asg(S, noff, ti): i64 {
+    if (_BX_IS(S) == 1) { return 0; }
+    if (_agc_ovr_is(noff) == 1) { return 0; }   # 6.7.11: the `*p = v` destination is a struct
+    if (_bx_dest(S, noff) == 0) { return 0; }
+    return _bx_refuse(S, ti, "cannot assign a value that is not a bool to bool ", noff, 0, 0 - 1);
+}
+# `b += e;` and the other nine — under the decision always a write of a non-boolean.
+fn _bx_compound(S, noff): i64 {
+    if (_bx_dest(S, noff) == 0) { return 0; }
+    return _bx_refuse(S, GTI(S), "compound assignment to bool ", noff, " is refused - its result is not a bool (write `b = b && c`, `b = !b`)", 0 - 1);
+}
+# ── fns (6.7.3): GFLG bit 4096 = declared `: bool`; bits 8192 << k = element k of a multi-value
+# return declared bool; `_pbool_get` = a bool parameter. All recorded in pass 1 for forward calls
+# and re-recorded by each definition in pass 2 (_bx_fn_reset first). ──
+fn _bx_is_bool_name(S, noff): i64 {
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    return _tn_bool(_tn_scalar(L64(S + 0xEC00000 + noff)));
+}
+fn _bx_fn_is_bool(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if ((GFLG(S, fi) & 4096) != 0) { return 1; }
+    return 0;
+}
+fn _bx_fname(S, fi): i64 { return L64(_fnt_names + fi * 8); }
+# ⛔ 6.7.16 — A REDEFINED FN'S BOOL FACTS AT A CALL ARE ITS LAST DEFINITION'S. Pass 2 re-recorded each definition's
+# bool return bits and parameter kinds over pass 1's, so a call compiled between `fn f(): i64` and `fn f(): bool` read
+# the first: `var x: bool = f();` was refused (and accepted the other way round, x holding 5); `f(5)` into `b: bool`
+# then `b: i64` refused, the reverse accepted. An earlier definition read in pass 2 (`_rdef_loser`) leaves the fn's
+# records alone: its own return bits, which its body's `return`s are checked against, are `_bx_ldef_bits` (read through
+# `_bx_cur_bits`), and its parameter kinds are its slots' only (`_bx_param`). PARSE_FN_DEF saves and restores the pair,
+# so it is that definition's alone. CHANGELOG [6.7.16]
+var _bx_ldef_fi = 0 - 1;   # the redefined fn whose earlier definition pass 2 is reading (-1: none)
+var _bx_ldef_bits = 0;     # that definition's own bool return bits (4096; 8192 << k)
+fn _bx_fn_reset(S, fi): i64 {
+    if (_rdef_loser(S, fi) == 1) {
+        _bx_ldef_fi = fi;
+        _bx_ldef_bits = 0;
+        return 0;
+    }
+    SFLG(S, fi, GFLG(S, fi) & (0 - 61441));   # bits 4096 .. 32768
+    _pbool_reset(fi);
+    return 0;
+}
+# Set bool return bit `b` of fn `fi` — an earlier definition's in its own word (see above).
+fn _bx_bit_or(S, fi, b): i64 {
+    if (fi == _bx_ldef_fi) { if (_rdef_loser(S, fi) == 1) { _bx_ldef_bits = _bx_ldef_bits | b; return 0; } }
+    SFLG(S, fi, GFLG(S, fi) | b);
+    return 0;
+}
+# The bool return bits of the fn whose body is being parsed.
+fn _bx_cur_bits(S): i64 {
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_cur_fn_ix == _bx_ldef_fi) { return _bx_ldef_bits; }
+    return GFLG(S, _cur_fn_ix);
+}
+fn _bx_cur_is_bool(S): i64 {
+    if ((_bx_cur_bits(S) & 4096) != 0) { return 1; }
+    return 0;
+}
+# A return type `: name` the classifier did not take (rc 0): bool sets bit 4096 and returns an i64
+# (-8); anything else is unchanged (pass 1) / refused by name (pass 2, _bx_ret_or_refuse).
+fn _bx_sig_ret(S, fi, rc, noff): i64 {
+    if (rc != 0) { return rc; }
+    if (_bx_is_bool_name(S, noff) == 0) { return 0; }
+    _bx_bit_or(S, fi, 4096);
+    return 0 - 8;
+}
+fn _bx_ret_or_refuse(S, fi, noff): i64 {
+    var rc = _bx_sig_ret(S, fi, 0, noff);
+    if (rc != 0) { return rc; }
+    return _tn_ret_refuse(S);
+}
+# Element `n` of `: (T1, T2[, T3])`, whose name token is `ti`.
+fn _bx_mret_note(S, fi, n, ti): i64 {
+    if (n >= 3) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (_bx_is_bool_name(S, TOKVAL(S, ti)) == 0) { return 0; }
+    _bx_bit_or(S, fi, 8192 << n);
+    return 0;
+}
+# Pass 1: the parameter at ordinal `pc` (cursor on its type name, not behind a `*`).
+fn _bx_pscan(S, fi, pc): i64 {
+    if (_bx_is_bool_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 1); }
+    elif (_is_f32_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 3); }   # 6.7.6 (D2): a forward call rounds too
+    elif (_is_f64_name(S, PEEKV(S)) == 1) { _pbool_set(fi, pc, 4); }   # 6.7.11: a forward call warns too
+    return 0;
+}
+# The type name `f32`, whole (not `f32v4`).
+fn _is_f32_name(S, noff): i64 {
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) == 0x00323366) { return 1; }
+    return 0;
+}
+# The type name `f64`, whole (not `f64v2`).
+fn _is_f64_name(S, noff): i64 {
+    if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFF) == 0x00343666) { return 1; }
+    return 0;
+}
+# Pass 2: is the parameter whose type name is `tnoff` a bool (not a `*bool`)? 1 a bool; 6.7.6: 2 an
+# integer i8..i64 / u8..u64 (the slot's bit 59, SLINTD — a number for the `_int` overload route); 3
+# an `f32` (D2: an f64 argument rounds, _bx_pcmpe_arg); 6.7.11: 4 an `f64` (an integer constant
+# argument warns, _bx_pcmpe_arg).
+fn _bx_ptype(S, tnoff): i64 {
+    if (_ptrp_now(S) != 0) { return 0; }
+    if (_bx_is_bool_name(S, tnoff) == 1) { return 1; }
+    if (_is_f32_name(S, tnoff) == 1) { return 3; }
+    if (_is_f64_name(S, tnoff) == 1) { return 4; }
+    if (FINDSTRUCT(S, tnoff) > 0) { return 0; }
+    if (_tn_iw(_tn_scalar(L64(S + 0xEC00000 + tnoff))) > 0) { return 2; }
+    return 0;
+}
+# The parameter table keeps 2 for an integer parameter (its readers test `== 1` for a bool), so the
+# #inline replay, which re-registers parameters by name, can re-mark the slot (_inl_param_marks).
+fn _bx_param(S, fi, pc, li, b): i64 {
+    if (fi != _bx_ldef_fi) { _pbool_set(fi, pc, b); }   # 6.7.16: an earlier definition keeps its kinds to its slots
+    if (b == 2) {
+        SLINTD(S, li);
+        b = 0;
+    }
+    SLBOOL(S, li, b);
+    return 0;
+}
+# 6.7.6 — the #inline replay's parameters (_inl_bind_param, parse/fn/table.cyr) at slots `s0` / `s1`: the
+# declared-integer mark of callee `fi`'s parameters 0 / 1, which re-registration by name dropped
+# (an inlined `println(n)` with `n: i64` took the cstring overload the out-of-line body did not).
+fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
+    if (pc >= 1) { if (_pbool_get(fi, 0) == 2) { SLINTD(S, s0); } }
+    if (pc >= 2) { if (_pbool_get(fi, 1) == 2) { SLINTD(S, s1); } }
+    if (pc >= 1) { _dsc_inl(S, fi, 0, s0); }   # 6.7.8 (D5): a declared scalar, as out of line
+    if (pc >= 2) { _dsc_inl(S, fi, 1, s1); }
+    if (pc >= 1) { _pnw_mark(S, s0, _ipt_ncode(GFIPT(S, fi), 0)); }   # 6.7.16 (D72): a narrow one's width and sign
+    if (pc >= 2) { _pnw_mark(S, s1, _ipt_ncode(GFIPT(S, fi), 1)); }
+    return 0;
+}
+# The name of parameter `ord` of fn `fi`, read from its definition's tokens (the `<..>` of a type
+# argument and a parameter's default skipped), or -1.
+fn _bx_pname(S, fi, ord): i64 {
+    var i = _gen_def_open(S, fi);
+    if (i < 0) { return 0 - 1; }
+    i = i + 1;
+    var k = 0;
+    var d = 0;
+    var want = 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (d == 0) {
+            if (t == 11) { return 0 - 1; }
+            if (t == 4) { i = _pl_dflt_end(S, i); continue; }   # 6.7.7: a default (`<` is an operator there)
+            if (t == 31) { k = k + 1; want = 1; }
+            elif (want == 1) { if (t == 2) { if (k == ord) { return TOKVAL(S, i); } want = 0; } }
+        }
+        if (t == 10 || t == 19) { d = d + 1; }
+        if (t == 11 || t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (d < 0) { d = 0; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# 6.7.16 (D101): the first token of the closure expression body being parsed (its return value, which `_vop_rchk`
+# judges), else -1. CHANGELOG [6.7.16]
+var _vop_clb = 0 - 1;
+# An argument for parameter `ord` of fn `fi` (`noff` its name): PCMPE, then the check. ⛔ 6.7.6 (Break
+# 1, D2): an f64 value passed to an `f32` parameter ROUNDS to f32 (_f32_init_round, the user's
+# decision: every write into an f32) — the callee read the low 32 bits of its f64 pattern.
+# ⛔ 6.7.11 — AN INTEGER CONSTANT PASSED TO AN `f64` / `f32` PARAMETER WARNS, as one stored into any
+# other f64 / f32 slot has since 6.6.10 (kind 4, `_IFS_CHECK`): `f(3)` passed 0x3, a subnormal, with no
+# warning — a call, a method, a tail call, a forward call, the #inline replay. Warn only (ADR-002: the
+# value keeps its bits; `0`, a hex IEEE pattern and a runtime value are exempt). CHANGELOG [6.7.11]
+fn _bx_pcmpe_arg(S, fi, ord, noff): i64 {
+    var t = GTI(S);
+    PCMPE(S);
+    _vsc_arg(S, fi, ord, t);   # 6.7.16 (D101): a whole vector call into a parameter that takes a word
+    _ssc_arg(S, fi, ord, t);   # 6.7.17 (D111): a struct value or call over 8 B too
+    _arr_parg(S, fi, ord, t);   # 6.7.17 (D109): an array's name into a pointer parameter
+    var pk = _pbool_get(fi, ord);
+    if (pk == 4) { _IFS_CHECK(S, 1, t); return 0; }
+    if (pk == 3) { _IFS_CHECK(S, 2, t); _f32_init_round(S, F32_TYID); return 0; }
+    if (pk != 1) { return 0; }   # 6.7.6: 2 is an integer parameter (_bx_param)
+    if (_BX_IS(S) == 1) { return 0; }
+    var pn = _bx_pname(S, fi, ord);
+    if (pn < 0) { return _bx_refuse(S, t, "cannot pass a value that is not a bool to a bool parameter of ", _fn_src_name(S, fi, noff), 0, 0 - 1); }
+    return _bx_refuse(S, t, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", _fn_src_name(S, fi, noff));
+}
+# `return e;` in the fn being parsed. 6.7.11: in a fn returning a struct of 8 B or less, the value is
+# checked by its struct (`_ret_small_val`).
+fn _bx_pcmpe_ret(S): i64 {
+    var t = GTI(S);
+    if (_ret_small_cls(S) == 1) { _ret_small_val(S, t); }
+    elif (_istr_rdx(S) == 0) { _istr_rsv(S, t); _istr_ret(S, t); }   # 6.7.13 (D7 (1)): an inline `Str` returned; 6.7.16: `*p` is p; 6.7.17 (D18): `_istr_rsv`
+    if (_bx_cur_is_bool(S) == 0) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
+}
+# `return (a, b[, c]);` — element `k`. In a single-value bool fn the tuple form (the ret2 register
+# convention) hands element 0 back in the return register: it is the bool return.
+fn _bx_pcmpe_mret(S, k): i64 {
+    var t = GTI(S);
+    _mret_sval(S, t);   # PCMPE + 6.7.16's D90: a struct value over 8 B is no element
+    if (_cur_fn_ix < 0) { return 0; }
+    var fl = _bx_cur_bits(S);
+    var el = 0;
+    if ((fl & (8192 << k)) != 0) { el = 1; }
+    if (el == 0) { if (k != 0) { return 0; } if ((fl & 4096) == 0) { return 0; } }
+    if (_BX_IS(S) == 1) { return 0; }
+    if (el == 0) { return _bx_refuse(S, t, "cannot return a value that is not a bool from bool fn ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1); }
+    return _bx_refuse(S, t, "cannot return a value that is not a bool as a bool element of ", _bx_fname(S, _cur_fn_ix), 0, 0 - 1);
+}
+# ⛔ 6.7.16 (the user's D90, 2026-10-20) — A STRUCT VALUE OVER 8 B IS NO MULTI-VALUE ELEMENT. `return (b, 5);` with a
+# 16-byte `b` — a struct local, parameter or global, a struct-returning call, method or operator, a by-value field,
+# `*p` — handed back the struct's first word: `b.y` was gone, and the caller's binding passed on as the struct faulted.
+# Refused once at the element's first token, in every multi-value fn, declared or not (6.7.13 refuses `return p;` there
+# for the same loss): return its pointer, or its fields as elements. An 8-byte struct is one word and compiles; a `Str`
+# (its name is the header's address), a tuple and a dyn keep their own paths. Not in an #inline replay (the definition
+# reported), not under --syntax-only. The element at token `t` is parsed with the argument's struct-value records armed
+# (`_expr_struct_sid`), which stand a whole tuple / dyn field's own refusal down: said here instead. CHANGELOG [6.7.16]
+fn _mret_sval(S, t): i64 {
+    if (GIDEP(S) != 0) { PCMPE(S); return 0; }
+    if (_syntax_only == 1) { PCMPE(S); return 0; }
+    var asid = _expr_struct_sid(S, t);
+    if (asid == 0) { asid = _ess_deref(S, t); }
+    if (asid <= 0) { return _mret_vval(S, t); }   # 6.7.17 (D25): a vector value
+    if (asid >= 2048) { return _mret_vval(S, t); }
+    if (_dx_plain(S, asid) == 0) { return _mret_fld_rchk(S, asid); }
+    if (STRUCTSZ(S, asid - 1) <= 8) { return 0; }
+    if (_mret_hdl(S, t) == 1) { return 0; }
+    return _mret_sval_err(S, t, asid);
+}
+# 1 when the element at token `t` is a HANDLE named whole (wrapped or not): a struct local whose one slot holds the
+# struct's address (`GLAGG` 0 — 6.7.10's handle line: `var a: H = alloc(16);`, `var h: Pt = w;`), not a parameter (a
+# by-value one is copied inline in the prologue), or a pointer-mode struct global (`GVPM` 1). Its word IS the address,
+# so nothing is lost — the element is "its pointer", what the refusal asks for, and it computed right before D90
+# (tests/gates/codegen/small_struct_handle_line.sh C5: the caller's `load64(x)` reads the field). The user's D90
+# refuses nothing that computes correctly. CHANGELOG [6.7.16]
+fn _mret_hdl(S, t): i64 {
+    var ist = _ess_wrap(S, t);
+    if (TOKTYP(S, ist) != 2) { return 0; }
+    if (_ess_k > 0) { if (ist + 1 != _ess_ie) { return 0; } }
+    else {
+        var nx = TOKTYP(S, ist + 1);
+        if (nx != 31) { if (nx != 11) { return 0; } }
+    }
+    var li = FINDLOCAL(S, TOKVAL(S, ist));
+    if (li >= 0) { return _mret_hdl_li(S, li); }
+    var gvi = FINDVAR(S, TOKVAL(S, ist));
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) == 1) { return 1; }
+    return 0;
+}
+fn _mret_hdl_li(S, li): i64 {
+    if (li < _cur_fn_pslots) { return 0; }
+    if (GLAGG(S, li) != 0) { return 0; }
+    if (GLPTRP(S, li) == 1) { return 0; }
+    return 1;
+}
+# ... a whole tuple / dyn field (`_fpk_ft`, the record `_expr_struct_sid` read) is refused at its load as a value, which
+# the armed record stood down (an argument takes it whole): its own line, at the field, as unarmed.
+fn _mret_fld_rchk(S, asid): i64 {
+    if (_fpk_ft != asid) { return 0; }
+    var sv = GTI(S);
+    STI(S, _fpk_end);
+    _tup_fld_rchk(S, asid, 0 - 2);
+    STI(S, sv);
+    return 0;
+}
+# ... the refusal at token `t`, struct `asid`, naming the fn as its multi-value refusals do (`_mret_fn`: a generic's
+# instance names its base; a method `P.mv`; a closure "a closure"). No latch: the element is parsed, the statement
+# reads on.
+fn _mret_sval_err(S, t, asid): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(t, "_mret_sval_err", asid, 0) == 1) { return 0; }
+    var fi = _mret_fn(S);
+    var sv = GTI(S);
+    STI(S, t);
+    _ew("error:", 6);
+    _err_head(S);
+    if (_fn_is_closure(S, fi) == 1) { PRSTR(": a closure"); }
+    else {
+        PRSTR(": '");
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+        PRSTR("'");
+    }
+    PRSTR(" returns struct '");
+    PRSTR(S + 0xEC00000 + _fsn_one(S, asid));   # an instance as spelled, `Box<i64>` (after the fn's: one scratch)
+    PRSTR("' (");
+    PRNUM(STRUCTSZ(S, asid - 1));
+    PRSTR(" bytes) as a multi-value element - return its pointer, or its fields as elements\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+# ⛔ 6.7.17 (D25 A, the user's decision, 2026-10-22) — A VECTOR VALUE IS NO MULTI-VALUE ELEMENT, as a struct over 8 B
+# is not (6.7.16's D90): `return (v, 3);` with v a vector local handed back its lane 0 — `fn two(): (f64v2, i64) { var v
+# = mk2(41, 7); return (v, 3); }` bound a = 41 (exit 44) on every target, a parameter, a capture and `*pv` the same.
+# Refused once at the element, in D90's shape: "'two' returns vector 'f64v2' (16 bytes) as a multi-value element -
+# return its pointer, or its lanes as elements". The declaration `fn two(): (f64v2, i64)` still compiles, as D90 left
+# `(P, i64)`; a vector call as the element keeps D100's words (`_vsl_tup`). The element [t, cursor) just parsed: a
+# vector value that is no call (`_vval_at`). No latch, as D90's. CHANGELOG [6.7.17]
+fn _mret_vval(S, t): i64 {
+    var vt = _vval_at(S, t, GTI(S));
+    if (vt == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(t, "_mret_vval", 0 - vt, 0) == 1) { return 0; }
+    var fi = _mret_fn(S);
+    var sv = GTI(S);
+    STI(S, t);
+    _ew("error:", 6);
+    _err_head(S);
+    if (_fn_is_closure(S, fi) == 1) { PRSTR(": a closure"); }
+    else {
+        PRSTR(": '");
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+        PRSTR("'");
+    }
+    if (_vvl_arr == 1) {   # 6.7.17 (D103): `return (wa, 3);` read wa's element 0's lane 0
+        PRSTR(" returns '");
+        _vval_pnm(S);
+        PRSTR("', an array of '");
+        _vty_pr(vt);
+        PRSTR("', as a multi-value element - return its pointer, or its lanes as elements\n");
+    } else {
+        PRSTR(" returns vector '");
+        _vty_pr(vt);
+        PRSTR("' (");
+        _vec_desc(S, vt);
+        PRNUM(GVEC_NSLOTS(S) * 8);
+        PRSTR(" bytes) as a multi-value element - return its pointer, or its lanes as elements\n");
+    }
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+# A bare `return;` returns 0 — refused in a bool fn (the user's decision, 2026-10-07).
+fn _bx_bare_ret(S): i64 {
+    if (_bx_cur_is_bool(S) == 0) { return 0; }
+    return _bx_refuse(S, GTI(S) - 1, "a bare `return;` in bool fn ", _bx_fname(S, _cur_fn_ix), " returns 0 - write `return false;`", 0 - 1);
+}
+# `return h(..);` taken as a tail call in a bool fn: h must be a bool fn.
+fn _bx_tc_ret(S, tcfi, ti, tcnoff): i64 {
+    if (_bx_cur_is_bool(S) == 0) { return 0; }
+    if (_bx_fn_is_bool(S, tcfi) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot return ", tcnoff, " (not a bool fn) from bool fn ", _bx_fname(S, _cur_fn_ix));
+}
+# Running off the end of a bool fn returns `false` (the user's decision, 2026-10-07): a `mov 0`
+# on the fall-through path only — every `return` jumps past it to the landing. The #inline replay
+# of a bool callee lands the same way (_bx_falloff_fi, the CALLEE's fi).
+fn _bx_falloff(S): i64 {
+    if (_bx_cur_is_bool(S) == 1) { EMOVI(S, 0); }
+    return 0;
+}
+fn _bx_falloff_fi(S, fi): i64 {
+    if (_bx_fn_is_bool(S, fi) == 1) { EMOVI(S, 0); }
+    return 0;
+}
+# An operator overload's right operand is the operator fn's parameter 1 (`p + 5` into
+# `fn P_add(self, b: bool)`), as `p.add(5)` passes it — checked the same way. ⛔ 6.7.6 (FE): and
+# into an `f32` parameter it ROUNDS, as `_bx_pcmpe_arg` does for `p.add(1.5)` (the decision: every
+# write into an f32) — `r + 1.5` passed 1.5's f64 pattern and the callee read its low 32 bits (0).
+# The operand is still in rax: `_op_rhs` calls this right after PARSE_TERM.
+fn _bx_op_rhs(S, fi, rb): i64 {
+    var pk = _pbool_get(fi, 1);
+    if (pk == 4) { _IFS_CHECK(S, 1, rb); return 0; }   # 6.7.11: `p + 3` into `b: f64` warns, as `p.add(3)`
+    if (pk == 3) { _IFS_CHECK(S, 2, rb); _f32_init_round(S, F32_TYID); return 0; }
+    if (pk != 1) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    var pn = _bx_pname(S, fi, 1);
+    if (pn < 0) { return _bx_refuse(S, rb, "cannot pass a value that is not a bool to a bool parameter of ", _fn_src_name(S, fi, _bx_fname(S, fi)), 0, 0 - 1); }
+    return _bx_refuse(S, rb, "cannot pass a value that is not a bool to bool parameter ", pn, " of ", _fn_src_name(S, fi, _bx_fname(S, fi)));
+}
+# A capture read (`env[k]`): the snapshot carries the enclosing slot's whole depth word, bit 58 too.
+fn _cl_cap_load(S, esl): i64 {
+    ELOAD64(S);
+    if (_cl_snap == 0) { return 0; }
+    if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 58) & 1) == 1) { _BX_MARK(S); }
+    return 0;
+}

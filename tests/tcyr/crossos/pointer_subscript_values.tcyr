@@ -9,8 +9,8 @@
 # address is — loaded and stored at T's width and typed as a declared T is: an iN sign-extended, a
 # uN zero-extended, an f64 an f64 (`p[1] * 2.0` is a float multiply), an f32 its 4 bytes (`p[0] =
 # 1.5` stores 0x3FC00000 and `p[0] += q` stays single precision), a bool a boolean value. The
-# element descriptor rides the pointer's step word (`_ps_word`, src/frontend/parse/types.cyr) and
-# is read by `_arr_sub_addr` / `_esub_load` / `_esub_assign` (src/frontend/parse/expr.cyr).
+# element descriptor rides the pointer's step word (`_ps_word`, src/frontend/parse/types/ptr.cyr) and
+# is read by `_arr_sub_addr` / `_esub_load` / `_esub_assign` (src/frontend/parse/expr/subscript.cyr).
 #
 # Every pointer points into BUF, which is zeroed before each group and followed by a canary; the
 # rows read the stored bytes back through `load8/16/32/64` at their byte offsets, so a wrong

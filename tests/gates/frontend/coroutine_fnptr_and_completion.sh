@@ -221,7 +221,7 @@ syscall(60, 0);
 EOF
 run e '0 0 0 7 7 7 7 7 7 7 1' "E: a finished loop coroutine does not resume; its defer ran once"
 # M (6.6.12, B05 T8b) — no UNREACHABLE `jmp +0` after the resume dispatch. `_defer_emit_init`
-# (src/frontend/parse/parse.cyr) pushed the body's fall-through `jmp` for every fn with defers, but a
+# (src/frontend/parse/state.cyr) pushed the body's fall-through `jmp` for every fn with defers, but a
 # coroutine's body end is already routed to the return landing and its dispatch ends in an
 # unconditional `jmp` to the body top, so a coroutine with a defer carried a dead `e9 00000000`
 # right after that backward jmp. Pinned on E's binary (a defer + awaits): the byte pattern

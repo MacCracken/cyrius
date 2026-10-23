@@ -92,9 +92,9 @@ for pr in "_tl_scan1 0" "_tl_scan2 1"; do
   [ "$nb" -eq 1 ] || bad="$bad\n    src/frontend/parse/fn/def.cyr: $1 calls _tl_directive(S, $2) x$nb (expected 1)"
 done
 # 1d — PARSE_PROG (the post-first-statement path) goes through the same fn
-pp=$(awk '/^fn PARSE_PROG\(S\)/{on=1} on{print} on&&/^}/{exit}' src/frontend/parse/parse.cyr)
-echo "$pp" | grep -q '_tl_directive(S, 1) == 1' || bad="$bad\n    src/frontend/parse/parse.cyr: PARSE_PROG does not call _tl_directive(S, 1)"
-echo "$pp" | grep -qE "typ == ($TOKS)\b" && bad="$bad\n    src/frontend/parse/parse.cyr: PARSE_PROG tests a directive token itself"
+pp=$(awk '/^fn PARSE_PROG\(S\)/{on=1} on{print} on&&/^}/{exit}' src/frontend/parse/prog.cyr)
+echo "$pp" | grep -q '_tl_directive(S, 1) == 1' || bad="$bad\n    src/frontend/parse/prog.cyr: PARSE_PROG does not call _tl_directive(S, 1)"
+echo "$pp" | grep -qE "typ == ($TOKS)\b" && bad="$bad\n    src/frontend/parse/prog.cyr: PARSE_PROG tests a directive token itself"
 if [ -n "$bad" ]; then
   printf "FAIL directive_fork_parity axis1: a directive is dispatched outside _tl_directive:%b\n" "$bad"
   echo "  Each private copy is a place for a fork to consume a token and arm nothing — the silent"

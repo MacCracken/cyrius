@@ -665,9 +665,9 @@ fn _gs_sval_hdl(S, d, sid): i64 {
 }
 # ⛔ 6.7.17 (D15, the user's decision, 2026-10-22) — THE D1 STUB SCAN READS A COMPOUND `OP=` STORE AS ITS `=` FORM: at a
 # scalar T, `y += R` (y typed by T), `*p += R` (p a `*T`), `p[0] += R` and `b.v += R` (b reading T) combine a struct
-# result over 8 B with a word, which a plain fn refuses (`_cop_sres`, parse.cyr) and the base parse leaves to the scan
-# (`_dsr_tdep`), so `g(5)` compiled and added Q's first word. The end of a store's destination whose `=` is at token eq:
-# eq, or eq - 1 when an `OP` token before it makes the pair a compound assignment. CHANGELOG [6.7.17]
+# result over 8 B with a word, which a plain fn refuses (`_cop_sres`, parse/assign.cyr) and the base parse leaves to the
+# scan (`_dsr_tdep`), so `g(5)` compiled and added Q's first word. The end of a store's destination whose `=` is at
+# token eq: eq, or eq - 1 when an `OP` token before it makes the pair a compound assignment. CHANGELOG [6.7.17]
 fn _gs_cop_de(S, eq): i64 {
     if (_is_cop_tok(TOKTYP(S, eq - 1)) == 1) { return eq - 1; }
     return eq;
@@ -2035,7 +2035,7 @@ fn _gu_iebig(S, ti): i64 {
     }
     return 0;
 }
-# 6.7.16 — the sweep's twin of `_slit_undecl` (parse/expr.cyr): the noted global whose whole initialiser at `ti`
+# 6.7.16 — the sweep's twin of `_slit_undecl` (parse/expr/undef.cyr): the noted global whose whole initialiser at `ti`
 # (inside any wrap) is a struct literal `Q { .. }` / `Q<..> { .. }` whose name is nothing (no struct, variable or fn)
 # is marked as refused, so a fn body compiled before the replay stands down at `x.a`. CHANGELOG [6.7.16]
 fn _gu_slit0(S, ti): i64 {
@@ -3181,7 +3181,7 @@ fn _hl_pchain(S, b, e): i64 {
     _hl_cp = p;
     return t;
 }
-# The struct a `*T` assignment SOURCE [a, e) points at (`_hl_psrc_copy`, parse.cyr): a `*T` GLOBAL's name,
+# The struct a `*T` assignment SOURCE [a, e) points at (`_hl_psrc_copy`, parse/assign.cyr): a `*T` GLOBAL's name,
 # or a chain ending in a call or method declared `: *T` or in a `*T` field (`_hl_pchain` with a `*T` at its
 # end) — `_hl_dnm` its last name, for a refusal — else 0. A `*T` local, parameter or capture is
 # `_try_aggregate_copy_assign`'s operand (B7-1c). CHANGELOG [6.7.10]

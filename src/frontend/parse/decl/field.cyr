@@ -295,7 +295,7 @@ fn _AGC_DREF(li): i64 { return 0 - 1000 - li; }
 # 6.6.11 — `li == -2` is a FOURTH source: the struct-typed FIELD recorded by `_fla_take`, so a
 # variable destination (`q = b.v;`, `var p: Pt = b.v;`) takes this same byte-exact copy. `-2` is
 # free: a slot is >= 0, "none" is -1 and the dereferenced band starts at -1000. CHANGELOG [6.6.11]
-# 6.6.16 (C2) — `gv <= -1000` is a pointer-mode GLOBAL handle (`_agc_gvi`'s deref band, parse.cyr
+# 6.6.16 (C2) — `gv <= -1000` is a pointer-mode GLOBAL handle (`_agc_gvi`'s deref band, parse/assign.cyr
 # `_agc_handle_global`): its slot holds the address, so the base is `[G]` — `_fsc_src_x1`'s
 # `_fsc_gdr` arm. Tested before the `li` arms, which a global operand leaves at -1. CHANGELOG [6.6.16]
 fn _agc_addr_x1(S, li, gv, boff): i64 {
@@ -708,7 +708,7 @@ fn _fsc_global_src(S, gv): i64 {
     return 0 - gt;
 }
 # ⛔ 6.6.13 — A CAPTURED STRUCT COPIED INSIDE A CLOSURE STORED ITS ADDRESS. The three name-based
-# copy-source resolvers (this one, `_agc_src_operand` in parse.cyr, `_try_struct_copy_init`) went
+# copy-source resolvers (this one, `_agc_src_operand` in parse/assign.cyr, `_try_struct_copy_init`) went
 # local, then global, with no rung for a closure CAPTURE — an enclosing local is neither inside the
 # closure body — so each fell back to the capture's scalar VALUE. For an inline (multi-word)
 # capture that value is `&env[woff]`, and for a one-word capture of a struct over 8 B (a
@@ -1355,7 +1355,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
 # depth. A result that is no struct (nor a `*T`: `_mchain_ptr`), and a struct chain at top level (no
 # frame), are refused by name.
 # The method a `.m(..)` expression ENDED with (-1 when it ended with a field or anything else) —
-# what `p.m(..);` as a statement discards, for #must_use (parse.cyr `_stmt_method_call`).
+# what `p.m(..);` as a statement discards, for #must_use (parse/stmt.cyr `_stmt_method_call`).
 var _mcall_last = 0 - 1;
 # 6.7.15 — the `.name` read past a base that resolved to nothing (PARSE_FIELD_LOAD's undefined arm, the cursor
 # after the name): 2 when `(` follows — a method call, which `_cst_fld_at` names "has no methods" on a const —
@@ -2227,7 +2227,7 @@ fn _ifs_bx_el(S, k, ti, nm): i64 {
 
 # 6.7.8 (C2-4b) — `h.p[i] = v` / `h.p[i] OP= v` (the statement and the classic-for step): the leaf
 # field (`_rlf_si` / `_rlf_fi`) a `*T`, its VALUE loaded from the field's address (`_fld_addr_ra`),
-# then the element addressed and stored as a named `*T`'s (parse/expr.cyr `_psub_addr`,
+# then the element addressed and stored as a named `*T`'s (parse/expr/subscript.cyr `_psub_addr`,
 # `_esub_assign`). A field that is no `*T` is refused by name, the statement parsed on.
 fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
     var fnm = GETFNAME(S, _rlf_si, _rlf_fi);
@@ -2243,9 +2243,9 @@ fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
 }
 # The field store's end: its terminator — `;`, or a classic-for step's `)` — consumed. 6.7.5
 # 6.7.17 (D14): `w.pq = v` with pq a `*S` field (one `*`, S a plain struct) and v no provable non-struct (`_psv_not`)
-# nor another struct's whole call (`_psv_other`): the field's address in rax, then `_psl_store` (parse.cyr) — a struct
-# value of S copies into the S pq points at, a handle or a `*S` rebinds pq. The leaf field `_rlf_si` / `_rlf_fi` (read
-# before the value), the cursor past the `=`. 1 = done (`term` consumed). CHANGELOG [6.7.17]
+# nor another struct's whole call (`_psv_other`): the field's address in rax, then `_psl_store` (parse/deref_store.cyr)
+# — a struct value of S copies into the S pq points at, a handle or a `*S` rebinds pq. The leaf field `_rlf_si` /
+# `_rlf_fi` (read before the value), the cursor past the `=`. 1 = done (`term` consumed). CHANGELOG [6.7.17]
 fn _fst_pslot(S, idx, sid, off, hop, term): i64 {
     var ps = _fld_ptr_sid(S, _rlf_si, _rlf_fi);
     if (ps <= 0) { return 0; }

@@ -1,0 +1,882 @@
+# PARSER — expr: the syscall arity table (_SC_ARITY), _STR_FROM_NOFF, and closures — the local-table snapshot, the
+# capture prescan and the captured environment (`_cl_*`).
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+fn _SC_ARITY(n): i64 {
+    if (n == 0) { return 3; }    # read(fd, buf, count)
+    if (n == 1) { return 3; }    # write(fd, buf, count)
+    if (n == 2) { return 3; }    # open(path, flags, mode)
+    if (n == 3) { return 1; }    # close(fd)
+    if (n == 4) { return 2; }    # stat(path, buf)
+    if (n == 5) { return 2; }    # fstat(fd, buf)
+    if (n == 8) { return 3; }    # lseek(fd, off, whence)
+    if (n == 9) { return 6; }    # mmap(addr, len, prot, flags, fd, off)
+    if (n == 10) { return 3; }   # mprotect(addr, len, prot)
+    if (n == 11) { return 2; }   # munmap(addr, len)
+    if (n == 12) { return 1; }   # brk(addr)
+    if (n == 16) { return 3; }   # ioctl(fd, req, arg)
+    if (n == 21) { return 2; }   # access(path, mode)
+    if (n == 22) { return 1; }   # pipe(fds)
+    if (n == 32) { return 1; }   # dup(fd)
+    if (n == 33) { return 2; }   # dup2(old, new)
+    if (n == 39) { return 0; }   # getpid()
+    if (n == 56) { return 5; }   # clone(flags, stack, ptid, ctid, tls)
+    if (n == 57) { return 0; }   # fork()
+    if (n == 59) { return 3; }   # execve(path, argv, envp)
+    if (n == 60) { return 1; }   # exit(code)
+    if (n == 61) { return 4; }   # wait4(pid, status, opts, rusage)
+    if (n == 62) { return 2; }   # kill(pid, sig)
+    if (n == 63) { return 1; }   # uname(buf)
+    if (n == 72) { return 3; }   # fcntl(fd, cmd, arg)
+    if (n == 79) { return 2; }   # getcwd(buf, size)
+    if (n == 262) { return 4; }  # newfstatat(dirfd, path, buf, flags) — at-family stat (v6.1.3)
+    if (n == 280) { return 4; }  # utimensat(dirfd, path, times, flags) (v6.1.3)
+    if (n == 80) { return 1; }   # chdir(path)
+    if (n == 83) { return 2; }   # mkdir(path, mode)
+    if (n == 84) { return 1; }   # rmdir(path)
+    if (n == 87) { return 1; }   # unlink(path)
+    if (n == 90) { return 2; }   # chmod(path, mode)
+    if (n == 102) { return 0; }  # getuid()
+    if (n == 104) { return 0; }  # getgid()
+    if (n == 107) { return 0; }  # geteuid()
+    if (n == 108) { return 0; }  # getegid()
+    if (n == 112) { return 0; }  # setsid() takes 0 args
+    if (n == 113) { return 1; }  # setuid(uid)
+    if (n == 116) { return 2; }  # setgroups(size, list)
+    if (n == 165) { return 5; }  # mount(src, tgt, fs, flags, data)
+    if (n == 166) { return 2; }  # umount2(target, flags)
+    if (n == 169) { return 4; }  # reboot(magic1, magic2, cmd, arg)
+    return 0 - 1;
+}
+
+# Cache for str_from function index (auto-coercion).
+# Lazily resolved on first use — returns the tok_names offset for "str_from".
+var _str_from_cache = 0 - 1;
+fn _STR_FROM_NOFF(S): i64 {
+    if (_str_from_cache >= 0) { return _str_from_cache; }
+    # Search tok_names for "str_from\0" = 0x006D6F72665F727473
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        if (L64(S + 0xEC00000 + i) == 0x6D6F72665F727473) {
+            if (load8(S + 0xEC00000 + i + 8) == 0) {
+                _str_from_cache = i;
+                return i;
+            }
+        }
+        # Skip to next null terminator
+        while (i < npos) { if (load8(S + 0xEC00000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    return 0 - 1;
+}
+
+# v6.3.7 — closure local-table isolation. A closure is its own fn but reuses the
+# SHARED per-fn local tables (names 0x5D9D000 / depths 0x5DBD000 / types 0x5DDD000
+# / slice-widths 0x5DFD000), starting at slot 0 after SFLC(0). Its params/locals
+# therefore OVERWRITE the enclosing fn's locals at slots [0, closure_flc) — so an
+# enclosing `var c0` shadowed by a later closure's `|x|` param became "undefined".
+# Snapshot the enclosing range before the closure and restore it after, so the
+# enclosing fn's locals survive. (n is the enclosing fn's GFLC at the closure site.)
+# 6.6.10: a fifth segment, n BYTES at buf + n*32, carries the untyped-float flags (_lfi_base),
+# so a closure's locals cannot leave the enclosing fn's `-c` warning wrong. CHANGELOG [6.6.10]
+# 6.6.13: an 8-aligned trailer WORD after them (`_cl_snap_ps_off`) holds the enclosing fn's
+# `_cur_fn_pslots`, read here because `_fnst_save` zeroes it right after. See `_cl_snap_is_sptr`.
+# CHANGELOG [6.6.13]
+# 6.7.8: a second trailer word (+ 8) points at a copy of the declared scalars' names `_dsc_tn[0..n)`
+# (`_dsc_snap`, parse/types/dyn_call.cyr), read only behind depth-word bit 63, which this snapshot restores: a
+# closure's (or an inline generic instance's) own declared scalar overwrote the name and the enclosing
+# one's dyn named its type. `_cl_snap_extend`'s copies carry no such word — they are never restored.
+# CHANGELOG [6.7.8]
+fn _cl_snap_ps_off(n): i64 { return (n * 33 + 7) & (0 - 8); }
+fn _cl_save_locals(S, n): i64 {
+    if (n <= 0) { return 0; }
+    var buf = alloc(_cl_snap_ps_off(n) + 16);
+    S64(buf + _cl_snap_ps_off(n), _cur_fn_pslots);
+    S64(buf + _cl_snap_ps_off(n) + 8, _dsc_snap(n));
+    var i = 0;
+    while (i < n) {
+        S64(buf + i * 8,          L64(S + 0x5D9D000 + i * 8));
+        S64(buf + n * 8 + i * 8,  L64(S + 0x5DBD000 + i * 8));
+        S64(buf + n * 16 + i * 8, L64(S + 0x5DDD000 + i * 8));
+        S64(buf + n * 24 + i * 8, L64(S + 0x5DFD000 + i * 8));
+        i = i + 1;
+    }
+    _cl_lfi_copy(buf + n * 32, _lfi_base, n);
+    return buf;
+}
+fn _cl_restore_locals(S, buf, n): i64 {
+    if (n <= 0) { return 0; }
+    var i = 0;
+    while (i < n) {
+        S64(S + 0x5D9D000 + i * 8, L64(buf + i * 8));
+        S64(S + 0x5DBD000 + i * 8, L64(buf + n * 8 + i * 8));
+        S64(S + 0x5DDD000 + i * 8, L64(buf + n * 16 + i * 8));
+        S64(S + 0x5DFD000 + i * 8, L64(buf + n * 24 + i * 8));
+        i = i + 1;
+    }
+    _cl_lfi_copy(_lfi_base, buf + n * 32, n);
+    _dsc_unsnap(L64(buf + _cl_snap_ps_off(n) + 8), n);
+    return 0;
+}
+# A closure's frame bytes: the larger of its final GFLC and the `_flc_hwm` high-water, rounded to
+# 16 — PARSE_FN_DEF's formula (a closure takes no `#regalloc` / struct-return stash). Hidden temps
+# and the #inline replay give their slots back, so GFLC alone left a slot taken in an inline call's
+# arguments (a value-form vector's copy) below rsp, where the next push overwrote it. `_fnst_save`
+# zeroed the high-water at the closure's entry and `_fnst_restore` brings back the enclosing fn's.
+# A helper because `_PARSE_FACTOR_IMPL` sits at cybs's per-fn reference ceiling. CHANGELOG [6.7.14]
+fn _cl_frame_bytes(S): i64 {
+    var n = GFLC(S);
+    if (_flc_hwm > n) { n = _flc_hwm; }
+    return (n * 8 + 15) & (0 - 16);
+}
+fn _cl_lfi_copy(dst, src, n): i64 {
+    if (_lfi_base == 0) { return 0; }
+    var i = 0;
+    while (i < n) { store8(dst + i, load8(src + i)); i = i + 1; }
+    return 0;
+}
+
+# v6.3.8 — lexical-capture helpers. The enclosing-locals NAME snapshot is the
+# first segment of the v6.3.7 snapshot buffer (buf[0..n)); `_cl_snap_find` returns
+# the enclosing slot whose name matches `noff`, searching backward so an inner
+# scope shadows an outer (same convention as FINDLOCAL). -1 if not an enclosing
+# local.
+fn _cl_snap_find(S, noff): i64 {
+    if (_cl_snap == 0) { return 0 - 1; }
+    # 6.6.17: the enclosing fn's locals first — one of them shadows a capture of the same name —
+    # then the enclosing closure's captures (`_cl_snap_nl`).
+    var r = _cl_snap_find_in(S, noff, 0, _cl_snap_nl);
+    if (r < 0) { r = _cl_snap_find_in(S, noff, _cl_snap_nl, _cl_snap_n); }
+    return r;
+}
+fn _cl_snap_find_in(S, noff, lo, hi): i64 {
+    var i = hi - 1;
+    while (i >= lo) {
+        var sn = L64(_cl_snap + i * 8);
+        if (sn >= 0) { if (STREQ(S, sn, noff) == 1) { return i; } }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+# Capture index of enclosing slot `esl`, or -1 if not yet captured.
+fn _cl_cap_find(esl): i64 {
+    var i = 0;
+    while (i < _cl_ncap) {
+        if (L64(&_cl_cap_slots + i * 8) == esl) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# 6.6.5 — the enclosing slot's recorded metadata, read from the SNAPSHOT rather than the live
+# tables: by the time the closure body is parsed the live slot tables hold the CLOSURE's own
+# locals, so index `esl` no longer means the enclosing variable. `_cl_save_locals` lays the
+# snapshot out as [names | depths | types | slice_widths], each `n` words.
+fn _cl_snap_span(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 32) & 0xFFFF;
+}
+# The enclosing slot's array ELEMENT descriptor (util.cyr GLAEW), from the same word. 6.6.12
+fn _cl_snap_aew(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 48) & 0xFF;
+}
+# The enclosing slot's `p: *T` mark (util.cyr GLPTRP, bit 56 of the same word). 6.6.17
+fn _cl_snap_ptrp(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 56) & 1;
+}
+fn _cl_snap_type(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
+}
+# The enclosing slot's u128 mark (util.cyr GLW128, bit 60 of the same word; a nested closure's snapshot keeps it,
+# `_cl_snap_extend`). 6.7.14
+fn _cl_snap_w128(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 60) & 1;
+}
+# ⛔ 6.7.14 — A CAPTURED u128 IS ITS VALUE (issues/archived/2026-10-08-u128-params-returns-fields-captures.md). Its env copy is
+# two words, so the read took the multi-word rule — the value is the ADDRESS, as an aggregate's is — and `c == 5`
+# compared the env address with 5, `c + 0` added it. With rax = `&env[woff]` (`_CL_CAP_WORDS_RA`), the two words are
+# copied into a 16-byte temporary and the read is that temporary's low word, stamped (k 3), so `==`, `<`, `+`, `-`, a
+# truth test and `match` take 6.7.6's u128 paths (an integer context reads the low word, as of a local). `&c` still
+# reads the env copy. 1 = done. CHANGELOG [6.7.14]
+fn _cl_cap_w128(S, esl): i64 {
+    if (_cl_snap_w128(esl) == 0) { return 0; }
+    var h = _w128_tmp(S);
+    _w128_addr(S, 3, h, 1);
+    EW128_ACCM(S, 2);
+    _w128_res(S, h);
+    return 1;
+}
+# The enclosing slot's declared-integer mark (util.cyr GLINTD, bit 59 of the same word). 6.7.6
+fn _cl_snap_intd(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 59) & 1;
+}
+# 6.6.13 — 1 when enclosing slot `esl` is an ADDRESS-PASSED by-value struct parameter of the
+# enclosing fn: its one captured word is the caller's struct's address, which a copy-init must
+# copy THROUGH, where a pointer-mode local's word (`var a: Pt = mk();`, a Str handle) is rebound.
+# The same discriminator as `_local_is_sptr_param` (parse/fn/call_args.cyr) — "slot below the enclosing
+# fn's parameter span" — asked of the snapshot, whose trailer word carries that span.
+# CHANGELOG [6.6.13]
+fn _cl_snap_is_sptr(S, esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    # 6.6.17: an enclosing closure's capture carries the answer its own snapshot gave (bit 57 of
+    # the entry's word, `_cl_snap_extend`) — the parameter span is that closure's, not the fn's.
+    if (esl >= _cl_snap_nl) { return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 57) & 1; }
+    if (esl >= L64(_cl_snap + _cl_snap_ps_off(_cl_snap_n))) { return 0; }
+    if (_cl_snap_span(esl) != 0) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    var sid = 0 - t;
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
+    return 1;
+}
+# 6.6.17 — the step word of enclosing slot `esl` when it is a typed pointer (`_slot_ptr_word`, read
+# from the snapshot: bit 56 of its depth word, the mark in its slice-width word — 6.7.8: T's kind
+# included), else 0. A capture of one loaded with scale 0, so `p + 1` stepped 1 and `var q: *T = p;`
+# warned.
+fn _cl_snap_ptr_word(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 56) & 1) == 0) { return 0; }
+    var w = L64(_cl_snap + _cl_snap_n * 24 + esl * 8);
+    if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
+    return 8;
+}
+# ⛔ 6.7.17 (met reviewing D103) — A CAPTURED ARRAY'S NAME READ AS A WORD IS ITS FIRST WORD, AS IN ITS FRAME. An array's
+# name read as a word is the named slot's word, `EFLLOAD` — a typed array's element 0 (§ compound assignment), a bare
+# `var b[N]` / `stack var b[N]`'s first word — but the capture rung took 6.6.5's multi-word rule (an aggregate's value
+# is its address), so inside a closure `var a: i64[4]; a[0] = 4; .. |k| take(a) + k` passed the env copy's ADDRESS (8 on
+# x86_64 / aarch64 / PE, 248 on cx, where 4 is right; a bare array 8 / cx 72). 1 = enclosing slot `esl` is an array — no
+# type, a span, and its slice-width word in the element-typed band (`_arr_named_marks`) or the bare mark (bit 61 of its
+# depth word, SLBARR): the read loads the copy's first word, as the frame's does. Its subscript and `&a` are unchanged.
+# CHANGELOG [6.7.17]
+fn _cl_snap_arr(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    if (_cl_snap_type(esl) != 0) { return 0; }
+    if (_cl_snap_span(esl) < 1) { return 0; }
+    if (((L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 61) & 1) == 1) { return 1; }   # a bare array
+    if (L64(_cl_snap + _cl_snap_n * 24 + esl * 8) > 0 - 0x1000000000000) { return 0; }
+    return 1;
+}
+# Word offset of capture `capi` inside the env object (slot 0 is the fn pointer).
+fn _cl_cap_woff(capi): i64 {
+    var off = 1;
+    var i = 0;
+    while (i < capi) {
+        off = off + L64(&_cl_cap_w + i * 8);
+        i = i + 1;
+    }
+    return off;
+}
+# rax = `&env[woff]` — the address of capture `capi`'s WORDS inside the env object. One
+# definition, so the four sites that need it (the value read, `&name`, the field/method base
+# in `_CL_CAP_BASE_RA`, and the operator-dispatch operand) cannot drift apart.
+fn _CL_CAP_WORDS_RA(S, capi): i64 {
+    EFLLOAD(S, _cl_env_lidx);
+    EADDRA_IMM(S, _cl_cap_woff(capi) * 8);
+    return 0;
+}
+# ⛔ 6.6.5 (review round 2) — A CAPTURED INLINE AGGREGATE DISPATCHES ITS OPERATOR OVERLOAD.
+# Once `var a = Num{1}` became a frame local (this bite), `|x| a + x` inside a closure stopped
+# going through the local rung below and reached the capture rung, which never called
+# `SESTYPE` — so `a + x` compiled to an INTEGER ADD of the captured word and answered 2 where
+# 102 is right. Worse than wrong: with `Num_add` DELETED the same source compiled clean, where
+# 6.6.4 refused it as an undefined function. The span comes from the SNAPSHOT (the live slot
+# tables hold the closure's own locals by now), and only a span-marked — i.e. inline —
+# aggregate dispatches, exactly as the enclosing-local and global rungs decide it.
+# CHANGELOG [6.6.5]
+fn _CL_CAP_OPTYPE(S, esl, capi): i64 {
+    var ps = _cl_snap_ptr_word(esl);   # 6.6.17: a captured typed pointer carries its step (6.7.8: + kind)
+    if (ps > 0) { SPSC(S, ps); return 0; }
+    if (_cl_snap_span(esl) < 1) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    SESTYPE(S, 0 - t);
+    if (L64(&_cl_cap_w + capi * 8) > 1) { SESVAR(S, 0 - 1000000 - capi); }
+    _esv_name = 0 - 1000000 - capi;   # 6.6.20: see `_op_operand_sv`
+    return 0;
+}
+# Record enclosing slot `esl` as a capture (dedup); returns its capture index.
+fn _cl_cap_add(S, esl): i64 {
+    var c = _cl_cap_find(esl);
+    if (c >= 0) { return c; }
+    if (_cl_ncap >= 64) { return 0 - 1; }
+    S64(&_cl_cap_slots + _cl_ncap * 8, esl);
+    var w = _cl_snap_span(esl);
+    if (w < 1) { w = 1; }
+    S64(&_cl_cap_w + _cl_ncap * 8, w);
+    var idx = _cl_ncap;
+    _cl_ncap = _cl_ncap + 1;
+    return idx;
+}
+fn _cl_shadow_add(S, noff): i64 {
+    if (_cl_nshadow >= 64) { return 0; }
+    S64(&_cl_shadow + _cl_nshadow * 8, noff);
+    _cl_nshadow = _cl_nshadow + 1;
+    return 0;
+}
+fn _cl_shadow_find(S, noff): i64 {
+    var i = 0;
+    while (i < _cl_nshadow) {
+        if (STREQ(S, L64(&_cl_shadow + i * 8), noff) == 1) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# Pre-scan the closure body (cursor at the body start: `{` for a block, else the
+# expression) to collect which enclosing locals it references as free variables.
+# A free var is an identifier that is NOT a closure param/local (FINDLOCAL), NOT a
+# body-local `var` (the shadow set), NOT a call name (`IDENT(`), and IS an
+# enclosing local (in the snapshot). Restores the cursor; populates _cl_cap_slots
+# + sets _cl_capturing. This runs BEFORE the closure prologue so the env-param
+# decision (capturing → hidden arg0) can be made in one pass.
+# 6.6.17: the walk covers every NESTED closure's body too, so a name a nested closure reads is
+# captured here first and is there for it to capture in turn (`_cl_ctx_enter`).
+fn _cl_prescan_captures(S, cl_zero): i64 {
+    _cl_ncap = 0;
+    _cl_nshadow = 0;
+    var save_ti = GTI(S);
+    # The pre-scan runs BEFORE the param loop registers the params, so the params
+    # aren't in the live local table yet — seed the shadow set with them (closure
+    # params are not free variables). The cursor enters at the first param.
+    if (cl_zero == 0) {
+        while (PEEKT(S) != 35) {
+            if (PEEKT(S) == 12) { break; }
+            if (PEEKT(S) == 2) { _cl_shadow_add(S, PEEKV(S)); }
+            STI(S, GTI(S) + 1);
+        }
+        if (PEEKT(S) == 35) { STI(S, GTI(S) + 1); }   # consume closing |
+    }
+    var is_block = 0;
+    if (PEEKT(S) == 13) { is_block = 1; STI(S, GTI(S) + 1); }
+    _cl_prescan_body(S, is_block);
+    STI(S, save_ti);
+    _cl_capturing = 0;
+    if (_cl_ncap > 0) { _cl_capturing = 1; }
+    return 0;
+}
+# Walk one closure body from the cursor: a block body (`is_block` 1) to its closing `}`, an
+# expression body (0) to the `;` / `,` / unmatched `)` `]` `}` that ends it, a parenthesised group
+# (2, a `for` header) to its unmatched `)`, a `for … in` header's part (3) to its depth-0 `{`,
+# range `..` or `;`, a declaration's tail (4: its annotation and right-hand side) to its depth-0 `;`
+# (`_cl_walk_stop`); the cursor is left AT that token. Every other `{` is walked as its own scope
+# (`_cl_prescan_nested`).
+# ⛔ 6.6.17 — A NESTED CLOSURE'S BLOCK BODY IS ITS OWN SCOPE. It is walked by a recursive call
+# and the `var` names it declares leave the shadow set when it ends: they used to stay, so
+# `|x| { var k = |y| { var b = y; return b; }; return b + x; }` stopped capturing the enclosing
+# `b` the outer body reads. An expression body counts `{ }` as nesting too — a nested block
+# body (`|x| |y| { var t = y; return t + b; }`) or a struct literal holds `;` / `,` that do not
+# end the expression, and stopping there dropped every capture after it. CHANGELOG [6.6.17]
+fn _cl_prescan_body(S, is_block): i64 {
+    var t0 = GTI(S);
+    var depth = 0;
+    var prev_var = 0;
+    var go = 1;
+    while (go == 1) {
+        var t = PEEKT(S);
+        if (t == 12) { go = 0; }
+        elif (_cl_walk_stop(S, is_block, t, depth) == 1) { go = 0; }
+        elif (t == 13) {
+            _cl_prescan_nested(S);             # any block is a scope (6.6.17)
+            t = 0 - 1;                         # consumed through its `}`
+        }
+        elif (t == 14) { go = 0; }
+        elif (t == 55) {
+            if (TOKTYP(S, GTI(S) + 1) == 10) { _cl_prescan_for(S); t = 0 - 1; }
+            elif (_cl_at_forin(S) == 1) { _cl_prescan_forin(S); t = 0 - 1; }   # 6.7.11
+        }
+        elif (t == 3) {
+            if (_cl_at_mvar(S) == 1) { _cl_prescan_mvar(S); t = 0 - 1; }       # 6.7.11
+            elif (TOKTYP(S, GTI(S) + 1) == 2) { _cl_prescan_var(S); t = 0 - 1; }   # 6.7.13
+        }
+        elif (t == 35) {
+            if (_cl_at_lit(S, t0) == 1) { _cl_prescan_lit(S); t = 0 - 1; }     # 6.7.13
+        }
+        elif (is_block != 1) {
+            if (t == 10 || t == 28) { depth = depth + 1; }
+            elif (t == 11 || t == 29) { if (depth == 0) { go = 0; } else { depth = depth - 1; } }
+            elif (t == 5 && depth == 0) { if (is_block == 0) { go = 0; } }
+            elif (t == 31 && depth == 0) { if (is_block == 0) { go = 0; } }
+        }
+        if (go == 1) {
+            if (t == 3 || t == 168) { prev_var = 1; }   # a local `const` (6.7.11) names one here
+            elif (t == 2) {
+                var noff = PEEKV(S);
+                if (prev_var == 1) { _cl_shadow_add(S, noff); prev_var = 0; }
+                else { _cl_prescan_ident(S, noff); }
+            }
+            else { prev_var = 0; }
+            if (t != 0 - 1) { STI(S, GTI(S) + 1); }
+        }
+    }
+    return 0;
+}
+# Cursor at `for (`: the header's `var` and the loop body are one scope (the for statement's
+# own SCOPE_PUSH) — walked with `is_block` 2 (a parenthesised group: only its `)` ends it), then
+# the body block. Leaves the cursor past the body. CHANGELOG [6.6.17]
+fn _cl_prescan_for(S): i64 {
+    var mk = _cl_nshadow;
+    STI(S, GTI(S) + 2);                  # `for (`
+    _cl_prescan_body(S, 2);
+    if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    _cl_nshadow = mk;
+    return 0;
+}
+# ⛔ 6.7.11 — A NAME THE BODY DECLARES IS NOT A READ. Only the name right after `var` was shadowed,
+# so `for i in 0..4 { .. }`, `const k = 3;` and the `b` of `var a, b = two();` each captured the
+# enclosing local of that name (refused without lib/alloc.cyr, or a needless heap env holding a
+# copy of it). Each is shadowed from where the PARSER binds it (`PARSE_FOR`, `PARSE_VAR`): a
+# `for … in` variable after the start bound or the collection, which read the enclosing name (a
+# range's end bound reads the variable), for the loop only; the names of a destructure after its
+# right-hand side, which reads the enclosing ones. CHANGELOG [6.7.11]
+# ⛔ 6.7.13 — NOR IS A DECLARATION'S INITIALIZER A READ OF THE NAME IT DECLARES. A `var` (and a
+# destructure's FIRST name) was still shadowed from the name, so `var a = a + n;` dropped the read
+# of the enclosing `a` that PARSE_VAR makes (it binds after the right-hand side): the body read a
+# GLOBAL `a` silently, or was refused "undefined variable". Every `var` name is shadowed after its
+# tail (`_cl_prescan_var`: the annotation and the `=` right-hand side, mode 4 to its `;`) — a
+# typed `var a: T = ..` and a classic `for (var a = a; ..)` header alike. A local `const` keeps
+# shadowing from its name: its initializer cannot read a runtime local. CHANGELOG [6.7.13]
+fn _cl_walk_stop(S, m, t, depth): i64 {
+    if (m < 3) { return 0; }
+    if (depth != 0) { return 0; }
+    if (t == 5) { return 1; }
+    if (m == 4) { return 0; }
+    if (t == 13) { return 1; }
+    if (t == 41) { if (TOKTYP(S, GTI(S) + 1) == 41) { return 1; } }
+    return 0;
+}
+# 1 at `for IDENT in`.
+fn _cl_at_forin(S): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 76) { return 0; }
+    return 1;
+}
+# Cursor at `for IDENT in`: the start bound or the collection (the enclosing scope), then IDENT
+# shadowed for a range's end bound and the body. Leaves the cursor past the body.
+fn _cl_prescan_forin(S): i64 {
+    var mk = _cl_nshadow;
+    var noff = TOKVAL(S, GTI(S) + 1);
+    STI(S, GTI(S) + 3);                  # `for IDENT in`
+    _cl_prescan_body(S, 3);
+    _cl_shadow_add(S, noff);
+    if (PEEKT(S) == 41) {
+        STI(S, GTI(S) + 2);              # a range's `..`
+        _cl_prescan_body(S, 3);
+    }
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    _cl_nshadow = mk;
+    return 0;
+}
+# 1 at `var IDENT , IDENT` — a destructure.
+fn _cl_at_mvar(S): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 31) { return 0; }
+    if (TOKTYP(S, GTI(S) + 3) != 2) { return 0; }
+    return 1;
+}
+# Cursor at `var a, b[, c] = f(..);`: the right-hand side read, then `a`, `b` (and `c`) shadowed.
+# Leaves the cursor at the `;`.
+fn _cl_prescan_mvar(S): i64 {
+    var ti = GTI(S) + 1;
+    var n1 = TOKVAL(S, ti);
+    var n2 = TOKVAL(S, ti + 2);
+    var n3 = 0;
+    var has3 = 0;
+    ti = ti + 3;
+    if (TOKTYP(S, ti) == 31) { if (TOKTYP(S, ti + 1) == 2) { n3 = TOKVAL(S, ti + 1); has3 = 1; ti = ti + 2; } }
+    STI(S, ti);
+    if (PEEKT(S) == 4) {
+        STI(S, ti + 1);
+        _cl_prescan_body(S, 4);
+    }
+    _cl_shadow_add(S, n1);
+    _cl_shadow_add(S, n2);
+    if (has3 == 1) { _cl_shadow_add(S, n3); }
+    return 0;
+}
+# Cursor at `var IDENT` (one name, `stack var` and a classic `for (` header's included): the tail —
+# an annotation, the `=` right-hand side — read first, then the name shadowed, as PARSE_VAR binds it.
+# Leaves the cursor at the `;`.
+fn _cl_prescan_var(S): i64 {
+    var noff = TOKVAL(S, GTI(S) + 1);
+    STI(S, GTI(S) + 2);
+    _cl_prescan_body(S, 4);
+    _cl_shadow_add(S, noff);
+    return 0;
+}
+# Cursor at a block's `{` — a nested closure's body or any other block (6.6.17: a block's `var`
+# shadows an enclosing name only inside it; it used to hide the name for the WHOLE closure
+# body, so a read after the block took a GLOBAL of that name, silently): walk it, leave the
+# cursor past its `}`, and drop the names it declared from the shadow set.
+fn _cl_prescan_nested(S): i64 {
+    var mk = _cl_nshadow;
+    STI(S, GTI(S) + 1);
+    _cl_prescan_body(S, 1);
+    _cl_nshadow = mk;
+    if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+# ⛔ 6.7.13 — A NESTED CLOSURE'S PARAMETERS ARE ITS OWN. The walk read the names between a nested
+# literal's bars, and every read of them in its body, as reads of the enclosing locals of those
+# names: `|n| { var g = |m| m + 1; .. }` beside an enclosing `m` captured it (refused without
+# lib/alloc.cyr, or a heap env holding a copy never read). At a literal's opening `|` the
+# parameters are shadowed for its body only, as `_cl_prescan_captures` seeds its own. A `|` opens a
+# literal only where an operand starts (`_cl_lit_pos`) and with the parser's parameter list after it
+# (`_cl_lit_end`): a bitwise or follows an operand, and reading one as a literal would DROP the
+# captures between its bars. A position missed falls back to the plain walk — an extra capture, never
+# a dropped one. `||` has no parameters: its body is walked as before. CHANGELOG [6.7.13]
+# `t0`: the walk's first token — a body, a header, a bound, a tail starts an operand there.
+fn _cl_at_lit(S, t0): i64 {
+    if (GTI(S) != t0) { if (_cl_lit_pos(S, GTI(S)) == 0) { return 0; } }
+    if (_cl_lit_end(S, GTI(S)) < 0) { return 0; }
+    return 1;
+}
+# 1 when the token before the `|` at `ti` cannot end an operand: `=` `(` `[` `,` `return` `:` `{` `;`
+# `||`, a binary or prefix operator. A generic's closing `>` / `>>` / `>>>` and a postfix `?` can. A
+# `|` before it is a literal's closing bar only at the walk's first token (`|x| |y| ..`, the case
+# `t0` covers): elsewhere it can be a missed `| |` literal's, and `| | q | r` would shadow `q`.
+fn _cl_lit_pos(S, ti): i64 {
+    if (ti < 1) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p == 4 || p == 10 || p == 28 || p == 31 || p == 33 || p == 49) { return 1; }
+    if (p == 13 || p == 5 || p == 54) { return 1; }
+    if (p >= 6 && p <= 9) { return 1; }                                      # + - * /
+    if (p == 17 || p == 18 || p == 19 || p == 21 || p == 22) { return 1; }   # == != < <= >=
+    if (p == 27 || p == 34 || p == 36 || p == 37 || p == 38) { return 1; }   # & % ^ ~ <<
+    if (p == 53 || p == 171) { return 1; }                                   # && !
+    if (p >= 113 && p <= 121) { return 1; }                                  # +% +| +? .. *?
+    return 0;
+}
+# The closing `|` of the parameter list the parser takes after the `|` at `ti` — `| |` or
+# `| IDENT (, IDENT)* |` (a closure's parameters are untyped) — or -1. 6.7.14: a refused `IDENT : T` is read
+# whole, as the parser steps over it (`_cl_typed_refuse`), so its name is still the literal's own.
+fn _cl_lit_end(S, ti): i64 {
+    var j = ti + 1;
+    if (TOKTYP(S, j) == 35) { return j; }
+    while (TOKTYP(S, j) == 2) {
+        j = j + 1;
+        if (TOKTYP(S, j) == 49) { j = _cl_ptail_end(S, j + 1, 1); }
+        if (TOKTYP(S, j) == 35) { return j; }
+        if (TOKTYP(S, j) != 31) { return 0 - 1; }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+# Cursor at a nested literal's opening `|` (`_cl_at_lit`): its parameters shadowed, its body walked
+# (a block through `_cl_prescan_nested`, an expression to the `;` / `,` / unmatched closer that ends
+# it), the parameters dropped. Leaves the cursor past a block body, at an expression body's end.
+fn _cl_prescan_lit(S): i64 {
+    var mk = _cl_nshadow;
+    var e = _cl_lit_end(S, GTI(S));
+    var j = GTI(S) + 1;
+    while (j < e) {
+        if (TOKTYP(S, j) == 2) { _cl_shadow_add(S, TOKVAL(S, j)); }
+        j = j + 1;
+        if (TOKTYP(S, j) == 49) { j = _cl_ptail_end(S, j + 1, 1); }   # 6.7.14: the names, never a type's
+        j = j + 1;
+    }
+    STI(S, e + 1);
+    if (PEEKT(S) == 13) { _cl_prescan_nested(S); }
+    else { _cl_prescan_body(S, 0); }
+    _cl_nshadow = mk;
+    return 0;
+}
+# ⛔ 6.7.7 — A NAMED ARGUMENT'S LABEL IS NOT A READ. In `|n| w3(1, c: n)` the capture pre-scan took
+# the label `c` for a read: of the enclosing fn's local `c` (a capture the body never uses, so the
+# closure was refused without lib/alloc.cyr), and at top level of whatever name the local table
+# still held from the last fn compiled (the callee's own parameter — a capture of a dead slot,
+# SIGSEGV). A label is `IDENT :` just after a `(` or `,` whose innermost unclosed bracket is a `(`.
+# CHANGELOG [6.7.7]
+fn _cl_is_arg_label(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    if (ti < 1) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p != 10 && p != 31) { return 0; }
+    var o = _cl_open_brk(S, ti - 1);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, o) == 10) { return 1; }
+    return 0;
+}
+# The innermost bracket `(` `[` `{` still open at token `q` (counting `q` itself), or -1.
+fn _cl_open_brk(S, q): i64 {
+    var d = 0;
+    while (q >= 0) {
+        var t = TOKTYP(S, q);
+        if (t == 11 || t == 29 || t == 14) { d = d + 1; }
+        elif (t == 10 || t == 28 || t == 13) {
+            if (d == 0) { return q; }
+            d = d - 1;
+        }
+        q = q - 1;
+    }
+    return 0 - 1;
+}
+# ⛔ 6.7.9 — A FIELD NAME IS NOT A READ EITHER. The pre-scan took `y` in `p.y` and in a struct
+# literal's `Pt { x: n, y: 2 }` for a read of the enclosing local `y`: a capture the body never
+# uses, so the closure was refused without lib/alloc.cyr, or built a heap env holding a copy of
+# `y` (6.6.0 - 6.7.8). A field name follows a `.` — but not a range's `..` (`for i in 0..y` reads
+# `y`; the lexer makes `..` two DOT tokens). A literal's label is `IDENT :` just after a `{` or
+# `,` whose innermost unclosed bracket is a `{` opened right after a struct name or a generic
+# struct's closing `>` (`Box<i64> { v: n }`). No other `IDENT :` stands there (`case y:` follows
+# `case`; there is no ternary), so a `case` value and a value after a label stay reads.
+# CHANGELOG [6.7.9]
+fn _cl_is_field_name(S, ti): i64 {
+    if (ti < 2) { return 0; }
+    if (TOKTYP(S, ti - 1) != 41) { return 0; }
+    if (TOKTYP(S, ti - 2) == 41) { return 0; }   # `0..y`: a range's bound
+    return 1;
+}
+fn _cl_is_lit_label(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 49) { return 0; }
+    if (ti < 2) { return 0; }
+    var p = TOKTYP(S, ti - 1);
+    if (p != 13 && p != 31) { return 0; }
+    var o = _cl_open_brk(S, ti - 1);
+    if (o < 1) { return 0; }
+    if (TOKTYP(S, o) != 13) { return 0; }
+    var h = TOKTYP(S, o - 1);
+    if (h == 20 || h == 39 || h == 152) { return 1; }   # `>` `>>` `>>>`: a generic literal's head
+    if (h != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, o - 1)) > 0) { return 1; }
+    return 0;
+}
+# One identifier read in a closure body: capture it when it is a free variable.
+fn _cl_prescan_ident(S, noff): i64 {
+    if (TOKTYP(S, GTI(S) + 1) == 10) { return 0; }   # a call name
+    if (_TOK_IS_LOOP_AT(S, GTI(S)) == 1) { return 0; }  # 6.7.5: the `loop {` statement, not a read
+    if (_cl_is_arg_label(S, GTI(S)) == 1) { return 0; }   # 6.7.7: `w3(1, c: n)`'s `c`, not a read
+    if (_cl_is_field_name(S, GTI(S)) == 1) { return 0; }   # 6.7.9: `p.y`'s `y`
+    if (_cl_is_lit_label(S, GTI(S)) == 1) { return 0; }   # 6.7.9: `Pt { y: 2 }`'s `y`
+    if (FINDLOCAL(S, noff) >= 0) { return 0; }
+    if (_cl_shadow_find(S, noff) >= 0) { return 0; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl >= 0) { _cl_cap_add(S, esl); }
+    return 0;
+}
+
+# ⛔ 6.6.17 — A CLOSURE NESTED IN A CAPTURING CLOSURE CAPTURES THROUGH IT. The capture tables
+# (`_cl_ncap`, `_cl_cap_slots`, `_cl_cap_w`) were one global set that a nested closure literal
+# overwrote, and its snapshot held only the enclosing closure's own LOCALS. So the inner closure
+# could not see a variable the outer one had captured (`fn mk(b) { |x| { |y| y + b } }` was
+# refused `undefined variable 'b'`; the guide wrote it down as "captured closures are flat"),
+# and the outer closure, once a nested one had been parsed, lost its own captures: it was
+# refused the same way, and its env was sized from the INNER closure's list.
+# Now each closure literal saves the enclosing CAPTURE CONTEXT as one block and puts it back
+# after its own env is built, and its snapshot gets one extra entry per enclosing capture
+# (`_cl_snap_nl` marks where they start). Capturing such an entry copies the word(s) out of the
+# enclosing closure's env (`_cl_emit_cap_word`) — by value, at construction, like any capture.
+# Block layout: [0] _cl_capturing, [8] _cl_env_lidx, [16] _cl_snap, [24] _cl_snap_n,
+# [32] _cl_snap_nl, [40] _cl_ncap, then _cl_ncap slots, then _cl_ncap widths, then (6.7.16) _cl_host_fn and
+# _cl_ctx_up (`_cl_ctx_tail`). CHANGELOG [6.6.17]
+# ⛔ 6.7.16 — `_cl_host_fn`: the fn whose locals are the closure being parsed's snapshot entries [0, _cl_snap_nl)
+# (the `_cur_fn_ix` its `_fnst_save` saved; -1 outside a fn); `_cl_ctx_up`: the context `_cl_ctx_enter` saved, which
+# holds the enclosing closure's capture list (0 below a fn's own level). With them a capture resolves to the variable
+# it reads in the fn that declared it, through any nesting (`_cl_cap_origin`). CHANGELOG [6.7.16]
+var _cl_host_fn = 0 - 1;
+var _cl_ctx_up = 0;
+fn _cl_ctx_tail(b): i64 { return b + 48 + load64(b + 40) * 16; }
+fn _cl_ctx_save(): i64 {
+    var b = alloc(64 + _cl_ncap * 16);
+    store64(b, _cl_capturing);
+    store64(b + 8, _cl_env_lidx);
+    store64(b + 16, _cl_snap);
+    store64(b + 24, _cl_snap_n);
+    store64(b + 32, _cl_snap_nl);
+    store64(b + 40, _cl_ncap);
+    var i = 0;
+    while (i < _cl_ncap) {
+        store64(b + 48 + i * 8, L64(&_cl_cap_slots + i * 8));
+        store64(b + 48 + _cl_ncap * 8 + i * 8, L64(&_cl_cap_w + i * 8));
+        i = i + 1;
+    }
+    store64(_cl_ctx_tail(b), _cl_host_fn);
+    store64(_cl_ctx_tail(b) + 8, _cl_ctx_up);
+    return b;
+}
+fn _cl_ctx_restore(b): i64 {
+    _cl_capturing = load64(b);
+    _cl_env_lidx = load64(b + 8);
+    _cl_snap = load64(b + 16);
+    _cl_snap_n = load64(b + 24);
+    _cl_snap_nl = load64(b + 32);
+    _cl_ncap = load64(b + 40);
+    var i = 0;
+    while (i < _cl_ncap) {
+        S64(&_cl_cap_slots + i * 8, load64(b + 48 + i * 8));
+        S64(&_cl_cap_w + i * 8, load64(b + 48 + _cl_ncap * 8 + i * 8));
+        i = i + 1;
+    }
+    _cl_host_fn = load64(_cl_ctx_tail(b));
+    _cl_ctx_up = load64(_cl_ctx_tail(b) + 8);
+    return 0;
+}
+# The variable capture `capi` of the closure being parsed reads, as `0 - 2 - li` (local slot li of the fn
+# `_cl_org_sc` names — the scope `_ann_refd_mark` recorded); -1 when there is none. A capture of an enclosing
+# closure's capture (an entry past `_cl_snap_nl`) is followed out through `_cl_ctx_up`. CHANGELOG [6.7.16]
+var _cl_org_sc = 0 - 1;
+fn _cl_cap_origin(capi): i64 {
+    if (capi < 0) { return 0 - 1; }
+    var e = L64(&_cl_cap_slots + capi * 8);
+    var nl = _cl_snap_nl;
+    var host = _cl_host_fn;
+    var up = _cl_ctx_up;
+    while (e >= nl) {
+        if (up == 0) { return 0 - 1; }
+        if (e - nl >= load64(up + 40)) { return 0 - 1; }
+        e = load64(up + 48 + (e - nl) * 8);
+        nl = load64(up + 32);
+        host = load64(_cl_ctx_tail(up));
+        up = load64(_cl_ctx_tail(up) + 8);
+    }
+    if (host < 0) { return 0 - 1; }
+    _cl_org_sc = host;
+    return 0 - 2 - e;
+}
+fn _cl_ctx_slot(b, i): i64 { return load64(b + 48 + i * 8); }
+fn _cl_ctx_w(b, i): i64 { return load64(b + 48 + load64(b + 40) * 8 + i * 8); }
+# Word offset of capture `capi` in the env a saved context describes (`_cl_cap_woff`'s twin).
+fn _cl_ctx_woff(b, capi): i64 {
+    var off = 1;
+    var i = 0;
+    while (i < capi) {
+        off = off + _cl_ctx_w(b, i);
+        i = i + 1;
+    }
+    return off;
+}
+# Enter a closure literal: save the enclosing capture context (returned, for `_cl_ctx_restore`)
+# and install the closure's snapshot — the enclosing locals `locsnap` (n entries), extended by
+# the enclosing closure's captures when it has any. `st` is the closure's `_fnst_save` block.
+# ⛔ 6.7.9 — A CLOSURE AT TOP LEVEL HAS NO ENCLOSING FRAME, so none of its names is a capture.
+# A fn's end does not clear the local tables: at top level GFLC and the slot names still hold
+# the LAST fn compiled, and a global the closure read under the name of one of that fn's locals
+# or parameters was captured from a slot of a frame that does not exist (SIGSEGV, or a dead
+# slot's value). The table is still saved and put back around the closure as before; only the
+# capture lookup is empty outside a fn. CHANGELOG [6.7.9]
+fn _cl_ctx_enter(S, locsnap, n, st): i64 {
+    var b = _cl_ctx_save();
+    var ls = 0;
+    var ln = 0;
+    _cl_host_fn = 0 - 1;   # 6.7.16: see `_cl_host_fn`
+    _cl_ctx_up = b;
+    if (_fnst_was_infn(st) == 1) { ls = locsnap; ln = n; _cl_host_fn = _fnst_fn_ix(st); }
+    var m = 0;
+    if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) { m = _cl_ncap; } }
+    var x = ls;
+    if (m > 0) { x = _cl_snap_extend(S, ls, ln, m); }
+    _cl_snap = x;
+    _cl_snap_n = ln + m;
+    _cl_snap_nl = ln;
+    return b;
+}
+# A copy of snapshot `ls` (n entries, `_cl_save_locals`' layout) with one entry appended per
+# capture of the enclosing closure (m of them), each carrying the name and metadata of the slot
+# it captured — read from the ENCLOSING snapshot, which is still installed. Depth 0; bit 57 of
+# the word records `_cl_snap_is_sptr` (the parameter span it is judged by is not this one's).
+fn _cl_snap_extend(S, ls, n, m): i64 {
+    var t = n + m;
+    var x = alloc(_cl_snap_ps_off(t) + 8);
+    var i = 0;
+    while (i < n) {
+        _cl_snap_cp(x, t, i, ls, n, i);
+        i = i + 1;
+    }
+    var j = 0;
+    while (j < m) {
+        var e = L64(&_cl_cap_slots + j * 8);
+        _cl_snap_cp(x, t, n + j, _cl_snap, _cl_snap_n, e);
+        var dw = L64(_cl_snap + _cl_snap_n * 8 + e * 8) & (0 - 4294967296);
+        if (_cl_snap_is_sptr(S, e) == 1) { dw = dw | (1 << 57); }
+        S64(x + t * 8 + (n + j) * 8, dw);
+        j = j + 1;
+    }
+    if (n > 0) { S64(x + _cl_snap_ps_off(t), L64(ls + _cl_snap_ps_off(n))); }
+    return x;
+}
+# Entry `si` of snapshot `src` (`sn` entries) into entry `i` of snapshot `x` (`t` entries).
+fn _cl_snap_cp(x, t, i, src, sn, si): i64 {
+    S64(x + i * 8, L64(src + si * 8));
+    S64(x + t * 8 + i * 8, L64(src + sn * 8 + si * 8));
+    S64(x + t * 16 + i * 8, L64(src + sn * 16 + si * 8));
+    S64(x + t * 24 + i * 8, L64(src + sn * 24 + si * 8));
+    store8(x + t * 32 + i, load8(src + sn * 32 + si));
+    return 0;
+}
+# The env object of the closure just parsed: its size in bytes, and the copy of each capture's
+# words into it (`ib` = that closure's saved context; the ENCLOSING context is live again).
+fn _cl_env_bytes(ib): i64 { return _cl_ctx_woff(ib, load64(ib + 40)) * 8; }
+fn _cl_emit_env_caps(S, obj_slot, ib): i64 {
+    var nl = load64(ib + 32);
+    var ci = 0;
+    while (ci < load64(ib + 40)) {
+        var w = _cl_ctx_w(ib, ci);
+        var wo = _cl_ctx_woff(ib, ci);
+        var base = _cl_ctx_slot(ib, ci);
+        var k = 0;
+        while (k < w) {
+            EFLLOAD(S, obj_slot);
+            EADDRA_IMM(S, (wo + k) * 8);   # rax = &env[woff+k] (dest)
+            EPUSHR(S);
+            _cl_emit_cap_word(S, base, nl, k, w);
+            EPOPC(S);                      # rcx = dest
+            ESTORE64(S);
+            k = k + 1;
+        }
+        ci = ci + 1;
+    }
+    return 0;
+}
+# rax = word k of the captured slot `base` (`w` words wide): an enclosing local's, or — for an
+# entry past `nl` — the enclosing closure's own capture `base - nl`, read from that closure's env.
+# Env word k must be the word at `&base + k*8`: the closure body reads field k there. On the stack
+# that is slot base - k (6.6.5). ⛔ In a suspending `async fn` it is not: the coroutine frame
+# ascends with the slot index and `_ECORO_AGG_OFF` bases an aggregate at its LOW slot, so slot
+# base - k holds word w-1-k, and the slot walk copied every captured struct, tuple and u128 in
+# reverse (`P2 { 1, 2 }` read as `{ 2, 1 }`, silently). There the words are read through the
+# aggregate's address, as every other coroutine consumer reads them; the stack form is unchanged,
+# byte for byte. CHANGELOG [6.7.9]
+fn _cl_emit_cap_word(S, base, nl, k, w): i64 {
+    if (base < nl) {
+        if (w > 1 && _cur_fn_coro == 1) {
+            EFLADDR(S, base);
+            if (k > 0) { EADDRA_IMM(S, k * 8); }
+            ELOAD64(S);
+            return 0;
+        }
+        if (w == 1) { if (_cl_cap_narrow(S, base) == 1) { return 0; } }   # 6.7.13: an i8 .. u32 local
+        EFLLOAD(S, base - k);
+        return 0;
+    }
+    _CL_CAP_WORDS_RA(S, base - nl);
+    if (k > 0) { EADDRA_IMM(S, k * 8); }
+    ELOAD64(S);
+    return 0;
+}
+
+# ⛔ 6.7.13 — A NARROW SCALAR LOCAL (i8 .. i32, u8 .. u32) holds its value in its slot's low 1 / 2 / 4 bytes, and the
+# env copy took the slot's whole raw word: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 / 32 bits) on
+# every target, and stale upper bytes came along (a positive one read -249 on aarch64 / cx). Rax = local `base`'s value
+# at its width, sign-extended for a signed one, as the local-read arm loads it (`EFLLOAD_W`): the env word holds the
+# value, so `_cl_cap_load`'s ELOAD64 and a nested closure's re-copy read it right
+# (issues/archived/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). 1 = loaded. CHANGELOG [6.7.13]
+fn _cl_cap_narrow(S, base): i64 {
+    var lt = _load_lt(S, base);
+    if (lt <= 0) { return 0; }
+    if (lt >= 8) { return 0; }
+    var lw = lt;
+    if (GSLICE_W(S, base) < 0) { lw = 0 - lt; }
+    EFLLOAD_W(S, base, lw);
+    return 1;
+}

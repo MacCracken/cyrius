@@ -413,7 +413,7 @@ fn _gai_decl(S, ann_ti, n, sz): i64 {
 # `switch` arms, `match`, `@unsafe`, a bare `{ }`) it is REFUSED: a baked list would hold its
 # values once, where a scalar's initializer runs each time the block does (that shape never
 # compiled — `expected ';'`).
-# PARSE_PROG counts its nesting in `_pp_depth`, and _PARSE_STMT_NESTED (parse.cyr) the statements
+# PARSE_PROG counts its nesting in `_pp_depth`, and _PARSE_STMT_NESTED (parse/stmt.cyr) the statements
 # parsed with no PARSE_PROG body — a `switch` case / default arm, `@unsafe { }`, a `for`'s init;
 # scope depth cannot tell, an `elif` body opens no scope. Returns the `{` token, or 0.
 fn _gai_stmt(S, ann_ti, n): i64 {

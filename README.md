@@ -267,8 +267,8 @@ src/
   version_str.cyr       Auto-generated version string
 
   frontend/
-    lex/                lex.cyr (the lexer) + pp.cyr (the preprocessor: include-once, #derive, #@incdir, #bounds, #ifdef/#elif/#else/#ifndef/#ifplat) + attr.cyr (the `#` attribute words)
-    parse/              parse.cyr (parser + codegen dispatch) + its split: decl/ (by seam: arrays, fields, struct and tuple literals, globals, copies, vectors, receives, PARSE_VAR, handles), expr, fn/ (by seam: the definition and the top-level scans, the call path, the return / tail path, traits, generics, the const-fn evaluator, ...), ctrl, cov, types
+    lex/                lex.cyr (the lexer) + pp/ (the preprocessor, by seam: directive predicates, include, #derive / Serialize / accessors, #define and macros, the passes, PREPROCESS with #@incdir and #bounds) + attr.cyr (the `#` attribute words)
+    parse/              parse.cyr (the entry: the pending attribute flags, then every piece in order) + its own body by seam (pair_scan / pair_check — pair-returning calls, state, vis, switch, builtin, assign / deref_store / assign_copy, stmt — the statement dispatch, prog — the program walk) + its split: decl/ (by seam: arrays, fields, struct and tuple literals, globals, copies, vectors, receives, PARSE_VAR, handles), expr/ (by seam: closures, callees and syscall routes, value stamps, u128 and tuples, postfix fields, subscripts, derefs, the factor, intrinsics, the term and operators, PEXPR and compares), fn/ (by seam: the definition and the top-level scans, the call path, the return / tail path, traits, generics, the const-fn evaluator, ...), types/ (by seam: type names, tuples, dyn and its calls, pointers and their annotations, slices and sizeof, the struct table, enums, struct definitions, name lookup), ctrl, cov
     ts/                 TypeScript frontend (lex + parse + JS emit; .ts/.tsx → JS via `cycc --emit-js`)
 
   backend/x86/          x86_64 emission (emit/jump/fixup/decode) + float.cyr = SSE/AVX scalar-f64 + ALL SIMD emitters

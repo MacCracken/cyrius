@@ -1,0 +1,1268 @@
+# PARSER — types: pointer annotations and their checks — a pointer argument into a `*S` / `**S` parameter (`_pa_*`,
+# `_pps_*`), `**T` inference (`_ic_pp_*`), the `*T` annotation (`_tn_ptr*`, `_ptr_annot`), on fields (`_fld_ptr*`) and
+# returns (`_ret_ptr*`).
+# ================================================================
+# Split from parse/types.cyr at 6.7.18, unchanged; parse.cyr includes parse/types/ in source order. CHANGELOG [6.7.18]
+
+# ⛔ 6.7.16 (D97, the user's decision, 2026-10-20) — A POINTER TO ANOTHER STRUCT INTO A `*S` / `**S` PARAMETER IS
+# REFUSED BY NAME, as a struct value of another type is (6.7.3). `nc1(&y)` with `y: Box<Pt>` and `p: *Box<i64>` read
+# Pt's `y` as Box<i64>'s `n` (2 where 9 is right), and `nc2(&q)` (`q: *Box<Pt>`, `pp: **Box<i64>`), `nc4(&q)` (`q: Qd`,
+# `p: *Pt`) and `nc4(pq)` (`pq: *Qd`) the same, silently on every target: behind a pointer nothing compared the pointee
+# (6.7.3 let a typed pointer convert freely). The whole argument [a, e), just pushed, to parameter `k` of `fi`: when the
+# parameter points through its stars to struct S (`_pps_param`) and the argument — by the compiler's own typing
+# (`_pa_sid`) — through as many to another struct, it is refused at the argument, `&y` named `y`, once, in 6.7.3's
+# words. An untyped pointer, `0` and a pointer to the declared struct pass (a pointer of another depth passed too
+# through 6.7.16 — refused since, below). Every call's
+# argument loop (`_arg_push_snap`: a call, a method's arguments, a named one, a tail call — a generic instance's
+# parameters are its own) and an operator's right operand (`_op_arg_check`). 1 = refused. CHANGELOG [6.7.16]
+# ⛔ 6.7.17 (D10 / D11, the user's decisions, 2026-10-22) — AND INTO A BY-VALUE STRUCT PARAMETER, AND AT ANOTHER DEPTH.
+# `bq(u)` / `bq(&p)` (`u: *Pt`) into `b: Q` copied Pt's bytes as a Q (68), `nc4(&pq)` (a `**Pt`) into `p: *Pt` read
+# pq's slot as the Pt and `nc2(pz)` (a `*Box<i64>`) into `pp: **Box<i64>` read the Box as a pointer (139): a by-value
+# struct takes a pointer of ONE star to its own struct (copied through, 6.7.10's B7-1b), so another struct there is
+# D97's refusal; a pointer whose stars differ from the parameter's (`_pa_derr`, both types named) is refused at every
+# struct parameter. `**pps` (it passes `*pps`), an untyped pointer and `0` are typed no struct pointer: they pass.
+# CHANGELOG [6.7.17]
+fn _pa_chk(S, fi, k, a, e): i64 {
+    var sp = _pps_param(S, fi, k);
+    var dp = _pps_d;
+    if (sp <= 0) { sp = _pa_bv(S, fi, k); dp = 0; }
+    if (sp <= 0) { return 0; }
+    var sa = _pa_sid(S, a, e);
+    if (sa <= 0) { return 0; }
+    if (sa >= 2048) { return 0; }
+    var dw = dp;
+    if (dw == 0) { dw = 1; }   # a by-value struct takes a `*S` of its own struct
+    if (_pa_d != dw) { return _pa_derr(S, fi, sa, sp, dp); }
+    if (sa == sp) { return 0; }
+    var nm = 0;
+    if (_pa_nt >= 0) { nm = TOKVAL(S, _pa_nt); }
+    else { nm = _src_span_nm(S, _pa_b, _pa_e, _hl_lastnm(S, _pa_b, _pa_e, 0)); }
+    var sv = GTI(S);
+    STI(S, _pa_b);
+    _sarg_ident_err(S, "cannot pass ", nm, 0 - 1, " to a parameter of a different struct type in a call to ", fi);
+    STI(S, sv);
+    return 1;
+}
+# The struct a BY-VALUE struct parameter `k` of `fi` is declared (its recorded GFPSID: an address-passed struct or
+# tuple, one of 8 B or less, a `Str` handle — no `*`, no untyped `self`, no `dyn`: `&p` forms its object), else 0.
+# CHANGELOG [6.7.17]
+fn _pa_bv(S, fi, k): i64 {
+    if (fi < 0) { return 0; }
+    var ps = GFPSID(S, fi, k);
+    if (ps <= 0) { return 0; }
+    if (ps >= 2048) { return 0; }
+    if (_dyn_is(S, ps) == 1) { return 0; }
+    if (_pptr_param(S, fi, k) == 1) { return 0; }
+    if (_pps_uself(S, fi, k) == 1) { return 0; }
+    return ps;
+}
+# 6.7.17 (D11): the argument `_pa_sid` typed (struct `sa` behind `_pa_d` stars, the span [`_pa_b`, `_pa_e`)) meets the
+# struct parameter `sp` at `dp` stars (0: by value) at another depth — refused at the argument, once, naming it as
+# spelled and both types: "cannot pass '&pq', a '**Pt', to a '*Pt' parameter in a call to 'nc4' - a pointer of another
+# depth". 1.
+fn _pa_derr(S, fi, sa, sp, dp): i64 {
+    var sv = GTI(S);
+    STI(S, _pa_b);
+    if (_err_once(S, ((sa * 31 + sp) * 31 + dp) * 8 + 6) == 0) { STI(S, sv); return 1; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass '");
+    PRSTR(S + 0xEC00000 + _src_span_nm(S, _pa_b, _pa_e, TOKVAL(S, _pa_e - 1)));
+    PRSTR("', a '");
+    _pa_tyname(S, sa, _pa_d);
+    PRSTR("', to a '");
+    _pa_tyname(S, sp, dp);
+    PRSTR("' parameter in a call to '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("' - a pointer of another depth\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _panic = 1;
+    return 1;
+}
+# ⛔ 6.7.17 (D107, the user's decision, 2026-10-22: "refuse it, naming both pointer types, as an argument of another
+# depth is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION. `var u: *Pt = &h;` (h a handle: its `&` is
+# the slot holding the address, a `**Pt`) held the slot, so `u.x` read the handle's word as the Pt; `var u: *Pt = pp;`
+# (a `**Pt`) and `var pp: **Pt = pq;` (a `*Pt`) the same, silently. The annotation at `ann` (one or more `*`, then a
+# struct: `_ppd_ann`), the initialiser [ti, e) typed as an argument is (`_pa_sid`: a name, `&x`, a field, a call,
+# `*ppp`, an if-expression) at another number of stars: "cannot initialise 'u: *Pt' from '&h', a '**Pt' - a pointer of
+# another depth", at the initialiser. A pointer of the annotation's depth (to any struct, as 6.7.3 left declarations),
+# an untyped pointer, `0` and an inline struct (D17's address) are unchanged. PARSE_VAR in a fn and at top level
+# after the first statement (cursor on the `=`), the zone replay (`_vin_zone`). 1 = refused. CHANGELOG [6.7.17]
+var _ppd_d = 0;
+var _ppd_asgm = 0;   # 1: an assignment's words, "cannot assign" (`_ppd_asg`)
+fn _ppd_val(S, ti, e, ann, noff): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (e <= ti) { return 0; }
+    var ds = _ppd_ann(S, ann);
+    if (ds <= 0) { return 0; }
+    var dd = _ppd_d;
+    var sa = _pa_sid(S, ti, e);
+    if (sa <= 0) { return 0; }
+    if (sa >= 2048) { return 0; }
+    if (_pa_d == dd) { return 0; }
+    if (_tn_once(S, _pa_b) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, _pa_b);
+    _ew("error:", 6);
+    _err_head(S);
+    if (_ppd_asgm == 1) { PRSTR(": cannot assign '"); } else { PRSTR(": cannot initialise '"); }
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(": ");
+    _pa_tyname(S, ds, dd);
+    PRSTR("' from '");
+    PRSTR(S + 0xEC00000 + _src_span_nm(S, _pa_b, _pa_e, TOKVAL(S, _pa_e - 1)));
+    PRSTR("', a '");
+    _pa_tyname(S, sa, _pa_d);
+    PRSTR("' - a pointer of another depth\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _ptr_refd_ti = ann;
+    return 1;
+}
+# 6.7.17 (D107, its assignment twin: the same decision) — `u = &h;`, `v = pp;`, `pp = u;` into a name declared a
+# pointer to a struct (a local, a parameter, a global, a capture: `_asa_ann` finds its annotation) at another depth
+# held the wrong pointer silently (`u.x + v.x` read 88 where 6 is right): "cannot assign 'u: *Pt' from '&h', a '**Pt' -
+# a pointer of another depth". `_try_aggregate_copy_assign`, the cursor on the value ending at `term`, the statement's
+# own `NAME =` (a dereference or field store reaches it with its operand's name: not judged); reports only, the
+# statement parses on. 0. CHANGELOG [6.7.17]
+fn _ppd_asg(S, noff, term): i64 {
+    if (_syntax_only == 1) { return 0; }
+    var ti = GTI(S);
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    if (TOKTYP(S, ti - 2) != 2) { return 0; }
+    if (STREQ(S, TOKVAL(S, ti - 2), noff) == 0) { return 0; }
+    var pt = TOKTYP(S, ti - 3);
+    if (pt == 8 || pt == 41) { return 0; }   # `**qq = ..`, `w.pq = ..`: a store through the name, not into it
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    # 6.7.17: the value's struct pointer (`_pa_sid`, its own tokens) before the destination's annotation (`_asa_ann`, a
+    # walk back over every earlier statement) — the walk on every `NAME = ..` made a fn of N assignments quadratic
+    # (`s = s + gN` x 10,000: 147 ms through 6.7.16, 6 s; globals_scale_linear.sh [ref]). `_ppd_val` refuses only
+    # such a value, so the answer is the same.
+    var sa = _pa_sid(S, ti, e);
+    if (sa <= 0) { return 0; }
+    if (sa >= 2048) { return 0; }
+    var a = _asa_ann(S, noff, ti - 1);
+    if (a <= 0) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    _ppd_asgm = 1;
+    _ppd_val(S, ti, e, a, noff);
+    _ppd_asgm = 0;
+    return 0;
+}
+# The struct the pointer annotation at `ann` points through to — `*S`, `**S`, `***S` (S a plain struct or an instance;
+# a bound T's at one star) — `_ppd_d` its stars; else 0.
+fn _ppd_ann(S, ann): i64 {
+    if (ann <= 0) { return 0; }
+    var d = 0;
+    while (TOKTYP(S, ann + d) == 8) { d = d + 1; }
+    if (d == 0) { return 0; }
+    _ppd_d = d;
+    var t = 0;
+    if (d == 1) { t = _ptr_ann_sid_tp(S, ann); }
+    else { t = _ptr_tok_sid(S, ann + d); }
+    if (t <= 0) { return 0; }
+    if (t >= 2048) { return 0; }
+    if (_dx_plain(S, t) == 0) { if (t != _STR_SID(S)) { return 0; } }
+    return t;
+}
+# `d` stars, then struct `sid` as the source spells it (`Box<Pt>`; a generic's base is its i64 binding, `Box<i64>`), on
+# stderr.
+fn _pa_tyname(S, sid, d): i64 {
+    while (d > 0) {
+        PRSTR("*");
+        d = d - 1;
+    }
+    PRSTR(S + 0xEC00000 + _fsn_one(S, sid));
+    if (_sinst_base(sid) > 0) { return 0; }
+    var tp = GSTP(S, sid - 1);
+    if (tp == 0) { return 0; }
+    PRSTR("<i64");
+    if ((tp >> 32) != 0) { PRSTR(", i64"); }
+    PRSTR(">");
+    return 0;
+}
+# The struct parameter `k` of `fi` points through to — a `*S` (GFPSID behind one `*`, `_pptr_param`; an untyped impl
+# `self`, `_pps_uself`), a `**S` / `***S` (GFPPS) — `_pps_d` its stars; else 0 (a by-value struct, a scalar pointer).
+var _pps_d = 0;
+fn _pps_param(S, fi, k): i64 {
+    _pps_d = 0;
+    if (fi < 0) { return 0; }
+    var ps = GFPSID(S, fi, k);
+    if (ps > 0) {
+        if (ps >= 2048) { return 0; }
+        if (_pptr_param(S, fi, k) == 0) { if (_pps_uself(S, fi, k) == 0) { return 0; } }
+        _pps_d = 1;
+        return ps;
+    }
+    var w = GFPPS(S, fi, k);
+    if (w <= 0) { return 0; }
+    _pps_d = w >> 32;
+    return w & 0xFFFFFFFF;
+}
+# 1 = parameter `k` of `fi` is an impl method's untyped `self` — a `*T` (6.7.0, A4): `Pt_m(&q)` calls it by name.
+fn _pps_uself(S, fi, k): i64 {
+    if (k != 0) { return 0; }
+    if (GFISELF(S, fi) == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, 0) == 0) { return 0; }
+    if (TOKTYP(S, _dps_nm + 1) == 49) { return 0; }
+    return 1;
+}
+# The struct the whole argument [a, e) points through to, by the compiler's own typing: `&x` of an inline struct
+# (`_hl_amp_sid`) or of a typed pointer, one star deeper (`_pa_amp`); a `**T` / `***T` name, call, method, field or
+# `*ppp` by its pinned step word (`_hl_pw`); a `*T` name, call, method, field, pointer arithmetic or `*pp` of a `**T`
+# (`_hl_psid`) — inside any parentheses. `_pa_d` its stars; `_pa_b` / `_pa_e` the unwrapped span, `_pa_nt` the name of
+# an `&x` (else -1). 0 = untyped, a scalar pointer, or a shape the reader does not type.
+var _pa_d = 0;
+var _pa_b = 0;
+var _pa_e = 0;
+var _pa_nt = 0;
+fn _pa_sid(S, a, e): i64 {
+    _pa_d = 0;
+    _pa_nt = 0 - 1;
+    var b = _ie_unparen(S, a, e);
+    var be = _ie_pe;
+    _pa_b = b;
+    _pa_e = be;
+    if (b >= be) { return 0; }
+    if (TOKTYP(S, b) == 27) { return _pa_amp(S, b + 1, be); }
+    if (TOKTYP(S, b) == 15) { return _pa_ie(S, b, be); }
+    var w = _hl_pw(S, b, be);
+    if (_ps_pinned(w) == 1) { return _pa_wsid(S, w); }
+    var s = _hl_psid(S, b, be);
+    if (s <= 0) { return 0; }
+    _pa_d = 1;
+    return s;
+}
+# ... `&` of exactly one name [a, e), inside any parentheses: an inline struct (one star), or a typed pointer (its
+# own stars, plus one).
+fn _pa_amp(S, a, e): i64 {
+    var n = _ie_unparen(S, a, e);
+    if (_ie_pe != n + 1) { return 0; }
+    if (TOKTYP(S, n) != 2) { return 0; }
+    _pa_nt = n;
+    var noff = TOKVAL(S, n);
+    var t = _hl_amp_sid(S, noff);
+    if (t > 0) {
+        _pa_d = 1;
+        return t;
+    }
+    t = _pa_hamp(S, noff);   # 6.7.17 (D11): `&h` of a handle is a `**S`
+    if (t > 0) { return t; }
+    t = _pa_aamp(S, n);   # 6.7.17: `&pa` of an array of `*S` is a `**S`
+    if (t > 0) { return t; }
+    var w = _hl_name_pw(S, noff);
+    if (w <= 0) { return 0; }
+    if (_ps_pinned(w) == 1) {
+        t = _pa_wsid(S, w);
+        if (t > 0) { _pa_d = _pa_d + 1; }
+        return t;
+    }
+    t = _hl_psid(S, n, n + 1);
+    if (t <= 0) { return 0; }
+    _pa_d = 2;
+    return t;
+}
+# ⛔ 6.7.17 — `&pa` OF AN ARRAY OF STRUCT POINTERS IS A POINTER ONE STAR DEEPER THAN ITS ELEMENT (met with D109's
+# narrowing, the user, 2026-10-22: "fix the depth hole too"). D11 refused `ts(&hp)` (`hp: *Pt`, a `**Pt`) into
+# `p: *Pt`, but `var pa: *Pt[2]; ts(&pa)` passed the array's address as the Pt and read element 0's address as its
+# field (40 where 7 was stored): nothing typed `&` of an array of pointers. The array named at token n declared
+# `var NAME: *..S[N]` (`_arr_elem_toks`, k stars to one struct name) types `&NAME` as S behind k + 1 stars, judged by
+# D11's depth rule. An array of inline structs (`var sa: Pt[2]`: `&sa` is element 0's address) and an element that is
+# no plain struct name are not typed here — unchanged. CHANGELOG [6.7.17]
+fn _pa_aamp(S, n): i64 {
+    if (_arr_name_at(S, n, n + 1) < 0) { return 0; }
+    if (_arr_elem_toks(S, n) == 0) { return 0; }
+    var i = _aet_s;
+    var k = 0;
+    while (i < _aet_e) {
+        if (TOKTYP(S, i) != 8) { break; }
+        k = k + 1;
+        i = i + 1;
+    }
+    if (k == 0) { return 0; }
+    if (i + 1 != _aet_e) { return 0; }
+    if (TOKTYP(S, i) != 2) { return 0; }
+    var s = FINDSTRUCT(S, TOKVAL(S, i));
+    if (s <= 0) { return 0; }
+    _pa_d = k + 1;
+    return s;
+}
+# ... `&noff` of a struct name that is no `*T` and that `_hl_amp_sid` does not take: a handle (a pointer-mode local,
+# parameter, capture or global; a `Str` one) — its `&` is the slot holding the address, a `**S`, `_pa_d` 2 — or an
+# inline `Str` header (`_pa_d` 1). A tuple or a dyn: 0. CHANGELOG [6.7.17]
+fn _pa_hamp(S, noff): i64 {
+    var t = _hl_name_ty(S, noff);
+    if (t <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    if (_tup_is(S, t) == 1) { return 0; }
+    if (_dyn_is(S, t) == 1) { return 0; }
+    _pa_d = 2;
+    if (_hl_amp_in(S, noff, t) > 0) { _pa_d = 1; }
+    return t;
+}
+# ... an if-expression [b, be) (`if` at b, its last `}` ending the span) whose every branch points through as many
+# stars to one struct (`_pa_sid` on each branch's expression); else 0. The span `_pa_b` / `_pa_e` is the whole of it.
+fn _pa_ie(S, b, be): i64 {
+    var i = b;
+    var d = 0 - 1;
+    var s = 0;
+    var go = 1;
+    while (go == 1) {
+        var o = i + 1;   # `if` / `elif`: `( cond ) {`
+        if (TOKTYP(S, i) != 23) {
+            if (TOKTYP(S, o) != 10) { return 0; }
+            o = _call_close(S, o) + 1;
+        }
+        var e = _pa_brace(S, o);
+        if (e < 0) { return 0; }
+        var t = _pa_sid(S, o + 1, e);
+        if (t <= 0) { return 0; }
+        if (d >= 0) { if (_pa_d != d) { return 0; } if (t != s) { return 0; } }
+        d = _pa_d;
+        s = t;
+        if (TOKTYP(S, i) == 23) { go = 0; }
+        i = e + 1;
+        if (go == 1) { if (TOKTYP(S, i) != 50) { if (TOKTYP(S, i) != 23) { return 0; } } }
+    }
+    if (i != be) { return 0; }
+    _pa_d = d;
+    _pa_b = b;
+    _pa_e = be;
+    _pa_nt = 0 - 1;
+    return s;
+}
+# The `}` closing the `{` at token `o` (-1 when `o` is no `{`, or the stream ends first).
+fn _pa_brace(S, o): i64 {
+    if (TOKTYP(S, o) != 13) { return 0 - 1; }
+    var n = GTCNT(S);
+    var dd = 0;
+    var i = o;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { dd = dd + 1; }
+        if (t == 14) {
+            dd = dd - 1;
+            if (dd == 0) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# ... a pinned step word `w` (a `**T`, `***T`): the struct its pins name, `_pa_d` its stars; else 0.
+fn _pa_wsid(S, w): i64 {
+    var v = _pps_of_pin(S, _ps_pin(w));
+    if (v <= 0) { return 0; }
+    _pa_d = v >> 32;
+    return v & 0xFFFFFFFF;
+}
+# Pass 1 (`_prescan_params_scan`), parameter `pc` of `fi` whose type opens with two or more `*` at token `ann`: its
+# struct behind them (`_pps_of_pin` on the pin `_param_pin` reads under the base's binding), when the pointee's name
+# and `<..>` resolve here — a struct declared below is the definition's (`_pps_def_note`). CHANGELOG [6.7.16]
+fn _pps_scan(S, fi, pc, ann): i64 {
+    var k = ann;
+    while (TOKTYP(S, k) == 8) { k = k + 1; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    if (FINDSTRUCT(S, TOKVAL(S, k)) <= 0) { return 0; }
+    if (TOKTYP(S, k + 1) == 19) { if (_pps_targs_ok(S, fi, k + 2) == 0) { return 0; } }
+    var svpn = _panic;
+    var pn = _param_pin(S, ann);
+    if (svpn == 0) { _panic = 0; }
+    return SFPPS(S, fi, pc, _pps_of_pin(S, pn));
+}
+# ... 1 = the type-argument list from token `i` resolves here, a generic's own type parameters bound as its base binds
+# them (T -> i64, `_ret_ptr_base_bind`): `glater<i64>(&py)` above `fn glater<T>(pp: **Box<T>)` is the base's call.
+fn _pps_targs_ok(S, fi, i): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _ret_ptr_base_bind(S, fi);
+    var r = _targs_resolvable(S, i);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return r;
+}
+# Pass 2 (PARSE_FN_DEF), parameter `pc` of `fi` in slot `li`: the struct behind a `**S` / `***S` (its slot's pinned
+# word, `_mark_ptr_param`), else 0 — a redefinition keeps pass 1's, the last definition's (as `_psid_def_note`).
+fn _pps_def_note(S, fi, pc, li): i64 {
+    if ((GFLG(S, fi) & 2048) != 0) { return 0; }
+    var v = 0;
+    if (_cur_fn_ptrp == li + 1) {
+        var m = GSLICE_W(S, li);
+        if (m <= 0 - 0x7E01) { v = _pps_of_pin(S, _ps_pin(0 - m - 0x7E00)); }
+    }
+    return SFPPS(S, fi, pc, v);
+}
+# The step word of the pointer type whose first `*` is token `a`, the cursor unmoved: `*T`'s as `_ptr_annot`
+# reads it (quiet: the annotation itself reports an unknown T), a pointer's 8 and its own pin, 0 for a T it does
+# not read (a slice, a tuple: refused by the annotation).
+fn _pp_word_at(S, a, si, ent): i64 {
+    var t = TOKTYP(S, a + 1);
+    if (t == 8) { return _ps_pw(8, _pp_pin_at(S, a, si, ent)); }
+    if (t != 2) { if (t != 105) { return 0; } }
+    if (si >= 0) { if (t == 2) { if (FINDSTRUCT(S, TOKVAL(S, a + 1)) == si + 1) {
+                return 0 - (a + 2);   # late: its field records the binding (`_fld_pp_one`, every `**` field's)
+            } } }
+    if (si >= 0) { if (_pp_late_name(S, a + 1) == 1) { return 0 - (a + 2); } }   # 6.7.16 (D103): declared below
+    var sv = GTI(S);
+    STI(S, a + 1);
+    var ps = _ptr_step_peek(S, 0 - 1, 1);
+    STI(S, sv);
+    return _ps_vw(_ps_word(ps, _ek_of_ptr_ann(S, a)), _ek_vd(S, a));
+}
+# The pointee word a dereference of step word `w` reads: its pin's (a late `**S` sized now), else 0.
+fn _pp_inner(S, w): i64 {
+    var p = _ps_pin(w);
+    if (p == 0) { return 0; }
+    if (p > _pp_n) { return 0; }
+    var v = L64(_pp_tab + p * 16);
+    if (v >= 0) { return v; }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_bind(S, L64(_pp_tab + p * 16 + 8));
+    var sv = GTI(S);
+    STI(S, 0 - v - 1);
+    var ps = _ptr_step_peek(S, 0 - 1, 1);
+    STI(S, sv);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return ps;
+}
+# Two branches' words: the same word, else the shared step without a kind, else 0 (no step).
+fn _ps_merge(a, b): i64 {
+    if (a == b) { return a; }
+    if (_ps_step(a) != _ps_step(b)) { return 0; }
+    return _ps_step(a);
+}
+# The step word of a typed-pointer slot `li` (a local or a `p: *T` parameter), 0 when it is none.
+fn _slot_ptr_word(S, li): i64 {
+    if (GLPTRP(S, li) == 0) { return 0; }
+    var w = GSLICE_W(S, li);
+    if (w <= 0 - 0x7E01) { return 0 - w - 0x7E00; }
+    return 8;
+}
+fn _slot_ptr_step(S, li): i64 { return _ps_step(_slot_ptr_word(S, li)); }
+# ⛔ 6.7.14 — A `pp: **T` PARAMETER BINDS THE STRUCT ITS `**S` ARGUMENT POINTS THROUGH TO (the user's decision D40 A,
+# 2026-10-16). `**T` carried nothing (`_gs_param` reads one `*`), so `st(pps)` with `pps: **P3` ran the i64 base,
+# whose `*pp + 1` stepped 8 and whose `take(**pp)` into `*P3` passed the first field as the address (139) — where
+# `st<P3>(pps)` steps 24. A `T` that no `x: T` / `p: *T` parameter and no generic struct carries (`_gen_infer_sc`) is
+# carried by the first parameter declared exactly `**T`: the struct its whole argument's pin names (`_ic_pp_arg`).
+# `mth` 1: a method call, whose list starts at parameter 1 (as `_gen_infer_sc`). CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AT ANY DEPTH OF TWO OR MORE (the user's decision D24 A, 2026-10-18): `ppp: ***T` (and deeper) binds T
+# from a `***S` argument, one pointee down per extra star (`_ic_pp_deep`) — `s3(ppps)` ran the i64 base (`**ppp + 1`
+# stepped 8, `take(***ppp)` faulted) where `s3<P3>(ppps)` steps 24. CHANGELOG [6.7.15]
+fn _gen_infer_ind(S, fi, open, which, mth): i64 {
+    var f = (GFGM(S, fi) >> (24 + which * 20)) & 0xFFFFF;
+    if (f != 0) { return _gen_infer_sc(S, fi, open, f, mth); }
+    var k = _pp_tparam(S, fi, which);
+    if (k <= mth) { return 0 - 8; }
+    var d = _ppt_d;   # read before the argument's own inference can ask again
+    var a = _call_arg_pk(S, fi, open, k - 1, k - 1 - mth);
+    if (a < 0) { return 0 - 8; }
+    return _ic_pp_arg(S, a, d);
+}
+# The 1-based index of fi's first parameter declared `*..*T` (two stars or more, `_pp_is_tp`), T its type parameter
+# `which`, read from the definition's tokens with `_dps_param`'s cursor put back (as `_ic_ptr_param`); 0 = none.
+fn _pp_tparam(S, fi, which): i64 {
+    var tn = (GFTP(S, fi) >> (which * 32)) & 0xFFFFFFFF;
+    if (tn == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    var s0 = _dps_ts; var s1 = _dps_te; var s2 = _dps_va; var s3 = _dps_nm;
+    var r = 0;
+    var k = 0;
+    while (r == 0) {
+        if (_dps_param(S, o, k) == 0) { r = 0 - 1; }
+        elif (_pp_is_tp(S, tn - 1) == 1) { r = k + 1; }
+        k = k + 1;
+    }
+    _dps_ts = s0; _dps_te = s1; _dps_va = s2; _dps_nm = s3;
+    if (r < 0) { return 0; }
+    return r;
+}
+# 1 = the parameter `_dps_param` just read is typed `*` d times then T (d >= 2: `**T`, 6.7.15's D24 A `***T` and
+# deeper), T the name at `tn`; `_ppt_d` = d.
+var _ppt_d = 0;
+fn _pp_is_tp(S, tn): i64 {
+    var i = _dps_ts;
+    var d = 0;
+    while (TOKTYP(S, i + d) == 8) { d = d + 1; }
+    if (d < 2) { return 0; }
+    if (_dps_te != i + d + 1) { return 0; }
+    if (TOKTYP(S, i + d) != 2) { return 0; }
+    if (TOKVAL(S, i + d) != tn) { return 0; }
+    _ppt_d = d;
+    return 1;
+}
+# The struct a WHOLE argument at token a reaches through two pointers, as `T` of a `pp: **T` it is passed to: the pin of
+# its step word (`_pp_sid`) — a `**S` local, parameter, capture or global, a field declared `**S` reached through a
+# chain, a call returning `**S` (a generic one at the instance it reaches) — or `&p` of a `*S` local, parameter or
+# global (`_ic_pp_addr`). 6.7.15 (D11 (a)): the same sources of a `**i32` / `**f64` bind that scalar
+# (`_ic_pscalar`). Anything else (a `***S` into `**T`, a `**u8`, any other expression) infers i64.
+# ⛔ 6.7.15 — PARENTHESES AROUND THE WHOLE ARGUMENT ARE TRANSPARENT (the user's decision D22 A, 2026-10-18) and A
+# TYPED POINTER PLUS OR MINUS n IS STILL THAT POINTER (D23 A): `tg((pps))`, `tg((&ps))` and `tg(pps + 0)` bind T as
+# `tg(pps)` does — they ran the i64 base (`take(**pp)` faulted: 139, cx 254, PE 5). The arithmetic is read by its
+# typed-pointer operand's step word (`_hl_pw`: `pps + n`, `n + pps`, `(pps) - n`); `&ps + n` is a byte pointer
+# (6.7.11's D15) and binds nothing. `d` the parameter's stars (D24): `_ic_pp_deep`. CHANGELOG [6.7.15]
+# ⛔ 6.7.17 — A METHOD RESULT BINDS AS A FREE CALL DOES (beside the user's D2, 2026-10-22): `gd2(b.mpp())` with `: **P`,
+# `gd2(b.mw().pp)` (a `**P` field after a method) and a `**Box<P>` one into a `pp: **Box<T>` carrier ran the i64 base
+# (`sizeof(T)` 8) or were refused "a different struct type" — the chain arm walked fields only. `_acv_bind` (mode 2 + d)
+# reads any receiver head and step first. CHANGELOG [6.7.17]
+fn _ic_pp_arg(S, a, d): i64 {
+    var e = _ic_arith_end(S, a);
+    if (e > 0) { return _ic_pp_deep(S, _hl_pw(S, a, e), d); }
+    var cv = _acv_bind(S, a, 0 - 1, 2 + d);   # 6.7.17 (D2): a field / method chain on any receiver head
+    if (_acv_is == 1) { return cv; }
+    a = _pwrap_in(S, a);
+    if (a < 0) { return 0 - 8; }
+    var t = TOKTYP(S, a);
+    if (t == 27) { return _ic_pp_addr(S, a + 1, d); }
+    if (t != 2) { return 0 - 8; }
+    if (TOKTYP(S, a + 1) == 41) { return _ic_pp_deep(S, _ic_pp_chain(S, a), d); }
+    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt == 10 || nt == 19) { return _ic_pp_deep(S, _fn_ret_ps(_gen_call_inst(S, a)), d); }
+    return _ic_pp_deep(S, _ic_pp_name(S, TOKVAL(S, a)), d);
+}
+# What a `*..*T` parameter of `d` stars binds from its argument's step word `w`: `d - 2` pointees down (`_pp_inner`,
+# one per star past two: a `***S`'s pin names a `**S`), the struct or scalar that pin names (`_ic_pp_sid`).
+# CHANGELOG [6.7.15]
+fn _ic_pp_deep(S, w, d): i64 {
+    while (d > 2) {
+        w = _pp_inner(S, w);
+        d = d - 1;
+    }
+    return _ic_pp_sid(S, w);
+}
+# ⛔ 6.7.15 (D23 A) — the end (its `,` / `)`) of the whole argument at token `a` when it is pointer arithmetic, inside
+# any parentheses: its loosest operator a `+` / `-` (`_gz_split`, the one applied last), else 0 — a name, a call, a
+# tuple literal, a comparison or a bitwise result (`p + 1 & 3` is no pointer) is none. CHANGELOG [6.7.15]
+fn _ic_arith_end(S, a): i64 {
+    var e = _arg_next(S, a);
+    var b = _ie_unparen(S, a, e);
+    var k = _gz_split(S, b, _ie_pe);
+    if (k < 0) { return 0; }
+    var t = TOKTYP(S, k);
+    if (t == 6 || t == 7 || t == 113 || t == 116) { return e; }
+    return 0;
+}
+# ... through a `p: *T` (D23 A): what the arithmetic [a, e)'s typed-pointer operand points at — a struct
+# (`_hl_psid`: a `*S` name, field, call, wrapped), else its scalar pointee's binding (`_ic_pscalar`, D11 (a)); i64 for
+# no typed pointer. CHANGELOG [6.7.15]
+fn _ic_parith(S, a, e): i64 {
+    var s = _hl_psid(S, a, e);
+    if (s > 0) { return s; }
+    return _ic_pscalar(_hl_pw(S, a, e));
+}
+# The struct step word `w`'s pin names (its pointee `*S`'s S), 6.7.15 (D11) else its pointee word's scalar
+# (`_pp_inner`: a `**i32`'s `*i32`), else i64.
+fn _ic_pp_sid(S, w): i64 {
+    var s = _pp_sid(S, _ps_pin(w));
+    if (s <= 0) { return _ic_pscalar(_pp_inner(S, w)); }
+    return _ic_pp_ok(S, s);
+}
+# A struct `s` as a binding (a tuple or a dyn binds nothing, as `_ic_addr`), else i64.
+fn _ic_pp_ok(S, s): i64 {
+    if (s <= 0) { return 0 - 8; }
+    if (_tup_is(S, s) == 1) { return 0 - 8; }
+    if (_dyn_is(S, s) == 1) { return 0 - 8; }
+    return s;
+}
+# The step word of the name at `noff`: a local or parameter, a capture, a global; 0 for none.
+fn _ic_pp_name(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) { return _slot_ptr_word(S, li); }
+    var esl = _cl_cap_esl(S, noff);
+    if (esl >= 0) { return _cl_snap_ptr_word(esl); }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    return _gv_ptr_word(S, vi);
+}
+# The step word of the leaf field of the whole chain at token a (`_chain_leaf`); 0 for none.
+fn _ic_pp_chain(S, a): i64 {
+    var l = _chain_leaf(S, a);
+    if (l == 0) { return 0; }
+    return _fld_ps_get(S, (l >> 32) - 1, l & 0xFFFFFFFF);
+}
+# `&p` with p (token i, the whole argument) a `*S` local, parameter or global: S — 6.7.15 (D11): a `*i32` / `*f64` one
+# its scalar (`_ic_pscalar`). A capture's `&c` is its env copy's address and binds nothing (as `_ic_addr`). 6.7.15
+# (D24 A): through `d` stars past two, `&pps` of a `**S` binds S as a `***S` does (its pointee is pps's word).
+fn _ic_pp_addr(S, i, d): i64 {
+    if (_gsc_name_end(S, i) == 0) { return 0 - 8; }
+    var noff = TOKVAL(S, i);
+    if (_cl_cap_esl(S, noff) >= 0) { return 0 - 8; }
+    if (d > 2) { return _ic_pp_deep(S, _ic_pp_name(S, noff), d - 1); }
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) {
+        if (GLPTRP(S, li) == 0) { return 0 - 8; }
+        var lt = GLTYPE(S, li);
+        if (lt >= 0) { return _ic_pscalar(_slot_ptr_word(S, li)); }
+        if (lt <= 0 - 2048) { return 0 - 8; }
+        return _ic_pp_ok(S, 0 - lt);
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0 - 8; }
+    if (_gv_ptr_sid(S, vi) <= 0) { return _ic_pscalar(_gv_ptr_word(S, vi)); }
+    return _ic_pp_ok(S, _gv_ptr_sid(S, vi));
+}
+# The LEAF field of the whole-argument chain at token a (`_gsc_chain`'s walk): its struct's sid in the high word and
+# its field index in the low, 0 when the argument is no such chain. `_ic_pp_chain` reads the leaf's step word.
+# CHANGELOG [6.7.14]
+fn _chain_leaf(S, a): i64 {
+    var i = a + 1;
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { return 0; }
+        i = i + 2;
+    }
+    var nt = TOKTYP(S, i);
+    if (nt != 31 && nt != 11) { return 0; }
+    var sid = _dyn_base_sid(S, TOKVAL(S, a));
+    var k = a + 2;
+    while (k < i) {
+        if (sid <= 0) { return 0; }
+        var fi = FINDFIELD(S, sid - 1, TOKVAL(S, k));
+        if (fi < 0) { return 0; }
+        if (k + 1 == i) { return (sid << 32) | fi; }
+        var ps = _fld_ptr_sid(S, sid - 1, fi);
+        if (ps > 0) { sid = ps; }
+        else { sid = GETFTYPE(S, sid - 1, fi); }
+        k = k + 2;
+    }
+    return 0;
+}
+# A `var p: *T` local's kind, written into the mark `_sl_marks` just wrote (`ann` the annotation's
+# `*`). `_sl_marks` sits at cybs's 6-parameter cap, so `_sl_last_marks` calls this.
+fn _sl_ptr_ed(S, li, ann): i64 {
+    var ed = _ek_of_ptr_ann(S, ann);
+    var vd = _ek_vd(S, ann);   # 6.7.12: a `*V`'s vector
+    var pn = _ek_pin(S, ann);  # 6.7.13: a `**T`'s pointee
+    if (ed == 0) { if (vd == 0) { if (pn == 0) { return 0; } } }
+    var w = GSLICE_W(S, li);
+    if (w > 0 - 0x7E01) { return 0; }
+    SSLICE_W(S, li, 0 - 0x7E00 - _ps_pw(_ps_vw(_ps_word(0 - w - 0x7E00, ed), vd), pn));
+    return 0;
+}
+# The type a VALUE read of local `li` is made at (PARSE_FACTOR, `x OP= ..`): a typed pointer is a
+# plain word (0) whatever its SLTYPE says — a `p: *f32` parameter's slot is typed f32 and a
+# `p: *Pt` one `0 - sid` (that is what `p.x` reads through), but its VALUE is an address, so it is
+# neither a float nor an operator-overloading operand. Step-8 locals keep SLTYPE 8.
+fn _load_lt(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (GLPTRP(S, li) == 0) { return lt; }
+    if (lt == 8) { return 8; }
+    return 0;
+}
+# The factor's pointer scale for local `li` read at `lt` (`_load_lt`): `lt`, which a step-8 `*T`
+# local's SLTYPE 8 is — 6.7.8 (C2-3a): that local's step WORD, T's kind included, so a `*i64` /
+# `*f64` / `*bool` local carries its kind as every other typed pointer does (`_ps_word`). One call
+# in _PARSE_FACTOR_IMPL where `SPSC(S, lt)` was (a same-count swap: cybs's per-fn ceiling).
+fn _lt_spsc(S, li, lt): i64 {
+    if (lt == 8) {
+        var w = _slot_ptr_word(S, li);
+        if (w > 0) {
+            SPSC(S, w);
+            return 0;
+        }
+    }
+    SPSC(S, lt);
+    return 0;
+}
+# An SLTYPE-0 local was just loaded: its marks — the untyped-float flag (_UFV_L) and the pointer
+# step above.
+fn _sl_load_marks(S, li): i64 {
+    _UFV_L(S, li);
+    var ps = _slot_ptr_word(S, li);   # 6.7.8 (C2-3a): the step word, kind included
+    if (ps > 0) { SPSC(S, ps); }
+    if (GLBOOL(S, li) == 1) { _BX_MARK(S); }   # 6.7.3: a bool local's read is a boolean value
+    if (GLW128(S, li) == 1) { _W128_MARK(S, 1, li); }   # 6.7.6 (D2): a u128 local's read is the u128
+    return 0;
+}
+
+# The pointer annotation `*T` at token `ti` (T, the token after the `*`), resolved — an unknown T
+# is refused (it was taken silently). 6.6.17: only a slice element `[*T]` / `slice<*T>` asks this
+# now (whose width is a pointer's 8); every `*T` variable's step is sizeof(T), `_tn_ptr_step`.
+fn _tn_ptr(S, ti, vnoff): i64 {
+    if (TOKTYP(S, ti) != 2) { return 8; }
+    var c = _tn_resolve_at(S, ti);
+    if (c == 0) {
+        _tn_refuse_var(S, ti, _tn_ptr_tail(vnoff), vnoff);
+        return 8;
+    }
+    if (_tn_class(c) == 1) { return _tn_val(c); }
+    return 8;
+}
+# The words after "unknown type 'Nope'" in a `*T`: "as the target of pointer 'p'" names its variable; with none (a
+# return `fn f(): *Nope`, a multi-value element: `vnoff` -1) "as the target of a pointer" — the line ended "as the
+# target of pointer " with nothing after it (6.6.17 - 6.7.16). CHANGELOG [6.7.17]
+fn _tn_ptr_tail(vnoff): i64 {
+    if (vnoff < 0) { return " as the target of a pointer"; }
+    return " as the target of pointer ";
+}
+
+# 6.6.17 — sizeof(T) for the pointer annotation `*T` at token `ti` (T, the token after the `*`):
+# the step of `p + n` on such a pointer. T is resolved as _tn_ptr resolves it: an unknown T is
+# refused once (`quiet` 1, pass 1: not reported — pass 2 reads it again) and steps 8; a bound
+# type parameter steps by its argument's size, an unbound one by its i64 base's 8.
+fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
+    if (TOKTYP(S, ti) == 105) { return 16; }      # *u128
+    if (TOKTYP(S, ti) != 2) { return 8; }
+    var w = 0;
+    var b = _tp_resolve(S, TOKVAL(S, ti));
+    if (b != 0) { w = _tn_bytes(S, _tn_from_rc(b)); }
+    else {
+        var c = _tn_resolve_at(S, ti);
+        if (c == 0) {
+            if (quiet == 0) { _tn_refuse_var(S, ti, _tn_ptr_tail(vnoff), vnoff); }
+            return 8;
+        }
+        w = _tn_bytes(S, c);
+    }
+    if (w < 1) { return 8; }
+    return w;
+}
+# ⛔ 6.6.17 — `name: *T` (a struct or union field) and `fn f(): *T` (a return type, a multi-value
+# return element) did not parse — `expected identifier, got '*'` — while `var p: *T` and a
+# `p: *T` parameter did. Each is an 8-byte pointer. Cursor on the first `*`: consumes the `*`s,
+# T and any `<..>` after it, and returns the step of `p + n` on the value — sizeof(T), 8 for a
+# pointer to a pointer — which a field load / a call result carries as its pointer scale, so
+# `var q: *T = h.p;` / `= f();` is not "assigning non-pointer to typed pointer". CHANGELOG [6.6.17]
+# The first `*` of the last `*( .. )` refused here: a declaration annotated so is not warned about its
+# value as well ("assigning non-pointer to typed pointer" about a type its line refused). The step
+# stays, so the variable's uses say nothing more. CHANGELOG [6.7.11]
+var _ptr_refd_ti = 0 - 1;
+# 6.7.14 — the token where the last `&a[i]` was refused (`_sub_post`, parse/expr/subscript.cyr): a `*T` destination
+# whose value spans it is not warned about that value too (`_tp_warn`). CHANGELOG [6.7.14]
+var _tp_refd_at = 0 - 1;
+fn _ptr_annot(S, vnoff, quiet): i64 {
+    var ti0 = GTI(S);
+    var n = 0;
+    while (PEEKT(S) == 8) {
+        STI(S, GTI(S) + 1);
+        n = n + 1;
+    }
+    if (_sl_ann_at(S, GTI(S)) == 1) {   # 6.7.8 (C2-6a): `*[T]` / `*slice<T>` — refused by name
+        if (quiet == 0) { _sl_err_ptr(S, GTI(S)); }
+        _sl_ann_skip(S);
+        return 8;
+    }
+    var ps = _ptr_step_peek(S, vnoff, quiet);
+    if (n > 1) { ps = 8; }
+    if (PEEKT(S) == 2 || PEEKT(S) == 105) {
+        STI(S, GTI(S) + 1);
+        if (quiet == 0) { _vec_ann_chk(S, GTI(S) - 1, vnoff); }   # 6.7.11: `*Vec<T>` reads T
+        if (quiet == 0) { _ngt_refuse(S, GTI(S) - 1); }   # 6.7.16 (D7): `*i32<u8>` (`*Pt<..>` said so already)
+        SKIP_GENERICS(S);
+    } elif (PEEKT(S) == 10) {
+        if (quiet == 0) { _tup_pos_refuse(S, "a pointer target `*( .. )`"); _ptr_refd_ti = ti0; }   # 6.7.7 (R3)
+        else { STI(S, _call_close(S, GTI(S)) + 1); }
+    } elif (PEEKT(S) == 32) {   # 6.7.17 (D8): `*fn( .. )`, a bare `*fn`, `**fn( .. )`
+        STI(S, _ptr_fnp_end(S, ti0, vnoff, quiet, " for variable "));
+    } elif (quiet == 0) { _ptr_notype(S, vnoff); }
+    if (quiet == 0) { if (_ann_said(S, ti0, GTI(S)) == 1) { _ptr_refd_ti = ti0; } }   # 6.7.17: see `_ann_said`
+    return ps;
+}
+# ⛔ 6.7.17 — A REFUSED `*T` ANNOTATION IS ITS DECLARATION'S ONE ERROR. 6.7.11 kept `*( .. )`'s refusal from a warning
+# about the value as well; every other refusal of the annotation still added "assigning non-pointer to typed pointer":
+# `var p: *Nope = x;`, `var c: *fn(Nope): i64 = x;` (6.7.17's D8), in a fn, the declaration zone and after the first
+# statement. 1 when a refusal was said at a token of [a, e) (`_tn_once`'s record, so a generic's instance, which says
+# nothing again, agrees). `_tp_warn_decl` reads `_ptr_refd_ti`, the zone's `_tp_warn_gv` asks this itself. CHANGELOG
+# [6.7.17]
+fn _ann_said(S, a, e): i64 {
+    while (a < e) {
+        if (_tn_seen_at(S, a) == 1) { return 1; }
+        a = a + 1;
+    }
+    return 0;
+}
+# ⛔ 6.7.17 — A VARIABLE'S `*` FOLLOWED BY NO TYPE (`var x: *+ = 0;`, `*5`, `*;`) is 6.7.14's D15 refusal, "expected a type
+# for variable 'x', got '+'", as `var x: + = 0;` and a parameter's `p: *+` are; it was "expected identifier, got '+'"
+# with "assigning non-pointer to typed pointer" after it. The token is stepped (not a `=` / `;`: the line reads on there,
+# as D15's does). A field's (`k: *+`, as `k: +`) and a return's keep "expected identifier". CHANGELOG [6.7.17]
+var _ptr_fld = 0;   # `_fld_ptr_annot` is reading a field's annotation
+fn _ptr_notype(S, vnoff): i64 {
+    if (_ptr_fld == 1 || vnoff < 0) { ERR_EXPECT(S, 2); return 0; }
+    _tn_var_err(S, GTI(S), vnoff);
+    var t = PEEKT(S);
+    if (t != 4 && t != 5 && t != 12) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+# ⛔ 6.7.17 (the user's D8, 2026-10-22) — A `*fn( .. )` TYPE DECLARES A LOCAL, A GLOBAL OR A FIELD AS THE ONE POINTER
+# WORD A PARAMETER'S DOES. The readers took the token after the `*` as a type name and met the keyword: `var c:
+# *fn(i64): i64 = 0;` was "expected identifier, got reserved keyword 'fn'" and a cascade, so a fn pointer was held only
+# untyped.
+# The type (the first `*` at token `ti0`; a bare `*fn` and `**fn( .. )` too) is read by the parameter reader's grammar
+# (`_pty_end`), each refusal inside its list once with the declaration's words (`what`, `vnoff`) when `quiet` is 0, and
+# stepped; its step is a pointer's 8 (`_ptr_step_peek`), so `fncall1(c, 5)` / `callptr(c, 5)` read the word as they
+# read a `cb: *fn( .. )` parameter. The token after the type. CHANGELOG [6.7.17]
+# The parameter reader's (`_pty_*`, parse/fn/impl.cyr) words for such a declaration (" for variable "; 0 = a
+# parameter's) and its name, and the token its list's missing `)` was expected at (-1 none; `_pty_rpn` 1 = nothing in
+# that type reported before it, so it is reported).
+var _pty_dk = 0;
+var _pty_dn = 0;
+var _pty_rpx = 0 - 1;
+var _pty_rpn = 0;
+fn _pty_what(): i64 {
+    if (_pty_dk != 0) { return _pty_dk; }
+    return " for parameter ";
+}
+fn _ptr_fnp_end(S, ti0, vnoff, quiet, what): i64 {
+    var sv_b = _pty_bad;
+    var sv_k = _pty_dk;
+    var sv_n = _pty_dn;
+    _pty_bad = 0;
+    _pty_dk = what;
+    _pty_dn = vnoff;
+    _pty_rpx = 0 - 1;
+    var e = _pty_end(S, ti0, 1 - quiet, 0);
+    if (_pty_rpx >= 0) {
+        if (quiet == 0) { _ptr_fnp_rp(S); }
+        e = _fnp_decl_end(S, e);
+    }
+    _pty_bad = sv_b;
+    _pty_dk = sv_k;
+    _pty_dn = sv_n;
+    return e;
+}
+# The `)` a `*fn( .. )` annotation's list lacks (`_pty_list` notes the token it was expected at): the parameter loop
+# reports a parameter's; a declaration's is reported here, once, unless the type reported before it (`_pty_rpn`).
+fn _ptr_fnp_rp(S): i64 {
+    if (_pty_rpn == 0) { return 0; }
+    if (_tn_once(S, _pty_rpx) == 0) { return 0; }
+    STI(S, _pty_rpx);
+    ERR_EXPECT(S, 11);
+    return 0;
+}
+# Past such a list (`e` the token its `)` was expected at): the declaration's `=` or `;` (or a brace), so the line
+# reads on from there in both passes, with nothing more to say about the type.
+fn _fnp_decl_end(S, e): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (e < n) {
+        var t = TOKTYP(S, e);
+        if (t == 5 || t == 12 || t == 13 || t == 14) { return e; }
+        if (t == 10 || t == 28) { d = d + 1; }
+        elif (t == 11 || t == 29) { if (d > 0) { d = d - 1; } }
+        elif (t == 4) { if (d == 0) { return e; } }
+        e = e + 1;
+    }
+    return e;
+}
+# The step of `*T` with the cursor on T, which does not move: `_tn_ptr_step`, except that a
+# generic struct with arguments is its INSTANCE (`*Box<i32>` steps sizeof(Box<i32>), as `var b:
+# Box<i32>` declares it — it stepped the base's size), sized as `_sizeof_type` sizes it. Pass 1
+# (`quiet`) sizes an instance only when its arguments resolve already. CHANGELOG [6.6.17]
+fn _ptr_step_peek(S, vnoff, quiet): i64 {
+    var ti = GTI(S);
+    var ps = _tn_ptr_step(S, ti, vnoff, quiet);
+    if (TOKTYP(S, ti) != 2) { return ps; }
+    if (TOKTYP(S, ti + 1) != 19) { return ps; }
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid <= 0) { return ps; }
+    if (quiet == 1) { if (_targs_resolvable(S, ti + 2) == 0) { return ps; } }
+    if (quiet == 1) { if (GSTP(S, sid - 1) == 0) { return ps; } }   # 6.7.15 (D6): pass 2 refuses `*Pt<..>`
+    if (_ppk_nomint == 1) { if (GSTP(S, sid - 1) != 0) { _fld_targ_chk(S, ti); return ps; } }   # 6.7.16
+    STI(S, ti + 1);
+    var g = _gen_ann_sid(S, sid);
+    STI(S, ti);
+    if (g > 0) { if (g != sid) { ps = STRUCTSZ(S, g - 1); } }
+    return ps;
+}
+# A `name: *T` field (cursor on its `:`): an 8-byte field whose loads carry T's step.
+# ⛔ 6.6.17 (review) — a pointer to a STRUCT is sized when the field is LOADED, not when it is
+# declared: inside its own definition a struct has the size of the fields so far
+# (`struct Node { val; next: *Node; }` stepped 8, not 16), and a struct declared further down
+# (`struct A { p: *B; }`) was refused "declared after its use", so two structs could not point
+# at each other. Such a field records T's token (`0 - (ti + 1)`); `_fld_ps_get` sizes it.
+var _fld_ps = 0;   # per field-pool entry: the step word of a `*T` field (or T's token), 0 otherwise
+fn _add_ptr_field(S, si, fnoff): i64 {
+    STI(S, GTI(S) + 1);                     # consume ':'
+    var ed = _ek_of_ptr_ann(S, GTI(S));     # 6.7.8 (C2-3a): T's kind rides the step (`_ps_word`)
+    var vd = _ek_vd(S, GTI(S));             # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
+    var ann = GTI(S);
+    var ps = _fld_ptr_late(S);
+    if (ps == 0) { ps = _fld_ptr_annot(S, fnoff, ann); }
+    var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
+    var top = L64(S + 0x1AC018);
+    ADDFIELD(S, si, fnoff);
+    if (L64(S + 0x1AC018) == top) { return 0; }   # refused (and reported) by ADDFIELD
+    if (ent >= 8192) { return 0; }
+    if (_fld_ps == 0) { _fld_ps = alloc(8192 * 8); }
+    S64(_fld_ps + ent * 8, _ps_vw(_ps_word(ps, ed), vd));   # a late struct T (`0 - token`) keeps its form
+    if (ps < 0) { _fld_pb_note(S, ent, si); }
+    _fld_pp_push(S, ann, ent, si);   # 6.7.13: a `**T`'s pointee, pinned at the struct's `}` (6.7.16)
+    return 0;
+}
+# ⛔ 6.7.16 — A `**G<..>` FIELD MINTS ITS INSTANCE AFTER THE STRUCT'S `}`. A struct's fields fill one run of the field
+# pool, and a `**Box<S16>` field minted `Box<S16>` in the middle of that run — its annotation sized the instance it
+# never uses (a `**` steps 8) and its pin sized it again — so the instance's fields took the slots the struct's next
+# field then overwrote: `b.v` / `b.n` of a `Box<S16>` were "unknown field" ever after (`**Box<A>` inside A also sized
+# Box<A> with the A so far). The annotation now checks its type arguments without minting (`_fld_targ_chk`, as a
+# `*Box<..>` field's, 6.7.15's D8), and the pin is taken at the `}` (`_fld_pp_end`), the struct whole and its run
+# closed. CHANGELOG [6.7.16]
+var _ppk_nomint = 0;   # `_ptr_step_peek` checks a generic's list without minting it
+fn _fld_ptr_annot(S, fnoff, ann): i64 {
+    if (_trs_ret_fnp(S, ann) == 1) {   # 6.7.17 (D8): `cb: *fn( .. )`, one 8-byte word (`_ptr_fnp_end`)
+        STI(S, _ptr_fnp_end(S, ann, fnoff, 0, " for struct field "));
+        return 8;
+    }
+    if (TOKTYP(S, ann + 1) != 8) {
+        _ptr_fld = 1;
+        var p1 = _ptr_annot(S, fnoff, 0);
+        _ptr_fld = 0;
+        return p1;
+    }
+    if (_fld_pp_late(S, ann) == 1) { return 8; }   # 6.7.16 (D103): `**B`, B declared below
+    _ppk_nomint = 1;
+    _ptr_fld = 1;
+    var ps = _ptr_annot(S, fnoff, 0);
+    _ppk_nomint = 0;
+    _ptr_fld = 0;
+    return ps;
+}
+# ⛔ 6.7.16 (the user's D103, 2026-10-20) — A `**B` / `**Box<B>` FIELD POINTS AT A STRUCT DECLARED BELOW, AS `*B` DOES.
+# 6.6.17 sizes a one-star `p: *B` field at its use (`_fld_ptr_late`), so two structs can point at each other; a field
+# with two stars or more read its pointee at the field — "type 'B' is declared after its use" — and its pin at the
+# struct's `}` minted `Box<B>` there — "unknown type 'B' as a type argument". Such a field's annotation is now consumed
+# with its type arguments checked as the late `*B` field's are (`_fld_targ_chk`, `_fld_ngt`), and its pin is late
+# (`_pp_word_at`: B's token, sized at the dereference by `_pp_inner`, its struct named there by `_pp_sid`), at any depth.
+# A by-value `B` field below stays refused. CHANGELOG [6.7.16]
+# The field annotation whose first `*` is token `ann` (two stars or more): 1 when its pointee past the stars is a struct
+# or union declared further down, or a generic one declared above whose type arguments do not resolve yet (`Box<B>`,
+# or no type: `_fld_targ_chk` refuses that) — checked and consumed; else 0, the cursor untouched.
+fn _fld_pp_late(S, ann): i64 {
+    var ti = ann;
+    while (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (_pp_late_name(S, ti) == 0) { return 0; }
+    _fld_targ_chk(S, ti);
+    _fld_ngt(S, ti);
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    return 1;
+}
+# 1 when the pointee name at token ti is a struct or union declared further down, or a generic struct declared above
+# whose `<..>` after it does not resolve yet.
+fn _pp_late_name(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    var sid = FINDSTRUCT(S, noff);
+    if (sid <= 0) { return _declared_later(S, noff, 40, 101); }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    if (GSTP(S, sid - 1) == 0) { return 0; }
+    if (_targs_resolvable(S, ti + 2) == 1) { return 0; }
+    return 1;
+}
+var _fpp = 0;     # 3 words per pending pin: the annotation's first `*`, the field entry, the struct
+var _fpp_n = 0;
+var _fpp_cap = 0;
+fn _fld_pp_push(S, ann, ent, si): i64 {
+    if (TOKTYP(S, ann) != 8) { return 0; }
+    if (TOKTYP(S, ann + 1) != 8) { return 0; }
+    if (_fpp_n >= _fpp_cap) {
+        var t = alloc((_fpp_cap * 2 + 16) * 24);
+        _tab_copy(t, _fpp, _fpp_n * 3);
+        _fpp = t;
+        _fpp_cap = _fpp_cap * 2 + 16;
+    }
+    S64(_fpp + _fpp_n * 24, ann);
+    S64(_fpp + _fpp_n * 24 + 8, ent);
+    S64(_fpp + _fpp_n * 24 + 16, si);
+    _fpp_n = _fpp_n + 1;
+    return 0;
+}
+# At struct si's `}`: its pending pins, in field order (a pin may mint an instance, whose own run of pending pins
+# above these is its own). CHANGELOG [6.7.16]
+fn _fld_pp_end(S, si): i64 {
+    var b = _fpp_n;
+    while (b > 0) {
+        if (L64(_fpp + (b - 1) * 24 + 16) != si) { break; }
+        b = b - 1;
+    }
+    var e = _fpp_n;
+    var k = b;
+    while (k < e) {
+        _fld_pp_one(S, si, L64(_fpp + k * 24), L64(_fpp + k * 24 + 8));
+        k = k + 1;
+    }
+    _fpp_n = b;
+    return 0;
+}
+# One pending pin (`ann` the field's first `*`, `ent` its entry), read under the struct's own binding as a late `*S<..>`
+# field's is (`_fld_pb_note`: an instance's arguments, the definition's T -> i64): `struct W<T> { p: **Box<T>; }` read
+# `Box<T>` unbound, "unknown type 'T' as a type argument". A `**S` of this struct is pinned late. CHANGELOG [6.7.16]
+fn _fld_pp_one(S, si, ann, ent): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_note(S, ent, si);
+    _fld_pb_bind(S, ent);
+    var pn = _pp_pin_at(S, ann, si, ent);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    S64(_fld_ps + ent * 8, _ps_pw(L64(_fld_ps + ent * 8), pn));
+    return 0;
+}
+# ⛔ 6.6.20 — the binding a late `*S<..>` field is re-read under. `_fld_ps_get` / `_fld_ptr_sid`
+# re-read the DEFINITION's tokens at the USE site, under whatever type parameters were bound
+# there: in a plain fn `struct L<T> { next: *L<T>; }`'s T was unbound — `a.next + 1` stepped the
+# base L whatever the instance, and `a.next.v` was refused "unknown type 'T'" even on L<i64> —
+# and in `fn k<T>` the struct's T silently took k's binding, so `a.next.w = 9` wrote with another
+# instance's layout, past the end of the struct. Recorded per entry: the struct's own parameters
+# (GSTP, set before its fields parse) bound as they are now — an instance's arguments, or the i64
+# base's -8 for the definition itself. Any other binding is dropped (a non-generic struct's field
+# names no parameter). 4 words per entry: n0, c0, n1, c1 (`_tp_bind`'s pairs). CHANGELOG [6.6.20]
+var _fld_pb = 0;
+fn _fld_pb_note(S, ent, si): i64 {
+    if (_fld_pb == 0) { _fld_pb = alloc(8192 * 32); }
+    var b = _fld_pb + ent * 32;
+    var stp = GSTP(S, si);
+    var n0 = stp & 0xFFFFFFFF;
+    var n1 = (stp >> 32) & 0xFFFFFFFF;
+    S64(b, 0); S64(b + 8, 0); S64(b + 16, 0); S64(b + 24, 0);
+    if (n0 != 0) { S64(b, n0 - 1); S64(b + 8, _tp_or_base(S, n0 - 1)); }
+    if (n1 != 0) { S64(b + 16, n1 - 1); S64(b + 24, _tp_or_base(S, n1 - 1)); }
+    return 0;
+}
+fn _tp_or_base(S, noff): i64 {
+    var c = _tp_resolve(S, noff);
+    if (c == 0) { return 0 - 8; }
+    return c;
+}
+# Replace the binding in force with entry `ent`'s; the caller saved it and puts it back.
+fn _fld_pb_bind(S, ent): i64 {
+    _tp_clear(S);
+    if (_fld_pb == 0) { return 0; }
+    var b = _fld_pb + ent * 32;
+    _tp_n0 = L64(b); _tp_c0 = L64(b + 8); _tp_n1 = L64(b + 16); _tp_c1 = L64(b + 24);
+    return 0;
+}
+# Cursor on the `*` of a field's `*T`: when T (one `*`) names a struct — this one, one declared
+# above, or one declared below — consume the annotation and return `0 - (ti + 1)` (T's token);
+# else 0, cursor untouched. ⛔ 6.7.15 — and a generic struct's type parameter bound to a struct
+# (`struct Pb<T> { p: *T; }` in its instance `Pb<Pt>`): recorded late, its binding noted per entry
+# (`_fld_pb_note`), so `b.p.y` hops through it as through a `p: *Pt` field (it stopped at `b.p`:
+# "expected ';', got '.'"). A scalar binding keeps the step it had. CHANGELOG [6.7.15]
+fn _fld_ptr_late(S): i64 {
+    var ti = GTI(S) + 1;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_fld_tp_struct(S, ti) == 1) {
+        STI(S, ti + 1);
+        return 0 - (ti + 1);
+    }
+    if (FINDSTRUCT(S, noff) <= 0) { if (_declared_later(S, noff, 40, 101) == 0) { return 0; } }
+    _fld_targ_chk(S, ti);
+    _fld_ngt(S, ti);   # 6.7.16 (D7)
+    STI(S, ti + 1);
+    SKIP_GENERICS(S);
+    return 0 - (ti + 1);
+}
+# ⛔ 6.7.15 (D8) — A LATE `p: *G<..>` FIELD'S TYPE ARGUMENTS ARE CHECKED AT THE FIELD (`ti` G's token, its `<` next,
+# G a generic struct declared above or below). The list was skipped unread (6.6.17's late sizing), so
+# `p: *Box<Zork>` and `p: *Box<1>` compiled while the field was unused and were refused only at a use. Read as
+# `_targ_chk` reads a Vec element's list — every refusal of a type argument once, at its token, nothing
+# instantiated, the cursor, the owed closers and the panic latch put back — and a struct declared further down is a
+# name (`_ta_late`), so two structs pointing at each other through `*Box<B>` / `*Box<A>` are unchanged. A use
+# re-reads the same tokens, so its report is the declaration's, printed once (the user's D8 (a), 2026-10-18). A
+# non-generic G's list is D6's. CHANGELOG [6.7.15]
+fn _fld_targ_chk(S, ti): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }
+    var noff = TOKVAL(S, ti);
+    var sid = FINDSTRUCT(S, noff);
+    if (sid > 0) { if (GSTP(S, sid - 1) == 0) { return 0; } }
+    if (sid <= 0) { if (_declared_later_gen(S, noff) == 0) { return 0; } }
+    var sv_rf = _ta_refd;
+    var sv_lt = _ta_late;
+    _ta_late = 1;
+    _targ_chk(S, ti + 1);
+    _ta_late = sv_lt;
+    _ta_refd = sv_rf;
+    return 0;
+}
+# 6.7.16 (D7): a pointer field's non-generic pointee given `<..>` (`ti` its name), refused at the field, once: a struct
+# declared above by `_ngt_refuse`; one declared further down (the reason this reader exists) by its declaration's
+# tokens, as `_fld_targ_chk` reads a generic one. A use re-reads the same tokens silently (`_ptr_tok_sid`).
+fn _fld_ngt(S, ti): i64 {
+    if (TOKTYP(S, ti + 1) != 19) { return 0; }   # 6.7.17 (D102): under CYRIUS_MONOMORPH=0 too (it returned 0 there)
+    if (FINDSTRUCT(S, TOKVAL(S, ti)) > 0) { return _ngt_refuse(S, ti); }
+    if (_declared_later_gen(S, TOKVAL(S, ti)) == 1) { return 0; }
+    return _ngt_say(S, ti, " is not a generic struct: it takes no type arguments");
+}
+# 1 when token `ti` is a type parameter bound to a struct right now, with no `<` after it.
+fn _fld_tp_struct(S, ti): i64 {
+    if (_tp_c0 == 0) { return 0; }
+    if (TOKTYP(S, ti + 1) == 19) { return 0; }
+    if (_tp_resolve(S, TOKVAL(S, ti)) > 0) { return 1; }
+    return 0;
+}
+# The pointee struct of a `name: *T` field — T a struct, or a generic instance — else 0. 6.6.17
+fn _fld_ptr_sid(S, si, fi): i64 {
+    if (_fld_ps == 0) { return 0; }
+    var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    var v = L64(_fld_ps + ent * 8);
+    if (v >= 0) { return 0; }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_bind(S, ent);
+    var sid = _ptr_ann_sid_tp(S, 0 - v - 2);   # 6.7.15: on the `*`, so a bound T is its struct
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return sid;
+}
+# A field's step word (6.7.8: kind included; a late struct T's, sized here, has none).
+fn _fld_ps_get(S, si, fi): i64 {
+    if (_fld_ps == 0) { return 0; }
+    var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    var v = L64(_fld_ps + ent * 8);
+    if (v >= 0) { return v; }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    _fld_pb_bind(S, ent);
+    var sv = GTI(S);
+    STI(S, 0 - v - 1);
+    var ps = _ptr_step_peek(S, 0 - 1, 1);
+    STI(S, sv);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return ps;
+}
+# A `fn f(): *T` return (cursor on the `*`): recorded as an i64 return plus T's step, which a
+# call to it carries (`_call_ret_ps`). `quiet` 1 in pass 1 (`_prescan_fn_sig`), which only
+# records it; pass 2 (PARSE_FN_DEF) refuses an unknown T and sets the fn's return scalar.
+var _fn_rps = 0;   # per fn: the step word of a `*T` return (6.7.8: + the kind, `_ps_word`), else 0
+var _fn_rpsid = 0; # per fn: T's struct for a `*T` return (6.6.17, `_call_ptr_field`), else 0
+# ⛔ 6.6.20 — a generic INSTANCE's `: *T` is read under the instance's binding, as `_gtype_sid`
+# reads `: Box<T>`: PARSE_FN_DEF binds T only around the parameter loop and the body, and the
+# return type sits between them, so every instance recorded the unbound T's i64 step (8) and
+# `gr<i32>(..) + 1` stepped 8. The binding in force is put back after. CHANGELOG [6.6.20]
+# ⛔ 6.7.14 — and the BASE's under the base's: T -> i64, as PARSE_FN_DEF binds the base body. Read unbound, the
+# `T` of `fn mkp<T>(x: T): *Box<T>` was refused as a type argument ("unknown type 'T'"), in pass 1 and again in
+# pass 2, so the definition never compiled; a bare `*T` is the i64 step either way. CHANGELOG [6.7.14]
+fn _ret_ptr_base_bind(S, fi): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_inst_conc0 != 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    _bind_generic_call(S, fi, 0 - 8, 0 - 8);
+    return 0;
+}
+# The struct a `: *T` return points at (cursor on the `*`), as `_ptr_ann_sid_tp`. ⛔ 6.7.14 — pass 1 (`quiet`) reads a
+# `*G<..>` only when its arguments resolve (`_targs_resolvable`, as `_ptr_step_peek` sizes it): read unresolved, the
+# type-argument refusal ran in pass 1 AND in pass 2, so `: *Box<Zork>` was reported twice. Pass 2 reads and refuses
+# it. CHANGELOG [6.7.14]
+fn _ret_ptr_sid(S, quiet): i64 {
+    if (_ret_ptr_unres(S, quiet) == 1) { return 0; }
+    return _ptr_ann_sid_tp(S, GTI(S));
+}
+# 1 in pass 1 (`quiet`) when the return's pointee past its stars (cursor on the first `*`) is `G<..>` whose arguments
+# do not resolve yet — a struct declared below the fn, or no type: neither its struct (`_ret_ptr_sid`) nor a `**`'s
+# pin (`_ret_ptr_record`) is read there. ⛔ 6.7.15 — the pin was: `: **Box<Later>` was refused "unknown type 'Later'"
+# by pass 1 and `: **Box<Zork>` reported twice. Pass 2 reads both at the definition. CHANGELOG [6.7.15]
+fn _ret_ptr_unres(S, quiet): i64 {
+    if (quiet != 1) { return 0; }
+    var k = GTI(S);
+    while (TOKTYP(S, k) == 8) { k = k + 1; }
+    if (TOKTYP(S, k) != 2) { return 0; }
+    if (TOKTYP(S, k + 1) != 19) { return 0; }
+    if (_targs_resolvable(S, k + 2) == 1) { return 0; }
+    return 1;
+}
+fn _ret_ptr_annot(S, fi, quiet): i64 {
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    if (_MONOMORPH_OK == 1) { if (_inst_conc0 != 0) { if (GFTP(S, fi) != 0) {
+                _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
+            } } }
+    _ret_ptr_base_bind(S, fi);
+    _ret_ptr_record(S, fi, quiet);
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return 0;
+}
+fn _ret_ptr_record(S, fi, quiet): i64 {
+    var w = _ret_ptr_owns(S, fi, quiet);     # 6.7.16: 0 = a redefined fn's earlier definition, read in pass 2
+    if (w == 1) { _ret_ptr_unk(S, fi); }     # 6.7.16: --syntax-only, a T this file does not declare
+    var psid = _ret_ptr_sid(S, quiet);       # 6.7.11: T bound to a struct too
+    if (psid > 0) { if (w == 1) {
+            if (_fn_rpsid == 0) { _fn_rpsid = alloc(131072 * 8); }
+            S64(_fn_rpsid + fi * 8, psid);
+        } }
+    var ed = _ek_of_ptr_ann(S, GTI(S));   # 6.7.8 (C2-3a): under the instance's binding, as the step
+    var vd = _ek_vd(S, GTI(S));           # 6.7.12: a `*V`'s vector (`_ps_vdesc`)
+    var pn = 0;                           # 6.7.13: a `**T`'s pointee (6.7.15: pass 2's, when unresolved in pass 1)
+    if (_ret_ptr_unres(S, quiet) == 0) { pn = _ek_pin(S, GTI(S)); }
+    var ps = _ptr_annot(S, 0 - 1, quiet);
+    SFRS(S, fi, 0 - 8);
+    if (w == 1) {
+        if (_fn_rps == 0) { _fn_rps = alloc(131072 * 8); }
+        S64(_fn_rps + fi * 8, _ps_pw(_ps_vw(_ps_word(ps, ed), vd), pn));
+    }
+    if (quiet == 0) { _cur_fn_ret_scalar = 0 - 8; }
+    return 0;
+}
+# ⛔ 6.7.16 — A REDEFINED FN'S `*T` RECORDS ARE THE WINNING DEFINITION'S. The step word (`_fn_rps`), the pointee struct
+# (`_fn_rpsid`) and the --syntax-only byte (`_fn_rpun`) were written only by a `: *T` return and never cleared, so with
+# `fn gp(): *H` then `fn gp(): i64` (the duplicate warning: the last definition wins) every call kept the first one's
+# `*H`: `gp() + 1` stepped sizeof(H) (124, not 101), `gp().b = 5` stored through the i64 (139), on every target. Pass 1
+# starts each redefinition's return afresh (`_ret_redef_reset`), so its last definition's return is what a call above
+# or between the definitions reads; pass 2 re-reads the definitions in order, so an earlier one records no `*T`
+# (`_ret_ptr_owns`: pass 1's last definition is fn flag 2048's GFDS) and only refuses its own T and types its own
+# returns. CHANGELOG [6.7.16]
+var _rpd_ti = 0 - 1;   # pass 2: the `fn` token of the definition PARSE_FN_DEF reads (`_fn_def_find`)
+fn _ret_ptr_owns(S, fi, quiet): i64 {
+    if (quiet == 1) { return 1; }
+    return 1 - _rdef_loser(S, fi);
+}
+# 1 = pass 2 is reading an EARLIER definition of the redefined fn `fi` (fn flag 2048): pass 1's last definition is
+# GFDS's, the one PARSE_FN_DEF reads `_rpd_ti`'s. A call reaches the last one, so its call facts stay the last's.
+fn _rdef_loser(S, fi): i64 {
+    if (_dyn_p2 == 0) { return 0; }      # pass 1 records every definition in order: the last one's stand
+    if (fi < 0) { return 0; }
+    if (_inst_name != 0) { return 0; }   # an instance is minted from the winning definition's tokens
+    if ((GFLG(S, fi) & 2048) == 0) { return 0; }
+    if (GFDS(S, fi) == _rpd_ti + 1) { return 0; }
+    return 1;
+}
+# Pass 1, a redefinition (fn flag 2048) about to record its return: the earlier definition's `*T` records and its
+# return word (GFRS: -8 for a `*T`, as pass 2 zeroes it at each definition) are dropped first.
+fn _ret_redef_reset(S, fi): i64 {
+    if ((GFLG(S, fi) & 2048) == 0) { return 0; }
+    if (fi < 0 || fi >= 131072) { return 0; }
+    if (_fn_rps != 0) { S64(_fn_rps + fi * 8, 0); }
+    if (_fn_rpsid != 0) { S64(_fn_rpsid + fi * 8, 0); }
+    if (_fn_rpun != 0) { store8(_fn_rpun + fi, 0); }
+    SFRS(S, fi, 0);
+    return 0;
+}
+# 6.6.17: and 0 for every other callee — the result is a plain value, whatever scale the last
+# argument left (`_call_scale_fix`).
+fn _call_ret_ps(S, fi): i64 {
+    SPSC(S, _fn_ret_ps(fi));
+    if (_bx_fn_is_bool(S, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool fn's call is a boolean value
+    return 0;
+}
+# Fn `fi`'s declared `: *T` step word (`_fn_rps`), 0 for any other return or an unresolved fn (-1):
+# a call's step, and (6.7.9) an operator fn's (EMIT_OP_DISPATCH).
+fn _fn_ret_ps(fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_fn_rps == 0) { return 0; }
+    return L64(_fn_rps + fi * 8);
+}
+# ⛔ 6.7.16 — --syntax-only, `gp().n = 5;` WITH `fn gp(): *Foo` DEFINED HERE AND `Foo` A SIBLING MODULE'S STRUCT was
+# "cannot assign to a field of a call result: the result is a temporary": gp resolves, but neither its struct by value
+# nor its `*T` struct is known here, so `_call_field` stepped over the call silently and the statement judged the `=`
+# as a by-value result's (6.7.13's D8 (a): a `: *T` result's field is an lvalue). Per fn, 1 = its return is `*T` (one
+# `*`) whose T is a name no type here resolves — `_tn_ptr_step`'s refusal, which --syntax-only keeps silent for a
+# sibling's type. Recorded at each `: *T` record (pass 1 for a forward call, pass 2 again), only under --syntax-only:
+# the byte table is allocated at its first 1, so a compile never allocates it. CHANGELOG [6.7.16]
+var _fn_rpun = 0;
+fn _ret_ptr_unk(S, fi): i64 {
+    if (_syntax_only == 0) { return 0; }
+    if (fi < 0 || fi >= 131072) { return 0; }
+    var k = GTI(S);
+    var u = 0;
+    if (TOKTYP(S, k) == 8) { if (TOKTYP(S, k + 1) == 2) { if (_tn_resolve_at(S, k + 1) == 0) { u = 1; } } }
+    if (_fn_rpun == 0) {
+        if (u == 0) { return 0; }
+        _fn_rpun = alloc(131072);
+    }
+    store8(_fn_rpun + fi, u);
+    return 0;
+}
+fn _fn_ret_unk(fi): i64 {
+    if (fi < 0 || fi >= 131072) { return 0; }
+    if (_fn_rpun == 0) { return 0; }
+    return load8(_fn_rpun + fi);
+}

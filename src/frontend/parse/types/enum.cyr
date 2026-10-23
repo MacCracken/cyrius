@@ -1,0 +1,410 @@
+# PARSER — types: enums (PARSE_ENUM_DEF): the member separators, names and type-parameter bounds.
+# ================================================================
+# Split from parse/types.cyr at 6.7.18, unchanged; parse.cyr includes parse/types/ in source order. CHANGELOG [6.7.18]
+
+# ⛔ 6.7.16 — ENUM MEMBERS ARE SEPARATED BY `;` OR `,` (the user's decision D12, 2026-10-19: refused by name).
+# After a member (cursor past it): a `;` / `,` is stepped; the enum's `}` / end of file is left (a trailing
+# separator stays valid); a name — the next member — is "expected ';' or ',' between enum members", at it, once
+# (pass 1 reports; the passes after it re-read the same tokens), and the member is read from there. `enum E { A B }`
+# compiled, B = 1 as `{ A, B }` gives (issues/archived/2026-10-18-enum-members-need-no-separator.md); 6.7.15's D1 (a) for a
+# struct literal, `_slit_sep`. Any other token keeps the member loop's own "expected identifier". The latch the
+# report sets is released at the enum's own `}` (`_tl_decl1`, as every pass-1 refusal of the declaration).
+# CHANGELOG [6.7.16]
+fn _enum_sep(S, emit_code): i64 {
+    var t = PEEKT(S);
+    if (t == 5 || t == 31) { STI(S, GTI(S) + 1); return 0; }
+    if (t != 2) { return 0; }
+    if (emit_code != 0) { return 0; }
+    ERR_MSG(S, "expected ';' or ',' between enum members", 40);
+    return 0;
+}
+
+# ⛔ 6.7.16 — STRUCT AND UNION FIELDS ARE SEPARATED BY `;` (the user's D69, 2026-10-20: refused by name). After a field
+# (cursor past it, its type read): a `;` is stepped; the `}` / end of file is left (`struct P { a; b }` stays valid); a
+# name — the next field — is "expected ';' between struct fields" ("... union fields"), at it, and the field is read
+# from there. `struct P { a b }`, `struct Q { x: i64 y: i64 }` and one field per line with no `;` compiled, each field
+# at the offset the separated form gives (issues/archived/2026-10-19-struct-and-union-fields-need-no-separator.md) — D12's enum
+# members (`_enum_sep`) and 6.7.15's D1 (a) struct literal elements (`_slit_sep`) for the third brace list. Once per
+# declaration: the report latches to the declaration's `}`, which releases it (`_tl_decl1`), so the next declaration
+# reports its own; a generic struct's instance re-reads its definition (`_inst_name`) and says nothing. Any other
+# token keeps the loop's own "expected identifier". `un` 1 = a union. CHANGELOG [6.7.16]
+fn _fld_sep(S, un): i64 {
+    var t = PEEKT(S);
+    if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+    if (t != 2) { return 0; }
+    if (_inst_name != 0) { return 0; }
+    if (un == 1) { ERR_MSG(S, "expected ';' between union fields", 33); }
+    else { ERR_MSG(S, "expected ';' between struct fields", 34); }
+    return 0;
+}
+
+# ⛔ 6.7.16 — the member at the cursor: its name, or -1 when it is not one ("expected identifier"). A TOKEN THAT CANNOT
+# NAME A MEMBER (`enum E { A 5 }`, a keyword an unclosed enum runs over) IS REPORTED AND REGISTERS NOTHING. It was
+# registered all the same, its VALUE read as a name offset — a number's (5, 6, 7) or a keyword's named whatever stood
+# there in the name pool — so `enum F { X 6 }` then `enum G { Y 7 }` warned "duplicate symbol 'X' redefined with
+# conflicting value", an unclosed enum one "duplicate symbol 'enum'" per keyword, and `enum E { A 5 }` declared a
+# constant named "E", which made a later `E.A` a field access on that "variable" (f16, s16). It keeps its position (the
+# next member's value) and its payload / `= value` are read as a member's (f16); the enum's name is entered as reported
+# (`_dl_refd_add`, once, in the registering parse, `emit_code` 0), so a use the refused body cannot answer (`E.B`, `E`)
+# stands down, counted (s16). The two lanes' halves met at the wave-4 integration. CHANGELOG [6.7.16]
+fn _enum_mem_name(S, emit_code, enoff): i64 {
+    if (PEEKT(S) == 2) { return PEEKV(S); }
+    ERR_EXPECT(S, 2);
+    if (emit_code == 0) { if (_dl_refd_at(S, enoff) == 0) { _dl_refd_add(S, enoff); } }
+    return 0 - 1;
+}
+
+# ⛔ 6.7.17 (the user's D101, 2026-10-22: "refuse it by name, as a fn's / struct's unknown bound") — AN ENUM'S
+# TYPE-PARAMETER BOUNDS ARE LOOKED UP: `enum E<T: Nope> { A }` compiled — the list was stepped (`_tpl_skip`) and no
+# bound read, where `struct B<T: Nope>` and `fn f<T: Nope>` are "unknown trait 'Nope' in the bound on type parameter
+# 'T'". Each parameter's bound is read and judged by the fn's own reader (`_ctp_bounds` + `_bnd_make`, as slot 0, so an
+# enum's third parameter — an enum may declare more than two — is judged too): the same words, once, at the bound, a
+# malformed bound (`T: 5`) or one with arguments (`T: Show<i64>`) its fn line too; pass 1 (`emit_code` 0), in source
+# order, the cursor put back. CYRIUS_MONOMORPH=0 reads no bound — an enum's as a fn's and a struct's. The block is not
+# kept: an enum binds nothing. Cursor on the `<`. CHANGELOG [6.7.17]
+fn _enum_tp_bounds(S): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (PEEKT(S) != 19) { return 0; }
+    var sv = GTI(S);
+    STI(S, GTI(S) + 1);
+    var go = 1;
+    while (go == 1) {
+        if (PEEKT(S) != 2) { go = 0; }
+        else {
+            var tn = PEEKV(S);
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) == 49) {
+                _ctp_n0 = 0; _ctp_n1 = 0; _ctp_bad = 0; _ctp_closed = 0;
+                _ctp_bounds(S, 0);
+                _bnd_make(S, tn + 1);
+                if (_ctp_closed == 1) { _ctp_closed = 0; go = 0; }
+            }
+            if (go == 1) {
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); } else { go = 0; }
+            }
+        }
+    }
+    STI(S, sv);
+    return 0;
+}
+
+# Parse: enum Name { A; B; C; } — registers variants as global constants
+# Called from BOTH pass 1 (register vars) and pass 2 (emit init code).
+# Pass 1: just register var names + sizes (no code)
+# Pass 2: emit mov rax, val; evstore for each variant
+fn PARSE_ENUM_DEF(S, emit_code): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var enoff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    # v5.8.21: enum Foo<T, E> { ... } — skip generic params, mirroring
+    # PARSE_STRUCT_DEF / PARSE_UNION_DEF. Type params are not yet
+    # bound to anything (mono-only); accepting the syntax unblocks
+    # `enum Result<T, E> { Ok(v); Err(e); }` source shape.
+    if (PEEKT(S) == 19) { _tpl_names(S, GTI(S)); }   # 6.7.17 (D3): `enum E<5>`
+    if (emit_code == 0) { _enum_tp_bounds(S); }      # 6.7.17 (D101): `enum E<T: Nope>`
+    _tpl_skip(S);   # 6.7.17: `enum E<T>> {` — the `>>` left for "expected '{'"
+    # v6.5.55 — `enum Name: stack { V(x); ... }` opts the declaration OUT of heap boxing.
+    # A payload variant of a stack enum returns its (tag, payload) in the multi-return
+    # register pair (rax = tag, rdx = payload) instead of a 16-byte `alloc`, and is read with
+    # the existing destructuring bind: `var t, v = Ok(5);`.
+    #
+    # ⭐ WHY `stack` AND NOT A NEW KEYWORD. `stack` is token 111, reserved since v5.5.36 for
+    # `stack var buf[N]` ("live on the call stack rather than being hoisted"), which is the
+    # same meaning one level up. Reusing it means no lexer change and no chance of colliding
+    # with an identifier — adding a `value` keyword would have silently broken any program
+    # using `value` as a name.
+    #
+    # ⚠ OPT-IN ON PURPOSE. The boxed form is the DOCUMENTED representation: the guide spells
+    # `Ok(42)` as "16-byte heap alloc — tag at +0, payload at +8", `?` desugars to
+    # `load64(rax + 8)`, and lib/result.cyr's is_ok/result_unwrap plus ~300 ecosystem sites
+    # read those offsets directly. Flipping the default would break all of them SILENTLY.
+    var is_stack_enum = 0;
+    if (PEEKT(S) == 49) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 111) { ERR_EXPECT(S, 111); }
+        STI(S, GTI(S) + 1);
+        is_stack_enum = 1;
+    }
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    STI(S, GTI(S) + 1);
+    # v5.8.22 bite #1 — bump enum_count + capture eid for variant
+    # tagging. Pass 1 only (emit_code == 0); pass 2 reuses the
+    # same eid implicitly via the variant lookup at match-check
+    # time. eid is 1-based so 0 in var_enum_id[] cleanly means
+    # "not a variant".
+    var ee_eid = 0;
+    if (emit_code == 0) {
+        ee_eid = GENUMC(S) + 1;
+        SENUMC(S, ee_eid);
+        SENUMNM(S, ee_eid - 1, enoff);
+    }
+    var val = 0;
+    var ego = 1;
+    while (ego == 1) {
+        if (PEEKT(S) == 14) { ego = 0; }
+        # v6.5.19: EOF guard. Without it `enum` (FOUR BYTES) SIGSEGV'd: the loop's only
+        # exit was `}`, so at EOF it re-registered the same member forever, and the
+        # per-member write walked the 1024-entry enum-const table off its region at
+        # ~1027 iterations. The v6.4.62 watchdog could not catch it — that one detects a
+        # STALL, and this loop ADVANCES GTI every iteration. See the include-length ifdef bug.
+        elif (PEEKT(S) == 12) { ego = 0; }
+        else {
+            var vnoff = _enum_mem_name(S, emit_code, enoff);
+            var vti = GTI(S);
+            STI(S, GTI(S) + 1);
+            # Check for constructor syntax: Variant(param) | Variant(a, b, ...)
+            # v5.8.21 bite: count arity by consuming param idents until ')'.
+            # Comma (token 31) separates; ident (token 2) bumps arity.
+            # v5.8.23 bite #1 — empty parens `Foo()` is now a TRUE
+            # nullary tagged variant: alloc(8), tag at +0, no payload,
+            # no params consumed. This is the migration shape for
+            # `enum Option { None(); Some(v); }` — the paren-consistent
+            # form that subsumes lib/tagged.cyr's hand-rolled
+            # `fn None() { return tagged_new(NONE, 0); }`. Pre-v5.8.23
+            # empty parens collapsed to arity-1 (16-byte alloc with
+            # garbage payload) which was a no-real-consumer landmine.
+            var has_ctor = 0;
+            var ctor_arity = 0;
+            if (PEEKT(S) == 10) {
+                has_ctor = 1;
+                STI(S, GTI(S) + 1);
+                while (PEEKT(S) != 11) {
+                    if (PEEKT(S) == 12) { break; }   # v6.4.61: EOF guard (multi-error recovery safety)
+                    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                    else {
+                        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+                        STI(S, GTI(S) + 1);
+                        ctor_arity = ctor_arity + 1;
+                    }
+                }
+                STI(S, GTI(S) + 1);
+            }
+            if (PEEKT(S) == 4) {
+                STI(S, GTI(S) + 1);
+                # 6.7.2 (B1): `[-]N` as before, or an integer const expression (a const, an earlier
+                # enum constant, sizeof, a const fn call) — evaluated once, replayed by token.
+                val = _enum_val(S);
+            }
+            if (vnoff < 0) { }   # 6.7.16: a refused member is a position, nothing registered or emitted
+            elif (emit_code == 2) {
+                # Pass 2 function section: emit constructor bodies only
+                if (has_ctor == 1) {
+                    # v6.5.55 — the pair carries exactly tag + one payload. Reject anything
+                    # else HERE rather than emitting a ctor that silently drops fields.
+                    # v6.5.67 — arity 0 is now allowed: a NULLARY variant has no payload, so it
+                    # needs no second register and simply returns its tag. Rejecting it blocked
+                    # the one type this whole arc exists to migrate — `enum Option { None(); Some(v); }`
+                    # could not be declared `: stack` at all ("stack enum variant must take exactly
+                    # 1 field"), which no roadmap line mentioned. Arity 2+ still cannot fit the
+                    # pair and is still refused, with the bound now stated in the message.
+                    if (is_stack_enum == 1) {
+                        if (ctor_arity > 1) { ERR_MSG(S, "stack enum variant takes 0 or 1 fields (the pair holds tag + one payload)", 73); }
+                    }
+                    # v5.11.65 (the compiler heap guard-page gap): bound NPOS_GUARD by actual
+                    # variant-name length; was magic-256.
+                    var _vnlen2 = 0; while (load8(S + 0xEC00000 + vnoff + _vnlen2) != 0) { _vnlen2 = _vnlen2 + 1; }
+                    NPOS_GUARD(S, _vnlen2 + 1);
+                    var cwp2 = GNPOS(S);
+                    var cnoff2 = cwp2;
+                    var cri2 = 0;
+                    var crc2 = load8(S + 0xEC00000 + vnoff + cri2);
+                    while (crc2 != 0) { store8(S + 0xEC00000 + cwp2, crc2); cwp2 = cwp2 + 1; cri2 = cri2 + 1; crc2 = load8(S + 0xEC00000 + vnoff + cri2); }
+                    store8(S + 0xEC00000 + cwp2, 0); cwp2 = cwp2 + 1;
+                    SNPOS(S, cwp2);
+                    var cfi = FINDFN(S, cnoff2);
+                    if (cfi >= 0) {
+                        # v6.5.67 — MARK A STACK-ENUM CONSTRUCTOR AS PAIR-RETURNING (fn flag 256).
+                        #
+                        # v6.5.55 gave these constructors a two-register return (rax = tag,
+                        # rdx = payload) and nothing recorded that fact anywhere, so every consumer
+                        # that binds the result to ONE variable silently kept the tag and dropped
+                        # the payload — no diagnostic, exit 0. Measured: a fn that binds
+                        # `var r = inner();` and later `return r;` hands back whatever the last
+                        # 3-arg call left in rdx (probe: payload 9 where 3 was correct). That is
+                        # the v6.5.15 class — "a failed open reported as success" — on the payload
+                        # instead of the tag, and the `.55` corpus cannot see it because every
+                        # stack-enum test destructures at the call site.
+                        #
+                        # The flag lets the binding sites REFUSE a lossy context instead of losing
+                        # data, and it propagates through `return` so a forwarding wrapper is
+                        # flagged too.
+                        if (is_stack_enum == 1) { if (ctor_arity == 1) {
+                                SFLG(S, cfi, GFLG(S, cfi) | 256);
+                                # v6.6.0 — a new pair-returning constructor exists, so the
+                                # forward-reference propagation in parse/pair_scan.cyr must run again: anything
+                                # it already decided was computed without knowing about this one.
+                                _pair_prescan_done = 0;
+                            } }
+                        # 6.6.9 — a NULLARY stack variant (fn flag 512). It returns the tag alone,
+                        # which is the whole value, so `return None();` in a fn that returns
+                        # `Some(v)` elsewhere is a legal return — but the mixed-return warning
+                        # (parse/pair_check.cyr) could only see flag 256 and called it a dropped tag.
+                        # CHANGELOG [6.6.9]
+                        if (is_stack_enum == 1) { if (ctor_arity == 0) { SFLG(S, cfi, GFLG(S, cfi) | 512); } }
+                        S64(_fnt_offsets + cfi * 8, GCP(S));
+                        # v6.2.41 — register the constructor's REAL arity (was a
+                        # hardcoded 1 — a dead sentinel; _fnt_params' only reader
+                        # is the inline-replay path, which ctors never take). The
+                        # accurate count lets the call-site arity check validate
+                        # multi-field variants (Pair/Triple) instead of exempting
+                        # them. Byte-identical: arity-1 ctors are unchanged, and
+                        # arity-2+ differ only in a value no codegen path reads.
+                        S64(_fnt_params + cfi * 8, ctor_arity);
+                        EFNPRO(S);
+                        var ctor_frame = ESUBRSP(S);
+                        # v5.8.21 bite: store each incoming param into its
+                        # own local slot 0..arity-1. ESTOREPARM routes through
+                        # the per-target ABI dispatch — args 0-5 (SysV/aarch64)
+                        # / 0-3 (Win64) from registers, the rest from the stack.
+                        # ⛔ 6.6.6 — the last argument is the caller's int-class
+                        # TOTAL, which SysV and aarch64 count stack slots DOWN
+                        # from. It was a literal 0, so a 7+-field variant read
+                        # field 7 from the ctor's OWN frame slot 4 (x86: `g` held
+                        # `e`) and aarch64 OR-ed a negative offset into its `ldr`
+                        # encoding (SIGILL). Constructor params are all int-class,
+                        # one slot each, no retptr: the total is the arity.
+                        # CHANGELOG [6.6.6]
+                        var ctor_pi = 0;
+                        while (ctor_pi < ctor_arity) {
+                            ESTOREPARM(S, ctor_pi, ctor_pi, ctor_arity);
+                            ctor_pi = ctor_pi + 1;
+                        }
+                        if (is_stack_enum == 1) {
+                            # v6.5.55 — the whole point: NO alloc. Hand back (tag, payload) in
+                            # the multi-return pair the language already has. Copy semantics is
+                            # what makes this sound where the v6.5.15 attempt was not: each
+                            # binding is its own copy, so two values built at one call site
+                            # cannot alias, and nothing points at storage that can be reused.
+                            # v6.5.67 — a NULLARY variant carries no payload: emit the tag alone
+                            # and leave rdx untouched. It is therefore NOT pair-returning, so it
+                            # does not get flag 256 and a single-variable bind of it stays legal —
+                            # which is exactly right, since there is nothing to lose.
+                            if (ctor_arity == 1) {
+                                EFLLOAD(S, 0);
+                                EMOVRDXRAX(S);
+                            }
+                            EMOVI(S, val);
+                            EPATCHFRAME(S, ctor_frame, 16);
+                            EFNEPI(S);
+                        } else {
+                            EMOVI(S, 8 + ctor_arity * 8); EPUSHR(S);
+                            ECALLPOPS(S, 1);
+                            NPOS_GUARD(S, 8);
+                            var awnp = GNPOS(S);
+                            store8(S + 0xEC00000 + awnp, 97); store8(S + 0xEC00000 + awnp + 1, 108);
+                            store8(S + 0xEC00000 + awnp + 2, 108); store8(S + 0xEC00000 + awnp + 3, 111);
+                            store8(S + 0xEC00000 + awnp + 4, 99); store8(S + 0xEC00000 + awnp + 5, 0);
+                            SNPOS(S, awnp + 6);
+                            var afi = FINDFN(S, awnp);
+                            if (afi < 0) { afi = REGFN(S, awnp); }
+                            var afoff = L64(_fnt_offsets + afi * 8);
+                            if (afoff >= 0) { ECALLTO(S, afoff); } else { ECALLFIX(S, afi); }
+                            ECALLCLEAN(S, 1);
+                            # v5.8.21 bite: alloc-ptr lives in slot `arity`
+                            # (slots 0..arity-1 hold params). Tag at +0,
+                            # payloads at +8, +16, ... For arity=1 this
+                            # produces byte-identical output to the prior
+                            # hardcoded path: slot 1, EMOVI(8), one store.
+                            EFLSTORE(S, ctor_arity);
+                            EFLLOAD(S, ctor_arity); EPUSHR(S); EMOVI(S, val); EPOPC(S); ESTORE64(S);
+                            var ctor_si = 0;
+                            while (ctor_si < ctor_arity) {
+                                EFLLOAD(S, ctor_arity); EPUSHR(S); EMOVI(S, 8 + ctor_si * 8); EMOVCA(S); EPOPR(S); EADDR(S);
+                                EPUSHR(S); EFLLOAD(S, ctor_si); EPOPC(S); ESTORE64(S);
+                                ctor_si = ctor_si + 1;
+                            }
+                            EPATCHFRAME(S, ctor_frame, (ctor_arity + 1) * 16);
+                            EFLLOAD(S, ctor_arity);
+                            EFNEPI(S);
+                        }
+                    }
+                }
+            }
+            elif (emit_code == 0) {
+                # Pass 1: register variant as global var
+                var vcnt = GVCNT(S);
+                # v6.2.11: flag a conflicting-value redefinition of this name
+                # (issue 2026-06-14) BEFORE registering it, so the lookup sees only
+                # prior defs. Pass-1-only (emit_code==0) → no double-warn.
+                CHKDUPVAL(S, vnoff, val);
+                CHK_ENUM_OVER_VAR(S, vnoff, val);   # 6.6.9: the computed-var prior CHKDUPVAL cannot compare
+                S64(_varn_base + vcnt * 8, vnoff);
+                S64(_vars_base + vcnt * 8, 8);
+                # v5.5.2: record enum variant's compile-time value in the
+                # enum_const_val table (_vecv_base, a grown var-family table
+                # indexed by var slot); SVECP marks the slot as an enum const.
+                # PARSE_FACTOR reads this when resolving a bare/qualified
+                # identifier and folds to EMOVI + _cfo=1 so callers like
+                # the syscall-reroute dispatch see sc_num correctly.
+                # v6.5.36: RAW value + an OUT-OF-BAND presence flag. The old
+                # `(1 << 63) | val` tag could not represent a value with bit 62 or 63
+                # set, and silently corrupted every enum constant >= 2^62 for five
+                # releases. See util.cyr's GVECP/SVECP note.
+                # 6.6.8: at EVERY var index — the old `vcnt < 1024` guard left a late
+                # enum unfolded (no array size, no dup warning, no Mach-O syscall
+                # reroute). CHANGELOG [6.6.8]
+                S64(_vecv_base + vcnt * 8, val);
+                SVECP(S, vcnt, 1);
+                SVDECL(S, vcnt, vti);   # 6.7.14: where it was declared (the native-region warning)
+                # v5.8.22 bite #1 — tag variant with parent enum-id +
+                # bump per-enum variant count. Both keyed for the future
+                # exhaustive-match consumer; no read site yet so this
+                # ships byte-identical compiler output (DCE keeps the
+                # writer fns alive via this call).
+                SVENUMID(S, vcnt, ee_eid);
+                SENUMVCNT(S, ee_eid - 1, GENUMVCNT(S, ee_eid - 1) + 1);
+                SVCNT(S, vcnt + 1);
+                # Register constructor function if has payload
+                if (has_ctor == 1) {
+                    # 6.6.20: the constructor is a fn under the BARE variant name, so a payload
+                    # variant `mulh64(a)` / `fncall1(a)` / `sizeof(a)` declares a reserved
+                    # intrinsic (the call lowers to the intrinsic, or SIGSEGVs). A unit variant
+                    # declares no fn and stays accepted (`E.mulh64`). CHANGELOG [6.6.20]
+                    _RSV_INTRINSIC_DECL(S, vnoff, vti, 0);
+                    # v5.11.65 (the compiler heap guard-page gap): bound NPOS_GUARD by actual
+                    # variant-name length; was magic-256.
+                    var _vnlen1 = 0; while (load8(S + 0xEC00000 + vnoff + _vnlen1) != 0) { _vnlen1 = _vnlen1 + 1; }
+                    NPOS_GUARD(S, _vnlen1 + 1);
+                    var cwp = GNPOS(S);
+                    var cnoff = cwp;
+                    var cri = 0;
+                    var crc = load8(S + 0xEC00000 + vnoff + cri);
+                    while (crc != 0) { store8(S + 0xEC00000 + cwp, crc); cwp = cwp + 1; cri = cri + 1; crc = load8(S + 0xEC00000 + vnoff + cri); }
+                    store8(S + 0xEC00000 + cwp, 0); cwp = cwp + 1;
+                    SNPOS(S, cwp);
+                    REGFN(S, cnoff);
+                }
+            } else {
+                # Pass 2 enum init (emit_code == 1): just set constant values
+                # 6.6.6: only into an ENUM constant's slot. When a declaration-zone `var`
+                # redeclares the name, FINDVAR (last match) returns the var, which already
+                # holds its own value from program start. This store runs before every
+                # deferred initializer, so it overwrote that value (`enum E { K = 5; }
+                # var K = 7;` read 5 under "last definition wins"). CHANGELOG [6.6.6]
+                #
+                # `_findvar_core`, not FINDVAR: this looks up the slot THIS enum member
+                # registered in pass 1 — it is the declaration's own second pass, not a
+                # reference the source spells — so the cross-file `private` check must not
+                # run. It did, and a `private` file whose `enum E { X = 2; }` shared a name
+                # with another `private` file's `var X = 5;` was refused at its OWN member
+                # line (`error: lib/a.cyr:2:24: 'X' is private to its file`, rc 1, no
+                # binary) even though neither file mentions the other's symbol. Fourth
+                # member of the same family as _findvar_core's three. CHANGELOG [6.6.6]
+                var idx = _findvar_core(S, vnoff);
+                if (idx >= 0) { if (GVENUMID(S, idx) != 0) { EMOVI(S, val); EVSTORE(S, idx); } }
+            }
+            val = val + 1;
+            # v5.8.21: either ';' (5) or ',' (31) between variants (`enum Result<T,E> { Ok(T), Err(E) }`
+            # and the historical ';' form); 6.7.16 (D12): one of them is required.
+            _enum_sep(S, emit_code);
+        }
+    }
+    # v6.5.19: the loop can now exit on EOF as well as on `}` (the include-length ifdef bug guard above),
+    # so the closing brace has to be VERIFIED rather than assumed. Without this,
+    # `enum E {` truncated mid-body exited 0 and cycc emitted a binary for a file that
+    # simply stops — trading a SIGSEGV for silent acceptance, which is worse.
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    STI(S, GTI(S) + 1);
+    return 0;
+}

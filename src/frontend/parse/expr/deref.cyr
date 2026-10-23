@@ -1,0 +1,448 @@
+# PARSER — expr: `*p` reads (`_deref_*`, `_dlo_*`), `&` addresses (`_amp_*`), narrow global loads and the syscall arity
+# warning.
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# The pointer-scale word with its element kind only when the kind is the value's own (the stamp,
+# `_PK_MARK`); otherwise the step alone. 6.7.8 (C2-5)
+fn _pk_word(S): i64 {
+    var w = GPSC(S);
+    if (_PK_IS(S) == 1) { if (_pk_w == w) { return w; } }
+    return _ps_step(w);
+}
+# The PARSE_FACTOR wrapper's end (the factor began at token ti0): vouch for the word's kind when
+# its own producer wrote it last — a bare name (its slot / capture / global mark), a field whose
+# declaration is that `*T` (`_sub_word`: the load ended at the cursor), a call whose callee — or
+# method — declares it. `mk(q).n`, `-q` and `~q` are not vouched for (6.7.9: they keep no word). `(E)`
+# carries E's own stamp across the `)` (`_paren_post`).
+fn _pk_post(S, ti0): i64 {
+    var w = GPSC(S);
+    if (_ps_step(w) <= 0) { return 0; }
+    if ((w >> 40) == 0) { return 0; }   # no element kind (6.7.12: nor vector, `_ps_vdesc`): nothing to vouch for
+    if (GTI(S) == ti0 + 1) { if (TOKTYP(S, ti0) == 2) { return _PK_MARK(S, w); } }
+    var h = _sub_how(S, ti0);
+    if (h == 0) { return 0; }
+    if (h == 2) { if (TOKTYP(S, _sub_open(S) - 1) != 2) {   # `-(q)` / `~(q)` end in `)` too: a call is
+            if (_sub_callee(S) < 0) { if (_pk_icall(S) == 0) { return 0; } }   # `name(`, `.name(`, `name<..>(`
+        } }
+    if (_sub_word(S, h) != w) { return 0; }
+    return _PK_MARK(S, w);
+}
+# 1 = the call that ends at the cursor is `callptr(..)` whose callee is a known `&f` (`_icall_scalar` recorded its
+# token): `_sub_word` answers the recorded word. 6.7.15 (D31)
+fn _pk_icall(S): i64 {
+    if (_sub_open(S) - 1 == _icall_ps_beg) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.8 (C2-5) — `*p` AT THE ELEMENT'S WIDTH (the user's decision, 2026-10-10: "`*p`, `*p = v`,
+# `*p OP= v` through a narrow `*T` (`*u8`..`*u32`, `*i8`..`*i32`, `*f32` — f32 rounding included)
+# read and write at the element's width, the same rule `p[i]` gets"). The element of a `*expr`
+# whose operand is a narrow `*T` — a name, a `*T` field, a call declared `: *T`, `p ± n`, `n + p`,
+# a parenthesised one — as its descriptor (step 1, 2 or 4; an integer or an f32), else 0: the
+# operand is a word address (untyped, `*i64` / `*u64` / `*f64` / `*bool`, a struct, a pointer).
+fn _deref_ed(S): i64 {
+    var w = _pk_word(S);
+    var st = _ps_step(w);
+    if (st < 1) { return 0; }
+    if (st > 4) { return 0; }
+    var ed = (w >> 40) & 0xFF;
+    if (_ek_w(ed) != st) { return 0; }
+    return ed;
+}
+# ⛔ 6.7.15 — `*pu` THROUGH A TYPED `*u128` IS REFUSED BY NAME, as `pu[0]` is (the user's D20, 2026-10-18;
+# issues/archived/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md): its element does not fit one register, and
+# the dereference read and wrote the low 8 bytes, silently — `var x: u128 = *pa;` dropped the high word, `*pa == a`
+# compared the low word, an if-expression branch was the low word, `*pa = b` left the old high word. The operand of
+# the `*` at `d` just parsed, its step word a `*u128`'s (step 16, element width 16 — the kind `_pk_word` vouches for: a
+# name, a `*u128` field, a call or method declared `: *u128`, `p + n`, `**pp` of a `**u128`): refused at the `*`, rax
+# 0 — 1, for the reader (`_deref_read`) and the store (`_deref_store`) alike. An untyped pointer (`var p = &b;` steps
+# 1) and a `**u128`'s `*pp` (a pointer) are not one. CHANGELOG [6.7.15]
+fn _deref_u128(S, d): i64 {
+    var w = _pk_word(S);
+    if (_ps_step(w) != 16) { return 0; }
+    if (_ek_w((w >> 40) & 0xFF) != 16) { return 0; }
+    _deref_u128_err(S, d);
+    EMOVI(S, 0);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    return 1;
+}
+# "cannot dereference 'pu': ..." at the `*` (token `d`), the operand named by its last name (`*w.pu` 'pu', `*gpu()`
+# 'gpu') behind the `*`s it opens with (`**pp` '*pp', as 6.7.15's `**pp OP= v` refusal spells it) — `_psub_ed`'s u128
+# words. Once at the token (a generic's instances parse it again); the panic latch set, as the subscript's is —
+# in sync, the read and the store parse on (6.7.16).
+fn _deref_u128_err(S, d): i64 {
+    if (_panic == 1) { return 0; }
+    _refuse_in_sync(S);
+    var nm = _hl_lastnm(S, d + 1, GTI(S), TOKVAL(S, d + 1));
+    var star = _sval_stars(S, d + 1);
+    if (_derr_seen(d, "_deref_u128_err", nm * 31 + star, 1) == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, d);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot dereference '");
+    _dst_spell(S, nm, star);
+    PRSTR("': a u128 element does not fit one register - use load64/store64 on its two halves\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# `*expr` — the dereference: the operand's element at its width when it is a narrow `*T`
+# (`_esub_load`, as `p[0]` reads it: sign- / zero-extended, an f32 typed), a struct under 8 B byte-exact
+# (`_deref_small`, 6.7.11), else load64 — an untyped word. 6.7.8 (C2-5): before, every `*p` read 8
+# bytes. CHANGELOG [6.7.8]
+fn _deref_read(S): i64 {
+    var d = GTI(S);
+    STI(S, GTI(S) + 1);
+    PARSE_FACTOR(S);
+    if (_deref_u128(S, d) == 1) { return 0; }   # 6.7.15 (D20): refused by name, as `pu[0]` is
+    var ed = _deref_ed(S);
+    if (ed == 0) { ed = _amp_ew(S, d + 1, GTI(S)); }   # 6.7.16 (D21): `*(&x)` of a narrow x is x, at its width
+    if (ed != 0) { return _esub_load(S, ed); }
+    var ow = _pk_word(S);
+    var iw = _pp_inner(S, ow);   # 6.7.13 (D9 (a)): `*pp` of a `**T` is a `*T`
+    var aw = 0;
+    if (iw == 0) { aw = _amp_pw(S, d + 1, GTI(S)); }   # 6.7.15 (D21 A): `*(&p)` is p, its type kept
+    var vd = _dop_vd(S, d + 1, GTI(S));   # 6.7.14: a `*V`'s vector, for an if-expression branch
+    var pk = _dlo_park(S, d);   # 6.7.10: an operator's left operand, maybe
+    if (pk == 0) { pk = _dvi_park(S, d, vd); }   # 6.7.14 (D36): an untyped declaration's `*p` of a `*V`
+    if (_deref_small(S, d) == 0) { ELOAD64(S); }
+    SPSC(S, iw);
+    if (iw > 0) {
+        _PK_MARK(S, iw);   # the pointee's word is this value's own (`_pk_word`)
+        _ppd_note(S, d, ow);   # 6.7.13: and its struct, for `**pps`
+    }
+    if (aw != 0) { SPSC(S, aw); _PK_MARK(S, aw); }
+    if (vd != 0) {
+        _dvd_note(S, d);
+        _dro_vnote(S, d, vd);   # 6.7.14: into a pointer of another kind (`_sarg_vdo`)
+    }
+    if (pk == 1) { _dlo_note(S, d); }
+    return 0;
+}
+# 6.7.14 — the dereference at `d` (its operand just parsed) that `_sarg_vdo` watches (`_dro_vo`), its operand naming
+# the vector `vd` (`_dop_vd`: what `_dlo_vec` reads for a `*V` parameter) and ending the argument (`,` / `)` next — no
+# operator: `*pb + 1` is an operator's operand): noted (`_dro_vod`, `_dro_vend`) for the refusal; nothing is emitted.
+fn _dro_vnote(S, d, vd): i64 {
+    if (d != _dro_vo) { return 0; }
+    var t = TOKTYP(S, GTI(S));
+    if (t != 31) { if (t != 11) { return 0; } }
+    _dro_vod = vd;
+    _dro_vend = GTI(S);
+    return 0;
+}
+# ⛔ 6.7.14 — A VECTOR DEREFERENCE IS A VECTOR VALUE AS AN IF-EXPRESSION BRANCH (6.7.13's D34: `*pv` of a `*V` is the
+# vector), so `if (c) { *pa } else { *pb }` is refused as `{ a } else { b }` is — it compiled to lane 0's word, the
+# value `_deref_read` loads (issues/archived/2026-10-15-vector-dereference-as-if-expression-branch-is-lane-zero.md). The load
+# replaces the operand's step word, so the dereference at `d` whose operand names a vector (`_dop_vd`: its step word,
+# or `*&w`) notes its span and the code pointer after it; `_ie_struct_sid` matches a whole `* E` branch against it
+# (`_dvd_whole`: nothing emitted since). CHANGELOG [6.7.14]
+var _dvd_beg = 0 - 1;   # the dereference's `*`
+var _dvd_end = 0 - 1;   # the token after its operand
+var _dvd_cp = 0 - 1;    # the code pointer after its load
+fn _dvd_note(S, d): i64 {
+    _dvd_beg = d;
+    _dvd_end = GTI(S);
+    _dvd_cp = GCP(S);
+    return 0;
+}
+# 1 = [a, b) is exactly the vector dereference `_dvd_note` recorded last, nothing emitted since.
+fn _dvd_whole(S, a, b): i64 {
+    if (_dvd_cp != GCP(S)) { return 0; }
+    if (a != _dvd_beg) { return 0; }
+    if (b != _dvd_end) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.11 — A DEREFERENCE OF A STRUCT UNDER 8 BYTES READS THE STRUCT, NOT A WORD (`*p` is a struct
+# value, 6.7.10 decision 6). Its load read 8 bytes from `p` whatever the struct's size, so a global
+# initialised or assigned from `*p`, a local assigned from it, `f(*p)`, `return *p` and `*p + a` read up
+# to 7 bytes past the object — SIGSEGV when it ends a mapping, else foreign bytes in the word's padding.
+# The operand at `d + 1` (rax = the pointer) typed `*T` by the compiler's own typing (`_hl_dpsid`), T a
+# struct of 1..7 bytes (its step): rax becomes T read byte-exact, its padding 0 (`_hl_pval_ra`), 1; else
+# 0 (the word load). CHANGELOG [6.7.11]
+# A zero-size T (its step 8) reads no byte: rax 0, 1 — its word load read 8 bytes past the object.
+# CHANGELOG [6.7.13]
+fn _deref_small(S, d): i64 {
+    var st = _ps_step(GPSC(S));
+    if (st < 1) { return 0; }
+    if (st > 8) { return 0; }
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (sid == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    var sz = STRUCTSZ(S, sid - 1);
+    if (_hl_dstep(st, sz) == 0) { return 0; }
+    if (sz == 0) { EMOVI(S, 0); return 1; }
+    if (sz >= 8) { return 0; }   # 6.7.13: `*(&p)` of a struct over 8 B steps 1
+    _hl_pval_ra(S, sid);
+    return 1;
+}
+# ⛔ 6.7.10 — A `*T` DEREFERENCE AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
+# 2026-10-12): `*p + a`, `(*p) + a`, `*gp() * a`, `*w.p - a` with a `*S` operand dispatch `S_add` (etc.)
+# at every size, as a struct variable does — `*p` is a struct value (decision 6). It added the first
+# word, silently. The cursor past the operand of the `*` at `d`, rax = the pointer: when the operand is
+# typed `*S` by the compiler's own typing (`_hl_dpsid`, its step the struct's size) and an overloadable
+# operator follows (past the parentheses wrapping the dereference), the pointer is parked in a hidden
+# temp — the left operand's address, or its struct, is read from it (`_opd_lhs_sv`). 1 = parked. A
+# dereference no operator follows is untouched, unless it starts an address-passed argument or right
+# operand (`_dro_want`, ops-5: its pointer is passed when it is the whole of it). CHANGELOG [6.7.10]
+fn _dlo_park(S, d): i64 {
+    if (_dlo_opnext(S, d) == 0) { if (d != _dro_want) { return 0; } }
+    if (d == _dro_vt) { if (_dlo_vec(S, d) == 1) { return 1; } }   # 6.7.12 (D27)
+    var sid = _hl_dpsid(S, d + 1, GTI(S));
+    if (sid <= 0) { if (d == _dro_want) { sid = _dlo_ppsid(S, d); } }   # 6.7.13: `take(**pps)`
+    if (sid <= 0) { return 0; }
+    if (sid == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    if (_hl_dstep(_ps_step(GPSC(S)), STRUCTSZ(S, sid - 1)) == 0) { return 0; }   # 6.7.13: zero-size steps 8, `&x` 1
+    _dlo_sid = sid;
+    _dlo_h = _HTEMP(S);
+    _HTSTORE(S, _dlo_h);
+    return 1;
+}
+# 6.7.14 (D36) — the dereference at `d` that an untyped declaration watches (`_dvi_want`, `_dvi_arm` in
+# parse/fn/call_agg.cyr), its operand naming a value-form vector `vd` (`_dop_vd`) and ending the initialiser (`;`, or
+# the `)` of the wrap the declaration stepped into): the pointer parked as `_dlo_vec` parks an argument's, for
+# `_dvi_take`. 1 = parked.
+fn _dvi_park(S, d, vd): i64 {
+    if (d != _dvi_want) { return 0; }
+    if (vd == 0) { return 0; }
+    if (_vrcv_vec(S, 0 - vd) == 0) { return 0; }
+    var t = TOKTYP(S, GTI(S));
+    if (t != 5) { if (t != 11) { return 0; } }
+    _dvi_got = d;
+    _dlo_sid = vd;
+    _dlo_h = _HTEMP(S);
+    _HTSTORE(S, _dlo_h);
+    return 1;
+}
+# 6.7.12 (D27) — the dereference at `d` that starts an argument to a `*V` parameter (`_sarg_deref`,
+# parse/fn/call_args.cyr), its operand typed `*V` (the step word's vector, `_ps_vdesc`) and ending the argument (`,` or
+# `)` next — no operator: a parked vector is no left operand `_opd_lst` may dispatch): the pointer parked as a struct's
+# is, `_dlo_sid` the vector's descriptor (>= 2048, so `_dro_check` compares vector types). 1 = parked.
+fn _dlo_vec(S, d): i64 {
+    var t = TOKTYP(S, GTI(S));
+    if (t != 31) { if (t != 11) { return 0; } }
+    var vd = _dop_vd(S, d + 1, GTI(S));   # 6.7.13: `*&b` too
+    if (vd == 0) { return 0; }
+    _dlo_sid = vd;
+    _dlo_h = _HTEMP(S);
+    _HTSTORE(S, _dlo_h);
+    return 1;
+}
+# The vector a dereference's operand [a, e) — just parsed, GPSC its word — points at: its step word's (6.7.12), or
+# (6.7.13) the vector an address-of names (`_amp_vd`); its descriptor (>= 2048), else 0.
+fn _dop_vd(S, a, e): i64 {
+    var vd = _ps_vdesc(_pk_word(S));
+    if (vd != 0) { return vd; }
+    return _amp_vd(S, a, e);
+}
+# ⛔ 6.7.13 — A DEREFERENCE OF AN ADDRESS-OF A VECTOR IS THAT VECTOR: `rd(*&b)` / `rd(*(&b))` into a `*V` parameter
+# pushed lane 0 as the address (139 on x86_64 and aarch64, a cx guest fault, PE 5) — `&b` carries no step word (`&x +
+# n` steps bytes, 6.7.11 D15), so `_dlo_vec` found no vector and the word the dereference loaded was pushed. The source
+# says `b`, as `*(&p)` of a struct is p (6.7.13): the dereference consumers read the operand [a, e) — exactly `& NAME`
+# inside any balanced parentheses, NAME a value-form vector local or parameter, a closure's captured vector or a vector
+# global — as a `*V` of NAME's type; `&b` itself is unchanged. Its descriptor (>= 2048), else 0. CHANGELOG [6.7.13]
+fn _amp_vd(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    return 0 - _name_vty(S, TOKVAL(S, b + 1));
+}
+# ⛔ 6.7.15 (D21 A, the user's decision, 2026-10-18) — A DEREFERENCE OF THE ADDRESS OF A TYPED POINTER IS THAT POINTER,
+# ITS TYPE KEPT: `*(&p)` with `p: *f64v2` is p, so `**(&p)` is the vector p points at (`lanes(**(&p))`, `return
+# **(&p);`, `var v = **(&p);` — they were refused, or bound one word and a stack word), `*(&ps)` of a `p: *Ps` is ps
+# (`(*(&ps)).y` reads its field), and through a narrow `p: *u8` `**(&p)` reads the byte `*p` reads (it read a word).
+# `&p` itself is unchanged — a byte pointer to p's slot (6.7.11's D15), so `*(&p + 0)` is still a byte — and only a
+# dereference of exactly `& NAME` recovers NAME's type, as 6.7.13 recovers a vector's (`_amp_vd`) and a struct's
+# (`_hl_dpsid`). The operand [a, e) exactly `& NAME` inside any balanced parentheses, NAME a typed-pointer local,
+# parameter, capture or global: NAME's step word (`_hl_name_pw`), else 0. CHANGELOG [6.7.15]
+fn _amp_pw(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    return _hl_name_pw(S, TOKVAL(S, b + 1));
+}
+# ⛔ 6.7.16 (D21, the user's decision, 2026-10-19) — A DEREFERENCE OF THE ADDRESS OF A NARROW INTEGER VARIABLE IS THAT
+# VARIABLE, AT ITS WIDTH: `*(&x)` with x an `i32` / `u8` / `i16` / ... reads x's bytes, sign- or zero-extended as x
+# reads them, and `*(&x) = v` / `*(&x) OP= v` (`_deref_store`) write them. It was the untyped word: `*(&GQ)` of a
+# packed `i32` global read GQ and the next global (5 + (9 << 32) where 5 is right), `*(&GQ) = 7` zeroed that global,
+# and `*(&a)` of an `i32` local -1 read 4294967295. The operand [a, e) exactly `& NAME` inside any balanced
+# parentheses (as `_amp_pw`), NAME a narrow integer local (`_amp_lew`) or global (`_amp_gew`): its element kind
+# (`_ek_*`: the width, | 0x40 when signed), else 0 — a narrow parameter's too (6.7.16, D72: typed as a narrow local).
+# A closure's capture (one env word, holding the value) keeps the word, which its own read loads whole. `&x + n` is
+# still a byte pointer (6.7.11's D15). CHANGELOG [6.7.16]
+# ⛔ 6.7.16 (D70, the user's decision, 2026-10-20) — AND AN `f64` / `f32` / `bool` VARIABLE: `*(&f)` is f, with f's
+# type — the kinds 0x28 / 0x24 / 0x68 (`_amp_fkl` / `_amp_fkg`), so `*(&f) + 1.0` is a float add (it was integer
+# arithmetic on f's bits, warned), `*(&f) = 2.5` / `*(&f) += 1.0` store and add as floats (an f32 at its 4 bytes),
+# and `*(&b)` of a bool is a boolean — the bool overload, the bool checks (`_dst_fk_chk` / `_dst_fk_cop` name b, as
+# `b = v` / `b += v` do). A local (a parameter too) or a global; a capture keeps its word. CHANGELOG [6.7.16]
+fn _amp_ew(S, a, e): i64 {
+    var b = _ie_unparen(S, a, e);
+    if (_ie_pe != b + 2) { return 0; }
+    if (TOKTYP(S, b) != 27) { return 0; }
+    if (TOKTYP(S, b + 1) != 2) { return 0; }
+    var noff = TOKVAL(S, b + 1);
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return _amp_lew(S, li); }
+        if (_hl_capn(S, noff) == 1) { return 0; }
+    }
+    return _amp_gew(S, _findvar_core(S, noff));
+}
+# A scalar local's kind when it is an `i8`..`i32` / `u8`..`u32` — SLTYPE 1 / 2 / 4, signed by its negative
+# slice-width word, as the name's own read takes it — or (D70) an `f64` / `f32` / `bool` — else 0 (an aggregate, an
+# array, a pointer).
+fn _amp_lew(S, li): i64 {
+    if (GLPTRP(S, li) != 0) { return 0; }
+    if (GLSPAN(S, li) != 0) { return 0; }
+    if (GLAEW(S, li) != 0) { return 0; }
+    if (GLBOOL(S, li) != 0) { return 0x68; }
+    var lt = GLTYPE(S, li);
+    var fk = _amp_fkl(lt);
+    if (fk != 0) { return fk; }
+    if (lt != 1) { if (lt != 2) { if (lt != 4) { return 0; } } }
+    if (GSLICE_W(S, li) < 0) { return lt | 0x40; }
+    return lt;
+}
+# The kind of a float slot type (F64_TYID 0x28, F32_TYID 0x24), else 0 (D70).
+fn _amp_fkl(t): i64 {
+    if (t == F64_TYID) { return 0x28; }
+    if (t == F32_TYID) { return 0x24; }
+    return 0;
+}
+# A scalar global's `f64` / `f32` / `bool` kind (D70): its 8-byte slot, no array (GVSGN >= 0x100) or struct value.
+fn _amp_fkg(S, vi): i64 {
+    if (L64(_vars_base + vi * 8) != 8) { return 0; }
+    if (GVSGN(S, vi) >= 0x100) { return 0; }
+    if (GVPM(S, vi) != 0) { return 0; }
+    if (GVBOOL(S, vi) == 1) { return 0x68; }
+    return _amp_fkl(GVTYPE(S, vi));
+}
+# A global's kind when it is a packed `i8`..`i32` / `u8`..`u32` scalar (its var size 1 / 2 / 4, GVSGN 1 when
+# signed), as the name's own read takes it, or (D70) an `f64` / `f32` / `bool` scalar — else 0 (a struct value under
+# 8 B, an array, any other 8-byte slot).
+fn _amp_gew(S, vi): i64 {
+    if (vi < 0) { return 0; }
+    var fk = _amp_fkg(S, vi);
+    if (fk != 0) { return fk; }
+    if (GVTYPE(S, vi) <= 0) { return 0; }
+    var sz = L64(_vars_base + vi * 8);
+    if (sz != 1) { if (sz != 2) { if (sz != 4) { return 0; } } }
+    if (GVPM(S, vi) == 2) { return 0; }
+    var g = GVSGN(S, vi);
+    if (g >= 0x100) { return 0; }
+    if (g == 1) { return sz | 0x40; }
+    return sz;
+}
+# The vector type (<= -2048) the name `noff` has where `&` resolves it — a local (a parameter's copy too), a closure's
+# capture, a global — else 0.
+fn _name_vty(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (_vrcv_vec(S, lt) == 1) { return lt; }
+            return 0;
+        }
+        if (_hl_capn(S, noff) == 1) { return _cl_cap_vec(S, noff); }
+    }
+    var vd = _gv_vvd_get(_findvar_core(S, noff));
+    if (vd == 0) { return 0; }
+    return 0 - vd - 2048;
+}
+# ⛔ 6.7.13 — `**pps` OF A `**S` IS THE STRUCT: `take(**pps)` into `p: *P3` pushed the word the outer dereference read
+# (P3's first field) as the address — 139 on x86_64 and aarch64, a cx guest fault, PE 5 — because `_hl_dpsid` types a
+# `*T` operand by its tokens and an inner dereference has none (D9 (a) typed `*pps` by its step word, which carries
+# sizeof(P3), not P3). The inner `*pps` notes its pin's struct (`_ppd_note`, from `_deref_read`); the outer `*` that
+# starts an address-passed argument (`_dro_want`) reads it when its operand, inside any parentheses, is exactly that
+# dereference and nothing was emitted since (`_dlo_ppsid`), so the pointer is parked and checked as `take(*ps)`'s is.
+var _ppd_beg = 0 - 1;   # the inner dereference's `*`
+var _ppd_end = 0 - 1;   # the token after its operand
+var _ppd_cp = 0 - 1;    # the code pointer after its load
+var _ppd_sid = 0;       # the struct its `*S` result points at
+fn _ppd_note(S, d, w): i64 {
+    _ppd_sid = _pp_sid(S, _ps_pin(w));
+    _ppd_beg = d;
+    _ppd_end = GTI(S);
+    _ppd_cp = GCP(S);
+    return 0;
+}
+fn _dlo_ppsid(S, d): i64 {
+    if (_ppd_cp != GCP(S)) { return 0; }
+    var a = _ie_unparen(S, d + 1, GTI(S));
+    if (a != _ppd_beg) { return 0; }
+    if (_ie_pe != _ppd_end) { return 0; }
+    return _ppd_sid;
+}
+# 1 = `+ - * /` (or a wrapping form) follows the dereference at `d`, past the `)`s closing the `(`s
+# right before it — the token test only: `_op_lst` decides whether it is the whole left operand.
+fn _dlo_opnext(S, d): i64 {
+    var e = GTI(S);
+    var k = 0;
+    while (TOKTYP(S, e + k) == 11) {
+        if (d - 1 - k < 0) { break; }
+        if (TOKTYP(S, d - 1 - k) != 10) { break; }
+        k = k + 1;
+    }
+    var t = TOKTYP(S, e + k);
+    if (t == 6 || t == 7 || t == 8 || t == 9) { return 1; }
+    if (t == 113 || t == 116 || t == 119) { return 1; }
+    return 0;
+}
+fn _dlo_note(S, d): i64 {
+    _dlo_beg = d;
+    _dlo_end = GTI(S);
+    _dlo_cp = GCP(S);
+    return 0;
+}
+
+# A global's load (global `idx`, GVTYPE `vt`): a typed-pointer global (6.6.17: GVTYPE = 0 - its
+# step) puts its step into the pointer-scale word, so `g + n` steps by the pointee — 6.7.8: as the
+# step word, with T's kind from `_gv_ped` (parse/types/ptr.cyr).
+fn _gv_load_ps(S, idx, vt): i64 {
+    if (vt < 0) { SPSC(S, _gv_ptr_word(S, idx)); }
+    return 0;
+}
+# ⛔ 6.7.10 (B7-2 review) — A STRUCT VALUE GLOBAL UNDER 8 BYTES IS A STRUCT OPERAND, not a narrow
+# scalar. The read keyed on the slot's size alone (`var_sizes < 8`: an i8 / i16 / i32 global), so a
+# value global of a struct under 8 B (`struct C4 { r: u8; g: u8; b: u8; a: u8; }`, packed since
+# 6.7.10; `struct I4 { a: i32; }` always) set no expression type: as an operator's LEFT operand
+# `A + B` never dispatched `C4_add` and integer-added the words (30 where 40 is right), while a
+# local or an 8 B global dispatched. Global `idx` (GVTYPE `vt`, `gvsz` bytes): an inline struct
+# (GVPM 2) records its struct, as the 8 B arm does; the width mark and the load are unchanged.
+# CHANGELOG [6.7.10]
+fn _gv_narrow_sx(S, idx, vt, gvsz): i64 {
+    SEXW(S, gvsz);
+    if (GVPM(S, idx) != 2) { return 0; }
+    SESTYPE(S, vt);
+    _esv_name = idx;   # 6.6.20: see `_op_operand_sv`
+    return 0;
+}
+
+# The factor's "undefined variable 'x'" (a read, or `&x`, of a name declared nowhere; `tail` closes the
+# quote), at the cursor — unless the const fn being parsed was refused naming x (`_ce_name_said`, 6.7.14).
+# Out of _PARSE_FACTOR_IMPL, a cybs-ceiling fn.
+# `syscall(N, ..)`'s arity warning (`argc` counts N), against the x86 table. Out of _PARSE_FACTOR_IMPL (cybs's
+# ceiling). 6.7.14: not after a refusal in the statement (the latch): an unclosed `syscall(39, 0;` has no
+# argument count, and its warning followed the "expected ')'". CHANGELOG [6.7.14]
+fn _sc_arity_warn(S, sc_num, argc): i64 {
+    if (_panic == 1) { return 0; }
+    if (sc_num < 0) { return 0; }
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    var expect = _SC_ARITY(sc_num);
+    if (expect < 0) { return 0; }
+    var got = argc - 1;
+    if (got == expect) { return 0; }
+    # The cross-arch number-reuse shapes that are not a mismatch: see _sc_arity_skip. CHANGELOG [6.6.12]
+    if (_sc_arity_skip(sc_num, got) == 0) { WARN(S, "syscall arity mismatch", 22); }
+    return 0;
+}

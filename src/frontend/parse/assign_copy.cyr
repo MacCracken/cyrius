@@ -1,0 +1,754 @@
+# PARSER — an assignment's judgements and copies — the untyped re-judge, the right side's type checks (`_asg_*`,
+# `_tpv_*`), struct, tuple and aggregate copies (`_asa_*`, `_tup_asg*`, _try_aggregate_copy_assign).
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+# ⛔ 6.6.11 — RE-JUDGE AN UNTYPED VARIABLE AT EVERY PLAIN ASSIGNMENT. The kind-3 flag (unary
+# minus on an untyped float, _UFV_L / _UFV_G) was written only at the declaration, so
+# `var g = 0; g = 1.5; -g` was a silent integer negation of 1.5's bits and `var h = 1.5; h = 7;
+# -h` warned about a correct -7. A plain store into an untyped slot (`t` == 0) now rewrites the
+# flag from its RHS (`_asg_ufv`). Flow-insensitive: the flag is whatever the last assignment
+# COMPILED said — source order within a fn, and across fns for a global. Compound assignment
+# keeps the flag (`_asg_ufv` -1). `g` = 1 for a global slot. CHANGELOG [6.6.11]
+fn _asg_rejudge(S, idx, t, g): i64 {
+    if (_asg_ufv < 0) { return 0; }
+    if (t != 0) { return 0; }
+    if (g == 1) { SGFI(S, idx, _asg_ufv); } else { SLFI(S, idx, _asg_ufv); }
+    return 0;
+}
+
+# ⛔ 6.6.6 (bite 14 review) — `x = <expr>;` where <expr> is one whole METHOD call or OVERLOADED
+# OPERATOR returning x's struct (`r = b.mk(5)`, `q = b.mp(3)`, `c = a + b`): the same temp-then-
+# copy as `_try_struct_call_assign`, which can only see a free fn's name. The method/operator
+# emitter stores the result in a temp and records it (`_sc_pre` / `_sc_post`, parse/fn/call_agg.cyr); this
+# replaces the statement's PCMPE and takes that temp when the record spans the whole right-hand
+# side. `r = b.mk(5)` SIGSEGV'd, `q = b.mp(3)` kept rax only. Returns 1 when the statement is done
+# (`;` consumed — `term`, which is `)` for a classic-for step); 0 leaves the ordinary store to
+# run, exactly as after a plain PCMPE.
+# 6.6.11: also arms the struct-typed FIELD source (`q = b.v;`, see `_fla_arm`) when the destination
+# is a struct, and type-checks every recorded struct result against it — a <= 8 B one (`_sc_tmp`
+# -3, value in rax) included — before any exit. CHANGELOG [6.6.11]
+# The assignment's RHS type, read before PCMPE consumes it, for the typed-pointer warning in
+# `_PARSE_STMT_IMPL`: a call's declared return (v6.5.28 — `t = str_new(..)` warned while the
+# identical `var t = str_new(..)` did not) and, since 6.6.17, a RHS that is ONE primary of the
+# destination local's own struct type: `a = GP` (a pointer-mode struct global), `b = q.name()`
+# (a method declared `: Str`), `c = h.name` (a `: Str` field, nested fields walked). Each of those
+# warned "assigning non-pointer to typed pointer" about a value of exactly the local's type.
+# Its own fn so `_PARSE_STMT_IMPL` carries one reference here, not seven (cybs's ceiling).
+# ⛔ 6.7.16 — INTO A `*T`, ONLY ITS OWN STRUCT, AND ONLY THE WHOLE VALUE. The call arm kept ANY struct a call is declared
+# to return, whatever the local points at and whatever followed the call: `p = str_from(..);` into a `*P` local (a `Str`
+# header's address in a `*P`; `p.b` read the length), a `*i64` local or a `p: *P` parameter, `h = mkq();` (an 8-byte
+# struct's word) into a `*Str`, `l = mkh().n;` and `l = str_from(..) + 0;` said nothing, where the `*T` declaration and
+# a `*T` global warn. Into a `*T` (the slot's typed-pointer bit) the value is typed as one whole primary (`_tpv_sid`: a
+# name, a call, either through nested fields) and kept only when it is T (`0 - lt`), so `l = mkh().name;` (a `: Str`
+# field) into a `*Str` stays quiet. A struct local that is no `*T` (a handle) keeps the call arm: a struct call into it
+# is a rebind at any type (6.6.16 (C2)), quiet as its declaration and a handle global are
+# (issues/archived/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md). Warning text only. CHANGELOG [6.7.16]
+fn _asg_ret_peek(S, noff): i64 {
+    _asg_ret_sid = 0;
+    if (GINFN(S) == 0) { return 0; }
+    var li = FINDLOCAL(S, noff);
+    if (li < 0) { return 0; }
+    if (GLPTRP(S, li) == 0) { if (_asg_hdl_call(S) == 1) { return 0; } }
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }
+    if (lt <= 0 - 2048) { return 0; }
+    var rs = _tpv_sid(S, GTI(S));
+    if (rs == 0 - lt) { _asg_ret_sid = rs; }
+    return 0;
+}
+# ... a local that is no `*T`: a free call at the cursor, under parentheses that wrap the whole value (`_tpv_peel`)
+# (`_asg_ret_sid` its declared return, v6.5.28). 1 = a call.
+fn _asg_hdl_call(S): i64 {
+    var a = _tpv_peel(S, GTI(S));
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi >= 0) { _asg_ret_sid = GFRS(S, fi); }
+    return 1;
+}
+# The struct ONE primary from token `st` evaluates to when it is the whole value: a name (`_arg_name_sid`: a typed
+# local, a capture, a pointer-mode struct global), a free call `f(..)` (its declared return), or either followed by
+# nested struct fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return), under any
+# parentheses that wrap it whole (`(h.name)`, `((f(..)))`: the guide's whole-wrap transparency, 6.7.16). An inline
+# struct field is not a pointer, so it is not typed here. 0 otherwise. A peek. The local's arm (`_asg_ret_peek`) and
+# the `*Str` declaration / global / zone (`_tp_call_pointee`, parse/decl/gvar_init.cyr) read it, so they agree.
+fn _tpv_sid(S, st): i64 {
+    var a = _tpv_peel(S, st);
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (_tpv_end_at(S, a + 1) == 1) { return _arg_name_sid(S, TOKVAL(S, a)); }
+    if (nt == 41) { return _asg_rhs_steps(S, a + 1, _recv_sid(S, TOKVAL(S, a))); }
+    if (nt != 10) { return 0; }
+    var e = _tok_close_paren(S, a + 1);
+    if (e < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, a));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (_tpv_end_at(S, e + 1) == 1) { return rs; }
+    if (TOKTYP(S, e + 1) != 41) { return 0; }
+    return _asg_rhs_steps(S, e + 1, rs);
+}
+# Where the value `_tpv_sid` types ends: the first of the `)` that wrap it whole, or -1 (its `;`, `_tp_term`).
+var _tpv_ve = 0 - 1;
+# The first token inside the k `(` at `st` that wrap the whole value up to its `;` (`_tp_term`) (k = 0: `st`; `_tpv_ve`
+# -1), or -1
+# when they do not wrap it whole (`(a) + 1`, `(a)(b)`). Sets `_tpv_ve`.
+fn _tpv_peel(S, st): i64 {
+    _tpv_ve = 0 - 1;
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    if (k == 0) { return st; }
+    var c = _tok_close_paren(S, st + k - 1);
+    if (c < 0) { return 0 - 1; }
+    if (_pair_unwrap_k(S, c, k, 0) < 0) { return 0 - 1; }
+    if (TOKTYP(S, c + k) != _tp_term) { return 0 - 1; }
+    _tpv_ve = c;
+    return st + k;
+}
+# 1 = token `i` ends the value `_tpv_sid` types (`_tpv_peel`'s end, else a `;`).
+fn _tpv_end_at(S, i): i64 {
+    if (_tpv_ve >= 0) {
+        if (i == _tpv_ve) { return 1; }
+        return 0;
+    }
+    if (TOKTYP(S, i) == _tp_term) { return 1; }
+    return 0;
+}
+fn _asg_rhs_steps(S, di, rsid): i64 {
+    while (rsid > 0) {
+        if (TOKTYP(S, di + 1) != 2) { return 0; }
+        if (TOKTYP(S, di + 2) == 10) {
+            var e = _tok_close_paren(S, di + 2);
+            if (e < 0) { return 0; }
+            if (_tpv_end_at(S, e + 1) == 0) { return 0; }
+            var mf = _meth_fn_at(S, rsid, TOKVAL(S, di + 1), di + 1);
+            if (mf < 0) { return 0; }
+            var ms = GFRS(S, mf);
+            if (ms < 0) { ms = 0; }
+            return ms;
+        }
+        var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+        if (fx < 0) { return 0; }
+        var ft = GETFTYPE(S, rsid - 1, fx);
+        if (_tpv_end_at(S, di + 2) == 1) {
+            if (IS_STR_FIELD(S, ft) == 1) { return ft; }
+            return 0;
+        }
+        if (TOKTYP(S, di + 2) != 41) { return 0; }
+        if (IS_STR_FIELD(S, ft) == 1) { return 0; }   # a Str field is a pointer slot: no walk INTO it
+        rsid = ft;
+        di = di + 2;
+    }
+    return 0;
+}
+
+# 6.7.7 (R12) — `t = 5;` / `t = x;` / `t = g();` into a TUPLE variable: the source parsed to a plain
+# value (no struct record — a whole tuple or tuple field took its copy path before), and the store
+# would write one word of the tuple (the struct first-word rule), silently. Refused by name at the
+# source (`st`). 1 = refused. CHANGELOG [6.7.7]
+# 1 after that refusal, for the statement: its typed-pointer warning is not given about the tuple
+# (its slot type is `0 - sid`, the pointer form). Cleared by each statement assignment. CHANGELOG [6.7.11]
+var _asg_tup_refd = 0;
+# ⛔ 6.7.17 — AN ASSIGNMENT REFUSED FOR ITS STRUCT TYPE IS ONE DIAGNOSTIC. `pp = mkq();` into a `*P`, `h = GQ;` into a `P`
+# handle from an inline struct global of another type and `l = w.q;` from a struct-typed field of another type each
+# gave "assigning non-pointer to typed pointer" beside the refusal "cannot copy .. into a variable of a different
+# struct/vector type": the statement went on to judge the value the refusal had already named. `_AGG_ASSIGN_TYPE_ERR`
+# at an assignment's arm, and the statement's warning withheld (as R12's and the dereference's refusals withhold it).
+# 1 = refused. CHANGELOG [6.7.17]
+fn _asg_type_err(S, td, ts, dnoff, snoff): i64 {
+    if (_AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff) == 0) { return 0; }
+    _asg_tup_refd = 1;
+    return 1;
+}
+fn _tup_asg_chk(S, noff, st): i64 {
+    _agc_operand(S, noff);
+    if (_agc_t >= 0) { return 0; }
+    if (_dyn_is(S, 0 - _agc_t) == 1) { _dyn_err(S, st, "cannot assign a value that is not a dyn to ", 0 - _agc_t, noff, 0); _asg_tup_refd = 1; return 1; }   # 6.7.8
+    if (_tup_is(S, 0 - _agc_t) == 0) { return 0; }
+    _tup_err(S, st, "cannot assign a value that is not a tuple to tuple ", noff, 0);
+    _asg_tup_refd = 1;
+    return 1;
+}
+fn _pcmpe_struct_assign(S, noff, term): i64 {
+    if (PEEKT(S) == 10) { if (_asg_struct_dst(S, noff) == 1) {   # 6.7.6: a wrapped source
+            var pr = _asg_paren(S, noff, term, 2);
+            if (pr >= 0) { return pr; }
+        } }
+    var st = GTI(S);
+    _agc_operand(S, noff);
+    var dt = _agc_t;
+    _fla_arm(st, _istr_hdt(S, noff, dt));   # 6.7.17 (D18): a struct field into a `Str` handle is recorded, refused
+    var fs = _fla_stp;
+    if (term == 11) { _fla_stp = st; }   # 6.6.20: a for step's field source ends at `)`
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _mv_asg_src(S, noff, st);   # 6.7.11: a multi-value call into a named struct
+    var dx = _dyn_dst_chk(S, st, dt);   # 6.7.8: a whole dyn result goes only into that dyn
+    if (dx == 0) { _bx_asg(S, noff, st); }   # 6.7.3 (B2): a write into a bool takes a boolean value
+    _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
+    _sc_want = w;
+    _fla_want = 0 - 1;
+    _fla_stp = fs;
+    if (dx == 1) { return 0; }
+    if (_fla_hit == 1) { return _fla_assign(S, noff, term); }
+    var t = _sc_whole(S, st);
+    if (t == 0 - 2) {
+        if (_hl_psrc_copy(S, noff, st, term) == 1) { return 1; }   # 6.7.10: a `*T` global / call / field
+        if (_istr_hcp(S, noff, st, term) == 1) { return 1; }   # 6.7.14 (D20 (a)): a `Str` method result / field
+        _fls_asg_check(S, noff, st); _tup_asg_chk(S, noff, st);   # 6.7.6: a `Str` field; 6.7.7 (R12): a value is never a tuple
+        _istr_asg(S, noff, st);   # 6.7.13 (D7 (1)): an inline `Str` into a `Str` handle
+        if (dt == 0) { return _asa_sval(S, noff, st, term); }   # 6.7.17 (D106): `y = q;`, q a struct value
+        return 0;
+    }
+    var n = _agc_operand(S, noff);
+    if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
+    if (_agg_sc_err(S, _istr_hdt(S, noff, _agc_t), noff) == 1) { return _asa_term(S, term); }   # 6.7.15: `Pt.dup`; 6.7.17 (D18): a `Str` handle
+    if (t == 0 - 3) { return _hl_res_into(S, term, _sc_sid); }   # 6.7.10 (B7-1): into a handle
+    if (_agc_t == 0) { if (_asa_rec(S, noff, st, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
+    if (n <= 1) { return 0; }
+    if (_agc_t != 0 - _sc_sid) { return 0; }
+    if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
+    var pdli = _agc_li;
+    if (_agc_pp != 0) { pdli = _AGC_DREF(pdli); }   # 6.6.16 (C2): a handle too
+    _agc_from_temp(S, t, pdli, _agc_gvi, n, _sc_sid);
+    _expect_step(S, term);   # consume the terminator
+    return 1;
+}
+
+# `_AGG_ASSIGN_TYPE_ERR` for the struct-call record (`_sc_sid`) assigned to `noff` of type `td`: the callee named as the
+# source spells it, a method `Pt.dup` (`_err_ident_fn`). 1 = refused. CHANGELOG [6.7.15]
+fn _agg_sc_err(S, td, noff): i64 {
+    if (td >= 0) { return 0; }
+    if (td == 0 - _sc_sid) { return 0; }
+    _err_ident_fn(S, "cannot copy ", _sc_fn, _sc_fi, " into a variable of a different struct/vector type: ", noff);
+    return 1;
+}
+# ⛔ 6.7.17 — A STRUCT VALUE OF ANOTHER TYPE INTO A `Str` HANDLE IS REFUSED BY NAME (the user's D18, 2026-10-22), as
+# into a `P` handle: `h = mkq();` with `h` a `Str` local, parameter or global and `mkq` returning a
+# `Q1` — a call, method, operator, if-expression, field, name, dereference, wrapped, in a fn, a for step or at top
+# level — stored the struct's first word as the header's address, silently (SIGSEGV at the next `str_len(h)`). `Str` is
+# kept out of the aggregate operand (`_agc_plain_big`, 6.6.16's C2) because it is a heap handle every assignment
+# rebinds, not because it takes other structs: `var h: Str = mkq();` was already refused. The type checks ask this for
+# the destination's struct type: `dt` as `_agc_operand` left it, or for a `Str` handle `0 - _STR_SID` (a handle or
+# `*T` source stays the rebind, `Str` itself the same type). A `*Str` name is no `Str` handle: it keeps 6.7.16's
+# "assigning non-pointer to typed pointer" (typed_pointer_warn_sign.sh SC1 / SC6). CHANGELOG [6.7.17]
+fn _istr_hdt(S, noff, dt): i64 {
+    if (dt != 0) { return dt; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return dt; }
+    if (_agc_ovr_is(noff) == 1) { return dt; }
+    var d = _istr_dst(S, noff);
+    if (d == 0) { return dt; }
+    if (d > 2) { return dt; }   # a `*Str` local / global
+    return 0 - ss;
+}
+# `h = q` — a NAME source `snoff` into a `Str` handle `noff` (`_try_aggregate_copy_assign`'s one-slot exit): refused
+# when the name is a struct value of another type (a handle or a `*T` rebinds). Nothing emitted.
+fn _istr_hnm(S, noff, snoff): i64 {
+    var dt = _istr_hdt(S, noff, 0);
+    if (dt == 0) { return 0; }
+    _agc_src_operand(S, snoff);
+    if (_agc_hdl() == 1) { return 0; }
+    _asg_type_err(S, dt, _agc_t, noff, snoff);
+    return 0;
+}
+# `h = *pq` — a dereference of a `*U` (`ps` = U, a plain struct) into a `Str` handle `noff` (`_asg_dstar`): refused,
+# named from its `*`. `*pp` of a `**U` reads a `*U`: the rebind.
+fn _istr_hdx(S, noff, ps): i64 {
+    if (_hl_dpp != 0) { return 0; }
+    var dt = _istr_hdt(S, noff, 0);
+    if (dt == 0) { return 0; }
+    if (_agg_dx_err(S, dt, 0 - ps, noff) == 1) { _asg_tup_refd = 1; }
+    return 0;
+}
+# ⛔ 6.7.14 — D24 AT AN ASSIGNMENT (the user's decision D27 (a), 2026-10-16). `x = mkp();` / `x = b.mk();` / `x = a + c;`
+# / `x = fncall0(&mkp);` (a classic-for step too) with the struct result over 8 B and `x` a SCALAR — a local, a
+# parameter or a global declared `: i64`, `: u8`, `: f64`, any annotation that names no struct — stored the
+# struct's first word, narrowed (the filed repros exited 77, 333 mod 256), silently, where `var x: i64 = mkp();` is
+# refused (6.7.11's D24, 6.7.13's D13). Refused with D24's words, "cannot assign 'x: i64' from 'mkp', which returns
+# the struct 'Q' - declare 'x: Q' or bind a field", at the call, the destination's annotation judged as the
+# declaration's is (`_rcv_ann_refuse`). A struct of 8 B or less and a `Str` keep their word; a `: bool` keeps its own
+# refusal (*not a bool*); an untyped destination has no annotation to judge; a top-level call over 16 B is refused
+# already (no frame), once. 1 = refused, the statement parsed to `term` and consumed. CHANGELOG [6.7.14]
+fn _asa_call(S, noff, fi, term): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (_scv_top_big(S, sid) == 1) { return 0; }
+    var ti = GTI(S);
+    if (_asa_refuse(S, noff, ti - 1, ti, TOKVAL(S, ti), sid) == 0) { return 0; }
+    PCMPE(S);
+    return _asa_term(S, term);
+}
+# ... a method / operator / known `&f` result the struct record spans (`_pcmpe_struct_assign`, `st` the source's
+# first token, the cursor on `term`).
+fn _asa_rec(S, noff, st, term): i64 {
+    _rcv_fi = _sc_fi;   # 6.7.15: named `Pt.mq`
+    var r = _asa_refuse(S, noff, st - 1, _sc_beg, _sc_fn, _sc_sid);
+    _rcv_fi = 0 - 1;
+    if (r == 0) { return 0; }
+    return _asa_term(S, term);
+}
+fn _asa_term(S, term): i64 {
+    _expect_step(S, term);
+    return 1;
+}
+# Struct `sid` from fn `fnoff` (reported at token `ti`) into the destination `noff`, whose declaration is looked
+# for back from token `from`: 1 = refused.
+# 6.7.15 (the user's decisions D32 (a) and D33 (a), 2026-10-18): also a `*T` destination whose pointee is not `sid`
+# itself, with D14's remedy (`_asa_ptr`), and an UNTYPED one, with D27's words minus the annotation
+# (`_rcv_unt_refuse`). CHANGELOG [6.7.15]
+fn _asa_refuse(S, noff, from, ti, fnoff, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    var a = _asa_ann(S, noff, from);
+    if (a < 0) { return 0; }   # no declaration found: not judged
+    _rcv_asg_e = ti;
+    if (a > 0) { _rcv_asg_e = _asa_end(S, a); }
+    var r = _asa_judge(S, ti, fnoff, sid, a, noff);
+    _rcv_asg_e = 0 - 1;
+    return r;
+}
+fn _asa_judge(S, ti, fnoff, sid, a, noff): i64 {
+    if (a == 0) { return _rcv_unt_refuse(S, ti, fnoff, sid, noff); }
+    if (_asa_ptr(S, a, sid) == 1) { return _rcv_ann_refuse(S, ti, fnoff, sid, 1, a, noff); }
+    if (_asa_scalar(S, a) == 0) { return 0; }
+    return _rcv_ann_refuse(S, ti, fnoff, sid, 0, a, noff);
+}
+# ⛔ 6.7.15 — D14 AT AN ASSIGNMENT (the user's decision D32 (a), 2026-10-18). `p = mkp();` with `p` a `*i64` / `*u8` /
+# any `*T` local, parameter or global and the struct result over 8 B stored the struct's first word as the pointer
+# — silently (the filed repro faulted at `*p`, 139) — where `var p: *i64 = mkp();` is refused (6.7.13's D14). 1 =
+# the annotation at `a` is a `*T` D14 refuses at the assignment: not `*S` of the result's struct `sid` itself (6.7.10
+# B7-1c: the struct is copied through it), nor a generic base's `*T` (each instance judges its own). CHANGELOG [6.7.15]
+fn _asa_ptr(S, a, sid): i64 {
+    if (TOKTYP(S, a) != 8) { return 0; }
+    var t = a + 1;
+    while (TOKTYP(S, t) == 8) { t = t + 1; }
+    if (_rcv_tp_base(S, t) == 1) { return 0; }
+    if (t != a + 1) { return 1; }
+    if (TOKTYP(S, t) != 2) { return 1; }
+    if (FINDSTRUCT(S, TOKVAL(S, t)) == sid) { return 0; }
+    if (TOKTYP(S, t + 1) == 19) { if (FINDSTRUCT(S, TOKVAL(S, t)) > 0) { return 0; } }   # `*G<..>`: the handle's
+    return 1;
+}
+# 1 = the annotation at token `a` names a scalar D24 judges: an integer, a float, an 8-byte handle (an enum,
+# `cstring`, `Result`, `Vec`, a type parameter) or `u128` — not `bool` (its own refusal), not an array element.
+fn _asa_scalar(S, a): i64 {
+    if (TOKTYP(S, a + 1) == 28) { return 0; }
+    if (TOKTYP(S, a) == 105) { return 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var c = _tn_resolve_at(S, a);
+    var k = _tn_class(c);
+    if (k < 1) { return 0; }
+    if (k > 4) { return 0; }
+    if (k == 4) { if (_tn_val(c) == 1) { return 0; } }
+    return 1;
+}
+# The token the annotation starting at `q` ends at: its declaration's `=` / `;`, a parameter's `,` / `)`
+# (`Map<K, V>` one type: `<` / `>` count as brackets).
+fn _asa_end(S, q): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (q < n) {
+        var t = TOKTYP(S, q);
+        if (d == 0) { if (t == 4 || t == 5 || t == 31) { return q; } }
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        d = d + _cl_ang_step(t);
+        if (d < 0) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
+# The annotation's first token of the declaration that binds the assignment's destination `noff`, read from the
+# tokens; 0 for one with none (an untyped `var x = ..`, a destructure's name, a for-in name, a closure's parameter);
+# -1 for no variable of that name, or a local the walk does not find (6.7.15: D33 refuses a 0). A local's: the
+# nearest binding of the name back from token `from` in a scope enclosing it (a closed `{ }` / `( )` / `[ ]` is stepped
+# over; an enclosing for body's header init is in scope, `_asa_for_hdr`), else its fn's parameter; a global's: the
+# same walk, else its first top-level declaration.
+fn _asa_ann(S, noff, from): i64 {
+    var loc = 0;
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { loc = 1; } }
+    if (loc == 0) { if (FINDVAR(S, noff) < 0) { return 0 - 1; } }
+    var a = _asa_back(S, noff, from, loc);
+    if (a >= 0) { return a; }
+    if (loc == 1) { return 0 - 1; }
+    return _asa_top(S, noff);
+}
+# `lb` = 1 while the last `{` walked back over opened a scope enclosing `from` (a for-in body: its name is bound).
+# A local's walk ends at its fn's `fn` (the parameters) or at a closure body's `{` (an untyped parameter). -1 = none.
+fn _asa_back(S, noff, k, loc): i64 {
+    var d = 0;
+    var lb = 0;
+    while (k >= 1) {
+        var t = TOKTYP(S, k);
+        if (t == 14 || t == 11 || t == 29) { d = d + 1; }
+        elif (t == 13 || t == 10 || t == 28) {
+            if (d > 0) {
+                d = d - 1;
+                if (t == 13) { lb = 0; }
+            } elif (t == 13) {
+                lb = 1;
+                if (loc == 1) { if (_tok_is_closure_body(S, k) == 1) { return 0; } }
+                var h = _asa_for_hdr(S, noff, k);
+                if (h != 0 - 2) { return h; }
+            }
+        } elif (d == 0) {
+            # 6.7.17 (D8): the fn's own `fn`, not a local's `*fn( .. )` (`_tok_fn_kw`)
+            if (t == 32) { if (loc == 1) { if (_tok_fn_kw(S, k) == 1) { return _asa_prm(S, noff, k); } } }
+            if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                    var r = _asa_bind(S, k, lb);
+                    if (r != 0 - 2) { return r; }
+                } }
+        }
+        k = k - 1;
+    }
+    return 0 - 1;
+}
+# A classic-for header's init declares into its body's scope, though the walk steps over the header as a closed
+# `( )`: when the enclosing `{` at token `k` is a `for (..)` body, the init's binding of `noff` (`for (var x: u8 = 0;
+# ..) { x = mkp(); }`) is the destination's declaration — its annotation, 0 = untyped (it shadows an outer `x: i64`).
+# -2 = not a for body, or its init binds no `noff`: the walk goes on. CHANGELOG [6.7.14]
+fn _asa_for_hdr(S, noff, k): i64 {
+    if (TOKTYP(S, k - 1) != 11) { return 0 - 2; }
+    var o = k - 2;
+    var d = 0;
+    while (o >= 1) {
+        var t = TOKTYP(S, o);
+        if (t == 11) { d = d + 1; }
+        elif (t == 10) {
+            if (d == 0) { break; }
+            d = d - 1;
+        }
+        o = o - 1;
+    }
+    if (o < 1) { return 0 - 2; }
+    if (TOKTYP(S, o - 1) != 55) { return 0 - 2; }
+    var j = o + 1;
+    d = 0;
+    while (j < k) {
+        var u = TOKTYP(S, j);
+        if (u == 10 || u == 13 || u == 28) { d = d + 1; }
+        elif (u == 11 || u == 14 || u == 29) { d = d - 1; }
+        elif (d == 0) {
+            if (u == 5) { return 0 - 2; }
+            if (u == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) {
+                    var r = _asa_bind(S, j, 0);
+                    if (r != 0 - 2) { return r; }
+                } }
+        }
+        j = j + 1;
+    }
+    return 0 - 2;
+}
+# The name at token `k`, met on the walk: -2 when it binds nothing there; else the annotation (0 = none).
+fn _asa_bind(S, k, lb): i64 {
+    var p = TOKTYP(S, k - 1);
+    if (p == 3) {
+        if (TOKTYP(S, k + 1) == 49) { return k + 2; }
+        return 0;
+    }
+    if (p == 55) { if (TOKTYP(S, k + 1) == 76) { if (lb == 1) { return 0; } } }   # `for name in ..`
+    if (p == 31) { if (_asa_dlist(S, k) == 1) { return 0; } }                      # `var a, name = f();`
+    return 0 - 2;
+}
+fn _asa_dlist(S, k): i64 {
+    var j = k - 1;
+    while (j >= 2) {
+        if (TOKTYP(S, j) != 31) { return 0; }
+        if (TOKTYP(S, j - 1) != 2) { return 0; }
+        if (TOKTYP(S, j - 2) == 3) { return 1; }
+        j = j - 2;
+    }
+    return 0;
+}
+# The parameter `noff` of the fn whose `fn` is token `k`: its annotation (0 = untyped or not one).
+fn _asa_prm(S, noff, k): i64 {
+    var n = GTCNT(S);
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { break; }
+        if (t == 13) { return 0; }
+        k = k + 1;
+    }
+    var d = 0;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 10 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 29) { d = d - 1; }
+        if (d == 0) { return 0; }
+        d = d + _cl_ang_step(t);
+        if (d == 1) { if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                    var p = TOKTYP(S, k - 1);
+                    if (p == 10 || p == 31) {
+                        if (TOKTYP(S, k + 1) == 49) { return k + 2; }
+                        return 0;
+                    }
+                } } }
+        k = k + 1;
+    }
+    return 0;
+}
+# A global's first top-level declaration (outside every `{ }` / `( )` / `[ ]`).
+fn _asa_top(S, noff): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var k = 1;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13 || t == 10 || t == 28) { d = d + 1; }
+        elif (t == 14 || t == 11 || t == 29) { d = d - 1; }
+        elif (d == 0) { if (t == 2) { if (TOKTYP(S, k - 1) == 3) { if (STREQ(S, TOKVAL(S, k), noff) == 1) {
+                        return _asa_bind(S, k, 0);
+                    } } } }
+        k = k + 1;
+    }
+    return 0;   # none by `var NAME`: a destructure's name (untyped)
+}
+
+# ⛔ 6.7.6 — `u = (j);`, `w = (z.k);`, `w = (mk(5));`, `w = (j.dup());` into a struct variable (and
+# in a classic-for step): the parenthesised source was an expression whose value is the struct's
+# first word, stored as one word — silently (`u = (j)` left u.b and u.c stale). Parentheses that
+# wrap the whole source (`_pwrap_k`) are transparent: the assignment helper `which` — 0
+# `_try_aggregate_copy_assign`, 1 `_try_struct_call_assign`, 2 `_pcmpe_struct_assign` — runs on what
+# they wrap, ending at its `)`, and the wrap is closed after. 1 = done (`term` consumed); 0 = not
+# that helper's source (cursor back on the `(`; for 2, the value is in rax and the cursor on `term`,
+# as after a plain PCMPE); -1 = not a wrap. CHANGELOG [6.7.6]
+fn _asg_paren(S, noff, term, which): i64 {
+    var st = GTI(S);
+    var k = _pwrap_k(S, st);
+    if (TOKTYP(S, _pw_end) != term) { return 0 - 1; }
+    STI(S, st + k);
+    var r = 0;
+    if (which == 0) { r = _try_aggregate_copy_assign(S, noff, 11); }
+    elif (which == 1) { r = _try_struct_call_assign(S, noff, 11); }
+    else { r = _pcmpe_struct_assign(S, noff, 11); }
+    if (r == 1) {   # the inside consumed its own `)`
+        _pw_close(S, k - 1);
+        _expect_step(S, term);
+        return 1;
+    }
+    if (which == 2) { _pw_close(S, k); return 0; }
+    STI(S, st);
+    return 0;
+}
+# 6.7.6 — `q = h.name;` with a `: Str` field into a struct VALUE of another type is refused by name;
+# a handle destination rebinds at any type (6.6.16 C2), and a `Str` one is a handle. See `_fls_note`.
+fn _fls_asg_check(S, noff, st): i64 {
+    if (_fls_whole(S, st) == 0) { return 0; }
+    _agc_operand(S, noff);
+    if (_agc_hdl() == 1) { return 0; }
+    return _fls_type_err(S, _agc_t, noff);
+}
+# 1 = `noff` names a struct operand (`_agc_operand`'s type in the struct band): the destination a
+# parenthesised source is unwrapped for. Any other `x = (e);` keeps its plain parse.
+fn _asg_struct_dst(S, noff): i64 {
+    _agc_operand(S, noff);
+    if (_agc_t >= 0) { return 0; }
+    if (_agc_t <= 0 - 2048) { return 0; }
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4) — `t = (a, b);` into a TUPLE variable (a local, a by-value parameter, a global; and a
+# classic-for step, `term` 11): the whole literal is built in a frame temp — every element evaluated
+# before any store, so `t = (t.1, t.0);` swaps — and copied in, as a struct call's result is. A
+# literal into a variable of any other aggregate type is refused by name (a scalar's, or a name that
+# is not a variable here, is the stray refusal at its factor). At top level there is no frame for
+# the temp: refused by name (R10; `var G = (..);` declares one). 1 = done (`term` consumed).
+# ⛔ 6.7.16 — a capture whose call ends a chain on a PARENTHESISED head (`_pw_head`: `t = (*pw).p.m2();`, `t = (p).mm(5);`,
+# `t = ((*pw).p.m2());`, a for step) is a capture, as the declaration's is (`_dt_wrap_k`): it was tried only as a tuple
+# literal and refused "cannot assign a value that is not a tuple". CHANGELOG [6.7.16]
+fn _tup_asg(S, noff, term): i64 {
+    if (PEEKT(S) == 2) { return _tup_asg_call(S, noff, term); }   # 6.7.7 (T5): a capture
+    if (PEEKT(S) == 137) { return _tup_asg_call(S, noff, term); }   # 6.7.14: `t = callptr(..);`
+    if (PEEKT(S) != 10) { return 0; }
+    var st = GTI(S);
+    if (_pw_head(S, st) >= 0) { if (_tup_asg_call(S, noff, term) == 1) { return 1; } }
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != term) { return 0; }   # an operand (`(1, 2) + u`): the stray refusal
+    var n = _agc_operand(S, noff);
+    var dt = _agc_t;
+    if (dt == 0) {   # a scalar: the literal's factor refuses it; no variable here (a closure's capture
+        if (_tup_asg_known(S, noff) == 0) { _tn_once(S, lp); }   # too): only the store's "undefined"
+        return 0;
+    }
+    if (dt <= 0 - 2048 || _tup_is(S, 0 - dt) == 0) {
+        _tup_err(S, lp, "cannot assign a tuple literal to ", noff, " - it is not a tuple");
+        return _tup_lit_skip(S, st, term);
+    }
+    var sid = 0 - dt;
+    if (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal assigned at top level has no frame to be built in - assign ", noff, " inside a fn (a top-level `var G = ( .. );` declares one)");
+        return _tup_lit_skip(S, st, term);
+    }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    if (_tup_lit_shape(S, lp, sid) == 0) { return _tup_lit_skip(S, st, term); }
+    var t = _agg_temp(S, sid);
+    STI(S, lp);
+    _tup_elems(S, sid, 0, t, 0);
+    _pw_close(S, lp - st);
+    _agc_from_temp(S, t, dli, dgv, n, sid);
+    _expect_step(S, term);
+    return 1;
+}
+# ⛔ 6.7.7 (B4, T5) — `t = f();` / `G = f();` (a for step too, `term` 11): a multi-value call CAPTURED
+# into an existing tuple variable — a local, a by-value parameter (copied in, inline), a global, at
+# top level too (no temp: the values go from the registers straight into the slots, every one read
+# before any is stored, so `t = f(t.1, t.0);` reads the old t). The capture's contract is
+# `_tup_cap_check`'s (parse/decl/tuple_lit.cyr), the destructure's: a refused callee is reported and skipped.
+# Inside a wrap too — `t = (f());` (6.7.14, D45: it was R12, as the destructure refused `(f())`): the
+# whole-value wrap is `_asg_paren`'s, which runs this on its inside. 1 = done (`term` consumed).
+fn _tup_asg_call(S, noff, term): i64 {
+    var sid = _tup_dst_sid(S, noff);
+    if (sid == 0) { return 0; }
+    var c = _tup_cap_check(S, sid, term);
+    if (c == 0) { return 0; }
+    var k = _tcap_k;
+    _agc_operand(S, noff);
+    var gv = _agc_gvi;
+    var idx = gv;
+    if (_agc_li >= 0) { idx = 0 - 2 - _agc_li; }
+    if (c == 1) {
+        PCMPE(S);
+        _pw_close(S, k);
+        if (idx != 0 - 1) {
+            var n = GETFCOUNT(S, sid - 1);
+            _tup_drain_push(S, n);
+            _tup_drain_store(S, n, idx, sid);
+            if (gv >= 0) { SLVAR(S, gv); }
+        }
+    }
+    _expect_step(S, term);
+    return 1;
+}
+# The tuple a destination name holds, else 0 — lookups only, nothing reported: a local (in a fn)
+# decides by itself, then an inline global. (A closure's capture is no destination: the store's
+# "undefined variable".)
+fn _tup_dst_sid(S, noff): i64 {
+    if (_agc_ovr_is(noff) == 1) { return 0; }   # 6.7.11: the `*p = v` destination is no tuple
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLAGG(S, li) == 0) { return 0; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            if (_tup_is(S, 0 - lt) == 1) { return 0 - lt; }
+            return 0;
+        }
+    }
+    var gi = _findvar_core(S, noff);
+    if (gi < 0) { return 0; }
+    if (GVPM(S, gi) != 2) { return 0; }
+    if (_tup_is(S, GVTYPE(S, gi)) == 1) { return GVTYPE(S, gi); }
+    return 0;
+}
+fn _tup_asg_known(S, noff): i64 {
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 1; } }
+    if (_findvar_core(S, noff) >= 0) { return 1; }
+    return 0;
+}
+fn _try_aggregate_copy_assign(S, noff, term): i64 {
+    _ppd_asg(S, noff, term);   # 6.7.17 (D107): `u = &h;` into a `*S` of another depth
+    if (_dyn_asg(S, noff, term) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
+    if (_tup_asg(S, noff, term) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
+    if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 0) == 1) { return 1; } return 0; }   # 6.7.6
+    if (PEEKT(S) == 8) { return _asg_dstar(S, noff, term); }   # 6.7.11: a dereference `*E`
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != term) { return 0; }
+    # ⛔ 6.6.5 — THIS USED TO OPEN `if (GINFN(S) != 1) return 0;` AND THEN `FINDLOCAL` BOTH
+    # SIDES, so no global could ever reach it and `B = A` between two inline struct GLOBALS
+    # copied EIGHT BYTES — the whole struct's first word, silently, at top level and inside a
+    # fn alike (measured: `var A = P{1,2}; var B = P{3,4}; B = A;` left `B.y` at 4). The same
+    # hole covered `B = p` and `q = A`. Once the LOCAL side was tightened onto the recorded
+    # layout, the two answered the same assignment differently, which is worse than both being
+    # wrong. Every combination now goes through `_agc_operand`. CHANGELOG [6.6.5]
+    var nslots = _agc_operand(S, noff);
+    # 6.6.6 — the destination's recorded type, read BEFORE the span test, and the source
+    # probed even when the destination is a ONE-slot (<= 8 B) struct: such a struct has no
+    # multi-slot copy but it still has a TYPE, and the declaration form reports a mismatch
+    # for it. Two paths answering the same pair differently is the shape 6.6.5 called out.
+    # `dt < 0` gates the probe so an ordinary scalar `x = y;` does not pay for it.
+    # See `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr). CHANGELOG [6.6.6]
+    var dt = _agc_t;
+    var src_noff = TOKVAL(S, GTI(S));
+    if (nslots <= 1) {
+        if (dt < 0) { return _hl_small_copy(S, noff, src_noff, dt); }   # 6.7.10 (B7-1): + a handle
+        return _istr_hnm(S, noff, src_noff);   # 6.7.17 (D18): a struct value into a `Str` handle
+    }
+    # ⛔ 6.6.16 (C2) — read whether the destination is a HANDLE (`_agc_hdl`) before the source
+    # probe resets the globals. handle <- handle is a pointer REBIND — the one-word store below,
+    # at ANY pair of struct types, exactly as before a handle was an operand: Str and every heap
+    # handle idiom rely on it. It returns ahead of the type check, so a rebind between handles of
+    # two struct types stays legal. Every other pair holding a handle copies the struct (through
+    # its address, the `_AGC_DREF` / deref-band path) and is type-checked like any copy.
+    var dh = _agc_hdl();
+    var dst_li = _agc_li;
+    if (_agc_pp != 0) { dst_li = _AGC_DREF(dst_li); }
+    var dst_gv = _agc_gvi;
+    var lt = _agc_t;
+    var snslots = _agc_src_operand(S, src_noff);   # 6.6.13: a closure capture too
+    if (snslots == 0) { snslots = _istr_hop(S, lt, dh, src_noff); }   # 6.7.14 (D20 (a)): a `Str` handle
+    if (dh == 1) { if (_agc_hdl() == 1) { return 0; } }
+    # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
+    # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
+    if (_asg_type_err(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }   # 6.7.17: no warning beside it
+    if (snslots != nslots) { return 0; }
+    if (_agc_t != lt) { return 0; }
+    var src_li = _agc_li;
+    if (_agc_pp != 0) { src_li = _AGC_DREF(src_li); }
+    var src_gv = _agc_gvi;
+    # ⛔ v6.6.1 — A NEGATIVE GLTYPE DOES NOT MEAN "INLINE AGGREGATE", AND ASSUMING IT DID SHIPPED
+    # A SILENT MISCOMPILE IN v6.5.57. Two different layouts share the same negative type marker:
+    #   var b: P = a;        -> INLINE: ceil(STRUCTSZ/8) slots, anonymous fillers (name -1) below
+    #                           the named slot.
+    #   var a = str_from(x); -> POINTER: ONE slot holding an address. The declaration path infers
+    #                           the callee's declared return sid (`_ti_inferred_sid`) so field
+    #                           access works, which stamps the SAME negative GLTYPE.
+    # The test above accepted both, so `a = b;` between two Str POINTERS copied STRUCTSZ(Str)/8
+    # slots and scribbled over whatever locals sat below them. Measured: a 12-line probe whose
+    # `guard` parameter came back corrupted, and in the wild yukti's `parse_uevent` had its `len`
+    # parameter overwritten with a pointer mid-loop, so `for (i = 0; i <= len; ...)` walked off
+    # the buffer into the process stack and SIGSEGV'd. Live in every release from v6.5.57.
+    #
+    # ⭐ THE DISCRIMINATOR IS THE RECORDED LAYOUT. v6.6.1 used the FILLER SENTINEL for this —
+    # "an inline aggregate owns the slots below its named one and they carry name -1" — which
+    # closed the reported shape and left the converse open: SCOPE_POP names the locals of a
+    # CLOSED BLOCK -1 too, so two pointer-mode struct locals separated by an `if { var t; }`
+    # passed the filler test and this copied STRUCTSZ/8 slots over their neighbours anyway.
+    # Measured: an unreached `defer` ran, because the copy landed on its runtime flag.
+    # 6.6.5 asks the bit that registration set (inside `_agc_operand`). CHANGELOG [6.6.5]
+    # 6.6.6 — the frame-span guard applies to an INLINE local only, and a `_AGC_DREF`-encoded
+    # parameter is already outside `>= 0` so it skips the guard by construction: it owns ONE
+    # slot whatever the struct's width, and measuring its span here would reject every such
+    # parameter back into the 8-byte store this bite exists to remove.
+    if (dst_li >= 0) { if (dst_li - nslots + 1 < 0) { return 0; } }
+    if (src_li >= 0) { if (src_li - nslots + 1 < 0) { return 0; } }
+    if (dst_li < 0 || src_li < 0) {
+        # A global or an address-passed parameter on either side: byte-exact, addressed.
+        # See `_agc_copy_bytes`. 6.6.13: so is a closure capture (`src_li` -2, `_agc_src_operand`).
+        # 6.6.16 (C2): and a handle — a local in the `_AGC_DREF` band, a global in the deref band.
+        # Only two INLINE locals (both slots >= 0) take the slot loop below; every other operand
+        # has `li` < 0 (a global's is -1), so one test says it. CHANGELOG [6.6.16]
+        var nb = nslots * 8;
+        if (lt < 0) { if (lt > 0 - 2048) { nb = STRUCTSZ(S, (0 - lt) - 1); } }
+        _agc_copy_bytes(S, dst_li, dst_gv, src_li, src_gv, nb);
+        if (dst_gv >= 0) { SLVAR(S, dst_gv); }
+        STI(S, GTI(S) + 1);
+        STI(S, GTI(S) + 1);
+        return 1;
+    }
+    var i = 0;
+    while (i < nslots) {
+        EFLLOAD(S, src_li - i);
+        EFLSTORE(S, dst_li - i);
+        i = i + 1;
+    }
+    STI(S, GTI(S) + 1);
+    STI(S, GTI(S) + 1);
+    return 1;
+}

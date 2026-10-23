@@ -932,7 +932,7 @@ exits p01 42 "P1-P21: var (annotated, wrapped, inferred), assignment (bare, wrap
 
 # ── KC (6.7.13, D15 — the user, 2026-10-15): a known `&f` callee declared `: dyn Tr` is a dyn source, as the direct
 # call is (issues/archived/2026-10-14-dyn-result-through-known-callee-refused.md). `fncall1(&mkd, &q)` was refused "cannot form
-# dyn Shape from this expression" where `mkd(&q)` copies; `_dyn_icall` (parse/types.cyr) reads it as that call.
+# dyn Shape from this expression" where `mkd(&q)` copies; `_dyn_icall` (parse/types/dyn.cyr) reads it as that call.
 # KC1 the filed repro verbatim (exit 18 on x86_64 here; aarch64 / cx / PE: dyn_objects.tcyr §known, the A legs).
 KH='include "lib/fnptr.cyr"\ntrait Shape { fn area(self): i64; }\nstruct Sq { s; }\nstruct HS { a; o: dyn Shape; b; }\nimpl Shape for Sq { fn area(self): i64 { return self.s * self.s; } }\nfn mkd(p: *Sq): dyn Shape { var o: dyn Shape = p; return o; }\nfn mkp(p: *Sq): *Sq { return p; }\nfn mki(p: *Sq): i64 { return 5; }\nfn take(o: dyn Shape): i64 { return o.area(); }\n'
 exits kc1 18 "KC1: the filed repro verbatim, \`var a: dyn Shape = fncall1(&mkd, &q);\` (refused before)" 'include "lib/fnptr.cyr"\ntrait Shape { fn area(self): i64; }\nstruct Sq { s; }\nimpl Shape for Sq { fn area(self): i64 { return self.s * self.s; } }\nfn mkd(p: *Sq): dyn Shape { var o: dyn Shape = p; return o; }\nfn run(): i64 { var q = Sq { 3 }; var a: dyn Shape = fncall1(&mkd, &q); var b: dyn Shape = mkd(&q); return a.area() + b.area(); }\nsyscall(60, run());\n'

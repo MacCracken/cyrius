@@ -16,7 +16,7 @@
 #   * a path that exists but cannot be read (a directory) read as "no dependencies", rc 0.
 #
 # THE RULE, from the compiler: an include is a directive only in COLUMN 0 (ISINCLUDE in
-# src/frontend/lex/pp.cyr — an indented `include` is an expression) and only outside a string
+# src/frontend/lex/pp/ — an indented `include` is an expression) and only outside a string
 # literal (PP_PASS gates on the PP_LEXST string state), and the directive consumes its line.
 # 6.7.3 (axis 7): that state machine is PP_LEXST_AT since 6.6.20 — a `#` that spells one of the
 # lexer's ten attribute words keeps its line in CODE, strings included. cyaudit's copy read it

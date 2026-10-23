@@ -1,0 +1,1297 @@
+# LEXER — pp: `#derive`: the directive, its emit helpers, a field's type and value (`PP_D*`), PP_DERIVE_FIELDS, the
+# shared struct parser (PP_PARSE_STRUCT_DEF), the derive table's layout checks, vector elements and the enum body.
+# ================================================================
+# Split from lex/pp.cyr at 6.7.18, unchanged; lex.cyr includes lex/pp/ in source order. CHANGELOG [6.7.18]
+
+# "#derive(Serialize)" = 23 64 65 72 69 76 65 28 53 65 72 69 61 6C 69 7A 65 29
+# v6.6.6 — the closing `)` must END the name (PP_NAMEBOUND), or a COMMENT arms the
+# derive machinery and silently changes the emitted binary. CHANGELOG [6.6.6]
+fn ISDERIVE(S, pos, bl): i64 {
+    if (pos + 18 >= bl) { return 0; }
+    if (load8(S + pos) != 35) { return 0; }
+    if (load8(S + pos + 1) != 100) { return 0; }
+    if (load8(S + pos + 2) != 101) { return 0; }
+    if (load8(S + pos + 3) != 114) { return 0; }
+    if (load8(S + pos + 4) != 105) { return 0; }
+    if (load8(S + pos + 5) != 118) { return 0; }
+    if (load8(S + pos + 6) != 101) { return 0; }
+    if (load8(S + pos + 7) != 40) { return 0; }
+    if (load8(S + pos + 8) != 83) { return 0; }
+    if (load8(S + pos + 9) != 101) { return 0; }
+    if (load8(S + pos + 10) != 114) { return 0; }
+    if (load8(S + pos + 11) != 105) { return 0; }
+    if (load8(S + pos + 12) != 97) { return 0; }
+    if (load8(S + pos + 13) != 108) { return 0; }
+    if (load8(S + pos + 14) != 105) { return 0; }
+    if (load8(S + pos + 15) != 122) { return 0; }
+    if (load8(S + pos + 16) != 101) { return 0; }
+    if (load8(S + pos + 17) != 41) { return 0; }
+    if (PP_NAMEBOUND(S, pos + 18, bl) == 0) { return 0; }
+    return 1;
+}
+
+# "#derive(Deserialize)" = 20 bytes
+# v6.6.6 — same word boundary as ISDERIVE. See PP_NAMEBOUND. CHANGELOG [6.6.6]
+fn ISDERIVE_DE(S, pos, bl): i64 {
+    if (pos + 20 >= bl) { return 0; }
+    if (load8(S + pos) != 35) { return 0; }
+    if (load8(S + pos + 1) != 100) { return 0; }
+    if (load8(S + pos + 2) != 101) { return 0; }
+    if (load8(S + pos + 3) != 114) { return 0; }
+    if (load8(S + pos + 4) != 105) { return 0; }
+    if (load8(S + pos + 5) != 118) { return 0; }
+    if (load8(S + pos + 6) != 101) { return 0; }
+    if (load8(S + pos + 7) != 40) { return 0; }
+    if (load8(S + pos + 8) != 68) { return 0; }
+    if (load8(S + pos + 9) != 101) { return 0; }
+    if (load8(S + pos + 10) != 115) { return 0; }
+    if (load8(S + pos + 11) != 101) { return 0; }
+    if (load8(S + pos + 12) != 114) { return 0; }
+    if (load8(S + pos + 13) != 105) { return 0; }
+    if (load8(S + pos + 14) != 97) { return 0; }
+    if (load8(S + pos + 15) != 108) { return 0; }
+    if (load8(S + pos + 16) != 105) { return 0; }
+    if (load8(S + pos + 17) != 122) { return 0; }
+    if (load8(S + pos + 18) != 101) { return 0; }
+    if (load8(S + pos + 19) != 41) { return 0; }
+    if (PP_NAMEBOUND(S, pos + 20, bl) == 0) { return 0; }
+    return 1;
+}
+
+# Derive state: struct sizes for nested struct offset calculation.
+#
+# v5.9.5 layout reshuffle. Pre-v5.9.5 the per-struct sizes/names
+# tables ([32] cap) shared the same 0x197XXX 4 KB region as the
+# shared parse-state buffers (op, field_count, cumul, sname,
+# field_names, field_types, field_offsets), with overlapping
+# extents — struct_names[31] reached 0x197508, op was at 0x197400
+# (inside struct_names entries 23+), and the size store for the
+# 33rd struct (`store64(S + 0x197008 + 32*8, ...)`) overwrote
+# struct_names[0]'s first 8 bytes. agnosys 1.1.0 hit this at 37
+# `#derive(accessors)` structs in the integration test compilation
+# (pam + netns + update modules pushed past 32). Two reproducible
+# modes: clean truncation (33rd struct silently fails to emit) and
+# prefix corruption (struct[0]'s name first 8 chars overwritten by
+# struct[32]'s size, leading to `update_state_X` getting emitted
+# as `tate_X`).
+#
+# Fix: separate the per-struct tables from the shared parse buffer. Shared parse
+# state stays in the low half (0x197008..0x1974E0); 0x197F00 (include count) and
+# 0x197F10 (the #ifdef per-depth state byte stack) stay where they were.
+#
+# S+0x197000: (freed 6.6.20 — the derive struct count is the gvar _pp_derive_count)
+# S+0x197008: output position (op)
+# S+0x197010: field_count
+# S+0x197018: cumul_off (total struct byte size)
+# S+0x197020: sname[64]
+# Per-struct field tables — v6.0.47 relocated to the freed 0x1FC000-0x204000
+# band + cap raised 32 → 256 fields. The `fc >= 256` bounds check below guards
+# the silent clobber that bit agnos 1.28.3 pre-v5.11.24.
+# S+0x1FC000: field_names[256][32]  (8192 bytes)
+# S+0x1FE000: field_types[256][32]  (8192 bytes)
+# S+0x200000: field_offsets[256][8] (2048 bytes; ends 0x200800)
+#
+# v6.0.53: the derive struct sizes[512] + names[512*32] tables (cap 64 → 512 —
+# libro -D LIBRO_TPM pulls 66 #derive structs: 27 libro + 39 agnosys) are ALLOC'd
+# from the heap, NOT fixed S-offsets. The fixed scratch band is packed solid (the
+# old 0x197500/0x197700 slot fit only 64; every nearby fixed region is live during
+# preprocessing — file_map@0x19A108, the struct pool@0x1A0000+, preprocess_out@0x459D000;
+# gvar_toks now lives at 0x729000, moved off 0x198000 at v6.3.41). alloc() lands them in
+# the post-brk heap, zero collision.
+# (CI-SIGILL fix: the first cut relocated sizes/names to a FIXED 0x198000 and clobbered
+# gvar_toks (which lived at 0x198000 until v6.3.41) → corrupted deferred-global-init
+# codegen → Illegal instruction. The fixed scratch band stays packed, so alloc() remains
+# the right home even though 0x198000 itself is now free.)
+var _pp_derive_count = 0;
+# v6.5.31: emit the shared enum name-compare helper once per compilation.
+var _pp_enum_helper_done = 0;
+var _pp_derive_sizes = 0;   # alloc(512*8)  lazily on first #derive registration
+var _pp_derive_names = 0;   # alloc(512*32) ditto
+var _pp_derive_lays = 0;    # alloc(512*8) ditto: a FIRST definition's layout record (6.6.11, PP_DERIVE_LAY_SAVE)
+var _pp_derive_isen = 0;    # alloc(512*8) ditto: 1 = the registration is an ENUM (6.7.11, PP_DNEST_SCAN)
+var _pp_derive_codec = 0;   # alloc(512*8) ditto: 1 = the registration emitted `T_from_json_str` (6.7.11, PP_DERIVE_STRUCT)
+var _pp_derive_fam = 0;     # alloc(512*8) ditto: the families the registration emitted, PP_DERIVE_FAM's bits (6.7.16)
+# v6.5.20 — FLATTEN mode for PP_EMIT_STR: newline -> space. Set only around the
+# `#derive` BODY emitters (the generated fns), never around the struct copy.
+#
+# WHY. `#derive` is the one preprocessor transform that ADDS lines, so unlike the
+# `#ifdef` family it could not be padded back to 1:1 and had to re-anchor the file map
+# after itself (v6.5.19). A re-anchor makes everything AFTER the construct exact but
+# nothing INSIDE it: the expansion still occupies more expanded lines than the source it
+# replaced, and FM_LOOKUP's `expanded - start + base` is linear, so it cannot represent
+# a span that stretches in the middle. Emitting the whole generated block on ONE
+# expanded line — the line of the struct's closing `}` — removes the stretch entirely:
+# the block now occupies exactly the source lines it consumed, the arithmetic is exact
+# everywhere including inside, and the re-anchor markers are no longer needed at all.
+#
+# ⚠ `#` IS A COMMENT in cyrius, so any `#` in a flattened literal comments out the rest
+# of the block. Every PP_EMIT_STR literal was audited (191 call sites, 178 with a string
+# literal); exactly one carried a `#` — a `# nested struct` comment in the generated
+# from_json body, deleted rather than escaped. The 13 non-literal arguments are struct
+# names, field names and field type names read from source, i.e. identifiers.
+var _pp_flatten = 0;
+# v6.6.3 — set while parsing a `public struct` / `public enum` so the generated
+# accessors inherit that visibility. See PP_PARSE_STRUCT_DEF and
+# PP_DERIVE_ACCESSORS_BODY. Reset at the start of every struct parse, so it cannot
+# leak from one derive to the next.
+var _pp_decl_public = 0;
+# v6.6.4: the "#derive target is an enum" flag lived at S+0x197F10 — the SAME cell the
+# `#ifdef` machinery uses as its per-depth state BYTE stack (store8(S+0x197F10+pp_depth)).
+# An enum derive inside a TAKEN #ifdef block overwrote depth-0's state with 1 (= "skip"),
+# so the rest of that block was silently dropped (rc=0, wrong exit code). A global now.
+var _pp_decl_is_enum = 0;
+# v6.5.20 — offset (relative to the handler's `src_base`) of the first byte AFTER the
+# `#derive`d struct's closing `}`, i.e. the start of that line's tail. PP_PARSE_STRUCT_DEF
+# records it; the entry-point handler copies the tail with PP_COPY_TAIL *after* it has
+# emitted the generated bodies. See PP_COPY_TAIL for why the tail must come LAST.
+var _pp_tail_ip = 0;
+var _pp_vecdec_int_done = 0;  # v6.4.x R2 — emitted the shared _cy_vecdec_int JSON-array helper yet?
+var _pp_vecdec_f64_done = 0;  # v6.4.x R2 — emitted the shared _cy_vecdec_f64 JSON-array helper yet?
+var _pp_skipval_done = 0;     # v6.4.x R3 — emitted the shared _cy_json_skipval value-skip helper yet?
+
+# Helper: write decimal integer to output buffer, return bytes written
+fn PP_EMIT_INT(out, op, val): i64 {
+    var digits[20];
+    var dc = 0;
+    if (val == 0) { store8(out + op, 48); return 1; }
+    var v = val;
+    while (v > 0) {
+        store8(&digits + dc, 48 + (v % 10));
+        dc = dc + 1;
+        v = v / 10;
+    }
+    # Reverse
+    var di = 0;
+    while (di < dc) {
+        store8(out + op + di, load8(&digits + dc - 1 - di));
+        di = di + 1;
+    }
+    return dc;
+}
+
+# Helper: copy C string bytes to output, return length.
+# v6.5.20 — honours `_pp_flatten` (newline -> space). See the flag's declaration.
+fn PP_EMIT_STR(out, op, cstr): i64 {
+    var i = 0;
+    while (load8(cstr + i) != 0) {
+        var ch = load8(cstr + i);
+        if (_pp_flatten == 1) { if (ch == 10) { ch = 32; } }
+        store8(out + op + i, ch);
+        i = i + 1;
+    }
+    return i;
+}
+
+# v6.5.20 — copy the REMAINDER of the struct's closing-`}` line, stopping at a `#`
+# that is outside a string literal, and WITHOUT copying the newline.
+#
+# ⚠ COPY, never consume. The obvious implementation of design 1 consumes this tail so
+# the generated bodies can own the line, and that is SILENT CODE LOSS, not merely a
+# dropped comment: `struct Z { a; } fn helper() { return 2; }` is legal cyrius, and
+# consuming the tail deletes `helper` with no diagnostic — the program compiles clean
+# and returns the wrong answer. Measured: `struct Z { a; b; } var g = 77;` went from
+# exit 77 to `undefined variable 'g'`.
+#
+# ⚠ THE TAIL GOES LAST, AFTER THE GENERATED BODIES. This call is made by the ENTRY-POINT
+# handler once its bodies are emitted, never by PP_PARSE_STRUCT_DEF mid-way — the tail's
+# offset travels in `_pp_tail_ip`. The first cut copied the tail first and appended the
+# bodies behind it, which is correct only while the tail is SELF-CONTAINED. A tail that
+# OPENS a construct continuing on later source lines —
+#     struct Z { a; } fn helper() {
+#         return 42;
+#     }
+# — then had every generated fn spliced INSIDE `helper`'s body: nested fn definitions,
+# `rc=0`, no diagnostic, and a binary that SIGSEGVs. Emitting the bodies first makes the
+# user's opener the last thing on the expanded line, so the lines that continue it follow
+# it verbatim, exactly as written. This ordering needs no look-ahead and no guess about
+# what the tail opens — `fn`, `if`, `while`, another `struct`, or nothing at all.
+#
+# The `#` stop is what makes copying safe on a flattened line: everything after a `#`
+# is a comment, and on one expanded line a copied comment would eat whatever follows it.
+# Dropping a trailing comment is semantically inert (the lexer discards it either way).
+# The scan is string-aware so a `#` inside a literal — say `} var s = "#!/bin/sh";` — is
+# copied through rather than truncating the string.
+#
+# The newline is deliberately not copied: the caller terminates the line itself, which is
+# what keeps the block's expanded line count equal to its source line count. `ip` is
+# advanced past the newline by PP_PARSE_STRUCT_DEF with PP_SKIPLINE, so only the new `op`
+# needs returning.
+fn PP_COPY_TAIL(src_base, ip, bl, out, op): i64 {
+    var q = 0;
+    var esc = 0;
+    while (ip < bl) {
+        var ch = load8(src_base + ip);
+        if (ch == 10) { return op; }
+        # v6.5.20: NO `#` stop here. The first cut copied the tail BEFORE the
+        # generated bodies, so a `#` comment in the tail would have commented the
+        # bodies out — hence the stop. The multi-line-tail fix inverted that: the
+        # tail is now the LAST thing on the expanded line and the newline is written
+        # immediately after it, so a `#` can no longer swallow anything. Keeping the
+        # stop was a REGRESSION against 6.5.19 — `q` tracks `"` but never `'`, so a
+        # `'#'` char literal on the closing-`}` line was cut mid-literal, leaving a
+        # dangling quote that the lexer carried across the newline and reported as a
+        # bogus `multi-byte char literal not supported`. `#` mid-line is not always a
+        # comment; only the newline ends the tail.
+        store8(out + op, ch); op = op + 1;
+        if (esc == 1) { esc = 0; }
+        elif (ch == 92) { if (q == 1) { esc = 1; } }
+        elif (ch == 34) { q = 1 - q; }
+        ip = ip + 1;
+    }
+    return op;
+}
+
+# ---------------------------------------------------------------------------------------
+# 6.6.7 — THE #derive BODY WALK. The field table (names S+0x1FC000, types S+0x1FE000,
+# offsets S+0x200000, and `_pp_derive_sizes`, which nested derives inherit) must describe
+# the SAME layout PARSE_STRUCT_DEF / PARSE_ENUM_DEF give the declaration. It used to be
+# collected by a byte-trigger scan — a field began only right after a `{` or `;` byte, and
+# `#` / tab / CR / `,` / `=` were not in any stop set — so an ordinary comment in a body, a
+# space before `:`, a field with no `;`, or `,`-separated enum members silently produced a
+# different table: wrong JSON keys and values from Serialize, zeroed fields from
+# Deserialize, and accessors that stored past the end of the struct. These helpers walk
+# the body as the parser reads it: identifiers, `#`-to-end-of-line comments and every kind
+# of blank are tokens or trivia, never field boundaries. A declaration HEADER the derive
+# cannot name is refused by name here; a body shape the grammar does not have stops the walk
+# and is left to the parser (see PP_DERIVE_FIELDS). CHANGELOG [6.6.7]
+# ---------------------------------------------------------------------------------------
+var _pp_dndir = 0;
+var _pp_dlen = 0;
+var _pp_dbadc = 0;
+# The layout backstop's armed flag (1; 2 = on a redefined name, 6.6.11) and size — see PP_DERIVE_EMIT_CHK.
+var _pp_dchk_pending = 0;
+var _pp_dchk_size = 0;
+# 1 iff the last PP_DERIVE_FIELDS walk reached the closing `}` (0: it stopped on a shape the
+# parser will reject, so the backstop is not armed — the parser's error is the one to read).
+var _pp_dfull = 0;
+var _pp_dstop = 0;
+# `S` while a derived declaration's header and body are walked, else 0 — arms PP_DDIRCHK.
+var _pp_dS = 0;
+
+# 1 iff `c` is a space or a tab.
+fn PP_DBLANK(c): i64 {
+    if (c == 32) { return 1; }
+    if (c == 9) { return 1; }
+    return 0;
+}
+
+# 1 iff `c` can start an identifier: [A-Za-z_].
+fn PP_IDSTART(c): i64 {
+    if (c >= 97) { if (c <= 122) { return 1; } }
+    if (c >= 65) { if (c <= 90) { return 1; } }
+    if (c == 95) { return 1; }
+    return 0;
+}
+
+# 1 iff `c` can continue an identifier: [A-Za-z0-9_].
+fn PP_IDC(c): i64 {
+    if (c >= 48) { if (c <= 57) { return 1; } }
+    var r = PP_IDSTART(c);
+    return r;
+}
+
+# Skip trivia in [p, end): space, tab, CR, LF, and a `#` comment up to its newline.
+fn PP_DTRIV(base, p, end): i64 {
+    while (p < end) {
+        var c = load8(base + p);
+        if (c == 35) { PP_DDIRCHK(base, p, end); p = PP_SKIPLINE(base, p, end); }
+        elif (PP_DBLANK(c) == 1) { p = p + 1; }
+        elif (c == 10) { p = p + 1; }
+        elif (c == 13) { p = p + 1; }
+        else { return p; }
+    }
+    return p;
+}
+
+# 1 iff the `#` at `p` opens a preprocessor directive: first non-blank byte of its line, and
+# one of the words PP_PASS / PP_IFDEF_PASS act on there.
+fn PP_DISDIR(base, p, end): i64 {
+    var q = p;
+    while (q > 0) { if (PP_DBLANK(load8(base + q - 1)) == 0) { break; } q = q - 1; }
+    if (q > 0) { if (load8(base + q - 1) != 10) { return 0; } }
+    if (ISIFDEF(base, p, end) == 1) { return 1; }
+    if (ISIFNDEF(base, p, end) == 1) { return 1; }
+    if (ISIF(base, p, end) == 1) { return 1; }
+    if (ISELIF(base, p, end) == 1) { return 1; }
+    if (ISELSE(base, p, end) == 1) { return 1; }
+    if (ISENDIF(base, p, end) == 1) { return 1; }
+    if (ISIFPLAT(base, p, end) == 1) { return 1; }
+    if (ISENDPLAT(base, p, end) == 1) { return 1; }
+    if (ISDEFINE(base, p, end) == 1) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.6.8 — A PREPROCESSOR DIRECTIVE INSIDE A DERIVED DECLARATION IS REFUSED BY NAME. The walk
+# reads a `#` line as a comment, so `#ifdef X` / `b: i64;` / `#endif` counted `b` whatever X
+# was, while the parser — after PP_IFDEF_PASS evaluates the copied lines — saw one branch: the
+# codec keyed the wrong fields (garbage `"#ifdef"` keys before 6.6.7, the layout backstop's
+# misleading "not itself #derive'd" message after). Evaluating it here is not an option: the
+# walk runs in PP_PASS, before the defines of an earlier include are registered, so it could
+# pick the other branch from the one the parser compiles — silently. A conditional around the
+# WHOLE `#derive` + declaration works. Armed only while `_pp_dS` is set. CHANGELOG [6.6.8]
+fn PP_DDIRCHK(base, p, end): i64 {
+    if (_pp_dS == 0) { return 0; }
+    if (PP_DISDIR(base, p, end) == 0) { return 0; }
+    var n = 1;
+    while (p + n < end) { if (PP_IDC(load8(base + p + n)) == 0) { break; } n = n + 1; }
+    _ew("error: #derive: a preprocessor directive (", 42);
+    _ew(base + p, n);
+    _ew(") inside the declaration of ", 28);
+    var S = _pp_dS;
+    var k = 0;
+    while (load8(S + 0x197020 + k) != 0) { k = k + 1; }
+    _ew(S + 0x197020, k);
+    var hint = "; the derived code cannot follow a conditional field -- put the conditional around the whole #derive and declaration\n";
+    _ew(hint, 117);
+    _die(1);
+    return 0;
+}
+
+# Refuse a byte the declaration grammar has no place for, naming it and the declaration.
+fn PP_DERIVE_BAD(S, c, msg, mlen): i64 {
+    _ew("error: #derive: unexpected ", 27);
+    if (c > 32 && c < 127) {
+        _pp_dbadc = c;
+        _ew("'", 1);
+        _ew(&_pp_dbadc, 1);
+        _ew("'", 1);
+    } else {
+        _ew("end of input", 12);
+    }
+    _ew(msg, mlen);
+    var n = 0;
+    while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
+    _ew(S + 0x197020, n);
+    _ew("\n", 1);
+    _die(1);
+    return 0;
+}
+
+# Record the stacked-derive flag for the `#` line at `q` (see S+0x197F08 below).
+fn PP_DERIVE_FLAG(S, base, q, bl): i64 {
+    if (ISDERIVE(base, q, bl) == 1) { S64(S + 0x197F08, L64(S + 0x197F08) | 1); return 0; }
+    if (ISDERIVE_DE(base, q, bl) == 1) { S64(S + 0x197F08, L64(S + 0x197F08) | 2); return 0; }
+    if (ISDERIVE_ACC(base, q, bl) == 1) { S64(S + 0x197F08, L64(S + 0x197F08) | 4); }
+    return 0;
+}
+
+# 6.6.8 — a directive between `#derive(...)` and its declaration was consumed as a comment line
+# below, so `#ifdef NOPE` there was dropped and the struct compiled anyway (and a `#define`
+# there never defined anything). Refused by name, as inside the body — see PP_DDIRCHK.
+# CHANGELOG [6.6.8]
+fn PP_DERIVE_PREDIR(base, q, bl): i64 {
+    var n = 1;
+    while (q + n < bl) { if (PP_IDC(load8(base + q + n)) == 0) { break; } n = n + 1; }
+    _ew("error: #derive: a preprocessor directive (", 42);
+    _ew(base + q, n);
+    var m = ") between #derive(...) and the declaration it applies to -- put the conditional around both\n";
+    _ew(m, 92);
+    _die(1);
+    return 0;
+}
+
+# Skip the lines between the entry `#derive(...)` and the declaration: `#` lines (stacked
+# derives and comments, indented or not) and blank lines. Returns the declaration's first
+# byte; `_pp_dndir` = the number of lines consumed, which the caller pads.
+# 6.6.7 — the old loop took only a `#` in COLUMN 0, so a blank line or an indented stacked
+# `#derive` ended it and the declaration probe then reported "neither". CHANGELOG [6.6.7]
+fn PP_DERIVE_SKIPDIRS(S, base, ip, bl): i64 {
+    _pp_dndir = 0;
+    while (ip < bl) {
+        var q = ip;
+        while (q < bl) {
+            var b = load8(base + q);
+            if (PP_DBLANK(b) == 0) { if (b != 13) { break; } }
+            q = q + 1;
+        }
+        if (q >= bl) { return q; }
+        var c = load8(base + q);
+        if (c == 10) { ip = q + 1; _pp_dndir = _pp_dndir + 1; }
+        elif (c == 35) {
+            if (PP_DISDIR(base, q, bl) == 1) { PP_DERIVE_PREDIR(base, q, bl); }
+            PP_DERIVE_FLAG(S, base, q, bl);
+            ip = PP_SKIPLINE(base, q, bl);
+            _pp_dndir = _pp_dndir + 1;
+        }
+        else { return q; }
+    }
+    return ip;
+}
+
+# Check the declaration header after its name: an optional `: stack` (enum only, as
+# PARSE_ENUM_DEF takes it), then the `{`. Anything else — a generic `<T>` list included,
+# which #derive has never supported — is refused here instead of reaching a generated fn
+# name. The name is already in S+0x197020.
+fn PP_DERIVE_HEADER(S, base, p, bl, is_enum): i64 {
+    if (load8(S + 0x197020) == 0) {
+        _ew("error: #derive: expected a name after `struct` / `enum`\n", 56);
+        _die(1);
+    }
+    p = PP_DTRIV(base, p, bl);
+    if (is_enum == 1) {
+        if (p < bl) {
+            if (load8(base + p) == 58) {
+                p = PP_DTRIV(base, p + 1, bl);
+                while (p < bl) { if (PP_IDC(load8(base + p)) == 0) { break; } p = p + 1; }
+                p = PP_DTRIV(base, p, bl);
+            }
+        }
+    }
+    var c = 0;
+    if (p < bl) { c = load8(base + p); }
+    if (c != 123) { PP_DERIVE_BAD(S, c, " in the declaration of ", 23); }
+    return 0;
+}
+
+# Append `c` to the 32-byte slot `dst` at `_pp_dlen`, bounded at 31 bytes (the derive name-capture overflow bug): past
+# that, print `msg` and stop, rather than run into the next slot.
+fn PP_DPUT(dst, c, msg, mlen): i64 {
+    if (_pp_dlen >= 31) {
+        _ew(msg, mlen);
+        _die(1);
+    }
+    store8(dst + _pp_dlen, c);
+    _pp_dlen = _pp_dlen + 1;
+    store8(dst + _pp_dlen, 0);
+    return 0;
+}
+
+# Append the identifier at `p` to `dst` (see PP_DPUT). Returns the position after it.
+fn PP_DAPPEND_ID(base, p, end, dst, msg, mlen): i64 {
+    store8(dst + _pp_dlen, 0);
+    while (p < end) {
+        var c = load8(base + p);
+        if (PP_IDC(c) == 0) { return p; }
+        PP_DPUT(dst, c, msg, mlen);
+        p = p + 1;
+    }
+    return p;
+}
+
+# A field's type, after its `:` — an identifier, optionally followed by a type-argument list
+# (trivia allowed around each, as the parser allows). Written to `dst` without the trivia, so
+# `Vec< i64 >` records `Vec<i64>` exactly like the unspaced form. Returns `end` (stop the
+# walk) on a shape the grammar does not have — see PP_DERIVE_FIELDS.
+fn PP_DTYPE(base, p, end, dst): i64 {
+    p = PP_DTRIV(base, p, end);
+    _pp_dlen = 0;
+    store8(dst, 0);
+    if (p >= end) { _pp_dstop = 1; return end; }
+    if (load8(base + p) == 42) { return PP_DPTR(base, p, end); }   # 6.6.17: `*T`
+    if (PP_IDSTART(load8(base + p)) == 0) { _pp_dstop = 1; return end; }
+    p = PP_DAPPEND_ID(base, p, end, dst, "error: #derive field type name too long (max 31 bytes)\n", 55);
+    var q = PP_DTRIV(base, p, end);
+    if (q >= end) { return p; }
+    if (load8(base + q) != 60) { return p; }
+    PP_DPUT(dst, 60, "error: #derive field type name too long (max 31 bytes)\n", 55);
+    return PP_DTARGS(base, q + 1, end, dst);
+}
+# ⛔ 6.7.1 (C3) — a type-argument list, just past its `<` (already written): every argument, each an
+# identifier with an optional list of its own, through the `>` that closes this one. Recorded whole —
+# `Vec<Box<i64>>`, `Pair<i32,Pt>`. The walk took ONE identifier and wanted `>`, so a NESTED list
+# (`xs: Vec<Box<i64>>`, which the parser takes since 6.6.17) or a second argument stopped it, and
+# every field after that one lost its derived code — `#derive(accessors)` never defined them.
+# A source `>>` is two bytes here, one closer each. CHANGELOG [6.7.1]
+fn PP_DTARGS(base, p, end, dst): i64 {
+    while (p < end) {
+        p = PP_DTRIV(base, p, end);
+        if (p >= end) { _pp_dstop = 1; return end; }
+        if (PP_IDSTART(load8(base + p)) == 0) { _pp_dstop = 1; return end; }
+        p = PP_DAPPEND_ID(base, p, end, dst, "error: #derive field type name too long (max 31 bytes)\n", 55);
+        var q = PP_DTRIV(base, p, end);
+        if (q >= end) { _pp_dstop = 1; return end; }
+        if (load8(base + q) == 60) {
+            PP_DPUT(dst, 60, "error: #derive field type name too long (max 31 bytes)\n", 55);
+            q = PP_DTARGS(base, q + 1, end, dst);
+            if (q >= end) { return end; }
+            q = PP_DTRIV(base, q, end);
+            if (q >= end) { _pp_dstop = 1; return end; }
+        }
+        var c = load8(base + q);
+        if (c == 62) {
+            PP_DPUT(dst, 62, "error: #derive field type name too long (max 31 bytes)\n", 55);
+            return q + 1;
+        }
+        if (c != 44) { _pp_dstop = 1; return end; }
+        PP_DPUT(dst, 44, "error: #derive field type name too long (max 31 bytes)\n", 55);
+        p = q + 1;
+    }
+    _pp_dstop = 1;
+    return end;
+}
+
+# 6.6.17 — a `name: *T` field (the parser takes it since 6.6.17). To every derived codec the
+# pointer is an untyped 8-byte word — an accessor is load64 / store64, a codec writes the number —
+# so no type name is recorded: step over the `*`s, T and any `<..>` after it. Before, the `*`
+# stopped the walk and every field after it lost its accessors. CHANGELOG [6.6.17]
+fn PP_DPTR(base, p, end): i64 {
+    while (p < end) {
+        if (load8(base + p) != 42) { break; }
+        p = PP_DTRIV(base, p + 1, end);
+    }
+    if (p >= end) { _pp_dstop = 1; return end; }
+    if (PP_IDSTART(load8(base + p)) == 0) { _pp_dstop = 1; return end; }
+    while (p < end) {
+        if (PP_IDC(load8(base + p)) == 0) { break; }
+        p = p + 1;
+    }
+    var q = PP_DTRIV(base, p, end);
+    if (q >= end) { return p; }
+    if (load8(base + q) != 60) { return p; }
+    var d = 0;
+    while (q < end) {
+        var c = load8(base + q);
+        if (c == 60) { d = d + 1; }
+        if (c == 62) {
+            d = d - 1;
+            if (d == 0) { return q + 1; }
+        }
+        q = q + 1;
+    }
+    _pp_dstop = 1;
+    return end;
+}
+
+# An enum member's value, after its `=`: an optional `-`, then a number or a char literal
+# (`'x'` / `'\n'`) — what PARSE_ENUM_DEF accepts. `end` (stop) on anything else.
+# ⛔ 6.7.4 — an enum member's value is any const expression (6.7.2 made enum values a const
+# context; 6.7.4 adds the if-expression), so the walk skips it WHOLE, by the evaluator's grammar at
+# byte level: operand (operator-run operand)*. The single-atom walk it replaces stopped at `1 + 1`'s
+# `+`, so every LATER member lost its derived code (`enum E { A = 1 + 1; B = 5; C = 7; }` decoded
+# "C" as an error). Newlines separate nothing inside a value, as in the evaluator; a member that
+# follows with no separator starts with an identifier, which no operator run precedes.
+fn PP_DVALUE(base, p, end): i64 {
+    p = PP_DVOPND(base, p, end);
+    while (p < end) {
+        var q = PP_DTRIV(base, p, end);
+        if (q >= end) { return p; }
+        if (PP_DVOPC(load8(base + q)) == 0) { return p; }
+        while (q < end) { if (PP_DVOPC(load8(base + q)) == 0) { break; } q = q + 1; }
+        p = PP_DVOPND(base, q, end);
+    }
+    return p;
+}
+fn PP_DVOPC(c): i64 {
+    if (c == 43 || c == 45 || c == 42 || c == 47 || c == 37 || c == 38) { return 1; }
+    if (c == 124 || c == 94 || c == 60 || c == 62 || c == 61 || c == 33) { return 1; }
+    return 0;
+}
+# One operand: unary `-` `~` `!`, then a char or string literal, a balanced `(..)`, an if-expression
+# chain, or a word (an identifier, a number, `E.A`, `1.5`) with an optional call `(..)`.
+fn PP_DVOPND(base, p, end): i64 {
+    p = PP_DTRIV(base, p, end);
+    while (p < end) {
+        var u = load8(base + p);
+        if (u == 45 || u == 126 || u == 33) { p = PP_DTRIV(base, p + 1, end); } else { break; }
+    }
+    if (p >= end) { _pp_dstop = 1; return end; }
+    var c = load8(base + p);
+    if (c == 39) {
+        p = p + 1;
+        if (p < end) { if (load8(base + p) == 92) { p = p + 1; } }
+        p = p + 1;
+        if (p >= end) { _pp_dstop = 1; return end; }
+        if (load8(base + p) != 39) { _pp_dstop = 1; return end; }
+        return p + 1;
+    }
+    if (c == 34 || c == 40) { return PP_DVGRP(base, p, end); }
+    var q = p;
+    while (p < end) {
+        var w = load8(base + p);
+        if (PP_IDC(w) == 0) { if (w != 46) { break; } }
+        p = p + 1;
+    }
+    if (p == q) { _pp_dstop = 1; return end; }
+    if (p - q == 2) { if (load8(base + q) == 105) { if (load8(base + q + 1) == 102) { return PP_DVIF(base, p, end); } } }
+    var r = PP_DTRIV(base, p, end);
+    if (r < end) { if (load8(base + r) == 40) { return PP_DVGRP(base, r, end); } }
+    return p;
+}
+# A balanced `(..)` / `{..}` group (both kinds counted; string and char literals skipped), or one
+# string literal, from its first byte: the byte after it.
+fn PP_DVGRP(base, p, end): i64 {
+    var d = 0;
+    while (p < end) {
+        var c = load8(base + p);
+        if (c == 34 || c == 39) {
+            p = p + 1;
+            while (p < end) {
+                var e = load8(base + p);
+                if (e == 92) { p = p + 1; }
+                elif (e == c) { break; }
+                p = p + 1;
+            }
+            if (d == 0) { return p + 1; }
+        } elif (c == 35) { p = PP_SKIPLINE(base, p, end); continue; }   # a `#` comment: its quotes and brackets are not code
+        elif (c == 40 || c == 123) { d = d + 1; }
+        elif (c == 41 || c == 125) { d = d - 1; if (d == 0) { return p + 1; } }
+        p = p + 1;
+    }
+    _pp_dstop = 1;
+    return end;
+}
+# `if (..) {..} [elif (..) {..}]* [else {..}]`, from just after the `if`: the byte after it.
+fn PP_DVIF(base, p, end): i64 {
+    p = PP_DVGRP(base, PP_DTRIV(base, p, end), end);
+    p = PP_DVGRP(base, PP_DTRIV(base, p, end), end);
+    var go = 1;
+    while (go == 1) {
+        var q = PP_DTRIV(base, p, end);
+        if (q + 4 > end) { return p; }
+        if (load8(base + q) != 101) { return p; }
+        if (PP_IDC(load8(base + q + 4)) == 1) { return p; }
+        if (load8(base + q + 1) == 108 && load8(base + q + 2) == 105 && load8(base + q + 3) == 102) {
+            p = PP_DVGRP(base, PP_DTRIV(base, q + 4, end), end);
+            p = PP_DVGRP(base, PP_DTRIV(base, p, end), end);
+        } elif (load8(base + q + 1) == 108 && load8(base + q + 2) == 115 && load8(base + q + 3) == 101) {
+            return PP_DVGRP(base, PP_DTRIV(base, q + 4, end), end);
+        } else { return p; }
+    }
+    return p;
+}
+
+# Everything after a field's (or member's) name: `: Type`, and for an enum member `= value`,
+# each optional, then at most one `;` or `,`. The next field may follow with no separator, which
+# the parser allows for a struct field (an enum member's is refused, 6.7.16's D12). `end` (stop) on
+# any other byte.
+fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
+    p = PP_DTRIV(base, p, end);
+    if (p < end) {
+        if (load8(base + p) == 58) {
+            PP_DTUP(S, base, PP_DTRIV(base, p + 1, end), end, fc);   # 6.7.7 (B4): a tuple field type
+            p = PP_DTYPE(base, p + 1, end, S + 0x1FE000 + fc * 32);
+            p = PP_DTRIV(base, p, end);
+        }
+    }
+    # `= value` is enum-member syntax only; in a struct it stops the walk.
+    # ⛔ A PAYLOAD variant (`Circle(r)`, `None()`) is REFUSED: the derived codec maps a value to
+    # a member NAME by comparing against the member's constant, and a constructor has no such
+    # constant — `v == Circle` compiled clean and wrote `null` for every Circle. Before 6.6.7
+    # the byte scan kept `Circle(r)` as the name, which failed to compile by accident; the walk
+    # must not turn that into silence. CHANGELOG [6.6.7]
+    if (_pp_decl_is_enum == 1) {
+        if (p < end) {
+            if (load8(base + p) == 40) {
+                var pm = " (a variant with a payload; the derived codec handles plain members only) in the body of ";
+                PP_DERIVE_BAD(S, 40, pm, 89);
+            }
+        }
+        if (p < end) { if (load8(base + p) == 61) { p = PP_DVALUE(base, p + 1, end); p = PP_DTRIV(base, p, end); } }
+    }
+    if (p >= end) { return p; }
+    var c = load8(base + p);
+    if (c == 59) { return p + 1; }
+    if (c == 44) { return p + 1; }
+    if (PP_IDSTART(c) == 0) { _pp_dstop = 1; return end; }
+    return p;
+}
+
+# ⛔ 6.7.7 (B4) — a `#derive`d struct's field typed by a TUPLE (`t: (i64, i64)`, a type since
+# 6.7.7). The walk reads named field types only; at the `(` it STOPPED, and every field after this
+# one silently lost its derived code (`_pp_dfull` stays 0, so not even the layout backstop ran).
+# Refused by name instead, as the walk's capture bounds are: `q` is the type's first byte.
+fn PP_DTUP(S, base, q, end, fc): i64 {
+    if (q >= end) { return 0; }
+    if (load8(base + q) != 40) { return PP_DDYN(S, base, q, end, fc); }
+    return PP_DREFUSE(S, fc, "' is a tuple (in the declaration of ", 36);
+}
+# ⛔ 6.7.8 — the same walk meets a field typed by a DYN (`o: dyn Show`, two words the derived codec
+# cannot read or write): it took `dyn` as the type and `Show` as the next field. Refused by name,
+# as a tuple is. `q` is the type's first byte: `dyn` then a byte no identifier continues with.
+fn PP_DDYN(S, base, q, end, fc): i64 {
+    if (q + 3 >= end) { return 0; }
+    if (load8(base + q) != 100) { return 0; }
+    if (load8(base + q + 1) != 121) { return 0; }
+    if (load8(base + q + 2) != 110) { return 0; }
+    if (PP_IDC(load8(base + q + 3)) == 1) { return 0; }
+    return PP_DREFUSE(S, fc, "' is a dyn (in the declaration of ", 34);
+}
+# "error: #derive reads named field types; '<field>'<what><struct>)" and exit 1.
+fn PP_DREFUSE(S, fc, what, wn): i64 {
+    _ew("error: #derive reads named field types; '", 41);
+    var f = S + 0x1FC000 + fc * 32;
+    var n = 0;
+    while (load8(f + n) != 0) { n = n + 1; }
+    _ew(f, n);
+    _ew(what, wn);
+    n = 0;
+    while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
+    _ew(S + 0x197020, n);
+    _ew(")\n", 2);
+    _die(1);
+    return 0;
+}
+
+# Walk the body [p, end) — `end` is the closing `}` — and fill the field table. Returns
+# the field count.
+# ⭐ A SHAPE THE WALK DOES NOT KNOW STOPS IT; IT IS NOT REPORTED HERE. The walk accepts a
+# SUPERSET of what PARSE_STRUCT_DEF / PARSE_ENUM_DEF accept (trivia anywhere, `,` between
+# struct fields too), so anything that stops it is also a parse error — and the
+# parser reports that at its real file and line (`struct D { x; y = ; }` -> `:2:`), which a
+# preprocessor message could not. The struct text is copied through untouched either way.
+# Only the capture BOUNDS (the derive name-capture overflow bug) stay hard errors here: they protect this table, not the
+# program. CHANGELOG [6.6.7]
+fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
+    var fc = 0;
+    _pp_dfull = 0;
+    _pp_dstop = 0;
+    p = PP_DTRIV(base, p, end);
+    while (p < end) {
+        if (PP_IDSTART(load8(base + p)) == 0) { return fc; }
+        # v5.11.24: hard-cap diagnostic (was silent clobber pre-fix). agnos 1.28.3's
+        # Process struct (22 fields with `#derive(accessors)`) overflowed field_types →
+        # wrong accessor offsets → CR3=0x2 page-fault on first kernel context switch.
+        if (fc >= 256) {
+            var cm = "error: #derive struct field cap exceeded (max 256 — raise in lex/pp/derive.cyr / S+0x1FC000 region)\n";
+            _ew(cm, 102);
+            _die(1);
+        }
+        # ⛔ v6.5.47 (the derive name-capture overflow bug) — bounded at 31 bytes, into a 32-byte stride (PP_DPUT).
+        _pp_dlen = 0;
+        var nm = "error: #derive field name too long (max 31 bytes)\n";
+        p = PP_DAPPEND_ID(base, p, end, S + 0x1FC000 + fc * 32, nm, 50);
+        store8(S + 0x1FE000 + fc * 32, 0);
+        p = PP_DFIELD_TAIL(S, base, p, end, fc);
+        fc = fc + 1;
+        p = PP_DTRIV(base, p, end);
+    }
+    # A stop inside the last field's tail returns exactly `end` too; only a tail that ended
+    # on its own counts as a full walk.
+    if (_pp_dstop == 0) { _pp_dfull = 1; }
+    return fc;
+}
+
+# Shared struct parser for #derive handlers. Skips derive lines, parses struct
+# name + fields, copies struct to output, computes offsets, registers in derive table.
+# Results stored at S+0x197008..S+0x200000. Returns new ip.
+#
+# v5.6.30: `src_base` carries the base for SOURCE reads. PP_PASS passes `S`
+# (the raw-input buffer). PP_IFDEF_PASS passes the `tmp` mmap buffer (full
+# preprocessed source up to 1 MB). Before this parameter split, both passes
+# read from `S + ip` — which for PP_IFDEF_PASS was the copy-back region capped
+# at 1048576 bytes. Any #derive directive landing past that offset read stale
+# data (zeros), produced corrupted output with a 0xff sentinel leaking through
+# from the heap state, and LEX died with `non-ASCII byte (0xff)` at an
+# apparently-valid source line. Libro 2.0.5 tripped this at
+# `src/file_store.cyr:10` (offset 543565, past the 1048576 cap). STATE-TABLE
+# writes (S+0x197020 struct names, S+0x1FC000 field names, S+0x1FE000 types,
+# S+0x200000 offsets, S+0x197008 op-out, S+0x197010 field count) stay addressed
+# relative to `S` — those regions are well below 0x100000 and always in sync.
+fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
+    # v6.5.20 — LINE ACCOUNTING (design 1). The block is made to occupy exactly the
+    # source lines it consumes, in three parts:
+    #   1. every consumed `#derive(...)` directive line is PADDED with one newline
+    #      (the `#ifdef` mechanism from v6.5.19; those lines emit no text of their own),
+    #   2. the struct itself is copied byte-for-byte, so its lines land 1:1, and
+    #   3. the closing-`}` line is left UNTERMINATED here — the caller flattens the
+    #      generated bodies onto it and writes the single closing newline.
+    # Total emitted newlines == total consumed newlines, so FM_LOOKUP's linear span
+    # arithmetic is exact INSIDE the construct as well as after it, and the v6.5.19
+    # re-anchor markers are gone.
+    var ndir = 1;
+    ip = PP_SKIPLINE(src_base, ip, bl);
+    # v5.10.14 — collect stacked `#derive(...)` flags so the
+    # entry-point handler can run additional codegen passes.
+    # Pre-fix this loop silently swallowed every `#` line
+    # between the entry-point `#derive(...)` and the struct
+    # definition, so stacked `#derive(accessors) +
+    # #derive(Serialize)` only got the FIRST handler's
+    # codegen — the second was dropped with no diagnostic.
+    # agnosys 1.1.12 follow-on filing
+    # (2026-05-08-cyrius-derive-multi-stacking.md).
+    #
+    # S+0x197F08 layout (8 bytes, treated as bitfield):
+    #   bit 0: Serialize stacked
+    #   bit 1: Deserialize stacked
+    #   bit 2: accessors stacked
+    # Reset to 0 at struct-def entry; set per matching skipped
+    # line. Entry-point handler reads it post-PP_PARSE_STRUCT_DEF
+    # to decide whether to also emit other directives' bodies.
+    S64(S + 0x197F08, 0);
+    ip = PP_DERIVE_SKIPDIRS(S, src_base, ip, bl);
+    ndir = ndir + _pp_dndir;
+    # Pad the consumed directive lines (part 1 above). Must precede any other output.
+    var dpad = 0;
+    while (dpad < ndir) { store8(out + op, 10); op = op + 1; dpad = dpad + 1; }
+    # The declaration's first byte; the struct copy below starts at the beginning of its line.
+    var decl_at = ip;
+    # v6.5.30 — REJECT a `#derive(...)` that is not sitting on a `struct`.
+    #
+    # ⛔ `ip = ip + 7` below blindly skips the width of `"struct "`. On an `enum` it therefore
+    # skipped `"enum pr"` and read the NAME as `obe_e` — which is where ranga's long-recorded
+    # "misnamed, crashing codec" symptom came from. By 6.5.27 the downstream emit no longer
+    # produced anything at all, so `#derive(Serialize)` above an enum compiled with rc=0, no
+    # diagnostic, and NO codec: the caller discovered it as `undefined function
+    # <name>_to_json` at link time, possibly long after writing the derive, and only if the
+    # codec was ever called. ranga hand-writes four enum codecs because of this.
+    #
+    # The filing (2026-08-19-derive-serialize-on-enum-emits-nothing) ranks the outcomes:
+    # support it, else reject loudly, else warn — and says explicitly that rejecting "would be
+    # strictly better than the current silence, even if enum support never lands". Enum
+    # support is a real feature (a name<->value codec, plus the parse direction ranga also
+    # needs) whose JSON shape is a design call the maintainer owns, so it is pinned separately.
+    # What ships here is the end of the silence.
+    # ⚠ Byte-compared inline rather than with `memeq`: that lives in lib/string.cyr, which
+    # cycc does not include, so a call here is an undefined symbol in the compiler itself.
+    # Every other keyword probe in this file (ISDERIVE and friends) is written the same way.
+    # v6.6.3 — SKIP A LEADING `public` / `pub` BEFORE PROBING FOR THE KEYWORD.
+    # The probes below byte-compare the literal "struct " / "enum " AT ip, so
+    # `public struct P { ... }` matched neither and fell into the "the following
+    # declaration is neither" error — making `#derive` and file visibility mutually
+    # exclusive, i.e. unusable together in any file that derives accessors, which in
+    # practice is every foundation type. Filed while adopting `private`/`public` across
+    # hisab's 35 modules; no workaround existed.
+    # ⚠ Only the DECLARATION POSITION moves. The source text is untouched — the derive
+    # machinery appends generated fns AFTER the declaration and never rewrites it — so
+    # the struct keeps its `public` exactly as written.
+    # `pub` and `public` are the same token (73); both spellings are accepted here
+    # because this probe reads raw source text, not tokens. Per-item `private` is
+    # rejected by the language (tests/gates/frontend/visibility_private.sh), so there is
+    # no third spelling to skip.
+    _pp_decl_public = 0;
+    if (ip + 7 <= bl) {
+        var _vp = 1;
+        if (load8(src_base + ip)     != 112) { _vp = 0; }   # p
+        if (load8(src_base + ip + 1) != 117) { _vp = 0; }   # u
+        if (load8(src_base + ip + 2) != 98)  { _vp = 0; }   # b
+        if (load8(src_base + ip + 3) != 108) { _vp = 0; }   # l
+        if (load8(src_base + ip + 4) != 105) { _vp = 0; }   # i
+        if (load8(src_base + ip + 5) != 99)  { _vp = 0; }   # c
+        if (PP_DBLANK(load8(src_base + ip + 6)) == 0) { _vp = 0; }   # ' ' or tab
+        if (_vp == 1) { _pp_decl_public = 1; ip = PP_DTRIV(src_base, ip + 7, bl); }
+    }
+    if (_pp_decl_public == 0) {
+        if (ip + 4 <= bl) {
+            var _vp2 = 1;
+            if (load8(src_base + ip)     != 112) { _vp2 = 0; }   # p
+            if (load8(src_base + ip + 1) != 117) { _vp2 = 0; }   # u
+            if (load8(src_base + ip + 2) != 98)  { _vp2 = 0; }   # b
+            if (PP_DBLANK(load8(src_base + ip + 3)) == 0) { _vp2 = 0; }   # ' ' or tab
+            if (_vp2 == 1) { _pp_decl_public = 1; ip = PP_DTRIV(src_base, ip + 4, bl); }
+        }
+    }
+    var is_struct = 0;
+    if (ip + 7 <= bl) {
+        is_struct = 1;
+        if (load8(src_base + ip)     != 115) { is_struct = 0; }   # s
+        if (load8(src_base + ip + 1) != 116) { is_struct = 0; }   # t
+        if (load8(src_base + ip + 2) != 114) { is_struct = 0; }   # r
+        if (load8(src_base + ip + 3) != 117) { is_struct = 0; }   # u
+        if (load8(src_base + ip + 4) != 99)  { is_struct = 0; }   # c
+        if (load8(src_base + ip + 5) != 116) { is_struct = 0; }   # t
+        if (PP_DBLANK(load8(src_base + ip + 6)) == 0) { is_struct = 0; }   # ' ' or tab
+    }
+    # v6.5.30/.31 — `enum` is a FIRST-CLASS derive target; anything else is rejected.
+    #
+    # ⭐ The member-name collection below needs NO enum-specific code. `enum E { A = 0; B = 1; }`
+    # goes through the same body walk as a struct (PP_DERIVE_FIELDS): `A` and `B` land in the
+    # field-name table exactly as struct fields do, with an empty type slot, and the `= 0` is
+    # consumed as a value. The ONLY differences are the keyword width (5 vs 7), the optional
+    # `: stack` in the header, and a flag telling the emitter which codec shape to generate.
+    #
+    # ⛔ `ip + 7` below skips the width of `"struct "`. Before v6.5.30 it ran unconditionally,
+    # so on an enum it skipped `"enum pr"` and read the name as `obe_e` — which is where the
+    # long-recorded "misnamed, crashing codec" symptom came from; the downstream emit later
+    # produced nothing at all, turning it into a silent no-op. One mechanism, both symptoms.
+    var kwlen = 0;
+    if (ip + 7 <= bl) { if (is_struct == 1) { kwlen = 7; } }
+    var is_enum = 0;
+    if (ip + 5 <= bl) {
+        is_enum = 1;
+        if (load8(src_base + ip)     != 101) { is_enum = 0; }   # e
+        if (load8(src_base + ip + 1) != 110) { is_enum = 0; }   # n
+        if (load8(src_base + ip + 2) != 117) { is_enum = 0; }   # u
+        if (load8(src_base + ip + 3) != 109) { is_enum = 0; }   # m
+        if (PP_DBLANK(load8(src_base + ip + 4)) == 0) { is_enum = 0; }   # ' ' or tab
+    }
+    if (kwlen == 0) { if (is_enum == 1) { kwlen = 5; } }
+    _pp_decl_is_enum = is_enum;
+    if (kwlen == 0) {
+        # Neither struct nor enum. Still rejected loudly, naming nothing we cannot name.
+        _ew("error: #derive(...) applies to a struct or an enum; the following declaration is neither\n", 89);
+        _die(1);
+    }
+    ip = PP_DTRIV(src_base, ip + kwlen, bl);
+    # ⛔ v6.5.47 (the derive name-capture overflow bug) — THIS CAPTURE WAS UNBOUNDED. `sname` is 64 bytes at S+0x197020,
+    # and
+    # the name is then copied into `_pp_derive_names` at a 32-BYTE STRIDE (see the copy below),
+    # so 31 is the real ceiling — the smaller of the two, not the 64 the scratch declares.
+    # 6.6.7 — the name is an IDENTIFIER, read as one: it stops at the first byte that cannot
+    # continue a name. The old stop set was `space { LF`, so `enum E: stack {` named the codec
+    # `E:_to_json` and a tab after the name put the tab into every generated fn name.
+    # CHANGELOG [6.6.7]
+    var sni = 0;
+    while (ip < bl) {
+        var c = load8(src_base + ip);
+        if (PP_IDC(c) == 0) { break; }
+        if (sni >= 31) {
+            _ew("error: #derive struct name too long (max 31 bytes)\n", 51);
+            _die(1);
+        }
+        store8(S + 0x197020 + sni, c); sni = sni + 1; ip = ip + 1;
+    }
+    store8(S + 0x197020 + sni, 0);
+    _pp_dS = S;
+    PP_DERIVE_HEADER(S, src_base, ip, bl, is_enum);
+    var struct_start = decl_at;
+    while (struct_start > 0) { if (load8(src_base + struct_start - 1) == 10) { break; } struct_start = struct_start - 1; }
+    # 6.6.7 — the copy runs PP_LEXST alongside, so a `{` / `}` inside a `#` comment or a char
+    # literal (`enum E { LB = '{'; }` is legal) neither opens nor closes the declaration. The
+    # bytes are still copied one for one, which is what keeps the line accounting exact.
+    var depth = 0;
+    var cp = struct_start;
+    var lst = 0;
+    var body_open = 0 - 1;
+    var body_close = 0 - 1;
+    while (cp < bl) {
+        var ch = load8(src_base + cp);
+        store8(out + op, ch); op = op + 1;
+        if (lst == 0) {
+            if (ch == 123) { depth = depth + 1; if (body_open < 0) { body_open = cp; } }
+            if (ch == 125) { depth = depth - 1; if (depth == 0) { body_close = cp; cp = cp + 1; break; } }
+        }
+        if (load8(src_base + cp) == 35) { lst = PP_LEXST_AT(src_base, cp, bl, lst); } else { lst = PP_LEXST(lst, load8(src_base + cp)); }
+        cp = cp + 1;
+    }
+    # The field table is built by a separate walk over the body, token by token — see
+    # PP_DERIVE_FIELDS. An unterminated body collects nothing; the parser reports it.
+    var fc = 0;
+    if (body_open >= 0) {
+        if (body_close > body_open) { fc = PP_DERIVE_FIELDS(S, src_base, body_open + 1, body_close); }
+    }
+    _pp_dS = 0;
+    ip = cp;
+    # v6.5.20 — the closing-`}` line's tail (part 3 above). Its offset is HANDED OFF; the
+    # entry-point handler flattens the generated bodies onto this same line, copies the
+    # tail behind them, then writes the single newline. See PP_COPY_TAIL for why the tail
+    # must be copied rather than consumed AND why it has to come after the bodies.
+    _pp_tail_ip = ip;
+    ip = PP_SKIPLINE(src_base, ip, bl);
+    # v5.9.36: derive-side offset table must use the same per-field
+    # widths as the parser-side `FIELDSZ` so PP_DERIVE_SERIALIZE's
+    # `load32`/`store32` etc target the actual struct-literal byte
+    # positions. Pre-fix this used a flat `fsz=8` for every typed
+    # field (overridden only when the type-name matched another
+    # `#derive`-registered struct), so narrow-typed fields at
+    # offsets 4/8 in memory were read by PP_DERIVE codegen at
+    # offsets 8/16 — net `point_i32 { 100, 200, 300 }` serialized
+    # as `{"x":100,"y":300,"z":<garbage>}`.
+    var cumul = 0;
+    var fi = 0;
+    while (fi < fc) {
+        store64(S + 0x200000 + fi * 8, cumul);
+        if (load8(S + 0x1FE000 + fi * 32) != 0) {
+            # Default 8 bytes for typed fields; refine for known
+            # primitive widths and nested derive structs below.
+            var fsz = 8;
+            # The builtin scalars at their widths — i8 / i16 / i32 and (6.7.10, packed) u8 / u16 /
+            # u32 / f32 — the parser's own vocabulary (PP_DFIELD_EK), so the two layouts agree.
+            var dew = _ek_w(PP_DFIELD_EK(S, fi));
+            if (dew > 0) { if (dew < 8) { fsz = dew; } }
+            # Nested-struct override (matched against derive-name
+            # table at _pp_derive_names; its size lives at _pp_derive_sizes).
+            var di = 0;
+            while (di < _pp_derive_count) {
+                var eq = 1; var ci = 0;
+                while (eq == 1) { var a = load8(S + 0x1FE000 + fi * 32 + ci); var b = load8(_pp_derive_names + di * 32 + ci); if (a != b) { eq = 0; } if (a == 0) { break; } ci = ci + 1; }
+                if (eq == 1) { fsz = load64(_pp_derive_sizes + di * 8); }
+                di = di + 1;
+            }
+            cumul = cumul + fsz;
+        } else { cumul = cumul + 8; }
+        fi = fi + 1;
+    }
+    if (_pp_derive_count >= 512) {
+        _ew("error: too many #derive structs in one file (max 512)\n", 54);
+        _die(1);
+    }
+    # v6.0.53: lazily alloc the sizes/names tables from the heap (post-brk, no
+    # fixed-offset collision). Once per run; reused across files. Safe before the
+    # earlier field-loop reads — those only fire when _pp_derive_count > 0, i.e.
+    # after a prior registration already ran this alloc.
+    if (_pp_derive_sizes == 0) {
+        _pp_derive_sizes = alloc(512 * 8);
+        _pp_derive_names = alloc(512 * 32);
+        _pp_derive_lays = alloc(512 * 8);
+        _pp_derive_isen = alloc(512 * 8);
+        _pp_derive_codec = alloc(512 * 8);
+        _pp_derive_fam = alloc(512 * 8);
+    }
+    var seen = PP_DERIVE_SEEN(S);
+    var dsi = _pp_derive_count;
+    store64(_pp_derive_lays + dsi * 8, 0);
+    store64(_pp_derive_isen + dsi * 8, _pp_decl_is_enum);
+    store64(_pp_derive_codec + dsi * 8, 0);
+    store64(_pp_derive_fam + dsi * 8, 0);
+    if (seen == 0) { store64(_pp_derive_lays + dsi * 8, PP_DERIVE_LAY_SAVE(S, fc)); }
+    var ri = 0;
+    while (load8(S + 0x197020 + ri) != 0) { store8(_pp_derive_names + dsi * 32 + ri, load8(S + 0x197020 + ri)); ri = ri + 1; }
+    store8(_pp_derive_names + dsi * 32 + ri, 0);
+    store64(_pp_derive_sizes + dsi * 8, cumul);
+    _pp_derive_count = _pp_derive_count + 1;
+    store64(S + 0x197008, op);
+    store64(S + 0x197010, fc);
+    store64(S + 0x197018, cumul);
+    # Arm the layout backstop (PP_DERIVE_EMIT_CHK) for a struct with fields. ⛔ 6.6.11: a NAME an
+    # earlier `#derive` declared is judged against THAT definition's field names, offsets and size
+    # (2 = they differ: refused, by name). The parser keeps the FIRST layout, so this declaration's
+    # accessors run against it: two derived `A`s of 48 and 64 B built rc 0 and `A_set_m` stored at
+    # offset 56 of a 48 B struct, and `{ x; y; }` then `{ y; x; }` (same size) built rc 0 with every
+    # setter writing the other field. 6.6.7 exempted a redefined name for the older kavach (two
+    # `struct SpawnedProcess`); every consumer now vendors kavach 3.13.1, which has one. The
+    # duplicates still live (agnosys + sigil, garjan + prani's DcBlocker) have the same names at the
+    # same offsets (field TYPES may differ: DcBlocker is f64 in one, i64 in the other), so they pass.
+    _pp_dchk_pending = 0;
+    if (_pp_decl_is_enum == 0) {
+        if (fc > 0) {
+            if (_pp_dfull == 1) {
+                _pp_dchk_pending = 1; _pp_dchk_size = cumul;
+                if (seen > 0) { _pp_dchk_pending = 2 * PP_DERIVE_LAY_DIFFERS(S, seen - 1, fc, cumul); }
+            }
+        }
+    }
+    return ip;
+}
+
+# ⛔ 6.6.7 — THE LAYOUT BACKSTOP. The derive computes field offsets itself (above) and the
+# parser computes the struct's real layout; if the two ever disagree, every accessor and codec
+# reads and writes the wrong bytes with no diagnostic — which is exactly what the byte-scan body
+# walk did for years. This emits `#assert sizeof(<Name>) == <derive's size>` into the FIRST
+# generated fn body, so any remaining disagreement fails the build instead. It is what makes the
+# still-unsupported case LOUD: a field typed with a struct that is not itself `#derive`d is sized
+# 8 here (the derive cannot see non-derived struct sizes) but its real size by the parser.
+# ⚠ It cannot catch a same-size mis-naming (a wrong key at the right width); it is a backstop,
+# not the fix — PP_DERIVE_FIELDS is.
+# ⚠ Why INSIDE a fn body and not after the struct: a top-level `#assert` is a statement, and
+# the first top-level statement ends the declaration phase — every `struct` / `enum` after it
+# is then rejected (`unexpected struct`). Inside a body it is evaluated by PARSE_STMT and emits
+# no code; an inlined accessor re-evaluates it at each call site, also emitting nothing. The
+# message is ONE fixed string so the string table carries it once per program.
+# CHANGELOG [6.6.7]
+# The FIRST earlier `#derive` registration of the name at S+0x197020 this run, 1-based (0: none).
+fn PP_DERIVE_SEEN(S): i64 {
+    var di = 0;
+    while (di < _pp_derive_count) {
+        if (PP_CSEQ(S + 0x197020, _pp_derive_names + di * 32) == 1) { return di + 1; }
+        di = di + 1;
+    }
+    return 0;
+}
+
+# 1 iff the NUL-terminated strings at a and b are equal.
+fn PP_CSEQ(a, b): i64 {
+    var ci = 0;
+    while (load8(a + ci) == load8(b + ci)) {
+        if (load8(a + ci) == 0) { return 1; }
+        ci = ci + 1;
+    }
+    return 0;
+}
+
+# 6.6.11 — a FIRST definition's layout, kept so a redefinition of the name can be judged against
+# the layout the parser keeps: [fc][fc x (32-byte field name, 8-byte offset)]. Names and offsets
+# with the size pin every field's bytes (the derive packs fields with no padding, so each width is
+# the gap to the next offset); field TYPES are deliberately not compared.
+fn PP_DERIVE_LAY_SAVE(S, fc): i64 {
+    var rec = alloc(8 + fc * 40);
+    store64(rec, fc);
+    var fi = 0;
+    while (fi < fc) {
+        var e = rec + 8 + fi * 40;
+        var k = 0;
+        while (k < 32) { store64(e + k, load64(S + 0x1FC000 + fi * 32 + k)); k = k + 8; }
+        store64(e + 32, load64(S + 0x200000 + fi * 8));
+        fi = fi + 1;
+    }
+    return rec;
+}
+
+# 1 iff this definition (field table, `fc` fields, `size` B) differs from registration `di`'s.
+fn PP_DERIVE_LAY_DIFFERS(S, di, fc, size): i64 {
+    if (load64(_pp_derive_sizes + di * 8) != size) { return 1; }
+    var rec = load64(_pp_derive_lays + di * 8);
+    if (rec == 0) { return 1; }
+    if (load64(rec) != fc) { return 1; }
+    var fi = 0;
+    while (fi < fc) {
+        var e = rec + 8 + fi * 40;
+        if (load64(e + 32) != load64(S + 0x200000 + fi * 8)) { return 1; }
+        if (PP_CSEQ(e, S + 0x1FC000 + fi * 32) == 0) { return 1; }
+        fi = fi + 1;
+    }
+    return 0;
+}
+
+fn PP_DERIVE_EMIT_CHK(S, out, op): i64 {
+    if (_pp_dchk_pending == 0) { return op; }
+    if (_pp_dchk_pending == 2) { return op + PP_DERIVE_REDEF_MSG(S, out, op); }
+    op = op + PP_EMIT_STR(out, op, "#assert sizeof(");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, ") == ");
+    op = op + PP_EMIT_INT(out, op, _pp_dchk_size);
+    _pp_dchk_pending = 0;
+    op = op + PP_EMIT_STR(out, op, ", \"#derive: field offsets disagree with the struct layout");
+    op = op + PP_EMIT_STR(out, op, " (is a field typed with a struct that is not itself #derive'd?)\"; ");
+    return op;
+}
+
+# The redefinition's refusal (6.6.11, see the arming in PP_DERIVE_FIELDS): the preprocessor has
+# already compared the two layouts, so it is an unconditional `#assert` naming the struct.
+# Returns bytes written.
+fn PP_DERIVE_REDEF_MSG(S, out, op): i64 {
+    _pp_dchk_pending = 0;
+    var n = PP_EMIT_STR(out, op, "#assert 0 == 1, \"#derive: struct '");
+    n = n + PP_EMIT_STR(out, op + n, S + 0x197020);
+    n = n + PP_EMIT_STR(out, op + n, "' is defined again with different field names, order or size");
+    n = n + PP_EMIT_STR(out, op + n, " -- the FIRST definition is the layout used, so these accessors would read and write the wrong bytes\"; ");
+    return n;
+}
+
+# v6.4.x Pin 2 R2 — classify the element type of a `#derive` field whose type
+# string (a 32-byte cstring at `t`) is `Vec<T>`. Returns:
+#   0                  — not a Vec<...> field
+#   8 / 16 / 32 / 64   — Vec<i8/i16/i32/i64> (int element; the JSON-text width, but
+#                        Vec slots are always i64 so encode/decode use the full slot)
+#   200                — Vec<f64>
+#   201                — Vec<other> (struct / Str element) — unsupported until R3
+# The type string reaches here verbatim because the #derive text pre-parser stops
+# only on `; } space \n` — never on `<`/`>` — so `xs: Vec<i64>` lands as "Vec<i64>".
+fn _pp_vec_elem(S, t): i64 {
+    if (load8(t) != 86) { return 0; }       # 'V'
+    if (load8(t + 1) != 101) { return 0; }  # 'e'
+    if (load8(t + 2) != 99) { return 0; }   # 'c'
+    if (load8(t + 3) != 60) { return 0; }   # '<'
+    var e0 = load8(t + 4);
+    if (e0 == 105) {                         # 'i'
+        var e1 = load8(t + 5);
+        if (e1 == 56) { if (load8(t + 6) == 62) { return 8; } }                               # i8>
+        if (e1 == 49) { if (load8(t + 6) == 54) { if (load8(t + 7) == 62) { return 16; } } }  # i16>
+        if (e1 == 51) { if (load8(t + 6) == 50) { if (load8(t + 7) == 62) { return 32; } } }  # i32>
+        if (e1 == 54) { if (load8(t + 6) == 52) { if (load8(t + 7) == 62) { return 64; } } }  # i64>
+        return 300;   # R3 (BUG-2): an iNN that isn't i8/16/32/64 is a struct name (e.g. Vec<info>)
+    }
+    if (e0 == 102) {                         # 'f'
+        if (load8(t + 5) == 54) { if (load8(t + 6) == 52) { if (load8(t + 7) == 62) { return 200; } } }  # f64>
+        return 300;   # R3 (BUG-2): an fNN that isn't f64 is a struct name (e.g. Vec<f64x>)
+    }
+    # v6.4.x R3 — the inner element is not int/f64. "Str>" stays unsupported (201); any
+    # other name is taken as a #derive-struct element (300 → Vec<struct>), whose
+    # <Name>_to_json / <Name>_from_json_str codecs its own #derive emits (an undefined
+    # element codec surfaces as a clear "undefined function <Name>_to_json").
+    if (e0 == 83) {                          # 'S' — maybe "Str"
+        if (load8(t + 5) == 116) { if (load8(t + 6) == 114) { if (load8(t + 7) == 62) { return 201; } } }  # Str>
+    }
+    return 300;
+}
+
+# R2 — true when _pp_vec_elem returned a Vec kind supported by the codecs (int/f64/struct).
+fn _pp_vec_ok(k): i64 {
+    if (k == 8) { return 1; }
+    if (k == 16) { return 1; }
+    if (k == 32) { return 1; }
+    if (k == 64) { return 1; }
+    if (k == 200) { return 1; }
+    if (k == 300) { return 1; }
+    return 0;
+}
+
+# v6.4.x R3 — emit the inner element type NAME of a "Vec<T>" type string (bytes t+4
+# until '>'), e.g. "Vec<SvPhonemeEvent>" → "SvPhonemeEvent". Returns bytes written so
+# callers can do `op = op + PP_EMIT_VEC_ELEM(out, op, t)` then append "_to_json" etc.
+fn PP_EMIT_VEC_ELEM(out, op, t): i64 {
+    var i = 4;
+    var n = 0;
+    while (1 == 1) {
+        var c = load8(t + i);
+        if (c == 62) { break; }
+        if (c == 0) { break; }
+        store8(out + op + n, c);
+        n = n + 1;
+        i = i + 1;
+    }
+    return n;
+}
+
+# Emit #derive(Serialize) — generates Name_to_json function after struct def
+# ip points to '#' of #derive. out+op is the output position.
+# Returns new ip (past the struct). Updates op via S+0x197008.
+# v5.10.14 — Serialize body emit, factored out for cross-call
+# from stacked-derive entry points (e.g. accessors-first source
+# order with Serialize stacked above the struct). Reads
+# metadata at S+0x197010 (field count) / S+0x197018 (cumul_off)
+# / S+0x197020 (struct name) / S+0x1FC000 (field names) /
+# S+0x1FE000 (field types) / S+0x200000 (offsets). Caller is
+# responsible for having called PP_PARSE_STRUCT_DEF first to
+# populate that metadata.
+# v6.5.31 — emit `E_to_json(v, sb)` + `E_from_json_str(json)` for a `#derive`d enum.
+#
+# Shape (name string, Result on parse — see the note in PP_DERIVE_SERIALIZE_BODY):
+#   fn E_to_json(v, sb) {
+#       if (v == A) { str_builder_add_cstr(sb, "\"A\""); return 0; }
+#       ...
+#       str_builder_add_cstr(sb, "null");     # unrecognised value, still valid JSON
+#       return 0;
+#   }
+#   fn E_from_json_str(json) {
+#       if (_cy_enum_name_eq(json, "A") == 1) { return Ok(A); }
+#       ...
+#       return Err(0 - 1);
+#   }
+#
+# ⚠ `null` for an out-of-range value, not a crash and not a bogus name: `to_json` writing
+# invalid JSON would corrupt the whole document around it, and an enum value can legitimately
+# be out of range (a cast, a wire value from an older peer). ranga's hand-written Display side
+# does the same thing with "unknown".
+fn PP_DERIVE_ENUM_BODY(S, out, op): i64 {
+    var mcount = load64(S + 0x197010);
+    # The name-compare helper is emitted ONCE per compilation, like the Vec decode helpers.
+    # It skips a leading quote so the same fn works whether the caller hands it a raw JSON
+    # value (`"A"`) or a bare name (`A`), which is what makes `from_json_str` usable both
+    # inside a decoded document and directly on a config string.
+    if (_pp_enum_helper_done == 0) {
+        # v6.6.4: emitted ONCE per translation unit (the first enum derive), but CALLED by
+        # every later enum's codec — if that first file is `private` the helper was private
+        # to it and a second file's `_from_json_str` was refused. Always public.
+        op = op + PP_EMIT_STR(out, op, "public fn _cy_enum_name_eq(json, name) {\nvar p = json;\nif (load8(p) == 34) { p = p + 1; }\nvar i = 0;\nwhile (load8(name + i) != 0) {\nif (load8(p + i) != load8(name + i)) { return 0; }\ni = i + 1;\n}\nvar c = load8(p + i);\nif (c == 34) { return 1; }\nif (c == 0) { return 1; }\nreturn 0;\n}\n");
+        _pp_enum_helper_done = 1;
+        PP_DERIVE_FAM_ADD(2);   # 6.7.16
+    }
+    # v6.6.4: a `public enum` / `public struct` in a private file gets PUBLIC codecs, exactly
+    # as its accessors do (v6.6.3) — the generated fns ARE the type's surface. Before this
+    # only the accessor emitter honoured `_pp_decl_public`; the codecs were emitted bare, so
+    # once the marker leak was closed a public type's `_to_json` became unreachable from
+    # any other file.
+    var _cvis = "";
+    if (_pp_decl_public == 1) { _cvis = "public "; }
+    # === E_to_json(v, sb) ===
+    op = op + PP_EMIT_STR(out, op, _cvis);
+    op = op + PP_EMIT_STR(out, op, "fn ");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, "_to_json(v, sb) {\n");
+    var mi = 0;
+    while (mi < mcount) {
+        op = op + PP_EMIT_STR(out, op, "if (v == ");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, ") { str_builder_add_cstr(sb, \"\\\"");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, "\\\"\"); return 0; }\n");
+        mi = mi + 1;
+    }
+    op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"null\");\nreturn 0;\n}\n");
+    # === E_from_json_str(json) -> Result ===
+    op = op + PP_EMIT_STR(out, op, _cvis);
+    op = op + PP_EMIT_STR(out, op, "fn ");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, "_from_json_str(json) {\n");
+    mi = 0;
+    while (mi < mcount) {
+        op = op + PP_EMIT_STR(out, op, "if (_cy_enum_name_eq(json, \"");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, "\") == 1) { return Ok(");
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + mi * 32);
+        op = op + PP_EMIT_STR(out, op, "); }\n");
+        mi = mi + 1;
+    }
+    op = op + PP_EMIT_STR(out, op, "return Err(0 - 1);\n}\n");
+    return op;
+}

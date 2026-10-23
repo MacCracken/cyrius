@@ -1,0 +1,654 @@
+# PARSER — expr: the pointer-kind stamp (`_PK_*`), parenthesised operands, u128 carry, borrow and compare (`_w128_*`),
+# and the whole-tuple and dyn value refusals.
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# 6.7.6 (D2): the u128 stamp (see _W128_MARK below), declared above its first reader.
+var _w128_k = 0;
+var _w128_v = 0;
+var _w128_cp = 0;
+var _w128_ti = 0;
+# ⛔ 6.7.8 (C2-5) — THE POINTER-KIND STAMP. `*p` reads and writes a narrow `*T`'s element at its
+# width, and the element kind rides the pointer-scale word (C2-3a) — but that word is "the last
+# factor's", not "this value's": nothing cleared it when an operator CONSUMED a pointer, so after
+# `x == q`, `m & q`, `-q`, `~q` or `mk(q).n` it held q's word (6.6.17's step leaked the same way —
+# `(x == q) + 1` added 4; 6.7.9 clears the word there, `_pexpr_bit_ps`). A value's kind is its OWN
+# only when the producer that wrote the word ended at THIS code pointer and token — the _BX / _FBR /
+# _W128 pattern: a name, a `*T` field or a call (`_pk_post`, the PARSE_FACTOR wrapper), pointer
+# arithmetic on such a value (`_ptr_add` / `_int_plus_ptr` / `_ptr_sub`), an if-expression whose
+# branches agree (`_ie_finish`), carried across a `)` (`_paren_post`). Every reader of the kind as
+# a value's goes through `_pk_word`, which strips it otherwise; the step is never touched, so all
+# arithmetic is what it was. CHANGELOG [6.7.8]
+var _pk_cp = 0;
+var _pk_ti = 0;
+var _pk_w = 0;
+fn _PK_MARK(S, w): i64 { _pk_cp = GCP(S); _pk_ti = GTI(S); _pk_w = w; return 0; }
+fn _PK_IS(S): i64 {
+    if (_pk_cp == 0) { return 0; }
+    if (GCP(S) != _pk_cp) { return 0; }
+    if (GTI(S) != _pk_ti) { return 0; }
+    return 1;
+}
+# A parenthesised factor carries its result flags across its `)`: the float-builtin kind (low
+# bits), the boolean stamp (16), (6.7.6) the u128 stamp (32) and (6.7.8) the pointer-kind stamp (64).
+fn _paren_pre(S): i64 {
+    var k = _FBR_KIND(S);
+    if (_BX_IS(S) == 1) { k = k + 16; }
+    if (_W128_IS(S) == 1) { k = k + 32; }
+    if (_PK_IS(S) == 1) { k = k + 64; }
+    return k;
+}
+fn _paren_post(S, k): i64 {
+    if ((k & 15) != 0) { _fbr_ti = GTI(S); }
+    if ((k & 16) != 0) { _bxr_ti = GTI(S); }
+    if ((k & 32) != 0) { _w128_ti = GTI(S); }
+    if ((k & 64) != 0) { _pk_ti = GTI(S); }
+    return 0;
+}
+
+# ⛔ 6.7.6 (Break 1, D2) — u128 `+` AND `-` CARRY AND BORROW ACROSS ALL 128 BITS (the user's decision,
+# 2026-10-08): in both spellings (`b = b + x`, `b += x`), with a u128 or an integer on either side,
+# on every backend. Neither carried: both worked on the low word and left the high word alone.
+# A u128 read is still its LOW word in rax, so every integer context (an argument, a return,
+# `var n = b`) is unchanged; a comparison reads both words (D3, _w128_cmp below) and so does a plain
+# assignment (D3, _w128_store). What it lacked is the high word, and the u128 STAMP says where
+# the whole value lives — the _BX / _FBR pattern, valid only while nothing has been emitted or
+# consumed since: a u128 local or global (k 1 / 2, the place itself; _sl_load_marks / _UFV_G) or a
+# 16-byte hidden temporary (k 3, _w128_tmp) holding a `+` / `-` result. A `+` / `-` with a u128 on
+# either side computes into a temporary with the backend's add / subtract with carry (EW128_ACCM,
+# EW128_ACCI) and leaves its low word in rax; a store into a u128 place takes all 16 bytes of the
+# value (_w128_store), and `b += x` / `b -= x` are that long form (_w128_cop). An integer
+# operand is its 64-bit pattern, ZERO-extended — the rule a u128 initializer, a `u128[N]` list
+# element and a constant u128 global already follow (`var z: u128 = 0 - 1;` is 2^64 - 1); unary
+# minus is `0 - x`. Every OTHER operator with a u128 operand — `* / % << >> >>> & | ^ ~`, the `*|
+# *? +| +? -| -?` forms and their `OP=` — is refused by name (_w128_refuse_at): each computed on
+# the low word. CHANGELOG [6.7.6]
+fn _W128_MARK(S, k, v): i64 {
+    _w128_k = k;
+    _w128_v = v;
+    _w128_cp = GCP(S);
+    _w128_ti = GTI(S);
+    return 0;
+}
+fn _W128_IS(S): i64 {
+    if (_w128_k == 0) { return 0; }
+    if (GCP(S) != _w128_cp) { return 0; }
+    if (GTI(S) != _w128_ti) { return 0; }
+    return 1;
+}
+# rax (rcx 0) or rcx (rcx 1) = the address of the u128 `(k, v)`: a local's canonical slot (k 1), a
+# global (k 2), a temporary (k 3: a frame slot, or `-2 - vi` for a dead global at top level). A
+# frame slot is reached by `lea`, which keeps it out of the register picker (parse/fn/def.cyr).
+fn _w128_addr(S, k, v, rcx): i64 {
+    var fr = 0;
+    if (k == 1) { fr = 1; }
+    if (k == 3) { if (v >= 0) { fr = 1; } else { v = 0 - 2 - v; } }
+    if (fr == 1) {
+        # The frame `lea` is raw bytes on x86 with no IR node of its own: marked, or a CYRIUS_IR pass
+        # that rewrites the node before it (a folded `0 - 1`) takes the `lea` with it (_arr_sub_addr's rule).
+        _IR_REC0(S, IR_RAW_EMIT);
+        if (rcx == 1) { EFLADDR_X1(S, v); } else { EFLADDR(S, v); }
+        return 0;
+    }
+    if (rcx == 1) { EVADDR_X1(S, v); } else { EVADDR(S, v); }
+    return 0;
+}
+# A 16-byte temporary, laid out as a u128 local is (the high half in the slot above the canonical
+# one, the pair an inline aggregate so a coroutine frame keeps it whole); at top level, which has no
+# frame, _HTEMP's dead unnamed global resized to 16 bytes (as _gv_target resizes its sink). Returns
+# its handle.
+fn _w128_tmp(S): i64 {
+    if (GINFN(S) == 1) {
+        var li = GFLC(S);
+        _w128_slot(S, li, 0);
+        _w128_slot(S, li + 1, 2);
+        SFLC(S, li + 2);
+        return li + 1;
+    }
+    var h = _HTEMP(S);
+    S64(_vars_base + (0 - 2 - h) * 8, 16);
+    return h;
+}
+fn _w128_slot(S, li, span): i64 {
+    S64(S + 0x5D9D000 + li * 8, 0 - 1);
+    SLDEP(S, li, 0);
+    if (span > 0) { SLAGG(S, li, span); }
+    SLTYPE(S, li, 0);
+    SSLICE_W(S, li, 0);
+    return 0;
+}
+# The temporary `h` (op)= the u128 `(k, v)` (op 2 copies it) / rax zero-extended (op 2 sets it).
+fn _w128_accm(S, h, op, k, v): i64 {
+    _w128_addr(S, k, v, 0);
+    _w128_addr(S, 3, h, 1);
+    EW128_ACCM(S, op);
+    return 0;
+}
+fn _w128_acci(S, h, op): i64 {
+    _w128_addr(S, 3, h, 1);
+    EW128_ACCI(S, op);
+    return 0;
+}
+# The result: rax = the temporary's low word (the value every integer context reads), stamped.
+fn _w128_res(S, h): i64 {
+    _w128_addr(S, 3, h, 0);
+    ELOAD64(S);
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    _W128_MARK(S, 3, h);
+    return 0;
+}
+# The right operand just parsed, into the temporary `h`: a u128 (the stamp) by address, else rax.
+fn _w128_rhs(S, h, op): i64 {
+    if (_W128_IS(S) == 1) { _w128_accm(S, h, op, _w128_k, _w128_v); }
+    else { _w128_acci(S, h, op); }
+    _w128_res(S, h);
+    return 0;
+}
+# `x + y` / `x - y` (op 0 / 1) with the u128 `x` the stamp names, the cursor on the operator (`e` 0),
+# or `x += e` / `x -= e` with the cursor past it (`e` 1, the right side a whole expression): x into
+# a temporary first — a k-3 x is its own — then the right side added or subtracted in.
+fn _w128_binop(S, op, e): i64 {
+    var lk = _w128_k;
+    var h = _w128_v;
+    if (e == 0) { STI(S, GTI(S) + 1); }
+    if (lk != 3) {
+        var lv = h;
+        h = _w128_tmp(S);
+        _w128_accm(S, h, 2, lk, lv);
+    }
+    if (e == 0) { PARSE_TERM(S); }
+    else {
+        _refuse_lossy_pair(S);   # 6.7.7 (T5b): `b += f();` added the tag, zero-extended
+        PCMPE(S);
+    }
+    _w128_rhs(S, h, op);
+    return 0;
+}
+# `n + x` / `n - x` with an integer `n` the arm pushed and the u128 `x` the stamp names (the
+# pointer-add hooks, _ptr_add / _ptr_sub): n zero-extended into a temporary, x added or subtracted
+# in. Unary minus (_neg_int) is `0 - x` this way.
+fn _w128_ilhs(S, op): i64 {
+    var rk = _w128_k;
+    var rv = _w128_v;
+    EPOPR(S);
+    var h = _w128_tmp(S);
+    _w128_acci(S, h, 2);
+    _w128_accm(S, h, op, rk, rv);
+    _w128_res(S, h);
+    return 0;
+}
+# PEXPR's loop, at operator `typ` (nothing consumed): a u128 `+` / `-` (1, handled), else a refused
+# additive-level operator with a u128 on its left (reported; the parse goes on).
+fn _w128_pexpr(S, typ): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    if (typ == 6 || typ == 113) { _w128_binop(S, 0, 0); return 1; }
+    if (typ == 7 || typ == 116) { _w128_binop(S, 1, 0); return 1; }
+    _w128_lchk(S, typ);
+    return 0;
+}
+# The operators refused with a u128 operand (`*%` included; `+%` / `-%` are `+` / `-`).
+fn _w128_refused_op(t): i64 {
+    if (t == 8 || t == 9 || t == 34 || t == 38 || t == 39 || t == 152) { return 1; }
+    if (t == 27 || t == 35 || t == 36 || t == 37) { return 1; }
+    if (t == 119 || t == 120 || t == 121 || t == 114 || t == 115 || t == 117 || t == 118) { return 1; }
+    return 0;
+}
+fn _w128_opstr(t): i64 {
+    if (t == 8) { return "*"; }
+    if (t == 9) { return "/"; }
+    if (t == 34) { return "%"; }
+    if (t == 38) { return "<<"; }
+    if (t == 39) { return ">>"; }
+    if (t == 152) { return ">>>"; }
+    if (t == 27) { return "&"; }
+    if (t == 35) { return "|"; }
+    if (t == 36) { return "^"; }
+    if (t == 37) { return "~"; }
+    if (t == 119) { return "*%"; }
+    if (t == 120) { return "*|"; }
+    if (t == 121) { return "*?"; }
+    if (t == 114) { return "+|"; }
+    if (t == 115) { return "+?"; }
+    if (t == 117) { return "-|"; }
+    return "-?";
+}
+# A refused operator `typ` at the cursor with the u128 the stamp names on its LEFT (PEXPR's and
+# PARSE_TERM's loops).
+fn _w128_lchk(S, typ): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    if (_w128_refused_op(typ) == 0) { return 0; }
+    return _w128_refuse_at(S, GTI(S), typ, 0);
+}
+# The factor that began at token `ti0` (PARSE_FACTOR, after it) is the u128 the stamp names: the
+# RIGHT operand of a refused operator just before it — `~x` too. A `*` / `&` with no operand before
+# it is a dereference / an address (`*p`, `&x`), not this.
+fn _w128_rchk(S, ti0): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    if (ti0 < 1) { return 0; }
+    var t = TOKTYP(S, ti0 - 1);
+    if (_w128_refused_op(t) == 0) { return 0; }
+    if (t == 8 || t == 27) { if (_tok_ends_operand(S, ti0 - 2) == 0) { return 0; } }
+    return _w128_refuse_at(S, ti0 - 1, t, 0);
+}
+# One report per binary expression: a whole tuple right after a binary operator whose left operand
+# was a whole tuple refused here (it ended at that operator) is the same mistake — `t == u`,
+# `t + u + v` report `t` alone. `_tup_rv_e` is the token after the last one. 1 = say nothing.
+# CHANGELOG [6.7.11]
+var _tup_rv_e = 0 - 1;
+fn _tup_rv_chain(S, ti0): i64 {
+    if (ti0 < 1) { return 0; }
+    if (_tup_rv_e != ti0 - 1) { return 0; }
+    return _cex_binop(TOKTYP(S, ti0 - 1));
+}
+# ⛔ 6.7.7 (B4) — A TUPLE IS NOT A NUMBER (R11). A factor that is exactly one name (`GTI == ti0 + 1`)
+# whose load stamped a tuple's sid — every inline-aggregate load stamps it: a local, an
+# address-passed parameter, a closure capture, a global; `_PARSE_FACTOR_IMPL` resets it at entry —
+# is a whole tuple read as a VALUE: `t == u`, `t + 1`, `!t`, `if (t)`, `print(t)`, `var x = t;`, an
+# untyped argument. Under the struct rule each of those took the tuple's first word (or dispatched
+# a `(i64, i64)_add` that cannot exist), silently. Refused by name, once per token, and the stamp
+# cleared so no operator dispatch follows. Every legitimate whole-tuple use — a copy, a tuple
+# argument, a field store, a struct-literal element, `&t` — consumes the name without a factor.
+# (A whole tuple-typed FIELD is refused at its load, `_tup_fld_rchk`.) CHANGELOG [6.7.7]
+fn _tup_rchk(S, ti0): i64 {
+    if (_dyn_rchk(S, ti0) == 1) { return 0; }   # 6.7.8: a dyn is not a value either (V1, V2, V4)
+    if (GTI(S) != ti0 + 1) { return 0; }
+    if (TOKTYP(S, ti0) != 2) { return 0; }
+    if (_tup_is(S, GESTYPE(S)) == 0) { return 0; }
+    if (_tup_rv_chain(S, ti0) == 0) {
+        _tup_err(S, ti0, "tuple ", TOKVAL(S, ti0), " used as a value - take an element (`t.0`) or copy it whole into a tuple");
+    }
+    _tup_rv_e = GTI(S);
+    SESTYPE(S, 0);
+    return 0;
+}
+# ⛔ 6.7.8 — A DYN IS NOT A VALUE (decision 7: its two words are opaque). Under the struct rule a
+# whole dyn read as a value took its DATA word — `o + 1`, `o == p`, `if (o)`, `print(o)`, `var x = o;`
+# (inferring no struct from a name), an untyped argument, `load64(o)` — and `&o` handed out the
+# address both words are written through. Refused by name, once per token, the stamp cleared so no
+# operator dispatches (`dyn Show_add`):
+#   V1 a factor that is exactly one name whose load stamped a dyn's sid (`_tup_rchk`'s shape);
+#   V2 `&o`, the name a dyn-typed local, parameter, capture or global;
+#   V4 a dyn-returning call (free, method or operator) that is exactly this factor (its `_lsc`
+#      record spans it, nothing emitted since) — unless a DESTINATION armed it (`_sc_want` is its
+#      first token) and the factor ends the destination's expression (`;` `,` `)` `}` next). Those
+#      are copies — `var y: dyn Show = mk();`, `o2 = h.mk();`, a dyn argument — taken through
+#      PARSE_FACTOR by the destination's own `_sc_whole`; each destination steps inside a wrap
+#      (`(mk())`, the 6.7.6 rule) before it arms, so `_sc_want` is the call itself. The one that does
+#      not — an un-annotated `var x = (mk());`, which infers no struct and keeps the first word — is
+#      refused here. `return mk();` in a fn returning a dyn passes the call through the scalar path
+#      unarmed: it is `_dyn_rw`'s (wrapped or not). A statement call (`mk();`) reaches no factor.
+# Every other whole-dyn use — a copy, a dyn argument, a field store, a struct-literal element —
+# consumes the name without a factor. (A whole dyn FIELD is refused at its load, `_tup_fld_rchk`.)
+# CHANGELOG [6.7.8]
+fn _dyn_rchk(S, ti0): i64 {
+    if (_dyn_nx == 0) { return 0; }
+    var e = GTI(S);
+    var t0 = TOKTYP(S, ti0);
+    var sid = GESTYPE(S);
+    if (e == ti0 + 1) { if (t0 == 2) { if (_dyn_is(S, sid) == 1) {
+                _dyn_err(S, ti0, "", sid, TOKVAL(S, ti0), " used as a value - call one of its methods, or copy it whole into a dyn");
+                SESTYPE(S, 0);
+                return 1;
+            } } }
+    if (e == ti0 + 2) { if (t0 == 27) {
+            sid = _sarg_name_sid(S, ti0 + 1);
+            if (_dyn_is(S, sid) == 1) {
+                _dyn_err(S, ti0, "the words of ", sid, TOKVAL(S, ti0 + 1), " are not addressable - `&` takes no dyn; copy it whole into a dyn");
+                return 1;
+            }
+        } }
+    if (_lsc_cp != GCP(S)) { return 0; }
+    if (_lsc_beg != ti0) { return 0; }
+    if (_lsc_end != e) { return 0; }
+    if (_dyn_is(S, _lsc_sid) == 0) { return 0; }
+    if (_dyn_want(S, ti0) == 1) {
+        _dyn_xb = ti0;   # let through for the destination, which must be this dyn (`_dyn_dst_chk`)
+        _dyn_xe = e;
+        _dyn_xs = _lsc_sid;
+        return 0;
+    }
+    _dyn_err(S, ti0, "a ", _lsc_sid, 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
+    SESTYPE(S, 0);
+    _lsc_cp = 0 - 1;   # nor is it the left operand of an operator (`_op_lst`)
+    return 1;
+}
+# ⛔ 6.7.8 (review) — V4 LETS A WHOLE DYN RESULT THROUGH FOR AN ARMED DESTINATION, and three arm for
+# any type: an assignment (`x = mk();` into an untyped / i64 / `*T` variable or global, a for step), a
+# declaration with an annotation that is no struct (`var y: i64 = mk();`, `: *Sq`, `: f64`), and any
+# declaration at top level after the first statement (`var G = mk();` — no frame takes the 16 B, so
+# the store kept the first word). Each stored the DATA word — the leak V4 exists to stop. The
+# exemption is recorded (the factor's span and its dyn) and each of those destinations asks after its
+# parse: refused, V4's words at the call, unless the destination is that dyn (`dt` = `0 - sid`, as
+# `_agc_t` / PARSE_VAR's pscale give it). 1 = refused. (A tail call is the fourth path: it never reaches
+# the factor — `_tc_callee_divert`.) CHANGELOG [6.7.8]
+var _dyn_xb = 0 - 1;   # the last whole dyn result V4 let through: its first token,
+var _dyn_xe = 0 - 1;   # ... the token after it,
+var _dyn_xs = 0;       # ... and its dyn
+fn _dyn_dst_chk(S, st, dt): i64 {
+    if (_dyn_xb != st) { return 0; }
+    if (_dyn_xe != GTI(S)) { return 0; }
+    _dyn_xb = 0 - 1;
+    if (dt == 0 - _dyn_xs) { return 0; }
+    _dyn_err(S, st, "a ", _dyn_xs, 0 - 1, " result used as a value - call one of its methods, or copy it whole into a dyn");
+    return 1;
+}
+# 1 = the factor at `ti0` (just parsed, the cursor after it) is a whole expression a destination
+# armed: `_sc_want` at `ti0` or before it through `(` only, and `;` `,` `)` or `}` next.
+fn _dyn_want(S, ti0): i64 {
+    var nt = TOKTYP(S, GTI(S));
+    if (nt != 5 && nt != 31 && nt != 11 && nt != 14) { return 0; }
+    if (_sc_want == ti0) { if (_scv_un != ti0) { return 1; } }   # 6.7.11: not through an untyped decl's wrap
+    return _dyn_wraps(S, _dyn_rw, ti0);
+}
+# 1 = `w` is `ti0`, or opens only `(` up to it.
+fn _dyn_wraps(S, w, ti0): i64 {
+    if (w < 0) { return 0; }
+    if (w > ti0) { return 0; }
+    while (w < ti0) {
+        if (TOKTYP(S, w) != 10) { return 0; }
+        w = w + 1;
+    }
+    return 1;
+}
+# `return mk();` in a fn returning a dyn: the pair-class return lets a call returning the same struct
+# through the scalar path's PCMPE (`_ret_struct_pair`), with no destination armed — its first token
+# (outside any wrap) is recorded here, a destination for `_dyn_want`.
+var _dyn_rw = 0 - 1;
+fn _dyn_ret_arm(S): i64 {
+    if (_dyn_is(S, _cur_fn_ret_sid) == 1) { _dyn_rw = GTI(S); }
+    return 0;
+}
+# ⛔ 6.7.7 (B4) — THE TUPLE LITERAL `(a, b)`: a `(` group with a comma at its own depth. ONE detector
+# for every position — PARSE_RETURN's multi-value arm, the accepting positions and the stray
+# refusal — so they cannot disagree. Its elements are stepped by `_arg_next`, the one argument
+# walker: a comma inside a nested `( [ {` group separates nothing, nor does one between a closure's
+# `|a, b|` bars at an element's start, nor one inside an explicit generic call's type arguments
+# (`pk<i64, i64>(1, 2)`, `_arg_gen_past`). PARSE_RETURN's own paren-depth scan counted both, so
+# `return (|a, b| a + b);` and `return (pk<i64, i64>(1, 2));` were taken for multi-value returns
+# ("expected ','"). CHANGELOG [6.7.7]
+# ⛔ 6.7.7 (B4 review) — THE DECLARATION ZONE'S PASS 1 READS A GENERIC CALL BY ITS TOKENS. It sizes a
+# zone global (`_tup_gci`) before the fns and structs below it are declared, so `_gcall_open` (a
+# KNOWN generic with resolvable type arguments) did not see `pk<i64, i64>(..)` with `pk` declared
+# below, and the comma between its type arguments was a tuple comma there and none in the replay:
+# `var G = (pk<i64, i64>(1, 2));` registered a tuple (G refused as a value), `var G: (i64, i64) =
+# (pk<..>(..));` stored one word, `(pk<..>(..), 3)` was typed `(i64, i64, i64)`, and a capture of
+# `g<i64>(5)` was refused. Set (1) only while `_tup_gci` reads; the replay still reads by `_gcall_open`
+# and refuses by name what this reading gets wrong (`_gvi_tup_odd`, `_gvi_tup_slot`).
+var _tup_p1 = 0;
+fn _tup_gopen(S, ti): i64 {
+    if (_tup_p1 == 1) { return _gcall_syn(S, ti); }
+    return _gcall_open(S, ti);
+}
+# The `(` of the call at token ti by its shape — `name(`, or `name<..>(` whose list holds only type
+# spellings (names, `,` and nested `<..>`: what `_parse_one_type_arg` reads) and closes right before
+# a `(` — or -1. No lookup: the name may be declared below.
+fn _gcall_syn(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 10) { return ti + 1; }
+    if (nt != 19) { return 0 - 1; }
+    if (_MONOMORPH_OK == 0) { return 0 - 1; }
+    var i = ti + 2;
+    var d = 1;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        elif (t != 2 && t != 31) { return 0 - 1; }
+        if (d <= 0) {
+            if (TOKTYP(S, i + 1) != 10) { return 0 - 1; }
+            return i + 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# The commas of the group whose `(` is token `open`: 0 = a parenthesised expression.
+fn _tup_commas(S, open): i64 {
+    var n = 0;
+    var q = _arg_next(S, open + 1);
+    while (TOKTYP(S, q) == 31) {
+        n = n + 1;
+        q = _arg_next(S, q + 1);
+    }
+    return n;
+}
+# A literal at token `st`, inside any wrap (`((1, 2))`, the 6.7.6 transparency rule): the token of
+# the literal's own `(`, with `_pw_end` the token after the OUTERMOST `)` (the caller tests its
+# terminator there); -1 when `st` opens none. `_pwrap_k` counts the literal's own `(` as a wrap.
+fn _tup_lit_at(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0 - 1; }
+    var lp = st + _pwrap_k(S, st) - 1;
+    if (_tup_commas(S, lp) == 0) { return 0 - 1; }
+    return lp;
+}
+# 6.7.16 — `Color.NOPE` (cursor at NOPE) that `_enum_qual_resolve` reported (-2: a member of no enum, the base an
+# enum): the member and a selector chain after it are consumed and 0 is the value, so the parse goes on in step — it
+# fell back to the field load, "undefined variable 'Color'". 1 = consumed.
+fn _enum_qual_said(S, vi): i64 {
+    if (vi != 0 - 2) { return 0; }
+    STI(S, GTI(S) + 1);
+    _mlist_step(S);   # 6.7.16: `Color.m<i64>(1)` as `Color.m(1)` — the list was read as comparisons ("undefined variable 'i64'")
+    _synonly_skip_chain(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# R9 — a literal anywhere a VALUE is parsed (PARSE_FACTOR, before its body): every accepting
+# position claims its literal before an expression is parsed, so a factor that opens one is an
+# operand, an untyped / fn-pointer / `callptr` argument, a branch, a nested element, `(1, 2).0`.
+# Refused by name; the group and a selector chain after it are consumed and 0 is the value, so
+# the parse goes on in step. 1 = refused (the factor is done).
+var _tls_n = 0;   # 6.7.16: the literals R9 refused so far (`_spi_expr` asks whether its element held one)
+fn _tup_lit_stray(S, ti0): i64 {
+    if (TOKTYP(S, ti0) != 10) { return 0; }
+    if (_tup_commas(S, ti0) == 0) { return 0; }
+    _tls_n = _tls_n + 1;
+    if (_tup_ret_wrap(S, ti0) == 1) {   # 6.7.7 (B4 review): `return ((a, b));` names its own spelling
+        _tup_err(S, ti0, "a multi-value return is written `return (a, b);` - drop the extra parentheses", 0 - 1, 0);
+    } else {
+        _tup_err(S, ti0, "a tuple `( .. )` is a value only as a `var` initializer, assigned to a tuple variable or field, as a tuple argument, or after `return` - here one value is expected", 0 - 1, 0);
+    }
+    STI(S, _call_close(S, ti0) + 1);
+    STI(S, _pf_chain_end(S, GTI(S)));   # 6.7.16: `.m(..)`, `.m<..>(..)`, `[..]` too ("expected ';', got '('")
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# 1 = the literal whose `(` is `ti0` is the group just inside `return`'s own parentheses (`return
+# ((a, b));`, any depth — each wrap closing right after it, `_pwrap_k`): a multi-value return keeps
+# its exact spelling `return (a, b);`, and the general text above lists "after `return`" as a place a
+# literal goes. A literal that is one ELEMENT there (`return ((1, 2), 3);`) keeps the general text.
+fn _tup_ret_wrap(S, ti0): i64 {
+    var k = ti0 - 1;
+    if (k < 1) { return 0; }
+    if (TOKTYP(S, k) != 10) { return 0; }
+    while (k > 0) {
+        if (TOKTYP(S, k) != 10) { break; }
+        k = k - 1;
+    }
+    if (TOKTYP(S, k) != 33) { return 0; }
+    var pe = _pw_end;
+    var w = _pwrap_k(S, k + 1);
+    _pw_end = pe;
+    if (k + w != ti0) { return 0; }
+    return 1;
+}
+fn _tok_ends_operand(S, ti): i64 {
+    if (ti < 0) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t == 1 || t == 2 || t == 11 || t == 29 || t == 30 || t == 61) { return 1; }
+    if (t == 124 || t == 169 || t == 170) { return 1; }
+    return 0;
+}
+# The refusal, reported at operator token `ti` (`cop` 1: a compound assignment `typ=`), naming the
+# u128 the stamp names — "a u128 value" for a computed one (`(a + b) * 2`). Reported once per token;
+# the parse goes on in sync and the panic latch is left as it was (_err_in_sync's rule).
+fn _w128_refuse_at(S, ti, typ, cop): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var nm = 0 - 1;
+    if (_w128_k == 1) { nm = L64(S + 0x5D9D000 + _w128_v * 8); }
+    if (_w128_k == 2) { nm = L64(_varn_base + _w128_v * 8); }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": ", 2);
+    if (cop == 1) { PRSTR("compound assignment `"); } else { PRSTR("`"); }
+    PRSTR(_w128_opstr(typ));
+    if (cop == 1) { PRSTR("=` to "); } else { PRSTR("` on "); }
+    if (nm >= 0) { PRSTR("u128 '"); PRSTR(S + 0xEC00000 + nm); PRSTR("'"); } else { PRSTR("a u128 value"); }
+    if (cop == 1) { PRSTR(" is refused - it is not implemented for u128 yet (only `+=` and `-=` are; lib/bayan.cyr's bayan_u128_* helpers cover the rest)\n"); }
+    else { PRSTR(" is refused - it is not implemented for u128 yet (only `+` and `-` are; lib/bayan.cyr's bayan_u128_* helpers cover the rest)\n"); }
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# `b OP= e` on the u128 place the stamp names (_asg_compound_load marked it; the cursor is past the
+# `=`): `+=` / `-=` are `b = b + e` / `b = b - e` (1), all 128 bits — the store takes the
+# temporary; any other operator is refused by name and its right-hand side skipped to the
+# statement's end (1): parsed on, a `: stack` pair there was refused a second time ("bind both").
+# CHANGELOG [6.7.11]
+fn _w128_cop(S, cop): i64 {
+    if (cop == 6) { _w128_binop(S, 0, 1); return 1; }
+    if (cop == 7) { _w128_binop(S, 1, 1); return 1; }
+    _w128_refuse_at(S, GTI(S) - 2, cop, 1);
+    _masg_skip(S);
+    return 1;
+}
+# The u128 place `(pk, pv)` = the value just parsed, all 16 bytes: a u128 (the stamp) copied, an
+# integer zero-extended. A declaration's store (_w16_local_init, _w16_global_init, _gvi_store).
+fn _w128_init_place(S, pk, pv): i64 {
+    if (_W128_IS(S) == 1) {
+        _w128_addr(S, _w128_k, _w128_v, 0);
+        _w128_k = 0;
+        _w128_addr(S, pk, pv, 1);
+        EW128_ACCM(S, 2);
+        return 0;
+    }
+    _w128_addr(S, pk, pv, 1);
+    EW128_ACCI(S, 2);
+    return 0;
+}
+# An ASSIGNMENT's store into slot `idx` (g 1 a global): when the slot is a u128, all 16 bytes (1),
+# as its declaration's store takes them (_w128_init_place): a u128 source — a variable, a `+` / `-`
+# result — copied, an integer zero-extended. ⛔ 6.7.6 (D3, the user's decision, 2026-10-08, third
+# round): only a `+` / `-` result took the whole value; `b = c` and `b = 5` stored the low word and
+# kept the old high word (`b = c` of 1 over a high word of 3 read 3 * 2^64 + 1).
+fn _w128_store(S, idx, g): i64 {
+    var pk = 1;
+    if (g == 1) { pk = 2; if (GVW128(S, idx) == 0) { return 0; } }
+    elif (GLW128(S, idx) == 0) { return 0; }
+    _w128_init_place(S, pk, idx);
+    return 1;
+}
+
+# ⛔ 6.7.6 (Break 1, D3) — u128 COMPARISONS COMPARE ALL 128 BITS (the user's decision, 2026-10-08, third
+# round): `== != < <= > >=`, UNSIGNED, with a u128 on either side and a u128 or an integer — zero-
+# extended, the D2 operand rule — on the other, wherever a comparison is parsed (_PLOGIC_ATOM: every
+# condition, `&&` / `||` operand, value and if-expression condition; ECONDCMP's chained `a < b < c`).
+# They compared the low words, signed: `b == c` was true for values 2^64 apart and `b < c` false for
+# `b` 1 and `c` 2^64. Both operands are compared in memory — the left one copied into a temporary
+# before the right is parsed, as `x + y` does, so the right side cannot change it; an integer gets a
+# temporary of its own — and EW128_CMP leaves the boolean (0 / 1) in rax.
+# A u128 on the LEFT, the stamp valid at the operator `op` (nothing consumed): handled (1).
+fn _w128_cmp(S, op): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    var lk = _w128_k;
+    var h = _w128_v;
+    STI(S, GTI(S) + 1);
+    if (lk != 3) {
+        var lv = h;
+        h = _w128_tmp(S);
+        _w128_accm(S, h, 2, lk, lv);
+    }
+    _cfo = 0;
+    PEXPR(S);
+    var rk = 3;
+    var rv = 0;
+    if (_W128_IS(S) == 1) { rk = _w128_k; rv = _w128_v; }
+    else { rv = _w128_tmp(S); _w128_acci(S, rv, 2); }
+    _w128_cmp_emit(S, op, h, rk, rv);
+    return 1;
+}
+# An integer on the LEFT, pushed, and the right operand just parsed (_PLOGIC_ATOM's integer arm,
+# ECONDCMP's chain): when that is a u128, the integer is popped into a temporary, zero-extended (1).
+fn _w128_cmp_r(S, op): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    var rk = _w128_k;
+    var rv = _w128_v;
+    EPOPR(S);
+    var h = _w128_tmp(S);
+    _w128_acci(S, h, 2);
+    _w128_cmp_emit(S, op, h, rk, rv);
+    return 1;
+}
+# rax = (the u128 in temporary `h`) op (the u128 `(rk, rv)`): a boolean value.
+fn _w128_cmp_emit(S, op, h, rk, rv): i64 {
+    _w128_k = 0;
+    _w128_addr(S, rk, rv, 0);
+    _w128_addr(S, 3, h, 1);
+    EW128_CMP(S, op);
+    SESTYPE(S, 0);
+    SPSC(S, 0);
+    _cfo = 0;
+    _BX_MARK(S);
+    return 0;
+}
+
+# ⛔ 6.7.6 (Break 1, D4) — A u128 TRUTH TEST IS A COMPARISON WITH ZERO, so it reads all 128 bits too
+# (the user's decision, 2026-10-08, D3's rule carried there): a bare condition — `if (b)`, `elif`,
+# `while`, `do .. while`, a `for` condition, an if-expression condition (ECONDCMP) —, an `&&` / `||`
+# operand (_PLOGIC_AND, PCMPE), `!b` (`b == 0`, _bx_factor_tok), and a `match b` / `switch (b)` subject:
+# each case value zero-extended and compared on all 128 bits (_w128_subj, _w128_case). Each read the
+# LOW word: b = 2^64 was false to `if (b)`, `!b` was 1, and match / switch took the 0 arm.
+# The value the stamp names, when it is a u128: rax = (value == 0) (op 17) / (value != 0) (op 18),
+# a boolean (1, handled); else nothing (0).
+fn _w128_truth(S, op): i64 {
+    if (_W128_IS(S) == 0) { return 0; }
+    var k = _w128_k;
+    _w128_k = 0;
+    _w128_addr(S, k, _w128_v, 0);
+    EW128_TST(S, op);
+    SESTYPE(S, 0);
+    SPSC(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# A `match` / `switch` subject just parsed (the cursor on the token after it): when it is a u128, its
+# whole value into a temporary of its own — a `+` / `-` result is one already — as an integer subject
+# is stored once, before any arm is tested. Returns the temporary's handle, or -1 (no handle is -1:
+# a frame slot is >= 0, a top-level one <= -2).
+fn _w128_subj(S): i64 {
+    if (_W128_IS(S) == 0) { return 0 - 1; }
+    var k = _w128_k;
+    var h = _w128_v;
+    _w128_k = 0;
+    if (k != 3) {
+        var v = h;
+        h = _w128_tmp(S);
+        _w128_accm(S, h, 2, k, v);
+    }
+    return h;
+}
+# One `match` arm or `switch` case value, just parsed, against the u128 subject in temporary `sh`: a
+# u128 compared as it is, an integer zero-extended, on all 128 bits. Returns the patch of the jump
+# taken when they differ (the arm's skip).
+fn _w128_case(S, sh): i64 {
+    var rk = 3;
+    var rv = 0;
+    if (_W128_IS(S) == 1) { rk = _w128_k; rv = _w128_v; }
+    else { rv = _w128_tmp(S); _w128_acci(S, rv, 2); }
+    _w128_cmp_emit(S, 17, sh, rk, rv);
+    ETESTAZ(S);
+    return EJCC(S, 0x84);
+}

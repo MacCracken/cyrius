@@ -134,9 +134,9 @@ _refuse() {
 }
 # B — a READ after the block
 _refuse B 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\nsyscall(60, tbv);\n'
-# C — an ASSIGNMENT after the block (a different resolver path: parse.cyr's statement layer)
+# C — an ASSIGNMENT after the block (a different resolver path: parse/stmt.cyr's statement layer)
 _refuse C 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\ntbv = 9;\nsyscall(60, g);\n'
-# D — an ADDRESS-OF after the block (parse/expr.cyr's `&name` ladder, a third path)
+# D — an ADDRESS-OF after the block (parse/expr/factor.cyr's `&name` ladder, a third path)
 _refuse D 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\nvar p = &tbv;\nsyscall(60, g);\n'
 # I — a `for` body, and an `else` arm: every top-level block form, not just `if`
 _refuse I 'var g = 0;\ng = 1;\nfor (var i = 0; i < 2; i = i + 1) { var tbv = 5; }\nsyscall(60, tbv);\n'

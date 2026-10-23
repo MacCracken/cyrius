@@ -138,9 +138,9 @@ fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
 # ⛔ 6.7.15 — D27 AT AN UNTYPED ASSIGNMENT DESTINATION (the user's decision D33 (a), 2026-10-18): `x = mkp();` with
 # `x` an untyped `var x = 0;`, an untyped parameter or global, or a destructure name kept the struct's first word (333
 # — the filed repro exited 77), silently, where `x: i64` is refused (6.7.14's D27) and 6.7.10's decision 12 never gives
-# an untyped receive a struct's first word. Refused with D27's words minus the annotation (`_asa_refuse`, parse.cyr):
-# "cannot assign 'x' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field". A struct of 8 B or
-# less, a `Str` and a dyn keep their word, as D27 keeps them. 1 = refused. CHANGELOG [6.7.15]
+# an untyped receive a struct's first word. Refused with D27's words minus the annotation (`_asa_refuse`,
+# parse/assign_copy.cyr): "cannot assign 'x' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field".
+# A struct of 8 B or less, a `Str` and a dyn keep their word, as D27 keeps them. 1 = refused. CHANGELOG [6.7.15]
 fn _rcv_unt_refuse(S, ti, fnoff, sid, noff): i64 {
     if (_rcv_big(S, sid) == 0) { return 0; }
     return _rcv_say(S, ti, fnoff, sid, 0, 0, noff);
@@ -192,7 +192,7 @@ fn _rcv_ann_refd(S, ann): i64 {
     while (TOKTYP(S, t) == 8) { t = t + 1; }
     return _tn_seen_at(S, t);
 }
-# 6.7.14 (D27) — the report of an ASSIGNMENT `x = mkp();` (`_asa_refuse`, parse.cyr): "cannot assign", the
+# 6.7.14 (D27) — the report of an ASSIGNMENT `x = mkp();` (`_asa_refuse`, parse/assign_copy.cyr): "cannot assign", the
 # destination's annotation printed from its declaration, which ends at token `_rcv_asg_e`; -1 = a declaration's.
 var _rcv_asg_e = 0 - 1;
 # 6.7.15 — the fn whose result `_rcv_ann_refuse` names (a struct-call record's `_sc_fi`: a method `Pt.mq` as the source
@@ -1013,8 +1013,8 @@ fn _vin_zone(S, gi, noff): i64 {
 }
 # ⛔ 6.7.17 (D106, the user's decision, 2026-10-22) — A DECLARATION ANNOTATED A SCALAR OR A POINTER TO NO STRUCT
 # (`_asa_scalar` / `_asa_ptr`'s classes: `var z: i64 = q;`, `: u8`, `: f64`, `: *i64`, `: **Q`) whose whole
-# initialiser is a struct value that is no call (`_ssv_at`, parse.cyr) is refused as `var z: i64 = mkp();` is
-# (6.7.11's D24, 6.7.13's D14: `_rcv_ann_refuse`), naming the value: "cannot initialise 'z: i64' from 'q', which is
+# initialiser is a struct value that is no call (`_ssv_at`, parse/deref_store.cyr) is refused as `var z: i64 = mkp();`
+# is (6.7.11's D24, 6.7.13's D14: `_rcv_ann_refuse`), naming the value: "cannot initialise 'z: i64' from 'q', which is
 # the struct 'Q' - declare 'z: Q' or bind a field". A `bool` keeps its own refusal, a struct annotation its copy (or
 # "cannot copy"), a `*S` D17's address (`_spd_decl`). PARSE_VAR in a fn and at top level after the first statement,
 # the cursor on the `=`. 0. CHANGELOG [6.7.17]
@@ -1042,7 +1042,7 @@ fn _svin_judge(S, ti, e, ann, noff): i64 {
     if (r == 1) { if (ps == 1) { _ptr_refd_ti = ann; } }
     return r;
 }
-# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse/types.cyr): `var GU: *Pt = GPP;`. 1 = refused.
+# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse/types/ptr_ann.cyr): `var GU: *Pt = GPP;`. 1 = refused.
 fn _ppd_zval(S, st): i64 {
     var i = _vrcv_dbeg(S, st);
     if (i < 0) { return 0; }

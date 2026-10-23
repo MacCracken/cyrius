@@ -132,7 +132,7 @@ fn run_simd_tests() {
 
 # v5.10.17 — keystone primitives for hisab gap-close.
 # Bundled into one fn for tcyr conciseness; multi-fn split also
-# works post-v5.10.17 (the parse.cyr statement-level dispatch
+# works post-v5.10.17 (the parse/stmt.cyr statement-level dispatch
 # was extended to the 128-130 token band — pre-v5.10.17 only
 # 62-105 was wired, so `f64v_scale(...);` as a bare statement
 # parsed as "unexpected unknown").

@@ -940,7 +940,7 @@ fn _ce_stmt(S): i64 {
 # `x OP= e` at the cursor (an IDENT): the operator, or 0.
 fn _ce_cop(S): i64 {
     var ct = TOKTYP(S, _ce_ti + 1);
-    if (_is_cop_tok(ct) == 1) {   # 6.7.5: the runtime's own list (parse.cyr)
+    if (_is_cop_tok(ct) == 1) {   # 6.7.5: the runtime's own list (parse/assign.cyr)
         if (TOKTYP(S, _ce_ti + 2) == 4) { return ct; }
     }
     return 0;
@@ -1912,7 +1912,7 @@ fn _asg_lvalue_at(S, noff): i64 {
     if (_slit_stmt(S, noff) == 1) { return 1; }   # 6.7.14 (D12 (a)): a statement `P { .. };`
     if (_asg_pair_at(S) == 1) {
         if (_asg_lvalue_refused(S, noff) == 1) { return 1; }
-        return _asg_cap_first(S, noff, GTI(S) - 1);   # 6.7.14: a captured name, at the name (parse.cyr)
+        return _asg_cap_first(S, noff, GTI(S) - 1);   # 6.7.14: a captured name, at the name (parse/assign.cyr)
     }
     if (_asg_lvalue_is(S, noff) == 0) { return 0; }
     ERR_EXPECT(S, 4);
@@ -2146,7 +2146,7 @@ fn _cst_ctx_skip(S, stop, ti, pw): i64 {
 # `;` / `}`, an array size's `]`) — leaves the cursor there and puts the caller's latch back (`_ce_ctx_close`), so
 # the next declaration reports its own error; one that ends elsewhere (`[yy zz]`) keeps the latch. Pass 1 never
 # resyncs: two refused enum values or global array sizes printed only the first (`#assert`: `_assert_open`,
-# parse.cyr). CHANGELOG [6.7.15]
+# parse/builtin.cyr). CHANGELOG [6.7.15]
 # ⛔ 6.7.16 — AND A `case` LABEL (`stop` its `:`), which kept its statement's latch: the switch's pre-scan evaluates
 # every label once and is no statement, so nothing resynced between two labels — the second refused label was
 # swallowed (then misreported by the body path, above). Each label is now evaluated with the latch clear and closed

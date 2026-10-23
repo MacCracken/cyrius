@@ -1,0 +1,639 @@
+# LEXER — pp: `include` — include-once (PP_ALREADY_INCLUDED, PP_MARK_INCLUDED), the name boundary, `#host_only`, the
+# file markers and line numbers behind a preprocessor error (`_pp_err_*`, PP_FMARK, PP_REANCHOR), the include name's
+# tail and its refusals, PP_PUSH_LEVEL.
+# ================================================================
+# Split from lex/pp.cyr at 6.7.18, unchanged; lex.cyr includes lex/pp/ in source order. CHANGELOG [6.7.18]
+
+# Include-once: track included filenames to skip duplicates.
+# v4.8.4-alpha2: relocated to 0x1C0000 (formerly fn-tables, freed in
+# 4.7.1 — 144 KB available). Capacity raised 64 → 256 entries.
+# Bote-class projects (16 stdlib + 9 libro + 6 majra + 15 source +
+# transitive autos) easily exceed 64; cyrius itself at ~30, kybernet
+# >40 already pushed against the wall.
+# S+0x197F00: include count (8 bytes — kept at original location)
+# S+0x1C0000: included filenames[256], a pointer each to the whole spelling, alloc'd by
+# PP_MARK_INCLUDED (2 KB of the 32 KB band). The 128 B entries cut a spelling at 127 bytes,
+# so a 128+ byte spelling never matched its own entry and was included twice. CHANGELOG [6.7.15]
+fn PP_ALREADY_INCLUDED(S, fname): i64 {
+    var cnt = L64(S + 0x197F00);
+    var i = 0;
+    while (i < cnt) {
+        var p = L64(S + 0x1C0000 + i * 8);
+        var c = 0;
+        var eq = 1;
+        while (eq == 1) {
+            var a = load8(fname + c);
+            var b = load8(p + c);
+            if (a != b) { eq = 0; }
+            if (a == 0) { break; }
+            c = c + 1;
+        }
+        if (eq == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v6.4.81 (the include filename-capture overflow bug) — bound for the include / `#ref` filename scratch at
+# S+0x190400. The scratch runs to the `#ref` read buffer at S+0x191800, so 4096 B
+# (0x190400..0x191400) fits with slack and is well past any real path.
+#
+# All THREE filename-capture loops (`include`, post-macro-expansion `include`,
+# and `#ref`) were UNBOUNDED. `include "<31490 chars>"` walked the write through
+# the include-count cell at S+0x197F00 and SIGSEGV'd (exit 139); below that
+# threshold it silently corrupted whatever lay between. Reachable from untrusted
+# source text with no flag, which is the whole threat model for a compiler.
+#
+# The heap map hid it: it documented this scratch at 0x190500 [256] — an address
+# NO code has ever written (every use is 0x190400) — so `tests/gates/memory/heapmap.sh`
+# validated a fiction and reported PASS through three minors of audits. The map
+# entry is corrected alongside this bound. See CHANGELOG [6.4.81].
+#
+# Split into its own fn rather than inlined at the three sites because PREPROCESS
+# is already near cybs's per-fn literal/global ceiling (the `_var_grow` /
+# TOKNAME_BUILTIN precedent) and seed-derive is the gate that would catch it.
+# v6.5.0 Phase 1 — emit one `#@file "<name>"\n` marker into `out` at `op`; returns the
+# new `op`. `name` is a NUL-terminated cstr.
+#
+# Factored out of three inline copies (the initial main-source marker, and the two
+# include-expansion sites in PP_PASS / PP_IFDEF_PASS) because v6.5.0 adds a fourth and
+# fifth caller — the RESUME markers below — and five copies of an 8-store block inside
+# two already-enormous fns is exactly the shape cybs mis-compiles. The `_var_grow`
+# `_grow_g1..g7` chain, `TOKNAME_BUILTIN` and `PP_FNAME_TOO_LONG` are all in this file
+# or its neighbours for the same reason; seed-derive is the gate that catches it.
+# v6.5.0 Phase 1 — the file PP_IFDEF_PASS is currently copying FROM, so a nested
+# include can emit a correct resume marker. PP_PASS does not need this (it only ever
+# expands top-level includes, so its enclosing file is always the main source), but
+# PP_IFDEF_PASS runs over a stream that ALREADY carries `#@file` markers and expands
+# the nested ones, so it must remember which file it is inside.
+#
+# Its own 4 KB scratch rather than a heap band: the surrounding fns already sit near
+# cybs's per-fn global-reference ceiling, and a bare top-level `var x[N]` is N*8 bytes
+# (the v6.4.10 contract — this is 512*8 = 4096, not 512).
+var _pp_curfile[512];
+var _pp_curfile_set = 0;
+# v6.5.3 — where the CURRENT file's marker sat in this pass's input, and the source line
+# it declared. PP_IFDEF_PASS's input is PP_PASS's OUTPUT, i.e. already expanded, so
+# counting newlines from offset 0 yields the EXPANDED line, not the file's own. A file
+# that itself contains an include therefore reported lines inflated by that include's
+# whole body (lib/mid.cyr:2 came out as :4). Anchoring to the file's own marker and
+# adding the base it carried fixes that without needing a per-file line counter.
+var _pp_curfile_anchor = 0;
+var _pp_curfile_base = 1;
+# v6.5.19 — 1 when the raw input opened with a `#@incdir <dir>` line (v6.5.7; written at
+# byte 0 by `cyrius build` / `check` / `lint` for any source with a directory component).
+# That line is a DIRECTIVE, not source, so raw input line N+1 is source line N. Without
+# this every diagnostic for such a source was reported one line late — measured at 6.5.18:
+# `cyrius build src/g.cyr` said 2:20 for a defect on line 1, while `cycc < g.cyr` on the
+# same bytes said 1:20.
+var _pp_srcline_bias = 0;
+# v6.5.24 — honour-once latch for `#@srcline` (see ISSRCLINE + its PP_PASS call site).
+var _pp_srcline_seen = 0;
+# 6.6.12 — per-nesting-level bits (bit d = level d) for the native-aarch64 region markers;
+# see _pp_a64_open. nif / nel: the level's if-side / else-side is native aarch64; on: the
+# level wrote `#@a+` and owes the matching `#@a-`.
+var _pp_a64_nif = 0;
+var _pp_a64_nel = 0;
+var _pp_a64_on = 0;
+
+# v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4, filed
+# 2026-06-28 as never-built and restored from `archived/` 2026-08-11 after being
+# archived UNFIXED). A `--target=<arch>-bare-metal-elf` build sets CYRIUS_KERNEL=1 and
+# used to place NO restriction on which `lib/*.cyr` an `include` could pull, so a kernel
+# that included a host-OS module compiled silently and faulted at runtime in the kernel.
+#
+# ⭐ AN ANNOTATION, NOT A DENY-LIST. The filing offered both and preferred the
+# annotation, and it is also the anti-drift choice: a central list of host-only modules
+# is a hand-maintained value that goes stale every time a module is added or renamed —
+# the exact shape that had silently drifted in three separate places this cycle. With
+# `#host_only` the fact lives IN the module it describes, so it moves with the file.
+# Unannotated modules stay allowed, which keeps the default behaviour identical to
+# before (a missing annotation is no worse than today) rather than breaking every
+# kernel build on day one.
+#
+# `#host_only` is inert to everything else in the pipeline: `#` opens a comment in
+# cyrius, so an annotated module still compiles normally for host targets.
+var _pp_hostonly_hit = 0;      # 1 once a #host_only module has been pulled at all
+var _pp_hostonly_user = 0;     # 1 if the pull came from the USER's own source
+var _pp_hostonly_name[128];    # the filename to name in the diagnostic (1024 B in .bss)
+
+# WORD BOUNDARY after a `#`-directive NAME in this file's own scanners.
+#
+# WHY: the same defect LEXATTRBOUND fixed in the lexer's `#` branch (a byte PREFIX
+# match that never checked the name had ENDED) was present SEVEN more times in the
+# PREPROCESSOR, where it is worse because none of them reports an error:
+#
+#   PP_IS_HOST_ONLY   `#host_onlyish note` marked the module host-only and refused
+#                     every `CYRIUS_KERNEL=1` build that included it
+#   ISDERIVE{,_DE,_ACC}  `#derive(Serialize)x note` ARMED the derive machinery and
+#                     changed the emitted binary — rc=0 either way
+#   ISENDIF           `#endifoo note` CLOSED a conditional, so code inside a skipped
+#                     `#ifdef` was compiled into the binary
+#   ISENDPLAT         the same, for `#ifplat`
+#   ISSRCLINE         `#@srclinex 10` shifted every diagnostic in the file by a line
+#
+# ⚠ ISELSE carried this rule INLINE from the start ("reject identifier continuation
+# so `#elseif` doesn't match"). A guard written by hand exactly once, with a comment
+# explaining why it is needed, is a defect report about its siblings — that comment
+# is how the other seven were found. Keep new `#`-name probes on this helper.
+#
+# Only whitespace or end of buffer can follow these names. No `(` case (unlike an
+# attribute): `#derive`'s parenthesis is INSIDE the name it matches, and stacked
+# derives sit on consecutive LINES.
+#
+# `n` is the buffer length, not the bounded scan window: a name ending exactly at the
+# window edge still has a real byte after it. CHANGELOG [6.6.6]
+fn PP_NAMEBOUND(base, q, n): i64 {
+    if (q >= n) { return 1; }
+    var b = load8(base + q);
+    if (b == 32) { return 1; }
+    if (b == 9) { return 1; }
+    if (b == 10) { return 1; }
+    if (b == 13) { return 1; }
+    return 0;
+}
+
+# Does the freshly-read include text carry a first-column `#host_only` line?
+# Bounded to the first 4096 bytes: this is a FILE-level annotation and belongs at the
+# top, and a bounded scan keeps it off the hot path. Requires column 0 so prose that
+# merely mentions the directive (this comment included) cannot trip it.
+#
+# v6.6.6 — ⚠ THE FOURTH line-oriented pass, and it had the same defect as the other
+# three: it tracked `bol` with no lexical state at all, so the column-0 rule above was
+# defeated by the one thing that can put an arbitrary byte at column 0 — a raw LF inside
+# a string literal. Any included file holding `var doc = "intro\n#host_only\nend";` was
+# recorded as host-only, and every `CYRIUS_KERNEL=1` build that pulled it was refused
+# with `bare-metal build includes host-only module`. The scan always starts at a file
+# boundary, so the state seeds at 0. See PP_LEXST. CHANGELOG [6.6.6]
+fn PP_IS_HOST_ONLY(buf, n): i64 {
+    var lim = n;
+    if (lim > 4096) { lim = 4096; }
+    var i = 0;
+    var bol = 1;
+    var lst = 0;
+    var in_string = 0;
+    while (i < lim) {
+        if (bol == 1 && in_string == 0) {
+            if (i + 10 <= lim) {
+                if (load8(buf + i) == 35) {              # '#'
+                    if (load8(buf + i + 1) == 104) {      # 'h'
+                        if (load8(buf + i + 2) == 111) {  # 'o'
+                            if (load8(buf + i + 3) == 115) {  # 's'
+                                if (load8(buf + i + 4) == 116) {  # 't'
+                                    if (load8(buf + i + 5) == 95) {   # '_'
+                                        if (load8(buf + i + 6) == 111) {  # 'o'
+                                            if (load8(buf + i + 7) == 110) {  # 'n'
+                                                if (load8(buf + i + 8) == 108) {  # 'l'
+                                                    if (load8(buf + i + 9) == 121) {  # 'y'
+                                                        # v6.6.6 — the name must END here, or `#host_onlyish`
+                                                        # (a COMMENT) marks the module host-only. See PP_NAMEBOUND.
+                                                        if (PP_NAMEBOUND(buf, i + 10, n) == 1) { return 1; }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        var hc = load8(buf + i);
+        if (load8(buf + i) == 35) { lst = PP_LEXST_AT(buf, i, n, lst); } else { lst = PP_LEXST(lst, load8(buf + i)); }
+        in_string = PP_LEXST_INSTR(lst);
+        if (hc == 10) { bol = 1; } else { bol = 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Record the first host-only module pulled, and error immediately IF this build already
+# knows it is a kernel build. kernel_mode (S+0x18FCA0) is set from CYRIUS_KERNEL by
+# main.cyr BEFORE preprocessing, which is the `--target=...-bare-metal-elf` path the
+# arc's acceptance names.
+# ⚠ HONEST LIMITATION: a build that declares itself with the SOURCE `kernel;` directive
+# instead of the triple sets kernel_mode during PARSE, i.e. after this runs, so that
+# path is not caught here. Recording the name in `_pp_hostonly_name` is what leaves a
+# later parse-time check possible without re-reading any file.
+fn _pp_ho_copy_name(fname): i64 {
+    var i = 0;
+    while (i < 127) {
+        var c = load8(fname + i);
+        store8(&_pp_hostonly_name + i, c);
+        if (c == 0) { i = 127; } else { i = i + 1; }
+    }
+    store8(&_pp_hostonly_name + 127, 0);
+    return 0;
+}
+
+# ⛔ WHOSE include is it? cbt prepends one `include` per `[deps].stdlib` module to EVERY
+# build regardless of target, so this repo's own `programs/boot_serial.cyr` — a kernel with
+# NO includes of its own — got `lib/fs.cyr` from the manifest and the first cut of this
+# check FAILED it. check.sh's qemu-boot gate caught that ("FAIL: plain kernel build"); left
+# in, it would have broken every kernel build in every repo whose manifest happens to list a
+# host-only module, which makes the feature unusable rather than useful.
+#
+# The arc's acceptance is about "bare-metal CODE pulling host-OS modules" — the kernel
+# source's own choice, not a build-system default the author never wrote. `#@srcline` splits
+# the two exactly: everything above it is cbt's prepend, everything below is the user's file.
+# So a pull is attributed to the USER only once the marker has been seen.
+#
+# With no marker at all (raw `cat | cycc`, the compiler-internal path) every include IS the
+# user's, so `_pp_hostonly_hit` is the one consulted — see the reporting site in PARSE_PROG.
+fn PP_NOTE_HOST_ONLY(fname): i64 {
+    if (_pp_srcline_seen == 1) {
+        if (_pp_hostonly_user == 1) { return 0; }
+        _pp_hostonly_user = 1;
+        _pp_ho_copy_name(fname);
+        return 0;
+    }
+    if (_pp_hostonly_hit == 1) { return 0; }
+    _pp_hostonly_hit = 1;
+    if (_pp_hostonly_user == 0) { _pp_ho_copy_name(fname); }
+    return 0;
+}
+
+fn _pp_curfile_ptr(): i64 {
+    if (_pp_curfile_set == 0) { return "<source>"; }
+    return &_pp_curfile;
+}
+
+# v6.5.3 — newlines in [from, upto) of `buf`.
+fn _pp_count_nl(buf, from, upto): i64 {
+    var n = 0;
+    var i = from;
+    while (i < upto) {
+        if (load8(buf + i) == 10) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Parse a `#@file "NAME"` line at `dip` and record NAME as the current file.
+# Tolerant by design: anything that is not exactly this shape is ignored, so an
+# ordinary `#@`-starting comment cannot corrupt the tracker. Returns 1 when the line was
+# a marker and was recorded, 0 when it was ignored (6.6.20, for _pp_unclosed's walk-back).
+fn _pp_note_marker(tmp, dip, bl): i64 {
+    var p = dip + 2;
+    if (load8(tmp + p) != 102) { return 0; }      # 'f'
+    if (load8(tmp + p + 1) != 105) { return 0; }  # 'i'
+    if (load8(tmp + p + 2) != 108) { return 0; }  # 'l'
+    if (load8(tmp + p + 3) != 101) { return 0; }  # 'e'
+    if (load8(tmp + p + 4) != 32) { return 0; }   # ' '
+    if (load8(tmp + p + 5) != 34) { return 0; }   # '"'
+    p = p + 6;
+    var i = 0;
+    var qpos = 0;
+    while (p < bl) {
+        var ch = load8(tmp + p);
+        if (ch == 34) { qpos = p; p = bl; }
+        else {
+            if (i < 4090) { store8(&_pp_curfile + i, ch); i = i + 1; }
+            p = p + 1;
+        }
+    }
+    store8(&_pp_curfile + i, 0);
+    _pp_curfile_set = 1;
+    # v6.5.3 — record the base this marker carries and the offset just past its line, so
+    # a RESUME emitted later in THIS pass can be expressed relative to the current file's
+    # own first line instead of the expanded-buffer line. `qpos` is the closing quote —
+    # the loop breaks by setting `p = bl`, so `p` cannot be used for this.
+    var bp = qpos + 1;
+    var bv = 0;
+    if (bp < bl) { if (load8(tmp + bp) == 32) {
+            bp = bp + 1;
+            while (bp < bl && load8(tmp + bp) >= 48 && load8(tmp + bp) <= 57) {
+                bv = bv * 10 + (load8(tmp + bp) - 48);
+                bp = bp + 1;
+            }
+        } }
+    if (bv < 1) { bv = 1; }
+    _pp_curfile_base = bv;
+    while (bp < bl && load8(tmp + bp) != 10) { bp = bp + 1; }
+    _pp_curfile_anchor = bp + 1;
+    return 1;
+}
+
+# v6.5.3 — count the 1-based line number at input offset `upto` in the buffer at `base`.
+# Used to give a RESUME marker the line the enclosing file actually resumes ON. Computed
+# on demand rather than threaded through PP_PASS's loop: that loop advances `ip` at 17
+# distinct sites and an off-by-one in any one of them would be invisible here, which is
+# exactly how the first attempt at this fix (reverted, see the issue) went wrong.
+# O(input) per include and includes are few, so the cost is irrelevant next to being right.
+fn _pp_lineno_at(S, base, upto): i64 {
+    var n = 1;
+    var i = 0;
+    while (i < upto) {
+        if (load8(base + i) == 10) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# ⛔ 6.6.10 — a PREPROCESSOR error names where it is. The flag-table cap reported through
+# ERR_MSG, whose head reads the TOKEN cursor — and the preprocessor runs before a single
+# token exists, so it printed `error:0:1:`, a location that names nothing. `base` is the
+# buffer the directive was read from, and the line is derived the way the re-anchor
+# markers derive it: PP_PASS reads the raw main source (S+_SRCB — exact by counting, as
+# PP_REANCHOR_SRC), PP_IFDEF_PASS a marker-carrying stream (relative to the current file's
+# marker, as PP_REANCHOR_CUR). `base` 0 = no source position (a builtin predefine): the
+# head is then a bare `error: `, never a fabricated one. Report-and-continue like ERR_MSG
+# (`_had_error` fails the compile); `_panic` is left alone — there is no parse cascade to
+# suppress yet, and setting it swallowed the first real parse error. CHANGELOG [6.6.10]
+fn _pp_err_at(S, base, pos, msg): i64 {
+    _pp_err_head(S, base, pos);
+    PRSTR(msg);
+    _ew("\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
+# 6.6.20 — _pp_err_at with the offending NAME in the message: `pre`, the identifier at
+# `base + npos`, `post`. A table that is full or refuses an entry says WHICH entry, so the
+# reader does not have to count #define lines to find it. CHANGELOG [6.6.20]
+fn _pp_err_name_at(S, base, pos, pre, npos, post): i64 {
+    _pp_err_head(S, base, pos);
+    PRSTR(pre);
+    _pp_write_ident(base + npos);
+    PRSTR(post);
+    _ew("\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
+# Write the identifier at `p` (letters, digits, `_`; at most 64 bytes) to stderr.
+fn _pp_write_ident(p): i64 {
+    var n = 0;
+    while (n < 64) {
+        if (PP_IDBYTE(load8(p + n)) == 0) { break; }
+        n = n + 1;
+    }
+    _ew(p, n);
+    return n;
+}
+
+# `error:<file>:<line>:<col>: ` — or a bare `error: ` for `base` 0. See _pp_err_at.
+fn _pp_err_head(S, base, pos): i64 {
+    _ew("error:", 6);
+    if (base == 0) { _ew(" ", 1); }
+    else {
+        var ln = 0;
+        if (base == S + _SRCB) {
+            PRSTR("<source>");
+            ln = _pp_lineno_at(S, base, pos) - _pp_srcline_bias;
+        } else {
+            PRSTR(_pp_curfile_ptr());
+            ln = _pp_curfile_base + _pp_count_nl(base, _pp_curfile_anchor, pos);
+        }
+        _ew(":", 1);
+        PRNUM(ln);
+        var ls = pos;
+        while (ls > 0) { if (load8(base + ls - 1) == 10) { break; } ls = ls - 1; }
+        _ew(":", 1);
+        PRNUM(pos - ls + 1);
+        _ew(": ", 2);
+    }
+    return 0;
+}
+
+# v6.5.3 — `base` is the source line the span AFTER this marker starts on.
+#   ENTER  (a fresh include)  -> 1, the included file's own first line
+#   RESUME (back to the parent) -> the parent's line just past the include directive
+# Emitted as `#@file "NAME" BASE`. FM_BUILD parses it; FM_LOOKUP adds it instead of
+# assuming 1. Without it the parent's numbering RESTARTS at 1 after every include, so a
+# diagnostic in the main source reported `actual_line - includes_before_it`.
+fn PP_FMARK(S, out, op, name, base): i64 {
+    store8(out + op, 35); op = op + 1;    # '#'
+    store8(out + op, 64); op = op + 1;    # '@'
+    store8(out + op, 102); op = op + 1;   # 'f'
+    store8(out + op, 105); op = op + 1;   # 'i'
+    store8(out + op, 108); op = op + 1;   # 'l'
+    store8(out + op, 101); op = op + 1;   # 'e'
+    store8(out + op, 32); op = op + 1;    # ' '
+    store8(out + op, 34); op = op + 1;    # '"'
+    var i = 0;
+    while (load8(name + i) != 0) {
+        store8(out + op, load8(name + i));
+        op = op + 1; i = i + 1;
+    }
+    store8(out + op, 34); op = op + 1;    # '"'
+    store8(out + op, 32); op = op + 1;    # ' '
+    # base as decimal, most-significant first
+    var d = base;
+    if (d < 1) { d = 1; }
+    var div = 1;
+    while (d / div >= 10) { div = div * 10; }
+    while (div > 0) {
+        store8(out + op, 48 + (d / div) % 10); op = op + 1;
+        div = div / 10;
+    }
+    store8(out + op, 10); op = op + 1;    # '\n'
+    return op;
+}
+
+# v6.5.19 — RE-ANCHOR the file map at a point where the expansion changed the line
+# count, so FM_LOOKUP's `expanded - start + base` arithmetic stays exact.
+#
+# THE DEFECT (agnosai, 35 duplicate-fn warnings). FM_LOOKUP reconstructs a source line
+# by linear arithmetic over a `#@file` span, which is only valid while the preprocessor
+# copies a file's lines into the expanded buffer 1:1. Two transforms broke that INSIDE a
+# span and neither re-anchored: the `#ifdef` family (directive lines consumed, skipped
+# bodies dropped -> reported line too SMALL) and `#derive` (2-3 source lines replaced by
+# N generated ones -> reported line too LARGE). Drift accumulates from the last marker,
+# so `lib/kavach.cyr:11588` named a line 267 past that file's EOF.
+#
+# The `#ifdef` half is fixed by PADDING (one newline per consumed/skipped source line)
+# at the call sites — no marker, no cost against the 1024-entry cap. `#derive` cannot be
+# padded (it ADDS lines), so it re-anchors here. Emitting a marker per `#ifdef` block
+# too would need ~1139 entries on agnosai's build against a 1024 cap, and overflow makes
+# FM_FILEID return -1, which `private` visibility is load-bearing on. CHANGELOG [6.5.19].
+fn PP_REANCHOR(S, out, op, name, srcline): i64 {
+    # A marker must own its line. Derive bodies end in `\n`, but an INCLUDED file that
+    # does not end in a newline would otherwise glue the marker onto its last line of
+    # code — where `#` comments the marker out and the span start lands one line early.
+    if (op > 0) { if (load8(out + op - 1) != 10) { store8(out + op, 10); op = op + 1; } }
+    return PP_FMARK(S, out, op, name, srcline);
+}
+
+# Re-anchor to the MAIN source at input offset `ip` (PP_PASS: its input is the raw
+# source, so the line number is exact by counting).
+fn PP_REANCHOR_SRC(S, out, op, ip): i64 {
+    return PP_REANCHOR(S, out, op, "<source>", _pp_lineno_at(S, S + _SRCB, ip) - _pp_srcline_bias);
+}
+
+# Re-anchor to whichever file PP_IFDEF_PASS is currently copying from. Its input is the
+# PREVIOUS pass's output, so the offset is expressed against the last marker seen —
+# correct precisely because the padding keeps that stream line-faithful.
+fn PP_REANCHOR_CUR(S, out, op, tmp, ip): i64 {
+    return PP_REANCHOR(S, out, op, _pp_curfile_ptr(), _pp_curfile_base + _pp_count_nl(tmp, _pp_curfile_anchor, ip));
+}
+
+# ⛔ v6.5.45 (the include-length ifdef bug) — THE BOUND IS 768, NOT 4096, AND THE DIFFERENCE WAS A SILENT
+# MISCOMPILE. The heap map declared `0x190400 include_fname [4096]` and all three capture loops
+# guarded at 4095 from that number, but TWO live things sit inside that declared span:
+#   S+0x190700  PP_EXPAND's output-write-cursor return slot (PP_EXPAND stores, PP_MACRO_PASS loads) — 768 B in
+#   S+0x190800  the `#ifdef` FEATURE-FLAG TABLE (PP_PREDEFINE / PP_DEFINE), 1024 B in
+# So an include or `#ref` path of 768 characters or more corrupts the preprocessor's own output
+# cursor — expanded macro text then lands at the wrong offset — and past 1024 it overwrites the
+# hashes of CYRIUS_ARCH_X86, CYRIUS_TARGET_MACOS and friends, after which `#ifdef` selects the
+# WRONG BRANCHES. No diagnostic, no crash: a path LENGTH changes the generated code.
+# ⚠ 768 IS THE NUMBER AND IT WAS NOT OBVIOUS. This fix first shipped at 1023, reasoning from the
+# flag table alone; the cursor slot 256 bytes below it is what makes the real bound 768. The map
+# now declares both, so the next reader does not have to re-derive them from grep.
+# ⚠ A long path is not exotic — deep vendored dep trees under a long $HOME reach four figures,
+# and the input is attacker-influenced wherever source is compiled on someone's behalf.
+# The map line is corrected to [1024] in src/main.cyr; the guards below are the enforcement.
+# ⛔ v6.6.6 — `include ` at column 0 with no quoted filename after it.
+#
+# Both include sites used to do `ip = ip + 8` on the PREDICATE match and only THEN look
+# for the `"`. When it was absent the eight bytes were already gone: the line reached the
+# lexer as `foo bar` and the diagnostic named a token from the middle of it
+# (`include foo bar` → `expected '=', got identifier 'bar'`, column 5 of a line whose
+# column 5 is `u`). Same shape as the `#ref ` byte-eater fixed in the same bite, and the
+# reason both are fixed together. No valid program can reach this — `include` at column 0
+# is a directive and nothing else, and a census of every `.cyr`/`.tcyr` in this repo and
+# every sibling under ~/Repos found ZERO such lines — so a clear error is strictly better
+# than passing mangled bytes to the lexer. CHANGELOG [6.6.6]
+fn PP_INCLUDE_NEEDS_QUOTE(): i64 {
+    _ew("error: include expects a quoted filename: include \"name.cyr\"\n", 61);
+    _die(1);
+    return 0;
+}
+
+# ⛔ 6.7.17 — AN `include` LINE ENDS AT ITS FILE NAME (the user's D29, 2026-10-22). The file's text replaces the whole
+# line, so whatever followed the name was dropped unread: `include "lib/syscalls.cyr"; var x = 42; syscall(60, x);`
+# exited 0, and a second include on the line was never read. From `ip` (just past the name's closing quote) only blanks,
+# one `;`, a `#` comment and the line's end may follow; anything else is "expected the end of the line after an
+# include's file name" at its first byte (`_pp_err_at`: located, the build fails, the line is still included). Both
+# include sites call it — PP_PASS (the entry's own lines) and PP_IFDEF_PASS (an included file's). CHANGELOG [6.7.17]
+fn PP_INCLUDE_TAIL(S, base, ip, bl, fname, fi): i64 {
+    var p = PP_FNAME_TAIL_AT(base, ip, bl, fname, fi);
+    if (p < bl) { _pp_err_at(S, base, p, "expected the end of the line after an include's file name"); }
+    return 0;
+}
+# ⛔ 6.7.17 — A #ref LINE ENDS AT ITS FILE NAME, as an include's does (the user's D92, 2026-10-22): PP_REF_PASS stepped
+# the rest of the line unread, so `#ref "f.toml"; var y = 2; syscall(60, ka + y);` exited 5, not 7. The same rule
+# (PP_FNAME_TAIL_AT) and words: "expected the end of the line after a #ref's file name" at its first byte, the line
+# numbered as PP_PASS numbers it (`_bnd_err` lends the `#@incdir` / `#@srcline` bias; PP_PASS has not run) — or, on an
+# included file's line (`base` PP_IFDEF_PASS's, D100), named by that file as its include tail is. The file is still
+# read. CHANGELOG [6.7.17]
+fn PP_REF_TAIL(S, base, ip, bl, rfn, rfi): i64 {
+    var p = PP_FNAME_TAIL_AT(base, ip, bl, rfn, rfi);
+    if (p >= bl) { return 0; }
+    var m = "expected the end of the line after a #ref's file name";
+    if (base == S + _SRCB) { _bnd_err(S, p, _bnd_entry_start(base, bl), m); }
+    else { _pp_err_at(S, base, p, m); }   # an included file's line (PP_IFDEF_PASS, D100): <file>:<line>:<col>
+    return 0;
+}
+# The offset of the first byte after a directive's file name (`ip`, just past its closing quote) that may not end its
+# line — anything but blanks, one `;`, a `#` comment, CR / LF / EOF — or `bl` when the line ends clean, or when the name
+# ran past its line (an unclosed name: its own report, PP_FNAME_UNCLOSED). One rule for an include (PP_INCLUDE_TAIL)
+# and a #ref (PP_REF_TAIL, at both #ref sites: the user's D92 / D100). CHANGELOG [6.7.17]
+fn PP_FNAME_TAIL_AT(base, ip, bl, fname, fi): i64 {
+    if (_pp_has_eol(fname, fi) == 1) { return bl; }
+    var p = _pp_blanks(base, ip, bl);
+    if (p < bl) { if (load8(base + p) == 59) { p = _pp_blanks(base, p + 1, bl); } }
+    if (p >= bl) { return bl; }
+    var c = load8(base + p);
+    if (c == 10 || c == 13 || c == 35) { return bl; }
+    return p;
+}
+# The first offset at or past `p` (below `bl`) that is not a blank (a space or a tab).
+fn _pp_blanks(base, p, bl): i64 {
+    while (p < bl) {
+        if (PP_DBLANK(load8(base + p)) == 0) { return p; }
+        p = p + 1;
+    }
+    return p;
+}
+
+fn PP_FNAME_TOO_LONG(name, n, what): i64 {
+    PP_FNAME_UNCLOSED(name, n, what);
+    _ew("error: include/#ref filename exceeds 767 bytes\n", 47);
+    _die(1);
+    return 0;
+}
+# ⛔ 6.7.17 — A FILE NAME WITH NO CLOSING QUOTE ON ITS LINE IS SAID SO. The include / #ref name loops read to the next `"`
+# wherever it sits, so `include "lib/x.cyr` with no closing quote took the lines after it into the name: "cannot open
+# include file: lib/x.cyr<LF>var y = .." printed those lines as the file's name, and 767 bytes on it was "include/#ref
+# filename exceeds 767 bytes". The same exit, the cause named, the name as written up to its line's end (`name`, `n`
+# bytes so far; `what` the directive). CHANGELOG [6.7.17]
+fn PP_FNAME_UNCLOSED(name, n, what): i64 {
+    if (_pp_has_eol(name, n) == 0) { return 0; }
+    var i = 0;
+    while (load8(name + i) != 10 && load8(name + i) != 13) { i = i + 1; }
+    _ew("error: ", 7);
+    PRSTR(what);
+    _ew(" \"", 2);
+    _ew(name, i);
+    _ew(": the file name has no closing quote on its line\n", 49);
+    _die(1);
+    return 0;
+}
+# 1 = the `n` bytes at `name` hold a line break (LF or CR): a file name read past its line's end.
+fn _pp_has_eol(name, n): i64 {
+    var i = 0;
+    while (i < n) {
+        var c = load8(name + i);
+        if (c == 10 || c == 13) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# An include's file `fname` did not open: an unclosed name said as such, else the file named. Exits. Both include sites.
+fn PP_INCLUDE_OPEN_FAIL(fname): i64 {
+    var n = 0;
+    while (load8(fname + n) != 0) { n = n + 1; }
+    PP_FNAME_UNCLOSED(fname, n, "include");
+    _ew("error: cannot open include file: ", 33);
+    _ew(fname, n);
+    _ew("\n", 1);
+    _die(1);
+    return 0;
+}
+# Refuse a #define whose body would run past the macro text pool (the define-body copy overflow bug). Mirrors
+# PP_FNAME_TOO_LONG: an honest hard error beats a silent wrong compile.
+fn PP_MACRO_TEXT_FULL(): i64 {
+    _ew("error: #define bodies exceed the 16 KB macro text pool\n", 55);
+    _die(1);
+    return 0;
+}
+
+# ⛔ 6.6.20 (the if-nesting overflow bug) — push one #ifdef / #ifndef / #ifplat / #if level onto the per-level
+# state stack at S+0x197F10 and return the new depth. The stack is 64 bytes, one per level,
+# and none of the seven push sites (PP_PASS 4, PP_IFDEF_PASS 3) checked it: each deeper level
+# wrote its state byte upward through live compiler state, and at ~344K levels into
+# gvar_initval, which _EMIT_GVAR_STATIC_INITS bakes into the image — a silent miscompile.
+# A hard error like PP_MACRO_TEXT_FULL, located: the matching #endif would pop a level that
+# was never pushed, so continuing is not an option. CHANGELOG [6.6.20]
+fn PP_PUSH_LEVEL(S, base, pos, d, st): i64 {
+    if (d >= 64) {
+        _pp_err_at(S, base, pos, "#if/#ifdef/#ifndef/#ifplat nesting exceeds 64 levels");
+        _die(1);
+    }
+    store8(S + 0x197F10 + d, st);
+    return d + 1;
+}
+
+
+fn PP_MARK_INCLUDED(S, fname): i64 {
+    var cnt = L64(S + 0x197F00);
+    if (cnt >= 256) {
+        _ew("error: include-once table full (256 files) — split compilation unit\n", 70);
+        _die(1);
+    }
+    var n = 0;
+    while (load8(fname + n) != 0) { n = n + 1; }
+    var p = alloc(n + 1);
+    var c = 0;
+    while (c < n) {
+        store8(p + c, load8(fname + c));
+        c = c + 1;
+    }
+    store8(p + n, 0);
+    S64(S + 0x1C0000 + cnt * 8, p);
+    S64(S + 0x197F00, cnt + 1);
+    return 0;
+}

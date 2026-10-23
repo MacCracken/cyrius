@@ -6,7 +6,7 @@
 # v5.10.1 — type-check infrastructure: lazy lookup for the
 # `Str` struct sid so PARSE_FNCALL can flag Str-typed args
 # being passed to cstring-typed (non-`: Str`) params. The
-# search shape mirrors `_STR_FROM_NOFF` in parse/expr.cyr —
+# search shape mirrors `_STR_FROM_NOFF` in parse/expr/closure.cyr —
 # scan tok_names for the cstring "Str\0" (4 bytes:
 # 0x0072_7453 little-endian), then resolve to a struct id via
 # FINDSTRUCT. Returns 0 if Str isn't defined in this program
@@ -1137,7 +1137,7 @@ fn _sarg_deref(S, fi, argc, tail): i64 {
 # with `pb: *f64v2` and `p: *f64v2` pushed lane 0 — the word the dereference read — as the address (139 on
 # x86_64 and aarch64, a cx guest fault, exit 5 on PE), as `take(*p)` did for a struct before 6.7.10's decision
 # 6. The `*` that starts the argument is parked as a struct's is when parameter `argc` of `fi` is a `*V`
-# (`_dlo_vec`, parse/expr.cyr: the operand's step word names its vector, `_ps_vdesc`) and pb itself is
+# (`_dlo_vec`, parse/expr/deref.cyr: the operand's step word names its vector, `_ps_vdesc`) and pb itself is
 # pushed (`_push_struct_expr_arg`); a `*` of another vector type is refused with A2's words (`_dro_check`).
 # The `*` token for `_dlo_vec`, -1 when the parameter is no `*V`.
 # 6.7.13 (D31 A): and for a pointer of another kind or a by-value struct (`_vk_param`), where `_dro_vcheck` refuses a

@@ -2,7 +2,7 @@
 # cx_pow2_mul.sh — `x * 2^k` on the cx target actually shifts.
 #
 # v6.6.4. `ESHLIMM` (src/backend/cx/emit.cyr) was a return-0 STUB, so the
-# power-of-two multiply strength reduction in parse/expr.cyr `_TRY_MUL_BY_POW2`
+# power-of-two multiply strength reduction in parse/expr/intrin.cyr `_TRY_MUL_BY_POW2`
 # (`x * 2` -> `shl rax, 1`) emitted NOTHING on cx: `x * 2` and `x * 4` returned x
 # unchanged under cxvm while `x * 3` and `x * k` (a variable) were correct — the
 # v6.5.13 / v6.4.32 return-0-stub class. Surfaced by the 6.6.4 review's probe

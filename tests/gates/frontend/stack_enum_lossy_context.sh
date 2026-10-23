@@ -2110,7 +2110,7 @@ printf '%s\n%s\nfn t(): i64 { var v = callptr(&mk3, 5).dv(2); return v; }\nsysca
 # which a caller's `var t, v = g();` reads as the TAG. The every-path rule warns for `var v = f(x)?; return v;` (the
 # guide's `?` section), but the mixed-return pass read `return f(x)?;` as FORWARDING f's pair (the call's flag) and said
 # nothing: in a fn, an impl method and a closure, for `(f(x))?`, `callptr(&f, x)?` and `fncall1(&f, x)? + 1` alike.
-# `_ret_q_plain` (parse.cyr): a return value with a `?` outside every bracket is plain. RQ1-RQ4 warn once per return
+# `_ret_q_plain` (parse/pair_check.cyr): a return value with a `?` outside every bracket is plain. RQ1-RQ4 warn once per return
 # (each runs its Err path: (1, 9) per fn); RQ5 the controls — `return f(f(x)?);`, `return SOk(f(x)?);`, `var v = f(x)?;
 # return SOk(v);` — forward a pair and stay silent. Mutation (measured): `_ret_is_variant` and `_warn_closure_block`
 # without `_ret_q_plain` (the tree before) -> RED RQ1-RQ4 (no warning) on every leg; RQ5 green.

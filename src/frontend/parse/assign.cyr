@@ -1,0 +1,832 @@
+# PARSER — assignment — one aggregate operand (`_agc_*`), a struct call result into a struct, the handle line's copies
+# (`_hl_*`), the compound `OP=` forms and stores (`_asg_*`).
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+# v6.4.62 (DX multi-error): the recovery chokepoint. Every statement parse goes
+# through this wrapper, so when a nested error set _panic we resync to the next
+# statement boundary (_sync_skip) once, at the tightest enclosing statement. The
+# guaranteed-progress guard (GTI must advance or force one token) stops the
+# enclosing block/PROG loop from spinning if a statement made no progress; the
+# PEEKT watchdog is the deeper backstop for loops that never return here. On VALID
+# input _panic is never set and every statement advances → pure pass-through (byte-id).
+# 6.6.5 — ONE OPERAND of `dst = src` between aggregates, resolved to its recorded layout.
+# Fills `_agc_li` (a LOCAL's named slot) or `_agc_gvi` (a GLOBAL's slot) plus `_agc_t` (the
+# type, normalised to the local `0 - sid` convention), and returns the SLOT SPAN — 0 when
+# this name is not an inline aggregate, so the caller falls through to the 8-byte store.
+# ⚠ THE TWO FRAMES COUNT IN OPPOSITE DIRECTIONS and the emit loop below is the only place
+# that has to know: a local aggregate is named at its DEEPEST slot, so its word k is slot
+# `li - k`; a global's fields ascend from its named slot (`EVADDR(gvi) + off`), so its word k
+# is slot `gvi + k`. CHANGELOG [6.6.5]
+# 6.6.6 — `_agc_pp` is the third answer: the operand IS an aggregate, but its slot holds the
+# ADDRESS of one (a by-value struct PARAMETER). Read it beside `_agc_li`; the copy below takes
+# the addressed path for it exactly as it does for a global. CHANGELOG [6.6.6]
+# ⛔ 6.6.16 (C2) — `_agc_pp == 2` is a HANDLE: a slot holding the address of a plain struct over
+# 8 B that is NOT the struct's value — a pointer-mode local (`var a: Pt = alloc(16);`) or a `*T`
+# parameter. A pointer-mode GLOBAL handle publishes `_agc_gvi` in the deref band `0 - 1000 - gvi`
+# instead (`_agc_addr_x1` loads the slot, as `_AGC_DREF` does for a local), so a consumer testing
+# `>= 0` before SLVAR skips it: the global itself is not written. Both copy through the address
+# exactly as `_agc_pp == 1` does; the difference is the RULE: handle <- handle is a pointer
+# REBIND (`_try_aggregate_copy_assign`), every other pair with a handle in it is a copy. Before,
+# `_agc_operand` reported a handle as "not an aggregate" and every arm fell to the one-word store
+# — the address into an inline struct's field 0, or field 0's value into the handle (SIGSEGV at
+# the next `a.x`). Read `_agc_hdl()` for "is a handle". CHANGELOG [6.6.16]
+var _agc_li = 0 - 1;
+var _agc_gvi = 0 - 1;
+var _agc_t = 0;
+var _agc_pp = 0;
+var _agc_src = 0;   # 6.7.11: 1 while `_agc_src_operand` resolves a SOURCE (`_agc_ptr_global`, `_agc_ovr_is`)
+# 6.7.11: `_agc_pp` 1 is a VALUE reached through its address, never a handle — the `*p = v` destination
+# (`_agc_ovr_ans`) included, whose top-level pointer sits in a hidden global answered in the deref band.
+fn _agc_hdl(): i64 {
+    if (_agc_pp == 1) { return 0; }
+    if (_agc_pp == 2) { return 1; }
+    if (_agc_gvi <= 0 - 1000) { return 1; }
+    return 0;
+}
+# 1 = `t` (a `0 - sid` type) is a plain struct over 8 B. `Str` / `Result` / `Option` / `Tagged` are
+# excluded by name through the classifier that builds a fn's structmask, as `_local_is_sptr_param`
+# excludes them: their slots hold heap handles that every assignment rebinds (the stdlib's
+# convention). A handle of 8 B or less is a local's own answer (`_small_hdl`, 6.7.10); a global
+# of 8 B or less is held by value. CHANGELOG [6.6.16]
+fn _agc_plain_big(S, t): i64 {
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    var si = (0 - t) - 1;
+    if (STRUCTSZ(S, si) <= 8) { return 0; }
+    if (_classify_param_type(S, L64(S + 0x1A6018 + si * 8)) != 0) { return 0; }
+    return 1;
+}
+# A one-slot struct local (GLAGG == 0): an address-passed by-value parameter (`_agc_pp` 1), a
+# handle (2), or not an aggregate operand (0 returned). Kept out of `_agc_operand` for cybs's
+# per-fn reference limit. Since C7 a by-value parameter is copied into an inline local in the
+# prologue (`_sptr_params_localize`), so 1 is left only for a `#naked` fn's. CHANGELOG [6.6.16]
+# 6.7.10 (B7-1): and a HANDLE of 8 B or less (the handle line), one slot (`_hl_small_copy`); (B7-1c)
+# and a `*T` of one (`_small_sptr`), as a `*T` over 8 B is a handle through `_agc_plain_big`.
+fn _agc_handle_local(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (_small_hdl(S, li) + _small_sptr(S, li) > 0) { _agc_pp = 2; _agc_li = li; _agc_t = lt; return 1; }
+    if (_agc_plain_big(S, lt) == 0) { return 0; }
+    _agc_pp = 2;
+    if (_local_is_sptr_param(S, li) == 1) { if (_is_ptr_param(S, li) == 0) { _agc_pp = 1; } }
+    _agc_li = li;
+    _agc_t = lt;
+    var n = AGG_NSLOTS(S, lt);
+    return n;
+}
+# A pointer-mode global (GVPM 1) of a plain struct over 8 B: a handle, in the deref band. 6.7.10
+# (B7-1g): and one of 8 B or less (the handle line), one slot (`_hl_small_copy`). 6.7.11: as a
+# DESTINATION, a typed `*S` global too (`_agc_ptr_global`).
+fn _agc_handle_global(S, gvi): i64 {
+    if (GVPM(S, gvi) != 1) { return _agc_ptr_global(S, gvi); }
+    var t = 0 - GVTYPE(S, gvi);
+    if (_small_ghdl(S, gvi) == 1) { _agc_gvi = 0 - 1000 - gvi; _agc_t = t; return 1; }   # 6.7.10 (B7-1g)
+    if (_agc_plain_big(S, t) == 0) { return 0; }
+    _agc_gvi = 0 - 1000 - gvi;
+    _agc_t = t;
+    var n = AGG_NSLOTS(S, t);
+    return n;
+}
+# ⛔ 6.7.11 — A TYPED `*S` GLOBAL IS A HANDLE AS A DESTINATION (the user's decision (a), 2026-10-13): `GP = l`
+# copies the struct value `l` into `*GP`, as `q = l` does through a `*S` local or parameter (`_agc_handle_local`)
+# — one rule for locals and globals at every size. Through 6.7.10 the global was no operand, and the one-word
+# store made `GP` the word `l.a`: a wild pointer, silently (issues/2026-10-13-struct-value-into-pointer-global-
+# destination-decision.md). Answered in the deref band, so a `*S` / handle source stays a REBIND (`GP = q`,
+# `GP = GP2`), another struct is refused by name, and a source that is no struct (`GP = &x`, `GP = 0`,
+# `GP = alloc(..)`) keeps the store. A DESTINATION only: as a source (`_agc_src`) the global keeps
+# `_hl_psrc_copy`'s path. A plain struct (no `Str` / tuple / dyn; over 8 B, no heap handle by name), its step
+# the struct's. CHANGELOG [6.7.11]
+# 1 = pointer step `st` is that of a `*T` to a struct of `sz` bytes: `sz`, or 8 for a zero-size one (`_tn_ptr_step`
+# steps a T of no bytes by 8).
+fn _ps_is_sz(st, sz): i64 {
+    if (st == sz) { return 1; }
+    if (sz == 0) { if (st == 8) { return 1; } }
+    return 0;
+}
+fn _agc_ptr_global(S, gvi): i64 {
+    if (_agc_src == 1) { return 0; }
+    var ps = _gv_ptr_sid(S, gvi);
+    if (ps <= 0) { return 0; }
+    if (ps >= 2048) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    var sz = STRUCTSZ(S, ps - 1);
+    if (sz > 8) { if (_agc_plain_big(S, 0 - ps) == 0) { return 0; } }
+    if (_ps_is_sz(_ps_step(_gv_ptr_word(S, gvi)), sz) == 0) { return 0; }
+    _agc_gvi = 0 - 1000 - gvi;
+    _agc_t = 0 - ps;
+    return AGG_NSLOTS(S, 0 - ps);
+}
+# ⛔ 6.7.11 — THE `*p = v` DESTINATION (`_dst_struct`): while the assignment arms run for a dereference store
+# through a `*S`, the destination they resolve by the name `_agc_ovr_nm` is the struct the parked pointer `_agc_ovr_h`
+# points at — a VALUE reached through one indirection (`_agc_pp` 1, as an address-passed parameter), so a `*T` or
+# handle source copies instead of rebinding. A frame slot in a fn; at top level a hidden global, answered in the
+# deref band with `_agc_pp` 1 (`_agc_hdl` 0). Never for a source (`_agc_src`), and never inside a statement nested
+# in the source (PARSE_STMT clears it). CHANGELOG [6.7.11]
+var _agc_ovr = 0;
+var _agc_ovr_nm = 0;
+var _agc_ovr_h = 0;
+var _agc_ovr_t = 0;
+var _agc_ovr_pp = 1;   # 6.7.17 (D14): 2 = the parked pointer is a `*S` slot's pointee, a handle (`_psl_store`)
+fn _agc_ovr_is(onoff): i64 {
+    if (_agc_ovr != 1) { return 0; }
+    if (_agc_src == 1) { return 0; }
+    if (onoff != _agc_ovr_nm) { return 0; }
+    return 1;
+}
+fn _agc_ovr_ans(S): i64 {
+    var h = _agc_ovr_h;
+    if (h >= 0) { _agc_li = h; } else { _agc_gvi = 0 - 1000 - (0 - 2 - h); }
+    _agc_pp = _agc_ovr_pp;
+    _agc_t = _agc_ovr_t;
+    return AGG_NSLOTS(S, _agc_t);
+}
+fn _agc_operand(S, onoff): i64 {
+    _agc_li = 0 - 1;
+    _agc_gvi = 0 - 1;
+    _agc_t = 0;
+    _agc_pp = 0;
+    if (_agc_ovr_is(onoff) == 1) { return _agc_ovr_ans(S); }
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, onoff);
+        if (li >= 0) {
+            if (GLAGG(S, li) == 0) {
+                # 6.6.6 — span 0 is "not inline", which an address-passed struct parameter also
+                # is. It owns ONE slot holding the caller's pointer, so it is an aggregate
+                # operand reached through one indirection. See `_local_is_sptr_param`.
+                # 6.6.16 (C2): and so is a handle. See `_agc_handle_local`.
+                var hn = _agc_handle_local(S, li);
+                return hn;
+            }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            _agc_li = li;
+            _agc_t = lt;
+            var ln = AGG_NSLOTS(S, lt);
+            return ln;
+        }
+    }
+    var gvi = FINDVAR(S, onoff);
+    if (gvi < 0) { return 0; }
+    # 2 == the slot IS the struct. 1 == it holds an address, 0 == not a recorded aggregate.
+    # GVTYPE's positive range is shared with scalar widths, so it is never the gate.
+    # 6.6.16 (C2): a 1 is a handle (`_agc_handle_global`), no longer "not an aggregate".
+    if (GVPM(S, gvi) != 2) {
+        var hg = _agc_handle_global(S, gvi);
+        return hg;
+    }
+    var gt = GVTYPE(S, gvi);
+    if (gt <= 0) { return 0; }
+    _agc_gvi = gvi;
+    _agc_t = 0 - gt;
+    var gn = AGG_NSLOTS(S, 0 - gt);
+    return gn;
+}
+
+# ⛔ 6.6.13 — the SOURCE operand of `dst = src;`: `_agc_operand`, plus a closure CAPTURE between the
+# local and the global rung (PARSE_FACTOR's order). Without it `q = p;` / `G = p;` / `w = v;`
+# inside a closure stored the capture's address as one word. A capture is recorded for
+# `_fsc_src_x1` (see `_fsc_cap_src`) and answered as the `-2` source. Never asked for the
+# DESTINATION, which must not touch that record. CHANGELOG [6.6.13]
+# 6.7.11: `_agc_src` is up across it, so `_agc_operand` answers a SOURCE (`_agc_ptr_global`).
+fn _agc_src_operand(S, onoff): i64 {
+    _agc_src = 1;
+    var n = _agc_src_rung(S, onoff);
+    _agc_src = 0;
+    return n;
+}
+fn _agc_src_rung(S, onoff): i64 {
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, onoff) >= 0) { return _agc_operand(S, onoff); } }
+    var t = _fsc_cap_src(S, onoff);
+    if (t == 0) { return _agc_operand(S, onoff); }
+    _agc_li = 0 - 2;
+    _agc_gvi = 0 - 1;
+    _agc_pp = 0;
+    _agc_t = t;
+    return AGG_NSLOTS(S, t);
+}
+
+# ⛔ 6.6.6 — `x = f(..);` where `x` is an inline struct (local or global) and `f` returns that
+# struct BY VALUE. The declaration form (`var x: S = f(..)`) always had a destination; this one
+# fell to the scalar store, so a >16 B return had no retptr at all (x86: SIGSEGV writing through
+# argument 1; aarch64: exit 0 with `x.x` = a stack address) and a 9-16 B one kept rax and dropped
+# rdx (`q = p2(3, 4)` left `q.y` stale). Now: the call into a temp, then the same copy `x = t`
+# performs. Through a temp rather than straight into `x`, so an argument that reads `x` (or is
+# `x`, address-passed) sees the old value. At top level there is no frame for the temp: a
+# retptr callee is refused by PARSE_FNCALL, a rax:rdx one here. CHANGELOG [6.6.6]
+fn _try_struct_call_assign(S, noff, term): i64 {
+    # ⛔ 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES. `r = mk(p);` into a
+    # `Box<Pt>` local compared the base's `Box` return, missed, and fell to the scalar store —
+    # fields stale, silently; the explicit `r = mk<Pt>(p);` did the same once its return type
+    # named the instance.
+    if (PEEKT(S) == 10) { if (_asg_paren(S, noff, term, 1) == 1) { return 1; } return 0; }   # 6.7.6
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (_call_follow(S, o - 1) != term) { return 0; }
+    var n = _agc_operand(S, noff);
+    # ⛔ 6.6.11 — THE TYPE CHECK COMES BEFORE EVERY EXIT. `p = mkq();` (Q into a Pt) returned 0 at
+    # the sid test below and the scalar store kept one word, silently; a <= 8 B result had already
+    # left at `cls == 0`, and a one-slot destination at `n <= 1`. The declaration form refuses
+    # all of these. A generic call is compared as the instance it reaches, so `s = mk(r.v)` into
+    # a `Box<Pt>` (the field argument infers T = i64) is refused by name. CHANGELOG [6.6.11]
+    if (_sca_mismatch(S, fi, noff) == 1) { return 0; }
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) {
+        if (_istr_call(S, fi, n, term) == 1) { return 1; }   # 6.7.14 (D20 (a)): a `: Str` call into an inline `Str`
+        return _hl_call_into(S, fi, n, term);   # 6.7.10 (B7-1): into a handle
+    }
+    if (_agc_t == 0) { if (_asa_call(S, noff, fi, term) == 1) { return 1; } }   # 6.7.14 (D27): into a scalar
+    if (n <= 1) { return 0; }
+    if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
+    if (GINFN(S) != 1) {
+        if (cls == 1) { _refuse_toplevel_struct_call(S, PEEKV(S)); }
+        return 0;
+    }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
+    var t = _struct_call_into_temp(S);
+    _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
+    _expect_step(S, term);   # consume the terminator
+    return 1;
+}
+
+# ⛔ 6.7.10 (B7-1) — `dst = src;` between one-slot (8 B or less) struct operands (`_agc_operand` just
+# ran on `dst`), now that one can be a HANDLE (the handle line) or a `*T` (B7-1c, `_small_sptr`):
+# exactly as over 8 B — handle <- handle is a pointer REBIND, at any pair of struct types, before the
+# type check (0: the one-word store); a handle and a value COPY the struct through the handle's address,
+# byte-exact. Two values keep the one-word store, and a mismatch is refused by name, as before. 1 =
+# copied (`src ;` consumed).
+fn _hl_small_copy(S, noff, src_noff, dt): i64 {
+    var dh = _agc_hdl();
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var dgv = _agc_gvi;
+    _agc_src_operand(S, src_noff);
+    var sh = _agc_hdl();
+    if (dh == 1) { if (sh == 1) { return 0; } }
+    if (_asg_type_err(S, dt, _agc_t, noff, src_noff) == 1) { return 0; }   # 6.7.17: no warning beside it
+    # A CAPTURED handle or `*T` (B7-1c) is a source the copy goes through (its word is the address),
+    # never a rebind — as over 8 B, where `_agc_src_operand` answers a capture as a value.
+    if (_agc_li == 0 - 2) { sh = _hl_cap_addr(S, src_noff); }
+    if (dh + sh == 0) { return 0; }
+    if (_agc_t != dt) { return 0; }
+    var sli = _agc_li;
+    if (_agc_pp != 0) { sli = _AGC_DREF(sli); }
+    _agc_copy_bytes(S, dli, dgv, sli, _agc_gvi, STRUCTSZ(S, (0 - dt) - 1));
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    STI(S, GTI(S) + 2);   # src ;
+    return 1;
+}
+# ⛔ 6.7.10 — STRUCT COPIES THROUGH A `*T` GLOBAL, A `: *T` CALL OR A `*T` FIELD (the user's decision 6,
+# 2026-10-12: struct copies are size-independent, and a copy through a `*T` copies the struct). B7-1c made a
+# `*T` LOCAL or PARAMETER a copy operand at every size; a `*T` global's name, a call or method declared
+# `: *T` and a `*T` field were no operand at ANY size, 16 B included: `l = GP`, `G = GP`, `l = gp()`,
+# `l = w.p` stored the POINTER word into the first field — silently (6.6.17 – 6.7.10 measured). The source
+# [st, cursor) just parsed — rax holds the pointer — read by the compiler's own typing (`_hl_psrc`): into a
+# struct VALUE (an inline local, a value global, a by-value parameter) the pointer is parked and the struct it
+# points at copied byte-exact (no byte past it read); into a handle or a `*T` it stays the one-word store (a
+# rebind, as `*T` <- `*T` is); a `*U` of another struct is refused by name. 1 = copied (`term` consumed).
+# CHANGELOG [6.7.10]
+fn _hl_psrc_copy(S, noff, st, term): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var ps = _hl_psrc(S, a, _ie_pe);
+    if (ps <= 0) { return 0; }
+    var n = _agc_operand(S, noff);
+    if (n == 0) { return 0; }
+    if (_agc_hdl() == 1) { return 0; }
+    var dt = _agc_t;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    if (_ps_step(GPSC(S)) != STRUCTSZ(S, ps - 1)) { return 0; }
+    if (_hl_psrc_err(S, dt, 0 - ps, noff) == 1) { return 0; }   # 6.7.16: the source as written, 'gq(&q)'
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var dgv = _agc_gvi;
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    _expect_step(S, term);   # consume the terminator
+    return 1;
+}
+# ⛔ 6.7.11 — AN ASSIGNMENT FROM A STRUCT DEREFERENCE COPIES THE STRUCT (6.7.10 decision 6: `*p` is a struct
+# value, and the declaration `var d: S = *p;` copies it). `l = *p`, `G = *p` and `q = *p` (q a `*S` or a
+# handle) parsed `*p` as an expression and stored its first word — `l.b` / `G.b` stale, q REBOUND to that word
+# — at every size, silently but for a false "assigning non-pointer to typed pointer" warning (issues/
+# 2026-10-13-assignment-from-struct-dereference-copies-one-word.md). The source up to `term` (`;`, or the `)`
+# of a for step or of the parentheses wrapping it) is ONE dereference whose operand `_hl_dstar_t` types `*S`,
+# and `noff` a struct operand: the pointer is parked in a hidden temp (a frame slot; a hidden global at top
+# level) and STRUCTSZ bytes are copied through it into a value (an inline local, a value global), or into
+# the pointee of a `*S` or a handle, as `q = l` copies. A `*U` of another struct is refused by name, as the
+# declaration refuses it. A `*S` GLOBAL destination is no operand here (unchanged). 1 = copied (`term`
+# consumed); 0 = untouched. CHANGELOG [6.7.11]
+# ⛔ 6.7.15 — and `*pp` of a `**S` (`_hl_dstar_x`'s twin, `_hl_dpp`): the `*S` it reads, copied through as `l = p`
+# copies — into a value, or the pointee of `*q = *pp` (`_dst_arms`); into a handle or a `*S` it stays the one-word
+# store, a rebind, as `q = p` is (`_asg_dpp_rebind`). CHANGELOG [6.7.15]
+# 6.7.16: mode 2 — and `*pp` of a `**Str` into an inline `Str` (`_hl_dpp_str`, `_istr_dxa`). CHANGELOG [6.7.16]
+fn _asg_dstar(S, noff, term): i64 {
+    var ps = _hl_dstar_x(S, GTI(S), term, 2);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return _istr_dxa(S, noff, ps, term); }   # 6.7.15 (D14): `t = *p` of a `*Str`
+    if (_agc_operand(S, noff) == 0) { return _istr_hdx(S, noff, ps); }   # 6.7.17 (D18): into a `Str` handle
+    if (_asg_dpp_rebind() == 1) { return 0; }
+    var dt = _agc_t;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    if (_dx_plain(S, 0 - dt) == 0) { return 0; }
+    if (_agg_dx_err(S, dt, 0 - ps, noff) == 1) {   # 6.7.16: the source as written, from its `*`
+        _asg_tup_refd = 1;   # 6.7.16: and no "assigning non-pointer to typed pointer" beside the refusal
+        return 0;
+    }
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }
+    var dgv = _agc_gvi;
+    var h = _hl_dx_src(S);
+    if (h >= 0) { _agc_copy_bytes(S, dli, dgv, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, ps - 1)); }
+    else { _agc_copy_bytes(S, dli, dgv, 0 - 1, 0 - 1000 - (0 - 2 - h), STRUCTSZ(S, ps - 1)); }
+    if (dgv >= 0) { SLVAR(S, dgv); }
+    _expect_step(S, term);   # consume the terminator
+    return 1;
+}
+# 1 = the source `_hl_dstar_x` just read is `*pp` (a `*S`) and the destination `_agc_operand` just resolved a handle
+# or a `*S`: pointer <- pointer, the rebind (`_hl_psrc_copy`'s rule), never a copy. CHANGELOG [6.7.15]
+fn _asg_dpp_rebind(): i64 {
+    if (_hl_dpp == 0) { return 0; }
+    return _agc_hdl();
+}
+# 6.7.10 (B7-1) — a struct of 8 B or less in rax (a method / operator / if-expression result, a free
+# call's) into the HANDLE destination `dli` (a local's slot) / `dgv` (a global's deref band): stored
+# into a frame temp and copied through the handle, as over 8 B the result's temp is. 1 = done (`term`
+# consumed). `_hl_res_into` is the record's arm: `_agc_operand` just ran on the destination; a value
+# destination keeps the one-word store (0). (B7-1g) At top level, into a handle global, the temp is a
+# hidden global (`_hl_gtemp`): there is no frame.
+fn _hl_res_into(S, term, sid): i64 {
+    if (_agc_hdl() == 0) { return 0; }
+    return _hl_val_into(S, term, sid, _agc_li, _agc_gvi);
+}
+fn _hl_val_into(S, term, sid, dli, dgv): i64 {
+    var t = 0 - 1;
+    var tg = 0 - 1;
+    if (GINFN(S) == 1) { t = _agg_temp(S, sid); EFLSTORE(S, t); }
+    else { tg = _hl_gtemp(S); EVSTORE(S, tg); }   # 6.7.10 (B7-1g): top level, a hidden global
+    if (dgv == 0 - 1) { dli = _AGC_DREF(dli); }
+    _agc_copy_bytes(S, dli, dgv, t, tg, STRUCTSZ(S, sid - 1));
+    _expect_step(S, term);   # consume the terminator
+    return 1;
+}
+# `a = mk(..);` — a free call returning a struct of 8 B or less (class 0, in rax) into a HANDLE `a` of
+# its type (`n` = `_agc_operand`'s span): parsed, then `_hl_val_into`. 0 leaves the cursor alone.
+fn _hl_call_into(S, fi, n, term): i64 {
+    if (n != 1) { return 0; }
+    if (_agc_hdl() == 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (_agc_t != 0 - rs) { return 0; }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    PCMPE(S);
+    return _hl_val_into(S, term, rs, dli, dgv);
+}
+# `x = f(..);` — x a struct operand (`_agc_operand` just ran) and f returning a DIFFERENT struct:
+# refused by name (1). Reads `_agc_t`. CHANGELOG [6.6.11]
+# 6.6.16 (C2): into a HANDLE, a call returning a struct HANDLE (`Str`: class 0 over 8 B, the
+# address in rax) is handle <- handle, a rebind at any type — as before, when a handle was not an
+# operand at all. A struct VALUE of a different type is refused, as into an inline one.
+fn _sca_mismatch(S, fi, noff): i64 {
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (_agc_hdl() == 1) { if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, rs - 1) > 8) { return 0; } } }
+    return _asg_type_err(S, _istr_hdt(S, noff, _agc_t), 0 - rs, noff, PEEKV(S));   # 6.7.17: no warning; (D18) a `Str` handle
+}
+
+# The copy both struct-call assignments end with: temp `t` (field-0 slot, `n` slots of struct
+# `sid`) into the destination local `dli` or global `dgv` (the other is -1). A `dli` in the
+# `_AGC_DREF` band is a by-value PARAMETER whose slot holds the struct's ADDRESS (6.6.6) — the
+# slot-index loop cannot express that, so it takes the same addressed copy a global takes.
+# CHANGELOG [6.6.6]
+# 6.6.16 (C2): a `dgv` in the deref band (`<= -1000`, a pointer-mode global handle) is addressed
+# too, and never SLVAR'd — the global's own slot is not written. CHANGELOG [6.6.16]
+fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
+    if (dgv != 0 - 1) {
+        _agc_copy_bytes(S, 0 - 1, dgv, t, 0 - 1, STRUCTSZ(S, sid - 1));
+        if (dgv >= 0) { SLVAR(S, dgv); }
+        return 0;
+    }
+    if (dli <= 0 - 1000) {
+        _agc_copy_bytes(S, dli, 0 - 1, t, 0 - 1, STRUCTSZ(S, sid - 1));
+        return 0;
+    }
+    var i = 0;
+    while (i < n) {
+        EFLLOAD(S, t - i);
+        EFLSTORE(S, dli - i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⛔ 6.6.11 — COMPOUND ASSIGNMENT is ONE implementation, shared by the statement arm
+# (_PARSE_STMT_IMPL) and the classic-for step replay (parse/ctrl.cyr). They were two copies and
+# both were wrong about floats: the statement arm took its float routing from a LOCAL's type
+# only, so `G += 1.0` on an f64 GLOBAL added the two bit patterns as integers, and the step copy
+# had no float routing at all — `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2 iterations,
+# not 4. Neither checked the right operand, so `t += 1` on an f64 silently added a subnormal.
+# Out of _PARSE_STMT_IMPL on purpose: cybs miscompiles that body SILENTLY past its per-fn
+# reference limit. CHANGELOG [6.6.11]
+# The compound-assignment operators (the token before `=`): ONE list, read by the runtime pair
+# below and by the const fn evaluator (`_ce_cop`), so the two cannot drift. 152 is `>>>`, so
+# `>>>=` is the eleventh (6.7.5): `>>>` has been an operator since v6.4.46. CHANGELOG [6.7.5]
+fn _is_cop_tok(ct): i64 {
+    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) { return 1; }
+    if (ct == 152) { return 1; }
+    return 0;
+}
+# The `op =` pair at the cursor: consumes both and returns the op token, else 0.
+fn _asg_compound_tok(S): i64 {
+    var ct = PEEKT(S);
+    if (_is_cop_tok(ct) == 1) {
+        var tn = GTI(S) + 1;
+        if (tn < GTCNT(S)) {
+            if (TOKTYP(S, tn) == 4) { STI(S, GTI(S) + 2); return ct; }
+        }
+    }
+    return 0;
+}
+# The plain assignment's `=` (cursor after the name): stepped, 0. Missing — `p;`, `p 5;`, `P { 5 };`, `p` before the
+# block's `}` — it is "expected '='" once and the statement ends in sync, nothing read as a value (`_stmt_rest_skip`),
+# so the next statement is parsed with its own errors: 1. The token was stepped whatever it was and a value parsed
+# from the next: `p;` as a block's last statement took its `;`, the value read the `}` and the next fn was "defined
+# inside" this one; `p 5;` lost the next statement's error to the resync. CHANGELOG [6.7.17]
+fn _asg_eq_step(S): i64 {
+    if (PEEKT(S) == 4) { STI(S, GTI(S) + 1); return 0; }
+    _refuse_in_sync(S);
+    ERR_EXPECT(S, 4);
+    _stmt_rest_skip(S);
+    return 1;
+}
+# The rest of a statement refused at the cursor: stepped to its `;` (stepped), brackets balanced — a `{ 5 }` in it is
+# stepped whole — stopping at a `}` that closes the enclosing block, a statement keyword or EOF, as `_sync_skip`
+# stops (its caller marked the refusal `_refuse_in_sync`, so the statement ends in sync). CHANGELOG [6.7.17]
+fn _stmt_rest_skip(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) {
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (t == 14) { return 0; }
+            if (_sync_kw(S, t) == 1) { return 0; }
+        }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) { if (d > 0) { d = d - 1; } }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# 1 = an assignment follows the cursor, `=` or an `op =` pair (nothing consumed). CHANGELOG [6.7.5]
+fn _asg_pair_at(S): i64 {
+    if (PEEKT(S) == 4) { return 1; }
+    if (_is_cop_tok(PEEKT(S)) == 0) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) == 4) { return 1; }
+    return 0;
+}
+# 6.7.0 (A5) — cursor on the `.` after a statement's first IDENT: 1 when a chain of `.name`s ends in
+# a call (`.m(`, `.v.m(`, `.next.v.m(`), so the statement is a method call; 0 for a field store. The
+# cursor is left wherever the walk stopped (the caller rewinds).
+fn _stmt_dot_chain_call(S): i64 {
+    while (PEEKT(S) == 41) {
+        if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { return 1; }
+        if (_mchain_targs(S, GTI(S)) != GTI(S)) { return 1; }   # 6.7.14 (D7 (a)): `p.id<f64>(h);`
+    }
+    return 0;
+}
+# Loads the left side (a local, else a global) into rax; returns its slot type.
+# ⛔ 6.6.12 — AT THE SLOT'S WIDTH, as a read of it in an expression loads it. This loaded 8
+# bytes, so `a >>= 1` on a u8 global followed by `var b: u8 = 1;` shifted b's byte down into a:
+# 130 where 2 is right. A narrow local is its own 8-byte frame slot, so the full-width load
+# read whatever an earlier full-width store had left above the low byte. CHANGELOG [6.6.12]
+# 6.6.17: and records the slot's pointer step (`_asg_cstep`), which `_asg_compound_op` applies to
+# `p += n` / `p -= n` as `p + n` applies it — the compound form never scaled at all.
+var _asg_cstep = 0;
+fn _asg_compound_load(S, noff): i64 {
+    _asg_cstep = 0;
+    _bx_compound(S, noff);   # 6.7.3 (B2): refused into a bool
+    if (_cur_iself_sid > 0) { if (_noff_is(S, noff, "self", 4) == 1) {   # 6.7.0 (A4): `self += n`
+            ERR_IDENT(S, "compound assignment to an untyped `self` is refused - in an impl it points at ", _ei_sid(_cur_iself_sid), ": declare `self: *T` to step whole elements", 0 - 1);
+        } }
+    var li = FINDLOCAL(S, noff);
+    _asg_struct_refused(S, noff, li);   # 6.7.5 (B8): `a += b` on a struct value
+    _asg_wide_refused(S, noff, li);     # 6.7.6: on a vector, a typed array, a slice
+    if (li >= 0) {
+        var lt = _load_lt(S, li);
+        _asg_cstep = _slot_ptr_step(S, li);
+        if (lt > 0) { if (lt < 8) {
+                var lw = lt;
+                if (GSLICE_W(S, li) < 0) { lw = 0 - lt; }   # signed: movsx (parse/expr/factor.cyr)
+                EFLLOAD_W(S, li, lw);
+                return lt;
+            } }
+        EFLLOAD(S, li);
+        if (GLW128(S, li) == 1) { _W128_MARK(S, 1, li); }   # 6.7.6 (D2): _asg_compound_op's u128 arm
+        return lt;
+    }
+    var gi = FINDVAR(S, noff);
+    if (gi >= 0) {
+        _vecg_refuse(S, gi);   # 6.6.17 (a3)
+        var gsz = L64(_vars_base + gi * 8);
+        if (gsz < 8) {
+            var gw = gsz;
+            if (GVSGN(S, gi) == 1) { gw = 0 - gsz; }
+            EVLOAD_W(S, gi, gw);
+            return GVTYPE(S, gi);
+        }
+        if (GVTYPE(S, gi) < 0) { _asg_cstep = 0 - GVTYPE(S, gi); }   # a typed-pointer global
+        EVLOAD(S, gi);
+        if (GVW128(S, gi) == 1) { _W128_MARK(S, 2, gi); }   # 6.7.6 (D2)
+        return GVTYPE(S, gi);
+    }
+    return 0;
+}
+
+# ⛔ 6.7.5 (B8) — `a OP= b` ON A STRUCT VALUE IS REFUSED BY NAME (user, 2026-10-08), as B2 refused
+# `b += 1` on a bool: it compiled and integer-operated on the struct's FIRST word, never calling an
+# overloaded `T_add` — 13 where `a = a + b` gives 33 — silently, as a statement and as a for step.
+# A struct value is an inline aggregate local (GLAGG: `var a = P { .. }`, `var a: P`, a <= 8 B one
+# too), an address-passed by-value parameter (`_local_is_sptr_param`) and an inline struct global
+# (GVPM 2). A HANDLE keeps its 6.6.17 pointer step: a `*T` slot, a pointer-mode local or global
+# (it holds the address), a `Str`. (A vector, typed array and slice: _asg_wide_refused, 6.7.6.) The
+# statement still parses on, so the parse stays in sync. `li` = FINDLOCAL's answer. CHANGELOG [6.7.5]
+fn _asg_struct_refused(S, noff, li): i64 {
+    var sv = 0;
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (lt < 0) { if (lt > 0 - 2048) { if (GLPTRP(S, li) == 0) {
+                    if (GLAGG(S, li) == 1) { sv = 1; }
+                    elif (_local_is_sptr_param(S, li) == 1) { sv = 1; }
+                } } }
+    } else {
+        var gi = _findvar_core(S, noff);
+        if (gi >= 0) { if (GVTYPE(S, gi) > 0) { if (GVPM(S, gi) == 2) { sv = 1; } } }
+    }
+    if (sv == 0) { return 0; }
+    _cop_rti = GTI(S);   # 6.7.17: its whole right side is this refusal's
+    _err_in_sync(S, "compound assignment to struct ", noff, " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+    return 1;
+}
+# ⛔ 6.7.17 (met landing D24) — A REFUSED COMPOUND ASSIGNMENT IS ITS RIGHT SIDE'S ONE ERROR. `w += mk2(1, 1);` on a vector
+# `w` (a struct, an array, `*pv` / `*q` through a pointer to one, `*(&w)`) printed the compound's refusal and then D100's
+# "vector return type does not match the assigned variable" about the call that is the whole right side — two errors
+# for one mistake, at one token (and D24 met the same for a vector name: `*pv += u`). The first token of the right
+# side a compound refusal was made for (`_asg_wide_refused`, `_asg_struct_refused`, `_dst_cop_err`, `_dvec_cop_err`);
+# `_vop_rchk` leaves a vector value that is all of it alone. An operand inside it (`w += 1 + mk2(..)`) keeps its own.
+# CHANGELOG [6.7.17]
+var _cop_rti = 0 - 1;
+
+# ⛔ 6.7.6 (Break 1, lane D) — `a OP= b` ON A SIMD VECTOR, A TYPED ARRAY OR A SLICE IS REFUSED BY
+# NAME (the user's decision, 2026-10-08), as 6.7.5 refused it on a struct: each compiled and
+# integer-operated on the FIRST word — `v += 1` on an i64v2 added to lane 0 only, `a += 8` on a
+# `var a: i64[4]` to a[0] (an f64[N] added bit patterns), `s += 1` on a slice to `.ptr` — silently,
+# as a statement and as a for step. A vector is a local or parameter of a vector type (a vector
+# GLOBAL is refused already, _vecg_refuse); a typed array is any `var a: T[N]` (the descriptor's 0x80
+# mark, local or global); a slice is a local `[T]` / `slice<T>`. D2 (the second round of decisions,
+# same day) added a BARE array — `var b[N]` (local, static, global) and `stack var b[N]`: its `OP=`
+# worked on the first word too. A u128's `+=` / `-=` carry and its other `OP=` are refused
+# (_w128_cop, parse/expr/wide.cyr). The statement parses on. CHANGELOG [6.7.6]
+fn _asg_wide_refused(S, noff, li): i64 {
+    var k = 0;
+    if (li >= 0) {
+        if (_is_simd_any(S, GLTYPE(S, li)) == 1) { k = 1; }
+        elif (GLAEW(S, li) != 0) { k = 2; }
+        elif (_slice_lw(S, li) > 0) { k = 3; }
+        elif (GLBARR(S, li) == 1) { k = 4; }   # 6.7.6 (D2): a bare `var b[N]` / `stack var b[N]`
+    } else {
+        var gi = _findvar_core(S, noff);
+        if (gi >= 0) { if (_arr_gdesc(S, gi) != 0) { k = 2; } elif (_arr_gbare(S, gi) == 1) { k = 4; } }
+    }
+    if (k == 0) { return 0; }
+    _cop_rti = GTI(S);   # 6.7.17: its whole right side is this refusal's
+    if (k == 1) { _err_in_sync(S, "compound assignment to vector ", noff, " is refused - a vector value is not an integer or a float (write the long form with the packed-op builtins)"); }
+    elif (k == 2) { _err_in_sync(S, "compound assignment to array ", noff, " is refused - an array is not an integer or a float (index an element: `a[i] += b`)"); }
+    elif (k == 4) { _err_in_sync(S, "compound assignment to array ", noff, " is refused - an array is not an integer or a float (a bare array has no element type: write the word, `store64(&b, load64(&b) + v)`)"); }
+    else { _err_in_sync(S, "compound assignment to slice ", noff, " is refused - a slice is not an integer or a float (step a field: `s.ptr += n`, `s.len -= n`)"); }
+    return 1;
+}
+
+# A PLAIN assignment's checks once its value is parsed (`ti` = the value's first token; -1 for a
+# compound one, which has its own arms): the integer-constant-into-float warning (_IFS_CHECK, 6.6.10)
+# and the two 6.7.6 (Break 1, D2) rules below. `g` 1 = slot `idx` is a global. Out of
+# _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling.
+fn _asg_plain_in(S, idx, g, ti): i64 {
+    var t = 0;
+    if (g == 1) { t = GVTYPE(S, idx); } else { t = GLTYPE(S, idx); }
+    _IFS_CHECK(S, _IFS_K(t), ti);
+    return _asg_plain_chk(S, idx, g, ti);
+}
+# ⛔ 6.7.6 (Break 1, D2) — the user's decisions, 2026-10-08: an f64 value assigned to an `f32` ROUNDS
+# to f32 (_f32_init_round — D-1's initializer rule, for every write: it stored the f64 bits, which
+# read as 0.0 or garbage), and an assignment to a whole TYPED array (`var a: T[N]`, local, global or
+# static) is REFUSED by name — `a = 8` (or `a = b`) stored into a[0], silently. A bare `var b[N]`
+# keeps its first-word store (not decided). Shared by the statement and the classic-for step.
+fn _asg_plain_chk(S, idx, g, ti): i64 {
+    if (ti < 0) { return 0; }
+    var nm = 0;
+    var arr = 0;
+    if (g == 1) {
+        _f32_init_round(S, GVTYPE(S, idx));
+        nm = L64(_varn_base + idx * 8);
+        if (_arr_gdesc(S, idx) != 0) { arr = 1; }
+    } else {
+        _f32_init_round(S, _load_lt(S, idx));   # a `p: *f32` parameter's slot is typed f32; its value is an address
+        nm = L64(S + 0x5D9D000 + idx * 8);
+        if (GLAEW(S, idx) != 0) { arr = 1; }
+    }
+    if (arr == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _err_in_sync(S, "assignment to array ", nm, " is refused - an array is not an integer or a float (assign an element: `a[i] = v`)");
+    STI(S, sv);
+    return 1;
+}
+
+# ⛔ 6.6.12 — THE STORE OF AN ASSIGNMENT, at the slot's width: a local (g == 0) or a global
+# (g == 1, then SLVAR) takes rax. ONE implementation for the statement arm (_PARSE_STMT_IMPL)
+# and the classic-for step replay (parse/ctrl.cyr), which had its own 8-byte copy: `for (a = 250;
+# a != 252; a = a + 1)` on a u8 global zeroed the seven packed globals after it, and `a += 1`
+# carried 255 -> 0 into the next one. Warns on a narrowing store, as the statement always did.
+fn _asg_store_slot(S, idx, g): i64 {
+    if (_w128_store(S, idx, g) == 1) { if (g == 1) { SLVAR(S, idx); } return 0; }   # 6.7.6 (D2): all 16 bytes
+    var ew = GEXW(S);
+    if (g == 0) {
+        var lt = GLTYPE(S, idx);
+        if (lt > 0) { if (lt <= 8) {
+                if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
+                EFLSTORE_W(S, idx, lt);
+                return 0;
+            } }
+        EFLSTORE(S, idx);
+        return 0;
+    }
+    _vecg_refuse(S, idx);   # 6.6.17 (a3)
+    var avsz = L64(_vars_base + idx * 8);
+    if (avsz < 8) {
+        if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
+        # A zero-size global (an inline `struct E { }`) owns no bytes: nothing is stored. Width 0
+        # took EVSTORE_W's 8-byte fallback over the next global. CHANGELOG [6.7.9]
+        if (avsz > 0) { EVSTORE_W(S, idx, avsz); }
+    }
+    else { EVSTORE(S, idx); }
+    SLVAR(S, idx);
+    return 0;
+}
+# An assignment whose destination is neither a local nor a global: "undefined variable 'x'" at the
+# cursor (the value's end), its excerpt and the block-scope note. ONE report for the statement arm
+# and the classic-for step, which stored nothing and said nothing — `for (i = 0; i < 5; j = i + 1)`
+# with `j` declared nowhere looped forever. The caller keeps its --syntax-only skip. CHANGELOG [6.7.9]
+# Inside a closure, a name of the enclosing scope is a capture, and the report says so (`_asg_cap_name`).
+fn _asg_undef_report(S, noff): i64 {
+    if (_asg_cap_name(S, noff) == 1) { return 0; }
+    _undef_var_report(S, _nm_ti(S, _asg_nti, noff), noff, "");   # 6.7.14: a const fn's check (`_ce_name_said`), once per token (ERR_UNDEF), the block-scope note
+    return 0;
+}
+# 6.7.11 — A WRITE TO A CAPTURED NAME in a closure (`x += d`, `x = x + d`, a `for` init or step, `a, x =
+# f()`): a capture is the closure's copy, taken by value, and a captured NAME is not an lvalue there
+# (guide § Compound assignment). It was reported as "undefined variable 'x'" — though `x` is defined and
+# readable in the same body (issues/archived/2026-10-08-struct-operator-results.md #6). 1 = the name is one of the
+# enclosing scope's (`_cl_snap_find`: inside a closure body only) and the refusal named it, at the cursor.
+# The fix-it's local is named from the capture (`var x_l = x;`): a fixed `y` read `var y = y;` for a
+# capture named `y`, a self-initialisation that names the local as the capture. CHANGELOG [6.7.13]
+fn _asg_cap_name(S, noff): i64 {
+    if (_cl_snap_find(S, noff) < 0) { return 0; }
+    if (_derr_seen(GTI(S), "_asg_cap_name", noff, 0) == 1) { _bx_undef_ti = GTI(S); return 1; }   # 6.7.15: once
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("' is captured by value; a captured name is not assignable in a closure — copy it into a local (`var ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("_l = ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(";`)\n");
+    _err_excerpt(S);
+    _bx_undef_ti = GTI(S);   # as `_gv_note_blockscoped` marks an undefined name's report
+    _had_error = 1;
+    return 1;
+}
+# ⛔ 6.7.14 — A WRITE TO A CAPTURED NAME IS REFUSED BEFORE ANY GLOBAL IS LOOKED UP, the order a read
+# resolves the name in (a capture, then a global). The write arms resolved local, then GLOBAL, then
+# capture, so with a global of the name `y += d`, `y = y + d`, a classic-for init or step and
+# `a, y = f()` in a closure compiled and stored into the GLOBAL while reads in the same body saw the
+# capture — a silent wrong value. Asked before the value is parsed: by `_asg_lvalue_at` (the statement
+# arm, the for init and step) and by `_masg_resolve`. 1 = `noff` is a capture (inside a closure body:
+# not the closure's own local, one of the enclosing scope's) and the refusal (`_asg_cap_name`) named it
+# at token `ti`. CHANGELOG [6.7.14]
+fn _asg_cap_first(S, noff, ti): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (GINFN(S) == 0) { return 0; }
+    if (FINDLOCAL(S, noff) >= 0) { return 0; }
+    if (_cl_snap_find(S, noff) < 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _asg_cap_name(S, noff);
+    STI(S, sv);
+    return 1;
+}
+# The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
+fn _asg_float_fop(cop, lt): i64 {
+    if (lt != F64_TYID) { if (lt != F32_TYID) { return 0 - 1; } }
+    if (cop == 6) { return 0; }
+    if (cop == 7) { return 1; }
+    if (cop == 8) { return 2; }
+    if (cop == 9) { return 3; }
+    return 0 - 1;
+}
+# Stack = x, rax = the right operand — EMIT_F{64,32}_BINOP's convention. Warns when the right
+# operand is not the slot's kind (kind 1 for f64, kind 5 for f32), as `x = x + <rhs>` does.
+# `q` 1: the right operand was refused (`_cop_sres`), so its kind is not warned about too. CHANGELOG [6.7.17]
+fn _asg_compound_float(S, fop, lt, q): i64 {
+    if (lt == F64_TYID) {
+        if (q == 0) { if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } }
+        EMIT_F64_BINOP(S, fop);
+        return 0;
+    }
+    if (q == 0) { if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } }
+    EMIT_F32_BINOP(S, fop);
+    return 0;
+}
+# `x OP= <expr>` with rax = x (from _asg_compound_load, whose slot type is `lt`): leaves the
+# combined value in rax for the caller's store. %, &, |, ^, <<, >> on a float slot take the
+# integer arm, as they always have.
+# 6.7.7: the integer arm's `+= -= *= /=` warns kind 2 on an f64 right operand, as `x = x + 1.5`
+# does (_INT_F64_MIX): `x += 1.5` / `h.n += 1.5` added 1.5's bit pattern, silently. Warn only —
+# nothing emitted changes. The type is read before EPTR_SCALE emits (_FBR_KIND dies at an emit).
+fn _asg_compound_op(S, cop, lt): i64 {
+    var st = _asg_cstep;
+    _asg_cstep = 0;
+    var cd = _cop_dst;   # 6.7.17 (D15): the destination's kind, for `_cop_sres`
+    _cop_dst = 0;
+    if (_W128_IS(S) == 1) { if (_w128_cop(S, cop) == 1) { return 0; } }   # 6.7.6 (D2): a u128 place
+    EPUSHR(S);
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): `x += f();` combined the tag, every OP= place
+    var cti = GTI(S);
+    _sc_beg = 0 - 1;   # 6.7.17 (D15): only this value's own struct-call record may match
+    PCMPE(S);
+    var crf = _cop_sres(S, cti, cd);   # 6.7.17 (D15): a struct result over 8 B on the right
+    var rt = _FBR_ST(S);
+    if (_ifm_at(S) == 1) { rt = 0; }   # 6.7.11: `x += x + 1.5` — that mix warned already (_INT_F64_MIX)
+    if (st > 1) { if (cop == 6 || cop == 7) { EPTR_SCALE(S, st); } }   # 6.6.17: `p += n` steps T
+    var fop = _asg_float_fop(cop, lt);
+    if (fop >= 0) { return _asg_compound_float(S, fop, lt, crf); }
+    if (rt == F64_TYID) { if (cop >= 6) { if (cop <= 9) { _FLT_TYPE_WARN(S, 2); } } }   # CHANGELOG [6.7.7]
+    EMOVCA(S);   # rcx = expr; pop rax = x; rax = x OP rcx
+    EPOPR(S);
+    if (cop == 6) { EADDR(S); }
+    elif (cop == 7) { ESUBR(S); }
+    elif (cop == 8) { EIMUL(S); }
+    elif (cop == 9) { ECQO(S); EIDIV(S); }
+    elif (cop == 34) { ECQO(S); EIDIV(S); EMOVDR(S); }
+    elif (cop == 27) { EANDR(S); }
+    elif (cop == 35) { EORR(S); }
+    elif (cop == 36) { EXORR(S); }
+    elif (cop == 38) { ESHLCL(S); }
+    elif (cop == 39) { ESHRCL(S); }
+    elif (cop == 152) { EASHRCL(S); }   # 6.7.5: `>>>=`, the arithmetic shift
+    if (st > 0) { if (cop == 6 || cop == 7) { SPSC(S, st); } }   # 6.6.17: the result is the pointer
+    return 0;
+}
+
+# ⛔ 6.7.17 (D15, the user's decision, 2026-10-22) — A COMPOUND ASSIGNMENT WITH A STRUCT RESULT OVER 8 B ON ITS
+# RIGHT IS REFUSED, as its `=` form is: `*p += mk3();` (p `*i64`) and `y += mk3();` added Q's first word (the filed
+# repro exited 116), silently, where 6.7.16's D100 refuses `x += mk2(..)` of a vector call and D27 / D33 / D99 / D16
+# the `=` forms. The value [ti, cursor) that `_dsr_rec` reads as one whole struct result, the destination before the
+# `OP =` pair (`_vsl_sbeg`), judged with its `=` form's words: a name D27 / D32 / D33's (`_asa_refuse`: "cannot assign
+# 'y: i64' from 'mk3', which returns the struct 'Q' - declare 'y: Q' or bind a field"), `*E` D99 / D13's
+# (`_dsr_sres`), an element D99 / D16's (`_dsr_esub`), a field D16's. `cd` names what the site knows the tokens do not
+# carry (`_cop_dst`): 1 a field (`_cop_fd` packs it), 2 a slice's `.len` / `.ptr`, else an element's kind + 8. A
+# struct-typed name or field keeps its own refusal (a struct value is not an integer). CHANGELOG [6.7.17]
+var _cop_dst = 0;
+var _cop_fd = 0;
+fn _cop_sres(S, ti, cd): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    if (_dsr_rec(S, ti) == 0) { return 0; }
+    var op = ti - 2;
+    var s = _vsl_sbeg(S, op);
+    if (s < 0) { return 0; }
+    if (cd == 1) { return _dsr_fld(S, ti, op, _cop_fd); }
+    if (cd == 2) { return _dsr_slf(S, ti, op); }
+    if (TOKTYP(S, s) == 8) { return _dsr_sres(S, s, op, ti); }
+    if (TOKTYP(S, op - 1) == 29) { return _dsr_esub(S, op, ti, cd - 8); }
+    if (op != s + 1) { return 0; }
+    if (TOKTYP(S, s) != 2) { return 0; }
+    _rcv_fi = _dsr_afi;
+    _rcv_isv = _dsr_isv;   # 6.7.17 (D106): `y += q`
+    var r = _asa_refuse(S, TOKVAL(S, s), op, _dsr_at, _dsr_fno, _dsr_sid);
+    _rcv_isv = 0;
+    _rcv_fi = 0 - 1;
+    return r;
+}

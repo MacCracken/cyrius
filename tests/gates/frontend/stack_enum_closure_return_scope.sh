@@ -6,7 +6,7 @@
 # ⛔ THE DEFECT (hisab, filed 2026-10-03 against pins 6.6.0 - 6.6.14; 6.6.15 carries the same
 # scans and reproduces it). The two token scans that reason about pair returns after parsing —
 # `_pair_prescan` (propagates fn flag 256 through `return f(..)`) and `_warn_mixed_pair_returns`
-# (the "SINGLE value here" warning), both in src/frontend/parse/parse.cyr — skipped a nested body only
+# (the "SINGLE value here" warning), in src/frontend/parse/pair_scan.cyr and pair_check.cyr — skipped a nested body only
 # on the `fn` token. A closure literal has no `fn` token, so its body was scanned as the
 # enclosing fn's. Then:
 #   - `fn mk(b) { var g = |x| { return h(x + b); }; return g; }` was flagged pair-returning

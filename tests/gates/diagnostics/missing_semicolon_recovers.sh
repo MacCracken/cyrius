@@ -15,7 +15,7 @@
 # THE FIX. Every statement-terminator site — the 46 literal `;` sites in six frontend files and the 25 `term` sites
 # the assignments share with the classic-for step — steps only a token that is not a recovery point (`_expect_step`,
 # src/common/util.cyr: a `}`, EOF, a `;` or a statement keyword stays for the block loop / the statement resync).
-# `_stmt_resync` (src/frontend/parse/parse.cyr) first steps through the `}` of each `{` the statement opened and left
+# `_stmt_resync` (src/frontend/parse/pair_check.cyr) first steps through the `}` of each `{` the statement opened and left
 # unclosed (`_resync_close`) — unless the statement ended at its own `;`. A zone `var` entry and a const end at a
 # declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse/decl/gvar.cyr). The classic-for header
 # (`_for_semis` / `_for_empty`), a dyn source's extent (`_dyn_ext`), a destructure's call check (`_dt_rhs_end`), a
@@ -26,7 +26,7 @@
 #   S2  the filing's s2 verbatim (`var a = 1` then `var b = zz;`): the `;`, then `zz`
 #   V   a `var` statement's `;` (PARSE_VAR): V1-V4 before an if / while / for / return, V5 before a closure, V6
 #       before the fn's `}` (the next fn not "inside" it)
-#   P   a statement's `;` (src/frontend/parse/parse.cyr): P1 an assignment before the fn's `}`, P2 / P3 break / continue
+#   P   a statement's `;` (src/frontend/parse/stmt.cyr): P1 an assignment before the fn's `}`, P2 / P3 break / continue
 #       before the loop's `}`, P4 a method call and P5 an explicit generic call before a `return`
 #   S1  the filing's s1 verbatim (`return 1 }`): one error, the next fn not "inside" it
 #   R   a `return`'s `;` (src/frontend/parse/fn/ret.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
@@ -195,7 +195,7 @@ syscall(60, f() + g());
 ' "error:<source>:1:25: expected ';', got '}'
 error:<source>:2:22: $UZ"
 
-# ---- P: a statement's `;` (_PARSE_STMT_IMPL and its arms, src/frontend/parse/parse.cyr)
+# ---- P: a statement's `;` (_PARSE_STMT_IMPL and its arms, src/frontend/parse/stmt.cyr)
 row P1 "an assignment before the fn's }" 'fn f(): i64 { var x = 0; x = 5 }
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
@@ -309,7 +309,7 @@ row F11 "an empty init" "${FH}    for (; b < 3; b = b + 1) { b = zz; }
 ${FT}" "error:<source>:4:10: $FE
 error:<source>:4:36: $UZ"
 
-# ---- D: a `dyn` initializer's `;` (src/frontend/parse/types.cyr)
+# ---- D: a `dyn` initializer's `;` (src/frontend/parse/types/dyn.cyr)
 DH='trait Show { fn show(self): i64; }
 struct P { a; b; }
 impl Show for P { fn show(self): i64 { return self.a; } }
@@ -360,7 +360,7 @@ syscall(60, f());
 error:<source>:8:9: $DF
 error:<source>:9:12: $UZ"
 
-# ---- E: a subscript store's `;` (src/frontend/parse/expr.cyr)
+# ---- E: a subscript store's `;` (src/frontend/parse/expr/subscript.cyr)
 row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
     var a: i64[4];
     a[0] = 1 }
@@ -562,7 +562,7 @@ syscall(60, f());
 ' "error:<source>:4:7: cannot assign to const 'N' - a const has no storage (declare it \`var\` to change it)
 error:<source>:5:13: $UZ"
 
-# ---- A: an `asm { }` body missing its `}` (`_asm_bad`, src/frontend/parse/parse.cyr)
+# ---- A: an `asm { }` body missing its `}` (`_asm_bad`, src/frontend/parse/stmt.cyr)
 row A1 "asm { 0x90; then the next asm block" 'fn f(): i64 {
     asm { 0x90;
     asm { 0x90; }

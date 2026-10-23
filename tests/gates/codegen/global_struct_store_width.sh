@@ -18,7 +18,7 @@
 #      x86_64, aarch64 (qemu), cx (cxvm) and PE (wine)
 #   R0 6.7.9 — the ZERO-size filing's repro, verbatim (`struct E { }`; G owns no bytes, so N1 starts
 #      AT G): exits 77 on the same legs. EVSTORE_W's width 0 took the 8-byte fallback; the store
-#      helper `_asg_store_slot` (parse.cyr) now stores nothing at width 0. Filed:
+#      helper `_asg_store_slot` (parse/assign.cyr) now stores nothing at width 0. Filed:
 #      docs/development/issues/2026-10-09-zero-size-struct-global-store-overwrites-neighbour.md
 #   T  the values file on x86_64 (default, CYRIUS_IR=1, CYRIUS_IR=3, CYRIUS_DCE=1), aarch64 (qemu),
 #      cx (cxvm) and PE (wine): "N passed, 0 failed (N total)", N derived from the file (one row per

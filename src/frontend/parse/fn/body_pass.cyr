@@ -92,7 +92,7 @@ fn _nop_shift_at(S, nrn, p): i64 {
 #
 # Runs BEFORE stage 4 (the byte copy) and reads pre-compaction CPs, like every other
 # stage. Both ends move independently, so each entry is recomputed from scratch rather
-# than adjusted by a single delta. x86-family only — parse.cyr forces the chain path
+# than adjusted by a single delta. x86-family only — parse/switch.cyr forces the chain path
 # for aarch64/cx, so `swn` is 0 there and this is a no-op. CHANGELOG [6.5.20]
 # v6.5.20 — does the 4-byte window at code position `p` touch any switch jump TABLE?
 # The tables live in the code stream as DATA (`nent` × 4-byte displacements, jumped over

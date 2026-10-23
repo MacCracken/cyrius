@@ -102,7 +102,7 @@ fn _arr_desc(ew, sgn): i64 {
 }
 # ⛔ 6.7.6 (Break 1, lane D) — 0x80 in the descriptor: the array was declared with an element TYPE
 # (`var a: T[N]`, any T — f64, a struct and a vector included, which carry no integer width), so
-# `a OP= v` on its name is refused by name (_asg_wide_refused, parse.cyr) — it operated on element 0.
+# `a OP= v` on its name is refused by name (_asg_wide_refused, parse/assign.cyr) — it operated on element 0.
 # A bare `var a[N]` stays 0. The subscript reads only the width and the kind bits below, so the
 # mark changes no load; a global keeps it under 0x100 like any descriptor. CHANGELOG [6.7.6]
 fn _arr_desc_t(ew, sgn, typed): i64 {
@@ -115,9 +115,9 @@ fn _arr_desc_t(ew, sgn, typed): i64 {
 # (width 8; float + signed is otherwise impossible). Low five bits 0 = no element a subscript can
 # load (bare, struct, pointer, vector, enum, cstring). A typed array of f64 / f32 / bool records its
 # kind now (`_arr_desc_k`) and a `*T` its pointee's (`_ek_of_ptr_ann`: the slot mark, `_gv_ped`,
-# the field and return step words — see `_ps_word`, parse/types.cyr), so C2's `p[i]`, `a[i]` on a
+# the field and return step words — see `_ps_word`, parse/types/ptr.cyr), so C2's `p[i]`, `a[i]` on a
 # float array and `*p` at the element's width read one byte (C2-4a: `a[i]` / `p[i]` load and store
-# by it — `_esub_load` / `_esub_assign`, parse/expr.cyr). The descriptor is a byte everywhere it is
+# by it — `_esub_load` / `_esub_assign`, parse/expr/subscript.cyr). The descriptor is a byte everywhere it is
 # stored (SLAEW, GVSGN's low byte, the step word's bits 40-47). CHANGELOG [6.7.8]
 fn _ek_w(d): i64 { return d & 0x1F; }        # the element width (1/2/4/8, 16 u128), 0 = none
 fn _ek_lw(d): i64 {                          # the load width, negative when signed (sign-extends)
@@ -137,7 +137,7 @@ fn _ek_lt(d): i64 {                          # the value's type: F64_TYID / F32_
     if (k == 2) { return F32_TYID; }
     return 0;
 }
-# The kind of a type code (_tn_*, parse/types.cyr): iN / uN its width (| 0x40 for i8..i32), f64
+# The kind of a type code (_tn_*, parse/types/struct.cyr): iN / uN its width (| 0x40 for i8..i32), f64
 # 0x28, f32 0x24, bool 0x68, a type parameter no binding resolved 8 (its i64 base); else 0.
 fn _ek_of_code(c): i64 {
     var k = _tn_class(c);
@@ -237,7 +237,7 @@ fn _arr_named_marks(S, li, d, n): i64 {
     SSLICE_W(S, li, 0 - 0x1000000000000 - n);
     return 0;
 }
-# `stack var b[N]` (parse.cyr): the span, and the bare mark — it states no element type either.
+# `stack var b[N]` (parse/stmt.cyr): the span, and the bare mark — it states no element type either.
 fn _stk_named_marks(S, li, n): i64 {
     SLAGG(S, li, n);
     SSLICE_W(S, li, 0);
@@ -277,7 +277,7 @@ fn _arr_ebytes(S, ew, flt, tsc, ann_ti): i64 {
     return _arr_name_ebytes(S, ann_ti);
 }
 # The annotation at `ti` set no width, float, sid or vector: its size through the one type-name
-# resolver (6.6.16, parse/types.cyr _tn_resolve_at) — 8 for bool, cstring, an enum (declared on
+# resolver (6.6.16, parse/types/type.cyr _tn_resolve_at) — 8 for bool, cstring, an enum (declared on
 # either side — its values are i64) or a type parameter of the enclosing generic fn — else
 # refused by name, reported at the name and recovered (8), so each bad array is reported.
 # `--syntax-only` resolves nothing, so there it is 8 too (see `_syntax_only`, util.cyr).
@@ -310,7 +310,7 @@ fn _arr_name_ebytes(S, ti): i64 {
 # Is `noff` a type parameter of the generic fn whose body holds token `ti`? The default build binds
 # every T (to i64 in the base, to its argument in an instance) and PARSE_VAR's ladder resolves it,
 # so this is CYRIUS_MONOMORPH=0's case, where nothing is captured or bound: read from the tokens,
-# as _is_own_tparam (parse/types.cyr) does for a struct. The enclosing fn is the nearest `fn`
+# as _is_own_tparam (parse/types/struct_def.cyr) does for a struct. The enclosing fn is the nearest `fn`
 # before `ti` whose body spans it.
 fn _arr_fn_tparam(S, ti, noff): i64 {
     if (GINFN(S) != 1) { return 0; }
@@ -518,7 +518,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
-    # See `_fs_push` (parse.cyr) for the whole story.
+    # See `_fs_push` (parse/state.cyr) for the whole story.
     if (GINFN(S) == 1) { _fs_push(S, vcnt, noff); }
     else {
         # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after

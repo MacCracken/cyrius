@@ -161,7 +161,7 @@ fn EPOPR(S): i64 {
 
 # Expression spill: identical to push/pop. 6.6.20 — DELEGATES, as the aarch64 and cx backends
 # already did: x86 carried ESPILL / EUNSPILL as verbatim copies of EPUSHR / EPOPR, and 6.6.5 had to
-# add `_xdepth` to each copy by hand. Every frontend spill site (parse/expr.cyr) is unchanged.
+# add `_xdepth` to each copy by hand. Every frontend spill site (parse/expr/) is unchanged.
 # CHANGELOG [6.6.20]
 var _INLINE_OK = 0;
 fn ESPILL(S): i64 { EPUSHR(S); return 0; }
@@ -340,7 +340,7 @@ fn ECMPR(S): i64 { if (_IR_REC0(S, IR_CMP) == 1) { return 0; } E3(S, 0xC83948); 
 fn ETESTAZ(S): i64 { if (_IR_REC0(S, IR_TEST_AZ) == 1) { return 0; } E3(S, 0xC08548); _flags_set(S); return 0; }
 fn EMOVRDXRAX(S): i64 { if (_IR_REC0(S, IR_MOV_RDX_RAX) == 1) { return 0; } E3(S, 0xC28948); return 0; }
 fn EMOVRA_RDX(S): i64 { if (_IR_REC0(S, IR_MOV_RAX_RDX) == 1) { return 0; } E3(S, 0xD08948); _flags_reflect_rax = 0; return 0; }
-# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse/expr.cyr _w128_*): rcx = a 16-byte accumulator;
+# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse/expr/wide.cyr _w128_*): rcx = a 16-byte accumulator;
 # EW128_ACCM takes rax = the ADDRESS of a u128, EW128_ACCI rax = an integer, zero-extended. op 0 adds
 # (add / adc), 1 subtracts (sub / sbb), 2 copies / sets. rdx is scratch, and `mov` leaves CF alone
 # between the two halves. IR-opaque (IR_RAW_EMIT), as the f32 conversions are. CHANGELOG [6.7.6]
@@ -373,7 +373,7 @@ fn EW128_ACCI(S, op): i64 {
     EB(S, 0);                                # imm8 0
     return 0;
 }
-# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse/expr.cyr _w128_cmp*): rcx = the ADDRESS of the
+# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse/expr/wide.cyr _w128_cmp*): rcx = the ADDRESS of the
 # left u128, rax = the right's; rax = (left op right), 0 / 1, UNSIGNED across all 128 bits (op =
 # the comparison token, 17-22). Branchless: `==` / `!=` OR the two words' XORs; `<` / `>=` borrow
 # through the low and then the high word (cmp / sbb: CF = left < right), `>` / `<=` the same with
@@ -406,7 +406,7 @@ fn EW128_CMP(S, op): i64 {
     _flags_reflect_rax = 0;
     return 0;
 }
-# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse/expr.cyr _w128_truth): rax = the ADDRESS of a u128;
+# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse/expr/wide.cyr _w128_truth): rax = the ADDRESS of a u128;
 # rax = (value == 0) for op 17, (value != 0) for op 18, 0 / 1, across all 128 bits — `if (b)`, `!b`,
 # an `&&` / `||` operand. rdx is scratch. IR-opaque, as EW128_CMP is. CHANGELOG [6.7.6]
 fn EW128_TST(S, op): i64 {
@@ -559,7 +559,7 @@ fn EASHRCL(S): i64 { if (_IR_REC0(S, IR_ASHR) == 1) { return 0; } E3(S, 0xF8D348
 # accidental n==0 caller doesn't leave a stale 1.
 fn ESHLIMM(S, n): i64 { EB(S, 0x48); EB(S, 0xC1); EB(S, 0xE0); EB(S, n & 0x3F); if (n > 0) { _flags_set(S); } return 0; }
 # v5.8.56: ESHRIMM removed — sibling of ESHLIMM (heavily used at
-# parse/expr.cyr:1141) that never got a call site. Re-add when a
+# parse/expr/intrin.cyr) that never got a call site. Re-add when a
 # parser path actually needs `shr rax, imm`.
 # Syscall pop helpers (6.6.5: each consumes one pending push — see `_xdepth`)
 fn EPOPRDI(S): i64 { _xdepth = _xdepth - 1; EB(S, 0x5F); return 0; }
@@ -1611,7 +1611,7 @@ fn EMACHO_READ_ARM(S): i64 {
 }
 
 # v5.6.6 x86 stub for EMACHO_CLOCK_ARM. Statically dead on x86 (the
-# _TARGET_MACHO == 2 branch in parse/expr.cyr is arm64-only). Must
+# _TARGET_MACHO == 2 branch in parse/expr/factor.cyr is arm64-only). Must
 # link to keep shared parse.cyr arch-portable.
 fn EMACHO_CLOCK_ARM(S): i64 {
     return 0;
@@ -3290,13 +3290,13 @@ fn EGETMODFILENAME_PE(S): i64 {
 }
 
 # v6.0.65: stub for the macho-ARM syscall-routed query (real impl in
-# src/backend/aarch64/emit.cyr next to ESYSXLAT). parse/expr.cyr references it
+# src/backend/aarch64/emit.cyr next to ESYSXLAT). parse/expr/callee.cyr references it
 # for the _TARGET_MACHO==2 whitelist warning; that path is dead on x86, so this
 # never runs — it exists only for symbol resolution on the x86/PE/x86-macho closures.
 fn _macho_arm_routes(n): i64 { return 0; }
 
 # v6.5.51 — the ELF-aarch64 raw-syscall-number diagnostic is aarch64-only; these stubs
-# keep the shared parse/expr.cyr call site defined without pulling the generated table
+# keep the shared parse/expr/callee.cyr call site defined without pulling the generated table
 # (src/common/syscall_xlat.cyr) into this fork. Mirrors `_macho_arm_routes` above.
 fn _SYSX_MEANT(n): i64 { return 0; }
 fn _SYSX_USE(n): i64 { return 0; }
@@ -3538,7 +3538,7 @@ fn EMUNMAP_PE(S): i64 {
 # v6.1.16 — Runtime PE syscall dispatch for NON-LITERAL numbers.
 #
 # The literal-number reroute above (`sc_num == N` cases in
-# parse/expr.cyr) is a compile-time pattern match: it only fires when
+# parse/expr/factor.cyr) is a compile-time pattern match: it only fires when
 # the first arg constant-folds. A consumer that holds the syscall
 # number in a `var` (the portable arch-dispatch idiom — sakshi's
 # `var _SK_SYS_WRITE = 1;`) leaves `sc_num == -1`, no case matches, and
@@ -4542,7 +4542,7 @@ fn EDROPI64(S): i64 {
 # the placeholder when the target fn's address is known.
 
 # ELOAD_FN_ADDR — load fn-address into rax (x86) / x0 (aarch64).
-# Used by `&fn_name` and closure-fn literal sites in parse/expr.cyr.
+# Used by `&fn_name` and closure-fn literal sites in parse/expr/factor.cyr.
 # `fnaddr` = pre-allocated fixup-table slot at `S+0x107B000+fc*16`;
 # `fc` = current fixup-table index (named op bumps SFCNT internally);
 # `fni` = fn index recorded in the fixup metadata word.
@@ -5158,7 +5158,7 @@ fn ECALLIND(S, idx): i64 {
     return 0;
 }
 
-# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse/expr.cyr).
+# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse/expr/callee.cyr).
 # Top-level code has no frame, and the indirect-call lowering spills its callee to rbp-relative
 # slots, so the call site opens one: `push rbp; mov rbp, rsp; sub rsp, imm32`, the imm32 patched
 # at the close once the slot count is known. Serves every x86 image (ELF, PE, EFI, agnos, x86

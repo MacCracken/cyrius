@@ -5,7 +5,7 @@
 # and then a name, where `var p: **i64` / `*fn( .. )` are types elsewhere:
 #   P  (D93) a slice's pointer element — `var s: [**i64] = 0;` was "expected ']', got '*'", `[**fn(i64): i64]` added
 #      "undefined variable 'i64'", `slice<**i64>` was "expected '=', got '*'". `_tn_slice_ptr_el`
-#      (src/frontend/parse/types.cyr) now steps every `*` and reads the rest as `[*T]` reads T: the same 8-byte element,
+#      (src/frontend/parse/types/slice_type.cyr) now steps every `*` and reads the rest as `[*T]` reads T: the same 8-byte element,
 #      the same refusals by name.
 #   V  (D105) a slice element is any type valid elsewhere — `[*u128]` was "expected ']', got u128", `[Vec<i64>]` /
 #      `[*Vec<i64>]` "expected ']', got '<'" (`slice<..>`: "expected '=', got '<'" + "undefined variable 'i64'"), while
@@ -15,7 +15,7 @@
 #      (`_sl_el_over`).
 #   Z  (D94) a sizeof operand — `sizeof(*i64)` was "expected identifier, got '*'" (`sizeof(*fn(i64): i64)` a cascade),
 #      in an expression, a const context and `#assert` alike. `_sizeof_type` hands a `*` to `_sizeof_ptr`
-#      (src/frontend/parse/types.cyr), and the const evaluator's `_ce_sizeof` (src/frontend/parse/fn/const_eval.cyr) passes it on:
+#      (src/frontend/parse/types/slice_type.cyr), and the const evaluator's `_ce_sizeof` (src/frontend/parse/fn/const_eval.cyr) passes it on:
 #      the `*`s and T stepped, T read as its own position reads it, the value 8.
 # Measured on the 6.7.17 wave-1 integration (l6717-integ 45c7ff467), x86_64; the parse is every target's.
 #

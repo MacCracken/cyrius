@@ -1,7 +1,7 @@
 # v6.6.3: a user-written `#inline` must not disarm every `#derive` after it.
 #
 # THE DEFECT. `#inline` became a real directive at v6.5.63, which taught PASS 2
-# (parse.cyr's directive dispatcher) to arm `_inline_pending` on token 163. Pass 1 —
+# (parse/fn/def.cyr's directive dispatcher) to arm `_inline_pending` on token 163. Pass 1 —
 # the declaration-collection scan in main.cyr and its six per-target forks — was never
 # taught to CONSUME it. An unconsumed directive there falls through to the catchall
 # `else` and TERMINATES the pass-1 scan, so every declaration after the first `#inline`

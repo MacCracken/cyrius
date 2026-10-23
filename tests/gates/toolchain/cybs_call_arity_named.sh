@@ -53,8 +53,9 @@
 #   cybs.cyr padded with comments past 131072 B / given 20 more labels    -> S RED
 # 6.7.14 (S2, a scratch copy of the gate each):
 #   the file ceiling lowered to 900000 (parse/fn.cyr is ~949 KB)          -> S2 RED (names the file)
-#   6.7.18, re-measured once parse/fn.cyr and parse/decl.cyr were split into parse/fn/ and parse/decl/: lowered
-#   to 500000 -> S2 RED naming src/frontend/parse/expr.cyr (522,971 B)
+#   6.7.18, re-measured once the frontend's largest files were split by seam (parse/fn.cyr, decl.cyr, expr.cyr and
+#   types.cyr into folders, parse.cyr's own body into the pieces beside it, lex/pp.cyr into lex/pp/): 390000 is
+#   green; lowered to 380000 -> S2 RED naming src/frontend/parse/fn/def.cyr (389,113 B)
 #   the walker's `#else` arm dropped (both branches emitted)              -> S2 RED (walker != cybs)
 #   (6.7.11: emit_sp_done is a comment in cybs.cyr now, sparing a seed label; restore the label
 #   to re-run the first mutation.)

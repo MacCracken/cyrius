@@ -697,7 +697,7 @@ fn main(): i64 {
     # and never once run). The repaired check compiles the bundle through a
     # generated entry and downgrades undefined FNS with --allow-undef. But a
     # bundle ships no stdlib GLOBALS either, and an undefined variable is a
-    # PARSE-TIME abort (src/frontend/parse/expr.cyr:589) that --allow-undef
+    # PARSE-TIME abort (src/frontend/parse/expr/undef.cyr) that --allow-undef
     # cannot reach — it only gates the fixup stage. So the check needed the
     # manifest auto-prepend, and distlib was never in this list, so
     # _dep_includes was empty and no prepend was possible. Any bundle reading a

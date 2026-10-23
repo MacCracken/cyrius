@@ -6,7 +6,7 @@
 # init or step and `a, x = f()` are refused. The refusal said `undefined variable 'x'` — though `x` is
 # defined, captured and readable in the same body (`|d| { return x + d; }` builds). It now says what is
 # refused: 'x' is captured by value; a captured name is not assignable in a closure — copy it into a local.
-# One reporter (`_asg_cap_name`, parse.cyr) for the statement arm, the for step (both through
+# One reporter (`_asg_cap_name`, parse/assign.cyr) for the statement arm, the for step (both through
 # `_asg_undef_report`) and the multi-value assignment (`_masg_resolve`). Diagnostics only.
 #
 #   W  a write to a captured name: the filed repro verbatim (`x += d`), `x = x + d`, a for init, a for
@@ -20,7 +20,7 @@
 #   G  6.7.14 (issues/archived/2026-10-16-closure-write-to-captured-name-lands-in-same-named-global.md) — the W shapes
 #      with a GLOBAL of the captured name: each write arm looked the global up before asking for a capture,
 #      so the write compiled and stored into the GLOBAL while the read beside it saw the capture (the
-#      filed repro exited 52). Each is refused once, as without the global (`_asg_cap_first`, parse.cyr,
+#      filed repro exited 52). Each is refused once, as without the global (`_asg_cap_first`, parse/assign.cyr,
 #      asked from `_asg_lvalue_at` and `_masg_resolve` before any global lookup). GC: a closure that sees
 #      no enclosing `x` writes the global (legal), and a closure-local `var x` shadowing both writes its own.
 #

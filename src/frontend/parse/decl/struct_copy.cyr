@@ -239,7 +239,7 @@ fn _gci_inline(S, sid, ann): i64 {
 }
 # Pass 1's half of a declaration-zone tuple literal, cursor on the RHS: -1 when it is no whole
 # literal up to the `;`; else the tuple to register inline, or 0. Quiet: the replay reports. The
-# tokens are read as the replay will read them with every fn declared (`_tup_p1`, parse/expr.cyr): a
+# tokens are read as the replay will read them with every fn declared (`_tup_p1`, parse/expr/wide.cyr): a
 # generic call's `<A, B>` holds no tuple comma, whether the generic is declared above or below.
 fn _tup_gci(S, sid, ann): i64 {
     _tup_p1 = 1;
@@ -450,7 +450,7 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # ⛔ 6.6.5 — A GLOBAL SOURCE WAS NOT A COPY, IT WAS A CRASH. `var b: P = A;` for a
     # top-level `var A = P { 1, 2 };` fell out of this path (FINDLOCAL fails) into the scalar
     # init, which stored A's ADDRESS into a slot marked struct-typed — so `b.x` dereferenced
-    # a value, not an address: SIGSEGV. The sibling `_agc_operand` (parse.cyr) fixed the
+    # a value, not an address: SIGSEGV. The sibling `_agc_operand` (parse/assign.cyr) fixed the
     # assignment form of the same hole; this is the declaration form. `_sci_gsrc` is the
     # global's slot, or -1 for the local source. CHANGELOG [6.6.5]
     _sci_gsrc = 0 - 1;

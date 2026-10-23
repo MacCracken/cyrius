@@ -238,7 +238,7 @@
 #   drop `_tc_generic_divert` from _tc_must_divert     -> H's `return g(5)` RED (rc 0)
 #   _tc_generic_divert returns 1 for EVERY generic      -> M's tail recursion RED (rc 139)
 #   `_gen_close` returns at once (no transitive half)   -> I RED (rc 0)
-#   drop the `_gen_addr_check` call (parse/expr.cyr)    -> J RED (rc 0)
+#   drop the `_gen_addr_check` call (parse/expr/factor.cyr)    -> J RED (rc 0)
 #   6.7.1: `_instantiate_generic_fn` refusing a struct beside a second type argument again (the
 #   pre-6.7.1 `-3`) -> K RED (refused, rc 1)
 #   drop the `_gen_own_call_check` in the asv_pair receive (parse/decl/var.cyr) -> L RED (rc 0)

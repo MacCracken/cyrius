@@ -3,7 +3,7 @@
 #
 # 6.6.12 made `f(mk(p).n)`, `var r = mkp(3).y;` and `mk(p).v.x + 1` compile inside a fn: the
 # result lands in a frame temp and the field is loaded from it (`_call_field`,
-# src/frontend/parse/expr.cyr). The acceptance rows live in
+# src/frontend/parse/expr/postfix.cyr). The acceptance rows live in
 # tests/tcyr/crossos/generic_struct_inference.tcyr (CF). This gate pins the other half, the
 # shapes that must NOT compile, each on its MESSAGE and on no binary being written, so a row
 # cannot pass on an unrelated syntax error (every one of these was "expected ';', got '.'" or
@@ -84,7 +84,7 @@
 #     return took `mkpt(1)` whole and a binary was emitted
 #   `_refuse_toplevel_pair_init` without it                 -> RED T5 (two errors)
 #   no `_stmt_call_field` call in PARSE_STMT (src/frontend/ -> RED T6, A1 ("expected ';', got '.'")
-#     parse.cyr)
+#     parse/stmt.cyr)
 #   `_call_field`'s refusal not skipping a method's `(..)`   -> RED T6, T7 (two errors)
 #   no `_stmt_explicit_generic` call in PARSE_STMT          -> RED G1, G2, G3
 #   `_stmt_explicit_generic` without `_must_use_warn`       -> RED G3

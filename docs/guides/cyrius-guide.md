@@ -726,7 +726,7 @@ as a NAME. ⚠ It was an ordinary identifier before 6.7.8: rename one.
 Eleven more names are reserved although that table does not hold them: the
 **identifier-spelled intrinsics** `sizeof`, `mulh64` and `fncall0` … `fncall8`. They lex as
 ordinary identifiers and the compiler lowers every call to them BY NAME (`_is_ident_intrinsic`
-in `src/frontend/parse/parse.cyr`, `_IS_FNCALL_NAME` in `src/frontend/parse/expr.cyr`), so since
+in `src/frontend/parse/builtin.cyr`, `_IS_FNCALL_NAME` in `src/frontend/parse/expr/callee.cyr`), so since
 6.6.20 declaring one — a fn, a parameter, a closure parameter, a `var` of any kind (local,
 global, destructured, `stack`, `secret`), a `for` binding, a `use mod.NAME;` alias (which binds
 the bare name), or a payload enum variant (whose constructor is a bare fn) — is refused at the

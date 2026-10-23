@@ -1,0 +1,434 @@
+# PARSER — types: name lookup — STREQ, the block-scoped and loop-variable notes, the name map (`_nm_*`, `_fvh_*`),
+# FINDVAR, visibility, and the enum / duplicate-value checks (CHK_ENUM_OVER_VAR, CHKDUPVAL, CHK_ENUM_SHADOW).
+# ================================================================
+# Split from parse/types.cyr at 6.7.18, unchanged; parse.cyr includes parse/types/ in source order. CHANGELOG [6.7.18]
+
+fn STREQ(S, a, b): i64 {
+    var i = 0;
+    var go = 1;
+    while (go == 1) {
+        var ca = load8(S + 0xEC00000 + a + i);
+        var cb = load8(S + 0xEC00000 + b + i);
+        if (ca != cb) { return 0; }
+        if (ca == 0) { return 1; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 6.6.6: a KERNEL build replays the declaration-zone initializers AFTER the top-level program
+# has registered its own globals, so a name read inside one (`var b = id(a);`) resolved to a
+# later `var a` of the program instead of the declaration-zone global every other build reads.
+# While that replay runs, globals in [_fv_hide_lo, _fv_hide_hi) — the program's — lose to any
+# declaration-zone match of the name (EMIT_GVAR_INITS sets the range from _gv_zone_top, which
+# main.cyr records before the kernel's PARSE_PROG). With no such match the program's global is
+# still returned, as before. CHANGELOG [6.6.6]
+var _gv_zone_top = 0;
+var _fv_hide_lo = 0;
+var _fv_hide_hi = 0;
+fn _fv_hidden(vi): i64 {
+    if (vi >= _fv_hide_hi) { return 0; }
+    if (vi < _fv_hide_lo) { return 0; }
+    return 1;
+}
+
+# 6.6.6 bite 19a — the follow-up to a FINDVAR miss: was this name a `var` declared inside a
+# TOP-LEVEL BLOCK, which now leaves scope with its block (see _gvs_push, util.cyr)? Such a
+# slot is marked dead with 2 (1 is a compiler temporary / a fn-local static), so a miss can
+# say WHICH variable and WHERE to put it instead of the bare "missing include or enum?".
+# Printed as a `note:` after the error so the error text every gate greps stays unchanged.
+# CHANGELOG [6.6.6]
+#
+# 6.6.8: a top-level `for x in ...` variable is marked 3 (_HTLOOPEND, parse/switch.cyr) — the block
+# note's advice ("declare it before the block") does not apply to a loop variable, so the
+# most recent out-of-scope match picks which note is printed. CHANGELOG [6.6.8]
+fn _gv_blockscoped(S, noff): i64 {
+    var vi = GVCNT(S) - 1;
+    while (vi >= 0) {
+        var d = GVDEAD(S, vi);
+        if (d >= 2) {
+            if (STREQ(S, L64(_varn_base + vi * 8), noff) == 1) { return d; }
+        }
+        vi = vi - 1;
+    }
+    return 0;
+}
+fn _gv_note_blockscoped(S, noff): i64 {
+    _bx_undef_ti = GTI(S);   # 6.7.3: every undefined-name report passes here; a bool check skips a value holding it
+    if (_err_quiet == 1) { return 0; }   # 6.7.14: its error printed nothing (a repeat, or the panic latch)
+    _pd_c14_note(S);         # 6.7.7 (B6): `syscall(n: 60, ..)` — a named argument to a builtin
+    var k = _gv_blockscoped(S, noff);
+    if (k == 0) { return 0; }
+    _ew("note: '", 7);
+    PRSTR(S + 0xEC00000 + noff);
+    if (k == 3) { return _gv_note_loopvar(S); }
+    _ew("' was declared inside a top-level block and goes out of scope at its '}'\n", 73);
+    _ew("      (since 6.6.6 a top-level block scopes its `var`s like a fn body does)\n", 76);
+    _ew("      declare it at top level, before the block, to use it after the block\n", 75);
+    return 0;
+}
+
+fn _gv_note_loopvar(S): i64 {
+    _ew("' is a `for ... in` loop variable and goes out of scope at the end of its loop\n", 79);
+    _ew("      to use a value after the loop, assign it to a variable declared before the loop\n", 86);
+    return 0;
+}
+
+# 6.6.6 bite 19b — RESOLUTION vs. a DECLARATION-TIME PROBE.
+#
+# FINDVAR is the one resolver, and v6.5.0 put the cross-file `private` check inside it on
+# purpose: every REFERENCE goes through it, so one check covers them all. But FOUR callers are
+# not references at all — PARSE_GVAR_REG's `sit_shadow` probe, CHKDUPVAL, CHK_ENUM_SHADOW and
+# PARSE_ENUM_DEF's pass-2 value store all look a name up while REGISTERING it, and none is
+# reading a prior definition. Running the visibility check for them made a legal program fail:
+#
+#     lib/a.cyr:  private            lib/b.cyr:  private
+#                 var LIMIT = 5;                 var B_CAP = LIMIT * 2;
+#                                                var LIMIT = 5;
+#
+#     error: lib/b.cyr:3:11: 'LIMIT' is private to its file          (rc 1)
+#
+# b.cyr's own `var LIMIT = 5;` — the declaration, on its own line — was reported as an illegal
+# ACCESS to a.cyr's private `LIMIT`, which b.cyr never mentions. The probe found a's slot,
+# FINDVAR reported it, and the file that is allowed its own `LIMIT` could not declare one.
+#
+# So the lookup is split: `_findvar_core` is pure resolution and `FINDVAR` is that plus the
+# visibility check, exactly as before for every reference. Declaration-time probes call the
+# core.
+#
+# ⚠ THE FIRST CUT OF THIS FIX MOVED TWO OF FOUR, and said in this comment and in the CHANGELOG
+# that there were two. CHK_ENUM_SHADOW is the arm that runs for every NON-int-literal
+# initializer — so `var X = 2 + 3;` beside another file's `private var X` stayed refused while
+# `var X = 5;` was fixed — and PARSE_ENUM_DEF's pass-2 value store is the fourth: it resolves
+# the slot the enum member itself registered in pass 1, and refused a `private` file at its own
+# `enum E { X = 2; }` line when another `private` file declared a `var X`. When you find a
+# probe, grep for the SHAPE (a FINDVAR call reached from a registration path) rather than
+# counting the ones already named — twice now the count in this comment has been the bug.
+# CHANGELOG [6.6.6]
+#
+# 6.6.9 — THE GLOBAL VAR TABLE HAS A NAME INDEX. `_findvar_core` and `_gv_prior`
+# (parse/decl/gvar.cyr) used to walk EVERY registered global with STREQ, and every new top-level
+# global or enum member triggers two of those walks (the sit_shadow probe + `_gv_fold`, or
+# CHKDUPVAL + the enum pass-2 lookup), so N registrations cost O(N²): 20,000 constant
+# globals took ~4.9 s, 99 % of it in this phase. Now a name maps to the HIGHEST slot of that
+# name and `_fvh_prev[vi]` links each slot to the next lower slot of the same name, so a
+# lookup visits only the slots that share the name, highest first — the order the old
+# reverse walk tested them in, so every result is the one it returned.
+#
+# The index syncs LAZILY for [_fvh_upto, GVCNT). That is sound because every writer of
+# `_varn_base` writes the name at an index >= GVCNT BEFORE bumping the count, and nothing
+# renames a slot below the count (a registration folded away by `_gv_fold` is never counted,
+# and the next one at that index overwrites its name first). A slot not yet counted is not
+# visible to either walk, which is also what the old loops did. `_HTEMP` slots carry name
+# offset 0 and all chain under the first lexed word, dead — the same cost as before for
+# that one name, and skipped exactly as before. No heap/brk layout change: both tables are
+# alloc'd. CHANGELOG [6.6.9]
+#
+# A name map: open addressing, 16-byte entries (name offset, value), value 0 = empty. The
+# handle is a 3-word block: table, mask (slots - 1), slots in use. Doubles at half full.
+fn _nm_alloc(m, slots): i64 {
+    store64(m, alloc(slots * 16));
+    store64(m + 8, slots - 1);
+    store64(m + 16, 0);
+    return 0;
+}
+fn _nm_new(slots): i64 {
+    var m = alloc(24);
+    _nm_alloc(m, slots);
+    return m;
+}
+# The entry for `noff`: the matching one, or the empty slot it would go in.
+fn _nm_probe(S, m, noff): i64 {
+    var tab = load64(m);
+    var mask = load64(m + 8);
+    var s = FNV1A_NOFF(S, noff) & mask;
+    while (load64(tab + s * 16 + 8) != 0) {
+        if (STREQ(S, load64(tab + s * 16), noff) == 1) { return tab + s * 16; }
+        s = (s + 1) & mask;
+    }
+    return tab + s * 16;
+}
+fn _nm_get(S, m, noff): i64 { return load64(_nm_probe(S, m, noff) + 8); }
+fn _nm_put(S, m, noff, val): i64 {
+    var a = _nm_probe(S, m, noff);
+    if (load64(a + 8) == 0) {
+        store64(a, noff);
+        store64(m + 16, load64(m + 16) + 1);
+    }
+    store64(a + 8, val);
+    if (load64(m + 16) * 2 > load64(m + 8)) { _nm_grow(S, m); }
+    return 0;
+}
+fn _nm_grow(S, m): i64 {
+    var old = load64(m);
+    var n = load64(m + 8) + 1;
+    _nm_alloc(m, n * 2);
+    var i = 0;
+    while (i < n) {
+        if (load64(old + i * 16 + 8) != 0) { _nm_put(S, m, load64(old + i * 16), load64(old + i * 16 + 8)); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+var _fvh_m = 0;      # name -> highest slot of that name + 1
+var _fvh_prev = 0;   # per slot: the next lower slot of the same name + 1 (0 = none)
+var _fvh_pcap = 0;
+var _fvh_upto = 0;   # slots [0, _fvh_upto) are indexed
+fn _fvh_prev_grow(n): i64 {
+    var nc = 4096;
+    while (nc < n) { nc = nc * 2; }
+    var np = alloc(nc * 8);
+    var i = 0;
+    while (i < _fvh_pcap) { store64(np + i * 8, load64(_fvh_prev + i * 8)); i = i + 1; }
+    _fvh_prev = np;
+    _fvh_pcap = nc;
+    return 0;
+}
+fn _fvh_add(S, vi): i64 {
+    var noff = L64(_varn_base + vi * 8);
+    store64(_fvh_prev + vi * 8, _nm_get(S, _fvh_m, noff));
+    _nm_put(S, _fvh_m, noff, vi + 1);
+    return 0;
+}
+fn _fvh_sync(S): i64 {
+    var n = GVCNT(S);
+    if (_fvh_upto >= n) { return 0; }
+    if (_fvh_m == 0) { _fvh_m = _nm_new(4096); }
+    if (n > _fvh_pcap) { _fvh_prev_grow(n * 2); }
+    while (_fvh_upto < n) {
+        _fvh_add(S, _fvh_upto);
+        _fvh_upto = _fvh_upto + 1;
+    }
+    return 0;
+}
+# The highest counted slot named `noff`, + 1 (0 = none). Walk down with _fvh_next.
+fn _fvh_head(S, noff): i64 {
+    _fvh_sync(S);
+    if (_fvh_m == 0) { return 0; }
+    return _nm_get(S, _fvh_m, noff);
+}
+fn _fvh_next(vi): i64 { return load64(_fvh_prev + vi * 8); }
+
+fn _findvar_core(S, noff): i64 {
+    var e = _fvh_head(S, noff);
+    var hid = 0 - 1;   # 6.6.6: the last match inside the hidden range (see _fv_hidden)
+    while (e != 0) {
+        var vi = e - 1;
+        # 6.6.5: a compiler-generated global temporary (top-level `switch` / `match` / `?` /
+        # `for ... in`) is registered with NAME OFFSET 0, which is the FIRST LEXED WORD of the
+        # program — so this lookup RETURNED those slots for that identifier and `&setup` changed
+        # meaning after an intervening `switch`. They are marked dead at registration and
+        # skipped here; inside a fn they are anonymous frame slots and never reach this table.
+        if (GVDEAD(S, vi) == 0) { if (_fv_hidden(vi) == 1) {
+                if (hid < 0) { hid = vi; }
+            } else {
+                return vi;
+            } }
+        e = _fvh_next(vi);
+    }
+    return hid;
+}
+
+# The resolver every REFERENCE goes through.
+#
+# v6.5.0 Phase 2b — the cross-file `private` check for GLOBAL vars lives HERE, inside the
+# single resolver, rather than being wired at each call site. Every global reference goes
+# through it, so one check covers them all — which is the lesson from the fn side, where the
+# plan named 2 of at least 13 resolution paths and the tail-call path was silently unenforced
+# until a gate caught it.
+#
+# Locals need no special case: frame locals are never stamped, so GVFI reads 0 and the check
+# falls straight through. 6.6.5: a fn-local STRUCT LITERAL is now a frame object and never
+# reaches this table at all, and a fn-local STATIC array (over the frame budget, or under
+# CYRIUS_STACK_ARRAYS=0) is scoped like a local and marked dead when its block closes, so it is
+# skipped rather than stamped. Neither can shadow another file's global any more.
+fn FINDVAR(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi >= 0) { _vis_check_var(S, vi, noff); }
+    return vi;
+}
+
+# Cross-file access to a file-private global. Same hard-error contract as the fn side
+# (v6.5.0 Phase 3): reported via `_had_error` so every violation surfaces in one run
+# and no binary is emitted.
+var _vcv_last_vi = 0 - 1;   # v6.6.4: dedup key — (var, source line) of the last report
+var _vcv_last_line = 0 - 1;
+fn _vis_check_var(S, vi, noff): i64 {
+    var owner = GVFI(S, vi);
+    if (owner == 0) { return 0; }          # public, a local, or unrecorded
+    var here = FM_FILEID(S, GTLINE(S, GTI(S))) + 1;
+    if (here == 0) { return 0; }
+    if (here == owner) { return 0; }       # same file — allowed
+    # v6.6.4: a struct-field access (`_gs.a`) resolves its base TWICE — once on the
+    # lookahead, once on the resolve — and reported the same violation at two columns.
+    # One report per (var, line): the gate's "exactly once" contract, and a reader
+    # gets one line per offending line of code.
+    var _vcv_line = GTLINE(S, GTI(S));
+    if (vi == _vcv_last_vi) { if (_vcv_line == _vcv_last_line) { return 1; } }
+    _vcv_last_vi = vi;
+    _vcv_last_line = _vcv_line;
+    if (_derr_seen(GTI(S), "_vis_check_var", vi, 0) == 1) { return 1; }   # 6.7.15: once per site (an instance)
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": '", 3);
+    PRSTR(S + 0xEC00000 + noff);
+    _ew("' is private to its file\n", 25);
+    _had_error = 1;
+    return 1;
+}
+
+# v6.2.11: constant-collision guardrail (issue 2026-06-14). cyrius has a FLAT
+# data-symbol namespace and silently lets the LAST definition of a name win.
+# When two co-linked modules define the same name with DIFFERENT compile-time
+# values (e.g. patra `enum TokType { TK_IDENT = 2 }` vs vyakarana `var TK_IDENT
+# = 0`, or net `var SYS_SOCKET = 41` vs syscalls `enum { SYS_SOCKET = 198 }`),
+# whichever loses gets the other's value substituted into its code with no
+# warning — the owl/patra `TK_IDENT`-aliases-`TK_EOF` corruption. This mirrors
+# the duplicate-`fn` warning (parse/fn/def.cyr) for data symbols: called at the
+# enum-member + literal-`var` registration sites with the NEW name+value BEFORE
+# the new entry is written, so the lookup sees only PRIOR definitions. (6.6.6: the
+# lookup is `_findvar_core`, not FINDVAR — see the note on the call below.) The prior's
+# compile-time value comes from the enum-const-fold table (_vecv_base raw value,
+# "is enum const" = the GVECP presence byte map) or, for a literal-init global, the static-init table
+# (0x1EC000). #ifdef platform variants never collide here — PREPROCESS strips
+# the inactive branch before registration, so only the active value is seen.
+# WARN only — never blocks the build. This is a best-effort lint that catches
+# the dangerous two-module collisions (one def per module); it deliberately
+# under-fires (false-negatives only, never false-positives) in these cases:
+#   - a prior with a COMPUTED initializer (`var X = f();`) has no value to compare.
+#     6.6.9: when the NEW definition is a nonzero enum constant, CHK_ENUM_OVER_VAR
+#     (above) reports it. (A prior constant ZERO is compared since 6.7.12 —
+#     `_gv_has_lit`, the user's decision D30: it read as "no literal".)
+#   - value-identical redefinitions are silent (intended);
+#   - (no index cap on either half any more.) 6.6.6 bite 19c removed a blanket
+#     `if (pi >= 1024) { return 0; }` over the WHOLE function, which made a LITERAL-init
+#     prior invisible past 1024 and silenced the warning in exactly the large programs
+#     that collide (measured: 1100 globals, then `var a = 5; var a = 7;`, no warning).
+#     The ENUM half stayed capped at 1024 by the fold table's presence map until 6.6.8,
+#     which sized that map to the var table — an enum prior past 1024 now warns too;
+#   - cx used to record only a REDECLARED constant in 0x1EC000 (its first literal
+#     took the runtime-store path), so a two-link collision was not seen there.
+#     ⚠ 6.6.6 bite 19d changed that: cx now records EVERY folded constant global,
+#     so a two-link collision IS reported on cx and its warnings agree with the
+#     host's. MEASURED with cx compilers built from the pre-19d tree and from this
+#     one: `var dupa = 5; var dupa = 7;` -> old cx silent, new cx and host both
+#     warn; a three-link chain -> old cx 1 warning, new cx and host 2.
+# 6.6.6: "last definition wins" is now what the compiler DOES, for every read —
+# a redeclaration shares the global's slot and a constant one is its value from
+# program start (see _gv_supersede, parse/decl/gvar.cyr). It used to be a second
+# slot, so this warning described a semantics nobody implemented (the earlier
+# read got 0). A constant redeclaration now records its value, so a 3rd+ link
+# of a chain is compared against the 2nd (it used to compare against 0 and stay
+# silent). CHANGELOG [6.6.6]
+# 6.6.9 — THE ENUM-AFTER-VAR HALF OF THE PAIRING. CHK_ENUM_SHADOW refuses a var declared
+# after an enum constant of the same name, and CHKDUPVAL compares values when both sides are
+# compile-time literals. The case neither saw: a global whose value is ZERO or COMPUTED
+# (`var A = 0;`, `var A = f();`, `var A = "s";` — nothing recorded in the static-init table),
+# then an enum member `A`. Every later use folds to the constant — the variable's own module
+# included — with no diagnostic. Measured: `var A = f();` then `enum { A = 4130 }` built rc 0
+# and read 4130 everywhere. A WARNING (as CHKDUPVAL is) so existing builds keep compiling; a
+# zero constant over such a var is not compared (a zero var and a zero constant agree).
+# CHANGELOG [6.6.9] — 6.7.12 (D30): a CONSTANT zero prior (`var A = 0;`) is CHKDUPVAL's now
+# (`_gv_has_lit`), the conflicting-value warning as for a non-zero one; this keeps the computed.
+fn CHK_ENUM_OVER_VAR(S, noff, newval): i64 {
+    if (newval == 0) { return 0; }
+    var pi = _findvar_core(S, noff);
+    if (pi < 0) { return 0; }
+    if (GVECP(S, pi) == 1) { return 0; }                 # prior is an enum const: CHKDUPVAL
+    if (_gv_has_lit(pi) == 1) { return 0; }              # prior constant recorded, zero too (6.7.12): CHKDUPVAL
+    _ew("warning:", 8);
+    _err_head(S);
+    _ew(": duplicate symbol '", 20);
+    PRSTR(S + 0xEC00000 + noff);
+    _ew("' is an enum constant here and a global variable before it (computed) — every use now reads the constant, including the variable's own module\n", 144);
+    return 0;
+}
+
+fn CHKDUPVAL(S, noff, newval): i64 {
+    # 6.6.6: _findvar_core, not FINDVAR — this is a DECLARATION-time probe of a name being
+    # registered, not a reference to the prior global, so it must not run the cross-file
+    # `private` check. See _findvar_core.
+    var pi = _findvar_core(S, noff);
+    if (pi < 0) { return 0; }
+    var pval = 0;
+    var phas = 0;
+    if (GVECP(S, pi) == 1) {          # out-of-band flag → prior is an enum const
+        pval = L64(_vecv_base + pi * 8);
+        phas = 1;
+    } else {
+        if (_gv_has_lit(pi) == 1) { pval = L64(_vgsi_base + pi * 8); phas = 1; }   # 6.7.12 (D30): a zero too
+    }
+    if (phas == 1) { if (pval != newval) { _dupval_warn(S, noff); } }
+    return 0;
+}
+# CHKDUPVAL's warning at the cursor, shared by the declaration zone's replay compare (_gvk_link,
+# parse/decl/gvar_init.cyr), which reports a pair whose earlier or later constant only the replay folds. CHANGELOG
+# [6.7.15]
+fn _dupval_warn(S, noff): i64 {
+    _ew("warning:", 8);
+    _err_head(S);
+    _ew(": duplicate symbol '", 20);
+    PRSTR(S + 0xEC00000 + noff);
+    _ew("' redefined with conflicting value (last definition wins)\n", 58);
+    # v6.5.50 — a `SYS_*` redefinition is not a cosmetic name collision, and the
+    # generic wording above hides that. The stdlib's syscall numbers are ARCH-AWARE
+    # (lib/syscalls.cyr -> syscalls_x86_64_linux.cyr / syscalls_aarch64_linux.cyr);
+    # a consumer's own `var SYS_FOO = <x86_64 number>` agrees on x86 and WINS
+    # everywhere else, so the emitted svc issues a different, valid syscall and the
+    # build succeeds. MEASURED under qemu on the two live instances found at v6.5.37:
+    # `sys_umount2` was issuing getpid(2) on every ELF-aarch64 build. Filed from
+    # darshana, where the only diagnostic read as lint.
+    # ⚠ Deliberately NOT gated on the target. The general "is this number right for
+    # this arch" question needs an x86_64->aarch64 CORRESPONDENCE TABLE the compiler
+    # does not have, but THIS case needs no table: a conflicting SYS_* redefinition is
+    # wrong on every target whose numbers differ, and the author of a cross-compiled
+    # source cannot know which targets that will be.
+    if (load8(S + 0xEC00000 + noff) == 83) {
+        if (load8(S + 0xEC00000 + noff + 1) == 89) {
+            if (load8(S + 0xEC00000 + noff + 2) == 83) {
+                if (load8(S + 0xEC00000 + noff + 3) == 95) {
+                    _ew("note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
+                    _ew("      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
+                    _ew("      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
+                    _ew("      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
+                } } } }
+    return 0;
+}
+
+# v6.3.24: HARD-ERROR when a `var` is declared with the same name as an existing
+# ENUM CONSTANT. Distinct from CHKDUPVAL (var-vs-var literal conflict → a warning,
+# to preserve the intentional-override pattern): a var shadowing an enum constant
+# is almost always a bug and SILENTLY miscompiles. FINDVAR returns last-match, so
+# once the var is registered EVERY later `NAME` reference — including inside
+# already-parsed library code that uses the constant as an ABI offset — binds to
+# the var's slot instead of the folded constant. A consumer `var DB_PATH = "…"`
+# shadowing patra's `enum DbOff { DB_PATH = 16 }` made `patra_open`'s
+# `store64(db + DB_PATH, …)` add a string POINTER as an offset → out-of-bounds
+# store → runtime SIGSEGV (the yeo-cy-test / SecureYeoman probe crash, misfiled as
+# a "string-literal global holds garbage at scale" codegen bug — the string value
+# is fine; the NAME collides). CHKDUPVAL missed it twice: it only ran for `= NUM ;`
+# inits (a string/expr init never reached it) and its fold-table probe capped at
+# index 1024 until 6.6.8 (large consumer stacks exceed it). var_enum_id (GVENUMID) is the
+# reliable, uncapped, growable per-symbol marker (1-based enum-id; 0 = plain var).
+# Fail loud so the collision surfaces at compile time — the fix is to rename the
+# variable. See issues/archived/2026-07-01-string-literal-global-garbage-in-large-programs.md.
+#
+# 6.6.6: `_findvar_core`, not `FINDVAR` — this is the THIRD declaration-time probe, and it was
+# missed when the other two moved. It runs for every global whose initializer is NOT an int
+# literal (`chk_has == 0`), so with a `private` file already owning the name, `var X = 2 + 3;`
+# / `= "abcd"` / `= f();` in another `private` file was reported as an illegal ACCESS to the
+# first file's X rather than compiled. The 19b gate could not see it: every accepting row it
+# had used `= NUM ;`, which takes the CHKDUPVAL path instead. CHANGELOG [6.6.6]
+fn CHK_ENUM_SHADOW(S, noff): i64 {
+    var pi = _findvar_core(S, noff);
+    if (pi < 0) { return 0; }
+    if (GVENUMID(S, pi) == 0) { return 0; }   # prior symbol is a plain var, not an enum const
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": variable '", 12);
+    PRSTR(S + 0xEC00000 + noff);
+    _ew("' shadows an enum constant (rename the variable)\n", 49);
+    _die(1);
+    return 0;
+}

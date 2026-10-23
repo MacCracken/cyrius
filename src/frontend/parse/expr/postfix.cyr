@@ -1,0 +1,973 @@
+# PARSER — expr: unary minus on an untyped float (`_UFV_*`), a `.field` after parentheses (`_pf_*`, `_pd_*`) and after a
+# call (`_call_field`), undefined callees, explicit generic calls, a call's result marks and the syscall arity skip.
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# ⛔ 6.6.10 — UNARY MINUS ON AN UNTYPED FLOAT VARIABLE. `var c = 1.5; -c` is an INTEGER
+# negation of 1.5's bits (-3.0; `-z` of 0.0 is +0, `-n` of -2.5 is 1.75), silent, because an
+# untyped var is i64-boxed (ADR-002) and nothing recorded what initialised it. WARN, the
+# roadmap's agreed posture: inferring f64 would change what existing code computes.
+# One byte per slot: `_lfi_base` for locals (cleared as SFLC hands a slot out, so a param or a
+# later fn never inherits a stale flag; saved/restored with the closure local snapshot) and
+# `_gfi_base` for globals (lazily alloc'd at the var table's hard cap — the `_var_dead`
+# precedent; never on the cybs-fragile `_grow_g*` chain). Set on EVERY declaration: 1 when
+# the initialiser was a float (a float literal, an f64/f32 value, a float builtin, or another
+# such variable), else 0. A load of a flagged variable marks kind 3. CHANGELOG [6.6.10]
+fn _UFV_L(S, li): i64 {
+    if (_lfi_base == 0) { return 0; }
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (load8(_lfi_base + li) == 1) { _FBR_MARK(S, 3); }
+    return 0;
+}
+fn _UFV_G(S, vi): i64 {
+    _vecg_refuse(S, vi);   # 6.6.17 (a3): the untyped-global read rung — a vector global's too
+    if (GVBOOL(S, vi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool global's read is a boolean value
+    if (GVW128(S, vi) == 1) { _W128_MARK(S, 2, vi); }   # 6.7.6 (D2): a u128 global's read is the u128
+    if (_gfi_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (load8(_gfi_base + vi) == 1) { _FBR_MARK(S, 3); }
+    return 0;
+}
+# 1 when the expression just parsed is a float (the local-declaration test).
+fn _UFV_IS_FLOAT(S): i64 {
+    var t = GESTYPE(S);
+    if (t == F64_TYID) { return 1; }
+    if (t == F32_TYID) { return 1; }
+    if (_FBR_KIND(S) != 0) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.7.6 (Break 1, lane D) — AN f64 VALUE INITIALIZING AN `f32` ROUNDS TO f32 (the user's decision,
+# 2026-10-08), as a 6.7.4 `f32[N]` list element does: `var x: f32 = 1.5;` (a local, a global in either
+# zone, a for-init) stored 1.5's binary64 bits, which every f32 read takes the low 32 of (0.0),
+# silently. The value just parsed is an f64 when it is typed so (a literal, f64 const arithmetic, an
+# f64 variable, field or `: f64` fn) or a float builtin marked kind 1 (`f64_sqrt(..)`); it is narrowed
+# where it stands, round-to-nearest-even — what `f32_from` (and `_gai_f32` for a list) gives. An f32
+# value, an integer constant (kept bits, with its warning) and an untyped word (the i64-boxed idiom)
+# are untouched. `t` = the slot's float type; 1 = narrowed. CHANGELOG [6.7.6]
+fn _f32_init_round(S, t): i64 {
+    if (t != F32_TYID) { return 0; }
+    if (GESTYPE(S) != F64_TYID) { if (_FBR_KIND(S) != 1) { return 0; } }
+    EF32_FROM(S);
+    return 1;
+}
+# A local or late-global declaration's float initializer, after PCMPE: the integer-constant warning
+# (_IFS_CHECK) and the f32 rounding above, in one call from PARSE_VAR.
+fn _decl_float_init(S, t, ti): i64 {
+    _IFS_CHECK(S, _IFS_K(t), ti);
+    _f32_init_round(S, t);
+    return 0;
+}
+
+# ⛔ 6.6.10 — AN INTEGER STORED INTO AN f64 / f32 SLOT keeps its integer BITS: `var t: f64 = 1;`,
+# `t = 1;`, `p.x = 1;` and `P { 1, 2 }` store 0x1, a subnormal, silently. WARN (ADR-002: a
+# conversion would change existing code). Only a compile-time integer CONSTANT is judged — a
+# literal, a negated literal or an enum constant, spanning the whole initialiser `[ti, end)` —
+# because a runtime untyped value is the legal i64-boxed float idiom (`var x: f64 = load64(p)`
+# is everywhere). 0 is exempt (its bits ARE 0.0), and so is |v| >= 2^52: an IEEE bit pattern
+# written in hex (0x3FF0000000000000) is never below 2^52 unless it is a subnormal, while an
+# integer COUNT essentially always is. `k` is the slot's float type (0 = not a float slot).
+fn _ic_val_ok(v): i64 {
+    if (v == 0) { return 0; }
+    if (v < 0) { v = 0 - v; }
+    if (v <= 0) { return 0; }
+    if (v >= 0x10000000000000) { return 0; }
+    return 1;
+}
+fn _IFS_SPAN(S, ti, end): i64 {
+    var n = end - ti;
+    if (n == 2) {
+        if (TOKTYP(S, ti) != 7) { return 0; }
+        if (TOKTYP(S, ti + 1) != 1) { return 0; }
+        return _ic_val_ok(TOKVAL(S, ti + 1));
+    }
+    if (n != 1) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t == 1) { return _ic_val_ok(TOKVAL(S, ti)); }
+    if (t != 2) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, TOKVAL(S, ti)) >= 0) { return 0; } }
+    # _findvar_core, not FINDVAR: a warning heuristic must not raise FINDVAR's `private`
+    # refusal — it also runs at global REGISTRATION (_gv_ifs), where that is an accusation.
+    var vi = _findvar_core(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    if (GVECP(S, vi) != 1) { return 0; }
+    return _ic_val_ok(L64(_vecv_base + vi * 8));
+}
+fn _IFS_CHECK(S, k, ti): i64 {
+    if (k == 0) { return 0; }
+    if (ti < 0) { return 0; }
+    if (_IFS_SPAN(S, ti, GTI(S)) == 1) { _FLT_TYPE_WARN(S, 4); }
+    return 0;
+}
+# A slot type (F64_TYID / F32_TYID / anything) as a float kind for _IFS_CHECK.
+fn _IFS_K(t): i64 {
+    if (t == F64_TYID) { return 1; }
+    if (t == F32_TYID) { return 2; }
+    return 0;
+}
+
+# A `.field` on the result of a call (fn `fi`, named `noff`) that returns no struct: refused. 6.7.7
+# (B4, T5, R15): a MULTI-VALUE one is told how to read its values — bind them into a tuple first.
+# 6.7.16: a method named as the source spells it (`_err_ident_fn`: `P.sc`, it printed `P_sc`), its hint the call as
+# written from `beg` (the receiver's first token; -1 for a free call). CHANGELOG [6.7.16]
+fn _call_fld_err(S, fi, noff, beg): i64 {
+    if (fi >= 0) { if (GFRS(S, fi) == MULTIRET_SID) { return _mret_fld_err(S, fi, noff, beg); } }
+    _err_ident_fn(S, "cannot take a field of the result of ", noff, fi, ": it does not return a struct", 0 - 1);
+    return 0;
+}
+fn _mret_fld_err(S, fi, noff, beg): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_mret_fld_err", fi * 31 + noff, 1) == 1) { return 0; }   # 6.7.15: once per site
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot take a field of the result of '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # written after the head, which may use the scratch
+    PRSTR("': it returns ");
+    PRNUM(GFRN(S, fi));
+    PRSTR(" values - bind them first, `var t: ");
+    _mret_spell(S, fi);
+    PRSTR(" = ");
+    if (beg >= 0) { _tok_src_pr(S, beg, _tok_open_back(S, GTI(S) - 1)); }   # a method: `p.m2`, `w.p.m2`
+    else { PRSTR(S + 0xEC00000 + noff); }
+    PRSTR("(..);`, then read `t.0`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+
+# ⛔ 6.7.14 — A `.field` / `.m(..)` AFTER PARENTHESES AROUND A STRUCT VALUE (the user's decision D24 (a), 2026-10-16):
+# `(s).a`, `((s)).a`, `(p).a` (p a `*P1`), `(*p).a`, `(s).m()`, `(mk1()).a`, `(mk3(5)).b` read the field or call the
+# method exactly as unwrapped — the wrap is transparent (guide § Parentheses, 6.7.6; 6.7.11's D35 / D44, 6.7.13's
+# D16 / D17 / D19). They were "expected ';', got '.'": the parenthesised factor returned at its `)`. The inside is
+# taken as its unwrapped spelling takes it: a name by the field-load route (`PARSE_FIELD_LOAD`, the receiver's first
+# token the wrap's `(`, so a destination's records span it), `*E` and any `*S`-typed value through its pointer, a
+# free call into a temp (`_call_field`'s convention), a method / operator / known `&f` result or a struct-typed field
+# from its record; the wrap is closed and the chain goes on. A wrap around a value that is no struct (`(x + 1).a`) is
+# refused by name; at top level a struct result is refused once (no frame), as unwrapped. Cursor on the factor's
+# `(`: 1 = taken (the chain consumed), 0 = not `( .. ) . name` (cursor untouched). CHANGELOG [6.7.14]
+fn _paren_field(S): i64 {
+    var st = GTI(S);
+    var k = _pf_wrap(S, st);
+    if (k == 0) { return 0; }
+    var e = _pf_e;
+    var a = st + k;
+    var ie = e - k;
+    if (ie == a + 1) { if (TOKTYP(S, a) == 2) { return _pf_name(S, st, a, k); } }
+    var ps = _hl_dstar_t(S, a, 11);
+    if (ps > 0) { return _pf_deref(S, st, a, k, ps); }
+    ps = _hl_psid(S, a, ie);
+    if (ps > 0) { return _pf_ptr(S, st, a, k, ps); }
+    if (_pf_iscall(S, a, ie) == 1) { return _pf_call(S, st, a, k); }
+    return _pf_value(S, st, a, k);
+}
+# The wrap at `st` when `. name` follows it: its parentheses' count, `_pf_e` the `.`; 0 when not that shape (a tuple
+# literal is no wrap).
+var _pf_e = 0;
+fn _pf_wrap(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    if (TOKTYP(S, _call_close(S, st) + 1) != 41) { return 0; }   # the common case, one scan
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, st);
+    _pf_e = _pw_end;
+    _pw_end = pe;
+    if (_mchain_at(S, _pf_e) == 0) { return 0; }
+    return k;
+}
+# A name: `PARSE_FIELD_LOAD` on it with the cursor on the `.` after the wrap.
+var _pfl_bo = 0 - 1;
+fn _pfl_beg(S): i64 {
+    var b = GTI(S) - 1;
+    if (_pfl_bo >= 0) { b = _pfl_bo; _pfl_bo = 0 - 1; }
+    return b;
+}
+fn _pf_name(S, st, a, k): i64 {
+    STI(S, a + 1);
+    _pw_close(S, k);
+    _pfl_bo = st;
+    PARSE_FIELD_LOAD(S, TOKVAL(S, a));
+    _cfo = 0;
+    return 1;
+}
+# `*E`, E a `*S` (`_hl_dstar_t`): E is the struct's address — parked as a pointer receiver of S.
+fn _pf_deref(S, st, a, k, ps): i64 {
+    var nm = _hl_dnm;
+    STI(S, a + 1);
+    PARSE_FACTOR(S);
+    _pw_close(S, k);
+    return _pf_chain(S, nm, st, _ptr_park(S, ps), ps);
+}
+# A value typed `*S` (`_hl_psid`: a call or a method declared `: *T`, a `*T` field, pointer arithmetic on one).
+fn _pf_ptr(S, st, a, k, ps): i64 {
+    var nm = _hl_pnm(S, a, _pf_e - k);
+    STI(S, a);
+    PCMPE(S);
+    _pw_close(S, k);
+    return _pf_chain(S, nm, st, _ptr_park(S, ps), ps);
+}
+# After the wrap (cursor on its `.`): the chain on receiver `h` of struct `sid`.
+fn _pf_chain(S, noff, beg, h, sid): i64 {
+    STI(S, GTI(S) + 1);   # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);   # the field / method name
+    _field_load_on(S, noff, fnoff, beg, h, sid);
+    _cfo = 0;
+    return 1;
+}
+# 1 = [a, ie) is one whole free call `name(..)` / `name<..>(..)` (not a call through fncallN).
+fn _pf_iscall(S, a, ie): i64 {
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != ie) { return 0; }
+    if (_icall_open_at(S, a) >= 0) { return 0; }
+    return 1;
+}
+# A free call: into a temp, as `mk1().a` (`_call_field`): a struct over 8 B returned in rax (`Str`) is a handle.
+fn _pf_call(S, st, a, k): i64 {
+    var fi = _gen_resolve_call(S, a);
+    if (fi < 0) { return _pf_value(S, st, a, k); }   # an undefined callee reports itself
+    var sid = GFRS(S, fi);
+    if (sid <= 0 || GINFN(S) != 1) {
+        if (_syntax_only == 0) {
+            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, a), 0 - 1); }
+            else { _refuse_toplevel_struct_call(S, TOKVAL(S, a)); }
+        }
+        return _pf_skip(S);
+    }
+    STI(S, a);
+    var h = 0;
+    if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, sid - 1) > 8) { h = 1; } }
+    _struct_call_into(S, h);
+    var t = _sci_t;
+    _pw_close(S, k);
+    return _pf_chain(S, TOKVAL(S, a), st, 0 - 2 - t, sid);
+}
+# The rest after a refusal: past the wrap, every `.name` / `(..)` of the chain.
+fn _pf_skip(S): i64 {
+    STI(S, _pf_e);
+    _mchain_skip(S);
+    _cfo = 0;
+    return 1;
+}
+# Anything else: parsed with the struct records armed — a method / operator / known `&f` call's result
+# (`_lsc_*`: a temp, or the value in rax / rax:rdx stored into one) or a whole struct-typed field (`_fla_take`:
+# its address). No struct: refused by name. At top level a struct result has no frame: refused once.
+fn _pf_value(S, st, a, k): i64 {
+    var e = _pf_e;
+    STI(S, a);
+    var w = _sc_arm(S);
+    var fw = _fla_want;
+    _fla_want = a;
+    _fla_hit = 0;
+    PCMPE(S);
+    _sc_want = w;
+    _fla_want = fw;
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); return _pf_skip(S); }
+    if (_fla_hit == 1) { return _pf_fld(S, st, k); }
+    var nm = _hl_lastnm(S, a, GTI(S), TOKVAL(S, a));
+    if (_sc_beg == a) { if (_sc_end == GTI(S)) { nm = _sc_fn; } }   # a method / operator / `&f` callee: its fn
+    if (_pf_lsc(S, a) == 0) {
+        if (_sc_rbeg == a) { if (_sc_rend == GTI(S)) { return _pf_skip(S); } }   # refused at top level (no frame)
+        _pf_err(S, e);
+        return _pf_skip(S);
+    }
+    var sid = _lsc_sid;
+    if (GINFN(S) != 1) {
+        if (_syntax_only == 0) { _refuse_toplevel_struct_call(S, nm); }
+        return _pf_skip(S);
+    }
+    var t = _lsc_tmp;
+    if (t < 0) {
+        if (STRUCTSZ(S, sid - 1) <= 8) { t = _mchain_temp(S, sid); }
+        else {
+            t = _agg_temp(S, sid);
+            EFLSTORE_STRUCT_INT_PAIR(S, t);
+        }
+    }
+    _pw_close(S, k);
+    return _pf_chain(S, nm, st, 0 - 2 - t, sid);
+}
+# 1 = the struct result stamp (`_lsc_note`) spans [a, cursor) with nothing emitted after it.
+fn _pf_lsc(S, a): i64 {
+    if (_lsc_beg != a) { return 0; }
+    if (_lsc_end != GTI(S)) { return 0; }
+    if (_lsc_cp != GCP(S)) { return 0; }
+    return 1;
+}
+# A whole struct-typed field (`_fla_take` recorded it, loading nothing): its address, parked.
+fn _pf_fld(S, st, k): i64 {
+    _fla_hit = 0;
+    var ft = _fla_ft;
+    _fld_addr_ra(S, _fsc_fidx, _fsc_fsid, _fsc_foff, 0 - 1);
+    var h = _ptr_park(S, ft);
+    _pw_close(S, k);
+    return _pf_chain(S, _fla_name, st, h, ft);
+}
+fn _pf_err(S, e): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_tn_once(S, e) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, e);
+    ERR_MSG(S, "a field is read only from a struct value - the value in these parentheses is not a struct (or a pointer to one)", 111);
+    STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.14 (D24 (a)) — a STATEMENT that begins `( .. ) . name`: a method call or a read (`(s).m();`, `(mk1()).a;`)
+# is parsed as unwrapped (PARSE_FACTOR's `_paren_field`, a discarded `#must_use` result warned); a store `(s).a = v;`
+# / `(s).a += v;` is refused by name, the statement stepped over in sync — it was "unexpected '('" for every one.
+# One call in PARSE_STMT (cybs's per-fn ceiling). 1 = the statement is consumed. CHANGELOG [6.7.14]
+fn _stmt_paren_field(S): i64 {
+    var st = GTI(S);
+    if (_pf_wrap(S, st) == 0) { return _stmt_paren_dst(S, st, 1); }   # 6.7.15 (D19): `(*p) += 1;`
+    var x = _pf_chain_end(S, _pf_e);
+    if (_pf_asg_at(S, x) == 1) {
+        _pf_store_err(S);
+        STI(S, st);
+        _cst_skip_sync(S);
+        return 1;
+    }
+    if (_pf_read_stmt(S, st, x) == 1) { return 1; }   # 6.7.15 (D60): `(s).a;` refused as `s.a;` is
+    _mcall_last = 0 - 1;
+    PARSE_FACTOR(S);
+    if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
+    _expect_step(S, 5);
+    return 1;
+}
+# A store through `( .. ).name` (D24 (a)), refused once at the wrap's `.` (`_pf_e`), the latch as it was; the cursor is
+# left on the `.`. The statement's and (6.7.16) the classic-for step's. ⛔ 6.7.16 — under --syntax-only too: the rule
+# reads no type (any `( .. ).name = v` is refused), and lint passed `(s).a = 1;` that the build refuses, where it
+# refuses its D19 / D22 / D60 siblings. CHANGELOG [6.7.16]
+fn _pf_store_err(S): i64 {
+    if (_tn_once(S, _pf_e) == 0) { return 0; }
+    var p0 = _panic;
+    STI(S, _pf_e);
+    ERR_MSG(S, "cannot assign to a field after parentheses - write the store without them (`s.a = v`)", 85);
+    _panic = p0;
+    return 0;
+}
+# ⛔ 6.7.16 — A CLASSIC-FOR STEP WHOSE DESTINATION IS PARENTHESISED IS REFUSED IN ITS STATEMENT'S WORDS: `(n) = 7`,
+# `(*pn) += 1` (6.7.15's D19), `(pn)[0] = 2` (6.7.16's D22) and `(s).a = 3` (6.7.14's D24 (a)) were "expected '=', got
+# <the token after the `(`>": `_for_step_replay` took the `(` as the destination's name, and the statement's refusals
+# (`_stmt_paren_field`) never saw a step. The statement's readers run with the step's `)` as the end (`_pd_semi` and
+# the chain walkers stop there): the same words, once at the same token, with no skip — PARSE_FOR puts the cursor back
+# after the step. A parenthesised value (`(n + 1) = 7`), a call (`(s).m()`) or no assignment keeps "expected '='".
+# Cursor on the step's `(`: 1 = refused, else 0 with the cursor untouched. CHANGELOG [6.7.16]
+fn _step_paren(S): i64 {
+    var st = GTI(S);
+    if (_pf_wrap(S, st) == 0) { return _stmt_paren_dst(S, st, 0); }
+    if (_pf_asg_at(S, _pf_chain_end(S, _pf_e)) == 0) { return 0; }
+    _pf_store_err(S);
+    return 1;
+}
+# ⛔ 6.7.15 — `(s).a;` ALONE IS REFUSED AS `s.a;` IS (the user's D60, 2026-10-18; 6.7.14's item 19): since 6.7.14's
+# D24 (a) a statement `( .. ).a;` compiled as a discarded read, while the unwrapped `s.a;` is refused ("expected '='")
+# and 6.7.13 refused it too ("unexpected '('"). A statement that is a field read through parentheses with NO call in it
+# (`(s).a;`, `(p).a;`, `(*p).a;`, `(w).p.a;`, `((s)).a;`) is now "the field read 'a' is discarded - a statement is an
+# assignment or a call", once at the field, the statement ended in sync (the latch as it was). A call anywhere keeps
+# it a statement, as unwrapped: `(mk1()).a;` as `mk1().a;`, `(s).m();` as `s.m();`, `(s).me().a;` as `s.me().a;`, and a
+# struct operator's result (`(x + y).b;`, its stamp `_lsc_beg` inside the statement). It is judged after the parse, so
+# a read that stops short (`(s).a.b;` of a scalar a, `(s).zz;`, `(zz).a;`) or latches its own refusal (`(x + 1).a;`)
+# keeps that one error. `x` = the token after the chain. 1 = the statement is consumed. CHANGELOG [6.7.15]
+fn _pf_read_stmt(S, st, x): i64 {
+    if (TOKTYP(S, x) != 5) { return 0; }
+    if (_pf_has_call(S, st + 1, x) == 1) { return 0; }
+    var p0 = _panic;
+    _lsc_beg = 0 - 1;
+    PARSE_FACTOR(S);
+    var ok = 1;
+    if (GTI(S) != x) { ok = 0; }
+    if (_lsc_beg >= st) { if (_lsc_beg < x) { ok = 0; } }   # a struct operator's call
+    if (_panic != p0) { ok = 0; }   # its own refusal latched (`(x + 1).a;`): left latched, not restored below
+    var f = _pf_last_field(S, _pf_e, x);
+    if (ok == 1) { if (f >= 0) {
+            STI(S, f);
+            var tl = " is discarded - a statement is an assignment or a call";
+            ERR_IDENT(S, "the field read ", TOKVAL(S, f), tl, 0 - 1);
+            _panic = p0;
+            STI(S, x);
+        } }
+    _expect_step(S, 5);
+    return 1;
+}
+# 1 = a call opens in tokens [i, e): a `(` after a name, a type-argument list's `>` or a builtin (`f(`, `.m(`,
+# `g<T>(`, `load64(`) — a grouping `(` follows `(`, an operator or `*` / `&`.
+fn _pf_has_call(S, i, e): i64 {
+    while (i < e) {
+        if (TOKTYP(S, i) == 10) {
+            var pt = TOKTYP(S, i - 1);
+            if (pt == 2 || pt == 20 || pt == 39 || pt == 152) { return 1; }
+            if (IS_KEYWORD_TOK(pt) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# The last `.name` of the field chain [i, e) (`.name` / `[..]` steps): that name's token, or -1.
+fn _pf_last_field(S, i, e): i64 {
+    var f = 0 - 1;
+    while (i < e) {
+        var t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0 - 1; }
+            f = i + 1;
+            i = i + 2;
+        } elif (t == 28) {
+            i = _pf_sq_close(S, i) + 1;
+        } else {
+            return 0 - 1;
+        }
+    }
+    return f;
+}
+# ⛔ 6.7.15 — A STATEMENT WHOSE ASSIGNMENT DESTINATION IS PARENTHESISED STAYS REFUSED, BY NAME (the user's D19,
+# 2026-10-18): `(*p) += 1;`, `(*p) = 1;`, `(n) = 7;`, `((n)) = 7;`, `(*(&s)) -= 1;` were "unexpected '('" (no statement
+# form starts with `(`; parentheses are transparent around a SOURCE, 6.7.6, and `(s).a = v;` is refused by name since
+# 6.7.14's D24 (a)); now "an assignment's destination is not parenthesised - write `*p += 1`", the statement quoted
+# without its wraps, once at the `(`, the statement stepped in sync (the latch as it was). The inside must be a place —
+# `* E`, or a name with `.f` / `[i]` steps — so a parenthesised value (`(n + 1) = 7;`, `(f()) = 3;`) or a tuple literal
+# keeps "unexpected '('". Cursor on the statement's `(`: 1 = consumed (`sync` 1: the statement stepped in sync; 0, a
+# classic-for step's (6.7.16, `_step_paren`): the cursor left, PARSE_FOR puts it back). CHANGELOG [6.7.15]
+fn _stmt_paren_dst(S, st, sync): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    if (_tup_lit_at(S, st) >= 0) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, st);
+    var e = _pw_end;
+    _pw_end = pe;
+    if (TOKTYP(S, e) == 28) { return _stmt_paren_sub(S, st, e, sync); }   # 6.7.16 (D22): `(pn)[0] = 1;`
+    if (_pf_asg_at(S, e) == 0) { return 0; }
+    if (_pd_place(S, st + k, e - k) == 0) { return 0; }
+    var p0 = _panic;
+    _pd_err(S, st + k, e - k, e);
+    _panic = p0;
+    if (sync == 1) {
+        STI(S, st);
+        _cst_skip_sync(S);
+    }
+    return 1;
+}
+# ⛔ 6.7.16 — A SUBSCRIPT STORE THROUGH A PARENTHESISED BASE STAYS REFUSED, IN THE READ'S WORDS (the user's D22,
+# 2026-10-19): `(pn)[0] = 1;`, `(*(&pn))[1] = 2;`, `(pn)[0] += 1;` were "unexpected '('" — the token after the `)` is `[`,
+# neither 6.7.14's `( .. ).name` statement nor D19's parenthesised destination — and now print what the read `(pn)[0]`
+# prints, "a subscript's base is a name, a *T field or a call returning *T - name the pointer first (var q: *T = ..;
+# q[i])", once at the `(`, the statement stepped in sync (the latch as it was), so the next statement is parsed
+# normally. `e` = the `[` after the outermost `)`; the `[..]` steps must end in an assignment, else 0 (cursor untouched:
+# `(pn)[0];` keeps "unexpected '('"). CHANGELOG [6.7.16]
+fn _stmt_paren_sub(S, st, e, sync): i64 {
+    var x = e;
+    while (TOKTYP(S, x) == 28) {
+        x = _pf_sq_close(S, x);
+        if (TOKTYP(S, x) != 29) { return 0; }
+        x = x + 1;
+    }
+    if (_pf_asg_at(S, x) == 0) { return 0; }
+    var p0 = _panic;
+    STI(S, st);
+    _psub_err(S, ": a subscript's base is a name, a *T field or a call returning *T", 0 - 1,
+      " - name the pointer first (var q: *T = ..; q[i])", "", 0);   # once per site: its own `_derr_seen`
+    _panic = p0;
+    if (sync == 1) { _cst_skip_sync(S); }
+    return 1;
+}
+# 1 = tokens [a, ie) are a place: `* E`, or a name followed by `.name` / `[..]` steps only.
+fn _pd_place(S, a, ie): i64 {
+    if (a >= ie) { return 0; }
+    if (TOKTYP(S, a) == 8) { return 1; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var i = a + 1;
+    while (i < ie) {
+        var t = TOKTYP(S, i);
+        if (t == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0; }
+            i = i + 2;
+        } elif (t == 28) {
+            i = _pf_sq_close(S, i) + 1;
+        } else {
+            return 0;
+        }
+    }
+    if (i == ie) { return 1; }
+    return 0;
+}
+# The refusal at the cursor (the statement's `(`): the place [a, ie), then the operator and value from `e` to the `;`.
+fn _pd_err(S, a, ie, e): i64 {
+    var m = ": an assignment's destination is not parenthesised - write `";
+    if (_err_once(S, (m * 31 + 61) * 8 + 4) == 0) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(m);
+    _pd_src(S, GTOFF(S, a), GTOFF(S, ie));
+    _pd_src(S, GTOFF(S, e - 1) + 1, GTOFF(S, _pd_semi(S, e)));   # from just past the last `)`, as written
+    PRSTR("`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# The source text from offset b to offset c (trailing blanks dropped).
+fn _pd_src(S, b, c): i64 {
+    while (c > b) {
+        var ch = load8(S + 0x459D000 + c - 1);
+        if (ch != 32 && ch != 9 && ch != 10 && ch != 13) { break; }
+        c = c - 1;
+    }
+    if (c > b) { _ew(S + 0x459D000 + b, c - b); }
+    return 0;
+}
+# The statement's `;` at or after token i (depth 0), or the token that ends it first (`}`, EOF).
+fn _pd_semi(S, i): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return i; }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) {
+            d = d - 1;
+            if (d < 0) { return i; }
+        }
+        if (t == 5) { if (d == 0) { return i; } }
+        i = i + 1;
+    }
+    return n;
+}
+# The token after the `.name` / `.m(..)` / `.m<..>(..)` / `[..]` chain that starts at token `i`.
+fn _pf_chain_end(S, i): i64 {
+    var go = 1;
+    while (go == 1) {
+        go = 0;
+        if (_mchain_at(S, i) == 1) {
+            i = _mchain_targs(S, i + 2);
+            if (TOKTYP(S, i) == 10) { i = _call_close(S, i) + 1; }
+            go = 1;
+        } elif (TOKTYP(S, i) == 28) {
+            i = _pf_sq_close(S, i) + 1;
+            go = 1;
+        }
+    }
+    return i;
+}
+fn _pf_sq_close(S, i): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 28) { d = d + 1; }
+        if (t == 29) {
+            d = d - 1;
+            if (d == 0) { return i; }
+        }
+        if (t == 5) { return i; }
+        i = i + 1;
+    }
+    return i;
+}
+fn _pf_asg_at(S, i): i64 {
+    if (TOKTYP(S, i) == 4) { return 1; }
+    if (_is_cop_tok(TOKTYP(S, i)) == 0) { return 0; }
+    if (TOKTYP(S, i + 1) == 4) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.6.12 — A `.field` ON A CALL RESULT (`f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`)
+# parsed nowhere: the factor returned straight after the call and the `.` was a syntax error in
+# every expression position. Cursor just past the callee IDENT; 1 = the call and its whole field
+# tail are consumed (the value in rax, typed like any field load), 0 = not that shape (cursor
+# untouched). In a fn the result lands in a frame temp — the retptr / rax:rdx / rax store of
+# `_struct_call_emit`, a `Str` handle in a pointer-mode slot — and the field is loaded from it
+# through PARSE_FIELD_LOAD's own body (`_field_load_on`), so chains, widths, signedness, float
+# kinds, a method on the result and a struct-typed field as a whole-struct source all match a
+# named receiver. At top level there is no frame: refused by name. CHANGELOG [6.6.12]
+fn _call_field(S): i64 {
+    var ti = GTI(S) - 1;
+    if (TOKTYP(S, ti) == 137) { return _icall_stmt_chain(S, ti); }   # 6.7.14: `callptr(&f, ..).b = v;` (`_stmt_callptr_field`)
+    if (_call_dotted(S, ti) == 0) { return 0; }
+    if (_icall_open_at(S, ti) >= 0) { return _icall_stmt_chain(S, ti); }   # 6.7.13 (D16 (a)): `fncall1(&f, ..).m();`
+    var fi = _gen_resolve_call(S, ti);
+    var u = _call_nodef(S, ti, fi);   # 6.7.15 / 6.7.16: an undefined callee named, its chain stepped over
+    if (u >= 0) { return u; }
+    var sid = 0;
+    if (fi >= 0) { sid = GFRS(S, fi); }
+    if (sid <= 0) { if (_call_ptr_field(S, ti, fi) == 1) { return 1; } }   # 6.6.17: `: *T`
+    if (sid <= 0 || GINFN(S) != 1) {
+        # --syntax-only: a return type from a sibling file reads as a scalar, so stay silent.
+        if (_syntax_only == 0) {
+            if (sid <= 0) { _call_fld_err(S, fi, TOKVAL(S, ti), 0 - 1); }   # 6.7.7 (T5): + a multi-value one's hint
+            else { _refuse_toplevel_struct_call(S, TOKVAL(S, ti)); }
+        }
+        # --syntax-only still parses a plain call's arguments, for the grammar errors in them.
+        if (_syntax_only == 1 && TOKTYP(S, ti + 1) == 10) { PARSE_FNCALL(S, TOKVAL(S, ti)); }
+        else { STI(S, _call_close(S, _gcall_open(S, ti)) + 1); }
+        # 6.7.15: the chain past the refusal, its `[..]` too, as a method's (`_method_chain`): `var x = mk().p[0];` added
+        # a false "cannot subscript field 'p'". 6.7.16: whole, before the walk below — a method's explicit list
+        # (`mk().mm<f64>(2.5)` at top level, `fs().mm<f64>(2.5)`) read `<` as less-than ("undefined variable 'f64'").
+        # --syntax-only walks it, its arguments and index parsed. CHANGELOG [6.7.16]
+        if (_syntax_only == 0) { STI(S, _pf_chain_end(S, GTI(S))); }
+        _synonly_skip_chain(S);
+        # a method on the refused result: its arguments too, or `(` is a second error
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+        if (_syntax_only == 1) { if (_cf_unres_fn(S, ti, fi) == 1) { _cf_unres = ti; } }   # 6.7.15: a sibling module's fn (6.7.16: or struct)
+        _cfo = 0;
+        return 1;
+    }
+    STI(S, ti);
+    var h = 0;
+    if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, sid - 1) > 8) { h = 1; } }
+    _struct_call_into(S, h);
+    var t = _sci_t;
+    STI(S, GTI(S) + 1);                 # consume `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # consume the field name
+    _field_load_on(S, TOKVAL(S, ti), fnoff, ti, 0 - 2 - t, sid);
+    # AFTER the call: a literal argument (`mkp(3)`) left itself foldable, and `mkp(3).y + 1`
+    # then folded to 4 by rewriting the code from that literal — the call and the load with it.
+    _cfo = 0;
+    return 1;
+}
+# ⛔ 6.7.15 — A `.field` OF AN UNDEFINED FN'S RESULT (`undefd().n += 1;`, `var x = undefd().n;`, the classic-for step
+# `undefd().n += 1`) never named the fn: `_call_field` left the call to PARSE_FNCALL, which stopped at the `.`
+# ("expected ';', got '.'"; the step fell to `_for_step_assign`, "expected '=', got '('"), and the fn surfaced only in
+# the end-of-compile refusal. Callee token `ti` resolving to no fn (pass 1 registered every definition) is "undefined
+# function 'undefd'" at its name — an ERROR, so --allow-undef cannot compile the line — once, the latch as it was;
+# the call and its `.f` / `.m(..)` / `[..]` chain are stepped over unparsed (this call is not registered: only an
+# earlier or later plain call to the name adds the end-of-compile refusal), rax 0, and `_tsc_n` moves, so the
+# statement and the step step over their tails with no second error. `sizeof` / `mulh64`, lowered by name, keep their
+# path; --syntax-only never gets here (a sibling module's fn, `_cf_unres`). 1 = consumed, 0 = not this shape.
+# CHANGELOG [6.7.15]
+fn _call_undef(S, ti): i64 {
+    var noff = TOKVAL(S, ti);
+    if (_is_ident_intrinsic(S, noff) == 1) { return 0; }
+    STI(S, ti);
+    _err_in_sync(S, "undefined function ", noff, 0);
+    STI(S, _pf_chain_end(S, _call_close(S, _gcall_open(S, ti)) + 1));
+    _tsc_n = _tsc_n + 1;
+    _addr_field_val(S);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# ⛔ 6.7.16 — and a callee an EARLIER PLAIN CALL registered (`undefd(); undefd().n += 1;`): the entry resolved (fi >= 0)
+# with no return struct, so the field was "cannot take a field of the result of 'undefd': it does not return a struct".
+# The test is the definition, not the entry: `_fn_nodef` (no code and no owner — pass 1 owns every `fn` it scans,
+# `#derive`'s text included, and a generic instance is defined before its call returns). The one definition pass 1
+# registers with no owner is an enum variant's payload constructor (`Some(v)`), whose code is emitted at its enum: a
+# call from a fn above the enum sees neither, so a variant's name keeps the old path (`_fn_enum_var`). -1 = a defined
+# callee: go on; else `_call_field`'s answer. CHANGELOG [6.7.16]
+fn _call_nodef(S, ti, fi): i64 {
+    if (_syntax_only == 1) { return 0 - 1; }
+    if (_fn_nodef(S, fi) == 0) { return 0 - 1; }
+    if (fi >= 0) { if (_fn_enum_var(S, TOKVAL(S, ti)) == 1) { return 0 - 1; } }
+    if (_call_undef(S, ti) == 1) { return 1; }
+    if (fi < 0) { return 0; }
+    return 0 - 1;
+}
+# 1 = `noff` names an enum variant (its constant's var slot carries the enum's id).
+fn _fn_enum_var(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    if (GVENUMID(S, vi) != 0) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.7.15 — --syntax-only, A FIELD ASSIGNMENT ON A SIBLING MODULE'S CALL (`gp().n = 5;`, the for step `gp().n += 1`,
+# with `fn gp(): *H` in another file) was "cannot assign to a field of a call result: the result is a temporary": the
+# callee resolved to nothing, `_call_field` stepped over the call and its chain silently, and the statement then judged
+# the `=` as if the result were known to be a struct by value. Only a KNOWN callee's result is known to be a
+# temporary: `_cf_unres` is the callee token of the last call `_call_field` stepped over under --syntax-only with no
+# definition in this file (`_fn_nodef`: unregistered, or registered only by an earlier call), and the statement /
+# step whose callee it is parses its assignment silently (`_synonly_fld_tail`), as a field store parses one through
+# a struct this file cannot see. CHANGELOG [6.7.15]
+var _cf_unres = 0 - 1;
+# 1 = fn `fi` (-1: none) has no definition this file shows: unregistered, or registered only by a call — pass 1
+# recorded no owner for it (`_warn_undefined_prepass`'s test).
+fn _fn_nodef(S, fi): i64 {
+    if (fi < 0) { return 1; }
+    if (L64(_fnt_offsets + fi * 8) >= 0) { return 0; }
+    if (GFFI(S, fi) != 0) { return 0; }
+    return 1;
+}
+# 1 = `_call_field` arms `_cf_unres` for callee token `ti`'s fn `fi`: no definition here (`_fn_nodef`), or (6.7.16) one
+# declared `: *T` whose T this file does not declare (`_fn_ret_unk`), so no struct was recorded for it (`_hl_fn_psid`) —
+# the winning definition's, of a redefined fn (the byte, not GFRS: pass 2 re-reads an earlier definition's return). A `: Foo` result by value keeps "the result is a temporary"; a `*T` whose T is declared here took
+# D8 (a)'s store. An enum variant's payload constructor called above its enum has no code and no owner yet, but it is
+# defined here (`_call_nodef`'s exclusion): `Some(5).n = 1;` was accepted, where the build refuses it. CHANGELOG [6.7.16]
+fn _cf_unres_fn(S, ti, fi): i64 {
+    if (_fn_nodef(S, fi) == 1) {
+        if (fi >= 0) { if (_fn_enum_var(S, TOKVAL(S, ti)) == 1) { return 0; } }
+        return 1;
+    }
+    if (_hl_fn_psid(fi) != 0) { return 0; }
+    return _fn_ret_unk(fi);
+}
+
+# 6.6.12 — the STATEMENT form, `mk(3).total();` / `mk(3).n;`. PARSE_STMT sends `IDENT (` straight
+# to PARSE_FNCALL and never reaches the factor, so `_call_field` above did not run there and the
+# `.` was "expected ';'" while `var t = mk(3).total();` worked. Cursor just past the callee IDENT;
+# 1 = the statement is consumed through its `;`. One call in PARSE_STMT: that body is near cybs's
+# per-function reference limit. A field of a temporary is not an lvalue: refused by name.
+# CHANGELOG [6.6.12]
+# 6.7.5 (B8): `mk(3).n += 1;` too — refused as `= 1` is, the statement stepped over.
+fn _stmt_call_field(S): i64 {
+    var sv = _cpf_st;
+    var st = GTI(S) - 1;
+    _cpf_st = st;   # 6.7.13 (D8 (a)): a field of a `: *T` result is stored through it (`_cpf_try`)
+    _cpf_done = 0 - 1;
+    var tn = _tsc_n;
+    var r = _call_field(S);
+    _cpf_st = sv;
+    if (r == 0) { return 0; }
+    if (_cpf_done == st) { return 1; }   # the store ended the statement
+    # 6.7.14: at top level the by-value call refused itself (`_tsc_n` moved): that is the one error, whatever
+    # follows (`= v`, `OP= v`, `.p[i] = v`). CHANGELOG [6.7.14]
+    if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
+    if (PEEKT(S) == 28) { _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `mk(4).p[i] = v;`
+    elif (_asg_pair_at(S) == 1) {
+        if (_cf_unres == st) { _synonly_fld_tail(S, 5); return 1; }   # 6.7.15: a sibling's call, not known
+        return _asg_temp_refused(S);
+    }
+    _expect_step(S, 5);
+    return 1;
+}
+# ⛔ 6.7.14 — `callptr(&gp, 5).b = 40;` WAS "expected ';', got '='": a `callptr` statement went to PCMPE, which reads
+# `.b` as a value, while `fncall1(&gp, 5).b = 40;` (an IDENT) reaches the call statement's field arms — D8 (a)'s store
+# through a `: *T` result, the refusal of a by-value temporary. The same known callee spelled `callptr` (6.7.13's
+# D16 (a)) takes that route when the call's `)` is followed by `.name`: 1 = the statement is consumed, 0 = not that
+# shape (cursor untouched). Cursor on `callptr`; one call in PARSE_STMT (cybs's per-fn ceiling). CHANGELOG [6.7.14]
+fn _stmt_callptr_field(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    var c = _call_close(S, ti + 1);
+    if (TOKTYP(S, c + 1) != 41) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    STI(S, ti + 1);
+    if (_stmt_call_field(S) == 1) { return 1; }
+    STI(S, ti);
+    return 0;
+}
+# `= e` / `OP= e` on a field of a call's result (`mk(3).n`, `b.mk(4).x`): refused by name, the rest
+# of the statement stepped over — the parse is then in sync, so the panic latch is left as it was
+# and the next statement is parsed (and reported) normally. 1.
+fn _asg_temp_refused(S): i64 {
+    var p0 = _panic;
+    ERR_MSG(S, "cannot assign to a field of a call result: the result is a temporary", 68);
+    _cst_skip_decl(S);
+    _panic = p0;
+    return 1;
+}
+# A refusal inside a statement that is then parsed to its end: reported once, and the panic latch
+# left as it was, so the statement after it is parsed and reported (`_bx_refuse`'s rule). 6.7.5
+fn _err_in_sync(S, msg, noff, tail): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, GTI(S)) == 0) { return 0; }   # a generic base and its instances parse the same tokens: report once
+    ERR_IDENT(S, msg, noff, tail, 0 - 1);
+    _panic = 0;
+    return 0;
+}
+
+# v6.3.10 (explicit): `foo<i64>(x)` / `foo<Pt>(p)` — cursor on the `<`. Out of
+# `_PARSE_FACTOR_IMPL` since 6.6.10: that body is near cybs's per-function reference limit, and
+# this path grew the stub refusal.
+# ⛔ 6.6.10 — `_ta_explicit` tells the PARSE_FNCALL below not to re-infer, and a stub generic
+# (it uses T as a struct) is refused by name for ANY scalar type argument: `g<i64>(5)` ran the
+# `rax = 0` stub silently, and `g<i32>(5)` minted an instance that failed with "no struct type
+# in scope for 'p'". A forwarded `inner<T>` in a base emission never gets here with a stub
+# callee: the enclosing generic is a (transitive) stub itself, so its base body is skipped —
+# which retired 6.6.8's `_call_forwarded_base` (a base call with the inline replay suppressed at
+# depth 0, which existed only to keep that replay out of such a base). CHANGELOG [6.6.10]
+fn _explicit_generic_call(S, noff, fi): i64 {
+    if (_MONOMORPH_OK != 1) { return _egc_nomono(S, noff, fi); }   # 6.7.17 (D7)
+    STI(S, GTI(S) + 1);                 # consume `<`
+    _ta_pending_gt = 0;
+    _ta_refd = 0;
+    # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
+    # type-args instantiate → their instance sid; `>>` tail handled).
+    var _ta_conc = _parse_one_type_arg(S);
+    var _ta_conc1 = _ta_rest_f(S, fi);  # `,` — 6.7.16 (D5): as many as the fn declares
+    _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
+    if (_ta_refd == 1) { return _gen_call_refd(S, noff); }   # 6.7.14
+    # Call the base (the all-i64 instance) only when EVERY arg is i64.
+    var _ta_do = 0;
+    if (_ta_conc != 0 - 8) { _ta_do = 1; }
+    if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
+    # A stub generic with a scalar type argument: route it to the base call, whose head refuses it.
+    if (_ta_conc < 0 && _ta_conc1 <= 0) { if (_gen_stub(S, fi) != 0) { _ta_do = 0; } }
+    if (_ta_do == 0) {
+        _ta_explicit = 1;               # set right before the call that reads it (see below)
+        PARSE_FNCALL(S, noff);          # all-i64: call the base
+        _call_ret_marks(S, fi);         # 6.6.17: a `*T` return's pointer scale (6.7.9: + an f64)
+        return 0;
+    }
+    # non-i64: monomorphize on demand + call the specialized fn.
+    var _spec = _instantiate_generic_fn(S, fi, _ta_conc, _ta_conc1);
+    if (_spec == 0 - 2) {
+        ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 91);
+    }
+    # ⛔ 6.6.5 — `_spec` is -2 on the error path above (and was -3 too until 6.7.1),
+    # and `_fnt_names + _spec * 8` read 16/24 bytes BEFORE the
+    # table: an out-of-bounds load whose garbage was then parsed
+    # as a name, which is where the nonsense
+    # "undefined function 'enum'" came from. ERR_MSG does not
+    # exit (the multi-error contract), so the guard has to be
+    # here. Arguments are still consumed, by PARSE_FNCALL on the
+    # base name, so the parse stays in sync. CHANGELOG [6.6.5]
+    # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
+    # and the first of them would have taken the flag as its own and skipped its inference.
+    _ta_explicit = 1;
+    # 6.7.11: 2 = the instance's bound was refused (-4) and reported at the type the call binds: the
+    # base call below only consumes the arguments, and is not judged against the base (`gb<f64>(h)`
+    # also said "needs `impl Show for i64`"). CHANGELOG [6.7.11]
+    if (_spec == 0 - 4) { _ta_explicit = 2; }
+    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); _call_ret_marks(S, _spec); }   # 6.7.9: + an f64
+    else { PARSE_FNCALL(S, noff); }
+    return 0;
+}
+# ⛔ 6.7.14 — AN EXPLICIT CALL WHOSE OWN TYPE ARGUMENT WAS REFUSED (`g<f64v2>(b)`, `g<1>(b)`, `g<[u8]>(b)`) mints no
+# instance: the refused argument read as i64 minted `g$i`, whose parse cleared the panic latch, so its arguments were
+# judged against `p: *i64` too — a second error, D27's "cannot pass 'b' ... in a call to 'g$i'". The base is called the
+# way 6.7.11's refused bound is (`_ta_explicit` 2: not re-inferred, not judged as a stub or a bound), its arguments
+# consumed. The latch is `_ta_refd`, cleared when this call's list opens. CHANGELOG [6.7.14]
+fn _gen_call_refd(S, noff): i64 {
+    _ta_refd = 0;
+    _ta_explicit = 2;
+    var p0 = _panic;
+    _panic = 1;   # the arguments are consumed, not judged: the call's one error is its type argument's
+    PARSE_FNCALL(S, noff);
+    _panic = p0;
+    return 0;
+}
+# ⛔ 6.6.17 — A CALL'S RESULT CARRIED ITS LAST ARGUMENT'S POINTER SCALE. The arguments are parsed
+# as expressions inside the call's factor, and nothing reset the scale the last one left, so with
+# `p: *i64` the value of `f(p) + 1` was f's result + 8, as was `load64(p) + 1`, `fncall1(&f, p) + 1`
+# and `callptr(cl, p) - p` (p scaled by 8 too). Silent wrong values. A call's result now scales
+# only by the callee's DECLARED return type: `fn f(): *T` steps sizeof(T) (`_fn_rps`), anything
+# else — every builtin, `callptr` / `fncallN` (6.7.14: but a known `&f`'s `: *T`), an untyped or scalar return —
+# is a plain value.
+# `ti` is the factor's first token; only a factor that IS one whole call `name(..)` /
+# `name<..>(..)` / `builtin(..)` is judged — one continuing past the `)` (`mk(p).f`) sets its own.
+# The method arm sets its result's scale itself (`_mcall_ret`). CHANGELOG [6.6.17]
+fn _call_scale_fix(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    var o = 0 - 1;
+    if (t == 2) { o = _gcall_open(S, ti); }
+    elif (TOKTYP(S, ti + 1) == 10) {
+        if (t == 137) { o = ti + 1; }                       # callptr
+        elif (TOKNAME_BUILTIN(t) != 0) { o = ti + 1; }
+    }
+    if (o < 0) { return 0; }
+    if (GTI(S) != _call_close(S, o) + 1) { return 0; }
+    var ps = 0;
+    if (t == 2) {
+        # 6.6.20: the INSTANCE the call reaches (`gr<i32>(..)`, or `gr(pt)` inferring T), whose
+        # `: *T` steps sizeof(T) — FINDFN named the template, whose T is i64. CHANGELOG [6.6.20]
+        var fi = _pair_gen_inst(S, ti);
+        if (fi >= 0) { if (_fn_rps != 0) { ps = L64(_fn_rps + fi * 8); } }
+        _lsc_free(S, ti, o, fi);   # 6.7.6: a struct result, for a left operand
+        _gcall_ret_f64(S, ti, fi);  # 6.7.9: an inferred instance's f64
+    }
+    if (ti == _icall_ps_beg) { ps = _icall_ps; }   # 6.7.14 (D26 (a)): a known `&f` callee's `: *T` (`_icall_scalar`)
+    SPSC(S, ps);
+    return 0;
+}
+# ⛔ 6.7.9 — AN INFERRED GENERIC CALL'S f64 RESULT WAS AN UNTYPED WORD. The call arm types a result
+# from FINDFN's entry, which for a generic is its i64 BASE (`: T` an i64), while the call reaches
+# the instance its arguments bind: `gid(h)` with `h: f64` calls `gid$f64`, whose `: T` is an f64
+# return (`_gtype_tp_ret`). `gid(h) * 2.0` multiplied the double's bits. The instance `fi` the
+# call at `ti` reached types it here, as `_call_ret_marks` does a `: f64` fn's; the explicit
+# spelling `gid<f64>(h)` types its own (`_explicit_generic_call`). CHANGELOG [6.7.9]
+fn _gcall_ret_f64(S, ti, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    if (GFRS(S, fi) != 0 - 9) { return 0; }
+    if (GFRS(S, FINDFN(S, TOKVAL(S, ti))) == 0 - 9) { return 0; }   # the call arm typed it
+    EMOVQ_A_X0(S);
+    SESTYPE(S, F64_TYID);
+    return 0;
+}
+# After a plain call `name(..)` to fn `fi` (-1: unresolved): a scalar f64 return (sentinel -9) is
+# in xmm0 — bring it back into rax and type the expression F64_TYID (v6.4.55; EMOVQ_A_X0 is a no-op
+# on aarch64/cx) — and a `*T` return carries T's step as the pointer scale (6.6.17).
+fn _call_ret_marks(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) == 0 - 9) { EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); }
+    _call_ret_ps(S, fi);
+    return 0;
+}
+# ⛔ 6.7.9 — A METHOD CALL'S RESULT KEPT ITS LAST ARGUMENT'S TYPE. The method arm of
+# `_field_load_on` has no PARSE_FNCALL, so neither half of a free call's result typing ran: the
+# arguments' expression type survived the call (`p.m(1.5) * 2` with `m: i64` multiplied bit
+# patterns as doubles — 0; `p.m(p) * 10` dispatched `P_mul`), and a `: f64` method's result was
+# never typed f64 (`p.area() + 1.0` added integers). Both halves now, in a free call's order:
+# the reset (PARSE_FNCALL's v6.4.56 D3), then `_call_ret_marks` on the callee. CHANGELOG [6.7.9]
+fn _mcall_ret(S, fi): i64 {
+    SESTYPE(S, 0);
+    return _call_ret_marks(S, fi);
+}
+
+# 1 = `syscall(sc_num, ..)` with `got` user arguments is a KNOWN cross-target shape, not an
+# arity mismatch: the Linux x86_64 arity table below cannot see which peer a wrapper belongs
+# to. Split out of _PARSE_FACTOR_IMPL (6.6.12) so the target gate on the kill shape costs that
+# body no global reference.
+fn _sc_arity_skip(sc_num, got): i64 {
+    # Skip the warning when this is the cross-arch
+    # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
+    # flags, mode) — 4 user args instead of open()'s 3.
+    # Source: arch-conditional wrappers in
+    # lib/syscalls_*_linux.cyr and src/frontend/lex/lex.cyr
+    # keep both open()/openat() shapes for cross-arch
+    # source compatibility; the dead branch on the
+    # running arch is not a bug. Open() is never called
+    # legitimately with 4 user args, so the structural
+    # match is unambiguous.
+    var skip_warn = 0;
+    if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
+    # v5.8.54: same cross-arch number-reuse pattern as
+    # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
+    # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
+    # args: clock_id + timespec_ptr — `syscall(113, 1,
+    # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
+    # Surfaced by `src/backend/aarch64/fixup.cyr`'s
+    # `_prof_clock_ns()` helper; warning fired on every
+    # aarch64 cross-build. setuid is never legitimately
+    # called with 2 user args, so the structural match
+    # is unambiguous (same logic as the SYS_OPEN skip).
+    if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+    # 6.6.10: Darwin's kill is kill(pid, sig, posix). lib's sys_kill passes
+    # posix = 0 explicitly on macOS (a stale third register made kill(-pgid)
+    # answer EPERM or ESRCH at random), and this Linux table then warned on
+    # every x86-macOS build. Linux kill never takes 3 user args, so the
+    # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
+    # ⛔ 6.6.12: DARWIN ONLY. The skip had no target check, so a wrong 3-arg kill compiled
+    # SILENTLY on x86-Linux from 6.6.10 on (6.6.9 warned). PE never prints this arity warning
+    # (its unrouted-number warning names the call, unchanged), and arm64-macOS never reaches
+    # here (_AARCH64_BACKEND).
+    if (_TARGET_MACHO == 1) { if (sc_num == 62) { if (got == 3) { skip_warn = 1; } } }
+    # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
+    # collide with Linux numbers at different arities (agnos
+    # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
+    # read=0/3-args; ...). This arity table is Linux-only, so
+    # it false-positives on every agnos syscall;
+    # lib/syscalls_x86_64_agnos.cyr is the authority.
+    if (_TARGET_AGNOS == 1) { skip_warn = 1; }
+    return skip_warn;
+}
+
+# `_SYSX_MEANT(n)` — the x86_64 name of a raw number that means something else on
+# ELF-aarch64 — unless the call sits inside a native-aarch64 region (`#ifdef
+# CYRIUS_ARCH_AARCH64`, `#ifndef CYRIUS_ARCH_X86`, ...), where the number is the native one
+# by construction: the preprocessor marks those regions (PP_A64_NATIVE_AT,
+# src/frontend/lex/pp/directive.cyr). Same frame rule as tests/gates/platform/
+# raw_syscall_literals_routed.sh applies to lib/. The table is a `return 0` stub off the
+# aarch64 backend, so the scan runs only where a warning would otherwise print.
+# CHANGELOG [6.6.12]
+fn _sysx_meant_here(S, n): i64 {
+    var m = _SYSX_MEANT(n);
+    if (m == 0) { return 0; }
+    # The call's own closing `)` (the cursor is one past it): the token after it may sit
+    # beyond the `#endif` that closes the region.
+    if (PP_A64_NATIVE_AT(S, GTOFF(S, GTI(S) - 1)) == 1) { return 0; }
+    return m;
+}

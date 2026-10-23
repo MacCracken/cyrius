@@ -1,0 +1,1214 @@
+# LEXER — pp: the passes: `#@pkgver` (PP_EMIT_PKGVER), the expansion map's write side (`_xm_*`), PP_PASS, PP_MACRO_PASS,
+# PP_IFDEF_PASS and PP_REF_PASS.
+# ================================================================
+# Split from lex/pp.cyr at 6.7.18, unchanged; lex.cyr includes lex/pp/ in source order. CHANGELOG [6.7.18]
+
+# Builds expanded source into a new buffer, then copies back.
+# v6.5.21 — turn a `#@pkgver <version>` marker into a real, source-visible
+# constant: `var CYRIUS_PKG_VERSION = "<version>";`.
+#
+# ONE line in, ONE line out. That is the whole reason this is a directive rather
+# than cbt simply prepending the `var` line: every other thing cbt prepends shifts
+# `<source>` diagnostics by one (measured at 6.5.20: `-D FOO=1` moves a line-5
+# error to :6, a one-include `[deps] stdlib` does the same), and only `#@incdir`
+# was ever compensated. Replacing the line in place costs the file map nothing.
+#
+# ⚠ The value is STRICTLY validated — `[0-9A-Za-z._+-]`, max 64. It lands inside a
+# `"..."` literal and it comes from a manifest, which is consumer-controlled input:
+# an unfiltered `"` would close the string and let a `version` field inject
+# arbitrary cyrius into the compile. Anything unexpected emits a bare newline
+# instead, so the constant is simply ABSENT and the use site fails honestly with
+# `undefined variable 'CYRIUS_PKG_VERSION'` rather than compiling something forged.
+fn PP_EMIT_PKGVER(S, out, op, ip, bl): i64 {
+    # v6.5.34 — the reference scan MOVED out (to the finished unit since 6.7.6); this function only
+    # VALIDATES the version and stashes it in `_pp_pkgver`, emitting nothing.
+    #
+    # It used to scan for the literal `CYRIUS_PKG_` right here, in the marker's own buffer
+    # — which at this moment is the ENTRY FILE's raw text, because includes have not been
+    # expanded yet. So the declaration appeared when the entry file named the symbol and
+    # was silently omitted when only an `include`d file did, which is the exact reverse of
+    # what the marker's byte-0 position suggests. Reported by agnostic wiring a `/ready`
+    # endpoint whose handler lived in `src/routes/health.cyr`:
+    #   error: undefined variable 'CYRIUS_PKG_VERSION' (missing include or enum?)
+    #
+    # ⚠ The conditional itself is NOT incidental and must survive any rework: declaring
+    # unconditionally puts an unused global plus its string data into EVERY binary built
+    # through `cyrius build`, changing the bytes of programs that never asked for the
+    # feature. `tests/gates/toolchain/auto_deps_verb_gate.sh` axis 5 catches exactly that
+    # and is right to. The fix widens what "referenced" is scanned OVER; it does not drop
+    # the test. See PP_RESOLVE_PKGVER (run by PREPROCESS, 6.7.6).
+    var p = ip + 9;
+    var n = 0;
+    var ok = 1;
+    while (p < bl) {
+        var c = load8(S + p);
+        if (c == 10) { break; }
+        if (c == 13) { break; }
+        var good = 0;
+        if (c >= 48) { if (c <= 57) { good = 1; } }
+        if (c >= 65) { if (c <= 90) { good = 1; } }
+        if (c >= 97) { if (c <= 122) { good = 1; } }
+        if (c == 46) { good = 1; }
+        if (c == 95) { good = 1; }
+        if (c == 43) { good = 1; }
+        if (c == 45) { good = 1; }
+        if (good == 0) { ok = 0; break; }
+        if (n >= 64) { ok = 0; break; }
+        store8(&_pp_pkgver + n, c);
+        n = n + 1;
+        p = p + 1;
+    }
+    if (n == 0) { ok = 0; }
+    if (ok == 0) {
+        _pp_pkgver_len = 0;
+        return op;
+    }
+    store8(&_pp_pkgver + n, 0);
+    _pp_pkgver_len = n;
+    # Emit OPTIMISTICALLY, and record the span so PREPROCESS can blank it if the
+    # finished unit turns out never to name the constant. The declaration has to be here,
+    # at the top — a global is not visible above its declaration — but whether it is wanted
+    # is not knowable until the includes are expanded.
+    _pp_pkgver_at = op;
+    op = op + PP_EMIT_STR(out, op, "var CYRIUS_PKG_VERSION = ");
+    store8(out + op, 34); op = op + 1;         # '"'
+    var i = 0;
+    while (i < n) {
+        store8(out + op, load8(&_pp_pkgver + i));
+        op = op + 1;
+        i = i + 1;
+    }
+    store8(out + op, 34); op = op + 1;         # '"'
+    store8(out + op, 59); op = op + 1;         # ';'
+    _pp_pkgver_declen = op - _pp_pkgver_at;
+    # ⚠ NO trailing newline, deliberately. Emitting one would make this a 1-for-1
+    # line REPLACEMENT, which is NOT line-neutral: cbt ADDS this marker above the
+    # user's file, so any line the marker occupies pushes every user line down by
+    # one — exactly the +N shift `-D` and `[deps] stdlib` already cause today.
+    # Emitting zero newlines merges the declaration onto the front of the user's
+    # first line, so expanded line N is user line N. Same technique as the v6.5.20
+    # `#derive` fix. Statements are `;`-terminated, so sharing the line is legal.
+    return op;
+}
+
+# v6.5.34 — decide whether the `CYRIUS_PKG_VERSION` declaration PP_EMIT_PKGVER wrote
+# optimistically should stay, now that the unit is fully expanded. v6.5.34 called it at the tail
+# of PP_PASS, where `out[0..op]` held the entry file with its top-level `include`s expanded — so a
+# file the entry includes became visible to the test (one level only: see 6.7.6 below).
+#
+# ⚠ THE DECLARATION CANNOT MOVE. A global is NOT visible above its declaration in cyrius:
+#     fn f(): i64 { return XYZ; }  var _r = f();  var XYZ = 7;
+#     → error: undefined variable 'XYZ'
+# The v6.5.33 attempt appended it after expansion on the issue file's recorded (and wrong)
+# claim that forward globals resolve, and could never have worked. So the declaration stays
+# where it must be — at the top — and this pass BLANKS it to spaces when unwanted. Same byte
+# count, so no line and no column moves, and whitespace emits no code.
+#
+# ⚠ Scanning for the 11-byte prefix `CYRIUS_PKG_` rather than the full name is deliberate
+# and unchanged from v6.5.21: a false positive costs one unused global, a false negative is
+# impossible, and the prefix is distinctive enough that neither happens in practice.
+#
+# ⛔ 6.7.6 — RUN ON THE FINISHED UNIT (PREPROCESS, after the macro pass). It ran at the tail of
+# PP_PASS, which expands only the ENTRY's includes — an included file's own `include` lines are
+# expanded later by PP_IFDEF_PASS — so a file two levels down that named the constant was not in
+# the buffer yet, the declaration was blanked, and the build failed with `undefined variable
+# 'CYRIUS_PKG_VERSION'` (filed by agnostic, 2026-10-07). The declaration's offset survives the
+# later passes (only the `#@file` marker line precedes it, copied through verbatim); it is
+# re-checked before blanking, and a declaration not found where it was written is kept — an unused
+# global, the safe direction.
+fn PP_RESOLVE_PKGVER(out, op): i64 {
+    if (_pp_pkgver_len == 0) { return op; }
+    if (_pp_pkgver_declen == 0) { return op; }
+    if (PP_PKGVER_AT(out, op, _pp_pkgver_at) == 0) { return op; }
+    # Scan the FULLY EXPANDED unit — this is the whole fix. The v6.5.21 scan ran inside
+    # PP_EMIT_PKGVER, whose buffer at that moment is the ENTRY FILE's raw text, includes
+    # not yet expanded. So the constant resolved when the entry file named it and failed
+    # when only an `include`d file did — the exact reverse of what the byte-0 marker
+    # position suggests. Reported by agnostic against a `/ready` handler in
+    # `src/routes/health.cyr`.
+    #
+    # ⚠ SKIP THE DECLARATION'S OWN BYTES. It contains the very prefix being searched for,
+    # so scanning the whole buffer would match itself and every build would keep the global
+    # — silently restoring the unconditional behaviour axis 5 of auto_deps_verb_gate.sh
+    # exists to forbid, while looking like it still had a test.
+    var declo = _pp_pkgver_at;
+    var dechi = _pp_pkgver_at + _pp_pkgver_declen;
+    var sp = 0;
+    var seen = 0;
+    while (sp + 11 <= op) {
+        if (sp >= declo && sp < dechi) { sp = dechi; continue; }
+        if (load8(out + sp) == 67) {
+            if (load8(out + sp + 1) == 89 && load8(out + sp + 2) == 82 && load8(out + sp + 3) == 73 && load8(out + sp + 4) == 85 && load8(out + sp + 5) == 83 && load8(out + sp + 6) == 95 && load8(out + sp + 7) == 80 && load8(out + sp + 8) == 75 && load8(out + sp + 9) == 71 && load8(out + sp + 10) == 95) {
+                seen = 1;
+                break;
+            }
+        }
+        sp = sp + 1;
+    }
+    if (seen == 1) { return op; }
+    # Not referenced: blank the declaration to spaces. Same byte count, so no line and no
+    # column moves, and whitespace emits no code — the produced binary is byte-identical to
+    # a build that never saw the marker, which is what axis 5 measures.
+    var b = declo;
+    while (b < dechi) {
+        store8(out + b, 32);
+        b = b + 1;
+    }
+    _pp_pkgver_len = 0;
+    return op;
+}
+
+# 1 when `out[at..]` still begins with the declaration PP_EMIT_PKGVER wrote there (6.7.6).
+fn PP_PKGVER_AT(out, op, at): i64 {
+    var w = "var CYRIUS_PKG_VERSION = ";
+    var i = 0;
+    while (load8(w + i) != 0) {
+        if (at + i >= op) { return 0; }
+        if (load8(out + at + i) != load8(w + i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# 6.7.17 — the expansion map's write side (its read side and the record layout: `_err_col`, util.cyr). PP_PASS starts
+# it (`_xm_reset`); each pass that rewrites the buffer opens with `_xm_begin`, translates the records it inherits as it
+# copies (`_xm_adv`, at its byte copy: a record whose first byte is copied moves to that byte's output offset; one
+# consumed by a directive or an expansion is gone), adds its own in-line expansions (`_xm_add`: a `#derive`'s generated
+# fns, a macro call), and closes with `_xm_end`, which merges the two. CHANGELOG [6.7.17]
+fn _xm_reset(): i64 {
+    _xm_n = 0;
+    _xm_nb = 0;
+    _xm_tn = 0;
+    _xm_c = 0;
+    _xm_next = 0x7FFFFFFFFFFF;
+    return 0;
+}
+fn _xm_begin(): i64 {
+    _xm_c = 0;
+    _xm_nb = 0;
+    _xm_next = 0x7FFFFFFFFFFF;
+    if (_xm_n > 0) { _xm_next = L64(_xm); }
+    return 0;
+}
+# The pass copies input byte `ip` to output offset `op` (`skip` 0), or drops it (`skip` nonzero: a skipped #ifdef arm).
+fn _xm_adv(ip, op, skip): i64 {
+    while (_xm_c < _xm_n) {
+        var e = _xm + _xm_c * 48;
+        var o = L64(e);
+        if (o > ip) { break; }
+        S64(e + 32, o);
+        S64(e + 40, L64(e + 8));
+        if (o == ip) { if (skip == 0) { S64(e, op); } else { S64(e, 0 - 1); } }
+        else { S64(e, 0 - 1); }
+        _xm_c = _xm_c + 1;
+    }
+    _xm_next = 0x7FFFFFFFFFFF;
+    if (_xm_c < _xm_n) { _xm_next = L64(_xm + _xm_c * 48); }
+    return 0;
+}
+# An in-line expansion: output [oo, oo + ol) replaced input [ii, ii + il), whose text is at `src`. Inside an expansion
+# a record already holds (a macro call in a derive's generated fns), that record grows by the difference instead.
+fn _xm_add(oo, ol, ii, il, src): i64 {
+    if (_xm_c > 0) {
+        var e = _xm + (_xm_c - 1) * 48;
+        if (L64(e) >= 0) {
+            var io = L64(e + 32);
+            var iend = io + L64(e + 40);
+            if (ii >= io) { if (ii < iend) { if (ii + il <= iend) {
+                        S64(e + 8, L64(e + 8) + ol - il);
+                        return 0;
+                    } } }
+        }
+    }
+    if (_xm_nb >= _xm_bcap) {
+        var nc = _xm_bcap * 2;
+        if (nc < 64) { nc = 64; }
+        var nb = alloc(nc * 48);
+        if (nb == 0) { return 0; }
+        var i = 0;
+        while (i < _xm_nb * 48) { S64(nb + i, L64(_xm_b + i)); i = i + 8; }
+        _xm_b = nb;
+        _xm_bcap = nc;
+    }
+    if (_xm_tn + il > _xm_tcap) {
+        var tc = _xm_tcap * 2 + il;
+        if (tc < 4096) { tc = 4096; }
+        var nt = alloc(tc);
+        if (nt == 0) { return 0; }
+        var j = 0;
+        while (j < _xm_tn) { store8(nt + j, load8(_xm_tb + j)); j = j + 1; }
+        _xm_tb = nt;
+        _xm_tcap = tc;
+    }
+    var k = 0;
+    while (k < il) { store8(_xm_tb + _xm_tn + k, load8(src + k)); k = k + 1; }
+    var r = _xm_b + _xm_nb * 48;
+    S64(r, oo);
+    S64(r + 8, ol);
+    S64(r + 16, il);
+    S64(r + 24, _xm_tn);
+    _xm_tn = _xm_tn + il;
+    _xm_nb = _xm_nb + 1;
+    return 0;
+}
+# The pass's end: the inherited records it never reached are gone; the live ones and its own, merged by offset.
+fn _xm_end(): i64 {
+    _xm_next = 0x7FFFFFFFFFFF;
+    var n = _xm_n + _xm_nb;
+    if (n == 0) { return 0; }
+    if (n > _xm_cap) {
+        var na = alloc(n * 2 * 48);
+        if (na == 0) { _xm_n = 0; _xm_nb = 0; return 0; }
+        var i = 0;
+        while (i < _xm_n * 48) { S64(na + i, L64(_xm + i)); i = i + 8; }
+        _xm = na;
+        _xm_cap = n * 2;
+    }
+    # live inherited records (a translated offset; those past `_xm_c` were never reached) packed in place
+    var w = 0;
+    var a = 0;
+    while (a < _xm_n) {
+        var e = _xm + a * 48;
+        if (a < _xm_c) { if (L64(e) >= 0) {
+                if (w != a) { var q = 0; while (q < 48) { S64(_xm + w * 48 + q, L64(e + q)); q = q + 8; } }
+                w = w + 1;
+            } }
+        a = a + 1;
+    }
+    # merged from the back into the table, the new records after the live ones
+    var ia = w - 1;
+    var ib = _xm_nb - 1;
+    var o = w + _xm_nb - 1;
+    while (ib >= 0) {
+        var src = _xm_b + ib * 48;
+        if (ia >= 0) { if (L64(_xm + ia * 48) > L64(src)) { src = _xm + ia * 48; ia = ia - 1; } else { ib = ib - 1; } }
+        else { ib = ib - 1; }
+        var q2 = 0;
+        while (q2 < 48) { S64(_xm + o * 48 + q2, L64(src + q2)); q2 = q2 + 8; }
+        o = o - 1;
+    }
+    _xm_n = w + _xm_nb;
+    _xm_nb = 0;
+    _xm_c = 0;
+    return 0;
+}
+
+fn PP_PASS(S): i64 {
+    _xm_reset();   # 6.7.17: the expansion map starts here (`_xm`, util.cyr)
+    var bl = GBL(S);
+    var out = S + 0x459D000;
+    var op = 0;
+    var ip = 0;
+    var bol = 1;
+    var skip_depth = 0;
+    # v5.6.1: pp_depth tracks the index into the per-level state stack
+    # at S+0x197F10 (64-byte cap, one byte per nesting level — enforced
+    # by PP_PUSH_LEVEL since 6.6.20, unchecked before). Shared
+    # with skip_depth: skip_depth == number of stack entries with
+    # state != 0. See the directive handler comments below for the
+    # state machine.
+    var pp_depth = 0;
+    var had_include = 0;
+    # Emit an initial `#@file "<source>"` marker so the main source is
+    # ALWAYS covered by the file map — even if no includes fire. Fixes
+    # bote feedback item 6 where a parse error in main source with no
+    # preceding includes fell through to the raw preprocessed line number.
+    # v6.5.3 — through PP_FMARK, so this carries a base like every other marker.
+    # Hand-rolled bytes here meant no base field, which FM_BUILD reads as 0 -> 1.
+    # Correct for THIS one (the main source really does start at line 1), but it was
+    # the same hand-rolling in the one-shot below (deleted at v6.5.3) that silently
+    # defeated the resume-line fix.
+    op = PP_FMARK(S, out, op, "<source>", 1);
+    # v6.5.19 — DROP a leading `#@incdir <dir>` line. PP_SCAN_INCDIR only READS it; it
+    # was then copied through as an ordinary `#` comment and occupied an expanded line
+    # the source did not have, so `<source>` numbering ran one line late for every file
+    # `cyrius build`/`check`/`lint` materialised with the marker (i.e. every source with
+    # a directory component). Setting the bias here rather than reading _pp_incdir_len
+    # is deliberate: a marker REJECTED by PP_SCAN_INCDIR's path guards still occupied its
+    # line, so the line count and the marker's validity are different questions.
+    if (bl >= 9) {
+        if (load8(S + _SRCB) == 35 && load8(S + _SRCB + 1) == 64 && load8(S + _SRCB + 2) == 105 && load8(S + _SRCB + 3) == 110 && load8(S + _SRCB + 4) == 99 && load8(S + _SRCB + 5) == 100 && load8(S + _SRCB + 6) == 105 && load8(S + _SRCB + 7) == 114 && load8(S + _SRCB + 8) == 32) {
+            ip = PP_SKIPLINE(S + _SRCB, ip, bl);
+            _pp_srcline_bias = 1;
+        }
+    }
+    # v6.5.21 — `#@pkgver <version>`, accepted at byte 0 or on the line directly
+    # after `#@incdir` (cbt emits both, incdir first — that one is byte-0-ONLY and
+    # its writer is guarded by "Nothing may be emitted above this line").
+    # No `_pp_srcline_bias` bump here: PP_EMIT_PKGVER writes a replacement line,
+    # so the expanded stream keeps the same line count as the source.
+    if (bl - ip >= 10) {
+        if (load8(S + _SRCB + ip) == 35 && load8(S + _SRCB + ip + 1) == 64 && load8(S + _SRCB + ip + 2) == 112 && load8(S + _SRCB + ip + 3) == 107 && load8(S + _SRCB + ip + 4) == 103 && load8(S + _SRCB + ip + 5) == 118 && load8(S + _SRCB + ip + 6) == 101 && load8(S + _SRCB + ip + 7) == 114 && load8(S + _SRCB + ip + 8) == 32) {
+            op = PP_EMIT_PKGVER(S + _SRCB, out, op, ip, bl);
+            ip = PP_SKIPLINE(S + _SRCB, ip, bl);
+        }
+    }
+    # v6.6.6 — `lst` is the PP_LEXST state; `in_string` is derived from it each
+    # byte. See PP_LEXST for why the state now CROSSES a newline. CHANGELOG [6.6.6]
+    var lst = 0;
+    # v5.8.40 — string-literal awareness. `in_string` flips on
+    # unescaped `"`; `escape_next` suppresses the toggle for the
+    # byte immediately following `\` while inside a string. The
+    # directive-detection block below gates on `in_string == 0`
+    # so a string literal containing `include "..."` (or any other
+    # directive prefix) doesn't get mistaken for a real directive.
+    # Mirrors the cyrlint v5.7.36 string-literal fix.
+    # v5.9.34 — `in_comment` added (vyakarana 1.0.2 fix); v6.6.6 folded both it
+    # and `escape_next` into PP_LEXST's `lst`.
+    var in_string = 0;
+    var open0 = 0;   # 6.6.20: the opener of the outermost open block, for _pp_unclosed
+    while (ip < bl) {
+        var c = load8(S + _SRCB + ip);
+        var handled = 0;
+        # Preprocessor directives at start of line. `dip` lets
+        # `#`-prefixed directives tolerate leading whitespace
+        # (cyrfmt indents `#ifdef` inside function bodies); ISINCLUDE
+        # stays at `ip` so `    include = 0;` remains an expression,
+        # not a directive. v5.8.40 — also gated on `in_string == 0`
+        # so directive prefixes inside string literals aren't
+        # processed.
+        var dip = PP_SKIP_WS(S + _SRCB, ip, bl);
+        var d0 = pp_depth;
+        if (bol == 1 && in_string == 0) {
+            if (ISDEFINE(S + _SRCB, dip, bl) == 1) {
+                if (skip_depth == 0) {
+                    # Check for macro with args: #define NAME(
+                    # 6.6.20: the name follows a RUN of blanks and ends at a tab too — with
+                    # `#define FOO<TAB>bar(1)` this walked past the tab, found the `(` and stored
+                    # a function-like macro named `FOO<TAB>bar`. See PP_SEP.
+                    var dp = PP_SEP(S + _SRCB, dip + 8);
+                    var dname = dp;
+                    var is_macro = 0;
+                    while (dp < bl) {
+                        var dc = load8(S + _SRCB + dp);
+                        if (dc == 40) { is_macro = 1; break; }
+                        if (PP_DBLANK(dc) == 1) { break; }
+                        if (dc == 10) { break; }
+                        dp = dp + 1;
+                    }
+                    if (is_macro == 1) {
+                        # Store macro inline: copy line text to storage
+                        var msi = PP_MACRO_SLOT(S, dip, dname);
+                        if (msi >= 0) {
+                            var mip = dname;
+                            store64(S + 0x192000 + msi * 8, PP_HASH_ID(S + _SRCB, mip));
+                            store64(S + 0x192080 + msi * 8, _pp_macro_text_pos);
+                            var mdst = S + 0x193000 + _pp_macro_text_pos;
+                            var mlen = 0;
+                            var mcp = mip;
+                            # ⛔ v6.5.45 (the define-body copy overflow bug) — THIS COPY WAS UNBOUNDED. The loop ran to
+                            # end-of-line with no check on `mlen` or on the ACCUMULATING
+                            # `_pp_macro_text_pos`, writing straight out of the macro text pool
+                            # at S+0x193000. The pool's free headroom runs to S+0x197000
+                            # (0x193400 is FREED since v6.1.40; the next LIVE writer is
+                            # 0x197000), i.e. 16 KB shared across all 16 macros — so a single
+                            # long `#define` body, or several ordinary ones in sequence, walked
+                            # into live compiler state. Silent: no diagnostic, no crash, a
+                            # wrong compile. Same class as the include filename-capture overflow bug.
+                            # ⚠ The guard is on the DESTINATION OFFSET, not on this macro's
+                            # length, because the position accumulates across macros — bounding
+                            # `mlen` alone would still overrun on the sixteenth #define.
+                            var mcap = 16384;
+                            while (mcp < bl) {
+                                if (load8(S + _SRCB + mcp) == 10) { break; }
+                                if (_pp_macro_text_pos + mlen + 1 >= mcap) { PP_MACRO_TEXT_FULL(); }
+                                store8(mdst + mlen, load8(S + _SRCB + mcp));
+                                mlen = mlen + 1;
+                                mcp = mcp + 1;
+                            }
+                            store8(mdst + mlen, 0);
+                            store64(S + 0x192100 + msi * 8, mlen);
+                            _pp_macro_text_pos = _pp_macro_text_pos + mlen + 1;
+                            _pp_macro_count = _pp_macro_count + 1;
+                        }
+                        ip = PP_SKIPLINE(S + _SRCB, ip, bl);
+                    } else {
+                        PP_DEFINE(S, S + _SRCB, dip + 8);
+                        ip = PP_SKIPLINE(S + _SRCB, ip, bl);
+                    }
+                } else {
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl);
+                }
+                # v6.5.19 — a consumed directive line still OCCUPIED a source line.
+                # Emit a blank line in its place so the expanded stream stays 1:1 with
+                # the source and FM_LOOKUP's span arithmetic stays exact. All three
+                # arms above consume exactly one line, so one newline covers them.
+                store8(out + op, 10); op = op + 1;
+                bol = 1; handled = 1;
+            }
+            # #ifdef / #ifndef / #ifplat / #if (v5.6.1 state-stack
+            # rewrite). Per-level state lives at S+0x197F10[pp_depth],
+            # one byte per level, cap 64 levels (PP_PUSH_LEVEL). Encoding:
+            #   0 = EMITTING    — branch emits; outer emits
+            #   1 = SEARCHING   — branch skips, no true match yet; outer emits
+            #   2 = DONE        — true branch already taken; skip rest
+            #   3 = OUTER_SKIP  — outer was skipping on entry; stays skip
+            # Emit iff skip_depth == 0, which tracks (count of levels
+            # with state != 0). Push-site logic below is identical
+            # across the four ISIF* variants — only the cond-eval
+            # callee differs.
+            if (handled == 0) { if (ISIFDEF(S + _SRCB, dip, bl) == 1) {
+                    var _s = 3;  # default: OUTER_SKIP
+                    if (skip_depth == 0) {
+                        if (PP_DEFINED(S, S + _SRCB, dip + 7) == 1) { _s = 0; }
+                        else { _s = 1; }
+                    }
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
+                    if (_s != 0) { skip_depth = skip_depth + 1; }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                } }
+            if (handled == 0) { if (ISIFNDEF(S + _SRCB, dip, bl) == 1) {
+                    var _s = 3;
+                    if (skip_depth == 0) {
+                        if (PP_DEFINED(S, S + _SRCB, dip + 8) == 0) { _s = 0; }
+                        else { _s = 1; }
+                    }
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
+                    if (_s != 0) { skip_depth = skip_depth + 1; }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                } }
+            # #ifplat PLAT (v5.4.19) — sugar for #ifdef CYRIUS_ARCH_<UPPER>.
+            # Paired with ISENDPLAT below. (ISIF wants a blank at byte 3, so
+            # "#ifp..." can never match it; the order is not load-bearing.)
+            if (handled == 0) { if (ISIFPLAT(S + _SRCB, dip, bl) == 1) {
+                    var _s = 3;
+                    if (skip_depth == 0) {
+                        if (PP_IFPLAT_MATCH(S, S + _SRCB, dip + 8) == 1) { _s = 0; }
+                        else { _s = 1; }
+                    }
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
+                    if (_s != 0) { skip_depth = skip_depth + 1; }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 2 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                } }
+            if (handled == 0) { if (ISIF(S + _SRCB, dip, bl) == 1) {
+                    var _s = 3;
+                    if (skip_depth == 0) {
+                        if (PP_EVAL_IF(S, S + _SRCB, dip + 4) == 1) { _s = 0; }
+                        else { _s = 1; }
+                    }
+                    pp_depth = PP_PUSH_LEVEL(S, S + _SRCB, dip, pp_depth, _s);
+                    if (_s != 0) { skip_depth = skip_depth + 1; }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                } }
+            # #else (v5.6.1) — flip current level's state.
+            #   0 → 2 (was emit; done-skip now)           skip_depth++
+            #   1 → 0 (was search; else body emits)       skip_depth--
+            #   2 → 2 no-op (already done)
+            #   3 → 3 no-op (outer skipping)
+            # 6.6.20: an unbalanced #else / #elif / #endif / #endplat (pp_depth == 0)
+            # is REPORTED — see _pp_stray. It used to be ignored silently.
+            if (handled == 0) { if (ISELSE(S + _SRCB, dip, bl) == 1) {
+                    if (pp_depth > 0) {
+                        var _s = load8(S + 0x197F10 + pp_depth - 1);
+                        if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
+                        elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
+                    } else { _pp_stray(S, S + _SRCB, dip, 0); }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 0, pp_depth - 1, out, op); bol = 1; handled = 1;
+                } }
+            # #elif COND (v5.6.1) — transition like #else for states 0/2/3
+            # but state 1 evaluates COND: if true, flip 1→0 (emit now);
+            # if false, stay 1 (keep searching for a later #elif/#else).
+            if (handled == 0) { if (ISELIF(S + _SRCB, dip, bl) == 1) {
+                    if (pp_depth > 0) {
+                        var _s = load8(S + 0x197F10 + pp_depth - 1);
+                        if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
+                        elif (_s == 1) {
+                            if (PP_EVAL_IF(S, S + _SRCB, dip + 6) == 1) {
+                                store8(S + 0x197F10 + pp_depth - 1, 0);
+                                skip_depth = skip_depth - 1;
+                            }
+                        }
+                    } else { _pp_stray(S, S + _SRCB, dip, 1); }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 1, pp_depth - 1, out, op); bol = 1; handled = 1;
+                } }
+            # v6.5.24 — `#@srcline`: set the `<source>` line bias from THIS marker's own
+            # position, so every cbt prepend above it stops shifting diagnostics. See
+            # ISSRCLINE for why this is a position marker rather than a count.
+            #
+            # `_pp_lineno_at` is 1-based, so a marker on raw line L means the entry file's
+            # line 1 is raw line L+1, and `PP_REANCHOR_SRC`'s `raw_line - bias` yields the
+            # user's own numbering exactly when bias == L. Assigned ABSOLUTELY, which also
+            # SUBSUMES the `#@incdir` bias of 1 set above — L already counts that line.
+            #
+            # ⚠ HONOUR-ONCE (`_pp_srcline_seen`). A hostile include could contain the
+            # marker text; accepting a second one would let it re-point line attribution.
+            # Worst case is still only wrong line numbers — it carries no filename and
+            # cannot open a file span, unlike the `#@file` hole v6.5.21 closed — but
+            # first-one-wins costs one flag and keeps cbt's marker authoritative.
+            if (handled == 0) { if (ISSRCLINE(S + _SRCB, dip, bl) == 1) {
+                    if (_pp_srcline_seen == 0) {
+                        _pp_srcline_bias = _pp_lineno_at(S, S + _SRCB, dip);
+                        _pp_srcline_seen = 1;
+                        # ⭐ RE-ANCHOR HERE, don't just set the bias. Setting `bias` alone
+                        # does nothing for the common case: the bias is only consumed by
+                        # PP_REANCHOR_SRC when an include RETURNS, and cbt's prepended
+                        # `include` lines all sit ABOVE this marker — so the last reanchor
+                        # has already happened by the time the marker is read, with the old
+                        # bias, and nothing recomputes it. Measured while building this:
+                        # bias-only reported the RAW line (8) instead of the user's (3).
+                        # Declaring the span outright — "what follows is <source> line 1" —
+                        # is what actually moves the numbering. Costs ONE map entry per
+                        # compile, which the 1024-entry cap absorbs (that cap is why
+                        # v6.5.19 pads #ifdef blocks instead of marking them).
+                        op = PP_REANCHOR(S, out, op, "<source>", 1);
+                    }
+                    # The bias assignment above still matters for what comes AFTER: a user
+                    # `include` inside the entry file re-anchors on return via
+                    # PP_REANCHOR_SRC, which needs raw→user in the bias. L subsumes the
+                    # `#@incdir` bias of 1 set before the loop — L already counts that line.
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); bol = 1; handled = 1;
+                } }
+            if (handled == 0) { if (ISENDIF(S + _SRCB, dip, bl) == 1) {
+                    if (pp_depth > 0) {
+                        var _s = load8(S + 0x197F10 + pp_depth - 1);
+                        if (_s != 0) { skip_depth = skip_depth - 1; }
+                        pp_depth = pp_depth - 1;
+                    } else { _pp_stray(S, S + _SRCB, dip, 2); }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
+                } }
+            # #endplat — semantically identical to #endif, visually pairs
+            # with #ifplat. Must come after ISENDIF because "#endp" would
+            # match "#end" prefix but we only want ISENDPLAT catching it.
+            if (handled == 0) { if (ISENDPLAT(S + _SRCB, dip, bl) == 1) {
+                    if (pp_depth > 0) {
+                        var _s = load8(S + 0x197F10 + pp_depth - 1);
+                        if (_s != 0) { skip_depth = skip_depth - 1; }
+                        pp_depth = pp_depth - 1;
+                    } else { _pp_stray(S, S + _SRCB, dip, 3); }
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
+                } }
+            # v6.5.20 — `#derive` is now LINE-EXACT and carries NO marker. v6.5.19 had it
+            # re-anchor here, because the expansion added lines and could not be padded;
+            # that made everything AFTER a derive exact but nothing INSIDE it (a linear
+            # `expanded - start + base` cannot describe a span that stretches in the
+            # middle, so a diagnostic in the struct stayed +1 and a SYNTHESIZED fn landed
+            # in the generated block past the struct). The handlers now emit the whole
+            # generated block on the struct's closing-`}` line and pad the consumed
+            # directive lines, so the construct occupies exactly the source lines it
+            # replaced — no marker, and one less entry per derive against the 1024-entry
+            # file-map cap. See PP_PARSE_STRUCT_DEF and `_pp_flatten`.
+            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(S + _SRCB, dip, bl) == 1) {
+                        ip = PP_DERIVE_SERIALIZE(S, S + _SRCB, dip, bl, out, op);
+                        op = load64(S + 0x197008);
+                        bol = 1; handled = 1;
+                    } } }
+            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(S + _SRCB, dip, bl) == 1) {
+                        ip = PP_DERIVE_DESER(S, S + _SRCB, dip, bl, out, op);
+                        op = load64(S + 0x197008);
+                        bol = 1; handled = 1;
+                    } } }
+            if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(S + _SRCB, dip, bl) == 1) {
+                        ip = PP_DERIVE_ACCESSORS(S, S + _SRCB, dip, bl, out, op);
+                        op = load64(S + 0x197008);
+                        bol = 1; handled = 1;
+                    } } }
+            if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(S + _SRCB, ip, bl) == 1) {
+                        # v6.6.6 — the quote is checked BEFORE `ip` moves. See
+                        # PP_INCLUDE_NEEDS_QUOTE for why the old order lost the bytes.
+                        if (load8(S + _SRCB + ip + 8) != 34) { PP_INCLUDE_NEEDS_QUOTE(); }
+                        ip = ip + 8;
+                        if (load8(S + _SRCB + ip) == 34) {
+                            ip = ip + 1;
+                            var fname = S + 0x190400;
+                            var fi = 0;
+                            var fgo = 1;
+                            while (fgo == 1) {
+                                if (ip >= bl) { fgo = 0; }
+                                if (fgo == 1) {
+                                    var fc = load8(S + _SRCB + ip);
+                                    if (fc == 34) { ip = ip + 1; fgo = 0; }
+                                    else { if (fi >= 767) { PP_FNAME_TOO_LONG(fname, fi, "include"); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
+                                }
+                            }
+                            store8(fname + fi, 0);
+                            PP_INCLUDE_TAIL(S, S + _SRCB, ip, bl, fname, fi);   # 6.7.17 (D29)
+                            var sgo = 1;
+                            while (sgo == 1) {
+                                if (ip >= bl) { sgo = 0; }
+                                if (sgo == 1) { if (load8(S + _SRCB + ip) == 10) { ip = ip + 1; sgo = 0; } else { ip = ip + 1; } }
+                            }
+                            # Include-once: skip if already included
+                            if (PP_ALREADY_INCLUDED(S, fname) == 0) {
+                                PP_MARK_INCLUDED(S, fname);
+                                op = PP_FMARK(S, out, op, fname, 1);
+                                var nr = READFILE(fname, out + op, 25165824 - op);
+                                if (nr < 0) { PP_INCLUDE_OPEN_FAIL(fname); }
+                                # v6.5.24 — bare-metal forbidden-module check: RECORD only.
+                                # Scanning the bytes just read means no file is opened
+                                # twice. The decision cannot be made here — kernel_mode is
+                                # still 0 during preprocessing (see the reporting site at
+                                # the end of PARSE_PROG in parse/prog.cyr for why).
+                                if (PP_IS_HOST_ONLY(out + op, nr) == 1) { PP_NOTE_HOST_ONLY(fname); }
+                                # v6.6.6 (the file-marker forge (private visibility) bug) — an include is READFILE'd
+                                # STRAIGHT into
+                                # `out`, so these bytes never pass the copy loop below and
+                                # could forge a `#@file` marker. See PP_NEUT_FMARK.
+                                PP_NEUT_FMARK(out + op, nr);
+                                op = op + nr;
+                                # v6.5.0 Phase 1 — RESUME marker. Without this the
+                                # enclosing file's remaining text inherits the INCLUDED
+                                # file's identity, because FM_BUILD derives each span as
+                                # the gap to the NEXT marker. That made `private`
+                                # mis-scope in BOTH directions in cycc's own build
+                                # (lib/alloc.cyr and lib/atomic.cyr shared an id;
+                                # src/frontend/lex/lex.cyr split across two), and it is also
+                                # a live DX bug — diagnostics reported the wrong file for
+                                # anything after an include.
+                                # PP_PASS only ever expands TOP-LEVEL includes (an
+                                # included file's own `include` lines are copied verbatim
+                                # into `out` and expanded later by PP_IFDEF_PASS), so the
+                                # file being resumed here is always the main source.
+                                op = PP_REANCHOR_SRC(S, out, op, ip);
+                                had_include = 1;
+                            } else {
+                                # v6.5.3 — include-once SKIP still consumes the directive
+                                # LINE, so the enclosing file's numbering advances by one
+                                # with no marker to record it. Without this the base set by
+                                # an earlier RESUME goes stale by one per skipped include
+                                # and every later diagnostic drifts. Re-anchor with a RESUME
+                                # marker; there is no ENTER to pair it with, which is fine —
+                                # it only re-states where the parent now is.
+                                op = PP_REANCHOR_SRC(S, out, op, ip);
+                            }
+                        }
+                        bol = 1; handled = 1;
+                    } } }
+        }
+        if (d0 == 0) { if (pp_depth > 0) { open0 = dip; } }
+        # Default: copy byte to output (if not skipping)
+        if (handled == 0) {
+            if (skip_depth == 0) {
+                # v6.5.3 — the `source_marked` one-shot USED to emit a bare
+                # `#@file "<source>"` here, before the first non-directive line after an
+                # include. It was an earlier, partial attempt at this same problem and it
+                # is now actively harmful: it fired at the very point the RESUME marker
+                # had just correctly marked, adding a SECOND entry for the same place
+                # carrying no base — so FM_LOOKUP matched the base-less one and restarted
+                # the main source's numbering at 1. That is precisely why the first
+                # attempt at this fix "changed nothing": the fix was right and this
+                # overwrote it. Deleted rather than patched — RESUME markers cover every
+                # case it covered, and the issue's own note said to fold it into whatever
+                # landed rather than leave two mechanisms.
+                # v6.5.21 neutralised a forged `#@file` marker HERE, inline in this
+                # copy loop, by inserting a space after the `#`. v6.6.6 moved that to
+                # PP_NEUT_PASS, which rewrites the whole raw source ONCE before any pass
+                # runs: this loop is not the only route from source to `out` — a stored
+                # macro body and the `#derive` tail copies bypass it entirely, and so
+                # does an included file — so a guard shaped like the loop could only ever
+                # cover one of four routes. See PP_NEUT_FMARK for the measured escape.
+                # CHANGELOG [6.6.6]
+                store8(out + op, c); op = op + 1;
+            }
+            # v6.5.19 — a SKIPPED body line still occupied a source line. Keep its
+            # newline so the expanded stream stays 1:1 with the source; the rest of the
+            # line is dropped as before. Without this, `#ifdef`-excluded bodies shrank
+            # the stream inside a `#@file` span and every later diagnostic in that file
+            # reported a line too small (agnosai: 30 warnings, uniformly true − 55).
+            elif (c == 10) { store8(out + op, 10); op = op + 1; }
+            # v5.8.40 — string-literal state machine; v5.9.34 made it
+            # comment-aware (the vyakarana 1.0.2 fix: a `\"` inside a comment in
+            # `src/grammar.cyr` was read as a string opener, `in_string` stayed 1
+            # for the rest of the buffer and every later `include` failed this
+            # bol+in_string gate and was passed through as raw text).
+            #
+            # v6.6.6 — the hand-inlined copy of that machine, and its
+            # reset-at-every-newline, are gone; PP_LEXST is the one copy and its
+            # string state CROSSES lines. See PP_LEXST for the full rationale.
+            # CHANGELOG [6.6.6]
+            if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
+            in_string = PP_LEXST_INSTR(lst);
+            ip = ip + 1;
+            if (c == 10) { bol = 1; } else { bol = 0; }
+        }
+    }
+    if (pp_depth > 0) { _pp_unclosed(S, S + _SRCB, open0, bl); }   # 6.6.20
+    # Check preprocess output size. Buffer is 24 MB at 0x459D000 (v6.5.39; 8 MB
+    # from v5.11.33, 2 MB at 0x44A000 before that).
+    if (op > 25165824) {
+        _ew("error: expanded source exceeds 24MB (", 37);
+        PRNUM(op);
+        _ew(" bytes)\n", 8);
+        _die(1);
+    }
+    # v6.5.34 — the `#@pkgver` declaration was written optimistically at the marker. ⛔ 6.7.6:
+    # it is NOT resolved here — this pass expands only the TOP-LEVEL includes, so a file two
+    # levels down was invisible to the scan and the declaration was blanked under it. See
+    # PP_RESOLVE_PKGVER, now run by PREPROCESS once every pass is done.
+    # No copy-back — data stays at S+0x459D000.
+    # PP_IFDEF_PASS reads from 0x459D000 (via its tmp copy) and writes back there.
+    _xm_end();   # 6.7.17
+    SBL(S, op);
+    return had_include;
+}
+
+# Separate pass: expand macro invocations after all includes/ifdefs are resolved
+fn PP_MACRO_PASS(S): i64 {
+    if (_pp_macro_count == 0) { return 0; }
+    var bl = GBL(S);
+    PP_SYNC_SRCB(S, bl);   # 6.6.6: this pass's input is the PREVIOUS pass's output (see there)
+    # Input: the previous pass's output, synced into S + _SRCB above; output to 0x459D000
+    var out = S + 0x459D000;
+    var op = 0;
+    var ip = 0;
+    # v6.6.6 — the PP_LEXST state, advanced on every byte this pass COPIES. Bytes
+    # consumed by an expansion are skipped: they are an invocation, i.e. code, so the
+    # state is unchanged by them. See PP_MACRO_START. CHANGELOG [6.6.6]
+    var lst = 0;
+    _xm_begin();   # 6.7.17: the expansion map (`_xm`)
+    while (ip < bl) {
+        var c = load8(S + _SRCB + ip);
+        var expanded = 0;
+        # v6.6.6 — an upper-case byte is not enough: it must START an identifier and
+        # must not be inside a string literal. See PP_MACRO_START.
+        if (PP_MACRO_START(S, ip, lst) == 1) {
+            var mmi = PP_FIND_MACRO(S, ip);
+            if (mmi >= 0) {
+                # v6.6.6 — the `(` probe (was an inline loop here) plus the
+                # same-line bound that keeps an invocation opened inside a `#`
+                # comment from swallowing the code after it. See PP_MACRO_CALLABLE.
+                if (PP_MACRO_CALLABLE(S, ip, bl, lst) == 1) {
+                    var xi = ip;
+                    var xo = op;
+                    ip = PP_EXPAND(S, mmi, ip, bl, out, op);
+                    op = load64(S + 0x190700);
+                    _xm_add(xo, op - xo, xi, ip - xi, S + _SRCB + xi);   # 6.7.17: the call's source text
+                    expanded = 1;
+                }
+            }
+        }
+        # ⚠ v6.6.6 — this block carried a 17-line comment headed "v6.5.21 — NEUTRALISE
+        # a user-authored `#@file` marker", describing in detail a guard that WAS NEVER
+        # HERE: the copy below is a plain byte copy and always was. The real v6.5.21
+        # guard lived in PP_PASS, and a reader taking this comment at face value would
+        # conclude the macro-expansion route was covered when it was not — PP_EXPAND
+        # writes a stored `#define` body into `out` in this pass, and a body spelling
+        # `#@file "secret.cyr" 1` forged a marker through it. Neutralisation now happens
+        # at the two ENTRY points (PP_NEUT_PASS over the raw source, and each include's
+        # READFILE), which covers this pass without a guard in it. CHANGELOG [6.6.6]
+        if (expanded == 0) {
+            if (ip >= _xm_next) { _xm_adv(ip, op, 0); }   # 6.7.17
+            store8(out + op, c);
+            op = op + 1;
+            if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
+            ip = ip + 1;
+        }
+    }
+    # No copy-back — output stays at S+0x459D000. LEX reads from there.
+    _xm_end();   # 6.7.17
+    SBL(S, op);
+    return 0;
+}
+
+# PP_IFDEF_PASS's 24 MB temp copy of the source — the preprocess_out cap (v6.5.39; it was
+# sized for the 8 MB cap at v5.11.33, and 2 MB at 0x44A000 before that).
+# mmap flags differ between Linux and macOS:
+#   Linux: MAP_PRIVATE(2) | MAP_ANONYMOUS(0x20) = 0x22 = 34
+#   macOS: MAP_PRIVATE(2) | MAP_ANON(0x1000)    = 0x1002
+# We try Linux flags first (runs fine on Linux host), fall back to
+# macOS flags if the kernel rejects them (EINVAL on macOS — BSD raw
+# SVC returns -errno now that ESYSCALL emits `csneg x0, x0, x0, cc`).
+# agnos has no Linux mmap: its 9 is mkdir and its 11 mount, so the agnos cycc_cx failed every
+# compile here (the pass copied the source to the error value: SIGSEGV). Its mmap is 27 (the
+# length alone; zero-filled; 0 = failure), as main_cx.cyr's arena and lib/alloc_agnos.cyr map.
+# A map that failed is refused by name on every target, never written through. CHANGELOG [6.7.16]
+fn _pp_tmp_map(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var tmp = syscall(27, 25165824);
+    #else
+    var tmp = syscall(9, 0, 25165824, 3, 34, 0 - 1, 0);
+    if (tmp < 0) {
+        tmp = syscall(9, 0, 25165824, 3, 0x1002, 0 - 1, 0);
+    }
+    #endif
+    if (tmp < 4096) {
+        _ew("error: cannot map the preprocessor's 24 MiB source buffer\n", 58);
+        _die(1);
+    }
+    return tmp;
+}
+
+# Second pass: evaluate #ifdef/#define/#endif only (no includes).
+# Processes conditional blocks in already-included content.
+#
+# v3.6.5: reads source from the preprocess buffer (S+0x459D000) directly via
+# `src` pointer. Only a bounded prefix is copied to S + _SRCB for helper functions
+# (ISDEFINE, PP_DEFINE, PP_SKIPLINE, etc.) which read via S+pos and also
+# access heap state at S+0x190800. Directives only appear in the first few KB
+# of source (stdlib headers), so the 256KB copy always covers them.
+#
+# Output writes go to S+0x459D000 (in-place: op <= ip always, safe because
+# ifdef filtering only removes lines). NO copy-back to S + _SRCB at the end —
+# LEX reads from S+0x459D000, and PP_MACRO_PASS short-circuits for programs
+# without macros.
+#
+# This eliminates the Bug #35 family of copy-back overflows that corrupted
+# compiler state (BL/CP at 0x18C100+) for programs >256KB of expanded source.
+fn PP_IFDEF_PASS(S): i64 {
+    # A temp buffer (_pp_tmp_map) holds the source. This avoided copying it to
+    # input_buf when that sat at S+0 and overflowed into heap state for programs >256KB
+    # (Bug #35); input_buf is 24 MB at S + _SRCB since v6.5.39.
+    # The temp buffer is separate memory that the helpers can safely read from.
+    var tmp = _pp_tmp_map();
+    # v4.8.4-alpha3: fixpoint loop so nested includes in files expanded
+    # during this pass (e.g. registry.cyr → hashmap.cyr → fnptr.cyr)
+    # are themselves scanned for further includes. Without the loop only
+    # one level of nesting was resolved, leaving literal `include "..."`
+    # directives in the parser input. Loop terminates when a pass does
+    # no include expansion (had_new_include==0); bounded at 16 iters
+    # as a safety net against pathological depth.
+    var iter = 0;
+    var had_new_include = 1;
+    while (had_new_include == 1) {
+        if (iter >= 16) {
+            _ew("error: preprocessor include nesting exceeded 16 levels\n", 55);
+            _die(1);
+        }
+        had_new_include = 0;
+        var bl = GBL(S);
+        # Copy the preprocessed source to the temp buffer
+        var ci = 0;
+        while (ci < bl) { store8(tmp + ci, load8(S + 0x459D000 + ci)); ci = ci + 1; }
+        # Redirect S-based reads to the temp buffer by copying back to S + _SRCB
+        # for helpers (PP_DEFINE, PP_DEFINED, PP_EVAL_IF, PP_DERIVE_*,
+        # PP_SKIPLINE) that take `S` as a base pointer and touch other
+        # regions of S too (e.g. `S+0x190800` for the #ifdef flag table).
+        # The 1048576 bound dates from input_buf at S+0, which ended at 0x100000 below
+        # compiler state at 0x18C100; S + _SRCB holds 24 MB since v6.5.39, so the bound
+        # now only limits the copy's cost. v4.8.4 capped at 262144 which
+        # made ISINCLUDE / ISDEFINE / etc. blind to directives past the
+        # 256 KB mark whenever `bl > 1048576` (bote 2.5.0 tripped exactly
+        # this on ~525 KB preprocessed source — `lib/assert.cyr:3`
+        # directive at offset ~525000 slipped through unexpanded).
+        # Directive DETECTION (IS*) now reads from `tmp` directly so it
+        # sees the full buffer regardless of where directives land.
+        var cap = bl;
+        if (cap > 1048576) { cap = 1048576; }
+        ci = 0;
+        while (ci < cap) { store8(S + _SRCB + ci, load8(tmp + ci)); ci = ci + 1; }
+        var out = S + 0x459D000;
+        var op = 0;
+        var ip = 0;
+        var bol = 1;
+        var skip_depth = 0;
+        # v5.6.1: shared state stack with PP_PASS (see there for state
+        # machine). Both passes must agree on the encoding since the same
+        # pp_depth / skip_depth invariant holds; we RESET the stack at the
+        # top of each pass rather than carry state across, because each
+        # pass walks the full source independently.
+        var pp_depth = 0;
+        # v5.8.40 — string-literal awareness mirroring PP_PASS;
+        # see there for the state-machine rationale. The fixpoint
+        # loop scans expanded source again with its own ISINCLUDE
+        # check, so the same string-literal blindness applies and
+        # gets the same in_string gate.
+        # v5.9.34 — `in_comment` added (vyakarana 1.0.2 fix); v6.6.6 folded it
+        # and `escape_next` into PP_LEXST's `lst`, whose string state crosses
+        # lines. CHANGELOG [6.6.6]
+        var lst = 0;
+        var in_string = 0;
+        var open0 = 0;   # 6.6.20: see PP_PASS
+        _xm_begin();   # 6.7.17: the expansion map (`_xm`), translated per iteration
+        while (ip < bl) {
+            var c = load8(tmp + ip);
+            var handled = 0;
+            # `dip` lets `#`-prefixed directives tolerate leading
+            # whitespace — see PP_PASS for the rationale. v5.8.40 —
+            # also gated on `in_string == 0`.
+            var dip = PP_SKIP_WS(tmp, ip, bl);
+            var d0 = pp_depth;
+            if (bol == 1 && in_string == 0) {
+                # v6.5.0 Phase 1 — remember which file we are copying FROM, so a nested
+                # include below can emit a correct RESUME marker. This only OBSERVES the
+                # marker; it is still copied through verbatim by the default path, so the
+                # emitted stream is unchanged by this branch.
+                if (load8(tmp + dip) == 35) {
+                    if (load8(tmp + dip + 1) == 64) { _pp_note_marker(tmp, dip, bl); }
+                }
+                if (ISDEFINE(tmp, dip, bl) == 1) {
+                    if (skip_depth == 0) { PP_DEFINE_INCLUDED(S, tmp, dip); }
+                    ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                }
+                # 6.7.8 (C2-7): a `#bounds` line in an included file — refused, consumed (_bnd_inc_line).
+                if (handled == 0) {
+                    var bip = _bnd_inc_line(S, tmp, ip, dip, bl);
+                    if (bip >= 0) { ip = bip; store8(out + op, 10); op = op + 1; bol = 1; handled = 1; }
+                }
+                if (handled == 0) { if (ISIFDEF(tmp, dip, bl) == 1) {
+                        var _s = 3;
+                        if (skip_depth == 0) {
+                            if (PP_DEFINED(S, tmp, dip + 7) == 1) { _s = 0; }
+                            else { _s = 1; }
+                        }
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
+                        if (_s != 0) { skip_depth = skip_depth + 1; }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                    } }
+                if (handled == 0) { if (ISIFNDEF(tmp, dip, bl) == 1) {
+                        var _s = 3;
+                        if (skip_depth == 0) {
+                            if (PP_DEFINED(S, tmp, dip + 8) == 0) { _s = 0; }
+                            else { _s = 1; }
+                        }
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
+                        if (_s != 0) { skip_depth = skip_depth + 1; }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                    } }
+                # #ifplat / #endplat in an INCLUDED file (6.6.20). This pass had no arm for
+                # either, so both were comments here: both arms of an included `#ifplat`
+                # compiled, and once a stray `#endif` became an error, an included
+                # `#ifplat x86` ... `#endif` (the guide's own spelling) was refused. Mirrors
+                # PP_PASS's arms, with `tmp` as the base (PP_IFPLAT_MATCH reads the uncapped
+                # buffer, as PP_DEFINED does). CHANGELOG [6.6.20]
+                if (handled == 0) { if (ISIFPLAT(tmp, dip, bl) == 1) {
+                        var _s = 3;
+                        if (skip_depth == 0) {
+                            if (PP_IFPLAT_MATCH(S, tmp, dip + 8) == 1) { _s = 0; }
+                            else { _s = 1; }
+                        }
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);   # 6.6.20: the 64-level cap here too
+                        if (_s != 0) { skip_depth = skip_depth + 1; }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 2 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                    } }
+                if (handled == 0) { if (ISIF(tmp, dip, bl) == 1) {
+                        var _s = 3;
+                        if (skip_depth == 0) {
+                            if (PP_EVAL_IF(S, tmp, dip + 4) == 1) { _s = 0; }
+                            else { _s = 1; }
+                        }
+                        pp_depth = PP_PUSH_LEVEL(S, tmp, dip, pp_depth, _s);
+                        if (_s != 0) { skip_depth = skip_depth + 1; }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
+                    } }
+                if (handled == 0) { if (ISELSE(tmp, dip, bl) == 1) {
+                        if (pp_depth > 0) {
+                            var _s = load8(S + 0x197F10 + pp_depth - 1);
+                            if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
+                            elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
+                        } else { _pp_stray(S, tmp, dip, 0); }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 0, pp_depth - 1, out, op); bol = 1; handled = 1;
+                    } }
+                if (handled == 0) { if (ISELIF(tmp, dip, bl) == 1) {
+                        if (pp_depth > 0) {
+                            var _s = load8(S + 0x197F10 + pp_depth - 1);
+                            if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
+                            elif (_s == 1) {
+                                if (PP_EVAL_IF(S, tmp, dip + 6) == 1) {
+                                    store8(S + 0x197F10 + pp_depth - 1, 0);
+                                    skip_depth = skip_depth - 1;
+                                }
+                            }
+                        } else { _pp_stray(S, tmp, dip, 1); }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 1, pp_depth - 1, out, op); bol = 1; handled = 1;
+                    } }
+                if (handled == 0) { if (ISENDIF(tmp, dip, bl) == 1) {
+                        if (pp_depth > 0) {
+                            var _s = load8(S + 0x197F10 + pp_depth - 1);
+                            if (_s != 0) { skip_depth = skip_depth - 1; }
+                            pp_depth = pp_depth - 1;
+                        } else { _pp_stray(S, tmp, dip, 2); }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
+                    } }
+                if (handled == 0) { if (ISENDPLAT(tmp, dip, bl) == 1) {
+                        if (pp_depth > 0) {
+                            var _s = load8(S + 0x197F10 + pp_depth - 1);
+                            if (_s != 0) { skip_depth = skip_depth - 1; }
+                            pp_depth = pp_depth - 1;
+                        } else { _pp_stray(S, tmp, dip, 3); }
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
+                    } }
+                # v6.5.20 — line-exact, no marker; see the PP_PASS twin. This is the pass
+                # that sees derives inside INCLUDED files, which is where all 93 of
+                # agnosai's live (kavach alone turned 3 source lines into 112).
+                if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE(tmp, dip, bl) == 1) {
+                            ip = PP_DERIVE_SERIALIZE(S, tmp, dip, bl, out, op);
+                            op = load64(S + 0x197008);
+                            bol = 1; handled = 1;
+                        } } }
+                if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_DE(tmp, dip, bl) == 1) {
+                            ip = PP_DERIVE_DESER(S, tmp, dip, bl, out, op);
+                            op = load64(S + 0x197008);
+                            bol = 1; handled = 1;
+                        } } }
+                if (handled == 0) { if (skip_depth == 0) { if (ISDERIVE_ACC(tmp, dip, bl) == 1) {
+                            ip = PP_DERIVE_ACCESSORS(S, tmp, dip, bl, out, op);
+                            op = load64(S + 0x197008);
+                            bol = 1; handled = 1;
+                        } } }
+                # 6.7.17 (the user's D100): a #ref line in an included file, expanded as the entry's are — column 0,
+                # the quote right after `#ref ` (PP_REF_PASS's test), outside a skipped #ifdef arm.
+                if (handled == 0) { if (skip_depth == 0) { if (ISREF(tmp, ip, bl) == 1) { if (load8(tmp + ip + 5) == 34) {
+                                _pp_ref_op = op;
+                                ip = PP_REF_LINE(S, tmp, ip + 6, bl, _pp_ref_buf(), out);
+                                op = _pp_ref_op;
+                                bol = 1; handled = 1;
+                            } } } }
+                if (handled == 0) { if (skip_depth == 0) { if (ISINCLUDE(tmp, ip, bl) == 1) {
+                            # v6.6.6 — same pre-check as PP_PASS's include site.
+                            if (load8(tmp + ip + 8) != 34) { PP_INCLUDE_NEEDS_QUOTE(); }
+                            ip = ip + 8;
+                            if (load8(tmp + ip) == 34) {
+                                ip = ip + 1;
+                                var fname = S + 0x190400;
+                                var fi = 0;
+                                var fgo = 1;
+                                while (fgo == 1) {
+                                    if (ip >= bl) { fgo = 0; }
+                                    if (fgo == 1) {
+                                        var fc = load8(tmp + ip);
+                                        if (fc == 34) { ip = ip + 1; fgo = 0; }
+                                        else { if (fi >= 767) { PP_FNAME_TOO_LONG(fname, fi, "include"); } store8(fname + fi, fc); fi = fi + 1; ip = ip + 1; }
+                                    }
+                                }
+                                store8(fname + fi, 0);
+                                PP_INCLUDE_TAIL(S, tmp, ip, bl, fname, fi);   # 6.7.17 (D29)
+                                var sgo = 1;
+                                while (sgo == 1) {
+                                    if (ip >= bl) { sgo = 0; }
+                                    if (sgo == 1) { if (load8(tmp + ip) == 10) { ip = ip + 1; sgo = 0; } else { ip = ip + 1; } }
+                                }
+                                if (PP_ALREADY_INCLUDED(S, fname) == 0) {
+                                    PP_MARK_INCLUDED(S, fname);
+                                    op = PP_FMARK(S, out, op, fname, 1);
+                                    var nr = READFILE(fname, out + op, 25165824 - op);
+                                    if (nr < 0) { PP_INCLUDE_OPEN_FAIL(fname); }
+                                    # v6.6.6 (the file-marker forge (private visibility) bug) — same READFILE-into-`out`
+                                    # route as
+                                    # PP_PASS's include site. See PP_NEUT_FMARK.
+                                    PP_NEUT_FMARK(out + op, nr);
+                                    op = op + nr;
+                                    # v6.5.0 Phase 1 — RESUME marker (see PP_PASS). This
+                                    # pass expands the NESTED includes, so the file being
+                                    # resumed is whichever `#@file` was last seen in the
+                                    # INPUT stream, tracked in `_pp_curfile` as this pass
+                                    # copies markers through. Falls back to "<source>"
+                                    # when no marker has been seen yet.
+                                    op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
+                                    had_new_include = 1;
+                                } else {
+                                    # v6.5.3 — see the PP_PASS skip path: an include-once
+                                    # SKIP still consumes its directive line, so re-anchor.
+                                    op = PP_REANCHOR_CUR(S, out, op, tmp, ip);
+                                }
+                            }
+                            bol = 1; handled = 1;
+                        } } }
+            }
+            if (d0 == 0) { if (pp_depth > 0) { open0 = dip; } }
+            if (handled == 0) {
+                if (ip >= _xm_next) { _xm_adv(ip, op, skip_depth); }   # 6.7.17
+                if (skip_depth == 0) { store8(out + op, c); op = op + 1; }
+                # v6.5.19 — keep a skipped line's newline; see the PP_PASS twin.
+                elif (c == 10) { store8(out + op, 10); op = op + 1; }
+                # v5.8.40 — string-literal state machine; mirrors PP_PASS.
+                # v6.6.6 — both copies are now PP_LEXST, and the string state is
+                # no longer reset at every newline. CHANGELOG [6.6.6]
+                if (load8(tmp + ip) == 35) { lst = PP_LEXST_AT(tmp, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(tmp + ip)); }
+                in_string = PP_LEXST_INSTR(lst);
+                ip = ip + 1;
+                if (c == 10) { bol = 1; } else { bol = 0; }
+            }
+        }
+        if (pp_depth > 0) { _pp_unclosed(S, tmp, open0, bl); }   # 6.6.20
+        # Size guard on the fixpoint output. v4.8.4 added the original
+        # 1 MB cap after bote reported silent overrun → downstream
+        # corruption (`lib/assert.cyr:3: expected '=', got string`).
+        # v5.6.40 doubled to 2 MB when patra 1.8.3 + stdlib crossed
+        # 1 MB. v5.11.33 raised to 8 MB after sit v0.7.6 hit 2,099,593
+        # bytes (2,441 over the 2 MB cap) on a stock sandhi-folded
+        # [deps].stdlib — the cap was sized pre-sandhi-fold and didn't
+        # grow with the canonical service-boundary consumer shape.
+        # See CHANGELOG [5.11.33]. v6.5.39 raised it to 24 MB, the
+        # preprocess_out cap.
+        if (op > 25165824) {
+            _ew("error: expanded source exceeds 24MB (", 37);
+            PRNUM(op);
+            _ew(" bytes) in PP_IFDEF_PASS iter=", 30);
+            PRNUM(iter);
+            _ew("\n", 1);
+            _die(1);
+        }
+        _xm_end();   # 6.7.17
+        SBL(S, op);
+        iter = iter + 1;
+    }
+    # No copy-back. Output stays at S+0x459D000. LEX reads from there.
+    # Free the temp buffer.
+    #ifdef CYRIUS_TARGET_AGNOS
+    syscall(28, tmp, 25165824);   # agnos munmap (its 11 is mount)
+    #else
+    syscall(11, tmp, 25165824);
+    #endif
+    return 0;
+}
+
+# Pre-pass: expand #ref directives in the raw input (S + _SRCB) into S+0x459D000, copy back
+fn PP_REF_PASS(S): i64 {
+    var bl = GBL(S);
+    var out = S + 0x459D000;
+    var op = 0;
+    var ip = 0;
+    var found = 0;
+    var bol = 1;
+    # v6.6.6 — this pass had NO lexical state at all, so a line that starts
+    # inside a multi-line string and begins `#ref "` was executed as a real
+    # `#ref` directive: `var s = "A\n#ref ";` died with
+    # `error: cannot open #ref file: ;`. Same root cause as its two sibling
+    # passes — see PP_LEXST. CHANGELOG [6.6.6]
+    var lst = 0;
+    var in_string = 0;
+    while (ip < bl) {
+        var _refc = load8(S + _SRCB + ip);
+        var _rhandled = 0;
+        if (bol == 1 && in_string == 0) {
+            if (ISREF(S + _SRCB, ip, bl) == 1) {
+                # ⛔ v6.6.6 — THE QUOTE IS CHECKED FIRST, AND ONLY THEN IS ANYTHING
+                # CONSUMED. `_rhandled = 1; ip = ip + 5;` used to run on the PREDICATE
+                # match alone, so a line that merely began `#ref ` and was an ordinary
+                # COMMENT — `#ref counting is fine` — had its first five bytes DELETED
+                # and the rest emitted as code. It is invisible until the file also holds
+                # a real `#ref "x"`, because only that sets `found` and triggers the
+                # copy-back; with one present, `var A = K;` after such a comment dies with
+                # `expected '=', got identifier 'is'`. A `#` opens a comment, so the only
+                # correct thing to do with a non-directive `#ref ` line is to leave it
+                # alone. Same shape as the two include sites fixed in the same bite —
+                # match, consume, bail, bytes gone. CHANGELOG [6.6.6]
+                if (load8(S + _SRCB + ip + 5) == 34) {
+                    _rhandled = 1;
+                    _pp_ref_op = op;
+                    ip = PP_REF_LINE(S, S + _SRCB, ip + 6, bl, S + 0x191800, out);   # 6.7.17: one reader, both sites
+                    op = _pp_ref_op;
+                    found = 1;
+                    bol = 1;
+                }
+            }
+        }
+        if (_rhandled == 0) {
+            store8(out + op, _refc);
+            op = op + 1;
+            if (load8(S + _SRCB + ip) == 35) { lst = PP_LEXST_AT(S + _SRCB, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(S + _SRCB + ip)); }
+            ip = ip + 1;
+            in_string = PP_LEXST_INSTR(lst);
+            if (_refc == 10) { bol = 1; } else { bol = 0; }
+        }
+    }
+    # ⛔ v6.5.39 — BOUND THE COPY-BACK. This was `while (ci < op)` with NO cap anywhere in
+    # PP_REF_PASS: unlike its two sibling passes it never checked `op` against the arena size,
+    # so a `#ref` expansion larger than the buffer wrote past `preprocess_out` into whatever
+    # followed it, and then copied the same overrun into `_SRCB`. It mattered less while the
+    # cap was 8 MB and _SRCB was the 16 MB region directly above (the overflow landed in the
+    # buffer it was copying to anyway); with preprocess_out grown to 24 MB the region above it
+    # is `fn_local_names`, so the same overrun would corrupt the per-fn local tables instead.
+    # Raising the ceiling without this would have converted a contained bug into a live one.
+    if (op > 25165824) {
+        _ew("error: #ref expansion exceeds 24MB (", 36);
+        PRNUM(op);
+        _ew(" bytes)\n", 8);
+        _die(1);
+    }
+    if (found == 1) {
+        var ci = 0;
+        while (ci < op) { store8(S + _SRCB + ci, load8(out + ci)); ci = ci + 1; }
+        SBL(S, op);
+    }
+    return 0;
+}

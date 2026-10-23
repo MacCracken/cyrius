@@ -29,7 +29,7 @@ include "src/backend/common/env.cyr"
 include "src/backend/common/tokens.cyr"
 include "src/backend/cx/emit.cyr"
 # v5.7.11: ir.cyr added at v5.6.12 (O3a IR instrumentation) but
-# never to main_cx.cyr; parse/expr.cyr references IR_RAW_EMIT.
+# never to main_cx.cyr; parse/expr/ references IR_RAW_EMIT.
 # Same shape as v5.6.32's main_aarch64_native.cyr fix.
 include "src/common/ir.cyr"
 include "src/frontend/lex/lex.cyr"
@@ -223,7 +223,7 @@ _fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so loa
 # cx's bytecode buffer: _CX_CODE_CAP (4 MiB) off-heap, fixed — backend/cx/emit.cyr EB refuses
 # cp >= _CX_CODE_CAP by name. It was the 512 KiB arena region at 0x54A000. CHANGELOG [6.7.12]
 _cx_code_base = alloc(_CX_CODE_CAP);
-# Not a code buffer on cx: the SHARED break/continue chain (parse.cyr _PARSE_BREAK,
+# Not a code buffer on cx: the SHARED break/continue chain (parse/stmt.cyr _PARSE_BREAK,
 # parse/ctrl.cyr) keeps its rel32 links at _codebuf_base + the code offset — an 8-byte
 # read-modify-write at an instruction start below the cap, hence _CX_CODE_CAP + 8. It was the
 # arena region at 0x41A000. `_codebuf_cap` below is read only by the x86/aarch64 EB, which cx
@@ -244,7 +244,7 @@ _var_cap = 8192;
 _vsgn_base = alloc(1048576 * 8);   # v6.4.23 signed-global sign-ext: max-sized (var-grow cap) so it never grows → NO cybs-fragile grow-chain change; 8MB lazy-mapped
 _codebuf_cap = 3145728;
 # ⛔ v6.5.13 — cx never set these. `_fixup_base` stayed 0, so the SHARED
-# `ELOAD_FN_ADDR` path (parse/expr.cyr:687 `var fnaddr = _fixup_base + fc * 16`)
+# `ELOAD_FN_ADDR` path (parse/expr/factor.cyr `var fnaddr = _fixup_base + fc * 16`)
 # computed an address near NULL and SIGSEGV'd the compiler the moment cx tried to
 # record a fn-pointer fixup — which is why cx's ELOAD_FN_ADDR was a return-0 stub
 # and `&fn` silently produced 0. cx's own writers (RECFIX / ECALLFIX / the closure
@@ -445,7 +445,7 @@ while (ufi < GFCNT(S)) {
     var uidx = uraw & 0x00FFFFFFFFFFFFFF;
     if (uft == 2 || uft == 3) {
         # 6.6.16: -1 only. -2 is a name the parser already REPORTED (a refused nested fn,
-        # parse.cyr `_nested_fn_mark` — the native check's own "reported" marker); that compile
+        # parse/stmt.cyr `_nested_fn_mark` — the native check's own "reported" marker); that compile
         # has `_had_error` set and stops at the gate below without a .cyx. CHANGELOG [6.6.16]
         if (L64(_fnt_offsets + uidx * 8) == 0 - 1) {
             if (cx_undef == 0) {

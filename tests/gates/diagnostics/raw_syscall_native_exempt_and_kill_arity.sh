@@ -3,13 +3,13 @@
 # diagnostics that were wrong in opposite directions.
 #
 # AXIS 1 — a CORRECT native aarch64 number is not flagged. The ELF-aarch64 raw-literal warning
-#   (v6.5.51; `_sysx_meant_here`, src/frontend/parse/expr.cyr) fired on `syscall(8, ..)` /
+#   (v6.5.51; `_sysx_meant_here`, src/frontend/parse/expr/postfix.cyr) fired on `syscall(8, ..)` /
 #   `syscall(291, ..)` INSIDE `#ifdef CYRIUS_ARCH_AARCH64`, where 8 IS getxattr and 291 IS
 #   statx — "Use SYS_LSEEK" was the wrong advice. Naming the number through an enum constant
 #   still warned (the constant folds to the same literal), so there was no way to say "native"
 #   (kriya's k_statx / its getxattr site). The parser runs after the #ifdef is gone, so the
 #   preprocessor now marks the regions (`#@a+` / `#@a-`, `_pp_a64_open`,
-#   src/frontend/lex/pp.cyr) and the warning skips a call inside one. Native = the defined side
+#   src/frontend/lex/pp/directive.cyr) and the warning skips a call inside one. Native = the defined side
 #   of CYRIUS_ARCH_AARCH64 or the undefined side of CYRIUS_ARCH_X86, the frame rule
 #   tests/gates/platform/raw_syscall_literals_routed.sh applies to lib/. Rows: `#ifdef`, the
 #   enum spelling, `#ifndef CYRIUS_ARCH_X86`, the `#else` of `#ifdef CYRIUS_ARCH_X86`,

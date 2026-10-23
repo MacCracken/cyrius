@@ -71,7 +71,7 @@
 #         a method that EXISTS, for a call to q.nosuch())
 #   M8  remove SFDS in pass 1                             -> axis 3 fwd_generic red, the crossos
 #         tcyr fails to COMPILE, and var_then_fn/arr_then_fn red (the authority keys on SFDS)
-#   M9  remove the _spec < 0 guard in parse/expr.cyr      -> was axis 3 struct_targ red ("undefined
+#   M9  remove the _spec < 0 guard in parse/expr/postfix.cyr      -> was axis 3 struct_targ red ("undefined
 #         function 'enum'", a read of _fnt_names at index -3); since 6.7.1 no struct type
 #         argument reaches it (the -3 refusal is gone), so this mutation is no longer observable
 #   M11 method args pushed without the callee mask        -> the crossos tcyr SIGSEGVs (139)
@@ -283,7 +283,7 @@ ok() {
 #
 # ⚠ 6.6.16 PORTED THE FIXTURE. Until then it nested `inner_secret` inside another fn's
 # body — the other shape pass 1 cannot stamp, measured accepted + SIGSEGV (rc 139) on 6.6.4.
-# 6.6.16 refuses a fn inside a fn body by name (parse.cyr `_refuse_nested_fn`), so that
+# 6.6.16 refuses a fn inside a fn body by name (parse/stmt.cyr `_refuse_nested_fn`), so that
 # fixture would now stop at the nested-fn error and its control would not build. A fn inside
 # a top-level block is the LEGAL shape with the same pass-1 blind spot. `public` must precede
 # the first top-level statement, so the public fns come first.

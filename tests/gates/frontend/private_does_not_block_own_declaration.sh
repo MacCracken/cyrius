@@ -19,7 +19,7 @@
 # look a name up while REGISTERING it. Running the visibility check for a DECLARATION-time
 # lookup turned the answer into an accusation. Fix: `_findvar_core` is pure resolution;
 # `FINDVAR` is that plus the check; declaration-time lookups call the core
-# (src/frontend/parse/types.cyr).
+# (src/frontend/parse/types/lookup.cyr).
 #
 # ⚠ THE FIRST CUT OF THIS GATE MISSED TWO OF THE FOUR, AND THE REASON IS IN ITS OWN ROW SET.
 # Every accepting row it shipped with declared the name with a `= NUM ;` literal, which is

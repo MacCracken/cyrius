@@ -40,7 +40,7 @@ var _tok_start = 0;
 # ⭐ PP_REANCHOR ALREADY SAID SO AND ENFORCED IT — `# A marker must own its line.` followed
 # by `if (op > 0) { if (load8(out + op - 1) != 10) { store8(out + op, 10); op = op + 1; } }`.
 # The producer has required this since v6.5.19; FM_BUILD simply never checked what
-# PP_FMARK already guarantees. (Same shape as ISELSE in lex/pp.cyr: an invariant written
+# PP_FMARK already guarantees. (Same shape as ISELSE in lex/pp/directive.cyr: an invariant written
 # down and enforced at one site while its siblings went without.) CHANGELOG [6.6.6]
 fn FM_ATBOL(buf, pos): i64 {
     if (pos == 0) { return 1; }
@@ -221,7 +221,7 @@ fn FM_FILEID(S, expanded_line): i64 {
 # filename scratch at S + 0x721000) of the span holding `expanded_line`, or -1 when no span does
 # (an empty map, or a line past an overflowed one); `_fm_site_line` receives the line within that
 # file (the expanded line itself when -1). The bounds-checked mode's site names its file and line
-# this way (parse/expr.cyr `_bck_file`); FM_LOOKUP prints the same answer.
+# this way (parse/expr/subscript.cyr `_bck_file`); FM_LOOKUP prints the same answer.
 var _fm_site_line = 0;
 fn FM_SITE(S, expanded_line): i64 {
     _fm_site_line = expanded_line;
@@ -980,7 +980,17 @@ fn READFILE(path, dst, maxsz): i64 {
 # Check for "#ref " directive (5 bytes: # r e f space)
 
 # v5.5.38: preprocessor (PP_*) passes + predicates extracted.
-include "src/frontend/lex/pp.cyr"
+# 6.7.18: that file (lex/pp.cyr) is split along its seams into lex/pp/, each piece moved unchanged and included
+# HERE, one after another in its old order, so the token stream, and every compiler built from it, is the same.
+# One parent, no nesting. CHANGELOG [6.7.18]
+include "src/frontend/lex/pp/directive.cyr"
+include "src/frontend/lex/pp/include.cyr"
+include "src/frontend/lex/pp/derive.cyr"
+include "src/frontend/lex/pp/serialize.cyr"
+include "src/frontend/lex/pp/accessor.cyr"
+include "src/frontend/lex/pp/macro.cyr"
+include "src/frontend/lex/pp/pass.cyr"
+include "src/frontend/lex/pp/preprocess.cyr"
 
 # The `#` attribute words (LEXATTRWORD, LEXATTRBOUND, _lex_attr_is): their own pure file, so the
 # source-scanning tools include the SAME list rather than a hand copy. CHANGELOG [6.7.11]
@@ -1566,7 +1576,7 @@ fn NPOS_GUARD(S, need): i64 {
 }
 
 # ⛔ 6.7.8 — `dyn` IS A RESERVED WORD, token 173 (the checked trait object: `o: dyn Show`, the user's
-# decision 2026-10-07). It is counted here so the token fold (`_dyn_fold`, parse/types.cyr) — which
+# decision 2026-10-07). It is counted here so the token fold (`_dyn_fold`, parse/types/dyn.cyr) — which
 # turns `dyn Show` into ONE identifier token naming its struct — runs only for a unit that spells
 # it: every other program's tokens are untouched. One call from LEXID (the cybs reference ceiling).
 # CHANGELOG [6.7.8]
@@ -2750,7 +2760,7 @@ fn LEX(S): i64 {
                                                                                                                                     # Token-30 value = (pool offset << 32) | length. str_data is 2 MB (offsets and
                                                                                                                                     # lengths both need 21 bits); the old 16-bit length field OR-ed a >= 64 KB
                                                                                                                                     # literal's length INTO the offset, so the literal read from its 2nd byte.
-                                                                                                                                    # Decoders: parse/expr.cyr ESADDR, parse.cyr #assert/#pe_import, parse/fn.cyr
+                                                                                                                                    # Decoders: parse/expr/factor.cyr ESADDR, parse/builtin.cyr #assert, parse/stmt.cyr #pe_import, parse/fn/def.cyr
                                                                                                                                     # #deprecated. CHANGELOG [6.6.4]
                                                                                                                                     var eline = GCLINE(S);
                                                                                                                                     SCLINE(S, sline);
@@ -2792,7 +2802,7 @@ fn LEX(S): i64 {
     }
     _lex_eof_tok(S, bl);
     # 6.6.5 — one pass over the finished token stream to record which files declared
-    # `private`, BEFORE pass 1 stamps anything. See _PRIV_PRESCAN (src/frontend/parse/parse.cyr)
+    # `private`, BEFORE pass 1 stamps anything. See _PRIV_PRESCAN (src/frontend/parse/vis.cyr)
     # for why this cannot be done during the walk. CHANGELOG [6.6.5]
     _PRIV_PRESCAN(S);
     return 0;

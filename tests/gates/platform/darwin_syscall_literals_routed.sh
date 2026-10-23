@@ -15,7 +15,7 @@
 # ELF reach table, whose CYRIUS_TARGET_MACOS / CYRIUS_TARGET_LINUX sides mean the OPPOSITE on
 # Darwin, and it ignored the parse-time reroutes (228, 35, 1700), which have no table row at all.
 # So the verdict here comes from the Mach-O compilers' own diagnostic (`_macho_warn_unrouted` in
-# src/frontend/parse/expr.cyr, which replays each backend's rows), and each probe is compiled at
+# src/frontend/parse/expr/callee.cyr, which replays each backend's rows), and each probe is compiled at
 # the site's REAL argument count: the reroutes fire at one arity only, and until 6.6.8 the
 # diagnostic was blind to that, so `syscall(228, id)` built clean on both Macs and faulted.
 #
@@ -120,7 +120,7 @@ nfiles=$(echo "$files" | wc -l)
 
 cat > "$TMP/scan.awk" <<'AWK'
 # Emits "<num> <argc> <file>:<line>" for each literal site target T reaches.
-# Directive spellings mirror src/frontend/lex/pp.cyr exactly (one space after #ifdef/#ifndef/
+# Directive spellings mirror src/frontend/lex/pp/directive.cyr exactly (one space after #ifdef/#ifndef/
 # #ifplat/#if; a non-identifier byte after #else/#elif/#endif/#endplat; any other # line is a
 # comment) — the same rules raw_syscall_literals_routed.sh documents.
 function reach(sym, negated,   ifs, els) {

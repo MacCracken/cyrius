@@ -1,0 +1,738 @@
+# LEXER — pp: `#derive(Serialize)`: PP_DERIVE_SERIALIZE_BODY, the nested-struct scan, PP_DERIVE_SERIALIZE and
+# PP_DERIVE_DESER.
+# ================================================================
+# Split from lex/pp.cyr at 6.7.18, unchanged; lex.cyr includes lex/pp/ in source order. CHANGELOG [6.7.18]
+
+fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
+    # This body emits `T_from_json_str` (Serialize, Deserialize, any stack of them): mark the
+    # registration PP_PARSE_STRUCT_DEF just made, so PP_DNEST_SCAN calls only a decoder that exists
+    # (an accessors-only struct registers too and emits none). CHANGELOG [6.7.11]
+    store64(_pp_derive_codec + (_pp_derive_count - 1) * 8, 1);
+    var field_count = load64(S + 0x197010);
+    var cumul_off = load64(S + 0x197018);
+    # v6.5.31 — ENUM codecs. A C-like enum is an integer with names, so the codec is the
+    # name<->value table the compiler already holds; the generated code compares against the
+    # ENUM CONSTANTS THEMSELVES rather than baking in numbers, so renumbering a variant cannot
+    # desynchronise the codec from the enum.
+    #
+    # ⚖️ WIRE SHAPE: a bare NAME STRING (`"Multiply"`), settled by the maintainer 2026-08-19.
+    # It matches what ranga's hand-written codecs already emit (`pixel_format_name` returns
+    # "RGBA8"), it keeps derived structs flat — `{"fmt":"RGBA8"}` rather than
+    # `{"fmt":{"PixelFormat":"RGBA8"}}`, where the tag merely restates the field name — and it
+    # is serde's representation for unit-variant enums, which is the Rust line the ranga port
+    # is measured against. The number form was rejected as ambiguous: a JSON consumer cannot
+    # tell it from any other integer field.
+    #
+    # ⚖️ PARSE FAILURE: `Result`, also the maintainer's call — `E_from_json_str` returns
+    # `Ok(value)` or `Err(0 - 1)`, composable with `?`. This DIFFERS from the struct
+    # deserializer, which returns a raw pointer: an enum parse can genuinely fail on an
+    # unrecognised name, where a struct decode yields a zeroed struct. The generated code
+    # therefore needs `lib/result.cyr` in scope.
+    if (_pp_decl_is_enum == 1) { return PP_DERIVE_ENUM_BODY(S, out, op); }
+    # Aliases: sname=S+0x197020, names=S+0x1FC000, types=S+0x1FE000, offsets=S+0x200000
+    # v6.4.x R2 — emit the shared Vec<primitive> JSON-array decode helper(s) ONCE per
+    # compilation, only for the element kinds actually present. Each takes a byte-ptr at
+    # (or before) the array's '[' and returns a fresh vec. from_json_str + from_json
+    # (pairs) both call these; encode is inline (vec_len/vec_get). Emitted only when a
+    # Vec field exists → non-Vec derive structs stay byte-identical.
+    var _needi = 0;
+    var _needf = 0;
+    var _vqi = 0;
+    while (_vqi < field_count) {
+        var _vek = _pp_vec_elem(S, S + 0x1FE000 + _vqi * 32);
+        if (_vek == 200) { _needf = 1; }
+        if (_vek >= 8) { if (_vek <= 64) { _needi = 1; } }
+        # v6.4.x R3 — Vec<Str> (kind 201) is the only remaining unsupported element (R2
+        # added int/f64; R3 added Vec<#derive-struct> = kind 300). Reject it up front with
+        # an HONEST diagnostic rather than letting the raw "Vec<Str>" string reach
+        # `Str_to_json` (undefined → a misleading re-parse error).
+        if (_vek == 201) {
+            _ew("error: #derive Vec<Str> field not yet supported (use Vec<int>/Vec<f64>/Vec<#derive-struct>)\n", 92);
+            _die(1);
+        }
+        _vqi = _vqi + 1;
+    }
+    if (_needi == 1) { if (_pp_vecdec_int_done == 0) {
+            op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_int(bp) {\nvar v = vec_new();\nvar p = 0;\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\n");
+            op = op + PP_EMIT_STR(out, op, "var es = p;\nvar neg = 0; if (c == 45) { neg = 1; p = p + 1; }\nvar iv = 0;\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) >= 48 && load8(bp + p) <= 57) { iv = iv * 10 + load8(bp + p) - 48; p = p + 1; }\n");
+            # Forward-progress guard: a non-consumable byte (e.g. '.'/'+'/letter) that is
+            # neither ']'/NUL/ws/comma nor a digit/'-' would otherwise leave p unmoved and
+            # spin the outer loop forever (vec_push spam → allocator abort). If nothing was
+            # consumed, skip the byte + the push; malformed JSON degrades, never crashes.
+            op = op + PP_EMIT_STR(out, op, "if (p == es) { p = p + 1; } else { if (neg == 1) { iv = 0 - iv; } vec_push(v, iv); }\n}\n}\nreturn v;\n}\n");
+            _pp_vecdec_int_done = 1;
+            PP_DERIVE_FAM_ADD(4);   # 6.7.16
+        } }
+    if (_needf == 1) { if (_pp_vecdec_f64_done == 0) {
+            op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_f64(bp) {\nvar v = vec_new();\nvar p = 0;\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\nvar vs = p;\n");
+            op = op + PP_EMIT_STR(out, op, "while (1 == 1) { var fc = load8(bp + p); if ((fc >= 48 && fc <= 57) || fc == 45 || fc == 43 || fc == 46 || fc == 101 || fc == 69) { p = p + 1; } else { break; } }\n");
+            # Forward-progress guard (mirrors _cy_vecdec_int): a byte outside [0-9-+.eE] and
+            # not ']'/NUL/ws/comma (e.g. the 'n' of `null`) captures zero token chars, so
+            # skip it + the push rather than spinning the outer loop → allocator abort.
+            op = op + PP_EMIT_STR(out, op, "if (p == vs) { p = p + 1; } else { vec_push(v, bayan_f64_from_json(bp + vs)); }\n}\n}\nreturn v;\n}\n");
+            _pp_vecdec_f64_done = 1;
+            PP_DERIVE_FAM_ADD(8);   # 6.7.16
+        } }
+    if (_pp_skipval_done == 0) {
+        # v6.4.x R3 — shared JSON value-skip: from position p in bp, walk past ONE JSON
+        # value (string-aware + bracket-depth-aware) and stop AT the value's terminator —
+        # a depth-0 ',' / '}' / ']' or NUL — without consuming it (the caller's loop does).
+        # Used to skip a non-array value for a Vec<struct> field (BUG-1) and a non-object
+        # array element (R-3) so an embedded '}'/']' in a string can't derail the parse.
+        # 6.7.11: emitted for every derived struct — the scanner's nested-struct field and its
+        # unknown key skip with it (PP_DNEST_SCAN). CHANGELOG [6.7.11]
+        op = op + PP_EMIT_STR(out, op, "fn _cy_json_skipval(bp, p) {\nvar sk = 0;\nvar si = 0;\nwhile (1 == 1) {\nvar sc = load8(bp + p);\nif (sc == 0) { break; }\n");
+        op = op + PP_EMIT_STR(out, op, "if (si == 1) {\nif (sc == 92) { p = p + 1; if (load8(bp + p) != 0) { p = p + 1; } } else { if (sc == 34) { si = 0; } p = p + 1; }\n} else {\n");
+        op = op + PP_EMIT_STR(out, op, "if (sc == 34) { si = 1; p = p + 1; }\nelif (sc == 123 || sc == 91) { sk = sk + 1; p = p + 1; }\nelif (sc == 125 || sc == 93) { if (sk == 0) { break; } sk = sk - 1; p = p + 1; }\nelif (sc == 44) { if (sk == 0) { break; } p = p + 1; }\nelse { p = p + 1; }\n}\n}\nreturn p;\n}\n");
+        _pp_skipval_done = 1;
+        PP_DERIVE_FAM_ADD(16);   # 6.7.16
+    }
+    # === Emit Name_to_json (2-arg composable form) ===
+    # fn Name_to_json(ptr, sb) { ... writes to caller's sb ... }
+    # v5.9.31 (agnosys 1.1.12 follow-up): renamed from
+    # Name_to_json_sb to Name_to_json to match the canonical
+    # 2-arg API the vidya `derive_str_fields` doc + existing
+    # consumer convention (`lib/yukti.cyr device_info_to_json`)
+    # establish. Pre-fix the codegen emitted both the 2-arg
+    # Name_to_json_sb AND a 1-arg Name_to_json wrapper that
+    # built its own sb internally, which mis-routed
+    # consumer calls of the documented `Name_to_json(ptr, sb)`
+    # shape into the 1-arg path → wrapper ignored the user's
+    # sb → empty output.
+    var _svis = "";   # v6.6.4: codecs inherit the struct's `public` (see PP_DERIVE_ENUM_BODY)
+    if (_pp_decl_public == 1) { _svis = "public "; }
+    op = op + PP_EMIT_STR(out, op, _svis);
+    op = op + PP_EMIT_STR(out, op, "fn ");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, "_to_json(ptr, sb) {\n");
+    op = PP_DERIVE_EMIT_CHK(S, out, op);
+    # v6.3.40 — pre-scan for any f64 field; if present, declare a shared 80-byte
+    # format scratch the per-field f64 branch fills via bayan_f64_to_json (v6.4.69; it
+    # was fmt_float_buf). Only emitted when needed → structs with
+    # no f64 field are byte-identical to pre-v6.3.40. An f32 field (6.7.10) prints through the
+    # same scratch (widened to f64), so it counts.
+    var _has_f64 = 0;
+    var _hf = 0;
+    while (_hf < field_count) {
+        if (PP_DFIELD_FLT(S, _hf) > 0) { _has_f64 = 1; }
+        if (_pp_vec_elem(S, S + 0x1FE000 + _hf * 32) == 200) { _has_f64 = 1; }
+        _hf = _hf + 1;
+    }
+    if (_has_f64 == 1) { op = op + PP_EMIT_STR(out, op, "var _dfb[80];\n"); }
+    # For each field
+    var fi = 0;
+    while (fi < field_count) {
+        var is_first = 0;
+        if (fi == 0) { is_first = 1; }
+        # str_builder_add_cstr(sb, "{\"name\":" or ",\"name\":");
+        op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"");
+        if (is_first == 1) { store8(out + op, 123); op = op + 1; }
+        else { store8(out + op, 44); op = op + 1; }
+        # Escaped field name: \"fieldname\":
+        store8(out + op, 92); op = op + 1;
+        store8(out + op, 34); op = op + 1;
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
+        store8(out + op, 92); op = op + 1;
+        store8(out + op, 34); op = op + 1;
+        store8(out + op, 58); op = op + 1;
+        op = op + PP_EMIT_STR(out, op, "\");\n");
+        if (load8(S + 0x1FE000 + fi * 32) != 0) {
+            # Type-aware emission. Three branches:
+            #   Str         → quoted JSON string literal
+            #   i8/16/32/64 → bare JSON number via str_builder_add_int
+            #                 + width-correct load (v5.9.30; agnosys
+            #                 1.1.12 filing — pre-fix this branch
+            #                 emitted `<type>_to_json_sb(...)` which
+            #                 doesn't exist for primitives → SIGILL).
+            #   other       → nested struct (recursive _to_json_sb)
+            var is_str = 0;
+            if (load8(S + 0x1FE000 + fi * 32) == 83) {
+                if (load8(S + 0x1FE000 + fi * 32 + 1) == 116) {
+                    if (load8(S + 0x1FE000 + fi * 32 + 2) == 114) {
+                        if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) {
+                            is_str = 1;
+                        }
+                    }
+                }
+            }
+            # v6.3.40 — an f64 field: a bare JSON number through bayan_f64_to_json into the
+            # shared _dfb scratch (declared above); 6.7.10 an f32 one too, widened (PP_DFLT_SER).
+            var is_f64 = PP_DFIELD_FLT(S, fi);
+            # A builtin integer field (i8..i64, 6.7.10 u8..u32): its access width in bits, through
+            # the parser's vocabulary (PP_DFIELD_INT — one classifier for the three codecs; it was
+            # an i-only byte ladder in each, v5.9.30..v5.9.36).
+            var prim_load = PP_DFIELD_INT(S, fi);
+            var _vk = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
+            if (_pp_vec_ok(_vk) == 1) {
+                # v6.4.x R2 — Vec<int/f64> field: emit a JSON array. Null-handle guard
+                # (a never-initialized Vec field is 0 → vec_len(0) would crash). Vec
+                # slots are i64, so int elements add_int the slot directly; f64 elements
+                # go through fmt_float_buf into the shared _dfb scratch (declared above).
+                op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"[\");\nif (load64(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ") != 0) {\nvar _vh");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = load64(ptr + ");
+                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                op = op + PP_EMIT_STR(out, op, ");\nvar _vn");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = vec_len(_vh");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, ");\nvar _vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = 0;\nwhile (_vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " < _vn");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, ") {\nif (_vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " > 0) { str_builder_add_cstr(sb, \",\"); }\n");
+                if (_vk == 300) {
+                    # v6.4.x R3 — Vec<struct> element: the slot holds the element struct's
+                    # pointer; recurse into its <Name>_to_json writing to the same sb.
+                    op = op + PP_EMIT_VEC_ELEM(out, op, S + 0x1FE000 + fi * 32);
+                    op = op + PP_EMIT_STR(out, op, "_to_json(vec_get(_vh");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, ", _vi");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, "), sb);\n");
+                } else { if (_vk == 200) {
+                        op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(vec_get(_vh");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", _vi");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+                    } else {
+                        op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, vec_get(_vh");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", _vi");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, "));\n");
+                    } }
+                op = op + PP_EMIT_STR(out, op, "_vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " = _vi");
+                op = op + PP_EMIT_INT(out, op, fi);
+                op = op + PP_EMIT_STR(out, op, " + 1;\n}\n}\nstr_builder_add_cstr(sb, \"]\");\n");
+            } else { if (is_f64 > 0) {
+                    op = PP_DFLT_SER(out, op, is_f64, load64(S + 0x200000 + fi * 8));
+                } else { if (is_str == 1) {
+                        # v5.10.8 — Str field: emit RFC 8259-compliant
+                        # quoted JSON string via the `str_builder_add_json_str`
+                        # helper (lib/str.cyr). Pre-v5.10.8 the emit was
+                        # raw `str_builder_add_cstr(sb, "\""); ... bytes ...
+                        # str_builder_add_cstr(sb, "\"");` which let `"`
+                        # `\` and control chars in the source string pass
+                        # through unescaped → invalid JSON. Closes the
+                        # v5.10.7 agnosys agent follow-up "JSON escaping"
+                        # finding (kernel audit text routinely contains
+                        # `"` and embedded newlines).
+                        op = op + PP_EMIT_STR(out, op, "str_builder_add_json_str(sb, load64(ptr + ");
+                        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                        op = op + PP_EMIT_STR(out, op, "));\n");
+                    } else { if (prim_load > 0) {
+                            # Primitive integer field: bare JSON number via
+                            # str_builder_add_int + width-correct load. Mirrors
+                            # the untyped-scalar branch below (which uses load64
+                            # for raw 8-byte slots) but width-aware for narrow
+                            # types.
+                            # ⛔ 6.6.8 — SIGN-extended through PP_DLOAD_EXPR, as the getter is: a
+                            # bare loadW zero-extends, so an i8 -1 was written as 255 and the
+                            # JSON did not round-trip. A u8 / u16 / u32 field (6.7.10) is read
+                            # ZERO-extended, as `p.x` reads it (a u32 4000000000 is written so, not
+                            # -294967296). CHANGELOG [6.6.8] [6.7.10]
+                            op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, ");
+                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8),
+                              PP_DFIELD_ZX(S, fi));
+                            op = op + PP_EMIT_STR(out, op, ");\n");
+                        } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
+                            op = PP_DBOOL_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_SER(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
+                        } else {
+                            # Nested struct: use composable 2-arg form.
+                            # v5.9.31: matched the renamed top-level fn
+                            # (Name_to_json, no `_sb` suffix).
+                            op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
+                            op = op + PP_EMIT_STR(out, op, "_to_json(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", sb);\n");
+                        } } } }
+        } else {
+            # Scalar field: emit as bare integer (valid JSON number)
+            op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load64(ptr + ");
+            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+            op = op + PP_EMIT_STR(out, op, "));\n");
+        }
+        fi = fi + 1;
+    }
+    # Close 2-arg form
+    op = op + PP_EMIT_STR(out, op, "str_builder_add_cstr(sb, \"}\");\nreturn 0;\n}\n");
+    # v5.9.31: the previous 1-arg wrapper Name_to_json(ptr) →
+    # str_builder_new + Name_to_json_sb + str_builder_build was
+    # retired. It collided with the documented 2-arg
+    # Name_to_json(ptr, sb) API: a consumer call of
+    # `Name_to_json(&s, sb)` (per vidya `derive_str_fields`)
+    # silently bound to the 1-arg fn, ignored the user's sb,
+    # built into a throwaway internal sb, and returned a value
+    # the caller dropped → empty output (agnosys 1.1.12 filing).
+    # The 2-arg form above is now the canonical Name_to_json.
+    # === Also emit Name_from_json (Deserialize) ===
+    op = op + PP_EMIT_STR(out, op, _svis);
+    op = op + PP_EMIT_STR(out, op, "fn ");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, "_from_json(pairs) {\nvar ptr = alloc(");
+    op = op + PP_EMIT_INT(out, op, cumul_off);
+    op = op + PP_EMIT_STR(out, op, ");\nvar v = 0;\n");
+    fi = 0;
+    while (fi < field_count) {
+        op = op + PP_EMIT_STR(out, op, "v = bayan_json_get_by_str(pairs, str_from(\"");   # 6.7.17: bayan 1.11.0 deprecates the bare name (the same answer). CHANGELOG [6.7.17]
+        op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
+        op = op + PP_EMIT_STR(out, op, "\"));\n");
+        if (load8(S + 0x1FE000 + fi * 32) != 0) {
+            # Typed field: Str / primitive integer / nested struct.
+            var fj_str = 0;
+            if (load8(S + 0x1FE000 + fi * 32) == 83) { if (load8(S + 0x1FE000 + fi * 32 + 1) == 116) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 114) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fj_str = 1; } } } }
+            # v5.9.35: a builtin integer field takes the str_to_int + storeW path (before, every
+            # non-Str typed field was taken for a nested struct: `i64_from_json` undefined). The
+            # store truncates to the field's width. PP_DFIELD_INT, as Serialize (6.7.10: u8..u32).
+            var fj_prim = PP_DFIELD_INT(S, fi);
+            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): `v` is a Str (bayan_json_get_by_str),
+            # parsed from str_data(v) (PP_DFLT_PAIRS).
+            var fj_f64 = PP_DFIELD_FLT(S, fi);
+            var _vk_p = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
+            if (_pp_vec_ok(_vk_p) == 1) {
+                if (_vk_p == 300) {
+                    # v6.4.x R3 — Vec<struct> (pairs form): bayan_json_get_by_str truncates an
+                    # array-of-objects value at the first inner comma, so the borrowed-pointer
+                    # re-scan R2 relies on cannot safely reconstruct the objects. The pairs form
+                    # decodes a Vec<struct> field to an EMPTY vec — use <Name>_from_json_str for
+                    # the full array-of-structs decode (svara's path). (Whole-array bayan capture
+                    # is a separate bayan hardening item.)
+                    op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, ", vec_new());\n");
+                } else {
+                    # v6.4.x R2 — Vec<int/f64> field (pairs form): bayan_json_get_by_str returns the
+                    # array TEXT as a Str; re-scan it with the shared decoder, else empty vec.
+                    op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, ", _cy_vecdec_");
+                    if (_vk_p == 200) { op = op + PP_EMIT_STR(out, op, "f64"); } else { op = op + PP_EMIT_STR(out, op, "int"); }
+                    op = op + PP_EMIT_STR(out, op, "(str_data(v))); } else { store64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, ", vec_new()); }\n");
+                }
+            } else { if (fj_f64 > 0) {
+                    op = PP_DFLT_PAIRS(out, op, fj_f64, load64(S + 0x200000 + fi * 8));
+                } else { if (fj_str == 1) {
+                        # v6.3.24: `bayan_json_get_by_str(pairs, key)` returns the value **Str
+                        # directly** (bayan_json_parse builds a vec of key→val pairs where
+                        # each val is `str_new`'d), NOT a cstr and NOT a JTAG_STR value
+                        # node. The old `str_from(v)` fed that Str pointer to a cstr ctor,
+                        # storing a garbage Str → a Str field round-tripped to `"�"` (the
+                        # working serialize half masked it). NOTE: the issue's speculated
+                        # bayan_json_v_str / v_is_str fix is for the value-NODE API, which
+                        # this pairs-based parser doesn't produce — v_is_str(v) would read
+                        # a JTAG from a Str header and always fail, leaving the field 0 →
+                        # a NULL Str crashes re-serialize.
+                        # See issues/archived/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+                        # 6.7.10 (the user's decision): `v` holds the value's source bytes with its
+                        # escapes as written, so storing `v` itself (6.3.24..6.7.9, a borrow) kept
+                        # `\"` / `\n` / `\u0001` raw; the field is now a FRESH Str of the unescaped
+                        # bytes (str_json_unescape, as the scanner). CHANGELOG [6.7.10]
+                        op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
+                        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                        op = op + PP_EMIT_STR(out, op, ", str_json_unescape(str_data(v), str_len(v))); }\n");
+                    } else { if (fj_prim > 0) {
+                            op = op + PP_EMIT_STR(out, op, "if (v != 0) { store");
+                            op = op + PP_EMIT_INT(out, op, fj_prim);
+                            op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
+                        } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
+                            op = PP_DBOOL_PAIRS(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_PAIRS(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
+                        } else {
+                            op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
+                            op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
+                            op = op + PP_EMIT_STR(out, op, "_from_json(bayan_json_parse(v));\nmemcpy(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", np, ");
+                            op = op + PP_EMIT_INT(out, op, PP_DERIVE_TSZ(S + 0x1FE000 + fi * 32));
+                            op = op + PP_EMIT_STR(out, op, ");\n}\n");
+                        } } } }
+        } else {
+            op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
+            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+            op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
+        }
+        fi = fi + 1;
+    }
+    op = op + PP_EMIT_STR(out, op, "return ptr;\n}\n");
+    # === Emit Name_from_json_str (single-pass O(n) deserializer) ===
+    # Scans raw JSON string once, matching field names inline.
+    op = op + PP_EMIT_STR(out, op, _svis);
+    op = op + PP_EMIT_STR(out, op, "fn ");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    # ⛔ v6.5.37 — GUARD THE NULL, AND REFUSE INPUT THAT IS NOT AN OBJECT.
+    #
+    # TWO DEFECTS IN ONE EMITTED BODY, both filed by prani (2026-08-31) against five
+    # generated codecs at once, and neither fixable by a consumer: the body is EMITTED, so a
+    # project can only abandon the derive and hand-write every codec — precisely the
+    # duplication the derive exists to remove.
+    #
+    #   1. NULL DEREF. The first statement dereferenced `json`, so `X_from_json_str(0)`
+    #      segfaulted. Measured at 6.5.36: exit 139. Reachable from any caller passing an
+    #      unvalidated pointer, on a code path every deserializer consumer has.
+    #   2. MALFORMED INPUT SCORED AS SUCCESS. `memset(ptr, 0, N)` runs first, the scan then
+    #      matches nothing, and the zeroed struct comes back as a valid pointer — so
+    #      `X_from_json_str("not json at all")` returned NON-NULL with every field 0 and no
+    #      way for the caller to tell it from a real document. Measured: x = 0, non-null.
+    #
+    # 0 is already the convention for a failed `alloc`, so a caller that checks the return at
+    # all is unaffected, and no currently-working call changes behaviour: the only inputs that
+    # reached defect 1 crashed, and the only ones that reached defect 2 were already garbage.
+    # All 40 in-repo call sites pass well-formed JSON.
+    #
+    # ⚠ Scope deliberately stops at "is this an object?". A well-formed document with the
+    # WRONG KEYS still returns a zeroed struct — that is a schema question, not a parse one,
+    # and answering it here would break round-tripping a legitimately all-default struct.
+    op = op + PP_EMIT_STR(out, op, "_from_json_str(json) {\nif (json == 0) { return 0; }\nvar ptr = alloc(");
+    op = op + PP_EMIT_INT(out, op, cumul_off);
+    op = op + PP_EMIT_STR(out, op, ");\nmemset(ptr, 0, ");
+    op = op + PP_EMIT_INT(out, op, cumul_off);
+    op = op + PP_EMIT_STR(out, op, ");\nvar _p = 0;\nvar _neg = 0;\nvar _iv = 0;\nvar _vs = 0;\n");
+    # Skip to opening {
+    op = op + PP_EMIT_STR(out, op, "var _sawlb = 0;\nwhile (load8(json + _p) != 0) { if (load8(json + _p) == 123) { _p = _p + 1; _sawlb = 1; break; } _p = _p + 1; }\nif (_sawlb == 0) { return 0; }\n");
+    # Main parse loop: read key, match, parse value
+    op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 0) {\n");
+    # Skip whitespace and commas
+    op = op + PP_EMIT_STR(out, op, "var _c = load8(json + _p);\n");
+    op = op + PP_EMIT_STR(out, op, "if (_c == 125) { break; }\n");
+    op = op + PP_EMIT_STR(out, op, "if (_c == 32 || _c == 10 || _c == 13 || _c == 9 || _c == 44) { _p = _p + 1; }\n");
+    op = op + PP_EMIT_STR(out, op, "elif (_c == 34) {\n");
+    # Read key into comparison
+    op = op + PP_EMIT_STR(out, op, "_p = _p + 1;\nvar _ks = _p;\nwhile (load8(json + _p) != 34) { _p = _p + 1; }\nvar _kl = _p - _ks;\n_p = _p + 1;\n");
+    # Skip colon + whitespace
+    op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) == 32 || load8(json + _p) == 58) { _p = _p + 1; }\n");
+    # Match each field
+    fi = 0;
+    while (fi < field_count) {
+        var fn_ptr = S + 0x1FC000 + fi * 32;
+        var fn_len = 0;
+        while (load8(fn_ptr + fn_len) != 0) { fn_len = fn_len + 1; }
+        if (fi == 0) { op = op + PP_EMIT_STR(out, op, "if"); }
+        else { op = op + PP_EMIT_STR(out, op, "elif"); }
+        op = op + PP_EMIT_STR(out, op, " (_kl == ");
+        op = op + PP_EMIT_INT(out, op, fn_len);
+        op = op + PP_EMIT_STR(out, op, " && memeq(json + _ks, \"");
+        op = op + PP_EMIT_STR(out, op, fn_ptr);
+        op = op + PP_EMIT_STR(out, op, "\", ");
+        op = op + PP_EMIT_INT(out, op, fn_len);
+        op = op + PP_EMIT_STR(out, op, ") == 1) {\n");
+        # Parse value based on type. v5.9.35: primitive integer
+        # detection — i8/i16/i32/i64 take the inline-decimal-parse
+        # path (mirrors the untyped scalar branch below) with
+        # width-correct storeN. Pre-fix typed primitives fell into
+        # the `else` (nested struct) branch and silently skipped
+        # their value, leaving the field zero.
+        if (load8(S + 0x1FE000 + fi * 32) != 0) {
+            var fjs = 0;
+            if (load8(S + 0x1FE000 + fi * 32) == 83) { if (load8(S + 0x1FE000 + fi * 32 + 1) == 116) { if (load8(S + 0x1FE000 + fi * 32 + 2) == 114) { if (load8(S + 0x1FE000 + fi * 32 + 3) == 0) { fjs = 1; } } } }
+            # v5.9.36: a builtin integer field (PP_DFIELD_INT, as Serialize; 6.7.10 u8..u32).
+            var fjp = PP_DFIELD_INT(S, fi);
+            # v6.3.40 — an f64 field (6.7.10 an f32 one, narrowed): capture the numeric token
+            # and parse it (PP_DFLT_SCAN).
+            var fjf = PP_DFIELD_FLT(S, fi);
+            var _vk_s = _pp_vec_elem(S, S + 0x1FE000 + fi * 32);
+            if (_pp_vec_ok(_vk_s) == 1) {
+                if (_vk_s == 300) {
+                    # v6.4.x R3 — Vec<struct> (single-pass): _p is at the array '['. For each
+                    # '{' element, decode via the element's <Name>_from_json_str, then advance
+                    # _p past its matching '}' with a STRING-AWARE bracket-depth scan (a '}'/'{'
+                    # inside a "..." string must not count). The first recursive value-parse in
+                    # this single-pass scanner (pre-R3 it skipped nested objects).
+                    op = op + PP_EMIT_STR(out, op, "var _vh");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = vec_new();\nif (load8(json + _p) == 91) { _p = _p + 1;\nwhile (1 == 1) {\nwhile (load8(json+_p)==32||load8(json+_p)==10||load8(json+_p)==13||load8(json+_p)==9||load8(json+_p)==44) { _p = _p + 1; }\nvar _ec");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_ec");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 93 || _ec");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 0) { break; }\nif (_ec");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 123) {\nvec_push(_vh");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, ", ");
+                    op = op + PP_EMIT_VEC_ELEM(out, op, S + 0x1FE000 + fi * 32);
+                    op = op + PP_EMIT_STR(out, op, "_from_json_str(json + _p));\nvar _dep");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = 0;\nvar _ins");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = 0;\nwhile (1 == 1) {\nvar _oc");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_oc");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 0) { break; }\nif (_ins");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 1) {\nif (_oc");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 92) { _p = _p + 1; if (load8(json + _p) != 0) { _p = _p + 1; } } else { if (_oc");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 34) { _ins");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = 0; } _p = _p + 1; }\n} else {\nif (_oc");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 34) { _ins");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = 1; _p = _p + 1; }\nelif (_oc");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 123) { _dep");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = _dep");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " + 1; _p = _p + 1; }\nelif (_oc");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 125) { _dep");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " = _dep");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " - 1; _p = _p + 1; if (_dep");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, " == 0) { break; } }\nelse { _p = _p + 1; }\n}\n}\n} else { _p = _cy_json_skipval(json, _p); }\n}\n} else { _p = _cy_json_skipval(json, _p); }\nstore64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, ", _vh");
+                    op = op + PP_EMIT_INT(out, op, fi);
+                    op = op + PP_EMIT_STR(out, op, ");\n");
+                } else {
+                    # v6.4.x R2 — Vec<int/f64> field (single-pass): _p is at the value's '['.
+                    # Decode via the shared helper, then advance _p past the closing ']'.
+                    op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, ", _cy_vecdec_");
+                    if (_vk_s == 200) { op = op + PP_EMIT_STR(out, op, "f64"); } else { op = op + PP_EMIT_STR(out, op, "int"); }
+                    op = op + PP_EMIT_STR(out, op, "(json + _p));\nwhile (load8(json + _p) != 93 && load8(json + _p) != 0) { _p = _p + 1; }\nif (load8(json + _p) == 93) { _p = _p + 1; }\n");
+                }
+            } else { if (fjf > 0) {
+                    op = PP_DFLT_SCAN(out, op, fjf, load64(S + 0x200000 + fi * 8));
+                } else { if (fjs == 1) {
+                        # A quoted value, walked escape-aware to its real closing quote (v6.4.x R3,
+                        # BUG-3: the first `"` ended it, even a `\"`), decoded into a FRESH Str
+                        # through lib/str.cyr's str_json_unescape — every RFC 8259 escape, `\uHHHH`
+                        # as UTF-8 (6.7.10, the user's decision: through 6.7.9 only `\n \t \r` were
+                        # decoded and any other escape kept its letter, so `\u0001\b` read
+                        # `u0001b`). Any other value leaves the field 0, as before. CHANGELOG [6.7.10]
+                        op = PP_DQSTR_SCAN(out, op, load64(S + 0x200000 + fi * 8), "str_json_unescape");
+                        op = op + PP_EMIT_STR(out, op, "\n");
+                    } else { if (fjp > 0) {
+                            # Primitive integer: parse decimal + width-correct store.
+                            op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
+                            op = op + PP_EMIT_STR(out, op, "_iv = 0;\nwhile (load8(json + _p) >= 48 && load8(json + _p) <= 57) { _iv = _iv * 10 + load8(json + _p) - 48; _p = _p + 1; }\n");
+                            op = op + PP_EMIT_STR(out, op, "if (_neg == 1) { _iv = 0 - _iv; }\n");
+                            op = op + PP_EMIT_STR(out, op, "store");
+                            op = op + PP_EMIT_INT(out, op, fjp);
+                            op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", _iv);\n");
+                        } elif (_pp_is_bool_ty(S + 0x1FE000 + fi * 32) == 1) {
+                            op = PP_DBOOL_SCAN(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.3
+                        } elif (PP_DFIELD_CSTR(S, fi) == 1) {
+                            op = PP_DCSTR_SCAN(out, op, load64(S + 0x200000 + fi * 8));   # 6.7.10
+                        } else {
+                            # Nested struct (PP_DNEST_SCAN). v6.5.20 — an emitted `# nested struct`
+                            # COMMENT LINE used to sit here and was deleted: the generated block is
+                            # flattened onto one expanded line, and `#` would have commented out every
+                            # fn after it.
+                            op = PP_DNEST_SCAN(S, out, op, fi);
+                        } } } }
+        } else {
+            # Untyped scalar: parse decimal
+            op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "_iv = 0;\nwhile (load8(json + _p) >= 48 && load8(json + _p) <= 57) { _iv = _iv * 10 + load8(json + _p) - 48; _p = _p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "if (_neg == 1) { _iv = 0 - _iv; }\n");
+            op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
+            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+            op = op + PP_EMIT_STR(out, op, ", _iv);\n");
+        }
+        # 6.7.13 — every arm ends by walking the rest of its value whole (`_cy_json_skipval` stops AT a
+        # depth-0 `,` / `}` / `]`): after a well-formed value it moves nothing; an object, an array or a
+        # string where a scalar was expected is skipped, so its inner keys are never read as this
+        # struct's (issues/archived/2026-10-14-derive-scanner-scalar-field-holding-object-derails-scan.md).
+        # CHANGELOG [6.7.13]
+        op = op + PP_EMIT_STR(out, op, "_p = _cy_json_skipval(json, _p);\n}\n");
+        fi = fi + 1;
+    }
+    # Skip an unknown key's value WHOLE (6.7.11: it stopped at the first `,` / `}`, at any depth).
+    op = op + PP_EMIT_STR(out, op, "else { _p = _cy_json_skipval(json, _p); }\n");
+    op = op + PP_EMIT_STR(out, op, "} else { _p = _p + 1; }\n}\nreturn ptr;\n}\n");
+    return op;
+}
+
+# ⛔ 6.7.11 — THE SCANNER'S NESTED-STRUCT FIELD. `T_from_json_str` skipped the value of a field typed
+# with a `#derive`d struct to its first `,` / `}` at ANY depth: the field stayed 0, the inner object's
+# next key was read as an OUTER key and its `}` ended the scan, so every field after it was lost; an
+# unknown key holding an object derailed the scan the same way (`{"a":1,"x":{"q":7,"b":9},"b":4}` gave
+# b = 9). The object is now decoded through the inner struct's own `<T>_from_json_str` and copied
+# inline, as the pairs form does, and the value is then walked whole with `_cy_json_skipval` (string-
+# and depth-aware) — so is an unknown key's. The `{` guard matters: `<T>_from_json_str` scans forward
+# to the FIRST `{`, so a `null` would decode a LATER object; such a value leaves the field 0. A type
+# no `#derive(Serialize)` / `#derive(Deserialize)` above has registered as a STRUCT (a plain struct,
+# one derived further down, an accessors-only struct — it has no decoder — a derived enum, whose
+# `E_from_json_str` returns a Result) is skipped only, as before
+# (issues/archived/2026-10-12-derive-scanner-loses-fields-after-nested-struct.md). CHANGELOG [6.7.11]
+fn PP_DNEST_SCAN(S, out, op, fi): i64 {
+    var tn = S + 0x1FE000 + fi * 32;
+    if (PP_DERIVE_STRUCT(tn) == 1) {
+        op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 123) { var _nq");
+        op = op + PP_EMIT_INT(out, op, fi);
+        op = op + PP_EMIT_STR(out, op, " = ");
+        op = op + PP_EMIT_STR(out, op, tn);
+        op = op + PP_EMIT_STR(out, op, "_from_json_str(json + _p); if (_nq");
+        op = op + PP_EMIT_INT(out, op, fi);
+        op = op + PP_EMIT_STR(out, op, " != 0) { memcpy(ptr + ");
+        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+        op = op + PP_EMIT_STR(out, op, ", _nq");
+        op = op + PP_EMIT_INT(out, op, fi);
+        op = op + PP_EMIT_STR(out, op, ", ");
+        op = op + PP_EMIT_INT(out, op, PP_DERIVE_TSZ(tn));
+        op = op + PP_EMIT_STR(out, op, "); } }\n");
+    }
+    op = op + PP_EMIT_STR(out, op, "_p = _cy_json_skipval(json, _p);\n");
+    return op;
+}
+# The LAST `#derive` registration of the name at `tn` (NUL-terminated) this run, 1-based; 0 = none.
+fn PP_DERIVE_LAST(tn): i64 {
+    var r = 0;
+    var di = 0;
+    while (di < _pp_derive_count) {
+        if (PP_CSEQ(tn, _pp_derive_names + di * 32) == 1) { r = di + 1; }
+        di = di + 1;
+    }
+    return r;
+}
+# 1 = the last `#derive` registration of the name at `tn` is a struct (not an enum) whose derive
+# emitted `T_from_json_str` (Serialize / Deserialize; not accessors alone).
+fn PP_DERIVE_STRUCT(tn): i64 {
+    var r = PP_DERIVE_LAST(tn);
+    if (r == 0) { return 0; }
+    if (load64(_pp_derive_isen + (r - 1) * 8) == 1) { return 0; }
+    if (load64(_pp_derive_codec + (r - 1) * 8) != 1) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.16 — WHAT A REGISTRATION WROTE, for a refused declaration's derive step (parse/fn/def.cyr `_dl_dname`): it steps
+# only the fns the derive wrote, so it asks which registration `r` (1-based, PP_DERIVE_LAST) emitted — the codecs
+# (`T_to_json` .., PP_DERIVE_CODEC) and, as bits of PP_DERIVE_FAM, the accessors (1: `T_<field>`, `T_set_<field>`) and
+# the shared helpers each is emitted with once per compilation (2 `_cy_enum_name_eq`, 4 `_cy_vecdec_int`, 8
+# `_cy_vecdec_f64`, 16 `_cy_json_skipval`). CHANGELOG [6.7.16]
+fn PP_DERIVE_CODEC(r): i64 {
+    if (r == 0) { return 0; }
+    return load64(_pp_derive_codec + (r - 1) * 8);
+}
+fn PP_DERIVE_FAM(r): i64 {
+    if (r == 0) { return 0; }
+    return load64(_pp_derive_fam + (r - 1) * 8);
+}
+# The current registration (the one whose bodies are being emitted) emitted family bit `b`.
+fn PP_DERIVE_FAM_ADD(b): i64 {
+    var a = _pp_derive_fam + (_pp_derive_count - 1) * 8;
+    store64(a, load64(a) | b);
+    return 0;
+}
+# The bytes a nested field typed `tn` copies in a decoder: its `#derive` registration's size, else 8.
+fn PP_DERIVE_TSZ(tn): i64 {
+    var r = PP_DERIVE_LAST(tn);
+    if (r == 0) { return 8; }
+    return load64(_pp_derive_sizes + (r - 1) * 8);
+}
+
+# v5.10.14 — Serialize entry point. Parses struct, emits body,
+# then runs additional codegen for any stacked `#derive(...)`
+# directives detected by PP_PARSE_STRUCT_DEF's `#`-skip loop.
+fn PP_DERIVE_SERIALIZE(S, src_base, ip, bl, out, op): i64 {
+    ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
+    op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
+    # v6.5.20 — the generated block goes onto the ONE expanded line PP_PARSE_STRUCT_DEF
+    # left open (the struct's closing-`}` line), then the user's tail, then that line is
+    # terminated. Every synthesized fn therefore reports the line of the construct that
+    # produced it, and the block consumes exactly the source lines it replaced.
+    _pp_flatten = 1;
+    op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
+    var _stacked = L64(S + 0x197F08);
+    if ((_stacked & 4) != 0) {
+        op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
+    }
+    _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
+    op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
+    store8(out + op, 10); op = op + 1;
+    store64(S + 0x197008, op);
+    return ip;
+}
+
+# `#derive(Deserialize)` entry point. The `_from_json` decoder is emitted by
+# `#derive(Serialize)` (PP_DERIVE_SERIALIZE_BODY emits both codecs), so this handler adds
+# no bodies of its own — but it MUST still route through PP_PARSE_STRUCT_DEF, which is
+# what copies the struct into the expanded stream.
+#
+# ⚠ v6.5.20 — until now it did not, and the struct was DELETED. The handler hand-rolled
+# "skip the directive line, then scan forward to the first `}`" and emitted only newline
+# padding, so:
+#   (a) the type was unusable — `#derive(Deserialize) struct D { x; y; }` followed by
+#       `D { 5, 7 }` failed with `undefined variable 'D'`, i.e. the ONE directive whose
+#       name says "this struct is data" was the one that threw the struct away; and
+#   (b) worse, a MALFORMED field inside it was silently accepted. `struct D { x; y = ; }`
+#       compiled rc=0 with zero diagnostics, because the parser is what diagnoses field
+#       syntax and the parser never saw the text. Silent acceptance of malformed source.
+# Bite 2 of this release gave the handler PP_COPY_TAIL + newline padding and its comment
+# claimed it had been "dropping its tail *and the struct* since forever" — but only the
+# tail half was actually repaired. This is the struct half.
+#
+# Routing through the shared parser also fixes stacking in this direction: `#derive(
+# Deserialize)` above `#derive(Serialize)` / `#derive(accessors)` used to drop the stacked
+# handler entirely (the flag bits were never even collected), while the reverse order
+# worked. Both orders now emit the same bodies.
+fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
+    ip = PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op);
+    op = load64(S + 0x197008);
+    var xo = op;   # 6.7.17: the generated fns start here (`_xm_add` below)
+    # v6.5.20 — see PP_DERIVE_SERIALIZE: bodies flattened onto the open closing-`}` line,
+    # then the user's tail, then the single newline.
+    _pp_flatten = 1;
+    var _stacked = L64(S + 0x197F08);
+    # v6.5.31 — emit the codec body UNCONDITIONALLY, not only when `Serialize` is also
+    # stacked.
+    #
+    # ⛔ A bare `#derive(Deserialize)` emitted NOTHING — the same silent no-op the enum case
+    # was filed for, in the same subsystem, and pre-existing on the STRUCT path too:
+    # `#derive(Deserialize) struct P { a; b; }` compiled clean and left `P_from_json_str`
+    # undefined until link time. It only ever worked when `#derive(Serialize)` happened to be
+    # stacked with it, because this body is what emits BOTH codecs.
+    #
+    # Found while wiring the enum arm: the enum path inherited the identical wart, and fixing
+    # it for enums alone would have left the struct half of one directive still silent.
+    # `PP_DERIVE_SERIALIZE_BODY` is called exactly ONCE here regardless of stacking, so the
+    # both-stacked case is unchanged and no fn is emitted twice.
+    op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
+    if ((_stacked & 4) != 0) {
+        op = PP_DERIVE_ACCESSORS_BODY(S, out, op);
+    }
+    _pp_flatten = 0;
+    _xm_add(xo, op - xo, _pp_tail_ip, 0, 0);   # 6.7.17: an in-line expansion that replaced no source text
+    op = PP_COPY_TAIL(src_base, _pp_tail_ip, bl, out, op);
+    store8(out + op, 10); op = op + 1;
+    store64(S + 0x197008, op);
+    return ip;
+}
