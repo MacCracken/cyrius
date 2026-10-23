@@ -94,13 +94,13 @@ sed "s|@T@|$TMPROOT|g" > "$D/probe.cyr" <<'EOF'
     var y = "a#b"; var z = "@T@/after_hash_in_string";
 EOF
 # Match the LITERAL column only: $D itself usually sits under /tmp.
-PROBE=$(awk -f "$D/lits.awk" "$D/probe.cyr" | awk -F'\t' '$2 ~ /\/tmp\//' | grep -c .)
+PROBE=$(awk -f "$D/lits.awk" "$D/probe.cyr" | awk -F'\t' '$2 ~ /\/tmp\//' | grep -c . || true)
 [ "$PROBE" = 3 ] && ok "scanner flags the 6.6.8 line, a literal after '\"' and after a '#' inside a string, and skips comments and the bare base" \
   || bad "scanner self-test found $PROBE /tmp/ literals in the probe, expected 3"
 
 # 1 — static.
 awk -f "$D/lits.awk" $(find cbt -name '*.cyr' | LC_ALL=C sort) > "$D/lits"
-NLIT=$(grep -c . "$D/lits")
+NLIT=$(grep -c . "$D/lits" || true)
 if [ "$NLIT" -lt 2000 ]; then bad "the scan saw only $NLIT string literals in cbt/ — did the scanner stop matching?"; fi
 HITS=$(awk -F'\t' '$2 ~ /\/tmp\//' "$D/lits")
 if [ -n "$HITS" ]; then
@@ -159,8 +159,10 @@ stub() {
   chmod +x "$D/bin/cycc"
   rm -f "$D/log"
 }
+# `RC=0; OUT=$(…) || RC=$?`, not `OUT=$(…); RC=$?`: most rows run a self-host that FAILS by
+# design, and under `bash -eo pipefail` the failing assignment ended the gate there. CHANGELOG [6.7.18]
 self_run() {
-  OUT=$( cd "$D/proj" && ulimit -c 0; TMPDIR="$D/t" CYRIUS_RESOLVED=1 "$D/bin/cyrius" self 2>&1 ); RC=$?
+  RC=0; OUT=$( cd "$D/proj" && ulimit -c 0; TMPDIR="$D/t" CYRIUS_RESOLVED=1 "$D/bin/cyrius" self 2>&1 ) || RC=$?
 }
 tmp_empty() {
   LEFT=$(ls -A "$D/t")
@@ -236,21 +238,21 @@ tmp_empty "outputs differed"
 if ! grep -q '^fn _copy_binary' "$D/cp.cyr"; then bad "could not extract _copy_binary from cbt/build.cyr"
 else
   "$CC" < "$D/cp.cyr" > "$D/cp" 2>/dev/null; chmod +x "$D/cp"
-  : > "$D/cp_src"; "$D/cp"; R1=$?
+  : > "$D/cp_src"; R1=0; "$D/cp" || R1=$?
   [ "$R1" = 1 ] && [ ! -e "$D/cp_dst" ] && ok "an EMPTY source fails (1) and leaves no dst" \
     || bad "_copy_binary of an empty source: rc $R1, dst $( [ -e "$D/cp_dst" ] && echo LEFT BEHIND || echo absent)"
-  rm -f "$D/cp_src" "$D/cp_dst"; mkdir "$D/cp_src"; "$D/cp"; R2=$?
+  rm -f "$D/cp_src" "$D/cp_dst"; mkdir "$D/cp_src"; R2=0; "$D/cp" || R2=$?
   [ "$R2" = 1 ] && [ ! -e "$D/cp_dst" ] && ok "an unreadable source fails (1) and leaves no dst" \
     || bad "_copy_binary of a directory: rc $R2, dst $( [ -e "$D/cp_dst" ] && echo LEFT BEHIND || echo absent)"
-  rmdir "$D/cp_src"; printf 'payload\n' > "$D/cp_src"; "$D/cp"; R3=$?
+  rmdir "$D/cp_src"; printf 'payload\n' > "$D/cp_src"; R3=0; "$D/cp" || R3=$?
   [ "$R3" = 0 ] && cmp -s "$D/cp_src" "$D/cp_dst" && ok "a real file copies byte-identical (anti-vacuous)" \
     || bad "_copy_binary of a real file: rc $R3, copy differs or is missing"
 fi
 
 # 7 — `_self_host_step_macos` removes its stage on every return.
 BODY=$(awk '/^fn _self_host_step_macos\(/{p=1} p{print} p && /^}/{exit}' cbt/build.cyr | sed 's/#.*//')
-NRET=$(printf '%s\n' "$BODY" | grep -c 'return')
-NUNL=$(printf '%s\n' "$BODY" | grep -c 'sys_unlink(ccr)')
+NRET=$(printf '%s\n' "$BODY" | grep -c 'return' || true)
+NUNL=$(printf '%s\n' "$BODY" | grep -c 'sys_unlink(ccr)' || true)
 if [ "$NRET" -lt 2 ]; then bad "could not extract _self_host_step_macos (found $NRET returns)"
 elif [ "$NUNL" -lt "$NRET" ]; then bad "_self_host_step_macos has $NRET returns but only $NUNL sys_unlink(ccr) — a path leaks its staged copy"
 else ok "_self_host_step_macos: $NRET returns, $NUNL unlinks of its staged copy"; fi

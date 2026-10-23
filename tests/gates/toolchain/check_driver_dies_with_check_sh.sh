@@ -101,12 +101,15 @@ cd "$ROOT"
 [ -x "$ROOT/build/cycc" ] || { echo "FAIL: build/cycc not built"; exit 1; }
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: mktemp -d"; exit 1; }
+# Every kill / wait of a process that may already be gone ends `|| true` (here and below): a kill
+# of a dead pid fails, a wait on a SIGKILLed job returns 137, and under `bash -eo pipefail` either
+# ended the gate (axis 4, rc 1, no verdict) — in this EXIT trap, before `rm -rf "$T"`. CHANGELOG [6.7.18]
 _cleanup() {
-    [ -n "${AX_CHILD:-}" ] && kill -9 "$AX_CHILD" 2>/dev/null
-    [ -n "${DRV_CHILD:-}" ] && kill -9 "$DRV_CHILD" 2>/dev/null
+    [ -n "${AX_CHILD:-}" ] && kill -9 "$AX_CHILD" 2>/dev/null || true
+    [ -n "${DRV_CHILD:-}" ] && kill -9 "$DRV_CHILD" 2>/dev/null || true
     # 6.6.8: anything an axis left behind carries this run's tag in its argv.
     for _sp in $(ps -eo pid=,args= | awk -v t="$$" '$2 == "sleep" && $3 ~ ("^47[12][.]" t "$") { print $1 }'); do
-        kill -9 "$_sp" 2>/dev/null
+        kill -9 "$_sp" 2>/dev/null || true
     done
     rm -rf "$T"
 }
@@ -178,15 +181,15 @@ _orphan_test() {
     ORPHAN_PID=$_cp
     ORPHAN_PPID=""
     if [ -z "$_pp" ] || [ -z "$_cp" ]; then VERDICT=nostart; return 0; fi
-    kill -9 "$_pp" 2>/dev/null
+    kill -9 "$_pp" 2>/dev/null || true
     # Reap the job here, quietly: an interactive-style shell otherwise prints its own
     # "Killed" notification to the gate's stderr when it notices, which reads like a
     # failure in check.sh's output and is not one.
     wait "$_job" 2>/dev/null || true
     sleep 1.5
     if kill -0 "$_cp" 2>/dev/null; then
-        ORPHAN_PPID=$(ps -o ppid= -p "$_cp" 2>/dev/null | tr -d ' ')
-        kill -9 "$_cp" 2>/dev/null
+        ORPHAN_PPID=$(ps -o ppid= -p "$_cp" 2>/dev/null | tr -d ' ' || true)
+        kill -9 "$_cp" 2>/dev/null || true
         VERDICT=survived
     else
         VERDICT=died
@@ -280,7 +283,7 @@ _mk_sleeper() {  # $1 = file, $2 = marker dir, $3 = "exit" to exit leaving a bg 
 _survivors() {  # the processes carrying this run's tag, one pid per line
     ps -eo pid=,args= | awk -v t="$TAG" '$2 == "sleep" && $3 ~ ("^47[12][.]" t "$") { print $1 }'
 }
-_kill_survivors() { for _sp in $(_survivors); do kill -9 "$_sp" 2>/dev/null; done; }
+_kill_survivors() { for _sp in $(_survivors); do kill -9 "$_sp" 2>/dev/null || true; done; }
 _wait_file() {  # $1 = file, waits up to ~10 s
     _wi=0
     while [ ! -s "$1" ] && [ "$_wi" -lt 100 ]; do sleep 0.1; _wi=$((_wi + 1)); done
@@ -322,7 +325,7 @@ echo "axis 4: SIGKILL of check.sh leaves nothing of a check.sh-run gate"
 R4="$T/r4"; _mk_chkroot "$R4" "$ROOT/scripts/check.sh"
 if _start_chk "$R4"; then
     sleep 0.3
-    kill -9 "$CHK" 2>/dev/null; wait "$CHK" 2>/dev/null
+    kill -9 "$CHK" 2>/dev/null || true; wait "$CHK" 2>/dev/null || true
     sleep 1.5
     NS=$(_survivors | grep -c . || true)
     [ "$NS" = "0" ] || _fail "axis 4: $NS process(es) of the gate survived a SIGKILLed check.sh"
@@ -340,7 +343,7 @@ _mk_sleeper "$T/g5.sh" "$M5"
 J5=$!
 if _wait_file "$M5/bg.pid" && _wait_file "$T/p5.pid"; then
     sleep 0.3
-    kill -9 "$(cat "$T/p5.pid")" 2>/dev/null; wait "$J5" 2>/dev/null
+    kill -9 "$(cat "$T/p5.pid")" 2>/dev/null || true; wait "$J5" 2>/dev/null || true
     sleep 1.5
     NS=$(_survivors | grep -c . || true)
     [ "$NS" = "0" ] || _fail "axis 5: $NS process(es) of a driver-run gate survived the driver's SIGKILLed parent"
@@ -376,7 +379,7 @@ NS=$(_survivors | grep -c . || true)
 _kill_survivors
 # A malformed knob is said ONCE, by check.sh, and dropped — never silently a 0 (no deadline).
 ( cd "$R6" && env -u CYRIUS_HOME HOME="$R6/home" TMPDIR="$R6/tmp" CYRIUS_CHECK_LONG_TIMEOUT=' 2' \
-    sh scripts/check.sh --resolve zzsleeper ) > "$R6/knob.out" 2>&1
+    sh scripts/check.sh --resolve zzsleeper ) > "$R6/knob.out" 2>&1 || true
 [ "$(grep -c "CYRIUS_CHECK_LONG_TIMEOUT=' 2' is not a whole number" "$R6/knob.out")" = "1" ] \
     || _fail "axis 6b: check.sh did not refuse CYRIUS_CHECK_LONG_TIMEOUT=' 2' exactly once"
 
@@ -384,14 +387,14 @@ echo "axis 7: SIGTERM of check.sh returns within seconds while a gate sleeps"
 R7="$T/r7"; _mk_chkroot "$R7" "$ROOT/scripts/check.sh"
 if _start_chk "$R7"; then
     sleep 0.3
-    kill -TERM "$CHK" 2>/dev/null
+    kill -TERM "$CHK" 2>/dev/null || true
     # Bounded: the defect is that check.sh does NOT return, so waiting on it unguarded would
     # hang this gate for the gate's whole sleep (measured: 315 s against the pre-6.6.8 shape).
     _k=0
     while kill -0 "$CHK" 2>/dev/null && [ "$_k" -lt 100 ]; do sleep 0.1; _k=$((_k + 1)); done
     if kill -0 "$CHK" 2>/dev/null; then
         _fail "axis 7: check.sh was still running 10 s after SIGTERM — the signal waits for the gate"
-        kill -9 "$CHK" 2>/dev/null
+        kill -9 "$CHK" 2>/dev/null || true
     fi
     RC7=0; wait "$CHK" 2>/dev/null || RC7=$?
     [ "$_k" -le 40 ] || _fail "axis 7: check.sh took more than 4 s to honour SIGTERM"
@@ -414,10 +417,10 @@ if command -v setsid > /dev/null 2>&1; then
         sh scripts/check.sh zzsleeper ) > "$R8/out" 2>&1 &
     C8=$!
     if _wait_file "$R8/m/bg.pid"; then
-        G8=$(ps -o pgid= -p "$C8" 2>/dev/null | tr -d ' ')
+        G8=$(ps -o pgid= -p "$C8" 2>/dev/null | tr -d ' ' || true)
         [ "$G8" = "$C8" ] || _fail "axis 8: setsid did not make check.sh a group leader (pgid '$G8', pid $C8)"
-        kill -KILL -- "-$G8" 2>/dev/null
-        wait "$C8" 2>/dev/null
+        kill -KILL -- "-$G8" 2>/dev/null || true
+        wait "$C8" 2>/dev/null || true
         sleep 0.5
         NS=$(_survivors | grep -c . || true)
         [ "$NS" = "0" ] || _fail "axis 8: $NS grandchild(ren) escaped a process-group kill — something left the group"
@@ -449,7 +452,7 @@ grep -q '^    sh "\$_g" "\$@" || _grc=\$?$' "$T/check_fg.sh" || _fail "axis 10: 
 R10="$T/r10"; _mk_chkroot "$R10" "$T/check_fg.sh"
 if _start_chk "$R10"; then
     sleep 0.3
-    kill -9 "$CHK" 2>/dev/null; wait "$CHK" 2>/dev/null
+    kill -9 "$CHK" 2>/dev/null || true; wait "$CHK" 2>/dev/null || true
     sleep 1
     NS=$(_survivors | grep -c . || true)
     [ "$NS" -ge 1 ] || _fail "axis 10: the foreground mutant leaked NOTHING — the harness cannot see a leak, so axes 4-9 prove nothing"
@@ -478,11 +481,11 @@ if command -v setsid > /dev/null 2>&1; then
         C11=$!
         if _wait_file "$R11/m/bg.pid"; then
             sleep 0.3
-            kill "-$_sig" -- "-$C11" 2>/dev/null
+            kill "-$_sig" -- "-$C11" 2>/dev/null || true
             _k=0
             while kill -0 "$C11" 2>/dev/null && [ "$_k" -lt 150 ]; do sleep 0.1; _k=$((_k + 1)); done
-            kill -9 "$C11" 2>/dev/null
-            wait "$C11" 2>/dev/null
+            kill -9 "$C11" 2>/dev/null || true
+            wait "$C11" 2>/dev/null || true
             sleep 0.5
             [ -s "$R11/m/trap.done" ] || _fail "axis 11 ($_sig): the gate's EXIT trap was cut short — its last command never ran (a second SIGTERM arrived mid-trap)"
             [ "$(_scratch_gone "$R11/m")" = "gone" ] || _fail "axis 11 ($_sig): the gate's mktemp dir was left behind"
@@ -516,7 +519,7 @@ done
 R12="$T/r12"; _mk_chkroot "$R12" "$ROOT/scripts/check.sh"
 printf '#!/bin/sh\nexit 124\n' > "$R12/tests/gates/zzsup/zzsleeper.sh"
 ( cd "$R12" && env -u CYRIUS_HOME HOME="$R12/home" TMPDIR="$R12/tmp" CYRIUS_CHECK_LONG_TIMEOUT=0 \
-    sh scripts/check.sh zzsleeper ) > "$R12/out" 2>&1
+    sh scripts/check.sh zzsleeper ) > "$R12/out" 2>&1 || true
 grep -q 'TIMEOUT' "$R12/out" && _fail "axis 12: check.sh reported a TIMEOUT under CYRIUS_CHECK_LONG_TIMEOUT=0 (no deadline exists)"
 grep -q '\^\^ FAILED (exit 1): tests/gates/zzsup/zzsleeper.sh' "$R12/out" \
     || _fail "axis 12: check.sh did not record the gate as an ordinary failure (exit 1)"

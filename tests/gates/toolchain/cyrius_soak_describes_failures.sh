@@ -35,7 +35,9 @@ cp "$CY" "$D/bin/cyrius" && cp "$CC" "$D/bin/cycc" && chmod +x "$D/bin/cyrius" "
     || { echo "SKIP: cyrius_soak_describes_failures: could not stage the CLI and compiler"; exit 77; }
 soak() {   # soak <src/main.cyr body>
     printf '%s\n' "$1" > "$D/proj/src/main.cyr"
-    OUT=$( cd "$D/proj" && ulimit -c 0; CYRIUS_RESOLVED=1 timeout 120 "$D/bin/cyrius" soak 1 2>&1 ); RC=$?
+    # `RC=0; OUT=$(…) || RC=$?`: every row's soak FAILS by design, and `OUT=$(…); RC=$?` ended
+    # the gate there under `bash -eo pipefail` (rc 1, no verdict). CHANGELOG [6.7.18]
+    RC=0; OUT=$( cd "$D/proj" && ulimit -c 0; CYRIUS_RESOLVED=1 timeout 120 "$D/bin/cyrius" soak 1 2>&1 ) || RC=$?
 }
 
 # 1 — SIGSEGV in step 2 (step 1 compiles src/main.cyr into a program that stores through NULL).
@@ -60,11 +62,16 @@ else bad "step 2's real status (3) not quoted (rc $RC): $OUT"; fi
 # 4 — source: no raw status print in cmd_soak; the helper describes.
 BODY=$(awk '/^fn cmd_soak\(/{f=1} f&&/^}/{print; exit} f' "$ROOT/cbt/commands/soak_smoke.cyr")
 [ -n "$BODY" ] || bad "source: cmd_soak not found in cbt/commands/soak_smoke.cyr"
-if echo "$BODY" | grep -qE 'fmt_int\((s1|s2)\)|self-host step [12] exited'; then
-    bad "source: cmd_soak prints a raw _self_host_step status: $(echo "$BODY" | grep -nE 'fmt_int\((s1|s2)\)|self-host step [12] exited' | head -2)"
+# The bodies are grepped from files, never `echo "$BODY" | grep -q`: cmd_soak is ~11 KB, more than
+# one write, so grep -q could exit at its match while echo still wrote, and under pipefail the
+# SIGPIPE'd echo read a PRESENT call as missing. CHANGELOG [6.7.18]
+printf '%s\n' "$BODY" > "$D/soak_body"
+if grep -qE 'fmt_int\((s1|s2)\)|self-host step [12] exited' "$D/soak_body"; then
+    bad "source: cmd_soak prints a raw _self_host_step status: $(grep -nE 'fmt_int\((s1|s2)\)|self-host step [12] exited' "$D/soak_body" | sed -n 1,2p)"
 else ok "source: cmd_soak quotes no raw _self_host_step status"; fi
 HELP=$(awk '/^fn _soak_step_failed\(/{f=1} f&&/^}/{print; exit} f' "$ROOT/cbt/commands/soak_smoke.cyr")
-if echo "$HELP" | grep -q '_raw_fail_describe(' && echo "$BODY" | grep -q '_soak_step_failed(2, s2)'; then
+printf '%s\n' "$HELP" > "$D/soak_help"
+if grep -q '_raw_fail_describe(' "$D/soak_help" && grep -q '_soak_step_failed(2, s2)' "$D/soak_body"; then
     ok "source: soak's step-failure line goes through _raw_fail_describe"
 else bad "source: _soak_step_failed missing, not describing, or not called for step 2"; fi
 

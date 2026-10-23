@@ -702,7 +702,10 @@ R4="$T/r4"; mkdir -p "$R4/build" "$R4/tests/tcyr/zz"
 ln -s "$ROOT/build/cycc" "$R4/build/cycc"
 ln -s "$ROOT/lib" "$R4/lib"
 cp "$T/spin.cyr" "$R4/tests/tcyr/zz/spin.tcyr"
-( cd "$R4" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" tcyr ) > "$T/a4a.out" 2>&1
+# Each driver run here ends `|| true`: it FAILS by design (a RED row is the point), and under
+# `bash -eo pipefail` the bare run ended the gate before any 4a row (rc 1, no verdict). The rows
+# read the run's own output. CHANGELOG [6.7.18]
+( cd "$R4" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" tcyr ) > "$T/a4a.out" 2>&1 || true
 strip_ansi < "$T/a4a.out" > "$T/a4a.txt"
 check "4a a spinning .tcyr prints a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT=1s" "yes" \
     "$(grep -q '^  TIMEOUT: test suite (1 files) — a child was killed at the deadline (CYRIUS_CHECK_TIMEOUT=1s)$' "$T/a4a.txt" && echo yes || echo no)"
@@ -720,12 +723,12 @@ printf 'fn main(): i64 { var w = syscall(1, 1, "exact-bytes\\n", 12); var i = 0;
 printf 'exact-bytes\n' > "$R4B/tests/fixtures/zz_hang.expected"
 printf 'fn main(): i64 { var w = syscall(1, 1, "exact-bytes\\n", 12); return 152; }\nvar r = main();\nsyscall(60, r);\n' > "$R4B/tests/fixtures/zz_ok.cyr"
 printf 'exact-bytes\n' > "$R4B/tests/fixtures/zz_ok.expected"
-( cd "$R4B" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" --output-row zz_hang ) > "$T/a4b.out" 2>&1
+( cd "$R4B" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" --output-row zz_hang ) > "$T/a4b.out" 2>&1 || true
 strip_ansi < "$T/a4b.out" > "$T/a4b.txt"
 check "4b a print-then-hang output fixture is RED" "yes" "$(grep -q '^  FAIL: zz_hang$' "$T/a4b.txt" && echo yes || echo no)"
 check "   …and says the child was killed at the deadline (not a crash, not a pass)" "yes" \
     "$(grep -q 'zz_hang — killed at the deadline (CYRIUS_CHECK_TIMEOUT)' "$T/a4b.txt" && echo yes || echo no)"
-( cd "$R4B" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=10 timeout 60 "$T/drv" --output-row zz_ok ) > "$T/a4b2.out" 2>&1
+( cd "$R4B" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=10 timeout 60 "$T/drv" --output-row zz_ok ) > "$T/a4b2.out" 2>&1 || true
 check "   …control: the same bytes from a fixture that EXITS (152) still pass" "yes" \
     "$(strip_ansi < "$T/a4b2.out" | grep -q '^  PASS: zz_ok$' && echo yes || echo no)"
 
@@ -753,7 +756,7 @@ syscall(60, r);
 KNOB
 "$ROOT/build/cycc" < "$T/knob.cyr" > "$T/knob" 2>/dev/null; chmod +x "$T/knob"
 for v in 2m abc '' ' 120' -3 1.5 1234567890; do
-    OUT=$(CYRIUS_CHECK_TIMEOUT="$v" CYRIUS_CHECK_LONG_TIMEOUT="$v" "$T/knob" 2> "$T/knob.err")
+    OUT=$(CYRIUS_CHECK_TIMEOUT="$v" CYRIUS_CHECK_LONG_TIMEOUT="$v" "$T/knob" 2> "$T/knob.err" || true)
     check "4c CYRIUS_CHECK_*TIMEOUT='$v' keeps the defaults (never 0 = no deadline)" "120000 120000 900000" "$OUT"
     check "   …and says so, once per variable, naming it" "1 1" \
         "$(grep -c "CYRIUS_CHECK_TIMEOUT='" "$T/knob.err") $(grep -c "CYRIUS_CHECK_LONG_TIMEOUT='" "$T/knob.err")"
@@ -781,7 +784,7 @@ ln -s "$ROOT/build/cycc" "$R4D/build/cycc"
 ln -s "$ROOT/tests" "$R4D/tests"
 printf '# one\nfn one(): i64 { return 1; }\n' > "$R4D/lib/one.cyr"
 printf '#!/bin/sh\nexec sleep 30\n' > "$R4D/build/cyrlint"; chmod +x "$R4D/build/cyrlint"
-( cd "$R4D" && HOME="$T/nohome" TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 120 "$T/drv" lint ) > "$T/a4d.out" 2>&1
+( cd "$R4D" && HOME="$T/nohome" TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 120 "$T/drv" lint ) > "$T/a4d.out" 2>&1 || true
 strip_ansi < "$T/a4d.out" > "$T/a4d.txt"
 check "4d a cyrlint killed at the deadline: 'lint (stdlib)' is RED" "yes" "$(grep -q '^  FAIL: lint (stdlib)' "$T/a4d.txt" && echo yes || echo no)"
 check "   …with a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT=1s" "yes" \
@@ -829,7 +832,7 @@ check "5a every harness run made its captures under the gate's own TMPDIR" "0" \
     "$(awk -v t="$T/tmp" '$2 != t' "$T/harness.pids" 2>/dev/null | grep -c . || true)"
 _capnames "$CALLER_BASE" > "$T/caller.after"
 LC_ALL=C comm -13 "$T/caller.before" "$T/caller.after" > "$T/caller.new"
-cut -d' ' -f1 "$T/harness.pids" 2>/dev/null > "$T/harness.pidlist"
+cut -d' ' -f1 "$T/harness.pids" 2>/dev/null > "$T/harness.pidlist" || true
 : > "$T/caller.ours"
 while read -r _nn; do
     _np=${_nn#audit_x?_}

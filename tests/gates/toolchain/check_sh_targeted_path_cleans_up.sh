@@ -108,7 +108,9 @@ _run() {
     # run it is part of. The harness must control its own home.
     ( cd "$_w/root" && env -u CYRIUS_HOME HOME="$_w/home" TMPDIR="$_w/tmp" \
         sh scripts/check.sh "$@" ) > "$_w/out" 2>&1 || RC=$?
-    LEFT=$(ls -d "$_w"/tmp/cyrius-check-home.* 2>/dev/null | wc -l)
+    # `{ ls … || true; }`: no home left is the PASSING case, where ls exits 2 — and under
+    # `bash -eo pipefail` that failed the assignment and ended the gate (rc 2). CHANGELOG [6.7.18]
+    LEFT=$({ ls -d "$_w"/tmp/cyrius-check-home.* 2>/dev/null || true; } | wc -l)
 }
 
 # ── axis 0 + 1 — the TARGETED path ────────────────────────────────────────────────────

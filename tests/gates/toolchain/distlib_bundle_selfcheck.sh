@@ -53,8 +53,11 @@ printf '[package]\nname = "bp"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/a.cy
 printf 'fn a_one(): i64 { return 1; }\n' > src/a.cyr
 
 echo "axis 1 — a well-formed bundle passes cleanly, with NO 'unresolved symbols' note:"
-timeout 300 "$CY" distlib > "$D/o1" 2>&1
-check "exit 0" 0 "$?"
+# Every run's status is captured `rcN=0; cmd || rcN=$?`, never `cmd; rcN=$?` / `check … "$?"`: the
+# broken-bundle rows FAIL by design, and under `bash -eo pipefail` the bare command ended the gate
+# there (rc 1, no verdict). CHANGELOG [6.7.18]
+rc1=0; timeout 300 "$CY" distlib > "$D/o1" 2>&1 || rc1=$?
+check "exit 0" 0 "$rc1"
 check "bundle written" 1 "$([ -f dist/bp.cyr ] && echo 1 || echo 0)"
 check "no 'unresolved symbols' note on a clean bundle" 0 "$(grep -c 'unresolved symbols' "$D/o1" || true)"
 check "no 'cannot write output' (the /dev/null tell)" 0 "$(grep -c 'cannot write output' "$D/o1" || true)"
@@ -66,8 +69,7 @@ check "and the report says v0.1.0" 1 "$(grep -c 'dist/bp.cyr: [0-9]* lines (v0.1
 
 echo "axis 2 — ⭐ THE REGRESSION: a bundle that does not compile must FAIL, not reassure:"
 printf 'fn a_one(): i64 { return 1; }\nfn broken( {\n' > src/a.cyr
-timeout 300 "$CY" distlib > "$D/o2" 2>&1
-rc2=$?
+rc2=0; timeout 300 "$CY" distlib > "$D/o2" 2>&1 || rc2=$?
 check "exit NON-zero on a broken bundle" 1 "$([ "$rc2" -ne 0 ] && echo 1 || echo 0)"
 check "the bundle is NAMED in the error" 1 "$(grep -c 'does not compile' "$D/o2" || true)"
 check "and it does NOT claim 'unresolved symbols'" 0 "$(grep -c 'unresolved symbols' "$D/o2" || true)"
@@ -76,16 +78,16 @@ printf 'fn a_one(): i64 { return 1; }\n' > src/a.cyr
 echo "axis 3 — undefined fns stay EXPECTED (a bundle ships no stdlib) and do not fail:"
 # Reference a stdlib symbol the bundle deliberately does not carry.
 printf 'fn a_one(): i64 { return strlen("x"); }\n' > src/a.cyr
-timeout 300 "$CY" distlib > "$D/o3" 2>&1
-check "exit 0 despite the undefined fn" 0 "$?"
+rc3=0; timeout 300 "$CY" distlib > "$D/o3" 2>&1 || rc3=$?
+check "exit 0 despite the undefined fn" 0 "$rc3"
 check "bundle still written" 1 "$([ -f dist/bp.cyr ] && echo 1 || echo 0)"
 printf 'fn a_one(): i64 { return 1; }\n' > src/a.cyr
 
 echo "axis 4 — the check leaves no temp entry behind, on success OR failure:"
-timeout 300 "$CY" distlib > /dev/null 2>&1
+timeout 300 "$CY" distlib > /dev/null 2>&1 || true
 check "no distchk entry after success" 0 "$(ls -a dist/ | grep -c 'distchk' || true)"
 printf 'fn a_one(): i64 { return 1; }\nfn broken2( {\n' > src/a.cyr
-timeout 300 "$CY" distlib > /dev/null 2>&1
+timeout 300 "$CY" distlib > /dev/null 2>&1 || true
 check "no distchk entry after failure" 0 "$(ls -a dist/ | grep -c 'distchk' || true)"
 printf 'fn a_one(): i64 { return 1; }\n' > src/a.cyr
 
@@ -107,14 +109,13 @@ while [ "$i" -lt 8000 ]; do
     i=$((i + 1))
 done
 printf '[package]\nname = "bp"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/a.cyr", "src/big1.cyr", "src/big2.cyr"]\n' > cyrius.cyml
-timeout 600 "$CY" distlib > "$D/o5" 2>&1
-check "exit 0 on a >1 MB bundle" 0 "$?"
+rc5=0; timeout 600 "$CY" distlib > "$D/o5" 2>&1 || rc5=$?
+check "exit 0 on a >1 MB bundle" 0 "$rc5"
 check "bundle really is over 1 MB" 1 "$([ "$(wc -c < dist/bp.cyr)" -gt 1048576 ] && echo 1 || echo 0)"
 check "no '1MB buffer' error" 0 "$(grep -c '1MB buffer' "$D/o5" || true)"
 # ...and it is genuinely CHECKED at that size, not skipped: break it and expect a failure.
 printf 'fn a_one(): i64 { return 1; }\nfn broken3( {\n' > src/a.cyr
-timeout 600 "$CY" distlib > "$D/o6" 2>&1
-rc6=$?
+rc6=0; timeout 600 "$CY" distlib > "$D/o6" 2>&1 || rc6=$?
 check "a broken >1 MB bundle still FAILS" 1 "$([ "$rc6" -ne 0 ] && echo 1 || echo 0)"
 
 cd "$ROOT" || exit 2
@@ -177,7 +178,7 @@ check "naming payload" 1 "$(printf '%s\n' "$BOUT" | grep -c 'symbol: payload' ||
 if [ -f "$D/r/dist/rc.cyr" ]; then
     ( cd "$D/r" && printf 'include "dist/rc.cyr"\n' | "$CC" --allow-undef > /dev/null 2> "$D/cap7" ) || true
     capsz=$(wc -c < "$D/cap7" | tr -d ' ')
-    payoff=$(grep -b "undefined function 'payload'" "$D/cap7" | head -1 | cut -d: -f1)
+    payoff=$(grep -b -m1 "undefined function 'payload'" "$D/cap7" | cut -d: -f1 || true)
     check "the capture is over 256 KB (${capsz} B)" 1 "$([ "$capsz" -gt 262144 ] && echo 1 || echo 0)"
     check "the payload warning starts past byte 262143 (at ${payoff:-none})" 1 "$([ -n "$payoff" ] && [ "$payoff" -gt 262143 ] && echo 1 || echo 0)"
 else

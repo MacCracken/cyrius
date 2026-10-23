@@ -122,8 +122,11 @@ export CYRIUS_HOME
 #     unpassable and incapable of seeing a real orphan.
 #   * SETS, not counts: the row below compares before-vs-after, so an unrelated
 #     stray from another session cannot flip this gate red on a shared box.
+# `{ grep … || true; }`: none found is the CLEAN answer, and grep's exit 1 there failed the pipeline
+# under `bash -eo pipefail` and ended the gate (at axis 1b's `orphan_pids > suite.pre`). The same
+# for the pid walks below: a pid that exits between ps and /proc is ordinary. CHANGELOG [6.7.18]
 orphan_pids() {
-    ps -eo pid=,args= 2>/dev/null | grep '/cyrius-[0-9]*/[t]est_bin' | awk '{print $1}' | sort
+    ps -eo pid=,args= 2>/dev/null | { grep '/cyrius-[0-9]*/[t]est_bin' || true; } | awk '{print $1}' | sort
 }
 
 # The same set, but ONLY processes descended from $1 — used by axis 1b.
@@ -155,7 +158,7 @@ descendant_pids() {
         _hops=0
         while [ -n "$_cur" ] && [ "$_cur" != 1 ] && [ "$_hops" -lt 12 ]; do
             if [ "$_cur" = "$_root" ]; then echo "$_p"; break; fi
-            _cur=$(awk '{print $4}' "/proc/$_cur/stat" 2>/dev/null)
+            _cur=$(awk '{print $4}' "/proc/$_cur/stat" 2>/dev/null || true)
             _hops=$(( _hops + 1 ))
         done
     done | sort
@@ -169,7 +172,7 @@ descendant_pids() {
 # path can. CHANGELOG [6.6.6]
 orphan_pids_of() {
     [ -n "$1" ] || { echo "no-pid"; return; }
-    ps -eo pid=,args= 2>/dev/null | grep -E "/cyrius-$1(-t[0-9]+)?/[t]est_bin" | awk '{print $1}' | sort
+    ps -eo pid=,args= 2>/dev/null | { grep -E "/cyrius-$1(-t[0-9]+)?/[t]est_bin" || true; } | awk '{print $1}' | sort
 }
 
 # A fixture that never terminates. `while (1 == 1)` with a live accumulator so no
@@ -324,7 +327,7 @@ runner=$!
 child=""
 i=0
 while [ "$i" -lt 600 ]; do
-    child=$(ps -eo pid=,ppid=,args= 2>/dev/null | awk -v r="$runner" '$2==r && $0 ~ /test_bin/ {print $1}' | head -1)
+    child=$(ps -eo pid=,ppid=,args= 2>/dev/null | awk -v r="$runner" '$2==r && $0 ~ /test_bin/ {print $1}' | head -1 || true)
     [ -n "$child" ] && break
     sleep 0.1
     i=$((i + 1))
@@ -332,7 +335,7 @@ done
 check "premise: the runner really did spawn a test child" "yes" \
     "$([ -n "$child" ] && echo yes || echo no)"
 if [ -n "$child" ]; then
-    kill -9 "$runner" 2>/dev/null
+    kill -9 "$runner" 2>/dev/null || true
     alive=yes
     j=0
     while [ "$j" -lt 100 ]; do
@@ -344,10 +347,10 @@ if [ -n "$child" ]; then
         echo "        → PR_SET_PDEATHSIG is missing from run_binary_timed's child arm"
         echo "          (cbt/build.cyr). A timeout alone cannot fix this: a SIGKILLed"
         echo "          parent runs no cleanup, so the kernel has to do it."
-        kill -9 "$child" 2>/dev/null
+        kill -9 "$child" 2>/dev/null || true
     fi
 else
-    kill -9 "$runner" 2>/dev/null
+    kill -9 "$runner" 2>/dev/null || true
 fi
 wait 2>/dev/null || true
 # A SIGKILLed runner runs no cleanup — by design, `_cbt_tmpdir_cleanup` cannot run in a
@@ -491,7 +494,7 @@ check "premise: the fixture hit the deadline" 1 "$(grep -c 'timed out after 2s' 
 sleep 0.5
 left=$(survivor "$N5")
 check "its spawned /bin/sleep $N5 is gone" "" "$left"
-for p in $left; do kill -9 "$p" 2>/dev/null; done
+for p in $left; do kill -9 "$p" 2>/dev/null || true; done
 
 echo "axis 6 — ⭐ a test that PASSES leaves nothing running either:"
 rc=0
@@ -500,14 +503,14 @@ check "premise: it passed" "0 1" "$rc $(grep -c '1 passed, 0 failed' "$T/x6.out"
 sleep 0.5
 left=$(survivor "$N6")
 check "its spawned /bin/sleep $N6 is gone" "" "$left"
-for p in $left; do kill -9 "$p" 2>/dev/null; done
+for p in $left; do kill -9 "$p" 2>/dev/null || true; done
 # The same with the deadline switched OFF (CYRIUS_TEST_TIMEOUT=0): still a batch run, still
 # swept — `cyrius run` is the only verb exempt (axis 3).
 ( cd "$T" && CYRIUS_TEST_TIMEOUT=0 timeout 120 "$CY" test "$T/fork_pass.tcyr" > "$T/x6b.out" 2> "$T/x6b.err" ) || true
 sleep 0.5
 left=$(survivor "$N6")
 check "…and with CYRIUS_TEST_TIMEOUT=0 too" "" "$left"
-for p in $left; do kill -9 "$p" 2>/dev/null; done
+for p in $left; do kill -9 "$p" 2>/dev/null || true; done
 
 echo "axis 7 — ⭐ 'cyrius test f | cat' returns within the bound:"
 t0=$(date +%s)
@@ -517,7 +520,7 @@ el=$(( $(date +%s) - t0 ))
 check "the pipeline was not shot by the 30 s backstop" "yes" "$([ "$rc" != 124 ] && echo yes || echo no)"
 check "it returned within 15 s (deadline 2 s + the TERM grace)" "yes" "$([ "$el" -lt 15 ] && echo yes || echo no)"
 left=$(survivor "$N5")
-for p in $left; do kill -9 "$p" 2>/dev/null; done
+for p in $left; do kill -9 "$p" 2>/dev/null || true; done
 
 # ── AXIS 8 — the sweep is SCOPED. The adoption window ends only what was adopted inside it; a
 # child that already existed when it opened (the CLI's analogue: a daemon from an implicit

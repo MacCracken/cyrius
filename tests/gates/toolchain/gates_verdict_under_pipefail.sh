@@ -1,4 +1,6 @@
 #!/bin/sh
+# check: serial — it runs other gates in its own bounded pool, among them a timing gate (test_runner_bounded)
+# that check.sh only runs alone; the parallel check.sh runs this one alone, after its pool (6.7.18)
 # tests/gates/toolchain/gates_verdict_under_pipefail.sh — 6.7.15. The gates filed for stopping
 # WITHOUT A VERDICT under `bash -eo pipefail` reach their verdict there.
 #
@@ -47,6 +49,48 @@
 #     `X=0; cmd || X=$?` / `|| true` now.
 #   * coroutine_midbody_suspend.sh (6.7.17) — a probe run `timeout 30 "$T/a1"; got=$?`: the probe exits 42 when it
 #     passes, so `-e` ended the gate on its first passing probe with rc 42; each is `got=0; .. || got=$?` now.
+#   * build_temp_source_write_checked.sh (6.7.18) — its filler was `yes … | head -n 15000`: head exits at
+#     its count, yes dies of SIGPIPE, rc 141 with no output; behind it, `_one_verdict` ended
+#     `grep -q … && { … }`, so on the PASSING case (no match) the fn returned 1. awk writes the filler
+#     now, and the fn's last check is an `if`.
+#   * cbt_no_shared_tmp_paths.sh (6.7.18) — `self_run` was `OUT=$(… cyrius self …); RC=$?` and the
+#     `_copy_binary` probe `"$D/cp"; R1=$?`: both FAIL by design on most rows, so `-e` ended the gate at
+#     the first (rc 1). `RC=0; OUT=$(…) || RC=$?` now.
+#   * cyrius_soak_describes_failures.sh (6.7.18) — `soak` was `OUT=$(… cyrius soak 1 …); RC=$?` over a
+#     soak that fails by design (rc 1, no output); and an 11 KB fn body went through `echo "$BODY" |
+#     grep -q` (more than one write: a present call could read as missing). Grepped from files now.
+#   * deps_git_cache_verified.sh (6.7.18) — `tmpn` counted leftovers with `ls <names> | wc -l`: ls exits 2
+#     when nothing is left (the CLEAN case), so the first refusal axis ended the gate (rc 2). It also
+#     ended on a bare `[ "$fail" -eq 0 ]` with no verdict line; it prints PASS / FAIL now.
+#   * deps_lock_new_leaf_locked.sh (6.7.18) — `n=$(grep -c 'lib/vec.cyr' …)` at axis 9's PASSING row
+#     (the remedy leaves 0 rows): grep -c prints 0 and exits 1 (rc 1). Every zero-able count is
+#     `|| true` now.
+#   * distlib_bundle_selfcheck.sh (6.7.18) — `cyrius distlib …; rc2=$?` / `check … "$?"` over the
+#     broken-bundle rows, which fail by design: `-e` ended the gate at axis 2 (rc 1). Each status is
+#     `rcN=0; … || rcN=$?` now.
+#   * install_gates_ship_the_checksum.sh (6.7.18) — axis 3's sweep piped every file through `grep -E
+#     'scp '` into a `while read`: most files hold no scp, grep's exit 1 failed the pipeline (rc 1).
+#     `{ grep … || true; }` now.
+#   * scaffold_verb_discovery.sh (6.7.18) — `( … cyrius <verb> __no_such_target_xyz__ … ); vrc=$?` over
+#     verbs that refuse by design: `-e` ended the gate at the first (rc 1). `vrc=0; ( … ) || vrc=$?`.
+#   * stdlib_key_scan_quoted.sh (6.7.18) — `raw=$(grep -c '"stdlib", 6' <files> | awk …)`: no raw scan
+#     left (the PASSING case) is grep's exit 1, which pipefail made the assignment's (rc 1).
+#   * test_runner_bounded.sh (6.7.18; `# check: serial`, so axis 2 runs it after the pool, alone) —
+#     `orphan_pids` piped `ps` through a grep that finds nothing on a clean box (rc 1 at axis 1b); a
+#     pid gone between ps and /proc, and a kill of an exited child, ended it the same way.
+#   * check_driver_bounded.sh (6.7.18) — axis 4 ran the check driver bare on suites that are RED by
+#     design (`( … "$T/drv" tcyr ) > out`): its exit 1 ended the gate before any 4a row.
+#   * check_driver_dies_with_check_sh.sh (6.7.18) — `kill -9 "$CHK"; wait "$CHK"`: the wait on a
+#     SIGKILLed job returns 137 (rc 1 at axis 4), and the EXIT trap's kill of a gone pid stopped the
+#     trap before its `rm -rf`. Every kill / wait of a process that may be gone is `|| true` now.
+#   * check_driver_requires_summary.sh (6.7.18) — `( … "$T/drv" tcyr ) 2>&1 | strip_ansi > out` over a
+#     suite RED by design: the driver's exit 1 failed the pipeline before any row (rc 1). The run is
+#     captured to a file first.
+#   * check_sh_targeted_path_cleans_up.sh (6.7.18) — `LEFT=$(ls -d <tmp>/cyrius-check-home.* | wc -l)`:
+#     no home left is the PASSING case and ls's exit 2 there (rc 2).
+#   * tracked_paths_portable.sh (6.7.18) — `grep -P '[<>:"|?*]…' paths > r1`: no forbidden character
+#     (the PASSING case) is grep's exit 1 (rc 1). Its status is read now — and 2 (no -P) fails by name
+#     instead of reading as a clean scan.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -58,7 +102,9 @@
 #           and must be read as STOPPED; the `|| true` spelling must be read as PASS.
 #   axis 2  each gate in GATES, run as `bash -eo pipefail <gate>`, exits 0 with a last line
 #           starting PASS (or 77 with a last line starting SKIP: a gate that could not run says
-#           so by name). check.sh runs each of them under `sh` as its own row.
+#           so by name). check.sh runs each of them under `sh` as its own row. They run in a
+#           pool bounded the way check.sh bounds its own (6.7.18), a `# check: serial` one after
+#           it, alone.
 #   axis 3  STATIC, over NOPIPE: no early-exiting reader below a pipe — `grep` with -q / -m / -l /
 #           -L, head, read, cmp, an awk whose script exits, a sed whose script quits — on any
 #           command line (comments skipped, `\` continuations joined). Its latent cases pass axis 2
@@ -80,7 +126,9 @@
 # axis 3 RED naming the line; the scanner's grep-option test dropped -> axis 3 RED (the early
 # fixture's grep rows unreported); lno's `|| :` dropped -> axis 4 RED (the mutant stops at
 # `neg=$(lno …)`); a build's `|| true` dropped -> axis 4 RED (the mutant stops at that build).
-# Add a gate to GATES when its pipefail stop or false verdict is fixed. CHANGELOG [6.7.17]
+# 6.7.18: each of the fifteen gates above back at its pre-fix text -> RED here, STOPPED, naming the
+# gate and its rc (1, 2 or 141) — measured all fifteen at once.
+# Add a gate to GATES when its pipefail stop or false verdict is fixed. CHANGELOG [6.7.18]
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -103,7 +151,22 @@ tests/gates/platform/pe_lockfileex_reroute.sh
 tests/gates/platform/pe_reroute_failure_errno.sh
 tests/gates/frontend/stack_enum_closure_return_scope.sh
 tests/gates/frontend/stack_enum_mixed_return_warning.sh
-tests/gates/frontend/coroutine_midbody_suspend.sh"
+tests/gates/frontend/coroutine_midbody_suspend.sh
+tests/gates/toolchain/build_temp_source_write_checked.sh
+tests/gates/toolchain/cbt_no_shared_tmp_paths.sh
+tests/gates/toolchain/cyrius_soak_describes_failures.sh
+tests/gates/toolchain/deps_git_cache_verified.sh
+tests/gates/toolchain/deps_lock_new_leaf_locked.sh
+tests/gates/toolchain/distlib_bundle_selfcheck.sh
+tests/gates/toolchain/install_gates_ship_the_checksum.sh
+tests/gates/toolchain/scaffold_verb_discovery.sh
+tests/gates/toolchain/stdlib_key_scan_quoted.sh
+tests/gates/toolchain/test_runner_bounded.sh
+tests/gates/toolchain/check_driver_bounded.sh
+tests/gates/toolchain/check_driver_dies_with_check_sh.sh
+tests/gates/toolchain/check_driver_requires_summary.sh
+tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh
+tests/gates/toolchain/tracked_paths_portable.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
@@ -132,16 +195,43 @@ done
 [ "$FAILS" = 0 ] && echo "  ok: axis 1: a zero-count grep -c and a SIGPIPE'd pipe read as STOPPED, the || true spelling as PASS"
 
 # ── axis 2: each listed gate reaches its verdict under bash -eo pipefail ────────────────
-# The gates run side by side (check.sh runs gates in parallel already); each one's rc lands in
-# its own file, and every PID is waited on.
-N=0; PIDS=""
+# The gates run side by side in a BOUNDED pool — check.sh's own worker rule (CYRIUS_CHECK_JOBS, else
+# half the online CPUs, capped at 8), not one process per listed gate — and a gate marked
+# `# check: serial` (a timing measurement check.sh runs alone) runs after the pool, alone, as check.sh
+# runs it. Each one's rc lands in its own file, and every PID is waited on. CHANGELOG [6.7.18]
+_jobs() {
+    _j="${CYRIUS_CHECK_JOBS:-}"
+    if [ -z "$_j" ]; then
+        _j=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+        case "$_j" in ''|*[!0-9]*) _j=2 ;; esac
+        _j=$((_j / 2))
+        if [ "$_j" -gt 8 ]; then _j=8; fi
+    fi
+    case "$_j" in ''|*[!0-9]*|0) _j=1 ;; esac
+    echo "$_j"
+}
+_running() {  # how many started pool gates have not written their rc yet
+    _r=0
+    for _n in $STARTED; do
+        if [ ! -f "$D/gate$_n.rc" ]; then _r=$((_r + 1)); fi
+    done
+    echo "$_r"
+}
+_run_one() {  # $1 = N, $2 = gate
+    grc=0; bash -eo pipefail "$2" > "$D/gate$1.out" 2>&1 < /dev/null || grc=$?; echo "$grc" > "$D/gate$1.rc"
+}
+JOBS=$(_jobs)
+N=0; PIDS=""; STARTED=""; : > "$D/serial.list"
 for g in $GATES; do
     N=$((N + 1))
     [ -f "$g" ] || continue
-    ( grc=0; bash -eo pipefail "$g" > "$D/gate$N.out" 2>&1 < /dev/null || grc=$?; echo "$grc" > "$D/gate$N.rc" ) &
-    PIDS="$PIDS $!"
+    if grep -q '^# check: serial' "$g"; then echo "$N $g" >> "$D/serial.list"; continue; fi
+    while [ "$(_running)" -ge "$JOBS" ]; do sleep 0.2; done
+    _run_one "$N" "$g" &
+    PIDS="$PIDS $!"; STARTED="$STARTED $N"
 done
 for p in $PIDS; do wait "$p" || true; done
+while read -r n g; do _run_one "$n" "$g"; done < "$D/serial.list"
 N=0
 for g in $GATES; do
     N=$((N + 1))

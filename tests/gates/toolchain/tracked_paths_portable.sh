@@ -40,7 +40,11 @@ N=$(wc -l < "$T/paths")
 bad=0
 report() { echo "  $1"; sed 's/^/      /' "$2"; bad=1; }
 
-grep -P '[<>:"|?*]|[\x01-\x1f]' "$T/paths" > "$T/r1" 2>/dev/null
+# grep's status is read, not left to `set -e`: 1 (no forbidden character) is the PASSING case and
+# ended the gate under `bash -eo pipefail`; 2 (no -P, a read error) is a scan that did not run, said
+# by name rather than read as clean. CHANGELOG [6.7.18]
+g1=0; grep -P '[<>:"|?*]|[\x01-\x1f]' "$T/paths" > "$T/r1" 2>/dev/null || g1=$?
+[ "$g1" -le 1 ] || { echo "FAIL tracked_paths_portable: grep -P could not scan the paths (rc $g1) — the forbidden-character check did not run"; exit 1; }
 [ -s "$T/r1" ] && report 'path contains a character Windows forbids (< > : " | ? * or a control byte):' "$T/r1"
 
 awk -F/ '{for(i=1;i<=NF;i++) if ($i ~ /[ .]$/) {print; next}}' "$T/paths" > "$T/r2"
