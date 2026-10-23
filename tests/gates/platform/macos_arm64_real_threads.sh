@@ -20,7 +20,7 @@
 # else in the tree couples those two facts.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-PE="$ROOT/src/frontend/parse/expr.cyr"
+PE="$ROOT/src/frontend/parse/expr/factor.cyr"   # 6.7.18: parse/expr.cyr split by seam
 AE="$ROOT/src/backend/aarch64/emit.cyr"
 ME="$ROOT/src/backend/macho/emit_arm64.cyr"
 fail() { echo "FAIL macos_arm64_real_threads: $1" >&2; exit 1; }

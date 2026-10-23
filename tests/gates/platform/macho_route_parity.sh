@@ -268,7 +268,7 @@ else
 fi
 
 # ---------------------------------------------------------------- axis 3: registration drift
-# _macho_arm_routes is the SINGLE SOURCE OF TRUTH parse/expr.cyr queries for the
+# _macho_arm_routes is the SINGLE SOURCE OF TRUTH parse/expr/callee.cyr queries for the
 # "syscall not routed" warning. It is a hand-maintained mirror of the ESYSXLAT sources, so it
 # drifts silently in BOTH directions: a missing row makes a WORKING call warn (7 socket numbers
 # did exactly that from v6.2.24 until v6.5.16 — and a warning that cries wolf is how a real one

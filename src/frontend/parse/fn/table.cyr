@@ -541,7 +541,7 @@ fn FINDFN(S, noff): i64 {
 }
 
 # v5.7.31: find fn index by literal c-string name (str_ptr / str_len).
-# Used by parse/expr.cyr's aarch64 polyfill dispatch for f64_exp /
+# Used by parse/expr/'s aarch64 polyfill dispatch for f64_exp /
 # f64_ln, where the lookup target is a fixed compiler-internal name
 # rather than a user IDENT (whose noff would be available via
 # PEEKV). Linear scan over GFCNT(S) entries; the str_data names are

@@ -21,7 +21,7 @@
 #      would recreate a bug we have already paid for once.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-PE="$ROOT/src/frontend/parse/expr.cyr"
+PE="$ROOT/src/frontend/parse/expr/callee.cyr"   # 6.7.18: parse/expr.cyr split by seam
 XE="$ROOT/src/backend/x86/emit.cyr"
 fail() { echo "FAIL macho_diagnostic_parity: $1" >&2; exit 1; }
 

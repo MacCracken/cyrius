@@ -13,7 +13,7 @@
 # second / third name of a destructure were taken for reads. With lib/alloc.cyr the values were
 # right, but each closure carried a heap env holding a copy of a local it never read.
 #
-# THE FIX (src/frontend/parse/expr.cyr): each name is shadowed from where the PARSER binds it.
+# THE FIX (src/frontend/parse/expr/closure.cyr): each name is shadowed from where the PARSER binds it.
 # `const` names one as `var` does. `_cl_prescan_forin`: the start bound or the collection is read in
 # the enclosing scope (PARSE_FOR parses it before it registers the variable), then the variable is
 # shadowed for a range's end bound (which reads it) and the body, and dropped after the loop.

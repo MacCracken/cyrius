@@ -71,7 +71,7 @@
 #         a method that EXISTS, for a call to q.nosuch())
 #   M8  remove SFDS in pass 1                             -> axis 3 fwd_generic red, the crossos
 #         tcyr fails to COMPILE, and var_then_fn/arr_then_fn red (the authority keys on SFDS)
-#   M9  remove the _spec < 0 guard in parse/expr.cyr      -> was axis 3 struct_targ red ("undefined
+#   M9  remove the _spec < 0 guard in parse/expr/postfix.cyr      -> was axis 3 struct_targ red ("undefined
 #         function 'enum'", a read of _fnt_names at index -3); since 6.7.1 no struct type
 #         argument reaches it (the -3 refusal is gone), so this mutation is no longer observable
 #   M11 method args pushed without the callee mask        -> the crossos tcyr SIGSEGVs (139)

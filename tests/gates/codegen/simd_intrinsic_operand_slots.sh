@@ -3,7 +3,7 @@
 # neither the argument parse (6.6.2) nor the register picker (6.6.5) may take one away.
 #
 # ⛔ DEFECT 1 (filed 2026-09-09 by hisab, fixed v6.6.2). Every f64v_*/f32v_*/iv_* handler in
-# parse/expr.cyr took `var vbase = GFLC(S);` and did not raise GFLC until AFTER every argument
+# parse/expr/intrin.cyr took `var vbase = GFLC(S);` and did not raise GFLC until AFTER every argument
 # had been parsed. So while an argument was being parsed, GFLC still pointed AT the intrinsic's
 # own destination slot. Any argument that allocates a frame local therefore bound it there — the
 # inline replay's `var saved_flc = GFLC(S);` (parse/fn/call.cyr) returned `vbase` itself and laid its

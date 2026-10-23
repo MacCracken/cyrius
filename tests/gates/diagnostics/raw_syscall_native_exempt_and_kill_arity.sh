@@ -3,7 +3,7 @@
 # diagnostics that were wrong in opposite directions.
 #
 # AXIS 1 — a CORRECT native aarch64 number is not flagged. The ELF-aarch64 raw-literal warning
-#   (v6.5.51; `_sysx_meant_here`, src/frontend/parse/expr.cyr) fired on `syscall(8, ..)` /
+#   (v6.5.51; `_sysx_meant_here`, src/frontend/parse/expr/postfix.cyr) fired on `syscall(8, ..)` /
 #   `syscall(291, ..)` INSIDE `#ifdef CYRIUS_ARCH_AARCH64`, where 8 IS getxattr and 291 IS
 #   statx — "Use SYS_LSEEK" was the wrong advice. Naming the number through an enum constant
 #   still warned (the constant folds to the same literal), so there was no way to say "native"

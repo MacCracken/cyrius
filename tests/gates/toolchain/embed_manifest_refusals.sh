@@ -168,7 +168,7 @@ awk '/^fn _is_ident_intrinsic\(/,/^}/' src/frontend/parse/parse.cyr | grep -o '_
 ni=$(wc -l < "$W/ident" | tr -d ' ')
 [ "$ni" -ge 2 ] || fail "axis 5: found $ni identifier intrinsics in _is_ident_intrinsic (floor 2: sizeof, mulh64)"
 cat "$W/ident" >> "$W/rsv"
-grep -q 'if (d > 56) { return 0; }' src/frontend/parse/expr.cyr || fail "axis 5: _IS_FNCALL_NAME no longer reads fncall0..fncall8 — re-derive the fncallN names"
+grep -q 'if (d > 56) { return 0; }' src/frontend/parse/expr/callee.cyr || fail "axis 5: _IS_FNCALL_NAME no longer reads fncall0..fncall8 — re-derive the fncallN names"
 for d in 0 1 2 3 4 5 6 7 8; do echo "fncall$d"; done >> "$W/rsv"
 sort -u "$W/rsv" | grep -v '^$' > "$W/rsv.u"
 nr=$(wc -l < "$W/rsv.u" | tr -d ' ')

@@ -3,7 +3,7 @@
 # a capturing closure, on every target, and a top-level `callptr` compiles.
 #
 # ⛔ THE DEFECT (hisab, filed 2026-10-03 against pins 6.6.0 - 6.6.14). Since 6.5.17 an indirect
-# call is lowered by PINDIRECT_CALL (src/frontend/parse/expr.cyr), which spills the callee to
+# call is lowered by PINDIRECT_CALL (src/frontend/parse/expr/callee.cyr), which spills the callee to
 # FRAME slots and decides "closure or bare fn pointer" at run time from bit 63. Top-level code
 # has no frame, so both lowering gates — the expression one in _PARSE_FACTOR_IMPL and the
 # statement one in _PARSE_STMT_IMPL — read `_cur_fn_ix >= 0`, and PINDIRECT_CALL itself refused

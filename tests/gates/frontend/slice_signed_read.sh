@@ -7,7 +7,7 @@
 # (6.7.7 and every release since v5.8.15), while the same bytes in an `i8[N]` array, through a `*i8`
 # or in an i8 field read -3. The read now takes the element's checked address from the store's call
 # (`_slice_idx_addr(&s, i, sizeof(T))`, the same "slice bounds violation" / 134 check) and loads it at
-# the negative width (`_esub_load`, src/frontend/parse/expr.cyr `_slice_sub_sread`), and `s[i] OP= v`
+# the negative width (`_esub_load`, src/frontend/parse/expr/subscript.cyr `_slice_sub_sread`), and `s[i] OP= v`
 # (C2-6a) loads the element the same way. Unsigned, i64, float, bool, pointer and u128 elements keep
 # their getter byte for byte (the differential: nothing else that compiled changes).
 #

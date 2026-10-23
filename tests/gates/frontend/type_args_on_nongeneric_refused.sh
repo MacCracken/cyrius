@@ -57,7 +57,7 @@
 #
 #   AD  (6.7.17, met in genb's GB1, no decision: the shape was refused already, as a cascade) `&` OF A FN WRITTEN WITH A
 #       TYPE-ARGUMENT LIST: `&nf<i64>` / `&gg<i32>` were "undefined variable 'i64'" + "expected ';', got '>'" (the `&`
-#       factor took the name and left the list to the expression as comparisons). `_amp_targs` (parse/expr.cyr): a fn
+#       factor took the name and left the list to the expression as comparisons). `_amp_targs` (parse/expr/callee.cyr): a fn
 #       that is not generic gets 6.7.16's line, the list stepped and its address taken; a generic fn's instance one line
 #       by name, "cannot take the address of a generic instance: 'gg' - ...", the list and a call's `( .. )` stepped.
 #       AD1-AD5 plain and under the flag (a local, a global's initializer, a callptr argument, `&gg<i32>(3)`); ADK the
@@ -66,7 +66,7 @@
 #   BV  (6.7.17, the review of genb, no decision: refused already, as a cascade) A NAME READ WITH A LIST OF TYPE NAMES
 #       AND NO CALL — `var f = gg<i32>;`, `nf<i64> + 1`, a global's initializer, `callptr(gg<Box<i64>>, 3)`, `zz<Pt, i64>`:
 #       the name's "undefined variable" and its list then read as comparisons ("undefined variable 'i32'" + "expected
-#       ';', got '>'"). The list is stepped after the name's line (`_undef_tlist`, parse/expr.cyr): one line, the next
+#       ';', got '>'"). The list is stepped after the name's line (`_undef_tlist`, parse/expr/undef.cyr): one line, the next
 #       error the program's own; plain and under the flag. Mutant (2026-10-22): the compiler before the fix (the review
 #       branch at 9515b522e) -> RED BV1-BV5 on both legs (three lines each), A [pe] BV1; A [a64] / [cx] BV1 build from
 #       the tree.

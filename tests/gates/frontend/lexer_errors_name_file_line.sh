@@ -150,7 +150,7 @@ echo "axis 6 — a newline INSIDE a string literal is a line (6.6.11):"
 # later token was lexed one line HIGH per newline: diagnostics named the wrong line, then
 # the wrong FILE (line 1 of the next include landed on its own marker line and printed a
 # bare `error:4:12:`), and FM_FILEID — which reads the line — attributed a call to the
-# wrong file, so a `private` fn was callable from outside it. src/frontend/parse/expr.cyr
+# wrong file, so a `private` fn was callable from outside it. src/frontend/parse/expr/callee.cyr
 # carried such a literal, which put every diagnostic in backend/x86/fixup.cyr one line high.
 refused ml_undef   'var s = "a\nb\nc";\nvar t = 1;\nvar u = zzz_undefined;\n'       "error:<source>:5:9: undefined variable 'zzz_undefined'"
 refused ml_dollar  'var s = "a\nb";\nvar b = $;\n'                                    'error:<source>:3:9: unexpected character (0x24)'

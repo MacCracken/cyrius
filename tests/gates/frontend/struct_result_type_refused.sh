@@ -780,7 +780,7 @@ syscall(60, X.a);
 # was a second error (the stand-down looked up no capture). Now the rung (`_cl_cap_fld_any`, parse/decl/field.cyr) hands any
 # capture on as its capture-band index with sid 0: "no struct type in scope for 'x'" in the field / store / method
 # wording, a captured vector's "SIMD vector has no named fields", and the refused-annotation stand-down, which resolves
-# the capture to its declaring fn's slot through any nesting (`_cl_cap_origin`, parse/expr.cyr: the closure context
+# the capture to its declaring fn's slot through any nesting (`_cl_cap_origin`, parse/expr/closure.cyr: the closure context
 # keeps its host fn, `_cl_host_fn`, and the enclosing context, `_cl_ctx_up`). The same arm calls a bounded scalar T's
 # member on a captured receiver (`|| v.show()` at T = i64 was "undefined variable 'v'": tests/tcyr/crossos/
 # trait_bounds.tcyr K1-K9). `--syntax-only` stays silent (UC12).

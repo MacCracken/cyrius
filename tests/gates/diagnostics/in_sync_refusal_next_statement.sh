@@ -15,7 +15,7 @@
 #
 # THE FIX. `_refuse_in_sync` (src/frontend/parse/parse.cyr) records the mark `_stmt_resync` reads, called just before each
 # such refusal latches: `_arr_sub_addr`'s undefined-base and u128 arms, `_sub_err`, `_psub_err` and `_deref_u128_err`
-# (src/frontend/parse/expr.cyr). `_stmt_resync` is unchanged: it clears only the latch when the statement ended at
+# (src/frontend/parse/expr/subscript.cyr, expr/deref.cyr). `_stmt_resync` is unchanged: it clears only the latch when the statement ended at
 # its own `;` / `}` past the mark, and still skips to the next recovery point when it did not.
 #
 #   F   the filing's programs verbatim: F1 latch4 (three errors, lines 5 6 7), F2 latch5 (three, lines 5 6 7)

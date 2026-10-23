@@ -56,7 +56,7 @@
 #        -> axis 2's warning row FAILs with line=4 (want 3). Added in review round 2, which
 #           found the warning naming the statement AFTER the declaration while this release's
 #           sibling-repo note promises downstreams a file:line.
-#   9. drop the `_CL_CAP_OPTYPE` call from the closure-capture rung (parse/expr.cyr)
+#   9. drop the `_CL_CAP_OPTYPE` call from the closure-capture rung (parse/expr/closure.cyr)
 #        -> axis 10 rows 1 and 3 give 2 and 32, and the no-`T_op` row COMPILES (rc 0) — the
 #           silent capability loss, since 6.6.4 refuses that program. Added in review round 2.
 set -u

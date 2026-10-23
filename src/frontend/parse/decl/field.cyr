@@ -2227,7 +2227,7 @@ fn _ifs_bx_el(S, k, ti, nm): i64 {
 
 # 6.7.8 (C2-4b) — `h.p[i] = v` / `h.p[i] OP= v` (the statement and the classic-for step): the leaf
 # field (`_rlf_si` / `_rlf_fi`) a `*T`, its VALUE loaded from the field's address (`_fld_addr_ra`),
-# then the element addressed and stored as a named `*T`'s (parse/expr.cyr `_psub_addr`,
+# then the element addressed and stored as a named `*T`'s (parse/expr/subscript.cyr `_psub_addr`,
 # `_esub_assign`). A field that is no `*T` is refused by name, the statement parsed on.
 fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
     var fnm = GETFNAME(S, _rlf_si, _rlf_fi);

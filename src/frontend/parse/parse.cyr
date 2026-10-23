@@ -125,7 +125,7 @@ var _pair_prescan_done = 0;
 #
 # Does the `{` at token k open a CLOSURE body? Call only when TOKTYP(S, k) == 13. Closure grammar
 # is `|` IDENT (`,` IDENT)* `|` or `||`, then the body — untyped params, no return annotation
-# (parse/expr.cyr, the `typ == 35 || typ == 54` factor arm) — and `{` never begins an expression,
+# (parse/expr/factor.cyr, the `typ == 35 || typ == 54` factor arm) — and `{` never begins an expression,
 # so a `{` right after `|` (35) or `||` (54) can only be a closure block body, never `a | b` /
 # `a || b`. ⚠ If closure params or a return type ever gain annotations, this must scan the param
 # list instead. A brace-less closure (`|x| h(x)`) needs no skip: an expression holds no `return`.
@@ -3028,7 +3028,7 @@ fn _defer_emit_walk(S): i64 {
     EDEFER_RESTORE(S);
     return 0;
 }
-# 6.6.7 — a coroutine suspend exit (`await` inside a coroutine body, parse/expr.cyr): record the
+# 6.6.7 — a coroutine suspend exit (`await` inside a coroutine body, parse/expr/stamp.cyr): record the
 # `jmp` to the fn end per suspend index, not in rp_vec, so it bypasses the defer walker. An
 # `await` inside a DEFER body is refused: the walker is mid-run with rax pushed on a stack frame
 # that the suspend destroys.
@@ -3365,7 +3365,21 @@ include "src/frontend/parse/types.cyr"
 # Linux x86_64 syscalls, or -1 if unknown. The table is fixed — free information.
 
 # v5.5.38: expression-parsing fns extracted.
-include "src/frontend/parse/expr.cyr"
+# 6.7.18: that file (parse/expr.cyr) is split along its seams into parse/expr/, each piece moved unchanged and
+# included HERE, one after another in its old order, so the token stream, and every compiler built from it, is the
+# same. One parent, no nesting. CHANGELOG [6.7.18]
+include "src/frontend/parse/expr/closure.cyr"
+include "src/frontend/parse/expr/callee.cyr"
+include "src/frontend/parse/expr/stamp.cyr"
+include "src/frontend/parse/expr/wide.cyr"
+include "src/frontend/parse/expr/postfix.cyr"
+include "src/frontend/parse/expr/subscript.cyr"
+include "src/frontend/parse/expr/deref.cyr"
+include "src/frontend/parse/expr/undef.cyr"
+include "src/frontend/parse/expr/factor.cyr"
+include "src/frontend/parse/expr/intrin.cyr"
+include "src/frontend/parse/expr/term.cyr"
+include "src/frontend/parse/expr/pexpr.cyr"
 
 
 # Parse array: already past [, parse N]; register global var with aligned size
@@ -5151,7 +5165,7 @@ var _cop_rti = 0 - 1;
 # mark, local or global); a slice is a local `[T]` / `slice<T>`. D2 (the second round of decisions,
 # same day) added a BARE array — `var b[N]` (local, static, global) and `stack var b[N]`: its `OP=`
 # worked on the first word too. A u128's `+=` / `-=` carry and its other `OP=` are refused
-# (_w128_cop, parse/expr.cyr). The statement parses on. CHANGELOG [6.7.6]
+# (_w128_cop, parse/expr/wide.cyr). The statement parses on. CHANGELOG [6.7.6]
 fn _asg_wide_refused(S, noff, li): i64 {
     var k = 0;
     if (li >= 0) {
@@ -5727,7 +5741,7 @@ fn _dst_word(S, h, sz): i64 {
 # a classic-for step: the address once, before the value, then the store. 6.7.5 (B8): the compound
 # form — it was "expected '=', got '+'" — loads, `_asg_compound_op`s it and stores it back. Out of
 # _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling. CHANGELOG [6.7.5]
-# 6.7.8 (C2-5): through a narrow `*T` (`_deref_ed`, parse/expr.cyr) the element is written at its
+# 6.7.8 (C2-5): through a narrow `*T` (`_deref_ed`, parse/expr/deref.cyr) the element is written at its
 # width, as `p[0] = v` / `p[0] OP= v` write it: `=` checks the value as a store into an f32 element
 # (an f64 rounds, an integer constant warns), `OP=` loads the element at its width (sign- /
 # zero-extended; an f32 combines as an f32), a wider integer warns "narrowing". Every other operand
@@ -7439,7 +7453,7 @@ fn _stmt_qmark(S, pair): i64 {
 
 # ⛔ 6.6.12 — AN EXPLICIT GENERIC CALL AS A BARE STATEMENT (`id<i32>(4);`) was "expected '=',
 # got '<'": the IDENT arm of _PARSE_STMT_IMPL sent only `IDENT (` to PARSE_FNCALL, so `IDENT <`
-# fell into the assignment path. Same guards as the factor's arm (parse/expr.cyr: the monomorph
+# fell into the assignment path. Same guards as the factor's arm (parse/expr/factor.cyr: the monomorph
 # flag, a generic callee, the `name<..>(` lookahead), so `a < b;` and a non-generic `<` never
 # get here. Parity with the `IDENT (` arm: a `.field` / `.method()` on the result
 # (`_stmt_call_field`), the #must_use warning and a postfix `?`. Cursor just past the callee

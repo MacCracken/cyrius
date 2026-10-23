@@ -14,7 +14,7 @@
 #
 # Each instruction is 4 bytes: [opcode][ra][rb][rc] (little-endian in output)
 
-# v5.7.11: stubs matching backend/x86/emit.cyr — parse.cyr / parse/expr.cyr
+# v5.7.11: stubs matching backend/x86/emit.cyr — parse.cyr / parse/expr/
 # / parse/decl/ / parse/fn/ reference these in shared codepaths
 # (`if (_AARCH64_BACKEND == 1)`, `if (_TARGET_MACHO == ...)`, etc.).
 # cx backend is x86-shaped, never aarch64/mach-o/PE — all 0.
@@ -29,7 +29,7 @@ var _TARGET_ELF64_KERNEL = 0;
 # x86/aarch64 emit headers.
 var _TARGET_EFI_APPLICATION = 0;
 # v6.0.48: AGNOS target marker — x86-only; always-zero parser-resolution
-# stub (parse/expr.cyr references _TARGET_AGNOS in the syscall arity skip).
+# stub (parse/expr/postfix.cyr references _TARGET_AGNOS in the syscall arity skip).
 var _TARGET_AGNOS = 0;
 # v5.7.12: this is the cyrius-x bytecode backend. =1 here so
 # parse/*.cyr can gate direct x86-byte emits via
@@ -37,7 +37,7 @@ var _TARGET_AGNOS = 0;
 # docs/audit/2026-04-27-cx-direct-emit-inventory.md).
 var _TARGET_CX = 1;
 # v5.6.8 flag-reuse tracker — defined in x86 + aarch64 emit; mirror
-# here so parse/ctrl.cyr / parse/expr.cyr resolve the symbol on cx
+# here so parse/ctrl.cyr / parse/expr/ resolve the symbol on cx
 # builds. Always 0 on cx — bytecode has no flag-reuse semantic.
 var _flags_reflect_rax = 0;
 var _flags_cp = 0 - 1;   # 6.7.6: the setter's CP, read by ECONDCMP (x86/emit.cyr); never set here
@@ -228,7 +228,7 @@ fn ESTORE32(S): i64 { CX_EMIT(S, 71, 1, 0, 0); return 0; }
 fn ESTORE64(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }
 fn ESTOC(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }    # store64 [r1], r0
 
-# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse/expr.cyr _w128_*): r1 = a 16-byte accumulator;
+# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse/expr/wide.cyr _w128_*): r1 = a 16-byte accumulator;
 # EW128_ACCM takes r0 = the ADDRESS of a u128, EW128_ACCI r0 = an integer, zero-extended. op 0 adds,
 # 1 subtracts, 2 copies / sets. cxvm has no carry flag, so the carry is computed: an unsigned
 # `a < b` is the signed compare of `a ^ (1 << 63)` and `b ^ (1 << 63)`. r8-r12 are scratch (self-
@@ -283,7 +283,7 @@ fn _cx_w128_op(S, op, lo, hi): i64 {
     CX_EMIT(S, 67, 11, 9, 0);             # store64 [r11], r9
     return 0;
 }
-# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse/expr.cyr _w128_cmp*): r1 = the ADDRESS of the left
+# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse/expr/wide.cyr _w128_cmp*): r1 = the ADDRESS of the left
 # u128, r0 = the right's; r0 = (left op right), 0 / 1, UNSIGNED across all 128 bits (op = the
 # comparison token, 17-22). cxvm has no carry flag: `a <u b` is the signed compare of `a ^ (1 << 63)`
 # and `b ^ (1 << 63)`, and A < B is (A.hi < B.hi) | (A.hi == B.hi & A.lo < B.lo) — `>` / `<=` swap the
@@ -321,7 +321,7 @@ fn EW128_CMP(S, op): i64 {
     }
     return 0;
 }
-# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse/expr.cyr _w128_truth): r0 = the ADDRESS of a u128;
+# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse/expr/wide.cyr _w128_truth): r0 = the ADDRESS of a u128;
 # r0 = (value == 0) for op 17, (value != 0) for op 18, 0 / 1, across all 128 bits. r8, r10 and r12
 # are scratch. CHANGELOG [6.7.6]
 fn EW128_TST(S, op): i64 {
@@ -345,7 +345,7 @@ fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
 # set r1 = 0, turning EJCC's `eq r0,r0,r1` into `eq r0,r0,0` = a genuine `r0 == 0`
 # truthiness test. Every caller is a truthiness test of r0 followed by EJCC, with
 # r1 scratch: ECONDCMP's bare value and its u128 chain arm (parse/ctrl.cyr),
-# `_w128_case` (parse/expr.cyr: a u128 match / switch arm), `_match_arm_test`'s
+# `_w128_case` (parse/expr/wide.cyr: a u128 match / switch arm), `_match_arm_test`'s
 # u128 arm on an integer subject and `_defer_emit_walk`'s flag test (parse.cyr).
 # Find them by name (`grep -n 'ETESTAZ(S)' src/frontend`), not by line.
 fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,r1 tests r0==0
@@ -454,7 +454,7 @@ fn EREGALLOC_RESTORE(S, n): i64 {
 }
 
 # EDROPI64 — PE-only path; cx doesn't enter the calling code
-# (parse/expr.cyr PE syscall stubs are gated by _TARGET_PE).
+# (parse/expr/factor.cyr PE syscall stubs are gated by _TARGET_PE).
 fn EDROPI64(S): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     return 0;
@@ -689,7 +689,7 @@ fn ECALLIND(S, idx): i64 {
     return 0;
 }
 
-# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse/expr.cyr; the
+# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse/expr/callee.cyr; the
 # x86 peer in backend/x86/emit.cyr has the full note). The ordinary prologue pair — EFNPRO
 # (`pushc fp; mov fp, sp`, fp saved on the CALL stack) and ESUBRSP's patchable
 # `movi r252; movhi r252; sub sp` — and the epilogue without its `ret`. Before 6.6.16 a top-level fncallN on cx was an ordinary
@@ -2033,7 +2033,7 @@ fn EMACHO_FORK_ARM(S): i64 { return 0; }   # 6.6.13: arm64-macOS only (libSystem
 fn _macho_arm_routes(n): i64 { return 0; }
 
 # v6.5.51 — the ELF-aarch64 raw-syscall-number diagnostic is aarch64-only; these stubs
-# keep the shared parse/expr.cyr call site defined without pulling the generated table
+# keep the shared parse/expr/callee.cyr call site defined without pulling the generated table
 # (src/common/syscall_xlat.cyr) into this fork. Mirrors `_macho_arm_routes` above.
 fn _SYSX_MEANT(n): i64 { return 0; }
 fn _SYSX_USE(n): i64 { return 0; }
@@ -2051,7 +2051,7 @@ fn RA_SCAN_LOOPS(base, lo, hi, out_t, out_s, cap): i64 { return 0 - 1; }
 
 # v6.5.64 — symbol-resolution stub. The direct 128-bit emitter is an x86 fast path; PARSE_SIMD_EXT
 # gates the whole detection on `_AARCH64_BACKEND == 0 && _TARGET_CX == 0` and never reaches this,
-# but an undefined fn has been a HARD ERROR since v6.3.2, so every fork that compiles parse/expr.cyr
+# but an undefined fn has been a HARD ERROR since v6.3.2, so every fork that compiles parse/expr/intrin.cyr
 # needs the symbol. Returning 0 without emitting is correct precisely because it is unreachable —
 # do NOT make this a partial implementation.
 fn EMIT_VEC_DIRECT(S, op, dst_li, a_li, b_li, dbl): i64 { return 0; }

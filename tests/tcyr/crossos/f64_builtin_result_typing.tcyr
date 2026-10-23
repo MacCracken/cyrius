@@ -21,7 +21,7 @@
 # rows run everywhere.
 #
 # Mutation that reddens this file: make PARSE_INTRIN skip `_FBR_MARK` (src/frontend/
-# parse/expr.cyr) — every arithmetic row fails.
+# parse/expr/intrin.cyr) — every arithmetic row fails.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"

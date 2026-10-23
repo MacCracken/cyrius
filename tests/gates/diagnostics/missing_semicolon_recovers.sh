@@ -360,7 +360,7 @@ syscall(60, f());
 error:<source>:8:9: $DF
 error:<source>:9:12: $UZ"
 
-# ---- E: a subscript store's `;` (src/frontend/parse/expr.cyr)
+# ---- E: a subscript store's `;` (src/frontend/parse/expr/subscript.cyr)
 row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
     var a: i64[4];
     a[0] = 1 }

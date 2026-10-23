@@ -523,7 +523,7 @@ var _asg_ret_sid = 0;
 # `_tpv_end_at`).
 var _tp_term = 5;
 # 6.6.10 — the first token of a plain assignment's RHS (-1 for a compound one), so an integer
-# constant stored into an f64 / f32 variable warns (_IFS_CHECK, src/frontend/parse/expr.cyr).
+# constant stored into an f64 / f32 variable warns (_IFS_CHECK, src/frontend/parse/expr/postfix.cyr).
 var _asg_ti = 0 - 1;
 var _asg_nti = 0 - 1;   # 6.7.17: an assignment's name token (PARSE_STMT, the for step), for its undefined-name report
 # 6.6.11 — whether a plain assignment's RHS was a float (_UFV_IS_FLOAT, captured right after its
@@ -969,7 +969,7 @@ fn GFLC(S): i64 { return L64(S + 0x18DA10); }
 # Both alloc()'d lazily on the first flagged declaration: no heap-LAYOUT change, and never on
 # the `_grow_g*` chain. A slot SFLC hands out is cleared here, so a parameter, a hidden temp or
 # the next fn's local never inherits a flag. Read by unary minus to warn; see _UFV_L
-# (src/frontend/parse/expr.cyr). CHANGELOG [6.6.10]
+# (src/frontend/parse/expr/postfix.cyr). CHANGELOG [6.6.10]
 var _lfi_base = 0;
 var _gfi_base = 0;
 fn _lfi_clear(S, v): i64 {
@@ -1241,8 +1241,8 @@ fn SFIC(S, fi, c0, c1): i64 {
 }
 # 6.7.3 (B2) — per fn, a row [capacity][one byte per parameter ordinal]: 1 = the parameter is
 # declared `: bool`, so an argument for it is checked (6.7.6: 2 an integer, 3 `: f32`; 6.7.11: 4
-# `: f64` — `_bx_ptype`, parse/expr.cyr; every reader tests an exact value). Allocated on the first such parameter and
-# grown on demand (no ordinal cap); the table is lazy at the max fn cap like _fnt_pmhi, so the brk
+# `: f64` — `_bx_ptype`, parse/expr/stamp.cyr; every reader tests an exact value). Allocated on the first such parameter
+# and grown on demand (no ordinal cap); the table is lazy at the max fn cap like _fnt_pmhi, so the brk
 # layout does not move. Pass 1 (_prescan_params_scan) records it for forward calls; pass 2
 # re-records each definition.
 var _fnt_pbool = 0;
@@ -1884,7 +1884,7 @@ fn GLSPAN(S, li): i64 {
 # | 0x40 when signed; 0 = no element type (a bare `var a[N]`, a `stack var`, any non-array).
 # Written after SLAGG (which rewrites the high half), and it clears itself on slot reuse like
 # the span, because every registration writes SLDEP first. Read by the `a[i]` subscript
-# (_arr_sub_addr, parse/expr.cyr). CHANGELOG [6.6.12]
+# (_arr_sub_addr, parse/expr/subscript.cyr). CHANGELOG [6.6.12]
 fn SLAEW(S, li, d): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | ((d & 0xFF) << 48)); return 0; }
 fn GLAEW(S, li): i64 {
     if (li < 0) { return 0; }
@@ -1923,7 +1923,7 @@ fn GLINTD(S, li): i64 {
     return (L64(S + 0x5DBD000 + li * 8) >> 59) & 1;
 }
 # 6.7.6 (Break 1, D2) — bit 60: the slot is a `u128` local's CANONICAL slot (its low word; the high
-# half is the slot above it), so a read of it stamps the u128 (_W128_MARK, parse/expr.cyr) and a `+` /
+# half is the slot above it), so a read of it stamps the u128 (_W128_MARK, parse/expr/wide.cyr) and a `+` /
 # `-` on it carries into the high word. A slice shares the 2-slot layout and stays unmarked. Bit 61:
 # the slot names a BARE array (`var b[N]` / `stack var b[N]` in a fn — no element type), whose
 # `b OP= v` is refused by name (_asg_wide_refused, parse.cyr). Both written last at registration.
@@ -1970,7 +1970,7 @@ fn GLDSC(S, li): i64 {
     if (li < 0) { return 0; }
     return (L64(S + 0x5DBD000 + li * 8) >> 63) & 1;
 }
-# The boolean stamp (parse/expr.cyr _BX_MARK): the code pointer and token index at the end of the
+# The boolean stamp (parse/expr/stamp.cyr _BX_MARK): the code pointer and token index at the end of the
 # last boolean value. 0 = none.
 var _bxr_cp = 0;
 var _bxr_ti = 0;
@@ -1989,7 +1989,7 @@ fn SESVAR(S, v): i64 { S64(S + 0x1903E0, v); return 0; }
 # 6.6.20 — the struct a bare NAME in operand position denotes, at EVERY size (SESVAR's encodings;
 # -1 = none). SESVAR keeps recording only the operands passed by address under the documented
 # operator ABI (over 8 B); this one is read only for a `*S` operand of 8 B or less
-# (`_op_operand_sv`, parse/expr.cyr). Reset with SESVAR at every factor. CHANGELOG [6.6.20]
+# (`_op_operand_sv`, parse/expr/term.cyr). Reset with SESVAR at every factor. CHANGELOG [6.6.20]
 var _esv_name = 0 - 1;
 
 # Module system. (GPUB/SPUB were scaffolded for the `pub` visibility check
@@ -2672,7 +2672,7 @@ fn TOKNAME_BUILTIN(typ): i64 {
 # `_stmt_value_builtin`, parse.cyr). An explicit list, not a range: keywords sit among the numbers (`mod` 72 ..
 # `object` 79, `union` 101, `u128` 105), and the effect builtins beside them — `store*`, `f64v_add(dst, ..)` and every
 # vector op writing `dst`, `ret2` (it returns), `syscall`, `callptr` — stay statements. Each member is confirmed from
-# its PARSE_FACTOR lowering (parse/expr.cyr). 1 = token `typ` is one. CHANGELOG [6.7.17]
+# its PARSE_FACTOR lowering (parse/expr/stamp.cyr). 1 = token `typ` is one. CHANGELOG [6.7.17]
 fn IS_VALUE_BUILTIN(typ): i64 {
     if (typ == 25) { return 1; }                        # load8
     if (typ >= 42) { if (typ <= 44) { return 1; } }     # load16 load32 load64

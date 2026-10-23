@@ -109,11 +109,11 @@ fi
 #   replay runs at top level, so it is always the dead-global arm)
 #   _await_coro_suspend 1 | _await_coro_force 1 | _await_spill 1 (6.6.10: a coroutine `await`
 #   keeps its operand, a forced Future's value, and the enclosing expression's pending pushes in
-#   coroutine-frame words across the suspend — parse/expr.cyr)
+#   coroutine-frame words across the suspend — parse/expr/stamp.cyr)
 # 6.6.17: _ptr_park — a `.name` through a `*T` field at TOP LEVEL parks the loaded pointer as a
 # dead pointer-mode global (inside a fn it takes a frame temp instead). CHANGELOG [6.6.17]
 # 6.7.6 (D2): _w128_tmp — a u128 `+` / `-` result at TOP LEVEL is a dead global resized to 16 bytes
-# (inside a fn it takes two frame slots instead; parse/expr.cyr).
+# (inside a fn it takes two frame slots instead; parse/expr/wide.cyr).
 # 6.7.7 (B6): _pd_nreorder — an out-of-order named call (`g(c: 3, a: 1)`) holds each argument,
 # evaluated as written, until every parameter is pushed in parameter order (parse/fn/call_named.cyr).
 # 6.7.7 (call arguments): _sarg_snap — a by-value argument a later argument may write is copied
@@ -130,7 +130,7 @@ fi
 # for a global's initialiser — the zone replay, or after the first statement; parse/decl/handle.cyr).
 # 6.7.10 (decision 11): _dlo_park — a dereference `* E` of a `*S` followed by `+ - * /` parks E's pointer, so
 # an operator whose LEFT operand it is takes the struct's address (or its struct, read byte-exact) from it
-# (a frame slot in a fn, a dead global at top level; parse/expr.cyr).
+# (a frame slot in a fn, a dead global at top level; parse/expr/deref.cyr).
 # 6.7.10 (decision 6): _hl_psrc_copy — `l = GP` / `l = gp()` / `l = w.p` into a struct value parks the `*T`
 # source's pointer while the struct is copied through it byte-exact (a frame slot in a fn, a dead global at
 # top level; parse.cyr).
@@ -144,12 +144,12 @@ fi
 # at (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-11-deref-store-through-struct-
 # pointer-decision.md).
 # 6.7.12 (D27): _dlo_vec — `rd(*pv)` into a `*V` parameter parks pv, as `_dlo_park` parks a struct's pointer, and
-# the argument pushes it (a frame slot in a fn, a dead global at top level; parse/expr.cyr — issues/2026-10-13-
+# the argument pushes it (a frame slot in a fn, a dead global at top level; parse/expr/deref.cyr — issues/2026-10-13-
 # vector-value-into-pointer-parameter-passes-lane-bits.md).
 # 6.7.12: _pe_vtemp — on Win64 a vector-returning call with no receive is given storage its hidden result pointer
 # addresses: a frame temp in a fn (`_agg_temp_t`), at top level a dead global resized to the vector; _op_park_top —
 # an operator fn returning a vector at top level parks its by-value left operand while that pointer is pushed
-# (parse/fn/call_agg.cyr / parse/expr.cyr — issues/archived/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md).
+# (parse/fn/call_agg.cyr / parse/expr/term.cyr — issues/archived/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md).
 # 6.7.13: _ret_addr_field — `return &w.s;` from a fn returning a struct over 8 B is parsed as a pointer value (D3 (b)
 # refuses it, once) and parked as `_ret_ptr_src` parks one, so neither return class's own refusal runs beside it; no
 # binary follows the error (parse/fn/ret_agg.cyr — issues/archived/2026-10-14-return-address-of-struct-local-decision.md).
@@ -165,7 +165,7 @@ fi
 # 6.7.14 (D35 A): `_vrcv_demit`'s park is `_vrcv_dparse`, shared with `return *p;` from a fn returning the vector
 # (`_ret_vderef`, parse/fn/call_agg.cyr) — the same one slot per dereference; (D36 A) _dvi_park — an untyped `var v = *p;` with
 # `p: *V` parks p as `_dlo_vec` parks an argument's, and the declaration copies the vector through it (a frame slot: an
-# untyped vector local lives in a fn; parse/expr.cyr — issues/2026-10-16-vector-dereference-return-and-untyped-
+# untyped vector local lives in a fn; parse/expr/deref.cyr — issues/2026-10-16-vector-dereference-return-and-untyped-
 # destinations.md).
 # 6.7.17 (D14): _psl_store — a struct value stored into a `*S` SLOT reached through a dereference or a field (`*ppq = r;`,
 # `w.pq = r;`) parks the slot's address and its pointee while the assignment arms copy the value into the pointee — two

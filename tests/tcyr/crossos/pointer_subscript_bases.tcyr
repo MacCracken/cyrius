@@ -8,7 +8,7 @@
 # store): the only spelling was `load32(h.p + i * 4)` / `store32(f() + i * 4, v)`. The base is
 # evaluated FIRST (the field's value, the call's result), then the index; the element is the one
 # `p[i]` on a named `*T` reaches (tests/tcyr/crossos/pointer_subscript_values.tcyr), typed by the
-# base's DECLARATION — the field's `*T`, the callee's `: *T` (src/frontend/parse/expr.cyr
+# base's DECLARATION — the field's `*T`, the callee's `: *T` (src/frontend/parse/expr/subscript.cyr
 # `_sub_post`, `_stmt_call_sub`; parse/decl/field.cyr `_fld_sub_store`).
 #
 # Every pointer points into BUF, zeroed before each group and followed by a canary; the rows read

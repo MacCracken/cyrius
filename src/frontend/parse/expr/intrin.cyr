@@ -1,0 +1,1031 @@
+# PARSER — expr: f64 binary ops and compares (PF64BIN, PF64CMP), SIMD (PARSE_SIMD_EXT), the run-time constant fold
+# (`_cf_*`), _TRY_MUL_BY_POW2 and the intrinsics (PARSE_INTRIN).
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# f64 binary ops
+fn PF64BIN(S, tok): i64 {
+    STI(S, GTI(S) + 1);
+    _expect_step(S, 10);
+    PCMPE(S); EPUSHR(S);
+    _expect_step(S, 31);
+    PCMPE(S);
+    EMIT_F64_BINOP(S, tok - 62);
+    _expect_step(S, 11);
+    return 0;
+}
+# f64 compare ops
+fn PF64CMP(S, tok): i64 {
+    STI(S, GTI(S) + 1);
+    _expect_step(S, 10);
+    PCMPE(S); EPUSHR(S);
+    _expect_step(S, 31);
+    PCMPE(S);
+    EPOPC(S); EPUSHR(S);
+    # At this point x1 = a, stack = [b], x0 (/ rax on x86) = b.
+    # v5.6.12: f64 compare — per-arch raw FCMP/UCOMISD + SETcc chain.
+    _IR_REC0(S, IR_RAW_EMIT);
+    # v5.11.38 path-A: f64 cmp dispatch lives in <backend>/emit.cyr.
+    EF64_CMP(S, tok);
+    _expect_step(S, 11);
+    # v6.4.56 D3 — the result is an i64 BOOLEAN, not a float. Without this the
+    # builtin leaked its last operand's F64_TYID, mis-routing an outer
+    # `f64_lt(..) == 1` through the f64-compare path.
+    SESTYPE(S, 0);
+    return 0;
+}
+
+# Constant folding state (codegen-level, same EMOVI size only)
+# Handle extended SIMD builtins (tokens 93-96) in separate function
+# v5.10.35 — stash arg value at slot AND mark locname[idx] = -1
+# (anonymous), so subsequent FINDLOCAL("r") inside the enclosing
+# fn doesn't pick up this stash slot as a named local.
+#
+# Pre-v5.10.35 bug: cyrius's locname table at S+0x191000 is shared
+# across all fn body parses (FLC resets to 0 at fn entry, but stale
+# locname entries from PRIOR fns persist at higher indices). Plain
+# EFLSTORE writes the value but not the name slot. So if a prior fn
+# had a local named "r" at idx N, AND the current fn's f64v_abs
+# (or any other PARSE_SIMD_EXT intrinsic) places its arg-stash at
+# idx N, then FINDLOCAL("r") AFTER the intrinsic call returns N (the
+# stash slot with stale "r" name) instead of the real `var r` slot
+# at a lower idx. Consequence: `return r;` post-call reads from the
+# stash (which contained the stored &r pointer-VALUE at the time of
+# the call), so the caller gets a stack address back instead of the
+# absed/sqrt'd bytes.
+#
+# The bug surfaced through the v5.10.33 typed-wrapper layer (sandhi
+# / hisab consumers using `fn f64v2_abs(p): f64v2 { var r; f64v_abs(&r,p,2);
+# return r; }`). 4-arg intrinsics (add/sub/mul/div/scale/axpy/fmadd)
+# happened to dodge it because their stash slot range usually didn't
+# overlap stale "r" entries in real consumer code; 3-arg
+# (abs/sqrt/dot) hit the +1 offset that did.
+#
+# Fix is independent of arity: every stash store anonymises the slot.
+# v6.6.2 — RESERVE the stash slots BEFORE any argument is parsed.
+#
+# ⛔ THE BUG THIS FIXES, AND WHY IT LOOKED LIKE A DERIVE REGRESSION. Every f64v_*/f32v_*/iv_*
+# handler took `var vbase = GFLC(S);` and did not raise GFLC until AFTER all arguments had been
+# parsed. So while argument N was being parsed, GFLC still pointed AT the destination stash slot.
+# Any argument expression that allocates a frame local therefore binds it to the intrinsic's own
+# operand slot: the inline replay's `var saved_flc = GFLC(S);` (parse/fn/call.cyr) returned
+# `vbase` itself, laid its parameter locals over the stash, and raised GFLC past them — and then
+# the handler's trailing `SFLC(S, vbase + N)` LOWERED GFLC BACK DOWN over live slots. The loop
+# then read its destination pointer from a slot no instruction ever wrote:
+#   `mov -0x50(%rbp),%rdx` / `movupd %xmm0,(%rdx,%rsi,8)` through garbage.
+#
+# ⭐ IT IS NOT A 6.5.71 REGRESSION, THOUGH IT WAS FILED AS ONE. 6.5.71 only routed
+# `#derive(accessors)` getters through the inline-replay path; before that the getter was a real
+# CALL, and the call incidentally forced the surrounding values to be spilled. Removing the call
+# removed a spill the expansion had been silently depending on. The same shape is reachable via
+# `callptr` since 6.0.70 and via `#inline` since 6.5.63 — so the filing's "6.5.71+" range and its
+# "derive" framing both understate it.
+#
+# ⭐ THE CORRECT PATTERN WAS ALREADY IN THIS FILE, one screen below: `bitset`/`bitclr` reserve
+# and anonymise up front (v5.10.35) for exactly this reason. 21 handlers had the other order.
+# Factored into one helper so 21 copies cannot drift apart again.
+#
+# Raising GFLC is a MAX, never an assignment: an argument's own parse may legitimately have
+# pushed the frame higher, and lowering it back is what corrupted live slots.
+# Anonymising (name = -1) matches _SIMD_STASH: stale locname entries from a prior fn-body parse
+# must not be picked up by a post-call FINDLOCal lookup.
+fn _SIMD_RESERVE(S, base, n): i64 {
+    # ⛔ v6.6.2 — REFUSE AT TOP LEVEL instead of emitting a program that SIGSEGVs.
+    # These intrinsics stash their operands in FRAME slots, and top-level code has no frame:
+    # `f64v_scale(r, m + 0, f64_from(2), 4);` outside any function compiled clean on every
+    # release checked and segfaulted at run time, with or without the operand-slot fix above —
+    # a silent crash, not a diagnostic. `bitset`/`bitclr` one screen below already refuse this
+    # exact way (v5.10.35); the SIMD band never got the same guard.
+    # This is the single choke point: all 21 handlers call _SIMD_RESERVE before emitting
+    # anything, so one guard here covers the whole band rather than 21 copies that can drift.
+    if (GINFN(S) == 0) { ERR_MSG(S, "SIMD intrinsics must be called inside a function", 48); }
+    if (base + n > GFLC(S)) { SFLC(S, base + n); }
+    var i = 0;
+    while (i < n) {
+        S64(S + 0x5D9D000 + (base + i) * 8, 0 - 1);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _SIMD_STASH(S, idx): i64 {
+    EFLSTORE(S, idx);
+    S64(S + 0x5D9D000 + idx * 8, 0 - 1);
+    return 0;
+}
+
+# v6.5.64 — DIRECT FORM for a fixed-lane vector binary op on three `&local` operands.
+#
+# `f32v_add(&r, &a, &b, 4)` / `f64v_add(&r, &a, &b, 2)` — the shape EVERY value-form wrapper in
+# lib/simd.cyr expands to — needs no pointers and no loop: the addresses are known frame
+# displacements and the "loop" runs exactly one iteration. Measured at 6.5.63, one such link cost
+# 28 real instructions and ~15 memory ops for ONE packed op.
+#
+# ⛔ REMOVING THOSE INSTRUCTIONS IS WORTH ZERO ON ITS OWN, AND THAT WAS MEASURED BEFORE THIS WAS
+# BUILT. The critical path of a chained expression is 16-byte STORE-TO-LOAD FORWARDS and the
+# pointer machinery is not on it: a hand-written replica removing exactly this scaffolding and
+# nothing else ran 33.99 ms against 33.96 ms. What pays is that the direct form leaves the result
+# store and the `return r` reload ADJACENT, which lets the v6.5.53 SLASE peephole collapse them —
+# that pair previously sat ~0x31 bytes apart and SLASE's own comment recorded it deleting nothing.
+# Measured end to end: latency-bound 33.36 -> 22.59 ms (1.48x), throughput-bound 20.90 -> 13.07 ms
+# (1.60x).
+#
+# ⛔ THE DECISION IS PURE LOOKAHEAD — NOTHING IS CONSUMED OR EMITTED UNTIL IT SUCCEEDS. The fast
+# path swallows 11 tokens unevaluated, allocates no stash slots and never leaves `n` in rax, so a
+# per-backend stubbed emitter CANNOT undo it; the gate has to be on the PARSER. parse.cyr:518-529
+# records that exact failure for the switch jump-table path ("a stranded `ja default` in cx output").
+#
+# ⚠ `_AARCH64_BACKEND == 0` IS NOT AN x86 TEST — cx sets it to 0 as well, which is why the
+# byte-pattern passes already run on cx. Both tests are required. PE and Mach-O are x86-64 with
+# the same rbp frame and share x86/float.cyr, so they take this path with no target-specific code.
+fn _try_vec_direct(S, op, dbl, lanes): i64 {
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    if (_TARGET_CX != 0) { return 0; }
+    var d_t = GTI(S);
+    if (TOKTYP(S, d_t) != 27) { return 0; }
+    if (TOKTYP(S, d_t + 1) != 2) { return 0; }
+    if (TOKTYP(S, d_t + 2) != 31) { return 0; }
+    if (TOKTYP(S, d_t + 3) != 27) { return 0; }
+    if (TOKTYP(S, d_t + 4) != 2) { return 0; }
+    if (TOKTYP(S, d_t + 5) != 31) { return 0; }
+    if (TOKTYP(S, d_t + 6) != 27) { return 0; }
+    if (TOKTYP(S, d_t + 7) != 2) { return 0; }
+    if (TOKTYP(S, d_t + 8) != 31) { return 0; }
+    if (TOKTYP(S, d_t + 9) != 1) { return 0; }
+    if (TOKTYP(S, d_t + 10) != 11) { return 0; }
+    # The lane count must be exactly the 16 bytes one xmm holds. Anything else is a real batch
+    # and must keep the loop.
+    if (TOKVAL(S, d_t + 9) != lanes) { return 0; }
+    var d_r = FINDLOCAL(S, TOKVAL(S, d_t + 1));
+    var d_a = FINDLOCAL(S, TOKVAL(S, d_t + 4));
+    var d_b = FINDLOCAL(S, TOKVAL(S, d_t + 7));
+    if (d_r < 0) { return 0; }
+    if (d_a < 0) { return 0; }
+    if (d_b < 0) { return 0; }
+    # v6.5.65 — READ THROUGH THE INLINE-PARAM COPY. When the replay bound this operand it copied
+    # 16 bytes from a caller local into a fresh param slot; loading that slot here is a 16-byte
+    # store-to-load FORWARD two instructions after the store, and forwards are the critical path
+    # (measured `.64`: removing instructions without removing a forward bought 1.00x). Reading the
+    # caller's local instead removes both remaining forwards per chain link. Provenance is dropped
+    # by `_prov_kill` on ANY store to the slot, so a body that assigns to its param falls back to
+    # the copy rather than reading a stale value.
+    # ⚠ SOURCES ONLY. The destination is the callee's own scratch, never a bound param, and
+    # redirecting a WRITE would scribble on the caller's variable.
+    d_a = _prov_src(d_a);
+    d_b = _prov_src(d_b);
+    # ⚠ ALL THREE must be 128-bit vector locals. The loop form is bounded by `n` and merely
+    # over-reads a too-small slot; the direct form writes 16 bytes UNCONDITIONALLY, so a 1-slot
+    # i64 local would smash its neighbour.
+    if (_is_simd128(S, GLTYPE(S, d_r)) == 0) { return 0; }
+    if (_is_simd128(S, GLTYPE(S, d_a)) == 0) { return 0; }
+    if (_is_simd128(S, GLTYPE(S, d_b)) == 0) { return 0; }
+    EMIT_VEC_DIRECT(S, op, d_r, d_a, d_b, dbl);
+    STI(S, d_t + 11);   # consume `&r , &a , &b , N )`
+    return 1;
+}
+
+fn PARSE_SIMD_EXT(S, ptyp): i64 {
+    # f64v_div(dst, a, b, n)
+    if (ptyp == 93) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        if (_try_vec_direct(S, 3, 1, 2) == 1) { return 0; }
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 3);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
+        EMIT_F64V_LOOP(S, 3, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # f64v_sqrt(dst, src, n)
+    if (ptyp == 94) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
+        EMIT_F64V_UNARY(S, 0, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # f64v_abs(dst, src, n)
+    if (ptyp == 95) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
+        EMIT_F64V_UNARY(S, 1, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # f64v_fmadd(dst, a, b, c, n)
+    if (ptyp == 96) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 4);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 3);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
+        EMIT_F64V_FMADD(S, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v5.10.17: f64v_dot(a, b, n) → f64 in rax/x0 (sum of a[i]*b[i])
+    if (ptyp == 128) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
+        EMIT_F64V_DOT(S, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v6.4.5 (SIMD Phase 2): f32v_fmadd(dst, a, b, c, n) — dst[i]=a[i]*b[i]+c[i]
+    # (packed single). Mirror of the f64v_fmadd(96) handler → EMIT_F32V_FMADD.
+    if (ptyp == 141) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 4);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 3);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 4);   # max, never a lowering assignment
+        EMIT_F32V_FMADD(S, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v6.4.5 (SIMD Phase 2): f32v_dot(a, b, n) → f32 bit pattern in rax (sum of
+    # a[i]*b[i]). Mirror of the f64v_dot(128) handler → EMIT_F32V_DOT.
+    if (ptyp == 142) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 2);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 2);   # max, never a lowering assignment
+        EMIT_F32V_DOT(S, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul(dst, a, b, n, w) — packed integer
+    # dst[i] = a[i] OP b[i]. The 5th arg `w` is the lane byte-width, a compile-time
+    # NUMBER literal (1/2/4/8) that selects padd/psub/pmul{b,w,d,q}. op = ptyp-143.
+    if (ptyp >= 143) { if (ptyp <= 145) {
+            var ivop = ptyp - 143;
+            STI(S, GTI(S) + 1);
+            _expect_step(S, 10);
+            var ivbase = GFLC(S);
+            _SIMD_RESERVE(S, ivbase, 3);
+            PCMPE(S); _SIMD_STASH(S, ivbase);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, ivbase + 1);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, ivbase + 2);
+            _expect_step(S, 31);
+            PCMPE(S);
+            _SIMD_RESERVE(S, ivbase, 3);   # max, never a lowering assignment
+            _expect_step(S, 31);
+            if (PEEKT(S) != 1) { ERR_MSG(S, "iv width arg must be a literal 1/2/4/8", 38); }
+            var ivw = PEEKV(S);
+            if (ivw != 1) { if (ivw != 2) { if (ivw != 4) { if (ivw != 8) { ERR_MSG(S, "iv width must be 1/2/4/8", 24); } } } }
+            if (_sync_stop_at(S) == 0) { STI(S, GTI(S) + 1); }   # 6.7.17: a missing width keeps the `;`
+            EMIT_IVEC_BINOP(S, ivop, ivw, ivbase);
+            _expect_step(S, 11);
+            return 0;
+        } }
+    # v6.4.7 (Phase 3b): iv_dp8(a, b, n) → i32 widening int8 dot in rax (a=u8, b=i8).
+    # 3-arg scalar-return, mirrors the f32v_dot(142) handler → EMIT_IVEC_DP8.
+    if (ptyp == 146) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var dpbase = GFLC(S);
+        _SIMD_RESERVE(S, dpbase, 2);
+        PCMPE(S); _SIMD_STASH(S, dpbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, dpbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, dpbase, 2);   # max, never a lowering assignment
+        EMIT_IVEC_DP8(S, dpbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v6.4.9 (Phase 4 R2): f32v8_fma(dst, a, b, c, n) — 256-bit AVX2 fused multiply-add
+    # (vfmadd231ps ymm). 5-arg stmt, mirrors the f32v_fmadd(141) handler → EMIT_F32V8_FMADD.
+    if (ptyp == 150) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var fmbase = GFLC(S);
+        _SIMD_RESERVE(S, fmbase, 4);
+        PCMPE(S); _SIMD_STASH(S, fmbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, fmbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, fmbase + 2);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, fmbase + 3);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, fmbase, 4);   # max, never a lowering assignment
+        EMIT_F32V8_FMADD(S, fmbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v6.4.9 (Phase 4 R2): f32v8_dot(a, b, n) → f32 bit pattern in rax (sum a[i]*b[i]
+    # over 8 lanes). 3-arg scalar-return, mirrors f32v_dot(142) → EMIT_F32V8_DOT.
+    if (ptyp == 151) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var d8base = GFLC(S);
+        _SIMD_RESERVE(S, d8base, 2);
+        PCMPE(S); _SIMD_STASH(S, d8base);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, d8base + 1);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, d8base, 2);   # max, never a lowering assignment
+        EMIT_F32V8_DOT(S, d8base);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v5.10.17: f64v_scale(dst, a, scalar, n) — dst[i] = a[i] * scalar
+    if (ptyp == 129) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 3);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
+        EMIT_F64V_SCALE(S, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # v5.10.17: f64v_axpy(y, x, alpha, n) — y[i] += alpha * x[i]
+    if (ptyp == 130) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbase = GFLC(S);
+        _SIMD_RESERVE(S, vbase, 3);
+        PCMPE(S); _SIMD_STASH(S, vbase);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbase + 2);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
+        EMIT_F64V_AXPY(S, vbase);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # ret2(a, b) — return two values in rax:rdx
+    if (ptyp == 97) {
+        var r2ti = GTI(S);
+        var r2en = _err_n;
+        var r2out = _ret2_ctx(S, r2ti);      # 6.7.13: no landing outside a fn
+        _refuse_async_mv_body(S, GTI(S), 2);   # 6.7.11: a Future carries one i64
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        PCMPE(S);
+        EPUSHR(S);
+        _expect_step(S, 31);
+        PCMPE(S);
+        # rax = b, stack = a → mov rdx, rax; pop rax
+        EMOVRDXRAX(S);
+        EPOPR(S);
+        _expect_step(S, 11);
+        _ret2_late(S, r2ti, r2en);   # 6.7.16: refused outside a fn, in a 3-value, struct or vector fn — after its arguments
+        # Don't consume ; here — PARSE_STMT handles it via expression statement path
+        if (r2out == 0) { _mret_land(S); }   # rax:rdx, then the epilogue jump (6.7.7); none outside a fn (6.7.13)
+        return 0;
+    }
+    # f64_atan(x) — v5.11.37 path-A: dispatch lives in <backend>/emit.cyr.
+    if (ptyp == 99) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_ATAN(S); _expect_step(S, 11); return 0; }
+    # rethi() — read rdx from last function call (mov rax, rdx)
+    if (ptyp == 98) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        _expect_step(S, 11);
+        EMOVRA_RDX(S);
+        return 0;
+    }
+    # bitget(val, offset, width) → (val >> offset) & ((1 << width) - 1)
+    if (ptyp == 102) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        PCMPE(S); ESPILL(S);
+        _expect_step(S, 31);
+        PCMPE(S);
+        # rax = offset, stack = val. Shift val >> offset
+        EMOVCA(S); EUNSPILL(S); ESHRCL(S);
+        # Now rax = val >> offset. Need to mask with (1 << width) - 1
+        ESPILL(S);
+        _expect_step(S, 31);
+        PCMPE(S);
+        # rax = width. Compute mask: (1 << width) - 1
+        EMOVCA(S); EMOVI(S, 1); ESHLCL(S);
+        # rax = 1 << width. Subtract 1.
+        ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
+        # rax = mask. AND with shifted val.
+        EMOVCA(S); EUNSPILL(S); EANDR(S);
+        _expect_step(S, 11);
+        return 0;
+    }
+    # bitset(val, offset, width, new) → (val & ~(mask << offset)) | ((new & mask) << offset)
+    if (ptyp == 103) {
+        if (GINFN(S) == 0) { ERR_MSG(S, "bitset must be called inside a function", 39); }
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var bsb = GFLC(S);
+        SFLC(S, bsb + 5);
+        # v5.10.35 — anonymise stash slots up front (s4 = mask filled
+        # below) so stale locname entries from prior fn-body parses
+        # can't be picked up by post-call FINDLOCal lookups. Same fix
+        # shape as _SIMD_STASH used by f64v_* intrinsics.
+        S64(S + 0x5D9D000 + bsb * 8, 0 - 1);
+        S64(S + 0x5D9D000 + (bsb + 1) * 8, 0 - 1);
+        S64(S + 0x5D9D000 + (bsb + 2) * 8, 0 - 1);
+        S64(S + 0x5D9D000 + (bsb + 3) * 8, 0 - 1);
+        S64(S + 0x5D9D000 + (bsb + 4) * 8, 0 - 1);
+        PCMPE(S); EFLSTORE(S, bsb);              # s0 = val
+        _expect_step(S, 31);
+        PCMPE(S); EFLSTORE(S, bsb + 1);          # s1 = offset
+        _expect_step(S, 31);
+        PCMPE(S); EFLSTORE(S, bsb + 2);          # s2 = width
+        _expect_step(S, 31);
+        PCMPE(S); EFLSTORE(S, bsb + 3);          # s3 = new_val
+        _expect_step(S, 11);
+        # mask = (1 << width) - 1
+        EFLLOAD(S, bsb + 2); EMOVCA(S); EMOVI(S, 1); ESHLCL(S);
+        ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
+        EFLSTORE(S, bsb + 4);                    # s4 = mask
+        # cleared = val & ~(mask << offset)
+        EFLLOAD(S, bsb + 4); ESPILL(S);
+        EFLLOAD(S, bsb + 1); EMOVCA(S); EUNSPILL(S); ESHLCL(S);
+        ENOTR(S); ESPILL(S);
+        EFLLOAD(S, bsb); EMOVCA(S); EUNSPILL(S); EANDR(S);
+        EFLSTORE(S, bsb);                        # s0 = cleared
+        # insert = (new_val & mask) << offset
+        EFLLOAD(S, bsb + 3); ESPILL(S);
+        EFLLOAD(S, bsb + 4); EMOVCA(S); EUNSPILL(S); EANDR(S);
+        ESPILL(S);
+        EFLLOAD(S, bsb + 1); EMOVCA(S); EUNSPILL(S); ESHLCL(S);
+        # result = cleared | insert
+        ESPILL(S); EFLLOAD(S, bsb); EMOVCA(S); EUNSPILL(S); EORR(S);
+        return 0;
+    }
+    # bitclr(val, offset, width) → val & ~(((1 << width) - 1) << offset)
+    if (ptyp == 104) {
+        if (GINFN(S) == 0) { ERR_MSG(S, "bitclr must be called inside a function", 39); }
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var bcb = GFLC(S);
+        SFLC(S, bcb + 3);
+        # v5.10.35 — anonymise stash slots (see bitset comment above).
+        S64(S + 0x5D9D000 + bcb * 8, 0 - 1);
+        S64(S + 0x5D9D000 + (bcb + 1) * 8, 0 - 1);
+        S64(S + 0x5D9D000 + (bcb + 2) * 8, 0 - 1);
+        PCMPE(S); EFLSTORE(S, bcb);              # s0 = val
+        _expect_step(S, 31);
+        PCMPE(S); EFLSTORE(S, bcb + 1);          # s1 = offset
+        _expect_step(S, 31);
+        PCMPE(S); EFLSTORE(S, bcb + 2);          # s2 = width
+        _expect_step(S, 11);
+        # mask = (1 << width) - 1
+        EFLLOAD(S, bcb + 2); EMOVCA(S); EMOVI(S, 1); ESHLCL(S);
+        ESPILL(S); EMOVI(S, 1); EMOVCA(S); EUNSPILL(S); ESUBR(S);
+        # mask << offset
+        ESPILL(S); EFLLOAD(S, bcb + 1); EMOVCA(S); EUNSPILL(S); ESHLCL(S);
+        # ~(mask << offset) & val
+        ENOTR(S); ESPILL(S);
+        EFLLOAD(S, bcb); EMOVCA(S); EUNSPILL(S); EANDR(S);
+        return 0;
+    }
+    return 0;
+}
+
+var _cfv = 0;
+var _cfp = 0;
+var _cfo = 0;
+
+# ⛔ 6.7.14 — THE RUN-TIME FOLD TAKES A CONSTANT NAME ON THE RIGHT (issues/2026-10-08-const-init-redundant-store-and-
+# unfolded-const-operand.md item 2). An arm folded `K op L` (K armed by its factor: `_cfo`, `_cfv`, `_cfp`) only when
+# L was a literal TOKEN, so `C * 2` was one mov and `2 * C` a run-time imul, `1 + C` an add, `2 + C * 3` an add of
+# the folded `C * 3` (x86_64: `mov eax,2; push rax; mov eax,5; pop rcx; imul rcx`). The `* / << >>` arms read their
+# right factor with `_cf_fac_at`, which reads a literal or a NAME the factor loads as an integer constant — a local
+# or top-level integer const, an enum constant bare or qualified, no local, capture or other file's private global
+# in the way — without emitting; the `+ - & | ^` arms read the right TERM with `_cf_term_at`, folded by the `* / <<
+# >>` arms' own rules. Each arm keeps its windows, so a value folds where the same expression with the value
+# written out does; values are unchanged, the code is smaller. (A literal followed by a term operator the old test
+# did not list — `*%`, `*|`, `*?`, `>>>` — keeps its old reading.) CHANGELOG [6.7.14]
+var _cf_v = 0;   # the value _cf_fac_at / _cf_term_at read
+var _cf_e = 0;   # the token after it
+fn _cf_fac(S): i64 { return _cf_fac_at(S, GTI(S)); }
+fn _cf_fac_at(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 1) { _cf_v = TOKVAL(S, ti); _cf_e = ti + 1; return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 41) { return _cf_qual_at(S, ti); }
+    if (_cf_tail(TOKTYP(S, ti + 1)) == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_lc_n > 0) {
+        var lc = _lc_find(S, noff);
+        if (lc >= 0) {
+            var le = _lc_tab + lc * 48;
+            if (L64(le + 24) != 0) { return 0; }   # an f64 / string / bool local const
+            _cf_v = L64(le + 32);
+            _cf_e = ti + 1;
+            return 1;
+        }
+    }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { return 0; }
+    return _cf_gconst(S, _findvar_core(S, noff), ti, ti + 1);
+}
+# `E.A` at `ti`: the variant's value, as the factor's qualified arm folds it (a variable's `.field` is not).
+fn _cf_qual_at(S, ti): i64 {
+    if (TOKTYP(S, ti + 2) != 2) { return 0; }
+    if (_cf_tail(TOKTYP(S, ti + 3)) == 0) { return 0; }
+    var bnoff = TOKVAL(S, ti);
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, bnoff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { return 0; }
+    if (_findvar_core(S, bnoff) >= 0) { return 0; }
+    return _cf_gconst(S, _enum_variant_in(S, bnoff, TOKVAL(S, ti + 2)), ti, ti + 3);
+}
+# Global slot `vi` (named at token `ti`, its factor ending before token `e`) as an integer constant.
+fn _cf_gconst(S, vi, ti, e): i64 {
+    if (vi < 0) { return 0; }
+    if (_gvk_name_ok(S, ti) == 0) { return 0; }   # another file's private global: the factor refuses it
+    if (GVTYPE(S, vi) != 0) { return 0; }
+    if (_cst_vkind(S, vi) >= 2) { return 0; }    # an f64 / string / bool const (_cst_read_global)
+    if (GVECP(S, vi) != 1) { return 0; }
+    _cf_v = L64(_vecv_base + vi * 8);
+    _cf_e = e;
+    return 1;
+}
+# 0 = the token after a name makes it more than a value: a call, a field or range, a subscript, type
+# arguments, a literal, a `?`.
+fn _cf_tail(t): i64 {
+    if (t == 10 || t == 41 || t == 28) { return 0; }
+    if (t == 19 || t == 13 || t == 124) { return 0; }
+    return 1;
+}
+# The right operand of `+ - & | ^` (cursor on it, `_cfo` armed): 1 = foldable, `_cf_v` its value, `_cf_e` the token
+# after. A literal not followed by a term operator is read as before; a literal followed by one, or a name, is the
+# term `_cf_term_at` folds.
+fn _cf_can(S): i64 {
+    if (_cfo != 1) { return 0; }
+    var ti = GTI(S);
+    var t = TOKTYP(S, ti);
+    if (t == 1) {
+        if (_cf_excl(TOKTYP(S, ti + 1)) == 0) {
+            _cf_v = TOKVAL(S, ti);
+            _cf_e = ti + 1;
+            return 1;
+        }
+    } elif (t != 2) { return 0; }
+    return _cf_term_at(S, ti);
+}
+# 1 = `nt` is one of PARSE_TERM's operators (`* / % << >> *% *| *? >>>`): the literal before it is not the whole
+# term. A missing one let the arm fold the literal and stop at the operator, "expected ';'" (CHANGELOG [6.7.15]).
+fn _cf_excl(nt): i64 {
+    if (nt == 8 || nt == 9 || nt == 34) { return 1; }
+    if (nt == 38 || nt == 39) { return 1; }
+    if (nt == 119 || nt == 120 || nt == 121) { return 1; }
+    if (nt == 152) { return 1; }
+    return 0;
+}
+# A term at `ti` that PARSE_TERM folds to one value: its first factor armed (0 .. 0xFFFF, as the factor arms it)
+# when an operator follows, each `*` (`*%`), `/`, `<<`, `>>` folded by its arm's rule. 0 at anything else.
+fn _cf_term_at(S, ti): i64 {
+    if (_cf_fac_at(S, ti) == 0) { return 0; }
+    var v = _cf_v;
+    var e = _cf_e;
+    var t = TOKTYP(S, e);
+    if (_cf_termop(t) == 1) {
+        if (v < 0 || v >= 0x10000) { return 0; }
+    }
+    while (_cf_termop(t) == 1) {
+        if (_cf_fac_at(S, e + 1) == 0) { return 0; }
+        e = _cf_e;
+        v = _cf_op(t, v, _cf_v);
+        if (_cf_opok == 0) { return 0; }
+        t = TOKTYP(S, e);
+    }
+    if (t == 34 || t == 152 || t == 124) { return 0; }   # `%`, `>>>`, `?`: never folded
+    if (t == 120 || t == 121) { return 0; }               # `*|`, `*?`: calls
+    _cf_v = v;
+    _cf_e = e;
+    return 1;
+}
+fn _cf_termop(t): i64 {
+    if (t == 8 || t == 119 || t == 9) { return 1; }
+    if (t == 38 || t == 39) { return 1; }
+    return 0;
+}
+# `v op crv` as the arm folds it; `_cf_opok` 0 where the arm emits the operation instead.
+var _cf_opok = 0;
+fn _cf_op(t, v, crv): i64 {
+    _cf_opok = 1;
+    if (t == 8 || t == 119) {
+        if (crv == 0) { return 0; }
+        if (crv == 1) { return v; }
+        if (crv > 0) { if (v * crv >= 0) { return v * crv; } }
+        _cf_opok = 0;
+        return 0;
+    }
+    if (crv > 0) { if (crv < 0x10000) {
+            var r = 0;
+            if (t == 9) { r = v / crv; }
+            elif (t == 38) { r = v << crv; }
+            else { r = v >> crv; }
+            if (r > 0) { if (r < 0x10000) { return r; } }
+        } }
+    _cf_opok = 0;
+    return 0;
+}
+
+# v5.6.7 O2 strength-reduction helper: if the next token is an
+# integer literal whose value is a positive power of two (2, 4, 8,
+# …, 2^63 — well, up to 2^62 since 2^63 is signed-negative), emit
+# `shl` by the shift amount instead of a full `imul`. Both backends
+# have ESHLIMM (x86 `shl rax, n`; aarch64 `lsl x0, x0, #n`). Assumes
+# ESPILL has already pushed the LHS; on hit, EUNSPILL pops it back
+# into rax / x0 before the shift.
+# Returns 1 on peephole hit (mul replaced with shl), 0 on miss
+# (caller falls through to the standard PARSE_FACTOR + EIMUL path).
+fn _TRY_MUL_BY_POW2(S): i64 {
+    if (PEEKT(S) != 1) { return 0; }
+    var pv = PEEKV(S);
+    if (pv < 2) { return 0; }
+    if ((pv & (pv - 1)) != 0) { return 0; }
+    var shift = 0;
+    var v = pv;
+    while (v > 1) { v = v >> 1; shift = shift + 1; }
+    STI(S, GTI(S) + 1);      # consume the literal
+    EUNSPILL(S);             # pop LHS back into rax / x0
+    ESHLIMM(S, shift);
+    return 1;
+}
+
+# v6.4.83 — the intrinsic dispatch, extracted out of PARSE_TERM's head so BOTH tiers
+# can reach it. Returns 1 if it consumed an intrinsic call, 0 if `ptyp` is not one.
+#
+# THE BUG THIS FIXES: these arms used to sit inline at the top of PARSE_TERM, each
+# ending in an early `return`. So an intrinsic could not FLANK a TERM-tier operator
+# from either side:
+#   `f64_from(2) * a`  -> as a LEFT operand the early return exited PARSE_TERM before
+#                         its own `*` loop, so the `*` was unexpected
+#   `a * f64_from(2)`  -> as a RIGHT operand that loop calls PARSE_FACTOR one tier
+#                         DOWN, which never knew these tokens
+# Both were hard syntax errors on `* / % << >> >>>`, while `+ - & | ^` worked (those
+# live one tier up in PEXPR). It hit every f64_*/f32_*/f64v_*/f32v_*/iv_* name plus
+# bitget/bitset/bitclr, store8/16/32/64, u128 and ret2/rethi — but NOT load8/16/32/64
+# or ordinary calls, which is why it read as arbitrary. Pre-existing since the dispatch
+# was built up (v5.10.17 / v6.4.5 / .6 / .9); found by the v6.4.82 closeout vidya sweep
+# by RUNNING the compiler against a documented claim rather than re-reading the doc.
+#
+# ⚠ EVERY `return 1` below means HANDLED (the token was consumed). The single
+# `return 0` at the bottom means NOT AN INTRINSIC. Getting that inverted makes the
+# caller re-parse an already-consumed token — which is exactly how the first cut of
+# this fix broke every intrinsic call in the tree.
+#
+# ⚠ `_cfo` DISCIPLINE. An intrinsic result is never a const-foldable literal, so both
+# callers clear `_cfo` after a handled dispatch. Getting this wrong is the `_cfo`
+# rewind class (four occurrences: 2026-06-11, v6.4.74, .80, .81), whose failure mode
+# is SILENT WRONG CODE rather than a syntax error. Do not simplify those clears away.
+# v6.5.38 — shared body for f64v256_abs / f64v256_sqrt (tokens 161/162). Both are
+# (dst, src, n) and differ only in the op index handed to EMIT_F64V4_UNARY, so the arm is
+# factored out rather than duplicated; `op` is passed in, never derived from the token.
+fn _PARSE_F64V4_UNARY(S, op): i64 {
+    STI(S, GTI(S) + 1);
+    _expect_step(S, 10);
+    var vbu = GFLC(S);
+    _SIMD_RESERVE(S, vbu, 2);
+    PCMPE(S); _SIMD_STASH(S, vbu);
+    _expect_step(S, 31);
+    PCMPE(S); _SIMD_STASH(S, vbu + 1);
+    _expect_step(S, 31);
+    PCMPE(S);
+    _SIMD_RESERVE(S, vbu, 2);   # max, never a lowering assignment
+    EMIT_F64V4_UNARY(S, op, vbu);
+    _expect_step(S, 11);
+    return 1;
+}
+
+# 6.6.10 — every builtin dispatch goes through here, so the float-builtin RESULT flag is
+# cleared for any other intrinsic and set for a float-returning one (_NEG_INTRIN_KIND), in
+# ONE place for both tiers that dispatch intrinsics. See _FBR_MARK. CHANGELOG [6.6.10]
+fn PARSE_INTRIN(S, ptyp): i64 {
+    _fbr_k = 0;
+    if (ptyp == 15) { return PARSE_IF_EXPR(S); }   # 6.7.4 (B3): `if (c) { a } else { b }` as a value
+    var r = _PARSE_INTRIN_IMPL(S, ptyp);
+    if (r != 1) { return r; }
+    # 6.7.9: a builtin's result is a plain value (6.6.17's call rule, `_call_scale_fix`) at BOTH
+    # tiers — PARSE_TERM's own dispatch skips the factor wrapper that applies it, so with `q: *i32`
+    # `bitget(m, 0, q) + 1` kept the last argument's step and added 4. CHANGELOG [6.7.9]
+    SPSC(S, 0);
+    var k = _NEG_INTRIN_KIND(ptyp);
+    if (k != 0) { _FBR_MARK(S, k); }
+    # 6.7.3: f64_eq / f64_lt / f64_gt (68-70) and f64_le / f64_ge (164-165) are comparisons.
+    if (ptyp >= 68) { if (ptyp <= 70) { _BX_MARK(S); } }
+    if (ptyp == 164 || ptyp == 165) { _BX_MARK(S); }
+    return r;
+}
+
+# 6.7.3 (B2) — `true` (169), `false` (170) and `!` (171) as factor-level values, dispatched from
+# PARSE_INTRIN so both tiers that parse a factor (PARSE_TERM, _PARSE_FACTOR_IMPL) take them from
+# ONE place. `!e` binds like unary minus (its operand is a factor) and is `e == 0` on the operand's
+# word — an f64 operand is tested by its raw bits, as `if (x)` tests it. The value is a fresh i64:
+# no variable, no float type, no float-builtin mark. CHANGELOG [6.7.3]
+fn _bx_factor_tok(S, t): i64 {
+    if (t < 169) { return 0; }
+    if (t > 171) { return 0; }
+    STI(S, GTI(S) + 1);
+    if (t == 169) { EMOVI(S, 1); }
+    if (t == 170) { EMOVI(S, 0); }
+    if (t == 171) {
+        PARSE_FACTOR(S);
+        if (_w128_truth(S, 17) == 0) {   # 6.7.6 (D4): `!b` on a u128 is `b == 0` on all 128 bits
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);
+            EPOPR(S);
+            ESETCC(S, 17);
+        }
+    }
+    SESTYPE(S, 0);
+    SPSC(S, 0);
+    SESVAR(S, 0 - 1);
+    _esv_name = 0 - 1;
+    SEXW(S, 0);
+    _fbr_k = 0;
+    _BX_MARK(S);
+    return 1;
+}
+
+fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
+    if (_bx_factor_tok(S, ptyp) == 1) { return 1; }
+    if (ptyp >= 93) { if (ptyp <= 99) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
+    if (ptyp >= 100) { if (ptyp <= 104) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
+    # v5.10.17 — f64v_dot/scale/axpy
+    if (ptyp >= 128) { if (ptyp <= 130) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
+    # v6.4.5 (SIMD Phase 2): f32v_fmadd (141) + f32v_dot (142) → PARSE_SIMD_EXT.
+    if (ptyp >= 141) { if (ptyp <= 142) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
+    # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul (143-145) → PARSE_SIMD_EXT.
+    if (ptyp >= 143) { if (ptyp <= 146) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
+    # v6.4.9 (Phase 4 R2): f32v8_fma (150) + f32v8_dot (151) → PARSE_SIMD_EXT.
+    if (ptyp >= 150) { if (ptyp <= 151) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
+    # f64 builtins — check before PARSE_FACTOR dispatches.
+    # v5.11.37 path-A: each ptyp dispatches to its named op in
+    # <backend>/emit.cyr — x86 emits SSE2/x87, aarch64 emits FNEG /
+    # polyfill-call / hard-error, cx is no-op. parse/expr.cyr is
+    # arch-agnostic for these ops.
+    if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 1; } }
+    if (ptyp == 66) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }
+    if (ptyp == 67) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); _expect_step(S, 11); return 1; }
+    if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 1; } }
+    # 6.6.13 — f64_le / f64_ge lower through the `<=` / `>=` operator compare (tok 21 / 22),
+    # NaN-false on every backend; they were lib/math.cyr calls (lt, then eq). CHANGELOG [6.6.13]
+    if (ptyp == 164) { PF64CMP(S, 21); return 1; }
+    if (ptyp == 165) { PF64CMP(S, 22); return 1; }
+    if (ptyp == 71) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_NEG(S); _expect_step(S, 11); return 1; }
+    # f64_sqrt(x) — sqrtsd xmm0, xmm0
+    # v6.6.2: f64_sqrt 79 -> 136 (was double-assigned with `object`).
+    if (ptyp == 136) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64SQRT(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
+    # f64_abs(x) — v5.11.40 path-A peephole. Dispatch lives in
+    # <backend>/emit.cyr::EF64_ABS: x86 movabs+and (saves 5 B vs
+    # the prior 5-instr push/movabs/movca/pop/and = 18 B); aarch64
+    # native fabs via fmov/fabs/fmov (saves 20 B vs the prior
+    # MOVK-chain + shuttle); cx no-op stub. See CHANGELOG [5.11.40].
+    if (ptyp == 80) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_ABS(S); _expect_step(S, 11); return 1; }
+    # f64_floor(x) — roundsd xmm0, xmm0, 1 (SSE4.1)
+    if (ptyp == 81) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
+    # f64_ceil(x) — roundsd xmm0, xmm0, 2 (SSE4.1)
+    if (ptyp == 82) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
+    # f64_trunc(x) — roundsd xmm0, xmm0, 3 / frintz (toward zero). 6.6.13, was a lib/math.cyr fn.
+    if (ptyp == 166) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64TRUNC(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
+    # f64_round(x) — roundsd xmm0, xmm0, 0 (round to nearest)
+    if (ptyp == 92) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); _expect_step(S, 11); return 1; }
+    # f32_from(x): f64 → f32 bit pattern (cvtsd2ss). f32_to(x): f32 → f64 (cvtss2sd).
+    # v6.2.18 native-float math arc. Backend emit takes the value in rax, returns
+    # the converted bits in rax (full move/cvt/move sequence lives per-arch).
+    if (ptyp == 131) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF32_FROM(S); SESTYPE(S, 0); _expect_step(S, 11); return 1; }
+    if (ptyp == 132) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF32_TO(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }
+    if (ptyp == 83) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_SIN(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 84) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_COS(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 85) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_EXP(S);  _expect_step(S, 11); return 1; }
+    if (ptyp == 86) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_LN(S);   _expect_step(S, 11); return 1; }
+    if (ptyp == 87) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_LOG2(S); _expect_step(S, 11); return 1; }
+    if (ptyp == 88) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); EF64_EXP2(S); _expect_step(S, 11); return 1; }
+    # f64v_add/sub/mul(dst, a, b, n) — SSE2 packed f64 batch operations.
+    # v5.10.39 — route through _SIMD_STASH (was bare EFLSTORE pre-fix).
+    # The v5.10.35 locname-staleness fix covered f64v_div/sqrt/abs/
+    # fmadd/dot/scale/axpy in PARSE_SIMD_EXT but missed this separate
+    # f64v_add/sub/mul path at ptyp 89-91 — stash slots weren't
+    # anonymised, and stale `r` entries from a prior fn parse caused
+    # `return r;` after f64v_add inside a wrapper to load the stash
+    # slot (containing &r pointer-VALUE) instead of the real var r.
+    # Surfaced at v5.10.39 when adding value-form siblings to
+    # lib/simd.cyr made the stale-collision reliable.
+    if (ptyp >= 89) { if (ptyp <= 91) {
+            STI(S, GTI(S) + 1);
+            _expect_step(S, 10);
+            if (_try_vec_direct(S, ptyp - 89, 1, 2) == 1) { return 1; }
+            var vbase = GFLC(S);
+            _SIMD_RESERVE(S, vbase, 3);
+            PCMPE(S); _SIMD_STASH(S, vbase);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vbase + 1);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vbase + 2);
+            _expect_step(S, 31);
+            PCMPE(S);
+            _SIMD_RESERVE(S, vbase, 3);   # max, never a lowering assignment
+            EMIT_F64V_LOOP(S, ptyp - 89, vbase);
+            _expect_step(S, 11);
+            return 1;
+        } }
+    # v6.4.3+ (SIMD Phase 1) — f32v_add/sub/mul(dst, a, b, n) — SSE2 packed f32
+    # (addps/subps/mulps), the f64v path minus the 66 prefix. Same 4-arg stash shape.
+    if (ptyp >= 138) { if (ptyp <= 140) {
+            STI(S, GTI(S) + 1);
+            _expect_step(S, 10);
+            if (_try_vec_direct(S, ptyp - 138, 0, 4) == 1) { return 1; }
+            var vbf = GFLC(S);
+            _SIMD_RESERVE(S, vbf, 3);
+            PCMPE(S); _SIMD_STASH(S, vbf);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vbf + 1);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vbf + 2);
+            _expect_step(S, 31);
+            PCMPE(S);
+            _SIMD_RESERVE(S, vbf, 3);   # max, never a lowering assignment
+            EMIT_F32V_LOOP(S, ptyp - 138, vbf);
+            _expect_step(S, 11);
+            return 1;
+        } }
+    # v6.4.8 (SIMD Phase 4 R1) — f32v8_add/sub/mul(dst, a, b, n) — 256-bit AVX2 packed
+    # f32 (vaddps/vsubps/vmulps ymm). Identical 4-arg stash to f32v_add; EMIT_F32V8_LOOP.
+    if (ptyp >= 147) { if (ptyp <= 149) {
+            STI(S, GTI(S) + 1);
+            _expect_step(S, 10);
+            var vbf8 = GFLC(S);
+            _SIMD_RESERVE(S, vbf8, 3);
+            PCMPE(S); _SIMD_STASH(S, vbf8);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vbf8 + 1);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vbf8 + 2);
+            _expect_step(S, 31);
+            PCMPE(S);
+            _SIMD_RESERVE(S, vbf8, 3);   # max, never a lowering assignment
+            EMIT_F32V8_LOOP(S, ptyp - 147, vbf8);
+            _expect_step(S, 11);
+            return 1;
+        } }
+    # v6.5.24 (ymm widening) — f64v256_add/sub/mul/div(dst, a, b, n): 256-bit AVX2 packed
+    # DOUBLE (vaddpd/vsubpd/vmulpd/vdivpd ymm). Identical 4-arg stash shape to the f32v8
+    # arm above; tokens 154-157 are consecutive so `ptyp - 154` is the op index.
+    # ⚠ n MUST be a multiple of 4 — EMIT_F64V4_LOOP strides rsi by 4, so a 2-element
+    # vector here would walk off the end. Only the AVX2-gated f64v4 lib wrappers (n=4)
+    # reach this; f64v2 keeps tokens 89-91 → EMIT_F64V_LOOP. See the emitter's own
+    # warning in src/backend/x86/float.cyr.
+    if (ptyp >= 154) { if (ptyp <= 157) {
+            STI(S, GTI(S) + 1);
+            _expect_step(S, 10);
+            var vb256 = GFLC(S);
+            _SIMD_RESERVE(S, vb256, 3);
+            PCMPE(S); _SIMD_STASH(S, vb256);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vb256 + 1);
+            _expect_step(S, 31);
+            PCMPE(S); _SIMD_STASH(S, vb256 + 2);
+            _expect_step(S, 31);
+            PCMPE(S);
+            _SIMD_RESERVE(S, vb256, 3);   # max, never a lowering assignment
+            EMIT_F64V4_LOOP(S, ptyp - 154, vb256);
+            _expect_step(S, 11);
+            return 1;
+        } }
+
+    # v6.5.38 — f64v256_fmadd(dst, a, b, c, n): 256-bit fused-shape multiply-add, token 158.
+    # FIVE stash slots (dst, a, b, c) + n, mirroring f64v_fmadd (token 96) in PARSE_SIMD_EXT;
+    # the 154-157 arm above takes four. Kept HERE rather than beside token 96 so the whole
+    # f64v256_ family dispatches from one place.
+    # ⚠ Same multiple-of-4 requirement as its siblings — EMIT_F64V4_FMADD strides rsi by 4.
+    if (ptyp == 158) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbf = GFLC(S);
+        _SIMD_RESERVE(S, vbf, 4);
+        PCMPE(S); _SIMD_STASH(S, vbf);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbf + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbf + 2);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbf + 3);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbf, 4);   # max, never a lowering assignment
+        EMIT_F64V4_FMADD(S, vbf);
+        _expect_step(S, 11);
+        return 1;
+    }
+
+    # v6.5.38 — f64v256_dot(a, b, n): THREE args and the only member of the family that
+    # produces a value (f64 bits in rax), so no dst slot; mirrors f64v_dot (token 128).
+    if (ptyp == 159) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbd = GFLC(S);
+        _SIMD_RESERVE(S, vbd, 2);
+        PCMPE(S); _SIMD_STASH(S, vbd);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbd + 1);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbd, 2);   # max, never a lowering assignment
+        EMIT_F64V4_DOT(S, vbd);
+        _expect_step(S, 11);
+        return 1;
+    }
+
+    # v6.5.38 — f64v256_scale(dst, a, s, n): four args, but arg 3 is a SCALAR f64 bit
+    # pattern, not a pointer — EMIT_F64V4_SCALE broadcasts it with vbroadcastsd.
+    if (ptyp == 160) {
+        STI(S, GTI(S) + 1);
+        _expect_step(S, 10);
+        var vbs = GFLC(S);
+        _SIMD_RESERVE(S, vbs, 3);
+        PCMPE(S); _SIMD_STASH(S, vbs);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbs + 1);
+        _expect_step(S, 31);
+        PCMPE(S); _SIMD_STASH(S, vbs + 2);
+        _expect_step(S, 31);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbs, 3);   # max, never a lowering assignment
+        EMIT_F64V4_SCALE(S, vbs);
+        _expect_step(S, 11);
+        return 1;
+    }
+
+    # v6.5.38 — f64v256_abs(dst, a, n) / f64v256_sqrt(dst, a, n): three args, one shared
+    # arm. EMIT_F64V4_UNARY takes op 0 = sqrt, 1 = abs — matching EMIT_F64V_UNARY, so the
+    # op index is NOT `ptyp - 161` (that would map abs->0 = sqrt). Spelled out explicitly.
+    if (ptyp == 161) { return _PARSE_F64V4_UNARY(S, 1); }
+    if (ptyp == 162) { return _PARSE_F64V4_UNARY(S, 0); }
+    return 0;
+}

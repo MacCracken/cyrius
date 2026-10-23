@@ -18,7 +18,7 @@
 # closure in a declaration-zone initializer (compiled after every fn) and in a top-level block,
 # and a struct literal's field label `y:` / a `p.y` below a `fn w(y)` (row L).
 #
-# THE FIX (src/frontend/parse/expr.cyr `_cl_ctx_enter`): outside a fn the capture lookup is
+# THE FIX (src/frontend/parse/expr/closure.cyr `_cl_ctx_enter`): outside a fn the capture lookup is
 # empty. Whether the closure sits in a fn is read from its own `_fnst_save` block
 # (`_fnst_was_infn`, src/frontend/parse/parse.cyr), taken before the closure enters its own fn. The
 # table is still saved and put back around the closure as before, so nothing else at top level

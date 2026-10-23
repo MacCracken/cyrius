@@ -1,6 +1,6 @@
 #!/bin/sh
 # 6.6.8 — an INT-left arithmetic op with an f64 right operand WARNS (kind 2 of
-# _FLT_TYPE_WARN, src/frontend/parse/expr.cyr).
+# _FLT_TYPE_WARN, src/frontend/parse/expr/pexpr.cyr).
 #
 # ⛔ THE DEFECT. Binary-op typing is left-operand driven. An f64 LEFT operand routes to the
 # SSE/FP emitters, and v6.4.56's kind-1 warning catches an f64-left op with a non-f64 right.

@@ -117,7 +117,7 @@ fn _arr_desc_t(ew, sgn, typed): i64 {
 # kind now (`_arr_desc_k`) and a `*T` its pointee's (`_ek_of_ptr_ann`: the slot mark, `_gv_ped`,
 # the field and return step words — see `_ps_word`, parse/types.cyr), so C2's `p[i]`, `a[i]` on a
 # float array and `*p` at the element's width read one byte (C2-4a: `a[i]` / `p[i]` load and store
-# by it — `_esub_load` / `_esub_assign`, parse/expr.cyr). The descriptor is a byte everywhere it is
+# by it — `_esub_load` / `_esub_assign`, parse/expr/subscript.cyr). The descriptor is a byte everywhere it is
 # stored (SLAEW, GVSGN's low byte, the step word's bits 40-47). CHANGELOG [6.7.8]
 fn _ek_w(d): i64 { return d & 0x1F; }        # the element width (1/2/4/8, 16 u128), 0 = none
 fn _ek_lw(d): i64 {                          # the load width, negative when signed (sign-extends)

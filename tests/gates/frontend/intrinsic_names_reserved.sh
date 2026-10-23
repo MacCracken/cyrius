@@ -2,7 +2,7 @@
 # tests/gates/frontend/intrinsic_names_reserved.sh — 6.6.20
 #
 # The identifier-spelled intrinsics — `sizeof`, `mulh64` (_is_ident_intrinsic, parse.cyr) and
-# `fncall0`..`fncall8` (_IS_FNCALL_NAME, parse/expr.cyr) — are RESERVED NAMES. They lex as
+# `fncall0`..`fncall8` (_IS_FNCALL_NAME, parse/expr/callee.cyr) — are RESERVED NAMES. They lex as
 # plain IDENTs and are lowered by NAME at the call, so they sit in neither of util.cyr's
 # reserved tables and nothing refused them as a declaration. Measured before 6.6.20:
 #   * `fn mulh64(a, b) { return 77; }` compiled (rc 0, the fn "unreachable") and

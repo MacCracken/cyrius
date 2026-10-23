@@ -211,7 +211,8 @@ fn _parse_drift_scan(path): i64 {
 fn _parse_emit_drift_gate(): i64 {
     var fail = 0;
     # Scope: every parse file — src/frontend/parse/ and its folders (6.7.15: parse/fn/def.cyr, split from
-    # parse/fn.cyr; 6.7.18: parse/fn.cyr and parse/decl.cyr split into parse/fn/ and parse/decl/).
+    # parse/fn.cyr; 6.7.18: parse/fn.cyr, parse/decl.cyr and parse/expr.cyr split into parse/fn/, parse/decl/ and
+    # parse/expr/).
     # tests/gates/toolchain/check_parse_drift_reads_whole.sh
     # holds this list to the tree's own (`find src/frontend/parse -name '*.cyr'`), so a file added there and not
     # here, or named here and gone, fails by name. CHANGELOG [6.7.18]
@@ -234,7 +235,18 @@ fn _parse_emit_drift_gate(): i64 {
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/receive.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/var.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/handle.cyr"));
-    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/closure.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/callee.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/stamp.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/wide.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/postfix.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/subscript.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/deref.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/undef.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/factor.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/intrin.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/term.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/expr/pexpr.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/table.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/ret.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/fn/call_args.cyr"));

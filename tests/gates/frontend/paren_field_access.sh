@@ -9,7 +9,7 @@
 #
 # THE RULE (D24 (a)): the wrap is transparent, as guide § Parentheses makes it for every struct source (6.7.6;
 # 6.7.11's D35 / D44, 6.7.13's D16 / D17 / D19). The inside is taken as its unwrapped spelling takes it (`_paren_field`,
-# src/frontend/parse/expr.cyr): a name through the field-load route, `*E` / a `*S` value through its pointer, a free
+# src/frontend/parse/expr/postfix.cyr): a name through the field-load route, `*E` / a `*S` value through its pointer, a free
 # call into a temp, a method / operator / known `&f` result or a struct-typed field from its record — then the wrap is
 # closed and the chain goes on. A wrap around a value that is no struct (`(x + 1).a`) is refused by name; a STORE
 # `(s).a = v;` / `(s).a += v;` is refused by name (`_stmt_paren_field`, one PARSE_STMT call); at top level a struct

@@ -1,0 +1,400 @@
+# PARSER — expr: a struct literal where a value is parsed (`_slit_*`), and undefined names and generic calls
+# (`_undef_*`, `_ugc_*`).
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# ⛔ 6.7.14 — A STRUCT LITERAL IS AN INITIALIZER (the user's decision D12 (a), 2026-10-16). `P { .. }` /
+# `Box<i64> { .. }` is taken only as a declaration's whole initializer (PARSE_VAR, PARSE_GVAR_REG and the replay,
+# through `_lit_head_w`). Where a VALUE is parsed — an assignment's right side, an argument, an operand, a nested
+# literal element, `return` — or as a statement, `P` is no variable: it was "undefined variable 'P'" (a statement
+# "expected '='") and the `{` cascaded into two to five more errors. Cursor just past a name no variable answers
+# (`noff`): when it opens a literal (`_slit_open`), ONE error by name at the name (`--syntax-only` too: never
+# valid, whatever P holds), the `{ .. }` stepped so the parse goes on in sync, and 0 the value. 1 = refused.
+# CHANGELOG [6.7.14]
+var _slit_beg = 0 - 1;   # the last refused literal's name token and the token after it (`_slit_whole`)
+var _slit_end = 0 - 1;
+fn _slit_stray(S, noff): i64 {
+    var ti = GTI(S) - 1;
+    if (TOKVAL(S, ti) != noff) { return 0; }
+    var o = _slit_open(S, ti);
+    var rf = 0;
+    if (o < 0) { o = _slit_refd(S, ti); rf = 1; }   # 6.7.15: a refused declaration's struct, stepped silently
+    if (o < 0) { o = _slit_undecl(S, ti, noff); rf = 2; }   # 6.7.16: a name that is nothing, reported once
+    if (o < 0) { return 0; }
+    _slit_beg = ti;
+    if (rf == 0) { if (_slit_open_wrap(S, ti, o) == 0) { _slit_err(S, ti, o); } }   # 6.7.15: an unclosed wrap's `)`
+    if (rf == 1) { _ann_refd_mark(S, _slit_decl_name(S, ti - 1)); }   # 6.7.15: `var q = Q { .. };` — q's uses too
+    STI(S, _slit_close(S, o) + 1);
+    _slit_tail(S);
+    _slit_end = GTI(S);
+    EMOVI(S, 0);
+    SESTYPE(S, 0);
+    _cfo = 0;
+    _asg_tup_refd = 1;   # and the statement's typed-pointer warning is not given about it
+    return 1;
+}
+# ⛔ 6.7.16 — `Q { 1 }` WHERE Q IS NOTHING (no variable, struct or fn): "undefined variable 'Q'" and then the `{` — "expected
+# ';', got '{'" for `var x = Q { 1 };`, and in a fn the resync stopped inside the braces: "unexpected ';'", "unexpected
+# '}'", "return outside a fn body" (five errors; under --syntax-only, where the name is a sibling file's struct, a false
+# "expected ';', got '{'" alone). Where the literal stands whole in a place a value is parsed — a declaration's
+# initializer (inside any balanced wrap), an assignment's right side, `return`, an argument: the name after `=`, `(`, `,`
+# or `return`, its `}` followed by `;`, `)` or `,` — the name is reported once, as before (not under --syntax-only, nor
+# when the declaration's annotation named it and was refused: `var x: Q = Q { 1 };`), the `{ .. }` stepped, and a
+# declared variable marked (`_ann_refd_mark`) so `x.a` stands down. Only that shape: `match x {`, `for i in 0..n {` and
+# a condition's `{` never follow those tokens. The `{` (token `o`), or -1. CHANGELOG [6.7.16]
+fn _slit_undecl(S, ti, noff): i64 {
+    var o = _slit_brace(S, ti);
+    if (o < 0) { return 0 - 1; }
+    if (FINDFN(S, noff) >= 0) { return 0 - 1; }
+    var b = TOKTYP(S, ti - 1);
+    if (b != 4 && b != 10 && b != 31 && b != 33) { return 0 - 1; }
+    var a = TOKTYP(S, _slit_close(S, o) + 1);
+    if (a != 5 && a != 11 && a != 31) { return 0 - 1; }
+    var eq = _slit_wrap_eq(S, ti, o);
+    if (_syntax_only == 0 || _unp_names == 1) {   # 6.7.17 (D110): the never-parsed body's read (`_unp_names`) too
+        if (_slit_ann_said(S, eq, noff) == 1) { _had_error = 1; }
+        else { _undef_var_report(S, ti, noff, " (missing include or enum?)"); }
+    }
+    if (eq > 0) { _ann_refd_mark(S, _slit_decl_name(S, eq)); }
+    return o;
+}
+# The `=` of the `var` declaration whose whole initializer is the literal at name `ti` (its `{` the token `o`), inside
+# `k` balanced wrapping parentheses (`k` `(`s back to the `=`, `k` `)`s after the `}`, then the `;`), or -1.
+fn _slit_wrap_eq(S, ti, o): i64 {
+    var k = 0;
+    while (ti - k - 1 > 0) {
+        if (TOKTYP(S, ti - k - 1) != 10) { break; }
+        k = k + 1;
+    }
+    var e = _slit_close(S, o) + 1;
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, e + j) != 11) { return 0 - 1; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, e + k) != 5) { return 0 - 1; }
+    if (_slit_decl_eq(S, ti - k - 1) == 0) { return 0 - 1; }
+    return ti - k - 1;
+}
+# 1 = the declaration whose `=` is token `eq` (-1: none) has an annotation naming `noff` whose type refusal printed
+# (`_tn_seen_at`): `var x: Q = Q { 1 };` is that one error.
+fn _slit_ann_said(S, eq, noff): i64 {
+    if (eq <= 0) { return 0; }
+    var k = eq - 1;
+    while (k > 0) {
+        var t = TOKTYP(S, k);
+        if (t == 49) { return 0; }
+        if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) { if (_tn_seen_at(S, k) == 1) { return 1; } } }
+        if (t == 3 || t == 5 || t == 13 || t == 14) { return 0; }
+        k = k - 1;
+    }
+    return 0;
+}
+# 1 = the literal at name `ti` (its `{` the token `o`) is a `var` declaration's whole initializer in an UNCLOSED
+# wrap: `var t: P = (P { 5, 6 };` — only `(`s back to the declaration's `=` (`_slit_decl_eq`), fewer `)`s than
+# them after the `}`, then the `;`. The wrap's missing `)` ("expected ')', got ';'") is its one error: a balanced
+# wrap is the initializer (6.7.14's D12 (a), `_slit_wrap_k`), so the literal broke no rule. A literal that is an
+# operand (`var t = (P { 5 } + 1;`) or an assignment's (`t = (P { 5 };`) keeps the refusal. Reads tokens only.
+# CHANGELOG [6.7.15]
+fn _slit_open_wrap(S, ti, o): i64 {
+    var k = 0;
+    while (ti - k > 0) {
+        if (TOKTYP(S, ti - k - 1) != 10) { break; }
+        k = k + 1;
+    }
+    if (k == 0) { return 0; }
+    if (_slit_decl_eq(S, ti - k - 1) == 0) { return 0; }
+    var e = _slit_close(S, o) + 1;
+    var j = 0;
+    while (TOKTYP(S, e + j) == 11) { j = j + 1; }
+    if (j >= k) { return 0; }
+    if (TOKTYP(S, e + j) != 5) { return 0; }
+    return 1;
+}
+# 1 = token `e` is the `=` of a `var` declaration — `var NAME =`, or `var NAME : <type> =` (the `:` the first
+# met walking back, before any `;` / `{` / `}` / `=`). Reads tokens only. CHANGELOG [6.7.15]
+fn _slit_decl_eq(S, e): i64 {
+    if (e < 2) { return 0; }
+    if (TOKTYP(S, e) != 4) { return 0; }
+    if (TOKTYP(S, e - 1) == 2) { if (TOKTYP(S, e - 2) == 3) { return 1; } }
+    var k = e - 1;
+    while (k >= 2) {
+        var t = TOKTYP(S, k);
+        if (t == 49) {
+            if (TOKTYP(S, k - 1) != 2) { return 0; }
+            if (TOKTYP(S, k - 2) != 3) { return 0; }
+            return 1;
+        }
+        if (t == 4 || t == 5 || t == 13 || t == 14) { return 0; }
+        k = k - 1;
+    }
+    return 0;
+}
+# The variable whose declaration's `=` is token `e` (`_slit_decl_eq`): its name, or -1. CHANGELOG [6.7.15]
+fn _slit_decl_name(S, e): i64 {
+    if (_slit_decl_eq(S, e) == 0) { return 0 - 1; }
+    if (TOKTYP(S, e - 1) == 2) { if (TOKTYP(S, e - 2) == 3) { return TOKVAL(S, e - 1); } }
+    var k = e - 1;
+    while (TOKTYP(S, k) != 49) { k = k - 1; }
+    return TOKVAL(S, k - 1);
+}
+# A selector run after the stepped literal (`.f`, `.m(..)`), stepped with it: `P { 5 }.a` is one refusal.
+fn _slit_tail(S): i64 {
+    while (PEEKT(S) == 41) {
+        if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+        STI(S, GTI(S) + 2);
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return 0;
+}
+# `return P { .. };` in a fn returning a struct over 16 B (`_ret_struct_big`, cursor on the value): refused by
+# name and stepped, the junk slot 0 (no binary is written); -1 = not a literal.
+fn _slit_ret(S): i64 {
+    var o = _slit_open(S, GTI(S));
+    if (o < 0) { return 0 - 1; }
+    _slit_err(S, GTI(S), o);
+    STI(S, _slit_close(S, o) + 1);
+    _slit_tail(S);
+    return 0;
+}
+# A statement (or a for step) `P { .. };` (cursor past the name, which no variable answers): the refusal; the
+# caller steps the rest in sync (`_asg_lvalue_at`'s). 1 = refused.
+fn _slit_stmt(S, noff): i64 {
+    if (PEEKT(S) != 13) { if (PEEKT(S) != 19) { return 0; } }   # every assignment asks: `{` / `<` first
+    if (_slit_open(S, GTI(S) - 1) < 0) { return _slit_refd_stmt(S, noff); }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_findvar_core(S, noff) >= 0) { return 0; }
+    _slit_err(S, GTI(S) - 1, _slit_open(S, GTI(S) - 1));
+    return 1;
+}
+# 1 = the value just parsed (from token `b`, inside `pk` closed parentheses) was one refused literal, whole: a
+# nested struct literal element takes it as the whole field (`_spi_expr`), as a refused call, so the walk does not
+# carry it as a first leaf and report the rest of the field missing.
+fn _slit_whole(S, b, pk): i64 {
+    if (_slit_beg != b) { return 0; }
+    if (_slit_end + pk != GTI(S)) { return 0; }
+    return 1;
+}
+# 1 = token `ti` opens a struct literal. Reads tokens only.
+fn _slit_at(S, ti): i64 {
+    if (_slit_open(S, ti) < 0) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.15 — `Q { .. }` where Q is a struct a refused declaration declared (`_dl_refd_at`): no struct answers
+# the name, so it was "undefined variable 'Q'" and the `{` "expected ';'"; the literal is stepped as a refused one
+# is, silently (the declaration's error is the one). The `{` (`_slit_brace`), or -1. CHANGELOG [6.7.15]
+fn _slit_refd(S, ti): i64 {
+    var o = _slit_brace(S, ti);
+    if (o < 0) { return 0 - 1; }
+    if (_dl_refd_at(S, TOKVAL(S, ti)) == 0) { return 0 - 1; }
+    return o;
+}
+# ... and as a statement (`Q { 5 };`, the caller steps it): 1 = stood down, counted.
+fn _slit_refd_stmt(S, noff): i64 {
+    if (_slit_brace(S, GTI(S) - 1) < 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_findvar_core(S, noff) >= 0) { return 0; }
+    return _dl_refd_at(S, noff);
+}
+# The `{` of the struct literal whose name is token `ti` — `P {` or `P<..> {`, P a declared struct — or -1.
+fn _slit_open(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    if (FINDSTRUCT(S, TOKVAL(S, ti)) <= 0) { return 0 - 1; }
+    return _slit_brace(S, ti);
+}
+# ... its shape alone, the name token `ti` an identifier: `NAME {` or `NAME<..> {`.
+fn _slit_brace(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    var o = ti + 1;
+    if (TOKTYP(S, o) == 19) {
+        o = _tok_targs_close(S, o + 1);
+        if (o < 0) { return 0 - 1; }
+        o = o + 1;
+    }
+    if (TOKTYP(S, o) != 13) { return 0 - 1; }
+    return o;
+}
+# The `}` closing the `{` at token `o` (the EOF token when none does).
+fn _slit_close(S, o): i64 {
+    var k = o + 1;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 12) { return k - 1; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { return k; } }
+        k = k + 1;
+    }
+    return k - 1;
+}
+# The refusal, at the struct name `ti` (its `{` is token `o`); once per token (`_tn_once`: an #inline / generic
+# replay of the body).
+fn _slit_err(S, ti, o): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": a struct literal is an initializer: declare `var t: ");
+    _slit_ptype(S, ti, o);
+    PRSTR(" = ");
+    _slit_ptype(S, ti, o);
+    PRSTR(" { .. };` and assign or pass t\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# ⛔ 6.7.17 — A STRUCT LITERAL ARGUMENT OF A GENERIC IS REFUSED AS ONE, NOT AS THE SCALAR CALL IT MADE (met reviewing
+# the genr lane). D12 (a) of 6.7.14 refuses a struct literal argument by name, once, but a literal binds a generic's T
+# to nothing, so `g(P { 2, 4 })` with `T: Show`, a stub `rdb(P { .. })`, `gb(Box<P> { .. })`, `gp(P { .. })` through
+# `p: *T` and `k.m(P { .. })` were refused as the i64 call they became — "its type argument does not implement trait
+# 'Show'" with a note asking for `impl Show for i64`, or "has no i64 (or other scalar) instance" — naming a type the
+# source never wrote. The scalar-call refusals (`_refuse_bnd_base`, `_refuse_gen_stub`) report the literal first when
+# the call's list — the cursor on its first argument — holds one, whole (wrapped or named too): 1 = reported (the
+# statement latched, as the refusal it replaces latched it). CHANGELOG [6.7.17]
+fn _slit_arg_err(S): i64 {
+    if (_panic == 1) { return 0; }
+    var a = GTI(S);
+    if (TOKTYP(S, a) == 10) { if (TOKTYP(S, a - 1) == 2) { a = a + 1; } }   # a method's refusal: on its `(`
+    if (TOKTYP(S, a - 1) != 10) { return 0; }
+    var n = GTCNT(S);
+    while (a < n) {
+        var w = a;
+        if (TOKTYP(S, w) == 2) { if (TOKTYP(S, w + 1) == 49) { w = w + 2; } }   # a named argument `v: ..`
+        w = _pwrap_in(S, w);
+        if (w >= 0) {
+            var o = _slit_open(S, w);
+            if (o > 0) {
+                _slit_err(S, w, o);
+                _panic = 1;
+                return 1;
+            }
+        }
+        a = _arg_next(S, a);
+        if (TOKTYP(S, a) != 31) { return 0; }
+        a = a + 1;
+    }
+    return 0;
+}
+# The literal's type as written: the name, or (`Box<i64>`) the source from the name to its `{`, blanks after it
+# dropped.
+fn _slit_ptype(S, ti, o): i64 {
+    if (o == ti + 1) { return _dyn_pn(S, TOKVAL(S, ti)); }
+    var a = GTOFF(S, ti);
+    var b = GTOFF(S, o);
+    while (b > a) {
+        var c = load8(S + 0x459D000 + b - 1);
+        if (c != 32 && c != 9 && c != 10) { break; }
+        b = b - 1;
+    }
+    _ew(S + 0x459D000 + a, b - a);
+    return 0;
+}
+# `&` takes a name. Anything else (`&(x)`, `&5`, `&*p`) is "expected identifier" once, at that token, and the
+# factor ends there: the `&` arm read on with the token's VALUE as a name offset (a `(`'s 0 is the source's first
+# word) and reported a second, false "undefined variable 'fn'". A `( .. )` is stepped whole, so the parse stays in
+# step; any other token is stepped as the arm stepped it. CHANGELOG [6.7.15]
+fn _amp_not_name(S): i64 {
+    ERR_EXPECT(S, 2);
+    var c = 0 - 1;
+    if (PEEKT(S) == 10) { c = _tok_close_paren(S, GTI(S)); }
+    if (c < 0) { c = GTI(S); }
+    STI(S, c + 1);
+    EMOVI(S, 0);
+    return 0;
+}
+# The subscript's undefined-base stand-downs: a const fn's check named it (6.7.14), or a refused declaration declared
+# it — `_undef_var_report`'s (6.7.16: `c[0]` after a refused top-level `var c: S;`, an enum member `B[0]`). 1 = said.
+fn _sub_undef_said(S, noff): i64 {
+    if (_ce_name_said(S, noff) == 1) { return 1; }
+    return _dl_name_refd(S, noff);
+}
+# At the name's token `ti` (6.7.17, D34; `_nm_ti`); the note reads the cursor.
+fn _undef_var_report(S, ti, noff, tail): i64 {
+    if (_ce_name_said(S, noff) == 1) { return 0; }
+    if (_dl_name_refd(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse/fn_def.cyr); 6.7.16: a variable
+    if (_unp_on == 1) { _ew_say = 1; }   # 6.7.17 (D110): said by a never-parsed body's read too (`_unp_run`)
+    if (ERR_UNDEF(S, ti, noff, tail) == 1) { if (_unp_on == 1) { _unp_said = _unp_said + 1; } }   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
+    _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
+    _ew_say = 0;
+    return 0;
+}
+# The factor's read of a name that is nothing in any scope (cursor past it): reported (not under --syntax-only, where it
+# is the constant 0 of a sibling file's name), its value 0; or the call `_ugc_call` takes.
+fn _undef_read(S, noff): i64 {
+    if (_ugc_call(S, noff) == 1) { return 0; }
+    if (_syntax_only == 0 || _unp_names == 1) { _undef_var_report(S, _nm_ti(S, GTI(S) - 1, noff), noff, " (missing include or enum?)"); _undef_tlist(S); }
+    EMOVI(S, 0);
+    return 0;
+}
+# 6.7.17 review — a name read with a list of type names and no call: `var f = g<i32>;`, `nf<i64> + 1`, `callptr(g<i32>,
+# 3)`, `zz<i64>`. The name's "undefined variable" stood, and its list was then read as comparisons — "undefined variable
+# 'i32'" + "expected ';', got '>'" — three lines for one mistake (`&g<i32>` and `nofn<i64>(1)` were made one line). The
+# list is stepped after the name's report, so that is the one line. Not under --syntax-only (nothing reported there).
+# Cursor past the name. CHANGELOG [6.7.17]
+fn _undef_tlist(S): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var lt = GTI(S);
+    var e = _tok_targs_close(S, lt + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) == 10) { return 0; }
+    var ok = 0;
+    if (_MONOMORPH_OK != 1) { ok = _tylist_fl(S, lt + 1, e); }
+    else { ok = _tylist_at(S, lt + 1, e, 0 - 1); }
+    if (ok == 1) { STI(S, e + 1); }
+    return 0;
+}
+# ⛔ 6.7.16 — `nofn<i64>(1)`, AN EXPLICIT-GENERIC CALL OF A NAME THAT IS NOTHING: its type arguments were read as
+# comparisons, so one mistake was three errors — "undefined variable 'nofn'", "undefined variable 'i64'", "expected ';',
+# got '>'" (a `.f` after the call: "expected ';', got '.'"; `[i]`: "cannot subscript the result of ''>''") — and under
+# --syntax-only (lint's pre-pass) a sibling module's generic called so was a false "expected ';', got '>'". Now it is
+# `_call_undef`'s callee (6.7.15): "undefined function 'nofn'" at its name — an ERROR, as it was refused before under
+# every flag — once; the type arguments, the call and its `.f` / `.m(..)` / `[..]` chain stepped over unparsed, rax 0,
+# and `_tsc_n` moved (the statement form steps its tail with no second error, `_stmt_undef_gcall`). Silent under
+# --syntax-only. Cursor on the `<` after the name, a list of type names before a `(` (`_ugc_open`). 1 = consumed, 0 =
+# not this shape. CHANGELOG [6.7.16]
+fn _ugc_call(S, noff): i64 {
+    var o = _ugc_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var e = _pf_chain_end(S, _call_close(S, o) + 1);
+    if (_syntax_only == 0) {
+        STI(S, GTI(S) - 1);
+        _err_in_sync(S, "undefined function ", noff, 0);
+        _tsc_n = _tsc_n + 1;
+    }
+    STI(S, e);
+    _addr_field_val(S);
+    SESTYPE(S, 0);
+    SEXW(S, 0);
+    _cfo = 0;
+    return 1;
+}
+# The `(` of `<..>(` when the `<` at token `lt` opens a list of type names (`_ugc_tyname`, `,`, a nested `<..>`) that
+# closes exactly right before it, else -1. The name is nothing, so the tokens alone tell a call from comparisons:
+# `zz < 2 >> (3)` (a shift) and `f(zz < b, c > (d))` (two comparisons of values) are no list.
+fn _ugc_open(S, lt): i64 {
+    if (TOKTYP(S, lt) != 19) { return 0 - 1; }
+    var d = 1;
+    var i = lt + 1;
+    while (d > 0) {
+        var t = TOKTYP(S, i);
+        if (t == 2) { if (_ugc_tyname(S, TOKVAL(S, i)) == 0) { return 0 - 1; } }
+        elif (t == 19) { d = d + 1; }
+        elif (t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        elif (t != 31) { return 0 - 1; }
+        i = i + 1;
+    }
+    if (d != 0) { return 0 - 1; }
+    if (TOKTYP(S, i) != 10) { return 0 - 1; }
+    return i;
+}
+# 1 = the name `noff` is a type here: one of the type-name vocabulary (`_tn_resolve`: a struct or union, a scalar, a
+# vector, Result / Option / .., an enum) or a type parameter in scope (`_targ_is_tp`).
+fn _ugc_tyname(S, noff): i64 {
+    if (_tn_resolve(S, noff) != 0) { return 1; }
+    return _targ_is_tp(S, noff);
+}

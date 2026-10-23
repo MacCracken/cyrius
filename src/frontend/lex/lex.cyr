@@ -221,7 +221,7 @@ fn FM_FILEID(S, expanded_line): i64 {
 # filename scratch at S + 0x721000) of the span holding `expanded_line`, or -1 when no span does
 # (an empty map, or a line past an overflowed one); `_fm_site_line` receives the line within that
 # file (the expanded line itself when -1). The bounds-checked mode's site names its file and line
-# this way (parse/expr.cyr `_bck_file`); FM_LOOKUP prints the same answer.
+# this way (parse/expr/subscript.cyr `_bck_file`); FM_LOOKUP prints the same answer.
 var _fm_site_line = 0;
 fn FM_SITE(S, expanded_line): i64 {
     _fm_site_line = expanded_line;

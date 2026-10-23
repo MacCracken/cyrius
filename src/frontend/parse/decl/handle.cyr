@@ -2035,7 +2035,7 @@ fn _gu_iebig(S, ti): i64 {
     }
     return 0;
 }
-# 6.7.16 — the sweep's twin of `_slit_undecl` (parse/expr.cyr): the noted global whose whole initialiser at `ti`
+# 6.7.16 — the sweep's twin of `_slit_undecl` (parse/expr/undef.cyr): the noted global whose whole initialiser at `ti`
 # (inside any wrap) is a struct literal `Q { .. }` / `Q<..> { .. }` whose name is nothing (no struct, variable or fn)
 # is marked as refused, so a fn body compiled before the replay stands down at `x.a`. CHANGELOG [6.7.16]
 fn _gu_slit0(S, ti): i64 {

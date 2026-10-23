@@ -4,7 +4,7 @@
 # A BUILTIN'S OR AN IDENTIFIER INTRINSIC'S MALFORMED ARGUMENT LIST IS ONE ERROR: THE BLOCK AROUND IT STILL CLOSES.
 #
 # THE DEFECT (measured 6.7.17 at the fea lane's base, 0d291492b; x86_64, aarch64, cx and PE alike — the shared
-# frontend). Each builtin's lowering in PARSE_FACTOR (src/frontend/parse/expr.cyr) checked its `(` and `,` with
+# frontend). Each builtin's lowering in PARSE_FACTOR (src/frontend/parse/expr/stamp.cyr) checked its `(` and `,` with
 # `if (PEEKT(S) != t) { ERR_EXPECT(S, t); } STI(S, GTI(S) + 1);`, stepping the token found whatever it was (6.7.14 had
 # made most `)` checks `_expect_step`). A malformed call at the end of a block took the statement's `;` and the block's
 # `}`: `var y = load8;` (or `f64_sqrt;`, `syscall;`, `callptr;`, `rethi;`, `store8(p;`, `ret2(p;`, `iv_add(p, p;`, ..)

@@ -2,7 +2,7 @@
 # tests/gates/frontend/slice_read_left_operand.sh — 6.7.8 (C2-1b)
 #
 # A SLICE SUBSCRIPT IS A WHOLE VALUE. The slice read `s[i]` (`_slice_sub_read`,
-# src/frontend/parse/expr.cyr) parsed its index, called `_slice_idx_get_W(&s, i)` and returned with
+# src/frontend/parse/expr/subscript.cyr) parsed its index, called `_slice_idx_get_W(&s, i)` and returned with
 # the INDEX's state still describing the factor (6.7.5 - 6.7.7, every target): a constant index left
 # the constant folder armed, so `s[0] + 10` folded `0 + 10` and rewound the code to the index's load
 # — the call vanished and its fixup patched the return's jump into a jump to the helper (exit 134

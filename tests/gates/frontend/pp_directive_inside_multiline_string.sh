@@ -7,7 +7,7 @@
 # first non-space byte, and until 6.6.6 each reset
 # its `in_string` flag at every newline "as a safety net", on the written premise
 # that "cyrius source uses single-line strings". That premise was false —
-# src/main.cyr and src/frontend/parse/expr.cyr both spell error messages with a
+# src/main.cyr and src/frontend/parse/expr/callee.cyr both spell error messages with a
 # literal LF inside the string — so a line sitting INSIDE a multi-line string was
 # read as a fresh line of code and its directives were EXECUTED:
 #

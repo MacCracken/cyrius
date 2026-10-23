@@ -36,7 +36,8 @@
 #           exactly the errno path
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-PE="$ROOT/src/frontend/parse/expr.cyr"
+PE="$ROOT/src/frontend/parse/expr/factor.cyr"   # 6.7.18: parse/expr.cyr split by seam — the reroute block
+PC="$ROOT/src/frontend/parse/expr/callee.cyr"   # ... and _macho_reroute_argc
 AE="$ROOT/src/backend/aarch64/emit.cyr"
 ME="$ROOT/src/backend/macho/emit_arm64.cyr"
 SA="$ROOT/lib/syscalls_aarch64_linux.cyr"
@@ -44,7 +45,7 @@ SM="$ROOT/lib/syscalls_macos.cyr"
 fail() { echo "FAIL macos_arm64_libsystem_fork: $1" >&2; exit 1; }
 # ⚠ Piped matches use `grep -c … >/dev/null`, never `grep -q`: -q exits at the first match, the
 # producer then dies of SIGPIPE, and under `bash -o pipefail` that reads as NO match.
-for f in "$PE" "$AE" "$ME" "$SA" "$SM"; do [ -f "$f" ] || fail "missing $f"; done
+for f in "$PE" "$PC" "$AE" "$ME" "$SA" "$SM"; do [ -f "$f" ] || fail "missing $f"; done
 
 # fn body (from `fn NAME(` to the first line that is exactly `}`)
 _body() { awk -v n="fn $2(" 'index($0, n) == 1 {s = 1} s {print} s && /^}/ {exit}' "$1"; }
@@ -64,7 +65,7 @@ sed -n "$L,$((L + 4))p" "$PE" | grep -c 'argc == 1' >/dev/null \
     || fail "the 1701 reroute does not require argc == 1 — fork takes no arguments, and any other arity would mis-pop the stack"
 sed -n "$L,$((L + 4))p" "$PE" | grep -c 'EMACHO_FORK_ARM(S);' >/dev/null \
     || fail "the 1701 reroute does not call EMACHO_FORK_ARM"
-_body "$PE" _macho_reroute_argc | grep -c 'if (tgt == 2) { if (n == 1701) { return 1; } }' >/dev/null \
+_body "$PC" _macho_reroute_argc | grep -c 'if (tgt == 2) { if (n == 1701) { return 1; } }' >/dev/null \
     || fail "_macho_reroute_argc does not report 1701 at argc 1 on arm64 Mach-O (tgt 2) — it must mirror the reroute block"
 
 # ── axis 2: EMACHO_FORK_ARM's slots are the writer's _fork / ___error ────────────────────────

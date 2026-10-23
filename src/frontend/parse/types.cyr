@@ -3148,7 +3148,7 @@ fn _gv_pvd_get(vi): i64 {
     return load8(_gv_pvd + vi);
 }
 # 6.7.13: and a value-form vector global's own vector (`var G: f64v2 = 0;` — GVVEC records only its words), a byte per
-# global the same way (the descriptor less 2048), for `*&G` (`_name_vty`, parse/expr.cyr).
+# global the same way (the descriptor less 2048), for `*&G` (`_name_vty`, parse/expr/deref.cyr).
 var _gv_vvd = 0;
 fn _gv_vvd_set(vi, vd): i64 {
     if (vd != 0) { _vty_any = 1; }   # 6.7.17: a vector global (`_vval_at` reads `*(&GW)`)
@@ -3292,10 +3292,10 @@ fn _slice_led(S, li): i64 {
 # and pointer arithmetic writes the operand's word back, so `p + n`, `p - n` and a parenthesised
 # pointer keep the kind exactly where they keep the step. The closed list of readers that use the
 # value as a NUMBER takes `_ps_step`: EPTR_SCALE, `_ptr_add`, `_add_word`, `_int_plus_ptr`, `_ptr_diff`
-# (parse/expr.cyr) and the if-expression's merge (`_ps_merge`); every other reader tests `== 0` / `> 0`,
+# (parse/expr/term.cyr) and the if-expression's merge (`_ps_merge`); every other reader tests `== 0` / `> 0`,
 # which the word preserves (ed is nonzero only when the step is). Nothing reads the kind yet: the
 # emitted bytes are unchanged. CHANGELOG [6.7.8] (6.7.9: `n + p` with a one-byte `*T` keeps p's
-# word as `p + n` does — `_add_word`, parse/expr.cyr.)
+# word as `p + n` does — `_add_word`, parse/expr/term.cyr.)
 fn _ps_word(ps, ed): i64 {
     if (ps <= 0) { return ps; }
     return ps | (ed << 40);
@@ -3340,7 +3340,7 @@ fn _ps_vdesc(w): i64 {
 # pointer". The pointee's own step word (`*T`'s: sizeof(T), T's kind, a vector) is interned in `_pp_tab` (alloc()'d,
 # no heap region) and its index (the pin) rides the word above the kind (`_ps_pw`), so every reader of the step or the
 # kind (40-47) is unchanged and the word stays positive. A `**T` local, parameter,
-# capture, field, global and `: **T` return carry it, `pp + n` keeps it, and `_deref_read` (parse/expr.cyr) gives
+# capture, field, global and `: **T` return carry it, `pp + n` keeps it, and `_deref_read` (parse/expr/deref.cyr) gives
 # `*pp` the pointee's word (`_pp_inner`). A `***T`'s pointee is a `**T` whose own pointee is pinned the same way. A
 # field `**S` naming the struct being declared pins S's token (`0 - ti - 1`: its size is not known yet), sized at
 # the dereference as `_fld_ps_get` sizes a late `*S`, under the field's binding. CHANGELOG [6.7.13]
@@ -3367,7 +3367,7 @@ fn _ps_pin(w): i64 {
     return (w >> 48) & 0x3FFF;
 }
 # 6.7.13: a pin also carries its pointee `*S`'s struct (`sid`, 0 for none) — the step word says only sizeof(S), so
-# `**pps` of a `**S` names S through it (`_ppd_note`, parse/expr.cyr): two structs of one size get two pins.
+# `**pps` of a `**S` names S through it (`_ppd_note`, parse/expr/deref.cyr): two structs of one size get two pins.
 var _pp_sids = 0;   # a word per pin: the pointee's struct
 # 6.7.15 — THE PIN INTERN IS HASHED. `_pp_intern` found an existing pin by scanning every pin so far, and 6.7.14
 # raised the cap from 126 to 16383, so a unit with thousands of distinct `**T` pointees compiled in quadratic time
@@ -4230,8 +4230,8 @@ fn _tn_ptr_step(S, ti, vnoff, quiet): i64 {
 # value as well ("assigning non-pointer to typed pointer" about a type its line refused). The step
 # stays, so the variable's uses say nothing more. CHANGELOG [6.7.11]
 var _ptr_refd_ti = 0 - 1;
-# 6.7.14 — the token where the last `&a[i]` was refused (`_sub_post`, parse/expr.cyr): a `*T` destination whose value
-# spans it is not warned about that value too (`_tp_warn`). CHANGELOG [6.7.14]
+# 6.7.14 — the token where the last `&a[i]` was refused (`_sub_post`, parse/expr/subscript.cyr): a `*T` destination
+# whose value spans it is not warned about that value too (`_tp_warn`). CHANGELOG [6.7.14]
 var _tp_refd_at = 0 - 1;
 fn _ptr_annot(S, vnoff, quiet): i64 {
     var ti0 = GTI(S);

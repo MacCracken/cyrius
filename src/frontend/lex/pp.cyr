@@ -213,7 +213,7 @@ fn _pp_unclosed(S, base, pos, bl): i64 {
 # own inline copy of the state and RESET `in_string` at every newline, on the
 # written premise that "cyrius source uses single-line strings (`\n` escape, not
 # literal LF inside a string)". That premise was FALSE — src/main.cyr and
-# src/frontend/parse/expr.cyr both hold error strings with a raw LF in them — so
+# src/frontend/parse/expr/callee.cyr both hold error strings with a raw LF in them — so
 # a line sitting INSIDE a multi-line string was read as a fresh line of code and
 # its `#ifdef` / `#ifndef` / `#if` / `#else` / `#elif` / `#endif` / `#ifplat` /
 # `#define` / `#@srcline` / `#ref` were EXECUTED. The string's bytes then did not
@@ -375,7 +375,7 @@ fn PP_NEUT_PASS(S): i64 {
 }
 
 # ⛔ 6.6.12 — NATIVE-AARCH64 REGION MARKERS. The ELF-aarch64 raw-literal warning
-# (`_sysx_meant_here`, src/frontend/parse/expr.cyr) flagged a CORRECT native number too:
+# (`_sysx_meant_here`, src/frontend/parse/expr/postfix.cyr) flagged a CORRECT native number too:
 # `syscall(8, ..)` under `#ifdef CYRIUS_ARCH_AARCH64` IS getxattr there, and naming it
 # through an enum constant still warned, because the parser runs after the #ifdef is gone.
 # So the preprocessor writes the fact into the stream: the blank line that replaces a

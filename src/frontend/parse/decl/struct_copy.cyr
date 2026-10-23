@@ -239,7 +239,7 @@ fn _gci_inline(S, sid, ann): i64 {
 }
 # Pass 1's half of a declaration-zone tuple literal, cursor on the RHS: -1 when it is no whole
 # literal up to the `;`; else the tuple to register inline, or 0. Quiet: the replay reports. The
-# tokens are read as the replay will read them with every fn declared (`_tup_p1`, parse/expr.cyr): a
+# tokens are read as the replay will read them with every fn declared (`_tup_p1`, parse/expr/wide.cyr): a
 # generic call's `<A, B>` holds no tuple comma, whether the generic is declared above or below.
 fn _tup_gci(S, sid, ann): i64 {
     _tup_p1 = 1;

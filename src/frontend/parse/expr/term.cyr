@@ -1,0 +1,886 @@
+# PARSER — expr: the term tier (PARSE_TERM), pointer arithmetic and its scale (EPTR_SCALE), operator overloads
+# (BUILD_OP_NAME, EMIT_OP_DISPATCH) and EMIT_OVF_CALL.
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# v6.5.19 (the define-body copy overflow bug): the unary/term tier needs its OWN depth entry — PEXPR's wrapper does
+# not cover it. A `-`/`!` chain and a `g(g(g(...)))` call chain recurse INSIDE this tier
+# without ever returning to PEXPR, so `- - - … 1` at 16384 deep still SIGSEGV'd with the
+# PEXPR bound in place. Same wrapper shape as PARSE_STMT/PEXPR; the return value is
+# propagated because callers read it. See _rd_enter (src/common/util.cyr).
+fn PARSE_TERM(S): i64 {
+    _rd_enter(S);
+    var _xd0 = _xdepth;
+    var _rt = _PARSE_TERM_IMPL(S);
+    _rd_exit();
+    _xd_check(S, _xd0, "expression term");
+    return _rt;
+}
+
+fn _PARSE_TERM_IMPL(S): i64 {
+    var _tbeg = GTI(S);   # the term's first token: a `*` / `/` dispatch's lhs starts here (6.6.6)
+    _cfo = 0;
+    # Extended builtins — checked first
+    var ptyp = PEEKT(S);
+    # v6.5.67 — note BEFORE the factor is consumed whether it is a call to a pair-returning
+    # (`: stack` enum) constructor, so the `?` handler below can refuse it. `?` dereferences its
+    # operand, so on a pair it reads the TAG (0 or 1) as a pointer: today that compiles with rc=0,
+    # no diagnostic, and SIGSEGVs at run time. The guide already states `?` does not apply to the
+    # stack form (docs/guides/cyrius-guide.md) — it just never said so to the compiler.
+    # ⚠ A LOCAL, captured before the operand is parsed. By the time `?` is seen the cursor is past
+    # the call, so this cannot be a peek at that point; and a global would be the `_cfo` re-arm
+    # shape, which this codebase has been bitten by four times.
+    var _tpair = _callee_returns_pair(S);
+    if (PARSE_INTRIN(S, ptyp) == 1) { _cfo = 0; }
+    else { PARSE_FACTOR(S); }
+    # v5.8.29 — postfix `?` propagation operator. After the primary
+    # factor evaluates (rax = Result heap pointer), `?` desugars to:
+    #   tag = load64(rax)
+    #   if (tag != Ok) { return rax; }   # Err path: short-circuit
+    #   rax = load64(rax + 8)            # Ok path: unwrap payload
+    # Highest precedence — binds tighter than `*`/`/` (handled below)
+    # so `foo()? * bar` is `(foo()?) * bar`. Outside a fn body is a
+    # parse-time error (the early-return jump would have nowhere to
+    # land). The acceptance gate "outside Result-returning fn is type
+    # error" is enforced in this slot at the coarser "outside any fn
+    # body" granularity — strict ret-type tracking is a future slot.
+    if (PEEKT(S) == 124) {
+        var _qpair_done = 0;
+        STI(S, GTI(S) + 1);
+        if (GINFN(S) == 0) {
+            ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
+        }
+        # v6.6.0 — `?` ON A VALUE-FORM (`: stack`) ENUM. The pair is (rax = tag, rdx = payload).
+        # ⛔ v6.5.67 made this a hard error because `?` dereferenced its operand and so read the
+        # TAG as a pointer — compiling clean and then SIGSEGV'ing. Refusing was the right stopgap;
+        # the fix is to lower it properly, because `Result` is the value form now.
+        #
+        # ⭐ THE ERR PATH MUST RE-EMIT **BOTH** HALVES. The one-line framing this arc carried for
+        # a year — "teach `?` to accept a pair" — omitted that, and it is the whole difficulty:
+        # propagating a Result out of the enclosing fn means returning a PAIR, so rdx has to be
+        # reloaded on the way out. Restoring only rax hands the caller a correct tag with a stale
+        # payload, which is the v6.5.67 silent-payload-loss class one level up.
+        if (_tpair == 1) {
+            var qtag = _HTEMP(S);
+            var qval = _HTEMP(S);
+            _HTSTORE(S, qtag);                # tag  (rax as returned)
+            EMOVRA_RDX(S);                    # rax = rdx = payload
+            _HTSTORE(S, qval);
+            # if (tag != Ok) -> return (tag, payload)
+            _HTLOAD(S, qtag);
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);                        # rcx = 0 (Ok)
+            EPOPR(S);                         # rax = tag
+            ECMPR(S);
+            var qjok = EJCC(S, 0x84);         # JE -> Ok, skip the propagate
+            _HTLOAD(S, qval);
+            EMOVRDXRAX(S);                    # rdx = payload
+            _HTLOAD(S, qtag);                 # rax = tag
+            var qrp2 = EJMP0(S);
+            vec_push(rp_vec, qrp2);
+            EPATCH(S, qjok);
+            _HTLOAD(S, qval);                 # Ok path: rax = payload
+            _cfo = 0;
+            # The enclosing fn now returns a pair on its Err path, so mark it pair-returning —
+            # exactly as an explicit `return SomeCtor(x)` does (parse/fn.cyr's PARSE_RETURN). Not inside
+            # an inline replay: there the Err jump lands at the replay's end (the call's value) and
+            # `_cur_fn_ix` is the caller. CHANGELOG [6.7.13]
+            if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); } }
+            _qpair_done = 1;
+        }
+        if (_qpair_done == 0) {
+            # Hidden temp slot to hold the Result ptr across the
+            # tag-check / unwrap branches (same idiom as PARSE_MATCH).
+            var qidx = _HTEMP(S);
+            _HTSTORE(S, qidx);                # save result_ptr
+            # Load tag and compare to 0 (Ok = 0, Err = 1)
+            _HTLOAD(S, qidx);                  # rax = result_ptr
+            ELOAD64(S);                       # rax = [rax] = tag
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);                        # rcx = 0 (Ok)
+            EPOPR(S);                         # rax = tag
+            ECMPR(S);                         # cmp rax, rcx
+            var qjcc_ok = EJCC(S, 0x84);      # JE → skip Err branch if Ok
+            # Err path: rax = result_ptr, jmp to fn epilogue (RPC table)
+            _HTLOAD(S, qidx);
+            var qrp = EJMP0(S);
+            vec_push(rp_vec, qrp);
+            # Ok path landing: rax = [result_ptr + 8] (payload)
+            EPATCH(S, qjcc_ok);
+            _HTLOAD(S, qidx);                  # rax = result_ptr
+            EPUSHR(S);
+            EMOVI(S, 8);
+            EMOVCA(S);                        # rcx = 8
+            EPOPR(S);                         # rax = result_ptr
+            EADDR(S);                         # rax = result_ptr + 8
+            ELOAD64(S);                       # rax = [result_ptr + 8] = payload
+            _cfo = 0;                         # invalidate const-fold tracking
+        }
+        SPSC(S, 0);   # 6.7.9: the payload is a plain value — `(p?) + 1` kept p's step (_pexpr_bit_ps)
+    }
+    var go = 1;
+    while (go == 1) {
+        var typ = PEEKT(S);
+        _w128_lchk(S, typ);   # 6.7.6 (D2): `* / % << >> >>>` on a u128 left operand is refused
+        # v5.6.2: `*%` is identical to bare `*` (wrapping default on
+        # 2's-complement). Collapse the token ID.
+        if (typ == 119) { typ = 8; }
+        if (typ == 8) {
+            var mulst = _op_lst(S, _tbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
+            STI(S, GTI(S) + 1);
+            if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
+            elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
+            elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
+            else {
+                # Constant fold: NUM * NUM where both and result are small positive
+                if (_cfo == 1) {
+                    if (_cf_fac(S) == 1) {   # 6.7.14: a literal or a constant name
+                        var crv = _cf_v;
+                        if (crv == 0) { STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, 0); _cfv = 0; }
+                        elif (crv == 1) { STI(S, _cf_e); }
+                        elif (crv > 0) {
+                            var cfr = _cfv * crv;
+                            if (cfr >= 0) {
+                                STI(S, _cf_e);
+                                SCP(S, _cfp);
+                                EMOVI(S, cfr);
+                                _cfv = cfr;
+                            } else {
+                                # v5.6.7 O2: cfr overflowed — try shl
+                                # strength-reduction before falling to imul.
+                                # (v6.1.37: also clear _cfo AFTER — PARSE_FACTOR
+                                # may re-arm it on a const RHS.)
+                                _cfo = 0;
+                                ESPILL(S);
+                                if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
+                                else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                            }
+                        }
+                        else {
+                            _cfo = 0;
+                            ESPILL(S);
+                            if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
+                            else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                        }
+                    } else {
+                        # The RHS may itself be an enum/NUM const — PARSE_FACTOR
+                        # re-arms const-fold tracking (_cfo/_cfp/_cfv). After this
+                        # runtime EIMUL we MUST re-clear _cfo, or the NEXT `*`
+                        # const-folds off the stale RHS and rewinds the code,
+                        # DROPPING this product (`A * B * 4` → `B * 4` = 800).
+                        # Mirrors the outer-else path. See issue 2026-06-11
+                        # agnos-const-3operand-multiply-miscompile (all targets).
+                        _cfo = 0;
+                        ESPILL(S);
+                        if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
+                        else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                    }
+                } else {
+                    # v5.6.7 O2: ESPILL LHS, then try strength-reduction
+                    # (literal power-of-2 RHS → shl) before emitting the
+                    # general `PARSE_FACTOR + EIMUL` sequence.
+                    ESPILL(S);
+                    if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
+                    else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                }
+            }
+            if (mulst <= 0) { _INT_F64_MIX(S); }
+        }
+        else { if (typ == 9) {
+                var divst = _op_lst(S, _tbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
+                STI(S, GTI(S) + 1);
+                if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
+                elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
+                elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; continue; }   # 6.7.9
+                else {
+                    if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14: a literal or a constant name
+                            var crv = _cf_v;
+                            if (crv > 0) { if (crv < 0x10000) {
+                                    var cfr = _cfv / crv;
+                                    if (cfr > 0) { if (cfr < 0x10000) {
+                                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                        } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                                    else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                                } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                            else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                        } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                    else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                }
+                if (divst <= 0) { _INT_F64_MIX(S); }
+            }
+            else { if (typ == 34) {
+                    STI(S, GTI(S) + 1); ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; EMOVDR(S); _cfo = 0;
+                }
+                else { if (typ == 38) {
+                        STI(S, GTI(S) + 1);
+                        if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14
+                                var crv = _cf_v;
+                                if (crv > 0) { if (crv < 0x10000) {
+                                        var cfr = _cfv << crv;
+                                        if (cfr > 0) { if (cfr < 0x10000) {
+                                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                            } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; } }
+                                        else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; }
+                                    } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; } }
+                                else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; }
+                            } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; } }
+                        else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHLCL(S); _cfo = 0; }
+                    }
+                    else { if (typ == 39) {
+                            STI(S, GTI(S) + 1);
+                            if (_cfo == 1) { if (_cf_fac(S) == 1) {   # 6.7.14
+                                    var crv = _cf_v;
+                                    if (crv > 0) { if (crv < 0x10000) {
+                                            var cfr = _cfv >> crv;
+                                            if (cfr > 0) { if (cfr < 0x10000) {
+                                                    STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; } }
+                                            else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; }
+                                        } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; } }
+                                    else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; }
+                                } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; } }
+                            else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ESHRCL(S); _cfo = 0; }
+                        }
+                        else { if (typ == 152) {
+                                # `>>>` arithmetic (sign-preserving) right shift. Always runtime:
+                                # the parser fast-path fold uses logical `>>`, wrong for negative
+                                # operands; EASHRCL (sar/asrv) is correct. CHANGELOG [6.4.46].
+                                #
+                                # v6.4.74 — `_cfo = 0` MOVED TO AFTER the emit (17 sites across
+                                # `/ % << >> >>>`). Clearing the const-fold flag BEFORE
+                                # `PARSE_FACTOR(S)` does not work: PARSE_FACTOR *re-arms* it for a
+                                # bare NUM (parse/expr.cyr:358/368 set `_cfp = GCP(S)` then
+                                # `_cfv = val; _cfo = 1`). PEXPR then saw a live fold, folded the
+                                # RHS literal with the next operator, and `SCP(S, _cfp)` REWOUND
+                                # the code pointer over the entire shift/div sequence — silently
+                                # emitting just the folded constant. Measured before the fix:
+                                # `100 >>> 1 + 1` == 2 (want 51), `100 >> 0 + 1` == 1 (want 101),
+                                # `100 << 0 + 1` == 1 (want 101). `>>` and `<<` mostly escaped only
+                                # because their own fold path normally handles a literal RHS and
+                                # keeps `_cfv` correct; the bug bit exactly where that fold could
+                                # not apply (count 0, or out of the 0x10000 window). A
+                                # parenthesised RHS also masked it (`100 >>> (1) + 1` == 51) since
+                                # the paren path never re-arms. Found while building the v6.4.74
+                                # module-scope initializer folder, which must agree with this path
+                                # exactly — encoding the defect into the folder instead would be
+                                # the "codegen bug written down as a language rule" antipattern.
+                                STI(S, GTI(S) + 1);
+                                ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EASHRCL(S); _cfo = 0;
+                            }
+                            # v5.6.2: *| / *? — saturating / checked mul. Calls into
+                            # lib/overflow.cyr. Matches the +|/+? pattern at PEXPR.
+                            else { if (typ == 120) {
+                                    STI(S, GTI(S) + 1);
+                                    EPUSHR(S);
+                                    PARSE_FACTOR(S);
+                                    EPUSHR(S);
+                                    EMIT_OVF_CALL(S, "_sat_mul_i64");
+                                    _cfo = 0;
+                                }
+                                else { if (typ == 121) {
+                                        STI(S, GTI(S) + 1);
+                                        EPUSHR(S);
+                                        PARSE_FACTOR(S);
+                                        EPUSHR(S);
+                                        EMIT_OVF_CALL(S, "_chk_mul_i64");
+                                        _cfo = 0;
+                                    }
+                                    else { go = 0; }
+                                } } } } } } }
+        if (go == 1) { _int_rest(S, typ); }   # 6.7.9: `* / % << >> >>>` give no pointer (_pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13
+    }
+    return 0;
+}
+
+# ⛔ 6.6.17 — POINTER ARITHMETIC BY THE C RULES, on both operand orders. `+` / `-` scaled the RIGHT
+# operand by the LEFT one's step whatever the right one was, so with `p, q: *i16` the difference
+# `q - p` was `q - 2p`'s bits (`var q: *i16 = p + 3; q - p` read -4090 where 3 is right), and
+# `n + p` with the integer on the left stepped 1 where `p + n` steps sizeof(T). Now (ps = the
+# left operand's step, rs = the right one's, both 0 for a plain value):
+#   p + n, p - n      the integer steps ps (unchanged)
+#   n + p             the integer steps rs — `+` commutes (`_int_plus_ptr`); 6.7.9: a one-byte
+#                     `*T` (`*u8` / `*i8`, nothing to scale) keeps its word too (`_add_word`)
+#   p - q             the ELEMENT count (p - q) / ps when ps == rs; a NAMED ERROR when the steps
+#                     differ (`*i64 - *u8`, `*Pt - &buf`) — the result has no honest unit. Two
+#                     pointers to different types of the same size cannot be told apart: the step
+#                     is all a pointer value carries. Plain addresses (`&a - &b`, step 1 each) stay
+#                     a byte difference, as they always were.
+# CHANGELOG [6.6.17]
+fn _ptr_add(S, ps): i64 {
+    if (_W128_IS(S) == 1) { return _w128_ilhs(S, 0); }   # 6.7.6 (D2): `n + x` with a u128 x
+    var rs = _pk_word(S);   # 6.7.8 (C2-5): the right operand's kind only when its own
+    if (ps == 0) { if (_ps_step(rs) > 1) { return _int_plus_ptr(S, rs); } }   # 6.7.8: the step, not the word
+    EPTR_SCALE(S, ps);
+    EMOVCA(S);
+    EUNSPILL(S);
+    EADDR(S);
+    var w = _add_word(ps, rs);
+    if (ps == 0) { if (_rhs_mwcap(S) == 1) { w = 0; } }   # 6.7.11: `n + cap`, no pointer
+    return _pk_set(S, w);
+}
+# `+`'s result word: the left operand's (`p + n`), else a one-byte pointer's on the right (`n + p`, the
+# user's decision 1(b), 2026-10-11). It wrote the LEFT one's, the integer's 0, so `1 + p8` was no
+# `*u8` where `p8 + 1` is one: `(1 + p8) - q32` built a byte difference and `var r: *u8 = 1 + p8;`
+# warned. CHANGELOG [6.7.9] 6.7.11: a step 1 with no element kind too — `&x` (v6.5.29: "`&x` IS a
+# pointer", byte-addressed) and a `*B1` (a one-byte struct's): `n + &x` is the byte pointer `&x + n`
+# is (the user's decision (a), 2026-10-13), so `var r: *u32 = 4 + &B;` is silent and `(4 + &B) - q32`
+# refused. The kind test kept a narrow scalar local's step 1 out; that local now loads 0.
+# CHANGELOG [6.7.11]
+fn _add_word(ps, rs): i64 {
+    if (ps != 0) { return ps; }
+    if (_ps_step(rs) != 1) { return 0; }
+    return rs;
+}
+# ⛔ 6.7.11 — DECISION 1(b) FOR A ONE-BYTE STRUCT POINTER (the user's decision, 2026-10-13: "(a) Yes, extend
+# 1(b)"): `m + pb` / `0 + pb` with `pb: *B1` are that pointer, as `n + p8` is. A one-byte struct's word
+# carries no element kind (a struct is no subscript element), so `_add_word` could not tell it from `&x`
+# or a narrow local's step 1 and wrote no step: `t1(m + pb)` passed the address's low byte as the B1, and
+# `(1 + pb) - q32` was a byte difference where `(1 + p8) - q32` is refused. 6.7.11 (`n + &x`): a narrow
+# local loads no step now, and `&x` commutes too, so `_add_word` writes every step-1 word — but one: a
+# MULTI-WORD closure capture's value is its env words' address, step 1 with no kind, and the struct it
+# holds is no pointer the source wrote (`m + s` on the frame's own `s: Pt` is an integer). 1 when the
+# right term [`_rhs_b`, cursor) is such a capture's bare (parenthesised) name. CHANGELOG [6.7.11]
+fn _rhs_mwcap(S): i64 {
+    if (_cl_capturing != 1) { return 0; }
+    if (_rhs_b < 0) { return 0; }
+    var a = _ie_unparen(S, _rhs_b, GTI(S));
+    if (_ie_pe != a + 1) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0; }
+    var esl = _cl_snap_find(S, TOKVAL(S, a));
+    if (esl < 0) { return 0; }
+    var c = _cl_cap_find(esl);
+    if (c < 0) { return 0; }
+    if (L64(&_cl_cap_w + c * 8) > 1) { return 1; }
+    return 0;
+}
+# Stack = n, rax = p: rax = n * rs + p (EIMUL clobbers rcx, so n goes round the stack). `rs` is p's
+# step word (6.7.8): the multiplier is its step, and the result keeps the word.
+fn _int_plus_ptr(S, rs): i64 {
+    EMOVCA(S);           # rcx = p
+    EUNSPILL(S);         # rax = n
+    EPUSHR(S);           # push n
+    EMOVI(S, 0);
+    EADDR(S);            # rax = p
+    EPOPC(S);            # rcx = n
+    EPUSHR(S);           # push p
+    EMOVI(S, _ps_step(rs));
+    EIMUL(S);            # rax = n * rs
+    EPOPC(S);            # rcx = p
+    EADDR(S);
+    return _pk_set(S, rs);
+}
+fn _ptr_sub(S, ps): i64 {
+    if (_W128_IS(S) == 1) { return _w128_ilhs(S, 1); }   # 6.7.6 (D2): `n - x` with a u128 x
+    var rs = GPSC(S);
+    if (ps > 0) { if (rs > 0) { return _ptr_diff(S, ps, rs); } }
+    EPTR_SCALE(S, ps);
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);
+    return _pk_set(S, ps);
+}
+# Pointer arithmetic's result: the pointer operand's word (`ps` / `rs`, read through `_pk_word`, so
+# its kind is there only when that operand's own), stamped as this value's. 6.7.8 (C2-5)
+fn _pk_set(S, w): i64 {
+    SPSC(S, w);
+    return _PK_MARK(S, w);
+}
+fn _ptr_diff(S, ps, rs): i64 {
+    var st = _ps_step(ps);   # 6.7.8: steps compared — `*i32 - *u32` is an element count, as before
+    if (_ps_step(rs) != st) {
+        ERR_MSG(S, "pointer difference of pointers with different element sizes; for a byte count subtract plain addresses (`var a = p;`)", 117);
+    }
+    EMOVCA(S);
+    EPOPR(S);
+    ESUBR(S);            # rax = p - q, in bytes
+    if (st > 1) {
+        EPUSHR(S);
+        EMOVI(S, st);
+        EMOVCA(S);
+        EPOPR(S);
+        ECQO(S);
+        EIDIV(S);        # / sizeof(T)
+    }
+    SPSC(S, 0);
+    return 0;
+}
+
+fn EPTR_SCALE(S, ps): i64 {
+    # rax has the offset value; multiply by pointer scale
+    # mov rcx, rax; mov rax, ps; imul rcx → rax = offset * scale
+    var st = _ps_step(ps);   # 6.7.8 (C2-3a): `ps` may be a step word (`_ps_word`, parse/types.cyr)
+    if (st > 1) { EMOVCA(S); EMOVI(S, st); EIMUL(S); }
+    return 0;
+}
+
+# Build operator function name: StructName_op in tok_names
+# op_name is a short string like "add", "sub", "mul", "div"
+fn BUILD_OP_NAME(S, stype, op_str, op_len): i64 {
+    var si = stype - 1;
+    var snoff = L64(S + 0x1A6018 + si * 8);
+    # v5.11.65 (the compiler heap guard-page gap): bound against actual struct-name length + op
+    # suffix; was magic-256 pessimistic budget. See CHANGELOG [5.11.65].
+    var _snlen = 0; while (load8(S + 0xEC00000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
+    NPOS_GUARD(S, _snlen + 1 + op_len + 1);
+    var owp = GNPOS(S);
+    var onoff = owp;
+    var ori = 0;
+    var orc = load8(S + 0xEC00000 + snoff + ori);
+    while (orc != 0) { store8(S + 0xEC00000 + owp, orc); owp = owp + 1; ori = ori + 1; orc = load8(S + 0xEC00000 + snoff + ori); }
+    store8(S + 0xEC00000 + owp, 95); owp = owp + 1;
+    var oci = 0;
+    while (oci < op_len) { store8(S + 0xEC00000 + owp + oci, load8(op_str + oci)); oci = oci + 1; }
+    owp = owp + op_len;
+    store8(S + 0xEC00000 + owp, 0); owp = owp + 1;
+    SNPOS(S, owp);
+    return onoff;
+}
+
+# ⛔ 6.6.6 (bite 16 review) — DOES A STRUCT-TYPED LOCAL IN LHS POSITION DISPATCH ITS OPERATOR?
+# The 6.6.5 rule (see the identifier-load site above) is "only an INLINE local dispatches — a
+# pointer-mode one holds an address, where `+` is pointer arithmetic", and that rule is still
+# right for `var p: P3 = alloc(24)` and for a `Str` handle. But an ADDRESS-PASSED BY-VALUE
+# PARAMETER is neither: `q` in `fn h(q: P3)` denotes the caller's STRUCT, which is why `q.z`
+# already reaches it. Keyed on `GLAGG == 1` alone, such a parameter set no expr-state type at
+# all, so `q + w` never dispatched and SILENTLY ADDED THE TWO POINTERS — measured at 6.6.5 and
+# on the compiler 16b shipped: 104 (and 72, 81 for other frames) where 9 is right, exit 0, no
+# diagnostic, while the identical expression on two inline LOCALS dispatched and gave 9, and
+# `var c: P3 = q + w` SIGSEGV'd. Same root cause as the rest of bite 16: the parameter slot
+# holds a pointer and every predicate keyed on inline-ness answers "not an aggregate".
+# CHANGELOG [6.6.6]
+fn _op_local_dispatches(S, li): i64 {
+    if (GLAGG(S, li) == 1) { return 1; }
+    return _local_is_sptr_param(S, li);
+}
+
+# 6.6.6 (bite 16 review) — the LOCAL arm of `_OP_OPERAND_ADDR`, split out so the two modes are
+# one decision. An inline local IS the struct, so its address is `&slot`; an address-passed
+# by-value parameter's slot HOLDS the struct's address, so the operand is the slot's CONTENT.
+# Passing `&slot` there handed the operator fn a pointer-to-pointer. CHANGELOG [6.6.6]
+# 6.6.20: `ofi` / `ord` = the operator fn and this operand's parameter (`_sarg_escapes`).
+fn _op_operand_local(S, li, ofi, ord): i64 {
+    if (_local_is_sptr_param(S, li) == 1) { EFLLOAD(S, li); return 0; }
+    _sarg_escapes(ofi, ord, 0);   # the operator fn may hold an address in this frame
+    EFLADDR(S, li);
+    return 0;
+}
+
+# Emit operator dispatch: push lhs, parse rhs, call StructName_op(lhs, rhs)
+# 6.6.5 — the operand address for an overloaded operator. `svar >= 0` is a global slot;
+# `svar <= -2` is the LOCAL encoding `-2 - li` (the same one PARSE_FIELD_LOAD uses), added so
+# a multi-word struct LOCAL can be passed by address exactly as a global already was.
+fn _OP_OPERAND_ADDR(S, svar, ofi, ord): i64 {
+    if (svar == _OPD_SV) { return _opd_operand(S, ofi); }   # 6.7.10: a field / a dereference (`_opd_lhs_sv`)
+    # 6.6.5 — the CAPTURE band (`-1000000 - capi`) is tested FIRST: it is also `<= -2`, so the
+    # local arm below would read it as a nonsense slot index. `_CL_CAP_OPTYPE` only ever puts a
+    # MULTI-WORD capture here, and those words ARE the aggregate, so `&env[woff]` is its
+    # address with no load — the same convention `_CL_CAP_BASE_RA` uses. CHANGELOG [6.6.5]
+    if (svar <= 0 - 1000000) { _CL_CAP_WORDS_RA(S, 0 - 1000000 - svar); return 0; }
+    if (svar >= 0) { EVADDR(S, svar); return 0; }
+    if (svar <= 0 - 2) { _op_operand_local(S, 0 - 2 - svar, ofi, ord); }
+    return 0;
+}
+
+# ⛔ 6.6.20 — A `*S` OPERAND OF 8 B OR LESS. The documented operator ABI passes a multi-word
+# struct operand by address and a one-word one by VALUE, and 6.6.17 (a2) made a `p: *S` parameter
+# a pointer at every size in the callee — so `fn S1_sub(a: *S1, b: *S1)` with `s - t` dereferenced
+# s's value: SIGSEGV on x86_64 and aarch64, a crash under wine, "guest address out of range" on cx,
+# with no diagnostic, while `fn P3_sub(a: *P3, b: *P3)` with `a - b` worked (6.6.16 gave the right
+# answer for both). The same rule as a call argument (`_try_push_struct_addr_arg`), decided from
+# what the operand IS once it is parsed:
+#   - a bare struct name (`s`, `(s)` — local, global, capture) passes its OWN address, so a write
+#     through it reaches the caller, as `rd1(s)` does;
+#   - a struct VALUE (`sval`: a call, method or operator result) lands in a frame temp whose
+#     address is passed — at top level, where there is no frame, it is refused by name;
+#   - a whole struct-typed field passes its own address (`_op_rhs`);
+#   - anything else is already an address or an untyped word — `&t`, a `*S1` variable, a call
+#     returning a pointer, a literal — and is passed through unchanged, as `rd1(&t)` / `rd1(q)`
+#     pass it. (Review round 2 put EVERY operand that was not a bare name into a temp, so
+#     `s * &t` handed the operator fn the address of a word holding t's address.)
+# Every operand of a by-value or over-8-byte parameter keeps exactly the address-or-value it had.
+# Returns the operand's encoding for `_OP_OPERAND_ADDR` (-1 = push the value in rax). CHANGELOG [6.6.20]
+fn _op_operand_sv(S, fi, k, svar, bare, sval): i64 {
+    if (_op_small_ptr(S, fi, k) == 0) { return svar; }
+    if (bare == 1) { if (_esv_name != 0 - 1) { return _esv_name; } }
+    if (sval == 0) { return svar; }
+    if (GINFN(S) != 1) { return _refuse_toplevel_op_operand(S, fi, k); }
+    var t = _agg_temp(S, GFPSID(S, fi, k));
+    EFLSTORE(S, t);
+    return 0 - 2 - t;
+}
+# The LEFT operand, tokens [beg, opti), already parsed and in rax: its encoding for operand 0.
+# It dispatched, so its recorded type is the struct: a name, or a struct value (6.7.11: `-s` is an integer).
+fn _op_lhs_sv(S, fi, beg, opti): i64 {
+    if (_lsc_hit == 1) { _lsc_hit = 0; return _op_lhs_call_sv(S, fi); }   # 6.7.6
+    if (_flo_hit + _dlo_hit > 0) { return _opd_lhs_sv(S, fi); }   # 6.7.10: a field / a dereference
+    var bare = _op_bare(S, beg, opti);
+    return _op_operand_sv(S, fi, 0, GESVAR(S), bare, _op_is_sval(S, beg, opti));
+}
+
+# ⛔ 6.7.6 — A STRUCT-RETURNING CALL, METHOD OR OPERATOR RESULT AS THE LEFT OPERAND DISPATCHES ITS
+# OPERATOR FN (the user's decision, 2026-10-08), as 6.7.6 made the right operand pass its temp. Only
+# a NAME typed the left operand (`_FBR_ST`: a local's or global's struct), and a call's result was an
+# untyped word, so `p.dup() + p` with `fn Pt_add(a: Pt, b: Pt)` integer-added the first words (2
+# where 6 is right), `a + b + c` with `fn V3_add(..): V3` added an address to a first word
+# (SIGSEGV), and `mk3(4) - s + 10` dispatched an undefined `P3_add` from the type `s` left behind.
+# The result is stamped where it ends (`_lsc_note`); a left operand that IS it — `[beg, cursor)` is
+# the call, inside any parentheses that wrap it, and nothing was emitted since — takes the call's
+# own struct, so a missing operator fn is refused by name as for a struct variable. Returns the
+# operand's struct for the `+ - * /` arms, else `_FBR_ST` as before. CHANGELOG [6.7.6]
+fn _op_lst(S, beg): i64 {
+    _lsc_hit = 0;
+    _flo_hit = 0;
+    _dlo_hit = 0;
+    if (_lsc_cp == GCP(S)) {
+        if (_opd_span(S, _lsc_beg, _lsc_end, beg) == 1) {
+            _lsc_hit = 1;
+            return _lsc_sid;
+        }
+    }
+    var ot = _opd_lst(S, beg);   # 6.7.10: a struct-typed field, a `*T` dereference
+    if (ot > 0) { return ot; }
+    return _FBR_ST(S);
+}
+# 1 = the stamped value `[b0, e0)` spans `[beg, cursor)`, inside `k` parentheses that wrap the whole of it.
+fn _opd_span(S, b0, e0, beg): i64 {
+    if (b0 < beg) { return 0; }
+    var k = b0 - beg;
+    if (e0 + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, beg + i) != 10) { return 0; }
+        if (TOKTYP(S, e0 + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# ⛔ 6.7.10 — the left operand [beg, cursor) is the whole field `_flo_note` stamped, or the whole
+# dereference `_dlo_park` parked, nothing emitted since (inside any wrapping parentheses): its struct
+# (`_flo_hit` / `_dlo_hit` set), else 0. CHANGELOG [6.7.10]
+fn _opd_lst(S, beg): i64 {
+    if (_flo_cp == GCP(S)) { if (_opd_span(S, _flo_beg, _flo_end, beg) == 1) {
+            _flo_hit = 1;
+            return _flo_sid;
+        } }
+    if (_dlo_cp == GCP(S)) { if (_opd_span(S, _dlo_beg, _dlo_end, beg) == 1) {
+            _dlo_hit = 1;
+            return _dlo_sid;
+        } }
+    return 0;
+}
+# The matched field or dereference as operand 0 of operator fn `fi`: its encoding for
+# `_OP_OPERAND_ADDR`, as a struct variable's: over 8 B, or into a `*S` parameter of 8 B or less, its
+# ADDRESS (the field's, `_flo_addr_ra`; the parked pointer); else its VALUE — the field's load is the
+# struct's word (-1, rax pushed as it is), a dereference's struct is read through the pointer
+# byte-exact (`_hl_pval_ra`: the load before it read a word). The address and the dereference are
+# emitted by `_OP_OPERAND_ADDR` (`_OPD_SV`, `_opd_k`), where a struct variable's address is — after a
+# >16 B result's retptr push, so rax is never parked across it (`_op_park_lhs`).
+var _OPD_SV = 0 - 999999;   # the encoding: below every frame slot, above the capture band
+var _opd_k = 0;             # 1 = the field's address, 2 = the dereference's pointer, 3 = its struct
+fn _opd_lhs_sv(S, fi): i64 {
+    var sid = _flo_sid;
+    if (_dlo_hit == 1) { sid = _dlo_sid; }
+    var adr = _op_small_ptr(S, fi, 0);
+    if (STRUCTSZ(S, sid - 1) > 8) { adr = 1; }
+    if (_dlo_hit == 1) {
+        _dlo_hit = 0;
+        _opd_k = 3 - adr;
+        return _OPD_SV;
+    }
+    _flo_hit = 0;
+    if (adr == 0) { return 0 - 1; }
+    _opd_k = 1;
+    return _OPD_SV;
+}
+fn _opd_operand(S, fi): i64 {
+    if (_opd_k == 1) { return _flo_addr_ra(S, fi); }
+    _HTLOAD(S, _dlo_h);
+    if (_opd_k == 3) { _hl_pval_ra(S, _dlo_sid); }   # 6.7.11: its padding 0, as `_deref_small`'s
+    return 0;
+}
+# Stamp the struct result of fn `fi` that just ended (first token `beg`, frame temp `t` or < 0).
+# A `Str` is a heap handle, a pointer word: never an operand that dispatches.
+fn _lsc_note(S, fi, beg, t): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (sid == _STR_SID(S)) { return 0; }
+    _lsc_beg = beg;
+    _lsc_end = GTI(S);
+    _lsc_cp = GCP(S);
+    _lsc_sid = sid;
+    _lsc_tmp = t;
+    return 0;
+}
+# A whole free call `name(..)` / `name<..>(..)` at token `ti` (its `(` at `o`) to fn `fi`: a >16 B
+# result is in the temp `_fnc_agg` gave it (none at top level, where the call refused itself); a
+# 9-16 B one in rax:rdx, unless the callee may have been replayed inline (no such pair then).
+fn _lsc_free(S, ti, o, fi): i64 {
+    if (fi < 0) { return 0; }
+    var cls = _ret_agg_class(S, fi);
+    var t = 0 - 1;
+    if (_fnc_lo == o) { if (_fnc_lcp == GCP(S)) { t = _fnc_lt; } }
+    if (cls == 2) { if (t < 0) { return 0; } }
+    if (cls == 1) { if (t < 0) { if (GFINL(S, fi) != 0) { return 0; } } }
+    return _lsc_note(S, fi, ti, t);
+}
+# The stamped result as operand 0 of operator fn `fi`: its encoding for `_OP_OPERAND_ADDR`. Of 8 B or
+# less it is the value in rax (a `*S` parameter's temp: `_op_operand_sv`); over 8 B the operator fn
+# takes its address — its temp, or (9-16 B, rax:rdx) a temp it is stored into now. At top level there
+# is no frame: refused by name (a >16 B call already refused itself).
+fn _op_lhs_call_sv(S, fi): i64 {
+    var sz = STRUCTSZ(S, _lsc_sid - 1);
+    if (sz <= 8) { return _op_operand_sv(S, fi, 0, 0 - 1, 0, 1); }
+    if (_lsc_tmp >= 0) { return 0 - 2 - _lsc_tmp; }
+    if (GINFN(S) != 1) {
+        if (sz > 16) { return 0 - 1; }
+        return _refuse_toplevel_op_operand(S, fi, 0);
+    }
+    var t = _agg_temp(S, _lsc_sid);
+    EFLSTORE_STRUCT_INT_PAIR(S, t);
+    return 0 - 2 - t;
+}
+# 6.7.3 — the LEFT operand is ARGUMENT 0 of the operator fn its struct `stype` picked: refused by
+# name when that fn declares parameter 0 as another struct (`fn Pt_add(a: Q, b: Pt)` read a Pt as a
+# Q). Named by the operand's first name (`p`, `(p)`, `mkp(..)`), else by its struct. Emits nothing.
+# CHANGELOG [6.7.3]
+fn _op_lhs_check(S, fi, stype, beg): i64 {
+    if (stype <= 0) { return 0; }
+    if (stype >= 2048) { return 0; }
+    var nt = beg;
+    if (TOKTYP(S, nt) == 10) { nt = nt + 1; }
+    var nm = L64(S + 0x1A6018 + (stype - 1) * 8);
+    if (TOKTYP(S, nt) == 2) { nm = TOKVAL(S, nt); }
+    return _sarg_type_err(S, fi, 0, stype, nm);
+}
+# 1 = the operand [b, e) just parsed is a struct VALUE: its recorded type is a struct (a name, under
+# parentheses too; 6.7.11: `-s`, `~s` and `k * s` are integers, `_int_st`), or it is one whole method /
+# operator result of 8 B or less (`_sc_post_small`'s record, -3: the value is in rax), bare or in
+# parentheses. `&s`, a `*S` variable, a call returning a pointer or an integer and a literal record no
+# struct type.
+fn _op_is_sval(S, b, e): i64 {
+    var st = GESTYPE(S);
+    if (st > 0) { if (st < 2048) { return 1; } }
+    if (_sc_tmp != 0 - 3) { return 0; }
+    if (_sc_beg == b) { if (_sc_end == e) { return 1; } }
+    if (TOKTYP(S, b) != 10) { return 0; }
+    if (_sc_beg != b + 1) { return 0; }
+    if (_sc_end != e - 1) { return 0; }
+    return 1;
+}
+# 1 = operand `k` of operator fn `fi` is a `*S` parameter of a struct of 8 B or less.
+fn _op_small_ptr(S, fi, k): i64 {
+    if (fi < 0) { return 0; }
+    if (_pm_struct(fi, k) == 0) { return 0; }
+    var ps = GFPSID(S, fi, k);
+    if (ps <= 0) { return 0; }
+    if (STRUCTSZ(S, ps - 1) > 8) { return 0; }
+    return 1;
+}
+# 1 = the operand is a bare name, `s` or `(s)` — `_esv_name` describes it; any longer operand
+# (`(s - t)`, `f(t)`, `s.dup()`) last parsed some INNER name, which is not the operand.
+fn _op_bare(S, b, e): i64 {
+    if (e == b + 1) { return 1; }
+    if (e != b + 3) { return 0; }
+    if (TOKTYP(S, b) != 10) { return 0; }
+    if (TOKTYP(S, b + 2) != 11) { return 0; }
+    return 1;
+}
+# 1 = operand `k` of operator fn `fi` is a `*S` parameter: a struct parameter its prologue does not
+# copy (a by-value one over 8 B is copied, `_pm_copies`; an untyped one is no struct parameter).
+fn _op_star_param(fi, k): i64 {
+    if (fi < 0) { return 0; }
+    if (_pm_struct(fi, k) == 0) { return 0; }
+    if (_pm_copies(fi, k) == 1) { return 0; }
+    return 1;
+}
+fn _refuse_toplevel_op_operand(S, fi, k): i64 {
+    if (_panic == 1) { return 0 - 1; }
+    _ew("error:", 6);
+    _err_head(S);
+    if (k == 0) { PRSTR(": the left operand of '"); } else { PRSTR(": the right operand of '"); }
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    # 6.7.6: a by-value or untyped parameter receives a struct over 8 B by address too.
+    if (_op_star_param(fi, k) == 1) { PRSTR("' is passed by address (a `*` parameter)"); }
+    else { PRSTR("' is passed by address (a struct over 8 bytes)"); }
+    PRSTR(", and a struct value that is not a variable needs a fn's frame to hold it — name it in a variable, or compute it inside a fn\n");
+    _had_error = 1;
+    return 0 - 1;
+}
+
+fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
+    # 6.6.6 (bite 14 review): an operator fn returning a struct BY VALUE takes its own path, so
+    # every other dispatch below stays byte-identical. `beg` = the lhs's first token.
+    var ofp = _op_fn_peek(S, stype, op_str, op_len);
+    var gfp = ofp;
+    ofp = _op_gen_head(S, ofp, beg, GTI(S) - 1);   # 6.7.16 (D85 (a)): a generic one's instance, as its call's
+    if (_op_agg_ret(S, ofp) == 1) {
+        return _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg, ofp);
+    }
+    var opti = GTI(S) - 1;   # the operator, just consumed — the call the warning names (6.6.16)
+    # For struct vars, push address instead of value (6.6.20: and for a `*S` operand at any size)
+    var svar = _op_lhs_sv(S, ofp, beg, opti);
+    _op_lhs_check(S, ofp, stype, beg);   # 6.7.3
+    _OP_OPERAND_ADDR(S, svar, ofp, 0);
+    EPUSHR(S);
+    _op_lhs_snap(S, ofp);   # 6.7.7: a by-value operand the right one may write is copied here
+    var srt = _sop_rti;
+    _sop_rti = GTI(S);   # 6.7.17 (D111): the rhs is the operator fn's argument, no word
+    var rsvar = _op_rhs(S, ofp);   # the rhs, parsed: a struct var's address too (6.6.20: _op_rhs)
+    _sop_rti = srt;
+    _OP_OPERAND_ADDR(S, rsvar, ofp, 1);
+    EPUSHR(S);
+    var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
+    ECALLPOPS(S, 2);
+    var ofi = FINDFN(S, opnoff);
+    if (ofi < 0) { ofi = REGFN(S, opnoff); }
+    if (ofp != gfp) { ofi = ofp; opnoff = L64(_fnt_names + ofi * 8); }   # 6.7.16: the instance (`_op_gen_head`)
+    _callee_site_checks(S, ofi, opnoff, opti);   # v6.5.0: operator overloading is its own call path
+    # ⛔ 6.6.6 (bite 14 review) — OPERATOR DISPATCH NEVER CHECKED THE OPERATOR FN'S ARITY. An
+    # operator always passes exactly two operands, so `fn V2_add(a, b, c)` bound `c` to whatever
+    # happened to be in the third argument register: `a + b` compiled clean and computed with
+    # garbage. Every OTHER call position has had a hard arity error since v6.5.1 (`_CHECK_ARITY`)
+    # — this one was simply never wired to it. The line is the LHS's first token, not the cursor,
+    # which by here has walked past the whole expression. Mode 4: an operator fn that declares a
+    # parameter default is refused (it is passed exactly two operands, never filled; 6.7.7).
+    # CHANGELOG [6.6.6] [6.7.7]
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
+    var ofoff = L64(_fnt_offsets + ofi * 8);
+    if (ofoff >= 0) { ECALLTO(S, ofoff); }
+    else { ECALLFIX(S, ofi); }
+    ECALLCLEAN(S, 2);
+    SESTYPE(S, 0);
+    # ⛔ 6.7.9 — the result's step is the operator fn's DECLARED one, as its free call's is (6.6.17):
+    # `: *T` steps sizeof(T), any other return none — `(v + q) + 1` took q's (bite 5), and the review
+    # found bite 5's flat 0 stepped a `: *i32` result by 1. The `+` / `-` loop takes it as its left
+    # step (`v + q + 1`), and the `*` / `/` loop skips its own reset (`v * q + 1`). CHANGELOG [6.7.9]
+    SPSC(S, _fn_ret_ps(ofi));
+    _sc_post_small(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
+    return 0;
+}
+
+# The operator fn `StructName_op`, looked up WITHOUT committing its name: EMIT_OP_DISPATCH builds
+# it again at its old place, so the name pool and the fn table grow exactly as they always did.
+# -1 when there is no such fn yet. CHANGELOG [6.6.6]
+fn _op_fn_peek(S, stype, op_str, op_len): i64 {
+    if (_dyn_is(S, stype) == 1) {   # 6.7.8: a dyn has no operators (decision 7) — never `dyn Show_add`
+        _dyn_err(S, GTI(S) - 1, "", stype, 0 - 1, " has no operators - call one of its methods");
+        return 0 - 1;
+    }
+    var np = GNPOS(S);
+    var fi = FINDFN(S, BUILD_OP_NAME(S, stype, op_str, op_len));
+    SNPOS(S, np);
+    return fi;
+}
+
+# ⛔ 6.6.6 (bite 14 review) — EMIT_OP_DISPATCH for an operator fn returning a struct BY VALUE
+# (`fn V3_add(a, b): V3`). `var c: V3 = a + b` SIGSEGV'd on every target: the dispatch passed no
+# retptr, so the callee wrote its result through the lhs address. The same dispatch, bracketed by
+# `_sc_pre` / `_sc_x8` / `_sc_post` (parse/fn/call_agg.cyr) — the temp, the retptr (int arg 0 on x86/cx,
+# X8 on aarch64) and the record a destination takes. One wrinkle: a <= 8 B lhs is passed BY
+# VALUE (there is no struct var to re-address), it is already in rax when the operator is seen,
+# and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.
+fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg, gfi): i64 {
+    var opti = GTI(S) - 1;   # the operator (see EMIT_OP_DISPATCH)
+    var opnoff = BUILD_OP_NAME(S, stype, op_str, op_len);
+    var ofi = FINDFN(S, opnoff);
+    if (ofi < 0) { ofi = REGFN(S, opnoff); }
+    if (gfi != ofi) { ofi = gfi; opnoff = L64(_fnt_names + ofi * 8); }   # 6.7.16: `gfi`, a generic one's instance
+    var svar = _op_lhs_sv(S, ofi, beg, opti);   # GESVAR, or (6.6.20) a `*S` operand's address
+    _op_lhs_check(S, ofi, stype, beg);   # 6.7.3
+    var park = 0 - 1;
+    if (svar == 0 - 1) { park = _op_park_lhs(S, ofi); }
+    var t = _sc_pre(S, ofi, opnoff, beg);
+    var n = 2 + _sc_n0;
+    if (park != 0 - 1) { _HTLOAD(S, park); } else { _OP_OPERAND_ADDR(S, svar, ofi, 0); }   # 6.7.12: or a hidden global
+    EPUSHR(S);
+    _op_lhs_snap(S, ofi);   # 6.7.7 (EMIT_OP_DISPATCH)
+    var srt = _sop_rti;
+    _sop_rti = GTI(S);   # 6.7.17 (D111): the rhs is the operator fn's argument, no word
+    var rsvar = _op_rhs(S, ofi);
+    _sop_rti = srt;
+    _OP_OPERAND_ADDR(S, rsvar, ofi, 1);
+    EPUSHR(S);
+    ECALLPOPS(S, n);
+    _sc_x8(S, ofi, t);
+    _callee_site_checks(S, ofi, opnoff, opti);
+    # 6.6.6 — same arity check as the scalar dispatch above. The retptr/X8 the struct-returning
+    # form adds is NOT a declared parameter, so the expected count is still exactly 2 (mode 4).
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 4);
+    var ofoff = L64(_fnt_offsets + ofi * 8);
+    if (ofoff >= 0) { ECALLTO(S, ofoff); }
+    else { ECALLFIX(S, ofi); }
+    ECALLCLEAN(S, n);
+    SESTYPE(S, 0);
+    SPSC(S, 0);   # 6.7.9: a struct result is no pointer (EMIT_OP_DISPATCH; the `*` / `/` loop skips its reset)
+    _sc_post(S, ofi, opnoff, beg, t);
+    return 0;
+}
+
+# Park a by-value lhs (rax) in an anonymous frame word when `_sc_pre` is about to push a retptr
+# (x86/cx, >16 B result, in a fn). Returns the slot, or -1 when nothing needs parking.
+fn _op_park_lhs(S, fi): i64 {
+    if (_pe_vret(S, fi) == 1) { if (GINFN(S) != 1) { return _op_park_top(S); } }   # 6.7.12: a Win64 vector's pointer
+    elif (_ret_agg_class(S, fi) != 2) { return 0 - 1; }
+    if (_AARCH64_BACKEND == 1) { return 0 - 1; }
+    if (GINFN(S) != 1) { return 0 - 1; }
+    var w = GFLC(S);
+    S64(S + 0x5D9D000 + w * 8, 0 - 1);
+    SLDEP(S, w, GSDEP(S));
+    SLTYPE(S, w, 0);
+    SFLC(S, w + 1);
+    if (w + 1 > _flc_hwm) { _flc_hwm = w + 1; }
+    EFLSTORE(S, w);
+    return w;
+}
+
+# 6.7.12: at top level (no frame) the lhs waits in a hidden global (`_HTEMP`) while the Win64 vector result's
+# pointer is pushed.
+fn _op_park_top(S): i64 {
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    return h;
+}
+# 1 = operator fn `fi` returns an aggregate its caller gives storage: a struct over 8 B, or (6.7.12) on Win64 a
+# vector (`_pe_vret`, its hidden result pointer) — `_EMIT_OP_DISPATCH_AGG`'s.
+fn _op_agg_ret(S, fi): i64 {
+    if (_ret_agg_class(S, fi) != 0) { return 1; }
+    return _pe_vret(S, fi);
+}
+
+# v5.6.2: emit a binop as a call to a named stdlib helper fn
+# (`_sat_add_i64` / `_chk_sub_i64` / etc. — see `lib/overflow.cyr`).
+# Assumes lhs is already pushed and rhs is pushed right before the call
+# (ECALLPOPS consumes 2 stack args). If the helper isn't defined at
+# link time the standard "undefined function" diagnostic fires on the
+# generated call — a hard error by default since v6.3.2.
+fn EMIT_OVF_CALL(S, fname_str): i64 {
+    var flen = 0;
+    while (load8(fname_str + flen) != 0) { flen = flen + 1; }
+    NPOS_GUARD(S, flen + 1);
+    var np = GNPOS(S);
+    var i = 0;
+    while (i < flen) {
+        store8(S + 0xEC00000 + np + i, load8(fname_str + i));
+        i = i + 1;
+    }
+    store8(S + 0xEC00000 + np + flen, 0);
+    SNPOS(S, np + flen + 1);
+    var fi = FINDFN(S, np);
+    if (fi < 0) { fi = REGFN(S, np); }
+    ECALLPOPS(S, 2);
+    var foff = L64(_fnt_offsets + fi * 8);
+    if (foff >= 0) { ECALLTO(S, foff); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, 2);
+    _int_st(S);   # 6.7.11: `n +| s + 10` — the helper's result is an integer
+    # 6.7.16 (the user's D104, 2026-10-20): and no f64 — `+| +? -| -? *| *?` have no f64 form, so their result is an
+    # integer whatever their right operand, as `&`'s is (6.7.13's D12): `(2 +| x) * 3` with `x: f64` took the f64 arm
+    # for `* 3` ("f64 arithmetic with a non-f64 right operand"). CHANGELOG [6.7.16]
+    SESTYPE(S, 0);
+    return 0;
+}

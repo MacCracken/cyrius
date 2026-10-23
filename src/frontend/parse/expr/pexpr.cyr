@@ -1,0 +1,396 @@
+# PARSER — expr: the expression tier (PEXPR), the float / integer mix warnings, `&&` / `||` (`_PLOGIC_*`) and the
+# comparisons (PCMPE).
+# ================================================================
+# Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
+
+# v6.5.19 (the define-body copy overflow bug): the expression-tier depth chokepoint, shaped exactly like the
+# PARSE_STMT wrapper in parse.cyr (v6.4.62) so there is one pattern, not two. PARSE_STMT
+# alone does NOT cover the expression vectors — nested parens, unary-minus chains and
+# call chains recurse through PEXPR/PARSE_TERM without ever re-entering a statement — so
+# a bound placed only on statements would have left three of the six crashing shapes
+# live. See _rd_enter (src/common/util.cyr).
+fn PEXPR(S): i64 {
+    _rd_enter(S);
+    var _xd0 = _xdepth;
+    _PEXPR_IMPL(S);
+    _rd_exit();
+    _xd_check(S, _xd0, "expression");
+    return 0;
+}
+
+# ⛔ 6.7.9 — A POINTER'S STEP OUTLIVED THE OPERATOR THAT CONSUMED THE POINTER. The pointer-scale
+# word is the LAST factor's, and only `+` / `-` wrote their result's back, so after any other
+# operator whose last operand was `q: *i32` the next `+ n` / `- n` stepped 4: `(x == q) + 100` was
+# 401, `(m & q) + 1` 4, `(-q) + 1` -q + 4, `mk(q).n + 1` 4 — silent, every target, 6.6.17-6.7.8.
+# An operator that produces a plain integer now leaves no step (the user's decision 1(a),
+# 2026-10-11): a comparison and an `&&` / `||` link (_PLOGIC_ATOM, _PLOGIC_AND, PCMPE); `* / % <<
+# >> >>>`, `*| *?` and a postfix `?` (_PARSE_TERM_IMPL); `& | ^` (here); unary `-` / `~` (_neg_int,
+# _bnot_int); an operator fn's result with no `: *T` return (EMIT_OP_DISPATCH: a `: *T` one steps
+# by T, as its free call does); a field that is no `*T`
+# (_field_load_type, parse/decl/field.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
+# `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
+# the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
+fn _pexpr_bit_ps(S, typ, ps): i64 {
+    if (typ == 27) { _int_resb(S); return 0; }   # 6.7.11: and no struct type (_int_st); 6.7.13: nor an f64 (D12 (a))
+    if (typ == 35) { _int_resb(S); return 0; }
+    if (typ == 36) { _int_resb(S); return 0; }
+    return ps;
+}
+
+fn _PEXPR_IMPL(S): i64 {
+    var _xbeg = GTI(S);   # every `+` / `-` dispatch's lhs starts here (left-assoc) (6.6.6)
+    PARSE_TERM(S);
+    var ps = _pk_word(S);   # 6.7.8 (C2-5): the left operand's kind only when its own
+    var go = 1;
+    while (go == 1) {
+        var typ = PEEKT(S);
+        if (_w128_pexpr(S, typ) == 1) { continue; }   # 6.7.6 (D2): a u128 `+` / `-` carries
+        # v5.6.2: `+%` / `-%` are semantically identical to bare `+` /
+        # `-` (wrapping is the default on 2's-complement); collapse
+        # token IDs so the existing dispatch below handles them.
+        if (typ == 113) { typ = 6; }
+        elif (typ == 116) { typ = 7; }
+        # `+|` / `+?` / `-|` / `-?` compile to a call to the
+        # corresponding `lib/overflow.cyr` helper. Handled in their own
+        # branches below so the constant-fold paths don't fire on them.
+        if (typ == 6) {
+            var addst = _op_lst(S, _xbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
+            STI(S, GTI(S) + 1);
+            if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
+            elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
+            elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
+            else {
+                # Fold a constant right term (6.7.14: a name, or a literal's whole term — _cf_can)
+                var add_can_fold = _cf_can(S);
+                if (add_can_fold == 1) {
+                    var crv = _cf_v;
+                    if (crv == 0) { STI(S, _cf_e); }
+                    elif (crv > 0) {
+                        var cfr = _cfv + crv;
+                        if (cfr >= 0) {
+                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                        } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
+                    }
+                    else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
+                } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); _ptr_add(S, ps); ps = GPSC(S); _cfo = 0; }
+            }
+            if (addst <= 0) { _INT_F64_MIX(S); }
+        }
+        else { if (typ == 7) {
+                var subst = _op_lst(S, _xbeg);   # 6.6.10 a float builtin's result; 6.7.6 a struct call's
+                STI(S, GTI(S) + 1);
+                if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
+                elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
+                elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; ps = GPSC(S); }   # 6.7.9
+                else {
+                    var sub_can_fold = _cf_can(S);   # 6.7.14
+                    if (sub_can_fold == 1) {
+                        var crv = _cf_v;
+                        if (crv == 0) { STI(S, _cf_e); }
+                        elif (crv > 0) {
+                            var cfr = _cfv - crv;
+                            if (cfr >= 0) {
+                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                            } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
+                        }
+                        else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
+                    } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); _ptr_sub(S, ps); ps = GPSC(S); _cfo = 0; }
+                }
+                if (subst <= 0) { _INT_F64_MIX(S); }
+            }
+            # v5.6.2: +| / +? / -| / -? — saturating / checked add/sub.
+            # Compiles to a call into lib/overflow.cyr. No constant-fold
+            # path; let the helper handle any corner cases. SPSC(0) during
+            # PARSE_TERM so pointer scaling doesn't apply (overflow ops
+            # are defined on integers only), and the RESULT is an integer
+            # too: no step, so with `q: *i32` `(q +| 1) + 1` is q + 2 — it
+            # restored q's step, q + 5 (6.6.17-6.7.10; the user's decision
+            # (a), 2026-10-13). CHANGELOG [6.7.11]
+            else { if (typ == 114) {
+                    STI(S, GTI(S) + 1);
+                    EPUSHR(S);
+                    SPSC(S, 0);
+                    PARSE_TERM(S);
+                    EPUSHR(S);
+                    EMIT_OVF_CALL(S, "_sat_add_i64");
+                    SPSC(S, 0); ps = 0;
+                    _cfo = 0;
+                }
+                else { if (typ == 115) {
+                        STI(S, GTI(S) + 1);
+                        EPUSHR(S);
+                        SPSC(S, 0);
+                        PARSE_TERM(S);
+                        EPUSHR(S);
+                        EMIT_OVF_CALL(S, "_chk_add_i64");
+                        SPSC(S, 0); ps = 0;
+                        _cfo = 0;
+                    }
+                    else { if (typ == 117) {
+                            STI(S, GTI(S) + 1);
+                            EPUSHR(S);
+                            SPSC(S, 0);
+                            PARSE_TERM(S);
+                            EPUSHR(S);
+                            EMIT_OVF_CALL(S, "_sat_sub_i64");
+                            SPSC(S, 0); ps = 0;
+                            _cfo = 0;
+                        }
+                        else { if (typ == 118) {
+                                STI(S, GTI(S) + 1);
+                                EPUSHR(S);
+                                SPSC(S, 0);
+                                PARSE_TERM(S);
+                                EPUSHR(S);
+                                EMIT_OVF_CALL(S, "_chk_sub_i64");
+                                SPSC(S, 0); ps = 0;
+                                _cfo = 0;
+                            }
+                            else { if (typ == 27) {
+                                    # AMPERSAND — binary AND
+                                    STI(S, GTI(S) + 1);
+                                    var and_can_fold = _cf_can(S);   # 6.7.14
+                                    if (and_can_fold == 1) {
+                                        var crv = _cf_v;
+                                        if (crv > 0) { if (crv < 0x10000) {
+                                                var cfr = _cfv & crv;
+                                                if (cfr > 0) { if (cfr < 0x10000) {
+                                                        STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                    } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
+                                                else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
+                                            } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; } }
+                                        else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
+                                    } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EANDR(S); _cfo = 0; }
+                                }
+                                else { if (typ == 35) {
+                                        # PIPE — binary OR
+                                        STI(S, GTI(S) + 1);
+                                        var or_can_fold = _cf_can(S);   # 6.7.14
+                                        if (or_can_fold == 1) {
+                                            var crv = _cf_v;
+                                            if (crv > 0) { if (crv < 0x10000) {
+                                                    var cfr = _cfv | crv;
+                                                    if (cfr > 0) { if (cfr < 0x10000) {
+                                                            STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                        } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
+                                                    else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
+                                                } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; } }
+                                            else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
+                                        } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EORR(S); _cfo = 0; }
+                                    }
+                                    else { if (typ == 36) {
+                                            # CARET — binary XOR
+                                            STI(S, GTI(S) + 1);
+                                            var xor_can_fold = _cf_can(S);   # 6.7.14
+                                            if (xor_can_fold == 1) {
+                                                var crv = _cf_v;
+                                                if (crv > 0) { if (crv < 0x10000) {
+                                                        var cfr = _cfv ^ crv;
+                                                        if (cfr > 0) { if (cfr < 0x10000) {
+                                                                STI(S, _cf_e); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
+                                                            } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }
+                                                        else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
+                                                    } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; } }
+                                                else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
+                                            } else { EPUSHR(S); PARSE_TERM(S); EMOVCA(S); EPOPR(S); EXORR(S); _cfo = 0; }
+                                        }
+                                        else { go = 0; }
+                                    } } } } } } } }
+        ps = _pexpr_bit_ps(S, typ, ps);   # 6.7.9: `& | ^` give no pointer
+    }
+    return 0;
+}
+
+# v6.4.56 D3 — stricter scalar-float typecheck (WARN-only, gated on the default-on
+# CYRIUS_TYPE_CHECK flag). WARN not ERROR: an error would break the legal i64-boxed
+# float idiom (ADR-002) — f64_add/f64_lt on untyped vars never reach an F64_TYID arm,
+# so they're untouched. kind 1 (arithmetic mix) is live: a plain `+`/`-`/`*`/`/` on an
+# F64_TYID value with a non-f64 RHS is the exact trap where `x + 1` silently means
+# `x + <int-1-as-denormal>`, not `x + 1.0`. kind 0 (comparison mix) is live as of v6.4.57:
+# wired in the _PLOGIC_ATOM compare arm WITH literal-0 suppression — `if (x > 0)` on an f64
+# does NOT warn (the int literal 0's bits ARE 0.0, so the compare is exact), but `if (x > 5)`
+# / `if (x > y)` DO (5's int bits ≠ 5.0's f64 bits — a denormal compare). stderr (fd 2).
+# kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX); kinds 3 and 4 (6.6.10)
+# are unary minus on an untyped float variable (_UFV_L) and an integer constant stored into an
+# f64 / f32 slot (_IFS_CHECK). kind 5 (6.6.11) is kind 1 for the f32 arms: EMIT_F32_BINOP takes
+# the right operand's LOW 32 BITS, so an f64 literal (`x * 2.0` → 0) or an integer is silently
+# reinterpreted. Warn-only, the same ADR-002 posture as kind 1. CHANGELOG [6.6.11]
+fn _FLT_TYPE_WARN(S, kind): i64 {
+    if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
+    if (_panic == 1) { return 0; }   # 6.7.16: the statement has its error; its operands' types are that error's cascade
+    if (_err_n != _flt_en) { return 0; }   # 6.7.16: and one that does not latch (`undefined variable`, a tuple's)
+    if (_warn_seen(GTI(S), "_FLT_TYPE_WARN", kind) == 1) { return 0; }   # 6.7.15: once per token and kind
+    _ew("warning:", 8);
+    _err_head(S);
+    if (kind == 0) {
+        _ew(": comparison mixes f64 and integer operands\n", 44);
+    } elif (kind == 2) {
+        _ew(": integer arithmetic with an f64 right operand\n", 47);
+    } elif (kind == 3) {
+        _ew(": unary minus on an untyped variable holding a float is integer negation (declare it f64)\n", 90);
+    } elif (kind == 4) {
+        _ew(": an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)\n", 88);
+    } elif (kind == 5) {
+        _ew(": f32 arithmetic with a non-f32 right operand\n", 46);
+    } else {
+        _ew(": f64 arithmetic with a non-f64 right operand\n", 46);
+    }
+    return 0;
+}
+
+# kind 2 (6.6.8) — the mirror of kind 1: an INT-left `+ - * /` whose right operand is f64
+# (`0 - 1.5`, `2 * x`) is integer arithmetic on the float's bits, silently (`0 - 1.5` is
+# -3.0). WARN only, the same ADR-002 posture as kind 1: the result type is left as it was.
+# Called after the int arm has parsed its right operand; a folded literal RHS never set
+# the type, so it cannot fire. CHANGELOG [6.6.8]
+# 6.6.10: a float builtin's result on the right (`2 * f64_sqrt(u)`) is an f64 operand too; its
+# flag was captured by _RHS_F / _RHS_T before the integer op was emitted, and is consumed here.
+# 6.7.11: once per mix — a right operand that is an earlier mix's result (`_ifm_rhs`) was reported there.
+fn _INT_F64_MIX(S): i64 {
+    var fr = _fbr_rhs;
+    _fbr_rhs = 0;
+    if (GESTYPE(S) == F64_TYID) { fr = 1; }
+    if (fr == 1) { _ifm_warn(S); }
+    _ifm_rhs = 0;
+    _int_st(S);   # 6.7.11: the `+ - * /` integer arms' result is no struct (`n - s + 10`)
+    return 0;
+}
+# The result carries the mix on (`x - (x * (x + 1.5))`): re-stamped where it ends, reported or not.
+fn _ifm_warn(S): i64 {
+    if (_ifm_rhs == 0) { _FLT_TYPE_WARN(S, 2); }
+    _ifm_cp = GCP(S);
+    return 0;
+}
+
+# One comparison "atom" for the logical-operator precedence levels: a value
+# expression plus an optional trailing comparison. v6.3.36 extracted this from
+# the old PCMPE prologue so EVERY && / || operand parses comparisons the same
+# way (previously only the first operand had the f64 comparison sugar; && and ||
+# right operands used a reduced int-only path — see issue [3]).
+fn _PLOGIC_ATOM(S): i64 {
+    PEXPR(S);
+    var op = PEEKT(S);
+    if (op >= 17) {
+        if (op <= 22) {
+            # v6.2.19: f64 comparison-operator sugar. Capture the lhs type BEFORE
+            # parsing the rhs (PEXPR(rhs) overwrites the expr-state-type). For an
+            # f64 lhs, route to EF64_CMP (ucomisd/fcmp + setcc) instead of the
+            # integer ESETCC; the operand setup (lhs→rcx, rhs on stack + in rax)
+            # mirrors PF64CMP's. Result is an i64 boolean (SESTYPE 0).
+            if (_w128_cmp(S, op) == 1) { return 0; }   # 6.7.6 (D3): a u128 on the left, all 128 bits
+            var cmpst = GESTYPE(S);
+            STI(S, GTI(S) + 1);
+            # v6.4.57 (kind-0 compare-mix warn): peek the rhs FIRST token before it's
+            # parsed. Suppress the warning when the non-float operand is the integer
+            # LITERAL 0 (token type 1, value 0) — `if (x > 0)` is exact since 0's int
+            # bits ARE 0.0. `if (x > 5)` / `if (x > y)` are NOT suppressed and warn.
+            var _rhs_lit0 = 0;
+            if (PEEKT(S) == 1) { if (PEEKV(S) == 0) { _rhs_lit0 = 1; } }
+            _cfo = 0;
+            EPUSHR(S);
+            PEXPR(S);
+            if (cmpst == F64_TYID) {
+                if (GESTYPE(S) != F64_TYID) { if (_rhs_lit0 == 0) { _FLT_TYPE_WARN(S, 0); } }
+                EPOPC(S); EPUSHR(S);
+                EF64_CMP(S, op);
+                SESTYPE(S, 0);
+            } elif (cmpst == F32_TYID) {
+                # v6.4.56 (scalar-float D2): f32 comparison sugar → EF32_CMP
+                # (ucomiss / fcmp s-reg). Same operand setup as f64.
+                EPOPC(S); EPUSHR(S);
+                EF32_CMP(S, op);
+                SESTYPE(S, 0);
+            } else {
+                if (GESTYPE(S) == F64_TYID) { if (_rhs_lit0 == 0) { _FLT_TYPE_WARN(S, 0); } }
+                if (_w128_cmp_r(S, op) == 0) {   # 6.7.6 (D3): a u128 on the right, all 128 bits
+                    EMOVCA(S);
+                    EPOPR(S);
+                    ESETCC(S, op);
+                }
+            }
+            _cfo = 0;
+            _int_resb(S);   # 6.7.9: and no pointer step — `(x == q) + 1` adds 1 (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
+            _BX_MARK(S);   # 6.7.3: a comparison is a boolean value
+        }
+    }
+    return 0;
+}
+
+# && precedence level (binds TIGHTER than ||): _PLOGIC_ATOM (&& _PLOGIC_ATOM)*
+# with short-circuit codegen. Result normalized to a 0/1 boolean in rax when the
+# chain has >1 operand. Short-circuit (fixed 4.4.1 — the prior bitwise impl
+# evaluated both sides, miscompiling guards like `if (p != 0 && vec_len(p) > 0)`):
+#   eval left, cmp 0, je skip_right, eval right, cmp 0, setne al,
+#   jmp end, skip_right: xor rax,rax (0), end:
+fn _PLOGIC_AND(S): i64 {
+    _PLOGIC_ATOM(S);
+    var lop = PEEKT(S);
+    while (lop == 53) {
+        # cmp rax, 0 ; je skip  — short-circuit && when the left side is false.
+        _w128_truth(S, 18);          # 6.7.6 (D4): a u128 operand tests all 128 bits
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EMOVCA(S);
+        EPOPR(S);
+        ECMPR(S);
+        var p_skip = EJCC(S, 0x84);
+        STI(S, GTI(S) + 1);          # consume &&
+        _PLOGIC_ATOM(S);             # right operand
+        _w128_truth(S, 18);          # 6.7.6 (D4)
+        # normalize right side to boolean (cmp 0; setne al; movzx)
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EMOVCA(S);
+        EPOPR(S);
+        ECMPR(S);
+        ESETCC(S, 18);               # 18 is !=, emits setne + movzx
+        var p_end = EJMP0(S);
+        EPATCH(S, p_skip);
+        EMOVI(S, 0);                 # short-circuited (left false) → result 0
+        EPATCH(S, p_end);
+        _int_resb(S);                # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
+        _BX_MARK(S);                 # 6.7.3: an && link is a boolean value
+        lop = PEEKT(S);
+    }
+    return 0;
+}
+
+# Parse comparison expression: the || precedence level (binds LOOSER than &&).
+# _PLOGIC_AND (|| _PLOGIC_AND)* — so `a || b && c` parses as `a || (b && c)`
+# (v6.3.36 issue [3]: previously && and || shared one flat left-associative loop,
+# giving them equal precedence and mis-parsing this as `(a || b) && c`).
+# Returns value in rax (0 or 1 for comparisons).
+#   || codegen: eval left, cmp 0, jne skip_right, eval right, cmp 0, setne al,
+#               jmp end, skip_right: mov rax,1, end:
+fn PCMPE(S): i64 {
+    _PLOGIC_AND(S);
+    var lop = PEEKT(S);
+    while (lop == 54) {
+        # cmp rax, 0 ; jne skip  — short-circuit || when the left side is true.
+        _w128_truth(S, 18);          # 6.7.6 (D4): a u128 operand tests all 128 bits
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EMOVCA(S);
+        EPOPR(S);
+        ECMPR(S);
+        var p_skip = EJCC(S, 0x85);
+        STI(S, GTI(S) + 1);          # consume ||
+        _PLOGIC_AND(S);              # right operand: a full && chain (tighter)
+        _w128_truth(S, 18);          # 6.7.6 (D4)
+        # normalize right side to boolean (cmp 0; setne al; movzx)
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EMOVCA(S);
+        EPOPR(S);
+        ECMPR(S);
+        ESETCC(S, 18);               # 18 is !=, emits setne + movzx
+        var p_end = EJMP0(S);
+        EPATCH(S, p_skip);
+        EMOVI(S, 1);                 # short-circuited (left true) → result 1
+        EPATCH(S, p_end);
+        _int_resb(S);                # 6.7.9: no pointer step (see _pexpr_bit_ps); 6.7.11: nor a struct; 6.7.13: nor an f64
+        _BX_MARK(S);                 # 6.7.3: an || link is a boolean value
+        lop = PEEKT(S);
+    }
+    return 0;
+}

@@ -5,7 +5,7 @@
 # v6.1.18: dir_list/is_dir/dir_walk bottomed out on syscall(SYS_GETDENTS64,…)
 # (arity 5), which has no Windows route — since v6.1.17 it returned an honest
 # -38, so directory walking was a no-op on Windows. This implements the real
-# port via five kernel32 reroutes (see src/backend/pe/emit.cyr + parse/expr.cyr):
+# port via five kernel32 reroutes (see src/backend/pe/emit.cyr + parse/expr/factor.cyr):
 #   0xF016 FindFirstFileW(pattern, &data) → HANDLE  (INVALID_HANDLE_VALUE = -1)
 #   0xF017 FindNextFileW(h, &data)        → BOOL     (0 = end, or a failure: see 0xF04B)
 #   0xF018 FindClose(h)                   → BOOL

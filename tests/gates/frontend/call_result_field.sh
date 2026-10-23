@@ -3,7 +3,7 @@
 #
 # 6.6.12 made `f(mk(p).n)`, `var r = mkp(3).y;` and `mk(p).v.x + 1` compile inside a fn: the
 # result lands in a frame temp and the field is loaded from it (`_call_field`,
-# src/frontend/parse/expr.cyr). The acceptance rows live in
+# src/frontend/parse/expr/postfix.cyr). The acceptance rows live in
 # tests/tcyr/crossos/generic_struct_inference.tcyr (CF). This gate pins the other half, the
 # shapes that must NOT compile, each on its MESSAGE and on no binary being written, so a row
 # cannot pass on an unrelated syntax error (every one of these was "expected ';', got '.'" or

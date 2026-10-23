@@ -29,7 +29,7 @@ include "src/backend/common/env.cyr"
 include "src/backend/common/tokens.cyr"
 include "src/backend/cx/emit.cyr"
 # v5.7.11: ir.cyr added at v5.6.12 (O3a IR instrumentation) but
-# never to main_cx.cyr; parse/expr.cyr references IR_RAW_EMIT.
+# never to main_cx.cyr; parse/expr/ references IR_RAW_EMIT.
 # Same shape as v5.6.32's main_aarch64_native.cyr fix.
 include "src/common/ir.cyr"
 include "src/frontend/lex/lex.cyr"
@@ -244,7 +244,7 @@ _var_cap = 8192;
 _vsgn_base = alloc(1048576 * 8);   # v6.4.23 signed-global sign-ext: max-sized (var-grow cap) so it never grows → NO cybs-fragile grow-chain change; 8MB lazy-mapped
 _codebuf_cap = 3145728;
 # ⛔ v6.5.13 — cx never set these. `_fixup_base` stayed 0, so the SHARED
-# `ELOAD_FN_ADDR` path (parse/expr.cyr:687 `var fnaddr = _fixup_base + fc * 16`)
+# `ELOAD_FN_ADDR` path (parse/expr/factor.cyr `var fnaddr = _fixup_base + fc * 16`)
 # computed an address near NULL and SIGSEGV'd the compiler the moment cx tried to
 # record a fn-pointer fixup — which is why cx's ELOAD_FN_ADDR was a return-0 stub
 # and `&fn` silently produced 0. cx's own writers (RECFIX / ECALLFIX / the closure

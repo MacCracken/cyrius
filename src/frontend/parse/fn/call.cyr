@@ -182,7 +182,7 @@ fn _callee_site_checks_here(S, fi, noff, back): i64 {
 # and v6.5.0 shipped THREE callers (PARSE_FNCALL, the tail call, EMIT_OP_DISPATCH).
 # hisab found `&_private` callable from any file; the sweep found eight paths that
 # resolve a user identifier through FINDFN and emit their own call/fixup with no check:
-# `&fn` (parse/expr.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
+# `&fn` (parse/expr/term.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
 # the inferred `var q = f()` form), and four PE-only SIMD receive/return paths
 # (parse/decl/vector.cyr _try_vector_call_assign / _f2c / _f4c, parse/fn/ret.cyr _rc). All eleven
 # now call it — since 6.6.16 through `_callee_site_checks`, its only caller, which adds the

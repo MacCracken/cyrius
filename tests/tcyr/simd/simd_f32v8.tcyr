@@ -1,5 +1,5 @@
 # ⛔ CORRECTED v6.6.2 — THIS FILE WAS VACUOUS. Every value used `f32_from(<integer>)`, but
-# `f32_from` takes an **f64 BIT PATTERN**, not an integer (src/frontend/parse/expr.cyr: "f64 ->
+# `f32_from` takes an **f64 BIT PATTERN**, not an integer (src/frontend/parse/expr/intrin.cyr: "f64 ->
 # f32 bit pattern (cvtsd2ss)"). Integer 1 read as f64 bits is a denormal ~5e-324, which narrows
 # to f32 **zero**. So every constructed lane was 0 AND every expected value was 0, and all 15
 # assertions were `0 == 0` — they passed whether or not f32v8 SIMD worked at all. Measured:

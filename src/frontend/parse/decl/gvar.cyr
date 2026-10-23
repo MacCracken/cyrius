@@ -331,7 +331,7 @@ fn _gv_store(S, vi): i64 {
     return 0;
 }
 # The declaration-zone replay's store of an initializer just parsed (EMIT_GVAR_INITS): an f64 value
-# into an `f32` global rounds first (_f32_init_round, parse/expr.cyr). Not in `_gv_store`, whose cx
+# into an `f32` global rounds first (_f32_init_round, parse/expr/postfix.cyr). Not in `_gv_store`, whose cx
 # constant prestore runs with no expression parsed. CHANGELOG [6.7.6]
 fn _gvi_store(S, vi): i64 {
     if (GVW128(S, vi) == 1) { _w128_init_place(S, 2, vi); _gv_slvar(S, vi); return 0; }   # 6.7.6 (D2)
@@ -483,7 +483,7 @@ fn _gv_entry_cut(S, sti): i64 {
     return 0;
 }
 
-# 6.6.10 — the untyped-float flag for a global registered here (see _UFV_G, parse/expr.cyr).
+# 6.6.10 — the untyped-float flag for a global registered here (see _UFV_G, parse/expr/postfix.cyr).
 # No code is emitted for the initialiser yet, so its SHAPE decides: after any leading `-` / `(`,
 # a float literal, a float builtin, a call to a `: f64` fn, or a lone f64 / f32 / flagged
 # global. `typed` is the sum of the declaration's (non-negative) annotation channels.

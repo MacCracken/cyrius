@@ -6,7 +6,7 @@
 # level). The only spelling was `store64(&a + i * 8, v)`. `a[i]` IS that: the element at
 # `&a + i * sizeof(T)`, loaded sign- or zero-extended by T and stored at T's width. The element
 # type is now recorded at the declaration (PARSE_ARRAY / PARSE_GVAR_ARR, src/frontend/
-# parse/decl/) and read by _arr_sub_addr (src/frontend/parse/expr.cyr).
+# parse/decl/) and read by _arr_sub_addr (src/frontend/parse/expr/subscript.cyr).
 #
 # Every array is flanked by canaries — a scalar declared before it and one after (locals), a
 # global declared after it (globals) — and every canary is checked after the writes, so a

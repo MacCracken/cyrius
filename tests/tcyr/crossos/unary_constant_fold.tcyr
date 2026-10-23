@@ -9,7 +9,7 @@
 # operand and dropped the unary op: `-K + 10` was 15, `~5 * 2` 10. The rewind also dropped the `0`
 # that unary minus pushes, so the stack was left one word deep: `1 + -K * 2` popped that 0 as its
 # left operand (10), and a loop over such an expression grew the stack every iteration. 6.6.10 - 6.7.8,
-# every target (the fold is in the shared frontend). `_neg_int` / `_bnot_int` (parse/expr.cyr) now
+# every target (the fold is in the shared frontend). `_neg_int` / `_bnot_int` (parse/expr/stamp.cyr) now
 # disarm it. Filed: docs/development/issues/2026-10-10-unary-minus-and-not-folded-over-by-literal-operator.md
 # Run on x86_64 / IR / DCE / aarch64 / cx / PE by tests/gates/frontend/unary_constant_fold.sh, on the
 # four hardware hosts by the release gate's cross-OS leg. Every expected value is the arithmetic the

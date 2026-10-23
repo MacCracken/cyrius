@@ -5,8 +5,8 @@
 # slot's whole raw word: a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 / 32 bits) on every target,
 # and on aarch64 / cx a positive one read the stale upper bytes of a slot a previous call left dirty (-249 for 7)
 # (docs/development/issues/archived/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). The env copy now
-# loads the local at its width (`_cl_cap_narrow`, src/frontend/parse/expr.cyr), as reading the local in its own fn
-# does. Each row runs after `dirty()` has left the stack it reuses all-ones; a nested closure reads the outer
+# loads the local at its width (`_cl_cap_narrow`, src/frontend/parse/expr/closure.cyr), as reading the local in its own
+# fn does. Each row runs after `dirty()` has left the stack it reuses all-ones; a nested closure reads the outer
 # closure's copy, and a narrow local of a closure BODY captured by an inner closure takes the same copy. A narrow
 # PARAMETER was always right: the controls. In this directory so the release gate runs it on ecb / ach / cass / pi;
 # tests/gates/frontend/closure_capture_narrow_scalar.sh runs it on x86_64 / IR=3 / aarch64 (qemu) / cx / PE.

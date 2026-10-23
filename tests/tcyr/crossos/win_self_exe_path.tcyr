@@ -1,6 +1,6 @@
 # win_self_exe_path.tcyr — v6.6.6. The companion test for the two Windows wrappers this
 # release added: `sys_self_exe_w` (PE reroute 0xF03A → kernel32!GetModuleFileNameW,
-# src/frontend/parse/expr.cyr `_PE_ROUTE_MODULEPATH`, emitter EGETMODFILENAME_PE) and
+# src/frontend/parse/expr/callee.cyr `_PE_ROUTE_MODULEPATH`, emitter EGETMODFILENAME_PE) and
 # `sys_rename` (0xF034 → MoveFileExW).
 #
 # ⭐ THIS FILE LIVES IN tests/tcyr/crossos/ BECAUSE THAT DIRECTORY IS THE SELECTOR.
@@ -44,7 +44,7 @@
 # MUTATION LEDGER (6.6.6, each mutant PE cross-compiler built from a staged tree with the
 # real build/cycc and run under wine 11.17; real tree = 25/25 under wine, 15/15 native
 # Linux, and see the cass line at the bottom). Baseline for the PE axes is 25 checks.
-#   - make `_PE_ROUTE_MODULEPATH` (src/frontend/parse/expr.cyr) return 0, so 0xF03A is
+#   - make `_PE_ROUTE_MODULEPATH` (src/frontend/parse/expr/callee.cyr) return 0, so 0xF03A is
 #     unroutable and `sys_self_exe_w` degrades to -38 → 7 RED, starting at "the route
 #     fired" and including the truncation contract (-38, not 4);
 #   - register 0xF03A against GetCommandLineW instead of GetModuleFileNameW → 8 RED: the
