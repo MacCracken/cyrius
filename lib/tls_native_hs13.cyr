@@ -1303,60 +1303,74 @@ fn _tn_rotate_send_keys(ctx): i64 {
     return _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len);
 }
 
-# Shared rotation core: advance the secret at `secoff`, re-derive key/IV,
-# reset the sequence at `seqoff`. Stores fresh allocations (the old key/IV/
-# secret are abandoned to the bump arena).
+# Shared rotation core: advance the secret at `secoff` to secret_{N+1}, re-derive the key and IV
+# from it, reset the sequence at `seqoff`. IN PLACE: the new secret, key and IV overwrite the old
+# ones in the buffers install_app_keys allocated, so a rotation allocates nothing (a peer's
+# KeyUpdates cannot grow the no-free heap or the connection's arena) and no copy of the rotated-out
+# secret, key or IV is left behind; the new secret's scratch is a `secret var`, zeroised on return.
+# (It allocated a fresh secret, key and IV per rotation and abandoned the old ones un-wiped.)
+# CHANGELOG [6.7.18]
 fn _tn_rotate_app_keys(ctx, secoff, keyoff, ivoff, seqoff, hash_algo, hlen, key_len, iv_len): i64 {
-    var oldsec = load64(ctx + secoff);
-    if (oldsec == 0) { return TLS_ERR_PROTOCOL; }
-    var newsec = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (newsec == 0) { return TLS_ERR_OOM; }
-    if (tls_native_key_update_secret(oldsec, hlen, hash_algo, newsec) < 0) {
+    secret var nsec[_TLS_MAX_DIGEST_LEN];
+    var sec = load64(ctx + secoff);
+    var k = load64(ctx + keyoff);
+    var iv = load64(ctx + ivoff);
+    if (sec == 0) { return TLS_ERR_PROTOCOL; }       # no 1.3 application keys (a 1.2 ctx)
+    if (k == 0) { return TLS_ERR_PROTOCOL; }
+    if (iv == 0) { return TLS_ERR_PROTOCOL; }
+    if (tls_native_key_update_secret(sec, hlen, hash_algo, &nsec) < 0) {
         return TLS_ERR_INTERNAL;
     }
-    var nk = _tn_alloc(ctx, key_len);
-    var niv = _tn_alloc(ctx, iv_len);
-    if (nk == 0) { return TLS_ERR_OOM; }
-    if (niv == 0) { return TLS_ERR_OOM; }
-    tls_native_derive_key(newsec, hlen, hash_algo, nk, key_len);
-    tls_native_derive_iv(newsec, hlen, hash_algo, niv, iv_len);
-    store64(ctx + secoff, newsec);
-    store64(ctx + keyoff, nk);
-    store64(ctx + ivoff, niv);
+    memcpy(sec, &nsec, hlen);
+    if (tls_native_derive_key(sec, hlen, hash_algo, k, key_len) < 0) { return TLS_ERR_INTERNAL; }
+    if (tls_native_derive_iv(sec, hlen, hash_algo, iv, iv_len) < 0) { return TLS_ERR_INTERNAL; }
     tls_native_seq_init(ctx + seqoff);
     return TLS_OK;
 }
 
 # Send a KeyUpdate (RFC 8446 §4.6.3) with the given request_update byte,
 # then rotate our send keys. Used to answer a peer KeyUpdate(update_requested).
+# The record (27 bytes) is built on the stack: an answer allocates nothing. CHANGELOG [6.7.18]
 fn _tn_send_key_update(ctx, request_update): i64 {
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
     var msg[8];                                   # 4-byte header + 1-byte body
     tls_native_handshake_write_header(&msg, TLS_HS_KEY_UPDATE, 1);
     store8(&msg + _TLS_HANDSHAKE_HEADER_LEN, request_update & 0xFF);
-    var rec = _tn_alloc(ctx, 64);
-    if (rec == 0) { return TLS_ERR_OOM; }
-    var rn = _tn_seal_ct(ctx, TLS_CT_HANDSHAKE, &msg, _TLS_HANDSHAKE_HEADER_LEN + 1, rec, 64);
+    var rec[64];
+    var rn = _tn_seal_ct(ctx, TLS_CT_HANDSHAKE, &msg, _TLS_HANDSHAKE_HEADER_LEN + 1, &rec, 64);
     if (rn < 0) { return rn; }
-    var w = _tn_io_write_all(ctx, fd, rec, rn);
+    var w = _tn_io_write_all(ctx, fd, &rec, rn);
     if (w < 0) { return w; }
     return _tn_rotate_send_keys(ctx);
 }
 
-# Handle one record's worth of post-handshake handshake messages. Consumes
-# (and ignores) NewSessionTicket; for KeyUpdate, rotates the receive keys and
-# — when the peer set update_requested — answers with our own KeyUpdate and
-# rotates our send keys. Returns TLS_OK or a negative error.
+# Handle one record's worth of post-handshake handshake messages. Consumes (and ignores)
+# NewSessionTicket. A KeyUpdate (RFC 8446 §4.6.3) is checked before it costs anything: its body
+# is exactly one byte, 0 or 1 (else TLS_ERR_BAD_HANDSHAKE: decode_error / illegal_parameter); it
+# ends its record (§5.1: the message before a key change aligns with a record boundary, so a
+# record holds at most one KeyUpdate; else TLS_ERR_PROTOCOL, unexpected_message); and it is at
+# most the _TN_KEY_UPDATE_MAX-th in a row with no application data between them
+# (TLS_CTX_OFF_KEY_UPDATES; else TLS_ERR_PROTOCOL). Then the receive keys rotate and, when the
+# peer set update_requested, we answer with our own KeyUpdate and rotate our send keys. (It
+# rotated once per KeyUpdate however many one record packed, with any body, allocating each
+# time — the post-handshake KeyUpdate flood.) Returns TLS_OK or a negative error.
+# CHANGELOG [6.7.18]
 fn _tn_handle_post_handshake(ctx, msg, msg_len): i64 {
     var pos = 0;
     while (pos + _TLS_HANDSHAKE_HEADER_LEN <= msg_len) {
         var htype = load8(msg + pos) & 0xFF;
         var blen = _tn_be24_r(msg + pos + 1);
         var body = msg + pos + _TLS_HANDSHAKE_HEADER_LEN;
-        if (pos + _TLS_HANDSHAKE_HEADER_LEN + blen > msg_len) { return TLS_OK; }
+        var next = pos + _TLS_HANDSHAKE_HEADER_LEN + blen;
+        if (next > msg_len) { return TLS_OK; }
         if (htype == TLS_HS_KEY_UPDATE) {
-            var req = 0;
-            if (blen >= 1) { req = load8(body) & 0xFF; }
+            if (blen != 1) { return TLS_ERR_BAD_HANDSHAKE; }
+            var req = load8(body) & 0xFF;
+            if (req > 1) { return TLS_ERR_BAD_HANDSHAKE; }
+            if (next != msg_len) { return TLS_ERR_PROTOCOL; }
+            var kus = load64(ctx + TLS_CTX_OFF_KEY_UPDATES) + 1;
+            if (kus > _TN_KEY_UPDATE_MAX) { return TLS_ERR_PROTOCOL; }
+            store64(ctx + TLS_CTX_OFF_KEY_UPDATES, kus);
             var rr = _tn_rotate_recv_keys(ctx);
             if (rr < 0) { return rr; }
             if (req == 1) {
@@ -1366,7 +1380,7 @@ fn _tn_handle_post_handshake(ctx, msg, msg_len): i64 {
         }
         # NewSessionTicket + any other type: consume and ignore (no session
         # resumption yet; RFC 8446 §4.6.1 lets a client discard tickets).
-        pos = pos + _TLS_HANDSHAKE_HEADER_LEN + blen;
+        pos = next;
     }
     return TLS_OK;
 }

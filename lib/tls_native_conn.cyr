@@ -1464,6 +1464,7 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
             # NOT end-of-stream — drain it and keep reading, so only a real
             # close_notify returns 0. Non-empty data is delivered to the caller.
             if (n > 0) {
+                store64(ctx + TLS_CTX_OFF_KEY_UPDATES, 0);   # data ends a KeyUpdate run. CHANGELOG [6.7.18]
                 if (n <= maxlen) {
                     memcpy(buf, plain, n);
                     return n;

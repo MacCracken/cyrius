@@ -21,12 +21,13 @@
 # after it hold the parsed credentials, the traffic keys and sequence
 # numbers, the record buffers and the 6.6.13 additions, up to TLS_CTX_LEN.
 
-# 632 = 79 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
+# 640 = 80 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
 # +1 (v6.2.8) CERT_REQUESTED; 6.6.13 added +512..+568 (see the block after READ_HOLD_OFF), 6.6.14
 # filled +560 and +568 and added +576 (NOSIGPIPE), 6.6.15 the key-exchange block from +584, 6.6.17
-# the backend tag at +616, 6.7.12 the trust policy at +624 (at the end of the list).
+# the backend tag at +616, 6.7.12 the trust policy at +624, 6.7.18 the KeyUpdate count at +632 (at
+# the end of the list).
 # Nothing outside _tn_ctx_new_in reads this; a new slot goes INSIDE it, never past it.
-var TLS_CTX_LEN          = 632;
+var TLS_CTX_LEN          = 640;
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -171,6 +172,10 @@ var _TN_CTX_TAG = 0x434E534C54525943;   # "CYRTLSNC", little-endian
 # of a path. tls_native_set_ca_system installs the system set's (0 off Windows); every other install
 # clears it. CHANGELOG [6.7.12]
 var TLS_CTX_OFF_CA_POLICY      = 624; # the root set's policy, or 0
+# 6.7.18 — +632: the peer's KeyUpdates since the last application data it sent (_tn_handle_post_handshake
+# counts, tls_native_read clears on delivering data); past _TN_KEY_UPDATE_MAX the connection fails.
+# CHANGELOG [6.7.18]
+var TLS_CTX_OFF_KEY_UPDATES    = 632; # consecutive peer KeyUpdates with no application data between them
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the
