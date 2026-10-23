@@ -88,6 +88,9 @@
 #     captured to a file first.
 #   * check_sh_targeted_path_cleans_up.sh (6.7.18) — `LEFT=$(ls -d <tmp>/cyrius-check-home.* | wc -l)`:
 #     no home left is the PASSING case and ls's exit 2 there (rc 2).
+#   * tracked_paths_portable.sh (6.7.18) — `grep -P '[<>:"|?*]…' paths > r1`: no forbidden character
+#     (the PASSING case) is grep's exit 1 (rc 1). Its status is read now — and 2 (no -P) fails by name
+#     instead of reading as a clean scan.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -123,7 +126,9 @@
 # axis 3 RED naming the line; the scanner's grep-option test dropped -> axis 3 RED (the early
 # fixture's grep rows unreported); lno's `|| :` dropped -> axis 4 RED (the mutant stops at
 # `neg=$(lno …)`); a build's `|| true` dropped -> axis 4 RED (the mutant stops at that build).
-# Add a gate to GATES when its pipefail stop or false verdict is fixed. CHANGELOG [6.7.17]
+# 6.7.18: each of the fifteen gates above back at its pre-fix text -> RED here, STOPPED, naming the
+# gate and its rc (1, 2 or 141) — measured all fifteen at once.
+# Add a gate to GATES when its pipefail stop or false verdict is fixed. CHANGELOG [6.7.18]
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -160,7 +165,8 @@ tests/gates/toolchain/test_runner_bounded.sh
 tests/gates/toolchain/check_driver_bounded.sh
 tests/gates/toolchain/check_driver_dies_with_check_sh.sh
 tests/gates/toolchain/check_driver_requires_summary.sh
-tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh"
+tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh
+tests/gates/toolchain/tracked_paths_portable.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
