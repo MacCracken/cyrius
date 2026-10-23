@@ -57,6 +57,9 @@
 #   * cyrius_soak_describes_failures.sh (6.7.18) — `soak` was `OUT=$(… cyrius soak 1 …); RC=$?` over a
 #     soak that fails by design (rc 1, no output); and an 11 KB fn body went through `echo "$BODY" |
 #     grep -q` (more than one write: a present call could read as missing). Grepped from files now.
+#   * deps_git_cache_verified.sh (6.7.18) — `tmpn` counted leftovers with `ls <names> | wc -l`: ls exits 2
+#     when nothing is left (the CLEAN case), so the first refusal axis ended the gate (rc 2). It also
+#     ended on a bare `[ "$fail" -eq 0 ]` with no verdict line; it prints PASS / FAIL now.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -118,7 +121,8 @@ tests/gates/frontend/stack_enum_mixed_return_warning.sh
 tests/gates/frontend/coroutine_midbody_suspend.sh
 tests/gates/toolchain/build_temp_source_write_checked.sh
 tests/gates/toolchain/cbt_no_shared_tmp_paths.sh
-tests/gates/toolchain/cyrius_soak_describes_failures.sh"
+tests/gates/toolchain/cyrius_soak_describes_failures.sh
+tests/gates/toolchain/deps_git_cache_verified.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }

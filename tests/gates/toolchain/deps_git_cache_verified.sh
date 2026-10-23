@@ -305,8 +305,11 @@ printf '#!/bin/sh\necho $$ > "$PIDFILE"\nexec "$@"\n' > "$W/pidwrap" && chmod +x
 tmpn() {
     _p=$(cat "$W/last.pid" 2>/dev/null || true)
     [ -n "$_p" ] || { echo 0; return; }
-    ls "$CTB"/cyrius-"$_p"/git_err "$CTB"/cyrius-"$_p"/dep_verify_* "$CTB"/cyrius-"$_p"/git_rev_out \
-       "$CTB"/cyrius-"$_p"-*/git_err "$CTB"/cyrius-"$_p"-*/dep_verify_* "$CTB"/cyrius-"$_p"-*/git_rev_out 2>/dev/null | wc -l
+    # `{ ls … || true; } | wc -l`: ls exits 2 when a name is absent — the CLEAN case, nothing left
+    # — and under `bash -eo pipefail` that failed the pipeline and ended the gate (rc 2) at the
+    # first refusal axis. CHANGELOG [6.7.18]
+    { ls "$CTB"/cyrius-"$_p"/git_err "$CTB"/cyrius-"$_p"/dep_verify_* "$CTB"/cyrius-"$_p"/git_rev_out \
+       "$CTB"/cyrius-"$_p"-*/git_err "$CTB"/cyrius-"$_p"-*/dep_verify_* "$CTB"/cyrius-"$_p"-*/git_rev_out 2>/dev/null || true; } | wc -l
 }
 
 refused() { # $1=axis $2=desc $3=proj $4=reason-substring $5=cachedir
@@ -1107,4 +1110,7 @@ fi
 echo "deps_git_cache_verified: $pass passed, $fail failed, $skipped skipped"
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "$fail" -eq 0 ] && [ "$skipped" -gt 0 ]; then echo "SKIP: deps_git_cache_verified — $skipped axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-[ "$fail" -eq 0 ]
+# A verdict LINE, not a bare `[ "$fail" -eq 0 ]`: a reader of the last line (gates_verdict_under_pipefail)
+# tells a stop from a verdict by it. CHANGELOG [6.7.18]
+if [ "$fail" -ne 0 ]; then echo "FAIL: deps_git_cache_verified ($fail of $TOTAL axes)"; exit 1; fi
+echo "PASS: deps_git_cache_verified ($pass axes)"
