@@ -95,8 +95,7 @@ var STDERR = 2;
 # through here so the bridge applies once. See CHANGELOG [6.0.55].
 fn file_open(path: cstring, flags, mode): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var namelen = 0;
-    while (load8(path + namelen) != 0) { namelen = namelen + 1; }
+    var namelen = strlen(path);
     var ao = 0;
     ao = ao | (flags & 3);   # O_/AO_ access mode 1:1 (0/1/2); v6.4.27: was folding O_RDWR→AO_WRONLY
     if ((flags & 64) != 0) { ao = ao | 0x100; }    # O_CREAT  -> AO_CREAT
@@ -131,8 +130,7 @@ fn xopen(path, flags): i64 {
 # Unlink a path. agnos is length-carrying: (path, pathlen).
 fn xunlink(path): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var an = 0;
-    while (load8(path + an) != 0) { an = an + 1; }
+    var an = strlen(path);
     return sys_unlink(path, an);
     #endif
     #ifdef CYRIUS_TARGET_WIN
@@ -163,8 +161,7 @@ fn xunlink(path): i64 {
 # while nothing depends on the call succeeding. CHANGELOG [6.6.6].
 fn xrmdir(path): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var rn = 0;
-    while (load8(path + rn) != 0) { rn = rn + 1; }
+    var rn = strlen(path);
     return sys_rmdir(path, rn);
     #endif
     #ifdef CYRIUS_TARGET_WIN
@@ -190,8 +187,7 @@ fn xrmdir(path): i64 {
 # Windows since 6.7.16 (it answered -1 for every failure there). CHANGELOG [6.5.7] [6.7.16]
 fn xmkdir(path, mode): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var mn = 0;
-    while (load8(path + mn) != 0) { mn = mn + 1; }
+    var mn = strlen(path);
     return sys_mkdir(path, mn);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
@@ -210,20 +206,14 @@ fn xmkdir(path, mode): i64 {
 # Paths are bounded at 1023 bytes; longer returns -1 rather than truncating, since a
 # silently truncated mkdir would create the WRONG directory. CHANGELOG [6.5.7]
 fn xmkdir_p(path, mode): i64 {
-    var n = 0;
-    while (load8(path + n) != 0) { n = n + 1; }
+    var n = strlen(path);
     if (n == 0) { return 0 - 1; }
     if (n > 1023) { return 0 - 1; }
     if (xmkdir(path, mode) == 0) { return 0; }
     if (_xdir_exists(path) == 1) { return 0; }
     # Full-path create failed: build each prefix and create it in turn.
     var buf[1024];
-    var i = 0;
-    while (i < n) {
-        store8(&buf + i, load8(path + i));
-        i = i + 1;
-    }
-    store8(&buf + n, 0);
+    memcpy(&buf, path, n + 1);          # the path and its NUL
     var j = 1;
     while (j < n) {
         if (load8(&buf + j) == 47) {
@@ -231,7 +221,7 @@ fn xmkdir_p(path, mode): i64 {
             if (_xdir_exists(&buf) == 0) { xmkdir(&buf, mode); }
             store8(&buf + j, 47);
         }
-        j = j + 1;
+        j += 1;
     }
     if (xmkdir(path, mode) == 0) { return 0; }
     if (_xdir_exists(path) == 1) { return 0; }
@@ -285,10 +275,8 @@ fn _xdir_exists(path): i64 {
 # CHANGELOG [6.5.7], [6.6.9], [6.7.16]
 fn xsymlink(target, linkpath): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var tn = 0;
-    while (load8(target + tn) != 0) { tn = tn + 1; }
-    var ln = 0;
-    while (load8(linkpath + ln) != 0) { ln = ln + 1; }
+    var tn = strlen(target);
+    var ln = strlen(linkpath);
     return sys_symlink(target, tn, linkpath, ln);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
@@ -304,8 +292,7 @@ fn xsymlink(target, linkpath): i64 {
 # CHANGELOG [6.5.7]
 fn xreadlink(path, buf, bufsize): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var rn = 0;
-    while (load8(path + rn) != 0) { rn = rn + 1; }
+    var rn = strlen(path);
     return sys_readlink(path, rn, buf, bufsize);
     #endif
     #ifdef CYRIUS_TARGET_WIN
@@ -324,10 +311,8 @@ fn xreadlink(path, buf, bufsize): i64 {
 # reroute wired and degrades to -1. CHANGELOG [6.5.7]
 fn xlink(oldpath, newpath): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var on = 0;
-    while (load8(oldpath + on) != 0) { on = on + 1; }
-    var nn = 0;
-    while (load8(newpath + nn) != 0) { nn = nn + 1; }
+    var on = strlen(oldpath);
+    var nn = strlen(newpath);
     return sys_link(oldpath, on, newpath, nn);
     #endif
     #ifdef CYRIUS_TARGET_WIN
@@ -355,10 +340,8 @@ fn xlink(oldpath, newpath): i64 {
 # 2026-07-12-thoth-portable-atomic-file-write.md.
 fn file_rename(oldpath, newpath): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var ol = 0;
-    while (load8(oldpath + ol) != 0) { ol = ol + 1; }
-    var nl = 0;
-    while (load8(newpath + nl) != 0) { nl = nl + 1; }
+    var ol = strlen(oldpath);
+    var nl = strlen(newpath);
     return sys_rename(oldpath, ol, newpath, nl);
     #endif
     #ifdef CYRIUS_TARGET_WIN
@@ -398,8 +381,7 @@ fn xfsync(fd): i64 {
 # stat a path into `buf`. agnos is length-carrying: (path, pathlen, statbuf).
 fn xstat(path, buf): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var sn = 0;
-    while (load8(path + sn) != 0) { sn = sn + 1; }
+    var sn = strlen(path);
     return sys_stat(path, sn, buf);
     #endif
     #ifdef CYRIUS_TARGET_WIN
@@ -467,8 +449,7 @@ fn _xgetdents_darwin(fd, buf, n): i64 {
     if (r <= 0) { return r; }
     var k = _xgetdents_fit(&hb, r, n);
     if (k >= r) {
-        var i = 0;
-        while (i < r) { store8(buf + i, load8(&hb + i)); i = i + 1; }
+        memcpy(buf, &hb, r);
         return r;
     }
     xlseek(fd, c0, 0);
@@ -491,7 +472,7 @@ fn _xgetdents_fit(hb, r, n): i64 {
         var drl = load16(hb + pos + 16);
         if (drl <= 0) { break; }
         if (pos + drl > n) { break; }
-        pos = pos + drl;
+        pos += drl;
     }
     return pos;
 }
@@ -614,7 +595,7 @@ fn _xflock_win(fd, op): i64 {
     r = _xflock_win_release(fd);               # the mode bytes, then the sentinel
     if (cmd == 8) { return r; }
     var fl = cmd & 2;                          # LOCKFILE_EXCLUSIVE_LOCK for LOCK_EX
-    if ((op & 4) != 0) { fl = fl | 1; }        # LOCKFILE_FAIL_IMMEDIATELY
+    if ((op & 4) != 0) { fl |= 1; }        # LOCKFILE_FAIL_IMMEDIATELY
     r = _xflock_win_lock(fd, 0x7FFFFFFFFFFFFFFF, fl);
     if (r != 0) { return r; }
     # Record the mode. Blocking: the byte's last holder released it before the sentinel (a closing
@@ -711,15 +692,12 @@ fn file_read_all(path, buf, maxlen): i64 {
     var fd = file_open(path, 0, 0);
     if (fd < 0) { return fd; }
     var total: i64 = 0;
-    var rgo: i64 = 1;
-    while (rgo == 1) {
+    loop {
         var n = file_read(fd, buf + total, maxlen - total);
         if (n < 0) { file_close(fd); return n; }
-        if (n == 0) { rgo = 0; }
-        else {
-            total = total + n;
-            if (total >= maxlen) { rgo = 0; }
-        }
+        if (n == 0) { break; }
+        total += n;
+        if (total >= maxlen) { break; }
     }
     file_close(fd);
     return total;
@@ -741,7 +719,7 @@ fn _io_write_full(fd, buf, len): i64 {
         var w = file_write(fd, buf + off, len - off);
         if (w < 0) { return w; }         # negative errno from the kernel
         if (w == 0) { return -5; }       # no forward progress → -EIO
-        off = off + w;
+        off += w;
     }
     return len;
 }
@@ -860,7 +838,7 @@ fn _io_read_whole(a, rb, path, max): i64 {
     var cap = load64(rb + 8);
     if (cap > max) { cap = max; }
     var total = 0;
-    while (1 == 1) {
+    loop {
         if (total == cap) {
             if (cap == max) {
                 var one[8];
@@ -883,7 +861,7 @@ fn _io_read_whole(a, rb, path, max): i64 {
         var n = file_read(fd, buf + total, cap - total);
         if (n < 0) { return _io_rw_fail(fd, n); }
         if (n == 0) { break; }
-        total = total + n;
+        total += n;
     }
     file_close(fd);
     store8(buf + total, 0);
@@ -922,13 +900,13 @@ fn _io_append_dec(buf, pos, val): i64 {
     while (v > 0) {
         var q = v / 10;
         store8(&tmp + n, 48 + (v - q * 10));
-        n = n + 1;
+        n += 1;
         v = q;
     }
     while (n > 0) {
-        n = n - 1;
+        n -= 1;
         store8(buf + pos, load8(&tmp + n));
-        pos = pos + 1;
+        pos += 1;
     }
     return pos;
 }
@@ -945,8 +923,8 @@ fn _io_tmp_name(path): i64 {
     var pos = plen + 8;
     pos = _io_append_dec(buf, pos, _io_pid());
     store8(buf + pos, 46);   # '.'
-    pos = pos + 1;
-    _io_atomic_ctr = _io_atomic_ctr + 1;
+    pos += 1;
+    _io_atomic_ctr += 1;
     pos = _io_append_dec(buf, pos, _io_atomic_ctr);
     store8(buf + pos, 0);
     return buf;
@@ -955,9 +933,9 @@ fn _io_tmp_name(path): i64 {
 # Create the sibling temp an atomic replace of `path` writes through, EXCLUSIVELY: each
 # "<path>.cyrtmp.<pid>.<ctr>" is opened O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW (at `_io_tmp_mode`), so
 # a name that already exists — a file, or a symlink dangling or not — is never opened, followed or
-# truncated; the counter moves on and the next name is tried, up to 64. Returns the temp name
-# and stores its fd at `fdp`, or returns 0 and stores a negative errno there: -12 (out of
-# memory), -17 (every name tried was taken), or the open's own error. ⛔ The name is
+# truncated; the counter moves on and the next name is tried, up to 64. Returns (the temp name,
+# its fd), or (0, a negative errno): -12 (out of memory), -17 (every name tried was taken), or the
+# open's own error. ⛔ The name is
 # predictable (pid + a counter from 1), and until 6.6.20 it was opened O_WRONLY|O_CREAT|O_TRUNC:
 # a symlink planted at the next name redirected the write — file_write_atomic overwrote the file
 # the link named, then renamed the link over `path`. CHANGELOG [6.6.20]
@@ -966,19 +944,16 @@ fn _io_tmp_name(path): i64 {
 # 0600 file's new bytes was world-readable until the fchmod, and an fd another user opened in
 # that window read them later. The fd is held from the create on; `_io_keep_mode` after it only
 # ever widens (back from what the umask took). CHANGELOG [6.7.18]
-fn _io_tmp_open(path, fdp): i64 {
+fn _io_tmp_open(path): (i64, i64) {
     var mode = _io_tmp_mode(path);
-    var tries = 0;
-    while (tries < 64) {
+    for (var tries = 0; tries < 64; tries += 1) {
         var tmp = _io_tmp_name(path);
-        if (tmp == 0) { store64(fdp, 0 - 12); return 0; }
+        if (tmp == 0) { return (0, 0 - 12); }
         var fd = file_open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
-        if (fd >= 0) { store64(fdp, fd); return tmp; }
-        if (_io_tmp_taken(tmp, fd) == 0) { store64(fdp, fd); return 0; }
-        tries = tries + 1;
+        if (fd >= 0) { return (tmp, fd); }
+        if (_io_tmp_taken(tmp, fd) == 0) { return (0, fd); }
     }
-    store64(fdp, 0 - 17);
-    return 0;
+    return (0, 0 - 17);
 }
 
 # The mode an atomic replace of `path` creates its temp at: the rwx bits `path` has now, else
@@ -1029,16 +1004,21 @@ fn _io_keep_mode(fd, path): i64 {
     return 0;
 }
 
+# The length of `s`'s directory part, its last '/' included: the index just past that '/', or 0
+# when there is none. The cut _io_link_join and _io_replace_target_in both take.
+fn _io_dir_cut(s): i64 {
+    var cut = 0;
+    var n = strlen(s);
+    for (var i = 0; i < n; i += 1) {
+        if (load8(s + i) == 47) { cut = i + 1; }
+    }
+    return cut;
+}
+
 # "<dir of link>/<target>" for a RELATIVE symlink target (readlink's bytes, `tn` long), since
 # the kernel resolves one against the directory holding the link, not the cwd.
 fn _io_link_join(link, target, tn): i64 {
-    var ll = strlen(link);
-    var cut = 0;
-    var i = 0;
-    while (i < ll) {
-        if (load8(link + i) == 47) { cut = i + 1; }   # just past the last '/'
-        i = i + 1;
-    }
+    var cut = _io_dir_cut(link);
     var out = alloc(cut + tn + 1);
     if (out == 0) { return 0; }   # v6.6.8: was memcpy'd through unchecked
     memcpy(out, link, cut);
@@ -1069,7 +1049,7 @@ fn _io_replace_target(path): i64 {
             cur = _io_link_join(cur, lb, n);
             if (cur == 0) { return 0 - 12; }
         }
-        hops = hops + 1;
+        hops += 1;
     }
     return 0 - 40;
 }
@@ -1085,10 +1065,8 @@ fn _io_replace_target(path): i64 {
 # a file the caller owns; for a file a USER owns (their source, their manifest) use
 # file_replace_atomic, which writes the file the link names. CHANGELOG [6.6.6]
 fn file_write_atomic(path, buf, len): i64 {
-    var fdc = 0;
-    var tmp = _io_tmp_open(path, &fdc);   # exclusive: a planted name is skipped. CHANGELOG [6.6.20]
-    if (tmp == 0) { return fdc; }         # -ENOMEM / -EEXIST / the open's error; `path` untouched
-    var fd = fdc;
+    var tmp, fd = _io_tmp_open(path);    # exclusive: a planted name is skipped. CHANGELOG [6.6.20]
+    if (tmp == 0) { return fd; }          # -ENOMEM / -EEXIST / the open's error; `path` untouched
     _io_keep_mode(fd, path);   # v6.6.6: an existing file keeps its permission bits
     var wr = _io_write_full(fd, buf, len);   # loops; a short write is an error
     if (wr < 0) {
@@ -1204,16 +1182,16 @@ fn _io_path_meta_why(p, n): i64 {
                     if (c == 0xEF && b == 0xBB && d == 0xBF) { skip = 1; }
                 }
                 if (skip == 1) {
-                    j = j + 3;
+                    j += 3;
                 } elif (c == 58) {
                     j = i;
                 } else {
                     if (c == 126 && j + 1 < i && load8(p + j + 1) >= 48 && load8(p + j + 1) <= 57) { short83 = 1; }
-                    if (c >= 65 && c <= 90) { c = c + 32; }
+                    if (c >= 65 && c <= 90) { c += 32; }
                     if (fl < 16) { store8(&f + fl, c); }
-                    fl = fl + 1;
+                    fl += 1;
                     if (c != 46 && c != 32) { sig = fl; }
-                    j = j + 1;
+                    j += 1;
                 }
             }
             # trailing dots / spaces dropped; anything longer than 5 folded bytes is not .git
@@ -1221,7 +1199,7 @@ fn _io_path_meta_why(p, n): i64 {
             if (sig == 5 && memeq(&f, "git~1", 5) == 1) { return 5; }
             s = i + 1;
         }
-        i = i + 1;
+        i += 1;
     }
     if (short83 == 1) { return 6; }
     return 0;
@@ -1260,13 +1238,8 @@ fn _io_replace_target_in(root, rel): i64 {
         if (n >= 4096) { return _io_contain_refuse(full, lb, 4095, 4, root); }
         if (load8(lb) == 47) { return _io_contain_refuse(full, lb, n, 1, root); }
         # The candidate: the link's own directory (relative to root), then the target.
-        var cl = strlen(cur);
-        var dcut = 0;
+        var dcut = _io_dir_cut(cur);
         var i = 0;
-        while (i < cl) {
-            if (load8(cur + i) == 47) { dcut = i + 1; }
-            i = i + 1;
-        }
         var cand = alloc(dcut + n + 1);
         if (cand == 0) { return 0 - 12; }
         memcpy(cand, cur, dcut);
@@ -1293,17 +1266,17 @@ fn _io_replace_target_in(root, rel): i64 {
                     var k = ol;
                     ol = 0;
                     while (k > 0) {
-                        k = k - 1;
+                        k -= 1;
                         if (load8(out + k) == 47) { ol = k; k = 0; }
                     }
                 } elif (w > 0 && (w != 1 || load8(cand + s) != 46)) {
-                    if (ol > 0) { store8(out + ol, 47); ol = ol + 1; }
+                    if (ol > 0) { store8(out + ol, 47); ol += 1; }
                     memcpy(out + ol, cand + s, w);
-                    ol = ol + w;
+                    ol += w;
                 }
                 s = i + 1;
             }
-            i = i + 1;
+            i += 1;
         }
         if (ol == 0) { return 0 - 21; }   # names `root` itself: a directory (EISDIR)
         store8(out + ol, 0);
@@ -1324,10 +1297,10 @@ fn _io_replace_target_in(root, rel): i64 {
                     return _io_contain_refuse(full, lb, n, 3, root);
                 }
             }
-            i = i + 1;
+            i += 1;
         }
         cur = out;
-        hops = hops + 1;
+        hops += 1;
     }
     return 0 - 40;
 }
@@ -1357,7 +1330,7 @@ fn _io_ew_shown(s): i64 {
         } else {
             file_write(STDERR, s + i, 1);
         }
-        i = i + 1;
+        i += 1;
         c = load8(s + i);
     }
     return 0;
@@ -1455,8 +1428,7 @@ fn _io_name_exists(path): i64 {
     # lstat#102 (agnos 1.56.x+): stat that does NOT follow the final link, so a dangling one
     # answers. (readlink cannot stand in for it: agnos refuses a buffer shorter than the
     # target instead of truncating — measured on agnos-qemu 1.57.10.)
-    var pn = 0;
-    while (load8(path + pn) != 0) { pn = pn + 1; }
+    var pn = strlen(path);
     var st[64];
     if (sys_lstat(path, pn, &st) >= 0) { return 1; }
     return 0;
@@ -1509,7 +1481,7 @@ fn file_lock_shared(fd): i64 {
 fn file_append_locked(path, buf, len): i64 {
     var flags = O_WRONLY | O_CREAT;
     #ifndef CYRIUS_TARGET_AGNOS
-    flags = flags | O_APPEND;
+    flags |= O_APPEND;
     #endif
     var fd = file_open(path, flags, 0x1A4);
     if (fd < 0) { return fd; }
@@ -1622,7 +1594,7 @@ fn file_read_all_r(path, buf, maxlen): Result {
         if (n < 0) { sys_close(fd); return Err(_io_errno_to_iorr(0 - n)); }
         if (n == 0) { rgo = 0; }
         else {
-            total = total + n;
+            total += n;
             if (total >= maxlen) { rgo = 0; }
         }
     }
@@ -1717,8 +1689,8 @@ fn _env_load(): i64 {
     var mi = 0;
     var me = load64(menvp);
     while (me != 0) {
-        mtot = mtot + strlen(me) + 1;
-        mi = mi + 1;
+        mtot += strlen(me) + 1;
+        mi += 1;
         if (mi > 4096) { break; }        # a runaway array means the anchor is wrong; stop.
         me = load64(menvp + mi * 8);
     }
@@ -1731,10 +1703,10 @@ fn _env_load(): i64 {
     while (me != 0) {
         var ml = strlen(me);
         memcpy(mbuf + mo, me, ml);
-        mo = mo + ml;
+        mo += ml;
         store8(mbuf + mo, 0);
-        mo = mo + 1;
-        mi = mi + 1;
+        mo += 1;
+        mi += 1;
         if (mi > 4096) { break; }
         me = load64(menvp + mi * 8);
     }
@@ -1767,7 +1739,7 @@ fn _env_load(): i64 {
         if (got < 0) { file_close(fd); _env_len = 0 - 1; return 0; }
         if (got == 0) { done = 1; }
         else {
-            n = n + got;
+            n += got;
             if (n >= cap) {
                 var ncap = cap * 2;
                 var nb = alloc(ncap);
@@ -1852,13 +1824,13 @@ fn getenv(name): i64 {
         ci = 0;
         while (ci < nlen) {
             if (load8(buf + pos + ci) != load8(name + ci)) { eq = 0; break; }
-            ci = ci + 1;
+            ci += 1;
         }
         if (eq == 1) { if (load8(buf + pos + nlen) == 61) {
                 # Found: return pointer to value (copy to heap for safety)
                 var vstart = pos + nlen + 1;
                 var vlen = 0;
-                while (vstart + vlen < n && load8(buf + vstart + vlen) != 0) { vlen = vlen + 1; }
+                while (vstart + vlen < n && load8(buf + vstart + vlen) != 0) { vlen += 1; }
                 var result = alloc(vlen + 1);
                 if (result == 0) { return 0; }   # v6.6.8: a refused copy is a miss, not a store to 0
                 memcpy(result, buf + vstart, vlen);
@@ -1867,7 +1839,7 @@ fn getenv(name): i64 {
             } }
         # Skip to next null terminator
         while (pos < n) { if (load8(buf + pos) == 0) { break; } pos = pos + 1; }
-        pos = pos + 1;
+        pos += 1;
     }
     return 0;
     #endif

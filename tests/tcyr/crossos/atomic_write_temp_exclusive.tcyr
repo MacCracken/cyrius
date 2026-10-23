@@ -214,8 +214,7 @@ fn main(): i64 {
     xunlink(dst600);
     file_write_all(dst600, "s", 1);
     assert_eq(sys_chmod(dst600, 0x180), 0, "the destination is 0600");
-    var sfd = 0;
-    var stmp = _io_tmp_open(dst600, &sfd);
+    var stmp, sfd = _io_tmp_open(dst600);
     assert(stmp != 0, "_io_tmp_open made the temp");
     var tst[144];
     var tm = 0 - 1;
