@@ -3564,34 +3564,22 @@ fn _fn_nop_compact(S, fi, fn_start, bp_x86): i64 {
 # so that fn keeps headroom under the per-fn x86 jump tables (see _fn_lase). Moved verbatim; each call site keeps its
 # place. CHANGELOG [6.7.18]
 # 1 when the fn's body (from the cursor at its parameter list) holds inline asm (token 48).
+# ⛔ 6.7.18 — the body is found as the definition's other readers find it: the parameter list to its `)`
+# (`_tok_close_paren`), then the body's `{` past any return type (`_tok_body_open`), then its tokens (`_body_has_tok`).
+# This look-ahead stepped over a return type of ONE name (`: i64`) and expected the `{` there, so a fn returning
+# `: *T`, `: (T1, T2)` or `: Box<T>` read as having no body: its asm was missed, the register picker's save area was
+# reserved on x86, and the asm's hardcoded `[rbp - 8]` read a saved register, not the first local (each such fn
+# returned 0, not its argument). Row: tests/tcyr/codegen/inline_asm_frame_any_return_type.tcyr. CHANGELOG [6.7.18]
 fn _fn_has_inline_asm(S): i64 {
-    var _has_inline_asm = 0;
-    var _ia_save_ti = GTI(S);
-    if (PEEKT(S) == 10) {
-        STI(S, GTI(S) + 1);
-        var _ia_pd = 1;
-        while (_ia_pd > 0 && PEEKT(S) != 12) {
-            if (PEEKT(S) == 10) { _ia_pd = _ia_pd + 1; }
-            elif (PEEKT(S) == 11) { _ia_pd = _ia_pd - 1; }
-            STI(S, GTI(S) + 1);
-        }
+    var i = GTI(S);
+    if (TOKTYP(S, i) == 10) {
+        var c = _tok_close_paren(S, i);
+        if (c < 0) { return 0; }
+        i = c + 1;
     }
-    if (PEEKT(S) == 49) {
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) == 2) { STI(S, GTI(S) + 1); }
-    }
-    if (PEEKT(S) == 13) {
-        STI(S, GTI(S) + 1);
-        var _ia_bd = 1;
-        while (_ia_bd > 0 && PEEKT(S) != 12) {
-            if (PEEKT(S) == 13) { _ia_bd = _ia_bd + 1; }
-            elif (PEEKT(S) == 14) { _ia_bd = _ia_bd - 1; }
-            elif (PEEKT(S) == 48) { _has_inline_asm = 1; }
-            STI(S, GTI(S) + 1);
-        }
-    }
-    STI(S, _ia_save_ti);
-    return _has_inline_asm;
+    var b = _tok_body_open(S, i);
+    if (b < 0) { return 0; }
+    return _body_has_tok(S, b + 1, 48, 48);
 }
 # The pending attributes (#regalloc and its auto-enable, #must_use .. #naked, #inline) applied to fn `fi`; returns
 # 1 when `fi` asked to be inlined. Out of _PARSE_FN_DEF_IMPL (see _fn_has_inline_asm). CHANGELOG [6.7.18]
