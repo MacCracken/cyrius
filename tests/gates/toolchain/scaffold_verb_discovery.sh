@@ -53,15 +53,15 @@ done
 run_verb() { ( cd "$P" && timeout 300 "$CYRIUS" "$1" 2>&1 ); }
 
 echo "axis 1 — cyrius test discovers tests/vprobe.tcyr (v6.4.72):"
-out=$(run_verb test)
+out=$(run_verb test || true)
 check "no 'no tests found'" "0" "$(printf '%s' "$out" | grep -ci 'no test.*found' || true)"
 
 echo "axis 2 — cyrius bench discovers tests/vprobe.bcyr (v6.4.78):"
-out=$(run_verb bench)
+out=$(run_verb bench || true)
 check "no 'No benchmarks found'" "0" "$(printf '%s' "$out" | grep -ci 'no benchmarks found' || true)"
 
 echo "axis 3 — cyrius fuzz discovers tests/vprobe.fcyr (v6.5.6 — the one that was broken):"
-out=$(run_verb fuzz)
+out=$(run_verb fuzz || true)
 check "no 'No fuzz harnesses found'" "0" "$(printf '%s' "$out" | grep -ci 'no fuzz harnesses found' || true)"
 check "reports a passing harness" "1" "$(printf '%s' "$out" | grep -c 'passed, 0 failed' || true)"
 
@@ -77,11 +77,11 @@ cp "$P/tests/vprobe.tcyr" "$P/tests/unit/nested.tcyr"
 cp "$P/tests/vprobe.bcyr" "$P/benches/perf/nested.bcyr"
 cp "$P/tests/vprobe.fcyr" "$P/fuzz/deep/nested.fcyr"
 rm -f "$P/tests/vprobe.bcyr" "$P/tests/vprobe.fcyr"
-out=$(run_verb bench)
+out=$(run_verb bench || true)
 check "bench finds benches/perf/nested.bcyr" "1" "$(printf '%s' "$out" | grep -c 'perf/nested.bcyr' || true)"
-out=$(run_verb fuzz)
+out=$(run_verb fuzz || true)
 check "fuzz finds fuzz/deep/nested.fcyr" "0" "$(printf '%s' "$out" | grep -ci 'no fuzz harnesses found' || true)"
-out=$( ( cd "$P" && timeout 300 "$CYRIUS" test tests 2>&1 ) )
+out=$( ( cd "$P" && timeout 300 "$CYRIUS" test tests 2>&1 ) || true )
 # Both the scaffolded tests/vprobe.tcyr and the nested tests/unit/nested.tcyr must
 # run, i.e. 2 passed. The string appears on more than one line, so test presence
 # rather than an exact count.
@@ -105,7 +105,7 @@ done
 # ── AXIS 7: no double-count. The walks are now RECURSIVE, so `tests/bcyr` must NOT
 # also be walked explicitly — it lives under `tests/` and would be visited twice.
 echo "axis 7 — recursion did not introduce a double-count:"
-n_bench=$(grep -cE '_bench_walk_dir\("(benches|tests)"' cbt/commands/benches.cyr)
+n_bench=$(grep -cE '_bench_walk_dir\("(benches|tests)"' cbt/commands/benches.cyr || true)
 check "_bench_walk_dir roots (benches + tests, NOT tests/bcyr)" 2 "$n_bench"
 n_bcyr=$(grep -c '_bench_walk_dir("tests/bcyr"' cbt/commands/benches.cyr || true)
 check "no explicit tests/bcyr walk" 0 "$n_bcyr"
@@ -132,13 +132,14 @@ CYB="$ROOT/build/cyrius"
 VD=$(mktemp -d) && [ -d "$VD" ] || { echo "FAIL: scaffold_verb_discovery: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 ( cd "$VD" && printf '[package]\nname = "vh"\nversion = "0.1.0"\n' > cyrius.cyml )
 for v in doc vet deny audit coverage; do
-    ( cd "$VD" && timeout 30 "$CYB" "$v" __no_such_target_xyz__ > vh.out 2>&1 )
-    vrc=$?
+    # `vrc=0; ( … ) || vrc=$?`: each verb FAILS by design here, and `( … ); vrc=$?` ended the gate
+    # at the first one under `bash -eo pipefail` (rc 1, no verdict). CHANGELOG [6.7.18]
+    vrc=0; ( cd "$VD" && timeout 30 "$CYB" "$v" __no_such_target_xyz__ > vh.out 2>&1 ) || vrc=$?
     check "$v rejects a bogus target" 1 "$([ "$vrc" -ne 0 ] && echo 1 || echo 0)"
     check "$v says error:" 1 "$(grep -c 'error:' "$VD/vh.out" || true)"
 done
 # The good paths must still work — a rejection that also breaks valid invocations is not a fix.
-( cd "$ROOT" && timeout 60 "$CYB" doc lib/fmt.cyr > "$VD/ok.out" 2>&1 )
+( cd "$ROOT" && timeout 60 "$CYB" doc lib/fmt.cyr > "$VD/ok.out" 2>&1 ) || true
 check "doc on a real file still succeeds" 1 "$([ -s "$VD/ok.out" ] && echo 1 || echo 0)"
 rm -rf "$VD"
 
