@@ -10,8 +10,10 @@
 #   argv: [ "unix_chkpwd", username, mode ]
 #     where mode is "nullok" (accept empty passwords — typical for
 #     interactive auth) or "nonull" (reject empty).
-#   stdin: the password bytes, no trailing NUL or newline; close
-#          the write end when done to send EOF.
+#   stdin: the password bytes FOLLOWED BY ONE NUL (no newline); close
+#          the write end when done to send EOF. Without the NUL the
+#          helper reads no password at all (6.7.18 — see the write).
+#          At most PAM_MAX_RESP_SIZE (512) password bytes are read.
 #   stdout/stderr: ignored.
 #   exit status: 0 = password correct, non-zero = fail.
 #
@@ -68,7 +70,7 @@ fn _pam_find_chkpwd(): i64 {
     return 0;
 }
 
-# Verify `password` (cstring, no terminator in the pipe) for
+# Verify `password` (cstring, sent with its NUL) for
 # `user`. Forks a child, pipes the password to unix_chkpwd's
 # stdin, waits for exit.
 #
@@ -148,17 +150,29 @@ fn pam_unix_authenticate(user, password): i64 {
         sys_exit(127);                   # only reached if execve failed
     }
 
-    # Parent: send password bytes, close write end → EOF for child. `rfd` stays open until the
-    # write is done (above). At most 512 bytes: well under any pipe's capacity, so it never blocks.
+    # Parent: send the password and its terminating NUL, close write end → EOF for child. `rfd`
+    # stays open until the write is done (above). At most 513 bytes: well under any pipe's
+    # capacity, so it never blocks.
+    # ⛔ The NUL is the protocol: unix_chkpwd (Linux-PAM >= 1.1, pam_read_passwords) takes a
+    # password only up to a NUL, and bytes with none read as NO password — "" — so without it a
+    # correct password never verified, and with nullok an account with an empty hash accepted
+    # ANY password. Measured against a stand-in /etc/shadow (user + mount namespace): "hunter2"
+    # unterminated -> 7, "hunter2\0" -> 0; an empty hash, "anything" unterminated -> 0. pam_unix
+    # writes the password then "" the same way (support.c). CHANGELOG [6.7.18]
+    var pbuf[520];   # PAM_MAX_PASSWORD + the NUL, in BYTES; wiped after the write
+    memcpy(&pbuf, password, plen);
+    store8(&pbuf + plen, 0);
+    var tlen = plen + 1;
     if (_pam_write_hook != 0) { fncall0(_pam_write_hook); }
     var wbad = 0;
     var off = 0;
-    while (off < plen) {
-        var wn = sys_write(wfd, password + off, plen - off);
+    while (off < tlen) {
+        var wn = sys_write(wfd, &pbuf + off, tlen - off);
         if (wn == 0 - 4) { continue; }       # EINTR
         if (wn <= 0) { wbad = 1; break; }
         off = off + wn;
     }
+    memset(&pbuf, 0, 520);
     sys_close(rfd);
     sys_close(wfd);
 

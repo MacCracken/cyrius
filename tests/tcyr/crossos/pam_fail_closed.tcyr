@@ -108,6 +108,51 @@ fn _pam_sigpipe_rows(): i64 {
     # The helper exits before reading, and the write lands after it is gone (the hook naps).
     assert_eq(_pam_answer(_pam_run(early, 512, &_pam_nap)), PAM_AUTH_FAIL, "a helper that exits unread: PAM_AUTH_FAIL, never SIGPIPE");
     assert_eq(_pam_answer(_pam_run(early, 1, &_pam_nap)), PAM_AUTH_FAIL, "... with a 1-byte password too");
+    # The bytes the helper reads: the password and ONE NUL (unix_chkpwd's pam_read_passwords takes
+    # a password only up to a NUL; unterminated bytes read as no password at all, so a correct
+    # password never verified and, with nullok, an empty-hash account took any password).
+    # CHANGELOG [6.7.18]
+    var recf = _pam_join("rec");
+    var rsb = alloc(256);
+    memcpy(rsb, "#!/bin/sh\n/bin/cat > ", 21);
+    memcpy(rsb + 21, recf, strlen(recf));
+    memcpy(rsb + 21 + strlen(recf), "\nexit 0\n", 8);
+    store8(rsb + 29 + strlen(recf), 0);
+    var rec = _pam_script("rec.sh", rsb);
+    assert(rec != 0, "the recording stand-in is written");
+    var pw7 = "hunter2";
+    var pid7 = sys_fork();
+    if (pid7 == 0) {
+        _pam_chkpwd_test = rec;
+        sys_exit(10 + pam_unix_authenticate("cy-no-such-user", pw7));
+    }
+    var st7[8];
+    store64(&st7, 0);
+    sys_waitpid(pid7, &st7, 0);
+    assert_eq(_pam_answer(load32(&st7)), PAM_AUTH_OK, "the helper's exit 0 is PAM_AUTH_OK");
+    var got = alloc(64);
+    var gfd = sys_open(recf, 0, 0);
+    var gn = 0 - 1;
+    if (gfd >= 0) { gn = sys_read(gfd, got, 64); sys_close(gfd); }
+    assert_eq(gn, 8, "the helper read 8 bytes: \"hunter2\" and its NUL");
+    if (gn == 8) {
+        assert_eq(memeq(got, "hunter2", 7), 1, "... the password");
+        assert_eq(load8(got + 7), 0, "... then the terminating NUL");
+    }
+    sys_unlink(recf);
+    var pid0 = sys_fork();
+    if (pid0 == 0) {
+        _pam_chkpwd_test = rec;
+        sys_exit(10 + pam_unix_authenticate("cy-no-such-user", ""));
+    }
+    store64(&st7, 0);
+    sys_waitpid(pid0, &st7, 0);
+    gn = 0 - 1;
+    gfd = sys_open(recf, 0, 0);
+    if (gfd >= 0) { gn = sys_read(gfd, got, 64); sys_close(gfd); }
+    assert_eq(gn, 1, "an empty password is one NUL (the blank password nullok checks, as pam_unix sends it)");
+    sys_unlink(recf);
+    sys_unlink(rec);
     sys_unlink(early);
     sys_unlink(drain);
     sys_rmdir(_pam_dir);
