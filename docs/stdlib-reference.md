@@ -1029,7 +1029,7 @@ Slots 0–15 are reserved for applications that pick a fixed slot; a library tak
 | `thread_local_alloc` | `thread_local_alloc() → slot/-1` | Hand out the next free library slot (monotonic, ≥ 16), or -1 once the 128 are used. Call once at init, on the main thread, and keep the index in your own global (v6.4.65) |
 | `thread_local_get` | `thread_local_get(slot) → i64` | Read value from slot (0 on fresh slots). No bounds check — the slot must be < 128 |
 | `thread_local_set` | `thread_local_set(slot, val) → 0` | Write value to slot |
-| `thread_local_use_foreign_tls` | `thread_local_use_foreign_tls() → 0` | For cyrius code hosted inside a glibc process (a C launcher): leave the thread-pointer register to glibc and keep the slots in a process-global array. Call before any other `thread_local_*` |
+| `thread_local_use_foreign_tls` | `thread_local_use_foreign_tls() → 0` | For cyrius code hosted inside a glibc process (a C launcher): leave the thread-pointer register to glibc and keep the slots in one array, owned by the thread that calls this first. Call it on that thread, before any other `thread_local_*`. Any other thread's slot access is refused with a named line and exit 70; a fork child's first thread takes the array over (6.7.18). Each access costs one `gettid` in this mode |
 
 ### atomic.cyr
 
