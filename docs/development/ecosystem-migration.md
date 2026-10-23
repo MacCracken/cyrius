@@ -759,9 +759,9 @@ a second handle's writes inside a transaction are no longer lost on Windows. Not
 
 Break 2, repair 7 — the cleanup: the 22 issues left open after 6.7.16, and the fold wave. Each block names its
 CHANGELOG [6.7.17] bite; the decisions are the user's (2026-10-22: D1 – D91 at the open, D92 – D109 at the finish pass,
-all as recommended) or the agent's defaults D110 / D111, which the CHANGELOG's head lists for the user's review — ⚠ its
-first item, D109's array of POINTERS passed by name (`var ap: *i64[4]; tp(ap)`), is the one valid program 6.7.16 ran
-right that stops compiling: write `tp(load64(&ap))`. D39 – D90 keep every change 6.7.16 shipped beyond its decisions'
+all as recommended) or the agent's defaults D110 / D111, which the CHANGELOG's head lists for the user's review (D109's
+boundary the user turned at the release: an array of pointers whose element IS the parameter's type still passes
+element 0, as through 6.7.16). D39 – D90 keep every change 6.7.16 shipped beyond its decisions'
 text, so nothing 6.7.16 changed is restored. Decision ids are 6.7.17's unless a block names another release ("6.7.16's
 D72"). Every refusal below is a frontend diagnostic, the same on x86_64, aarch64, cx, PE and Mach-O, unless the block
 names a target. The fold wave (bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9) is the last block.
@@ -891,8 +891,12 @@ names a target. The fold wave (bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9) is th
 - `var a, b, c = f(..);` (or `callptr(&f, ..)`) with f returning a `: stack` enum stops compiling — bind two names.
 - `var x = wa;` / top-level `var X = GA;` from an array of vectors stops compiling — take `&wa`.
 - An array's name passed to a pointer parameter (`tp(a)`, `o.m(a)`, `fncall1(fp, a)` through `*fn(*i64)`) stops
-  compiling — pass `&a` (it passed the first element as the address and faulted). An array of pointers passed by name
-  (`var ap: *i64[4]; tp(ap)`, which passed its element 0 and ran right) stops compiling too — write `tp(load64(&ap))`.
+  compiling — pass `&a` (it passed the first element as the address and faulted). An array whose element IS the
+  parameter's pointer type (`var ap: *i64[4]; tp(ap)`) still passes element 0; one of another pointer type or more
+  stars (`*Pt[4]` / `**i64[2]` into `*i64`) stops compiling — pass `load64(&pq)` for element 0, or `&pq` for the
+  array's address.
+- `ts(&pa)` with `pa: *Pt[2]` into a `*Pt` parameter stops compiling (a `**Pt`, as `&hp` of a `*Pt` already was; it read
+  element 0's address as the Pt) — pass `pa` for element 0.
 - Inside a closure, a captured array's name read as a word is now its first element (it was the copy's address): code
   that passed a captured array by name to an untyped parameter as an address must pass `&a`.
 - `var v = callptr(&f, ..);` / `fncallN(&f, ..)` (and `x = ..`, `store64(.., ..)`, a field / element / `*p` store,

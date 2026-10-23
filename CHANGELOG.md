@@ -36,11 +36,16 @@ ledger row and docs/audit/2026-09-03-security-audit.md § CYRIUS-2026-0037 say f
 
 **Agent defaults for the user's review** — the recommended reading, taken and implemented where no decision's text
 reached (the integrator's ledger; each is a fork the user can still turn):
-1. ⚠ **D109's boundary — the one valid program that stops compiling.** `var ap: *i64[4]; tp(ap)` with
-   `fn tp(p: *i64)` — an array of POINTERS passed by name to a pointer parameter of its element's type — RAN through
-   6.7.16 (exit 7: the name read as a word is element 0, itself a `*i64`) and is now refused by D109's one rule, *cannot
-   pass array 'ap' to pointer parameter 'p' of 'tp' - an array's name is its first element; pass &a for its address*.
-   Write `tp(load64(&ap))`. The guide says so; row AP17 (valc, 8cb9e5633).
+1. **D109's boundary — turned by the user at the release** (2026-10-22, reviewing this list: "refuse only when the
+   array's element isn't the parameter's pointer type; an array of matching pointers passes element 0 as in 6.7.16.
+   Fix the tp(&ap) depth hole too."). The agent default (8cb9e5633) refused `var ap: *i64[4]; tp(ap)` with
+   `fn tp(p: *i64)` — an array of POINTERS whose element 0 IS the parameter's `*i64`, which ran right through 6.7.16
+   (exit 7) — with a hint (`&ap`) that named the array's address. Now an array whose declared element type is the
+   parameter's (`*Pt[2]` into `*Pt`; a generic's `*T` from any pointer element) passes element 0 as before; `i64[4]`,
+   a bare `var b[N]`, `*Pt[4]` into `*i64` and `**i64[2]` stay refused. Met with it: `&pa` of an array of `*Pt` into a
+   `*Pt` parameter compiled and read element 0's address as the Pt (40 / 72 where 7 was stored) — it is a `**Pt`, now
+   refused as `&hp` of a `*Pt` is (D11). `*i64` word pointers (`tp(&ap)`, `tp(&q)`) are unchanged. Rows
+   simd_return_shapes.sh APC2, AP17-AP19 (e3c4fc15c).
 2. D110's boundary: in the read of a body pass 2 never parses, a global declared after the first top-level statement,
    below an uninstantiated generic, is in scope — as in an instance a call below that declaration mints (exit 6) —
    where a plain fn above it refuses the name. Kept; the guide (§ Generic Functions) says so; row NU8 (feg, 5a6ee2db2).
@@ -109,7 +114,8 @@ guide say; an unqualified Dn is 6.7.17's. The migration is
   word); refused where they read lane 0: a vector value that is no call in a word slot (D24), as a multi-value element
   (D25), an array of vectors read as a word (D103) or into an untyped declaration (D108); `var x = w;` of a vector copies
   it in a fn and is refused at top level (D95; it bound lane 0); an array's name into a pointer parameter is refused,
-  "pass &a" (D109; it faulted — ⚠ an array of pointers ran right, agent default 1 above); a `: stack` pair fn through
+  "pass &a" (D109; it faulted — an array whose element IS the parameter's pointer type passes element 0 as before, the
+  user's narrowing, item 1 above); a `: stack` pair fn through
   `callptr(&f, ..)` / `fncallN(&f, ..)` is the direct call's pair — `?` propagates (it crashed), a one-wide bind is
   refused "bind both" (D26). Beside them: three names over a `: stack` pair are refused; a captured array's name read as
   a word is its first element, as in its frame (it was the copy's address); `return f(x)?;` warns as a single value.
@@ -739,9 +745,9 @@ D23 – D26 at the open, D95, D103, D108 and D109 at the finish pass (the user, 
   tp(p: *i64)`, `var a: i64[4]; tp(a)` passed it as the address (a fault on every target: 139 on Linux, cxvm's guest
   fault, a Windows access violation); now *cannot pass array 'a' to pointer parameter 'p' of 'tp' - an array's name is
   its first element; pass &a for its address* — a fn, a method, a generic's `*T`, a known `&f` through callptr /
-  fncallN, a fn pointer declared `*fn( .. )`; a local, a global, a capture, a bare array; whatever the element, an
-  array of pointers too (`var ap: *i64[4]; tp(ap)` ran right, its element 0 a `*i64`: write `tp(load64(&ap))`) (the
-  user's D109, 6.7.17, 2026-10-22; the bare array and the array of pointers are agent defaults).
+  fncallN, a fn pointer declared `*fn( .. )`; a local, a global, a capture, a bare array — unless the array's element
+  IS the parameter's pointer type: `var ap: *i64[4]; tp(ap)` passes element 0 as through 6.7.16 (the user's D109,
+  6.7.17, 2026-10-22, narrowed by the user at the release, e3c4fc15c; the bare array is an agent default).
 
 #### VC1-8 — a captured array's name is its first word inside a closure, as in its frame (lane valc, finish pass round 3, commits 771613e1e, bd1c239fd)
 
@@ -1364,7 +1370,23 @@ differ only in the ORDER of the same stderr lines; every compiled binary byte-id
   b86cc1dc8) and ZR1 (P2 finished after the reboot, merged 3011c4b59), each on a branch cut from `l6717-integ`; one
   check.sh on the merged tree (`dd9c88a1a`).
 
-⟪REVIEW-W2⟫
+- **The wave-2/3 review** — one round per pair of units, each reviewer applying its own fixes. FB1 + FD1
+  (`l6717-rv-w2a`): `5c6e3c939` the caret inside a closure body landed on the closure's inner name (FD1; row
+  dx_diag_format.sh CR13); `a2a8b7222` an `if` / `match` expression as a `dyn` source gave a bogus "expected ';', got
+  if" and lost the fn's end (FB1; missing_semicolon_recovers.sh D5); `6c7944172` a stray `{`'s recovery took the fn's
+  `}` and defined the next fn inside it (FB1; B3, control B4); `be3d92eb0` call_site_callee_spelling.sh built its own
+  aarch64 compiler (it read a stale or missing `build/cycc_aarch64`; N8). The 694-file `.tcyr` differential per unit:
+  binary, exit and stderr identical. FC1 + ZR1 (`l6717-rv-w2b`): no FC1 must-fix (the nine filed lines one error each
+  on four targets; uncovered stand-down shapes still reported); `01ee1ea49` the parse window closed only when the top
+  level stopped at the end of file — recovery that stopped at a module-scope `}` left the held diagnostics held into
+  FIXUP's raw exit and every one was lost; each of the seven forks now ends the window after its last parse (ZO11 /
+  ZO12); `39f170ba8` D111's `_ssc_err` wrote its `error:` raw, printing `error:error:..` and a headless line after an
+  earlier error (ZO13; diagnostic_writer_census.sh); `d40e9d46b` a block head missing its `)` (`if (x {`) stepped the
+  block's `{`, whose `}` then closed the fn (KH1-KH6).
+- **At the release**: D109 narrowed and the `&pa` depth hole (the user; `e3c4fc15c`, head item 1);
+  version_bump_doc_anchors.sh stopped under `bash -eo pipefail` (`diff` exits 1 on the anchor it is meant to find;
+  `19a75276d`).
+⟪CHECK⟫
 
 ### Folds — bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9
 
