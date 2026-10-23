@@ -14,7 +14,7 @@ unpinned watching list is [roadmap-future.md](roadmap-future.md), volatile state
 
 ## Where we are
 
-**Current head: v6.7.17** (2026-10-22) — the cleanup, every remaining placed issue: 22 issues closed in seventeen lanes over four waves (wave 0 on main: the fold wave bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9, and D39–D90 keeping each 6.7.16 change beyond the decisions' text); 111 decisions (D1–D109 the user's, all as recommended; D110, D111 the agent's recommended defaults, for the user's review); CYRIUS-2026-0037 fixed; the helper scripts converted to cyrius · cycc **2,923,536 B** · `cycc-native-aarch64` **3,153,176 B** · **694** `.tcyr`, **382** in `crossos/` · **106** `lib/*.cyr` · **587** shell gates under `tests/gates/<bucket>/` · api-surface **5,919** · **9** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0038**
+**Current head: v6.7.17** (2026-10-22) — the cleanup, every remaining placed issue: 22 issues closed in seventeen lanes over four waves (wave 0 on main: the fold wave bayan 1.11.0, sandhi 1.13.6, sankoch 2.8.9, and D39–D90 keeping each 6.7.16 change beyond the decisions' text); 111 decisions (D1–D109 the user's, all as recommended; D110, D111 the agent's recommended defaults, for the user's review); CYRIUS-2026-0037 fixed; the helper scripts converted to cyrius · cycc **2,923,536 B** · `cycc-native-aarch64` **3,153,176 B** · **694** `.tcyr`, **382** in `crossos/` · **106** `lib/*.cyr` · **587** shell gates under `tests/gates/<bucket>/` · api-surface **5,919** · **10** open issues · **2** open proposals · next ledger id **CYRIUS-2026-0038**
 
 > Every figure above is DERIVED (2026-10-08), never carried. `version-bump.sh` rewrites only the stamp's version and
 > the `(…)` after it — re-derive the rest at each release (`find tests/gates -name '*.sh' | wc -l`, …). Keep the stamp
@@ -99,6 +99,9 @@ cannot pack filed.
   channel and the seed → cybs → cycc chain, `pam`, secrets in memory) as they stand after 6.7.x's growth; scan; report
   in `docs/audit/<date>-security-audit.md`; a ledger id only for an actual vulnerability (attacker + boundary named);
   P0 / P1 fixed in the release, each with a regression test.
+  - [The network parsers' fuzz harnesses and bounds-checked builds](issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
+    (HTTP, WebSocket, DNS, X.509 / DER, JSON; the user, 2026-10-22) — the bounds-checked form is its one question at
+    the open.
 - **The refactor / optimization review — elevate the large files.** The frontend has outgrown its files
   (`parse_fn.cyr` ~13.9 K lines, `parse_expr.cyr` ~6.4 K, `parse_decl.cyr` ~6.2 K, `lex_pp.cyr` ~5.3 K, `parse.cyr`
   ~4.5 K; `cbt/commands.cyr` / `deps.cyr` ~6.6 K each): split them along their real seams (the trait / generic /

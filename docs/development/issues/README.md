@@ -264,6 +264,10 @@ release plan is roadmap.md § *Release sequence* (placed 2026-10-09).
 **6.7.17 — the cleanup of the remaining issues (the user, 2026-10-22)** (0)
 
 
+**6.7.18 — the full security audit + the refactor / optimization review (D91)** (1)
+
+- [The network parsers are unfuzzed, and bounds mode cannot see how they read](2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
+
 **Open by design — placed arcs, not bugs** (6)
 
 - [A constant `if` condition is tested at run time and its dead arm is emitted (DEAD-10)](2026-10-08-constant-if-arms-not-folded.md)
