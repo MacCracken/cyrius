@@ -997,6 +997,12 @@ fn tls_native_client_seal_handshake(ctx, inner, inner_len, out, out_max): i64 {
 # transitions to CONNECTED. Returns the client Finished record length,
 # `TLS_ERR_AUTHN` on a bad server Finished, or another negative error.
 fn tls_native_client_finish(ctx, out, out_max): i64 {
+    # Both handshake-traffic secrets and Finished keys live in `secret var`s, zeroised on every
+    # return (they were _tn_alloc copies abandoned un-wiped in the ctx's allocator). CHANGELOG [6.7.18]
+    secret var s_shs_b[_TLS_MAX_DIGEST_LEN];
+    secret var s_fk_b[_TLS_MAX_DIGEST_LEN];
+    secret var c_chs_b[_TLS_MAX_DIGEST_LEN];
+    secret var c_fk_b[_TLS_MAX_DIGEST_LEN];
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
@@ -1014,13 +1020,11 @@ fn tls_native_client_finish(ctx, out, out_max): i64 {
         return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
     }
     # Verify the server Finished over CH..CertificateVerify.
-    var s_shs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (s_shs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var s_shs = &s_shs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, s_shs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var s_fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (s_fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var s_fk = &s_fk_b;
     if (tls_native_hkdf_expand_label(s_shs, hlen, "finished", 8, 0, 0, hash_algo, s_fk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -1078,13 +1082,11 @@ fn tls_native_client_finish(ctx, out, out_max): i64 {
         }
     }
     # Build + seal the client Finished over CH..serverFinished (+ clientCert/CV).
-    var c_chs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (c_chs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var c_chs = &c_chs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, c_chs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var c_fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (c_fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var c_fk = &c_fk_b;
     if (tls_native_hkdf_expand_label(c_chs, hlen, "finished", 8, 0, 0, hash_algo, c_fk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -2572,19 +2574,21 @@ fn _tn_build_cert_verify(ctx, out, out_max, label, label_len): i64 {
 # finished_key = HKDF-Expand-Label(server_hs_traffic, "finished", "",
 # Hash.length).
 fn _tn_build_finished(ctx, out, out_max): i64 {
+    # The secret and the Finished key are `secret var`s, zeroised on return (they were _tn_alloc
+    # copies abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var shs_b[_TLS_MAX_DIGEST_LEN];
+    secret var fk_b[_TLS_MAX_DIGEST_LEN];
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
     if (ts == 0) { return TLS_ERR_PROTOCOL; }
     if (ks == 0) { return TLS_ERR_PROTOCOL; }
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
-    var shs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (shs == 0) { return TLS_ERR_OOM; }
+    var shs = &shs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_SERVER_HANDSHAKE, shs) < 0) {
         return TLS_ERR_PROTOCOL;
     }
-    var fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (fk == 0) { return TLS_ERR_OOM; }
+    var fk = &fk_b;
     if (tls_native_hkdf_expand_label(shs, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }
@@ -2924,6 +2928,10 @@ fn tls_native_server_recv_client_certverify(ctx, msg, msg_len): i64 {
 # state machine advances to CONNECTED. Used for both the no-auth path
 # (the only client message) and the client-auth path (after Cert+CV).
 fn tls_native_server_recv_client_finished(ctx, msg, msg_len): i64 {
+    # The secret and the Finished key are `secret var`s, zeroised on every return (they were
+    # _tn_alloc copies abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var chs_b[_TLS_MAX_DIGEST_LEN];
+    secret var fk_b[_TLS_MAX_DIGEST_LEN];
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var ht = 0;
     var blen = 0;
@@ -2940,13 +2948,11 @@ fn tls_native_server_recv_client_finished(ctx, msg, msg_len): i64 {
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
     if (blen != hlen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    var chs = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (chs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var chs = &chs_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_CLIENT_HANDSHAKE, chs) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var fk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (fk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var fk = &fk_b;
     if (tls_native_hkdf_expand_label(chs, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -3042,6 +3048,10 @@ fn tls_native_server_open_ticket(ctx, blob, blob_len, out): i64 {
 # Hash.length), seals it into the ticket, and serializes the message
 # into `out`. Returns the message length or a negative TLS_ERR_*.
 fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
+    # The resumption master secret's copy and the PSK are `secret var`s, zeroised on every return
+    # (they were _tn_alloc copies abandoned un-wiped; the PSK leaves only sealed). CHANGELOG [6.7.18]
+    secret var rm_b[_TLS_MAX_DIGEST_LEN];
+    secret var psk_b[_TLS_MAX_DIGEST_LEN];
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
     if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL); }
@@ -3052,8 +3062,7 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
-    var rm = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (rm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var rm = &rm_b;
     if (tls_native_keysched_get_secret(ks, TLS_KS_RESUMPTION_MASTER, rm) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
@@ -3067,8 +3076,7 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
     # ticket. Never emit a weak NewSessionTicket.
     if (_tn_rand_bytes(nonce, 8) != 8) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     if (_tn_rand_bytes(age_add, 4) != 4) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    var psk = _tn_alloc(ctx, _TLS_MAX_DIGEST_LEN);
-    if (psk == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var psk = &psk_b;
     if (tls_native_hkdf_expand_label(rm, hlen, "resumption", 10, nonce, 8, hash_algo, psk, hlen) != TLS_OK) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
@@ -3101,28 +3109,29 @@ fn tls_native_server_new_session_ticket(ctx, out, out_max): i64 {
 #   binder       = HMAC(finished_key, transcript_hash)
 # Writes `out` (Hash.length bytes). Returns TLS_OK or an error. Used
 # by both ticket issuance verification and the resumed handshake.
+# The early secret, binder key and Finished key are `secret var`s, zeroised on every return (they
+# were three no-free global allocations per call, never wiped). CHANGELOG [6.7.18]
 fn tls_native_psk_binder(psk, psk_len, hash_algo, transcript_hash, th_len, out): i64 {
+    secret var early_b[_TLS_MAX_DIGEST_LEN];
+    secret var binder_key_b[_TLS_MAX_DIGEST_LEN];
+    secret var fk_b[_TLS_MAX_DIGEST_LEN];
+    var zero_b[_TLS_MAX_DIGEST_LEN];
     var hlen = _tn_hash_len(hash_algo);
     if (th_len != hlen) { return TLS_ERR_INVALID_PARAM; }
     # early_secret = HKDF-Extract(salt=0^hlen, ikm=psk)
-    var zero = alloc(hlen);
-    if (zero == 0) { return TLS_ERR_OOM; }
-    var zi = 0;
-    while (zi < hlen) { store8(zero + zi, 0); zi = zi + 1; }
-    var early = alloc(hlen);
-    if (early == 0) { return TLS_ERR_OOM; }
+    var zero = &zero_b;
+    memset(zero, 0, hlen);
+    var early = &early_b;
     _tn_hkdf_extract(zero, hlen, psk, psk_len, hash_algo, early);
     # binder_key = Derive-Secret(early, "res binder", "")
-    var binder_key = alloc(hlen);
-    if (binder_key == 0) { return TLS_ERR_OOM; }
+    var binder_key = &binder_key_b;
     var empty_th = _tn_empty_transcript(hash_algo);
     if (empty_th == 0) { return TLS_ERR_OOM; }
     if (tls_native_derive_secret(early, hlen, "res binder", 10, empty_th, binder_key) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }
     # finished_key = HKDF-Expand-Label(binder_key, "finished", "", L)
-    var fk = alloc(hlen);
-    if (fk == 0) { return TLS_ERR_OOM; }
+    var fk = &fk_b;
     if (tls_native_hkdf_expand_label(binder_key, hlen, "finished", 8, 0, 0, hash_algo, fk, hlen) != TLS_OK) {
         return TLS_ERR_INTERNAL;
     }

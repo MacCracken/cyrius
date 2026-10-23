@@ -256,6 +256,9 @@ fn tls_native_keysched_set_psk(ks, psk, psk_len): i64 {
 #   - client_handshake_traffic_secret  ("c hs traffic")
 #   - server_handshake_traffic_secret  ("s hs traffic")
 fn tls_native_keysched_derive_handshake(ks, dhe, dhe_len, transcript): i64 {
+    # The "derived" bridge secret is a `secret var`, zeroised on every return (it was a
+    # _tn_ks_alloc abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var derived_b[_TLS_MAX_DIGEST_LEN];
     if (ks == 0) { return TLS_ERR_INVALID_PARAM; }
     if (transcript == 0) { return TLS_ERR_INVALID_PARAM; }
     var hash_algo = load64(ks);
@@ -266,8 +269,7 @@ fn tls_native_keysched_derive_handshake(ks, dhe, dhe_len, transcript): i64 {
 
     # Derive-Secret(early, "derived", "") — the empty-transcript
     # bridge to the next HKDF-Extract.
-    var derived = _tn_ks_alloc(ks, hash_len);
-    if (derived == 0) { return TLS_ERR_OOM; }
+    var derived = &derived_b;
     var empty_th = _tn_empty_transcript_in(load64(ks + TLS_KS_OFF_ALLOC), hash_algo);
     if (empty_th == 0) { return TLS_ERR_OOM; }
     var drc = tls_native_derive_secret(early, hash_len, "derived", 7, empty_th, derived);
@@ -310,6 +312,9 @@ fn tls_native_keysched_derive_handshake(ks, dhe, dhe_len, transcript): i64 {
 #   - exporter_master_secret             ("exp master")
 #   - resumption_master_secret           ("res master")
 fn tls_native_keysched_derive_master(ks, transcript): i64 {
+    # The "derived" bridge secret is a `secret var`, zeroised on every return (it was a
+    # _tn_ks_alloc abandoned un-wiped). CHANGELOG [6.7.18]
+    secret var derived_b[_TLS_MAX_DIGEST_LEN];
     if (ks == 0) { return TLS_ERR_INVALID_PARAM; }
     if (transcript == 0) { return TLS_ERR_INVALID_PARAM; }
     var hash_algo = load64(ks);
@@ -319,8 +324,7 @@ fn tls_native_keysched_derive_master(ks, transcript): i64 {
     var hs = load64(ks + 32);
 
     # Derive-Secret(hs, "derived", "") bridge.
-    var derived = _tn_ks_alloc(ks, hash_len);
-    if (derived == 0) { return TLS_ERR_OOM; }
+    var derived = &derived_b;
     var empty_th = _tn_empty_transcript_in(load64(ks + TLS_KS_OFF_ALLOC), hash_algo);
     if (empty_th == 0) { return TLS_ERR_OOM; }
     var drc = tls_native_derive_secret(hs, hash_len, "derived", 7, empty_th, derived);

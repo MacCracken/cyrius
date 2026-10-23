@@ -107,10 +107,10 @@ fn _cw_check(ctx): i64 {
 # A fresh in-memory TLS 1.3 handshake; both sides' application keys installed.
 var _cw_srv = 0;
 var _cw_cl = 0;
-fn _cw_pair(): i64 {
-    var srv = tls_native_new_server(_cw_cert, 385, _cw_key, 138);
+fn _cw_pair_in(a): i64 {
+    var srv = tls_native_new_server_in(a, _cw_cert, 385, _cw_key, 138);
     if (tls_native_server_load_creds(srv) != TLS_OK) { return 1; }
-    var cl = tls_native_new_client("localhost", 9);
+    var cl = tls_native_new_client_in(a, "localhost", 9);
     var ch[512];
     var chn = tls_native_client_build_hello(cl, &ch, 512);
     var sh[256];
@@ -132,6 +132,7 @@ fn _cw_pair(): i64 {
     _cw_cl = cl;
     return 0;
 }
+fn _cw_pair(): i64 { return _cw_pair_in(0); }
 
 _cw_wbuf = alloc(4096);
 assert_eq(tls_native_set_transport(&_cw_read, &_cw_write, &_cw_now), TLS_OK, "the in-memory transport installs");
@@ -213,6 +214,137 @@ assert_eq(_cw_wpos, fw0, "failed: a failed ctx sends no close_notify");
 _cw_check(f12);
 assert_eq(_cw_live, 5, "failed: it held a master secret and two keys and IVs");
 assert_eq(_cw_wiped, 5, "failed: every one reads zero after the close");
+
+# ================================================================
+test_group("after close no copy of a session secret is left in the connection's arena");
+# ================================================================
+# The handshake's own working copies — the handshake-traffic secrets fetched to derive the
+# Finished keys, the Finished keys, the copies install_handshake_keys derived the keys from, the
+# key schedule's "derived" bridges, the TLS 1.2 key block, the ticket's resumption secret and PSK —
+# were abandoned un-wiped in the ctx's allocator. Both ctxs draw from one arena here; every
+# secret of the session is looked for in all of it, byte by byte, before and after the close.
+var _sc_pats = alloc(64 * 48);
+var _sc_lens: i64[64];
+var _sc_n = 0;
+fn _sc_add(src, n): i64 {
+    if (n > 16) { n = 16; }                         # 16 bytes of a secret identify it
+    memcpy(_sc_pats + _sc_n * 48, src, n);
+    _sc_lens[_sc_n] = n;
+    _sc_n = _sc_n + 1;
+    return 0;
+}
+# How many of the patterns occur in [base, end), and how many occurrences in all.
+var _sc_found = 0;
+var _sc_hits = 0;
+fn _sc_scan(base, end): i64 {
+    _sc_found = 0;
+    _sc_hits = 0;
+    var i = 0;
+    while (i < _sc_n) {
+        var pat = _sc_pats + i * 48;
+        var n = _sc_lens[i];
+        var c = 0;
+        var p = base;
+        while (p + n <= end) {
+            if (load8(p) == load8(pat)) {
+                if (_tn_ct_eq(p, pat, n) == 1) { c = c + 1; }
+            }
+            p = p + 1;
+        }
+        if (c > 0) { _sc_found = _sc_found + 1; }
+        _sc_hits = _sc_hits + c;
+        i = i + 1;
+    }
+    return 0;
+}
+
+var _sc_al = arena_allocator(1048576);
+var _sc_ar = allocator_state(_sc_al);
+assert_eq(_cw_pair_in(_sc_al), 0, "arena 1.3: the in-memory handshake completes in one arena");
+var _sc_srv = _cw_srv;
+var _sc_cl = _cw_cl;
+var _sc_nst[512];
+var _sc_nstn = tls_native_server_new_session_ticket(_sc_srv, &_sc_nst, 512);
+assert_gt(_sc_nstn, 0, "arena 1.3: the server issues a NewSessionTicket");
+var _sc_ks = load64(_sc_cl + TLS_CTX_OFF_KEYSCHED);
+var _sc_hl = load64(_sc_ks + 8);
+var _sc_halg = load64(_sc_ks);
+var _sc_b[48];
+var _sc_fk[48];
+var _sc_w = 0;
+while (_sc_w <= 8) {                                # early .. resumption master
+    tls_native_keysched_get_secret(_sc_ks, _sc_w, &_sc_b);
+    _sc_add(&_sc_b, _sc_hl);
+    _sc_w = _sc_w + 1;
+}
+var _sc_kl = tls_native_cipher_key_len(load64(_sc_cl + TLS_CTX_OFF_CIPHER));
+_sc_add(load64(_sc_srv + TLS_CTX_OFF_SRV_HS_KEY), _sc_kl);
+_sc_add(load64(_sc_srv + TLS_CTX_OFF_CLI_HS_KEY), _sc_kl);
+_sc_add(load64(_sc_srv + TLS_CTX_OFF_SRV_APP_KEY), _sc_kl);
+_sc_add(load64(_sc_srv + TLS_CTX_OFF_CLI_APP_KEY), _sc_kl);
+_sc_add(load64(_sc_srv + TLS_CTX_OFF_SRV_APP_IV), 12);
+_sc_add(load64(_sc_srv + TLS_CTX_OFF_CLI_APP_IV), 12);
+_sc_add(load64(_sc_srv + TLS_CTX_OFF_KEY_MAT), 32);   # the server's private scalar
+_sc_scan(load64(_sc_ar), load64(_sc_ar + 8));
+assert_eq(_sc_found, _sc_n, "arena 1.3: before the close, the scan finds each secret the ctxs keep (16)");
+var _sc_kept = _sc_n;
+# The transient ones — the two Finished keys and the ticket's PSK — are not in the arena even before it.
+tls_native_keysched_get_secret(_sc_ks, TLS_KS_SERVER_HANDSHAKE, &_sc_b);
+tls_native_hkdf_expand_label(&_sc_b, _sc_hl, "finished", 8, 0, 0, _sc_halg, &_sc_fk, _sc_hl);
+_sc_add(&_sc_fk, _sc_hl);                           # the server Finished key
+tls_native_keysched_get_secret(_sc_ks, TLS_KS_CLIENT_HANDSHAKE, &_sc_b);
+tls_native_hkdf_expand_label(&_sc_b, _sc_hl, "finished", 8, 0, 0, _sc_halg, &_sc_fk, _sc_hl);
+_sc_add(&_sc_fk, _sc_hl);                           # the client Finished key
+tls_native_keysched_get_secret(_sc_ks, TLS_KS_RESUMPTION_MASTER, &_sc_b);
+tls_native_hkdf_expand_label(&_sc_b, _sc_hl, "resumption", 10, &_sc_nst + 13, 8, _sc_halg, &_sc_fk, _sc_hl);
+_sc_add(&_sc_fk, _sc_hl);                           # the ticket's resumption PSK (nonce at body + 9)
+_sc_scan(load64(_sc_ar), load64(_sc_ar + 8));
+assert_eq(_sc_found, _sc_kept, "arena 1.3: the Finished keys and the ticket PSK were never left in it");
+tls_native_close(_sc_cl);
+tls_native_close(_sc_srv);
+_sc_scan(load64(_sc_ar), load64(_sc_ar + 8));
+assert_eq(_sc_hits, 0, "arena 1.3: after both closes, no copy of any of them is left in the arena");
+
+var _sc_al2 = arena_allocator(65536);
+var _sc_ar2 = allocator_state(_sc_al2);
+var _sc_c12 = tls_native_new_client_in(_sc_al2, "localhost", 9);
+store64(_sc_c12 + TLS_CTX_OFF_CIPHER, TLS_AES_256_GCM_SHA384);
+store64(_sc_c12 + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
+store64(_sc_c12 + TLS_CTX_OFF_CLIENT_RANDOM, &cr12);
+store64(_sc_c12 + TLS_CTX_OFF_SERVER_RANDOM, &sr12);
+assert_eq(tls_native_12_derive_keys(_sc_c12, &pm12, 32), TLS_OK, "arena 1.2: derive_keys in an arena");
+_sc_n = 0;
+_sc_add(load64(_sc_c12 + TLS_CTX_OFF_MASTER12), 48);
+_sc_add(load64(_sc_c12 + TLS_CTX_OFF_CLI_APP_KEY), 32);
+_sc_add(load64(_sc_c12 + TLS_CTX_OFF_SRV_APP_KEY), 32);
+tls_native_close(_sc_c12);
+_sc_scan(load64(_sc_ar2), load64(_sc_ar2 + 8));
+assert_eq(_sc_hits, 0,
+  "arena 1.2: after the close, no copy of the master secret or a key is left (the key block's too)");
+
+# tls_native_psk_binder takes no ctx: its early secret, binder key and Finished key were three
+# no-free global allocations per call. The global allocations it makes lie between two markers.
+var _sc_psk[48];
+var _sc_th[48];
+var _sc_i = 0;
+while (_sc_i < 48) { store8(&_sc_psk + _sc_i, 7 * _sc_i + 3); store8(&_sc_th + _sc_i, _sc_i); _sc_i = _sc_i + 1; }
+var _sc_bnd[48];
+var _sc_m0 = alloc(8);
+assert_eq(tls_native_psk_binder(&_sc_psk, 32, TLS_HASH_SHA256, &_sc_th, 32, &_sc_bnd), TLS_OK, "binder: computes");
+var _sc_m1 = alloc(8);
+var _sc_z[48];
+memset(&_sc_z, 0, 48);
+var _sc_early[48];
+_tn_hkdf_extract(&_sc_z, 32, &_sc_psk, 32, TLS_HASH_SHA256, &_sc_early);
+var _sc_bk[48];
+tls_native_derive_secret(&_sc_early, 32, "res binder", 10, _tn_empty_transcript(TLS_HASH_SHA256), &_sc_bk);
+tls_native_hkdf_expand_label(&_sc_bk, 32, "finished", 8, 0, 0, TLS_HASH_SHA256, &_sc_fk, 32);
+_sc_n = 0;
+_sc_add(&_sc_early, 32);
+_sc_add(&_sc_bk, 32);
+_sc_add(&_sc_fk, 32);
+_sc_scan(_sc_m0, _sc_m1);
+assert_eq(_sc_hits, 0, "binder: no copy of its early secret, binder key or Finished key is left on the heap");
 
 tls_native_set_transport(0, 0, 0);
 var rc = assert_summary();
