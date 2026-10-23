@@ -202,6 +202,52 @@ fn main(): i64 {
     assert_eq(file_write_atomic(path, "after", 5), 0, "with the names free again, the write succeeds");
     assert_eq(_content_is(path, "after"), 1, "`path` holds the new bytes");
 
+    # ⛔ CYRIUS-2026-0047 (6.7.18): the temp was created 0644 & ~umask and fchmod'ed to the
+    # destination's mode only after — a 0600 file's new bytes sat in a world-readable inode in
+    # between, and an fd another user opened there read them. Measured on the parent: 0600
+    # destination, temp right after _io_tmp_open 0644 (420). POSIX modes only: Windows has none,
+    # and the cx leg runs on hosts whose chmod route this row does not ask. CHANGELOG [6.7.18]
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_CX
+    test_group("the temp is never wider than the file it replaces");
+    var dst600 = _scratch("cyr_atx", ".dst600");
+    xunlink(dst600);
+    file_write_all(dst600, "s", 1);
+    assert_eq(sys_chmod(dst600, 0x180), 0, "the destination is 0600");
+    var sfd = 0;
+    var stmp = _io_tmp_open(dst600, &sfd);
+    assert(stmp != 0, "_io_tmp_open made the temp");
+    var tst[144];
+    var tm = 0 - 1;
+    if (stmp != 0) {
+        if (xstat(stmp, &tst) == 0) { tm = load32(&tst + STAT_MODE) & 0x1FF; }
+        file_close(sfd);
+        xunlink(stmp);
+    }
+    assert_eq(tm & 0x7F, 0, "right after the create the temp has no group / other / owner-x bit (0600 at most)");
+    assert_eq(file_write_atomic(dst600, "t", 1), 0, "file_write_atomic replaces the 0600 file");
+    var fst[144];
+    var fm = 0 - 1;
+    if (xstat(dst600, &fst) == 0) { fm = load32(&fst + STAT_MODE) & 0x1FF; }
+    assert_eq(fm, 0x180, "the replaced file is still 0600");
+    # A NEW file still gets 0644 & ~umask: compared with one the plain O_CREAT made beside it.
+    var fresh = _scratch("cyr_atx", ".fresh");
+    var ref = _scratch("cyr_atx", ".ref");
+    xunlink(fresh); xunlink(ref);
+    var rfd = file_open(ref, O_WRONLY | O_CREAT | O_EXCL, 0x1A4);
+    if (rfd >= 0) { file_close(rfd); }
+    assert_eq(file_write_atomic(fresh, "n", 1), 0, "file_write_atomic creates a new file");
+    var nst[144];
+    var rst[144];
+    var nm = 0 - 1;
+    var rm = 0 - 2;
+    if (xstat(fresh, &nst) == 0) { nm = load32(&nst + STAT_MODE) & 0x1FF; }
+    if (xstat(ref, &rst) == 0) { rm = load32(&rst + STAT_MODE) & 0x1FF; }
+    assert_eq(nm, rm, "a new file is 0644 & ~umask, as an open(O_CREAT, 0644) makes it");
+    xunlink(dst600); xunlink(fresh); xunlink(ref);
+    #endif
+    #endif
+
     xunlink(path); xunlink(victim); xunlink(absent);
     #endif
 

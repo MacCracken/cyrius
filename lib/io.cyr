@@ -953,26 +953,45 @@ fn _io_tmp_name(path): i64 {
 }
 
 # Create the sibling temp an atomic replace of `path` writes through, EXCLUSIVELY: each
-# "<path>.cyrtmp.<pid>.<ctr>" is opened O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW (0644), so a name
-# that already exists — a file, or a symlink dangling or not — is never opened, followed or
+# "<path>.cyrtmp.<pid>.<ctr>" is opened O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW (at `_io_tmp_mode`), so
+# a name that already exists — a file, or a symlink dangling or not — is never opened, followed or
 # truncated; the counter moves on and the next name is tried, up to 64. Returns the temp name
 # and stores its fd at `fdp`, or returns 0 and stores a negative errno there: -12 (out of
 # memory), -17 (every name tried was taken), or the open's own error. ⛔ The name is
 # predictable (pid + a counter from 1), and until 6.6.20 it was opened O_WRONLY|O_CREAT|O_TRUNC:
 # a symlink planted at the next name redirected the write — file_write_atomic overwrote the file
 # the link named, then renamed the link over `path`. CHANGELOG [6.6.20]
+# ⛔ CYRIUS-2026-0047: the temp is created at the mode `path` has NOW (`_io_tmp_mode`), never
+# wider — it was created 0644 & ~umask and only then fchmod'ed down, so the inode carrying a
+# 0600 file's new bytes was world-readable until the fchmod, and an fd another user opened in
+# that window read them later. The fd is held from the create on; `_io_keep_mode` after it only
+# ever widens (back from what the umask took). CHANGELOG [6.7.18]
 fn _io_tmp_open(path, fdp): i64 {
+    var mode = _io_tmp_mode(path);
     var tries = 0;
     while (tries < 64) {
         var tmp = _io_tmp_name(path);
         if (tmp == 0) { store64(fdp, 0 - 12); return 0; }
-        var fd = file_open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0x1A4);
+        var fd = file_open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
         if (fd >= 0) { store64(fdp, fd); return tmp; }
         if (_io_tmp_taken(tmp, fd) == 0) { store64(fdp, fd); return 0; }
         tries = tries + 1;
     }
     store64(fdp, 0 - 17);
     return 0;
+}
+
+# The mode an atomic replace of `path` creates its temp at: the rwx bits `path` has now, else
+# (no file yet, or a target with no POSIX mode) 0644 — a new file ends up 0644 & ~umask anyway, so
+# its temp is never wider than the result. CHANGELOG [6.7.18]
+fn _io_tmp_mode(path): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var st[144];
+    if (xstat(path, &st) == 0) { return load32(&st + STAT_MODE) & 0x1FF; }
+    #endif
+    #endif
+    return 0x1A4;
 }
 
 # Did an exclusive create of `tmp` fail because the NAME exists? Linux, macOS and (since 6.7.14)
@@ -994,8 +1013,9 @@ fn _io_tmp_taken(tmp, rc): i64 {
 
 # Give the fresh temp `fd` the permission bits `path` has NOW, so an atomic replace keeps the
 # mode the user set (a 0600 file stays 0600; 0755 stays executable). A rename puts a NEW inode
-# at `path`, and the temp was created 0644 & ~umask — without this every replace reset the mode,
-# which the open(O_TRUNC) writes it replaced never did. rwx bits only: setuid/setgid are not
+# at `path`, and the temp was created at that mode & ~umask (`_io_tmp_mode`; 0644 & ~umask before
+# 6.7.18) — without this every replace lost what the umask took, which the open(O_TRUNC) writes
+# it replaced never did. rwx bits only: setuid/setgid are not
 # carried (a write clears them too). No existing file, or a target with no POSIX mode (Windows)
 # or no fchmod (agnos): nothing to keep, the default stands. CHANGELOG [6.6.6]
 fn _io_keep_mode(fd, path): i64 {
