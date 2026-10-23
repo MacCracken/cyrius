@@ -58,7 +58,9 @@
 #           and must be read as STOPPED; the `|| true` spelling must be read as PASS.
 #   axis 2  each gate in GATES, run as `bash -eo pipefail <gate>`, exits 0 with a last line
 #           starting PASS (or 77 with a last line starting SKIP: a gate that could not run says
-#           so by name). check.sh runs each of them under `sh` as its own row.
+#           so by name). check.sh runs each of them under `sh` as its own row. They run in a
+#           pool bounded the way check.sh bounds its own (6.7.18), a `# check: serial` one after
+#           it, alone.
 #   axis 3  STATIC, over NOPIPE: no early-exiting reader below a pipe — `grep` with -q / -m / -l /
 #           -L, head, read, cmp, an awk whose script exits, a sed whose script quits — on any
 #           command line (comments skipped, `\` continuations joined). Its latent cases pass axis 2
@@ -132,16 +134,43 @@ done
 [ "$FAILS" = 0 ] && echo "  ok: axis 1: a zero-count grep -c and a SIGPIPE'd pipe read as STOPPED, the || true spelling as PASS"
 
 # ── axis 2: each listed gate reaches its verdict under bash -eo pipefail ────────────────
-# The gates run side by side (check.sh runs gates in parallel already); each one's rc lands in
-# its own file, and every PID is waited on.
-N=0; PIDS=""
+# The gates run side by side in a BOUNDED pool — check.sh's own worker rule (CYRIUS_CHECK_JOBS, else
+# half the online CPUs, capped at 8), not one process per listed gate — and a gate marked
+# `# check: serial` (a timing measurement check.sh runs alone) runs after the pool, alone, as check.sh
+# runs it. Each one's rc lands in its own file, and every PID is waited on. CHANGELOG [6.7.18]
+_jobs() {
+    _j="${CYRIUS_CHECK_JOBS:-}"
+    if [ -z "$_j" ]; then
+        _j=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+        case "$_j" in ''|*[!0-9]*) _j=2 ;; esac
+        _j=$((_j / 2))
+        if [ "$_j" -gt 8 ]; then _j=8; fi
+    fi
+    case "$_j" in ''|*[!0-9]*|0) _j=1 ;; esac
+    echo "$_j"
+}
+_running() {  # how many started pool gates have not written their rc yet
+    _r=0
+    for _n in $STARTED; do
+        if [ ! -f "$D/gate$_n.rc" ]; then _r=$((_r + 1)); fi
+    done
+    echo "$_r"
+}
+_run_one() {  # $1 = N, $2 = gate
+    grc=0; bash -eo pipefail "$2" > "$D/gate$1.out" 2>&1 < /dev/null || grc=$?; echo "$grc" > "$D/gate$1.rc"
+}
+JOBS=$(_jobs)
+N=0; PIDS=""; STARTED=""; : > "$D/serial.list"
 for g in $GATES; do
     N=$((N + 1))
     [ -f "$g" ] || continue
-    ( grc=0; bash -eo pipefail "$g" > "$D/gate$N.out" 2>&1 < /dev/null || grc=$?; echo "$grc" > "$D/gate$N.rc" ) &
-    PIDS="$PIDS $!"
+    if grep -q '^# check: serial' "$g"; then echo "$N $g" >> "$D/serial.list"; continue; fi
+    while [ "$(_running)" -ge "$JOBS" ]; do sleep 0.2; done
+    _run_one "$N" "$g" &
+    PIDS="$PIDS $!"; STARTED="$STARTED $N"
 done
 for p in $PIDS; do wait "$p" || true; done
+while read -r n g; do _run_one "$n" "$g"; done < "$D/serial.list"
 N=0
 for g in $GATES; do
     N=$((N + 1))
