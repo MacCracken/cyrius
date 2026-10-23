@@ -420,6 +420,9 @@ fn http_get_r(url) : Result {
     if (total == 0 - 2) { return Err(HttpOther); }
     if (total < 0) { return Err(HttpNetErr); }
     var resp = _http_parse_response(load64(&rb), total);
+    # 6.7.18: a refused response struct is Err(HttpOther) — it was read through (load64(0)).
+    # CHANGELOG [6.7.18]
+    if (resp == 0) { return Err(HttpOther); }
     var st = load64(resp);
     if (st < 200) { return Err(HttpNon2xx); }
     if (st >= 300) { return Err(HttpNon2xx); }

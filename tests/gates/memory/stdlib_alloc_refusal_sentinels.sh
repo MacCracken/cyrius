@@ -413,6 +413,102 @@ var ec = main();
 syscall(60, ec);
 CYR
 
+# ── the HTTP client's whole call (lib/http.cyr http_get_r), 6.7.18 ──
+# A forked child serves a canned 200 on a loopback listener, one connection per request, so its
+# own allocations never touch this process's count. http_get_r's allocations, in order: the URL
+# struct and its host copy (k=1, 2), the request slot (k=3), the request (k=4), the 64 KiB
+# receive buffer (k=5) and the response struct (k=6). Until 6.7.18 a refused response struct was
+# read through (load64(0): SIGSEGV) — k=6 is the row for that.
+cat > "$W/fi/http_probe.cyr" <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/http.cyr"
+include "rows.cyr"
+
+# A listener on 127.0.0.1 and a forked child answering `n` connections with a canned 200, each
+# after reading its request. Returns the port; the child's pid is at pid_out.
+fn _hp_serve(n, pid_out): i64 {
+    var lt, lfd = tcp_socket();
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    var st, sv = sock_listen(lfd, 16);
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    sys_getsockname(lfd, &sa, &sl);
+    var port = ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+    var pid = sys_fork();
+    if (pid == 0) {
+        # The child must never outlive a probe that died: it lets go of the gate's output pipe
+        # (whose reader waits for every writer) and gives up after 10 s with no connection.
+        sys_close(1);
+        sys_close(2);
+        sock_set_recv_timeout(lfd, 10, 0);
+        var i = 0;
+        var rq[2048];
+        while (i < n) {
+            var at, afd = sock_accept(lfd);
+            if (is_err_result(at) == 1) { sys_exit(0); }
+            if (is_err_result(at) == 0) {
+                var got = 0;
+                var done = 0;
+                while (done == 0 && got < 2000) {
+                    var r = _net_os_recv(afd, &rq + got, 2000 - got);
+                    if (r <= 0) { done = 1; }
+                    else {
+                        got = got + r;
+                        if (got >= 4 && memeq(&rq + got - 4, "\r\n\r\n", 4) == 1) { done = 1; }
+                    }
+                }
+                sock_send_all(afd, "HTTP/1.0 200 OK\r\n\r\nhi", 21);
+                sock_close(afd);
+            }
+            i = i + 1;
+        }
+        sys_exit(0);
+    }
+    sock_close(lfd);
+    store64(pid_out, pid);
+    return port;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var pid[8];
+    var port = _hp_serve(8, &pid);
+    var url = alloc(64);
+    memset(url, 0, 64);
+    memcpy(url, "http://127.0.0.1:", 17);
+    var e = fmt_int_buf(port, url + 17);
+    memcpy(url + 17 + e, "/", 1);
+
+    var k = 1;
+    while (k <= 4) {
+        _fi_arm(k);
+        var t0, v0 = http_get_r(url);
+        _refused("http_get_r url / slot / request", k, is_err_result(t0), 1);
+        k = k + 1;
+    }
+    _fi_arm(5);
+    var t5, v5 = http_get_r(url);
+    _refused("http_get_r receive buffer", 5, is_err_result(t5) == 1 && v5 == HttpOther, 1);
+    _fi_arm(6);
+    var t6, v6 = http_get_r(url);
+    _refused("http_get_r response struct", 6, is_err_result(t6) == 1 && v6 == HttpOther, 1);
+    _fi_arm(7);
+    var t7, v7 = http_get_r(url);
+    _served("http_get_r", 7, is_err_result(t7) == 0 && http_status(v7) == 200);
+    sys_kill(load64(&pid), 9);
+    sys_waitpid(load64(&pid), 0, 0);
+    return _rows_done();
+}
+var ec = main();
+syscall(60, ec);
+CYR
+
 # Compile and run one probe from $W/fi; leaves its row count in $_n (fails the gate on anything
 # else). Called directly, never in $(...), so a `fail` inside it ends the gate AND is printed.
 _run_probe() {
@@ -436,4 +532,6 @@ _run_probe ws_probe; nw=$_n
 [ "$nw" -ge 12 ] || fail "only $nw rows ran in ws_probe (floor 12)"
 _run_probe wss_probe; ns=$_n
 [ "$ns" -ge 15 ] || fail "only $ns rows ran in wss_probe (floor 15; 11 until 6.6.19 added the four header-lookup rows)"
-echo "PASS: stdlib_alloc_refusal_sentinels ($n + $nw ws + $ns ws_server rows: every refused alloc returned its sentinel, every count exact)"
+_run_probe http_probe; nh=$_n
+[ "$nh" -ge 7 ] || fail "only $nh rows ran in http_probe (floor 7)"
+echo "PASS: stdlib_alloc_refusal_sentinels ($n + $nw ws + $ns ws_server + $nh http rows: every refused alloc returned its sentinel, every count exact)"
