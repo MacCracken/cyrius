@@ -2,7 +2,7 @@
 # tests/gates/frontend/unary_constant_fold.sh — 6.7.9
 #
 # UNARY `-` / `~` ON A CONSTANT OPERAND BINDS TIGHTER THAN A LITERAL OPERATOR AFTER IT. The run-time
-# constant fold (`_cfo` / `_cfv` / `_cfp`, parse_expr.cyr) folds `K op L` when its left operand was a
+# constant fold (`_cfo` / `_cfv` / `_cfp`, parse/expr.cyr) folds `K op L` when its left operand was a
 # constant factor (a literal, an enum constant or a `const`, 0 - 0xFFFF) and L an integer literal,
 # rewinding the code to the constant. Unary `-` (on anything but a literal) and unary `~` parsed their
 # operand as a factor, which armed the fold with the OPERAND's value, and returned still armed: `-K + 10`

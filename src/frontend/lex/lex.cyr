@@ -221,7 +221,7 @@ fn FM_FILEID(S, expanded_line): i64 {
 # filename scratch at S + 0x721000) of the span holding `expanded_line`, or -1 when no span does
 # (an empty map, or a line past an overflowed one); `_fm_site_line` receives the line within that
 # file (the expanded line itself when -1). The bounds-checked mode's site names its file and line
-# this way (parse_expr.cyr `_bck_file`); FM_LOOKUP prints the same answer.
+# this way (parse/expr.cyr `_bck_file`); FM_LOOKUP prints the same answer.
 var _fm_site_line = 0;
 fn FM_SITE(S, expanded_line): i64 {
     _fm_site_line = expanded_line;
@@ -1566,7 +1566,7 @@ fn NPOS_GUARD(S, need): i64 {
 }
 
 # ⛔ 6.7.8 — `dyn` IS A RESERVED WORD, token 173 (the checked trait object: `o: dyn Show`, the user's
-# decision 2026-10-07). It is counted here so the token fold (`_dyn_fold`, parse_types.cyr) — which
+# decision 2026-10-07). It is counted here so the token fold (`_dyn_fold`, parse/types.cyr) — which
 # turns `dyn Show` into ONE identifier token naming its struct — runs only for a unit that spells
 # it: every other program's tokens are untouched. One call from LEXID (the cybs reference ceiling).
 # CHANGELOG [6.7.8]
@@ -2750,7 +2750,7 @@ fn LEX(S): i64 {
                                                                                                                                     # Token-30 value = (pool offset << 32) | length. str_data is 2 MB (offsets and
                                                                                                                                     # lengths both need 21 bits); the old 16-bit length field OR-ed a >= 64 KB
                                                                                                                                     # literal's length INTO the offset, so the literal read from its 2nd byte.
-                                                                                                                                    # Decoders: parse_expr.cyr ESADDR, parse.cyr #assert/#pe_import, parse_fn.cyr
+                                                                                                                                    # Decoders: parse/expr.cyr ESADDR, parse.cyr #assert/#pe_import, parse/fn.cyr
                                                                                                                                     # #deprecated. CHANGELOG [6.6.4]
                                                                                                                                     var eline = GCLINE(S);
                                                                                                                                     SCLINE(S, sline);
@@ -2792,7 +2792,7 @@ fn LEX(S): i64 {
     }
     _lex_eof_tok(S, bl);
     # 6.6.5 — one pass over the finished token stream to record which files declared
-    # `private`, BEFORE pass 1 stamps anything. See _PRIV_PRESCAN (src/frontend/parse.cyr)
+    # `private`, BEFORE pass 1 stamps anything. See _PRIV_PRESCAN (src/frontend/parse/parse.cyr)
     # for why this cannot be done during the walk. CHANGELOG [6.6.5]
     _PRIV_PRESCAN(S);
     return 0;

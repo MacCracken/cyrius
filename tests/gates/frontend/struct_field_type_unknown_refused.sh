@@ -62,7 +62,7 @@
 # C3's four refusal rows and the vb-vq row RED (vb prints 16, vu 8: built; measured). Drop `_field_scalar_width` from the
 # ladders -> E (i16v8) and F RED (rc 0). Drop the latch clear -> G RED (one error). Drop the
 # `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139); `_bare_vec_field`'s (6.7.13) -> j4 / j5 RED. Make `_fsc_src`
-# (parse_decl.cyr) return 0 -> K RED (rc 0).
+# (parse/decl.cyr) return 0 -> K RED (rc 0).
 # V (6.7.11; each a one-edit copy of the tree, its compiler built by the fixed one, this gate run from that copy
 # with CYCC= it, 2026-10-14; each measured):
 #   MV1 `_vec_ann_chk` returning at once -> every V1-V4, V6 and V7 row RED (each builds); V5 green

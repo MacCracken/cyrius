@@ -15,9 +15,9 @@
 # THE FIX. Every statement-terminator site — the 46 literal `;` sites in six frontend files and the 25 `term` sites
 # the assignments share with the classic-for step — steps only a token that is not a recovery point (`_expect_step`,
 # src/common/util.cyr: a `}`, EOF, a `;` or a statement keyword stays for the block loop / the statement resync).
-# `_stmt_resync` (src/frontend/parse.cyr) first steps through the `}` of each `{` the statement opened and left
+# `_stmt_resync` (src/frontend/parse/parse.cyr) first steps through the `}` of each `{` the statement opened and left
 # unclosed (`_resync_close`) — unless the statement ended at its own `;`. A zone `var` entry and a const end at a
-# declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse_decl.cyr). The classic-for header
+# declaration keyword beginning a later line (`_gv_entry_cut`, src/frontend/parse/decl.cyr). The classic-for header
 # (`_for_semis` / `_for_empty`), a dyn source's extent (`_dyn_ext`), a destructure's call check (`_dt_rhs_end`), a
 # whole call's end (`_call_ends_at`) and an `asm { }` body (`_asm_bad`) read a missing `;` / `}` as that, once.
 # The `undefined variable` rows pin the name's own column (6.7.17, the user's D34; re-derived from the compiler — they
@@ -26,10 +26,10 @@
 #   S2  the filing's s2 verbatim (`var a = 1` then `var b = zz;`): the `;`, then `zz`
 #   V   a `var` statement's `;` (PARSE_VAR): V1-V4 before an if / while / for / return, V5 before a closure, V6
 #       before the fn's `}` (the next fn not "inside" it)
-#   P   a statement's `;` (src/frontend/parse.cyr): P1 an assignment before the fn's `}`, P2 / P3 break / continue
+#   P   a statement's `;` (src/frontend/parse/parse.cyr): P1 an assignment before the fn's `}`, P2 / P3 break / continue
 #       before the loop's `}`, P4 a method call and P5 an explicit generic call before a `return`
 #   S1  the filing's s1 verbatim (`return 1 }`): one error, the next fn not "inside" it
-#   R   a `return`'s `;` (src/frontend/parse_fn.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
+#   R   a `return`'s `;` (src/frontend/parse/fn.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
 #       R3 a call's return before the fn's `}`
 #   F   a C-style `for` header missing one of its two `;`: F1 the condition's, F2 the init's, F3 an assignment
 #       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's;
@@ -72,12 +72,12 @@
 # is defined inside fn 'f'"); K green. On bc51aa5c6 (before `_resync_close`) RED: B1 B2 (the stray `{`'s `}` closed the
 # fn: "unexpected ';'" / "unexpected number 4", "return outside a fn body"). `_resync_close` without its own-`;`
 # exemption -> RED K3 ("expected '}', got end of file"). On 99355d191 (before parse.cyr's sites) RED: P1-P5.
-# On 11bbb4141 (before parse_fn.cyr's sites) RED: S1 R1-R3. On b91579399 (before `_for_semis`) RED: F1-F6 (the
+# On 11bbb4141 (before parse/fn.cyr's sites) RED: S1 R1-R3. On b91579399 (before `_for_semis`) RED: F1-F6 (the
 # init's resync ran into the condition, the step replayed from the token after the missing `;`, the step skip ran
 # to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
-# parse_types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
-# On c3dea492b (before parse_expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
-# On 063eeadf7 (before parse_decl.cyr's `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
+# parse/types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
+# On c3dea492b (before parse/expr.cyr's sites) RED: E1 E2. On 958534651 (before parse.cyr's `term` sites) RED: T1 T2.
+# On 063eeadf7 (before parse/decl.cyr's `term` sites) RED: T3-T5. On ed2f66ae0 (before `_dyn_asg`'s) RED: D3 D4.
 # On 36c6cb47f (before `_dt_rhs_end`) RED: M1 M2 ("multi-value destructure needs a call on the right-hand side").
 # On 82bef3a5b (before `_gv_entry_cut`) RED: S3 Z1 Z2 Z4-Z7 (the entry ran to the next depth-0 `;`: the fns, the
 # struct, `var h` swallowed, their errors never reported); Z3 ZA green. On 1094715eb (before `_cst_skip_decl`'s cut)
@@ -156,7 +156,7 @@ accept() {
 
 UZ="undefined variable 'zz' (missing include or enum?)"
 
-# ---- V: a `var` statement's `;` (PARSE_VAR and the declaration sites, src/frontend/parse_decl.cyr)
+# ---- V: a `var` statement's `;` (PARSE_VAR and the declaration sites, src/frontend/parse/decl.cyr)
 row S2 "the filing's s2 verbatim: var a = 1 then var b = zz;" 'fn main(): i64 {
 var a = 1
 var b = zz;
@@ -195,7 +195,7 @@ syscall(60, f() + g());
 ' "error:<source>:1:25: expected ';', got '}'
 error:<source>:2:22: $UZ"
 
-# ---- P: a statement's `;` (_PARSE_STMT_IMPL and its arms, src/frontend/parse.cyr)
+# ---- P: a statement's `;` (_PARSE_STMT_IMPL and its arms, src/frontend/parse/parse.cyr)
 row P1 "an assignment before the fn's }" 'fn f(): i64 { var x = 0; x = 5 }
 fn g(): i64 { return zz; }
 syscall(60, f() + g());
@@ -236,7 +236,7 @@ syscall(60, f());
 ' "error:<source>:4:5: expected ';', got return
 error:<source>:4:12: $UZ"
 
-# ---- R: a `return`'s `;` (PARSE_RETURN's arms, src/frontend/parse_fn.cyr)
+# ---- R: a `return`'s `;` (PARSE_RETURN's arms, src/frontend/parse/fn.cyr)
 row S1 "the filing's s1 verbatim: return 1 } — one error" 'fn h(): i64 { return 1 }
 fn main(): i64 { return 2; }
 syscall(60, main());
@@ -264,7 +264,7 @@ syscall(60, f() + g());
 ' "error:<source>:2:27: expected ';', got '}'
 error:<source>:3:22: $UZ"
 
-# ---- F: a C-style `for` header missing one of its two `;` (PARSE_FOR, src/frontend/parse_ctrl.cyr)
+# ---- F: a C-style `for` header missing one of its two `;` (PARSE_FOR, src/frontend/parse/ctrl.cyr)
 FH='fn f(): i64 {
     var a = 0;
     var b = 0;
@@ -309,7 +309,7 @@ row F11 "an empty init" "${FH}    for (; b < 3; b = b + 1) { b = zz; }
 ${FT}" "error:<source>:4:10: $FE
 error:<source>:4:36: $UZ"
 
-# ---- D: a `dyn` initializer's `;` (src/frontend/parse_types.cyr)
+# ---- D: a `dyn` initializer's `;` (src/frontend/parse/types.cyr)
 DH='trait Show { fn show(self): i64; }
 struct P { a; b; }
 impl Show for P { fn show(self): i64 { return self.a; } }
@@ -360,7 +360,7 @@ syscall(60, f());
 error:<source>:8:9: $DF
 error:<source>:9:12: $UZ"
 
-# ---- E: a subscript store's `;` (src/frontend/parse_expr.cyr)
+# ---- E: a subscript store's `;` (src/frontend/parse/expr.cyr)
 row E1 "a[0] = 1 before the fn's }" 'fn f(): i64 {
     var a: i64[4];
     a[0] = 1 }
@@ -479,7 +479,7 @@ syscall(60, g());
 error:<source>:4:22: $UZ"
 
 # ---- Z: the declaration zone — a `var` entry missing its `;` ends at the declaration after it (`_gv_entry_cut`,
-# src/frontend/parse_decl.cyr), so pass 1 / pass 2 register and parse what follows
+# src/frontend/parse/decl.cyr), so pass 1 / pass 2 register and parse what follows
 row S3 "the filing's s3 verbatim: var g = 1 then two fns" 'var g = 1
 fn f1(): i64 { return zz1; }
 fn f2(): i64 { return zz2; }
@@ -562,7 +562,7 @@ syscall(60, f());
 ' "error:<source>:4:7: cannot assign to const 'N' - a const has no storage (declare it \`var\` to change it)
 error:<source>:5:13: $UZ"
 
-# ---- A: an `asm { }` body missing its `}` (`_asm_bad`, src/frontend/parse.cyr)
+# ---- A: an `asm { }` body missing its `}` (`_asm_bad`, src/frontend/parse/parse.cyr)
 row A1 "asm { 0x90; then the next asm block" 'fn f(): i64 {
     asm { 0x90;
     asm { 0x90; }

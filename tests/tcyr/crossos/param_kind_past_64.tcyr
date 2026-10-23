@@ -7,7 +7,7 @@
 # landed on parameter 2 and 67's `: Str` bit on parameter 3 — so a struct local passed to 2 went by
 # ADDRESS and a string literal passed to 3 was wrapped into a Str (the callee read garbage); a
 # struct at ordinal 62 was never address-passed (`_smask_args` masks bit 62, the self-by-value
-# flag). Ordinals past a mask now live in a per-fn overflow row (parse_fn.cyr `_pmw`). No
+# flag). Ordinals past a mask now live in a per-fn overflow row (parse/fn.cyr `_pmw`). No
 # parameter-count limit was added — the compiler takes any number of parameters.
 # CROSS-HOST: register vs stack argument passing differs per ABI (SysV 6 int regs, Win64 4, aarch64
 # 8; a value-form vector rides an XMM / V register, or a pointer on Win64).

@@ -149,7 +149,7 @@
 # must still open it.
 #
 # One more change was made in the same pass and it is NOT gated here, deliberately:
-# `_ra_frame_trim`'s unaligned byte-pattern scan (parse_fn.cyr) now refuses any window
+# `_ra_frame_trim`'s unaligned byte-pattern scan (parse/fn.cyr) now refuses any window
 # overlapping a switch jump TABLE. Measured with a mutant that removes the guard
 # (`_sw_tbl_hits` bypassed): 352 corpus files compiled by both, **0 binaries differ**.
 # It rejects no real match today — it is hardening against a false match on table DATA,

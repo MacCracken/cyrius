@@ -1016,7 +1016,7 @@ fn cx_run(code, code_len): i64 {
         elif (op == 65) { cx_reg_set(ra, load64(_cx_addr(cx_reg_get(rb), 8))); }
         elif (op == 66) { store8(_cx_addr(cx_reg_get(ra), 1), cx_reg_get(rb) & 0xFF); }
         elif (op == 67) { store64(_cx_addr(cx_reg_get(ra), 8), cx_reg_get(rb)); }
-        # v5.9.40 — sub-8-byte struct field load (parse_decl.cyr)
+        # v5.9.40 — sub-8-byte struct field load (parse/decl.cyr)
         # closes Phase 2c #2: cyrius core has only load8/load64
         # primitives, so wider loads compose from byte loads.
         elif (op == 68) {

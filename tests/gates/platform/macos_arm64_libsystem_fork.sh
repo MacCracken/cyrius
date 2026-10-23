@@ -36,7 +36,7 @@
 #           exactly the errno path
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-PE="$ROOT/src/frontend/parse_expr.cyr"
+PE="$ROOT/src/frontend/parse/expr.cyr"
 AE="$ROOT/src/backend/aarch64/emit.cyr"
 ME="$ROOT/src/backend/macho/emit_arm64.cyr"
 SA="$ROOT/lib/syscalls_aarch64_linux.cyr"

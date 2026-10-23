@@ -172,7 +172,7 @@ exits a15 3   "A15: a statement-start if is still the if statement" "fn f(c): i6
 
 
 # 6.7.13 (issues/archived/2026-10-14-dereference-as-if-expression-branch.md) — A STRUCT DEREFERENCE AS A BRANCH IS A STRUCT
-# VALUE (`_ie_deref_sid`, parse_ctrl.cyr; the declaration zone's `_gz_bty` reads it alike). Over 8 B it is refused
+# VALUE (`_ie_deref_sid`, parse/ctrl.cyr; the declaration zone's `_gz_bty` reads it alike). Over 8 B it is refused
 # as any struct value over 8 B is — branch on the pointer (the user's D1 (a), 2026-10-15); through 6.7.12 each D row
 # compiled (an integer branch, the word `*p` read) and `var v: S = if (c) { *p } else { *q };` SIGSEGV'd.
 DS='struct P16 { a; b; }\nstruct P24 { a; b; c; }\nstruct W24 { k; p: *P24; }\nvar G16 = P16 { 5, 6 };\nfn gp16(): *P16 { return &G16; }\n'

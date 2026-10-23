@@ -64,7 +64,7 @@
 # (exit 139 before), D18 a `**Pt` into `*Q` refused by name. Mutation (scratch tree, measured 2026-10-16):
 #   `_dlo_ppsid` answers 0                             -> RED D17 (exit 139) D18 (compiled)
 #
-# 6.7.8 — T IS INFERRED THROUGH A GENERIC STRUCT PARAMETER (`_gs_carrier`, parse_fn.cyr):
+# 6.7.8 — T IS INFERRED THROUGH A GENERIC STRUCT PARAMETER (`_gs_carrier`, parse/fn.cyr):
 # R18b `gx(b)` flips from a refusal to an acceptance (exit 8, control `gx<Pt>(b)`). What stays: an
 # `x: T` parameter binds T before the struct carrier does (R18c — the literal's i64, so the
 # Box<Pt> is still refused against the base) and a nested `Box<Pair<T>>` binds nothing (R18d). The
@@ -171,7 +171,7 @@
 # issues/archived/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): `ri(s)` with `p: *i64` / `*u8` /
 # `**i64` / `*f64`, s an inline local (8 / 16 B), a by-value parameter, an inline global (a fn, top level), a capture,
 # wrapped, a `*T` with T = i64, a method's parameter — "cannot pass 's' to a parameter that is not a pointer to its
-# struct type in a call to 'ri' - pass &s for its address" (`_sarg_struct_other`, parse_fn.cyr); P1 the filed repro
+# struct type in a call to 'ri' - pass &s for its address" (`_sarg_struct_other`, parse/fn.cyr); P1 the filed repro
 # verbatim, P2-P16, P17 a `*Str` keeps 6.7.3's refusal; PK1 a handle, `&s`, a `*Pt`, `*Pt <- s`, an untyped parameter and `rg(s)` pass; PK2 a `Str` compiles.
 # Mutations (each a scratch copy of the tree with the one change, this gate run with its compiler; 2026-10-15):
 #   the tree before it (8abca341)                      -> RED 16: P1-P16 (each compiled)
@@ -185,7 +185,7 @@
 # pointer-parameter-pushes-first-word.md; D5 (a) and 6.7.13's D31 already state the rule): a struct-typed field, a by-value
 # struct call, a method / operator result, a `*S` / `**S` dereference — wrapped, 8 B, at top level, into a method's,
 # a generic's, a `*u8` / `**i64` parameter, in a closure — "cannot pass 's' to a parameter that is not a pointer to its
-# struct type in a call to 'ri' - a struct value is no address", once (`_sarg_sval_ptr`, parse_fn.cyr); V1 the filed
+# struct type in a call to 'ri' - a struct value is no address", once (`_sarg_sval_ptr`, parse/fn.cyr); V1 the filed
 # repro verbatim (one error in each fn), V2-V17; VK1 / VK2 an address, a `*Pt`, a `*Pt` field, a `: *Pt` call and
 # method, a `*i64` dereference pass; VK3 a `Str` field compiles.
 # Mutations (2026-10-17, the gate run with each compiler):
@@ -202,7 +202,7 @@
 #
 # 6.7.15 (issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md) — A CALL ABOVE A FN WHOSE
 # PARAMETER NAMES A STRUCT DECLARED BELOW THAT FN reads the signature the definition reads (`_psig_reread`,
-# src/frontend/parse_fn_def.cyr): FB1, the filed repro 2 verbatim, `h(t)` into `x: *R2` passes `&t` (77; refused "cannot
+# src/frontend/parse/fn_def.cyr): FB1, the filed repro 2 verbatim, `h(t)` into `x: *R2` passes `&t` (77; refused "cannot
 # pass 't' ... pass &t" before); FB2, another struct into such a `x: R2`, is refused as it is with R2 declared above
 # (compiled clean before: pass 1 recorded no struct, so nothing was checked); FB3, a redefined callee whose FIRST
 # definition names a struct below it, checks against its LAST definition's record (7). The run-time rows (8 / 16 / 24
@@ -287,7 +287,7 @@
 # `**S`, a `*Str` into a `Str`, untyped, `0`, a dyn — PV / PX / PVK on the x86_64, aarch64, cx and PE compilers; the
 # runtime half is crossos/struct_arg_type_accepted.tcyr's d10_* / d11_* rows. Mutations (2026-10-22, each a scratch
 # copy of the tree with the one change, its compiler built from it, the gate run from the copy):
-#   the tree before it (e65604d5d's parse_types.cyr)    -> RED 35: R4b B4 D11 PV1-PV13 but PV12 (a captured `*Pt`:
+#   the tree before it (e65604d5d's parse/types.cyr)    -> RED 35: R4b B4 D11 PV1-PV13 but PV12 (a captured `*Pt`:
 #                                                          6.7.3's capture arm refused it already) PX1-PX11b
 #   `_pa_bv` answering 0 (no by-value arm)              -> RED 19: R4b B4 D11 PV1-PV13 but PV12, PX4 PX5 PX7b PX8
 #   the depth test returning 0 (no `_pa_derr`)          -> RED 20: PX1-PX11b
@@ -305,7 +305,7 @@
 #   `_ppd_zval` answering 0                             -> RED 1: PY8
 #   real tree                                           -> GREEN (242 refusal rows — floor 242 — and 49 acceptance rows)
 # 6.7.17 (D107's ASSIGNMENT twin, covered by D107) — `u = &h;` / `v = pp;` / `pp = u;` into a name declared a struct
-# pointer of another depth (`_ppd_asg`, parse_types.cyr), "cannot assign 'u: *Pt' from '&h', a '**Pt' - a pointer of
+# pointer of another depth (`_ppd_asg`, parse/types.cyr), "cannot assign 'u: *Pt' from '&h', a '**Pt' - a pointer of
 # another depth": PZ1-PZ7, PZK1. Mutations (2026-10-22, the same method):
 #   the tree before it (the integration head)           -> RED 7: PZ1-PZ7 (compiled; PZ1 exited 88 where 6 is right)
 #   `_ppd_asg` answering 0                              -> RED 7: PZ1-PZ7
@@ -1342,7 +1342,7 @@ fn go(): i64 { var l: P3; l = GPQ; return l.x; } syscall(60, go());"
 
 echo "=== 6.7.16 (D97): a pointer to another struct into a \`*S\` / \`**S\` parameter (x86_64, aarch64, cx, PE) ==="
 # issues/archived/2026-10-20-pointer-to-other-struct-argument-unchecked.md — refused at the argument in 6.7.3's words (`_pa_chk`,
-# parse_fn.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
+# parse/fn.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
 accept4() {  # $1 label  $2 source  $3 expected x86_64 exit
     printf '%s' "$2" > "$D/k4.cyr"
     naccept=$((naccept+1))
@@ -1501,7 +1501,7 @@ accept4 "PDK5 an if-expression with a 0 branch" \
     "${PD}fn go(): i64 { var p = Pt { 1, 7 }; var c = 1; return nc4(if (c == 1) { &p } else { 0 }); } syscall(60, go());" 7
 
 echo "=== 6.7.17 (D10 / D11): a pointer to another struct into a by-value struct, a pointer of another depth (x86_64, aarch64, cx, PE) ==="
-# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md rows A1 / A2 — `_pa_chk` (parse_types.cyr)
+# issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md rows A1 / A2 — `_pa_chk` (parse/types.cyr)
 # now reads a BY-VALUE struct parameter as depth 0 (it takes a `*S` of its own struct: B7-1b's copy) and refuses a
 # pointer whose stars differ from the parameter's (`_pa_derr`, both types named); `&h` of a handle is a `**S`
 # (`_pa_hamp`). PV1 / PX1 / PX2 the filed repros verbatim.
@@ -1632,7 +1632,7 @@ accept4 "PVK5 an untyped pointer, alloc(), 0" \
     "${PV}fn go(): i64 { var p = Pt { 1, 2 }; var u = &p; var a = alloc(16); store64(a + 8, 3); return nc4(u) + nc4(a) + bp(u) + n2(&u) + n2(0); } syscall(60, go());" 11
 
 # 6.7.17 (D107, the user's decision, 2026-10-22: "refuse it, naming both pointer types, as an argument of another depth
-# is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION (`_ppd_val`, parse_types.cyr; the zone's
+# is") — A POINTER OF ANOTHER DEPTH INTO A STRUCT-POINTER DECLARATION (`_ppd_val`, parse/types.cyr; the zone's
 # `_ppd_zval`): "cannot initialise 'u: *Pt' from '&h', a '**Pt' - a pointer of another depth". PY1 the vala review's
 # blocked repro verbatim (`u.x` read the handle's slot as the Pt: exit 0 where 3 is right); PY2-PY12 every source and
 # path, both ways; PYK1 what stays: the annotation's depth (to any struct), `*pp`, `&h` into `**Pt`, untyped, `0`,

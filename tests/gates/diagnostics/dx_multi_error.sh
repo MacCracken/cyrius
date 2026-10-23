@@ -334,7 +334,7 @@ ordered_legs ZO13 1 'struct Q { a; b; }\nfn take(x: i64): i64 { return x; }\nvar
 # KH1-KH6 (6.7.17 review, met) — A BLOCK HEAD'S MISSING `)` IS ONE ERROR. The `)` check stepped one token whatever it
 #     was, so `if (x {` stepped the block's `{`: its `}` closed the enclosing fn, then "return outside a fn body", every
 #     later fn unparsed ("undefined function 'main'", "refusing to emit binary"). A `{` there is the block's now
-#     (parse_ctrl.cyr `_hdr_rparen`). KH1 `if`, KH2 `elif`, KH3 `while`, KH4 `switch`, KH5 an if expression; KH6 the
+#     (parse/ctrl.cyr `_hdr_rparen`). KH1 `if`, KH2 `elif`, KH3 `while`, KH4 `switch`, KH5 an if expression; KH6 the
 #     statement after the block still reports its own. RED before the fix: KH1-KH6 (2-3 errors and the warning).
 KM='}\nfn main(): i64 { return f(1); }\nvar r = main();\n'
 KP="expected ')', got '{'"

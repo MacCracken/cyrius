@@ -4,7 +4,7 @@
 # A CLOSURE'S CAPTURE OF A NARROW SCALAR LOCAL (`i8` / `i16` / `i32`, `u8` / `u16` / `u32`) READS ITS VALUE
 # (docs/development/issues/archived/2026-10-14-closure-capture-of-narrow-local-reads-unextended-word.md). A narrow local's
 # frame slot holds its value only in its low 1 / 2 / 4 bytes; the closure's env copy (`_cl_emit_cap_word`,
-# src/frontend/parse_expr.cyr) took the slot's whole raw word, and the closure reads the env word whole
+# src/frontend/parse/expr.cyr) took the slot's whole raw word, and the closure reads the env word whole
 # (`_cl_cap_load`, ELOAD64). So a captured `i8` holding -3 read 253 (65533 / 4294967293 at 16 / 32 bits) on every
 # target, and on aarch64 / cx a positive value read the stale upper bytes a previous call left in the slot. Measured
 # on the filed repro (expected `-3 -3 -3 7 7`), 6.6.0 through the 6.7.13 lane before this fix:

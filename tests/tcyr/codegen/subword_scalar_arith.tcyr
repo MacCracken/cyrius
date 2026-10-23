@@ -5,7 +5,7 @@
 # 48 (= 40 + 2*4), i16 gave 44, and `var c: i32=30; var d=40; c + d` gave 190. Root
 # cause: PARSE_FACTOR's local-load set the pointer scale (SPSC) to the scalar's byte
 # width `lt`, which is only correct for a pointer-to-lt element — a plain scalar's
-# arithmetic scale must be 1. Fixed in parse_expr.cyr (scalar branch → SPSC 1).
+# arithmetic scale must be 1. Fixed in parse/expr.cyr (scalar branch → SPSC 1).
 # i8 passed by coincidence (scale 1 == no-op); i64 by scale 0; multiplication and a
 # scalar on the RIGHT were always immune; i32 PARAMS were immune (different load path).
 # Pre-existing since ≥v5.11.69; latent because sub-i64 locals rarely sit left of +/-.

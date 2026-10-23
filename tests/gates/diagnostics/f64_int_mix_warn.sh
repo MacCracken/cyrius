@@ -1,6 +1,6 @@
 #!/bin/sh
 # 6.6.8 — an INT-left arithmetic op with an f64 right operand WARNS (kind 2 of
-# _FLT_TYPE_WARN, src/frontend/parse_expr.cyr).
+# _FLT_TYPE_WARN, src/frontend/parse/expr.cyr).
 #
 # ⛔ THE DEFECT. Binary-op typing is left-operand driven. An f64 LEFT operand routes to the
 # SSE/FP emitters, and v6.4.56's kind-1 warning catches an f64-left op with a non-f64 right.
@@ -416,7 +416,7 @@ n=$(count "$K3"); [ "$n" = 3 ] || { bad "axis 12: kind-3 warning count $n, want 
 for want in 8 13 18; do
     grep "$K3" "$W/e" | grep -q ">:$want:" || bad "axis 12: no kind-3 warning at line $want"
 done
-# the for-step replay re-judges too (parse_ctrl.cyr's plain-step `_asg_rejudge` calls), for a
+# the for-step replay re-judges too (parse/ctrl.cyr's plain-step `_asg_rejudge` calls), for a
 # local and a global: a float step flags `-g` / `-G3`, an int step clears `-h` / `-G4`.
 cat > "$W/a12s.cyr" <<'EOF'
 include "lib/syscalls.cyr"

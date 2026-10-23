@@ -8,7 +8,7 @@
 # compiles their file — the arm64 Mach-O writer (15.8 KB, 43 % of the dead bytes) compiled into
 # every x86-family compiler, a TS JSX walker superseded at v5.7.6, x86-named stubs in the aarch64
 # and cx backends whose comments claimed parse.cyr needed them (no shared file had referenced them
-# for releases), and a helper only the cx fork calls living in shared parse_fn.cyr. None of it was
+# for releases), and a helper only the cx fork calls living in shared parse/fn.cyr. None of it was
 # a bug a test could see; all of it was something a reader had to wade through and trust.
 #
 #   axis 1  every unreachable fn DEFINED UNDER src/, in each of the 7 forks, is on that fork's

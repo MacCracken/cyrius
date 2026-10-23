@@ -8,7 +8,7 @@
 # address", a `: Pq` return took no hidden result pointer (139 / cx 0 or 254 / PE 5), an untyped `var t = mk(10);` was
 # "no struct type in scope for 't'", and a struct named like a vector was the vector ("vector return type does not
 # match the declared type"). Once every struct is registered, a signature naming one registered after it is read again
-# (`_psig_reread`, src/frontend/parse_fn_def.cyr). Filed:
+# (`_psig_reread`, src/frontend/parse/fn_def.cyr). Filed:
 #   docs/development/issues/archived/2026-10-17-forward-call-struct-parameter-of-struct-declared-below-fn.md
 #   docs/development/issues/archived/2026-10-17-forward-call-struct-return-of-struct-declared-below-fn.md
 #

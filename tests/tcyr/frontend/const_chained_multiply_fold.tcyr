@@ -4,7 +4,7 @@
 # e.g. 320*200*4 → 800). Root cause: the runtime-EIMUL path in PARSE_EXPR left
 # _cfo set after PARSE_FACTOR re-armed it on a const RHS, so the next `*`
 # const-folded off the stale RHS and rewound the code. Affected ALL targets
-# (the report's "agnos-only" was a misdiagnosis). See parse_expr.cyr.
+# (the report's "agnos-only" was a misdiagnosis). See parse/expr.cyr.
 include "lib/assert.cyr"
 
 enum Dim { A = 320; B = 200; C = 7; }
@@ -71,7 +71,7 @@ fn main(): i64 {
     #
     # These assert the MECHANISM across every PEXPR-tier operator, not one of them.
     # Mutation-proven: restore any `_cfo = 0;` to before its PARSE_TERM call in
-    # parse_expr.cyr and the matching line here goes red.
+    # parse/expr.cyr and the matching line here goes red.
     assert_eq(1 - 2 + 3, 2, "neg intermediate then + (the .80 repro)");
     assert_eq(2 - 5 + 10, 7, "neg intermediate then + (larger)");
     assert_eq(0 - 1 + 3, 2, "0-1 then +");

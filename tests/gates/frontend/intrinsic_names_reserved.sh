@@ -2,7 +2,7 @@
 # tests/gates/frontend/intrinsic_names_reserved.sh — 6.6.20
 #
 # The identifier-spelled intrinsics — `sizeof`, `mulh64` (_is_ident_intrinsic, parse.cyr) and
-# `fncall0`..`fncall8` (_IS_FNCALL_NAME, parse_expr.cyr) — are RESERVED NAMES. They lex as
+# `fncall0`..`fncall8` (_IS_FNCALL_NAME, parse/expr.cyr) — are RESERVED NAMES. They lex as
 # plain IDENTs and are lowered by NAME at the call, so they sit in neither of util.cyr's
 # reserved tables and nothing refused them as a declaration. Measured before 6.6.20:
 #   * `fn mulh64(a, b) { return 77; }` compiled (rc 0, the fn "unreachable") and
@@ -41,14 +41,14 @@
 #   * parse.cyr _rsv_in_fnptr: `return 0;` first          -> axis 3/4 RED (lib/fnptr.cyr refused).
 #   * parse.cyr _rsv_in_fnptr: `return 1;` first          -> axis 1 + 3 RED (fc*_fn, myptr, notfnptr,
 #     user_beside_lib and fnptr_entry all compile; 52 RED).
-#   * parse_fn_def.cyr: the fn-name call AFTER `_mod_name_intern` moved BEFORE it -> axis 4 RED (impl
+#   * parse/fn_def.cyr: the fn-name call AFTER `_mod_name_intern` moved BEFORE it -> axis 4 RED (impl
 #     method `sizeof` refused).
 #   * parse.cyr _RSV_INTRINSIC_DECL: the `TOKTYP(S, ti) != 2` guard dropped -> the three
 #     number-as-a-name rows RED (rc 139: the number was read as a name-pool offset).
-#   * parse_fn_def.cyr _tl_use: the _RSV_INTRINSIC_DECL call dropped -> the four use_* rows RED, 14
+#   * parse/fn_def.cyr _tl_use: the _RSV_INTRINSIC_DECL call dropped -> the four use_* rows RED, 14
 #     assertions (use_mh / use_mh_top compile and run 2, use_fc compiles and SIGSEGVs, use_sz is
 #     only the bare `expected identifier` parse error).
-#   * parse_types.cyr PARSE_ENUM_DEF: the _RSV_INTRINSIC_DECL call dropped -> the six en_* rows RED,
+#   * parse/types.cyr PARSE_ENUM_DEF: the _RSV_INTRINSIC_DECL call dropped -> the six en_* rows RED,
 #     24 assertions (each compiles rc 0 and emits a binary).
 #   Re-measured with the enum rows: refusal disabled 162 RED (= the 6.6.19 compiler); exemption
 #   never / always 17 / 52; _tl_use call dropped 14.

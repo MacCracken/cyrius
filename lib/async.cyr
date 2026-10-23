@@ -1367,7 +1367,7 @@ fn async_write_unlock(lk): i64 {
 # awaited (or spawned + run) — matching the cooperative runtime above, where a
 # Future is exactly a task with its arguments bundled in.
 #
-# The argc word carries two compiler-set markers (src/frontend/parse_fn.cyr
+# The argc word carries two compiler-set markers (src/frontend/parse/fn.cyr
 # `_async_argc_word`; the compiler and this file ship in LOCKSTEP):
 #   FUT_MEMO (256) — a compiler-built PLAIN Future, laid out
 #                    `[fp, argc|256, arg0 … arg{n-1}, done, value]`. It runs its body ONCE;

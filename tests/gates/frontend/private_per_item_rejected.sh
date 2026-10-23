@@ -3,7 +3,7 @@
 # reinterpreted as a file-level declaration.
 #
 # THE DEFECT, twelve releases live. `private` flips the FILE it sits in (`_TL_VIS`,
-# src/frontend/parse.cyr) — deliberately, because a running per-item flag would leak into every
+# src/frontend/parse/parse.cyr) — deliberately, because a running per-item flag would leak into every
 # file included after it. But the per-item spelling `private fn h(): i64 { ... }` parsed with
 # **no diagnostic** and privatised the ENTIRE FILE, `main` included. It reads exactly like the
 # per-item visibility other languages have, so it is the spelling a user reaches for first.
@@ -101,7 +101,7 @@ fi
 #     code for a mistake made elsewhere in the file, which is worse than the original
 #     silence because it points the reader at the wrong line.
 # Both are fixed by doing the work once, in the pre-pass that runs before either parser
-# pass (`_PRIV_PRESCAN`, src/frontend/parse.cyr), and marking ONLY the accepted form.
+# pass (`_PRIV_PRESCAN`, src/frontend/parse/parse.cyr), and marking ONLY the accepted form.
 mkdir -p "$T/c/lib"
 cat > "$T/c/lib/a4.cyr" <<'EOF'
 fn a4_g(): i64 { return 7; }
@@ -173,7 +173,7 @@ fi
 # was one error (`_TL_VIS` steps the marker); in a fn body, a block or after the first top-level statement PARSE_STMT
 # met the token the pre-pass had already reported: "unexpected private" too, and `private fn g` in a fn body "fn 'g'
 # is defined inside fn 'f'" as well — two or three errors for one mistake. Now `_dl_priv` (src/frontend/
-# parse_fn_def.cyr, from `_decl_inner`) steps the marker (`_priv_is_item`, the pre-pass's own test): a `var` /
+# parse/fn_def.cyr, from `_decl_inner`) steps the marker (`_priv_is_item`, the pre-pass's own test): a `var` /
 # `const` / statement after it parses and declares; a `fn` where a fn is defined (module scope, a top-level block) is
 # defined; a `fn` in a fn body, or a declaration the declaration-section rule refuses, is stepped as that refusal
 # steps it, its names and fns entered as reported. Pass 1's tail walk steps a `private` alone, so a `fn` after it is
@@ -369,7 +369,7 @@ piok PC2 "control: the file-level private line" "$(printf 'private\nfn helper():
 # issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (row 5). `_PRIV_PRESCAN` already marked
 # the file from the line wherever it sits (the guide: "the WHOLE file, wherever in it the marker sits"); only PARSE_STMT
 # refused it — "unexpected private", and with no `;` the refusal's latch swallowed the next statement's own error
-# (`zz` never reported). `_dl_priv_file` (src/frontend/parse_fn_def.cyr) steps the marker and an optional `;` at module
+# (`zz` never reported). `_dl_priv_file` (src/frontend/parse/fn_def.cyr) steps the marker and an optional `;` at module
 # scope, as `_TL_VIS` does in the declaration zone; in a fn body or a block it stays "unexpected private", now in sync.
 #   PC3  re-pinned: the line after the first statement compiles and runs (exit 2; "unexpected private" through 6.7.16)
 #   PL1  row 5 verbatim: its one error is the next line's `zz`

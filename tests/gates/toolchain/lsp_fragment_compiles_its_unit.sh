@@ -6,7 +6,7 @@
 # 6.7.16-open server): in a project the open file was always the unit (`cyrius check --with-deps
 # --no-redirect <the open file>`), so a file that is an `include` of another was compiled ALONE and
 # every name an earlier include declares read "undefined" — 55 false errors on cyrius's own
-# src/frontend/parse_ctrl.cyr, a duplicate-fn warning per fn on lib/string.cyr (the [deps] prepend
+# src/frontend/parse/ctrl.cyr, a duplicate-fn warning per fn on lib/string.cyr (the [deps] prepend
 # defined them first), 67 on lib/syscalls_windows.cyr (compiled for Linux), 3 errors on
 # bootstrap/cybs.cyr (assembly for bootstrap/asm, not cycc input); and only the first 8,191 bytes of
 # the compiler's stderr were read.

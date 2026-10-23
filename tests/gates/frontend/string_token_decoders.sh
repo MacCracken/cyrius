@@ -7,7 +7,7 @@
 # tests/tcyr/frontend/string_literal_64k.tcyr). There are FOUR decoders of that
 # value: ESADDR (every string expression — pinned by the whole corpus), the
 # `#assert` failure message and `#pe_import` symbol name in parse.cyr, and the
-# `#deprecated` message in parse_fn.cyr. ⛔ Nothing in the tree asserted the TEXT
+# `#deprecated` message in parse/fn.cyr. ⛔ Nothing in the tree asserted the TEXT
 # of the last three: a compiler with the #deprecated decoder left at the old pack
 # still self-hosted at the same size, passed tests/tcyr/lang/deprecated_attr.tcyr
 # 3/3, and printed every deprecation message as NUL bytes (measured during the
@@ -18,7 +18,7 @@
 # bypassed PARSE_FNCALL and warned NOTHING, contradicting the "fires at EVERY call
 # site" contract; the warning is now one helper (_DEPRECATED_WARN) on both paths.
 #
-# Mutation-proven: reverting parse_fn.cyr's decoder to `>> 16` / `& 0xFFFF` reds
+# Mutation-proven: reverting parse/fn.cyr's decoder to `>> 16` / `& 0xFFFF` reds
 # axes 1-2; reverting parse.cyr:1534-1535 reds axis 3; reverting :1576 reds axis 4;
 # dropping the tail-path _DEPRECATED_WARN call reds axis 2 alone.
 set -eu

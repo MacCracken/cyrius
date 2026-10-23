@@ -283,7 +283,7 @@ refused r15b "fn 'f' is defined twice and declares parameter defaults" "R15b: th
 exits r17 56 "R17: a fn inside a top-level block takes defaults (pass 1 records it): a call above the block" 'var r = g(5, 6);\nif (1 == 1) {\n    fn g(a, b = 1): i64 { return a * 10 + b; }\n}\nsyscall(60, r);\n'
 refused r18 "a closure's parameters take no defaults" "R18: a closure parameter default" "fn main(): i64 { var c = |a, b = 1| a + b; return 0; }\nsyscall(60, main());\n" "1:32"
 # R18t-R18z (6.7.14, issues/archived/2026-10-16-typed-closure-parameter-refusal-cascades.md): a TYPED closure parameter is
-# refused by the rule at its `:`, the type stepped over as D18 steps over a default (`_cl_typed_refuse`, parse_fn.cyr).
+# refused by the rule at its `:`, the type stepped over as D18 steps over a default (`_cl_typed_refuse`, parse/fn.cyr).
 # It was "expected unknown, got ':'" + "undefined variable 'i64'" (the type parsed as the body), five errors for a
 # block body, and nested beside an enclosing `m` the pre-scan captured `m` ("needs lib/alloc.cyr"). Mutations: the
 # loop without `_cl_param_tail`'s `:` arm -> RED R18t-R18z ("expected '|', got ':'" and the cascade); `_cl_lit_end`
@@ -848,14 +848,14 @@ fi
 # byte by byte; each must be defined in lib/, and no definition may hold a depth-1 `=`. 6.7.8 (C2-8):
 # the bounds-checked mode's checker (`__cyrius_*`) is the compiler's own text, appended to the unit
 # by lex/pp.cyr `_bnd_finish` — its string literals, unescaped, are scanned as one more file; 6.7.10
-# (P5B-2): so is the execution-coverage mode's dump, appended by parse_cov.cyr `_cov_finish`.
+# (P5B-2): so is the execution-coverage mode's dump, appended by parse/cov.cyr `_cov_finish`.
 R5N=$( (grep -rhoE '(_FINDFN_CSTR\(S, |EMIT_OVF_CALL\(S, )"[A-Za-z_0-9]+"' "$ROOT/src" | sed 's/.*"\([^"]*\)"/\1/'; printf 'vec_len\nvec_get\nalloc\nstr_from\n') | sort -u | tr '\n' ' ')
 R5C=$(echo "$R5N" | wc -w | tr -d ' ')
 if [ "$R5C" -lt 20 ]; then bad "S-R5: only $R5C compiler-called helper names derived from src (floor 20)"
 else
     find "$ROOT/lib" -name '*.cyr' | sort > "$T/st/r5.files"
     { sed -n '/^fn _bnd_finish(S)/,/^}/p' "$ROOT/src/frontend/lex/pp.cyr"
-      sed -n '/^fn _cov_finish(S)/,/^}/p' "$ROOT/src/frontend/parse_cov.cyr"; } | grep '_bnd_ln(out, op, "' \
+      sed -n '/^fn _cov_finish(S)/,/^}/p' "$ROOT/src/frontend/parse/cov.cyr"; } | grep '_bnd_ln(out, op, "' \
         | sed 's/.*_bnd_ln(out, op, "//; s/");[^"]*$//' | while IFS= read -r l; do printf '%b\n' "$l"; done > "$T/st/r5_injected.cyr"
     echo "$T/st/r5_injected.cyr" >> "$T/st/r5.files"
     awk -v NAMES="$R5N" -v Q="'" '

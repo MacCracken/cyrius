@@ -8,7 +8,7 @@
 # NAMED like a scalar (`u8pair`, `f64pair`, `i32one`) was that scalar: `var p: u8pair;` in a fn
 # did not compile at all and `var G: u8pair = 0;` at top level was a 1-byte u8 global, its field
 # stores silently landing in a byte. And `bool` was an 8-byte array element but a refused struct
-# field. Every one of those now resolves through parse_types.cyr `_tn_resolve`.
+# field. Every one of those now resolves through parse/types.cyr `_tn_resolve`.
 #
 # Rows: (1) sizeof of every builtin name, the vectors, structs, a union, an enum, `Vec` and a
 # bool-field struct; (2) `#assert sizeof` over the same vocabulary (a failing one stops the
@@ -27,7 +27,7 @@
 # Group (7), measured on the srcb-1 review build (bound T's raw code read as a width, the arm
 # 6.6.16 first left alone): `T[5]` with T = f64 spanned 56 bytes against T = i64's 40 (9-byte
 # elements) while sizeof(T) was 8, `y + y` with T = f64 was an INTEGER add of 1.5's bits, and
-# T = i8 / i16 / i32 read -1 back zero-extended — 5 rows red. With parse_types.cyr _tn_var_ann's
+# T = i8 / i16 / i32 read -1 back zero-extended — 5 rows red. With parse/types.cyr _tn_var_ann's
 # bound arm deleted (T then an unbound, plain-i64 name), 3 rows go red (T = Pt, f64, i32). `Vec` (sizeof 8, `Vec[3]`) did not compile there (`unknown type 'Vec'`).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"

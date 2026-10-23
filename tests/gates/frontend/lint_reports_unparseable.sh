@@ -25,7 +25,7 @@
 # ⭐ AXIS 6 IS THE OTHER ONE THAT MATTERS (added v6.5.19, after this gate shipped
 # GREEN over a live P1). Axis 3 proves an UNRESOLVABLE file is still linted, but it
 # picks `lib/fs.cyr`, which takes `Str` params and never reads `.field` off one — so
-# it sails past the actual hole. Six struct-field sites in `src/frontend/parse_decl.cyr`
+# it sails past the actual hole. Six struct-field sites in `src/frontend/parse/decl.cyr`
 # reported RESOLUTION failures through `ERR(S)`, the SYNTAX emitter, so a module doing
 # `total = total + e.size;` with `Entry` declared in a SIBLING FILE — the ordinary
 # layout for any project whose manifest concatenates modules — came back
@@ -47,7 +47,7 @@
 #     -> 19 RED: axis 3, axis 5 (u1/u3) and ALL FOUR of axis 6; axes 1/4/7 green.
 #     Note it takes axis 6 down too — the cross-file shape exits 1 like any other
 #     unresolvable file, which is the whole reason exit-code gating is wrong.
-#   * ⭐ SEMANTIC mutation, not textual — revert `src/frontend/parse_decl.cyr`'s
+#   * ⭐ SEMANTIC mutation, not textual — revert `src/frontend/parse/decl.cyr`'s
 #     `if (sid == 0) { ERR_IDENT(...); return 0; }` to the pre-6.5.19
 #     `if (sid == 0) { ERR(S); }` and rebuild cycc -> axis 6 RED on x_read/x_write/
 #     x_method/x_chain (premise C and the LINTED rows both flip), axes 1-5 green.

@@ -33,7 +33,7 @@
 # shapes every time rather than the one that motivated the patch.
 #
 # ⚠ 6.6.16 — THE NESTED-fn SHAPE NO LONGER RECURSES AT ALL. A fn inside a fn body is now
-# refused by name (src/frontend/parse.cyr `_refuse_nested_fn`) and its tokens are skipped by
+# refused by name (src/frontend/parse/parse.cyr `_refuse_nested_fn`) and its tokens are skipped by
 # an iterative brace match, so `fn f() { ` x N reports the nested-fn error once and never
 # reaches the depth bound. Axis 1 still runs it (no signal, no hang); axis 3 measures the
 # bound on NESTED BLOCKS instead and asserts the nested-fn refusal for the nested-fn shape.

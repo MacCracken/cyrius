@@ -1103,7 +1103,7 @@ fn sys_listen(fd, backlog): i64 {
 # ================================================================
 # 0xF038 → kernel32!QueryPerformanceCounter(LARGE_INTEGER*)
 # 0xF039 → kernel32!QueryPerformanceFrequency(LARGE_INTEGER*)
-# (src/backend/x86/emit.cyr EQPC_PE / EQPF_PE, routed in src/frontend/parse_expr.cyr.)
+# (src/backend/x86/emit.cyr EQPC_PE / EQPF_PE, routed in src/frontend/parse/expr.cyr.)
 #
 # ⛔ WHY: Windows had NO sub-millisecond clock in cyrius at all. `syscall(228)` reroutes
 # to kernel32!GetTickCount64, whose counter advances in **15 ms** steps (measured on

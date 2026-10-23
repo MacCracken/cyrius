@@ -7,7 +7,7 @@
 # `var a: B1 = alloc(8);` is a handle too). A VALUE is an inline local or global, a by-value struct
 # parameter, a closure capture, a struct field, or a call / method / operator result.
 #
-# ⛔ THE DEFECT, every release before 6.6.16. `_agc_operand` (src/frontend/parse.cyr) reported a
+# ⛔ THE DEFECT, every release before 6.6.16. `_agc_operand` (src/frontend/parse/parse.cyr) reported a
 # handle as "not an aggregate", so every assignment arm fell to the one-word store:
 #   q = a;        (inline <- handle)  stored a's ADDRESS in q.x and left q.y stale — printed
 #                 1397460178042889 where 12 is right; the same into a global, from a global, for

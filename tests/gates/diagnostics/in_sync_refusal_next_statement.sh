@@ -13,9 +13,9 @@
 # `qq[0]`. Only 6.7.11's pair refusal (`_pair_sync_ti`) and 6.7.14's const ones recorded that they were in sync.
 # (issues/archived/2026-10-18-in-sync-refusal-in-assignment-swallows-next-statement.md)
 #
-# THE FIX. `_refuse_in_sync` (src/frontend/parse.cyr) records the mark `_stmt_resync` reads, called just before each
+# THE FIX. `_refuse_in_sync` (src/frontend/parse/parse.cyr) records the mark `_stmt_resync` reads, called just before each
 # such refusal latches: `_arr_sub_addr`'s undefined-base and u128 arms, `_sub_err`, `_psub_err` and `_deref_u128_err`
-# (src/frontend/parse_expr.cyr). `_stmt_resync` is unchanged: it clears only the latch when the statement ended at
+# (src/frontend/parse/expr.cyr). `_stmt_resync` is unchanged: it clears only the latch when the statement ended at
 # its own `;` / `}` past the mark, and still skips to the next recovery point when it did not.
 #
 #   F   the filing's programs verbatim: F1 latch4 (three errors, lines 5 6 7), F2 latch5 (three, lines 5 6 7)
@@ -497,7 +497,7 @@ error:<source>:3:15: $ZZ"
 # LATCHED IN A BLOCK HEAD'S HEADER IS THE HEADER'S, CLEARED AT ITS `{`. The header of an `if` / `elif` / `while` /
 # classic `for` / `for .. in` / `switch` / `match` that refused left the latch set for the block: its first
 # statement ended latched, PARSE_STMT's resync skipped the SECOND statement, and that statement's error was never
-# reported. `_blk_open` (src/frontend/parse_ctrl.cyr) clears the latch when it was clear as the head began and the
+# reported. `_blk_open` (src/frontend/parse/ctrl.cyr) clears the latch when it was clear as the head began and the
 # cursor's `{` is exactly the header's end. H1 is the filing's program verbatim. Controls: H9 a header left mid-way
 # (`if (y b) {`) keeps the latch; H10 a header inside a closure argument parsed under a statement's own latch keeps it.
 # MUTATION (2026-10-20, f16, the scratch-copy procedure above): `_blk_open` never clearing -> RED H1-H8 and H11-H16 on
@@ -705,8 +705,8 @@ error:<source>:6:9: undefined variable 'zz8' (missing include or enum?)"
 # TOP LEVEL after the first statement (an uninitialized struct or vector, which only a fn's frame holds) IS REFUSED
 # IN SYNC AND DECLARES `c` AS REPORTED. PARSE_VAR's arm latched with no mark — the resync skipped the next statement
 # — and registered a fn-local slot no top-level use reads, so each use of `c` added "undefined variable 'c'".
-# `_usl_top` (src/frontend/parse_decl.cyr) marks it in sync, steps its `;`, and enters `c` in the refused variables
-# (`_dl_var_refd_add`, parse_fn_def.cyr) that `_undef_var_report`, the subscript's undefined base and a multi-value
+# `_usl_top` (src/frontend/parse/decl.cyr) marks it in sync, steps its `;`, and enters `c` in the refused variables
+# (`_dl_var_refd_add`, parse/fn_def.cyr) that `_undef_var_report`, the subscript's undefined base and a multi-value
 # target stand down at (`_dl_name_refd`; U6: the subscript's arm missed a refused late enum's member as well). U1 is
 # the filing's program verbatim. Controls: U5 the declaration in a fn compiles and runs; U7 a type annotation
 # spelled `c` is still "unknown type 'c'" (a variable's mark, not a type's).

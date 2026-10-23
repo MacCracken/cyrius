@@ -10,7 +10,7 @@
 # order agnos depends on), so a kernel that never returns read 0. Measured at the 6.6.16 slot open:
 # `kernel; enum E { A = 0x1234567; } var X = A; asm { 0xF4 x4 }` put `b8 67 45 23 01 48 b9 .. 48 89
 # 01` AFTER the asm and left X's slot zero in the image. The fold now sits at the replay, where
-# names resolve exactly as the replayed store does, and the value is BAKED (parse_decl.cyr
+# names resolve exactly as the replayed store does, and the value is BAKED (parse/decl.cyr
 # _gvk_pre / _spc_try); the store stayed, so the code did not change. 6.7.14 drops a baked SCALAR's
 # store where the image already holds its value (_gvk_quiet; issues/2026-10-08-const-init-redundant-
 # store-and-unfolded-const-operand.md): its `movabs rax, imm64` is gone from the code, the baked copy

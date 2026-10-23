@@ -101,7 +101,7 @@
 #   V1-V2  what the replay's parse reports is still reported: another file's private const (`'PC' is private to its
 #          file`), a `*T` global's "assigning non-pointer to typed pointer", a bool global's refusal
 #
-# Item 2 — the run-time fold arms (parse_expr.cyr `_PARSE_TERM_IMPL` / `_PEXPR_IMPL`) take a constant NAME on the
+# Item 2 — the run-time fold arms (parse/expr.cyr `_PARSE_TERM_IMPL` / `_PEXPR_IMPL`) take a constant NAME on the
 # right (and `+ - & | ^` a constant term): `2 * C` was `mov eax,2; push rax; mov eax,5; pop rcx; imul rcx`, `1 + C`
 # an add, `2 + C * 3` an add of the folded `C * 3`.
 #   F1-F15 each `return <expr>;` is BYTE-IDENTICAL to `return <its value>;` — on x86_64, and with the tree's aarch64

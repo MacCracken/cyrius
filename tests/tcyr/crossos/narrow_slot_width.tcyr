@@ -2,21 +2,21 @@
 # width by every assignment form, on every backend: the statement, the classic-for step (plain
 # and compound), and a compound operator's load.
 #
-# The for-step replay (src/frontend/parse_ctrl.cyr) had its own copy of the assignment store and
+# The for-step replay (src/frontend/parse/ctrl.cyr) had its own copy of the assignment store and
 # it was always 8 bytes: `for (a = 250; a != 252; a = a + 1)` on a u8 global zeroed the seven
 # packed globals after it, and `a += 1` carried 255 -> 0 into the next one. A narrow LOCAL kept
 # 257 in its 8-byte frame slot after `for (i = 254; i != 1; i += 1)`; the narrow read hid it and
 # the next compound op (`i >>= 1`) exposed it — 128, not 0. The compound op's LOAD was the same
 # defect on the adjacent path: 8 bytes, so `a >>= 1` on a u8 global followed by a u8 `b = 1`
 # shifted b's byte into a (130, not 2). Now one store (_asg_store_slot) and a width-correct
-# load (_asg_compound_load), both in src/frontend/parse.cyr.
+# load (_asg_compound_load), both in src/frontend/parse/parse.cyr.
 #
 # Every neighbour is initialised NON-zero on purpose (a zero-initialised narrow global is a
 # different, separately tracked path) and every one is checked after the loop.
 #
 # Mutations that redden this file (each alone; the 6.6.11 compiler fails 23-24 of the 58 rows —
 # the i8-local row reads whatever stale byte sits above the slot in the frame):
-#   * route the GLOBAL for step back to EVSTORE in parse_ctrl.cyr — every narrow-global for-step
+#   * route the GLOBAL for step back to EVSTORE in parse/ctrl.cyr — every narrow-global for-step
 #     row and the top-level rows fail (19);
 #   * route the LOCAL for step back to EFLSTORE — the two "whole frame slot" rows fail (256): the
 #     loop exits on the wrapping store, which an 8-byte store keeps as 256 under a narrow read of 0;

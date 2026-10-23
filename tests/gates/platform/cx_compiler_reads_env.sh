@@ -7,7 +7,7 @@
 # src/backend/cx/emit.cyr. Every CYRIUS_* knob reachable from the cx driver was dead — ten call
 # sites: CYRIUS_ASYNC, CYRIUS_STACK_ARRAYS (parse.cyr), CYRIUS_DCE, CYRIUS_STATS (util.cyr),
 # CYRIUS_POISON, CYRIUS_MONOMORPH (main_cx.cyr), CYRIUS_ALLOW_PARENT_INCLUDES,
-# CYRIUS_ALLOW_ABSOLUTE_INCLUDES (lex.cyr), CYRIUS_TYPE_CHECK, CYRIUS_FILEID_DUMP (parse_fn.cyr).
+# CYRIUS_ALLOW_ABSOLUTE_INCLUDES (lex.cyr), CYRIUS_TYPE_CHECK, CYRIUS_FILEID_DUMP (parse/fn.cyr).
 # Derive the list, do not trust this one:
 #   grep -ho '_read_env("[A-Z_]*")' <every file main_cx.cyr includes> | sort -u
 # And the refusals that NAME a knob were unactionable: `CYRIUS_ASYNC=1 cycc_cx` still said
@@ -23,7 +23,7 @@
 #   parse.cyr     CYRIUS_ASYNC                  unset: rc 1 + the gate message; set: a plain async
 #                                               fn compiles and `await` yields its value under cxvm;
 #                                               a coroutine reaches the cx refusal by name (dead before)
-#   parse_cov.cyr CYRIUS_POISON                 predefines the CYRIUS_POISON macro: set, an #ifdef
+#   parse/cov.cyr CYRIUS_POISON                 predefines the CYRIUS_POISON macro: set, an #ifdef
 #                                               arm is taken (exit 11); unset, it is not (exit 22)
 # plus a source pin: no `fn _read_env` in the cx backend, and main_cx.cyr includes env.cyr.
 #
@@ -82,7 +82,7 @@ run CYRIUS_ASYNC=1 "$ROOT" "$T/as.cyr"
 if [ "$rc" -ne 0 ]; then _bad "async, CYRIUS_ASYNC=1: rc $rc — cycc_cx cannot see the knob its own refusal names"; grep '^error' "$T/e" | head -2 | sed 's/^/      /'
 else vm; if [ "$vrc" -ne 35 ]; then _bad "async: the .cyx exits $vrc under cxvm, expected 35 (await five() + 30)"; else pass=$((pass + 1)); fi; fi
 
-# With the gate open, the cx coroutine refusal (parse_fn.cyr) is reachable for the first time:
+# With the gate open, the cx coroutine refusal (parse/fn.cyr) is reachable for the first time:
 # a mid-body suspend must be refused BY NAME on cx, not compiled.
 cat > "$T/co.cyr" <<'EOF'
 include "lib/alloc.cyr"
@@ -95,7 +95,7 @@ EOF
 run CYRIUS_ASYNC=1 "$ROOT" "$T/co.cyr"
 if [ "$rc" -ne 1 ] || ! grep -q 'mid-body suspend is x86-only' "$T/e"; then _bad "coroutine, CYRIUS_ASYNC=1: rc $rc — expected 1 with the cx coroutine refusal"; grep '^error' "$T/e" | head -2 | sed 's/^/      /'; else pass=$((pass + 1)); fi
 
-# ── parse_cov.cyr (main_cx.cyr until 6.7.11): CYRIUS_POISON (a predefine, so the program can see it)
+# ── parse/cov.cyr (main_cx.cyr until 6.7.11): CYRIUS_POISON (a predefine, so the program can see it)
 cat > "$T/po.cyr" <<'EOF'
 #ifdef CYRIUS_POISON
 syscall(60, 11);

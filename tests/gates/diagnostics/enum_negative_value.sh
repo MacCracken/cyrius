@@ -127,7 +127,7 @@ fi
 # v6.5.36 moved presence out of band: `_vecv_base` holds the RAW i64 and `_vecp_base` (via
 # GVECP/SVECP) holds the flag. So the invariant to defend is no longer "one decoder" — it is
 # that NOTHING derives presence or value from bits inside the value again.
-ENUM_SRC="src/frontend/parse_types.cyr src/frontend/parse_decl.cyr src/frontend/parse_expr.cyr"
+ENUM_SRC="src/frontend/parse/types.cyr src/frontend/parse/decl.cyr src/frontend/parse/expr.cyr"
 GD=$(mktemp -d) && [ -d "$GD" ] || { echo "FAIL: enum_negative_value: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 # ⚠ CODE ONLY. A first draft of this axis grepped the raw files and went red on its OWN
 # explanatory comments (which necessarily quote the old `(1 << 63) | val` tag) and on

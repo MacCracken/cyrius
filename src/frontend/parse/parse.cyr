@@ -26,7 +26,7 @@ var _unsafe_depth = 0;
 # `(STR)` args, storing the string token value (offset<<32 | length
 # into str_data at 0x21A000) in _deprecated_msg_pending. PARSE_FN_DEF
 # transfers both into fn_flags[fi] bit 2 + fn_deprecated_msg[fi].
-# Call-site check is `_callee_site_checks` (parse_fn.cyr) — every call path, at every
+# Call-site check is `_callee_site_checks` (parse/fn.cyr) — every call path, at every
 # call, not just statement-level discards (that's #must_use's job).
 var _deprecated_pending = 0;
 var _deprecated_msg_pending = 0;
@@ -112,7 +112,7 @@ var _inline_pending = 0;
 # stays, as diagnostic hygiene for the refused program — `_warn_mixed_pair_returns` runs at the
 # end of a parse that has errors, and without the skip a refused fn's `return h(x)` would put a
 # bogus mixed-return warning on the OUTER fn beside the refusal. CHANGELOG [6.6.16]
-# ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse_types.cyr). The prescan is
+# ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse/types.cyr). The prescan is
 # demand-driven, and the first demand can arrive BEFORE the enum declaration has been reached —
 # measured: the pass ran with a complete 3,498-token stream and flagged nothing, because no
 # constructor carried the flag yet for it to propagate FROM. Re-running on each new stack enum
@@ -125,7 +125,7 @@ var _pair_prescan_done = 0;
 #
 # Does the `{` at token k open a CLOSURE body? Call only when TOKTYP(S, k) == 13. Closure grammar
 # is `|` IDENT (`,` IDENT)* `|` or `||`, then the body — untyped params, no return annotation
-# (parse_expr.cyr, the `typ == 35 || typ == 54` factor arm) — and `{` never begins an expression,
+# (parse/expr.cyr, the `typ == 35 || typ == 54` factor arm) — and `{` never begins an expression,
 # so a `{` right after `|` (35) or `||` (54) can only be a closure block body, never `a | b` /
 # `a || b`. ⚠ If closure params or a return type ever gain annotations, this must scan the param
 # list instead. A brace-less closure (`|x| h(x)`) needs no skip: an expression holds no `return`.
@@ -1393,7 +1393,7 @@ fn _tok_body_open(S, i): i64 {
 # resolves names in) has a `return f(..)` / `return g<..>(..)` / `return x.m(..)` whose callee is
 # flagged 256: it forwards a `: stack` pair. Closure bodies are their own units, skipped, as is a
 # refused nested fn. `_pair_prescan`'s scan of one fn, and (6.7.8) the dyn pair check's of a slot
-# method whose body pass 2 has not reached (`_dyn_slot_pair`, parse_types.cyr).
+# method whose body pass 2 has not reached (`_dyn_slot_pair`, parse/types.cyr).
 # ⛔ 6.7.14 — A `?` ON A PAIR CALL IS A PAIR ROUTE TOO (`_tok_q_is_pair`): pass 2 flags the fn 256
 # at its `?`, so a fn whose only pair route was a `?` was a pair only BELOW its definition — a
 # caller above took `qb(x)?` as boxed (rc 139) and `var v = qb(x);` kept the tag. CHANGELOG [6.7.14]
@@ -2293,7 +2293,7 @@ fn _callee_returns_pair(S): i64 {
     # ⚠ NO propagation check here either — this feeds `_tpair` in `_PARSE_TERM_IMPL`, the flag
     # that tells `?` it is holding a pair. Both helpers answer "does this callee return a pair",
     # nothing more; whether a `?` then CONSUMES that pair is the binding site's question, and it
-    # is asked there (parse_decl.cyr). Putting it in either helper silently routes `?` into the
+    # is asked there (parse/decl.cyr). Putting it in either helper silently routes `?` into the
     # boxed lowering, which dereferences the tag as a pointer.
     return 1;
 }
@@ -2442,7 +2442,7 @@ var _cur_fn_is_pure = 0;
 # and to save/restore the correct set of callee-saved registers.
 var _cur_fn_regalloc = 0;
 # v6.3.37 (A3) — per-fn frame-slot high-water mark. The monomorph/inline-replay
-# path (parse_fn.cyr, gated _INLINE_OK||_MONOMORPH_OK) transiently bumps GFLC to
+# path (parse/fn.cyr, gated _INLINE_OK||_MONOMORPH_OK) transiently bumps GFLC to
 # materialize callee args into enclosing-frame slots, then restores it — so the
 # frame-size patch (which reads the FINAL GFLC) under-reserves, and a live runtime
 # `push rax` (a binary operand) aliases the transient inline param slot. This
@@ -2455,11 +2455,11 @@ var _flc_hwm = 0;
 # v5.8.16 §8 guarded only the SYNTACTIC form `return f(&local)`; a pointer
 # laundered through a variable (`var p = &buf; ... return f(p);`) walked straight
 # past it. Reset per fn in PARSE_FN_DEF; read by the tail-call guard in
-# parse_fn.cyr. See CHANGELOG [6.5.14]. 6.6.20: also set where an address in this
+# parse/fn.cyr. See CHANGELOG [6.5.14]. 6.6.20: also set where an address in this
 # frame is pushed WITHOUT a `&` — an inline aggregate argument, a temp, a field of a
 # frame aggregate, a method's `self`, an operator's operand — and can outlive the call
 # (`_sarg_escapes`). It is set SO FAR, so inside a loop a tail call waits for the end of its
-# outermost loop to read it (`_tcp_site` / `_tcp_loop_end`, parse_fn.cyr). CHANGELOG [6.7.3]
+# outermost loop to read it (`_tcp_site` / `_tcp_loop_end`, parse/fn.cyr). CHANGELOG [6.7.3]
 var _fn_local_addr = 0;
 # v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
 # emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
@@ -2613,7 +2613,7 @@ var _cur_fn_pslots = 0;
 # records it here; a destination (`var p: S = ..`, `x = ..`, a by-value struct argument,
 # `return ..` in a struct fn) arms `_sc_want` with the token it is about to parse, and after
 # the parse takes the temp when the record spans EXACTLY that expression (`_sc_whole`). See
-# `_sc_pre` in parse_fn.cyr. A free fn needs none of this — its name is the next token.
+# `_sc_pre` in parse/fn.cyr. A free fn needs none of this — its name is the next token.
 var _sc_want = 0 - 1;   # first token of the expression a destination is parsing
 var _sc_beg = 0 - 1;    # first token of the last recorded struct-valued call
 var _sc_end = 0 - 1;    # the token after it
@@ -2665,7 +2665,7 @@ var _dro_vt = 0 - 1;    # 6.7.12: ... the same `*` when that argument's paramete
 var _dro_vo = 0 - 1;    # 6.7.14: the `*` starting an argument to a pointer of another kind or a small by-value struct
 var _dro_vod = 0;       # ... the vector its dereference read (`_dro_vnote`: its descriptor), 0 = none
 var _dro_vend = 0;      # ... the token after that dereference's operand
-var _dvi_want = 0 - 1;  # 6.7.14 (D36): the `*` of an untyped declaration's whole `*p` (`_dvi_arm`, parse_fn.cyr)
+var _dvi_want = 0 - 1;  # 6.7.14 (D36): the `*` of an untyped declaration's whole `*p` (`_dvi_arm`, parse/fn.cyr)
 var _dvi_got = 0 - 1;   # ... that `*` once its `*V` operand's pointer is parked (`_dvi_park`)
 var _fnc_lo = 0 - 1;    # `_fnc_agg`'s last emitted call: its `(`,
 var _fnc_lt = 0 - 1;    #   its temp,
@@ -2685,7 +2685,7 @@ var _pw_end = 0 - 1;
 # call starting there records its struct temp (`_fnc_agg`), as a method call's does. -1 = none.
 var _sc_fcw = 0 - 1;
 # 6.7.6 — the last WHOLE `Str` field read (`h.name`): its first token, the token after it, the Str
-# struct id and the field's name (`_fls_note`, parse_decl.cyr). Passive — the load is unchanged.
+# struct id and the field's name (`_fls_note`, parse/decl.cyr). Passive — the load is unchanged.
 var _fls_beg = 0 - 1;
 var _fls_end = 0 - 1;
 var _fls_sid = 0;
@@ -2760,8 +2760,8 @@ var _ra_auto_count = 0;
 
 # v5.11.62: current fn index for the per-fn array-byte attribution
 # tracked at 0x1C8000 (reclaimed v5.11.19 fn_regalloc slot). PARSE_FN_DEF
-# sets to the fn's fi at entry and resets to -1 at exit. parse_decl.cyr's
-# array-registration path (parse_decl.cyr `PARSE_ARRAY`) adds the aligned
+# sets to the fn's fi at entry and resets to -1 at exit. parse/decl.cyr's
+# array-registration path (parse/decl.cyr `PARSE_ARRAY`) adds the aligned
 # size into the slot when this is >= 0; top-level `var foo[N]` declarations
 # (no enclosing fn) skip the accounting. Read by FIXUP's `large static
 # data` warning emitter (src/backend/x86/fixup.cyr) to compute "M bytes
@@ -2794,7 +2794,7 @@ var _brk_depth = 0;
 var _in_defer = 0;
 # 6.6.20 — the pending `continue` jumps of EVERY enclosing `for` (C-style, range, collection) in
 # one growable vector. A `for` owns the entries from its base (the length when it opened,
-# `_cont_open`) up, patches them to its step and truncates back (`_cont_close`, parse_ctrl.cyr),
+# `_cont_open`) up, patches them to its step and truncates back (`_cont_close`, parse/ctrl.cyr),
 # so the ranges of a nest are disjoint at any depth, across a `while`, a closure body or a
 # generic instance emitted mid-loop. It replaces the flat array at S+0x18F8A0, whose next-free
 # index 0x18F898 a `while` had to ZERO (0 was also its mode flag): a `for` inside that `while`
@@ -3028,7 +3028,7 @@ fn _defer_emit_walk(S): i64 {
     EDEFER_RESTORE(S);
     return 0;
 }
-# 6.6.7 — a coroutine suspend exit (`await` inside a coroutine body, parse_expr.cyr): record the
+# 6.6.7 — a coroutine suspend exit (`await` inside a coroutine body, parse/expr.cyr): record the
 # `jmp` to the fn end per suspend index, not in rp_vec, so it bypasses the defer walker. An
 # `await` inside a DEFER body is refused: the walker is mid-run with rax pushed on a stack frame
 # that the suspend destroys.
@@ -3091,7 +3091,7 @@ fn _coro_land_suspends(S): i64 {
 }
 # A loop body: one more loop and one more break target for the statements inside it.
 fn _loop_body(S, scoped): i64 { return _loop_body_b(S, scoped, 1); }
-# ... `bb` 0: a body of one statement, no braces (`_blk_open`, parse_ctrl.cyr). CHANGELOG [6.7.16]
+# ... `bb` 0: a body of one statement, no braces (`_blk_open`, parse/ctrl.cyr). CHANGELOG [6.7.16]
 fn _loop_body_b(S, scoped, bb): i64 {
     _loop_depth = _loop_depth + 1;
     _brk_depth = _brk_depth + 1;
@@ -3185,7 +3185,7 @@ fn _PRIV_PRESCAN_TOK(S, ti): i64 {
     return 0;
 }
 # 1 = the `private` at token `ti` is the per-item form (reported by the pre-pass). Also the statement parser's test
-# (`_dl_priv`, parse_fn_def.cyr), so the token it steps is the one reported.
+# (`_dl_priv`, parse/fn_def.cyr), so the token it steps is the one reported.
 # THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
 # file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
 # too. Anything else sharing the token's line is the per-item misread.
@@ -3358,28 +3358,28 @@ fn _ensure_stack_arrays(S): i64 {
 
 
 # v5.5.38: struct/enum/union + shared-helper fns extracted.
-include "src/frontend/parse_types.cyr"
+include "src/frontend/parse/types.cyr"
 
 
 # Syscall arity table: returns expected arg count for well-known
 # Linux x86_64 syscalls, or -1 if unknown. The table is fixed — free information.
 
 # v5.5.38: expression-parsing fns extracted.
-include "src/frontend/parse_expr.cyr"
+include "src/frontend/parse/expr.cyr"
 
 
 # Parse array: already past [, parse N]; register global var with aligned size
 
 # v5.5.38: var/array/field/struct-init/assignment fns extracted.
-include "src/frontend/parse_decl.cyr"
+include "src/frontend/parse/decl.cyr"
 
 
 # Emit inverted jcc for comparison op, return patch offset
 
 # v5.5.38: fn decls + calls + returns + impls + PARSE_FN_DEF extracted.
-include "src/frontend/parse_fn.cyr"
-# 6.7.15: the top-level scans and PARSE_FN_DEF, split from parse_fn.cyr (its fmt / lint read cap).
-include "src/frontend/parse_fn_def.cyr"
+include "src/frontend/parse/fn.cyr"
+# 6.7.15: the top-level scans and PARSE_FN_DEF, split from parse/fn.cyr (its fmt / lint read cap).
+include "src/frontend/parse/fn_def.cyr"
 
 
 # ASM_MNEMONIC, ASM_KW_IN and helpers are in arch-specific emit files:
@@ -3456,7 +3456,7 @@ fn _brk_chain_end(S, saved_brk): i64 {
 }
 
 # v6.5.20 — register a switch jump table for the per-fn NOP-compaction repair
-# (_sw_tbl_repair, parse_fn.cyr). Entries hold `target_cp - table_cp`; the
+# (_sw_tbl_repair, parse/fn.cyr). Entries hold `target_cp - table_cp`; the
 # v5.6.27 compactor shifts code but knew nothing about this table, so harvesting
 # a 4-byte NOP run between the table and a case body left every later entry
 # stale. Overflow past the 256 cap keeps counting so the compaction gate trips
@@ -3577,14 +3577,14 @@ fn _match_arm_test(S, midx, mh): i64 {
 }
 
 fn PARSE_SWITCH(S): i64 {
-    var p0 = _panic;   # 6.7.16: see _blk_open (parse_ctrl.cyr)
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse/ctrl.cyr)
     STI(S, GTI(S) + 1);
     var he = _hdr_end(S, GTI(S));
     if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
     STI(S, GTI(S) + 1);
     PCMPE(S);
     var swh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
-    _hdr_rparen(S);   # 6.7.17: a `{` there is the body's (parse_ctrl.cyr)
+    _hdr_rparen(S);   # 6.7.17: a `{` there is the body's (parse/ctrl.cyr)
     if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
     # Pre-scan: collect case values to decide chain vs jump table
     var save_ti = GTI(S);
@@ -3813,7 +3813,7 @@ fn PARSE_MATCH(S): i64 {
     # v5.8.22 bite #2 — capture match-keyword line for exhaustive-
     # coverage diagnostic before STI consumes it.
     var match_line = GTLINE(S, GTI(S));
-    var p0 = _panic;   # 6.7.16: see _blk_open (parse_ctrl.cyr)
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse/ctrl.cyr)
     STI(S, GTI(S) + 1);
     var he = _hdr_brace(S, GTI(S));
     PCMPE(S);
@@ -4081,7 +4081,7 @@ fn _assert_tail(S, rep): i64 {
     if (rep == 1) { _asrt_tail_err(S, m); }
     var a = GTI(S);
     var r = _ln_rest(S, ln, blk);
-    _asrt_tail_names(S, a, GTI(S), rep);   # 6.7.17: what it declares, as reported (parse_fn_def.cyr)
+    _asrt_tail_names(S, a, GTI(S), rep);   # 6.7.17: what it declares, as reported (parse/fn_def.cyr)
     return r;
 }
 # The line the string token `ti` ends on: its first line (the token's) plus the line breaks inside it, a raw LF or
@@ -4950,7 +4950,7 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
 }
 
 # ⛔ 6.6.11 — COMPOUND ASSIGNMENT is ONE implementation, shared by the statement arm
-# (_PARSE_STMT_IMPL) and the classic-for step replay (parse_ctrl.cyr). They were two copies and
+# (_PARSE_STMT_IMPL) and the classic-for step replay (parse/ctrl.cyr). They were two copies and
 # both were wrong about floats: the statement arm took its float routing from a LOCAL's type
 # only, so `G += 1.0` on an f64 GLOBAL added the two bit patterns as integers, and the step copy
 # had no float routing at all — `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2 iterations,
@@ -5047,7 +5047,7 @@ fn _asg_compound_load(S, noff): i64 {
         _asg_cstep = _slot_ptr_step(S, li);
         if (lt > 0) { if (lt < 8) {
                 var lw = lt;
-                if (GSLICE_W(S, li) < 0) { lw = 0 - lt; }   # signed: movsx (parse_expr.cyr)
+                if (GSLICE_W(S, li) < 0) { lw = 0 - lt; }   # signed: movsx (parse/expr.cyr)
                 EFLLOAD_W(S, li, lw);
                 return lt;
             } }
@@ -5116,7 +5116,7 @@ var _cop_rti = 0 - 1;
 # mark, local or global); a slice is a local `[T]` / `slice<T>`. D2 (the second round of decisions,
 # same day) added a BARE array — `var b[N]` (local, static, global) and `stack var b[N]`: its `OP=`
 # worked on the first word too. A u128's `+=` / `-=` carry and its other `OP=` are refused
-# (_w128_cop, parse_expr.cyr). The statement parses on. CHANGELOG [6.7.6]
+# (_w128_cop, parse/expr.cyr). The statement parses on. CHANGELOG [6.7.6]
 fn _asg_wide_refused(S, noff, li): i64 {
     var k = 0;
     if (li >= 0) {
@@ -5175,7 +5175,7 @@ fn _asg_plain_chk(S, idx, g, ti): i64 {
 
 # ⛔ 6.6.12 — THE STORE OF AN ASSIGNMENT, at the slot's width: a local (g == 0) or a global
 # (g == 1, then SLVAR) takes rax. ONE implementation for the statement arm (_PARSE_STMT_IMPL)
-# and the classic-for step replay (parse_ctrl.cyr), which had its own 8-byte copy: `for (a = 250;
+# and the classic-for step replay (parse/ctrl.cyr), which had its own 8-byte copy: `for (a = 250;
 # a != 252; a = a + 1)` on a u8 global zeroed the seven packed globals after it, and `a += 1`
 # carried 255 -> 0 into the next one. Warns on a narrowing store, as the statement always did.
 fn _asg_store_slot(S, idx, g): i64 {
@@ -5692,7 +5692,7 @@ fn _dst_word(S, h, sz): i64 {
 # a classic-for step: the address once, before the value, then the store. 6.7.5 (B8): the compound
 # form — it was "expected '=', got '+'" — loads, `_asg_compound_op`s it and stores it back. Out of
 # _PARSE_STMT_IMPL, whose body sits at cybs's silent per-fn reference ceiling. CHANGELOG [6.7.5]
-# 6.7.8 (C2-5): through a narrow `*T` (`_deref_ed`, parse_expr.cyr) the element is written at its
+# 6.7.8 (C2-5): through a narrow `*T` (`_deref_ed`, parse/expr.cyr) the element is written at its
 # width, as `p[0] = v` / `p[0] OP= v` write it: `=` checks the value as a store into an f32 element
 # (an f64 rounds, an integer constant warns), `OP=` loads the element at its width (sign- /
 # zero-extended; an f32 combines as an f32), a wider integer warns "narrowing". Every other operand
@@ -6412,7 +6412,7 @@ fn _asg_rejudge(S, idx, t, g): i64 {
 # ⛔ 6.6.6 (bite 14 review) — `x = <expr>;` where <expr> is one whole METHOD call or OVERLOADED
 # OPERATOR returning x's struct (`r = b.mk(5)`, `q = b.mp(3)`, `c = a + b`): the same temp-then-
 # copy as `_try_struct_call_assign`, which can only see a free fn's name. The method/operator
-# emitter stores the result in a temp and records it (`_sc_pre` / `_sc_post`, parse_fn.cyr); this
+# emitter stores the result in a temp and records it (`_sc_pre` / `_sc_post`, parse/fn.cyr); this
 # replaces the statement's PCMPE and takes that temp when the record spans the whole right-hand
 # side. `r = b.mk(5)` SIGSEGV'd, `q = b.mp(3)` kept rax only. Returns 1 when the statement is done
 # (`;` consumed — `term`, which is `)` for a classic-for step); 0 leaves the ordinary store to
@@ -6465,7 +6465,7 @@ fn _asg_hdl_call(S): i64 {
 # nested struct fields ending in a `: Str` field or a method call (`<Struct>_<m>`'s declared return), under any
 # parentheses that wrap it whole (`(h.name)`, `((f(..)))`: the guide's whole-wrap transparency, 6.7.16). An inline
 # struct field is not a pointer, so it is not typed here. 0 otherwise. A peek. The local's arm (`_asg_ret_peek`) and
-# the `*Str` declaration / global / zone (`_tp_call_pointee`, parse_decl.cyr) read it, so they agree.
+# the `*Str` declaration / global / zone (`_tp_call_pointee`, parse/decl.cyr) read it, so they agree.
 fn _tpv_sid(S, st): i64 {
     var a = _tpv_peel(S, st);
     if (a < 0) { return 0; }
@@ -6992,7 +6992,7 @@ fn _tup_asg(S, noff, term): i64 {
 # into an existing tuple variable — a local, a by-value parameter (copied in, inline), a global, at
 # top level too (no temp: the values go from the registers straight into the slots, every one read
 # before any is stored, so `t = f(t.1, t.0);` reads the old t). The capture's contract is
-# `_tup_cap_check`'s (parse_decl.cyr), the destructure's: a refused callee is reported and skipped.
+# `_tup_cap_check`'s (parse/decl.cyr), the destructure's: a refused callee is reported and skipped.
 # Inside a wrap too — `t = (f());` (6.7.14, D45: it was R12, as the destructure refused `(f())`): the
 # whole-value wrap is `_asg_paren`'s, which runs this on its inside. 1 = done (`term` consumed).
 fn _tup_asg_call(S, noff, term): i64 {
@@ -7334,7 +7334,7 @@ fn _must_use_warn(S, noff): i64 {
 # _PARSE_STMT_IMPL (the cybs per-fn cap). `pair` = the callee is pair-returning, read by name
 # BEFORE the call was parsed. Cursor on the token after the call; no-op unless it is `?`.
 fn _stmt_qmark(S, pair): i64 {
-    if (PEEKT(S) == 28) { return _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `f(..)[i] = v;` (parse_expr.cyr)
+    if (PEEKT(S) == 28) { return _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `f(..)[i] = v;` (parse/expr.cyr)
     if (PEEKT(S) == 124) {
         STI(S, GTI(S) + 1);
         if (GINFN(S) == 0) {
@@ -7404,7 +7404,7 @@ fn _stmt_qmark(S, pair): i64 {
 
 # ⛔ 6.6.12 — AN EXPLICIT GENERIC CALL AS A BARE STATEMENT (`id<i32>(4);`) was "expected '=',
 # got '<'": the IDENT arm of _PARSE_STMT_IMPL sent only `IDENT (` to PARSE_FNCALL, so `IDENT <`
-# fell into the assignment path. Same guards as the factor's arm (parse_expr.cyr: the monomorph
+# fell into the assignment path. Same guards as the factor's arm (parse/expr.cyr: the monomorph
 # flag, a generic callee, the `name<..>(` lookahead), so `a < b;` and a non-generic `<` never
 # get here. Parity with the `IDENT (` arm: a `.field` / `.method()` on the result
 # (`_stmt_call_field`), the #must_use warning and a postfix `?`. Cursor just past the callee
@@ -7908,7 +7908,7 @@ fn PARSE_STMT(S): i64 {
 
 # 6.6.16 (C1): a statement inside another statement that has NO braced PARSE_PROG body — a
 # `switch` case / default arm, an `@unsafe { }` body, a `for`'s init clause — is one nesting
-# level deeper for _gai_stmt (parse_decl.cyr), which takes an array initializer only at module
+# level deeper for _gai_stmt (parse/decl.cyr), which takes an array initializer only at module
 # scope (`_pp_depth == 1`). PARSE_PROG counts every braced body; these parse their statements
 # through PARSE_STMT directly, so a list in a top-level `case` arm was baked whether the arm ran
 # or not. A wrapper, so no hot function gains a global reference. CHANGELOG [6.6.16]
@@ -8306,7 +8306,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var _qs_pair = _stmt_call_pair(S, noff);   # 6.7.17 (D26): `fncall1(&f, 4)?;` too
             # ⛔ 6.6.5 — `fncallN(cb, …);` AS A STATEMENT WAS NOT THE SAME LANGUAGE AS IN AN
             # EXPRESSION. v6.5.17 lowered `fncallN` to the closure-aware indirect call in
-            # PARSE_FACTOR (parse_expr.cyr), but this dispatch sends IDENT+`(` straight to
+            # PARSE_FACTOR (parse/expr.cyr), but this dispatch sends IDENT+`(` straight to
             # PARSE_FNCALL, so in statement position the SAME TEXT stayed an ordinary call
             # into lib/fnptr.cyr — which calls the bit-63-tagged env pointer verbatim.
             # `fncall1(closure, 2);` SIGSEGV'd (exit 139) while `var r = fncall1(closure, 2);`
@@ -8353,10 +8353,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
             PARSE_FIELD_STORE(S, noff, 5);
             return 0;
         }
-        if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse_expr.cyr)
+        if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse/expr.cyr)
         # assignment or compound assignment: already consumed IDENT
         # 6.7.2 (B1): a const is not an lvalue — refused by name (the statement still parses on).
-        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse_fn.cyr). 6.7.14: only before an
+        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse/fn.cyr). 6.7.14: only before an
         # `=` / `op =` (_asg_lvalue_at).
         if (_asg_lvalue_at(S, noff) == 1) {
             _cst_skip_sync(S);   # the rest of the statement, to its `;` (6.7.14: in sync)
@@ -8380,7 +8380,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             _asg_ufv = 0 - 1;   # after the RHS: a statement nested in it (a closure body) set it
         } else {
             # v6.5.28 — capture the callee's DECLARED return sid BEFORE the RHS is consumed.
-            # The declaration path already does this (parse_decl.cyr:2352-2362: peek
+            # The declaration path already does this (parse/decl.cyr:2352-2362: peek
             # `IDENT (`, FINDFN, GFRS) — which is why `var t = str_new(..)` correctly types
             # `t` as a Str. The ASSIGNMENT path never did, so `t = str_new(..)` on that same
             # binding warned "assigning non-pointer to typed pointer" about a call that
@@ -8412,7 +8412,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 # In the local SLTYPE scheme a POSITIVE lt is a narrow width in bytes
                 # (1/2/4) or a float tag (F64_TYID 0x40000001 / F32_TYID 0x40000002);
                 # the pointer-like case is stored NEGATIVE, as `0 - sid`
-                # (parse_decl.cyr:2490). `lt > 0` therefore meant "narrow or float".
+                # (parse/decl.cyr:2490). `lt > 0` therefore meant "narrow or float".
                 # Measured before the fix: `var w: i32 = 5; w = 6;` warned, `var a: f64
                 # = ...; a = ...;` warned, and a struct-typed local — the actual typed
                 # pointer — did NOT, i.e. the check was unreachable for its own purpose.
@@ -8486,7 +8486,7 @@ fn PARSE_PROG(S): i64 {
     # FIRST PARSE_PROG-path declaration (`var`, array, struct literal, destructure) in a
     # private file consumed it and was stamped public. Found by the bite-3 review.
     _pub_pending = 0;
-    _pp_depth = _pp_depth + 1;   # 6.6.16 (C1): 1 = module scope (parse_decl.cyr _gai_stmt)
+    _pp_depth = _pp_depth + 1;   # 6.6.16 (C1): 1 = module scope (parse/decl.cyr _gai_stmt)
     var go = 1;
     while (go == 1) {
         var typ = PEEKT(S);
@@ -8543,11 +8543,11 @@ fn PARSE_PROG(S): i64 {
     # consumes each entry as it reports it; the LAST invocation is the end of the fork's
     # top-level call, by which point everything is parsed. Because it is entered that often,
     # the sweep itself is guarded by a PRIVATE-stamp sequence (see `_vis_stamp_seq` in
-    # parse_fn.cyr) — without it the walk is quadratic in the deferral count.
-    # See _vis_check (src/frontend/parse_fn.cyr). CHANGELOG [6.6.5]
+    # parse/fn.cyr) — without it the walk is quadratic in the deferral count.
+    # See _vis_check (src/frontend/parse/fn.cyr). CHANGELOG [6.6.5]
     _vis_check_deferred(S);
     _pp_depth = _pp_depth - 1;
-    _dl_pw_end(S);   # 6.7.16: the top-level call's end — a pre-walk name's unreported declaration (parse_fn_def.cyr)
+    _dl_pw_end(S);   # 6.7.16: the top-level call's end — a pre-walk name's unreported declaration (parse/fn_def.cyr)
     # With no marker (raw `cat | cycc`) every include is the user's, so the plain latch
     # applies. See PP_NOTE_HOST_ONLY.
     var _ho = _pp_hostonly_hit;

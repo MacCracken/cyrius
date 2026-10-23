@@ -20,7 +20,7 @@
 # `idiv` traps on INT_MIN / -1 (rows G H), the replay re-stored a constant over a value an
 # earlier initializer's call had written (row I), and the replay order moved the implicit exit's
 # "last var" (row J). 6.7.9 drops the opt-out: cx takes the static-init path, and the prestore
-# is what gives it the value. src/frontend/parse_decl.cyr (PARSE_GVAR_REG, _gv_cx_prestore).
+# is what gives it the value. src/frontend/parse/decl.cyr (PARSE_GVAR_REG, _gv_cx_prestore).
 #
 # EXPECTED VALUES are computed a DIFFERENT WAY from the actual, twice over: (1) every row is
 # compared against a CONTROL — the same program declared in dependency order, or the same value

@@ -39,7 +39,7 @@ fn _kmode_emit_order_gate(): i64 {
     # matched an UNRELATED `48 b9` in the kmode boilerplate — the gate still
     # reported PASS while testing nothing (verified: binary 408 B → 368 B, two
     # `48 b9` → one, gate still green).
-    # `seed_var | 0xF` references an IDENT, so `_CF_TRY` (parse_decl.cyr) refuses to
+    # `seed_var | 0xF` references an IDENT, so `_CF_TRY` (parse/decl.cyr) refuses to
     # fold it and the deferred init is genuinely emitted. Do NOT "tidy" this into a
     # literal or a foldable constant expression.
     var src = "kernel;\n\nvar seed_var = 0xDEADBEE0;\nvar marker_var = seed_var | 0xF;\n\nasm { 0xF4; 0xF4; 0xF4; 0xF4; }\n";

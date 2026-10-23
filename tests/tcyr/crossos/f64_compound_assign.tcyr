@@ -5,7 +5,7 @@
 # `G += 1.0` added the two bit patterns as integers (G = 9216616637413720064, f64_to saturates)
 # and `G -= 0.5` / `G *= 2.0` gave 0; the f32 global was garbage the same way. The for-step
 # replay was a separate, float-blind copy: `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2
-# iterations, not 4. Both are now one implementation (_asg_compound_op, src/frontend/parse.cyr).
+# iterations, not 4. Both are now one implementation (_asg_compound_op, src/frontend/parse/parse.cyr).
 # Values are compared as BIT PATTERNS (assert_eq on an untyped result), so the float literal on
 # the right is exact.
 #

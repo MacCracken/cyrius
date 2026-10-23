@@ -184,7 +184,7 @@ fn FIXUP(S): i64 {
         }
         else { if (ftype == 3) {
                 # Function address (the `&fn_name` and closure-literal
-                # paths in parse_expr.cyr). ftype 3 is the function-
+                # paths in parse/expr.cyr). ftype 3 is the function-
                 # pointer counterpart to ftype 0 (var address).
                 #   Linux aarch64 → 3-instruction MOVZ/MOVK chain (12 B),
                 #     patched absolute by FIXUP_MOV.

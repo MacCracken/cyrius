@@ -15,7 +15,7 @@
 #   Ab  A-broad (v6.3.38): an explicit-type-arg 2-arg generic call whose arg1 contains
 #       ANOTHER call clobbered arg0 — the inline-replay reserved param-slot INDICES only
 #       AFTER the arg loop, so a nested inline call reused the slot. (.37's _flc_hwm
-#       reserved frame SIZE; A-broad reserves the slot indices, parse_fn.cyr:1031.)
+#       reserved frame SIZE; A-broad reserves the slot indices, parse/fn.cyr:1031.)
 #
 # Compiles + runs ONLY under CYRIUS_MONOMORPH=1 (gated; default codegen byte-identical).
 # MUST exit 42.

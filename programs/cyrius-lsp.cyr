@@ -923,7 +923,7 @@ var _LSP_DRAIN_MAX = 67108864;
 
 # Read `fd` to its end into a fresh NUL-terminated buffer that doubles as it fills.
 # ⛔ 6.7.16 — both readers kept the first 8,191 bytes of the compiler's stderr and never read the
-# rest: src/frontend/parse_ctrl.cyr compiled alone printed 11,163, and a unit compile can print an
+# rest: src/frontend/parse/ctrl.cyr compiled alone printed 11,163, and a unit compile can print an
 # entry's warnings ahead of the open file's own error. Past _LSP_DRAIN_MAX it stops reading and says
 # so in the log (the child then meets a closed pipe). CHANGELOG [6.7.16]
 fn _lsp_drain(fd): i64 {
@@ -1031,7 +1031,7 @@ fn _lsp_env_selects(e): i64 {
 # ⛔ issues/archived/2026-10-19-cyrius-lsp-compiles-an-include-fragment-alone.md — in a project the open file
 # was always the unit (`cyrius check --with-deps --no-redirect <the open file>`). A file that is an
 # `include` of another was compiled ALONE, so every name an earlier include declares read
-# "undefined": 55 false errors on src/frontend/parse_ctrl.cyr, a duplicate-fn warning for each fn of
+# "undefined": 55 false errors on src/frontend/parse/ctrl.cyr, a duplicate-fn warning for each fn of
 # lib/string.cyr and 67 on lib/syscalls_windows.cyr (the [deps] prepend defining them first), and 3
 # errors on bootstrap/cybs.cyr (assembly for the seed's bootstrap/asm, not cycc input). Now each file
 # is checked through its UNIT — (entry, target, deps) — chosen from the project's include graph, in

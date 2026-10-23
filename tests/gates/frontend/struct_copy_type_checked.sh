@@ -9,8 +9,8 @@
 #     var p: P3 = q;                       -> p.x read 139 (q's ADDRESS, stored into a
 #                                             slot the compiler marks struct-typed)
 #
-# ROOT CAUSE. Both copy paths — `_try_aggregate_copy_assign` (src/frontend/parse.cyr) and
-# `_try_struct_copy_init` (src/frontend/parse_decl.cyr) — answered a type mismatch with
+# ROOT CAUSE. Both copy paths — `_try_aggregate_copy_assign` (src/frontend/parse/parse.cyr) and
+# `_try_struct_copy_init` (src/frontend/parse/decl.cyr) — answered a type mismatch with
 # `return 0`, which falls through to the generic 8-byte store. Neither reported anything.
 # The LITERAL form (`var p: P3 = Q3{..}`) has been a hard error since 6.6.5; these two were
 # the same rule with nothing behind it. Fixed by `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr),
@@ -31,7 +31,7 @@
 # call site reverted, rebuilt with build/cycc; ledger measured on the fixed tree):
 #   m1 all three call sites reverted to a bare `return 0`  -> RED, 9 of 9 refusal rows
 #   m2 assignment site only (parse.cyr)                    -> RED rows R1 R3 R5 R7 R9
-#   m3 declaration local-source site only (parse_decl.cyr) -> RED rows R2 R6 R8
+#   m3 declaration local-source site only (parse/decl.cyr) -> RED rows R2 R6 R8
 #   m4 declaration global-source site only                 -> RED row R4
 #   real tree                                              -> GREEN (9 refusals, 7 acceptances)
 #

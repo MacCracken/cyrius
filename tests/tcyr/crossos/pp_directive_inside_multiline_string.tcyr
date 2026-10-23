@@ -1,7 +1,7 @@
 # pp_directive_inside_multiline_string.tcyr — v6.6.6 bite 4.
 #
 # A cyrius string literal may hold a RAW newline (src/main.cyr and
-# src/frontend/parse_expr.cyr both spell error messages that way). The three
+# src/frontend/parse/expr.cyr both spell error messages that way). The three
 # line-oriented preprocessor passes decide "is this line a directive?" from the
 # line's first non-space byte, and until 6.6.6 each RESET its `in_string` flag at
 # every newline — so a line sitting INSIDE a multi-line string was read as a

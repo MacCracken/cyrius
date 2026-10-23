@@ -6,7 +6,7 @@
 # high-water: the frame could end above them, so the call's own argument `push` landed on the spilled callee and the
 # callee was passed its own code address as its first argument. This release's D30 shape `la(callptr(&mkv, 4, 2))`
 # into an inline value-form vector parameter read 2 where 42 is right on x86_64, and the two-parameter `lc(..)` faulted
-# (`_icall_slot`, src/frontend/parse_expr.cyr). The scalar rows are controls (an integer argument's spill stayed inside
+# (`_icall_slot`, src/frontend/parse/expr.cyr). The scalar rows are controls (an integer argument's spill stayed inside
 # the frame). Each argument is weighted, so a lost or swapped one changes the value. In this directory so the release
 # gate runs it on ecb / ach / cass / pi.
 include "lib/syscalls.cyr"

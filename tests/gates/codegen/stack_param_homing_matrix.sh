@@ -668,7 +668,7 @@ fi
 # arity error since v6.5.1; this one was never wired to it. Both dispatchers are probed — the
 # scalar one and the struct-returning `_EMIT_OP_DISPATCH_AGG`, whose hidden retptr/X8 is NOT a
 # declared parameter and must not shift the expected count — in both directions (too many, too
-# few). Mutation: drop EITHER `_CHECK_ARITY` call in parse_expr.cyr -> RED on all three
+# few). Mutation: drop EITHER `_CHECK_ARITY` call in parse/expr.cyr -> RED on all three
 # compilers, "2 times, want 4" each (the probe's two too-many and two too-few cases split evenly
 # across the two dispatchers). Ledger: mutated tree RED, real tree GREEN (2026-09-19).
 cat > "$T/ro.cyr" <<'EOF'

@@ -44,17 +44,17 @@ fn _verify_inline(buf, n, pattern, region): i64 {
 fn _cve05_guard_gate(): i64 {
     var label = "the compiler heap guard-page gap tok_names mangle-path: no magic-256 NPOS_GUARD in any source-identifier copy site (v5.11.65)";
     var files[88];
-    store64(&files + 0,  _root_path("src/frontend/parse_decl.cyr"));
-    store64(&files + 8,  _root_path("src/frontend/parse_expr.cyr"));
-    store64(&files + 16, _root_path("src/frontend/parse_fn.cyr"));
-    store64(&files + 24, _root_path("src/frontend/parse_types.cyr"));
+    store64(&files + 0,  _root_path("src/frontend/parse/decl.cyr"));
+    store64(&files + 8,  _root_path("src/frontend/parse/expr.cyr"));
+    store64(&files + 16, _root_path("src/frontend/parse/fn.cyr"));
+    store64(&files + 24, _root_path("src/frontend/parse/types.cyr"));
     store64(&files + 32, _root_path("src/main.cyr"));
     store64(&files + 40, _root_path("src/main_aarch64.cyr"));
     store64(&files + 48, _root_path("src/main_aarch64_macho.cyr"));
     store64(&files + 56, _root_path("src/main_aarch64_native.cyr"));
     store64(&files + 64, _root_path("src/main_cx.cyr"));
     store64(&files + 72, _root_path("src/main_win.cyr"));
-    store64(&files + 80, _root_path("src/frontend/parse_fn_def.cyr"));   # 6.7.15: split from parse_fn.cyr
+    store64(&files + 80, _root_path("src/frontend/parse/fn_def.cyr"));   # 6.7.15: split from parse/fn.cyr
 
     var fail = 0;
     var fi = 0;

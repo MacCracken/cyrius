@@ -4,7 +4,7 @@
 # instance `g$i32`, and the call-site messages printed that: "in a call to 'S_ri'" (D27, 6.7.12), "different vector
 # type in a call to 'S_rd'" (A2, 6.7.11), the struct-type refusal, "'S_two' expects 2 arguments, got 3", "'S_ta' has
 # no parameter named 'z'", "undefined function 'S_nope'", "#pure fn calls #io fn 'A_m'", "'g$i32' is deprecated".
-# `_fn_src_name` (parse_fn.cyr) gives every such message `S.ri` / `g<i32>` (a method from its record, GFMETH: pass 1
+# `_fn_src_name` (parse/fn.cyr) gives every such message `S.ri` / `g<i32>` (a method from its record, GFMETH: pass 1
 # records an impl's definitions, the method arm a name a call registered; an instance its base and `<..>` from its
 # type arguments, GFIC). A method form's arity message counts the arguments as written, without `self`
 # (`_check_arity_p0`). Diagnostics only: no binary changes (issues/archived/2026-10-15-call-diagnostics-name-method-by-mangled-name.md).

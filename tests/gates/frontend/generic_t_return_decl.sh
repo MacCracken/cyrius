@@ -6,7 +6,7 @@
 # `var a: P3 = gid(5);` reaches gid's i64 base, which returns a word: `a` holds it as the struct's address, as
 # `var b: P3 = wid(5);` with `fn wid(x): i64` does (the guide's handle line, 6.7.10) — `gid(alloc(24))` reads and
 # writes the record, and `a.z` of `gid(5)` reads address 5 + 16 at run time, the fault `wid(5)` gives.
-# ⛔ THROUGH 6.7.14 PARSE_VAR's reset (`_gen_decl_reset`, src/frontend/parse_decl.cyr) dropped the annotation for a
+# ⛔ THROUGH 6.7.14 PARSE_VAR's reset (`_gen_decl_reset`, src/frontend/parse/decl.cyr) dropped the annotation for a
 # `: T` callee whatever T bound, so a scalar instance left `a` an untyped word: `a.z` was refused "no struct type in
 # scope for 'a'" at the use (the filed repro 1, `gid(w.v)` — i64 by the whole-argument rule), and with no field use
 # the annotation was dropped in silence (repro 2, exit 5). The reset now asks what the reached fn returns: a T bound

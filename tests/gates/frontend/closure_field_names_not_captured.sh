@@ -13,7 +13,7 @@
 # lib/alloc.cyr included the value was right, but each such closure carried a heap env holding a
 # copy of `y` it never read.
 #
-# THE FIX (src/frontend/parse_expr.cyr): two more exemptions. `_cl_is_field_name`: the name
+# THE FIX (src/frontend/parse/expr.cyr): two more exemptions. `_cl_is_field_name`: the name
 # follows a `.` that is not the second dot of a range's `..` (`for i in 0..y` reads `y` — the
 # lexer makes `..` two DOT tokens). `_cl_is_lit_label`: `IDENT :` right after a `{` or `,` whose
 # innermost open bracket is a `{` that follows a struct name or a generic struct's `>`.

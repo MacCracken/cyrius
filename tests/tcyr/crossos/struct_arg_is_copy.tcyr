@@ -14,7 +14,7 @@
 # caller-side field copy). Only a field argument inside a fn was copied.
 #
 # ⭐ THE FIX is one site in the CALLEE's prologue (`_sptr_params_localize`, src/frontend/
-# parse_fn.cyr): after `_stkp_flush` has homed every parameter slot — a stack-passed pointer
+# parse/fn.cyr): after `_stkp_flush` has homed every parameter slot — a stack-passed pointer
 # (SysV 7th+, aarch64 9th+, Win64 5th+) included — each such parameter's struct is copied into an
 # inline frame aggregate that takes the parameter's name. The ABI does not change, so every
 # caller form above, fn pointers included, gets the copy from the one site.

@@ -40,7 +40,7 @@
 #      on packed narrow globals and a narrow local seen through its address; each equals native.
 #      ⚠ The B01 rows need F's B01 frontend fix too (the for step / compound load) — on a tree
 #      without it they are RED natively as well, and the row says so.
-#      6.6.13 (M1b): cx's constant PRESTORE (_gv_cx_prestore, parse_decl.cyr) stored 8 bytes too,
+#      6.6.13 (M1b): cx's constant PRESTORE (_gv_cx_prestore, parse/decl.cyr) stored 8 bytes too,
 #      so before the next narrow global's own initialiser ran, a forward read of it saw the
 #      prestored constant's upper bytes (E4: 255 where native gives 0; E5: every width).
 #

@@ -3,15 +3,15 @@
 # PARSE_IMPL / SKIP_GENERICS / DSE_PASS / IS_JUMP_TARGET /
 # PARSE_FN_DEF.
 # ================================================================
-# Split out of src/frontend/parse.cyr in v5.5.38. Consumes the state
+# Split out of src/frontend/parse/parse.cyr in v5.5.38. Consumes the state
 # vars _cur_fn_regalloc / _cur_fn_ret_stash / _cur_fn_ret_sid defined
 # at the top of parse.cyr. Included by parse.cyr at the same textual
 # position the original content lived; self-host byte-identical.
 
 # v5.5.38: control-flow fns (if/while/for + cond helpers) extracted.
-include "src/frontend/parse_ctrl.cyr"
+include "src/frontend/parse/ctrl.cyr"
 # 6.7.10 (P5-B): the execution-coverage mode — its switch, the per-fn counters, the map and the dump.
-include "src/frontend/parse_cov.cyr"
+include "src/frontend/parse/cov.cyr"
 
 # ================================================================
 # FUNCTION TABLE + CODEGEN
@@ -403,7 +403,7 @@ fn REGFN(S, noff): i64 {
             # (they DO grow past 8192), but this forward-registration site alone
             # still wrote `S + 0x97A000 + ...`; once _fnt_grow relocated the table
             # off that fixed base, a forward-registered overload landed in the
-            # abandoned region while every reader (parse_fn.cyr:1083/1109) looked at
+            # abandoned region while every reader (parse/fn.cyr:1083/1109) looked at
             # the grown _fnt_ovstr — so overloads registered after a grow silently
             # went missing. The REVERSE-direction writes below already used the
             # pointers; this matches them.
@@ -551,7 +551,7 @@ fn FINDFN(S, noff): i64 {
 }
 
 # v5.7.31: find fn index by literal c-string name (str_ptr / str_len).
-# Used by parse_expr.cyr's aarch64 polyfill dispatch for f64_exp /
+# Used by parse/expr.cyr's aarch64 polyfill dispatch for f64_exp /
 # f64_ln, where the lookup target is a fixed compiler-internal name
 # rather than a user IDENT (whose noff would be available via
 # PEEKV). Linear scan over GFCNT(S) entries; the str_data names are
@@ -1663,7 +1663,7 @@ fn _PARSE_RETURN_ARMS(S): i64 {
 # v5.10.1 — type-check infrastructure: lazy lookup for the
 # `Str` struct sid so PARSE_FNCALL can flag Str-typed args
 # being passed to cstring-typed (non-`: Str`) params. The
-# search shape mirrors `_STR_FROM_NOFF` in parse_expr.cyr —
+# search shape mirrors `_STR_FROM_NOFF` in parse/expr.cyr —
 # scan tok_names for the cstring "Str\0" (4 bytes:
 # 0x0072_7453 little-endian), then resolve to a struct id via
 # FINDSTRUCT. Returns 0 if Str isn't defined in this program
@@ -2794,7 +2794,7 @@ fn _sarg_deref(S, fi, argc, tail): i64 {
 # with `pb: *f64v2` and `p: *f64v2` pushed lane 0 — the word the dereference read — as the address (139 on
 # x86_64 and aarch64, a cx guest fault, exit 5 on PE), as `take(*p)` did for a struct before 6.7.10's decision
 # 6. The `*` that starts the argument is parked as a struct's is when parameter `argc` of `fi` is a `*V`
-# (`_dlo_vec`, parse_expr.cyr: the operand's step word names its vector, `_ps_vdesc`) and pb itself is
+# (`_dlo_vec`, parse/expr.cyr: the operand's step word names its vector, `_ps_vdesc`) and pb itself is
 # pushed (`_push_struct_expr_arg`); a `*` of another vector type is refused with A2's words (`_dro_check`).
 # The `*` token for `_dlo_vec`, -1 when the parameter is no `*V`.
 # 6.7.13 (D31 A): and for a pointer of another kind or a by-value struct (`_vk_param`), where `_dro_vcheck` refuses a
@@ -3408,7 +3408,7 @@ fn _tup_sarg_lit(S, fi, argc, tail): i64 {
 # EPUSHR: byte-identical), and its static struct is checked: a bare name; a whole free call,
 # resolved AFTER the parse (a dedup hit — resolving it first would move a generic's instantiation);
 # a whole method / operator result (`_sc_post`'s record); a whole struct-typed field (the passive
-# `_fpk` record, parse_decl.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
+# `_fpk` record, parse/decl.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
 # other one to the caller. All three argument loops reach it. CHANGELOG [6.7.3]
 # 6.7.10 (B7-1): a HANDLE of 8 B or less (`take(a)`, `take((a))`) passes the struct it points at, as
 # one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed
@@ -4483,7 +4483,7 @@ fn _sptr_param_localize1(S, li): i64 {
 }
 
 # ⭐ 6.6.5 — PARSE_FNCALL's `: Str` param auto-coercion, EXTRACTED so the method-call path
-# (parse_decl.cyr) uses the same code rather than a second copy that drifts. A string
+# (parse/decl.cyr) uses the same code rather than a second copy that drifts. A string
 # literal landing in a param the callee annotated `: Str` is wrapped in `str_from(...)`;
 # without the wrap the callee receives a raw cstr pointer and every Str accessor reads the
 # wrong shape. Measured on 6.6.4 AND on the first cut of this bite: `h.slen("abcde")`
@@ -7179,7 +7179,7 @@ fn _sc_pre(S, fi, noff, beg): i64 {
     return t;
 }
 
-# 6.7.13 (D29) — a value-form vector receive of a METHOD call `x.m(..)` (`_vrcv_emit`, parse_decl.cyr) on PE: the
+# 6.7.13 (D29) — a value-form vector receive of a METHOD call `x.m(..)` (`_vrcv_emit`, parse/decl.cyr) on PE: the
 # method whose receiver is token `_sc_vbeg` (one-shot) takes the destination's address, slot `_sc_vdst`, as its
 # hidden result pointer (int arg 0, before `self`) — `_icall_vret`'s shape. -1 (no temp: `_sc_post` reads nothing).
 fn _sc_vret(S): i64 {
@@ -7232,7 +7232,7 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
 # rax, there is no temp". Every `_sc_whole` consumer either type-checks it (`_fsc_expr`,
 # `_pcmpe_struct_assign`, both var receives) or keeps ignoring it (-3 is neither -1 nor a slot).
 # Str (16 B, a handle in rax) is not a <= 8 B struct and stays unrecorded. The scalar operator
-# dispatch (parse_expr.cyr) calls this directly. CHANGELOG [6.6.11]
+# dispatch (parse/expr.cyr) calls this directly. CHANGELOG [6.6.11]
 fn _sc_post_small(S, fi, noff, beg): i64 {
     if (fi < 0) { return 0; }
     var sid = GFRS(S, fi);
@@ -7452,7 +7452,7 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
 # PE 146 where 161 is right), silently. E's type is known only once it is parsed, so the declaration's scalar path runs
 # as ever: when the whole initialiser, inside any parentheses (`_scv_un_peel` stepped in), is one dereference `* E`
 # (`_vrcv_dsrc`), its `*` is watched (`_dvi_arm`); E naming a value-form vector, `_deref_read` parks the pointer
-# (`_dvi_park`, parse_expr.cyr) and the declaration takes it here (`_dvi_take`): the local is that vector, its 16 / 32
+# (`_dvi_park`, parse/expr.cyr) and the declaration takes it here (`_dvi_take`): the local is that vector, its 16 / 32
 # bytes copied through the pointer. A `*p` of no vector binds the word as before — nothing parks, its code unchanged.
 # CHANGELOG [6.7.14]
 fn _dvi_arm(S): i64 {
@@ -7480,7 +7480,7 @@ fn _dvi_take(S, noff, pscale, ext, start): i64 {
     _agc_copy_bytes(S, named, 0 - 1, _AGC_DREF(_dlo_h), 0 - 1, n * 8);
     return 1;
 }
-# 6.7.8 (review) — a declaration's whole dyn initialiser (`_dyn_dst_chk`, parse_expr.cyr): in a fn an
+# 6.7.8 (review) — a declaration's whole dyn initialiser (`_dyn_dst_chk`, parse/expr.cyr): in a fn an
 # untyped one infers the dyn (a copy) and a struct annotation is `_sc_decl_mismatch`'s; any other
 # annotation (`: i64`, `: *Sq`, `: f64`, a vector — `ext` a scalar / float / slice / bool one) is
 # refused. 1 = refused.
@@ -7515,7 +7515,7 @@ fn _sc_global_pair(S, pscale, start): i64 {
 }
 
 # 6.6.17 (a3): a vector global declared after the first statement takes only `= 0;` (see
-# `_vecg_size`, parse_decl.cyr). `start` is the initializer's first token, after
+# `_vecg_size`, parse/decl.cyr). `start` is the initializer's first token, after
 # `var NAME : VEC =` (a vector type is one token, so the name is 4 back).
 fn _vecg_rhs_ok(S, start): i64 {
     var v = _CF_TRY(S, start, 5);
@@ -7989,7 +7989,7 @@ fn _ret_vicall(S): i64 {
     return 1;
 }
 # On Win64 that call returns through a hidden pointer (int arg 0), as `f(..)` does: into an anonymous temp
-# (`_icall_vbeg` / `_icall_vdst`, parse_expr.cyr), copied into this fn's own result pointer — the by-name arm's
+# (`_icall_vbeg` / `_icall_vdst`, parse/expr.cyr), copied into this fn's own result pointer — the by-name arm's
 # shape below. SysV / AAPCS64 / cx return it in the vector registers, which the scalar path leaves as they are.
 # 1 = emitted (the `;` consumed). CHANGELOG [6.7.13]
 fn _ret_vicall_pe(S): i64 {
@@ -8421,7 +8421,7 @@ fn _async_mv_say(S, noff, cut, n): i64 {
 # `_tsc_n` counts the refusals written: a statement form that sees it move while it parsed its call knows the
 # call refused itself, and steps over the rest without a second error (`mk().n = 5;` at top level was also
 # "the result is a temporary"). The panic latch is left as it was. CHANGELOG [6.7.14]
-# 6.7.15: an undefined callee with a `.field` chain (`_call_undef`, parse_expr.cyr) moves it too. CHANGELOG [6.7.15]
+# 6.7.15: an undefined callee with a `.field` chain (`_call_undef`, parse/expr.cyr) moves it too. CHANGELOG [6.7.15]
 # 6.7.15: the callee `noff` named as the source spells it — a method `Pt.dup`, not its fn `Pt_dup` (`_fn_src_name`).
 var _tsc_n = 0;
 fn _refuse_toplevel_struct_call(S, noff): i64 {
@@ -8624,9 +8624,9 @@ fn _callee_site_checks_here(S, fi, noff, back): i64 {
 # and v6.5.0 shipped THREE callers (PARSE_FNCALL, the tail call, EMIT_OP_DISPATCH).
 # hisab found `&_private` callable from any file; the sweep found eight paths that
 # resolve a user identifier through FINDFN and emit their own call/fixup with no check:
-# `&fn` (parse_expr.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
+# `&fn` (parse/expr.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
 # the inferred `var q = f()` form), and four PE-only SIMD receive/return paths
-# (parse_decl.cyr _try_vector_call_assign / _f2c / _f4c, parse_fn.cyr _rc). All eleven
+# (parse/decl.cyr _try_vector_call_assign / _f2c / _f4c, parse/fn.cyr _rc). All eleven
 # now call it — since 6.6.16 through `_callee_site_checks`, its only caller, which adds the
 # `#deprecated` warning; `grep -n '_callee_site_checks' src/frontend/` is the list.
 #
@@ -11297,7 +11297,7 @@ fn _refuse_bnd_fwd(S, fi, noff): i64 {
 # The refusal for a scalar call (or `&g`) of generic fi whose base is not a valid i64 instance:
 # its own bound (reported by `_bnd_check_fn`), or a bounded struct it instantiates with its T.
 fn _refuse_bnd_base(S, fi, noff): i64 {
-    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `g(P { .. })` is the literal's error (parse_expr.cyr)
+    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `g(P { .. })` is the literal's error (parse/expr.cyr)
     if (_bnd_check_fn(S, fi, 0 - 8, 0 - 8) == 1) { return 0; }
     if (_bbs_fwd > 0) { _refuse_bnd_fwd(S, fi, noff); return 0; }   # 6.7.14
     if (_bbs_why <= 0) { return 0; }
@@ -12999,7 +12999,7 @@ fn _ce_top_expr(S, ti, out): i64 {
     return v;
 }
 # 6.7.15 — the same, QUIET: a refusal sets `out`[1] and prints nothing, counts no error and latches nothing — the
-# declaration zone's probe of a float global's initializer (parse_decl.cyr _gvk_fx), which the replay compiles as
+# declaration zone's probe of a float global's initializer (parse/decl.cyr _gvk_fx), which the replay compiles as
 # run-time code when the evaluator refuses it. Its tokens are pre-scanned (_gvk_fscan): only consts already
 # evaluated are read, so no const's own evaluation runs under it. CHANGELOG [6.7.15]
 var _ce_quiet = 0;
@@ -14005,7 +14005,7 @@ fn PARSE_IMPL(S): i64 {
     STI(S, GTI(S) + 1);  # consume IMPL
     # `impl Trait for Type {` or (6.7.0, A3) the inherent `impl Type {` — methods with no trait.
     if (PEEKT(S) == 10) { return _impl_tup_refuse(S); }   # 6.7.7 (R3): `impl ( .. ) {`
-    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); return _impl_hdr_bad(S, impl_ti); }   # 6.7.17: the block stepped (parse_fn_def.cyr)
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); return _impl_hdr_bad(S, impl_ti); }   # 6.7.17: the block stepped (parse/fn_def.cyr)
     var trait_noff = PEEKV(S);
     STI(S, GTI(S) + 1);  # consume the trait (or, inherent, the type) name
     var type_noff = trait_noff;
@@ -14327,7 +14327,7 @@ fn _mark_ptr_param(S): i64 {
     # 6.6.17: and its step, sizeof(T), as a mark on the slot the parameter takes next — read only
     # behind the slot's bit 56, which `_param_record` sets (see `_sl_marks`). Cursor on T; an
     # unknown T is refused by `_tn_param_check`, so this is quiet. `**T` steps a pointer's 8.
-    # 6.7.8 (C2-3a): and T's kind with it (`_ps_word`, parse_types.cyr), under the same binding.
+    # 6.7.8 (C2-3a): and T's kind with it (`_ps_word`, parse/types.cyr), under the same binding.
     var ps = 8;
     var ed = 0;
     if (PEEKT(S) != 8) {
@@ -15411,7 +15411,7 @@ fn _gs_ppvar(S, fi, ni, ti): i64 {
 var _gvk_at = 0;        # `_gs_vkind` 2: the carrier annotation's G token, or -1 for a call's result (`_gvk_call`)
 var _gvk_call = 0;      # ... the call's name token
 var _gvk_tp = 0;        # `_gs_vkind` 1: the type parameter's name, 0 when the scan does not know which
-# The readers (`_gs_uvar`, `_gs_vkind` .. `_gcr_slot`, and the bounded scan's `_bnr_uvar`) live in parse_fn_def.cyr, so
+# The readers (`_gs_uvar`, `_gs_vkind` .. `_gcr_slot`, and the bounded scan's `_bnr_uvar`) live in parse/fn_def.cyr, so
 # this file keeps its 64 KB of fmt / lint headroom (tracked_sources_canonically_formatted.sh).
 # ⛔ 6.7.16 (the user's D1, 2026-10-19) — TWO MORE SHAPES OF A BODY THAT ONLY WORKS WHEN T IS A STRUCT. `return &n;` in
 # a fn returning a struct, n typed by T (`var n: T`, `p: *T`, an untyped `var n = x;` from one): `&n` is that struct
@@ -16169,7 +16169,7 @@ fn _gen_fwd_err(S, fi, noff, tail, fi2): i64 {
 # The refusal, by name, for a scalar call / type argument / address of a stub generic fi (the site names it `noff`).
 # 6.7.16 (D1): the words name the two new shapes too, and a note names the line that needs a struct.
 fn _refuse_gen_stub(S, fi, noff): i64 {
-    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `rdb(P { .. })` is the literal's error (parse_expr.cyr)
+    if (_slit_arg_err(S) == 1) { return 0; }   # 6.7.17: `rdb(P { .. })` is the literal's error (parse/expr.cyr)
     _gen_ident_err(S, fi, noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, `&x` of one returned as a struct, or a struct result over 8 bytes stored in one — directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
     if (_err_quiet == 0) { _gen_stub_note(S, fi); }
     return 0;
@@ -16263,7 +16263,7 @@ fn _gen_addr_check(S, fi, noff): i64 {
 # 2026-10-18): `g(ps + 1)`, `g(1 + ps)`, `g((ps) - 1)` bind what ps points at (`_ic_parith`) — they ran the i64 base
 # (`p + 1` stepped 8 for a 24-byte S). Through `x: T` no pointer binds, so the arithmetic is read through `p: *T` only.
 # ⛔ 6.7.17 — a whole field or method chain on any receiver head binds as the struct value it is (the user's D2,
-# 2026-10-22): `sz(w.p)`, `sz(b.mp2())`, `sz(w.gp().m())`, `sz((*pw).p)` — `_acv_bind` (parse_decl.cyr). CHANGELOG [6.7.17]
+# 2026-10-22): `sz(w.p)`, `sz(b.mp2())`, `sz(w.gp().m())`, `sz((*pw).p)` — `_acv_bind` (parse/decl.cyr). CHANGELOG [6.7.17]
 fn _ic_arg(S, fi, a, k): i64 {
     var ptr = _ic_ptr_param(S, fi, k - 1);
     if (ptr == 1) {
@@ -16422,7 +16422,7 @@ fn _gsc_deref(S, a): i64 {
 # A struct carrier given a field chain `h.bp` / `hp.bp` / `self.bp` / `GH.k.bp` (the whole argument):
 # what its LEAF field points at when it is declared `*G<X>` — each hop through an inline struct field
 # or a `*T` field, the head a local, a parameter, a capture or a global (`_dyn_base_sid`). It ran the
-# i64 base, `Box<i64>`'s layout, silently (4 for 8). The walk is `_chain_leaf` (parse_types.cyr). CHANGELOG [6.7.8]
+# i64 base, `Box<i64>`'s layout, silently (4 for 8). The walk is `_chain_leaf` (parse/types.cyr). CHANGELOG [6.7.8]
 # ⛔ 6.7.17 — AN INLINE `G<X>` FIELD AND A METHOD RETURNING `G<X>` / `*G<X>` BIND X TOO, on any receiver head, as a G<X>
 # local or a free call does (the user's D2, 2026-10-22: a struct-typed field and a struct-returning method bind as a
 # struct local or a free call): `gx(h.b)`, `gx(o.mkb())`, `gpx(o.mpb())`, `gx(w.gp().b)` were refused "a different
@@ -19233,9 +19233,9 @@ fn _prescan_sig_facts(S, fi, start_ti, pasync): i64 {
 # sid (a generic instance's), -9 an f64, a multi-value signature, a `*T`'s pointee, a bool (the
 # cursor is left where those readers stop: `_prescan_ret_single` scans on to the `{`). Extracted from
 # `_prescan_fn_sig` (6.7.8): a trait-object call's prototype is recorded from its trait member's
-# signature the same way (`_dyn_proto`, parse_types.cyr).
+# signature the same way (`_dyn_proto`, parse/types.cyr).
 fn _prescan_ret_type(S, fi): i64 {
-    _ret_redef_reset(S, fi);   # 6.7.16: a redefinition's return is its own (parse_types.cyr)
+    _ret_redef_reset(S, fi);   # 6.7.16: a redefinition's return is its own (parse/types.cyr)
     if (PEEKT(S) != 49) { return 0; }   # optional `: ReturnType`
     STI(S, GTI(S) + 1);     # consume ':'
     if (PEEKT(S) == 10) {
@@ -19255,7 +19255,7 @@ fn _prescan_ret_type(S, fi): i64 {
 }
 
 # ⛔ 6.6.17 (a5) — PASS 1: does fn `fi`'s body PROVABLY return ONE value? Then GFLG bit 1024, which
-# `_dt_arity_check` (parse_decl.cyr) reads to refuse `var a, b = f();` — b took a stale rdx,
+# `_dt_arity_check` (parse/decl.cyr) reads to refuse `var a, b = f();` — b took a stale rdx,
 # silently, at fn scope and at top level. Recorded HERE so a forward call knows it. Conservative:
 # a `ret2`, an `asm` block, a `?` or any `return` that is not provably one value (`_ret_stmt_single`)
 # leaves the bit clear. Closure and nested-fn bodies are their own units. Cursor: past the
@@ -19639,7 +19639,7 @@ fn _pre_attr_drop(): i64 {
 # declared `Box<Pt>` (24 B, `v` a Pt): `var r: Box<Pt> = mk<Pt>(p); r.v.x` failed with "expected
 # ';', got '.'", and a plain `fn mkp(x: Pt): Box<Pt>` was refused ("fn return struct-id differs
 # from declared var type"). As a parameter type `r.v.x` failed the same way. The type now
-# resolves exactly as a `var b: Box<Pt>` does (parse_decl.cyr): an ALL-i64 argument list is the
+# resolves exactly as a `var b: Box<Pt>` does (parse/decl.cyr): an ALL-i64 argument list is the
 # base struct itself, anything else the deduped `Box$..` instance, with an instance's T bound.
 # ⛔ 6.7.16 — A generic's BASE reads its list with T bound to i64, as the base's body reads the same
 # annotation: `: G1<T>` is still the base `G1`, but `: G1<Box<T>>` is `G1$Box` and `: Box<Pt>` /
@@ -19751,5 +19751,5 @@ fn _gtype_param_mask(S, mask, pc, base, inst, isptr): i64 {
 }
 
 # The top-level scans (pass 1 / pass 2), the definition identity and duplicate checks, and the fn
-# definition itself (`_PARSE_FN_DEF_IMPL`) continue in src/frontend/parse_fn_def.cyr, which
-# src/frontend/parse.cyr includes right after this file. CHANGELOG [6.7.15]
+# definition itself (`_PARSE_FN_DEF_IMPL`) continue in src/frontend/parse/fn_def.cyr, which
+# src/frontend/parse/parse.cyr includes right after this file. CHANGELOG [6.7.15]

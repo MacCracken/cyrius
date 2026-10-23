@@ -7,9 +7,9 @@
 # identifier; rename the variable/field/fn)", then "undefined variable 'i64'" and "assigning non-pointer to typed
 # pointer"; a declaration-zone global added "expected '=', got '('"; `struct H { cb: *fn(i64): i64; k; }` the keyword
 # line. Measured on 6.7.16 (main 4a3c510f3), x86_64; the parse is every target's. The readers now read the type by the
-# parameter's grammar (`_ptr_fnp_end`, src/frontend/parse_types.cyr), its names checked with the declaration's words,
+# parameter's grammar (`_ptr_fnp_end`, src/frontend/parse/types.cyr), its names checked with the declaration's words,
 # once, and step a pointer's 8 (`fncallN` / `callptr` call through the word as through a parameter). A `fn` behind a
-# `*` is a fn-pointer type to the token scans too (`_skip_nested_body`, src/frontend/parse.cyr; `_tok_fn_kw`).
+# `*` is a fn-pointer type to the token scans too (`_skip_nested_body`, src/frontend/parse/parse.cyr; `_tok_fn_kw`).
 # Filed: docs/development/issues/archived/2026-10-21-fn-pointer-type-outside-a-parameter.md
 #
 #   R  the filed repros verbatim — a local, a declaration-zone global, a field — and a global after the first
@@ -27,7 +27,7 @@
 #      variable's `&x` is (6.5.29): `var c: *fn(i64): i64 = &dbl;`, `cb = &inc;` into a `cb: *fn( .. )` parameter, a
 #      zone / late / assigned global, a for step, `|x| x + 1`, `|| 4`, wrapped `((&f))` / `((|x| x))`, `&f` into a `*i64`,
 #      `&P_m` — each warned "assigning non-pointer to typed pointer" through 6.7.16 (`_tp_fna_exempt`,
-#      src/frontend/parse_decl.cyr); WC1-WC3 the controls that still warn (an untyped variable, `&f + 0`, `(|x| x) + 1`)
+#      src/frontend/parse/decl.cyr); WC1-WC3 the controls that still warn (an untyped variable, `&f + 0`, `(|x| x) + 1`)
 #   Y  (met landing D8) the statement resync (`_sync_kw`, src/common/util.cyr) stopped at a fn-pointer type's `fn` as at a
 #      statement keyword, so junk `h(1 *fn(i64): i64;` added "a fn is defined inside fn 'f'" (and, once D8 made
 #      `_skip_nested_body` take a `*fn` as no unit, "unexpected '('"): Y1 one error, Y2 the next statement's error kept,

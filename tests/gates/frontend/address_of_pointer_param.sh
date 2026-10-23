@@ -10,7 +10,7 @@
 # a `*P` local, a `*Q` of 8 B or less and a `*i64` parameter was the slot (and 6.6.5 gave the slot for
 # all of them). Since 6.6.16 a by-value parameter is copied into its own inline local, so the arm fired
 # only for `*P` parameters — and for a `#naked` fn's by-value one, which keeps it. Now the arm asks
-# `_addr_is_slot_content` (parse_fn.cyr). The user's decision 2(a). 6.6.6 - 6.7.8 measured, x86_64 /
+# `_addr_is_slot_content` (parse/fn.cyr). The user's decision 2(a). 6.6.6 - 6.7.8 measured, x86_64 /
 # aarch64 / cx / PE. Filed: docs/development/issues/2026-10-10-address-of-pointer-param-over-8b-is-pointee.md
 #
 #   R1 the filed repro, verbatim, exits 0 (3 before) on x86_64, x86_64 CYRIUS_IR=3, aarch64 (qemu),

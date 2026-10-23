@@ -67,11 +67,11 @@
 #         fns defined after the violation; without them M5b reported 1 and this axis passed it.
 #   M6  drop the _fn_by_defti pass-1 authority            -> public_marker_scoped_to_its_item
 #         var_then_fn + arr_then_fn red (pass 2's `var` skip re-arms `public` and consumes nothing)
-#   M7  remove the SNPOS commit in parse_decl.cyr         -> axis 3 wrong_name red (names Q7_seven,
+#   M7  remove the SNPOS commit in parse/decl.cyr         -> axis 3 wrong_name red (names Q7_seven,
 #         a method that EXISTS, for a call to q.nosuch())
 #   M8  remove SFDS in pass 1                             -> axis 3 fwd_generic red, the crossos
 #         tcyr fails to COMPILE, and var_then_fn/arr_then_fn red (the authority keys on SFDS)
-#   M9  remove the _spec < 0 guard in parse_expr.cyr      -> was axis 3 struct_targ red ("undefined
+#   M9  remove the _spec < 0 guard in parse/expr.cyr      -> was axis 3 struct_targ red ("undefined
 #         function 'enum'", a read of _fnt_names at index -3); since 6.7.1 no struct type
 #         argument reaches it (the -3 refusal is gone), so this mutation is no longer observable
 #   M11 method args pushed without the callee mask        -> the crossos tcyr SIGSEGVs (139)
@@ -117,7 +117,7 @@ forks=$(ls "$ROOT"/src/main*.cyr 2>/dev/null | grep -v version_str)
 nf=$(printf '%s\n' "$forks" | grep -c .)
 [ "$nf" -ge 7 ] || { echo "  FAIL: private_forward_reference axis1 — expected >= 7 src/main*.cyr forks, found $nf"; fail=1; }
 # 6.6.17: the two calls live in the ONE shared pass-1 scan every fork runs (_tl_pass1,
-# src/frontend/parse_fn.cyr); toplevel_scan_shared.sh refuses a fork that re-grows its own.
+# src/frontend/parse/fn.cyr); toplevel_scan_shared.sh refuses a fork that re-grows its own.
 for f in $forks; do
   b=$(basename "$f")
   cp1=$(grep -c '^_tl_pass1(S, [01]);' "$f" || true)
@@ -126,7 +126,7 @@ for f in $forks; do
   [ "$cp1" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — $b calls the shared pass-1 scan $cp1 x, want exactly 1"; fail=1; }
   [ "$cs" = "0" ] || { echo "  FAIL: private_forward_reference axis1 — $b still carries the inline pass-1 impl brace-skip ('var idep = 0')"; fail=1; }
 done
-_pfbody() { awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse_fn_def.cyr"; }
+_pfbody() { awk -v n="fn $1(" 'index($0, n) == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse/fn_def.cyr"; }
 ci=$(_pfbody _tl_scan1_mode | grep -c '_prescan_impl(S)' || true)
 ct=$(_pfbody _tl_pass1 | grep -c '_prescan_tail(S)' || true)
 [ "$ci" = "1" ] || { echo "  FAIL: private_forward_reference axis1 — the shared pass-1 scan has $ci x _prescan_impl(S), want exactly 1"; fail=1; }

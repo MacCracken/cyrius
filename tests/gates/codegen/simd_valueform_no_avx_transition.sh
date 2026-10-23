@@ -246,7 +246,7 @@ fi
 # its last lane before it is timed: a fixture that does not run its kernel is a loud FAIL, never
 # a spectacular ratio.
 # THE BOUND IS 90 %, NOT 100 %: with f64v256_add routed through the 128-bit kernel (EMIT_F64V_LOOP
-# for EMIT_F64V4_LOOP in parse_expr.cyr's 154-157 arm) the two fixtures are the same code and read
+# for EMIT_F64V4_LOOP in parse/expr.cyr's 154-157 arm) the two fixtures are the same code and read
 # 98-103 %, so `< 100 %` caught that mutation in only four runs of eight — a coin flip. A tie is
 # not a win. The real win reads 52-55 % on a quiet box. Mutation (6.7.14): that routing -> RED,
 # eight runs of eight.

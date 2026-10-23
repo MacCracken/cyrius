@@ -41,7 +41,7 @@
 #   5. _gvs_pop marks dead with 1, not 2                -> RED rows B C D I J K L M (a 1 is
 #                                                         indistinguishable from a compiler
 #                                                         temporary, so no note is printed)
-#   6. the note dropped from the two parse_decl.cyr
+#   6. the note dropped from the two parse/decl.cyr
 #      `.field` sites (the state 19a shipped in)        -> RED rows L M only
 #   7. real tree                                        -> GREEN (16 host rows, 3 cx, 3 aarch64)
 # ⚠ HONEST GAP, recorded rather than papered over: the `GINFN(S) != 1` guard inside _gvs_push
@@ -136,7 +136,7 @@ _refuse() {
 _refuse B 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\nsyscall(60, tbv);\n'
 # C — an ASSIGNMENT after the block (a different resolver path: parse.cyr's statement layer)
 _refuse C 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\ntbv = 9;\nsyscall(60, g);\n'
-# D — an ADDRESS-OF after the block (parse_expr.cyr's `&name` ladder, a third path)
+# D — an ADDRESS-OF after the block (parse/expr.cyr's `&name` ladder, a third path)
 _refuse D 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\nvar p = &tbv;\nsyscall(60, g);\n'
 # I — a `for` body, and an `else` arm: every top-level block form, not just `if`
 _refuse I 'var g = 0;\ng = 1;\nfor (var i = 0; i < 2; i = i + 1) { var tbv = 5; }\nsyscall(60, tbv);\n'
@@ -146,7 +146,7 @@ _refuse K 'var g = 0;\ng = 1;\nwhile (g == 1) { var tbv = 5; g = 0; }\nsyscall(6
 # L/M — the `.field` READ and the `.field =` WRITE. THESE ARE THE ROWS THE FIRST CUT DID NOT
 #     HAVE, and their absence is why 19a shipped with the note wired into three of the FIVE
 #     `undefined variable` sites while the CHANGELOG said "all three resolver paths". The two
-#     struct-field paths (parse_decl.cyr) print the same error and were left bare, so
+#     struct-field paths (parse/decl.cyr) print the same error and were left bare, so
 #     `tbv.a` after the block told the reader nothing about why the name had vanished. Rows
 #     B/C/D/I/J/K all take the plain-identifier ladders; a gate that samples one shape of a
 #     reference cannot speak for the others.

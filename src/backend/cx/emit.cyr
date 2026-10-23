@@ -14,8 +14,8 @@
 #
 # Each instruction is 4 bytes: [opcode][ra][rb][rc] (little-endian in output)
 
-# v5.7.11: stubs matching backend/x86/emit.cyr — parse.cyr / parse_expr.cyr
-# / parse_decl.cyr / parse_fn.cyr reference these in shared codepaths
+# v5.7.11: stubs matching backend/x86/emit.cyr — parse.cyr / parse/expr.cyr
+# / parse/decl.cyr / parse/fn.cyr reference these in shared codepaths
 # (`if (_AARCH64_BACKEND == 1)`, `if (_TARGET_MACHO == ...)`, etc.).
 # cx backend is x86-shaped, never aarch64/mach-o/PE — all 0.
 # Drifted out of sync over multiple v5.6.x/v5.7.x minors because no
@@ -29,15 +29,15 @@ var _TARGET_ELF64_KERNEL = 0;
 # x86/aarch64 emit headers.
 var _TARGET_EFI_APPLICATION = 0;
 # v6.0.48: AGNOS target marker — x86-only; always-zero parser-resolution
-# stub (parse_expr.cyr references _TARGET_AGNOS in the syscall arity skip).
+# stub (parse/expr.cyr references _TARGET_AGNOS in the syscall arity skip).
 var _TARGET_AGNOS = 0;
 # v5.7.12: this is the cyrius-x bytecode backend. =1 here so
-# parse_*.cyr can gate direct x86-byte emits via
+# parse/*.cyr can gate direct x86-byte emits via
 # `if (_TARGET_CX == 0)` (path B from
 # docs/audit/2026-04-27-cx-direct-emit-inventory.md).
 var _TARGET_CX = 1;
 # v5.6.8 flag-reuse tracker — defined in x86 + aarch64 emit; mirror
-# here so parse_ctrl.cyr / parse_expr.cyr resolve the symbol on cx
+# here so parse/ctrl.cyr / parse/expr.cyr resolve the symbol on cx
 # builds. Always 0 on cx — bytecode has no flag-reuse semantic.
 var _flags_reflect_rax = 0;
 var _flags_cp = 0 - 1;   # 6.7.6: the setter's CP, read by ECONDCMP (x86/emit.cyr); never set here
@@ -228,7 +228,7 @@ fn ESTORE32(S): i64 { CX_EMIT(S, 71, 1, 0, 0); return 0; }
 fn ESTORE64(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }
 fn ESTOC(S): i64 { CX_EMIT(S, 67, 1, 0, 0); return 0; }    # store64 [r1], r0
 
-# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse_expr.cyr _w128_*): r1 = a 16-byte accumulator;
+# ⛔ 6.7.6 (Break 1, D2) — u128 `+` / `-` (parse/expr.cyr _w128_*): r1 = a 16-byte accumulator;
 # EW128_ACCM takes r0 = the ADDRESS of a u128, EW128_ACCI r0 = an integer, zero-extended. op 0 adds,
 # 1 subtracts, 2 copies / sets. cxvm has no carry flag, so the carry is computed: an unsigned
 # `a < b` is the signed compare of `a ^ (1 << 63)` and `b ^ (1 << 63)`. r8-r12 are scratch (self-
@@ -283,7 +283,7 @@ fn _cx_w128_op(S, op, lo, hi): i64 {
     CX_EMIT(S, 67, 11, 9, 0);             # store64 [r11], r9
     return 0;
 }
-# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse_expr.cyr _w128_cmp*): r1 = the ADDRESS of the left
+# ⛔ 6.7.6 (Break 1, D3) — a u128 comparison (parse/expr.cyr _w128_cmp*): r1 = the ADDRESS of the left
 # u128, r0 = the right's; r0 = (left op right), 0 / 1, UNSIGNED across all 128 bits (op = the
 # comparison token, 17-22). cxvm has no carry flag: `a <u b` is the signed compare of `a ^ (1 << 63)`
 # and `b ^ (1 << 63)`, and A < B is (A.hi < B.hi) | (A.hi == B.hi & A.lo < B.lo) — `>` / `<=` swap the
@@ -321,7 +321,7 @@ fn EW128_CMP(S, op): i64 {
     }
     return 0;
 }
-# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse_expr.cyr _w128_truth): r0 = the ADDRESS of a u128;
+# ⛔ 6.7.6 (Break 1, D4) — a u128 TRUTH TEST (parse/expr.cyr _w128_truth): r0 = the ADDRESS of a u128;
 # r0 = (value == 0) for op 17, (value != 0) for op 18, 0 / 1, across all 128 bits. r8, r10 and r12
 # are scratch. CHANGELOG [6.7.6]
 fn EW128_TST(S, op): i64 {
@@ -344,8 +344,8 @@ fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
 # emits `test rax,rax` (flag from the single value); cx has no flags, so instead we
 # set r1 = 0, turning EJCC's `eq r0,r0,r1` into `eq r0,r0,0` = a genuine `r0 == 0`
 # truthiness test. Every caller is a truthiness test of r0 followed by EJCC, with
-# r1 scratch: ECONDCMP's bare value and its u128 chain arm (parse_ctrl.cyr),
-# `_w128_case` (parse_expr.cyr: a u128 match / switch arm), `_match_arm_test`'s
+# r1 scratch: ECONDCMP's bare value and its u128 chain arm (parse/ctrl.cyr),
+# `_w128_case` (parse/expr.cyr: a u128 match / switch arm), `_match_arm_test`'s
 # u128 arm on an integer subject and `_defer_emit_walk`'s flag test (parse.cyr).
 # Find them by name (`grep -n 'ETESTAZ(S)' src/frontend`), not by line.
 fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,r1 tests r0==0
@@ -440,7 +440,7 @@ fn EFNEPI(S): i64 {
 # x86-style callee-saved register set (CYX has 256 virtual regs,
 # no caller/callee-save split that needs prologue spills). The
 # regalloc save/restore are conceptual no-ops for cx; preserved
-# stubs let parse_*.cyr call them unconditionally. See
+# stubs let parse/*.cyr call them unconditionally. See
 # x86/emit.cyr for the active implementations +
 # docs/audit/2026-04-27-cx-direct-emit-inventory.md.
 fn EREGALLOC_SAVE(S, n): i64 {
@@ -454,7 +454,7 @@ fn EREGALLOC_RESTORE(S, n): i64 {
 }
 
 # EDROPI64 — PE-only path; cx doesn't enter the calling code
-# (parse_expr.cyr PE syscall stubs are gated by _TARGET_PE).
+# (parse/expr.cyr PE syscall stubs are gated by _TARGET_PE).
 fn EDROPI64(S): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     return 0;
@@ -580,7 +580,7 @@ fn ECALLTO(S, target): i64 {
 # 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `jmp new_off` (opcode 80, 4-byte
 # instruction units like ECALLTO), so every reference already compiled against it reaches the
 # last definition. Writes the cx code buffer EB writes (_cx_code_base). Returns 1, writing
-# nothing, when the earlier body is too short. See `_fn_redirect` (parse_fn.cyr). CHANGELOG [6.6.20]
+# nothing, when the earlier body is too short. See `_fn_redirect` (parse/fn.cyr). CHANGELOG [6.6.20]
 fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
     if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
     var off = (new_off - old_off) / 4;
@@ -689,7 +689,7 @@ fn ECALLIND(S, idx): i64 {
     return 0;
 }
 
-# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse_expr.cyr; the
+# 6.6.16 — the MICRO-FRAME around a TOP-LEVEL indirect call (PINDIRECT_CALL, parse/expr.cyr; the
 # x86 peer in backend/x86/emit.cyr has the full note). The ordinary prologue pair — EFNPRO
 # (`pushc fp; mov fp, sp`, fp saved on the CALL stack) and ESUBRSP's patchable
 # `movi r252; movhi r252; sub sp` — and the epilogue without its `ret`. Before 6.6.16 a top-level fncallN on cx was an ordinary
@@ -1266,7 +1266,7 @@ fn EFLSTORE_W(S, idx, width): i64 {
     return 0;
 }
 
-# v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).
+# v5.9.40 — sub-byte struct field load (parse/decl.cyr:252).
 # Field-base ptr is in r1; emit width-correct load into r0.
 # Mirrors the aarch64 ldrb/ldrh/ldr w0 dispatch and the x86
 # movzx rax/movzx eax/mov eax dispatch, with cx using the new
@@ -1286,7 +1286,7 @@ fn EFIELD_LOAD_W(S, width): i64 {
     return 0;
 }
 
-# v5.9.40 — struct-by-value return (parse_fn.cyr:371).
+# v5.9.40 — struct-by-value return (parse/fn.cyr:371).
 # Emits a byte-copy loop: src in r9 (= fp + src_disp), dst in
 # r10 (= load64 [fp + stash_disp]), counter in r11. Loop body
 # walks the aligned byte count copying byte-by-byte; tail
@@ -1373,7 +1373,7 @@ fn EADDIMM_X1(S, val): i64 {
 # return address, which the jmp left on the call stack — so a tail recursion runs in constant
 # call-stack and guest-stack space.
 #
-# By the time this is called the shared tail path (parse_fn.cyr PARSE_RETURN) has evaluated every
+# By the time this is called the shared tail path (parse/fn.cyr PARSE_RETURN) has evaluated every
 # argument onto the data stack and ECALLPOPS has popped them into r3.. — the data stack is
 # balanced and nothing of this frame is read after the jmp, so a nested call among the arguments
 # needs no special handling. Until 6.6.12 this emitted a normal call + epilogue under a comment
@@ -1865,10 +1865,10 @@ fn EF64CEIL(S): i64 { CX_EMIT(S, 107, 0, 0, 0); return 0; }    # 0x6B fceil  r0,
 fn EF64ROUND(S): i64 { CX_EMIT(S, 108, 0, 0, 0); return 0; }   # 0x6C fround r0, r0
 fn EF64TRUNC(S): i64 { CX_EMIT(S, 110, 0, 0, 0); return 0; }   # 0x6E ftrunc r0, r0 (6.6.13)
 # v5.9.40 Phase 2c — real EFLADDR / EFLADDR_X1 for cx. Compute
-# &local-slot. Required by parse_decl.cyr's asv (assignment-
+# &local-slot. Required by parse/decl.cyr's asv (assignment-
 # from-struct-value) caller-side and by PARSE_FIELD_STORE/LOAD
 # when the local var is an inline struct (fs_is_ptr == 0 path,
-# parse_decl.cyr:344).
+# parse/decl.cyr:344).
 #   EFLADDR    → addr in r0 (pushed as fn-arg or paired with EPOPC)
 #   EFLADDR_X1 → addr in r1 (paired with EPOPR + storeN [r1], r0)
 # Sub-8-byte struct field stores route through EFLADDR_X1 when
@@ -1895,7 +1895,7 @@ fn EFLADDR_X1(S, lli): i64 {
 
 # v5.9.40 Phase 2c — real ESTOREREGPARM for cx. Stash the param
 # register r(3+pidx) into the local frame at fp+disp (disp is
-# negative). Used by parse_fn.cyr:930 in the struct-return
+# negative). Used by parse/fn.cyr:930 in the struct-return
 # prologue: cx receives retptr as the FIRST arg in r3, then
 # stashes it for later reload by ESTRUCT_BYVAL_COPY's tail.
 # x86 + aarch64 backends have separate ESTOREREGPARM impls that
@@ -2033,7 +2033,7 @@ fn EMACHO_FORK_ARM(S): i64 { return 0; }   # 6.6.13: arm64-macOS only (libSystem
 fn _macho_arm_routes(n): i64 { return 0; }
 
 # v6.5.51 — the ELF-aarch64 raw-syscall-number diagnostic is aarch64-only; these stubs
-# keep the shared parse_expr.cyr call site defined without pulling the generated table
+# keep the shared parse/expr.cyr call site defined without pulling the generated table
 # (src/common/syscall_xlat.cyr) into this fork. Mirrors `_macho_arm_routes` above.
 fn _SYSX_MEANT(n): i64 { return 0; }
 fn _SYSX_USE(n): i64 { return 0; }
@@ -2041,7 +2041,7 @@ fn _SYSX_ACTUALLY(n): i64 { return 0; }
 fn _pe_pending_imp_add(S, name): i64 { return 0; }
 
 # v6.5.35 — stub. `RA_SCAN_LOOPS` really lives in src/backend/x86/decode.cyr, which this
-# fork does not include; `parse_fn.cyr` is shared by every fork and calls it. Returning -1
+# fork does not include; `parse/fn.cyr` is shared by every fork and calls it. Returning -1
 # means "no loop information", which the caller must already handle by falling back to the
 # conservative whole-function interval extent — so the picker behaves exactly as it did
 # before v6.5.35 here. (The x86 regalloc post-pass does not run on these targets anyway;
@@ -2051,7 +2051,7 @@ fn RA_SCAN_LOOPS(base, lo, hi, out_t, out_s, cap): i64 { return 0 - 1; }
 
 # v6.5.64 — symbol-resolution stub. The direct 128-bit emitter is an x86 fast path; PARSE_SIMD_EXT
 # gates the whole detection on `_AARCH64_BACKEND == 0 && _TARGET_CX == 0` and never reaches this,
-# but an undefined fn has been a HARD ERROR since v6.3.2, so every fork that compiles parse_expr.cyr
+# but an undefined fn has been a HARD ERROR since v6.3.2, so every fork that compiles parse/expr.cyr
 # needs the symbol. Returning 0 without emitting is correct precisely because it is unreachable —
 # do NOT make this a partial implementation.
 fn EMIT_VEC_DIRECT(S, op, dst_li, a_li, b_li, dbl): i64 { return 0; }

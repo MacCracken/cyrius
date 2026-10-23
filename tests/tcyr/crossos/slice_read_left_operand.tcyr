@@ -1,7 +1,7 @@
 # slice_read_left_operand.tcyr — a slice subscript is a whole value: `s[0] + 10` (6.7.8, C2-1b).
 #
 # THE DEFECT (6.7.5 – 6.7.7, every target). The slice read `s[i]` (`_slice_sub_read`,
-# src/frontend/parse_expr.cyr) parses its index, calls `_slice_idx_get_W(&s, i)` and returns — but
+# src/frontend/parse/expr.cyr) parses its index, calls `_slice_idx_get_W(&s, i)` and returns — but
 # left behind what the INDEX had said about itself, as if it described the element:
 #   - a constant index armed the constant folder (`_cfo` / `_cfp` / `_cfv`), so `s[0] + 10` folded
 #     `0 + 10` and REWOUND the code to the index's load: the call vanished, its fixup then patched

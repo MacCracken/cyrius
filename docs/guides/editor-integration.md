@@ -76,7 +76,7 @@ Each `error:` / `warning:` line of the output becomes an LSP `Diagnostic`
 
 ### How a file's unit is chosen
 
-A project file is rarely compiled on its own: `src/frontend/parse_ctrl.cyr` is
+A project file is rarely compiled on its own: `src/frontend/parse/ctrl.cyr` is
 an `include` of `src/main.cyr` and uses names the files before it declare.
 Until 6.7.16 the server compiled the open file alone, so every such name read
 `undefined` (55 false errors on that file). Now it keeps the project's include

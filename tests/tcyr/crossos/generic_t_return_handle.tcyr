@@ -2,7 +2,7 @@
 # STRUCT-ANNOTATED LOCAL, IS A HANDLE, as the non-generic word-returning call is (the user's decision D13 (a),
 # 2026-10-18).
 #
-# ⛔ THROUGH 6.7.14 PARSE_VAR's reset (`_gen_decl_reset`, src/frontend/parse_decl.cyr) dropped the annotation of
+# ⛔ THROUGH 6.7.14 PARSE_VAR's reset (`_gen_decl_reset`, src/frontend/parse/decl.cyr) dropped the annotation of
 # `var a: P3 = gid(..)` for `fn gid<T>(x: T): T` whenever the call reached a scalar instance — gid's i64 base for
 # `gid(5)`, `gid(alloc(24))` and `gid(w.v)` (i64 by the whole-argument rule), `gid$i32` for `gid<i32>(5)`, the f64
 # instance for an f64 — so `a` was an untyped word: `a.z = 4` and `a.z` were refused "no struct type in scope for

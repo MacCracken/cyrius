@@ -206,7 +206,7 @@ chmod +x "$T/rp"; grp=0; "$T/rp" > /dev/null 2>&1 || grp=$?
 # The diagnostic names the parameter AND the spelling to use. Then the anti-vacuous half: a
 # `p: *P3` parameter, a struct of 8 B or less and a `Str` (a heap handle, 16 B by name) still
 # compile and compute. Mutation: drop the `_refuse_async_struct_param` call in `_param_record`
-# (parse_fn.cyr) -> RED ("a 24-byte struct parameter of a coro async fn COMPILED").
+# (parse/fn.cyr) -> RED ("a 24-byte struct parameter of a coro async fn COMPILED").
 for sz in 24 16; do
   flds='x; y; z;'; [ "$sz" = 16 ] && flds='x; y;'
   for form in coro plain; do
@@ -276,7 +276,7 @@ chmod +x "$T/rs"; grs=0; "$T/rs" > /dev/null 2>&1 || grs=$?
 # the 24 B `P3` printed 0 and exited 0, and the 16 B `P2` came back holding `.x` only.
 # A struct of 8 B or less IS one i64, so it must keep working — that is the anti-vacuous half,
 # and it is why the refusal keys on `_ret_agg_class` and not on "returns a struct".
-# Mutation: drop the `_refuse_async_struct_return` call in parse_fn.cyr -> RED
+# Mutation: drop the `_refuse_async_struct_return` call in parse/fn.cyr -> RED
 # ("a 24-byte struct return COMPILED"). Ledger: mutated tree RED, real tree GREEN (2026-09-19).
 for sz in 24 16; do
   flds='x; y; z;'; [ "$sz" = 16 ] && flds='x; y;'
@@ -315,7 +315,7 @@ chmod +x "$T/r8"; g8=0; "$T/r8" > /dev/null 2>&1 || g8=$?
 # byte-identical SYNC fn yields 7 — that sync control is the anti-vacuous half below, so a
 # refusal that merely broke vectors outright would not pass this axis. Both size classes
 # (16 B / 32 B) and both element kinds, because `_is_simd_any` is a BAND test.
-# Mutation: drop the `_refuse_async_vec_return` call in parse_fn.cyr -> RED
+# Mutation: drop the `_refuse_async_vec_return` call in parse/fn.cyr -> RED
 # ("an f64v2 return COMPILED"). Ledger: mutated tree RED, real tree GREEN (2026-09-19).
 for vt in f64v2 f32v4 f64v4 i32v4; do
   cat > "$T/r.cyr" <<EOF

@@ -1,7 +1,7 @@
 # const_fn_f64.tcyr — 6.7.2 (C1): a `const fn` computing f64 at COMPILE time gives the same BITS the same
 # call gives at RUN time, on every backend.
 #
-# The compiler evaluates f64 with an integer-only IEEE-754 binary64 module (`_sf_*`, parse_fn.cyr):
+# The compiler evaluates f64 with an integer-only IEEE-754 binary64 module (`_sf_*`, parse/fn.cyr):
 # cybs (the seed's compiler) has no float, so the host FPU is not available to it. Round to nearest
 # even, gradual underflow, overflow to infinity, signed zeros; a NaN is REFUSED (its bits differ by
 # target). Each row runs one const fn twice — into a const at compile time, and as a call at run time

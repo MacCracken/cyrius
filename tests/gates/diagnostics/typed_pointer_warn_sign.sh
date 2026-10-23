@@ -4,10 +4,10 @@
 # The local-variable arm of this warning gated on `lt > 0`, but in the local SLTYPE scheme
 # a positive type is a narrow WIDTH (1/2/4) or a FLOAT TAG (F64_TYID 0x40000001 /
 # F32_TYID 0x40000002); the pointer-like case is stored NEGATIVE as `0 - sid`
-# (src/frontend/parse_decl.cyr:2490). The test was therefore inverted, with a failure mode
+# (src/frontend/parse/decl.cyr:2490). The test was therefore inverted, with a failure mode
 # in BOTH directions at once — it fired on every width- or float-annotated local, and
 # never on a real typed-pointer local, so the check was unreachable for its own purpose.
-# The GLOBAL arm of the same warning (`vt < 0`, src/frontend/parse.cyr:~1550) had always
+# The GLOBAL arm of the same warning (`vt < 0`, src/frontend/parse/parse.cyr:~1550) had always
 # used the correct convention, so the two arms silently disagreed.
 #
 # ⛔ WHY A GATE. This is a WARNING, so no .tcyr can catch it: warnings don't change exit
@@ -116,7 +116,7 @@ else echo "  ok axis 4: struct-typed local assigned a non-pointer warns (check i
 # --- axis 5 (v6.5.28): the assignment path must consult the callee's DECLARED return type ---
 # v6.5.27's sign fix made this check reach real typed-pointer locals for the FIRST time, and
 # exposed the gap behind it: the DECLARATION path resolves the callee's return sid
-# (parse_decl.cyr: peek `IDENT (`, FINDFN, GFRS) but the ASSIGNMENT path did not. So
+# (parse/decl.cyr: peek `IDENT (`, FINDFN, GFRS) but the ASSIGNMENT path did not. So
 # `var t: Str = mk();` was accepted while `t = mk();` — the same call, the same binding —
 # warned. Two paths disagreeing about one expression. Filed from abaco.
 cat > "$T" <<'EOF'
@@ -403,7 +403,7 @@ tpx A7 0 1 - "top level after a statement: var P: *i64 = &A[1]; refused once" 'v
 # --- axis 15 (6.7.15; issues/archived/2026-10-17-string-literal-expression-into-byte-pointer-still-warns.md) ---
 # A string literal's address plus or minus ONE integer operand (an integer / char literal or a single name), and the
 # literal under parentheses that wrap it whole, are its address too: `var s: *u8 = "abc" + 1;` and `var t: *u8 =
-# ("xyz");` warned (6.7.14 exempted the literal only alone before the `;`). `_tp_str_exempt` (parse_decl.cyr), at every
+# ("xyz");` warned (6.7.14 exempted the literal only alone before the `;`). `_tp_str_exempt` (parse/decl.cyr), at every
 # site `_tp_exempt` serves: a declaration in a fn, after the first statement and in the zone, an assignment. Any other
 # expression is judged as before (SLK1, SLK2). Warning text only: no binary changes (each row's exit is the one before).
 #   `_tp_exempt` without `_tp_str_exempt` (the literal alone, the lane before the bite) -> RED 6: SL0 (2) SL1 (6)
@@ -513,7 +513,7 @@ tp5 SC7 "controls, quiet: a : Str call / field / method into a *Str, into a Str 
 # --- axis 17, the classic-for STEP (6.7.16; met with issues/archived/2026-10-19-str-call-into-other-struct-pointer-local-not-warned.md) ---
 # The warning is given at every `*T` site (6.7.13's D18 (a)), but a plain classic-for step `p = 7` / `G = 7` / `q = x`
 # into a `*T` local, parameter or global (or a struct handle) said nothing: the step shared the statement's store and
-# its aggregate dispatch (6.6.12, 6.6.20), not its warning. `_for_step_tpw` (parse_ctrl.cyr) is the statement's test,
+# its aggregate dispatch (6.6.12, 6.6.20), not its warning. `_for_step_tpw` (parse/ctrl.cyr) is the statement's test,
 # with the step's `)` as the value's end for the exemptions (`_tp_term`), so `p = 0`, `p = (0)`, a string literal, a
 # pointer, a `: Str` call into a `*Str` (wrapped too) and a struct call into a handle stay quiet; a compound step `q += 1`
 # is never warned (as the statement). The tuple (R12) and `&a[i]` refusals in a step are not warned beside.

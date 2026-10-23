@@ -60,7 +60,7 @@
 # 6.7.12 (D28, the user, 2026-10-15: "refused as D24 refuses mk3(5)") — THE SAME AT A KNOWN FN-POINTER CALL.
 # `var n: i64 = fncall1(&mk3, 5);` / `= callptr(&mk3, 5);` — the callee written `&f`, so the call carries the
 # struct result (6.7.11, ARG-1) — compiled and read P3's first field (the filed repro: exit 55), where the
-# direct call is refused. `_scv_icall_ann` (parse_decl.cyr, from `_scv_arm`) refuses it with D24's words,
+# direct call is refused. `_scv_icall_ann` (parse/decl.cyr, from `_scv_arm`) refuses it with D24's words,
 # naming the callee at its name (issues/2026-10-14-scalar-annotation-from-known-fn-pointer-struct-call-reads-
 # first-field.md). FP0 the filed repro verbatim (both declarations refused); FP1-FP8 `fncall0` / `callptr` at
 # 16 B and 24 B into i64 / u8 / f64 / bool; FP9 / FP10 a wrapped initialiser (into `: bool`, the bool check not
@@ -80,7 +80,7 @@
 # 6.7.13 — D24 AT TOP LEVEL (6.7.12's D28, "D24 at every path", binding). `var G: i64 = mk2(5);` (a 9-16 B struct) and
 # `var H: i64 = fncall1(&mk2, 5);` at top level compiled and read the first field (the filed repro: exit 10 on every
 # target) — in the declaration zone (`_gvi_expr`'s scalar arm, a plain PCMPE) and after a first statement (PARSE_VAR's
-# receive runs only in a fn; D28's `_scv_icall_ann` was fn-only). `_scv_gcall_ann` / `_scv_icall_ann` (parse_decl.cyr,
+# receive runs only in a fn; D28's `_scv_icall_ann` was fn-only). `_scv_gcall_ann` / `_scv_icall_ann` (parse/decl.cyr,
 # through `_scv_top_ann` from `_scv_arm` and `_gvi_expr`) refuse it with D24's words, once (a bool's check not run
 # again); over 16 B keeps its one no-frame refusal (`_scv_top_big`), 8 B or less and a `Str` keep the word
 # (issues/archived/2026-10-15-d24-scalar-annotation-refusal-misses-top-level.md). TL0 the repro verbatim; TL1-TL14 the zone /
@@ -101,7 +101,7 @@
 # 6.7.13 — D13 (the user, 2026-10-15): D24 REACHES A METHOD OR OPERATOR RESULT. `var x: i64 = b.mk();` / `var y: u8 = a + c;`
 # (any annotation that names no struct) with the method / operator fn returning a struct over 8 B kept the struct's first
 # word, narrowed (the filed repro exited 77 on every target), and a `: bool` was "not a bool". `_scv_rec_ann`
-# (parse_decl.cyr; PARSE_VAR after the initialiser's parse, and the declaration zone's `_gvi_scalar`) reads the
+# (parse/decl.cyr; PARSE_VAR after the initialiser's parse, and the declaration zone's `_gvi_scalar`) reads the
 # struct-result record (`_sc_whole`) and refuses with D24's words through the shared `_rcv_ann_refuse`, naming the fn
 # (issues/archived/2026-10-14-scalar-annotation-from-struct-method-or-operator-keeps-first-word.md). SA0 the repro verbatim;
 # SA1-SA13 a 16 B / 24 B method and a 16 B / 24 B operator into i64 / u8 / f64 / bool; SA14 SA15 SA24 wrapped; SA16 a
@@ -147,7 +147,7 @@
 # `S`: PARSE_VAR's B-explicit reset (`pscale = 0`, re-derive the receive from the callee) ran for every generic callee
 # the struct check (`_gen_decl_check`) did not keep, and that check answers 0 for a return that is no struct by value
 # (`: *T` records GFRS -8). `h` was an untyped word, `h.v = 6` "no struct type in scope for 'h'" (the filed repro:
-# 68 / refused / 8). `_gen_decl_reset` (parse_decl.cyr) resets only for a generic returning a struct BY VALUE, so the
+# 68 / refused / 8). `_gen_decl_reset` (parse/decl.cyr) resets only for a generic returning a struct BY VALUE, so the
 # local keeps `S` and binds the handle, as the non-generic `fn gp(): *S` does (the 6.7.10 handle line)
 # (issues/archived/2026-10-14-generic-pointer-call-into-annotated-local-drops-struct-type.md). GH0a-GH0c the filed loop's three
 # programs; GH1 GH2 inferred; GH3-GH5 uses that name no field; GH6 GH7 24 / 8 B; GH8 an untyped-value return; GH9 a

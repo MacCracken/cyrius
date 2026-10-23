@@ -63,7 +63,7 @@
 # `Box<i64> { 7, 5 }` / `Box<Pt> { 1, 2, 5 }`, fn-local, in the leading declaration block and after
 # the first top-level statement. Every head (PARSE_VAR, PARSE_GVAR_REG's lookahead, the
 # EMIT_GVAR_INITS replay) committed only on `Name {`, so each was "undefined variable 'Box'".
-# Mutation: make `_lit_head` (src/frontend/parse_decl.cyr) return 0 on `<` -> this file does not
+# Mutation: make `_lit_head` (src/frontend/parse/decl.cyr) return 0 on `<` -> this file does not
 # build. The mismatched-annotation refusals are in tests/gates/frontend/struct_literal_type_refused.sh.
 #
 # CF (6.6.12, R3) rows `run_call_fields` / `run_call_fields_pair`: a `.field` on a CALL RESULT,
@@ -84,7 +84,7 @@
 # received as the struct); `_call_field` not clearing `_cfo` after the call (C0x and the `+ 1`
 # rows); `_try_push_struct_addr_arg` without its `_call_dotted` route (`ptv(mkbp(5).p)` pushes
 # the field's first word as the struct's address: rc 139); no `_stmt_call_field` call in PARSE_STMT
-# (src/frontend/parse.cyr; the file does not build: `mk8(5).bump();`).
+# (src/frontend/parse/parse.cyr; the file does not build: `mk8(5).bump();`).
 #
 # SG (6.6.12, R2) rows `run_stmt_generics` + the top-level SG rows: an EXPLICIT generic call as a
 # BARE STATEMENT, `id<i32>(4);`. The IDENT arm of PARSE_STMT sent only `IDENT (` to PARSE_FNCALL,
@@ -94,7 +94,7 @@
 # result, and a postfix `?` on a pair-returning (`Result`) generic — Ok falls through, Err
 # propagates both halves. The top-level struct refusal and the #must_use warning are in
 # tests/gates/frontend/call_result_field.sh (G rows). Mutation: no `_stmt_explicit_generic` call
-# in PARSE_STMT (src/frontend/parse.cyr) -> this file does not build; `_stmt_explicit_generic`
+# in PARSE_STMT (src/frontend/parse/parse.cyr) -> this file does not build; `_stmt_explicit_generic`
 # passing `pair = 0` to `_stmt_qmark` -> the SG `?` Err row dies (rc 139: the tag read as a
 # pointer).
 #

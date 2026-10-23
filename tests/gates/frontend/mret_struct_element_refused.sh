@@ -9,7 +9,7 @@
 # one, from a struct-returning call (`return (mk(), 5)`), a method or operator result, a by-value field, `*p`, a
 # by-value parameter, a global (issues/archived/2026-10-20-multi-value-struct-element-returns-its-first-word.md). Now ONE line
 # at the element's first token: "'mv' returns struct 'Pt' (16 bytes) as a multi-value element - return its pointer, or
-# its fields as elements" (`_mret_sval`, parse_expr.cyr), once per token (a generic's instances name the base, a method
+# its fields as elements" (`_mret_sval`, parse/expr.cyr), once per token (a generic's instances name the base, a method
 # `P.mv`, a closure "a closure"), no latch (the statement reads on), silent under --syntax-only. The declaration
 # `(Pt, i64)`, a word element, an 8-byte struct element (one word: it compiles and passes on whole), a `Str` (its name
 # is the header's address), `&b`, a `*Pt` and `b.x` keep compiling; a tuple's and a dyn's own refusals stay theirs.
@@ -52,7 +52,7 @@
 # ⛔ 6.7.17 (D25 A, the user's decision, 2026-10-22: "Refuse it at the element") — A VECTOR VALUE IS NO ELEMENT EITHER.
 # `fn two(): (f64v2, i64) { var v = mk2(41, 7); return (v, 3); }` handed back v's lane 0 — the filed repro exited 44 (a
 # = 41) on x86_64, aarch64, cx and PE — and a parameter, a capture and `*pv` the same. Now one line at the element in
-# D90's shape (`_mret_vval`, parse_expr.cyr; the vector value read by `_vval_at`, parse_decl.cyr): "'two' returns vector
+# D90's shape (`_mret_vval`, parse/expr.cyr; the vector value read by `_vval_at`, parse/decl.cyr): "'two' returns vector
 # 'f64v2' (16 bytes) as a multi-value element - return its pointer, or its lanes as elements". Rows V1 (the filed repro
 # verbatim) - V6, V7 the control (a vector CALL as the element keeps 6.7.16's D100 words), V9 a `*V` global's
 # dereference in a program with no vector local (the scan's mark, `_gv_pvd_set`), V8 --syntax-only, K5 the

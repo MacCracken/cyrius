@@ -10,7 +10,7 @@
 # the LOCAL inline-struct branch (the one dot-dispatch test uses an 8-byte GLOBAL).
 #
 # Mutation that reddens this file: `EFLADDR(S, mli)` -> `EFLLOAD(S, mli)` in
-# parse_decl.cyr's method path (the 6.6.3 shape) — rc=139.
+# parse/decl.cyr's method path (the 6.6.3 shape) — rc=139.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"

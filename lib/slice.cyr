@@ -1,7 +1,7 @@
 # slice.cyr — first-class slice (16-byte {ptr, len}) helpers.
 #
 # v5.8.10 §2: complements parser-side slice<T> / [T] type
-# annotations (parse_decl.cyr's PARSE_VAR scalar_type=16 path).
+# annotations (parse/decl.cyr's PARSE_VAR scalar_type=16 path).
 # A slice is a 16-byte stack-local slot:
 #   offset 0: ptr (i64) — pointer to first element
 #   offset 8: len (i64) — element count

@@ -26,7 +26,7 @@
 # (4) `var X = 0;` falls through to BSS-zero path (no regression
 #     for the zero-literal case which all-of-cc5 uses extensively).
 # (5) Arithmetic RHS. UPDATED v6.4.74: this NO LONGER falls through to the
-#     runtime-store path — `_CF_TRY` (parse_decl.cyr) const-folds it and it
+#     runtime-store path — `_CF_TRY` (parse/decl.cyr) const-folds it and it
 #     takes the same static-init path as a literal. That is the whole point of
 #     v6.4.74: in kmode the deferred block is unreachable for a kernel whose
 #     top-level program never returns, so a computed initializer read 0 forever.

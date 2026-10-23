@@ -784,7 +784,7 @@ fn _embed_e_len(e): i64 { return load64(e + 24); }
 # embed_manifest_refusals.sh checks this list against the compiler): every TOKNAME_BUILTIN name
 # and every IS_KEYWORD_TOK statement keyword (src/common/util.cyr), plus the identifier-spelled
 # intrinsics PARSE_FACTOR lowers inline — `sizeof` / `mulh64` (_is_ident_intrinsic,
-# src/frontend/parse.cyr) and `fncall0`..`fncall8` (_IS_FNCALL_NAME) — which sit in neither
+# src/frontend/parse/parse.cyr) and `fncall0`..`fncall8` (_IS_FNCALL_NAME) — which sit in neither
 # table. Since 6.6.20 the compiler refuses declaring them (`_RSV_INTRINSIC_DECL`, parse.cyr) —
 # before, `fn sizeof()` declared and its call was a parse error.
 fn _embed_reserved_list(): i64 {

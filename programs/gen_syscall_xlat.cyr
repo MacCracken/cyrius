@@ -80,7 +80,7 @@ var _gx_routed_n = 0;
 # the committed kernel table, which knows the ~330 aarch64 names the stdlib peer has no
 # reason to declare. 35 of the 43 rows gain the text — DERIVE it rather than trusting this
 # line: `awk '/^fn _SYSX_ACTUALLY/{m=1;next} /^}/{m=0} m&&/return "/{c++} END{print c}'
-# src/common/syscall_xlat.cyr`. (Review round 2: this said 38 while parse_expr.cyr and the
+# src/common/syscall_xlat.cyr`. (Review round 2: this said 38 while parse/expr.cyr and the
 # CHANGELOG both said 35, which is the hand-quoted-derived-count drift this release's own
 # entry condemns.) CHANGELOG [6.6.5]
 #

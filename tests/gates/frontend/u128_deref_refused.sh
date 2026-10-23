@@ -7,7 +7,7 @@
 # filed programs printed 0010 and 0-1, rc 0, no diagnostic), where `pa[0]` was refused by name. Every `*pu` whose
 # operand is a typed `*u128` — a name, a `*u128` field, a call or method declared `: *u128`, `p + n`, a wrap, `**pp`
 # of a `**u128` — is now "cannot dereference 'pu': a u128 element does not fit one register - use load64/store64 on
-# its two halves", at the `*`, read or stored (`_deref_u128`, src/frontend/parse_expr.cyr). An untyped pointer
+# its two halves", at the `*`, read or stored (`_deref_u128`, src/frontend/parse/expr.cyr). An untyped pointer
 # (`var p = &b;`, silent_values_checked.sh U34) and a `**u128`'s `*pp` (a pointer) are unchanged.
 # Filed: docs/development/issues/archived/2026-10-17-u128-pointer-dereference-reads-and-writes-low-word.md
 #

@@ -34,7 +34,7 @@ gen 1000 > "$T"
 # 6.7.16 — the cap is a fn's OWN targets. A generic instance is emitted inline in the fn whose call reaches it, and its
 # targets were merged into that fn's table: one fn calling 300 distinct generics at f64 (about 5 targets each) was
 # refused here although it has no branch of its own. An instance's range is opaque to the enclosing fn now
-# (`_jt_merge`, `_jir_in`, src/frontend/parse_fn.cyr) and its targets stay its own; the program must run (300).
+# (`_jt_merge`, `_jir_in`, src/frontend/parse/fn.cyr) and its targets stay its own; the program must run (300).
 # Mutant (2026-10-20, CYCC= its cycc): the 6.3.35 merge back -> RED here ("1023 jump targets"). On every host:
 # tests/tcyr/crossos/generic_forward_chain_deep.tcyr (W).
 genw() { # <n distinct generics, each called once from main at f64>

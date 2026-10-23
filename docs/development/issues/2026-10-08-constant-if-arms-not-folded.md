@@ -37,9 +37,9 @@ Expected: no compare, no else arm, no marker string. Actual: all present.
 
 ## Root cause
 
-`PARSE_IF` (`src/frontend/parse_ctrl.cyr:168`) always calls `ECOND(S)` and parses + emits both arms; nothing asks
+`PARSE_IF` (`src/frontend/parse/ctrl.cyr:168`) always calls `ECOND(S)` and parses + emits both arms; nothing asks
 whether the condition is a compile-time constant. The evaluator entry `_ce_eval_here`
-(`src/frontend/parse_fn.cyr:7083`) reports a refusal on a non-constant expression, so it needs a non-reporting
+(`src/frontend/parse/fn.cyr:7083`) reports a refusal on a non-constant expression, so it needs a non-reporting
 "is this constant?" pre-check before `PARSE_IF` can use it.
 
 ## Proposed fix

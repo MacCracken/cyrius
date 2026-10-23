@@ -1373,7 +1373,7 @@ fi
 # where 42 is right) or a fault (aarch64 139): the copy's frame temp is taken while the inline replay evaluates its
 # arguments and given back after, and a closure's frame was sized from GFLC alone, never the `_flc_hwm` high-water a
 # plain fn's frame takes, so the temp lay below rsp and the next push overwrote it. The frame is sized from both now
-# (`_cl_frame_bytes`, parse_expr.cyr). The same frame lost PE's snapshot temp (VCi3: 5) and a temp of integer-only
+# (`_cl_frame_bytes`, parse/expr.cyr). The same frame lost PE's snapshot temp (VCi3: 5) and a temp of integer-only
 # inline calls (VCi5: 26 where 57 is right).
 #   VCi1 / VCi2 `|k| li(lanes(b), k)`, `|k| li(lanes(*pb), k)`: exit 42 on x86_64 / IR=3 / aarch64 / cx / PE
 #   VCi3 `|k| li(two(b, setb(pb, 7)), k)` + `|k| li(two(*pb, setb(pb, 7)), k)`: exit 114 on the same legs

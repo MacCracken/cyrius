@@ -2,7 +2,7 @@
 # PCMPE + helpers (_SC_ARITY, _STR_FROM_NOFF, PF64BIN, PF64CMP,
 # PARSE_SIMD_EXT, EPTR_SCALE, BUILD_OP_NAME, EMIT_OP_DISPATCH).
 # ================================================================
-# Split out of src/frontend/parse.cyr in v5.5.38 to keep single-file
+# Split out of src/frontend/parse/parse.cyr in v5.5.38 to keep single-file
 # LOC under ~1500. Included by parse.cyr at the same textual position
 # the original content lived. No logical change from the original
 # inline version; self-host byte-identical by construction.
@@ -88,7 +88,7 @@ fn _STR_FROM_NOFF(S): i64 {
 # `_cur_fn_pslots`, read here because `_fnst_save` zeroes it right after. See `_cl_snap_is_sptr`.
 # CHANGELOG [6.6.13]
 # 6.7.8: a second trailer word (+ 8) points at a copy of the declared scalars' names `_dsc_tn[0..n)`
-# (`_dsc_snap`, parse_types.cyr), read only behind depth-word bit 63, which this snapshot restores: a
+# (`_dsc_snap`, parse/types.cyr), read only behind depth-word bit 63, which this snapshot restores: a
 # closure's (or an inline generic instance's) own declared scalar overwrote the name and the enclosing
 # one's dyn named its type. `_cl_snap_extend`'s copies carry no such word — they are never restored.
 # CHANGELOG [6.7.8]
@@ -225,7 +225,7 @@ fn _cl_snap_intd(esl): i64 {
 # 6.6.13 — 1 when enclosing slot `esl` is an ADDRESS-PASSED by-value struct parameter of the
 # enclosing fn: its one captured word is the caller's struct's address, which a copy-init must
 # copy THROUGH, where a pointer-mode local's word (`var a: Pt = mk();`, a Str handle) is rebound.
-# The same discriminator as `_local_is_sptr_param` (parse_fn.cyr) — "slot below the enclosing
+# The same discriminator as `_local_is_sptr_param` (parse/fn.cyr) — "slot below the enclosing
 # fn's parameter span" — asked of the snapshot, whose trailer word carries that span.
 # CHANGELOG [6.6.13]
 fn _cl_snap_is_sptr(S, esl): i64 {
@@ -895,7 +895,7 @@ fn _cl_cap_narrow(S, base): i64 {
 # 6.7.16: 1 = fn fi is generic (the explicit call's arm reads its `<..>`). One that is not, given `<..>(` at the cursor
 # (just past its name) with a type list (`_tylist_at`), is refused once at the name — "'nf' is not a generic fn: it
 # takes no type arguments" — and the list stepped, so the call parses as `nf(..)` (it was "undefined variable 'nf'" +
-# "undefined variable 'i64'" + "expected ';', got '>'"; `_meth_ngt`'s free twin, parse_decl.cyr). 0.
+# "undefined variable 'i64'" + "expected ';', got '>'"; `_meth_ngt`'s free twin, parse/decl.cyr). 0.
 fn _eta_gen(S, fi): i64 {
     if (GFTP(S, fi) != 0) { return 1; }
     var nt = GTI(S) - 1;
@@ -1333,7 +1333,7 @@ fn _icall_stmt_chain(S, ti): i64 {
     return 1;
 }
 # 6.7.11 — a value-form vector receive of `fncallN(&f, ..)` / `callptr(&f, ..)` (`_vrcv_emit`,
-# parse_decl.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
+# parse/decl.cyr) on PE: a vector result comes back through a hidden pointer there (int arg 0), as
 # from `f(..)`, so the call whose name is token `_icall_vbeg` (one-shot) passes the destination's
 # address, slot `_icall_vdst`. Elsewhere the result is in the vector registers and the receive
 # stores them. -1 (no struct temp).
@@ -1920,7 +1920,7 @@ fn _await_paren_wraps(S, ti, te): i64 {
 # the await was reached — `b` in `b + await f()`, `1000` in `add(1000, await f())`, the address
 # in `store64(m + 8, await f())` — was gone at the landing, and the parser's pending pop took
 # whatever sat at the new rsp: `b + await five()` gave 5, and the store64 form SIGSEGV'd.
-# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse_fn.cyr
+# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse/fn.cyr
 # refuses aarch64 and cx), so those `_xdepth` words are popped into coroutine-frame words
 # before the suspend and pushed back, in order, at the landing. CHANGELOG [6.6.10]
 fn _await_coro_suspend(S, sk, fut): i64 {
@@ -2404,7 +2404,7 @@ fn _bx_param(S, fi, pc, li, b): i64 {
     SLBOOL(S, li, b);
     return 0;
 }
-# 6.7.6 — the #inline replay's parameters (_inl_bind_param, parse_fn.cyr) at slots `s0` / `s1`: the
+# 6.7.6 — the #inline replay's parameters (_inl_bind_param, parse/fn.cyr) at slots `s0` / `s1`: the
 # declared-integer mark of callee `fi`'s parameters 0 / 1, which re-registration by name dropped
 # (an inlined `println(n)` with `n: i64` took the cstring overload the out-of-line body did not).
 fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
@@ -2736,7 +2736,7 @@ fn _W128_IS(S): i64 {
 }
 # rax (rcx 0) or rcx (rcx 1) = the address of the u128 `(k, v)`: a local's canonical slot (k 1), a
 # global (k 2), a temporary (k 3: a frame slot, or `-2 - vi` for a dead global at top level). A
-# frame slot is reached by `lea`, which keeps it out of the register picker (parse_fn.cyr).
+# frame slot is reached by `lea`, which keeps it out of the register picker (parse/fn.cyr).
 fn _w128_addr(S, k, v, rcx): i64 {
     var fr = 0;
     if (k == 1) { fr = 1; }
@@ -4294,7 +4294,7 @@ fn _sysx_meant_here(S, n): i64 {
 # a `p: *T` parameter, a closure capture or a global subscripts as an array does — the element at
 # `p + i * sizeof(T)`: the pointer's VALUE is the base where an array's address is — and `var a:
 # f64[N]` / `f32[N]` / `bool[N]` (refused by name until now) take `a[i]` too. The element's
-# descriptor (`_ek_*`, parse_decl.cyr: an array's from its declaration, a pointer's from the step
+# descriptor (`_ek_*`, parse/decl.cyr: an array's from its declaration, a pointer's from the step
 # word, `_ps_word`) types the value as a declared T would be (`_esub_load`: an f64, an f32's 4
 # bytes, a boolean value, an iN sign-extended) and checks a store as a field of T is checked
 # (`_esub_assign`: an f64 into an f32 rounds, a non-bool into a bool is refused, an integer
@@ -4458,7 +4458,7 @@ fn _arr_sub_load(S, w): i64 {
     # needs no record of its own (it took one in 6.6.12, when only 1 / 2 / 4 were). CHANGELOG [6.7.14]
     EFIELD_LOAD_W(S, w);
     # EADDR left `_flags_reflect_rax` set and a load does not write the flags: without this a
-    # following `if (a[i])` would branch on the ADDRESS (see parse_ctrl.cyr ETESTAZ).
+    # following `if (a[i])` would branch on the ADDRESS (see parse/ctrl.cyr ETESTAZ).
     _flags_reflect_rax = 0;
     return 0;
 }
@@ -4499,7 +4499,7 @@ fn _arr_sub_read(S, noff): i64 {
 }
 # The assignment: `NAME[idx] = v` or `NAME[idx] OP= v` (the compound pair of _asg_compound_tok),
 # stored at the element's width. Does NOT consume the `;` — the statement arm and the classic-for
-# step replay (parse_ctrl.cyr) share it. 0 when the cursor is not at `[`.
+# step replay (parse/ctrl.cyr) share it. 0 when the cursor is not at `[`.
 fn _arr_sub_assign(S, noff): i64 {
     if (PEEKT(S) != 28) { return 0; }
     var ed = _arr_sub_addr(S, noff);
@@ -4536,7 +4536,7 @@ fn _esub_assign(S, ed, nm): i64 {
         _asg_compound_op(S, cop, _ek_lt(ed));
     }
     if (k == 1 || k == 2) { SEXW(S, 0); }
-    _asg_store_w(S, _ek_lw(ed));   # at the element's width (parse_decl.cyr, shared with a field's OP=)
+    _asg_store_w(S, _ek_lw(ed));   # at the element's width (parse/decl.cyr, shared with a field's OP=)
     return 1;
 }
 # The statement arm (_PARSE_STMT_IMPL): the assignment and its `;`.
@@ -4614,7 +4614,7 @@ fn _sub_how(S, ti): i64 {
     return 2;
 }
 # The base's step word, 0 when it is no `*T`: a field's from its declaration, and only when its load
-# ended at the cursor (`_flt_ti`, parse_decl.cyr — a slice's `.ptr` or an enum constant is read
+# ended at the cursor (`_flt_ti`, parse/decl.cyr — a slice's `.ptr` or an enum constant is read
 # another way); a direct call's from the callee it reaches (`_fn_rps`, the instance's); any other
 # call's from the word its call set (a method's `_call_ret_ps`, a builtin's 0).
 fn _sub_word(S, h): i64 {
@@ -4889,7 +4889,7 @@ fn _step_asg_at(S): i64 {
 # per-fn reference ceiling: each is one call there, so C2's subscript, `*p` and step-word work
 # grows these and not the giant. Each emits exactly what its inline arm emitted; moving them out
 # also took the giant under the per-fn NOP compactor's 1024-entry caps (`_nrn` / `_jsn`,
-# parse_fn.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
+# parse/fn.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
 
 # v5.8.15 §7: the slice subscript `s[i]` as a value, for the slice-typed local `li`. _slice_lw
 # returns the element byte-width captured at PARSE_VAR time (v5.8.14 §6); 0 means not a slice.
@@ -5536,7 +5536,7 @@ fn _dlo_park(S, d): i64 {
     _HTSTORE(S, _dlo_h);
     return 1;
 }
-# 6.7.14 (D36) — the dereference at `d` that an untyped declaration watches (`_dvi_want`, `_dvi_arm` in parse_fn.cyr),
+# 6.7.14 (D36) — the dereference at `d` that an untyped declaration watches (`_dvi_want`, `_dvi_arm` in parse/fn.cyr),
 # its operand naming a value-form vector `vd` (`_dop_vd`) and ending the initialiser (`;`, or the `)` of the wrap the
 # declaration stepped into): the pointer parked as `_dlo_vec` parks an argument's, for `_dvi_take`. 1 = parked.
 fn _dvi_park(S, d, vd): i64 {
@@ -5551,7 +5551,7 @@ fn _dvi_park(S, d, vd): i64 {
     _HTSTORE(S, _dlo_h);
     return 1;
 }
-# 6.7.12 (D27) — the dereference at `d` that starts an argument to a `*V` parameter (`_sarg_deref`, parse_fn.cyr),
+# 6.7.12 (D27) — the dereference at `d` that starts an argument to a `*V` parameter (`_sarg_deref`, parse/fn.cyr),
 # its operand typed `*V` (the step word's vector, `_ps_vdesc`) and ending the argument (`,` or `)` next — no
 # operator: a parked vector is no left operand `_opd_lst` may dispatch): the pointer parked as a struct's is,
 # `_dlo_sid` the vector's descriptor (>= 2048, so `_dro_check` compares vector types). 1 = parked.
@@ -5736,7 +5736,7 @@ fn _dlo_note(S, d): i64 {
 
 # A global's load (global `idx`, GVTYPE `vt`): a typed-pointer global (6.6.17: GVTYPE = 0 - its
 # step) puts its step into the pointer-scale word, so `g + n` steps by the pointee — 6.7.8: as the
-# step word, with T's kind from `_gv_ped` (parse_types.cyr).
+# step word, with T's kind from `_gv_ped` (parse/types.cyr).
 fn _gv_load_ps(S, idx, vt): i64 {
     if (vt < 0) { SPSC(S, _gv_ptr_word(S, idx)); }
     return 0;
@@ -6086,7 +6086,7 @@ fn _sub_undef_said(S, noff): i64 {
 # At the name's token `ti` (6.7.17, D34; `_nm_ti`); the note reads the cursor.
 fn _undef_var_report(S, ti, noff, tail): i64 {
     if (_ce_name_said(S, noff) == 1) { return 0; }
-    if (_dl_name_refd(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse_fn_def.cyr); 6.7.16: a variable
+    if (_dl_name_refd(S, noff) == 1) { return 0; }   # 6.7.15: a name a refused declaration declared (parse/fn_def.cyr); 6.7.16: a variable
     if (_unp_on == 1) { _ew_say = 1; }   # 6.7.17 (D110): said by a never-parsed body's read too (`_unp_run`)
     if (ERR_UNDEF(S, ti, noff, tail) == 1) { if (_unp_on == 1) { _unp_said = _unp_said + 1; } }   # 6.7.14: once per token and message (`_err_dup`); `tail` follows the name's quote
     _gv_note_blockscoped(S, noff);   # 6.6.6: see there (quiet on a repeat: `_err_quiet`)
@@ -6484,7 +6484,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # v6.4.23: a SIGNED sub-i64 global (i8/i16/i32) loads via movsx —
                 # pass a NEGATIVE width so EVLOAD_W's _EMIT_NLOAD_RCX (x86) / signed
                 # arms (aarch64) sign-extend. Unsigned (uN) stays zero-extend. Mirrors
-                # the local negative-width sentinel (parse_expr.cyr ~523).
+                # the local negative-width sentinel (parse/expr.cyr ~523).
                 var _gw = gvsz;
                 if (GVSGN(S, idx) == 1) { _gw = 0 - gvsz; }
                 EVLOAD_W(S, idx, _gw);
@@ -6539,7 +6539,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (PEEKT(S) != 2) { _amp_not_name(S); return 0; }   # 6.7.15: one error, the factor ends there
         var anoff = PEEKV(S);
         STI(S, GTI(S) + 1);
-        # 6.7.2 (B1): a const has no address; 6.7.3: nor has an enum constant (parse_fn.cyr).
+        # 6.7.2 (B1): a const has no address; 6.7.3: nor has an enum constant (parse/fn.cyr).
         if (_addr_lvalue_refused(S, anoff) == 1) { EMOVI(S, 0); return 0; }
         # Resolution order is local → global → function: a VALUE of a
         # given name shadows a function of the same name (correct lexical
@@ -6693,7 +6693,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # for specific syscalls the tools actually exercise.
         # v6.5.43 put the x86 Mach-O half beside it; v6.6.8 made both ARITY-aware and moved them
         # into _macho_warn_unrouted (below _PE_ROUTE_PERFCOUNTER) so this fn does not grow; 6.7.10
-        # wraps it with the execution-coverage exit hook (parse_cov.cyr `_sc_args_done`).
+        # wraps it with the execution-coverage exit hook (parse/cov.cyr `_sc_args_done`).
         _sc_args_done(S, sc_num, argc);
         # v6.5.51 — ELF-aarch64: a raw syscall NUMBER that is really an x86_64 number.
         # ESYSXLAT's aarch64 arm passes unmatched numbers through to the `svc` verbatim,
@@ -7498,7 +7498,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             #
             # Reusing EPE_SYSCALL_DYNAMIC rather than minting a new emitter is deliberate:
             # it already ends in `_pe_dyn_nomatch` (drop args, `mov rax, -38`), and a NEW
-            # cross-fork symbol called from parse_expr.cyr would need return-0 stubs in the
+            # cross-fork symbol called from parse/expr.cyr would need return-0 stubs in the
             # aarch64 AND cx forks — a miss only real cass/cycc_cx catches. A known-unrouted
             # literal cannot match any comparison in the emitted switch, so it lands on that
             # -38 tail by construction; the dead compares cost bytes on a path that is by
@@ -7739,7 +7739,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         _cl_env_lidx = 0 - 1;
         var cl_env_slot = 0 - 1;
         if (_cl_capturing == 1) {
-            cl_env_slot = _cl_param_slot(S, 0 - 1);   # 6.7.16: its type words reset too (parse_fn.cyr)
+            cl_env_slot = _cl_param_slot(S, 0 - 1);   # 6.7.16: its type words reset too (parse/fn.cyr)
             SFLC(S, cl_env_slot + 1);
             _cl_env_lidx = cl_env_slot;
         }
@@ -7758,7 +7758,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 var cpnoff = PEEKV(S);
                 _RSV_INTRINSIC_DECL(S, cpnoff, GTI(S), 0);   # 6.6.20: a closure param `|sizeof|`
                 STI(S, GTI(S) + 1);
-                _cl_param_tail(S);   # 6.7.7 (B6): D18, a default; 6.7.14: a type (parse_fn.cyr)
+                _cl_param_tail(S);   # 6.7.7 (B6): D18, a default; 6.7.14: a type (parse/fn.cyr)
                 var cpli = _cl_param_slot(S, cpnoff);   # 6.7.16: an untyped slot, whatever an earlier fn left
                 if (clpc < 6) { ESTOREPARM(S, clpc, cpli, 0); }
                 SFLC(S, cpli + 1);
@@ -7789,7 +7789,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # dropped every parameter past the 6th: the in-loop `clpc < 6` guard is correct (the
         # overflow cannot be homed until the TOTAL count is known, because SysV's stack slot is
         # `16 + (pc - 6 - 1 - (pidx - 6)) * 8` — it counts DOWN from the total), but nothing ever
-        # ran the second pass that `PARSE_FN` has had all along (src/frontend/parse_fn.cyr, since
+        # ran the second pass that `PARSE_FN` has had all along (src/frontend/parse/fn.cyr, since
         # 6.6.6 `_stkp_flush`). So the 7th+ parameter was never stored and the body read an
         # uninitialised frame slot. (A closure's params are all untyped int-class, one slot each,
         # with no retptr, so `cl_p0 + cspi` / `clpc` below ARE the slot and the total — the
@@ -8004,7 +8004,7 @@ fn PF64CMP(S, tok): i64 {
 # handler took `var vbase = GFLC(S);` and did not raise GFLC until AFTER all arguments had been
 # parsed. So while argument N was being parsed, GFLC still pointed AT the destination stash slot.
 # Any argument expression that allocates a frame local therefore binds it to the intrinsic's own
-# operand slot: the inline replay's `var saved_flc = GFLC(S);` (parse_fn.cyr:1717) returned
+# operand slot: the inline replay's `var saved_flc = GFLC(S);` (parse/fn.cyr:1717) returned
 # `vbase` itself, laid its parameter locals over the stash, and raised GFLC past them — and then
 # the handler's trailing `SFLC(S, vbase + N)` LOWERED GFLC BACK DOWN over live slots. The loop
 # then read its destination pointer from a slot no instruction ever wrote:
@@ -8764,7 +8764,7 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     # f64 builtins — check before PARSE_FACTOR dispatches.
     # v5.11.37 path-A: each ptyp dispatches to its named op in
     # <backend>/emit.cyr — x86 emits SSE2/x87, aarch64 emits FNEG /
-    # polyfill-call / hard-error, cx is no-op. parse_expr.cyr is
+    # polyfill-call / hard-error, cx is no-op. parse/expr.cyr is
     # arch-agnostic for these ops.
     if (ptyp >= 62) { if (ptyp <= 65) { PF64BIN(S, ptyp); return 1; } }
     if (ptyp == 66) { STI(S, GTI(S) + 1); _expect_step(S, 10); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); _expect_step(S, 11); return 1; }
@@ -9046,7 +9046,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             _HTLOAD(S, qval);                 # Ok path: rax = payload
             _cfo = 0;
             # The enclosing fn now returns a pair on its Err path, so mark it pair-returning —
-            # exactly as an explicit `return SomeCtor(x)` does (parse_fn.cyr's PARSE_RETURN). Not inside
+            # exactly as an explicit `return SomeCtor(x)` does (parse/fn.cyr's PARSE_RETURN). Not inside
             # an inline replay: there the Err jump lands at the replay's end (the call's value) and
             # `_cur_fn_ix` is the caller. CHANGELOG [6.7.13]
             if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); } }
@@ -9214,7 +9214,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                 # v6.4.74 — `_cfo = 0` MOVED TO AFTER the emit (17 sites across
                                 # `/ % << >> >>>`). Clearing the const-fold flag BEFORE
                                 # `PARSE_FACTOR(S)` does not work: PARSE_FACTOR *re-arms* it for a
-                                # bare NUM (parse_expr.cyr:358/368 set `_cfp = GCP(S)` then
+                                # bare NUM (parse/expr.cyr:358/368 set `_cfp = GCP(S)` then
                                 # `_cfv = val; _cfo = 1`). PEXPR then saw a live fold, folded the
                                 # RHS literal with the next operator, and `SCP(S, _cfp)` REWOUND
                                 # the code pointer over the entire shift/div sequence — silently
@@ -9374,7 +9374,7 @@ fn _ptr_diff(S, ps, rs): i64 {
 fn EPTR_SCALE(S, ps): i64 {
     # rax has the offset value; multiply by pointer scale
     # mov rcx, rax; mov rax, ps; imul rcx → rax = offset * scale
-    var st = _ps_step(ps);   # 6.7.8 (C2-3a): `ps` may be a step word (`_ps_word`, parse_types.cyr)
+    var st = _ps_step(ps);   # 6.7.8 (C2-3a): `ps` may be a step word (`_ps_word`, parse/types.cyr)
     if (st > 1) { EMOVCA(S); EMOVI(S, st); EIMUL(S); }
     return 0;
 }
@@ -9743,7 +9743,7 @@ fn _op_fn_peek(S, stype, op_str, op_len): i64 {
 # ⛔ 6.6.6 (bite 14 review) — EMIT_OP_DISPATCH for an operator fn returning a struct BY VALUE
 # (`fn V3_add(a, b): V3`). `var c: V3 = a + b` SIGSEGV'd on every target: the dispatch passed no
 # retptr, so the callee wrote its result through the lhs address. The same dispatch, bracketed by
-# `_sc_pre` / `_sc_x8` / `_sc_post` (parse_fn.cyr) — the temp, the retptr (int arg 0 on x86/cx,
+# `_sc_pre` / `_sc_x8` / `_sc_post` (parse/fn.cyr) — the temp, the retptr (int arg 0 on x86/cx,
 # X8 on aarch64) and the record a destination takes. One wrinkle: a <= 8 B lhs is passed BY
 # VALUE (there is no struct var to re-address), it is already in rax when the operator is seen,
 # and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.
@@ -9872,7 +9872,7 @@ fn PEXPR(S): i64 {
 # >> >>>`, `*| *?` and a postfix `?` (_PARSE_TERM_IMPL); `& | ^` (here); unary `-` / `~` (_neg_int,
 # _bnot_int); an operator fn's result with no `: *T` return (EMIT_OP_DISPATCH: a `: *T` one steps
 # by T, as its free call does); a field that is no `*T`
-# (_field_load_type, parse_decl.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
+# (_field_load_type, parse/decl.cyr). `!` and a u128 comparison always did. `p ± n`, `n + p`,
 # `p - q` and `+| +? -| -?` (the left operand's word) are what they were. Returns the left step
 # the next `+` / `-` takes: 0 after `& | ^` (token `typ`), else `ps`. CHANGELOG [6.7.9]
 fn _pexpr_bit_ps(S, typ, ps): i64 {

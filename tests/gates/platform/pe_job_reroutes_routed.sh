@@ -5,7 +5,7 @@
 # KILL_ON_JOB_CLOSE Job object so a deadline ends its whole tree (bite 11). They reach
 # CreateJobObjectW / AssignProcessToJobObject / TerminateJobObject / ResumeThread /
 # SetInformationJobObject through literal syscall ids that `_PE_ROUTE_JOB`
-# (src/frontend/parse_expr.cyr) sends to the ECREATEJOB_PE … ESETJOBINFO_PE emitters. Without
+# (src/frontend/parse/expr.cyr) sends to the ECREATEJOB_PE … ESETJOBINFO_PE emitters. Without
 # the parse-side route each id is an unrouted literal: a warning, and -38 (-ENOSYS) at run time,
 # so every PE spawn fails (measured: deadline_ends_grandchild.tcyr 13/19 under wine).
 #

@@ -29,7 +29,7 @@ include "src/backend/common/env.cyr"
 include "src/backend/common/tokens.cyr"
 include "src/backend/cx/emit.cyr"
 # v5.7.11: ir.cyr added at v5.6.12 (O3a IR instrumentation) but
-# never to main_cx.cyr; parse_expr.cyr references IR_RAW_EMIT.
+# never to main_cx.cyr; parse/expr.cyr references IR_RAW_EMIT.
 # Same shape as v5.6.32's main_aarch64_native.cyr fix.
 include "src/common/ir.cyr"
 include "src/frontend/lex/lex.cyr"
@@ -40,7 +40,7 @@ include "lib/alloc.cyr"
 include "lib/vec.cyr"
 var rp_vec = 0;
 
-include "src/frontend/parse.cyr"
+include "src/frontend/parse/parse.cyr"
 
 # MAIN
 # ================================================================
@@ -224,7 +224,7 @@ _fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so loa
 # cp >= _CX_CODE_CAP by name. It was the 512 KiB arena region at 0x54A000. CHANGELOG [6.7.12]
 _cx_code_base = alloc(_CX_CODE_CAP);
 # Not a code buffer on cx: the SHARED break/continue chain (parse.cyr _PARSE_BREAK,
-# parse_ctrl.cyr) keeps its rel32 links at _codebuf_base + the code offset — an 8-byte
+# parse/ctrl.cyr) keeps its rel32 links at _codebuf_base + the code offset — an 8-byte
 # read-modify-write at an instruction start below the cap, hence _CX_CODE_CAP + 8. It was the
 # arena region at 0x41A000. `_codebuf_cap` below is read only by the x86/aarch64 EB, which cx
 # does not compile.
@@ -244,7 +244,7 @@ _var_cap = 8192;
 _vsgn_base = alloc(1048576 * 8);   # v6.4.23 signed-global sign-ext: max-sized (var-grow cap) so it never grows → NO cybs-fragile grow-chain change; 8MB lazy-mapped
 _codebuf_cap = 3145728;
 # ⛔ v6.5.13 — cx never set these. `_fixup_base` stayed 0, so the SHARED
-# `ELOAD_FN_ADDR` path (parse_expr.cyr:687 `var fnaddr = _fixup_base + fc * 16`)
+# `ELOAD_FN_ADDR` path (parse/expr.cyr:687 `var fnaddr = _fixup_base + fc * 16`)
 # computed an address near NULL and SIGSEGV'd the compiler the moment cx tried to
 # record a fn-pointer fixup — which is why cx's ELOAD_FN_ADDR was a return-0 stub
 # and `&fn` silently produced 0. cx's own writers (RECFIX / ECALLFIX / the closure
@@ -298,7 +298,7 @@ PP_PREDEFINE(S, "CYRIUS_HAS_VAL_SIMD_PARAMS");
 # and its own arms. CHANGELOG [6.6.6]
 PP_PREDEFINE(S, "CYRIUS_TARGET_CX");
 # CYRIUS_POISON (the allocator poison mode) is read once, in the shared PREPROCESS:
-# src/frontend/parse_cov.cyr `_poison_setup`. CHANGELOG [6.7.11]
+# src/frontend/parse/cov.cyr `_poison_setup`. CHANGELOG [6.7.11]
 PREPROCESS(S);
 
 # Build file map from #@file markers (for file:line error messages)
@@ -334,7 +334,7 @@ if (_mono_env != 0) {
 }
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse_fn_def.cyr)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn_def.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE with the parse-time
 # body skip it fed. See src/main.cyr for the full note.
@@ -353,7 +353,7 @@ _tl_enum_inits(S);
 EMIT_GVAR_INITS(S);
 STI(S, gvar_save_ti);
 
-# 6.6.5 — ONE shared emitter (src/frontend/parse_fn.cyr). Three forks carried this loop
+# 6.6.5 — ONE shared emitter (src/frontend/parse/fn.cyr). Three forks carried this loop
 # inline and it needed a fix in all three: pass 1 now prescans relaxed-ordering fns, which
 # PARSE_PROG defines BELOW this point, so an un-guarded loop warns about every one of them.
 _warn_undefined_prepass(S);
@@ -378,7 +378,7 @@ if (_main_found >= 0) {
     var _main_off = L64(_fnt_offsets + _main_found * 8);
     if (_main_off >= 0) { ECALLTO(S, _main_off); }
 }
-_cov_tail(S);   # 6.7.10 (P5-B): the execution-coverage dump, the exit value kept (parse_cov.cyr)
+_cov_tail(S);   # 6.7.10 (P5-B): the execution-coverage dump, the exit value kept (parse/cov.cyr)
 EEXIT(S);
 
 # Fixup: resolve string/var/fn addresses in bytecode
@@ -501,7 +501,7 @@ while (fi < fcnt) {
         # units, mirroring ECALLTO's `off=(target-cp)/4`. v6.4.54: this was triply broken
         # — (a) read the stale 0xE92000 stub table (only the DCE-dead-fn stub writes it)
         # instead of _fnt_offsets (the canonical table PARSE_FN_DEF writes + ECALLTO reads,
-        # parse_fn.cyr:1526); (b) used BYTE units (`target-coff-4`); (c) `S64(pa, ...low 32
+        # parse/fn.cyr:1526); (b) used BYTE units (`target-coff-4`); (c) `S64(pa, ...low 32
         # bits...)` clobbered byte 0 (the 0x60 opcode) → every forward call derailed/SIGSEGV.
         # CHANGELOG [6.4.54]
         var target = L64(_fnt_offsets + idx * 8);
@@ -553,7 +553,7 @@ while (fi < fcnt) {
 # codebuf), so pass (_CX_CODE_CAP, 0). CHANGELOG [6.7.12]
 # Warnings go to stderr (fd 2); the .cyx below goes to stdout (fd 1), unaffected.
 _capacity_warnings(S, _CX_CODE_CAP, 0);
-_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse_fn_def.cyr)
+_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn_def.cyr)
 
 # Emit CYX file: header + bytecode + var data + string data
 # Header: "CYX" (3 bytes) + format version (1 byte) + entry_offset (4 bytes LE).

@@ -761,7 +761,7 @@ fn _cov_expand_programs(pats, key): i64 {
 # ================================================================
 # 6.7.10 (P5-B) — EXECUTION COVERAGE: `cyrius coverage --exec[=<glob>]` / `[coverage] exec`
 # ================================================================
-# The compiler half is the CYRIUS_COVERAGE=1 mode (src/frontend/parse_cov.cyr): every fn body bumps
+# The compiler half is the CYRIUS_COVERAGE=1 mode (src/frontend/parse/cov.cyr): every fn body bumps
 # its own counter, and the program appends `# cyrius-coverage 1` and one `<count> <file>:<line>
 # <name>` per fn it entered (`- <file>:<line> <name>` for a #naked fn, which is not instrumented) to
 # CYRIUS_COVERAGE_FILE when it leaves through the top level or an exit syscall with a constant
@@ -1397,7 +1397,7 @@ fn _hdr_only_ellipsis(b, s, e): i64 {
 # ================================================================
 # 6.7.11 — THE RETURN TYPE. cmd_header never read past the parameter list's `)`, so every
 # prototype said `cyr_val f(..)` whatever the fn returned. cycc returns a value five ways
-# (`_ret_agg_class`, src/frontend/parse_fn.cyr; the multi-value landing, `_mret_land`):
+# (`_ret_agg_class`, src/frontend/parse/fn.cyr; the multi-value landing, `_mret_land`):
 #   8 bytes or less; a 9-16 B `Str`        rax / x0: a word (a Str is a handle), `cyr_val`
 #   9-16 bytes, and a `dyn Tr`             rax:rdx / x0:x1: `cyr_val2`, the two-int64-word struct
 #                                          SysV and AAPCS64 C return in the same registers; Win64 C
@@ -1412,7 +1412,7 @@ fn _hdr_only_ellipsis(b, s, e): i64 {
 # A type this scanner cannot size — another file's, a generic instance, a struct holding one, a
 # struct declared twice or whose fields sit under a preprocessor conditional — is refused by name
 # on stderr: no prototype, rc 1 (never guessed). Field widths are the compiler's (FIELDSZ /
-# STRUCTSZ, src/frontend/parse_types.cyr): packed; i8/u8 1, i16/u16 2, i32/u32/f32 4, a tuple 8
+# STRUCTSZ, src/frontend/parse/types.cyr): packed; i8/u8 1, i16/u16 2, i32/u32/f32 4, a tuple 8
 # per element, a dyn 16, a nested struct its size, a union its widest field, every other field 8
 # (a `Str` FIELD and a `Vec<T>` FIELD are their 8-byte handle; a bare `Vec` FIELD is the file's
 # own `struct Vec` when one is declared above it, else the 8-byte handle).
@@ -1955,7 +1955,7 @@ fn _hdr_guard_else(b, ns, nl, rk): i64 {
 # `enum E: stack { V(x); }`) returns a (tag, payload) PAIR — rax:rdx on x86_64, x0:x2 on aarch64
 # (measured on pi and ecb: x1 is 0, x2 the payload), rax:rdx on Win64 — and so does every fn
 # that returns one (`return Ok(x);`), or returns a call of such a fn (GFLG 256, the compiler's
-# propagation, src/frontend/parse.cyr _pair_body_scan). An annotated `: Result` / `: Option` /
+# propagation, src/frontend/parse/parse.cyr _pair_body_scan). An annotated `: Result` / `: Option` /
 # `: Tagged` (or own stack enum) return is modelled as cyr_val2 (class 4, x86_64 SysV only);
 # a fn whose signature says a word (none, or `: i64`) but whose body returns the pair is
 # REFUSED by name — a source scanner cannot see a propagated pair from the signature, so it says
@@ -2076,7 +2076,7 @@ fn _hdr_closure_skip(b, p, close): i64 {
 
 # 1 when the pair call NAME at b[ns, ne) — `NAME(..)` / `NAME<..>(..)` — is followed by `?`: the
 # `?` desugar returns the callee's pair on its Err path and marks the enclosing fn pair-returning
-# (src/frontend/parse.cyr and parse_expr.cyr, the `?` lowering's SFLG 256). CHANGELOG [6.7.13]
+# (src/frontend/parse/parse.cyr and parse/expr.cyr, the `?` lowering's SFLG 256). CHANGELOG [6.7.13]
 fn _hdr_q_after(b, ne, close): i64 {
     var r = _hdr_ws_nl(b, ne, close);
     if (r < close && load8(b + r) == 60) { r = _hdr_ws_nl(b, _hdr_skip_targs(b, r, close), close); }

@@ -4,7 +4,7 @@
 # `var a: u8 = 0; var b: u8 = 7; syscall(60, b);` exited 0 (want 7) on x86, aarch64, PE and both
 # Mach-O targets. A leading-block global takes the static file-image path only when its
 # initialiser folds to a NON-zero constant; a `= 0`, any non-constant expression and a call are
-# stored at startup instead, by EMIT_GVAR_INITS's replay (src/frontend/parse_decl.cyr), whose
+# stored at startup instead, by EMIT_GVAR_INITS's replay (src/frontend/parse/decl.cyr), whose
 # scalar arm stored with the 8-byte EVSTORE whatever the slot's width. Narrow globals are packed,
 # so that store wrote the value's upper bytes over the next 7/6/4 bytes of globals — and a
 # neighbour whose value was already in the image lost it. Now _gv_store stores at the slot's

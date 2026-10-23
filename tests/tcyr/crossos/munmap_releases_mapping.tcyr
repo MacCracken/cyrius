@@ -10,7 +10,7 @@
 # a var were both unrouted (the var form with no compile-time warning at all).
 #
 # THE FIX. syscall(11, addr, len) → kernel32!VirtualFree(addr, 0, MEM_RELEASE), on the literal
-# path (parse_expr.cyr `_PE_ROUTE_FLUSH`) and the var path (`_pe_dyn_arity3`), BOOL → 0 / -22.
+# path (parse/expr.cyr `_PE_ROUTE_FLUSH`) and the var path (`_pe_dyn_arity3`), BOOL → 0 / -22.
 # MEM_RELEASE frees the whole reservation and needs dwSize == 0, so an OFFSET munmap is not
 # expressible on PE: it fails with -EINVAL (the last PE-only row pins that contract).
 #

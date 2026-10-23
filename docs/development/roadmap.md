@@ -61,7 +61,7 @@ travels as a named hand-off patch. The binary is rebuilt once on the merged tree
 decisions are asked in one round at the open. The `2026-10-09-*` links resolve when 6.7.7 merges; they are on the
 lanes until then.
 
-**Why this order.** dyn and B7 both own `parse_types.cyr` and `parse_decl.cyr`'s field arms, so they never share a
+**Why this order.** dyn and B7 both own `parse/types.cyr` and `parse/decl.cyr`'s field arms, so they never share a
 release; C2 pairs cleanly with either. dyn goes first for two reasons. It builds directly on B4's anonymous-struct
 interning and B6's argument marshaller. And its cx pair emitters must exist before B7 moves `f32 × 4` / `u8 × 16`
 structs into cx's 16-byte class. P5-B is split to 6.7.10 now, at planning, because 6.7.8's two `src/` lanes are
@@ -108,7 +108,7 @@ cannot pack filed.
     (HTTP, WebSocket, DNS, X.509 / DER, JSON; the user, 2026-10-22) — the bounds-checked form is its one question at
     the open.
 - **The refactor / optimization review — elevate the large files.** The frontend has outgrown its files
-  (`parse_fn.cyr` ~13.9 K lines, `parse_expr.cyr` ~6.4 K, `parse_decl.cyr` ~6.2 K, `lex/pp.cyr` ~5.3 K, `parse.cyr`
+  (`parse/fn.cyr` ~13.9 K lines, `parse/expr.cyr` ~6.4 K, `parse/decl.cyr` ~6.2 K, `lex/pp.cyr` ~5.3 K, `parse/parse.cyr`
   ~4.5 K; `cbt/commands.cyr` / `deps.cyr` ~6.6 K each): split them along their real seams (the trait / generic /
   const-fn modules, the call path, the statement dispatch), shrink the giant fns that sit near cybs's per-fn
   reference ceiling (PARSE_FNCALL, PARSE_RETURN, `_PARSE_FN_DEF_IMPL`, `_PARSE_FACTOR_IMPL`, `_field_load_on`), dedupe
@@ -251,7 +251,7 @@ here as "owed".
   out, a throwaway `CYRIUS_HOME` (a copy of the pinned slot, an EMPTY dep cache) and a throwaway `HOME`, with GitHub's
   shell semantics (`bash -e` unless the workflow says `shell: bash`).
 - **The `PARSE_RETURN` tail path has skipped a call-site obligation five times** (v6.3.36, v6.4.53, v6.5.1, v6.5.2,
-  and `defer` at 6.6.7). The diverts are one predicate now (`_tc_must_divert`, parse_fn.cyr), so a new obligation is a
+  and `defer` at 6.6.7). The diverts are one predicate now (`_tc_must_divert`, parse/fn.cyr), so a new obligation is a
   new line THERE; grep the tail path for the SHAPE of any new `PARSE_FNCALL`-resident transformation.
   `EDEFER_SAVE` / `EDEFER_RESTORE` must preserve every return register of every return convention (x86: rax, rdx, r8,
   xmm0, xmm1; aarch64: x0–x3, q0, q1; cx: r0–r5) — a new return class that adds a register adds it there.

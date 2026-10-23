@@ -5,7 +5,7 @@
 # cybs (the hand-assembly bootstrap compiler the seed assembles) passed only the six register
 # arguments: `emit_fn_call_pops` handled 0..6 and `emit_store_param` stored parameters 0..5. A
 # call with 7+ arguments fell to `parse_err` with a bare "syntax error" (found at 6.7.0, when a
-# 7-argument helper call in src/frontend/parse_decl.cyr broke seed-derive), so 6.7.0 refused it
+# 7-argument helper call in src/frontend/parse/decl.cyr broke seed-derive), so 6.7.0 refused it
 # BY NAME and a definition with 7+ parameters kept only its first six (lib/fnptr.cyr's
 # fncall6..8, which the compiler includes, were such). 6.7.6 passes them, in cycc's order (the
 # user's decision, 2026-10-08, third round — lane B first passed them in the SysV order, argument 7
@@ -52,7 +52,7 @@
 #   rdi and rsi register loads swapped                       (register arguments misrouted)
 #   cybs.cyr padded with comments past 131072 B / given 20 more labels    -> S RED
 # 6.7.14 (S2, a scratch copy of the gate each):
-#   the file ceiling lowered to 900000 (parse_fn.cyr is ~949 KB)          -> S2 RED (names the file)
+#   the file ceiling lowered to 900000 (parse/fn.cyr is ~949 KB)          -> S2 RED (names the file)
 #   the walker's `#else` arm dropped (both branches emitted)              -> S2 RED (walker != cybs)
 #   (6.7.11: emit_sp_done is a comment in cybs.cyr now, sparing a seed label; restore the label
 #   to re-run the first mutation.)

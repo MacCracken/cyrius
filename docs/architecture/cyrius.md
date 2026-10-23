@@ -142,7 +142,7 @@ shared code is never re-forked into a driver.
 | `src/main_win.cyr` | `cycc_win`, the compiler that runs on Windows (built by `cycc` with `CYRIUS_TARGET_WIN=1`) |
 | `src/main_cx.cyr` | The cyrius-x bytecode compiler, `cycc_cx` (its output runs under `programs/cxvm.cyr`) |
 | `src/version_str.cyr` | The version string — generated from `VERSION` by `scripts/version-bump.sh`, never hand-edited |
-| `src/frontend/` | `lex/` — `lex`, `pp` (the preprocessor), `attr` (the `#` attribute words); `parse` and its `parse_types` / `parse_expr` / `parse_decl` / `parse_fn` / `parse_ctrl` split; `ts/` is the TypeScript front end (x86 `cycc` only) |
+| `src/frontend/` | `lex/` — `lex`, `pp` (the preprocessor), `attr` (the `#` attribute words); `parse/` — `parse` and its `types` / `expr` / `decl` / `fn` / `fn_def` / `ctrl` / `cov` split; `ts/` is the TypeScript front end (x86 `cycc` only) |
 | `src/backend/x86/` | `emit`, `jump`, `fixup`, `decode`, `float` (SSE / AVX and all SIMD) |
 | `src/backend/aarch64/` | `emit`, `jump`, `fixup` |
 | `src/backend/macho/` | The Mach-O writers: `emit` (x86_64), `emit_arm64` |

@@ -20,7 +20,7 @@
 # axis-3 fixture exits 0 instead of 7 — wrong code, no diagnostic, no crash. Latent only
 # because nothing in the tree uses `#assert` today (all 12 grep hits are compiler
 # implementation or comments), so it was waiting for the first consumer who did. Duplicated at
-# three sites in three files: src/frontend/parse.cyr (pass 2, shared by all forks) and the
+# three sites in three files: src/frontend/parse/parse.cyr (pass 2, shared by all forks) and the
 # pass-1 arms in src/main.cyr and src/main_win.cyr.
 #
 # ⚠ THE FILING THIS CLOSES WAS WRONG THREE WAYS, recorded so a sweep does not re-inflate it:
@@ -84,7 +84,7 @@ var ec = main();
 syscall(60, ec);
 EOF
 # ⚠ TWO failure symptoms, and the gate must name both. If only the pass-2 copy
-# (src/frontend/parse.cyr) regresses, the two passes disagree about where the directive ends
+# (src/frontend/parse/parse.cyr) regresses, the two passes disagree about where the directive ends
 # and the fixture fails to COMPILE. If all three copies regress together, it compiles fine
 # and returns the WRONG ANSWER. Reporting only the second would misdiagnose the first.
 set +e
@@ -166,7 +166,7 @@ grep -q '#assert failed: top' "$WORK/inl.err" || fail "axis 7: a second, indepen
 
 # ── axis 8: ONLY `;` OR THE LINE'S END AFTER THE MESSAGE (6.7.17, the user's D28, 2026-10-22) ─────────────────────────
 # issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (rows 1 and 2). `_assert_tail`
-# (src/frontend/parse.cyr) skipped whatever followed the message to the next `;` or the line's end, unread:
+# (src/frontend/parse/parse.cyr) skipped whatever followed the message to the next `;` or the line's end, unread:
 # `#assert 1 == 1, "m" junk` compiled, and in an impl body the tail ate the next method up to its `;` — pass 2 then
 # ended the impl at the method's `}`, and the program after it was never compiled (exit 0, not 9). Now one error at the
 # first token after the message ("#assert: expected `;` or the end of the line after the message"; after a `,` with no
@@ -323,7 +323,7 @@ syscall(60, s.m());' 5
 atrun AC6 "control: a # comment after the message" '#assert 1 == 1, "m"  # note
 syscall(60, 9);' 9
 # AT12-AT18 (6.7.17, FC1 — issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md's class, met by the
-# fea review): what the refused tail declares is entered as reported (`_asrt_tail_names`, parse_fn_def.cyr), so a use
+# fea review): what the refused tail declares is entered as reported (`_asrt_tail_names`, parse/fn_def.cyr), so a use
 # of it adds no error of its own (the guide's 6.7.15 rule) — each was "undefined variable 'z'" at every use, a fn "undefined
 # function 'g'" + "refusing to emit binary", a struct "unknown type 'S'", an enum's members "undefined variable". AT12 a
 # var at module scope; AT13 in a fn body; AT14 a fn; AT15 a struct (its annotation and fields); AT16 an enum's members;

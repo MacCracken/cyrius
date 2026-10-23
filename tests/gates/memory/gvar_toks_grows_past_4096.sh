@@ -35,7 +35,7 @@
 #      scale: the binary must not change when the program's later `var` is renamed).
 #   4. NO CAP — no "too many initialized globals" text is left in the compiler source.
 #   5. STATIC — the one growing store path: exactly one gvar_cnt bump and one gvar_toks store
-#      in parse_decl.cyr, both inside _gv_defer; _gv_defer grows the table past its cap; the
+#      in parse/decl.cyr, both inside _gv_defer; _gv_defer grows the table past its cap; the
 #      fixed 0x729000 base appears in code only as _gvt's initial value; _gv_ent_set and the
 #      supersede list grow too; _gv_supersede walks the per-name list and never reads
 #      gvar_cnt (its runtime twin is globals_scale_linear.sh's redecl row).
@@ -46,7 +46,7 @@
 #      see above — the reason axis 5 exists)
 #   3. `_gv_supersede` returns 0 immediately -> RED axis 2 (exit 19: g4500, g10 and db4700 all
 #      keep their deferred value)
-#   4. the 6.6.8 parse_decl.cyr (the cap) -> RED axes 1-5 (32 checks)
+#   4. the 6.6.8 parse/decl.cyr (the cap) -> RED axes 1-5 (32 checks)
 #   5. `_gv_supersede` restored to the 6.6.8 O(entries) `_gv_entry_hit` scan over `_gvt(S)`
 #      (correct past 4096, quadratic) -> RED axis 5 only, 2 checks (axes 1-3 stay GREEN;
 #      globals_scale_linear.sh's redecl row reads it at 4.0x)
@@ -55,7 +55,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: gvar_toks_grows_past_4096: $CC missing"; exit 1; }
-SRC="$ROOT/src/frontend/parse_decl.cyr"
+SRC="$ROOT/src/frontend/parse/decl.cyr"
 [ -f "$SRC" ] || { echo "FAIL: $SRC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: mktemp"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
@@ -152,13 +152,13 @@ awk '
 ' "$SRC" > "$WORK/a5.txt"
 while read -r kind fn ln; do
     case "$kind" in
-      BUMP_OUTSIDE)  bad "axis 5: gvar_cnt bumped outside _gv_defer ($fn, parse_decl.cyr:$ln)" ;;
-      STORE_OUTSIDE) bad "axis 5: gvar_toks stored outside _gv_defer ($fn, parse_decl.cyr:$ln)" ;;
-      FIXED_OUTSIDE) bad "axis 5: the fixed 0x729000 base used outside _gvt ($fn, parse_decl.cyr:$ln)" ;;
+      BUMP_OUTSIDE)  bad "axis 5: gvar_cnt bumped outside _gv_defer ($fn, parse/decl.cyr:$ln)" ;;
+      STORE_OUTSIDE) bad "axis 5: gvar_toks stored outside _gv_defer ($fn, parse/decl.cyr:$ln)" ;;
+      FIXED_OUTSIDE) bad "axis 5: the fixed 0x729000 base used outside _gvt ($fn, parse/decl.cyr:$ln)" ;;
     esac
 done < "$WORK/a5.txt"
 set -- $(grep '^COUNTS' "$WORK/a5.txt")
-[ "$2" = "1" ] || bad "axis 5: $2 gvar_cnt bumps in parse_decl.cyr, want exactly 1 (in _gv_defer)"
+[ "$2" = "1" ] || bad "axis 5: $2 gvar_cnt bumps in parse/decl.cyr, want exactly 1 (in _gv_defer)"
 [ "$3" = "1" ] || bad "axis 5: $3 gvar_toks registration stores, want exactly 1 (in _gv_defer)"
 [ "$4" = "1" ] || bad "axis 5: the 0x729000 base appears $4 times in code, want exactly 1 (_gvt)"
 body() { awk -v f="$1" '$0 ~ "^fn " f "\\(" {on=1} on {print} on && /^}/ {exit}' "$SRC"; }

@@ -42,7 +42,7 @@
 #         `readlink("/proc/self/exe")` — the exact line this filing is about — starts
 #         COMPILING for PE and silently degrading to argv(0), i.e. the half-fix axes 3-4
 #         exist to catch gets waved through at the build step instead.
-#   * make `_PE_ROUTE_MODULEPATH` (src/frontend/parse_expr.cyr) return 0, so the reroute
+#   * make `_PE_ROUTE_MODULEPATH` (src/frontend/parse/expr.cyr) return 0, so the reroute
 #     degrades to -38/-ENOSYS and `_self_path` falls back to argv0
 #       → axes 1, 2 and 5 all stay GREEN — it still compiles and still ships, which is
 #         precisely the shipped-but-useless outcome — and axes 3-4 go RED, 8 checks: the
@@ -167,7 +167,7 @@ check "…and does NOT stub sys_readlink (the hard error is the diagnostic)" 0 \
 # release, so the warning names the pair as a range. Match GetModuleFileNameW wherever it
 # sits in that list rather than pinning one spelling of its neighbours.
 check "the routable-numbers warning names the GetModuleFileNameW reroute" 1 \
-    "$(grep -c '0xF03A[^ ]* (kernel32: GetModuleFileNameW' src/frontend/parse_expr.cyr || true)"
+    "$(grep -c '0xF03A[^ ]* (kernel32: GetModuleFileNameW' src/frontend/parse/expr.cyr || true)"
 
 # ── AXES 3+4: run the thing, from the SHIPPED layout. Not hardware — cass does that.
 if ! command -v wine > /dev/null 2>&1; then

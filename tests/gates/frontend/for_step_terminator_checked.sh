@@ -2,7 +2,7 @@
 # tests/gates/frontend/for_step_terminator_checked.sh — 6.7.8 (C2-2b)
 #
 # EVERY CLASSIC-FOR STEP ENDS AT ITS `)`. The step of `for (init; cond; step)` is skipped (by paren
-# depth) before the body and replayed after it (`_for_step_replay`, parse_ctrl.cyr). The field and
+# depth) before the body and replayed after it (`_for_step_replay`, parse/ctrl.cyr). The field and
 # `*p` arms (6.7.5) and the whole-aggregate helpers (6.6.20) end at the `)` and report anything else;
 # the scalar arm (`_for_step_assign`) and the subscript arm (`_arr_sub_assign`) stopped after the
 # value and never looked, so trailing junk up to the `)` was silently ignored (6.7.7 and before):
@@ -48,7 +48,7 @@
 #                                                           got '{'" — struct_copy, struct_call,
 #                                                           struct_paren, struct_global, tuple_step
 #                                                           each, measured one at a time) and A
-#   the 6.7.7 parse_ctrl.cyr (the pre-fix compiler)      -> RED J1-J16 X3 P (29 rows)
+#   the 6.7.7 parse/ctrl.cyr (the pre-fix compiler)      -> RED J1-J16 X3 P (29 rows)
 # 2026-10-11 (6.7.9):
 #   M3a `_for_step_assign` without the `else` after FINDVAR (the step stores nothing, silently)
 #                                                        -> RED U1-U6 P(U1) (each BUILDS)

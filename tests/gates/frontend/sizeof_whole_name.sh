@@ -8,7 +8,7 @@
 #   sizeof(i8zz) 1, sizeof(i32q) 4, and `#assert sizeof(i16v8) == 2` PASSED. 6.6.10 fixed the
 #   same prefix test for struct/union/Vec FIELDS (`_field_scalar_width`) only. A name that is no
 #   type is refused by name. 6.6.16 (C8): both sites resolve through the one type-name resolver
-#   (parse_types.cyr `_tn_resolve`) — a vector type like i16v8 now sizes 16 (axis 2) and the
+#   (parse/types.cyr `_tn_resolve`) — a vector type like i16v8 now sizes 16 (axis 2) and the
 #   refusal names the type (tests/gates/diagnostics/type_name_refused.sh has every site).
 # AXIS 2 — ANTI-VACUOUS: sizeof(i8/i16/i32/i64) and a struct still size, in an expression,
 #   in a fn, at top level and under #assert.
@@ -19,11 +19,11 @@
 #   tests/tcyr/crossos/return_intrinsic_values.tcyr.)
 #
 # MUTATION PROOF (6.6.11):
-#   * parse_expr.cyr sizeof: `_field_scalar_width` back to `_scalar_name_width`
+#   * parse/expr.cyr sizeof: `_field_scalar_width` back to `_scalar_name_width`
 #     -> the expression rows of axis 1 RED (rc 0, value 2/1/4).
 #   * parse.cyr _EVAL_CONST_ATOM: the same swap -> the #assert rows of axis 1 RED. (6.7.2: that
 #     fn is gone — #assert is a const context evaluated by `_ce_*`, whose sizeof is `_sizeof_type`.)
-#   * parse_expr.cyr: the mulh64 arm back to the 6-byte prefix test -> axis 3 RED (0, want 7).
+#   * parse/expr.cyr: the mulh64 arm back to the 6-byte prefix test -> axis 3 RED (0, want 7).
 #
 # Exit 77 = could not run (no compiler); never 0 for that.
 set -u

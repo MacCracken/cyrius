@@ -38,7 +38,7 @@
 # MUTATION PROOF (2026-09-04): restoring `_fnt_hash_mask = nc - 1` with `alloc(nc * 4)` and
 # `_fnt_cap = 4096` and rebuilding puts the 64,000-fn case at 97.7 % load and a five-figure
 # maxprobe; both axes go RED. ⚠ MUTATE THE SOURCE, NOT build/cycc — a stale binary changes
-# nothing here because the fixture runs the CURRENT build/cycc, so revert parse_fn.cyr and
+# nothing here because the fixture runs the CURRENT build/cycc, so revert parse/fn.cyr and
 # rebuild.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"

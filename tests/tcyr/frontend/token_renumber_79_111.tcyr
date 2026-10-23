@@ -74,7 +74,7 @@ fn _tr_stack_local() {
 }
 assert_eq(_tr_stack_local(), 4242, "`stack var` still parses and works");
 
-# `: stack` enums read token 111 too (parse_types.cyr) — a second, independent consumer of the
+# `: stack` enums read token 111 too (parse/types.cyr) — a second, independent consumer of the
 # number, and the one the whole v6.6.0 value-form arc rests on.
 test_group(": stack enum still parses (the other 111 consumer)");
 var tt, tv = TOk(7);

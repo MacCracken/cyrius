@@ -1,7 +1,7 @@
 # elif_else_block_scope.tcyr — 6.6.17 (a6). An `elif` body, and the `else` that follows an `elif`, are
 # scopes exactly like the `if` body: a `var` declared there ends at its `}`, at top level and in a fn.
 #
-# ⛔ THE DEFECT, every release through 6.6.16. PARSE_ELIF (src/frontend/parse_ctrl.cyr) parsed both
+# ⛔ THE DEFECT, every release through 6.6.16. PARSE_ELIF (src/frontend/parse/ctrl.cyr) parsed both
 # bodies with no SCOPE_PUSH / SCOPE_POP, which PARSE_IF's own `if` and `else` bodies have. So:
 #   * in a fn, `elif (..) { var t = 20; } else { var t = 30; }` was "duplicate variable" (this file
 #     did not compile);

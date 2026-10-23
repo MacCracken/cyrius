@@ -6,7 +6,7 @@
 # INSIDE a fn compiled fine, and an i64/f64-only struct compiled fine at global
 # scope — so it was specifically Str-field × global-scope.
 #
-# Root cause (parse_decl.cyr): EMIT_GVAR_INITS's pass-2 replay of a global
+# Root cause (parse/decl.cyr): EMIT_GVAR_INITS's pass-2 replay of a global
 # struct-literal init is a PARALLEL COPY of PARSE_STRUCT_INIT's positional loop
 # that never received the v5.10.7 Str fix. A Str field (field-type id > 0) fell
 # into the nested-struct FLATTEN branch, which treats it as a 2-field by-value

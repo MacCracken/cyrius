@@ -5,7 +5,7 @@
 # issues/archived/2026-10-14-address-of-field-does-not-parse-guide-cites-it.md). Through 6.7.12 the `&` factor took `&x`
 # and stopped at the `.`, so the parse failed on the token after it — `expected ')', got '.'` (`expected ';'` in a
 # declaration) — with no word of why, while the guide cited `load64(&s.f)` and `&h.f` as expressions. Now the
-# factor refuses it once, as `&a[i]` is (`_addr_field_post`, src/frontend/parse_expr.cyr), consumes its `.f` /
+# factor refuses it once, as `&a[i]` is (`_addr_field_post`, src/frontend/parse/expr.cyr), consumes its `.f` /
 # `.0` / `.m(..)` steps so the parse stays in step, and the guide's two citations are corrected.
 #
 #   F   refused once, by name, no binary: the filed repro verbatim (a narrow field `load8(&o.g)` of a local), a
@@ -23,7 +23,7 @@
 #       ONCE (issues/archived/2026-10-17-address-of-parenthesised-name-false-second-error.md). The `&` arm went on with the
 #       token's VALUE as a name offset — a `(`'s 0, the source's first word — and printed a second, false
 #       "undefined variable 'fn'" ('struct' when the source opens with a struct); `_amp_not_name`
-#       (src/frontend/parse_expr.cyr) ends the factor there and steps a `( .. )` whole. The two filed repros
+#       (src/frontend/parse/expr.cyr) ends the factor there and steps a `( .. )` whole. The two filed repros
 #       verbatim on the x86_64, aarch64, cx and PE compilers, at their positions; the parse stays in step (N9).
 #       Mutation (2026-10-18, a scratch tree whose `&` arm calls ERR_EXPECT and reads on, as before, its 2-stage
 #       compiler, the gate run from it): RED 15 — N1 N2 on all four legs, N3-N8 (two error lines each, the second

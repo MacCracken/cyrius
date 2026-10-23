@@ -193,13 +193,13 @@ if [ -s "$D/rverdict" ] 2>/dev/null; then
 fi
 
 # ── headroom — 6.7.15. cyrfmt and cyrlint read at most _MAX_FILE bytes of a file (1028 KB, set
-# at 6.2.20); a file past it cannot be checked at all, and parse_fn.cyr had reached its last 3 KB
+# at 6.2.20); a file past it cannot be checked at all, and parse/fn.cyr had reached its last 3 KB
 # (split at 6.7.15, D25 A, the user, 2026-10-18). Every file this sweep checks stays 64 KB under
 # the cap, so the next one to approach it is caught a release early, not at the cap. The cap is
 # read from both tools, which must agree. lib/ is outside the row: its large files are the
 # vendored folds (sigil, mabda, sankoch are already past the cap — the `lib/` ratchet above), and a
 # fold's layout is its source repo's.
-# MUTATION (6.7.15): the limit set to the cap minus 300 KB -> RED, naming parse_fn.cyr.
+# MUTATION (6.7.15): the limit set to the cap minus 300 KB -> RED, naming parse/fn.cyr.
 capf=$(sed -n 's/^var _MAX_FILE: i64 = \([0-9]*\);.*/\1/p' programs/cyrfmt.cyr | head -1)
 capl=$(sed -n 's/^var _MAX_FILE = \([0-9]*\);.*/\1/p' programs/cyrlint.cyr | head -1)
 if [ -z "$capf" ] || [ "$capf" != "$capl" ]; then

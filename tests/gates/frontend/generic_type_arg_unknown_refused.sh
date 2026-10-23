@@ -233,15 +233,15 @@
 # (refused, but as an "unknown type"). (6.6.8's third mutation, "let _call_forwarded_base inline
 # -> D RED", went GREEN at 6.6.10 and that fn was retired: outer's base is now a transitive stub
 # whose body is skipped, so no replay of the inlinable inner<T> is left for it to suppress.)
-# 6.6.10 (src/frontend/parse_fn.cyr; each run on a scratch tree, never the repo):
+# 6.6.10 (src/frontend/parse/fn.cyr; each run on a scratch tree, never the repo):
 #   `_gen_call_head` never calls _refuse_gen_stub     -> H, I RED (rc 0, the stub's 0)
 #   drop `_tc_generic_divert` from _tc_must_divert     -> H's `return g(5)` RED (rc 0)
 #   _tc_generic_divert returns 1 for EVERY generic      -> M's tail recursion RED (rc 139)
 #   `_gen_close` returns at once (no transitive half)   -> I RED (rc 0)
-#   drop the `_gen_addr_check` call (parse_expr.cyr)    -> J RED (rc 0)
+#   drop the `_gen_addr_check` call (parse/expr.cyr)    -> J RED (rc 0)
 #   6.7.1: `_instantiate_generic_fn` refusing a struct beside a second type argument again (the
 #   pre-6.7.1 `-3`) -> K RED (refused, rc 1)
-#   drop the `_gen_own_call_check` in the asv_pair receive (parse_decl.cyr) -> L RED (rc 0)
+#   drop the `_gen_own_call_check` in the asv_pair receive (parse/decl.cyr) -> L RED (rc 0)
 #   drop the vector guard in _infer_conc_at_cursor      -> M's vector row RED
 #   drop the `_targs_resolvable` early-out in _gen_resolve_call -> N RED (reported twice)
 #   6.7.11: `_gs_use` mode 0 without `_gs_cfield` -> CF1 / CF5 RED (the definition fails), CF2-CF4

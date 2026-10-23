@@ -117,7 +117,7 @@ fi
 # ── AXIS 5 (6.7.17, the D33 review's finding) — A BODY PASS 2 NEVER PARSES IS READ FOR ITS SYNTAX. A trait default no
 # impl inherits (or every impl overrides) and a generic base pass 2 steps — a stub (`p.x` on a T) or a bounded generic
 # i64 does not satisfy — that no instance re-parses were never parsed, so `trait T { fn d(self): i64 { return 1 +; } }`
-# compiled (rc 0, exit 3). Now each is parsed once after the image is built (`_unp_run`, parse_fn_def.cyr), MUTED
+# compiled (rc 0, exit 3). Now each is parsed once after the image is built (`_unp_run`, parse/fn_def.cyr), MUTED
 # through `_ew` (diagnostic_writer_census.sh): only a syntax error is said, at its token, in the words a plain dead fn's
 # gets; one refuses the build and no image is written. Five legs: the x86_64, PE and Mach-O compilers and the aarch64
 # and cx compilers built from this tree. NP1 the filed repro verbatim; NP2 a bounded generic fn, NP3 a bounded generic

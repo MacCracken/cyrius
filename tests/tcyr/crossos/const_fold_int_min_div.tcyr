@@ -1,7 +1,7 @@
 # const_fold_int_min_div.tcyr — the top-level constant folder divides INT_MIN by -1 without
 # taking the compiler down (6.6.20, RPD-06).
 #
-# THE DEFECT (measured at 6.6.19, x86_64 Linux). `_CF_TERM` (src/frontend/parse_decl.cyr), the
+# THE DEFECT (measured at 6.6.19, x86_64 Linux). `_CF_TERM` (src/frontend/parse/decl.cyr), the
 # folder behind a top-level `var X = <constant expr>;`, an array initializer element (6.6.16) and
 # an enum-constant fold, guarded a zero divisor only. x86 `idiv` traps on INT_MIN / -1 and
 # INT_MIN % -1, so

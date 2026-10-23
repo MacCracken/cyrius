@@ -4,7 +4,7 @@
 # any other shape refused by name (6.7.17, the user's D30: the UL rows below).
 #
 # THE DEFECT (measured at 6.6.19, x86_64 Linux, no diagnostic): `_tl_use_alias`
-# (src/frontend/parse_fn.cyr) stored alias #uc at use_from[uc] / use_to[uc] with no cap. The two
+# (src/frontend/parse/fn.cyr) stored alias #uc at use_from[uc] / use_to[uc] with no cap. The two
 # tables are 64 entries each and ABUT in the heap map (use_from @0x18FFD0, use_to @0x1901D0, the
 # count @0x1903D0), so the 65th `use` wrote its source name into use_to[0] — alias #1 then
 # resolved to whatever fn carried that bare name, and the program called it silently — and every
@@ -97,7 +97,7 @@ fi
 # issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (row 4) and the user's D30 (2026-10-22,
 # "Refuse it by name"). Pass 1 read `use IDENT . IDENT [;]` and pass 2 stepped to the next `;`, so `use m.f` with no `;`
 # dropped the next line (exit 0, not 3), and `use 5;`, `use m.;`, `use m;`, `use m.f g;` compiled binding nothing. Now
-# one reader (`_use_step`, src/frontend/parse_fn_def.cyr) in every position: the form, then its `;` or its line's end;
+# one reader (`_use_step`, src/frontend/parse/fn_def.cyr) in every position: the form, then its `;` or its line's end;
 # any other line is "expected `use module.name;`" once, at its first wrong token, the line stepped whole. Four legs:
 # x86_64, aarch64 (the tree's cross compiler, run under qemu-aarch64), cx (main_cx, run under the tree's cxvm) and PE
 # (CYRIUS_TARGET_WIN=1, run under wine in a private prefix) — a refusal by its exact error lines and no binary, a run

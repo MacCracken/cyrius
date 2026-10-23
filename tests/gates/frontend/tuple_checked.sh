@@ -1275,7 +1275,7 @@ cascade cs8h 1 "CS8h: ... a scalar \`B\` above: R12 alone (the control)" 'var B 
 # CS9 (6.7.16, issues/archived/2026-10-18-refused-annotation-cascades-tuple-literal-initializer.md) — a REFUSED annotation over a
 # tuple literal initializer is the annotation's one error: the refusal left no type, which R9 read as a declared
 # non-tuple ("a tuple literal cannot initialize 'b' - its declared type is not a tuple" after it, every row below
-# through 6.7.15). `_tup_r9` (parse_decl.cyr) stands R9 down for an annotation refused at its token (`_tup_ann_refd`:
+# through 6.7.15). `_tup_r9` (parse/decl.cyr) stands R9 down for an annotation refused at its token (`_tup_ann_refd`:
 # an unknown name, a token that is no type, a missing type, a refused declaration's struct), so the declaration is
 # the plain word the refusal left, its uses standing down through the annotation's mark (CS9l / CS9m: `.0`, `.a`).
 # A type the annotation still names keeps R9: R9d (`: i64`), CS9n (the zone's and the post-statement `: i64`),

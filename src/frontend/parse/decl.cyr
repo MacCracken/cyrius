@@ -3,7 +3,7 @@
 # PARSE_GVAR_ARR / PARSE_GVAR_REG / EMIT_GVAR_INITS / PARSE_VAR /
 # PARSE_ASSIGN + BUILD_METHOD_NAME.
 # ================================================================
-# Split out of src/frontend/parse.cyr in v5.5.38 to keep single-file
+# Split out of src/frontend/parse/parse.cyr in v5.5.38 to keep single-file
 # LOC under ~1500. Included by parse.cyr at the same textual position
 # the original content lived; self-host byte-identical.
 
@@ -120,9 +120,9 @@ fn _arr_desc_t(ew, sgn, typed): i64 {
 # (width 8; float + signed is otherwise impossible). Low five bits 0 = no element a subscript can
 # load (bare, struct, pointer, vector, enum, cstring). A typed array of f64 / f32 / bool records its
 # kind now (`_arr_desc_k`) and a `*T` its pointee's (`_ek_of_ptr_ann`: the slot mark, `_gv_ped`,
-# the field and return step words — see `_ps_word`, parse_types.cyr), so C2's `p[i]`, `a[i]` on a
+# the field and return step words — see `_ps_word`, parse/types.cyr), so C2's `p[i]`, `a[i]` on a
 # float array and `*p` at the element's width read one byte (C2-4a: `a[i]` / `p[i]` load and store
-# by it — `_esub_load` / `_esub_assign`, parse_expr.cyr). The descriptor is a byte everywhere it is
+# by it — `_esub_load` / `_esub_assign`, parse/expr.cyr). The descriptor is a byte everywhere it is
 # stored (SLAEW, GVSGN's low byte, the step word's bits 40-47). CHANGELOG [6.7.8]
 fn _ek_w(d): i64 { return d & 0x1F; }        # the element width (1/2/4/8, 16 u128), 0 = none
 fn _ek_lw(d): i64 {                          # the load width, negative when signed (sign-extends)
@@ -142,7 +142,7 @@ fn _ek_lt(d): i64 {                          # the value's type: F64_TYID / F32_
     if (k == 2) { return F32_TYID; }
     return 0;
 }
-# The kind of a type code (_tn_*, parse_types.cyr): iN / uN its width (| 0x40 for i8..i32), f64
+# The kind of a type code (_tn_*, parse/types.cyr): iN / uN its width (| 0x40 for i8..i32), f64
 # 0x28, f32 0x24, bool 0x68, a type parameter no binding resolved 8 (its i64 base); else 0.
 fn _ek_of_code(c): i64 {
     var k = _tn_class(c);
@@ -282,7 +282,7 @@ fn _arr_ebytes(S, ew, flt, tsc, ann_ti): i64 {
     return _arr_name_ebytes(S, ann_ti);
 }
 # The annotation at `ti` set no width, float, sid or vector: its size through the one type-name
-# resolver (6.6.16, parse_types.cyr _tn_resolve_at) — 8 for bool, cstring, an enum (declared on
+# resolver (6.6.16, parse/types.cyr _tn_resolve_at) — 8 for bool, cstring, an enum (declared on
 # either side — its values are i64) or a type parameter of the enclosing generic fn — else
 # refused by name, reported at the name and recovered (8), so each bad array is reported.
 # `--syntax-only` resolves nothing, so there it is 8 too (see `_syntax_only`, util.cyr).
@@ -315,7 +315,7 @@ fn _arr_name_ebytes(S, ti): i64 {
 # Is `noff` a type parameter of the generic fn whose body holds token `ti`? The default build binds
 # every T (to i64 in the base, to its argument in an instance) and PARSE_VAR's ladder resolves it,
 # so this is CYRIUS_MONOMORPH=0's case, where nothing is captured or bound: read from the tokens,
-# as _is_own_tparam (parse_types.cyr) does for a struct. The enclosing fn is the nearest `fn`
+# as _is_own_tparam (parse/types.cyr) does for a struct. The enclosing fn is the nearest `fn`
 # before `ti` whose body spans it.
 fn _arr_fn_tparam(S, ti, noff): i64 {
     if (GINFN(S) != 1) { return 0; }
@@ -433,7 +433,7 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb, ann_ti): i64 {
     if (eb > 0) { aligned = (asz * eb + 7) & (0 - 8); }
     # v6.4.10 (P1 fix, kernel blocker) — a BARE top-level `var X[N]` (ew==0, NOT a
     # function-local) must size N×8 to match PARSE_GVAR_ARR (the pass-1 declaration path,
-    # parse_decl.cyr ~700 `ar_ew` defaults to 8). Otherwise the IDENTICAL decl is N×8 when
+    # parse/decl.cyr ~700 `ar_ew` defaults to 8). Otherwise the IDENTICAL decl is N×8 when
     # it precedes the first bare top-level statement (pass 1) but only N bytes when it
     # follows it (pass 2, this PARSE_ARRAY) — a silent 8× under-size → BSS overflow /
     # memory corruption (agnos fpctxsw_payload ring-3 #PF). True in-function locals (GINFN
@@ -1645,7 +1645,7 @@ fn _fls_type_err(S, dt, dnoff): i64 {
 }
 
 # 6.7.3 — a whole struct-typed field as the argument of a parameter that is not address-passed
-# (`_sarg_byval_small`, parse_fn.cyr): its struct, end token and name, recorded WITHOUT changing the
+# (`_sarg_byval_small`, parse/fn.cyr): its struct, end token and name, recorded WITHOUT changing the
 # load — the by-value word is pushed exactly as before. The reader compares the end with the cursor.
 fn _fpk_note(S, ft): i64 {
     if (ft <= 0) { return 0; }
@@ -1823,7 +1823,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
             # + ELODC) rather than direct EFLLOAD against the slot
             # number. Reason: the regalloc post-body peephole pins
             # hot user-locals to callee-saved registers via "time-
-            # sliced sharing" (parse_fn.cyr v5.6.20). The picker
+            # sliced sharing" (parse/fn.cyr v5.6.20). The picker
             # treats any slot accessed only through `mov rax,
             # [rbp+disp]` / `mov [rbp+disp], rax` as eligible for
             # register routing — it bars `&local` (lea) accesses,
@@ -1930,7 +1930,7 @@ fn _meth_sid0_said(S, noff, pfl_beg, idx): i64 {
 }
 # The `sid == 0` arms' stand-downs (the method call, the `.field` read and store; out of their cybs-ceiling fns): a
 # refused const fn's run-time body (`_ce_fld_said`, 6.7.14), and 6.7.15 a variable `noff` (resolved to `idx`)
-# whose annotation named a type a refused declaration declared (`_ann_refd_said`, parse_fn_def.cyr). 1 = said.
+# whose annotation named a type a refused declaration declared (`_ann_refd_said`, parse/fn_def.cyr). 1 = said.
 # 6.7.17: and a zone global the sweep judged refused, before the replay has said (`_gu_phold`, report `kind`).
 fn _fld_sid0_said(S, noff, idx, kind): i64 {
     if (_ce_fld_said(S) == 1) { return 1; }
@@ -2092,7 +2092,7 @@ fn _load_str_hop(S, noff, beg, idx, sid, off): i64 {
     return _field_load_on(S, noff, mnoff, beg, h, ft);
 }
 # 6.7.14: 1 = the `.m(` at the cursor is a bounded site recorded on a struct carrier's T field (`_bnd_fsite`,
-# parse_fn.cyr) — `b.v.show()` with `b: Box<T>`, T bound here to a scalar.
+# parse/fn.cyr) — `b.v.show()` with `b: Box<T>`, T bound here to a scalar.
 fn _fld_bs_site(S): i64 {
     if (_bs_n == 0) { return 0; }
     if (_bs_find(S, GTI(S) + 1) < 0) { return 0; }
@@ -2769,7 +2769,7 @@ fn _ifs_bx_el(S, k, ti, nm): i64 {
 
 # 6.7.8 (C2-4b) — `h.p[i] = v` / `h.p[i] OP= v` (the statement and the classic-for step): the leaf
 # field (`_rlf_si` / `_rlf_fi`) a `*T`, its VALUE loaded from the field's address (`_fld_addr_ra`),
-# then the element addressed and stored as a named `*T`'s (parse_expr.cyr `_psub_addr`,
+# then the element addressed and stored as a named `*T`'s (parse/expr.cyr `_psub_addr`,
 # `_esub_assign`). A field that is no `*T` is refused by name, the statement parsed on.
 fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
     var fnm = GETFNAME(S, _rlf_si, _rlf_fi);
@@ -5391,7 +5391,7 @@ fn _gv_owner(S, ti): i64 {
 # The live, plain global below index `below` that a top-level redeclaration of `noff` must
 # reuse, or -1. An enum constant has no storage to share (CHK_ENUM_SHADOW / CHKDUPVAL own
 # that case), and a prior with a different visibility owner is a different global.
-# 6.6.9: walks only the slots of this name, through the name index (_fvh_head, parse_types.cyr)
+# 6.6.9: walks only the slots of this name, through the name index (_fvh_head, parse/types.cyr)
 # — it used to STREQ every global below `below`, the second of the two O(N) walks each
 # registration paid. CHANGELOG [6.6.9]
 fn _gv_prior(S, noff, below, owner): i64 {
@@ -5581,7 +5581,7 @@ fn _gv_supersede(S, noff, lists): i64 {
 }
 
 # The per-name list of deferred-entry targets: name -> newest record + 1 (a name map, see
-# _nm_new in parse_types.cyr); record r = entry * 4 + target, chained through _gvx_nxt.
+# _nm_new in parse/types.cyr); record r = entry * 4 + target, chained through _gvx_nxt.
 var _gvx_m = 0;
 var _gvx_rec = 0;
 var _gvx_nxt = 0;
@@ -5669,7 +5669,7 @@ fn _gv_ent_slot(S, gi, k, noff): i64 {
 # Hide the top-level program's globals from FINDVAR while the replay runs (on = 1) or stop
 # (on = 0). Only a kernel build sets _gv_zone_top (main.cyr): every other build replays before
 # the program has registered anything. Globals the replay itself registers (sinks, hidden
-# temps) sit above the range and stay visible. See _fv_hidden (parse_types.cyr).
+# temps) sit above the range and stay visible. See _fv_hidden (parse/types.cyr).
 fn _gv_hide_program(S, on): i64 {
     _fv_hide_lo = 0;
     _fv_hide_hi = 0;
@@ -5695,7 +5695,7 @@ fn _gv_store(S, vi): i64 {
     return 0;
 }
 # The declaration-zone replay's store of an initializer just parsed (EMIT_GVAR_INITS): an f64 value
-# into an `f32` global rounds first (_f32_init_round, parse_expr.cyr). Not in `_gv_store`, whose cx
+# into an `f32` global rounds first (_f32_init_round, parse/expr.cyr). Not in `_gv_store`, whose cx
 # constant prestore runs with no expression parsed. CHANGELOG [6.7.6]
 fn _gvi_store(S, vi): i64 {
     if (GVW128(S, vi) == 1) { _w128_init_place(S, 2, vi); _gv_slvar(S, vi); return 0; }   # 6.7.6 (D2)
@@ -5847,7 +5847,7 @@ fn _gv_entry_cut(S, sti): i64 {
     return 0;
 }
 
-# 6.6.10 — the untyped-float flag for a global registered here (see _UFV_G, parse_expr.cyr).
+# 6.6.10 — the untyped-float flag for a global registered here (see _UFV_G, parse/expr.cyr).
 # No code is emitted for the initialiser yet, so its SHAPE decides: after any leading `-` / `(`,
 # a float literal, a float builtin, a call to a `: f64` fn, or a lone f64 / f32 / flagged
 # global. `typed` is the sum of the declaration's (non-negative) annotation channels.
@@ -6698,7 +6698,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # var, INCLUDING inside already-parsed library code that uses the constant as an
     # ABI offset (patra `DbOff.DB_PATH`). Hard-error. An int-literal shadow stays a
     # CHKDUPVAL warning above (e.g. chrono's harmless `var CLOCK_MONOTONIC = 1`
-    # aliasing the syscall enum, same value). See CHK_ENUM_SHADOW in parse_types.cyr.
+    # aliasing the syscall enum, same value). See CHK_ENUM_SHADOW in parse/types.cyr.
     if (chk_has == 0) { CHK_ENUM_SHADOW(S, noff); }
     # Register
     var vcnt = GVCNT(S);
@@ -6751,7 +6751,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # v6.2.11: flag a conflicting-value redefinition (issue 2026-06-14) when this
     # global has a `= NUM ;` literal AND shadows a prior def, BEFORE it's
     # counted so the lookup sees only prior defs. Mirrors the enum-member site in
-    # parse_types.cyr. Gated on the shadow so the common non-colliding case skips
+    # parse/types.cyr. Gated on the shadow so the common non-colliding case skips
     # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
     # 6.7.15: asked once the registration is written, so a refused shape and a prior the replay folds stand it down
     # (_gv_dup_later). The cursor is still the declaration's `=`.
@@ -8182,7 +8182,7 @@ fn EMIT_GVAR_INITS(S): i64 {
     # v6.6.0 — every fn is parsed and flagged by now, so this is the one point where a
     # pair-returning fn's OTHER return paths can be judged. Runs once; see parse.cyr.
     _warn_mixed_pair_returns(S);
-    _dl_pw_late(S);   # 6.7.16: a kernel build replays the globals after the program (parse_fn_def.cyr `_dl_pw_end`)
+    _dl_pw_late(S);   # 6.7.16: a kernel build replays the globals after the program (parse/fn_def.cyr `_dl_pw_end`)
     return 0;
 }
 
@@ -8422,7 +8422,7 @@ fn _gci_inline(S, sid, ann): i64 {
 }
 # Pass 1's half of a declaration-zone tuple literal, cursor on the RHS: -1 when it is no whole
 # literal up to the `;`; else the tuple to register inline, or 0. Quiet: the replay reports. The
-# tokens are read as the replay will read them with every fn declared (`_tup_p1`, parse_expr.cyr): a
+# tokens are read as the replay will read them with every fn declared (`_tup_p1`, parse/expr.cyr): a
 # generic call's `<A, B>` holds no tuple comma, whether the generic is declared above or below.
 fn _tup_gci(S, sid, ann): i64 {
     _tup_p1 = 1;
@@ -9826,7 +9826,7 @@ fn _vcall_fi(S, ti): i64 {
 # (`_mcall_gen`, quietly, as `_var_rhs_msid` resolves it). Every vector receive refused it ("got `s`"), where a by-name
 # call declared `: f64v2` was taken. At token `ti`: that method's fn when it is declared to return a vector, else -1;
 # `_vcall_o` its `(`. Its call is the method arm's (`_field_load_on`), which on Win64 passes a receive's own
-# destination as the hidden result pointer (`_sc_vbeg`, parse_fn.cyr). CHANGELOG [6.7.13]
+# destination as the hidden result pointer (`_sc_vbeg`, parse/fn.cyr). CHANGELOG [6.7.13]
 # 6.7.15: on a field chain `h.f.m(..)` too (`_vmc_open`).
 fn _vmc_fi(S, ti): i64 {
     var o = _vmc_open(S, ti);   # 6.7.15: `x.m<..>(` too, at its explicit instance
@@ -13079,7 +13079,7 @@ fn _svin_judge(S, ti, e, ann, noff): i64 {
     if (r == 1) { if (ps == 1) { _ptr_refd_ti = ann; } }
     return r;
 }
-# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse_types.cyr): `var GU: *Pt = GPP;`. 1 = refused.
+# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse/types.cyr): `var GU: *Pt = GPP;`. 1 = refused.
 fn _ppd_zval(S, st): i64 {
     var i = _vrcv_dbeg(S, st);
     if (i < 0) { return 0; }
@@ -13319,7 +13319,7 @@ fn PARSE_VAR(S): i64 {
         } else {
             var _gs_sid = 0;   # v6.3.10: base sid if `: StructName` resolved (for generic-struct instantiation below)
             if (_tn_head_var(S, noff) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.14: else refused by name
-                # ⛔ 6.6.16 (C8): the one type-name resolver (parse_types.cyr _tn_var_ann).
+                # ⛔ 6.6.16 (C8): the one type-name resolver (parse/types.cyr _tn_var_ann).
                 # This ladder matched PREFIXES (`i8x` an i8, `f64zz` an f64, the struct
                 # `u8pair` a u8 scalar before the struct lookup) and read an unknown name as a
                 # silent i64; a bound type parameter took its argument's raw code as a WIDTH
@@ -13593,7 +13593,7 @@ fn PARSE_VAR(S): i64 {
         if (TOKTYP(S, _look_ti) == 2) {
             # v6.3.37 (B1 half-B / B2): recognize a struct-returning call in BOTH the
             # plain `IDENT (` and the monomorph generic `IDENT < ... > (` shapes. The
-            # RHS-consume path (parse_expr.cyr:375) already handles the generic call;
+            # RHS-consume path (parse/expr.cyr:375) already handles the generic call;
             # only this LHS receive-type inference needed the `<`-token widening.
             # 6.6.12: `_var_rhs_call` — and not a call followed by `.field` (`mkp(3).y`).
             # 6.7.6: the WHOLE initialiser (6.7.11: or the whole inside of its wrap).
@@ -13640,7 +13640,7 @@ fn PARSE_VAR(S): i64 {
                         if (_inf_sz > 16) { pscale = 0 - _look_sid; }
                         elif ((_inf_sz > 8) && (_look_sid != _STR_SID(S))) { pscale = 0 - _look_sid; }
                     }
-                    # v5.10.2 paired with parse_fn.cyr's
+                    # v5.10.2 paired with parse/fn.cyr's
                     # rough-scan: ≤16-byte struct returns (Str,
                     # any small struct) flow through scalar
                     # rax/rdx — NOT retptr. asv path uses
@@ -13748,7 +13748,7 @@ fn PARSE_VAR(S): i64 {
         return 0;
     }
     # v5.10.45 Phase 1 — asv_pair path for 9-16B int-class non-Str
-    # struct returns. Caller-side mirror of parse_fn.cyr's pair-
+    # struct returns. Caller-side mirror of parse/fn.cyr's pair-
     # return branch: allocate multi-slot for the receiver, call the
     # fn normally (no retptr arg), receive rax+rdx into the slots
     # via EFLSTORE_STRUCT_INT_PAIR. Same allocation shape as asv_try
@@ -13891,7 +13891,7 @@ fn PARSE_VAR(S): i64 {
         } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
     # closure now identifies itself at RUNTIME (bit 63 of its value; see the callptr
-    # lowering in parse_expr.cyr), so a `var` holding one needs no special type — and
+    # lowering in parse/expr.cyr), so a `var` holding one needs no special type — and
     # `var g = f;` needs no hand-written tag propagation, because there is nothing
     # left to propagate. Two bugs die with it: every escape the stamp could not
     # follow (param / return / global / memory / plain assignment) used to dispatch
@@ -14006,7 +14006,7 @@ fn PARSE_VAR(S): i64 {
                 # `var n = strlen(s);` where strlen is `: i64`) was
                 # tried at v5.10.5 with SLTYPE = positive width
                 # (8 for i64), but that encoding tripped the
-                # parse_expr.cyr:263 width-aware load path which
+                # parse/expr.cyr:263 width-aware load path which
                 # SEXW(S, 8) marks expr_width = 8 and downstream
                 # arithmetic emit narrowed incorrectly (`hlen -
                 # nlen` returned -29 instead of 6 in the tcyr
@@ -14028,7 +14028,7 @@ fn PARSE_VAR(S): i64 {
                     # ⚠ This is deliberately NARROWER than the scalar-return
                     # inference reverted at v5.10.5 (see the note above): that one
                     # encoded `: i64` as a positive WIDTH (8), which tripped the
-                    # width-aware load path at parse_expr.cyr:263 and narrowed
+                    # width-aware load path at parse/expr.cyr:263 and narrowed
                     # downstream arithmetic. F64_TYID is 0x40000001, not a small
                     # positive width, so it cannot reach that path.
                     SLTYPE(S, li, F64_TYID);
@@ -14083,7 +14083,7 @@ fn PARSE_VAR(S): i64 {
                 # Pre-4.8.0-alpha3 this hardcoded 8, truncating u128 vars
                 # declared in the PARSE_PROG path (e.g. after a top-level
                 # expression statement like `alloc_init();` that stops
-                # pass 1 — see _tl_scan1's termination, parse_fn_def.cyr).
+                # pass 1 — see _tl_scan1's termination, parse/fn_def.cyr).
                 S64(_vars_base + vcnt * 8, scalar_type);
                 _w16_global_init(S, vcnt, scalar_type, ann_ti);   # 6.7.6 (D2): a u128 whole
             }
@@ -16122,7 +16122,7 @@ fn _gu_ieg(S, g, ab, ae): i64 {
     if (_gu_wfree(S, a, _ie_pe) == 0) { return 0; }
     return _gu_ok(S, _gu_cg(S, a, g));
 }
-# 6.7.16 — the sweep's twin of `_ie_decl_mark` (parse_ctrl.cyr): the noted global whose whole initialiser at `ti`
+# 6.7.16 — the sweep's twin of `_ie_decl_mark` (parse/ctrl.cyr): the noted global whose whole initialiser at `ti`
 # (inside any wrap) is an if-expression a branch of which the replay refuses as a value over 8 bytes — a struct over
 # 8 B, a vector, a u128, read from its tokens as the parse reads it (`_gu_bwide`) — is marked as refused
 # (`_ann_refd_mark`), so a fn body compiled before the replay stands down at `G.a`, as the replay's own mark makes the
@@ -16149,7 +16149,7 @@ fn _gu_iebig(S, ti): i64 {
     }
     return 0;
 }
-# 6.7.16 — the sweep's twin of `_slit_undecl` (parse_expr.cyr): the noted global whose whole initialiser at `ti`
+# 6.7.16 — the sweep's twin of `_slit_undecl` (parse/expr.cyr): the noted global whose whole initialiser at `ti`
 # (inside any wrap) is a struct literal `Q { .. }` / `Q<..> { .. }` whose name is nothing (no struct, variable or fn)
 # is marked as refused, so a fn body compiled before the replay stands down at `x.a`. CHANGELOG [6.7.16]
 fn _gu_slit0(S, ti): i64 {

@@ -8,7 +8,7 @@
 # bind, connect, listen, setsockopt, getsockopt, closesocket, getaddrinfo) plus six new reroutes
 # the blocking verbs need: accept, shutdown, send, recv, ioctlsocket (FIONBIO) and WSAPoll. They
 # reach the EACCEPT_PE … EWSAPOLL_PE emitters through `_PE_ROUTE_SOCK`
-# (src/frontend/parse_expr.cyr); without that route each id is an unrouted literal again.
+# (src/frontend/parse/expr.cyr); without that route each id is an unrouted literal again.
 #
 # THE AXES (compile-only; the behaviour is tests/tcyr/crossos/net_loopback_tcp.tcyr and
 # net_resolve_pe.tcyr on real cass in the release gate's cross-OS leg).

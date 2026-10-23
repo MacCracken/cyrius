@@ -3,7 +3,7 @@
 # `: stack` pair on another path but a SINGLE value here") fires on a dropped TAG, and not on
 # a nullary variant, which IS a whole value.
 #
-# ⛔ WHY. `_warn_mixed_pair_returns` (src/frontend/parse.cyr) treated `return IDENT(...)` as
+# ⛔ WHY. `_warn_mixed_pair_returns` (src/frontend/parse/parse.cyr) treated `return IDENT(...)` as
 # a pair return only when the callee had fn flag 256. Nullary `: stack` variant constructors
 # (`None()`, any `Nope();`) never get 256, and correctly so, because they return the tag
 # alone. So `return None();` beside `return Some(v);` was reported as a dropped tag and

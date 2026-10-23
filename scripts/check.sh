@@ -1251,7 +1251,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_requires_summary.sh"
 # helper. With no HOME at all the libssl groups of tls_libssl_read_errors / _session_cache /
 # _worker_thread SKIPped on every check.sh run; the invoking HOME is still never reached.
 _chk_gate "$ROOT/tests/gates/toolchain/check_tcyr_home_has_helper.sh"
-# 6.6.17 (g4): the path-A drift row reads each src/frontend/parse_*.cyr WHOLE, sized by fstat,
+# 6.6.17 (g4): the path-A drift row reads each src/frontend/parse/*.cyr WHOLE, sized by fstat,
 # through its last fn. It read a fixed 256 KB, and parse_decl / parse_expr / parse_fn had
 # outgrown that, so a direct emit in their tails was never scanned.
 _chk_gate "$ROOT/tests/gates/toolchain/check_parse_drift_reads_whole.sh"
@@ -1469,7 +1469,7 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_kernel_compaction_boots.sh"
 # #deprecated and cx #naked rows.
 _chk_gate "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
 
-# 6.6.17: the top-level scans (pass 1, pass 2, enum inits) live ONCE in src/frontend/parse_fn_def.cyr
+# 6.6.17: the top-level scans (pass 1, pass 2, enum inits) live ONCE in src/frontend/parse/fn_def.cyr
 # and every src/main*.cyr fork calls them; a fork that re-grows its own copy (reads PEEKT, calls
 # a scan arm) is refused. Static — the byte-identical proof of the DRY is in CHANGELOG [6.6.17].
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_scan_shared.sh"
@@ -2109,7 +2109,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/lsp_diagnostics_file_column.sh"
 # fragment of a unit until a file it depends on changes on disk; the compiler's output is read
 # whole (it kept 8,191 bytes). F1-F23 (each with its mutant), and S: every src/, lib/ and
 # bootstrap/cybs.cyr file of this tree opened in one session, each one's own list empty but for
-# named entries' and NOTEs' (55 false errors on src/frontend/parse_ctrl.cyr before).
+# named entries' and NOTEs' (55 false errors on src/frontend/parse/ctrl.cyr before).
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_fragment_compiles_its_unit.sh"
 
 # 6.7.12 — programs/wc.cyr (a demo) right-justifies its counts to the widest, one space apart (a

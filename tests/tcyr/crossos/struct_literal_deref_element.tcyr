@@ -9,7 +9,7 @@
 # refused by name for any other struct. `*pp` of a `**S` is the `*S` it reads, copied through as a `*S` name is.
 #
 # WHY A CROSS-HOST TEST: the copy through the parked pointer (a frame temp in a fn, a hidden global at top level) is
-# emitted per backend. Mutation: `_spi_dsrc` (src/frontend/parse_decl.cyr) answering 0 — this file stops compiling.
+# emitted per backend. Mutation: `_spi_dsrc` (src/frontend/parse/decl.cyr) answering 0 — this file stops compiling.
 include "lib/assert.cyr"
 
 struct DeQ2 { a; b; }

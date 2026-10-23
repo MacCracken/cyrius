@@ -1,6 +1,6 @@
 # win_qpc_clock.tcyr — v6.6.5. The Windows monotonic clock moved from
 # kernel32!GetTickCount64 to QueryPerformanceCounter (PE reroutes 0xF038/0xF039,
-# src/frontend/parse_expr.cyr `_PE_ROUTE_PERFCOUNTER`, emitters EQPC_PE/EQPF_PE). This is
+# src/frontend/parse/expr.cyr `_PE_ROUTE_PERFCOUNTER`, emitters EQPC_PE/EQPF_PE). This is
 # the companion test the syscall-wrapper rule requires for a new reroute.
 #
 # ⛔ WHY IT HAD TO MOVE. GetTickCount64's counter advances in **15 ms** steps — measured

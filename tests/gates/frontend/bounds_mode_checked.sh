@@ -17,7 +17,7 @@
 # LEN) at <file>:<line>` to stderr and exits 134 ... typed arrays a[i] against their exact N; slice
 # reads AND writes; a *T subscript checked for a NEGATIVE index only ... A constant index provably
 # out of range WARNS in every mode and is an ERROR under the mode. @unsafe { } turns checks off
-# inside it."). Every subscript asks src/frontend/parse_expr.cyr `_bck_open` at its `[` and calls the
+# inside it."). Every subscript asks src/frontend/parse/expr.cyr `_bck_open` at its `[` and calls the
 # checker the preprocessor appends to the finished unit (lex/pp.cyr `_bnd_finish`) once the index is
 # in rax — so every target lowers the violation through its own write / exit paths.
 #
@@ -520,7 +520,7 @@ done
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
-# C2-8 — WHAT THE MODE CHECKS (src/frontend/parse_expr.cyr `_bck_*`; the checker lex/pp.cyr
+# C2-8 — WHAT THE MODE CHECKS (src/frontend/parse/expr.cyr `_bck_*`; the checker lex/pp.cyr
 # `_bnd_finish`): a typed array `a[i]` against its exact N, a slice's reads and writes against its
 # length, a `*T` subscript for a negative index only; `bounds: index N out of [0, LEN) at
 # <file>:<line>` on stderr and exit 134; a constant index judged at compile time; `@unsafe` lexical.

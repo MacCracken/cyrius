@@ -213,7 +213,7 @@ fn _pp_unclosed(S, base, pos, bl): i64 {
 # own inline copy of the state and RESET `in_string` at every newline, on the
 # written premise that "cyrius source uses single-line strings (`\n` escape, not
 # literal LF inside a string)". That premise was FALSE — src/main.cyr and
-# src/frontend/parse_expr.cyr both hold error strings with a raw LF in them — so
+# src/frontend/parse/expr.cyr both hold error strings with a raw LF in them — so
 # a line sitting INSIDE a multi-line string was read as a fresh line of code and
 # its `#ifdef` / `#ifndef` / `#if` / `#else` / `#elif` / `#endif` / `#ifplat` /
 # `#define` / `#@srcline` / `#ref` were EXECUTED. The string's bytes then did not
@@ -375,7 +375,7 @@ fn PP_NEUT_PASS(S): i64 {
 }
 
 # ⛔ 6.6.12 — NATIVE-AARCH64 REGION MARKERS. The ELF-aarch64 raw-literal warning
-# (`_sysx_meant_here`, src/frontend/parse_expr.cyr) flagged a CORRECT native number too:
+# (`_sysx_meant_here`, src/frontend/parse/expr.cyr) flagged a CORRECT native number too:
 # `syscall(8, ..)` under `#ifdef CYRIUS_ARCH_AARCH64` IS getxattr there, and naming it
 # through an enum constant still warned, because the parser runs after the #ifdef is gone.
 # So the preprocessor writes the fact into the stream: the blank line that replaces a
@@ -3272,7 +3272,7 @@ fn PP_DERIVE_STRUCT(tn): i64 {
     if (load64(_pp_derive_codec + (r - 1) * 8) != 1) { return 0; }
     return 1;
 }
-# ⛔ 6.7.16 — WHAT A REGISTRATION WROTE, for a refused declaration's derive step (parse_fn_def.cyr `_dl_dname`): it steps
+# ⛔ 6.7.16 — WHAT A REGISTRATION WROTE, for a refused declaration's derive step (parse/fn_def.cyr `_dl_dname`): it steps
 # only the fns the derive wrote, so it asks which registration `r` (1-based, PP_DERIVE_LAST) emitted — the codecs
 # (`T_to_json` .., PP_DERIVE_CODEC) and, as bits of PP_DERIVE_FAM, the accessors (1: `T_<field>`, `T_set_<field>`) and
 # the shared helpers each is emitted with once per compilation (2 `_cy_enum_name_eq`, 4 `_cy_vecdec_int`, 8
@@ -5814,7 +5814,7 @@ fn _bnd_scan(S): i64 {
 
 # An environment rung: 1 / 0, or -1 when the variable `name` is unset or empty (and after
 # refusing any other value by name). Shared by CYRIUS_BOUNDS, CYRIUS_COVERAGE and CYRIUS_POISON
-# (parse_cov.cyr).
+# (parse/cov.cyr).
 fn _pp_env_rung(S, name): i64 {
     var e = _read_env(name);
     if (e == 0) { return 0 - 1; }
@@ -5963,9 +5963,9 @@ fn PREPROCESS(S): i64 {
     PP_NEUT_PASS(S);
     # 6.7.8 (C2-7): the bounds-checked mode, before the first `#ifdef` is evaluated.
     _bnd_setup(S);
-    # 6.7.10 (P5B-1): the execution-coverage mode (src/frontend/parse_cov.cyr), likewise.
+    # 6.7.10 (P5B-1): the execution-coverage mode (src/frontend/parse/cov.cyr), likewise.
     _cov_setup(S);
-    # 6.7.11: the allocator poison mode's switch (parse_cov.cyr `_poison_setup`), likewise.
+    # 6.7.11: the allocator poison mode's switch (parse/cov.cyr `_poison_setup`), likewise.
     _poison_setup(S);
     PP_PASS(S);
     # Pass 2: evaluate #ifdef/#define in included content
@@ -5976,7 +5976,7 @@ fn PREPROCESS(S): i64 {
     SBL(S, PP_RESOLVE_PKGVER(S + 0x459D000, GBL(S)));
     # 6.7.8 (C2-8): the bounds-checked mode's checker, appended to the finished unit.
     _bnd_finish(S);
-    # 6.7.10 (P5B-2): the execution-coverage mode's dump, likewise (parse_cov.cyr).
+    # 6.7.10 (P5B-2): the execution-coverage mode's dump, likewise (parse/cov.cyr).
     _cov_finish(S);
     return 0;
 }

@@ -1,7 +1,7 @@
 # PARSER — control flow: ECONDOP/ECONDOPT/ECONDCMP/ECOND/ECOND_AND/
 # ECOND_OR / PATCHXP / PARSE_ELIF / PARSE_IF / PARSE_WHILE / PARSE_FOR.
 # ================================================================
-# Split out of src/frontend/parse.cyr in v5.5.38 to keep single-file
+# Split out of src/frontend/parse/parse.cyr in v5.5.38 to keep single-file
 # LOC under ~1500. Included by parse.cyr at the same textual position
 # the original content lived; self-host byte-identical.
 
@@ -736,7 +736,7 @@ fn _ie_finish(S, st): i64 {
     if (cl == 1) { if (fbk == 3) { _FBR_MARK(S, 3); } }
     if (cl == 4) { _ie_struct_result(S, st); }
     if (cl == 1) { if (L64(st + 16) == 1) { _BX_MARK(S); } }
-    _iep_cp = 0 - 1;   # 6.7.11: every branch a pointer (`_hl_ie_ptr`, parse_decl.cyr)
+    _iep_cp = 0 - 1;   # 6.7.11: every branch a pointer (`_hl_ie_ptr`, parse/decl.cyr)
     if (L64(st + 64) == 1) {
         _iep_beg = L64(st + 56);
         _iep_end = GTI(S);

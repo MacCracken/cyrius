@@ -6,7 +6,7 @@
 # One release." — "Flag off ⇒ byte-identical output (P5-B)."
 #
 # GROUP S — THE SWITCH (P5B-1). The mode is decided once, in the shared PREPROCESS right after the
-# bounds-checked mode's `_bnd_setup` (src/frontend/parse_cov.cyr `_cov_setup`): CYRIUS_COVERAGE 1
+# bounds-checked mode's `_bnd_setup` (src/frontend/parse/cov.cyr `_cov_setup`): CYRIUS_COVERAGE 1
 # on; 0, unset or empty off; any other value refused by name (lex/pp.cyr `_pp_env_rung`, the rung
 # CYRIUS_BOUNDS uses). On, it needs CYRIUS_COVERAGE_FILE (no default: a predictable relative name
 # is a symlink-plantable target in a shared directory) and predefines CYRIUS_COVERAGE. A kernel /
@@ -35,7 +35,7 @@
 #       CYRIUS_COVERAGE= (empty) — the binary, the stderr and the rc
 #
 # GROUPS H / A / B / M / CC / L — THE COUNTERS, THE MAP AND THE END-OF-PROGRAM DUMP (P5B-2). Every
-# fn body bumps its own counter at its first byte (parse_cov.cyr `_cov_body` / `_cov_hit`); the
+# fn body bumps its own counter at its first byte (parse/cov.cyr `_cov_body` / `_cov_hit`); the
 # counters and the fn map are two hidden globals (`_cov_greg`), the map an image blob; `_cov_tail`
 # (one line before EEXIT in each of the seven forks) calls the dump appended to the unit
 # (`_cov_finish`), which appends `# cyrius-coverage 1` and one `<count> <file>:<line> <name>` per fn
@@ -67,7 +67,7 @@
 #
 # GROUP E — EVERY EXIT ROUTE (P5B-3). A program that leaves through an exit syscall never reaches
 # `_cov_tail`, so the syscall builtin hooks every exit whose NUMBER is a compile-time constant
-# (parse_cov.cyr `_sc_args_done`, the 1-for-1 swap for `_macho_warn_unrouted` in
+# (parse/cov.cyr `_sc_args_done`, the 1-for-1 swap for `_macho_warn_unrouted` in
 # `_PARSE_FACTOR_IMPL`; `_cov_is_exit` per target: x86 ELF / x86 Mach-O / cx {60, 231}, aarch64 {60,
 # 93, 94}, PE {60}, agnos {0}), after the arguments are pushed and before every target lowering.
 # Each row holds the exit to the plain build's and to its stated value, and the program's own
@@ -98,7 +98,7 @@
 #   x86 and aarch64; E1b / E7 under CYRIUS_IR=1 / IR=3 / DCE=1 / PIE=1 / STACK_ARRAYS=0
 #
 # GROUP F — EVERY FN SHAPE (P5B-4). An `#inline` replay re-parses its callee's body inside the
-# caller and bumps the callee's counter (parse_cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
+# caller and bumps the callee's counter (parse/cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
 # PARSE_FNCALL's one PARSE_PROG; the callee's line recorded only when its definition has not); a
 # closure bumps its own once its frame is open (`_cl_frame_open`, the 1-for-1 swap for
 # `_PARSE_FACTOR_IMPL`'s one ESUBRSP), named at its closing bar's line; a `#naked` fn is recorded as
@@ -134,7 +134,7 @@
 #   G2  the texts it quotes are the compiler's: the `0 or 1` refusal (for `=2`), the missing-FILE
 #       refusal, the over-255-byte warning
 #   G3  the dump fns it names as reserved are exactly the `fn __cyrius_cov_*` that `_cov_finish`
-#       (src/frontend/parse_cov.cyr) appends
+#       (src/frontend/parse/cov.cyr) appends
 #   G4  its reserved-name claims: a program's own `__cyrius_` fn gets no line, and one that reuses
 #       `__cyrius_cov_dump` is replaced by the compiler's — the `duplicate fn` warning names it, and
 #       the block is still written
@@ -205,7 +205,7 @@
 # NOT MUTATION-PROVABLE, said by name (plan §5; the 6.7.10 review), kept as defensive lines:
 #   - the two `_IR_REC0(S, IR_RAW_EMIT)` marks in `_cov_hit`: P11 measured identical output without them;
 #     the IR=3 rows are pinned by M2.
-#   - `_cfo = 0` in `_cov_hit` and in `_cov_call_dump` (src/frontend/parse_cov.cyr). Every factor that can
+#   - `_cfo = 0` in `_cov_hit` and in `_cov_call_dump` (src/frontend/parse/cov.cyr). Every factor that can
 #     precede a fold clears or re-arms `_cfo` itself (a variable load, a call, a unary operator, the
 #     syscall builtin), so a fold armed before the hit or the dump call is never consulted after it.
 #     Measured, each line removed in its own 2-stage mutant cycc (MY2 the hit's, MY3 the dump call's):
@@ -647,7 +647,7 @@ else bad "L5 cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # GROUP E — EVERY EXIT ROUTE (P5B-3). A program that leaves through an exit syscall never reaches the
 # top level's `_cov_tail`, so the syscall builtin hooks each exit whose NUMBER is a compile-time
-# constant (parse_cov.cyr `_sc_args_done` / `_cov_is_exit`, the 1-for-1 swap for
+# constant (parse/cov.cyr `_sc_args_done` / `_cov_is_exit`, the 1-for-1 swap for
 # `_macho_warn_unrouted` in `_PARSE_FACTOR_IMPL`): after the arguments are evaluated and pushed,
 # before every target lowering. The exit numbers are per target, measured: x86 ELF / x86 Mach-O / cx
 # {60, 231}; aarch64 {60, 93, 94} (raw 231 is munlockall there); PE {60} (raw 231 is -38 and the
@@ -871,7 +871,7 @@ else bad "E cx: src/main_cx.cyr or programs/cxvm.cyr did not build"; fi
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # GROUP F — EVERY FN SHAPE (P5B-4). An `#inline` replay re-parses its callee's body inside the
-# CALLER and bumps the callee's counter (parse_cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
+# CALLER and bumps the callee's counter (parse/cov.cyr `_cov_body` with ti -1, the 1-for-1 swap for
 # `PARSE_FNCALL`'s PARSE_PROG); a closure bumps its own once its frame is open (`_cl_frame_open`,
 # the 1-for-1 swap for `_PARSE_FACTOR_IMPL`'s ESUBRSP), named at its closing bar's line; a `#naked`
 # fn is recorded as not instrumented (`- <file>:<line> <name>`). Each probe falls off the top level,
@@ -913,7 +913,7 @@ EOF
 printf '%s\n1 <source>:3 P_sum\n1 <source>:6 run\n' "$HDR" > "$T/f4.want"
 printf '#naked\nfn nk() { syscall(60, 77); }\nfn f(): i64 { return 1; }\nvar r = f();\n' > "$T/f6.cyr"
 printf '%s\n- <source>:2 nk\n1 <source>:3 f\n' "$HDR" > "$T/f6.want"
-# cx ignores `#naked` (parse_fn.cyr: the attribute is not taken on cx — it has no raw-asm body), so
+# cx ignores `#naked` (parse/fn.cyr: the attribute is not taken on cx — it has no raw-asm body), so
 # there `nk` is an ordinary fn, instrumented and never entered: no record at all
 printf '%s\n1 <source>:3 f\n' "$HDR" > "$T/f6cx.want"
 F6W="$T/f6.want"; F6N=""
@@ -1069,9 +1069,9 @@ cc g2c s.cyr CYRIUS_COVERAGE=1 CYRIUS_COVERAGE_FILE="$L256"
 if [ -n "$GQ3" ] && [ "$RC" = 1 ] && grep '^warning' "$T/g2c.err" | grep -qF -- "$GQ3"; then ok "G2c the guide's '$GQ3' is the compiler's warning"
 else bad "G2c the guide quotes '${GQ3:-(not found in the guide)}'; a ${#L256} B CYRIUS_COVERAGE_FILE gives rc $RC: $(head -1 "$T/g2c.err")"; fi
 # G3 — the reserved dump fns the guide names are exactly the ones the compiler appends
-grep -o 'fn __cyrius_cov_[a-z_]*' src/frontend/parse_cov.cyr | sed 's/^fn //' | LC_ALL=C sort -u > "$T/g3.src"
+grep -o 'fn __cyrius_cov_[a-z_]*' src/frontend/parse/cov.cyr | sed 's/^fn //' | LC_ALL=C sort -u > "$T/g3.src"
 grep -o '`__cyrius_cov_[a-z_]*`' "$T/g.sec" | tr -d '`' | grep -vx '__cyrius_cov_' | LC_ALL=C sort -u > "$T/g3.doc"
-if [ "$(grep -c . "$T/g3.src")" -lt 4 ]; then bad "G3 found $(grep -c . "$T/g3.src") dump fns in parse_cov.cyr (floor 4) — the reader is blind"
+if [ "$(grep -c . "$T/g3.src")" -lt 4 ]; then bad "G3 found $(grep -c . "$T/g3.src") dump fns in parse/cov.cyr (floor 4) — the reader is blind"
 elif cmp -s "$T/g3.src" "$T/g3.doc"; then ok "G3 the guide names exactly the dump's fns: $(tr '\n' ' ' < "$T/g3.src")"
 else bad "G3 the compiler appends: $(tr '\n' ' ' < "$T/g3.src")— the guide names: $(tr '\n' ' ' < "$T/g3.doc")"; fi
 # G4 — the reserved prefix: a program's own `__cyrius_` fn gets no line; its `__cyrius_cov_dump`

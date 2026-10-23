@@ -28,7 +28,7 @@
 #   5. RESERVED NAMES, DERIVED from the compiler (not typed here): every TOKNAME_BUILTIN name,
 #      every IS_KEYWORD_TOK statement keyword via TOKNAME (src/common/util.cyr), and the
 #      identifier-spelled intrinsics PARSE_FACTOR lowers (_is_ident_intrinsic's `_is_X_word`
-#      calls in src/frontend/parse.cyr; fncall0..8 from _IS_FNCALL_NAME) — `sizeof` is in
+#      calls in src/frontend/parse/parse.cyr; fncall0..8 from _IS_FNCALL_NAME) — `sizeof` is in
 #      NEITHER util.cyr table. Each is refused by name; near-misses (`matches`, `sizeofx`,
 #      `fncall9`) are accepted, so the check is not a prefix test.
 #   6. positive: `--print-config` shows `embed = ["PRESET=data/x.json"]  (manifest: [embed])`,
@@ -164,11 +164,11 @@ while read -r t; do
 done < "$W/kwtyp" | sed "s#'/'#\\
 #g" >> "$W/rsv"
 # identifier-spelled intrinsics: the `_is_X_word` calls in _is_ident_intrinsic, and fncall0..8
-awk '/^fn _is_ident_intrinsic\(/,/^}/' src/frontend/parse.cyr | grep -o '_is_[a-z0-9]*_word' | sed 's/^_is_//; s/_word$//' > "$W/ident"
+awk '/^fn _is_ident_intrinsic\(/,/^}/' src/frontend/parse/parse.cyr | grep -o '_is_[a-z0-9]*_word' | sed 's/^_is_//; s/_word$//' > "$W/ident"
 ni=$(wc -l < "$W/ident" | tr -d ' ')
 [ "$ni" -ge 2 ] || fail "axis 5: found $ni identifier intrinsics in _is_ident_intrinsic (floor 2: sizeof, mulh64)"
 cat "$W/ident" >> "$W/rsv"
-grep -q 'if (d > 56) { return 0; }' src/frontend/parse_expr.cyr || fail "axis 5: _IS_FNCALL_NAME no longer reads fncall0..fncall8 — re-derive the fncallN names"
+grep -q 'if (d > 56) { return 0; }' src/frontend/parse/expr.cyr || fail "axis 5: _IS_FNCALL_NAME no longer reads fncall0..fncall8 — re-derive the fncallN names"
 for d in 0 1 2 3 4 5 6 7 8; do echo "fncall$d"; done >> "$W/rsv"
 sort -u "$W/rsv" | grep -v '^$' > "$W/rsv.u"
 nr=$(wc -l < "$W/rsv.u" | tr -d ' ')

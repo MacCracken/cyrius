@@ -1,7 +1,7 @@
 # ptr_param_small_struct.tcyr — 6.6.17 (a2). A `p: *T` PARAMETER is an 8-byte pointer whatever
 # T's size, so `p.v` reads and writes the struct it points at — for an 8 B (or smaller) T too.
 #
-# ⛔ THE DEFECT, every release through 6.6.16. `_param_record` (src/frontend/parse_fn.cyr) ran
+# ⛔ THE DEFECT, every release through 6.6.16. `_param_record` (src/frontend/parse/fn.cyr) ran
 # MARK_SMALL_STRUCT on every struct-typed parameter, and that marks a struct of 8 B or less as
 # held INLINE in its slot. On a `*T` slot that turned the pointer into "the struct": `rd(&b)` read
 # the pointer itself as `p.v` (an address where 5 is right), `wr(&b, 9)` overwrote the pointer and
