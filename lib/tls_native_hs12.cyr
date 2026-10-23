@@ -3831,18 +3831,21 @@ const _TN_CHAIN_PATH_MAX = 18;
 # 1 when the CA `ca`'s nameConstraints (RFC 5280 §4.2.1.10; none = 1) allow every certificate of
 # `path`[0 .. n) — the leaf (`path`[0]) always, an intermediate unless it is self-issued (RFC 5280
 # §6.1.3(b): a self-issued certificate other than the last is not checked) — through sigil's
-# x509_name_constraints_check (dNSName and iPAddress subtrees permitted and excluded, directoryName
-# permitted, the subject CN as a dNSName when the cert has none; any other constrained form
-# refuses a cert carrying it). CYRIUS-2026-0042, CHANGELOG [6.7.18]
+# x509_name_constraints_check for the leaf and x509_name_constraints_check_ca for an intermediate
+# (dNSName and iPAddress subtrees permitted and excluded, directoryName permitted, the LEAF's
+# subject CN as a dNSName when it has none — a CA's CN names the CA, as OpenSSL reads it at depth 0
+# only; any other constrained form refuses a cert carrying it). CYRIUS-2026-0042, CHANGELOG [6.7.18]
 fn _tn_nc_below_ok(ca, path, n): i64 {
     if (x509_cert_has_name_constraints(ca) == 0) { return 1; }
     var k = 0;
     while (k < n) {
         var c = load64(path + k * 8);
-        var exempt = 0;
-        if (k > 0) { exempt = _x509_self_issued(c); }
-        if (exempt == 0) {
+        if (k == 0) {
             if (x509_name_constraints_check(ca, c) == 0) { return 0; }
+        } else {
+            if (_x509_self_issued(c) == 0) {
+                if (x509_name_constraints_check_ca(ca, c) == 0) { return 0; }
+            }
         }
         k = k + 1;
     }

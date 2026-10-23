@@ -28,7 +28,10 @@
 #   the trailing dot: the client dials `victim-bank.test.`, the leaf's SAN is `victim-bank.test.`
 #     (so the literal hostname check passes), under nc-lower <- int_xv (excluded;DNS:victim-bank.test)
 #     REFUSED — OpenSSL 3.6.5 compares literally and lets it out (the named divergence);
-#   control: victim-bank.test <- int_plain <- root connects (the PKI is sound without constraints).
+#   control: victim-bank.test <- int_plain <- root connects (the PKI is sound without constraints);
+#   a CA named like a host (the refold review): www.good.test <- a CA CN=sub.other.test, no SAN <-
+#     int_nc, and the same under int_plain <- root_nc, connect — sigil 3.13.14 read every
+#     certificate's CN as a dNSName and refused both (connect -6); OpenSSL reads it at depth 0 only.
 #   TLS 1.2 (6.7.18, met here — the 1.2 client's Certificate parser kept the leaf only, so it
 #     failed every server that sends an intermediate, the 1.2 control row 6.7.17 failed): the
 #     control and www.good.test <- nc-lower <- int_nc connect; the audit's repro, the upper-CA and
@@ -55,7 +58,7 @@ BGP=""
 trap 'for p in $BGP; do kill "$p" 2>/dev/null || true; done; rm -rf "$T"' EXIT
 FAILS=0
 NROWS=0
-FLOOR=17
+FLOOR=19
 TO=""
 command -v timeout >/dev/null 2>&1 && TO="timeout 30"
 
@@ -111,12 +114,14 @@ sign() {
 }
 for v in int_nc int_ncc int_plain int_ex int_xv; do sign "$v" nc-gate-int root root "$v" int; done
 sign lower nc-gate-lower int_plain int lower low
+sign lower_h sub.other.test int_plain int lower low     # a CA named like a host, no SAN
 sign leaf_victim leaf-victim int_plain int l_victim leaf
 sign leaf_www leaf-www int_plain int l_www leaf
 sign leaf_bad leaf-bad int_plain int l_bad leaf
 sign leaf_l_victim leaf-l-victim lower low l_victim leaf
 sign leaf_l_www leaf-l-www lower low l_www leaf
 sign leaf_l_dot leaf-l-dot lower low l_dot leaf
+sign leaf_h_www leaf-h-www lower_h low l_www leaf
 
 # ── the native client: cli <port> <host> <trust root .pem> <12|13> ──
 # Verification ON (the default), the one root installed with tls_native_set_ca_bundle. Prints
@@ -252,6 +257,8 @@ row 13 root    leaf_l_victim lower,int_nc    victim-bank.test  refused 47 "an UP
 row 13 root    leaf_l_www    lower,int_nc    www.good.test     ok      ok "an UPPER CA: www.good.test <- nc-lower <- int_nc <- root"
 row 13 root    leaf_l_dot    lower,int_xv    victim-bank.test. refused ok-diverges "the trailing dot: victim-bank.test. <- nc-lower <- int_xv (excluded victim-bank.test)"
 row 13 root    leaf_l_victim lower,int_plain victim-bank.test  ok      ok "control: victim-bank.test <- nc-lower <- int_plain <- root connects"
+row 13 root    leaf_h_www    lower_h,int_nc  www.good.test     ok      ok "a CA named like a host: www.good.test <- CN=sub.other.test <- int_nc <- root"
+row 13 root_nc leaf_h_www    lower_h,int_plain www.good.test   ok      ok "a CA named like a host under the ANCHOR: www.good.test <- CN=sub.other.test <- int_plain <- root_nc"
 row 12 root    leaf_victim   int_plain       victim-bank.test  ok      ok "control: victim-bank.test <- int_plain <- root connects"
 row 12 root    leaf_victim   int_nc          victim-bank.test  refused 47 "the audit's repro: victim-bank.test <- int_nc <- root"
 row 12 root    leaf_l_www    lower,int_nc    www.good.test     ok      ok "an UPPER CA: www.good.test <- nc-lower <- int_nc <- root"
