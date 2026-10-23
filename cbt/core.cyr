@@ -1149,7 +1149,7 @@ fn find_tools(): i64 {
     # With neither variable set there is no home to trust: refuse by name. CHANGELOG [6.7.18]
     if (proc_home == 0 && cyrius_home == 0) {
         _err("neither CYRIUS_HOME nor USERPROFILE is set, so there is no toolchain home (the POSIX default /root is drive-relative here) — set CYRIUS_HOME");
-        sys_exit(1);
+        _cbt_exit(1);
     }
     #endif
     #ifndef CYRIUS_TARGET_WIN
