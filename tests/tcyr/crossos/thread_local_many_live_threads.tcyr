@@ -1,0 +1,148 @@
+# thread_local_many_live_threads.tcyr — 6.7.18: every live thread has thread-local slots of its
+# OWN, however many threads are live at once.
+#
+# THE DEFECT. arm64 macOS keeps each thread's slot block in a registry keyed on TPIDRRO_EL0
+# (lib/thread_local.cyr). Through 6.7.17 the registry was a fixed 64 entries that each new thread
+# claimed for itself at entry. A thread past the 64th LIVE one found it full, ran on anyway, and
+# every thread_local_get / _set it made fell through to the MAIN thread's array. Every overflow
+# thread therefore shared every library's per-thread slots with main and with each other. sigil's
+# crypto lane lives in such a slot, so two threads could believe they held one lane (an alias
+# path of CYRIUS-2026-0040). sandhi's pooled server starts 128 workers by default. Since 6.7.18
+# thread_create claims the entry before the thread exists and links another 64-entry chunk when
+# all are held. A thread is refused (thread_create returns 0) only when that chunk cannot be
+# allocated. A slot access from a thread no thread_create started is refused by name.
+#
+# THE ROW. ML_N threads (past the old 64, into a third chunk) are held LIVE together by a barrier,
+# for two rounds (the second reuses the entries the first released). Each worker first reads a
+# library-allocated slot and a frozen-range slot, which must read fresh (0). It then writes its
+# own value into both and waits until every worker has written. Then it reads both back. Main
+# writes its own values before the rounds and checks them after. The contract is asserted, not
+# the mechanism. It holds for clone + CLONE_SETTLS (Linux), for TlsAlloc (Windows), for the gs
+# header (x86 macOS) and for the serial peer (agnos: each body runs inline, so it is not held live,
+# but its slots must still be its own).
+#
+# RED ON THE PARENT (6.7.17's registry, arm64 macOS; reasoned from the code, the release gate runs
+# this row on ecb). The barrier keeps all ML_N = 150 threads live, so exactly 64 bind and 86 find
+# the registry full. Those 86 read main's array. Their fresh reads see main's 0x51 / 0x52 or a
+# sibling's value, and their read-backs see the last overflow writer's value. Main's own two
+# slots come back as an overflow thread's. Every other target passes on the parent: their blocks
+# are per-thread with no table to fill (Linux CLONE_SETTLS, Windows TlsGetValue, x86-macOS gs).
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/atomic.cyr"
+include "lib/chrono.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+
+enum ManyLive {
+    ML_N = 150;            # threads live at once: past 64, into the registry's third chunk
+    ML_REC = 48;           # per-worker record, bytes (see _ml_body)
+    ML_LOW = 7;            # a frozen-range slot (0..15): apps that hard-code a slot use these
+    ML_DEADLINE = 60000;   # ms; a barrier that never opens FAILS, it does not hang the leg
+}
+
+var _ml_hi = 0;            # a library slot, from thread_local_alloc() (16..)
+var _ml_arrived = 0;
+var _ml_go = 0;
+
+# One worker. arg = its record: +0 its index · +8 slot hi read fresh · +16 slot low read fresh ·
+# +24 slot hi read back · +32 slot low read back · +40 1 if the barrier deadline expired.
+fn _ml_body(rec): i64 {
+    var k = load64(rec);
+    store64(rec + 8, thread_local_get(_ml_hi));
+    store64(rec + 16, thread_local_get(ML_LOW));
+    thread_local_set(_ml_hi, 0x10000 + k);
+    thread_local_set(ML_LOW, 0x20000 + k);
+    if (THREADS_CONCURRENT == 1) {
+        atomic_fetch_add(&_ml_arrived, 1);
+        var t0 = clock_now_ms();
+        while (atomic_load(&_ml_go) == 0) {
+            if (clock_now_ms() - t0 > ML_DEADLINE) { store64(rec + 40, 1); break; }
+            sleep_ms(1);
+        }
+    }
+    store64(rec + 24, thread_local_get(_ml_hi));
+    store64(rec + 32, thread_local_get(ML_LOW));
+    return 0;
+}
+
+fn _ml_say(s): i64 { sys_write(1, s, strlen(s)); return 0; }
+
+# One round of ML_N workers, all live together where threads are real.
+fn _ml_round(round, recs, hs): i64 {
+    atomic_store(&_ml_arrived, 0);
+    atomic_store(&_ml_go, 0);
+    var made = 0;
+    var k = 0;
+    while (k < ML_N) {
+        memset(recs + k * ML_REC, 0, ML_REC);
+        store64(recs + k * ML_REC, k);
+        var h = thread_create(&_ml_body, recs + k * ML_REC);
+        store64(hs + k * 8, h);
+        if (h != 0) { made = made + 1; }
+        k = k + 1;
+    }
+    assert_eq(made, ML_N, "every thread_create of the round returned a handle (no thread refused)");
+    if (THREADS_CONCURRENT == 1) {
+        var t0 = clock_now_ms();
+        while (atomic_load(&_ml_arrived) < made) {
+            if (clock_now_ms() - t0 > ML_DEADLINE) { break; }
+            sleep_ms(1);
+        }
+        assert_eq(atomic_load(&_ml_arrived), made, "every worker wrote its slots while all of them were live");
+        atomic_store(&_ml_go, 1);
+    }
+    k = 0;
+    while (k < ML_N) {
+        var h = load64(hs + k * 8);
+        if (h != 0) { thread_join(h); }
+        k = k + 1;
+    }
+    var fresh_bad = 0;
+    var back_bad = 0;
+    var late = 0;
+    k = 0;
+    while (k < ML_N) {
+        var r = recs + k * ML_REC;
+        if (load64(r + 8) != 0 || load64(r + 16) != 0) { fresh_bad = fresh_bad + 1; }
+        if (load64(r + 24) != 0x10000 + k || load64(r + 32) != 0x20000 + k) { back_bad = back_bad + 1; }
+        if (load64(r + 40) != 0) { late = late + 1; }
+        k = k + 1;
+    }
+    if (fresh_bad != 0 || back_bad != 0) {
+        _ml_say("  round "); print_num(round);
+        _ml_say(": "); print_num(fresh_bad); _ml_say(" threads saw another thread's slots at start, ");
+        print_num(back_bad); _ml_say(" read back another thread's value\n");
+    }
+    assert_eq(fresh_bad, 0, "every thread's slots read fresh (0) at start, not another thread's values");
+    assert_eq(back_bad, 0, "every thread reads back exactly the values it wrote, with all of them live");
+    assert_eq(late, 0, "no worker's barrier wait hit the deadline");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    thread_local_init();
+    test_group("thread-local slots stay per-thread with more threads live than the old 64-entry registry");
+
+    _ml_hi = thread_local_alloc();
+    assert_eq(_ml_hi >= 16, 1, "thread_local_alloc handed out a library slot (>= 16)");
+    thread_local_set(_ml_hi, 0x51);
+    thread_local_set(ML_LOW, 0x52);
+
+    var recs = alloc(ML_N * ML_REC);
+    var hs = alloc(ML_N * 8);
+    _ml_round(1, recs, hs);
+    _ml_round(2, recs, hs);
+
+    assert_eq(thread_local_get(_ml_hi), 0x51, "main's library slot is still main's after two rounds");
+    assert_eq(thread_local_get(ML_LOW), 0x52, "main's frozen-range slot is still main's after two rounds");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

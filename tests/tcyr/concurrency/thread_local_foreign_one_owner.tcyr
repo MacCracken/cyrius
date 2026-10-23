@@ -1,0 +1,140 @@
+# thread_local_foreign_one_owner.tcyr — 6.7.18: in foreign-TLS mode the slots belong to the thread
+# that declared the mode, and no other thread is handed them.
+#
+# THE DEFECT. `thread_local_use_foreign_tls()` is for cyrius code inside a glibc-hosted process,
+# where %fs / TPIDR_EL0 are the host's. cyrius then keeps the slots in one process-global array.
+# Through 6.7.17 it handed that array to EVERY thread: a host pthread or a cyrius thread_create
+# worker read and wrote the declaring thread's slots. Every library's per-thread state (sigil's
+# crypto lane among them) was shared, the same fallback arm64 macOS had past its 64th live thread
+# (crossos/thread_local_many_live_threads.tcyr). Since 6.7.18 the declaring thread owns the array.
+# Any other thread's first slot access is refused by name (exit 70).
+#
+# THE ROWS. Each scenario runs in a forked child, because foreign mode is process-wide and a
+# refusal ends the process. The child's stderr goes to a pipe the test reads back.
+#   F1  a worker started by the declaring thread touches a slot: refused, exit 70, the named
+#       line. On 6.7.17 the worker read the owner's 0x51 and overwrote it: exit 3.
+#   F2  the owner keeps its slots, and a second declaration changes nothing: exit 0.
+#   F3  the owner forks, and the child's first thread (the child's only thread at the fork)
+#       takes the array over with the owner's values. The owner's own slots are untouched:
+#       exit 0.
+# Linux only: foreign mode is the Linux %fs / TPIDR_EL0 path. Elsewhere the file runs no rows.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+
+#ifdef CYRIUS_TARGET_LINUX
+var _fo_seen = 0;
+
+fn _fo_worker(arg): i64 {
+    _fo_seen = thread_local_get(16);
+    thread_local_set(16, 0x99);
+    return 0;
+}
+
+# F1: 70 = the worker was refused; 3 = it read the owner's value; 4 = it overwrote the owner's;
+# 5 = neither (it saw its own fresh slot); 9 = no thread.
+fn _fo_f1(): i64 {
+    thread_local_use_foreign_tls();
+    thread_local_set(16, 0x51);
+    var h = thread_create(&_fo_worker, 0);
+    if (h == 0) { return 9; }
+    thread_join(h);
+    if (_fo_seen == 0x51) { return 3; }
+    if (thread_local_get(16) != 0x51) { return 4; }
+    return 5;
+}
+
+# F2: 0, or the first mismatch's row number.
+fn _fo_f2(): i64 {
+    thread_local_use_foreign_tls();
+    thread_local_set(16, 0x51);
+    thread_local_set(7, 0x52);
+    if (thread_local_get(16) != 0x51) { return 21; }
+    thread_local_use_foreign_tls();
+    if (thread_local_get(7) != 0x52) { return 22; }
+    thread_local_set(16, 0x53);
+    if (thread_local_get(16) != 0x53) { return 23; }
+    return 0;
+}
+
+# F3: 0, or the first mismatch's row number.
+fn _fo_f3(): i64 {
+    thread_local_use_foreign_tls();
+    thread_local_set(16, 0x51);
+    var pid = sys_fork();
+    if (pid == 0) {
+        if (thread_local_get(16) != 0x51) { sys_exit_group(31); }
+        thread_local_set(16, 0x61);
+        if (thread_local_get(16) != 0x61) { sys_exit_group(32); }
+        sys_exit_group(0);
+    }
+    if (pid < 0) { return 33; }
+    var st: i64[1];
+    st[0] = 0;
+    sys_waitpid(pid, &st, 0);
+    if (WIFEXITED(st[0]) != 1) { return 34; }
+    if (WEXITSTATUS(st[0]) != 0) { return WEXITSTATUS(st[0]); }
+    if (thread_local_get(16) != 0x51) { return 35; }
+    return 0;
+}
+
+var _fo_err[512];
+
+# Run scenario `which` in a child with stderr on a pipe. Returns its exit status (-1 if it did not
+# exit normally); its stderr lands in _fo_err, NUL-terminated.
+fn _fo_run(which): i64 {
+    var fds[16];
+    if (sys_pipe(&fds) != 0) { return 0 - 2; }
+    var rd = load32(&fds);
+    var wr = load32(&fds + 4);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(rd);
+        sys_dup2(wr, 2);
+        var rc = 0;
+        if (which == 1) { rc = _fo_f1(); }
+        if (which == 2) { rc = _fo_f2(); }
+        if (which == 3) { rc = _fo_f3(); }
+        sys_exit_group(rc);
+    }
+    sys_close(wr);
+    var got = 0;
+    var k = sys_read(rd, &_fo_err, 511);
+    while (k > 0) {
+        got = got + k;
+        if (got >= 511) { break; }
+        k = sys_read(rd, &_fo_err + got, 511 - got);
+    }
+    store8(&_fo_err + got, 0);
+    sys_close(rd);
+    var st: i64[1];
+    st[0] = 0;
+    sys_waitpid(pid, &st, 0);
+    if (WIFEXITED(st[0]) != 1) { return 0 - 1; }
+    return WEXITSTATUS(st[0]);
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    test_group("foreign-TLS mode: the slots are the declaring thread's alone");
+    #ifdef CYRIUS_TARGET_LINUX
+    var f1 = _fo_run(1);
+    assert_eq(f1, 70, "F1: a worker's slot access is refused (70; 3 = it read the owner's slot)");
+    var named = 0;
+    if (strstr(&_fo_err, "thread_local: refused: in foreign-TLS mode") >= 0) { named = 1; }
+    assert_eq(named, 1, "F1: the refusal names itself on stderr");
+    assert_eq(_fo_run(2), 0, "F2: the declaring thread keeps its slots; a second declaration changes nothing");
+    assert_eq(_fo_run(3), 0, "F3: a fork child's first thread takes the array over; the owner's slots are untouched");
+    #endif
+    #ifndef CYRIUS_TARGET_LINUX
+    println("  not run: foreign-TLS mode is the Linux thread-pointer path");
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
