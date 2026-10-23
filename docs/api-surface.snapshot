@@ -904,6 +904,7 @@ fdlopen::fdlopen_slot/2
 fdlopen::fdlopen_state_size/0
 fdlopen::fdlopen_status/1
 fdlopen::fdlopen_strerror/1
+fdlopen::fdlopen_trusted_only/1
 fdlopen::fdlopen_unsetenv/1
 flags::flags_add_bool/5
 flags::flags_add_int/5
