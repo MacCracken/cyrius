@@ -117,7 +117,9 @@ fn test_file_relay(): i64 {
     var c = _ar_pair();
     var s = _ar_afd;
     assert_eq(c >= 0, 1, "a loopback pair");
-    if (c < 0) { return 0; }
+    # No pair (cx has no sockets): the fixture is removed on this exit too. It was left in the cwd
+    # as cyrius_ar_relay.<pid>, once per run. CHANGELOG [6.7.18]
+    if (c < 0) { xunlink(path); return 0; }
     var fd = file_open(path, 0, 0);
     assert_eq(fd >= 0, 1, "the file opens");
     var buf = alloc(64);

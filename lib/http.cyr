@@ -6,7 +6,9 @@
 # /etc/hosts, then DNS; the system resolver on Windows (v6.6.9; before it no http_* call could
 # reach any host). The request is at most _HTTP_REQ_CAP (2048) bytes; a longer one is refused as
 # a bad URL (CYRIUS-2026-0010). Every socket is closed with net.cyr's sock_close: on Windows it is a
-# Winsock SOCKET, which sys_close (CloseHandle there) does not close (6.6.11).
+# Winsock SOCKET, which sys_close (CloseHandle there) does not close (6.6.11). Every call is bounded
+# by HTTP_IDLE_TIMEOUT_MS (5 s per wait) and HTTP_TIMEOUT_MS (30 s for the whole exchange) — 6.7.18,
+# CYRIUS-2026-0049; see their definitions.
 
 # v5.8.31: Result-returning *_r variant (`http_get_r`) for typed
 # error returns. Also v5.8.31 fixes a long-standing bug in the
@@ -25,6 +27,10 @@ include "lib/result.cyr"
 # warnings and a trapping http_get. Include-once, so an existing caller pays nothing.
 # CHANGELOG [6.6.9]
 include "lib/net.cyr"
+# 6.7.18 (CYRIUS-2026-0049): the exchange's deadlines read lib/chrono.cyr's monotonic clock_now_ns.
+include "lib/chrono.cyr"
+# 6.7.18 (D1): the response parser reads through a fn-local [u8] slice. CHANGELOG [6.7.18]
+include "lib/slice.cyr"
 
 # v5.8.31 — HttpError variants. `HttpBadUrl` covers _http_parse_url
 # rejection (CRLF/whitespace/empty host/bad port); `HttpNetErr`
@@ -178,75 +184,171 @@ fn _http_prepare(host, port, path, slot): i64 {
     return 0;
 }
 
-# v5.8.36 — Allocator-as-first-arg variant of _http_parse_response.
-# Allocates the 32-byte response struct via `a`. Returns 0 on OOM.
-fn _http_parse_response_a(a, buf, len): i64 {
-    var result = alloc_via(a, 32);
-    if (result == 0) { return 0; }
+# The http_get family's deadlines, in milliseconds (CYRIUS-2026-0049, 6.7.18). HTTP_IDLE_TIMEOUT_MS
+# bounds every wait — the connect, the request's send, and each read for the next bytes of the
+# response — and HTTP_TIMEOUT_MS the whole exchange, so a server that never answers ends the call
+# after 5 s and one that dribbles a byte at a time after 30 s. A call that runs out of either is a
+# failure (HTTP_ERROR, Err(HttpNetErr)), never a truncated response returned as complete. 0
+# disables that bound (both 0: the pre-6.7.18 behaviour, where a peer could hold the call for
+# ever). Read once per call: set them before calling, e.g. lower both when fetching untrusted URLs.
+# ⛔ WHY. The three calls connected and read with no deadline and kept the socket private, so a
+# server that accepted and stayed silent pinned the fetching thread for ever, with no way for the
+# caller to bound it — the client-side slowloris (the TLS stack's CYRIUS-2026-0017). CHANGELOG [6.7.18]
+var HTTP_IDLE_TIMEOUT_MS = 5000;
+var HTTP_TIMEOUT_MS = 30000;
+
+# Milliseconds the next wait may take: the idle bound, cut to what is left of the whole-exchange
+# deadline `dl` (0 = none). 0 when the deadline has passed; -1 when neither bound is set.
+fn _http_wait_ms(dl): i64 {
+    var ms = HTTP_IDLE_TIMEOUT_MS;
+    if (ms <= 0) { ms = 0 - 1; }
+    if (dl != 0) {
+        var left = dl - clock_now_ns();
+        if (left <= 0) { return 0; }
+        var lm = (left + 999999) / 1000000;
+        if (ms < 0 || lm < ms) { ms = lm; }
+    }
+    return ms;
+}
+
+# Wait up to `ms` (> 0) for socket `fd` to be readable (`want_write` == 0) or writable. 1 ready
+# (an error or hang-up included: the next call reports it), 0 the time ran out. Where there is no
+# poll (agnos, cx) the socket's own timeout bounds the next call instead, and this answers 1.
+fn _http_wait(fd, want_write, ms): i64 {
+    var r = fd_wait_ready(fd, want_write, ms);
+    while (r == 0 - 4) { r = fd_wait_ready(fd, want_write, ms); }   # EINTR: wait again
+    if (r == 0) { return 0; }
+    if (r == 0 - 38) {
+        if (want_write == 0) { sock_set_recv_timeout(fd, ms / 1000, (ms % 1000) * 1000); }
+        else { sock_set_send_timeout(fd, ms / 1000, (ms % 1000) * 1000); }
+    }
+    return 1;
+}
+
+# Connect to addr:port, send the NUL-terminated request `req`, and read the response into a 64 KiB
+# buffer from allocator `a` (0: alloc), under the deadlines above. Stores the buffer at rslot[0]
+# and returns the bytes read (the read ends at EOF, at 64 KiB, or at a read error after the
+# connect); -1 when there is no socket, the connect or the send failed, or a deadline passed; -2
+# when the buffer was refused. One body for http_get / http_get_r / http_get_a, which open-coded
+# it three times.
+fn _http_exchange(a, addr, port, req, rslot): i64 {
+    var dl = 0;
+    if (HTTP_TIMEOUT_MS > 0) { dl = clock_now_ns() + HTTP_TIMEOUT_MS * 1000000; }
+    var fd_r_tag, fd_r = tcp_socket();
+    if (is_err_result(fd_r_tag) == 1) { return 0 - 1; }
+    var fd = fd_r;
+    var ms = _http_wait_ms(dl);
+    if (ms == 0) { sock_close(fd); return 0 - 1; }
+    if (ms < 0) {
+        var c_r_tag, c_r = sock_connect(fd, addr, port);
+        if (is_err_result(c_r_tag) == 1) { sock_close(fd); return 0 - 1; }
+    } else {
+        if (net_connect_nb(fd, addr, port, ms) != 0) { sock_close(fd); return 0 - 1; }
+    }
+    # Send the WHOLE request. v6.6.8: this used to call sock_send and drop its count, so a
+    # short write (SO_SNDTIMEO, a signal) sent half a request and then waited for a response to
+    # it. A failed or short send is now an error. CHANGELOG [6.6.8]
+    var qlen = strlen(req);
+    ms = _http_wait_ms(dl);
+    if (ms == 0) { sock_close(fd); return 0 - 1; }
+    if (ms > 0) { sock_set_send_timeout(fd, ms / 1000, (ms % 1000) * 1000); }
+    if (sock_send_all(fd, req, qlen) != qlen) { sock_close(fd); return 0 - 1; }
+    var rbuf = 0;
+    if (a == 0) { rbuf = alloc(65536); }
+    else { rbuf = alloc_via(a, 65536); }
+    if (rbuf == 0) { sock_close(fd); return 0 - 2; }
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        ms = _http_wait_ms(dl);
+        if (ms == 0) { sock_close(fd); return 0 - 1; }
+        if (ms > 0) {
+            if (_http_wait(fd, 0, ms) == 0) { sock_close(fd); return 0 - 1; }
+        }
+        var rd_r_tag, rd_r = sock_recv(fd, rbuf + total, 65536 - total);
+        if (is_err_result(rd_r_tag) == 1) {
+            # Where the socket's own timeout bounded the read (no poll), its expiry (EAGAIN) is a
+            # deadline that passed, not the end of the response.
+            if (ms > 0 && (rd_r == _NET_EAGAIN || _http_wait_ms(dl) == 0)) { sock_close(fd); return 0 - 1; }
+            rgo = 0;
+        }
+        else {
+            var n = rd_r;
+            if (n <= 0) { rgo = 0; }
+            else { total = total + n; if (total >= 65536) { rgo = 0; } }
+        }
+    }
+    sock_close(fd);
+    store64(rslot, rbuf);
+    return total;
+}
+
+# Fill the response struct `result` (status, body pointer, body length — 0, 0, 0 for a response
+# too short to carry a status line, no status when it is not HTTP/1.x, no body without a blank
+# line) from the `len`-byte response at buf. Returns result. One body for both parse fns below.
+# 6.7.18 (D1): every byte is read through a slice of buf[0, len), checked in every build, so a
+# bound this fn gets wrong is `slice bounds violation`, never a read past the response.
+# CHANGELOG [6.7.18]
+fn _http_parse_into(result, buf, len): i64 {
     store64(result, 0);
     store64(result + 8, 0);
     store64(result + 16, 0);
     if (len < 12) { return result; }
+    var r: [u8] = 0;
+    slice_set(&r, buf, len);
+    # Status line: "HTTP/1.x NNN ..."
+    var pre: [u8] = 0;
+    slice_set(&pre, "HTTP/1.", 7);
+    var same = 1;
+    var i = 0;
+    while (i < 7) {
+        if (r[i] != pre[i]) { same = 0; }
+        i = i + 1;
+    }
+    # The status is three DIGITS: anything else is no status (0), as a response that is not
+    # HTTP/1.x is. 6.7.18: the three bytes were taken as digits unchecked, so "HTTP/1.1 2x0"
+    # reported 920 and "HTTP/1.1 !!!" -1665 — a negative status no caller tests for. CHANGELOG [6.7.18]
     var code = 0;
-    if (memeq(buf, "HTTP/1.", 7) == 1) {
-        code = (load8(buf + 9) - 48) * 100 + (load8(buf + 10) - 48) * 10 + (load8(buf + 11) - 48);
+    if (same == 1) {
+        var d0 = r[9] - 48;
+        var d1 = r[10] - 48;
+        var d2 = r[11] - 48;
+        if (d0 >= 0 && d0 <= 9 && d1 >= 0 && d1 <= 9 && d2 >= 0 && d2 <= 9) { code = d0 * 100 + d1 * 10 + d2; }
     }
     store64(result, code);
+    # Find body (after \r\n\r\n)
     var pi = 0;
     while (pi < len - 3) {
-        if (load8(buf + pi) == 13) {
-            if (load8(buf + pi + 1) == 10) {
-                if (load8(buf + pi + 2) == 13) {
-                    if (load8(buf + pi + 3) == 10) {
-                        store64(result + 8, buf + pi + 4);
-                        store64(result + 16, len - pi - 4);
-                        return result;
-                    }
-                }
-            }
+        if (r[pi] == 13 && r[pi + 1] == 10 && r[pi + 2] == 13 && r[pi + 3] == 10) {
+            store64(result + 8, buf + pi + 4);
+            store64(result + 16, len - pi - 4);
+            return result;
         }
         pi = pi + 1;
     }
     return result;
 }
 
-# Parse HTTP response: extract status code and body
+# v5.8.36 — Allocator-as-first-arg variant of _http_parse_response.
+# Allocates the 32-byte response struct via `a`. Returns 0 on OOM.
+fn _http_parse_response_a(a, buf, len): i64 {
+    var result = alloc_via(a, 32);
+    if (result == 0) { return 0; }
+    return _http_parse_into(result, buf, len);
+}
+
+# Parse HTTP response: extract status code and body. Returns 0 on OOM.
 fn _http_parse_response(buf, len): i64 {
     var result = alloc(32);
     if (result == 0) { return 0; }
-    store64(result, 0);
-    store64(result + 8, 0);
-    store64(result + 16, 0);
-    if (len < 12) { return result; }
-    # Status line: "HTTP/1.x NNN ..."
-    var code = 0;
-    if (memeq(buf, "HTTP/1.", 7) == 1) {
-        code = (load8(buf + 9) - 48) * 100 + (load8(buf + 10) - 48) * 10 + (load8(buf + 11) - 48);
-    }
-    store64(result, code);
-    # Find body (after \r\n\r\n)
-    var i = 0;
-    while (i < len - 3) {
-        if (load8(buf + i) == 13) {
-            if (load8(buf + i + 1) == 10) {
-                if (load8(buf + i + 2) == 13) {
-                    if (load8(buf + i + 3) == 10) {
-                        store64(result + 8, buf + i + 4);
-                        store64(result + 16, len - i - 4);
-                        return result;
-                    }
-                }
-            }
-        }
-        i = i + 1;
-    }
-    return result;
+    return _http_parse_into(result, buf, len);
 }
 
 # HTTP GET request. Returns response struct {status, body_ptr, body_len}.
 # On malformed or unsafe URL (CRLF injection, empty host, out-of-range
 # port, embedded whitespace, a request over _HTTP_REQ_CAP bytes), a host
-# that does not resolve, or a network failure, returns a response with
+# that does not resolve, a network failure, or a deadline that passed
+# (HTTP_IDLE_TIMEOUT_MS / HTTP_TIMEOUT_MS, 6.7.18), returns a response with
 # status == HTTP_ERROR so callers can fail fast without a separate validator.
 fn http_get(url): i64 {
     var parsed = _http_parse_url(url);
@@ -276,65 +378,28 @@ fn http_get(url): i64 {
     }
     var req = load64(slot);
     var addr = load64(slot + 8);
-    # v5.8.31 bug fix — net.cyr fns return Result (heap ptr), not raw
-    # int. Pre-fix: `var fd = tcp_socket(); if (fd < 0)` never fired
-    # (fd is a positive heap ptr) and subsequent syscalls received
-    # the Result ptr as a fd. Now: explicit is_err_result + payload
-    # unwrap, mirroring the lib/sandhi.cyr / TLS live-gate call shape
-    # (then regression-tls-live.sh; now the check driver's
-    # `_tls_live_gate`, programs/checks/services.cyr).
-    var fd_r_tag, fd_r = tcp_socket();
-    if (is_err_result(fd_r_tag) == 1) {
+    # v6.7.18: the connect, send and read are _http_exchange's, under HTTP_IDLE_TIMEOUT_MS /
+    # HTTP_TIMEOUT_MS (CYRIUS-2026-0049); a deadline that passes is HTTP_ERROR. CHANGELOG [6.7.18]
+    var rb[8];
+    var total = _http_exchange(0, addr, port, req, &rb);
+    if (total == 0 - 2) { return 0; }
+    if (total < 0) {
         var err = alloc(24);
         if (err == 0) { return 0; }
         store64(err, HTTP_ERROR);
+        store64(err + 8, 0);
+        store64(err + 16, 0);
         return err;
     }
-    var fd = fd_r;
-    var c_r_tag, c_r = sock_connect(fd, addr, port);
-    if (is_err_result(c_r_tag) == 1) {
-        sock_close(fd);
-        var cerr = alloc(24);
-        if (cerr == 0) { return 0; }
-        store64(cerr, HTTP_ERROR);
-        return cerr;
-    }
-    # Send the WHOLE request. v6.6.8: this used to call sock_send and drop its count, so a
-    # short write (SO_SNDTIMEO, a signal) sent half a request and then waited for a response to
-    # it. A failed or short send is now HTTP_ERROR. CHANGELOG [6.6.8]
-    var qlen = strlen(req);
-    if (sock_send_all(fd, req, qlen) != qlen) {
-        sock_close(fd);
-        var serr = alloc(24);
-        if (serr == 0) { return 0; }
-        store64(serr, HTTP_ERROR);
-        return serr;
-    }
-    # Read response — sock_recv returns Result; payload(Ok) is bytes
-    # read, Err short-circuits the loop.
-    var rbuf = alloc(65536);
-    if (rbuf == 0) { sock_close(fd); return 0; }
-    var total = 0;
-    var rgo = 1;
-    while (rgo == 1) {
-        var rd_r_tag, rd_r = sock_recv(fd, rbuf + total, 65536 - total);
-        if (is_err_result(rd_r_tag) == 1) { rgo = 0; }
-        else {
-            var n = rd_r;
-            if (n <= 0) { rgo = 0; }
-            else { total = total + n; if (total >= 65536) { rgo = 0; } }
-        }
-    }
-    sock_close(fd);
-    return _http_parse_response(rbuf, total);
+    return _http_parse_response(load64(&rb), total);
 }
 
 # v5.8.31 — Result variant of http_get. Failures land as typed
 # HttpError variants instead of the back-compat HTTP_ERROR sentinel
 # in resp.status. Bad URL (or a request over _HTTP_REQ_CAP bytes) →
-# Err(HttpBadUrl); a host that does not resolve, or a net.cyr Err in
-# tcp_socket / sock_connect / the send → Err(HttpNetErr); 2xx response →
-# Ok(resp); non-2xx → Err(HttpNon2xx).
+# Err(HttpBadUrl); a host that does not resolve, a net.cyr Err in
+# tcp_socket / the connect / the send, or a deadline that passed (6.7.18) →
+# Err(HttpNetErr); 2xx response → Ok(resp); non-2xx → Err(HttpNon2xx).
 fn http_get_r(url) : Result {
     var parsed = _http_parse_url(url);
     if (parsed == 0) { return Err(HttpBadUrl); }
@@ -348,28 +413,14 @@ fn http_get_r(url) : Result {
     if (prep != 0) { return Err(HttpNetErr); }                # v6.6.9: does not resolve
     var req = load64(slot);
     var addr = load64(slot + 8);
-    var fd_r_tag, fd_r = tcp_socket();
-    if (is_err_result(fd_r_tag) == 1) { return Err(HttpNetErr); }
-    var fd = fd_r;
-    var c_r_tag, c_r = sock_connect(fd, addr, port);
-    if (is_err_result(c_r_tag) == 1) { sock_close(fd); return Err(HttpNetErr); }
-    var qlen = strlen(req);
-    if (sock_send_all(fd, req, qlen) != qlen) { sock_close(fd); return Err(HttpNetErr); }   # v6.6.8
-    var rbuf = alloc(65536);
-    if (rbuf == 0) { sock_close(fd); return Err(HttpOther); }
-    var total = 0;
-    var rgo = 1;
-    while (rgo == 1) {
-        var rd_r_tag, rd_r = sock_recv(fd, rbuf + total, 65536 - total);
-        if (is_err_result(rd_r_tag) == 1) { rgo = 0; }
-        else {
-            var n = rd_r;
-            if (n <= 0) { rgo = 0; }
-            else { total = total + n; if (total >= 65536) { rgo = 0; } }
-        }
-    }
-    sock_close(fd);
-    var resp = _http_parse_response(rbuf, total);
+    var rb[8];
+    var total = _http_exchange(0, addr, port, req, &rb);           # 6.7.18: CYRIUS-2026-0049
+    if (total == 0 - 2) { return Err(HttpOther); }
+    if (total < 0) { return Err(HttpNetErr); }
+    var resp = _http_parse_response(load64(&rb), total);
+    # 6.7.18: a refused response struct is Err(HttpOther) — it was read through (load64(0)).
+    # CHANGELOG [6.7.18]
+    if (resp == 0) { return Err(HttpOther); }
     var st = load64(resp);
     if (st < 200) { return Err(HttpNon2xx); }
     if (st >= 300) { return Err(HttpNon2xx); }
@@ -414,45 +465,18 @@ fn http_get_a(a, url): i64 {
     }
     var req = load64(slot);
     var addr = load64(slot + 8);
-    var fd_r_tag, fd_r = tcp_socket();
-    if (is_err_result(fd_r_tag) == 1) {
+    var rb[8];
+    var total = _http_exchange(a, addr, port, req, &rb);           # 6.7.18: CYRIUS-2026-0049
+    if (total == 0 - 2) { return 0; }
+    if (total < 0) {
         var err = alloc_via(a, 24);
         if (err == 0) { return 0; }
         store64(err, HTTP_ERROR);
+        store64(err + 8, 0);
+        store64(err + 16, 0);
         return err;
     }
-    var fd = fd_r;
-    var c_r_tag, c_r = sock_connect(fd, addr, port);
-    if (is_err_result(c_r_tag) == 1) {
-        sock_close(fd);
-        var err = alloc_via(a, 24);
-        if (err == 0) { return 0; }
-        store64(err, HTTP_ERROR);
-        return err;
-    }
-    var qlen = strlen(req);
-    if (sock_send_all(fd, req, qlen) != qlen) {                 # v6.6.8: a short send is an error
-        sock_close(fd);
-        var serr = alloc_via(a, 24);
-        if (serr == 0) { return 0; }
-        store64(serr, HTTP_ERROR);
-        return serr;
-    }
-    var rbuf = alloc_via(a, 65536);
-    if (rbuf == 0) { sock_close(fd); return 0; }
-    var total = 0;
-    var rgo = 1;
-    while (rgo == 1) {
-        var rd_r_tag, rd_r = sock_recv(fd, rbuf + total, 65536 - total);
-        if (is_err_result(rd_r_tag) == 1) { rgo = 0; }
-        else {
-            var n = rd_r;
-            if (n <= 0) { rgo = 0; }
-            else { total = total + n; if (total >= 65536) { rgo = 0; } }
-        }
-    }
-    sock_close(fd);
-    return _http_parse_response_a(a, rbuf, total);
+    return _http_parse_response_a(a, load64(&rb), total);
 }
 
 # Get status code from response

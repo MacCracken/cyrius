@@ -25,8 +25,8 @@
 #   * normalize: the 6.6.9 step-buffer `return off` -> rc 1 (a SHORTER string, returned as success);
 #     dropping the -1 propagation in the walk    -> rc 1 at the nested row (k=4)
 #   * each of lib/ws.cyr's three checks (ws_new, the handshake buffer, CYRIUS-2026-0011's ws_recv_frame
-#     payload) and lib/ws_server.cyr's six (ws_server_new, concat, digest, ws_server_send_close,
-#     the recv buffer, the recv copy) -> rc 139 in its probe. (lib/ws.cyr's sender had a fourth,
+#     payload) and lib/ws_server.cyr's five (ws_server_new, concat, digest, ws_server_send_close,
+#     the recv message — 6.7.18 folded the recv buffer and its copy into it) -> rc 139 in its probe. (lib/ws.cyr's sender had a fourth,
 #     its masked copy; 6.6.20 removed that allocation, and its two rows now pin that the sender
 #     allocates nothing — restoring an alloc there fails them "allocated MORE".)
 #   * every lib/ file at its pre-6.6.10 state   -> rc 139 at the first row
@@ -295,6 +295,15 @@ fn _recv_served(ws, n): i64 {
     return 1;
 }
 
+# A socketpair with a 101 and the frame FIN|TEXT "hi" queued on its server end. Returns the
+# client end (sv[0]); the server end is sv[4]. Allocates nothing.
+fn _hs_pair(sv): i64 {
+    syscall(53, 1, 1, 0, sv);                    # socketpair(AF_UNIX, SOCK_STREAM)
+    var r = "HTTP/1.1 101 Switching Protocols\r\n\r\n\x81\x02hi";
+    syscall(1, load32(sv + 4), r, 40);
+    return load32(sv);
+}
+
 # ws_connect's state, or -1 when it returned no handle.
 fn _connect_state(r): i64 {
     if (r == 0) { return 0 - 1; }
@@ -317,6 +326,18 @@ fn main(): i64 {
     # the refusal must come before any I/O)
     _fi_arm(1); _refused("ws_connect ws_new", 1, ws_connect(0 - 1, "/p", "h"), 0);
     _fi_arm(3); _refused("ws_connect request buf", 3, _connect_state(ws_connect(0 - 1, "/p", "h")), WS_CLOSED);
+
+    # 6.7.18 (audit finding 19): bytes the server sent past the 101's header block are kept in a
+    # buffer of their own (k=4, after ws_new, the key and the request) — a refused one is a CLOSED
+    # handle, never a copy into address 0. A socketpair: the 101 and a frame are queued first.
+    var sp[8];
+    _fi_arm(4); _refused("ws_connect pending bytes", 4, _connect_state(ws_connect(_hs_pair(&sp), "/p", "h")), WS_CLOSED);
+    var wc = 0;
+    _fi_arm(5); wc = ws_connect(_hs_pair(&sp), "/p", "h");
+    _served("ws_connect pending bytes", 5, _connect_state(wc) == WS_OPEN);
+    _fi_arm(2);
+    var hi = ws_recv(wc);
+    _served("ws_recv of the kept frame", 2, hi != 0 && streq(hi, "hi") == 1);
 
     # the sender allocates NOTHING (6.6.20): its masked copy was an alloc(len) taken after the
     # header was sent — refused for len > 0 it left a header with no payload, and alloc(0) made
@@ -350,9 +371,8 @@ CYR
 # found, so the handshake's first four allocations are the four lookups (k=1..4, each refused ->
 # that header reads absent -> 0) and its own follow: concat (k=5), digest (k=6), then sha1's two
 # (k=7, 8).
-# ⚠ ws_server_recv's two rows follow the same zero-length reasoning as ws_recv_frame's: an
-# unchecked recv BUFFER only writes through (store8 at 0 + 0) for an empty frame, and an
-# unchecked OUT copy only does (memcpy to 0) for a non-empty one.
+# ⚠ ws_server_recv's two rows cover both payload shapes: an unchecked message allocation is
+# written through by the payload read for a non-empty frame and by the NUL store for an empty one.
 cat > "$W/fi/wss_probe.cyr" <<'CYR'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -400,13 +420,110 @@ fn main(): i64 {
     _fi_arm(1); _refused("ws_server_send_close payload", 1, ws_server_send_close(ws, 1000, "bye"), 0 - 1);
     _fi_arm(2); _served("ws_server_send_close", 2, ws_server_send_close(ws, 1000, "bye") == 0);
 
-    # the recv buffer is lazy (first use), then one copy per data frame
+    # one allocation per data frame: the message it returns, read straight into (6.7.18,
+    # CYRIUS-2026-0043 — the lazy process-global 1 MiB buffer and the copy out of it are gone)
     var r0 = _frame_wss(0);
-    _fi_arm(1); _refused("ws_server_recv buffer (empty frame)", 1, ws_server_recv(r0), 0);
+    _fi_arm(1); _refused("ws_server_recv message (empty frame)", 1, ws_server_recv(r0), 0);
     var r3 = _frame_wss(3);
-    _fi_arm(2); _refused("ws_server_recv out (3 bytes)", 2, ws_server_recv(r3), 0);
+    _fi_arm(1); _refused("ws_server_recv message (3 bytes)", 1, ws_server_recv(r3), 0);
     var r3b = _frame_wss(3);
     _fi_arm(2); _served("ws_server_recv", 2, ws_server_recv(r3b) != 0);
+    return _rows_done();
+}
+var ec = main();
+syscall(60, ec);
+CYR
+
+# ── the HTTP client's whole call (lib/http.cyr http_get_r), 6.7.18 ──
+# A forked child serves a canned 200 on a loopback listener, one connection per request, so its
+# own allocations never touch this process's count. http_get_r's allocations, in order: the URL
+# struct and its host copy (k=1, 2), the request slot (k=3), the request (k=4), the 64 KiB
+# receive buffer (k=5) and the response struct (k=6). Until 6.7.18 a refused response struct was
+# read through (load64(0): SIGSEGV) — k=6 is the row for that.
+cat > "$W/fi/http_probe.cyr" <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/http.cyr"
+include "rows.cyr"
+
+# A listener on 127.0.0.1 and a forked child answering `n` connections with a canned 200, each
+# after reading its request. Returns the port; the child's pid is at pid_out.
+fn _hp_serve(n, pid_out): i64 {
+    var lt, lfd = tcp_socket();
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    var st, sv = sock_listen(lfd, 16);
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    sys_getsockname(lfd, &sa, &sl);
+    var port = ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+    var pid = sys_fork();
+    if (pid == 0) {
+        # The child must never outlive a probe that died: it lets go of the gate's output pipe
+        # (whose reader waits for every writer) and gives up after 10 s with no connection.
+        sys_close(1);
+        sys_close(2);
+        sock_set_recv_timeout(lfd, 10, 0);
+        var i = 0;
+        var rq[2048];
+        while (i < n) {
+            var at, afd = sock_accept(lfd);
+            if (is_err_result(at) == 1) { sys_exit(0); }
+            if (is_err_result(at) == 0) {
+                var got = 0;
+                var done = 0;
+                while (done == 0 && got < 2000) {
+                    var r = _net_os_recv(afd, &rq + got, 2000 - got);
+                    if (r <= 0) { done = 1; }
+                    else {
+                        got = got + r;
+                        if (got >= 4 && memeq(&rq + got - 4, "\r\n\r\n", 4) == 1) { done = 1; }
+                    }
+                }
+                sock_send_all(afd, "HTTP/1.0 200 OK\r\n\r\nhi", 21);
+                sock_close(afd);
+            }
+            i = i + 1;
+        }
+        sys_exit(0);
+    }
+    sock_close(lfd);
+    store64(pid_out, pid);
+    return port;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var pid[8];
+    var port = _hp_serve(8, &pid);
+    var url = alloc(64);
+    memset(url, 0, 64);
+    memcpy(url, "http://127.0.0.1:", 17);
+    var e = fmt_int_buf(port, url + 17);
+    memcpy(url + 17 + e, "/", 1);
+
+    var k = 1;
+    while (k <= 4) {
+        _fi_arm(k);
+        var t0, v0 = http_get_r(url);
+        _refused("http_get_r url / slot / request", k, is_err_result(t0), 1);
+        k = k + 1;
+    }
+    _fi_arm(5);
+    var t5, v5 = http_get_r(url);
+    _refused("http_get_r receive buffer", 5, is_err_result(t5) == 1 && v5 == HttpOther, 1);
+    _fi_arm(6);
+    var t6, v6 = http_get_r(url);
+    _refused("http_get_r response struct", 6, is_err_result(t6) == 1 && v6 == HttpOther, 1);
+    _fi_arm(7);
+    var t7, v7 = http_get_r(url);
+    _served("http_get_r", 7, is_err_result(t7) == 0 && http_status(v7) == 200);
+    sys_kill(load64(&pid), 9);
+    sys_waitpid(load64(&pid), 0, 0);
     return _rows_done();
 }
 var ec = main();
@@ -433,7 +550,9 @@ _run_probe() {
 _run_probe probe; n=$_n
 [ "$n" -ge 67 ] || fail "only $n rows ran in probe (floor 67) — the probe is not exercising the sites it names"
 _run_probe ws_probe; nw=$_n
-[ "$nw" -ge 12 ] || fail "only $nw rows ran in ws_probe (floor 12)"
+[ "$nw" -ge 15 ] || fail "only $nw rows ran in ws_probe (floor 15; 12 until 6.7.18 added the three pending-bytes rows)"
 _run_probe wss_probe; ns=$_n
 [ "$ns" -ge 15 ] || fail "only $ns rows ran in wss_probe (floor 15; 11 until 6.6.19 added the four header-lookup rows)"
-echo "PASS: stdlib_alloc_refusal_sentinels ($n + $nw ws + $ns ws_server rows: every refused alloc returned its sentinel, every count exact)"
+_run_probe http_probe; nh=$_n
+[ "$nh" -ge 7 ] || fail "only $nh rows ran in http_probe (floor 7)"
+echo "PASS: stdlib_alloc_refusal_sentinels ($n + $nw ws + $ns ws_server + $nh http rows: every refused alloc returned its sentinel, every count exact)"

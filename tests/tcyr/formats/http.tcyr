@@ -24,20 +24,20 @@ assert_eq(memeq(req, "GET / HTTP/1.0", 14), 1, "GET line");
 # told :80). An explicit :80 is the default and takes no suffix. CHANGELOG [6.6.11]
 test_group("Host header carries a non-default port");
 assert_eq(streq(req, "GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n"), 1,
-          "port 80: Host has no suffix");
+  "port 80: Host has no suffix");
 var u80 = _http_parse_url("http://h:80/x");
 var r80 = _http_build_request("GET", load64(u80), load64(u80 + 8), load64(u80 + 16));
 assert_eq(streq(r80, "GET /x HTTP/1.0\r\nHost: h\r\nConnection: close\r\n\r\n"), 1,
-          "explicit :80 in the URL: Host has no suffix");
+  "explicit :80 in the URL: Host has no suffix");
 var u8080 = _http_parse_url("http://localhost:8080/x");
 var r8080 = _http_build_request("GET", load64(u8080), load64(u8080 + 8), load64(u8080 + 16));
 assert_eq(streq(r8080, "GET /x HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n"), 1,
-          ":8080 gives Host: localhost:8080");
+  ":8080 gives Host: localhost:8080");
 var r1 = _http_build_request("GET", "h", 1, "/");
 assert_eq(streq(r1, "GET / HTTP/1.0\r\nHost: h:1\r\nConnection: close\r\n\r\n"), 1, "one-digit port");
 var r65535 = _http_build_request("GET", "h", 65535, "/");
 assert_eq(streq(r65535, "GET / HTTP/1.0\r\nHost: h:65535\r\nConnection: close\r\n\r\n"), 1,
-          "five-digit port");
+  "five-digit port");
 
 test_group("response parsing");
 # Build response with explicit CR LF bytes
@@ -53,5 +53,17 @@ memcpy(rbuf + rp, "hello", 5); rp = rp + 5;
 var resp = _http_parse_response(rbuf, rp);
 assert_eq(http_status(resp), 200, "status 200");
 assert_eq(http_body_len(resp), 5, "body 5");
+
+# 6.7.18: a status that is not three digits is no status (0) — "2x0" read as 920 and "!!!" as
+# -1665 (and HTTP_ERROR is -1, so a negative status was neither an error nor a status). CHANGELOG [6.7.18]
+test_group("a status that is not three digits is no status");
+var bad = "HTTP/1.1 2x0 OK\r\n\r\n";
+assert_eq(http_status(_http_parse_response(bad, strlen(bad))), 0, "'2x0': 0");
+var neg = "HTTP/1.1 !!! OK\r\n\r\n";
+assert_eq(http_status(_http_parse_response(neg, strlen(neg))), 0, "'!!!': 0, not negative");
+var sp = "HTTP/1.1  20 OK\r\n\r\n";
+assert_eq(http_status(_http_parse_response(sp, strlen(sp))), 0, "' 20': 0");
+var ok404 = "HTTP/1.1 404 Not Found\r\n\r\n";
+assert_eq(http_status(_http_parse_response(ok404, strlen(ok404))), 404, "'404': 404");
 
 var r = assert_summary();

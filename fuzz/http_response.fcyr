@@ -1,0 +1,197 @@
+# Fuzz: the HTTP/1 response parser — lib/http.cyr _http_parse_response / _http_parse_response_a
+# (both over _http_parse_into), which reads whatever the server an http_get reached sent back
+# (6.7.18; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+#
+# A VALID response (status line, two headers, a blank line, a body) is the seed; each iteration
+# mutates a fresh copy from its own seed — a truncation (inside the status line, inside the
+# CRLF CRLF), the status digits replaced, CR / LF inserted or dropped, byte flips, a repeated header
+# line — into a heap block of exactly the mutated length, and parses it with both fns (a fresh
+# arena for the allocator form). A response with no status or no body is graceful. A fault fails:
+# the iterations run in a forked child that reports each iteration's seed to the parent first, so
+# the parent names the seed of the iteration that killed it (a SIGSEGV, `slice bounds violation`
+# exit 134, a poison trap exit 86); set _fz_replay to replay it. A result that breaks the parser's
+# contract (a status outside 0..999, a body that is not the tail of the response, the two fns
+# disagreeing) fails too. The child prints one digest, so `--poison=ab` sees an over-read.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/http.cyr"
+
+var _fz_name = "fuzz_http_response";
+var _fz_iters = 4000;
+var _fz_what = " mutated responses parsed";
+var _fz_first = 0x5EED4770;  # the first iteration's seed
+var _fz_replay = 0;          # a seed the parent printed: run that one iteration alone
+
+var _fz_bad = 0;             # set by an iteration whose result breaks the parser's contract
+var _fz_s = 0;
+fn _fz_rnd(): i64 {
+    _fz_s = _fz_s * 6364136223846793005 + 1442695040888963407;
+    var r = _fz_s >> 33;
+    if (r < 0) { r = 0 - r; }
+    return r;
+}
+
+# memmove: n bytes from src to dst, the two may overlap.
+fn _fz_move(dst, src, n): i64 {
+    if (dst > src) {
+        var i = n;
+        while (i > 0) { i = i - 1; store8(dst + i, load8(src + i)); }
+    } else {
+        var j = 0;
+        while (j < n) { store8(dst + j, load8(src + j)); j = j + 1; }
+    }
+    return 0;
+}
+
+var _fz_seed_text = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello";
+var _fz_arena = 0;
+
+# Mutate the n-byte response at b (room for 512) by the current LCG. Returns the new length.
+fn _fz_mutate(b, n): i64 {
+    var m = n;
+    var kinds = 1 + _fz_rnd() % 3;
+    while (kinds > 0) {
+        var k = _fz_rnd() % 6;
+        if (k == 0) { m = _fz_rnd() % (m + 1); }                         # truncate anywhere
+        elif (k == 1) {                                                  # the status digits
+            var d = 9 + _fz_rnd() % 3;
+            if (d < m) { store8(b + d, _fz_rnd() % 256); }
+        } elif (k == 2) {                                                # CR / LF in, or one out
+            var p = _fz_rnd() % (m + 1);
+            if (_fz_rnd() % 2 == 0 && m < 511) {
+                _fz_move(b + p + 1, b + p, m - p);
+                store8(b + p, 10 + 3 * (_fz_rnd() % 2));
+                m = m + 1;
+            } elif (p < m) {
+                _fz_move(b + p, b + p + 1, m - p - 1);
+                m = m - 1;
+            }
+        } elif (k == 3) {                                                # byte flips
+            var f = 1 + _fz_rnd() % 4;
+            while (f > 0) { var q = _fz_rnd() % (m + 1); if (q < m) { store8(b + q, _fz_rnd() % 256); } f = f - 1; }
+        } elif (k == 4) {                                                # repeat a header line
+            if (m >= 43 && m + 26 < 512) { _fz_move(b + 43, b + 17, m - 17); m = m + 26; }
+        } else {                                                         # a response cut to its end at the blank line
+            if (m >= 4 && m < 512) { store8(b + m - 1, 13); }
+        }
+        kinds = kinds - 1;
+    }
+    return m;
+}
+
+# One iteration from `seed`: returns a value folded into the digest; a result that breaks the
+# parser's contract sets _fz_bad.
+fn _fz_one(seed): i64 {
+    _fz_s = seed;
+    var work = alloc(512);
+    var n0 = strlen(_fz_seed_text);
+    memcpy(work, _fz_seed_text, n0);
+    var n = _fz_mutate(work, n0);
+    var b = alloc(n + 1);                     # exactly the response (+1: alloc(0) is no block)
+    memcpy(b, work, n);
+    var r1 = _http_parse_response(b, n);
+    reset_via(_fz_arena);
+    var r2 = _http_parse_response_a(_fz_arena, b, n);
+    if (r1 == 0 || r2 == 0) { _fz_bad = 11; return 0; }
+    var st = http_status(r1);
+    var bl = http_body_len(r1);
+    var bp = http_body(r1);
+    if (st < 0 || st > 999) { _fz_bad = 12; return 0; }
+    if (bl != 0 && (bp < b || bp + bl != b + n)) { _fz_bad = 13; return 0; }
+    if (st != http_status(r2) || bl != http_body_len(r2) || bp != http_body(r2)) { _fz_bad = 14; return 0; }
+    var off = 0;
+    if (bp != 0) { off = bp - b; }
+    return st * 131 + bl * 7 + off;
+}
+
+fn _fz_setup(): i64 {
+    _fz_arena = arena_allocator(4096);
+    return 0;
+}
+
+# ── the supervisor (the same in every network-parser harness) ──
+#ifdef CYRIUS_TARGET_LINUX
+fn main(): i64 {
+    alloc_init();
+    _fz_setup();
+    if (_fz_replay != 0) {
+        var rr = _fz_one(_fz_replay);
+        fmt_int(rr);
+        if (_fz_bad != 0) {
+            syscall(SYS_WRITE, 1, " (contract check ", 17);
+            fmt_int(_fz_bad);
+            syscall(SYS_WRITE, 1, " broken)", 8);
+        }
+        syscall(SYS_WRITE, 1, "\n", 1);
+        return 0;
+    }
+    var pfd[16];
+    if (sys_pipe(&pfd) != 0) { println("FAIL: pipe"); return 1; }
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(load32(&pfd));
+        var wfd = load32(&pfd + 4);
+        _fz_s = _fz_first;
+        var next = _fz_rnd();
+        var dig = 0;
+        var i = 0;
+        while (i < _fz_iters) {
+            var seed = next;
+            var sb[8];
+            store64(&sb, seed);
+            sys_write(wfd, &sb, 8);
+            _fz_s = seed;
+            next = _fz_rnd() * 2654435761 + i;          # the next seed, independent of this iteration
+            var v = _fz_one(seed);
+            if (_fz_bad != 0) {
+                syscall(SYS_WRITE, 1, "FAIL: a result broke the parser's contract (check ", 50);
+                fmt_int(_fz_bad);
+                syscall(SYS_WRITE, 1, ")\n", 2);
+                sys_exit(3);
+            }
+            dig = dig * 1000003 + v;
+            i = i + 1;
+        }
+        syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+        syscall(SYS_WRITE, 1, ": ", 2);
+        fmt_int(_fz_iters);
+        syscall(SYS_WRITE, 1, _fz_what, strlen(_fz_what));
+        syscall(SYS_WRITE, 1, ", digest ", 9);
+        fmt_int(dig);
+        syscall(SYS_WRITE, 1, "\n", 1);
+        sys_exit(0);
+    }
+    sys_close(load32(&pfd + 4));
+    var last = 0;
+    var got = 0;
+    var rb[8];
+    while (sys_read(load32(&pfd), &rb, 8) == 8) { last = load64(&rb); got = got + 1; }
+    var st[8];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    var status = load64(&st) & 0xFFFF;
+    if (status == 0) { return 0; }
+    syscall(SYS_WRITE, 1, "FAIL: ", 6);
+    syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+    syscall(SYS_WRITE, 1, ": iteration ", 12);
+    fmt_int(got - 1);
+    syscall(SYS_WRITE, 1, " (seed ", 7);
+    fmt_int(last);
+    syscall(SYS_WRITE, 1, ") ended with ", 13);
+    if ((status & 0x7F) != 0) { syscall(SYS_WRITE, 1, "signal ", 7); fmt_int(status & 0x7F); }
+    else { syscall(SYS_WRITE, 1, "exit ", 5); fmt_int((status >> 8) & 0xFF); }
+    syscall(SYS_WRITE, 1, " — replay: set _fz_replay to that seed\n", 41);
+    return 1;
+}
+#endif
+#ifndef CYRIUS_TARGET_LINUX
+fn main(): i64 {
+    syscall(SYS_WRITE, 1, _fz_name, strlen(_fz_name));
+    println(": runs on Linux (fork + pipe supervisor) — nothing to run here");
+    return 0;
+}
+#endif
+var r = main();
+syscall(SYS_EXIT, r);
