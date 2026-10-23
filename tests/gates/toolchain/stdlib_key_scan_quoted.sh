@@ -94,8 +94,10 @@ cd "$ROOT"
 # scans and required each to route through `_toml_key_at`; a fourth hand-rolled copy is exactly
 # what it exists to catch, so it now requires there be NO byte scan and that both readers (cmd_deps,
 # `lib sync`'s _libsync_declared_mods) call the helper.
-raw=$(grep -c '"stdlib", 6' $(find cbt/commands cbt/deps -name '*.cyr' | LC_ALL=C sort) | awk -F: '{s+=$2} END{print s}')
-users=$(grep -c '_dep_declared_stdlib(' $(find cbt/commands cbt/deps -name '*.cyr' | LC_ALL=C sort) | awk -F: '{s+=$2} END{print s}')
+# `{ grep -c … || true; }`: with no raw scan left grep -c exits 1 (no file matched) — the PASSING
+# case — and under `bash -eo pipefail` that failed the pipeline and ended the gate. CHANGELOG [6.7.18]
+raw=$({ grep -c '"stdlib", 6' $(find cbt/commands cbt/deps -name '*.cyr' | LC_ALL=C sort) || true; } | awk -F: '{s+=$2} END{print s}')
+users=$({ grep -c '_dep_declared_stdlib(' $(find cbt/commands cbt/deps -name '*.cyr' | LC_ALL=C sort) || true; } | awk -F: '{s+=$2} END{print s}')
 if [ "$raw" -ne 0 ]; then
     echo "  FAIL axis 3 (structural): $raw raw \"stdlib\", 6 byte scan(s) in cbt/ — a hand-rolled key scan has been reintroduced"
     fail=1

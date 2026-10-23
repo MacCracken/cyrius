@@ -71,6 +71,8 @@
 #     `{ grep … || true; }` now.
 #   * scaffold_verb_discovery.sh (6.7.18) — `( … cyrius <verb> __no_such_target_xyz__ … ); vrc=$?` over
 #     verbs that refuse by design: `-e` ended the gate at the first (rc 1). `vrc=0; ( … ) || vrc=$?`.
+#   * stdlib_key_scan_quoted.sh (6.7.18) — `raw=$(grep -c '"stdlib", 6' <files> | awk …)`: no raw scan
+#     left (the PASSING case) is grep's exit 1, which pipefail made the assignment's (rc 1).
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -137,7 +139,8 @@ tests/gates/toolchain/deps_git_cache_verified.sh
 tests/gates/toolchain/deps_lock_new_leaf_locked.sh
 tests/gates/toolchain/distlib_bundle_selfcheck.sh
 tests/gates/toolchain/install_gates_ship_the_checksum.sh
-tests/gates/toolchain/scaffold_verb_discovery.sh"
+tests/gates/toolchain/scaffold_verb_discovery.sh
+tests/gates/toolchain/stdlib_key_scan_quoted.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
