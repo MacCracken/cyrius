@@ -18,7 +18,7 @@
 #      one); a probe then feeds the message that check stopped. The parser must stop at the slice —
 #      exit 134 and `slice bounds violation` on stderr. The same probe on the real lib/ is the
 #      control: the graceful answer, exit 0.
-# Families: the async DNS answer parser (lib/async.cyr).
+# Families: the async DNS answer parser (lib/async.cyr), the HTTP/1 response parser (lib/http.cyr).
 #
 # RED before 6.7.18: the static rows name every raw load, and with the same check removed the
 # parent's raw loads read on past the message (the probe exits 0 with whatever the heap held).
@@ -111,8 +111,41 @@ caught "dns answer" lib/async.cyr 'if (off + 10 > blen) { return 0 - 1; }' '# (r
 { echo '#define DNS_LABEL'; cat "$T/dns.cyr"; } > "$T/dnsl.cyr"
 caught "dns name" lib/async.cyr 'if (p < 0 || p >= blen) { return 0 - 1; }' '# (removed)' dnsl.cyr '-1'
 
+# ── the HTTP/1 response parser (lib/http.cyr) ──
+echo "the HTTP/1 response parser:"
+no_raw lib/http.cyr _http_parse_into _http_parse_response _http_parse_response_a
+cat > "$T/http.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/http.cyr"
+# a response that ends one byte short of its blank line (HTTP_SHORT: a 10-byte one), on the heap
+fn main(): i64 {
+    alloc_init();
+    var src = "HTTP/1.1 200 OK\r\nX: y\r\n\r";
+    #ifdef HTTP_SHORT
+    src = "HTTP/1.1 2";
+    #endif
+    var n = strlen(src);
+    var b = alloc(64);
+    memset(b, 0, 64);
+    memcpy(b, src, n);
+    var r = _http_parse_response(b, n);
+    fmt_int(http_status(r));
+    syscall(1, 1, " ", 1);
+    fmt_int(http_body_len(r));
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+caught "http blank-line scan" lib/http.cyr 'while (pi < len - 3) {' 'while (pi < len) {' http.cyr '200 0'
+{ echo '#define HTTP_SHORT'; cat "$T/http.cyr"; } > "$T/https.cyr"
+caught "http status line" lib/http.cyr 'if (len < 12) { return result; }' '# (removed)' https.cyr '0 0'
+
 # Floor: every family's rows ran.
-if [ "$ROWS" -lt 6 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 6) — the gate is reading nothing"; fi
+if [ "$ROWS" -lt 13 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 13) — the gate is reading nothing"; fi
 if [ "$FAILS" = 0 ]; then echo "PASS: $NAME ($ROWS rows: the parsers read through slices, and a bound they get wrong stops there)"; exit 0; fi
 echo "FAIL: $NAME ($FAILS)"
 exit 1
