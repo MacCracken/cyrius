@@ -3329,11 +3329,12 @@ fn _wd_tick(S): i64 {
 # The message is deliberately in the STANDARD `error:<file>:<line>:<col>: <msg>` shape
 # rather than a bare `error: …`, for two reasons. It is a real diagnostic a user will
 # see (a file missing its final `;` reaches it), so it should carry a location like
-# every other one. And `cyrius lint`'s pre-pass classifies on the message, matching the
-# `unexpected ` prefix through `_lint_capture_has_syntax` — which parses exactly this
-# shape and would silently ignore a bare `error:` line, letting lint bless a file that
-# does not parse. That is the very defect v6.5.19 exists to close, so the format is
-# load-bearing: see `_lint_msg_is_syntax` in cbt/commands.cyr.
+# every other one. And `cyrius lint`'s pre-pass classifies on the message it reads after
+# this location (`_lint_err_msg` / `_lint_capture_verdict`, cbt/commands/lint.cyr), so the
+# format is load-bearing. It was at v6.5.19 too: the syntax allow-list of then
+# (`_lint_capture_has_syntax`, replaced by the context set at 6.6.11) would silently ignore a
+# bare `error:` line, letting lint bless a file that does not parse — the very defect v6.5.19
+# exists to close.
 fn _wd_eof_tick(S): i64 {
     _wd_eof = _wd_eof + 1;
     if (_wd_eof > 20000) {
@@ -3828,7 +3829,8 @@ fn ERR_EXPECT(S, expected_type): i64 {
 #   1. it sent the reader hunting for a typo that does not exist, and
 #   2. `cyrius lint` classifies on the message CLASS (a lint of ONE file in
 #      isolation has no manifest and no lib/, so it cannot key on the exit code —
-#      see cbt/commands.cyr `_lint_msg_is_syntax`), so lint REFUSED to lint those
+#      `_lint_msg_is_syntax` then, `_lint_msg_is_context` since 6.6.11, both in what is
+#      now cbt/commands/lint.cyr), so lint REFUSED to lint those
 #      files. Measured at 6.5.18 across 472 files in nine repos: 3 refusals, all
 #      in stiva — the repo that filed the original "lint never parses" issue.
 # Messages emitted here are deliberately NOT of the `unexpected …` / `expected …`
