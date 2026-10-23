@@ -108,7 +108,8 @@
 # differently).
 
 # 6.6.9: alloc / memcpy / cyr_munmap / the dynlib_auxv_* helpers were all called and none
-# included. CHANGELOG [6.6.9]
+# included. CHANGELOG [6.6.9] — and 6.7.18's secure-exec test calls the uid / gid wrappers.
+include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/mmap.cyr"
@@ -340,6 +341,54 @@ fn dl_longjmp(buf, val): i64 {
 var _fdl_trusted_mode = 0;
 var _FDL_SYSTEM_HELPER = "/usr/lib/cyrius/dlopen-helper";
 
+# ⛔ CYRIUS-2026-0041 (6.7.18): the TRUSTED path is taken whenever this process runs with
+# privileges its invoker lacks — a setuid / setgid exec, file capabilities, an LSM transition —
+# not only when the caller asks for it. lib/tls.cyr's libssl backend called fdlopen_init_full,
+# which read HOME from /proc/self/environ (the invoker's, kept across a setuid exec) and ran
+# $HOME/.cyrius/dlopen-helper in-process: a setuid-root program on that backend ran a local
+# user's code as root, and offered no way to ask for fdlopen_init_trusted. Now
+# `_fdlopen_secure_exec` (the kernel's AT_SECURE, a real/effective uid or gid mismatch, or an
+# auxv this process may not read) sends every entry — the path, `fdlopen_helper_available`,
+# `fdlopen_init_full` — to the root-owned system helper, verified, or -9 (FDL_ERR_UNTRUSTED);
+# `fdlopen_trusted_only(1)` asks for the same in any process. CHANGELOG [6.7.18]
+var _fdl_trusted_only = 0;
+# Test-only seam: while 1, `_fdlopen_secure_exec` answers 1 (a setuid run needs root to make).
+# Nothing outside tests/ sets it.
+var _fdl_secure_test = 0;
+
+# Take the trusted, root-owned helper for EVERY fdlopen init in this process (1), or only when
+# the process is a secure exec (0, the default). A setuid consumer may call it first to make the
+# choice explicit; it is already the answer there. Returns the previous setting.
+fn fdlopen_trusted_only(on): i64 {
+    var was = _fdl_trusted_only;
+    _fdl_trusted_only = 0;
+    if (on != 0) { _fdl_trusted_only = 1; }
+    return was;
+}
+
+# 1 when this process may not trust its invoker's environment: the kernel set AT_SECURE (23) in
+# its auxv, its real and effective uid or gid differ, or its auxv cannot be read (a non-dumpable
+# process — every secure exec that is not root — reads /proc/self/auxv as EACCES): fail closed.
+fn _fdlopen_secure_exec(): i64 {
+    if (_fdl_secure_test == 1) { return 1; }
+    #ifdef CYRIUS_TARGET_LINUX
+    var ab[4096];
+    var an = dynlib_read_auxv(&ab, 4096);
+    if (an <= 0) { return 1; }
+    if (dynlib_auxv_get(&ab, an, 23) != 0) { return 1; }
+    if (sys_getuid() != sys_geteuid()) { return 1; }
+    if (sys_getgid() != sys_getegid()) { return 1; }
+    #endif
+    return 0;
+}
+
+# 1 when the next init must take the trusted path (asked for, or a secure exec).
+fn _fdlopen_must_trust(): i64 {
+    if (_fdl_trusted_mode == 1) { return 1; }
+    if (_fdl_trusted_only == 1) { return 1; }
+    return _fdlopen_secure_exec();
+}
+
 # Build the dlopen-helper path into `buf`, returning length on success or 0.
 # Default: `$HOME/.cyrius/dlopen-helper`. In trusted mode: the root-owned
 # system helper (the $HOME copy is NEVER consulted).
@@ -352,7 +401,7 @@ fn _fdlopen_helper_path(buf, bufsz): i64 {
     #endif
     if (buf == 0) { return 0; }
     if (bufsz < 64) { return 0; }
-    if (_fdl_trusted_mode == 1) {
+    if (_fdlopen_must_trust() == 1) {   # never $HOME in a secure exec (CYRIUS-2026-0041)
         var c = 0;
         while (load8(_FDL_SYSTEM_HELPER + c) != 0) {
             store8(buf + c, load8(_FDL_SYSTEM_HELPER + c));
@@ -433,6 +482,10 @@ fn fdlopen_helper_available(): i64 {
     # agree, or a consumer (lib/tls.cyr:218) sees "available" and then fails to init.
     return 0;
     #endif
+    # A secure exec (or a caller that asked) has a helper only when the root-owned system one
+    # verifies — never "available" for one that fdlopen_init_full would then refuse.
+    # CHANGELOG [6.7.18]
+    if (_fdlopen_must_trust() == 1) { return _fdlopen_verify_trusted(_FDL_SYSTEM_HELPER); }
     var pathbuf = alloc(512);
     if (pathbuf == 0) { return 0; }
     var pl = _fdlopen_helper_path(pathbuf, 512);
@@ -736,7 +789,7 @@ fn _fdlopen_build_stack(region, region_size, helper_info, ldso_info,
     store64(p, 16); p = p + 8;
     store64(p, dynlib_auxv_get(auxv_buf, auxv_len, 16)); p = p + 8;  # AT_HWCAP
     store64(p, 23); p = p + 8;
-    store64(p, 0); p = p + 8;                          # AT_SECURE=0 (regular exe)
+    store64(p, _fdlopen_secure_exec()); p = p + 8;     # AT_SECURE: this process's (6.7.18)
     store64(p, 25); p = p + 8;
     var real_rnd = dynlib_auxv_get(auxv_buf, auxv_len, 25);
     if (real_rnd == 0) { real_rnd = rand_ptr; }
@@ -876,6 +929,11 @@ fn fdlopen_init(state): i64 {
 # `dlsym("getpid")` → `fncall0(...) == syscall(39)` round-trip).
 fn fdlopen_init_full(state): i64 {
     if (state == 0) { return 0 - 3; }
+    # A secure exec, or a process that asked: the trusted entry, -9 without a verified system
+    # helper (CYRIUS-2026-0041). CHANGELOG [6.7.18]
+    if (_fdl_trusted_mode == 0) {
+        if (_fdlopen_must_trust() == 1) { return fdlopen_init_trusted(state); }
+    }
     var i = 0;
     while (i < 256) { store8(state + i, 0); i = i + 1; }
     #ifdef CYRIUS_TARGET_LINUX

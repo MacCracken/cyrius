@@ -114,6 +114,57 @@ test_group("init_trusted — fail closed");
 # back to the $HOME helper.
 var rc_untrusted = (rc == 0 - 9);
 assert_eq(rc_untrusted, 1, "x86-Linux: init_trusted returns -9 (fail closed) with no system helper");
+
+# ⛔ CYRIUS-2026-0041 (6.7.18): a setuid program on lib/tls.cyr's libssl backend reached
+# fdlopen_init_full, which took the INVOKER's $HOME/.cyrius/dlopen-helper (HOME survives a setuid
+# exec) and ran it in-process, as root; nothing let it ask for the trusted path. A secure exec
+# needs root to make, so `_fdl_secure_test` stands in for the kernel's AT_SECURE.
+# CHANGELOG [6.7.18]
+test_group("a secure exec never takes the $HOME helper (CYRIUS-2026-0041)");
+assert_eq(_fdlopen_secure_exec(), 0, "an ordinary run is not a secure exec (AT_SECURE 0, uid == euid, gid == egid)");
+var sys_ok = _fdlopen_verify_trusted(_FDL_SYSTEM_HELPER);
+var hb = alloc(512);
+var mode_i = 0;
+while (mode_i < 2) {
+    # 0: the kernel says secure (the seam); 1: the caller asked (fdlopen_trusted_only)
+    var why = "secure exec";
+    if (mode_i == 0) { _fdl_secure_test = 1; }
+    if (mode_i == 1) { fdlopen_trusted_only(1); why = "fdlopen_trusted_only(1)"; }
+    var hl = _fdlopen_helper_path(hb, 512);
+    assert(hl > 0, "the helper path resolves");
+    assert_eq(streq(hb, "/usr/lib/cyrius/dlopen-helper"), 1, "the helper path is the root-owned system one, never $HOME's");
+    assert_eq(fdlopen_helper_available(), sys_ok, "the helper is available only when the system one verifies");
+    if (sys_ok == 0) {
+        var st2[256];
+        assert_eq(fdlopen_init_full(&st2), 0 - 9, "fdlopen_init_full (lib/tls.cyr's entry) fails closed with -9 (FDL_ERR_UNTRUSTED)");
+        assert_eq(fdlopen_status(&st2), 0 - 9, "... and the state says -9");
+    } else {
+        syscall(1, 1, "  not run: a verified /usr/lib/cyrius/dlopen-helper exists here (the -9 rows need its absence)\n", 95);
+    }
+    # The synthesised auxv hands ld.so this process's AT_SECURE (it was a constant 0).
+    var stk = syscall(9, 0, 65536, 3, 34, 0 - 1, 0);
+    var hinfo = alloc(64);
+    var linfo = alloc(64);
+    var ab2[4096];
+    var an2 = dynlib_read_auxv(&ab2, 4096);
+    var nrsp = _fdlopen_build_stack(stk, 65536, hinfo, linfo, &ab2, an2, &st, 0);
+    var sec = 0 - 1;
+    if (nrsp != 0) {
+        var ap = nrsp + 48;   # argc, argv[0..2], NULL, envp NULL
+        while (load64(ap) != 0) {
+            if (load64(ap) == 23) { sec = load64(ap + 8); }
+            ap = ap + 16;
+        }
+    }
+    # AT_SECURE is the process's own state: 1 in a secure exec, still 0 when a caller only asked.
+    var want_sec = 0;
+    if (mode_i == 0) { want_sec = 1; }
+    assert_eq(sec, want_sec, "the synthesised auxv hands ld.so this process's AT_SECURE");
+    syscall(11, stk, 65536);
+    _fdl_secure_test = 0;
+    fdlopen_trusted_only(0);
+    mode_i = mode_i + 1;
+}
 #endif
 #endif
 
