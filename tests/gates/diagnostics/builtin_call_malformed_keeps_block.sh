@@ -18,7 +18,7 @@
 # THE SAME STEP IN THE ASSIGNMENT ARM (met with these rows). A bare name as a statement — `p;`, `zq;` — is the
 # assignment arm's "expected '='"; the arm then stepped the `;`, its value read the block's `}`, and the next fn was
 # "defined inside fn 'main'" (`zq;` added "undefined variable" at the next line). Now `_asg_eq_step` (src/frontend/
-# parse.cyr): a missing `=` is one error and the statement ends in sync — nothing read as a value, the rest stepped to
+# parse/assign.cyr): a missing `=` is one error and the statement ends in sync — nothing read as a value, the rest stepped to
 # its `;` with its brackets balanced (`_stmt_rest_skip`) — so the next statement is parsed with its own errors (`p 5;`
 # lost the next statement's error to the resync).
 #

@@ -2146,7 +2146,7 @@ fn _cst_ctx_skip(S, stop, ti, pw): i64 {
 # `;` / `}`, an array size's `]`) — leaves the cursor there and puts the caller's latch back (`_ce_ctx_close`), so
 # the next declaration reports its own error; one that ends elsewhere (`[yy zz]`) keeps the latch. Pass 1 never
 # resyncs: two refused enum values or global array sizes printed only the first (`#assert`: `_assert_open`,
-# parse.cyr). CHANGELOG [6.7.15]
+# parse/builtin.cyr). CHANGELOG [6.7.15]
 # ⛔ 6.7.16 — AND A `case` LABEL (`stop` its `:`), which kept its statement's latch: the switch's pre-scan evaluates
 # every label once and is no statement, so nothing resynced between two labels — the second refused label was
 # swallowed (then misreported by the body path, above). Each label is now evaluated with the latch clear and closed

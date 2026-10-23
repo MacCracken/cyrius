@@ -1,0 +1,1338 @@
+# PARSER — the statement dispatch — `break`, `continue`, `defer`, a call as a statement, `?`, multi-value re-assignment
+# (`_masg_*`), the nested-fn refusal, PARSE_STMT and _PARSE_STMT_IMPL.
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+# break; — forward jump to after the loop/switch/match (linked list through codebuf).
+# 6.6.7: refused when nothing in THIS fn encloses it (`_brk_depth` counts loops + switch +
+# match). An unowned break was never patched: its rel32 kept the chain link, a wild jump.
+fn _PARSE_BREAK(S): i64 {
+    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
+    if (_brk_depth == 0) {
+        if (_in_defer == 1) { ERR_MSG(S, "break cannot leave a defer body", 31); return 0; }
+        ERR_MSG(S, "break outside a loop or switch", 30);
+        return 0;
+    }
+    var prev_brk = L64(S + 0x18F840);
+    var brk_off = EJMP0(S);
+    # Store prev break offset in this jmp's rel32 field (chain link)
+    var brk_addr = _codebuf_base + brk_off;
+    S64(brk_addr, (L64(brk_addr) >> 32 << 32) | (prev_brk & 0xFFFFFFFF));
+    S64(S + 0x18F840, brk_off);
+    return 0;
+}
+# continue; — jump to loop top (or forward to the step of a C-style for).
+# 6.6.7: refused with no loop in THIS fn — it used to jump to the stale loop top of whatever
+# fn last had a loop (SIGSEGV), or into the enclosing fn's loop from a closure.
+fn _PARSE_CONTINUE(S): i64 {
+    STI(S, GTI(S) + 1);
+    _expect_step(S, 5);
+    if (_loop_depth == 0) {
+        if (_in_defer == 1) { ERR_MSG(S, "continue cannot leave a defer body", 34); return 0; }
+        ERR_MSG(S, "continue outside a loop", 23);
+        return 0;
+    }
+    if (L64(S + 0x18F898) > 0) {
+        # A `for`: a forward jump to its step, patched by `_cont_close` (see `_cont_vec`).
+        # No cap: the vector grows. The fixed 8-entry array this replaced was shared by the
+        # whole nest, so its "max 8" counted the OUTER loops' continues and named the inner
+        # one (5 outer + 4 inner was refused). CHANGELOG [6.6.20]
+        vec_push(_cont_vec, EJMP0(S));
+    } else {
+        # A `while`: a direct jump to the loop top
+        EJMP(S, L64(S + 0x18F838));
+    }
+    return 0;
+}
+# return; / return v; outside every fn body — at top level or in a top-level block (GINFN 0) — is
+# refused by name, as a top-level break / continue / defer is: the top level has no frame and no
+# epilogue to land on, so the jump PARSE_RETURN records in rp_vec was never patched — a `jmp +0`
+# on x86_64 / PE (the return passed over), a branch to itself on aarch64 / cx (a hang). A closure
+# body and an #inline fn's replay are GINFN 1. Reported once and in sync: the statement is stepped
+# over through its `;` and the latch cleared, so the next statement parses and reports its own
+# errors. 1 = refused. CHANGELOG [6.7.11]
+fn _ret_toplevel(S): i64 {
+    if (GINFN(S) == 1) { return 0; }
+    var p0 = _panic;
+    ERR_MSG(S, "return outside a fn body", 24);
+    _ret_skip_stmt(S);
+    if (p0 == 0) { _panic = 0; }
+    return 1;
+}
+# Step over the refused statement: through its `;` outside `( [ {` nesting, or up to the `}` that
+# closes the enclosing block, or EOF.
+fn _ret_skip_stmt(S): i64 {
+    var d = 0;
+    var n = GTCNT(S);
+    while (GTI(S) < n) {
+        var t = PEEKT(S);
+        if (t == 12) { return 0; }
+        if (d == 0) {
+            if (t == 5) { STI(S, GTI(S) + 1); return 0; }
+            if (t == 14) { return 0; }
+        }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) { d = d - 1; }
+        if (d < 0) { d = 0; }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# defer { body } — execute body at function return (LIFO)
+# Each defer gets a runtime flag (hidden local) set to 1 when reached.
+# At epilogue, flag is checked before running the block — unreached defers are skipped.
+# 6.6.7 — CONTEXT RULES. Top level is refused (no frame for the flag — it was written through
+# rbp = 0 and SIGSEGV'd — and no epilogue to run the block), like `secret`/`stack` var. The
+# body runs FROM the epilogue walker, so it may not leave: a `return`/`?`/`ret2` inside it
+# (seen as rp_vec growth) re-entered the walker and re-ran the block, and a `break`/`continue`
+# jumped back into the loop it was registered in; both are refused. A loop OPENED inside the
+# body is fine — `_loop_body` counts it. CHANGELOG [6.6.7]
+fn _PARSE_DEFER(S): i64 {
+    if (GINFN(S) != 1) {
+        ERR_MSG(S, "defer only allowed inside a function", 36);
+    }
+    # A #naked fn has no epilogue (its body ends in its own asm return) and no frame: the walker
+    # emitted after the body is unreachable, so the block never ran. Refused. CHANGELOG [6.6.15]
+    if (_cur_fn_naked == 1) {
+        ERR_MSG(S, "defer is not allowed in a #naked fn (it has no epilogue to run the block)", 73);
+    }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    # Allocate hidden local for defer flag (initialized to 0 in prologue)
+    var dflag = GFLC(S);
+    S64(S + 0x5D9D000 + dflag * 8, 0 - 1);   # 6.6.5: anonymous — name 0 is the first lexed word
+    SLDEP(S, dflag, GSDEP(S));
+    SLTYPE(S, dflag, 0);
+    SFLC(S, dflag + 1);
+    # Emit: flag = 1 (set when defer statement is reached)
+    EMOVI(S, 1);
+    EFLSTORE(S, dflag);
+    # Emit jmp-over (skip deferred block during normal execution)
+    var djmp = EJMP0(S);
+    # Record block start (current CP after jmp-over)
+    var dstart = GCP(S);
+    # Parse deferred block body — with no loop and no break target of its own
+    STI(S, GTI(S) + 1);
+    var sv_ld = _loop_depth;
+    var sv_bd = _brk_depth;
+    var sv_id = _in_defer;
+    var rp0 = vec_len(rp_vec);
+    _loop_depth = 0;
+    _brk_depth = 0;
+    _in_defer = 1;
+    PARSE_PROG(S);
+    _loop_depth = sv_ld;
+    _brk_depth = sv_bd;
+    _in_defer = sv_id;
+    if (vec_len(rp_vec) != rp0) {
+        ERR_MSG(S, "return inside a defer body (a defer block cannot leave its function)", 68);
+    }
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    STI(S, GTI(S) + 1);
+    # Emit jmp placeholder (patched to next defer block or epilogue)
+    var dend = EJMP0(S);
+    # Store {block_start, end_jmp, flag_local} triple (24 bytes per entry)
+    var dci = L64(S + 0x1AC020);
+    if (dci >= 64) {
+        _ew("error: too many defer blocks (max 64)\n", 38);
+        _die(1);
+    }
+    S64(S + 0x1AC028 + dci * 24, dstart);
+    S64(S + 0x1AC028 + dci * 24 + 8, dend);
+    S64(S + 0x1AC028 + dci * 24 + 16, dflag);
+    S64(S + 0x1AC020, dci + 1);
+    # Patch jmp-over to land here (after the deferred block)
+    EPATCH(S, djmp);
+    return 0;
+}
+# 1 = the statement call `noff(..)` (the cursor on its `(`) returns a `: stack` pair, so a `?` after it takes the pair
+# lowering (`_stmt_qmark`): FINDFN's entry's flag — or, through `fncallN(&f, ..)`, the known f's (6.7.17, the user's
+# D26 of 2026-10-22: `fncall1(&f, 4)?;` read fncall1's own flag, took the boxed `?` and dereferenced the tag; a callee
+# held in a variable stays a word). CHANGELOG [6.7.17]
+fn _stmt_call_pair(S, noff): i64 {
+    _ensure_pair_flags(S);
+    if (_icall_open_at(S, GTI(S) - 1) >= 0) { return _callee_returns_pair_at(S, GTI(S) - 1); }
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { return 0; }
+    if ((GFLG(S, fi) & 256) != 0) { return 1; }
+    return 0;
+}
+# v5.6.3: #must_use — warn when the fn `noff` names is marked #must_use and is called as a
+# bare expression statement (result dropped). Called BEFORE the call is parsed, so the line
+# is the call site's, not the trailing ';'. Shared by the `IDENT (` statement arm and the
+# bare explicit-generic statement (`_stmt_explicit_generic`). CHANGELOG [6.6.12]
+fn _must_use_warn(S, noff): i64 {
+    var _mu_fi = FINDFN(S, noff);
+    if (_mu_fi >= 0) {
+        var _mu_flags = GFLG(S, _mu_fi);
+        if (_mu_flags & 1 != 0) {
+            if (_warn_seen(GTI(S), "_must_use_warn", _mu_fi * 31 + noff) == 1) { return 0; }   # 6.7.15: once
+            _ew("warning:", 8);
+            _err_head(S);
+            _ew(": #must_use result of '", 23);
+            PRSTR(S + 0xEC00000 + _fn_src_name(S, _mu_fi, noff));   # 6.7.14: `S.m`, `g<i32>`
+            _ew("' is discarded\n", 15);
+        }
+    }
+    return 0;
+}
+
+# v5.8.31 — postfix `?` on a bare fncall-statement
+# (`expr?;` form). v5.8.29 added `?` in PARSE_TERM but
+# this path bypasses PARSE_TERM entirely (PARSE_STMT
+# dispatches IDENT+LPAREN straight to PARSE_FNCALL),
+# so the `?` was unhandled and the next token check
+# for `;` reported "expected ';', got unknown" (token
+# 124 has no TOKNAME entry). Same desugar shape as the
+# PARSE_TERM hook: tag-check + early-return on Err +
+# payload-load on Ok. The unwrapped value lands in rax
+# and is dropped by the bare-statement convention.
+# 6.6.12: one copy for both statement forms, `f(..)?;` and `g<T>(..)?;`, out of
+# _PARSE_STMT_IMPL (the cybs per-fn cap). `pair` = the callee is pair-returning, read by name
+# BEFORE the call was parsed. Cursor on the token after the call; no-op unless it is `?`.
+fn _stmt_qmark(S, pair): i64 {
+    if (PEEKT(S) == 28) { return _stmt_call_sub(S); }   # 6.7.8 (C2-4b): `f(..)[i] = v;` (parse/expr.cyr)
+    if (PEEKT(S) == 124) {
+        STI(S, GTI(S) + 1);
+        if (GINFN(S) == 0) {
+            ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
+        }
+        # ⛔ v6.6.0 — THE VALUE-FORM PATH, AND WHY IT IS HERE TWICE. This block is a
+        # SECOND, PARALLEL COPY of the `?` desugar: PARSE_STMT dispatches IDENT+LPAREN
+        # straight to PARSE_FNCALL and never reaches `_PARSE_TERM_IMPL`, so v5.8.31 had
+        # to repeat the lowering. When v6.6.0 taught `?` the pair form it was fixed in
+        # the OTHER copy only, and this one kept dereferencing the operand — reading the
+        # TAG (0 or 1) as a pointer. `look(n)?;` as a bare statement compiled clean and
+        # SIGSEGV'd while `var x = look(n)?;` was correct. Same parallel-copy class as
+        # the global-init REPLAY that had to take the v6.3.44 struct fix separately.
+        # ⭐ The Err path re-emits BOTH halves, exactly as the expression copy does:
+        # propagating out of the enclosing fn means RETURNING a pair, so restoring only
+        # rax would hand the caller a correct tag with a stale payload.
+        if (pair == 1) {
+            var qstag = _HTEMP(S);
+            var qsval = _HTEMP(S);
+            _HTSTORE(S, qstag);           # tag (rax as returned)
+            EMOVRA_RDX(S);                # rax = rdx = payload
+            _HTSTORE(S, qsval);
+            _HTLOAD(S, qstag);
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);                    # rcx = 0 (Ok)
+            EPOPR(S);                     # rax = tag
+            ECMPR(S);
+            var qspj = EJCC(S, 0x84);     # JE -> Ok, skip the propagate
+            _HTLOAD(S, qsval);
+            EMOVRDXRAX(S);                # rdx = payload
+            _HTLOAD(S, qstag);            # rax = tag
+            var qsprp = EJMP0(S);
+            vec_push(rp_vec, qsprp);
+            EPATCH(S, qspj);
+            _HTLOAD(S, qsval);            # Ok path: rax = payload (dropped by the
+            # bare-statement convention)
+            # Not inside an inline replay: its Err jump lands at the replay's end (the call's value), not
+            # the caller's epilogue — `_cur_fn_ix` is the caller there. CHANGELOG [6.7.13]
+            if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); } }
+        } else {
+            var qsidx = _HTEMP(S);
+            _HTSTORE(S, qsidx);
+            _HTLOAD(S, qsidx);
+            ELOAD64(S);
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);
+            EPOPR(S);
+            ECMPR(S);
+            var qsjcc = EJCC(S, 0x84);
+            _HTLOAD(S, qsidx);
+            var qsrp = EJMP0(S);
+            vec_push(rp_vec, qsrp);
+            EPATCH(S, qsjcc);
+            _HTLOAD(S, qsidx);
+            EPUSHR(S);
+            EMOVI(S, 8);
+            EMOVCA(S);
+            EPOPR(S);
+            EADDR(S);
+            ELOAD64(S);
+        }
+    }
+    return 0;
+}
+
+# ⛔ 6.6.12 — AN EXPLICIT GENERIC CALL AS A BARE STATEMENT (`id<i32>(4);`) was "expected '=',
+# got '<'": the IDENT arm of _PARSE_STMT_IMPL sent only `IDENT (` to PARSE_FNCALL, so `IDENT <`
+# fell into the assignment path. Same guards as the factor's arm (parse/expr/factor.cyr: the monomorph
+# flag, a generic callee, the `name<..>(` lookahead), so `a < b;` and a non-generic `<` never
+# get here. Parity with the `IDENT (` arm: a `.field` / `.method()` on the result
+# (`_stmt_call_field`), the #must_use warning and a postfix `?`. Cursor just past the callee
+# IDENT; 1 = the statement is consumed through its `;`, 0 = not that shape (cursor untouched — but a list on a fn that
+# is not generic is refused and stepped, `_eta_gen`, 6.7.16, so the `IDENT (` arm parses the call).
+# One call in _PARSE_STMT_IMPL: that body is near cybs's per-function reference limit.
+# CHANGELOG [6.6.12]
+fn _stmt_explicit_generic(S, noff): i64 {
+    if (PEEKT(S) == 31) { return _masg_stmt(S, 5); }   # 6.7.7 (T5): `a, b = f();` (it was "expected '='")
+    if (PEEKT(S) != 19) { return 0; }
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { return _stmt_undef_gcall(S, noff); }   # 6.7.16: `nofn<i64>(1);`, a generic that is nothing
+    if (_eta_gen(S, fi) == 0) { return 0; }   # 6.7.16: `nf<i64>(6);` refused, the list stepped — the `IDENT (` arm
+    if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) != 1) { return 0; }
+    if (_stmt_call_field(S) == 1) { return 1; }
+    _must_use_warn(S, noff);
+    _ensure_pair_flags(S);
+    var pair = 0;
+    if ((GFLG(S, fi) & 256) != 0) { pair = 1; }
+    _explicit_generic_call(S, noff, fi);
+    _cfo = 0;
+    _stmt_qmark(S, pair);
+    _expect_step(S, 5);
+    return 1;
+}
+# ⛔ 6.7.16 — `nofn<i64>(1);` AS A STATEMENT, the name nothing in any scope, took the assignment path: "expected '=', got
+# '<'", then "undefined variable 'i64'" and "undefined variable 'nofn'" — and under --syntax-only (lint's pre-pass) a
+# sibling module's generic called so was a false "expected '=', got '<'". It is the factor's call (`_ugc_call`): "undefined
+# function 'nofn'" once, and whatever follows the call's chain stepped over with it (`nofn<i64>(1).n = 5;`); under
+# --syntax-only silent, a field store's tail parsed as a sibling's call's is (`_synonly_fld_tail`). A local, a capture, a
+# global or a struct of the name keeps the old path. Cursor past the name; 1 = consumed through its `;`, 0 = not this
+# shape (cursor untouched). CHANGELOG [6.7.16]
+fn _stmt_undef_gcall(S, noff): i64 {
+    if (_is_ident_intrinsic(S, noff) == 1) { return _stmt_intr_targs(S, noff); }   # 6.7.16: `mulh64<i64>(2, 3);`
+    if (_ugc_open(S, GTI(S)) < 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (_cl_capturing == 1) { if (_cl_snap_find(S, noff) >= 0) { return 0; } }
+    if (FINDVAR(S, noff) >= 0) { return 0; }
+    if (FINDSTRUCT(S, noff) > 0) { return 0; }
+    var tn = _tsc_n;
+    _ugc_call(S, noff);
+    if (_tsc_n != tn) { _cst_skip_decl(S); return 1; }
+    if (_asg_pair_at(S) == 1) { _synonly_fld_tail(S, 5); return 1; }
+    _expect_step(S, 5);
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4, T5) — `a, b = f();` / `a, b, c = f();`: A MULTI-VALUE CALL RE-ASSIGNS EXISTING
+# VARIABLES (the user's decision, 2026-10-08 — the re-poll gap: a loop re-polling a `Result` had to
+# bind a fresh pair each pass). The destructure `var a, b = f();`'s contract on its own checks: the
+# right-hand side is ONE whole call (`_dt_rhs_check_t`, ending at `term` — `;`, or a classic-for
+# step's `)`), its declared arity matched and a provably one-value callee refused
+# (`_dt_arity_check`). The targets are 2 or 3 plain names, each resolved as `x = ..` resolves it (a
+# local, then a global; a closure's capture is "undefined"): a const or enum constant, a struct /
+# tuple / vector / u128 / slice / array / f32 target, a name given twice, and a bool target whose
+# value is not declared bool are refused by name, as is a target that is not a plain name (`a,
+# b.x`, `a, b[i]`, `a, *p`, `a, t.0`, `OP=`) — each was "expected '='". Every value is pushed before
+# any store (rax, rdx, r3), then each target takes its own at its width (`_asg_store_slot`, the
+# statement's). Reached through `_stmt_explicit_generic` (no reference in `_PARSE_STMT_IMPL`) and
+# the for-step replay; cursor on the `,` after the first target. Consumes through `term`. 1.
+# CHANGELOG [6.7.7]
+# The targets are held in this fn's own locals across the call's parse: a multi-value assignment
+# inside it (a closure body among the arguments) re-uses `_masg_ix`.
+var _masg_ix[3];   # target i: a local slot (>= 0), a global (`0 - 2 - gi`), -1 none (refused / unresolved)
+fn _masg_stmt(S, term): i64 {
+    var t0 = GTI(S) - 1;
+    var n = _masg_targets(S);
+    if (n == 0) { return _masg_end(S, term); }
+    STI(S, GTI(S) + 1);   # `=`
+    var x0 = _masg_target(S, t0, 0);
+    var x1 = _masg_target(S, t0, 1);
+    var x2 = 0 - 1;
+    if (n == 3) { x2 = _masg_target(S, t0, 2); }
+    var d0 = _dt_dfr_n();   # 6.7.17: a refusal the chain's own error may stand for (`_dt_dfr_say`)
+    var wk = _dt_peel(S, term);   # 6.7.14 (D45): `a, b = (f());`, closed after the call
+    var fi = _dt_call_fn_d(S);
+    if (_masg_callee(S, fi, n) == 1) {
+        _masg_skip(S);
+        _dt_dfr_say(S, d0);
+        _pw_close(S, wk);
+        return _masg_end(S, term);
+    }
+    _masg_bools(S, t0, n, fi);
+    PCMPE(S);
+    _dt_dfr_say(S, d0);
+    _pw_close(S, wk);
+    _tup_drain_push(S, n);
+    if (n == 3) {
+        EPOPR(S);
+        _masg_store(S, x2);
+    }
+    EPOPR(S);
+    _masg_store(S, x1);
+    EPOPR(S);
+    _masg_store(S, x0);
+    return _masg_end(S, term);
+}
+# The callee `fi` (-1: unknown) of `a, b = f();`, cursor on it: a struct- or vector-returning one is
+# refused by name, as the capture refuses it (`_tup_cap_class`) — a struct return is no multi-value
+# call: a 24 B one's values were its retptr's words, and a 16 B one is a struct, not two values (until
+# the 6.7.7 aarch64 fix it also crossed the struct pair x0:x1 into the multi-value drain x0:x2 — 50
+# where 59 is right). The refusal is the B4 decision, not a register workaround. Then the destructure's
+# arity check. 1 = refused.
+# CHANGELOG [6.7.7] (B4 review)
+fn _masg_callee(S, fi, n): i64 {
+    if (_dt_icall_vec(S, 1) == 1) { return 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
+    _dt_icall_pair(S, n);   # 6.7.17: a known `&f`'s `: stack` pair, three names
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) {
+        _tup_cap_err(S, 0, fi, 2, 0);
+        return 1;
+    }
+    if (rs <= 0 - 2048) {
+        _tup_cap_err(S, 0, fi, 3, 0);
+        return 1;
+    }
+    _dt_arity_check(S, fi, n);
+    return 0;
+}
+# rax into target `x` (`_masg_ix`'s encoding), at its width; none for -1.
+fn _masg_store(S, x): i64 {
+    if (x >= 0) { return _asg_store_slot(S, x, 0); }
+    if (x < 0 - 1) { return _asg_store_slot(S, 0 - 2 - x, 1); }
+    return 0;
+}
+fn _masg_end(S, term): i64 {
+    _expect_step(S, term);
+    return 1;
+}
+# The targets after the first, cursor on its `,`: their count (2..3), the cursor left on `=`; 0 = a
+# refusal reported (a target that is no plain name, or a fourth), the cursor at the statement's end.
+fn _masg_targets(S): i64 {
+    var n = 1;
+    while (PEEKT(S) == 31) {
+        STI(S, GTI(S) + 1);   # `,`
+        if (PEEKT(S) != 2) { return _masg_np(S); }
+        STI(S, GTI(S) + 1);
+        n = n + 1;
+        if (PEEKT(S) != 31) { if (PEEKT(S) != 4) { return _masg_np(S); } }
+    }
+    if (n > 3) {
+        _masg_err(S, "a multi-value assignment re-assigns 2 or 3 variables - a call returns at most 3 values", 0);
+        _masg_skip(S);
+        return 0;
+    }
+    return n;
+}
+# A later target that is no plain name (cursor on the token that shows it). 0.
+fn _masg_np(S): i64 {
+    var t = PEEKT(S);
+    var w = " - this target is not one";
+    if (t == 41) { w = " - a field is not one"; }
+    elif (t == 28) { w = " - an element is not one"; }
+    elif (t == 8) { w = " - `*p` is not one"; }
+    elif (_is_cop_tok(t) == 1) { w = " - its form is `=`, not a compound `OP=`"; }
+    _masg_err(S, "a multi-value assignment `a, b = f();` re-assigns plain variables", w);
+    _masg_skip(S);
+    return 0;
+}
+# A FIRST target that is no plain name (`h.x, b = f();`, `a[i], b = ..`, `*p, q = ..` — where the
+# store expects `=`, cursor on the `,`): refused by name, the cursor at the statement's end. 1.
+fn _masg_not_plain(S, what): i64 {
+    if (PEEKT(S) != 31) { return 0; }
+    _masg_err(S, "a multi-value assignment `a, b = f();` re-assigns plain variables", what);
+    _masg_skip(S);
+    return 1;
+}
+# Reported at the cursor, in sync (the panic latch untouched: the statement is parsed to its end).
+fn _masg_err(S, msg, tail): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_masg_err", msg * 31 + tail, 0) == 1) { return 0; }   # 6.7.15: once per site
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": ");
+    PRSTR(msg);
+    if (tail != 0) { PRSTR(tail); }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# To the statement's end — its `;` at depth 0, or a classic-for step's `)` — not consumed.
+fn _masg_skip(S): i64 {
+    var d = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        if (d == 0) { if (t == 5) { return 0; } }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) {
+            if (d == 0) { return 0; }
+            d = d - 1;
+        }
+        STI(S, GTI(S) + 1);
+    }
+    return 0;
+}
+# Target `i` (token `t0 + 2i`): resolved and judged, recorded in `_masg_ix` and returned.
+fn _masg_target(S, t0, i): i64 {
+    var ti = t0 + i * 2;
+    var sv = GTI(S);
+    STI(S, ti + 1);   # past the name, where `x = ..` reports
+    var x = _masg_resolve(S, TOKVAL(S, ti), ti, t0, i);
+    STI(S, sv);
+    store64(&_masg_ix + i * 8, x);
+    return x;
+}
+fn _masg_resolve(S, nm, ti, t0, i): i64 {
+    var j = 0;
+    while (j < i) {
+        if (TOKVAL(S, t0 + j * 2) == nm) {
+            _masg_err(S, "a multi-value assignment re-assigns each variable once - this one is named twice", 0);
+            return 0 - 1;
+        }
+        j = j + 1;
+    }
+    var p0 = _panic;
+    if (_asg_lvalue_refused(S, nm) == 1) { _panic = p0; return 0 - 1; }
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            if (_masg_kind(S, nm, li, ti) == 1) { return 0 - 1; }
+            return li;
+        }
+    }
+    if (_panic == 0) { if (_asg_cap_first(S, nm, GTI(S)) == 1) { return 0 - 1; } }   # 6.7.11: a capture; 6.7.14: before a global
+    var gi = FINDVAR(S, nm);
+    if (gi < 0) {
+        if (_syntax_only == 1) { return 0 - 1; }   # a sibling file's global: the store is dropped
+        if (_sub_undef_said(S, nm) == 1) { return 0 - 1; }   # 6.7.14: a const fn's check named it; 6.7.16: a refused declaration declared it
+        _undef_ident_at(S, ti, nm, 0);   # 6.7.17: at the name
+        _gv_note_blockscoped(S, nm);
+        _panic = p0;
+        return 0 - 1;
+    }
+    if (_masg_kind(S, nm, 0 - 1, ti) == 1) { return 0 - 1; }
+    return 0 - 2 - gi;
+}
+# A target that holds no one value: an aggregate, a vector, a u128 / slice pair, an array or an
+# f32 (a local `li`, else the global `nm`) — refused by name. 1 = refused.
+fn _masg_kind(S, nm, li, ti): i64 {
+    var k = 0;
+    var tup = 0;
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (GLAEW(S, li) != 0 || GLBARR(S, li) == 1) { k = 5; }
+        elif (_is_simd_any(S, lt) == 1) { k = 2; }
+        elif (lt < 0) { if (GLAGG(S, li) == 1) { k = 1; tup = _tup_is(S, 0 - lt); } }
+        elif (lt == F32_TYID) { k = 3; }
+        elif (GLSPAN(S, li) > 1) { k = 4; if (_slice_lw(S, li) > 0) { k = 6; } }
+    } else {
+        var gi = _findvar_core(S, nm);
+        if (gi < 0) { return 0; }
+        var gt = GVTYPE(S, gi);
+        if (_arr_gdesc(S, gi) != 0 || _arr_gbare(S, gi) == 1) { k = 5; }
+        elif (GVVEC(S, gi) != 0) { k = 2; }
+        elif (GVPM(S, gi) == 2) { k = 1; tup = _tup_is(S, gt); }
+        elif (gt == F32_TYID) { k = 3; }
+        elif (GVW128(S, gi) == 1) { k = 4; }
+        elif (GVPM(S, gi) == 0) { if (L64(_vars_base + gi * 8) == 16) { k = 6; } }
+    }
+    if (k == 0) { return 0; }
+    var tl = " from a multi-value call - its targets are i64, f64 or bool variables";
+    if (tup == 1) { _tup_err(S, ti, "cannot re-assign tuple ", nm, " from a multi-value call - capture the call into it whole: `t = f();`"); }
+    elif (k == 1) { _tup_err(S, ti, "cannot re-assign struct ", nm, tl); }
+    elif (k == 2) { _tup_err(S, ti, "cannot re-assign vector ", nm, tl); }
+    elif (k == 3) { _tup_err(S, ti, "cannot re-assign f32 ", nm, tl); }
+    elif (k == 4) { _tup_err(S, ti, "cannot re-assign u128 ", nm, tl); }
+    elif (k == 5) { _tup_err(S, ti, "cannot re-assign array ", nm, tl); }
+    else { _tup_err(S, ti, "cannot re-assign slice ", nm, tl); }
+    return 1;
+}
+# A bool target takes only a value its callee DECLARES bool (`: (bool, ..)`) — B2's rule for `b = e`.
+fn _masg_bools(S, t0, n, fi): i64 {
+    var i = 0;
+    while (i < n) {
+        var x = L64(&_masg_ix + i * 8);
+        var b = 0;
+        if (x >= 0) { b = GLBOOL(S, x); }
+        elif (x < 0 - 1) { b = GVBOOL(S, 0 - 2 - x); }
+        if (b == 1) { if (_masg_ebool(S, fi, i) == 0) {
+                _bx_refuse(S, t0 + i * 2, "cannot assign a value that is not a bool to bool ", TOKVAL(S, t0 + i * 2), " - the call does not declare that value bool", 0 - 1);
+            } }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _masg_ebool(S, fi, k): i64 {
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    if ((GFLG(S, fi) & (8192 << k)) == 0) { return 0; }
+    return 1;
+}
+
+# ⛔ 6.6.16 — A METHOD CALL AS A BARE STATEMENT, `p.m(..);` — with a postfix `?`, like `f(..)?;`
+# and `g<T>(..)?;`. The arm in _PARSE_STMT_IMPL called PARSE_FIELD_LOAD and then demanded `;`, so
+# `p.div(d)?;` was "expected ';', got unknown". `pair` is read BEFORE the call is parsed
+# (`_pair_callee_at`: the receiver's `T_m`), as the other two statement forms read theirs. Cursor
+# on the DOT after the receiver `noff`; consumes through the `;`. One call in _PARSE_STMT_IMPL
+# (the cybs per-function cap). CHANGELOG [6.6.16]
+# 6.6.17: and #must_use, as a discarded `f(..);` warns — an impl method takes the attribute since
+# 6.6.17 (`_impl_attrs`). The method the statement ENDED with is the one discarded (`_mcall_last`:
+# `p.bump().mu();` discards `mu`'s result; `p.mu().x;` used it).
+fn _stmt_method_call(S, noff): i64 {
+    if (_stmt_enum_qual(S, noff) == 1) { return 0; }   # 6.7.16: `E.m(..);`, E an enum
+    var pair = _callee_returns_pair_at(S, GTI(S) - 1);
+    _mcall_last = 0 - 1;
+    var sv = _cpf_st;
+    var st = GTI(S) - 1;
+    _cpf_st = st;   # 6.7.13 (D8 (a)): `o.gp().n = v;` through a method's `*T` result (`_cpf_try`)
+    _cpf_done = 0 - 1;
+    var tn = _tsc_n;
+    PARSE_FIELD_LOAD(S, noff);
+    _cpf_st = sv;
+    if (_cpf_done == st) { return 0; }   # the store ended the statement
+    # 6.7.5 (B8): `b.mk(4).x = 5;` / `.. += 5;` — a field of the call's result is no lvalue (it was
+    # `expected ';', got '='`). A chain ending in a call keeps that message. 6.7.14: at top level the
+    # by-value method refused itself (`_tsc_n` moved), the one error. CHANGELOG [6.7.14]
+    if (_mcall_last < 0) { if (_asg_pair_at(S) == 1) { if (_tsc_n != tn) { _cst_skip_decl(S); return 0; } _asg_temp_refused(S); return 0; } }
+    if (_mcall_last >= 0) { if (PEEKT(S) == 5) { _must_use_warn(S, L64(_fnt_names + _mcall_last * 8)); } }
+    _stmt_qmark(S, pair);
+    _expect_step(S, 5);
+    return 0;
+}
+
+# 6.7.16 — `E.m(..);` (cursor on the dot), E an enum and no variable: the store path's statement (a member, `Color.RED();`,
+# is the "expected '='" `Color.RED;` is; any other name "'m' is not a variant of 'E'", the statement stepped) — the
+# field load blamed the enum, "undefined variable 'Color'". 1 = consumed through its `;`. CHANGELOG [6.7.16]
+fn _stmt_enum_qual(S, noff): i64 {
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (_enum_id_of(S, noff) == 0) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, noff) >= 0) { return 0; } }
+    if (FINDVAR(S, noff) >= 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, sv + 2);
+    if (_enum_qual_store_refused(S, noff, TOKVAL(S, sv + 1)) == 1) { return 1; }
+    STI(S, sv);   # --syntax-only: an unknown member stays opaque (`_enum_qual_bad`), the call parsed as before
+    return 0;
+}
+
+# ⛔ 6.6.16 — A fn IS DEFINED AT TOP LEVEL. A named `fn` / `async fn` inside a fn body — or a
+# closure, an impl method, a generic body — reached PARSE_PROG's relaxed-ordering arm, which is
+# for TOP-LEVEL code: PARSE_FN_DEF for the inner fn overwrote the OUTER fn's per-fn state while
+# the outer was still being emitted (its locals and frame, its return patches, `_cur_fn_ix`, and
+# `SINFN(S, 0)` at the inner fn's end, so the rest of the outer body parsed as top-level code),
+# and pass 1 never registered the inner fn (bodies are brace-skipped). Measured on x86:
+# `fn outer(): i64 { fn inner(): i64 { return 3; } return inner(); }` compiled rc 0 and ran SIGILL
+# (132), and still did with `return 7;` in place of the call; a multi-line form, an untyped one,
+# one inside an `if` and one in a generic instance SIGSEGV'd. In a switch case, an `async fn`, a
+# closure body or an impl method it failed with an unrelated message (`unexpected async`,
+# `undefined variable 'x'`, `undefined function 'inner'`), often with a cascade.
+# So it is ONE named error, and nothing cascades: the nested fn's tokens are consumed
+# (`_skip_nested_body`, the pair scans' own skip), its name is entered as already REPORTED
+# (`_nested_fn_mark`), and the panic latch is left as it was (the report is written here, not
+# through an ERR_* emitter that would latch it), so the outer body parses on and reports its own
+# errors. A fn inside a TOP-LEVEL block (`if (on) { fn f() { .. } }`, GINFN == 0) is the
+# relaxed-ordering feature, compiles correctly, and is untouched. A local function is a closure.
+# CHANGELOG [6.6.16]
+var _nfn_seen = 0;   # vec of the `fn` tokens refused so far: a body parsed twice reports once
+
+# Has the nested `fn` at token kw been reported? A body can be parsed more than once — a generic
+# instance and an `#inline` replay re-parse the base's tokens — and each is the same definition.
+fn _nested_fn_seen(kw): i64 {
+    if (_nfn_seen == 0) { _nfn_seen = vec_new(); }
+    var i = 0;
+    var c = vec_len(_nfn_seen);
+    while (i < c) {
+        if (vec_get(_nfn_seen, i) == kw) { return 1; }
+        i = i + 1;
+    }
+    vec_push(_nfn_seen, kw);
+    return 0;
+}
+
+# The refused fn's NAME is entered in the fn table as already REPORTED — offset -2, the
+# undefined-call check's own "reported" marker, plus an owner so the pre-pass check skips it too —
+# so a call to it adds no "undefined function" warning and no "refusing to emit binary" error to
+# the one diagnostic. Only an entry nothing defines: a fn of the same name defined elsewhere keeps
+# its entry untouched, and a call reaches that one.
+fn _nested_fn_mark(S, noff, kw): i64 {
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { fi = REGFN(S, noff); }
+    if (L64(_fnt_offsets + fi * 8) != 0 - 1) { return 0; }
+    if (GFFI(S, fi) != 0) { return 0; }
+    S64(_fnt_offsets + fi * 8, 0 - 2);
+    SFFI(S, fi, FM_FILEID(S, GTLINE(S, kw)) + 1);
+    return 0;
+}
+
+# Where the refused fn sits, for the message: `fn 'outer'` (a generic instance's or an async
+# body's `$..` suffix cut), or `a closure` for a closure's `__clNNNNN` entry.
+fn _nested_fn_encl(S): i64 {
+    if (_cur_fn_ix < 0) { PRSTR("a fn body"); return 0; }
+    var p = S + 0xEC00000 + L64(_fnt_names + _cur_fn_ix * 8);
+    if (_fn_is_closure(S, _cur_fn_ix) == 1) { PRSTR("a closure"); return 0; }
+    PRSTR("fn '");
+    var l = 0;
+    while (load8(p + l) != 0 && load8(p + l) != 36) { l = l + 1; }
+    _ew(p, l);
+    PRSTR("'");
+    return 0;
+}
+
+# 1 = fn `fi` is a closure's `__clNNNNN` entry (a refusal says "a closure", never its table name). CHANGELOG [6.7.16]
+fn _fn_is_closure(S, fi): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    if (load8(p) != 95 || load8(p + 1) != 95 || load8(p + 2) != 99 || load8(p + 3) != 108) { return 0; }
+    if (load8(p + 4) >= 48 && load8(p + 4) <= 57) { return 1; }
+    return 0;
+}
+# Refuse the `fn` / `async fn` at the cursor when it is inside a fn body (GINFN == 1).
+# 1 = refused: reported once, consumed through its body's `}` (or a bodiless header's `;`, never
+# past EOF). 0 = not a nested fn: nothing moved. Small and with no tail call (cybs).
+# Called by PARSE_PROG's `fn` arm, the end of _PARSE_STMT_IMPL (`async fn`, and the statement
+# positions that bypass PARSE_PROG: a switch case body, `@unsafe { }`) and the generic stub-body
+# skip in PARSE_FN_DEF.
+# 6.7.14 — `async fn` AFTER THE FIRST TOP-LEVEL STATEMENT IS A FUNCTION, as a `fn` there is (the user's decision
+# D14 (a), 2026-10-16; the guide: "functions can appear after top-level statements"). PARSE_PROG's relaxed-ordering
+# arm admitted it (`_IS_FN_KW`) and pass 1 prescans it, but only `const`'s prefix was consumed, so PARSE_FN_DEF took
+# `async` for its `fn` and `fn` for the name: "expected identifier, got reserved keyword 'fn'". The prefix is taken
+# as pass 2's `_tl_scan2_def` takes it, after `_refuse_nested_fn` (whose `async fn` refusal reads the prefix itself).
+fn _tl_async_prefix(S): i64 {
+    if (PEEKT(S) != 134) { return 0; }
+    _pending_async = 1;
+    STI(S, GTI(S) + 1);
+    return 0;
+}
+fn _refuse_nested_fn(S): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    var kw = GTI(S);
+    if (TOKTYP(S, kw) == 134) { kw = kw + 1; }    # `async fn`
+    if (TOKTYP(S, kw) != 32) { return 0; }
+    if (_nested_fn_seen(kw) == 0) {
+        _ew("error:", 6);
+        _err_head(S);
+        if (TOKTYP(S, kw + 1) == 2) {
+            PRSTR(": fn '");
+            PRSTR(S + 0xEC00000 + TOKVAL(S, kw + 1));
+            PRSTR("' is defined inside ");
+            _nested_fn_mark(S, TOKVAL(S, kw + 1), kw);
+        } else { PRSTR(": a fn is defined inside "); }
+        _nested_fn_encl(S);
+        PRSTR("; define it at top level\n");
+        _err_excerpt(S);
+        PRSTR("  note: a local function is a closure (`var f = |x| { .. };`); a fn inside a top-level block is allowed\n");
+        _had_error = 1;
+    }
+    var e = _skip_nested_body(S, kw);
+    if (TOKTYP(S, e) != 12) { e = e + 1; }
+    STI(S, e);
+    return 1;
+}
+
+# 6.7.17 — a token an `asm { }` body cannot hold. A statement keyword, `asm` or the end of file: the block's `}` is
+# missing — "expected '}'" there, nothing stepped, and the block ends in sync (the latch as it was), so the next
+# statement is parsed; anything else is reported and stepped. 0 = the block ended. The body loop stepped nothing after
+# its report: `asm { 0x90;` then `asm { .. }` printed "unexpected asm" and spun to "parser recovery aborted (desync —
+# too many errors)", nothing after it parsed. CHANGELOG [6.7.17]
+fn _asm_bad(S): i64 {
+    var p0 = _panic;
+    var t = PEEKT(S);
+    if (t == 12 || t == 48 || _sync_kw(S, t) == 1) {   # 48: the next `asm`
+        ERR_EXPECT(S, 14);
+        if (p0 == 0) { _panic = 0; }
+        return 0;
+    }
+    ERR(S);
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
+fn PARSE_STMT(S): i64 {
+    if (_decl_late(S) == 1) { return 0; }   # 6.7.14 (D13 (a)): a declaration after the first statement
+    var before = GTI(S);
+    # v6.5.19 (the define-body copy overflow bug): this wrapper is already the one place every statement descent
+    # passes through, which makes it the natural home for the depth bound too. See
+    # _rd_enter (src/common/util.cyr). Covers nested fn / blocks / if / while.
+    _rd_enter(S);
+    # 6.6.5: and for the same reason, the natural home for the expression-stack check — a
+    # statement must leave the machine stack exactly as it found it. See `_xd_check`.
+    var _xd0 = _xdepth;
+    var ov = _agc_ovr;   # 6.7.11: a statement nested in a `*p = v` source is no `*p` destination (`_dst_arms`)
+    _agc_ovr = 0;
+    var fe = _flt_en;   # 6.7.16: this statement's errors are counted from here (`_FLT_TYPE_WARN`)
+    _flt_en = _err_n;
+    # 6.7.17: a statement nested in an assignment's value (a closure body) keeps the assignment's name token: `zq =
+    # |a| { var t = 1; t = t + 1; return a; };` reported 'zq' under the inner `t`. CHANGELOG [6.7.17]
+    var an = _asg_nti;
+    _PARSE_STMT_IMPL(S);
+    _asg_nti = an;
+    _flt_en = fe;
+    _agc_ovr = ov;
+    _rd_exit();
+    _xd_check(S, _xd0, "statement");
+    if (_panic == 1) { _stmt_resync(S, before); }   # 6.7.11: an in-sync pair refusal resyncs here
+    if (GTI(S) == before) {
+        if (GTI(S) < GTCNT(S)) { STI(S, GTI(S) + 1); }
+    }
+    return 0;
+}
+
+# 6.6.16 (C1): a statement inside another statement that has NO braced PARSE_PROG body — a
+# `switch` case / default arm, an `@unsafe { }` body, a `for`'s init clause — is one nesting
+# level deeper for _gai_stmt (parse/decl/static_init.cyr), which takes an array initializer only at module
+# scope (`_pp_depth == 1`). PARSE_PROG counts every braced body; these parse their statements
+# through PARSE_STMT directly, so a list in a top-level `case` arm was baked whether the arm ran
+# or not. A wrapper, so no hot function gains a global reference. CHANGELOG [6.6.16]
+fn _PARSE_STMT_NESTED(S): i64 {
+    _pp_depth = _pp_depth + 1;
+    PARSE_STMT(S);
+    _pp_depth = _pp_depth - 1;
+    return 0;
+}
+
+# The nested `@unsafe` warning, at the cursor, once (`_warn_seen`: a generic body is parsed per instance).
+# CHANGELOG [6.7.15]
+fn _unsafe_nest_warn(S): i64 {
+    if (_warn_seen(GTI(S), "_unsafe_nest_warn", 0) == 1) { return 0; }
+    _ew("warning:", 8);
+    _err_head(S);
+    _ew(": nested @unsafe block\n", 23);
+    return 0;
+}
+fn _PARSE_STMT_IMPL(S): i64 {
+    var typ = PEEKT(S);
+    # v5.6.3: @unsafe { ... } block. Body parses as a plain block
+    # (no scope change). Nested unsafe triggers an advisory warning —
+    # by design, @unsafe is for marking memory/FFI crossings and
+    # wrapping an unsafe region in another one usually means the
+    # outer-scope responsibility is being redelegated, which is what
+    # the warning flags.
+    if (typ == 123) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+        STI(S, GTI(S) + 1);
+        _unsafe_depth = _unsafe_depth + 1;
+        if (_unsafe_depth > 1) { _unsafe_nest_warn(S); }
+        while (PEEKT(S) != 14) {
+            if (PEEKT(S) == 12) { break; }
+            _PARSE_STMT_NESTED(S);
+        }
+        STI(S, GTI(S) + 1);
+        _unsafe_depth = _unsafe_depth - 1;
+        return 0;
+    }
+    # #assert EXPR OP EXPR, "msg" — compile-time check
+    if (typ == 107) {
+        # 6.7.2 (C1): a CONST CONTEXT — any const expression (consts, enum constants, sizeof,
+        # const fn calls, arithmetic, `&&` / `||`); it used to be one atom, or two compared.
+        # 6.7.15: with the latch clear, refused in sync (`_assert_open` / `_assert_end`).
+        var as_p0 = _assert_open(S);
+        var lhs = _ce_eval_here(S);
+        _ce_asrt = 0;
+        if (_ce_err == 0) { if (_ce_k == 2) { ERR_MSG(S, "#assert of a string: an assertion is an integer or f64 condition", 64); } }
+        # lhs is now the assertion value (0 = fail, non-zero = pass)
+        _assert_operands_end(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+        # 6.6.10: an operand (or a trailing token) that THIS assert reported has latched
+        # _panic; a "#assert failed" after it was a second error for the same mistake. Only
+        # this assert's own latch counts (6.7.15: it began clear) — an earlier, unresynced error
+        # must not swallow an independent failing #assert. CHANGELOG [6.6.10]
+        if (_panic == 1) { lhs = 1; }
+        if (lhs == 0) { if (GTI(S) > _assert_rep_ti) {
+                _assert_rep_ti = GTI(S);
+                _ew("error:", 6);
+                _err_head(S);
+                _ew(": #assert failed", 16);
+                if (PEEKT(S) == 30) {
+                    # String token value is (offset << 32) | length
+                    var sv = PEEKV(S);
+                    var slen = sv & 0xFFFFFFFF;
+                    _ew(": ", 2);
+                    _ew(_lit_ptr(S, sv), slen);   # 6.6.17: a side-table message
+                }
+                _ew("\n", 1);
+                # 6.6.11: record, don't exit. A top-level #assert runs in the declaration phase,
+                # BEFORE PARSE_PROG parses the top-level `var` initialisers, so exiting here lost
+                # an earlier syntax error (`var x = ;` then a failing assert printed only the
+                # assert). Every fork's EMITELF refuses on _had_error and main exits with it.
+                _had_error = 1;
+            } }
+        _assert_end(S, as_p0);
+        return 0;
+    }
+    # #pe_import("kernel32.dll", "WriteFile"); — declare a PE32+ IAT
+    # import symbol at parse time. The dll string is accepted but
+    # ignored in v5.4.6 (kernel32.dll is the only supported DLL);
+    # the symbol string is handed to the pe emitter's pending-
+    # imports buffer, to be folded into the real imports registry
+    # by `_pe_layout` during FIXUP.
+    if (typ == 110) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
+        STI(S, GTI(S) + 1);
+        # dll name (ignored for v5.4.6)
+        if (PEEKT(S) != 30) { ERR_EXPECT(S, 30); }
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); }
+        STI(S, GTI(S) + 1);
+        # symbol name
+        if (PEEKT(S) != 30) { ERR_EXPECT(S, 30); }
+        var pe_sv = PEEKV(S);
+        var pe_soff = pe_sv >> 32;
+        _pe_pending_imp_add(S, S + 0x21A000 + pe_soff);
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+        return 0;
+    }
+    if (typ == 3) { PARSE_VAR(S); return 0; }
+    if (typ == 168) { _cst_stmt(S); return 0; }   # 6.7.2 (B1): `const NAME = ..;` (no code)
+    # secret var buf[N]; — declares an array that is memset(0) at every
+    # function-return path. Implemented as a synthetic defer body: the
+    # var is registered normally, then a zeroise loop is emitted into a
+    # defer entry so the existing epilogue walker runs it. Only supports
+    # array declarations in v5.3.5 scope — the crypto consumers (sigil,
+    # sakshi) use arrays exclusively.
+    if (typ == 108) {
+        if (GINFN(S) != 1) {
+            ERR_MSG(S, "secret var only allowed inside a function", 41);
+        }
+        # A #naked fn has no epilogue to zeroise from: the wipe never ran. Refused. CHANGELOG [6.6.15]
+        if (_cur_fn_naked == 1) {
+            ERR_MSG(S, "secret var is not allowed in a #naked fn (it has no epilogue to zeroise it)", 75);
+        }
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 3) { ERR_EXPECT(S, 3); }
+        # v6.3.15: when array locals are per-thread STACK (CYRIUS_STACK_ARRAYS), the
+        # `var buf[N]` here is registered as fn-LOCAL slots, not a global var — so detect
+        # the array via FINDLOCAL + a slot-delta size and zeroise through the local
+        # address (`lea [rbp-disp]`) instead of the global `EVADDR`. Off (legacy global
+        # array) keeps the original VCNT/`_vars_base`/`EVADDR` path byte-identical.
+        var s_name = TOKVAL(S, GTI(S) + 1);   # the array's name token (after `var`)
+        var s_flc_pre = GFLC(S);
+        var vcnt_pre = GVCNT(S);
+        PARSE_VAR(S);
+        var sidx = 0;
+        var ssz = 0;
+        var s_lidx = 0;
+        # 6.6.5 — ASK WHERE THE ARRAY ACTUALLY WENT, not whether stack arrays are enabled.
+        # An array over the per-fn budget falls back to static storage even with the flag on,
+        # so the flag said "local", FINDLOCAL found nothing, and a perfectly good
+        # `secret var buf[200000];` was refused with "secret requires array declaration".
+        # Worse, with an outer local of the same name in scope FINDLOCAL DID find something
+        # and the zeroise ran against the wrong storage — the buffer was never cleared, which
+        # is the one thing `secret` exists to guarantee. The slot-count delta is the fact.
+        var s_stack = 0;
+        if (GFLC(S) > s_flc_pre) { s_stack = 1; }
+        if (s_stack == 1) {
+            s_lidx = FINDLOCAL(S, s_name);
+            if (s_lidx < 0) {
+                ERR_MSG(S, "secret requires array declaration: secret var buf[N];", 53);
+            }
+            ssz = (GFLC(S) - s_flc_pre) * 8;   # array slot count (incl. any 16-align pad) × 8
+        } else {
+            if (GVCNT(S) != vcnt_pre + 1) {
+                ERR_MSG(S, "secret requires array declaration: secret var buf[N];", 53);
+            }
+            sidx = vcnt_pre;
+            ssz = L64(_vars_base + sidx * 8);
+        }
+        # Flag local (initialized to 0 in prologue; set to 1 when this
+        # declaration is reached at runtime).
+        var sflag = GFLC(S);
+        S64(S + 0x5D9D000 + sflag * 8, 0 - 1);   # 6.6.5: anonymous — name 0 is the first lexed word
+        SLDEP(S, sflag, GSDEP(S));
+        SLTYPE(S, sflag, 0);
+        SFLC(S, sflag + 1);
+        EMOVI(S, 1);
+        EFLSTORE(S, sflag);
+        var sjmp = EJMP0(S);
+        var ssbody = GCP(S);
+        # Zeroise body: load &buf once, then unroll `store64 [ptr], 0; ptr += 8`.
+        # Stack array (flag on): rbp-relative `lea` of the local; global array
+        # (flag off, legacy): absolute `EVADDR`. Both leave the base in rax.
+        if (s_stack == 1) {
+            var s_disp = 0 - ((s_lidx + 1) * 8);
+            if (_cur_fn_regalloc > 0) { s_disp = s_disp - _cur_fn_regalloc * 8; }
+            if (_cur_fn_ret_stash > 0) { s_disp = s_disp - _cur_fn_ret_stash; }
+            ELOAD_LOCAL_ADDR(S, s_disp);
+        } else {
+            EVADDR(S, sidx);
+        }
+        EMOVCA(S);
+        EXORAA(S);
+        var sqw = ssz / 8;
+        var sqi = 0;
+        while (sqi < sqw) {
+            ESTORE64(S);
+            EADDIMM_X1(S, 8);
+            sqi = sqi + 1;
+        }
+        var ssend = EJMP0(S);
+        var sdci = L64(S + 0x1AC020);
+        if (sdci >= 64) {
+            _ew("error: too many defer/secret blocks (max 64)\n", 45);
+            _die(1);
+        }
+        S64(S + 0x1AC028 + sdci * 24, ssbody);
+        S64(S + 0x1AC028 + sdci * 24 + 8, ssend);
+        S64(S + 0x1AC028 + sdci * 24 + 16, sflag);
+        S64(S + 0x1AC020, sdci + 1);
+        EPATCH(S, sjmp);
+        return 0;
+    }
+    # v5.5.36: `stack var buf[N];` — stack-local array. Unlike the
+    # default `var x[N]` which hoists to .bss as a global, this
+    # reserves N bytes (aligned up to 8) on the call stack. Each fn
+    # invocation gets its own copy (re-entrant-safe). Addressed via
+    # rbp-relative displacement through the existing `&local`
+    # codepath, so no emit-side changes are needed for access.
+    #
+    # Implementation: register ceil(N/8) fn-local slots. The first
+    # nslots-1 are anonymous sentinels (name offset = -1; FINDLOCAL
+    # skips them via its `sn >= 0` gate). The last slot carries the
+    # user's name, so FINDLOCAL returns the deepest (lowest-address)
+    # slot — `&buf` therefore points at the BOTTOM of the array,
+    # with byte[0] at rbp-(nslots*8) and byte[N-1] immediately below
+    # the regular locals block.
+    #
+    # __chkstk for frames ≥ 4 KB under _TARGET_PE is v5.5.36 Phase 1b
+    # (pinned — same patch). For now, small-frame `stack var` lands
+    # cleanly on Windows because Win11 happens to extend stack on
+    # guard-page access for frames ≤ one-page-past-the-guard; deeper
+    # frames need the chkstk walker to touch every page in order.
+    if (typ == 111) {
+        if (GINFN(S) != 1) {
+            ERR_MSG(S, "stack var only allowed inside a function", 40);
+        }
+        STI(S, GTI(S) + 1);                         # consume 'stack'
+        if (PEEKT(S) != 3) { ERR_EXPECT(S, 3); }    # need 'var'
+        STI(S, GTI(S) + 1);                         # consume 'var'
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }    # need IDENT
+        var stk_noff = PEEKV(S);
+        _RSV_INTRINSIC_DECL(S, stk_noff, GTI(S), 0);   # 6.6.20: `stack var sizeof`
+        STI(S, GTI(S) + 1);                         # consume IDENT
+        if (PEEKT(S) != 28) { ERR_EXPECT(S, 28); }  # need '['
+        STI(S, GTI(S) + 1);                         # consume '['
+        if (PEEKT(S) != 1) { ERR_EXPECT(S, 1); }    # need NUM
+        var stk_size = PEEKV(S);
+        STI(S, GTI(S) + 1);                         # consume NUM
+        if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }  # need ']'
+        STI(S, GTI(S) + 1);                         # consume ']'
+        _expect_step(S, 5);                         # consume ';'
+        if (stk_size <= 0) {
+            ERR_MSG(S, "stack var size must be > 0", 26);
+        }
+        var stk_aligned = (stk_size + 7) & (0 - 8);
+        var stk_nslots = stk_aligned / 8;
+        # Reject duplicate name (same rule as regular locals)
+        var stk_existing = FINDLOCAL(S, stk_noff);
+        if (stk_existing >= 0) {
+            if (GLDEP(S, stk_existing) == GSDEP(S)) { ERRDUPVAR(S); }
+        }
+        # Anonymous filler slots — FINDLOCAL skips `sn < 0` entries.
+        var stk_j = 0;
+        while (stk_j < stk_nslots - 1) {
+            var stk_li = GFLC(S);
+            S64(S + 0x5D9D000 + stk_li * 8, 0 - 1);
+            SLDEP(S, stk_li, GSDEP(S));
+            SLTYPE(S, stk_li, 0);
+            SFLC(S, stk_li + 1);
+            stk_j = stk_j + 1;
+        }
+        # Named slot at the deepest frame offset — this is where
+        # `&buf` and `buf` resolve via FINDLOCAL.
+        var stk_named = GFLC(S);
+        S64(S + 0x5D9D000 + stk_named * 8, stk_noff);
+        SLDEP(S, stk_named, GSDEP(S));
+        _stk_named_marks(S, stk_named, stk_nslots);   # 6.6.5: the slots ARE the buffer; 6.7.6: a bare array
+        SLTYPE(S, stk_named, 0);
+        SFLC(S, stk_named + 1);
+        return 0;
+    }
+    # Block statement: { ... }
+    if (typ == 13) {
+        STI(S, GTI(S) + 1);
+        SCOPE_PUSH(S);
+        PARSE_PROG(S);
+        SCOPE_POP(S);
+        if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    if (typ == 15) { PARSE_IF(S); return 0; }
+    # 6.7.3: after the WHOLE loop — a C-style `for`'s step is emitted after its body.
+    if (typ == 16) { PARSE_WHILE(S); _tcp_loop_end(); return 0; }
+    if (typ == 55) { PARSE_FOR(S); _tcp_loop_end(); return 0; }
+    # 6.7.5 (B5): `do { } while (c);` and the contextual `loop { }` — before the identifier arm.
+    if (_loop_stmt(S, typ) == 1) { return 0; }
+    if (typ == 57) { PARSE_SWITCH(S); return 0; }
+    if (typ == 75) { PARSE_MATCH(S); return 0; }
+    if (typ == 33) { PARSE_RETURN(S); return 0; }
+    # break; / defer { } / continue; — see _PARSE_BREAK / _PARSE_DEFER / _PARSE_CONTINUE.
+    if (typ == 51) { _PARSE_BREAK(S); return 0; }
+    if (typ == 106) { _PARSE_DEFER(S); return 0; }
+    if (typ == 52) { _PARSE_CONTINUE(S); return 0; }
+    # asm { ... } — raw bytes or mnemonic instructions
+    if (typ == 48) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+        STI(S, GTI(S) + 1);
+        # v5.6.12: inline asm block is opaque to IR — each byte is
+        # arbitrary user-provided machine code.
+        _IR_REC0(S, IR_RAW_EMIT);
+        var ago = 1;
+        while (ago == 1) {
+            if (PEEKT(S) == 14) { ago = 0; }
+            else {
+                if (PEEKT(S) == 1) {
+                    # Raw byte — the dead-code call graph keeps the byte scan over its fn
+                    # (util.cyr _dce_raw_note). CHANGELOG [6.7.14]
+                    _dce_raw_note(_cur_fn_ix);
+                    EB(S, PEEKV(S) & 0xFF);
+                    STI(S, GTI(S) + 1);
+                    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+                }
+                elif (PEEKT(S) == 2) {
+                    # Mnemonic — dispatch to ASM_MNEMONIC
+                    ASM_MNEMONIC(S);
+                }
+                # `in` lexes as the for-in keyword: the backend's ASM_KW_IN (6.7.14)
+                elif (PEEKT(S) == 76) { ASM_KW_IN(S); }
+                else { ago = _asm_bad(S); }
+            }
+        }
+        if (PEEKT(S) == 14) { STI(S, GTI(S) + 1); }
+        # aarch64 requires every instruction 4-byte aligned. Existing
+        # lib/*.cyr asm blocks are x86-specific byte sequences that the
+        # aarch64 backend pastes verbatim; if the length isn't a multiple
+        # of 4, every downstream instruction decodes at the wrong offset
+        # and the program SIGILLs long before it ever reaches the x86
+        # bytes. Pad with zeros so downstream emit stays aligned. The x86
+        # backend is variable-length and doesn't care about alignment, so
+        # this costs nothing there — on aarch64 `_AARCH64_BACKEND == 1`.
+        # v6.4.58: cx bytecode is ALSO strictly 4-byte instructions (cxvm computes
+        # call/jump targets as off*4), so a raw asm block whose length isn't a
+        # multiple of 4 misaligns every following fn — same class as the v6.4.54
+        # DCE-stub bug. Pad on cx too. x86 is variable-length (both operands 0 →
+        # no padding, byte-identical). See issue 2026-07-11-cx-naked-asm-4byte-realign.
+        if (_AARCH64_BACKEND == 1 || _TARGET_CX == 1) {
+            while ((GCP(S) & 3) != 0) { EB(S, 0); }
+        }
+        return 0;
+    }
+    if (typ == 8) { _deref_store(S, 5); return 0; }   # `*expr = v;` / `*expr OP= v;`
+    # 6.7.17 (D32): a value builtin as the statement — `load8(p);`, `f64_sqrt(x);` — is refused by name. The arms
+    # below are the effect builtins: a store through a destination, a call, `ret2`'s return.
+    if (_stmt_value_builtin(S, typ) == 1) { return 0; }
+    # Expression statements: syscall(...); store8(...);
+    # 6.7.14: their `;` through `_expect_step` — an unclosed `syscall(60, 0;` then a `for` stepped the `for`.
+    if (typ == 24) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 26) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 45) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 46) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 47) { PCMPE(S); _expect_step(S, 5); return 0; }
+    # f64/SIMD builtins as statements: this band's effect members, f64v_add .. f64v_fmadd (89-96, `dst`) and ret2
+    if (typ >= 62) { if (typ <= 105) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v5.10.17: f64v_scale/axpy as statements (out-of-range from
+    # the existing 62-105 SIMD band; share the same PCMPE-then-`;` shape).
+    if (typ >= 129) { if (typ <= 130) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.3+ (SIMD Phase 1): f32v_add/sub/mul as statements (138-140).
+    if (typ >= 138) { if (typ <= 140) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.5 (SIMD Phase 2): f32v_fmadd as a statement (141).
+    if (typ == 141) { PCMPE(S); _expect_step(S, 5); return 0; }
+    # v6.4.6 (Phase 3a): iv_add/iv_sub/iv_mul as statements (143-145).
+    if (typ >= 143) { if (typ <= 145) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.8 (SIMD Phase 4 R1): f32v8_add/sub/mul as statements (147-149).
+    if (typ >= 147) { if (typ <= 149) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.4.9 (SIMD Phase 4 R2): f32v8_fma as a statement (150).
+    if (typ == 150) { PCMPE(S); _expect_step(S, 5); return 0; }
+    # v6.5.24 (ymm widening): f64v256_add/sub/mul/div as statements (154-157). The lib
+    # wrappers call these in STATEMENT position (`f64v256_add(&r, a_ptr, b_ptr, 4);`), so
+    # without this band the builtin lexes and emits fine yet is a syntax error at every
+    # real call site. 152/153 (`>>>`, `private`) are deliberately not in the range; f64v256_dot (159) is a value.
+    if (typ >= 154) { if (typ <= 162) { PCMPE(S); _expect_step(S, 5); return 0; } }
+    # v6.6.2 — callptr (137), renumbered out of its collision with `stack` (111), GAINS statement position here: at
+    # 111 it hit the `stack var` parser and was a hard error, which the filing recorded as diagnostics-only and was not.
+    if (typ == 137) { if (_stmt_callptr_field(S) == 1) { return 0; } }   # 6.7.14: `callptr(&gp, 5).b = 40;`
+    if (typ == 137) { PCMPE(S); _expect_step(S, 5); return 0; }
+    if (typ == 2) {
+        # Could be assignment or fn call as statement
+        var noff = PEEKV(S);
+        STI(S, GTI(S) + 1);
+        if (_stmt_explicit_generic(S, noff) == 1) { return 0; }   # 6.6.12: `id<i32>(4);`
+        if (_stmt_intr_bare(S, noff) == 1) { return 0; }   # 6.7.17: `mulh64;` is "expected '('", as `load16;`
+        if (PEEKT(S) == 10) {
+            if (_stmt_intrinsic(S, noff) == 1) { return 0; }   # 6.7.16 (D11): `mulh64(a, b);` refused by name
+            if (_stmt_call_field(S) == 1) { return 0; }   # 6.6.12: `mk(3).total();`
+            # v5.6.3: #must_use — warned BEFORE PARSE_FNCALL, so the line is the call's.
+            var _mu_fi = FINDFN(S, noff);
+            _must_use_warn(S, noff);
+            # fn call statement
+            # v6.6.0 — is the callee pair-returning? Read the flag BEFORE PARSE_FNCALL consumes
+            # the call, so the `?` desugar below can take the value-form path. Read from the fn
+            # table by name rather than peeking the cursor: by the time `?` is seen the cursor is
+            # already past the call.
+            var _qs_pair = _stmt_call_pair(S, noff);   # 6.7.17 (D26): `fncall1(&f, 4)?;` too
+            # ⛔ 6.6.5 — `fncallN(cb, …);` AS A STATEMENT WAS NOT THE SAME LANGUAGE AS IN AN
+            # EXPRESSION. v6.5.17 lowered `fncallN` to the closure-aware indirect call in
+            # PARSE_FACTOR (parse/expr.cyr), but this dispatch sends IDENT+`(` straight to
+            # PARSE_FNCALL, so in statement position the SAME TEXT stayed an ordinary call
+            # into lib/fnptr.cyr — which calls the bit-63-tagged env pointer verbatim.
+            # `fncall1(closure, 2);` SIGSEGV'd (exit 139) while `var r = fncall1(closure, 2);`
+            # returned 42. It also gave the two positions OPPOSITE stack alignment (the
+            # lowering spills the callee to a frame slot; the plain call pushes it as an
+            # argument), which is the asymmetry the mabda filing measured and could not
+            # explain from the source text. Same gate as the expression side — a real
+            # `fncallN` name, and FINDFN >= 0 so a program that never included
+            # lib/fnptr.cyr still gets its "undefined function" diagnostic.
+            # CHANGELOG [6.6.5]
+            # 6.6.16: no longer "inside a fn" too — at top level the lowering brings its own
+            # micro-frame (PINDIRECT_CALL), and the old fall-through to lib/fnptr.cyr called a
+            # capturing closure's tagged value: `fncall1(g, 1);` at top level SIGSEGV'd.
+            # CHANGELOG [6.6.16]
+            var _stmt_fcn = 0;
+            if (_IS_FNCALL_NAME(S, noff) == 1) { if (_mu_fi >= 0) { _stmt_fcn = 1; } }
+            if (_stmt_fcn == 1) {
+                _fncall_expect = ((L64(S + 0xEC00000 + noff) >> 48) & 0xFF) - 48;
+                STI(S, GTI(S) + 1);   # consume '('
+                PINDIRECT_CALL(S);
+            } else {
+                PARSE_FNCALL(S, noff);
+            }
+            _stmt_qmark(S, _qs_pair);   # postfix `?` on the call: see _stmt_qmark
+            _expect_step(S, 5);         # 6.7.14: a miss never steps the next statement's keyword
+            return 0;
+        }
+        # struct field access: ident.field = expr; or ident.method(args);
+        if (PEEKT(S) == 41) {
+            # Peek ahead: is this a method call or field store?
+            # Save position, consume DOT, check if ident followed by (
+            var save_ti = GTI(S);
+            # 6.7.0 (A5): the whole `.a.b.m(` chain, not one `.m(` — `b.v.scale(3);` on a nested
+            # field was `expected '=', got '.'` (it went to the field store).
+            if (_stmt_dot_chain_call(S) == 1) {
+                # Method call: rewind and use PARSE_FIELD_LOAD (which handles methods),
+                # a postfix `?` included (6.6.16, _stmt_method_call)
+                STI(S, save_ti);
+                _stmt_method_call(S, noff);
+                return 0;
+            }
+            # Not a method call — rewind and do field store
+            STI(S, save_ti);
+            PARSE_FIELD_STORE(S, noff, 5);
+            return 0;
+        }
+        if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse/expr.cyr)
+        # assignment or compound assignment: already consumed IDENT
+        # 6.7.2 (B1): a const is not an lvalue — refused by name (the statement still parses on).
+        # 6.7.3: nor is an enum constant (_asg_lvalue_refused, parse/fn.cyr). 6.7.14: only before an
+        # `=` / `op =` (_asg_lvalue_at).
+        if (_asg_lvalue_at(S, noff) == 1) {
+            _cst_skip_sync(S);   # the rest of the statement, to its `;` (6.7.14: in sync)
+            return 0;
+        }
+        # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=, >>>=
+        _asg_nti = GTI(S) - 1;   # 6.7.17: the name, for its undefined-name report
+        var compound_op = _asg_compound_tok(S);
+        _asg_ti = 0 - 1;
+        _asg_ufv = 0 - 1;
+        _asg_tup_refd = 0;
+        if (compound_op == 0) {
+            if (_asg_eq_step(S) == 1) { return 0; }   # 6.7.17: a bare `p;` is one error, in sync
+            _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
+        }
+        if (compound_op != 0) {
+            # x OP= expr — load x, combine; the store below is shared with `x = expr`. 6.6.11:
+            # one implementation with the for-step replay (see _asg_compound_tok).
+            var cltype = _asg_compound_load(S, noff);
+            _asg_compound_op(S, compound_op, cltype);
+            _asg_ufv = 0 - 1;   # after the RHS: a statement nested in it (a closure body) set it
+        } else {
+            # v6.5.28 — capture the callee's DECLARED return sid BEFORE the RHS is consumed.
+            # The declaration path already does this (parse/decl.cyr:2352-2362: peek
+            # `IDENT (`, FINDFN, GFRS) — which is why `var t = str_new(..)` correctly types
+            # `t` as a Str. The ASSIGNMENT path never did, so `t = str_new(..)` on that same
+            # binding warned "assigning non-pointer to typed pointer" about a call that
+            # returns exactly that pointer. Filed from abaco after v6.5.27's sign fix made
+            # the check reach real typed-pointer locals for the FIRST time and exposed the
+            # gap sitting behind it (2026-08-14-typed-ptr-warn-ignores-declared-return-type).
+            # ⚠ Must be read BEFORE PCMPE — afterwards the token cursor has moved past the
+            # callee name and FINDFN would resolve nothing.
+            if (_try_aggregate_copy_assign(S, noff, 5) == 1) { return 0; }
+            if (_try_struct_call_assign(S, noff, 5) == 1) { return 0; }   # 6.6.6
+            # v6.5.61 — `r = f(...)` into a VECTOR local needs the 16/32-byte receive the
+            # declaration form has; without it this fell to the 8-byte EFLSTORE below.
+            if (_try_vector_call_assign(S, noff, 5) == 1) { return 0; }
+            # v6.6.0 — `x = f();` where f returns a `: stack` pair keeps the tag and drops the
+            # payload, silently. Same refusal as the declaration form. CHANGELOG [6.6.0].
+            _refuse_lossy_pair(S);
+            _asg_ret_peek(S, noff);   # 6.6.17: the RHS's declared type, before PCMPE moves on
+            if (_pcmpe_struct_assign(S, noff, 5) == 1) { return 0; }   # PCMPE + a method/operator struct result (6.6.6)
+        }
+        # Type check at assignment
+        var aps = GPSC(S);
+        var idx = 0 - 1;
+        if (GINFN(S) == 1) {
+            idx = FINDLOCAL(S, noff);
+            if (idx >= 0) {
+                var lt = GLTYPE(S, idx);
+                # v6.5.24 — THE SIGN TEST WAS INVERTED, so this warning fired on exactly
+                # the locals it should ignore and never once on the case it exists for.
+                # In the local SLTYPE scheme a POSITIVE lt is a narrow width in bytes
+                # (1/2/4) or a float tag (F64_TYID 0x40000001 / F32_TYID 0x40000002);
+                # the pointer-like case is stored NEGATIVE, as `0 - sid`
+                # (parse/decl.cyr:2490). `lt > 0` therefore meant "narrow or float".
+                # Measured before the fix: `var w: i32 = 5; w = 6;` warned, `var a: f64
+                # = ...; a = ...;` warned, and a struct-typed local — the actual typed
+                # pointer — did NOT, i.e. the check was unreachable for its own purpose.
+                # `lt < 0` is also what the GLOBAL arm of this very warning already uses
+                # (`vt < 0`, ~40 lines below); the two arms had silently disagreed.
+                # ⭐ Fixing the float half UNGATED the ranga/ganita f32 tier: `acc =
+                # f32_op(acc, ..)` is the canonical loop body there, so every f32
+                # accumulator in every consumer would have emitted a bogus warning.
+                # Filed as 2026-08-13-f64-typed-binding-reassign-warns-as-pointer plus
+                # the wider inverted-sign finding (roadmap Slot 1 item (d)).
+                # v6.5.28 — a call whose DECLARED return sid is a struct (> 0) IS a typed
+                # pointer, even though the call itself leaves the expression pointer-scale at
+                # 0. Without this the warning fired on `t = str_new(..)` while the identical
+                # initializer `var t = str_new(..)` was accepted — the two paths disagreeing
+                # about the same expression.
+                # 6.7.13 (D18 (a)): and a `*T` local / `p: *T` parameter of a scalar T (the slot's typed-pointer bit);
+                # the literal 0 is a null reset, never warned (`_tp_warn`).
+                # 6.7.14: never a value-form vector local — its SLTYPE is a descriptor (<= -2048), negative but no
+                # `0 - sid`: `v = f64v2_splat(1.0);` with the fn undefined (the undefined-function path's since 6.7.13)
+                # and `v = mk4(..)` of another vector (refused) warned "assigning non-pointer to typed pointer".
+                if ((lt < 0 || GLPTRP(S, idx) == 1) && _asg_ret_sid <= 0) {
+                    if (lt > 0 - 2048) { if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn(S, _asg_ti); } } }
+                }
+            }
+        }
+        if (idx >= 0) {
+            var lt = GLTYPE(S, idx);
+            _asg_plain_in(S, idx, 0, _asg_ti);      # 6.6.10: `t = 1` into an f64 / f32 local; 6.7.6: f32 rounds, a whole array refused
+            _asg_rejudge(S, idx, lt, 0);            # 6.6.11
+            _asg_store_slot(S, idx, 0);             # 6.6.12: shared with the for step
+        }
+        else {
+            idx = FINDVAR(S, noff);
+            if (idx < 0) {
+                # v6.5.19: --syntax-only drops the STORE (there is nowhere to store to)
+                # but must still consume the statement's `;`, exactly as the tail of
+                # this fn does below. Returning without it left the `;` dangling and
+                # the statement layer reported `unexpected ';'` — a FALSE ACCUSATION
+                # against valid code, measured on `lib/thread_win.cyr`'s
+                # `_threads_active = 1;` (a global declared in a sibling module) and
+                # therefore on all 74 repos that vendor it. See _syntax_only.
+                if (_syntax_only == 1) {
+                    if (_unp_names == 1) { _asg_undef_report(S, noff); }   # 6.7.17 (D110): a never-parsed body's read
+                    _expect_step(S, 5);
+                    return 0;
+                }
+                _asg_undef_report(S, noff);   # 6.7.9: shared with the for step
+                _expect_step(S, 5); return 0;   # 6.7.14
+            }
+            var vt = GVTYPE(S, idx);
+            if (vt < 0) {
+                if (aps == 0) { if (_asg_tup_refd == 0) { _tp_warn_gasg(S, idx, _asg_ti); } }   # 6.7.16: a `: Str` call into a `*Str`
+            }
+            _asg_plain_in(S, idx, 1, _asg_ti);      # 6.6.10: `G = 1` into an f64 / f32 global; 6.7.6: as the local
+            _asg_rejudge(S, idx, vt, 1);            # 6.6.11
+            _asg_store_slot(S, idx, 1);             # 6.6.12: shared with the for step
+        }
+        _expect_step(S, 5);
+        return 0;
+    }
+    if (_refuse_nested_fn(S) == 1) { return 0; }   # 6.6.16: a `fn` / `async fn` in a fn body
+    if (_stmt_paren_field(S) == 1) { return 0; }   # 6.7.14 (D24 (a)): `(s).m();`, `(s).a = v;` refused
+    ERR(S);
+    return 0;
+}

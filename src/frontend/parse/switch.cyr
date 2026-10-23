@@ -1,0 +1,627 @@
+# PARSER — `switch` and `match` (PARSE_SWITCH, PARSE_MATCH): the jump-end bound, the case and arm tests, the hidden
+# temps (`_HTEMP` and kin), the match warnings.
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+# v6.5.19 (the include-length ifdef bug) — bound the jump-end arrays of PARSE_SWITCH and PARSE_MATCH.
+#
+# Both fns collect one "jump to end of construct" patch site per case/arm into a LOCAL
+# `ends: i64[256]`, then walk it once the construct closes. The counter `ec` was never
+# checked against 256 at ANY of the four write sites, so case 257 wrote straight off the
+# stack frame. This needs no hostile input: a 400-case `switch` and a 400-arm `match`
+# are ordinary valid cyrius — exactly the opcode-dispatch shape this compiler's own
+# sources use — and both killed cycc with a SIGSEGV and ZERO diagnostic bytes.
+#
+# v6.2.1 is the near-miss worth recording: it found the same arrays overflowing at 32
+# entries, correctly diagnosed the `var ends[256]` = 256 BYTES = 32 slots trap (see
+# CLAUDE.md), and resized them to `i64[256]`. But resizing MOVED the cliff from 32 to
+# 256 without ever fencing it, and added a `seen_count < 256` guard on the neighbouring
+# dedup array — so the file already shows the author knew a bound was needed, one
+# declaration away. A capacity fix is not a bounds fix.
+#
+# HARD ERROR, never a silent skip: dropping a jump-end patch leaves that arm falling
+# through into the next one, i.e. a silent miscompile, which is strictly worse than
+# refusing the file. Shared by all four sites so the limit cannot drift between them.
+# v6.5.23 — CAPACITY joins the RECOVERABLE diagnostic class (maintainer decision,
+# 2026-08-17: "recoverable"). Reported once and the parse continues, so ONE compile names
+# this alongside every other error in the file instead of stopping here.
+#
+# ⚠ THIS DOES NOT WEAKEN THE HAZARD THE NOTE ABOVE DESCRIBES. `_had_error` withholds the
+# binary (the v6.4.62 multi-error contract), so the fall-through miscompile it warns about
+# — an unpatched jump-end letting one arm fall into the next — can never reach an
+# executable. "Recoverable" means the DIAGNOSTIC recovers, not that a broken binary ships.
+# Returning 1 lets the caller skip recording a patch it has no slot for, rather than
+# writing past the 256-slot array, which is what the guard existed to prevent.
+#
+# ⛔ THE 256 CAP ITSELF IS UNRESOLVED AND MUST BE RE-REVIEWED WHEN IT BECOMES THE
+# BOTTLENECK (maintainer, 2026-08-17). This change makes hitting it survivable and
+# legible; it does not raise it. v6.2.1 already moved this cliff once (32 → 256) without
+# fencing it, and the note above records that "a capacity fix is not a bounds fix" — the
+# converse also holds: this is a bounds fix, not a capacity fix. When a real consumer
+# needs >256 arms, the arrays are `i64[256]` in four sites and the limit is shared through
+# this fn precisely so it can be raised in one place.
+fn _ends_guard(S, ec): i64 {
+    if (ec >= 256) {
+        if (_derr_seen(GTI(S), "_ends_guard", 0, 0) == 1) { return 1; }   # 6.7.15: once per site
+        _ew("error:", 6); _err_head(S);
+        _ew(": too many case/arm bodies in one switch/match (max 256)\n", 57);
+        _had_error = 1;
+        return 1;
+    }
+    return 0;
+}
+
+# v6.5.20 — patch the pending `break` chain to the CURRENT code position and
+# restore the enclosing construct's chain head. `break` threads a linked list
+# through the rel32 field of each placeholder jmp, head at S+0x18F840; the
+# construct that owns the chain saves the head, zeroes it, parses the body, then
+# walks and patches. PARSE_WHILE / PARSE_FOR did this; PARSE_SWITCH / PARSE_MATCH
+# never touched the slot at all, so a `break` inside a switch either broke the
+# ENCLOSING LOOP or — with no enclosing loop — was never patched and kept the
+# chain link in its displacement field: a wild jump, SIGSEGV at runtime.
+# CHANGELOG [6.5.20]
+fn _brk_chain_end(S, saved_brk): i64 {
+    var bp = L64(S + 0x18F840);
+    while (bp > 0) {
+        var _ba = _codebuf_base + bp;
+        var _nb = L64(_ba) & 0xFFFFFFFF;
+        EPATCH(S, bp);
+        bp = _nb;
+    }
+    S64(S + 0x18F840, saved_brk);
+    _brk_depth = _brk_depth - 1;   # 6.6.7 — paired with the switch/match entry
+    return 0;
+}
+
+# v6.5.20 — register a switch jump table for the per-fn NOP-compaction repair
+# (_sw_tbl_repair, parse/fn/body_pass.cyr). Entries hold `target_cp - table_cp`; the
+# v5.6.27 compactor shifts code but knew nothing about this table, so harvesting
+# a 4-byte NOP run between the table and a case body left every later entry
+# stale. Overflow past the 256 cap keeps counting so the compaction gate trips
+# and skips the pass for that fn — never a silent drop. CHANGELOG [6.5.20]
+fn _sw_tbl_reg(S, table_cp, nent): i64 {
+    var n = L64(S + 0x1AC800);
+    if (n < 256) {
+        S64(S + 0x1AC808 + n * 16, table_cp);
+        S64(S + 0x1AC808 + n * 16 + 8, nent);
+    }
+    S64(S + 0x1AC800, n + 1);
+    # v6.5.68: the per-fn table above is zeroed at every function start, so the
+    # whole-program pass keeps its own copy. A switch jump table is DATA inside `.text`
+    # holding `target_cp - table_cp` deltas; delete a run between a table and its targets
+    # without repairing it and the dispatch jumps into the middle of an instruction.
+    _wpsw_add(S, table_cp, nent);
+    return 0;
+}
+
+# ⛔ 6.6.5 — A COMPILER-GENERATED TEMPORARY IS NOT A GLOBAL.
+#
+# `switch`, `match`, both `?` lowerings and `for ... in` each stashed their subject in a
+# GLOBAL slot registered at GVCNT with NAME OFFSET 0. Three consequences, all silent:
+#   * RECURSION reloaded the outer call's value. `rec(n)` through a range `for` returned 63
+#     where 255 is right; a `match` re-entered from an arm pattern returned 1 for 30.
+#   * THREADS shared one word. A chain-path `switch` across 8 threads exited non-zero on
+#     every run.
+#   * NAME OFFSET 0 IS THE FIRST LEXED WORD of the program (the lexer resets NPOS to 0), so
+#     FINDVAR — a flat last-match table — RETURNED THESE SLOTS for that identifier. Measured:
+#     `&setup` changed value after a fn containing a `switch` was parsed between two uses.
+#
+# Inside a fn they are anonymous FRAME slots, which makes them per call and per thread. At
+# top level they stay global and are marked dead so FINDVAR skips them. The handle is the
+# slot index for a frame slot and `-2 - vi` for a global, so callers use `_HTSTORE`/`_HTLOAD`
+# and never care which. CHANGELOG [6.6.5]
+fn _HTEMP(S): i64 {
+    if (GINFN(S) == 1) {
+        var _hli = GFLC(S);
+        S64(S + 0x5D9D000 + _hli * 8, 0 - 1);
+        SLDEP(S, _hli, 0);
+        SLTYPE(S, _hli, 0);
+        SSLICE_W(S, _hli, 0);
+        SFLC(S, _hli + 1);
+        return _hli;
+    }
+    var _hvi = GVCNT(S);
+    S64(_varn_base + _hvi * 8, 0);
+    S64(_vars_base + _hvi * 8, 8);
+    SVDEAD(S, _hvi, 1);
+    SVCNT(S, _hvi + 1);
+    return 0 - 2 - _hvi;
+}
+# The NAMED sibling of _HTEMP: a `for x in ...` loop variable. Inside a fn it is a frame slot
+# at the loop's scope depth, as it always was. At top level there is NO frame on any executable
+# entry (ELF x86/aarch64, PE, Mach-O), and the frame slot it used to get there was an `[rbp-8]`
+# store into nothing: every top-level for-in segfaulted, and every READ of the variable was
+# `undefined variable` because top-level resolution never runs FINDLOCAL. So at top level it is
+# a LIVE global; the loop's SCOPE_PUSH recorded GVCNT, so its SCOPE_POP takes the name out of
+# scope and _HTLOOPEND re-marks it as a loop variable for the diagnostic. CHANGELOG [6.6.8]
+fn _HTNAMED(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = GFLC(S);
+        S64(S + 0x5D9D000 + li * 8, noff);
+        SLDEP(S, li, GSDEP(S));
+        SLTYPE(S, li, 0);
+        SFLC(S, li + 1);
+        return li;
+    }
+    var vi = GVCNT(S);
+    S64(_varn_base + vi * 8, noff);
+    S64(_vars_base + vi * 8, 8);
+    SVCNT(S, vi + 1);
+    return 0 - 2 - vi;
+}
+# After the loop's SCOPE_POP: dead mark 3 (not the block-var 2) so a later use of the name is
+# told it was a loop variable — "declare it before the block" does not apply to one.
+fn _HTLOOPEND(S, h): i64 {
+    if (h < 0) { SVDEAD(S, 0 - 2 - h, 3); }
+    return 0;
+}
+fn _HTSTORE(S, h): i64 {
+    if (h >= 0) { EFLSTORE(S, h); } else { EVSTORE(S, 0 - 2 - h); }
+    return 0;
+}
+fn _HTLOAD(S, h): i64 {
+    if (h >= 0) { EFLLOAD(S, h); } else { EVLOAD(S, 0 - 2 - h); }
+    return 0;
+}
+
+# One `switch` case's test (chain path): the jump taken when the subject is not `val`. ⛔ 6.7.6 (D4): a
+# u128 subject (`swh`, its temporary; -1 for an integer one) compares all 128 bits against `val`
+# zero-extended (_w128_case) — it compared the low word, so 2^64 took `case 0:`.
+fn _sw_case_test(S, swidx, val, swh): i64 {
+    if (swh != 0 - 1) { EMOVI(S, val); return _w128_case(S, swh); }
+    _HTLOAD(S, swidx);
+    EPUSHR(S);
+    EMOVI(S, val);
+    EMOVCA(S);
+    EPOPR(S);
+    ECMPR(S);
+    return EJCC(S, 0x85);
+}
+# One `match` arm's test (the cursor on its value): the jump taken when the subject is not that value.
+# ⛔ 6.7.6 (D4): a u128 subject (`mh`, its temporary; -1 for an integer one) compares all 128 bits — an
+# arm value zero-extended, a u128 arm as it is (_w128_case). And (FE) an INTEGER subject against a
+# u128 arm compares all 128 bits as `n == b` does (_w128_cmp_r: the subject zero-extended) — it
+# compared the arm's low word, so `match 0 { b => }` took the arm for b = 2^64.
+fn _match_arm_test(S, midx, mh): i64 {
+    if (mh != 0 - 1) { PCMPE(S); return _w128_case(S, mh); }
+    _HTLOAD(S, midx);
+    EPUSHR(S);
+    PCMPE(S);
+    if (_w128_cmp_r(S, 17) == 1) { ETESTAZ(S); return EJCC(S, 0x84); }
+    EMOVCA(S);
+    EPOPR(S);
+    ECMPR(S);
+    return EJCC(S, 0x85);
+}
+
+fn PARSE_SWITCH(S): i64 {
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse/ctrl.cyr)
+    STI(S, GTI(S) + 1);
+    var he = _hdr_end(S, GTI(S));
+    if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
+    STI(S, GTI(S) + 1);
+    PCMPE(S);
+    var swh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
+    _hdr_rparen(S);   # 6.7.17: a `{` there is the body's (parse/ctrl.cyr)
+    if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
+    # Pre-scan: collect case values to decide chain vs jump table
+    var save_ti = GTI(S);
+    var _sw_m0 = _clm_n;   # 6.7.2: this switch's label memo, trimmed at its end
+    var case_count = 0;
+    var case_min = 0x7FFFFFFFFFFFFFFF;
+    var case_max = 0;
+    var has_default = 0;
+    var pgo = 1;
+    while (pgo == 1) {
+        if (PEEKT(S) == 58) {
+            STI(S, GTI(S) + 1);
+            var cv = _case_val(S);   # 6.7.2 (B1): a const expression; evaluated here once, replayed below
+            if (_case_ok == 1) {
+                if (case_count == 0) { case_min = cv; case_max = cv; }
+                else {
+                    if (cv < case_min) { case_min = cv; }
+                    if (cv > case_max) { case_max = cv; }
+                }
+                case_count = case_count + 1;
+            }
+            # Skip to next case/default/} (track brace depth for block bodies)
+            var _psd = 0;
+            while (1) {
+                if (PEEKT(S) == 13) { _psd = _psd + 1; }
+                if (PEEKT(S) == 14) { if (_psd > 0) { _psd = _psd - 1; } else { break; } }
+                if (_psd == 0 && PEEKT(S) == 58) { break; }
+                if (_psd == 0 && PEEKT(S) == 59) { break; }
+                if (PEEKT(S) == 12) { break; }
+                STI(S, GTI(S) + 1);
+            }
+        }
+        else { if (PEEKT(S) == 59) { has_default = 1;
+                var _psd2 = 0;
+                while (1) {
+                    if (PEEKT(S) == 13) { _psd2 = _psd2 + 1; }
+                    if (PEEKT(S) == 14) { if (_psd2 > 0) { _psd2 = _psd2 - 1; } else { break; } }
+                    if (PEEKT(S) == 12) { break; }
+                    STI(S, GTI(S) + 1);
+                }
+            }
+            else { pgo = 0; } }
+    }
+    STI(S, save_ti);
+    # Decide: jump table if >= 4 cases, density >= 1/3, and range < 256.
+    # v4.8.2 lowered threshold from 50% (*2) to 33% (*3) — more real-world
+    # enum-like switches with a few gaps now hit the O(1) dispatch path.
+    # The 256-byte range cap keeps the jump table itself small.
+    var range = case_max - case_min;
+    var use_table = 0;
+    if (case_count >= 4) {
+        if (range + 1 <= case_count * 3) {
+            # v4.8.2-alpha2: range cap raised 256 → 1024. Jump table is
+            # (range+1) × 4 bytes, so a 1024-range table is ~4 KB of
+            # .text — still tiny, and wider enum dispatches (e.g. the
+            # 40+-variant tagged-union switches in libro / kybernet)
+            # now hit the O(1) path.
+            if (range < 1024) { use_table = 1; }
+        }
+    }
+    # v5.6.0 + v5.11.39: jump-table path is x86-only. aarch64 and cx
+    # take the chain path (linear comparison) — aarch64 has no jump-
+    # table emitter today, and cx bytecode has no analog of rip-
+    # relative LEA + indirect JMP via a packed-i32 table. Without
+    # these guards the named-op layer would still no-op out for both
+    # (the stubs in <arch>/emit.cyr are pure IR-record), but the
+    # parser would still emit the `EJCC` jump pre-table that has no
+    # corresponding back-patch on the no-op path — leaving a stranded
+    # `ja default` in cx output. Setting use_table = 0 here keeps the
+    # parser on the correctness-preserving chain path.
+    if (_AARCH64_BACKEND == 1) { use_table = 0; }
+    if (_TARGET_CX == 1) { use_table = 0; }
+    if (swh != 0 - 1) { use_table = 0; }   # 6.7.6 (D4): a u128 subject takes the chain (_sw_case_test)
+    # Allocate hidden global to hold switch value
+    var swidx = _HTEMP(S);
+    _HTSTORE(S, swidx);
+    # v6.5.20: own the `break` chain for the duration of the case bodies so a
+    # `break` inside a case leaves the SWITCH (C semantics), not the enclosing
+    # loop. `continue` is a separate chain (0x18F898 / `_cont_vec`) and is deliberately
+    # NOT captured — it must still continue the enclosing loop.
+    var saved_brk = L64(S + 0x18F840);
+    S64(S + 0x18F840, 0);
+    _brk_depth = _brk_depth + 1;   # 6.6.7 — a `break` target (see _brk_chain_end)
+    if (use_table == 1) {
+        # === JUMP TABLE PATH ===
+        # v5.11.39 path-A: dispatch sequence + reserved zero table
+        # live in <backend>/emit.cyr. Parser keeps the `EJCC` call
+        # between the two named ops since EJCC returns the
+        # default-jump patch position (back-patched when the
+        # `default:` case body is parsed).
+        ESWITCH_DISPATCH_PRE(S, case_min, range);
+        var default_patch = EJCC(S, 0x87);   # ja default
+        var table_cp = ESWITCH_DISPATCH_TABLE(S, range);
+        # v6.5.20: hand the table to the compaction repair. The `lea rcx,[rip+d32]`
+        # inside ESWITCH_DISPATCH_TABLE needs no repair — the nine bytes between its
+        # disp32 and table_cp are raw (`movsxd`/`add`/`jmp rax`) and can never match
+        # the picker's `48 8B|89 85` probe, so no NOP run can be harvested between
+        # them and the disp is shift-invariant.
+        _sw_tbl_reg(S, table_cp, range + 1);
+        var ti = 0;
+        # Parse case bodies, patching table entries
+        var ends: i64[256];   # v6.2.1: 256 jump-end slots (was bare [256]=256B=32 slots → OOB at >32 cases)
+        var ec = 0;
+        var default_cp = 0 - 1;   # filled in when `default:` is parsed
+        var sgo = 1;
+        while (sgo == 1) {
+            if (PEEKT(S) == 58) {
+                STI(S, GTI(S) + 1);
+                var val = _case_val(S);   # 6.7.2: the pre-scan's value
+                if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
+                STI(S, GTI(S) + 1);
+                # Patch table entry: table[val - min] = body_cp - table_cp
+                var body_cp = GCP(S);
+                var toff = (val - case_min) * 4 + table_cp;
+                var ta = _codebuf_base + toff;
+                var trel = body_cp - table_cp;
+                S64(ta, (L64(ta) >> 32 << 32) | (trel & 0xFFFFFFFF));
+                # Parse case body
+                var cgo = 1;
+                while (cgo == 1) {
+                    if (PEEKT(S) == 58) { cgo = 0; }
+                    else { if (PEEKT(S) == 59) { cgo = 0; }
+                        else { if (PEEKT(S) == 14) { cgo = 0; }
+                            else { if (PEEKT(S) == 12) { cgo = 0; }
+                                else { _PARSE_STMT_NESTED(S); } } } }
+                }
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
+            }
+            else { if (PEEKT(S) == 59) {
+                    STI(S, GTI(S) + 1);
+                    if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
+                    STI(S, GTI(S) + 1);
+                    # Default body — patch default_patch to here
+                    EPATCH(S, default_patch);
+                    default_patch = 0;
+                    default_cp = GCP(S);
+                    while (PEEKT(S) != 14) {
+                        if (PEEKT(S) == 12) { break; }
+                        _PARSE_STMT_NESTED(S);
+                    }
+                    var _eg = _ends_guard(S, ec);
+                    var _ep = EJMP0(S);
+                    if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
+                }
+                else { sgo = 0; } }
+        }
+        # Patch default jump if no default case was found
+        if (default_patch > 0) { EPATCH(S, default_patch); }
+        # Fill unpatched table entries. If a `default:` was present
+        # (v4.8.2), gaps within [case_min, case_max] now jump to the
+        # default body — before this fix they fell through to the
+        # end of the switch, which silently hid sparse-case bugs at
+        # the previous 50% density threshold (no gaps). When no
+        # default exists, gaps still fall through.
+        var end_cp = GCP(S);
+        var gap_rel = end_cp - table_cp;
+        if (default_cp >= 0) { gap_rel = default_cp - table_cp; }
+        ti = 0;
+        while (ti <= range) {
+            var te = _codebuf_base + table_cp + ti * 4;
+            if (load32(te) == 0) {
+                S64(te, (L64(te) >> 32 << 32) | (gap_rel & 0xFFFFFFFF));
+            }
+            ti = ti + 1;
+        }
+        if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+        STI(S, GTI(S) + 1);
+        for (var ei = 0; ei < ec; ei = ei + 1) { EPATCH(S, load64(&ends + ei * 8)); }
+    } else {
+        # === CHAIN PATH (original) ===
+        var ends: i64[256];   # v6.2.1: 256 jump-end slots (see table-path note above)
+        var ec = 0;
+        var sgo = 1;
+        while (sgo == 1) {
+            if (PEEKT(S) == 58) {
+                STI(S, GTI(S) + 1);
+                var val = _case_val(S);   # 6.7.2: the pre-scan's value
+                if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
+                STI(S, GTI(S) + 1);
+                var skip = _sw_case_test(S, swidx, val, swh);
+                var cgo = 1;
+                while (cgo == 1) {
+                    if (PEEKT(S) == 58) { cgo = 0; }
+                    else { if (PEEKT(S) == 59) { cgo = 0; }
+                        else { if (PEEKT(S) == 14) { cgo = 0; }
+                            else { if (PEEKT(S) == 12) { cgo = 0; }
+                                else { _PARSE_STMT_NESTED(S); } } } }
+                }
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
+                EPATCH(S, skip);
+            }
+            else { if (PEEKT(S) == 59) {
+                    STI(S, GTI(S) + 1);
+                    if (PEEKT(S) != 49) { ERR_EXPECT(S, 49); }
+                    STI(S, GTI(S) + 1);
+                    # NOTE (v6.5.20): unlike the table path, this body deliberately gets
+                    # NO jump to the end of the switch — the chain path REACHES its
+                    # default by falling out of the last comparison, so the default body
+                    # must be emitted last and control already lands past it. A
+                    # `default:` written before another arm is rejected outright
+                    # (`unexpected case`) by the `!= 14` loop above, so there is no
+                    # silent fall-through here. Do not "fix" this into an EJMP0 without
+                    # also giving a non-last default a jump-over + backward entry.
+                    while (PEEKT(S) != 14) {
+                        if (PEEKT(S) == 12) { break; }
+                        _PARSE_STMT_NESTED(S);
+                    }
+                }
+                else { sgo = 0; } }
+        }
+        if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+        STI(S, GTI(S) + 1);
+        for (var ei = 0; ei < ec; ei = ei + 1) { EPATCH(S, load64(&ends + ei * 8)); }
+    }
+    _brk_chain_end(S, saved_brk);
+    _clm_n = _sw_m0;   # 6.7.2: this switch's label memo
+    return 0;
+}
+
+# Parse: match expr { val => { stmts } val => { stmts } _ => { stmts } }
+fn PARSE_MATCH(S): i64 {
+    # v5.8.22 bite #2 — capture match-keyword line for exhaustive-
+    # coverage diagnostic before STI consumes it.
+    var match_line = GTLINE(S, GTI(S));
+    var p0 = _panic;   # 6.7.16: see _blk_open (parse/ctrl.cyr)
+    STI(S, GTI(S) + 1);
+    var he = _hdr_brace(S, GTI(S));
+    PCMPE(S);
+    var mh = _w128_subj(S);   # 6.7.6 (D4): a u128 subject, all 128 bits (-1: an integer one)
+    if (_blk_open(S, p0, he) == 0) { _blk_skip_body(S); return 0; }   # 6.7.16: no `{`
+    # Store match value in hidden temp var
+    var midx = _HTEMP(S);
+    _HTSTORE(S, midx);
+    # v6.5.20: `break` inside a match arm leaves the MATCH — same chain protocol
+    # as PARSE_SWITCH / PARSE_WHILE. Untouched before this, so it either broke the
+    # enclosing loop or left an unpatched wild jump. CHANGELOG [6.5.20]
+    var saved_brk = L64(S + 0x18F840);
+    S64(S + 0x18F840, 0);
+    _brk_depth = _brk_depth + 1;   # 6.6.7 — a `break` target (see _brk_chain_end)
+    var ends: i64[256];   # v6.2.1: 256 match-arm jump-end slots (was [256]=32 slots → OOB at >32 arms)
+    var ec = 0;
+    # v5.8.22 bite #2 — exhaustive-match coverage tracking. When the
+    # arm's pattern is a bare-or-payloaded variant of an enum, look
+    # up its parent enum-id (var_enum_id at 0x204000, written by
+    # PARSE_ENUM_DEF in bite #1). First variant arm sets match_eid;
+    # subsequent variant arms must share the same eid (mixed → warn).
+    # had_default tracks whether `_ =>` was present (opt-out). Final
+    # check: if eid != 0 && !had_default && covered < total → warn.
+    var match_eid = 0;
+    var match_covered = 0;
+    var match_mixed = 0;
+    var had_default = 0;
+    # v5.8.25 — arm-tag dedup. Stack array of variant vcnts seen
+    # so far; per-arm linear scan flags duplicate arms with
+    # `warning: duplicate match arm 'X'` and skips counting the
+    # dup toward match_covered (so the non-exhaustive check
+    # stays accurate when a user writes the same variant twice).
+    # 256 cap matches the per-match arm budget; beyond that no
+    # dedup (rare-edge tolerated). Linear scan is O(N²) but
+    # typical match has 2-10 arms so cost is negligible.
+    var seen_vcnt: i64[256];   # v6.2.1: matches the `seen_count < 256` guard (was [256]=32 slots → OOB at >32 unique variants)
+    var seen_count = 0;
+    var mgo = 1;
+    while (mgo == 1) {
+        if (PEEKT(S) == 14) { mgo = 0; }
+        # v6.5.19: EOF guard (the include-length ifdef bug). `fn f() { match` and `fn f() { match (` SIGSEGV'd
+        # at 6.5.18 — and this one bit FASTEST of the whole class, because the arm loop
+        # writes `ends`/`seen_vcnt`, which are 256-slot LOCAL (stack) arrays: a runaway
+        # arm count smashes the frame long before any heap table overflows.
+        elif (PEEKT(S) == 12) { mgo = 0; }
+        else {
+            # Check for _ (wildcard/default)
+            var is_default = 0;
+            if (PEEKT(S) == 2) {
+                # Check if identifier is "_"
+                var mnoff = PEEKV(S);
+                if (load8(S + 0xEC00000 + mnoff) == 95) {
+                    if (load8(S + 0xEC00000 + mnoff + 1) == 0) {
+                        is_default = 1;
+                    }
+                }
+            }
+            if (is_default == 1) {
+                had_default = 1;
+                # _ => { stmts }
+                STI(S, GTI(S) + 1);
+                # Expect =>
+                if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+                STI(S, GTI(S) + 1);
+                SCOPE_PUSH(S);
+                PARSE_PROG(S);
+                SCOPE_POP(S);
+                if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+                STI(S, GTI(S) + 1);
+                # v6.5.20: the `_ =>` arm emitted no jump to the end of the match,
+                # so a wildcard arm written before another arm FELL THROUGH into
+                # that arm's comparison and a LATER arm could win — a silent wrong
+                # answer (`match 2 { 1 => 11  _ => 7  2 => 22 }` gave 22, not 7).
+                # A wildcard matches everything, so the arms after it are dead.
+                # PARSE_SWITCH's chain-path `default:` looks like the same shape but
+                # is NOT: a non-last `default:` is rejected there at parse time.
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
+            } else {
+                # v5.8.22 bite #2 — pre-PCMPE peek: if the arm pattern's
+                # first token is a variant-of-enum ident, record its
+                # parent eid. Bare variants (`Ok`) and payload-bearing
+                # variants (`Ok(v)`) both have the variant name as the
+                # first ident. Non-variant arms (literals, regular
+                # const vars, complex exprs) skip the bookkeeping.
+                if (PEEKT(S) == 2) {
+                    var arm_noff = PEEKV(S);
+                    var arm_vi = FINDVAR(S, arm_noff);
+                    if (arm_vi >= 0) {
+                        var arm_eid = GVENUMID(S, arm_vi);
+                        if (arm_eid > 0) {
+                            # v5.8.25 — dedup: scan seen_vcnt for arm_vi.
+                            # If found, emit duplicate-arm warning + skip
+                            # coverage bump (accurate non-exhaustive math).
+                            # If new, record + bump as before.
+                            var dupe = 0;
+                            var di = 0;
+                            while (di < seen_count) {
+                                if (load64(&seen_vcnt + di * 8) == arm_vi) { dupe = 1; }
+                                di = di + 1;
+                            }
+                            if (dupe == 1) {
+                                _match_dup_warn(S, arm_noff);
+                            } else {
+                                if (seen_count < 256) {
+                                    store64(&seen_vcnt + seen_count * 8, arm_vi);
+                                    seen_count = seen_count + 1;
+                                }
+                                if (match_eid == 0) { match_eid = arm_eid; }
+                                if (arm_eid == match_eid) {
+                                    match_covered = match_covered + 1;
+                                } else {
+                                    match_mixed = 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                # val => { stmts }
+                var skip = _match_arm_test(S, midx, mh);
+                # Expect =>
+                if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
+                STI(S, GTI(S) + 1);
+                if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+                STI(S, GTI(S) + 1);
+                SCOPE_PUSH(S);
+                PARSE_PROG(S);
+                SCOPE_POP(S);
+                if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+                STI(S, GTI(S) + 1);
+                var _eg = _ends_guard(S, ec);
+                var _ep = EJMP0(S);
+                if (_eg == 0) { store64(&ends + ec * 8, _ep); ec = ec + 1; }
+                EPATCH(S, skip);
+            }
+        }
+    }
+    STI(S, GTI(S) + 1);
+    for (var ei = 0; ei < ec; ei = ei + 1) { EPATCH(S, load64(&ends + ei * 8)); }
+    _brk_chain_end(S, saved_brk);
+    # v5.8.22 bite #2 — exhaustive-match coverage check. Warning (not
+    # error) so v5.8.x downstream consumers can adopt incrementally —
+    # same trade-off as #must_use / #deprecated / #pure→#io. Promotes
+    # to lint --strict in a follow-up slot.
+    if (match_eid != 0) {
+        if (match_mixed == 1) {
+            _match_cov_warn(S, match_line, 0, 0);
+        } else {
+            if (had_default == 0) {
+                var match_total = GENUMVCNT(S, match_eid - 1);
+                if (match_covered < match_total) { _match_cov_warn(S, match_line, match_eid, match_covered); }
+            }
+        }
+    }
+    return 0;
+}
+
+# PARSE_MATCH's warnings, once per token and message (`_warn_seen`: a generic body is parsed again per instance —
+# each printed once per parse). A duplicate arm `noff` at the cursor; at the match's end (`line` its line), arms
+# over more than one enum (`eid` 0) or `cov` of enum `eid`'s variants covered. CHANGELOG [6.7.15]
+fn _match_dup_warn(S, noff): i64 {
+    if (_warn_seen(GTI(S), "_match_dup_warn", noff) == 1) { return 0; }
+    _ew("warning:", 8);
+    _err_head(S);
+    _ew(": duplicate match arm '", 23);
+    PRSTR(S + 0xEC00000 + noff);
+    _ew("'\n", 2);
+    return 0;
+}
+fn _match_cov_warn(S, line, eid, cov): i64 {
+    if (_warn_seen(GTI(S), "_match_cov_warn", eid * 65536 + cov) == 1) { return 0; }
+    _ew("warning:", 8);
+    FM_LOOKUP(S, line);
+    if (eid == 0) {
+        _ew(": match arms span multiple enums (exhaustive-coverage check skipped)\n", 69);
+        return 0;
+    }
+    _ew(": non-exhaustive match over enum '", 34);
+    PRSTR(S + 0xEC00000 + GENUMNM(S, eid - 1));
+    _ew("' — covers ", 13);
+    PRNUM(cov);
+    _ew(" of ", 4);
+    PRNUM(GENUMVCNT(S, eid - 1));
+    _ew(" variants; add `_ =>` to opt out\n", 33);
+    return 0;
+}

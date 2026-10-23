@@ -84,7 +84,7 @@
 #     return took `mkpt(1)` whole and a binary was emitted
 #   `_refuse_toplevel_pair_init` without it                 -> RED T5 (two errors)
 #   no `_stmt_call_field` call in PARSE_STMT (src/frontend/ -> RED T6, A1 ("expected ';', got '.'")
-#     parse.cyr)
+#     parse/stmt.cyr)
 #   `_call_field`'s refusal not skipping a method's `(..)`   -> RED T6, T7 (two errors)
 #   no `_stmt_explicit_generic` call in PARSE_STMT          -> RED G1, G2, G3
 #   `_stmt_explicit_generic` without `_must_use_warn`       -> RED G3

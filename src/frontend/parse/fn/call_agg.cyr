@@ -293,7 +293,7 @@ fn _ret_small_struct(S, fi): i64 {
 #             address as int arg 0 (`_sc_n0` = 1), before `self` / the lhs
 #   _sc_x8    after ECALLPOPS: the temp's address in aarch64's X8
 #   _sc_post  after the call: the rax:rdx store / the first word as the value, and the record
-#             (`_sc_*` in parse.cyr) a destination matches with `_sc_whole`
+#             (`_sc_*` in parse/state.cyr) a destination matches with `_sc_whole`
 # At top level there is no frame: a >16 B call is refused here; a 9-16 B one is recorded without
 # a temp, and a destination that needs storage refuses it. CHANGELOG [6.6.6]
 fn _sc_pre(S, fi, noff, beg): i64 {
@@ -473,7 +473,7 @@ fn _scv_arm(S, pscale, ext): i64 {
     return (w + 1) | (d << 32);
 }
 # The untyped peel. A whole DYN result inside it keeps its refusal (6.7.8 V4d: `var x = (pass(o));`,
-# `(o.me())`): `_scv_un` (parse.cyr), the token it stepped to, is not a destination for V4's exemption
+# `(o.me())`): `_scv_un` (parse/state.cyr), the token it stepped to, is not a destination for V4's exemption
 # (`_dyn_want`).
 fn _scv_un_peel(S): i64 {
     _scv_peel(S);

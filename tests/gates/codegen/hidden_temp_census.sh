@@ -29,7 +29,7 @@
 # MUTATION LEDGER (each applied to this tree and measured):
 #   * restore one open-coded `S64(_varn_base + x * 8, 0);` hidden global -> axis 1 names it.
 #   * restore a frame slot registered with name 0                        -> axis 2 names it.
-#   * delete ONE `_HTEMP` call from PARSE_SWITCH (parse.cyr:1223)        -> axis 3 FAILs,
+#   * delete ONE `_HTEMP` call from PARSE_SWITCH (parse/switch.cyr)        -> axis 3 FAILs,
 #     naming `PARSE_SWITCH want 1 got 0` and the total 11 -> 10. (Re-measured this round;
 #     the same mutant left the previous floor-of-9 form GREEN.)
 #   * delete one of PARSE_FOR's four                                     -> axis 3 FAILs on
@@ -49,7 +49,7 @@ SRC="src/frontend src/common src/backend"
 fail=0
 
 # ── axis 1 — no construct registers a GLOBAL slot under name offset 0 ─────────────────────
-# The legal sites are `_HTEMP`'s own top-level arm in src/frontend/parse/parse.cyr, which marks the slot
+# The legal sites are `_HTEMP`'s own top-level arm in src/frontend/parse/switch.cyr, which marks the slot
 # dead so FINDVAR skips it, and (6.7.8, the checked dyn) `_dyn_vt_reg` in parse/types.cyr — a trait
 # object's VTABLE, marked dead the same way and program-wide by design: every forming site, in every
 # call, thread and file, stores the same fn addresses into it. And (6.7.10, P5-B) `_cov_greg` in
@@ -70,7 +70,7 @@ bad1=$(grep -rEn 'S64\(_varn_base \+ [A-Za-z_][A-Za-z0-9_]*[[:space:]]*\*[[:spac
 if [ -n "$bad1" ]; then
     echo "FAIL hidden_temp_census axis 1: a global slot is registered under NAME OFFSET 0 (= the first lexed word of the program):"
     echo "$bad1" | sed 's/^/    /'
-    echo "    Use _HTEMP(S) / _HTSTORE / _HTLOAD (src/frontend/parse/parse.cyr) — inside a fn it is an"
+    echo "    Use _HTEMP(S) / _HTSTORE / _HTLOAD (src/frontend/parse/switch.cyr) — inside a fn it is an"
     echo "    anonymous FRAME slot (per call, per thread); at top level it is marked dead so FINDVAR skips it."
     fail=$((fail+1))
 else
@@ -101,7 +101,7 @@ fi
 # attributed by walking `fn <name>` headers, i.e. computed from the source's own structure and
 # not from the number this file would like to see.
 #   PARSE_SWITCH 1 | PARSE_MATCH 1 | _stmt_qmark 3 (`?` as a statement, pair + scalar; moved out
-#   of _PARSE_STMT_IMPL at 6.6.12 so `f(..)?;` and `g<T>(..)?;` share ONE copy — parse.cyr)
+#   of _PARSE_STMT_IMPL at 6.6.12 so `f(..)?;` and `g<T>(..)?;` share ONE copy — parse/stmt.cyr)
 #   _PARSE_TERM_IMPL 3 (`?` in an expression) | PARSE_FOR 4 (collection, length, range end,
 #   and 6.6.8: the collection loop's hidden INDEX at top level — it was a frame slot there too,
 #   into a frame top-level code does not have; inside a fn it stays a frame slot)
@@ -133,7 +133,7 @@ fi
 # (a frame slot in a fn, a dead global at top level; parse/expr/deref.cyr).
 # 6.7.10 (decision 6): _hl_psrc_copy — `l = GP` / `l = gp()` / `l = w.p` into a struct value parks the `*T`
 # source's pointer while the struct is copied through it byte-exact (a frame slot in a fn, a dead global at
-# top level; parse.cyr).
+# top level; parse/assign.cyr).
 # 6.7.11: _fsc_psrc — `o.s = GP` / `o.s = gp()` / `o.s = w.p` into a struct-typed FIELD parks the `*T` source's
 # pointer while the struct is copied through it into the field (a frame slot in a fn, a dead global at top
 # level; parse/decl/field.cyr — issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
@@ -141,7 +141,7 @@ fi
 # `*S` value's pointer while the struct is copied through it into a frame temp (parse/fn/ret_agg.cyr —
 # issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md).
 # 6.7.11: _dst_struct — `*p = v` through a `*S` parks p while the assignment arms copy the struct into what it points
-# at (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-11-deref-store-through-struct-
+# at (a frame slot in a fn, a dead global at top level; parse/deref_store.cyr — issues/2026-10-11-deref-store-through-struct-
 # pointer-decision.md).
 # 6.7.12 (D27): _dlo_vec — `rd(*pv)` into a `*V` parameter parks pv, as `_dlo_park` parks a struct's pointer, and
 # the argument pushes it (a frame slot in a fn, a dead global at top level; parse/expr/deref.cyr — issues/2026-10-13-
@@ -169,13 +169,13 @@ fi
 # destinations.md).
 # 6.7.17 (D14): _psl_store — a struct value stored into a `*S` SLOT reached through a dereference or a field (`*ppq = r;`,
 # `w.pq = r;`) parks the slot's address and its pointee while the assignment arms copy the value into the pointee — two
-# slots (a frame slot each in a fn, a dead global each at top level; parse.cyr — issues/2026-10-21-struct-and-pointer-
+# slots (a frame slot each in a fn, a dead global each at top level; parse/deref_store.cyr — issues/2026-10-21-struct-and-pointer-
 # shapes-beyond-d97-d99-take-a-word.md).
 # 6.7.17 (D20): _istr_amp_cap — `*(&t) = v` with t a closure's captured inline `Str` parks `&t` (the environment copy)
 # while the statement's arms copy v's header through it (a frame slot of the closure; parse/decl/struct_copy.cyr — issues/archived/2026-10-21-
 # str-shapes-beyond-d19-d20-d71-d73.md row 3).
 # 6.7.17 (D23 A): _dst_vec — `*pv = v` through a `*V` parks the pointer while `_dvec_rcv` copies the whole vector through
-# it (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-21-vector-value-in-a-word-position-
+# it (a frame slot in a fn, a dead global at top level; parse/deref_store.cyr — issues/2026-10-21-vector-value-in-a-word-position-
 # beyond-d100-d101.md row 1).
 HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1 _ptr_park:1 _w128_tmp:1 _pd_nreorder:1 _sarg_snap:2 _hl_gtemp:1 _hl_pval_ra:1 _hl_dx_src:1 _dlo_park:1 _hl_psrc_copy:1 _fsc_psrc:1 _ret_ptr_src:1 _ret_park_copy:1 _dst_struct:1 _dlo_vec:1 _pe_vtemp:1 _op_park_top:1 _vrcv_dparse:1 _dvi_park:1 _istr_rax_into:1 _psl_store:2 _istr_amp_cap:1 _dst_vec:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
@@ -214,7 +214,7 @@ fi
 # 6.6.6: `_gv_reg8` is the pass-1 destructure's per-name registration (moved out of
 # PARSE_GVAR_REG, which was 4 and is now 1) — declaration zone only, never inside a fn.
 #
-# 6.6.8: `_HTNAMED` (parse.cyr) is a `for x in ...` loop variable. Its global arm runs only with
+# 6.6.8: `_HTNAMED` (parse/switch.cyr) is a `for x in ...` loop variable. Its global arm runs only with
 # GINFN != 1 (top level — inside a fn it is a frame slot), and the loop's SCOPE_POP takes the
 # name out of scope (tests/gates/frontend/toplevel_for_in.sh pins both).
 #
@@ -224,7 +224,7 @@ fi
 #
 # The ONE arm that legitimately runs inside a fn is PARSE_ARRAY's static-array fallback (an
 # array over the per-fn frame budget, or any array under CYRIUS_STACK_ARRAYS=0). It is safe
-# because `_fs_push` (parse.cyr) scopes the NAME to the block — that scoping is what
+# because `_fs_push` (parse/state.cyr) scopes the NAME to the block — that scoping is what
 # `tests/gates/codegen/fn_local_storage_class.sh` axes 2/3/4/9 assert behaviourally, which is
 # the other, non-textual half of this axis.
 #
@@ -271,7 +271,7 @@ if [ -n "$vn_bad" ] || [ "$scanned" -ne "$vn_want" ] || [ "$vn_got" -ne "$vn_wan
     echo "    A registration inside a fn body is a per-program global shared by recursion, threads"
     echo "    and every later file. If the new site is genuinely top-level-only, add its fn here."
     echo "    The in-fn arms allowed today are PARSE_ARRAY's static-array fallback, whose NAME is scoped"
-    echo "    by _fs_push (src/frontend/parse/parse.cyr), and _dyn_vt_reg's vtable (named nothing, SVDEAD)."
+    echo "    by _fs_push (src/frontend/parse/state.cyr), and _dyn_vt_reg's vtable (named nothing, SVDEAD)."
     fail=$((fail+1))
 else
     echo "  ok: axis 5 — $scanned global registrations attributed exactly ($VN_SPEC)"

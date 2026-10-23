@@ -451,7 +451,7 @@ var _coro_flc = 0;          # that body's local-slot count (its frame size)
 var _async_gate_init = 0;
 # v6.3.13: thread-safe array locals — route `var arr[N]` (inside a fn) to a per-thread
 # stack/heap slot instead of the shared global/BSS data region. Default off (lazy-init
-# from CYRIUS_STACK_ARRAYS); flipped on at slot close. See parse.cyr `_ensure_stack_arrays`.
+# from CYRIUS_STACK_ARRAYS); flipped on at slot close. See parse/vis.cyr `_ensure_stack_arrays`.
 var _STACK_ARRAYS = 0;
 var _sa_init = 0;
 # v6.3.11 (G): set by the pass-2 top-level dispatch when it consumes a leading
@@ -516,7 +516,7 @@ var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attrib
 # Lazily allocated per the v6.4.75 `_fnvb_base` precedent above: no heap-map region, no
 # layout change, no two-step bootstrap, and a program with no float literals allocates nothing.
 # v6.5.28 — the declared return sid of the call on the RHS of an assignment, captured before
-# the RHS is parsed (src/frontend/parse/parse.cyr). 0 when the RHS is not a call to a known fn.
+# the RHS is parsed (src/frontend/parse/assign_copy.cyr). 0 when the RHS is not a call to a known fn.
 var _asg_ret_sid = 0;
 # 6.7.16 — the token that ends the value the typed-pointer warning judges: `;` (5), or a classic-for step's `)` (11,
 # `_for_step_tpw`, src/frontend/parse/ctrl.cyr). Read by the exemptions (`_tp_null_exempt`, `_tp_str_exempt`, `_tpv_peel`,
@@ -528,7 +528,7 @@ var _asg_ti = 0 - 1;
 var _asg_nti = 0 - 1;   # 6.7.17: an assignment's name token (PARSE_STMT, the for step), for its undefined-name report
 # 6.6.11 — whether a plain assignment's RHS was a float (_UFV_IS_FLOAT, captured right after its
 # PCMPE); -1 when there is no plain RHS to judge. Re-judges an untyped variable's kind-3 flag
-# at the store (_asg_rejudge, src/frontend/parse/parse.cyr).
+# at the store (_asg_rejudge, src/frontend/parse/assign_copy.cyr).
 var _asg_ufv = 0 - 1;
 var _flit_base = 0;
 var _flit_n = 0;
@@ -1926,7 +1926,7 @@ fn GLINTD(S, li): i64 {
 # half is the slot above it), so a read of it stamps the u128 (_W128_MARK, parse/expr/wide.cyr) and a `+` /
 # `-` on it carries into the high word. A slice shares the 2-slot layout and stays unmarked. Bit 61:
 # the slot names a BARE array (`var b[N]` / `stack var b[N]` in a fn — no element type), whose
-# `b OP= v` is refused by name (_asg_wide_refused, parse.cyr). Both written last at registration.
+# `b OP= v` is refused by name (_asg_wide_refused, parse/assign.cyr). Both written last at registration.
 fn SLW128(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 60)); return 0; }
 fn GLW128(S, li): i64 {
     if (li < 0) { return 0; }
@@ -2669,7 +2669,7 @@ fn TOKNAME_BUILTIN(typ): i64 {
 # The builtins whose call is ONLY a value: no store through a destination, no call, no return — `load8(p)`,
 # `f64_sqrt(x)`, `bitset(v, o, w, n)` (it returns the new word; nothing is stored), `f64v_dot(a, b, n)` (the sum). As
 # a whole statement each is refused in 6.7.16's D11 words (the user's D32, 2026-10-22: PARSE_STMT's
-# `_stmt_value_builtin`, parse.cyr). An explicit list, not a range: keywords sit among the numbers (`mod` 72 ..
+# `_stmt_value_builtin`, parse/builtin.cyr). An explicit list, not a range: keywords sit among the numbers (`mod` 72 ..
 # `object` 79, `union` 101, `u128` 105), and the effect builtins beside them — `store*`, `f64v_add(dst, ..)` and every
 # vector op writing `dst`, `ret2` (it returns), `syscall`, `callptr` — stay statements. Each member is confirmed from
 # its PARSE_FACTOR lowering (parse/expr/stamp.cyr). 1 = token `typ` is one. CHANGELOG [6.7.17]
@@ -3683,7 +3683,7 @@ fn WARN(S, msg, len): i64 {
 # problem is and wrong for one raised after the declaration it describes was consumed: the
 # over-budget array warning named the line and column of the NEXT statement, with the caret
 # under it, while this release's sibling-repo note promised downstreams a file:line for the
-# declaration. Moving the cursor and putting it back is what `_priv_per_item_err` (parse.cyr)
+# declaration. Moving the cursor and putting it back is what `_priv_per_item_err` (parse/vis.cyr)
 # already does, so there is one excerpt path, not two. CHANGELOG [6.6.5]
 fn WARN_AT(S, ti, msg, len): i64 {
     var sv = GTI(S);
@@ -4116,7 +4116,7 @@ fn _edup_grow(): i64 {
 }
 
 # ⛔ 6.6.6 — A STRUCT COPY BETWEEN TWO DIFFERENT STRUCT TYPES WAS SILENTLY ACCEPTED.
-# Both copy paths — `p = q;` (`_try_aggregate_copy_assign`, parse.cyr) and
+# Both copy paths — `p = q;` (`_try_aggregate_copy_assign`, parse/assign_copy.cyr) and
 # `var p: P = q;` (`_try_struct_copy_init`, parse/decl/struct_copy.cyr) — answered a type mismatch
 # with `return 0`, which falls through to the generic 8-byte store. So:
 #   struct P3{x;y;z;} struct Q3{a;b;c;}   p = q;        -> one word of three copied,

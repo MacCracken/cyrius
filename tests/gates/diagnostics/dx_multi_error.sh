@@ -327,7 +327,7 @@ for _fk in main main_win main_aarch64 main_aarch64_native main_x86_macho main_aa
         { echo "FAIL: ZO12: src/$_fk.cyr does not end the parse window (_eb_end) between its last parse and FIXUP"; kfail=$((kfail + 1)); }
 done
 # ZO13 (6.7.17 review) — A DIAGNOSTIC'S `error:` GOES THROUGH THE WRITER THAT HOLDS IT. D111's struct-value refusal
-#     (parse.cyr `_ssc_err`) wrote its `error:` raw: printed at once while the rest of its line was held, its record opened
+#     (parse/deref_store.cyr `_ssc_err`) wrote its `error:` raw: printed at once while the rest of its line was held, its record opened
 #     by the line's tail and never keyed (FM_LOOKUP ran before it), so it sorted FIRST — a fn body's 4:55 before the zone's
 #     3:9. RED before the fix (and diagnostic_writer_census.sh).
 ordered_legs ZO13 1 'struct Q { a; b; }\nfn take(x: i64): i64 { return x; }\nvar p = zz;\nfn f(): i64 { var q: Q; q.a = 1; q.b = 2; return take(q); }\nvar r = f();\nsyscall(60, r);\n' "error:<source>:3:9: $UV 'zz'" "error:<source>:4:55: a struct value cannot be passed to an integer parameter - 'q' is the struct 'Q'"

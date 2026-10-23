@@ -215,7 +215,7 @@ fn _parse_emit_drift_gate(): i64 {
     var fail = 0;
     # Scope: every parse file — src/frontend/parse/ and its folders (6.7.15: parse/fn/def.cyr, split from
     # parse/fn.cyr; 6.7.18: parse/fn.cyr, parse/decl.cyr and parse/expr.cyr split into parse/fn/, parse/decl/ and
-    # parse/expr/).
+    # parse/expr/, and parse.cyr's own body into the pieces beside it).
     # tests/gates/toolchain/check_parse_drift_reads_whole.sh
     # holds this list to the tree's own (`find src/frontend/parse -name '*.cyr'`), so a file added there and not
     # here, or named here and gone, fails by name. CHANGELOG [6.7.18]
@@ -224,6 +224,17 @@ fn _parse_emit_drift_gate(): i64 {
     # switch-jump-table direct emits. parse.cyr now joins the gate.
     # 6.7.10: parse/cov.cyr (the execution-coverage mode) joins it too.
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/parse.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/pair_scan.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/pair_check.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/state.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/vis.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/switch.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/builtin.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/assign.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/deref_store.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/assign_copy.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/stmt.cyr"));
+    fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/prog.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/cov.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/ctrl.cyr"));
     fail = fail + _parse_drift_scan(_root_path("src/frontend/parse/decl/array.cyr"));

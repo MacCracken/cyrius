@@ -283,7 +283,7 @@ ok() {
 #
 # ⚠ 6.6.16 PORTED THE FIXTURE. Until then it nested `inner_secret` inside another fn's
 # body — the other shape pass 1 cannot stamp, measured accepted + SIGSEGV (rc 139) on 6.6.4.
-# 6.6.16 refuses a fn inside a fn body by name (parse.cyr `_refuse_nested_fn`), so that
+# 6.6.16 refuses a fn inside a fn body by name (parse/stmt.cyr `_refuse_nested_fn`), so that
 # fixture would now stop at the nested-fn error and its control would not build. A fn inside
 # a top-level block is the LEGAL shape with the same pass-1 blind spot. `public` must precede
 # the first top-level statement, so the public fns come first.

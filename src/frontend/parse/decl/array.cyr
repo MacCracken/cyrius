@@ -102,7 +102,7 @@ fn _arr_desc(ew, sgn): i64 {
 }
 # ⛔ 6.7.6 (Break 1, lane D) — 0x80 in the descriptor: the array was declared with an element TYPE
 # (`var a: T[N]`, any T — f64, a struct and a vector included, which carry no integer width), so
-# `a OP= v` on its name is refused by name (_asg_wide_refused, parse.cyr) — it operated on element 0.
+# `a OP= v` on its name is refused by name (_asg_wide_refused, parse/assign.cyr) — it operated on element 0.
 # A bare `var a[N]` stays 0. The subscript reads only the width and the kind bits below, so the
 # mark changes no load; a global keeps it under 0x100 like any descriptor. CHANGELOG [6.7.6]
 fn _arr_desc_t(ew, sgn, typed): i64 {

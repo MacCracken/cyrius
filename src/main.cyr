@@ -81,7 +81,7 @@
 #   0x18F888  extra_patch_cnt [8]
 #   0x18F890  ptr_scale     [8]
 #   0x18F898  continue_mode [8]           0 = continue jumps to the loop top, 1 = to a for's step
-#   0x18F8A0  (FREED v6.6.20)             was continue_patches [64] → _cont_vec (parse.cyr)
+#   0x18F8A0  (FREED v6.6.20)             was continue_patches [64] → _cont_vec (parse/state.cyr)
 #   0x18F900  (FREED v6.0.47)             was defer_count → relocated to 0x1AC020 (cap 8→64)
 #   0x18F908  (FREED v6.0.47)             was defer_addrs → relocated to 0x1AC028
 #   0x18FCA0  kernel_mode   [8]

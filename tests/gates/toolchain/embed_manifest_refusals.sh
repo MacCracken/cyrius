@@ -28,7 +28,7 @@
 #   5. RESERVED NAMES, DERIVED from the compiler (not typed here): every TOKNAME_BUILTIN name,
 #      every IS_KEYWORD_TOK statement keyword via TOKNAME (src/common/util.cyr), and the
 #      identifier-spelled intrinsics PARSE_FACTOR lowers (_is_ident_intrinsic's `_is_X_word`
-#      calls in src/frontend/parse/parse.cyr; fncall0..8 from _IS_FNCALL_NAME) — `sizeof` is in
+#      calls in src/frontend/parse/builtin.cyr; fncall0..8 from _IS_FNCALL_NAME) — `sizeof` is in
 #      NEITHER util.cyr table. Each is refused by name; near-misses (`matches`, `sizeofx`,
 #      `fncall9`) are accepted, so the check is not a prefix test.
 #   6. positive: `--print-config` shows `embed = ["PRESET=data/x.json"]  (manifest: [embed])`,
@@ -164,7 +164,7 @@ while read -r t; do
 done < "$W/kwtyp" | sed "s#'/'#\\
 #g" >> "$W/rsv"
 # identifier-spelled intrinsics: the `_is_X_word` calls in _is_ident_intrinsic, and fncall0..8
-awk '/^fn _is_ident_intrinsic\(/,/^}/' src/frontend/parse/parse.cyr | grep -o '_is_[a-z0-9]*_word' | sed 's/^_is_//; s/_word$//' > "$W/ident"
+awk '/^fn _is_ident_intrinsic\(/,/^}/' src/frontend/parse/builtin.cyr | grep -o '_is_[a-z0-9]*_word' | sed 's/^_is_//; s/_word$//' > "$W/ident"
 ni=$(wc -l < "$W/ident" | tr -d ' ')
 [ "$ni" -ge 2 ] || fail "axis 5: found $ni identifier intrinsics in _is_ident_intrinsic (floor 2: sizeof, mulh64)"
 cat "$W/ident" >> "$W/rsv"
@@ -186,7 +186,7 @@ for w in matches sizeofx fncall9 f64_addx var_ default_x; do
     rc=0; cli build --print-config > "$W/out" 2>&1 || rc=$?
     [ "$rc" = 0 ] || fail "axis 5: the near-miss name $w was refused (a prefix test?): $(grep error: "$W/out" | head -1)"
 done
-[ "$FAIL" = "$x" ] && echo "  ok axis 5: all $nr reserved names derived from util.cyr + parse.cyr are refused by name; near-misses are accepted"
+[ "$FAIL" = "$x" ] && echo "  ok axis 5: all $nr reserved names derived from util.cyr + parse/builtin.cyr are refused by name; near-misses are accepted"
 
 # ── axis 6: positive ─────────────────────────────────────────────────────────────────────
 x=$FAIL

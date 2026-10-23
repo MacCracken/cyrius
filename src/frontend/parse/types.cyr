@@ -6876,7 +6876,7 @@ fn _fv_hidden(vi): i64 {
 # Printed as a `note:` after the error so the error text every gate greps stays unchanged.
 # CHANGELOG [6.6.6]
 #
-# 6.6.8: a top-level `for x in ...` variable is marked 3 (_HTLOOPEND, parse.cyr) — the block
+# 6.6.8: a top-level `for x in ...` variable is marked 3 (_HTLOOPEND, parse/switch.cyr) — the block
 # note's advice ("declare it before the block") does not apply to a loop variable, so the
 # most recent out-of-scope match picks which note is printed. CHANGELOG [6.6.8]
 fn _gv_blockscoped(S, noff): i64 {

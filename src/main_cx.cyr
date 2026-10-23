@@ -223,7 +223,7 @@ _fnt_cap = 2048;        # v6.5.51: HALF the fixed 4096-slot hash regions, so loa
 # cx's bytecode buffer: _CX_CODE_CAP (4 MiB) off-heap, fixed — backend/cx/emit.cyr EB refuses
 # cp >= _CX_CODE_CAP by name. It was the 512 KiB arena region at 0x54A000. CHANGELOG [6.7.12]
 _cx_code_base = alloc(_CX_CODE_CAP);
-# Not a code buffer on cx: the SHARED break/continue chain (parse.cyr _PARSE_BREAK,
+# Not a code buffer on cx: the SHARED break/continue chain (parse/stmt.cyr _PARSE_BREAK,
 # parse/ctrl.cyr) keeps its rel32 links at _codebuf_base + the code offset — an 8-byte
 # read-modify-write at an instruction start below the cap, hence _CX_CODE_CAP + 8. It was the
 # arena region at 0x41A000. `_codebuf_cap` below is read only by the x86/aarch64 EB, which cx

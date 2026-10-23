@@ -44,7 +44,7 @@ var _last_movca_popr_cp = 0 - 1;
 # the PE / kernel / agnos / EFI branches are statically-dead shims here).
 
 # No-op shim for the PE pending-imports helper, same reasoning:
-# `parse.cyr` calls `_pe_pending_imp_add` from the `#pe_import`
+# `parse/stmt.cyr` calls `_pe_pending_imp_add` from the `#pe_import`
 # directive handler unconditionally so the compile-time name
 # resolves. aarch64-backed `main_*.cyr` entry points don't include
 # `src/backend/pe/emit.cyr`, so the real helper isn't available —
@@ -2932,7 +2932,7 @@ fn EF64_ABS(S): i64 {
 }
 
 # v5.11.39 path-A stubs — switch-table dispatch. aarch64 takes
-# the chain path (parse.cyr sets `use_table = 0` for
+# the chain path (parse/switch.cyr sets `use_table = 0` for
 # _AARCH64_BACKEND == 1); these ops are defined for include-time
 # symmetry but never invoked at compile time.
 fn ESWITCH_DISPATCH_PRE(S, case_min, range): i64 {

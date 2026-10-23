@@ -346,7 +346,7 @@ fn ECMPR(S): i64 { return 0; }  # no-op, comparison done inline
 # truthiness test. Every caller is a truthiness test of r0 followed by EJCC, with
 # r1 scratch: ECONDCMP's bare value and its u128 chain arm (parse/ctrl.cyr),
 # `_w128_case` (parse/expr/wide.cyr: a u128 match / switch arm), `_match_arm_test`'s
-# u128 arm on an integer subject and `_defer_emit_walk`'s flag test (parse.cyr).
+# u128 arm on an integer subject and `_defer_emit_walk`'s flag test (parse/state.cyr).
 # Find them by name (`grep -n 'ETESTAZ(S)' src/frontend`), not by line.
 fn ETESTAZ(S): i64 { CX_MOVI(S, 1, 0); return 0; }  # r1 = 0 so EJCC's eq r0,r0,r1 tests r0==0
 # v6.5.21: these were `return 0;` stubs, so multi-return (`return (a, b);` and
@@ -549,7 +549,7 @@ fn EF64_CMP(S, tok): i64 {
 }
 
 # v5.11.39 path-A stubs — switch-table dispatch. cx takes the
-# chain path (parse.cyr now sets `use_table = 0` for _TARGET_CX
+# chain path (parse/switch.cyr now sets `use_table = 0` for _TARGET_CX
 # == 1, paired guard at the existing aarch64 one). Stubs for
 # include-time symmetry.
 fn ESWITCH_DISPATCH_PRE(S, case_min, range): i64 {

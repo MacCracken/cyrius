@@ -4,7 +4,7 @@
 # Split from parse/expr.cyr at 6.7.18, unchanged; parse.cyr includes parse/expr/ in source order. CHANGELOG [6.7.18]
 
 # v6.5.19 (the define-body copy overflow bug): the expression-tier depth chokepoint, shaped exactly like the
-# PARSE_STMT wrapper in parse.cyr (v6.4.62) so there is one pattern, not two. PARSE_STMT
+# PARSE_STMT wrapper in parse/stmt.cyr (v6.4.62) so there is one pattern, not two. PARSE_STMT
 # alone does NOT cover the expression vectors — nested parens, unary-minus chains and
 # call chains recurse through PEXPR/PARSE_TERM without ever re-entering a statement — so
 # a bound placed only on statements would have left three of the six crashing shapes

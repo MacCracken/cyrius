@@ -5,7 +5,7 @@
 # THE BUG. main_cx.cyr does not include src/backend/common/runtime.cyr (it keeps its own RECFIX),
 # and until 6.6.10 it compiled against `fn _read_env(name): i64 { return 0; }` in
 # src/backend/cx/emit.cyr. Every CYRIUS_* knob reachable from the cx driver was dead — ten call
-# sites: CYRIUS_ASYNC, CYRIUS_STACK_ARRAYS (parse.cyr), CYRIUS_DCE, CYRIUS_STATS (util.cyr),
+# sites: CYRIUS_ASYNC, CYRIUS_STACK_ARRAYS (parse/vis.cyr), CYRIUS_DCE, CYRIUS_STATS (util.cyr),
 # CYRIUS_POISON, CYRIUS_MONOMORPH (main_cx.cyr), CYRIUS_ALLOW_PARENT_INCLUDES,
 # CYRIUS_ALLOW_ABSOLUTE_INCLUDES (lex.cyr), CYRIUS_TYPE_CHECK, CYRIUS_FILEID_DUMP (parse/fn/def.cyr).
 # Derive the list, do not trust this one:
@@ -20,7 +20,7 @@
 # compiler that always (or never) honoured a knob fails the pair:
 #   lex.cyr       CYRIUS_ALLOW_PARENT_INCLUDES  unset: rc 1 + the traversal refusal; set: rc 0 and
 #                                               the .cyx runs under cxvm to the included fn's value
-#   parse.cyr     CYRIUS_ASYNC                  unset: rc 1 + the gate message; set: a plain async
+#   parse/vis.cyr CYRIUS_ASYNC                  unset: rc 1 + the gate message; set: a plain async
 #                                               fn compiles and `await` yields its value under cxvm;
 #                                               a coroutine reaches the cx refusal by name (dead before)
 #   parse/cov.cyr CYRIUS_POISON                 predefines the CYRIUS_POISON macro: set, an #ifdef
@@ -71,7 +71,7 @@ run CYRIUS_ALLOW_PARENT_INCLUDES=1 "$T/inc/sub" m.cyr
 if [ "$rc" -ne 0 ]; then _bad "parent include, CYRIUS_ALLOW_PARENT_INCLUDES=1: rc $rc — cycc_cx cannot see the knob its own refusal names"; grep '^error' "$T/e" | head -2 | sed 's/^/      /'
 else vm; if [ "$vrc" -ne 7 ]; then _bad "parent include: the .cyx exits $vrc under cxvm, expected 7"; else pass=$((pass + 1)); fi; fi
 
-# ── parse.cyr: CYRIUS_ASYNC ────────────────────────────────────────────────────────────────
+# ── parse/vis.cyr: CYRIUS_ASYNC ────────────────────────────────────────────────────────────
 cat > "$T/as.cyr" <<'EOF'
 include "lib/alloc.cyr"
 include "lib/async.cyr"

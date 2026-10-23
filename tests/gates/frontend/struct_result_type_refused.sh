@@ -17,7 +17,7 @@
 #       (the scalar field infers T = i64, so the call reaches Box<i64>, not Box<Pt>). The
 #       declarations `var z: Odd = mkod2()` and `var s: Box<Pt> = mk(r.n)` were not refused by
 #       name either — only the retptr / rax:rdx receives compared the sid. Root cause:
-#       `_try_struct_call_assign` (src/frontend/parse/parse.cyr) exited at `cls == 0`, `n <= 1` and
+#       `_try_struct_call_assign` (src/frontend/parse/assign.cyr) exited at `cls == 0`, `n <= 1` and
 #       the sid test with `return 0` = the scalar store.
 #       At TOP LEVEL the same mismatch compiled clean at 9-16 B too (`var GZ: Pt = mkr()`,
 #       `= GQ.mr()`: no frame, so no receive compared the sid; the binary SIGSEGV'd reading GZ.x),
@@ -121,7 +121,7 @@
 #   MTG12 `_gs_mtp` without `_cam_open` (parameter k read at position k) -> RED 2: TG15 TG16
 # 6.7.16 (D99, the user's decision, 2026-10-20; issues/archived/2026-10-20-dereference-store-of-struct-result-keeps-first-word.md) —
 # A STRUCT RESULT OVER 8 B STORED THROUGH A POINTER TO A SCALAR is refused, "cannot assign '*p: i64' from 'mkp', which
-# returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_sres`, src/frontend/parse/parse.cyr), and in a
+# returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_sres`, src/frontend/parse/deref_store.cyr), and in a
 # generic a store through a name reading T is a stub line (`_gs_dsr_stmt`): DP0 the filed repro verbatim (its one error,
 # at 6:44), DP1-DP21 (DP18b), DPK1-DPK4; TA6 / TA6n / TA6b / TA6c re-pinned (they compiled: the review's R1 had taken the
 # line out of D1's), TA11 a carrier's `*T` field, TA12 `*(p + 0)`, TA13 the base parse judges no T-typed store (a chain
@@ -155,7 +155,7 @@
 #   for a T-typed store the scan would read no struct from, and no row reaches it)
 # 6.7.17 (D13, the user's decision, 2026-10-22; issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md
 # row B1) — THE SAME STORE THROUGH AN UNTYPED POINTER is refused in D99's words without the type, "cannot assign '*p'
-# from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_untyped`, parse.cyr): UP0
+# from 'mkp', which returns the struct 'Q' - store it through a '*Q' or bind a field" (`_dsr_untyped`, parse/deref_store.cyr): UP0
 # the filed repro verbatim (exit 77 through 6.7.16: Q's first word), UP1-UP13 (`alloc`, `*(p + 8)`, an untyped global,
 # top level, a method, an operator, wrapped, `fncall0(&mkp)`, 24 B, a for step, an untyped parameter, a capture, a
 # generic), UPK1-UPK5 (a field of the result, 8 B, a `Str`, `*(&q)`, a word); UPX UP0 / UP5 on aarch64 / cx / PE.
@@ -195,7 +195,7 @@
 # 6.7.17 (D106, the user's decision, 2026-10-22: "refuse it as the struct call is there", the struct twin of D24) — A
 # STRUCT VALUE THAT IS NO CALL INTO A WORD SLOT is refused where the struct call is, in the call's words with "which is
 # the struct 'Q'": an inline local, a by-value parameter, a captured copy, an inline global, `*pq` / `**ppq` / `*(&q)`, a
-# struct-typed field (`_ssv_at`, parse.cyr) — over 8 B, not a `Str` / tuple / dyn — into a name (`_asa_sval`, from
+# struct-typed field (`_ssv_at`, parse/deref_store.cyr) — over 8 B, not a `Str` / tuple / dyn — into a name (`_asa_sval`, from
 # `_pcmpe_struct_assign`), a declaration annotated a scalar or a pointer to no struct (`_svin_val`; the zone's
 # `_svin_zval`), and every `_dsr_rec` reader (`_dsr_val`: a field, an element, `*p` typed or untyped, a compound, a
 # literal's element, a slice field); through a generic's T the stub scan reads it (`_gs_sval_big`). SV0 the review's

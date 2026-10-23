@@ -9,7 +9,7 @@
 # the next compound op (`i >>= 1`) exposed it — 128, not 0. The compound op's LOAD was the same
 # defect on the adjacent path: 8 bytes, so `a >>= 1` on a u8 global followed by a u8 `b = 1`
 # shifted b's byte into a (130, not 2). Now one store (_asg_store_slot) and a width-correct
-# load (_asg_compound_load), both in src/frontend/parse/parse.cyr.
+# load (_asg_compound_load), both in src/frontend/parse/assign.cyr.
 #
 # Every neighbour is initialised NON-zero on purpose (a zero-initialised narrow global is a
 # different, separately tracked path) and every one is checked after the loop.

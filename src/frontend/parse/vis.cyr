@@ -1,0 +1,257 @@
+# PARSER — file-scoped visibility (`private` / `public`: `_PRIV_*`, _TL_VIS, _GVAR_VIS), `async fn` at top level
+# (_IS_FN_KW), and the async and stack-array switches.
+# ================================================================
+# Split from parse/parse.cyr at 6.7.18, unchanged; parse.cyr includes its pieces in source order. CHANGELOG [6.7.18]
+
+# v6.3.11 (G) — async/await. `_IS_FN_KW` lets the top-level dispatch in every
+# driver fork route a leading `async` (token 134) to the same fn path as `fn`
+# (token 32) without 7×2 bespoke branches: the dispatch checks `_IS_FN_KW(S)==1`
+# instead of `PEEKT(S)==32`, and the shared _prescan_fn_sig / PARSE_FN_DEF consume
+# the optional `async` prefix. Token 134 only exists when source has `async`
+# (cycc has none → byte-identical self-host), so no _ASYNC_OK guard is needed here.
+# ── v6.5.0 file-scoped visibility: the top-level `private` / `public` markers ──
+#
+# `private` on its own at top level flips THIS FILE to private-by-default; `public`
+# (== `pub`, token 73) in front of an individual item re-exposes it. Default with no
+# declaration is today's behaviour, everything public — so this is opt-in per file and
+# nothing in the tree or the ecosystem changes until a file asks for it.
+#
+# ONE shared helper rather than 14 hand-written dispatch arms. The top-level token
+# dispatch is inline code duplicated across pass 1 and pass 2 of all 7 `main_*.cyr`
+# forks, and BOTH fallthroughs terminate the parse SILENTLY — so a fork where the new
+# token was forgotten would not error, it would quietly stop parsing. Routing every
+# site through one call means the set of edits is a mechanical one-line substitution
+# and the behaviour cannot drift between forks. (Same reasoning as `_capacity_warnings`
+# at v6.4.50, which pulled a block duplicated in 2 of 7 drivers into one shared fn and
+# thereby fixed the 5 forks that had silently never had it.)
+#
+# Returns 1 if it consumed a visibility marker, 0 otherwise. Callers pass through to
+# their existing chain on 0.
+#
+# Recording is IDEMPOTENT: both passes walk the same token stream, so pass 2 re-marks
+# the same file id pass 1 already marked. That is deliberate — it means one helper
+# serves both passes with no pass-awareness.
+var _priv_files[512];        # 512*8 = 4096 B = 32768 bits, one per possible file id
+var _pub_pending = 0;        # `public` seen; consumed by the next fn / global-var definition; un-armed by _TL_VIS on struct/union/enum/impl/use (v6.6.4)
+
+fn _PRIV_MARK(fid): i64 {
+    if (fid <= 0) { return 0; }
+    if (fid >= 32768) { return 0; }
+    var w = fid / 64;
+    var b = fid % 64;
+    store64(&_priv_files + w * 8, load64(&_priv_files + w * 8) | (1 << b));
+    return 0;
+}
+
+fn _PRIV_FILE(fid): i64 {
+    if (fid <= 0) { return 0; }
+    if (fid >= 32768) { return 0; }
+    var w = fid / 64;
+    var b = fid % 64;
+    if ((load64(&_priv_files + w * 8) & (1 << b)) != 0) { return 1; }
+    return 0;
+}
+
+# ⭐ 6.6.5 — mark every `private` file BEFORE either parser pass, from the end of LEX.
+#
+# `private` used to be recorded by _TL_VIS as pass 1 WALKED PAST the marker, so whether a
+# definition was stamped private depended on where in the file the marker sat: a fn above
+# the `private` line was prescanned while the file was still "public" and a forward call
+# to it was allowed, and a GLOBAL above the line was never private in either order. The
+# guide says the marker applies to the whole file — so the marking has to happen before
+# anything is stamped, not during the walk.
+#
+# It also gives the per-item diagnostic a place to be emitted EXACTLY ONCE: both passes
+# walk the same tokens, so reporting from _TL_VIS printed the same error twice. This loop
+# visits each token once.
+#
+# ⚠ The per-item form `private fn h()` must NOT mark the file. _TL_VIS marked first and
+# errored second, so the rejected form still privatised the file — and a legitimate `fn g`
+# in that same file was then reported "private to its file" at its caller: a false cascade
+# on top of a doubled diagnostic. CHANGELOG [6.6.5]
+fn _PRIV_PRESCAN(S): i64 {
+    var i = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        if (TOKTYP(S, i) == 153) { _PRIV_PRESCAN_TOK(S, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _PRIV_PRESCAN_TOK(S, ti): i64 {
+    if (_priv_is_item(S, ti) == 1) { _priv_per_item_err(S, ti); return 0; }
+    _PRIV_MARK(FM_FILEID(S, GTLINE(S, ti)));
+    return 0;
+}
+# 1 = the `private` at token `ti` is the per-item form (reported by the pre-pass). Also the statement parser's test
+# (`_dl_priv`, parse/fn/def.cyr), so the token it steps is the one reported.
+# THE DISCRIMINATOR IS THE LINE (v6.5.56): `private` alone on its own line is the
+# file-level form; a trailing `;` closes the statement so `private; fn h()` is legal
+# too. Anything else sharing the token's line is the per-item misread.
+# ⚠ EOF (token 12) is NOT "something on the line". LEX appends it with ADDTOK(S, 12, 0)
+# on whatever line the source ended on, so a file whose last byte is the `e` of
+# `private` — no trailing newline — has the EOF token sharing the marker's line and was
+# told "per-item `private` is not supported", a rule the author did not break. 6.6.4
+# refused that source too (`unexpected private` when a statement precedes it), so the
+# only thing at stake is WHICH diagnostic; the carve-out restores it. CHANGELOG [6.6.5]
+fn _priv_is_item(S, ti): i64 {
+    var nx = ti + 1;
+    if (nx >= GTCNT(S)) { return 0; }
+    if (TOKTYP(S, nx) == 5) { return 0; }
+    if (TOKTYP(S, nx) == 12) { return 0; }
+    if (GTLINE(S, nx) != GTLINE(S, ti)) { return 0; }
+    return 1;
+}
+
+# Emitted from the pre-pass, so NOT through ERR_MSG: ERR_MSG sets `_panic`, which exists
+# to swallow a cascade until the statement parser resyncs — arming it before the parse has
+# started would swallow the first genuine syntax error instead. `_had_error` alone
+# withholds the binary, which is the v6.4.62 multi-error contract.
+fn _priv_per_item_err(S, ti): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head_at(S, ti);
+    _ew(": per-item `private` is not supported; put `private` alone on a line to make the file private\n", 94);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+
+# v6.6.4: the tokens `public` can ARM the marker for — a `var`, a `fn`
+# (plain, `async`), or a fn-attribute directive that precedes one (#regalloc #must_use
+# #deprecated #pure #io #alloc #naked #inline). Anything else — struct, union, enum, impl,
+# `use`, `mod`, … — records no visibility (the committed design covers fns and global vars
+# only), so `public` on it is consumed UN-ARMED. Before this, the marker was armed
+# unconditionally and only fn/var definitions ever cleared it, so `public enum E {..}`
+# silently re-exposed the NEXT fn or var in a private file (hisab `_ad_pow`, 2026-09-13) —
+# and the same for struct / union / impl / `use`. A positive list rather than a negative
+# one so a future top-level keyword cannot re-open it.
+fn _PUB_CAN_ARM(t): i64 {
+    if (t == 3) { return 1; }      # var (`secret var` is fn-local only — never at top level)
+    if (t == 32) { return 1; }     # fn
+    if (t == 134) { return 1; }    # async (fn)
+    if (t == 168) { return 1; }    # const (6.7.2): `pub const X` / `pub const fn`
+    if (t == 109) { return 1; }    # #regalloc
+    if (t == 122) { return 1; }    # #must_use
+    if (t == 124) { return 1; }    # #deprecated
+    if (t == 125) { return 1; }    # #pure
+    if (t == 126) { return 1; }    # #io
+    if (t == 127) { return 1; }    # #alloc
+    if (t == 133) { return 1; }    # #naked
+    if (t == 163) { return 1; }    # #inline
+    return 0;
+}
+
+fn _TL_VIS(S): i64 {
+    var t = PEEKT(S);
+    if (t == 73) {
+        # `public` / `pub` — re-expose the NEXT item. Consumed by PARSE_FN_DEF / _GVAR_VIS;
+        # consumed HERE, un-armed, when the next item cannot carry visibility (v6.6.4).
+        STI(S, GTI(S) + 1);
+        _pub_pending = 0;
+        if (_PUB_CAN_ARM(PEEKT(S)) == 1) { _pub_pending = 1; }
+        return 1;
+    }
+    if (t == 153) {
+        # `private` — CONSUME ONLY. The file was flipped by `_PRIV_PRESCAN` at the end of
+        # LEX, and the v6.5.56 per-item rejection is reported there too.
+        #
+        # ⛔ 6.6.5: this arm used to do both jobs itself, and both were wrong from here.
+        #  * Marking DURING the walk made the stamp depend on where the marker sat — a fn
+        #    or a global ABOVE the `private` line was prescanned while the file still read
+        #    public. The guide says the marker applies to the whole file.
+        #  * It marked BEFORE rejecting the per-item form, so `private fn h()` still
+        #    privatised the file; and because both passes walk these tokens, the rejection
+        #    printed TWICE and a legitimate sibling fn was then reported "private to its
+        #    file" at its caller. One pre-pass visit fixes all three. CHANGELOG [6.6.5]
+        STI(S, GTI(S) + 1);
+        # Tolerate an optional trailing `;` so both `private` and `private;` parse.
+        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+        return 1;
+    }
+    return 0;
+}
+
+# v6.5.0 Phase 2b — stamp a global var's visibility. `decl_ti` is the `var` keyword
+# token, so the file is derived from the declaration itself rather than from whatever
+# token happens to be current (the same reasoning as the fn stamp using `_defstart_ti`).
+fn _GVAR_VIS(S, vi, decl_ti): i64 {
+    var fid = FM_FILEID(S, GTLINE(S, decl_ti));
+    if (_pub_pending == 0) {
+        if (_PRIV_FILE(fid) == 1) { SVFI(S, vi, fid + 1); }
+    }
+    _pub_pending = 0;
+    return 0;
+}
+
+fn _IS_FN_KW(S): i64 {
+    var t = PEEKT(S);
+    if (t == 32) { return 1; }
+    if (t == 134) { return 1; }
+    if (t == 168) { if (TOKTYP(S, GTI(S) + 1) == 32) { return 1; } }   # 6.7.2 (C1): `const fn`
+    return 0;
+}
+
+# Lazily resolve the async feature gate from CYRIUS_ASYNC the first time an
+# `async`/`await` token reaches pass 2 (PARSE_FN_DEF / PEXPR). Default off → the
+# gated lowering is unreachable and cycc self-host is byte-identical (async/await
+# never appear in cycc src, so this is never called during self-host). Same opt-in
+# contract as _MONOMORPH_OK, but lazy — avoids a per-fork driver env-read edit.
+fn _ensure_async_gate(S): i64 {
+    if (_async_gate_init == 1) { return _ASYNC_OK; }
+    _async_gate_init = 1;
+    var e = _read_env("CYRIUS_ASYNC");
+    if (e != 0) { if (load8(e) == 49) { if (load8(e + 1) == 0) { _ASYNC_OK = 1; } } }
+    return _ASYNC_OK;
+}
+
+# v6.3.13 (thread-safe array locals): a `var arr[N]` declared INSIDE a function is
+# historically allocated in the global/BSS data region at a FIXED address — shared
+# by every thread, so concurrent code that uses an array-local corrupts (root cause
+# of the str_builder concurrency bug). When this gate is on, small array locals are
+# registered as multi-slot per-thread STACK locals (the struct-local mechanism) and
+# large ones are heap-allocated per call — so &arr / arr[i] resolve via FINDLOCAL to
+# a per-thread address. Default OFF during the v6.3.13 dev cycle (flipped ON at slot
+# close via a two-step bootstrap). Lazy-init from CYRIUS_STACK_ARRAYS — no per-fork edit.
+fn _ensure_stack_arrays(S): i64 {
+    if (_sa_init == 1) { return _STACK_ARRAYS; }
+    _sa_init = 1;
+    # v6.3.15: DEFAULT-ON. `var arr[N]` LOCALS route to per-thread STACK slots (fixes the
+    # str_builder concurrency root cause — v6.3.13: array locals used to share one global
+    # .bss buffer across all threads). The two v6.3.13 default-on blockers are resolved:
+    # (1) SSE m128 16-alignment — array stack slots whose `&arr` disp would be 8 (mod 16)
+    # get a one-slot parity pad so `pxor/aesenc xmm,[arr]` stays #GP-free (see PARSE_ARRAY);
+    # (2) `secret var` zeroise now addresses the LOCAL (ELOAD_LOCAL_ADDR), not the global.
+    # CYRIUS_STACK_ARRAYS=0 opts back to legacy global (.bss) arrays. See CHANGELOG [6.3.15].
+    # ⛔ v6.5.12: THE OPT-OUT IS NOT SILENT ANY MORE — it can re-open a fixed CVE-class
+    # defect in a DOWNSTREAM library, and nothing said so.
+    #
+    # sigil 3.12.3 fixed an RSA authentication bypass (`rsa_pkcs1v15_verify_sha256`
+    # returning 1 for INVALID signatures — 888 of 400,000 forged signatures accepted,
+    # measured by agnosai) and the ENTIRE fix is "make the verify scratch buffers
+    # function-LOCAL": `var nbuf[512]` / `var embuf[512]` / `var expbuf[512]`. That fix
+    # only holds because array locals are per-thread STACK slots. Setting
+    # CYRIUS_STACK_ARRAYS=0 turns them back into shared .bss globals — the two operands
+    # of the verify decision land in one lane-indexed global again and the bypass
+    # RETURNS, with no diagnostic anywhere.
+    #
+    # The flag stays (it is a real debugging escape hatch and has been default-on since
+    # v6.3.15), but a security property must not be revocable in silence. Warn, name what
+    # it costs, and let the caller decide — the same reasoning as the v6.5.11 "no silent
+    # caps" work.
+    _STACK_ARRAYS = 1;
+    var e = _read_env("CYRIUS_STACK_ARRAYS");
+    if (e == 0) { return _STACK_ARRAYS; }
+    if (load8(e) == 48) {
+        if (load8(e + 1) == 0) {
+            _STACK_ARRAYS = 0;
+            _ew("warning: CYRIUS_STACK_ARRAYS=0 — `var arr[N]` locals are shared .bss globals, not per-thread stack.\n", 102);
+            _ew("  This REVERTS the mechanism sigil 3.12.3 relies on to fix its RSA verify bypass; crypto scratch\n", 97);
+            _ew("  buffers become cross-thread shared again. Do not use for anything that verifies signatures.\n", 94);
+        }
+    }
+    return _STACK_ARRAYS;
+}

@@ -127,7 +127,7 @@ else
 fi
 
 # ── axis 3: 4,097 switch jump tables under CYRIUS_IR=3 ──────────────────────────────────
-# Four dense cases reach the x86 table path (parse.cyr: >= 4 cases, density >= 1/3); h leaves
+# Four dense cases reach the x86 table path (parse/switch.cyr: >= 4 cases, density >= 1/3); h leaves
 # the IR passes' NOP bytes, so the seam has something to compact.
 awk 'BEGIN {
     print "fn h(r): i64 {"; print "    r = r + 3 * 4;"; print "    r = r + 3 * 4;"; print "    return r;"; print "}"

@@ -3,7 +3,7 @@
 #
 # ⛔ THE DEFECT, every release through 6.6.16. `fn w<T>(p: T, d) { return p.div(d); }` returns a pair
 # at T = Pt (`Pt_div` returns Ok/Err) and one value at T = Qt. The pair question
-# (`_pair_callee_at`, src/frontend/parse/parse.cyr) looked at the generic TEMPLATE, whose flag cannot fit
+# (`_pair_callee_at`, src/frontend/parse/pair_check.cyr) looked at the generic TEMPLATE, whose flag cannot fit
 # both, so `w(p, 2)?` and `w<Pt>(p, 2)?` took the BOXED `?` lowering and dereferenced the tag:
 # SIGSEGV (rc 139) on x86, aarch64 and PE, in either definition order. Now the call resolves to its
 # instance (`_pair_gen_inst`), whose body set its own flag when it was parsed with T bound.

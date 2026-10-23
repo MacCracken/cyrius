@@ -908,7 +908,7 @@ fn PARSE_DO(S): i64 {
 }
 
 # A `for` opens its `continue` range: forward-jump mode, its jumps appended above every
-# enclosing `for`'s (see `_cont_vec`, parse.cyr). Returns its base. CHANGELOG [6.6.20]
+# enclosing `for`'s (see `_cont_vec`, parse/state.cyr). Returns its base. CHANGELOG [6.6.20]
 fn _cont_open(S): i64 {
     if (_cont_vec == 0) { _cont_vec = vec_new(); }
     S64(S + 0x18F898, 1);

@@ -30,7 +30,7 @@
 # 6.6.11 (N4): the qualified form never checked its BASE. `Foo.EB` (no enum Foo) and
 # `F.EB` (EB belongs to E) compiled in expressions, #assert and array sizes, `Nope.gz`
 # loaded the plain global gz, and with a variant name shared by two enums `A.X` read the
-# LAST X. One resolver (_enum_qual_resolve, parse.cyr) serves all three sites now: the
+# LAST X. One resolver (_enum_qual_resolve, parse/builtin.cyr) serves all three sites now: the
 # base must be an enum and the variant must be ITS variant, looked up in that enum.
 # An enum NAME may be declared more than once, so the parent is matched by NAME, not id.
 # Mutation: make _enum_qual_resolve `return FINDVAR(S, vn);` -> every N4 refusal compiles

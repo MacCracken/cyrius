@@ -1495,7 +1495,7 @@ fn _pe_ensure_tlsset(S): i64 {
 }
 fn _pe_tlsset_get(): i64 { return _pe_tlsset_idx; }
 
-# Called from `parse.cyr`'s `#pe_import("dll", "symbol")` handler
+# Called from `parse/stmt.cyr`'s `#pe_import("dll", "symbol")` handler
 # with `name` pointing at the NUL-terminated symbol string inside
 # str_data. Appends the name to the pending buffer; `_pe_layout`
 # iterates the buffer and forwards each entry to `_pe_imp_add`

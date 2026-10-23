@@ -1085,7 +1085,7 @@ fn _tp_str_exempt(S, st): i64 {
     return 1;
 }
 # The warning (at the cursor) into a `*T`, unless the value starting at `st` is exempt or was refused already (an
-# `&a[i]` inside it). An assignment's (parse.cyr's `_PARSE_STMT_IMPL` arms) calls it directly.
+# `&a[i]` inside it). An assignment's (parse/stmt.cyr's `_PARSE_STMT_IMPL` arms) calls it directly.
 # ⛔ 6.7.17 (met landing D24) — A REFUSED STATEMENT PRINTS NO TYPED-POINTER WARNING, as it prints no float-type one
 # (6.7.16, `_FLT_TYPE_WARN`): `var p: *f64v2 = mk2(4, 7);` and `p = mk2(4, 7);` printed D100's refusal and then
 # "assigning non-pointer to typed pointer" about the refused value (`var x: *i64 = (*GP);` D24's the same). Not while
@@ -1151,7 +1151,8 @@ fn _tp_warn_gasg(S, gvi, st): i64 {
 # `Str`-typed name (`var a: *Str = GS;`), a field or a method of a call's result (`mkh().name`, `mkh().nm()`), and each
 # of those and the call under parentheses that wrap the value whole (`(h.name)`, `(str_from(..))` — in the local too).
 # 1 = the value from `st` to its `;` is one primary the local's arm types as the destination's pointee (`_tpv_sid`,
-# parse.cyr: the same reader) and that pointee is `Str`. A field of any other type (`h.n`) is still warned about.
+# parse/assign_copy.cyr: the same reader) and that pointee is `Str`. A field of any other type (`h.n`) is still warned
+# about.
 fn _tp_call_pointee(S, st, psid): i64 {
     if (st < 0) { return 0; }
     if (psid <= 0) { return 0; }

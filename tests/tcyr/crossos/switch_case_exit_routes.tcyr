@@ -3,7 +3,7 @@
 #
 # THE BUG THIS GUARDS (P1 silent miscompile, latent for multiple minors):
 #
-#  (1) TABLE REGIME (>= 4 dense cases; x86-family only — parse.cyr forces the chain
+#  (1) TABLE REGIME (>= 4 dense cases; x86-family only — parse/switch.cyr forces the chain
 #      path for aarch64 and cx). The dispatch is
 #          movsxd rax,[rcx+rax*4] ; add rax,rcx ; jmp rax
 #      over a table of `target_cp - table_cp` displacements. The v5.6.27 regalloc

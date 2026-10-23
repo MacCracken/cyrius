@@ -1955,7 +1955,7 @@ fn _hdr_guard_else(b, ns, nl, rk): i64 {
 # `enum E: stack { V(x); }`) returns a (tag, payload) PAIR — rax:rdx on x86_64, x0:x2 on aarch64
 # (measured on pi and ecb: x1 is 0, x2 the payload), rax:rdx on Win64 — and so does every fn
 # that returns one (`return Ok(x);`), or returns a call of such a fn (GFLG 256, the compiler's
-# propagation, src/frontend/parse/parse.cyr _pair_body_scan). An annotated `: Result` / `: Option` /
+# propagation, src/frontend/parse/pair_scan.cyr _pair_body_scan). An annotated `: Result` / `: Option` /
 # `: Tagged` (or own stack enum) return is modelled as cyr_val2 (class 4, x86_64 SysV only);
 # a fn whose signature says a word (none, or `: i64`) but whose body returns the pair is
 # REFUSED by name — a source scanner cannot see a propagated pair from the signature, so it says
@@ -2076,7 +2076,7 @@ fn _hdr_closure_skip(b, p, close): i64 {
 
 # 1 when the pair call NAME at b[ns, ne) — `NAME(..)` / `NAME<..>(..)` — is followed by `?`: the
 # `?` desugar returns the callee's pair on its Err path and marks the enclosing fn pair-returning
-# (src/frontend/parse/parse.cyr and parse/expr/term.cyr, the `?` lowering's SFLG 256). CHANGELOG [6.7.13]
+# (src/frontend/parse/stmt.cyr and parse/expr/term.cyr, the `?` lowering's SFLG 256). CHANGELOG [6.7.13]
 fn _hdr_q_after(b, ne, close): i64 {
     var r = _hdr_ws_nl(b, ne, close);
     if (r < close && load8(b + r) == 60) { r = _hdr_ws_nl(b, _hdr_skip_targs(b, r, close), close); }

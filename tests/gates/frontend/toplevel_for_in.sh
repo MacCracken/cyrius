@@ -12,7 +12,7 @@
 # PARSE_FOR registered the loop variable as a fn FRAME slot unconditionally. Top-level code
 # has no frame on any executable entry, so the store addressed [rbp-8] / [x29-8] off an
 # unset frame pointer, and top-level resolution never runs FINDLOCAL, so every READ of the
-# name was undefined. At top level it is now a LIVE global (_HTNAMED, parse.cyr) that leaves
+# name was undefined. At top level it is now a LIVE global (_HTNAMED, parse/switch.cyr) that leaves
 # scope at the loop's end, marked 3 so a later use gets a note that fits a loop variable.
 #
 # EXPECTED VALUES come from a CONTROL program compiled by the same compiler that spells the
