@@ -3636,11 +3636,18 @@ fn _ppd_asg(S, noff, term): i64 {
     if (STREQ(S, TOKVAL(S, ti - 2), noff) == 0) { return 0; }
     var pt = TOKTYP(S, ti - 3);
     if (pt == 8 || pt == 41) { return 0; }   # `**qq = ..`, `w.pq = ..`: a store through the name, not into it
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    # 6.7.17: the value's struct pointer (`_pa_sid`, its own tokens) before the destination's annotation (`_asa_ann`, a
+    # walk back over every earlier statement) — the walk on every `NAME = ..` made a fn of N assignments quadratic
+    # (`s = s + gN` x 10,000: 147 ms through 6.7.16, 6 s; globals_scale_linear.sh [ref]). `_ppd_val` refuses only
+    # such a value, so the answer is the same.
+    var sa = _pa_sid(S, ti, e);
+    if (sa <= 0) { return 0; }
+    if (sa >= 2048) { return 0; }
     var a = _asa_ann(S, noff, ti - 1);
     if (a <= 0) { return 0; }
     if (TOKTYP(S, a) != 8) { return 0; }
-    var e = _hl_dx_end(S, ti, term);
-    if (e < 0) { return 0; }
     _ppd_asgm = 1;
     _ppd_val(S, ti, e, a, noff);
     _ppd_asgm = 0;

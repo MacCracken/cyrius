@@ -5897,8 +5897,12 @@ fn _ssv_at(S, a0, e): i64 {
     var sid = 0;
     if (t == 2) {
         if (pe == a + 1) {
-            if (_ssv_scal(S, a) == 1) { return 0; }   # declared a scalar: its own line's refusal stands alone
+            # 6.7.17: the struct test (a table lookup) before the declaration's annotation (`_asa_ann`, a token walk back
+            # through the file for a global) — the walk on every name operand made `s = s + gN` over N globals
+            # quadratic (10,000: 147 ms through 6.7.16, 6 s; globals_scale_linear.sh [ref]). Same answer: both must hold.
             sid = _hl_amp_sid(S, TOKVAL(S, a));
+            if (sid <= 0) { return 0; }
+            if (_ssv_scal(S, a) == 1) { return 0; }   # declared a scalar: its own line's refusal stands alone
         }
         else { sid = _ssv_fld(S, a, pe); }
     } elif (t == 8) {
