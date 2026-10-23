@@ -86,6 +86,8 @@
 #   * check_driver_requires_summary.sh (6.7.18) — `( … "$T/drv" tcyr ) 2>&1 | strip_ansi > out` over a
 #     suite RED by design: the driver's exit 1 failed the pipeline before any row (rc 1). The run is
 #     captured to a file first.
+#   * check_sh_targeted_path_cleans_up.sh (6.7.18) — `LEFT=$(ls -d <tmp>/cyrius-check-home.* | wc -l)`:
+#     no home left is the PASSING case and ls's exit 2 there (rc 2).
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -157,7 +159,8 @@ tests/gates/toolchain/stdlib_key_scan_quoted.sh
 tests/gates/toolchain/test_runner_bounded.sh
 tests/gates/toolchain/check_driver_bounded.sh
 tests/gates/toolchain/check_driver_dies_with_check_sh.sh
-tests/gates/toolchain/check_driver_requires_summary.sh"
+tests/gates/toolchain/check_driver_requires_summary.sh
+tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
