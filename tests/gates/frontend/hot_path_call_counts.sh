@@ -65,6 +65,13 @@
 #      `fn g<T>(x: T): T { var vK: T = x; .. }`: the parent read 4,417,792 tokens at 500 stores, 17,334,792 at
 #      1,000 (3.92x; 1,866 ms at 4,000); the tree 162,813 -> 324,813 (1.99x). Bound: 1,000 stores under 3x the
 #      TOKTYP calls of 500; the program exits 7.
+#   W  `_arr_fn_tparam` (parse/decl/array.cyr) — is a name no scope resolves a type parameter of the enclosing
+#      generic fn? — walked back to the nearest `fn` and scanned that fn's body to its end, per call: N such names
+#      in one body read O(N x body) tokens. Row T's program past the 1,024-struct cap (each later `Q` unresolved,
+#      in `main` and in each impl): the parent read 18,812,533 TOKTYP at 1,200 impls, 72,744,133 at 1,600 (3.87x;
+#      5,000: 8 s); the tree 1,776,717 -> 2,354,317 (1.33x; 5,000: 1.3 s) — one forward walk whose cursor the next
+#      query advances. Bound: 1,600 under 2x the TOKTYP calls of 1,200; both refused with the cap's error and the
+#      same diagnostics as the walk gives (the corpus and the cap programs, byte-identical at the change).
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -81,6 +88,8 @@
 # F: the parent of its fix -> RED (80 per token); `_FINDFN_CSTR` taking its walk again (the hash skipped) -> RED.
 # C: the parent of its fix -> RED (69,133 calls); LEX asking CCLASS per byte again (LEXID by table) -> RED.
 # T3: the parent of its fix -> RED (1.24x); `_tr_prepass` leaving `_ti_asc` 0 (the scan always) -> RED.
+# W: the parent of its fix -> RED (386%); the cursor restarted on every query (`_aft_p = 0 - 1` first, the same
+# answers) -> RED.
 # D: the parent of its fix -> RED (392%); `_tok_name_decl` never reusing its walk -> RED; `_gs_sval_big` without
 # the `_rbn_has` filter -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -223,6 +232,29 @@ if run "$D/t3.cyr"; then
     if [ "$T3T" -lt 1 ] || [ $((T3L * 10)) -ge $((T3T * 9)) ]; then
         echo "FAIL: $G [T3]: $T3L L64 calls against $T3T TOKTYP calls at 800 impls (bound 0.9x)"; FAIL=1
     else echo "  ok [T3] $T3L L64 calls against $T3T TOKTYP calls at 800 impls ($((T3L * 100 / T3T))%, bound 90%)"; fi
+fi
+
+# ── W: a name no scope resolves, past the struct cap ─────────────────────────────────────────────────────────
+# run_refused <program>: as run, but the program must be REFUSED with the struct cap's error (rc 1).
+run_refused() {
+    rm -f "$D/cov.txt"
+    crc=0; "$D/cc_cov" < "$1" > "$D/prog" 2> "$D/prog.err" || crc=$?
+    if [ ! -s "$D/cov.txt" ]; then echo "FAIL: $G: no coverage block for $1"; sed -n 1,5p "$D/prog.err"; FAIL=1; return 1; fi
+    if [ "$crc" -ne 1 ] || ! grep -q 'too many struct definitions (max 1024)' "$D/prog.err"; then
+        echo "FAIL: $G: $1 was not refused at the struct cap (rc $crc)"; sed -n 1,5p "$D/prog.err"; FAIL=1; return 1
+    fi
+    return 0
+}
+tgen 1200 > "$D/w1.cyr"; tgen 1600 > "$D/w2.cyr"
+if run_refused "$D/w1.cyr"; then
+    W1=$(count TOKTYP)
+    if run_refused "$D/w2.cyr"; then
+        W2=$(count TOKTYP); WA=$(count _arr_fn_tparam)
+        if [ "$WA" -lt 1000 ]; then echo "FAIL: $G [W]: only $WA _arr_fn_tparam calls at 1,600 impls — the fixture no longer takes the path"; FAIL=1
+        elif [ "$W1" -lt 1 ] || [ "$W2" -ge $((W1 * 2)) ]; then
+            echo "FAIL: $G [W]: TOKTYP calls $W1 (1,200 impls) -> $W2 (1,600): $((W2 * 100 / (W1 + 1)))% (bound 200%)"; FAIL=1
+        else echo "  ok [W] TOKTYP calls $W1 (1,200 impls) -> $W2 (1,600), $((W2 * 100 / W1))% (bound 200%; $WA _arr_fn_tparam calls)"; fi
+    fi
 fi
 
 # ── D: a generic body's T-typed stores ───────────────────────────────────────────────────────────────────────
