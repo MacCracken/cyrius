@@ -1083,7 +1083,7 @@ fn exec_vec_str(args): i64 {
 }
 
 # Run command with Str args vec and capture stdout. Returns bytes
-# read. buf must be pre-allocated.
+# read, or -1 when nothing could be spawned. buf must be pre-allocated.
 fn exec_capture_str(args, buf, buflen): i64 {
     var argc = vec_len(args);
     if (argc < 1) { return 0 - 1; }
@@ -1100,7 +1100,10 @@ fn exec_capture_str(args, buf, buflen): i64 {
     if (envp == 0) { return 0 - 1; }
     store64(envp, 0);
     var pipefd[16];
-    sys_pipe(&pipefd);
+    # 6.7.18: a failed pipe is -1, nothing run — it was unchecked, so the parent closed and read
+    # the never-written pipe words (fd 0, the caller's stdin) and ran the command uncaptured.
+    # CHANGELOG [6.7.18]
+    if (sys_pipe(&pipefd) < 0) { return 0 - 1; }
     var rfd = load32(&pipefd);
     var wfd = load32(&pipefd + 4);
     var _pg_ppid = sys_getpid();

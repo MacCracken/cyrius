@@ -80,4 +80,53 @@ test_group("exec_vec_str — empty vec returns -1");
 var empty = vec_new();
 assert_eq(exec_vec_str(empty), 0 - 1, "empty Str argv returns -1");
 
+#ifdef CYRIUS_TARGET_LINUX
+# 6.7.18: a pipe exec_capture_str cannot get is -1 with nothing run. Its sys_pipe was unchecked, so
+# with no fd free the parent closed and read the pipe words it never got (fd 0, the caller's stdin)
+# and ran the command with its output uncaptured. The child lowers RLIMIT_NOFILE to 16 and fills
+# its fd table, then asks for `echo ran > <mark>`; its exit code carries the verdict: bit 0 the
+# answer was not -1, bit 1 fd 0 was closed under it.
+test_group("exec_capture_str — a failed pipe is -1: nothing runs, no fd of the caller is closed");
+var ecs_mark = test_scratch("cyr_ecs_mark");
+sys_unlink(ecs_mark);
+var ecs_sh = alloc(strlen(ecs_mark) + 16);
+memcpy(ecs_sh, "echo ran > ", 11);
+memcpy(ecs_sh + 11, ecs_mark, strlen(ecs_mark) + 1);
+var ecs_args = vec_new();
+vec_push(ecs_args, str_from("/bin/sh"));
+vec_push(ecs_args, str_from("-c"));
+vec_push(ecs_args, str_from(ecs_sh));
+var ecs_pid = sys_fork();
+if (ecs_pid == 0) {
+    var rl: i64[2];
+    if (sys_getrlimit(7, &rl) != 0) { sys_exit(70); }   # RLIMIT_NOFILE
+    store64(&rl, 16);
+    var sr = 0 - 1;
+    #ifdef CYRIUS_ARCH_X86
+    sr = syscall(160, 7, &rl);                          # setrlimit
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    sr = syscall(164, 7, &rl);
+    #endif
+    if (sr != 0) { sys_exit(71); }
+    loop { if (sys_open("/dev/null", 0, 0) < 0) { break; } }
+    var ecs_out = alloc(64);
+    var got = exec_capture_str(ecs_args, ecs_out, 64);
+    var v = 0;
+    if (got != 0 - 1) { v = v | 1; }
+    if (sys_fcntl(0, 1, 0) < 0) { v = v | 2; }          # F_GETFD
+    sys_exit(v);
+}
+var ecs_st: i64[1];
+store64(&ecs_st, 0);
+sys_waitpid(ecs_pid, &ecs_st, 0);
+var ecs_v = 0 - 1;
+if (WIFEXITED(load32(&ecs_st)) == 1) { ecs_v = WEXITSTATUS(load32(&ecs_st)); }
+assert(ecs_v < 70, "the child lowered RLIMIT_NOFILE (70: getrlimit failed, 71: setrlimit failed)");
+assert_eq(ecs_v & 1, 0, "with no fd free, exec_capture_str answers -1");
+assert_eq(ecs_v & 2, 0, "...and the caller's fd 0 is still open");
+assert_eq(file_exists(ecs_mark), 0, "...and the command never ran (no mark file)");
+sys_unlink(ecs_mark);
+#endif
+
 var r = assert_summary();
