@@ -570,10 +570,7 @@ fn _cl_ptail_end(S, q, ang): i64 {
 }
 fn _cl_ang_step(t): i64 {
     if (t == 19) { return 1; }
-    if (t == 20) { return 0 - 1; }
-    if (t == 39) { return 0 - 2; }
-    if (t == 152) { return 0 - 3; }
-    return 0;
+    return 0 - _targ_gt_n(t);
 }
 # Pass 2, a definition pass 1 did not record (`_PARSE_FN_DEF_IMPL`'s else-branch; `op` its `(`):
 # a generic instance shares its base's row (one record, one report); an async fn's `f$impl` has
