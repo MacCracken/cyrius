@@ -63,6 +63,9 @@
 #   * deps_lock_new_leaf_locked.sh (6.7.18) — `n=$(grep -c 'lib/vec.cyr' …)` at axis 9's PASSING row
 #     (the remedy leaves 0 rows): grep -c prints 0 and exits 1 (rc 1). Every zero-able count is
 #     `|| true` now.
+#   * distlib_bundle_selfcheck.sh (6.7.18) — `cyrius distlib …; rc2=$?` / `check … "$?"` over the
+#     broken-bundle rows, which fail by design: `-e` ended the gate at axis 2 (rc 1). Each status is
+#     `rcN=0; … || rcN=$?` now.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -126,7 +129,8 @@ tests/gates/toolchain/build_temp_source_write_checked.sh
 tests/gates/toolchain/cbt_no_shared_tmp_paths.sh
 tests/gates/toolchain/cyrius_soak_describes_failures.sh
 tests/gates/toolchain/deps_git_cache_verified.sh
-tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
+tests/gates/toolchain/deps_lock_new_leaf_locked.sh
+tests/gates/toolchain/distlib_bundle_selfcheck.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
