@@ -1,12 +1,15 @@
-# PARSER — the top-level scans and the fn definition:
+# PARSER — fn: the top-level scans and the fn definition:
 # _warn_undefined_prepass / _tl_directive / _tl_use / _tl_pass1 / _tl_pass2 / _tl_enum_inits /
 # the declaration-after-the-first-statement rule (_decl_late, _dl_*) / _fn_redirect / the
 # duplicate-definition checks (_dsg_*) / _PARSE_FN_DEF_IMPL.
 # ================================================================
 # Split out of src/frontend/parse/fn.cyr in 6.7.15 (D25 A, the user, 2026-10-18): that file had
 # reached its last 3 KB under cyrfmt's / cyrlint's 1028 KB read cap. parse.cyr includes this file
-# right after parse/fn.cyr, so the token stream — and cycc — are unchanged (self-host
+# right after parse/fn/'s files, so the token stream — and cycc — are unchanged (self-host
 # byte-identical). The 6.7.17 layout review gives the frontend its folders. CHANGELOG [6.7.15]
+# 6.7.18: moved from parse/fn_def.cyr into parse/fn/ (D2's layout — the definitions piece beside the call path, the
+# return / tail path, traits, generics and the const-fn evaluator), unchanged and still included last.
+# CHANGELOG [6.7.18]
 
 # 6.6.5 — the pre-PARSE_PROG "registered but never defined" warning, extracted from the
 # three forks (main, main_win, main_cx) that each carried a copy of it inline.
@@ -5157,8 +5160,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
 }
 
 # ⛔ 6.7.16 (the user's D102, 2026-10-20) — the stub scan's and the bounded-site scan's reading of an untyped `var y = E;`
-# holding a value of a type parameter (the why, the shapes and the tables: parse/fn.cyr, beside `_gs_var` and `_bnr_decl`).
-# Here rather than there for parse/fn.cyr's fmt / lint headroom; fns resolve wherever they sit. CHANGELOG [6.7.16]
+# holding a value of a type parameter (the why, the shapes and the tables: parse/fn/generic.cyr beside `_gs_var`,
+# parse/fn/traits.cyr beside `_bnr_decl`). Here rather than there for parse/fn.cyr's fmt / lint headroom (that file is
+# parse/fn/ since 6.7.18); fns resolve wherever they sit. CHANGELOG [6.7.16]
 fn _gs_uvar(S, fi, ni): i64 {
     var k = _gs_vkind(S, fi, ni + 2, 0);
     _gvm_put(ni + 2, k);
@@ -5378,7 +5382,8 @@ fn _gs_cb_ex(S, fi, k, w): i64 {
 # `p.pick((t))`, `gx((b))` forwarded nothing, so a generic forwarding T only so kept its i64 base and was refused at
 # the definition naming the callee, called or not (`vb(x)` made it a stub); `var r = idp((&x));` /
 # `var r = gvb((b));` left r untyped ("no struct type in scope for 'r'" at `r.b`, as `idp(&x)` / `gvb(b)` did not).
-# `_gs_arg_named`, `_gs_carries` (parse/fn.cyr), this reader and `_gs_cb_carr` read inside the wrap. CHANGELOG [6.7.17]
+# `_gs_arg_named`, `_gs_carries` (parse/fn/generic.cyr), this reader and `_gs_cb_carr` read inside the wrap.
+# CHANGELOG [6.7.17]
 fn _gs_cb_pp(S, fi, a, d, dep): i64 {
     var st = 0;
     a = _pwrap_in(S, a);
@@ -5644,8 +5649,8 @@ fn _gcr_live(S, ni): i64 {
 # the stub scan took only a T-typed NAME for a value of T: a generic forwarding `b.v` (`b: Box<T>`, `v: T`) into a stub
 # — `rdb(b.v)`, `k.pick(b.v)`, `var r = idt(b.v); return r.b;`, a bounded `r.show()` — kept its i64 base and was
 # refused at the definition, called or not, where the `var y: T = b.v;` spelling was a stub. `_gs_arg_named`,
-# `_gs_carries` (parse/fn.cyr) and `_gs_cbind` take it as they take a T-typed name. 1 + the carrier's slot when the
-# whole argument at token a (inside a wrap) is `b.f`, b a carrier where it sits whose G declares f with G's type
+# `_gs_carries` (parse/fn/generic.cyr) and `_gs_cbind` take it as they take a T-typed name. 1 + the carrier's slot when
+# the whole argument at token a (inside a wrap) is `b.f`, b a carrier where it sits whose G declares f with G's type
 # parameter in a slot the carrier gives T — `f: T`, or `f: *T` unless `byval` (`_gsn` holds `p: *T` names,
 # `_gs_vkind` does not) — as `_gs_cfield` reads `b.f.g`; else 0. CHANGELOG [6.7.17]
 fn _gs_cfv(S, a, byval): i64 {
@@ -5808,7 +5813,7 @@ fn _bnr_uvar(S, fi, tp, blk, i): i64 {
 
 # ── Moved from parse/fn.cyr at the 6.7.16 wave-4 integration (2026-10-21): the wave-4 lanes' new helpers took that file
 # past its fmt / lint headroom line (64 KB under the 1,052,672 B read cap; tracked_sources_canonically_formatted.sh).
-# fns call each other in any order, and every global they read is declared above (parse/fn.cyr is included first).
+# fns call each other in any order, and every global they read is declared above (parse/fn/ is included first).
 # CHANGELOG [6.7.16]
 # The receiver of the method call at token ti as written: its name, or (6.7.16) a chain's source text up to the `.`
 # before its method's name (`_mco_mt`) — `w.p` in `w.p.m(..)`. CHANGELOG [6.7.16]

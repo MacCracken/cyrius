@@ -194,13 +194,15 @@ fi
 # 6.6.7: the tail arm's diverts moved into ONE predicate, so the route is three links —
 # PARSE_RETURN asks _tc_must_divert, which asks _tc_args_divert, which asks _tc_str_literal_arg.
 # Each link is checked, so dropping any of them from the chain fails here.
-grep -q '_tc_must_divert(S, FINDFN(S, PEEKV(S)), ti_after)' src/frontend/parse/fn.cyr \
+# 6.7.18: parse/fn.cyr is split by seam into parse/fn/ — the rows read the folder's files, in order, as the one file
+# they were (sed takes its file arguments as one stream; a glob that matches nothing fails every row).
+grep -q '_tc_must_divert(S, FINDFN(S, PEEKV(S)), ti_after)' src/frontend/parse/fn/*.cyr \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: the tail path no longer consults _tc_must_divert"; fail=1; }
-sed -n '/^fn _tc_must_divert/,/^}/p' src/frontend/parse/fn.cyr | grep -q '_tc_args_divert(S, cfi, ti_after)' \
+sed -n '/^fn _tc_must_divert/,/^}/p' src/frontend/parse/fn/*.cyr | grep -q '_tc_args_divert(S, cfi, ti_after)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_must_divert no longer asks _tc_args_divert"; fail=1; }
-sed -n '/^fn _tc_args_divert/,/^}/p' src/frontend/parse/fn.cyr | grep -q '_tc_str_literal_arg(S, ti_after, cfi)' \
+sed -n '/^fn _tc_args_divert/,/^}/p' src/frontend/parse/fn/*.cyr | grep -q '_tc_str_literal_arg(S, ti_after, cfi)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: the tail path no longer routes its \`: Str\` divert through _tc_str_literal_arg"; fail=1; }
-TCB=$(sed -n '/^fn _tc_str_literal_arg/,/^}/p' src/frontend/parse/fn.cyr)
+TCB=$(sed -n '/^fn _tc_str_literal_arg/,/^}/p' src/frontend/parse/fn/*.cyr)
 echo "$TCB" | grep -q 'if (TOKTYP(S, i) == 30' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer tests for a string-literal token"; fail=1; }
 # 6.7.2: a STRING CONST is its literal, so both sides also take one — through the same predicate.
@@ -208,7 +210,7 @@ echo "$TCB" | grep -q '_cst_str_tok(S, i)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer treats a string const as its literal — the two sides would disagree on one"; fail=1; }
 # 6.6.17 (a10): both sides ask ONE per-argument reader, `_pm_str` (the overflow row past ordinal 61),
 # so the criterion is that each calls it with its own position and that it reads _fnt_strmask.
-sed -n '/^fn _pm_str(/,/}/p' src/frontend/parse/fn.cyr | grep -q '_fnt_strmask + fi \* 8' \
+sed -n '/^fn _pm_str(/,/}/p' src/frontend/parse/fn/*.cyr | grep -q '_fnt_strmask + fi \* 8' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _pm_str no longer reads the per-argument _fnt_strmask bit"; fail=1; }
 echo "$TCB" | grep -q '_pm_str(fi, pos)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer tests the callee's per-ARGUMENT _fnt_strmask bit — it would divert calls whose literal is in a position the wrap never touches"; fail=1; }
@@ -217,7 +219,7 @@ echo "$TCB" | grep -q '_pm_str(fi, pos)' \
 # too high here: issue 2026-10-09-closure-literal-comma-counted-as-argument).
 echo "$TCB" | grep -q 'i = _arg_next(S, i);' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_str_literal_arg no longer steps argument by argument (_arg_next), testing the FIRST token of each"; fail=1; }
-FPB=$(sed -n '/^fn _try_push_str_literal_arg/,/^}/p' src/frontend/parse/fn.cyr)
+FPB=$(sed -n '/^fn _try_push_str_literal_arg/,/^}/p' src/frontend/parse/fn/*.cyr)
 echo "$FPB" | grep -q 'if (PEEKT(S) != 30) { if (_cst_str_tok(S, GTI(S)) == 0) { return 0; } }' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _try_push_str_literal_arg no longer wraps only a literal at an argument's FIRST token — the tail path's predicate is now mis-matched"; fail=1; }
 echo "$FPB" | grep -q '_pm_str(fi, argc)' \

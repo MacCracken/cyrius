@@ -323,7 +323,7 @@ syscall(60, s.m());' 5
 atrun AC6 "control: a # comment after the message" '#assert 1 == 1, "m"  # note
 syscall(60, 9);' 9
 # AT12-AT18 (6.7.17, FC1 — issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md's class, met by the
-# fea review): what the refused tail declares is entered as reported (`_asrt_tail_names`, parse/fn_def.cyr), so a use
+# fea review): what the refused tail declares is entered as reported (`_asrt_tail_names`, parse/fn/def.cyr), so a use
 # of it adds no error of its own (the guide's 6.7.15 rule) — each was "undefined variable 'z'" at every use, a fn "undefined
 # function 'g'" + "refusing to emit binary", a struct "unknown type 'S'", an enum's members "undefined variable". AT12 a
 # var at module scope; AT13 in a fn body; AT14 a fn; AT15 a struct (its annotation and fields); AT16 an enum's members;

@@ -1,0 +1,572 @@
+# PARSER — fn: the function table (REGFN / FINDFN / FINDLOCAL, the FNV-1a name hash, overload suffixes) and the
+# inline replay's parameter binding.
+# ================================================================
+# Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
+
+# ================================================================
+# FUNCTION TABLE + CODEGEN
+# ================================================================
+
+# v5.6.5 O1: FNV-1a over the null-terminated ident at S+0x60000+noff.
+# Returns the 64-bit hash. Caller masks with (table_size - 1) to land
+# a slot. Constants are the standard FIPS-spec 64-bit FNV-1a values
+# (offset basis + prime). Cyrius multiplies wrap on 2's-complement so
+# the natural u64 arithmetic this algorithm assumes works directly.
+# v6.5.52 — inline-replay param binding for WIDE (vector) params.
+#
+# The replay used to bind both params to adjacent SINGLE 8-byte slots and store each with an
+# 8-byte EFLSTORE. A 16-byte f32v4/f64v2 (or 32-byte f64v4) therefore overran its neighbour:
+# ONE SIMD param inlined correctly, TWO crashed the compiler outright. These two helpers make
+# the binding width-driven and type-carrying, mirroring exactly what PARSE_FN_DEF does for a
+# real (non-inlined) SIMD param: (nslots-1) anonymous filler slots first, then the NAMED slot
+# last at the deepest displacement — which is where `&v` and lane access resolve.
+# v6.5.52 — bind ONE value-form SIMD argument on the inline-replay path.
+#
+# ⛔ WHY THIS EXISTS INSTEAD OF `PCMPE` + STORE. `PCMPE` does not materialise a value-form
+# SIMD operand at all — the normal call path routes those in TWO PASSES for a stated reason:
+# the arg "MUST be a local", is recorded to a scratch table, and the XMM load is emitted
+# AFTER the int args "so int-arg eval (which may clobber XMM during PCMPE) doesn't trample
+# SIMD state". Without that, the replay's store wrote whatever XMM0 last held — measured on a
+# 2-param call as three consecutive `movupd %xmm0, ...` with no load between them, so both
+# params took the previous local's value (f32v4_dot returned 36.0 for an 8.0 case).
+#
+# The inline path needs no XMM ordinal — the destination is a frame slot, not an ABI register
+# — so this copies memory-to-memory and sidesteps the clobber problem entirely: the load and
+# the store are ADJACENT instructions, leaving no window for anything to touch XMM0.
+#
+# Mirrors the normal path's checks: the arg must be an IDENT naming a local whose SLTYPE
+# matches the param's class (size-class for 16-byte vectors, exact for f32v4/f64v4), so a
+# mismatched vector is rejected rather than silently reinterpreted.
+# v6.5.66 — the plain copy, with no provenance recorded. Used by every non-x86 fork, where
+# `_F64V_DISP` does not exist and the direct-form/harvest machinery is inert.
+fn _inl_simd_arg_copy(S, alli, dst_slot, w): i64 {
+    if (w == 4) {
+        EFLLOAD_F64V4_PAIR(S, alli);
+        EFLSTORE_F64V4_PAIR(S, dst_slot);
+        return 0;
+    }
+    EFLLOAD_F64V2_PAIR(S, alli);
+    EFLSTORE_F64V2_PAIR(S, dst_slot);
+    return 0;
+}
+
+# 6.7.13 (D30 A): a call declared to return the vector is received straight into the parameter's slots, and any
+# other source that is no local is refused by name once and skipped (`_sar_vcall` / `_sar_err`, the call path's).
+# 6.7.14: the call path's sources, through its `_sar_take` (inside any parentheses wrapping the whole argument), a
+# local checked by its class rule there (`_simd_arg_typecheck`: the words this replay's own checks printed).
+var _sar_lcl = 0;   # 1 = `_sar_take` took a local: its own slot, nothing copied
+fn _inl_simd_arg(S, dst_slot, w, want_t, fi): i64 {
+    var ti = GTI(S);
+    var alli = _sar_take(S, fi, _vf_cls(S, want_t), 0 - want_t, dst_slot);
+    if (alli == 0 - 2) { return _sar_none(S, ti, fi); }
+    if (_sar_lcl == 0) { return 0; }   # received into the slot, or refused
+    # v6.5.66 — bracket the copy so it can be NOP'd out later if nothing reads the slot.
+    #
+    # ⛔ x86 ONLY, AND BOTH HALVES OF THAT GATE MATTER. `_F64V_DISP` lives in
+    # backend/x86/float.cyr, which ONLY main.cyr / main_win.cyr / main_x86_macho.cyr include — the
+    # three aarch64 forks and main_cx.cyr do not, and an undefined fn has been a hard error since
+    # v6.3.2. Recording provenance unconditionally broke the aarch64-Mach-O fork outright
+    # (rc=256), which is the v6.4.26 trap: a shared parse_fn/parse_expr call needs a peer in every
+    # fork. A stub would be worse than useless here — `_prov_harvest` runs in SHARED code, so a
+    # stub returning 0 would have it scanning every non-x86 build for displacement 0 and
+    # potentially NOP-filling live bytes. Do not record at all off x86.
+    if (_AARCH64_BACKEND != 0) { return _inl_simd_arg_copy(S, alli, dst_slot, w); }
+    if (_TARGET_CX != 0) { return _inl_simd_arg_copy(S, alli, dst_slot, w); }
+    var _pcs = GCP(S);
+    if (w == 4) {
+        EFLLOAD_F64V4_PAIR(S, alli);
+        EFLSTORE_F64V4_PAIR(S, dst_slot);
+        _prov_record(dst_slot, alli, _pcs, GCP(S), _F64V_DISP(dst_slot), 4);
+        return 0;
+    }
+    EFLLOAD_F64V2_PAIR(S, alli);
+    EFLSTORE_F64V2_PAIR(S, dst_slot);
+    # v6.5.65 — record AFTER the store: the store itself invalidates the slot, so recording first
+    # would immediately undo it.
+    _prov_record(dst_slot, alli, _pcs, GCP(S), _F64V_DISP(dst_slot), 2);
+    return 0;
+}
+
+fn _inl_store_arg(S, slot, w): i64 {
+    if (w == 2) { EFLSTORE_F64V2_PAIR(S, slot); return 0; }
+    if (w == 4) { EFLSTORE_F64V4_PAIR(S, slot); return 0; }
+    EFLSTORE(S, slot);
+    return 0;
+}
+
+fn _inl_bind_param(S, base, w, named, noff, t): i64 {
+    var j = 0;
+    while (j < w - 1) {
+        S64(S + 0x5D9D000 + (base + j) * 8, 0 - 1);   # anon filler
+        SLDEP(S, base + j, 0);
+        SLTYPE(S, base + j, 0);
+        j = j + 1;
+    }
+    S64(S + 0x5D9D000 + named * 8, noff);
+    SLDEP(S, named, GSDEP(S));
+    # 6.6.5: an inline-replay param wider than one slot IS the aggregate (the replay copies
+    # the caller's words into it); a single-slot small struct is a value too.
+    if (w > 1) { SLAGG(S, named, w); }
+    else { MARK_SMALL_STRUCT(S, named, t); }
+    # ⚠ Re-apply the param TYPE. Without this the param is untyped inside the inlined body,
+    # which surfaces as a bogus "value-form SIMD arg type mismatch" at its first use — the
+    # second of the two defects, independent of the slot-width one above.
+    SLTYPE(S, named, t);
+    return 0;
+}
+
+fn FNV1A_NOFF(S, noff): i64 {
+    var h = 0xcbf29ce484222325;
+    var i = 0;
+    var c = load8(S + 0xEC00000 + noff + i);
+    while (c != 0) {
+        h = h ^ c;
+        h = h * 0x100000001b3;
+        i = i + 1;
+        c = load8(S + 0xEC00000 + noff + i);
+    }
+    return h;
+}
+
+# v5.6.5 O1: insert (noff → fi) into fn_name_hash at 0x110000 via
+# linear probing. Stored value is fi+1 so 0 marks empty (zero-init
+# heap gives us free initialization). Called from REGFN after the
+# fn_names entry is written. Load factor 0.5 at 4096-fn cap means
+# avg ~1.5 probes to insert.
+# v6.5.51 — fn-name-hash health, computed ON DEMAND for `CYRIUS_STATS=1` by walking the
+# table once. Deliberately NOT a counter incremented inside _REGFN_HASH: that is the hot
+# path, and this must cost nothing when the meter is off.
+#
+# ⭐ IT REPORTS maxprobe, NOT JUST LOAD, because maxprobe is the PROPERTY and load is only
+# the mechanism. A gate pinning load alone would pass any future scheme that keeps load low
+# while still clustering — the v6.5.36 lesson (an enum gate stayed green through five bad
+# releases because it pinned the mechanism, and the mechanism was the thing that was wrong).
+# What costs time is displacement from the home slot, so that is what is measured: for every
+# occupied slot, re-derive the entry's home slot and report the largest wrap-adjusted
+# distance. Measured on a 120,000-fn unit: 65,263 before v6.5.51, 38 after.
+fn _fnhash_health(S): i64 {
+    var slots = _fnt_hash_mask + 1;
+    var used = 0;
+    var maxd = 0;
+    var sl = 0;
+    while (sl < slots) {
+        var e = load32(_fnt_namehash + sl * 4);
+        if (e != 0) {
+            used = used + 1;
+            var noff = L64(_fnt_names + (e - 1) * 8);
+            var hh = FNV1A_NOFF(S, noff);
+            var home = (hh & _fnt_hash_mask);
+            var d = ((sl - home) & _fnt_hash_mask);
+            if (d > maxd) { maxd = d; }
+        }
+        sl = sl + 1;
+    }
+    _ew("  fn_name_hash: ", 16);
+    PRNUM(used);
+    _ew(" / ", 3);
+    PRNUM(slots);
+    _ew(" slots, maxprobe ", 17);
+    PRNUM(maxd);
+    _ew("\n", 1);
+    return maxd;
+}
+
+fn _REGFN_HASH(S, noff, fi): i64 {
+    var h = FNV1A_NOFF(S, noff);
+    var slot = h & _fnt_hash_mask;
+    while (load32(_fnt_namehash + slot * 4) != 0) {
+        slot = (slot + 1) & _fnt_hash_mask;
+    }
+    store32(_fnt_namehash + slot * 4, fi + 1);
+    return 0;
+}
+
+# v5.10.25 — Phase 3 generalize: detect _str/_int/_cstr suffix on
+# the fn name at noff. Used by REGFN to auto-register an overload
+# entry in fn_overload_{str,int,cstr} when the base name is also
+# defined. Returns:
+#   1 = _str  suffix (4 chars)
+#   2 = _int  suffix (4 chars)
+#   3 = _cstr suffix (5 chars)
+#   0 = no recognized suffix
+fn _OVERLOAD_SUFFIX(S, noff): i64 {
+    var p = S + 0xEC00000 + noff;
+    var len = 0;
+    while (load8(p + len) != 0) { len = len + 1; }
+    if (len > 4) {
+        if (load8(p + len - 4) == 95) {
+            if (load8(p + len - 3) == 115) {
+                if (load8(p + len - 2) == 116) {
+                    if (load8(p + len - 1) == 114) { return 1; }
+                }
+            }
+            if (load8(p + len - 3) == 105) {
+                if (load8(p + len - 2) == 110) {
+                    if (load8(p + len - 1) == 116) { return 2; }
+                }
+            }
+        }
+    }
+    if (len > 5) {
+        if (load8(p + len - 5) == 95) {
+            if (load8(p + len - 4) == 99) {
+                if (load8(p + len - 3) == 115) {
+                    if (load8(p + len - 2) == 116) {
+                        if (load8(p + len - 1) == 114) { return 3; }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+# Grow the fn-table family 2x: realloc + copy all 16 parallel 8 B/slot tables,
+# realloc the start-hash (rebuilt each fixup, so no copy needed), then rebuild
+# the name-hash at the new size and re-insert every live entry. Old buffers leak
+# (cycc is short-lived). Ceiling 131072 since v6.5.40 (it was 32768 while the
+# hash slots were 2 B: they store fi+1, so the index had to stay < 65536); the
+# slots are 4 B now (the note below). v6.2.0 Phase 0 / AR-03. See util.cyr for the
+# gvar family.
+fn _fnt_grow(S): i64 {
+    var nc = _fnt_cap * 2;
+    if (nc > 131072) {
+        _ew("error: too many functions (max 131072)\n", 39);
+        _die(1);
+    }
+    var oc = _fnt_cap;
+    _fnt_cstrmask  = _fnt_copy_table(_fnt_cstrmask,  oc, nc);
+    _fnt_resmask   = _fnt_copy_table(_fnt_resmask,   oc, nc);
+    _fnt_optmask   = _fnt_copy_table(_fnt_optmask,   oc, nc);
+    _fnt_tagmask   = _fnt_copy_table(_fnt_tagmask,   oc, nc);
+    _fnt_ovstr     = _fnt_copy_table(_fnt_ovstr,     oc, nc);
+    _fnt_ovint     = _fnt_copy_table(_fnt_ovint,     oc, nc);
+    _fnt_ovcstr    = _fnt_copy_table(_fnt_ovcstr,    oc, nc);
+    _fnt_simdmask  = _fnt_copy_table(_fnt_simdmask,  oc, nc);
+    _fnt_names     = _fnt_copy_table(_fnt_names,     oc, nc);
+    _fnt_offsets   = _fnt_copy_table(_fnt_offsets,   oc, nc);
+    _fnt_params    = _fnt_copy_table(_fnt_params,    oc, nc);
+    _fnt_bodystart = _fnt_copy_table(_fnt_bodystart, oc, nc);
+    _fnt_bodyend   = _fnt_copy_table(_fnt_bodyend,   oc, nc);
+    _fnt_inline    = _fnt_copy_table(_fnt_inline,    oc, nc);
+    _fnt_strmask   = _fnt_copy_table(_fnt_strmask,   oc, nc);
+    _fnt_codeend   = _fnt_copy_table(_fnt_codeend,   oc, nc);
+    _fnt_structmask = _fnt_copy_table(_fnt_structmask, oc, nc);
+    # start-hash is rebuilt from scratch each fixup pass — just give it a
+    # cap-sized buffer (contents irrelevant; the fixup clear loop zeroes it).
+    # v6.5.51 — TWO hash slots per fn-table entry, so the open-addressed tables never
+    # exceed 50 % load. They used to be nc slots for an nc-entry table, and REGFN only
+    # grows once `fc >= _fnt_cap`, so the name hash filled to EXACTLY 100 % before every
+    # doubling. Linear probing at that load degenerates into a full-table scan: measured
+    # max probe 65,263 on a 131,072-slot table, 31.5 MILLION probes for one 120,000-fn
+    # compile. Two slots per entry caps the load at 50 %, where the measured max probe is
+    # 38 and the total is 131,892 — a 239x reduction that removes the superlinearity
+    # outright (5.3 us/fn, flat from 34k to 120k fns).
+    # Only these TWO tables double; the 17 payload tables above are untouched, so the cost
+    # is ~2 MB at the 131,072 ceiling. Output is byte-identical: the hash is a lookup
+    # accelerator whose probe ORDER changes but whose answers do not.
+    _fnt_starthash = alloc(nc * 8);  # nc*2 slots x 4 B
+    _fnt_namehash  = alloc(nc * 8);  # nc*2 slots x 4 B
+    _fnt_hash_mask = nc * 2 - 1;
+    _fnt_cap = nc;
+    var i = 0;
+    while (i < oc) {
+        _REGFN_HASH(S, L64(_fnt_names + i * 8), i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Register new function, return index
+# ⚡ v6.5.42 — HASH LOOKUP FOR `<name>_str` / `_int` / `_cstr`, replacing an O(n^2) scan.
+#
+# REGFN's REVERSE overload registration walked EVERY already-registered fn for every new one,
+# looking for a sibling named `<my_name>_<suffix>`. That is quadratic in fn count by
+# construction: at 60,000 fns it is ~1.8x10^9 name comparisons. MEASURED on the 60k fixture —
+# 43.5 s with the scan, 23.6 s with it disabled, so it was **46 % of total compile time**, and
+# the share grows with the square. (Filed as `2026-09-02-compile-time-superlinear-in-fn-count`,
+# which named this as the strongest candidate; the measurement confirms it. ⚠ 23.6 s is still
+# slow for 60k fns, so a SECOND quadratic contributor remains — see that filing.)
+#
+# The replacement is exactly equivalent, not an approximation: the scan was looking for a fn
+# whose name is the concatenation `<my_name>` + `<suffix>`, so three direct lookups of those
+# three names find precisely the same set. Equivalence is verifiable rather than argued —
+# cycc's output must stay BYTE-IDENTICAL, and it does.
+#
+# ⚠ `_FINDFN_CSTR` cannot be used here: it is itself a linear scan, so three calls would make
+# the cost WORSE, not better. This probes the hash table directly.
+#
+# ⚠ Hash slots are 4 BYTES since v6.5.40 (the fn ceiling went 32768 -> 131072, which required
+# widening them from 2). Reading them as 2 would silently find the wrong entries.
+
+# FNV-1a over the NUL-terminated name at `noff`, continued over `suflen` bytes at `suf`.
+fn _fnv_noff_suffix(S, noff, suf, suflen): i64 {
+    var h = 0xcbf29ce484222325;
+    var i = 0;
+    var c = load8(S + 0xEC00000 + noff + i);
+    while (c != 0) {
+        h = h ^ c;
+        h = h * 0x100000001b3;
+        i = i + 1;
+        c = load8(S + 0xEC00000 + noff + i);
+    }
+    var j = 0;
+    while (j < suflen) {
+        h = h ^ load8(suf + j);
+        h = h * 0x100000001b3;
+        j = j + 1;
+    }
+    return h;
+}
+
+# 1 if the name at `sn` is exactly `<name at noff>` ++ `<suflen bytes at suf>`.
+fn _name_is_noff_suffix(S, sn, noff, suf, suflen): i64 {
+    var i = 0;
+    var c = load8(S + 0xEC00000 + noff + i);
+    while (c != 0) {
+        if (load8(S + 0xEC00000 + sn + i) != c) { return 0; }
+        i = i + 1;
+        c = load8(S + 0xEC00000 + noff + i);
+    }
+    var j = 0;
+    while (j < suflen) {
+        if (load8(S + 0xEC00000 + sn + i + j) != load8(suf + j)) { return 0; }
+        j = j + 1;
+    }
+    # must END there — otherwise `foo_string` would match a lookup for `foo_str`.
+    if (load8(S + 0xEC00000 + sn + i + suflen) != 0) { return 0; }
+    return 1;
+}
+
+# fn index of `<name at noff><suffix>`, or -1.
+fn _findfn_noff_suffix(S, noff, suf, suflen): i64 {
+    var h = _fnv_noff_suffix(S, noff, suf, suflen);
+    var slot = h & _fnt_hash_mask;
+    var probes = 0;
+    while (probes < _fnt_cap) {
+        var stored = load32(_fnt_namehash + slot * 4);
+        if (stored == 0) { probes = _fnt_cap; }
+        else {
+            var fi = stored - 1;
+            var sn = L64(_fnt_names + fi * 8);
+            if (_name_is_noff_suffix(S, sn, noff, suf, suflen) == 1) { return fi; }
+            slot = (slot + 1) & _fnt_hash_mask;
+            probes = probes + 1;
+        }
+    }
+    return 0 - 1;
+}
+
+fn REGFN(S, noff): i64 {
+    var fc = GFNC(S);
+    # Grow the fn-table family the moment the count would exceed the cap (the
+    # writes below append slot fc). _fnt_cap==0 guards any pre-init call.
+    if (_fnt_cap != 0 && fc >= _fnt_cap) { _fnt_grow(S); }
+    S64(_fnt_names + fc * 8, noff);
+    S64(_fnt_offsets + fc * 8, 0 - 1);
+    S64(_fnt_params + fc * 8, 0);
+    SFNC(S, fc + 1);
+    _REGFN_HASH(S, noff, fc);
+    # v5.10.25 — auto-register overload mapping in BOTH directions
+    # so include-order doesn't matter:
+    #   FORWARD: this fn ends with `_str`/`_int`/`_cstr` AND base
+    #            fn already registered → register fc as that base's
+    #            overload target.
+    #   REVERSE: this fn is a base AND a sibling already-registered
+    #            fn matches `<this_name>_str`/`_int`/`_cstr` → register
+    #            that sibling as fc's overload target.
+    # Without bidirection, lib/str.cyr's `println_str` defined BEFORE
+    # lib/string.cyr's `println` would never get registered.
+    var _ov_p = S + 0xEC00000 + noff;
+    var _ov_my_len = 0;
+    while (load8(_ov_p + _ov_my_len) != 0) { _ov_my_len = _ov_my_len + 1; }
+    # FORWARD direction
+    var _ov_kind = _OVERLOAD_SUFFIX(S, noff);
+    if (_ov_kind > 0) {
+        var _ov_suffix_len = 4;
+        if (_ov_kind == 3) { _ov_suffix_len = 5; }
+        var _ov_base_len = _ov_my_len - _ov_suffix_len;
+        var _ov_base_fi = _FINDFN_CSTR(S, _ov_p, _ov_base_len);
+        if (_ov_base_fi >= 0) {
+            # v6.4.75 — write through the RELOCATABLE table pointer, not the fixed
+            # pre-grow base. _fnt_ovstr/ovint/ovcstr are in the _fnt_grow copy list
+            # (they DO grow past 8192), but this forward-registration site alone
+            # still wrote `S + 0x97A000 + ...`; once _fnt_grow relocated the table
+            # off that fixed base, a forward-registered overload landed in the
+            # abandoned region while every reader (parse/fn.cyr:1083/1109) looked at
+            # the grown _fnt_ovstr — so overloads registered after a grow silently
+            # went missing. The REVERSE-direction writes below already used the
+            # pointers; this matches them.
+            var _ov_tab = _fnt_ovstr;
+            if (_ov_kind == 2) { _ov_tab = _fnt_ovint; }
+            if (_ov_kind == 3) { _ov_tab = _fnt_ovcstr; }
+            S64(_ov_tab + _ov_base_fi * 8, fc + 1);
+        }
+    }
+    # REVERSE direction — find any already-registered `<my_name>_<suffix>` sibling.
+    # ⚡ v6.5.42: three hash lookups, replacing a full walk of every registered fn. See
+    # `_findfn_noff_suffix` above for the measurement and the equivalence argument.
+    if (_ov_kind == 0) {
+        var _rv_s = _findfn_noff_suffix(S, noff, "_str", 4);
+        if (_rv_s >= 0) { S64(_fnt_ovstr + fc * 8, _rv_s + 1); }
+        var _rv_i = _findfn_noff_suffix(S, noff, "_int", 4);
+        if (_rv_i >= 0) { S64(_fnt_ovint + fc * 8, _rv_i + 1); }
+        var _rv_c = _findfn_noff_suffix(S, noff, "_cstr", 5);
+        if (_rv_c >= 0) { S64(_fnt_ovcstr + fc * 8, _rv_c + 1); }
+    }
+    return fc;
+}
+
+# Find function by name, return index or -1. v5.6.5 O1: hash-table
+# fast path first (FNV-1a at 0x110000). Open-addressing with linear
+# probing; stop on empty slot or content match via STREQ. Fall through
+# to the use-alias linear scan only on hash miss — direct fn-name
+# lookups (the >99% hot path) hit the hash and return immediately.
+# v6.5.38 — resolve a name that has MULTIPLE definitions, at least one private.
+#
+# ⭐ THIS IS WHAT MAKES `private` A REAL BOUNDARY. Before this, the fn table held exactly
+# one entry per NAME and a second definition overwrote the first ("last definition wins"),
+# so a private helper was silently replaced by any same-named fn in any other file —
+# INCLUDING for its own file's internal calls. Declaring `private` on both sides did not
+# help, because visibility was enforced only at the REFERENCE site, on top of an unchanged
+# global symbol table. Filed from owl 1.4.7, where vyakarana and sankoch each define a
+# private `_stream_grow` disagreeing about arity, buffer offsets AND return polarity — a
+# wrong binding there reports every successful buffer grow as a FAILURE, inside a
+# tokenizer, on file content. v6.5.37 closed only the arity-differing case, as an error.
+#
+# The caller's file comes from the CURRENT TOKEN, not from `_cur_fn_ix` — the same choice
+# `_vis_check` documents and for the same reason: the inline-replay path re-parses a
+# callee's body while `_cur_fn_ix` still names the enclosing fn, so the fn table would
+# answer for the wrong file.
+#
+# Preference order, and each arm matters:
+#   1. a definition PRIVATE TO THE CALLER'S OWN FILE — the file's own helper always wins
+#      inside that file, which is precisely what §1 of the filing got wrong;
+#   2. otherwise the first NON-private definition — a public fn stays reachable from
+#      everywhere, so splitting a name does not hide an ordinary API;
+#   3. otherwise the first match, so the caller is referencing someone else's private fn
+#      and `_vis_check` produces the existing "is private to its file" error. Returning -1
+#      here instead would turn a precise diagnostic into "undefined function".
+fn _findfn_scoped(S, noff, slot, first): i64 {
+    var caller = FM_FILEID(S, GTLINE(S, GTI(S)));
+    var pub_pick = 0 - 1;
+    var s2 = slot;
+    var probes = 0;
+    while (probes < _fnt_cap) {
+        var stored = load32(_fnt_namehash + s2 * 4);
+        if (stored == 0) { probes = _fnt_cap; }
+        else {
+            var fi = stored - 1;
+            var sn = L64(_fnt_names + fi * 8);
+            if (STREQ(S, sn, noff) == 1) {
+                if ((GFLG(S, fi) & 64) != 0) {
+                    var owner = GFFI(S, fi) - 1;      # GFFI stores fid+1; 0 = unknown
+                    if (owner >= 0) { if (owner == caller) { return fi; } }
+                }
+                else { if (pub_pick < 0) { pub_pick = fi; } }
+            }
+            s2 = (s2 + 1) & _fnt_hash_mask;
+            probes = probes + 1;
+        }
+    }
+    if (pub_pick >= 0) { return pub_pick; }
+    return first;
+}
+
+fn FINDFN(S, noff): i64 {
+    var h = FNV1A_NOFF(S, noff);
+    var slot = h & _fnt_hash_mask;
+    var probes = 0;
+    while (probes < _fnt_cap) {
+        var stored = load32(_fnt_namehash + slot * 4);
+        if (stored == 0) { probes = _fnt_cap; }
+        else {
+            var fi = stored - 1;
+            var sn = L64(_fnt_names + fi * 8);
+            if (STREQ(S, sn, noff) == 1) {
+                # v6.5.38 — bit 7 (128) = "this NAME has more than one definition, and at
+                # least one of them is private". Set only by the split in PARSE_FN_DEF, so
+                # it is clear for every fn in a normal program: the common path still
+                # returns on the first match with no extra work and no file-map lookup.
+                if ((GFLG(S, fi) & 128) != 0) { return _findfn_scoped(S, noff, slot, fi); }
+                return fi;
+            }
+            slot = (slot + 1) & _fnt_hash_mask;
+            probes = probes + 1;
+        }
+    }
+    # Check use aliases: if noff matches a use_from, look up use_to
+    var uc = GUSEC(S);
+    var i = 0;
+    while (i < uc) {
+        var ufrom = L64(S + 0x18FFD0 + i * 8);
+        if (STREQ(S, ufrom, noff) == 1) {
+            var uto = L64(S + 0x1901D0 + i * 8);
+            return FINDFN(S, uto);
+        }
+        i = i + 1;
+    }
+    # 6.7.0 (A2): `T_Trait_m`, and an ambiguous `T_m` (reported; -1). See `_tr_fallback`.
+    if (_ti_n > 0) {
+        var _tq = _tr_fallback(S, noff);
+        if (_tq >= 0) { return _tq; }
+        if (_tq == 0 - 2) { return 0 - 1; }
+    }
+    # v6.4.3: f64v2(...) / f64v4(...) constructor sugar. An f64v2/f64v4 call
+    # name that is NOT a real fn resolves to the lib constructor f64v2_make /
+    # f64v4_make (lib/simd.cyr) — the natural `type(...)` spelling over the
+    # proven make (agnos FP issue §2). Only fires as a fallback: a real fn
+    # named f64v2 is found by the hash probe above and takes precedence.
+    var _cp = S + 0xEC00000 + noff;
+    if (load8(_cp) == 0x66) {                 # 'f'
+        if (load8(_cp + 1) == 0x36) {         # '6'
+            if (load8(_cp + 2) == 0x34) {     # '4'
+                if (load8(_cp + 3) == 0x76) { # 'v'
+                    var _cd = load8(_cp + 4);
+                    if (load8(_cp + 5) == 0) {          # exactly "f64vN"
+                        if (_cd == 0x32) {              # '2'
+                            var _mk2 = _FINDFN_CSTR(S, "f64v2_make", 10);
+                            if (_mk2 >= 0) { return _mk2; }
+                        }
+                        if (_cd == 0x34) {              # '4'
+                            var _mk4 = _FINDFN_CSTR(S, "f64v4_make", 10);
+                            if (_mk4 >= 0) { return _mk4; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+# v5.7.31: find fn index by literal c-string name (str_ptr / str_len).
+# Used by parse/expr.cyr's aarch64 polyfill dispatch for f64_exp /
+# f64_ln, where the lookup target is a fixed compiler-internal name
+# rather than a user IDENT (whose noff would be available via
+# PEEKV). Linear scan over GFCNT(S) entries; the str_data names are
+# NUL-terminated, so we match str_len bytes AND verify the trailing
+# NUL to avoid prefix matches. Returns fn index or -1.
+# v5.11.37: _FINDFN_CSTR relocated to src/common/util.cyr so backend
+# emit.cyr files can resolve polyfill fn indices without forward refs.
+# See util.cyr for the definition.
+
+# NOTE: Arch-specific function emit functions (EFNPRO, ESUBRSP, EFNEPI,
+# ECALLTO, ECALLFIX, EPOPARG, ECALLPOPS, ECALLCLEAN, ESTOREREGPARM,
+# ESTORESTACKPARM, ESTOREPARM, EFLLOAD, EFLSTORE) are in the
+# arch-specific emit files (EDISP32 is x86-only):
+#   x86_64:  src/backend/x86/emit.cyr
+#   aarch64: src/backend/aarch64/emit.cyr
+
+# Find fn local variable by name
+fn FINDLOCAL(S, noff): i64 {
+    var lc = GFLC(S);
+    var i = lc - 1;
+    # Search backward so inner scope shadows outer
+    while (i >= 0) {
+        var sn = L64(S + 0x5D9D000 + i * 8);
+        if (sn >= 0) { if (STREQ(S, sn, noff) == 1) { return i; } }
+        i = i - 1;
+    }
+    return 0 - 1;
+}

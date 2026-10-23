@@ -1,0 +1,1081 @@
+# PARSER — decl: a call result's receive — the right-hand side's call (`_var_rhs_*`), receive annotations (`_rcv_*`,
+# `_scv_*`), destructuring (`_dt_*`) and vector initializers (`_vin_*`).
+# ================================================================
+# Split from parse/decl.cyr at 6.7.18, unchanged; parse.cyr includes parse/decl/ in source order. CHANGELOG [6.7.18]
+
+# The right-hand side at token `ti` is a call — `IDENT (` or a generic `IDENT < .. > (` — whose
+# RESULT is the value, i.e. not followed by `.field`. PARSE_VAR sizes a struct receive and infers
+# an untyped local's struct type from such a call; a field of the result (`var r = mkp(3).y;`)
+# is the field's value, not the struct. CHANGELOG [6.6.12]
+fn _var_rhs_call(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var c = 0;
+    if (TOKTYP(S, ti + 1) == 10) { c = 1; }
+    if (c == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, ti + 1) == 19) {
+                var gfi = FINDFN(S, TOKVAL(S, ti));
+                if (gfi >= 0) { if (GFTP(S, gfi) != 0) { c = 1; } }
+            } } }
+    if (c == 1) { if (_call_dotted(S, ti) == 1) { c = 0; } }
+    return c;
+}
+# ⛔ 6.7.11 — THE TYPE AN UNTYPED `var x = f(..) ...;` TAKES FROM ITS LEADING CALL `f` at `ti` (6.6.10:
+# the instance the call reaches): its return annotation's GFRS. A STRUCT only when the call ENDS the
+# initialiser (`_call_ends_at`, as the receive asks): `var r = mk3(4) - s;` with an integer-returning
+# `P3_sub` was typed P3, so `r.x` dereferenced -5 and `var r = mk2(1) == p; return r;` returned a 16-byte
+# struct from an 8-byte slot (SIGSEGV, 6.7.6 - 6.7.10). An operator's struct result types the binding
+# after the parse (`_var_rhs_post`); any other value leaves it untyped. A `: f64` call's f64 (-9) is judged
+# there too (6.7.13): kept when the whole initialiser's type is still f64 — `var x = f() * 2.0;`, the f64
+# arithmetic the leading call drives — and dropped for a comparison or an `&&` / `||` (`var c = f() < 1.0;`
+# is 0 / 1: it was typed f64, so `-c` flipped the sign bit). CHANGELOG [6.7.11] [6.7.13]
+fn _var_rhs_csid(S, ti): i64 {
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return rs; }
+    if (_call_ends_at(S, ti, 5) == 0) { return 0; }
+    return rs;
+}
+# ⛔ 6.7.13 — `var x = (mk1());` WITH AN 8 B STRUCT RESULT INFERRED NOTHING: the peek above wants `IDENT (`
+# first, so x was an untyped word and `x.a` was "no struct type in scope for 'x'" (decision 12 / 6.7.11 D42:
+# a whole struct result binds the struct at every size, the wrap transparent). The type of a WHOLE free
+# call inside parentheses that wrap the whole untyped initialiser at `ti` (`_pwrap_name` up to the `;`,
+# `_rcv_iscall`): a struct of 8 B or less (over 8 B the receive takes it, `_rcv_peel`; a dyn, 16 B, keeps
+# 6.7.8 V4d's refusal), or a `: f64` call's -9 (judged after the parse, as `var x = f();` is); else 0.
+# CHANGELOG [6.7.13]
+# 6.7.14 — and a `Str` handle, as `var t = mks();` is typed (v5.10.4): the wrapped one was an untyped word, so
+# `println(s)` took the integer overload and `s.len()` was refused. And a `: f64` call's -9 whatever follows the
+# wrap: `var a = (f()) * 2.0;` was an untyped word, where `f() * 2.0` is an f64 — `_var_rhs_post` drops it when
+# the whole initialiser is no longer an f64 (a comparison, `&&`, `& | ^ % << >>`); a struct still needs the `;`.
+# CHANGELOG [6.7.14]
+fn _var_rhs_wsid(S, ti): i64 {
+    var k = _pwrap_name(S, ti);
+    if (k == 0) { return 0; }
+    var e = TOKTYP(S, _pw_end);
+    if (_rcv_iscall(S, ti + k, k) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, ti + k);
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs == 0 - 9) { return rs; }
+    if (e != 5) { return 0; }
+    if (rs <= 0) { return 0; }
+    if (rs > 2047) { return 0; }
+    if (rs == _STR_SID(S)) { return rs; }
+    if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
+    return rs;
+}
+
+# ⛔ 6.7.11 — PARSE_VAR's struct receive looked for `IDENT (` right after `=`, so `var x = (mk());`
+# with `mk` returning a struct over 8 B inferred nothing: x held the FIRST word, and `dq(x)` into a
+# by-value struct parameter passed it as the struct's address (SIGSEGV; cx / PE a guest error). The
+# number of parentheses that wrap the whole untyped initialiser at `ti` (`_pwrap_k`, up to the `;`),
+# 0 for none: the receive then judges the call inside, and the typed path takes it through
+# `_scv_peel`, exactly as for `var x: Q = (mk());`. A struct annotation peels for itself; a tuple
+# literal is no wrap; a dyn result keeps its own refusals (6.7.8 V4d). CHANGELOG [6.7.11]
+fn _rcv_peel(S, ti, pscale): i64 {
+    if (pscale != 0) { return 0; }
+    var k = _pwrap_name(S, ti);
+    if (k == 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti + k));
+    if (fi >= 0) { if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; } }
+    return k;
+}
+# The parentheses at token `ti` that wrap one whole value whose inside starts with a name (`(mk())`,
+# `((g<P>(1)))`): their count, with `_pw_end` the token after the outermost `)` for the caller's
+# terminator; 0 for none. A tuple literal is no wrap. The peel of the receive above and of a struct
+# literal's element (`_spi_pcall`), each then judging the call inside. CHANGELOG [6.7.11]
+fn _pwrap_name(S, ti): i64 {
+    if (TOKTYP(S, ti) != 10) { return 0; }
+    if (_tup_lit_at(S, ti) >= 0) { return 0; }
+    var k = _pwrap_k(S, ti);
+    if (TOKTYP(S, ti + k) != 2) { return 0; }
+    return k;
+}
+# The call at `ti` is the whole initialiser: followed by the `;`, or by the wrap's `)` (`pk` > 0).
+fn _rcv_iscall(S, ti, pk): i64 {
+    if (_var_rhs_call(S, ti) == 0) { return 0; }
+    if (pk > 0) { return _call_ends_at(S, ti, 11); }
+    return _call_ends_at(S, ti, 5);
+}
+# ⛔ 6.7.11 — `var x: i64 = mkp();` (`: u8`, `: f64`, `: bool`, any annotation that names no struct)
+# with `mkp` returning a struct over 8 B: the receive inferred the struct OVER the annotation, so x
+# became a P2 (`x.b` compiled) and a `u8` held 333 — or, for a bool, the bool check refused it as
+# "not a bool". Refused by name at the call (the user's decision, 2026-10-13: refuse); 1 = refused,
+# and the variable parses on as its annotation says, with no struct receive (a bool's own check is
+# dropped: it would refuse the same initialiser twice). A struct of 8 B or less and a `Str` handle
+# are one word, which the scalar keeps; a dyn's is `_dyn_var_ann`'s. `ann` is the annotation's first
+# token, the cursor its `=`. CHANGELOG [6.7.11]
+fn _rcv_scalar_ann(S, ti, sid, pscale, ann, noff): i64 {
+    if (pscale != 0) { return 0; }
+    return _rcv_ann_refuse(S, ti, TOKVAL(S, ti), sid, 0, ann, noff);
+}
+# 1 = D24 refuses the struct `sid` into the annotation at `ann`: a struct over 8 B, not a `Str` handle, not a
+# dyn (`_dyn_var_ann`'s), and not a generic base's `T` (`_rcv_tp_base`).
+fn _rcv_ann_hit(S, sid, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    if (_rcv_tp_base(S, ann) == 1) { return 0; }
+    return 1;
+}
+# 1 = struct `sid` is a value D24 refuses into no struct: over 8 B, not a `Str` handle, not a dyn.
+fn _rcv_big(S, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz <= 8) { return 0; }
+    if (sz <= 16) { if (sid == _STR_SID(S)) { return 0; } }
+    return 1;
+}
+# ⛔ 6.7.13 — D24's one refusal, shared by every path that reaches it: the free call (`_rcv_scalar_ann`), the known
+# `&f` call (`_scv_icall_ann`), the top-level call (`_scv_gcall_ann`) and a method or operator result
+# (`_scv_rec_ann`, D13). Reported at token `ti`, naming the fn `fnoff`; `pscale` > 0 is a pointer annotation, whose
+# remedy is D14's (`declare 'x: P2' and take `&x``). 1 = refused (or already reported at `ti`). The cursor is the
+# declaration's `=`. CHANGELOG [6.7.13]
+fn _rcv_ann_refuse(S, ti, fnoff, sid, pscale, ann, noff): i64 {
+    if (_rcv_ann_hit(S, sid, ann) == 0) { return 0; }
+    return _rcv_say(S, ti, fnoff, sid, pscale, ann, noff);
+}
+# ⛔ 6.7.15 — D27 AT AN UNTYPED ASSIGNMENT DESTINATION (the user's decision D33 (a), 2026-10-18): `x = mkp();` with
+# `x` an untyped `var x = 0;`, an untyped parameter or global, or a destructure name kept the struct's first word (333
+# — the filed repro exited 77), silently, where `x: i64` is refused (6.7.14's D27) and 6.7.10's decision 12 never gives
+# an untyped receive a struct's first word. Refused with D27's words minus the annotation (`_asa_refuse`, parse.cyr):
+# "cannot assign 'x' from 'mkp', which returns the struct 'Q' - declare 'x: Q' or bind a field". A struct of 8 B or
+# less, a `Str` and a dyn keep their word, as D27 keeps them. 1 = refused. CHANGELOG [6.7.15]
+fn _rcv_unt_refuse(S, ti, fnoff, sid, noff): i64 {
+    if (_rcv_big(S, sid) == 0) { return 0; }
+    return _rcv_say(S, ti, fnoff, sid, 0, 0, noff);
+}
+# The report itself, once at token `ti`; `ann` 0 = the destination has no annotation (D33). 1 = refused.
+fn _rcv_say(S, ti, fnoff, sid, pscale, ann, noff): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 1; }
+    if (ann > 0) { if (_rcv_ann_refd(S, ann) == 1) { return 1; } }   # 6.7.14: the annotation itself was refused
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var eq = GTI(S);
+    var ae = eq;
+    if (_rcv_asg_e >= 0) { ae = _rcv_asg_e; }
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(_rcv_head());
+    PRSTR(S + 0xEC00000 + noff);
+    if (ann > 0) {
+        PRSTR(": ");
+        _rcv_ann_pr(S, ann, ae);
+    }
+    PRSTR("' from '");
+    if (_rcv_isv == 1) {   # 6.7.17 (D106): a struct value that is no call, named as written
+        _ssv_pr(S);
+        PRSTR("', which is the struct '");
+    } else {
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, _rcv_fi, fnoff));
+        PRSTR("', which returns the struct '");
+    }
+    _sn_pr(S, sid);
+    PRSTR("' - declare '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(": ");
+    _sn_pr(S, sid);
+    _rcv_ann_tail(S, pscale, noff);
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, eq);
+    return 1;
+}
+# ⛔ 6.7.14 — 1 = the annotation at `ann` (its type name, past any `*`) was refused at that name already: an unknown
+# type (`_tn_refuse`) or another refusal there (`_tn_once`). `var x: Foo = b.mk();` reported "unknown type 'Foo'" and
+# then D24's "cannot initialise 'x: Foo' from 'Q_mk'" for the same line (the free call, the `&f` call, a method, an
+# operator and `*Foo` alike). D24 says nothing more: the line is refused, and the declaration parses on as the
+# annotation's refusal left it (a plain i64, no struct receive). CHANGELOG [6.7.14]
+fn _rcv_ann_refd(S, ann): i64 {
+    var t = ann;
+    while (TOKTYP(S, t) == 8) { t = t + 1; }
+    return _tn_seen_at(S, t);
+}
+# 6.7.14 (D27) — the report of an ASSIGNMENT `x = mkp();` (`_asa_refuse`, parse.cyr): "cannot assign", the
+# destination's annotation printed from its declaration, which ends at token `_rcv_asg_e`; -1 = a declaration's.
+var _rcv_asg_e = 0 - 1;
+# 6.7.15 — the fn whose result `_rcv_ann_refuse` names (a struct-call record's `_sc_fi`: a method `Pt.mq` as the source
+# spells it, `_fn_src_name`); -1: the name as written.
+var _rcv_fi = 0 - 1;
+# 6.7.17 (D106) — 1: the source `_rcv_say` names is a struct value that is no call (`_ssv_at`'s span).
+# CHANGELOG [6.7.17]
+var _rcv_isv = 0;
+fn _rcv_head(): i64 {
+    if (_rcv_asg_e >= 0) { return ": cannot assign '"; }
+    return ": cannot initialise '";
+}
+fn _rcv_ann_tail(S, pscale, noff): i64 {
+    if (pscale <= 0) { PRSTR("' or bind a field\n"); return 0; }
+    PRSTR("' and take `&");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("`\n");
+    return 0;
+}
+# ⛔ 6.7.13 — A BY-VALUE STRUCT RESULT INTO A POINTER ANNOTATION (D14, the user, 2026-10-15). `var x: *P2 = mkp();` with
+# mkp returning a struct over 8 B stored the call's value as the pointer — rax, the struct's first word (the hidden
+# result pointer's target was never set up over 16 B) — under only the typed-pointer warning, so `x.b` dereferenced
+# 333: SIGSEGV on x86_64 / aarch64, a guest fault on cx, exit 5 on PE; `var x: *i64 = mkp();` held 333 as an address.
+# PARSE_VAR's receive is gated on `pscale <= 0`, so a `*T` (pscale > 0) never reached D24. Refused by name at the
+# call, in a fn, for every `*T`: "cannot initialise 'x: *P2' from 'mkp', which returns the struct 'P2' - declare
+# 'x: P2' and take `&x`". The whole initialiser, inside any parentheses (`_rcv_peel` judged as for a scalar), is one
+# free call (a generic's instance, `_gen_resolve_call`); the known `&f` call is `_scv_icall_ann`'s and a method /
+# operator result `_scv_rec_ann`'s. 8 B or less (the struct's word, as a scalar keeps it) and a `Str` handle keep
+# today's word and warning. The refused line says no typed-pointer warning (`_ptr_refd_ti`). The cursor is the
+# declaration's `=`. 1 = refused. CHANGELOG [6.7.13]
+fn _rcv_ptr_ann(S, pscale, ann, noff): i64 {
+    if (pscale <= 0) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (PEEKT(S) != 4) { return 0; }
+    var k = _rcv_peel(S, GTI(S) + 1, 0);
+    var c = GTI(S) + 1 + k;
+    if (TOKTYP(S, c) != 2) { return 0; }
+    if (_rcv_iscall(S, c, k) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, c);
+    if (fi < 0) { return 0; }
+    var r = _rcv_ann_refuse(S, c, TOKVAL(S, c), GFRS(S, fi), pscale, ann, noff);
+    if (r == 1) { _ptr_refd_ti = ann; }
+    return r;
+}
+# ⛔ 6.7.12 — D24 REACHES A KNOWN FN-POINTER CALL (D28, the user, 2026-10-15). `var n: i64 = fncall1(&mk3, 5);` and
+# `= callptr(&mk3, 5);` — the callee written `&f`, so the call carries mk3's struct result (6.7.11, ARG-1) — into an
+# annotation that names no struct read P3's first field (n = 5) where `var n: i64 = mk3(5);` is refused (D24). Now
+# refused with D24's words, naming mk3, at its name: in a fn, a declaration of no struct type (`pscale` 0, the
+# cursor on its initialiser) whose initialiser is one whole such call, inside any parentheses up to its `;`
+# (`_rcv_scalar_ann` judges the struct's size, a `Str`, the annotation). The initialiser's first token is marked
+# reported, so a bool's own check does not refuse it a second time. A callee in parentheses, `(&mk3)`, is the
+# same known callee (6.7.13, `_icall_fti`); a callee in a variable stays a word (D31). 1 = refused.
+# CHANGELOG [6.7.12]
+# 6.7.13: and at top level (6.7.12's D28 "D24 at every path"; `_scv_gcall_ann`). CHANGELOG [6.7.13]
+# 6.7.14: a `*T` at top level too (D28 (a): D14 at every path). CHANGELOG [6.7.14]
+fn _scv_icall_ann(S, pscale): i64 {
+    if (pscale < 0) { return 0; }
+    var st = GTI(S);
+    if (TOKTYP(S, st - 1) != 4) { return 0; }
+    var c = st;
+    var x = 5;   # what follows the call: the `;`, or a `)` of the wrap
+    if (TOKTYP(S, st) == 10) {
+        var k = _pwrap_k(S, st);
+        if (TOKTYP(S, _pw_end) != 5) { return 0; }
+        c = st + k;
+        x = 11;
+    }
+    var sid = _icall_sid_at(S, c);
+    if (sid <= 0) { return 0; }
+    if (_scv_top_big(S, sid) == 1) { return 0; }
+    if (TOKTYP(S, _call_close(S, c + 1) + 1) != x) { return 0; }
+    var ann = _scv_ann_at(S, st - 1);
+    if (ann <= 0) { return 0; }
+    STI(S, st - 1);
+    var fti = _icall_fti(S, c);
+    var r = _rcv_ann_refuse(S, fti, TOKVAL(S, fti), sid, pscale, ann, _scv_ann_nm);
+    STI(S, st);
+    if (r == 1) { _tn_once(S, st); }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
+    return r;
+}
+# ⛔ 6.7.13 — D24 AT TOP LEVEL (6.7.12's D28, the user, 2026-10-15: "D24 at every path", binding here).
+# `var G: i64 = mk2(5);` (`: u8`, `: f64`, `: cstring`, `: bool`, any annotation that names no struct) with
+# mk2 returning a 9-16 B struct, at top level — in the declaration zone (`_gvi_expr`) or after the first
+# statement (PARSE_VAR, through `_scv_arm`) — stored the struct's first word (the filed repro exited 10)
+# where in a fn PARSE_VAR's receive refuses it (`_rcv_scalar_ann`, which runs only there). Now refused with
+# D24's words at the call: a declaration of no struct type (`pscale` 0, the cursor on its initialiser)
+# whose initialiser is one whole direct call, inside any parentheses up to its `;` (`_rcv_peel` /
+# `_rcv_iscall`), its callee the one the call reaches (`_gen_resolve_call`). The initialiser's first token is
+# marked reported, so a bool's own check does not refuse it a second time. 1 = refused. CHANGELOG [6.7.13]
+# 6.7.14 (D28 (a), the user, 2026-10-16) — and a POINTER annotation (`pscale` > 0: `var X: *P2 = mkp();`, `*i64`,
+# `*u8`, any `*T`) with D14's remedy ("declare 'X: P2' and take `&X`"), in the zone and after the first statement:
+# it stored the struct's first word as the pointer under the typed-pointer warning (`X.b` faulted), and the zone
+# replayed it as a scalar (D24's remedy). The refused line says no warning (`_ptr_refd_ti`, the zone's
+# `_tn_seen_at`). CHANGELOG [6.7.14]
+fn _scv_gcall_ann(S, pscale): i64 {
+    if (pscale < 0) { return 0; }
+    if (GINFN(S) == 1) { return 0; }   # a fn's receive judges its own
+    var st = GTI(S);
+    if (TOKTYP(S, st - 1) != 4) { return 0; }
+    var k = _rcv_peel(S, st, 0);
+    var c = st + k;
+    if (TOKTYP(S, c) != 2) { return 0; }
+    if (_rcv_iscall(S, c, k) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, c);
+    if (fi < 0) { return 0; }
+    if (_scv_top_big(S, GFRS(S, fi)) == 1) { return 0; }
+    var ann = _scv_ann_at(S, st - 1);
+    if (ann <= 0) { return 0; }
+    STI(S, st - 1);
+    var r = _rcv_ann_refuse(S, c, TOKVAL(S, c), GFRS(S, fi), pscale, ann, _scv_ann_nm);
+    STI(S, st);
+    if (r == 1) { _tn_once(S, st); }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
+    return r;
+}
+# 1 = a struct result over 16 B at top level: refused already there (no frame, `_refuse_toplevel_struct_call`),
+# so D24 judges only 9-16 B at top level — one error, not two.
+fn _scv_top_big(S, sid): i64 {
+    if (GINFN(S) == 1) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 16) { return 1; }
+    return 0;
+}
+# Both top-level forms (`mk2(5)`, `fncall1(&mk2, 5)`), one call in `_scv_arm` / `_gvi_expr`.
+fn _scv_top_ann(S, pscale): i64 {
+    if (_scv_gcall_ann(S, pscale) == 1) { return 1; }
+    return _scv_icall_ann(S, pscale);
+}
+# ⛔ 6.7.13 — D24 REACHES A METHOD OR OPERATOR RESULT (D13, the user, 2026-10-15). `var x: i64 = b.mk();` and
+# `var y: u8 = a + c;` (`: f64`, `: bool`, `: cstring`, any annotation that names no struct) with the method / the
+# operator fn returning a struct over 8 B kept the struct's first word, narrowed (the filed repro: x = 333, y = 77),
+# where the free call (D24) and the `&f` call (D28) are refused; a `: bool` was refused as "not a bool". Now refused
+# with D24's words, naming the fn, after the initialiser's parse (`start` its first token, the cursor after it): the
+# whole initialiser, inside any parentheses, is the method / operator call the struct-result record spans
+# (`_sc_whole`: a temp, -4 in rax:rdx, -1 at top level; -3 is 8 B or less, a word), in a fn and at top level (PARSE_VAR
+# and the declaration zone, `_gvi_expr`). A line refused inside its initialiser (`_scv_err`) or already refused at its
+# first token (the free / `&f` call) is not reported again; the first token is marked, so a bool's own check does not
+# refuse it a second time; and the declaration takes no struct (`_scv_refd`, read by `_sc_var_receive`): it parses on
+# as its annotation says, as after the free call's refusal. 1 = refused. CHANGELOG [6.7.13]
+# 6.7.14: a `*T` at top level too, the zone's replay passing its pointer (D28 (a)). CHANGELOG [6.7.14]
+var _scv_refd = 0 - 1;   # the initialiser's first token of the last declaration `_scv_rec_ann` refused
+fn _scv_rec_ann(S, pscale, start): i64 {
+    if (pscale < 0) { return 0; }
+    if (_scv_err == 1) { return 0; }
+    var t = _sc_whole(S, start);
+    if (t == 0 - 2) { return 0; }
+    if (t == 0 - 3) { return 0; }
+    var ann = _scv_ann_at(S, start - 1);
+    if (ann <= 0) { return 0; }
+    if (_rcv_ann_hit(S, _sc_sid, ann) == 0) { return 0; }
+    if (_tn_seen_at(S, start) == 1) { _scv_refd = start; return 1; }
+    var eq = GTI(S);
+    STI(S, start - 1);
+    _rcv_fi = _sc_fi;   # 6.7.15: named `Pt.mq`
+    var r = _rcv_ann_refuse(S, _sc_beg, _sc_fn, _sc_sid, pscale, ann, _scv_ann_nm);
+    _rcv_fi = 0 - 1;
+    STI(S, eq);
+    if (r == 1) { _tn_once(S, start); }
+    if (r == 1) { _scv_refd = start; }
+    if (r == 1) { if (pscale > 0) { _ptr_refd_ti = ann; } }
+    return r;
+}
+# The annotation of the declaration `var NAME : <ann> =` whose `=` is token `eq`: its first token, `_scv_ann_nm`
+# the name; 0 for an untyped declaration.
+var _scv_ann_nm = 0;
+fn _scv_ann_at(S, eq): i64 {
+    var k = eq - 1;
+    while (k >= 2) {
+        var t = TOKTYP(S, k);
+        if (t == 5 || t == 13 || t == 14) { return 0; }
+        if (t == 49) { if (TOKTYP(S, k - 1) == 2) { if (TOKTYP(S, k - 2) == 3) {
+                    _scv_ann_nm = TOKVAL(S, k - 1);
+                    return k + 1;
+                } } }
+        if (eq - k > 64) { return 0; }
+        k = k - 1;
+    }
+    return 0;
+}
+# The annotation is the enclosing generic fn's type parameter, in its BASE parse (`_inst_name` 0, T
+# the i64 base): each instance judges its own binding — `var x: T = mkp();` is `x: P2` in `f<P2>`.
+fn _rcv_tp_base(S, ann): i64 {
+    if (_inst_name != 0) { return 0; }
+    if (TOKTYP(S, ann) != 2) { return 0; }
+    var noff = TOKVAL(S, ann);
+    if (_tp_resolve(S, noff) != 0) { return 1; }
+    return _tn_tparam(S, ann, noff);
+}
+# The annotation as written: the source bytes from token `ann` up to the `=` at `eq`, trailing
+# blanks trimmed; its name when the tokens carry no source offsets.
+fn _rcv_ann_pr(S, ann, eq): i64 {
+    var a = GTOFF(S, ann);
+    var e = GTOFF(S, eq);
+    while (e > a) {
+        var c = load8(S + 0x459D000 + e - 1);
+        if (c != 32) { if (c != 9) { if (c != 10) { break; } } }
+        e = e - 1;
+    }
+    if (a > 0) { if (e > a) { if (e - a < 128) {
+                _ew(S + 0x459D000 + a, e - a);
+                return 0;
+            } } }
+    if (TOKTYP(S, ann) == 2) { PRSTR(S + 0xEC00000 + TOKVAL(S, ann)); return 0; }
+    PRSTR(TOKNAME(TOKTYP(S, ann)));
+    return 0;
+}
+
+# ⛔ 6.7.17 — AN ANNOTATED DESTRUCTURE NAME: `var a: i64, b: i64 = f();` (a local, a global, a for-init; `var a, b: i64`
+# too) was "expected '=', got ','" + "undefined variable 'b'" at every use of b (or "expected '=', got ':'" + "undefined
+# variable 'i64'"): the destructure reads bare names and the annotation reader expected the `=`. The names take none —
+# the callee's declared return types them — so the first annotated name is refused once per statement, at the name,
+# "a multi-value destructure's names take no type annotation: 'a' - ...", said under --syntax-only too (nothing is
+# resolved), each annotation stepped and the destructure read on: its names are declared and its call judged.
+# CHANGELOG [6.7.17]
+var _dt_ann_k = 0 - 1;   # the statement's first name token
+var _dt_ann_v = 0 - 1;   # the statement last refused
+# The token ending the annotation whose `:` is token k: the first `,` or `=` outside `( )` `[ ]` `< >`, or a `;` `{` `}`.
+fn _dt_ann_end(S, k): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var i = k + 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 5 || t == 12 || t == 13 || t == 14) { return i; }
+        if (t == 10 || t == 28 || t == 19) { d = d + 1; }
+        elif (t == 11 || t == 29 || t == 20) { d = d - 1; }
+        elif (t == 39) { d = d - 2; }
+        elif (t == 152) { d = d - 3; }
+        if (d < 0) { d = 0; }
+        if (d == 0) { if (t == 31 || t == 4) { return i; } }
+        i = i + 1;
+    }
+    return n;
+}
+# 1 when an `=` comes before the statement's end, from token i (a destructure, not `var a: i64, b: i64;`).
+fn _dt_ann_eq(S, i): i64 {
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 4) { return 1; }
+        if (t == 5 || t == 12 || t == 13 || t == 14) { return 0; }
+        i = i + 1;
+    }
+    return 0;
+}
+# The refusal at name token k, once per statement, then the cursor on the annotation's end `e`. A statement with no `=`
+# (`var a: i64, b: i64;`) is stepped silently: it reports what `var a, b;` reports, "expected '=', got ';'".
+fn _dt_ann_say(S, k, e): i64 {
+    if (_dt_ann_eq(S, e) == 0) { STI(S, e); return 1; }
+    if (_dt_ann_v != _dt_ann_k) {
+        _dt_ann_v = _dt_ann_k;
+        if (_tpl_beg(S, k) == 1) {
+            PRSTR("a multi-value destructure's names take no type annotation: '");
+            PRSTR(S + 0xEC00000 + TOKVAL(S, k));
+            PRSTR("' - the callee's declared return types them");
+            _tpl_fin(S);
+        }
+    }
+    STI(S, e);
+    return 1;
+}
+# Cursor past a destructure's FIRST name: an annotation ending at a `,` with a name after it is refused and stepped
+# (1); else 0, the cursor untouched (a plain annotated `var`). 6.7.17 review: a `,` with no name after it is no
+# destructure — `var b: , = 0;`, `var b: i64, = 0;` keep the annotation reader's one line ("expected a type for
+# variable 'b', got ','" / "expected '=', got ','"); they were this refusal plus "expected identifier". CHANGELOG [6.7.17]
+fn _dt_ann1(S): i64 {
+    _dt_ann_k = GTI(S) - 1;
+    if (PEEKT(S) != 49) { return 0; }
+    var e = _dt_ann_end(S, GTI(S));
+    if (TOKTYP(S, e) != 31) { return 0; }
+    if (TOKTYP(S, e + 1) != 2) { return 0; }
+    return _dt_ann_say(S, _dt_ann_k, e);
+}
+# Cursor past a LATER name: its annotation, ending at the next `,`, the `=` or the `;`, refused and stepped.
+fn _dt_annk(S): i64 {
+    if (PEEKT(S) != 49) { return 0; }
+    var e = _dt_ann_end(S, GTI(S));
+    var t = TOKTYP(S, e);
+    if (t != 31 && t != 4 && t != 5) { return 0; }
+    return _dt_ann_say(S, GTI(S) - 1, e);
+}
+
+# The right-hand side of a destructure (cursor on it) must be ONE whole call: `f(`, `g<..>(` or
+# `x.m(`, with `;` right after its `)`. `dm(17, 5) + (k / 9) - 11` opens with the same tokens and
+# used to compile with the arithmetic's leftovers in rdx landing in the second target (an idiv
+# REMAINDER in `r`). v6.5.21 / 6.6.16; shared with the declaration-zone replay since 6.6.17.
+# ... ending at `term` (6.7.7, T5: `;`, or a classic-for step's `)` for `a, b = f()`).
+fn _dt_rhs_check_t(S, term): i64 {
+    var sc = _dt_call_open_cp(S);   # 6.7.13: `callptr(fp, ..)` too. CHANGELOG [6.7.13]
+    if (sc < 0) {
+        if (_dt_chain_m(S, term) == 1) { return _dt_dfr_push(S); }   # 6.7.17: the chain's own error first
+        ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+        sc = GTI(S) + 1;
+    }
+    var d = 0;
+    while (sc < GTCNT(S)) {
+        var tk = TOKTYP(S, sc);
+        if (tk == 10) { d = d + 1; }
+        if (tk == 11) { d = d - 1; if (d == 0) { break; } }
+        sc = sc + 1;
+    }
+    if (TOKTYP(S, sc + 1) != term) {
+        if (_dt_rhs_end(S, sc + 1) == 1) { return 0; }
+        if (_dt_chain_m(S, term) == 1) { return _dt_dfr_push(S); }   # 6.7.17: `q.one().m2()`, `one` an i64
+        ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+    }
+    return 0;
+}
+# ⛔ 6.7.17 — A METHOD CHAIN THE LOOKAHEAD CANNOT TYPE REPORTS ITS OWN ERROR, NOT THE DESTRUCTURE'S. `var a, b =
+# q.one().m2();` (`one` returning an i64) was "multi-value destructure needs a call on the right-hand side", where
+# `var a = q.one().m2();` names the mistake: "cannot take a field of the result of 'P.one': it does not return a
+# struct" (issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, row 3). A right-hand side the
+# call lookahead does not read as one whole call (`_dt_call_open_cp`: none, or one the chain goes on past) but that
+# ends, at `term`, in a method call `.m(..)` on a receiver (`_dt_chain_m`) defers the refusal (`_dt_dfr_push`: its token
+# and the error counts): each destructure form reads the value, then `_dt_dfr_say` reports it at that token only when
+# the value's parse reported nothing of its own — a chain the parse accepts is still refused, as before. The inner
+# call is not the destructure's callee (`_dt_call_fn_d`). CHANGELOG [6.7.17]
+var _dtd = 0;       # the deferred refusals: (token, `_err_n`, `_had_error`) per entry, a vec made at the first
+fn _dt_chain_m(S, term): i64 {
+    var a = GTI(S);
+    var i = a;
+    var d = 0;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (d == 0) {
+            if (t == term) { break; }
+            if (t == 5 || t == 12 || t == 14) { return 0; }
+        }
+        if (t == 10 || t == 13 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 14 || t == 29) { d = d - 1; }
+        if (d < 0) { return 0; }
+        i = i + 1;
+    }
+    if (i >= n) { return 0; }
+    while (TOKTYP(S, a) == 10) {   # inside parentheses that wrap the whole value
+        if (_gz_close(S, a, i) != i - 1) { break; }
+        a = a + 1;
+        i = i - 1;
+    }
+    if (TOKTYP(S, i - 1) != 11) { return 0; }
+    var o = i - 1;
+    while (o > a) {
+        if (_gz_close(S, o, i) == i - 1) { break; }
+        o = o - 1;
+    }
+    if (TOKTYP(S, o - 1) != 2) { return 0; }
+    if (TOKTYP(S, o - 2) != 41) { return 0; }
+    if (o - 2 <= a) { return 0; }
+    return 1;
+}
+fn _dt_dfr_push(S): i64 {
+    if (_panic == 1) { return ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59); }
+    if (_dtd == 0) { _dtd = vec_new(); }
+    vec_push(_dtd, GTI(S));
+    vec_push(_dtd, _err_n);
+    vec_push(_dtd, _had_error);
+    return 0;
+}
+# A destructure form's callee (`_dt_call_fn`): none when its refusal was deferred at the cursor — the call the lookahead
+# read is the chain's inner one, and its arity is not the destructure's ("'P.one' returns 1 value").
+fn _dt_call_fn_d(S): i64 {
+    if (_dtd != 0) { if (vec_len(_dtd) > 0) { if (vec_get(_dtd, vec_len(_dtd) - 3) == GTI(S)) { return 0 - 1; } } }
+    return _dt_call_fn(S);
+}
+# The deferred refusals' count, before a destructure form's check: its `_dt_dfr_say` reads what is above it.
+fn _dt_dfr_n(): i64 {
+    if (_dtd == 0) { return 0; }
+    return vec_len(_dtd);
+}
+# After the value's parse: each refusal deferred since `d0` is reported at its token unless the parse reported an
+# error of its own (`_own_err`).
+fn _dt_dfr_say(S, d0): i64 {
+    if (_dtd == 0) { return 0; }
+    while (vec_len(_dtd) > d0) {
+        var k = vec_len(_dtd) - 3;
+        var ti = vec_get(_dtd, k);
+        var en = vec_get(_dtd, k + 1);
+        var he = vec_get(_dtd, k + 2);
+        vec_truncate(_dtd, k);
+        if (_own_err(en, he) == 0) {
+            var sv = GTI(S);
+            STI(S, ti);
+            ERR_MSG(S, "multi-value destructure needs a call on the right-hand side", 59);
+            STI(S, sv);
+        }
+    }
+    return 0;
+}
+# 6.7.17 — 1 = token `k` after the call ends the statement with its `;` missing (`}`, EOF, a statement keyword): the
+# terminator's own "expected ';'" is the error (`a, b = two(3) }` was "needs a call on the right-hand side", and
+# `two(3)` is one). CHANGELOG [6.7.17]
+fn _dt_rhs_end(S, k): i64 {
+    var t = TOKTYP(S, k);
+    if (t == 14 || t == 12) { return 1; }
+    return _sync_kw_at(S, k, t);
+}
+# ... inside the parentheses that wrap the whole call (6.7.14, D45: `_dt_wrap_k`): the cursor stepped in
+# and the call judged against their `)`. Returns k, for the caller's `_pw_close` once the call is parsed.
+fn _dt_peel(S, term): i64 {
+    var k = _dt_wrap_in(S, term);
+    _dt_rhs_check_t(S, _dt_wterm(k, term));
+    return k;
+}
+# ⛔ 6.6.17 (a5) — the declaration-zone top-level destructure (`var a, b = f();` before the first
+# statement) is replayed by EMIT_GVAR_INITS, which PCMPE'd the right-hand side with NO contract:
+# `var a, b = 42;`, a call followed by arithmetic, a declared-arity mismatch and a one-value `f`
+# all compiled silently. The same checks as PARSE_VAR's, from here. `n` = names bound.
+# The replay has no statement resync, so each report's panic latch is cleared after its own
+# statement (as `_gai_err` does) and every bad declaration of a file is reported; an error already
+# holding it is left alone. 1 = this check latched it: the replay clears it once the right-hand side
+# is parsed, so the call's own cascade (6.7.11: a 24 B callee's "needs storage in a fn's frame") is
+# not a second report.
+fn _dt_zone_check(S, n, k): i64 {
+    if (_panic == 1) { return 0; }
+    _dt_rhs_check_t(S, _dt_wterm(k, 5));   # 6.7.14: `k` wrapping parentheses stepped (`_dt_wrap_in`)
+    var fi = _dt_call_fn_d(S);
+    if (_dt_icall_vec(S, 0) == 1) { return _panic; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
+    if (fi >= 0) { _dt_arity_check(S, fi, n); }
+    _dt_icall_pair(S, n);   # 6.7.17: through a known `&f`
+    return _panic;
+}
+# ⛔ 6.6.17 (a5) — THE DESTRUCTURE'S ARITY, against the fn the call reaches. A declared
+# `: (T1, T2[, T3])` must match exactly (v6.5.21), and (6.7.11) so must an undeclared fn's provable
+# count (`_fn_ret_arity`: every `return` a tuple of one arity). A fn whose body provably returns ONE value
+# (pass 1, `_prescan_ret_single`, GFLG bit 1024) is refused by name: `var a, b = one(1);` bound b
+# to whatever rdx held, silently, at fn scope and at top level (6.6.0's destructure). A struct callee
+# is judged by its register words (`_dt_struct_check`) — its DECLARED return, ahead of a recorded
+# `return (..)` count (a `: P` fn's crossing arms). Not refused: a `: stack` pair (bit 256) bound to two names
+# (6.7.17: three are refused, `_dt_icall_pair`), Result / Option / Tagged — any of which can carry a second word.
+# CHANGELOG [6.6.17]
+# A vector is refused since 6.7.16 (`_dt_vec_err`).
+fn _dt_arity_check(S, fi, n): i64 {
+    var rs = GFRS(S, fi);
+    if (_dyn_is(S, rs) == 1) {   # 6.7.8 (V6): a dyn is one value, its words opaque
+        return _dyn_err(S, GTI(S), "multi-value destructure of a ", rs, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " result - a dyn is one value: bind it to one name");
+    }
+    if (rs <= 0 - 2048) { return _dt_vec_err(S, fi); }   # 6.7.16: a vector is no multiple values
+    if (rs == MULTIRET_SID) {
+        if (GFRN(S, fi) != n) {
+            ERR_MSG(S, "multi-value destructure count does not match the fn's declared return arity", 75);
+        }
+        return 0;
+    }
+    _ensure_pair_flags(S);
+    var fl = GFLG(S, fi);
+    if ((fl & 256) != 0) {   # 6.7.17: a `: stack` pair is two values, the tag and one payload
+        if (n == 3) { return _dt_count_err(S, fi, n, 2); }
+        return 0;
+    }
+    if ((fl & 256) == 0) { if (rs > 0) { if (rs < 2048) { return _dt_struct_check(S, fi, n); } } }
+    var ar = _fn_ret_arity(S, fi);   # 6.7.11: an undeclared fn's provable count
+    if (ar != 0) {
+        if (ar != n) { _dt_count_err(S, fi, n, ar); }
+        return 0;
+    }
+    if ((fl & 1024) == 0) { return 0; }
+    if ((fl & 256) != 0) { return 0; }
+    if (rs <= 0 - 16) { if (rs >= 0 - 18) { return 0; } }
+    if (rs <= 0 - 2048) { return 0; }
+    return _dt_one_err(S, fi, n);
+}
+fn _dt_one_err(S, fi, n): i64 {
+    if (n == 3) {
+        ERR_IDENT(S, "multi-value destructure binds 3 names, but ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
+    } else {
+        ERR_IDENT(S, "multi-value destructure binds 2 names, but ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " returns 1 value - bind it to one name: `var x = f(..);`", 0 - 1);
+    }
+    return 0;
+}
+# ⛔ 6.7.11 — A STRUCT CALLEE'S WORDS ARE ITS RETURN REGISTERS (the user's decision, 2026-10-13: refuse
+# over 16 B, and where the names outnumber the register words). A 9-16 B struct comes back in rax:rdx
+# (x0:x1 + x2 on aarch64, 6.7.7) and `var a, b = mk(..);` binds its two words — pinned since 6.7.7. Over
+# 16 B it comes back through a retptr, and `var a, b = mk(5);` bound b to whatever rdx held (50 where 56
+# is meant, on every target); a third name read a register no struct return writes; an 8 B struct (or a
+# `Str` handle) is one word, refused as one value even where pass 1 could not prove the body. The
+# class is `_ret_agg_class`'s, the one caller and callee share. CHANGELOG [6.7.11]
+fn _dt_struct_check(S, fi, n): i64 {
+    var c = _ret_agg_class(S, fi);
+    if (c == 2) { return _dt_struct_err(S, fi, 0); }
+    if (c == 1) {
+        if (n == 3) { return _dt_struct_err(S, fi, 2); }
+        return 0;
+    }
+    return _dt_one_err(S, fi, n);
+}
+# The report, cursor on the call (`name(`, `name<..>(` or `x.m(`): `w` 0 = not in registers (a
+# retptr), 2 = its 2 words are, and 3 names were bound.
+fn _dt_struct_err(S, fi, w): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_dt_struct_err", fi * 4 + w, 1) == 1) { return 0; }   # 6.7.15: once per site
+    var ct = GTI(S);
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = _mco_mt; }   # 6.7.15: `x.m<..>(` names m too; 6.7.16: a chain's
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot destructure '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    if (w == 0) { PRSTR("' - it returns struct '"); }
+    else { PRSTR("' into 3 names - it returns struct '"); }
+    _sn_pr(S, GFRS(S, fi));
+    if (w == 0) { PRSTR("', which is not in registers - bind it to one name: `var x = "); }
+    else { PRSTR("', whose 2 words are its return registers - bind 2 names: `var a, b = "); }
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    PRSTR("(..);`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# ⛔ 6.7.16 (met landing 6.7.16's D100) — A VECTOR CALL IS NO MULTIPLE VALUES: `var a, b = mk2(41, 7);` (a method, an
+# explicit instance, wrapped, `var a, b, c = mk4(1);`, in the declaration zone and after the first statement) bound the
+# names to the integer return registers a vector return does not write — x86_64 / IR=3 / aarch64 0 and 0, Windows
+# garbage (195 where 161 is the lanes), cx its lanes by accident — where the assignment `a, b = mk2(..)` is refused (6.7.11,
+# `_tup_cap_class`) and 6.7.14's D27 (a) sets one rule for a declaration and an assignment. Refused by name in the
+# assignment's words, cursor on the call (`name(`, `name<..>(` or `x.m(`). CHANGELOG [6.7.16]
+fn _dt_vec_err(S, fi): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_dt_vec_err", fi, 1) == 1) { return 0; }
+    var ct = GTI(S);
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { ct = ct + 2; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot destructure '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ct));
+    PRSTR("' - it returns a vector, not multiple values\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# ... and through `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` (the cursor on the call; `masg` 1:
+# the assignment `a, b = ..`, in its words, `_tup_cap_err`): refused at `f` when f returns a vector. 1 = refused.
+fn _dt_icall_vec(S, masg): i64 {
+    var ft = _icall_fti(S, GTI(S));
+    if (ft < 0) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ft));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) > 0 - 2048) { return 0; }
+    var sv = GTI(S);
+    STI(S, ft);
+    if (masg == 1) { _tup_cap_err(S, 0, fi, 3, 0); }
+    else { _dt_vec_err(S, fi); }
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.11 — `n` names bound from undeclared fn `fi`, which returns `ar` values (pass 1,
+# `_prescan_ret_arity`): `var q, r, z = dm(17, 5);` bound z to whatever r8 held, silently, as the
+# declared spelling `fn dm(a, b): (i64, i64)` was already refused. CHANGELOG [6.7.11]
+# ⛔ 6.7.17 (met reviewing D26) — A `: stack` PAIR IS TWO VALUES: `var a, b, c = f(4);` with f returning a `: stack` enum
+# (a tag and at most one payload, "stack enum variant takes 0 or 1 fields") compiled, and c read whatever the third
+# return register held, as a multi-value fn's three names over its two values are refused ("multi-value destructure
+# binds 3 names, but 'f' returns 2 values"); refused the same (`_dt_arity_check`), by name, through a known `&f` too
+# (`callptr(&f, 4)` / `fncallN(&f, ..)`, `_dt_icall_pair`: D26 makes it f's pair), in a declaration, at top level and
+# in an assignment `a, b, c = f(4);`. CHANGELOG [6.7.17]
+fn _dt_icall_pair(S, n): i64 {
+    if (n != 3) { return 0; }
+    if (_icall_open_at(S, GTI(S)) < 0) { return 0; }
+    var fi = _pair_call_fn(S, GTI(S));
+    if (fi < 0) { return 0; }
+    _ensure_pair_flags(S);
+    if ((GFLG(S, fi) & 256) == 0) { return 0; }
+    return _dt_count_err(S, fi, n, 2);
+}
+fn _dt_count_err(S, fi, n, ar): i64 {
+    var head = "multi-value destructure binds 2 names, but ";
+    if (n == 3) { head = "multi-value destructure binds 3 names, but "; }
+    var tail = " returns 2 values - bind 2 names: `var a, b = f(..);`";
+    if (ar == 3) { tail = " returns 3 values - bind 3 names: `var a, b, c = f(..);`"; }
+    ERR_IDENT(S, head, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), tail, 0 - 1);
+    return 0;
+}
+
+# ⛔ 6.6.16 — the destructure's right-hand CALL, in every spelling `f(..)` is: `name(`, an explicit
+# generic `name<..>(` and a method `x.m(`. It took `name(` only, so the remedy the "bind both"
+# refusal prints — `var tag, val = f();` — was "multi-value destructure needs a call on the
+# right-hand side" for `g<i32>(..)` and `p.m(..)`. The method is taken by SHAPE: whether `x` names
+# a struct is the call's own question (PARSE_FIELD_LOAD reports it by name). The `(` that opens
+# the call at the cursor, or -1. CHANGELOG [6.6.16]
+# 6.7.16: a method ending a chain on any receiver (`_mcall_open`'s chain arm, before a call head's own `(`):
+# `w.p.m(`, `f(..).m(`, `(*pw).m(`. CHANGELOG [6.7.16]
+fn _dt_call_open(S): i64 {
+    var ti = GTI(S);
+    var m = _mcall_open(S, ti, 0 - 1);   # `x.m(`, by shape; 6.7.15: `x.m<..>(` when m is x's generic method
+    if (m >= 0) { if (_mco_ch == 1) { return m; } }
+    var o = _tup_gopen(S, ti);   # 6.7.7 (B4 review): `_gcall_open`, but by its tokens in the zone's pass 1
+    if (o >= 0) { return o; }
+    return m;
+}
+# ... or `callptr(fp, ..)`, the multi-value call the destructure and the tuple capture take (the guide's
+# Multi-Return list names it; `fncallN`, its lowering, already captured): a call whose callee is unknown
+# (`_dt_call_fn` answers -1), so its count is not judged. 6.7.13 gave the destructure this arm; the
+# capture (`var t: T = callptr(..)`, `t = ..`, both top-level zones) was "not a tuple". CHANGELOG [6.7.14]
+fn _dt_call_open_cp(S): i64 {
+    var o = _dt_call_open(S);
+    if (o >= 0) { return o; }
+    if (PEEKT(S) == 137) { if (TOKTYP(S, GTI(S) + 1) == 10) { return GTI(S) + 1; } }
+    return 0 - 1;
+}
+# ⛔ 6.7.14 (D45, the user's decision, 2026-10-16) — PARENTHESES AROUND THE WHOLE CALL ARE TRANSPARENT to
+# the destructure and the tuple capture, as to every other consumer of a whole call: a struct source
+# (6.7.6), a multi-value call into a named struct and `return (g(x));` (6.7.11), the pair checks (6.7.13's
+# D19 A). `var a, b = (f(7));`, `a, b = (f());`, a for step, both top-level zones, `var t: T = (two(3));`
+# and `t = ((..));` were "needs a call on the right-hand side" / "not a tuple". Cursor on the right-hand
+# side, which ends at `term`: k when it is k `(`, ONE call (`_dt_call_open_cp`'s), k `)`, then `term`;
+# else 0 — `(f(7)) + 1`, `(f(7) + 1)` and a tuple literal stay the value they were, refused as before.
+# Tokens only, linear (`_pair_unwrap_k`). The caller steps in (`_dt_wrap_in`), judges the call against
+# its `)` (`_dt_wterm`), parses it, and closes the k after (`_pw_close`), so the call compiles exactly
+# as unwrapped. CHANGELOG [6.7.14]
+fn _dt_wrap_k(S, term): i64 {
+    var st = GTI(S);
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var a = st + _pw_lead(S, st);   # 6.7.16: up to a parenthesised chain head, `((*pw).m2())`
+    STI(S, a);
+    var o = _dt_call_open_cp(S);
+    STI(S, st);
+    if (o < 0) { return 0; }
+    var e = _call_close(S, o) + 1;
+    if (_pair_unwrap_k(S, e, a - st, a) < 0) { return 0; }
+    if (TOKTYP(S, e + a - st) != term) { return 0; }
+    return a - st;
+}
+# ... the cursor stepped into that wrap: its k (0: none, the cursor kept).
+fn _dt_wrap_in(S, term): i64 {
+    var k = _dt_wrap_k(S, term);
+    STI(S, GTI(S) + k);
+    return k;
+}
+# The call's terminator inside k wrapping parentheses: their `)`, else `term`.
+fn _dt_wterm(k, term): i64 {
+    if (k > 0) { return 11; }
+    return term;
+}
+# ...and the fn it REACHES, whose return types type the bindings: a generic's instance
+# (`_gen_resolve_call`, so `: (T1, T2)` / `: f64` are the instance's), else the method's `T_m` — a generic
+# method's inferred `x.m(..)` the instance its arguments bind (`_mcall_gen`, quiet), as `x.m<..>(..)` and the
+# free spelling reach theirs: `var a, b = p.mm(h);` typed its `(V, i64)` from the base. CHANGELOG [6.7.16]
+# 6.7.16: a chain's last method, its inferred generic's instance as on a single name (`_dt_mfn`).
+fn _dt_call_fn(S): i64 {
+    var ti = GTI(S);
+    var fi = 0 - 1;
+    var o = _mcall_open(S, ti, 0 - 1);
+    if (o >= 0) { if (_mco_ch == 1) { return _dt_mfn(S, o, _mco_mf, _mco_mt, _mco_rs); } }
+    if (_gcall_open(S, ti) >= 0) { fi = _gen_resolve_call(S, ti); }
+    else { fi = _pair_callee_at(S, ti); }
+    if (fi >= 0) { if (_tok_method_open(S, ti) == 1) { fi = _mcall_gen(S, fi, ti + 3, _recv_sid(S, TOKVAL(S, ti)), 0); } }
+    return fi;
+}
+# The method `mf` named at token mt on struct `rs`, its call's `(` at o: the instance an inferred generic's arguments
+# bind (`_mcall_gen`, quiet), an explicit one's (`_mco_inst`).
+fn _dt_mfn(S, o, mf, mt, rs): i64 {
+    if (mf < 0) { return mf; }
+    if (o != mt + 1) { return _mco_inst(S, mf, mt, o); }
+    return _mcall_gen(S, mf, o, rs, 0);
+}
+
+# Parse: var IDENT = expr ;
+# PARSE_VAR, cursor on its `=` (or the token after the name): the declaration's `pscale` after the by-name vector call
+# that starts its initialiser (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too). In a fn, no annotation of its
+# own takes the callee's vector (6.7.15: an annotation of no integer width — `: f64`, `: f32`, `: bool`, `: cstring`, an
+# enum — is one, so it meets the refusal below), and an annotation that DISAGREES with the callee is a type error: it
+# used to be silent in the same way the missing one was — the receive paths below require `GFRS == pscale`, so a
+# mismatch simply fell out of them into the scalar init (`var r: f64v4 = f64v2_add(a, b);` and `var r: i64 =
+# f64v2_add(a, b);` both read back as zero, exit 0). At top level: `_vin_top`. CHANGELOG [6.7.15]
+fn _vin_decl(S, pscale, sty, ann): i64 {
+    if (PEEKT(S) != 4) { return pscale; }
+    _vin_vval(S, pscale, ann);   # 6.7.17 (D24): `var x: i64 = w;`
+    _svin_val(S, pscale, ann);   # 6.7.17 (D106): `var x: i64 = q;`, q a struct value
+    if (ann > 0) { if (pscale > 0) { if (TOKTYP(S, ann - 1) == 49) {   # 6.7.17 (D107): `var u: *Pt = &h;`
+                _ppd_val(S, GTI(S) + 1, _hl_dx_end(S, GTI(S) + 1, 5), ann, TOKVAL(S, ann - 2));
+            } } }
+    _vin_avv(S, pscale, sty, ann);   # 6.7.17 (D108): `var x = wa;`, an array of vectors
+    if (GINFN(S) != 1) {
+        _vin_top(S, pscale, ann);
+        return pscale;
+    }
+    var fi = _vcall_fi(S, GTI(S) + 1);
+    if (fi < 0) { return _vin_ustart(S, pscale, sty, ann); }   # 6.7.16 (D24): a method / `&f` / a wrap starting it
+    var rs = GFRS(S, fi);
+    if (pscale == 0) { if (sty == 0) { if (ann == 0) { pscale = rs; } } }
+    if (pscale != rs) { if (_vrcv_annbad(S, GTI(S)) == 0) {   # 6.7.16: a refused annotation's one error
+            _refuse_in_sync(S);   # 6.7.16: the statement parses on; the next one keeps its errors
+            ERR_MSG(S, "vector return type does not match the declared type", 51);
+        } }
+    return pscale;
+}
+# ⛔ 6.7.16 (D24 A, the user's decision, 2026-10-19) — AN UNTYPED DECLARATION WHOSE INITIALISER A VECTOR CALL STARTS
+# BUT IS NOT IS REFUSED BY NAME, as every annotated spelling is: `var w = mk2(41, 7) + 1;` dropped the `+ 1` on x86_64 /
+# aarch64 (161), added it to a lane on cx (165) and failed to parse on Windows ("expected ';', got '+'"); `var w =
+# s.m2() + 1;` bound one word (11; cx 165, PE 205) — guide § vector returns: there is no vector `+`. The call's vector
+# is the declaration's, so it meets the value-form refusal (`_vrcv_decl_err`: "a value-form vector local is
+# initialised only from .. - got `mk2`"), as `var w: f64v2 = s.m2() + 1;` does. The by-name call is read above (its
+# start infers, as ever); here a method, `callptr(&f, ..)` / `fncallN(&f, ..)` or a wrapped call that starts it
+# (`_vcall_vt` `start` 1, D26's peel). A whole call is `_vrcv_ity`'s (D37 / D28). In a fn, cursor on the `=`; the
+# declaration's `pscale`. CHANGELOG [6.7.16]
+fn _vin_ustart(S, pscale, sty, ann): i64 {
+    if (pscale != 0) { return pscale; }
+    if (sty != 0) { return pscale; }
+    if (ann != 0) { return pscale; }
+    var rs = _vcall_vt(S, GTI(S) + 1, 5, 1);
+    if (rs == 0) { return 0; }
+    if (_vcv_more(S) == 0) { return 0; }   # 6.7.16: no operator after it — a stray token is the parse's
+    if (_vcall_vt(S, GTI(S) + 1, 5, 0) != 0) { return 0; }   # the whole call: `_vrcv_ity`'s
+    return rs;
+}
+# ⛔ 6.7.15 (D26 A / D27 A, the user's decisions, 2026-10-18) — A CALL DECLARED TO RETURN A VECTOR INTO A TOP-LEVEL
+# DECLARATION IS REFUSED, as the annotated vector global and the `*V` argument are there (a vector result needs a fn's
+# frame; a vector global takes no initializer but 0) and as the scalar annotation is in a fn (6.7.10's decision 5: one
+# rule for locals and globals). An untyped `var w = mkv(41, 7);` / `var v = s.mv();` / `(..)` / `callptr(&mkv, ..)`
+# held one word (x86_64 / aarch64 0, cx 154, PE 195 where 161 is right) and `var x: i64 = mkv(41, 7);` the result's
+# word (0; cx / PE 41). Cursor on the `=`: a vector annotation is the vector global's own refusal (`_vecg_init_ok`);
+# else `_vtop_ref`. In the declaration zone the replay asks (`_vin_zone`). CHANGELOG [6.7.15]
+fn _vin_top(S, pscale, ann): i64 {
+    if (pscale <= 0 - 2048) { return 0; }
+    return _vtop_ref(S, GTI(S) + 1, ann);
+}
+# The top-level initialiser at token `st` (`ann` its declaration's annotation, 0 none): a call declared to return a
+# vector that is it or starts it (any spelling, any wrap, `_vcall_vt`) refused — untyped, at the call in the words of a
+# top-level vector call into a `*V` parameter (`_svc_toplevel_err`, naming the fn, the method, `&f`); annotated, at the
+# `=`, "vector return type does not match the declared type". 1 = refused. 6.7.16 (D24 A): untyped, a call that only
+# starts it too — `var w = mkv(41, 7) + 1;` stored the result's word plus 1 (x86_64 / aarch64 1, cx / PE 42). 6.7.17
+# (D95): untyped, a vector value that is no call (`_vtop_vval`).
+fn _vtop_ref(S, st, ann): i64 {
+    var rs = _vcall_vt(S, st, 5, 1);
+    if (rs == 0) {
+        if (ann == 0) { return _vtop_vval(S, st); }   # 6.7.17 (D95): `var X = *GP;`
+        return 0;
+    }
+    if (ann == 0) { return _svc_toplevel_at(S, _vcv_a, _vcv_nt); }
+    if (_vrcv_annbad(S, st - 1) == 1) { return 1; }   # 6.7.16: a refused annotation's one error
+    var sv = GTI(S);
+    STI(S, st - 1);
+    ERR_MSG(S, "vector return type does not match the declared type", 51);
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.17 (D95, the user's decision, 2026-10-22: "at top level refuse it as `var w = mkv(..)` is") — AN UNTYPED
+# TOP-LEVEL DECLARATION FROM A VECTOR VALUE THAT IS NO CALL IS REFUSED, as the vector call is there (`_svc_toplevel_at`:
+# a vector needs storage in a fn's frame; a vector global takes no initializer but 0). `var X = *GP;` — `(*GP)`,
+# `**GPP`, `*(&GW)`, `*gp()` — bound lane 0, silently, on every target (`var X = *GP;` 4 with *GP = (4, 7)). In a fn
+# the same declaration copies (`_uci_ps`; `var v = *p;` is 6.7.14's D36). The whole initialiser at token `st` a vector
+# value that is no call (`_vval_at`): refused at the value, naming it as written, in the call's shape. 1 = refused.
+# CHANGELOG [6.7.17]
+fn _vtop_vval(S, st): i64 {
+    var vt = _vval_at(S, st, _hl_dx_end(S, st, 5));
+    if (vt == 0) { return 0; }
+    if (_vvl_arr == 1) { return _vavv_err(S, vt); }   # 6.7.17 (D108): `var X = GA;`, an array of vectors
+    _vop_done = _vvl_a;   # its one refusal (D100 / D24's readers stand down)
+    if (_panic == 1) { return 1; }
+    if (_derr_seen(_vvl_a, "_vtop_vval", 0, 0) == 1) { return 1; }
+    var sv = GTI(S);
+    STI(S, _vvl_a);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    _vval_pnm(S);
+    PRSTR("' is a vector, and a vector value needs storage in a fn's frame - copy it inside a fn\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.17 (D108, the user's decision, 2026-10-22: "refuse it naming the array of vectors, as D103") — AN UNTYPED
+# DECLARATION FROM AN ARRAY OF VECTORS IS REFUSED. `var wa: f64v2[2]; var x = wa;` bound one word, element 0's lane 0
+# (exit 4 with wa[0] = (4, 7)), in a fn and at top level (`var X = GA;`), on every target, where D103 refuses the same
+# name in every word slot and D95 copies a vector (an array is no vector to copy). In a fn, PARSE_VAR's untyped
+# declaration (cursor on the `=`, `_vin_avv`); at top level, the zone and after the first statement (`_vtop_vval`):
+# the whole initialiser an array of vectors (`_vval_at`, `_vvl_arr`) — "'wa' is an array of vectors - an untyped
+# declaration binds one word, its element 0's lane 0; take its address: `var p: *f64v2 = &wa;`". Once, in sync.
+# CHANGELOG [6.7.17]
+fn _vin_avv(S, pscale, sty, ann): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    if (ann != 0) { return 0; }
+    if (pscale != 0) { return 0; }
+    if (sty != 0) { return 0; }
+    var ti = GTI(S) + 1;
+    var vt = _vval_at(S, ti, _hl_dx_end(S, ti, 5));
+    if (vt == 0) { return 0; }
+    if (_vvl_arr == 0) { return 0; }
+    return _vavv_err(S, vt);
+}
+fn _vavv_err(S, vt): i64 {
+    _vop_done = _vvl_a;   # its one refusal
+    if (_panic == 1) { return 1; }
+    if (_derr_seen(_vvl_a, "_vavv_err", 0, 0) == 1) { return 1; }
+    var sv = GTI(S);
+    STI(S, _vvl_a);
+    _refuse_in_sync(S);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    _vval_pnm(S);
+    PRSTR("' is an array of vectors - an untyped declaration binds one word, its element 0's lane 0; ");
+    PRSTR("take its address: `var p: *");
+    _vty_pr(vt);
+    PRSTR(" = &");
+    _vval_pnm(S);
+    PRSTR(";`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+# The declaration zone's replay, cursor on the initialiser of global `gi` (`noff`): `_vtop_ref`, unless the global is
+# a vector (pass 1 refused its initializer: `_vecg_init_ok`).
+fn _vin_zone(S, gi, noff): i64 {
+    var slot = _gv_ent_slot(S, gi, 0, noff);
+    if (slot >= 0) { if (GVVEC(S, slot) != 0) { return 0; } }
+    var st = GTI(S);
+    var ann = 1;
+    if (_gu_untyped(S, st) == 1) { ann = 0; }
+    if (ann == 1) { if (_vin_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D24): `var X: i64 = *GP;`
+    if (ann == 1) { if (_svin_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D106): `var X: i64 = GQ;`
+    if (ann == 1) { if (_ppd_zval(S, st) == 1) { return 1; } }   # 6.7.17 (D107): `var GU: *Pt = GPP;`
+    return _vtop_ref(S, st, ann);
+}
+# ⛔ 6.7.17 (D106, the user's decision, 2026-10-22) — A DECLARATION ANNOTATED A SCALAR OR A POINTER TO NO STRUCT
+# (`_asa_scalar` / `_asa_ptr`'s classes: `var z: i64 = q;`, `: u8`, `: f64`, `: *i64`, `: **Q`) whose whole
+# initialiser is a struct value that is no call (`_ssv_at`, parse.cyr) is refused as `var z: i64 = mkp();` is
+# (6.7.11's D24, 6.7.13's D14: `_rcv_ann_refuse`), naming the value: "cannot initialise 'z: i64' from 'q', which is
+# the struct 'Q' - declare 'z: Q' or bind a field". A `bool` keeps its own refusal, a struct annotation its copy (or
+# "cannot copy"), a `*S` D17's address (`_spd_decl`). PARSE_VAR in a fn and at top level after the first statement,
+# the cursor on the `=`. 0. CHANGELOG [6.7.17]
+fn _svin_val(S, pscale, ann): i64 {
+    if (ann <= 0) { return 0; }
+    if (pscale < 0) { return 0; }
+    if (TOKTYP(S, ann - 1) != 49) { return 0; }
+    var ti = GTI(S) + 1;
+    return _svin_judge(S, ti, _hl_dx_end(S, ti, 5), ann, TOKVAL(S, ann - 2));
+}
+# ... the value [ti, e) into the declaration of `noff` annotated at `ann`. 1 = refused.
+fn _svin_judge(S, ti, e, ann, noff): i64 {
+    if (e < 0) { return 0; }
+    var sid = _ssv_at(S, ti, e);
+    if (sid <= 0) { return 0; }
+    var ps = 0;
+    if (TOKTYP(S, ann) == 8) {
+        if (_ptr_ann_sid_tp(S, ann) > 0) { return 0; }   # `*S`: D17's (`_spd_decl`)
+        if (_asa_ptr(S, ann, sid) == 0) { return 0; }
+        ps = 1;
+    } elif (_asa_scalar(S, ann) == 0) { return 0; }
+    _rcv_isv = 1;
+    var r = _rcv_ann_refuse(S, _ssv_a, TOKVAL(S, _ssv_a), sid, ps, ann, noff);
+    _rcv_isv = 0;
+    if (r == 1) { if (ps == 1) { _ptr_refd_ti = ann; } }
+    return r;
+}
+# 6.7.17 (D107) — ... the zone replay's twin of `_ppd_val` (parse/types.cyr): `var GU: *Pt = GPP;`. 1 = refused.
+fn _ppd_zval(S, st): i64 {
+    var i = _vrcv_dbeg(S, st);
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    if (TOKTYP(S, i + 3) != 8) { return 0; }
+    return _ppd_val(S, st, _hl_dx_end(S, st, 5), i + 3, TOKVAL(S, i + 1));
+}
+# ... the declaration zone's replay (`_vin_zone`, the initialiser at `st`): `var X: i64 = GQ;`. 1 = refused.
+fn _svin_zval(S, st): i64 {
+    var i = _vrcv_dbeg(S, st);
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    var sv = GTI(S);
+    STI(S, st - 1);   # the `=`: the annotation is printed up to it
+    var r = _svin_judge(S, st, _hl_dx_end(S, st, 5), i + 3, TOKVAL(S, i + 1));
+    STI(S, sv);
+    return r;
+}
+# 6.7.17 (D24) — ... and a vector value that is no call as the whole initialiser of a zone declaration annotated no
+# vector, struct or bool (`_vin_vval`'s rule; the annotation read back from the initialiser at `st`): `var X: i64 =
+# *GP;` stored lane 0. 1 = refused.
+fn _vin_zval(S, st): i64 {
+    if (_vty_any == 0) { return 0; }
+    var i = _vrcv_dbeg(S, st);
+    if (i < 0) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    if (TOKTYP(S, i + 3) == 2) {
+        var c = _tn_resolve_at(S, i + 3);
+        if (_tn_bool(c) == 1) { return 0; }
+        if (_tn_sid(c) != 0) { return 0; }
+        if (_tn_vec(c) != 0) { return 0; }
+    }
+    if (_vval_at(S, st, _hl_dx_end(S, st, 5)) == 0) { return 0; }
+    _vsc_vn = 1;
+    return _vop_tyerr(S, _vvl_a, 0);
+}

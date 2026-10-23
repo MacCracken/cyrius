@@ -2,7 +2,7 @@
 # the Str itself, on every backend.
 #
 # THE DEFECT. A `: Str` field is one 8-byte slot holding the Str's address (FIELDSZ), but the
-# chained-field walk (`_resolve_leaf_field`, parse/decl.cyr) treated it as an inline struct and
+# chained-field walk (`_resolve_leaf_field`, parse/decl/field.cyr) treated it as an inline struct and
 # added `.len`'s offset to the slot's. With `struct Holder { name: Str; n; }`, `h.name.len` read
 # `h.n`, `h.name.data` read the handle, and `h.name.len = 2` overwrote `h.n` — silently, for a
 # local, a global, a parameter and a call result. The walk now loads the slot and applies the

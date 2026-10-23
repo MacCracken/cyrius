@@ -298,7 +298,7 @@ fn _ir_set_node(S, ni, opflags, arg1, arg2): i64 {
 fn IR_NODE_CP(S, ni): i64 { return load32(_ir_cp_base + ni * 4); }
 # v6.5.54 — setter, so the NOP-harvest compactor can repair recorded node positions after it
 # relocates code. Without this the compactor had to be disabled entirely under IR mode
-# (`IR_ENABLED(S) == 0` in parse/fn.cyr): it repairs jump disp32s, fixup CPs and switch-table
+# (`IR_ENABLED(S) == 0` in parse/fn/def.cyr): it repairs jump disp32s, fixup CPs and switch-table
 # entries, but the IR's node->CP table kept PRE-compaction offsets, so the IR fixpoint then
 # read and rewrote code at stale positions. Measured consequence of just lifting that gate
 # without this repair: the IR=3-built cycc dies at startup with `alloc_init: mmap failed`.

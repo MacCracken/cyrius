@@ -4,7 +4,7 @@
 # A CALL'S RESULT IS TYPED BY ITS CALLEE, NEVER BY ITS LAST ARGUMENT. A call's arguments are parsed as
 # expressions inside the call's factor, and the last one leaves its expression type behind; PARSE_FNCALL
 # resets it (v6.4.56 D3) and `_call_ret_marks` types a `: f64` return f64. The METHOD arm of
-# `_field_load_on` (parse/decl.cyr) ran neither half, so `p.m(1.5) * 2` with `m: i64` multiplied bit
+# `_field_load_on` (parse/decl/field.cyr) ran neither half, so `p.m(1.5) * 2` with `m: i64` multiplied bit
 # patterns as doubles (0), `p.m(p) * 10` dispatched the struct's operator fn (undefined `P_mul`, or a
 # silent wrong value when one exists), and `p.area() + 1.0` with `area: f64` added integers — and a free
 # struct-returning call's field (`mkq(1.5).a`, `_struct_call_emit`) skipped the reset too. The method

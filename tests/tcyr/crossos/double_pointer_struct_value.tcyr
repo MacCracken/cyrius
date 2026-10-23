@@ -9,7 +9,7 @@
 # bytes (10 where 11 is right), `**pp = u` stored one word (54 where 56 is right) and `**pp += 10` added to the
 # first field (now refused, as `*p OP= v` through a `*S` is: tests/gates/frontend/struct_copy_type_checked.sh C5).
 # `_hl_psid` now reads `*E` with E a `**S` — a local, a parameter, a closure capture, a global, a `**S` field, a
-# `: **S` call (a generic one too), `pp + n`, `*ppp` of a `***S` — as a `*S` (`_hl_dref_psid`, parse/decl.cyr).
+# `: **S` call (a generic one too), `pp + n`, `*ppp` of a `***S` — as a `*S` (`_hl_dref_psid`, parse/decl/handle.cyr).
 # With it every reader of the typed-pointer reader sees `*pp` as the `*S` D9 (a) made it: `return *pp;` from a
 # `: S` fn returns the struct it points at (6.7.11), `l = *pp + 0` copies it (ops-6).
 # Filed: docs/development/issues/archived/2026-10-16-struct-double-pointer-dereference-is-no-struct-value.md (its three

@@ -4,7 +4,7 @@
 # ⛔ THE DEFECT, through 6.7.15. A parameter declared `y: u8` (i8, u16, i16, u32, i32) was registered untyped (SLTYPE
 # 0), so it held the caller's whole word: `wid(0x1FF)` read 511 in a `u8`, `w32(0x1FFFFFFFF)` 8589934591 in an `i32`,
 # and `y += 1` of an `i16` 32767 was 32768 (an `i16` LOCAL wraps to -32768) — on x86_64, aarch64, cx and PE alike. Now
-# the parameter loop types its slot as a narrow local's (`_pnw_apply`, src/frontend/parse/fn.cyr: SLTYPE the width,
+# the parameter loop types its slot as a narrow local's (`_pnw_apply`, src/frontend/parse/fn/def.cyr: SLTYPE the width,
 # a signed one's negative slice-width mark), so every read takes its width sign- or zero-extended and every store
 # writes it. The ABI is unchanged — the whole register is homed and the callee reads its low bytes — so a fn-pointer
 # call narrows too, as does a stack-passed parameter, an `#inline` replay (the GFIPT pack carries the code) and a

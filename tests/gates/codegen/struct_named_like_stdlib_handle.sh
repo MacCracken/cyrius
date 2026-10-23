@@ -4,7 +4,7 @@
 # A PROGRAM'S OWN `struct Result` / `struct Option` / `struct Tagged` IS A PLAIN STRUCT.
 # (issues/archived/2026-10-15-user-struct-named-result-option-tagged-is-a-handle-by-name.md)
 #
-# The parameter classifier `_classify_param_type` (src/frontend/parse/fn.cyr) answered the stdlib's
+# The parameter classifier `_classify_param_type` (src/frontend/parse/fn/sig.cyr) answered the stdlib's
 # handle classes 3 / 4 / 5 for the NAMES `Result` / `Option` / `Tagged`, whatever the program declared:
 # a 16 B `struct Result { a; b; }` was a one-word value parameter (`_param_wants_struct_ptr` 0), the
 # caller pushed its first field, and the callee read `x.b` through it — x86_64 139, aarch64 139, cx 252,

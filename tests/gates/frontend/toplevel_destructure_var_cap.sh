@@ -1,6 +1,6 @@
 #!/bin/sh
 # 6.6.10: a TOP-LEVEL destructure (`var a, b = f();` after the first top-level
-# statement, the PARSE_PROG arm of parse/decl.cyr) wrote its 2nd/3rd name at
+# statement, the PARSE_PROG arm of parse/decl/var.cyr) wrote its 2nd/3rd name at
 # GVCNT+1 / GVCNT+2 BEFORE SVCNT grew the var family. The GVCNT < _var_cap
 # invariant covers only the first name, so at the cap the others landed past the
 # table: the initial tables are contiguous 8192-slot bands, so varn[8192] aliased

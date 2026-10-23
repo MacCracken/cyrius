@@ -268,7 +268,7 @@ src/
 
   frontend/
     lex/                lex.cyr (the lexer) + pp.cyr (the preprocessor: include-once, #derive, #@incdir, #bounds, #ifdef/#elif/#else/#ifndef/#ifplat) + attr.cyr (the `#` attribute words)
-    parse/              parse.cyr (parser + codegen dispatch) + its split: decl, expr, fn, fn_def, ctrl, cov, types
+    parse/              parse.cyr (parser + codegen dispatch) + its split: decl/ (by seam: arrays, fields, struct and tuple literals, globals, copies, vectors, receives, PARSE_VAR, handles), expr, fn/ (by seam: the definition and the top-level scans, the call path, the return / tail path, traits, generics, the const-fn evaluator, ...), ctrl, cov, types
     ts/                 TypeScript frontend (lex + parse + JS emit; .ts/.tsx → JS via `cycc --emit-js`)
 
   backend/x86/          x86_64 emission (emit/jump/fixup/decode) + float.cyr = SSE/AVX scalar-f64 + ALL SIMD emitters

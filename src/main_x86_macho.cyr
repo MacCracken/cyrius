@@ -198,7 +198,7 @@ if (_mono_env != 0) {
 _TARGET_MACHO = 1;
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn_def.cyr)
+_tl_pass1(S, 0);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn/def.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap is GONE, along with the
 # parse-time body skip it fed (see src/main.cyr for the full note). This driver
@@ -219,7 +219,7 @@ _tl_pass2(S, 0);   # 6.6.17: the ONE pass-2 dispatch, shared by every fork
 EPATCH(S, jmp_patch);
 
 # v6.1.30: x86-macho argv — park the init rsp in r15 (reserved from regalloc, see
-# parse/fn.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The
+# parse/fn/def.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The
 # entry jmp preserves rsp, so here rsp is still the init stack ([rsp]=argc, inline
 # argv/envp) — captured before the gvar-inits / EFNPRO below push anything. r15 is
 # never clobbered, so it survives into argc()/argv()/_read_env. cycc ignores it.
@@ -254,7 +254,7 @@ STI(S, gvar_save_ti);
 
 # 6.6.9: the pre-PARSE_PROG "undefined function" warning every other fork prints — this
 # fork never called it, so an undefined call in code DCE judges unreachable was silent here
-# and loud on x86. See _warn_undefined_prepass (parse/fn.cyr). CHANGELOG [6.6.9]
+# and loud on x86. See _warn_undefined_prepass (parse/fn/def.cyr). CHANGELOG [6.6.9]
 _warn_undefined_prepass(S);
 # Parse main code (top-level statements)
 PARSE_PROG(S);
@@ -296,7 +296,7 @@ FIXUP(S);
 # v6.4.50: soft capacity warnings, shared across all 7 drivers (util.cyr).
 _capacity_warnings(S, 67108864, 1);
 EMITELF(S);
-_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn_def.cyr)
+_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn/def.cyr)
 # v6.6.6 — the loop that used to sit here stopped on the first failing `write` and
 # then exited 0 with a TRUNCATED image. _write_out_all (src/common/util.cyr) is the
 # same loop plus the comparison it was missing, shared by every fork so the check

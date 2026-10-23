@@ -63,7 +63,7 @@
 # `Box<i64> { 7, 5 }` / `Box<Pt> { 1, 2, 5 }`, fn-local, in the leading declaration block and after
 # the first top-level statement. Every head (PARSE_VAR, PARSE_GVAR_REG's lookahead, the
 # EMIT_GVAR_INITS replay) committed only on `Name {`, so each was "undefined variable 'Box'".
-# Mutation: make `_lit_head` (src/frontend/parse/decl.cyr) return 0 on `<` -> this file does not
+# Mutation: make `_lit_head` (src/frontend/parse/decl/gvar.cyr) return 0 on `<` -> this file does not
 # build. The mismatched-annotation refusals are in tests/gates/frontend/struct_literal_type_refused.sh.
 #
 # CF (6.6.12, R3) rows `run_call_fields` / `run_call_fields_pair`: a `.field` on a CALL RESULT,

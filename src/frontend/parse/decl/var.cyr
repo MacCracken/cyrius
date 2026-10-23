@@ -1,0 +1,1004 @@
+# PARSER — decl: PARSE_VAR.
+# ================================================================
+# Split from parse/decl.cyr at 6.7.18, unchanged; parse.cyr includes parse/decl/ in source order. CHANGELOG [6.7.18]
+
+fn PARSE_VAR(S): i64 {
+    STI(S, GTI(S) + 1);  # consume VAR
+    # expect IDENT
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var noff = PEEKV(S);
+    _RSV_INTRINSIC_DECL(S, noff, GTI(S), 0);   # 6.6.20: `var sizeof` / `var mulh64` / `var fncallN`
+    _lc_var_dup(S, noff);                       # 6.7.2: a local const of this name in this scope
+    STI(S, GTI(S) + 1);
+    _dt_ann1(S);   # 6.7.17: `var a: i64, b = f();` refused, its annotation stepped
+    # Multi-var destructure: var x, y[, z] = fn()
+    if (PEEKT(S) == 31) {
+        STI(S, GTI(S) + 1);  # consume ,
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        var noff2 = PEEKV(S);
+        _RSV_INTRINSIC_DECL(S, noff2, GTI(S), 0);
+        STI(S, GTI(S) + 1);
+        _dt_annk(S);
+        # v6.5.21 — optional THIRD target: `var x, y, z = f();`
+        var noff3 = 0;
+        var _dt_n = 2;
+        if (PEEKT(S) == 31) {
+            STI(S, GTI(S) + 1);  # consume ,
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            noff3 = PEEKV(S);
+            _RSV_INTRINSIC_DECL(S, noff3, GTI(S), 0);
+            STI(S, GTI(S) + 1);
+            _dt_annk(S);
+            _dt_n = 3;
+        }
+        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+        STI(S, GTI(S) + 1);  # consume =
+        # v6.5.21 — peek the callee's return annotation BEFORE PCMPE consumes the
+        # call, mirroring `_ti_inferred_sid` on the single-binding path. Without
+        # this both destructured locals were registered SLTYPE 0, so
+        # `var p, s = two(x, y); var d: f64 = p + s;` emitted an INTEGER add over
+        # two IEEE-754 bit patterns and produced garbage — the transport was
+        # always correct, the TYPE was what got dropped.
+        var _dt_ftype = 0;
+        var _dt_t1 = 0;
+        var _dt_t2 = 0;
+        var _dt_t3 = 0;
+        # v6.5.21 — THE DESTRUCTURE CONTRACT. Before this there was none at all:
+        # `var q, r = 42;` compiled, `var q, r = dm(17,5) + (k/9) - 11;` put the
+        # idiv REMAINDER in r, and `var q, r = inner()?;` yielded garbage — every
+        # one silently, because the second target simply read whatever rdx held.
+        # A non-call right-hand side can never produce a second value, so it is
+        # now rejected outright.
+        # 6.6.16: `f(`, `g<..>(` or `x.m(` (`_dt_call_open`). CHANGELOG [6.6.16]
+        # 6.6.17 (a5): factored into `_dt_rhs_check_t`, which the declaration-zone replay shares.
+        # 6.7.14 (D45): inside parentheses that wrap the whole call (`_dt_peel`), closed after it.
+        var _dt_d0 = _dt_dfr_n();   # 6.7.17: a refusal the chain's own error may stand for
+        var _dt_wk = _dt_peel(S, 5);
+        var _dt_fi = _dt_call_fn_d(S);
+        if (_dt_icall_vec(S, 0) == 1) { _dt_fi = 0 - 1; }   # 6.7.16: `callptr(&f, ..)` / `fncallN(&f, ..)` of a vector f
+        _dt_icall_pair(S, _dt_n);   # 6.7.17: `var a, b, c = callptr(&f, 4);` / `fncall1(&f, 4)`, f a pair
+        if (_dt_fi >= 0) {
+            var _dt_rs = GFRS(S, _dt_fi);
+            if (_dt_rs == 0 - 9) { _dt_ftype = F64_TYID; _dt_t1 = F64_TYID; _dt_t2 = F64_TYID; _dt_t3 = F64_TYID; }
+            _dt_arity_check(S, _dt_fi, _dt_n);   # 6.6.17 (a5): the declared AND the one-value arity
+            if (_dt_rs == MULTIRET_SID) {
+                # Declared `: (T1, T2[, T3])` — take the element types from the signature, so
+                # the bindings need no annotation of their own.
+                if (GFRT(S, _dt_fi, 0) == 0 - 9) { _dt_t1 = F64_TYID; }
+                if (GFRT(S, _dt_fi, 1) == 0 - 9) { _dt_t2 = F64_TYID; }
+                if (GFRT(S, _dt_fi, 2) == 0 - 9) { _dt_t3 = F64_TYID; }
+            }
+        }
+        PCMPE(S);
+        _dt_dfr_say(S, _dt_d0);
+        _pw_close(S, _dt_wk);
+        # rax = first value, rdx = second value (from ret2/return (a,b))
+        if (GINFN(S) == 1) {
+            # Register first local
+            var li1 = GFLC(S);
+            var li2 = li1 + 1;
+            var li3 = li1 + 2;
+            # First value: already in rax from the call.
+            S64(S + 0x5D9D000 + li1 * 8, noff);
+            SLDEP(S, li1, GSDEP(S));
+            SLTYPE(S, li1, _dt_t1);
+            EFLSTORE(S, li1);
+            # v6.5.21: drain the THIRD slot BEFORE rdx. EMOVRA_R3 and EMOVRA_RDX
+            # both land in rax, so reading rdx first would be overwritten by the
+            # ret3 read. EFLSTORE only touches rax, so ret3 is still live here.
+            if (_dt_n == 3) {
+                EMOVRA_R3(S);
+                S64(S + 0x5D9D000 + li3 * 8, noff3);
+                SLDEP(S, li3, GSDEP(S));
+                SLTYPE(S, li3, _dt_t3);
+                EFLSTORE(S, li3);
+            }
+            # mov rax, rdx (get second return value)
+            EMOVRA_RDX(S);
+            S64(S + 0x5D9D000 + li2 * 8, noff2);
+            SLDEP(S, li2, GSDEP(S));
+            SLTYPE(S, li2, _dt_t2);
+            EFLSTORE(S, li2);
+            if (_dt_n == 3) { SFLC(S, li1 + 3); } else { SFLC(S, li1 + 2); }
+        } else {
+            # v6.6.0 — TOP-LEVEL destructure. This used to be refused outright, and the refusal
+            # became load-bearing the moment `Result` went to the value form: binding BOTH halves
+            # is the only correct way to receive a pair, so a top-level `var t, v = f();` had no
+            # legal spelling at all and the stdlib flip could not land while it errored.
+            # The global path mirrors the local one exactly, INCLUDING THE DRAIN ORDER — EMOVRA_R3
+            # and EMOVRA_RDX both land in rax, so the third slot must be read BEFORE rdx
+            # overwrites it. Indices are allocated in declaration order and the STORES are what
+            # get reordered; doing it the other way round would number the names by emit order.
+            # CHANGELOG [6.6.0].
+            var gi1 = GVCNT(S);
+            var gi2 = gi1 + 1;
+            var gi3 = gi1 + 2;
+            # Grow the var family BEFORE the name stores: the GVCNT < _var_cap invariant covers
+            # only gi1, so gi2/gi3 written first landed past the cap — aliasing var_sizes[0] /
+            # var_types[0] at 8190, or the next alloc'd table at 16382 (a silent miscompile).
+            # SVCNT may reallocate, so _varn_base/_vars_base are read after it. CHANGELOG [6.6.10]
+            if (_dt_n == 3) { SVCNT(S, gi1 + 3); } else { SVCNT(S, gi1 + 2); }
+            S64(_varn_base + gi1 * 8, noff);
+            S64(_vars_base + gi1 * 8, 8);
+            if (_dt_t1 != 0) { SVTYPE(S, gi1, _dt_t1); }
+            S64(_varn_base + gi2 * 8, noff2);
+            S64(_vars_base + gi2 * 8, 8);
+            if (_dt_t2 != 0) { SVTYPE(S, gi2, _dt_t2); }
+            if (_dt_n == 3) {
+                S64(_varn_base + gi3 * 8, noff3);
+                S64(_vars_base + gi3 * 8, 8);
+                if (_dt_t3 != 0) { SVTYPE(S, gi3, _dt_t3); }
+            }
+            # First value: already in rax from the call.
+            EVSTORE(S, gi1);
+            if (_dt_n == 3) { EMOVRA_R3(S); EVSTORE(S, gi3); }
+            EMOVRA_RDX(S);
+            EVSTORE(S, gi2);
+            SLVAR(S, gi2);
+            _GVAR_VIS(S, gi1, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
+            _GVAR_VIS(S, gi2, GTI(S));
+            if (_dt_n == 3) { _GVAR_VIS(S, gi3, GTI(S)); }
+        }
+        _expect_step(S, 5);
+        return 0;
+    }
+    # Optional type annotation: var x: type = ... or var x: *type = ...
+    var pscale = 0;
+    var scalar_type = 0;
+    var scalar_signed = 0;   # v6.3.35: 1 for a SIGNED sub-i64 (iN) local, 0 for uN/other
+    var lfloat = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for local `var x: f64`/`f32`
+    var lbool = 0;    # 6.7.3 (B2): `var b: bool` — its initializer and every write are checked
+    var slice_elt_w = 0;  # v5.8.14 §6: element width for slice<T>/[T] (0 = not a slice)
+    var ann_ti = 0;       # 6.6.13 (M2): the annotation's type token (an array's element size)
+    if (PEEKT(S) == 49) {
+        STI(S, GTI(S) + 1);  # consume :
+        ann_ti = GTI(S);
+        if (PEEKT(S) == 8) {
+            # Pointer type `*T`: T resolved by its WHOLE name, an unknown T refused; the scale is
+            # sizeof(T) (6.6.17) — a local keeps an 8-byte slot (_sl_ptr_type).
+            pscale = _ptr_annot(S, noff, 0);
+        } elif (PEEKT(S) == 28) {
+            # v5.8.9 §1: `[T]` slice type sugar — `var x: [u8] = ...`.
+            # v5.8.10 §2: 16-byte {ptr, len} slot (u128 path).
+            # v5.8.14 §6: capture element width for §7 sized indexing.
+            STI(S, GTI(S) + 1);  # consume [
+            if (PEEKT(S) == 8) {
+                # Pointer element: [*T] — width = 8 (pointer size); T must name a type (6.6.16)
+                STI(S, GTI(S) + 1);  # consume *
+                slice_elt_w = 8;
+                _tn_slice_ptr_el(S, noff);   # consume T (6.7.8: `*[U]` refused by name)
+            } elif (_tn_slice_head(S) == 1) {   # 6.7.7: + a tuple's `(`, refused by _tn_slice_w
+                # Element [u8], [i32], [Foo], [u128]: sizeof(T) by the WHOLE name (a bound type
+                # parameter by its argument); an unknown name is refused — it was 8. CHANGELOG [6.6.16]
+                slice_elt_w = _tn_slice_w(S, GTI(S), noff);
+                STI(S, GTI(S) + 1);
+            }
+            if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+            STI(S, GTI(S) + 1);  # consume ]
+            SKIP_GENERICS(S);
+            scalar_type = 16;
+        } elif (PEEKT(S) == 105) {
+            # u128 type
+            scalar_type = 16;
+            STI(S, GTI(S) + 1);
+        } elif (_sl_word_builtin(S) == 1) {   # 6.7.11: a program's own `struct slice` wins (see there)
+            # v5.8.10 §2: `slice<T>` ident form — 16-byte {ptr,len} slot.
+            # v5.8.14 §6: extract element width from <T> for §7 indexing.
+            # Bytes for "slice\0" = 0x006563696C73 (little-endian load64
+            # lower 6 bytes; 's'=0x73 'l'=0x6C 'i'=0x69 'c'=0x63 'e'=0x65, NUL).
+            # 6.6.16: the WHOLE word (the NUL is in the mask): `slices` / `slicer` were a slice.
+            # Manual <T> parsing replaces SKIP_GENERICS so we can capture T.
+            scalar_type = 16;
+            STI(S, GTI(S) + 1);  # consume "slice"
+            if (PEEKT(S) == 19) {  # `<`
+                STI(S, GTI(S) + 1);  # consume <
+                if (PEEKT(S) == 8) {
+                    STI(S, GTI(S) + 1);  # consume *
+                    slice_elt_w = 8;
+                    _tn_slice_ptr_el(S, noff);
+                } elif (_tn_slice_head(S) == 1) {   # 6.7.7: + a tuple's `(`
+                    slice_elt_w = _tn_slice_w(S, GTI(S), noff);   # 6.6.16 (C8): as `[T]` above
+                    STI(S, GTI(S) + 1);
+                }
+                if (PEEKT(S) == 20) { STI(S, GTI(S) + 1); }  # consume >
+            }
+        } else {
+            var _gs_sid = 0;   # v6.3.10: base sid if `: StructName` resolved (for generic-struct instantiation below)
+            if (_tn_head_var(S, noff) == 1) {   # 6.7.7 (B4): or a tuple type's `(`; 6.7.14: else refused by name
+                # ⛔ 6.6.16 (C8): the one type-name resolver (parse/types.cyr _tn_var_ann).
+                # This ladder matched PREFIXES (`i8x` an i8, `f64zz` an f64, the struct
+                # `u8pair` a u8 scalar before the struct lookup) and read an unknown name as a
+                # silent i64; a bound type parameter took its argument's raw code as a WIDTH
+                # (T = f64 a 9-byte word, T = i8 never sign-extended). Now: iN/uN set the width
+                # (and the sign of i8/i16/i32), f64/f32 the float tag, a vector its descriptor
+                # sentinel, a struct `0 - sid` — for a bound T exactly as for its argument
+                # spelled out; bool, cstring, Vec, an enum, Result/Option/Tagged or an unbound
+                # type parameter stay a plain i64; any other name is refused by name.
+                # CHANGELOG [6.6.16]
+                var _lc = _tn_var_ann(S, GTI(S), noff);
+                scalar_type = _tn_iw(_lc);
+                scalar_signed = _tn_sgn(_lc);
+                lfloat = _tn_flt(_lc);
+                lbool = _tn_bool(_lc);
+                _gs_sid = _tn_sid(_lc);
+                pscale = _tn_vec(_lc) - _gs_sid;
+            }
+            STI(S, GTI(S) + 1);
+            # v6.3.10 (generic structs): `var x: Box<conc>` retargets the local to the instance
+            # sid; see _gen_ann_sid (6.6.11: shared with the declaration-zone global path).
+            var _gi = _gen_ann_sid(S, _gs_sid);
+            if (_gi != _gs_sid) { pscale = 0 - _gi; }
+        }
+    }
+    # v6.5.61 — INFER THE VECTOR TYPE FROM THE CALLEE'S RETURN TYPE WHEN THE VAR HAS NONE.
+    #
+    # The 128-bit and 256-bit receive paths below are gated entirely on `pscale`, and `pscale`
+    # came ONLY from the var's own type annotation. So `var r: f64v2 = f64v2_add(a, b);` stored
+    # both halves, while `var r = f64v2_add(a, b);` — the spelling a user reaches for first —
+    # fell through to the SCALAR init and read back as zero. Silent: exit 0, no diagnostic,
+    # wrong numbers. Every width was affected (f32v4 → 4, f64v2 → 0, f64v4 → 0) and every
+    # vector-returning fn, stdlib or user-defined, not just `lib/simd.cyr`.
+    #
+    # ⚠ The corpus could not see this because every existing call site spells the annotation:
+    # `var sum: f64v2 = f64v2_add(&x, &y);`. An API's most natural spelling being the one no
+    # test uses is exactly the blind spot the v6.5.55 payload-enum sweep found from the other
+    # side — write the test for the shape a consumer writes, not the shape the stdlib writes.
+    #
+    # The callee's return sid is already recorded, so the annotation is redundant information.
+    # Take it from GFRS when the var declares none; a var that DOES declare one keeps it (a
+    # mismatch is diagnosed at the receive paths below rather than silently truncated).
+    # v6.5.67 — a `: stack` enum call bound to ONE variable keeps the tag and silently drops the
+    # payload. Refuse it. The two-variable destructure is handled earlier in this fn, so reaching
+    # here with a pair-returning callee means the payload is about to be lost. 6.7.6: at top level
+    # too (a global after the first statement; the declaration zone's replay is `_gvi_expr`).
+    # 6.7.7 (B4): `_tup_var` runs it — first taking a tuple literal initializer, which declares the
+    # whole tuple here (1: done).
+    if (_tup_var(S, noff, pscale, ann_ti) == 1) { return 0; }
+    pscale = _vin_decl(S, pscale, scalar_type, ann_ti);   # 6.7.15: out of PARSE_VAR (cybs), + the top-level arm
+
+    # v5.5.36 Phase 2: `var p: StructName;` — stack-local struct
+    # with no initializer. `pscale < 0` means the type annotation
+    # resolved to a struct id (FINDSTRUCT returned sid, `pscale`
+    # was set to 0 - sid above). If the next token is `;`, we've
+    # hit the uninitialized-struct case: allocate stack space and
+    # register a struct-typed local.
+    #
+    # Same anonymous+named-slot trick as `stack var`: reserve
+    # ceil(STRUCTSZ/8) fn-local slots, sentinel-name all but the
+    # last, give the last slot `ltype = -sid` so PARSE_FIELD_LOAD /
+    # PARSE_FIELD_STORE's existing local-struct branch resolves
+    # field offsets correctly. FINDLOCAL skips sentinel slots via
+    # the `sn >= 0` gate, and the named slot lives at the deepest
+    # frame offset — so `&p` points at the BOTTOM of the struct,
+    # which is where field 0 lives.
+    if (pscale < 0 && PEEKT(S) == 5) {
+        if (GINFN(S) != 1) { return _usl_top(S, noff); }   # 6.7.16: refused in sync, `noff` entered as reported
+        var sv_sid = 0 - pscale;
+        var sv_sz = 0;
+        # SIMD band (sentinel <= -2048, below the struct-sid range): size via
+        # the structured descriptor. f64v2 (-2093) -> 2 slots / 16 bytes,
+        # f64v4 (-2125) -> 4 slots / 32 bytes, f32v4 (-2121) -> 2 slots.
+        # v6.4.14 folded the old flat f64v2/f64v4 -20/-21 cases into this
+        # band (they collided with struct-ids 20/21); _vec_desc handles all.
+        if (pscale <= 0 - 2048) { _vec_desc(S, pscale); sv_sz = GVEC_NSLOTS(S) * 8; }
+        else { sv_sz = STRUCTSZ(S, sv_sid - 1); }
+        if (sv_sz < 8) { sv_sz = 8; }
+        var sv_aligned = (sv_sz + 7) & (0 - 8);
+        var sv_nslots = sv_aligned / 8;
+        # Duplicate-name check
+        var sv_existing = FINDLOCAL(S, noff);
+        if (sv_existing >= 0) {
+            if (GLDEP(S, sv_existing) == GSDEP(S)) { ERRDUPVAR(S); }
+        }
+        # Anonymous filler slots
+        var sv_j = 0;
+        while (sv_j < sv_nslots - 1) {
+            var sv_li = GFLC(S);
+            S64(S + 0x5D9D000 + sv_li * 8, 0 - 1);
+            SLDEP(S, sv_li, GSDEP(S));
+            SLTYPE(S, sv_li, 0);
+            SFLC(S, sv_li + 1);
+            sv_j = sv_j + 1;
+        }
+        # Named slot with struct-type marker (ltype = -sid)
+        var sv_named = GFLC(S);
+        S64(S + 0x5D9D000 + sv_named * 8, noff);
+        SLDEP(S, sv_named, GSDEP(S));
+        SLAGG(S, sv_named, sv_nslots);   # 6.6.5: `var p: T;` is inline, at EVERY width and on every target
+        SLTYPE(S, sv_named, 0 - sv_sid);
+        SFLC(S, sv_named + 1);
+        STI(S, GTI(S) + 1);   # consume ';'
+        return 0;
+    }
+    # v6.3.36 (issue [6]) — `var b: P = a;` struct-to-struct copy-init from a
+    # local struct variable (as opposed to a fn call, handled by the asv paths).
+    if (ann_ti == 0) { if (pscale == 0) { pscale = _uci_ps(S); } }   # 6.7.12 (D29): untyped `var q = p;`
+    if (_try_struct_copy_init(S, noff, pscale) == 1) { return 0; }
+    # v5.5.36 Phase 2b — struct-valued assignment from a fn call:
+    #   `var got: Point = make(args);`
+    # Allocates `got` as a stack-local struct (same slot-trick as the
+    # no-init case above), then calls `make` with &got prepended as
+    # the hidden first arg. The callee's `return p;` copies bytes
+    # straight into &got, so `got` is populated when we fall through.
+    # No post-call rax-to-local store is needed; rax = &got (return
+    # convention) is discarded.
+    # Scope the branch strictly: (a) inside a fn, (b) struct type
+    # annotation present, (c) next-token `=`, (d) RHS is IDENT `(`,
+    # (e) that IDENT resolves to a fn with a declared struct return.
+    # This way the existing module-scope pattern
+    # `var a: Num = 20;` (where Num is a wrapper struct and the
+    # init expression is a plain scalar) falls through to PCMPE-
+    # as-usual instead of being rejected here.
+    # v5.10.28 — `var x: f64v2 = f();` caller-side path.
+    # f64v2 returns split rax+rdx (pair-register on SysV/aarch64/cx).
+    # Caller must:
+    #  (a) allocate 2-slot stack-local (16 bytes) for x
+    #  (b) compile RHS (the fn call) — result lands in rax (lo) + rdx (hi)
+    #  (c) store rax → x's named slot (lo, &x+0)
+    #      store rdx → x's filler slot (hi, &x+8)
+    # Detected via pscale == -20 (f64v2 sentinel from the type
+    # annotation parser) AND RHS is `IDENT(...)` whose target fn
+    # was annotated `: f64v2` (GFRS == -20).
+    #
+    # v5.10.31 — Win64 PE branch: ≤16B composite returns use
+    # retptr-style. Caller allocates the 16B local up front,
+    # pushes &local as hidden first arg (RCX on Win64), the
+    # callee writes through the retptr. No post-call store needed
+    # (the local is already populated). Mirror of the existing
+    # big-struct asv path at line ~1063.
+    if (_vrcv_decl(S, noff, pscale, ann_ti) == 1) { return 0; }   # 6.7.11: wrapped, or through fncallN / callptr (6.7.13: a method; untyped)
+    if ((_is_simd128(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {  # any 16B/1-XMM vector receive
+        var _f2c_look_ti = GTI(S) + 1;
+        if (TOKTYP(S, _f2c_look_ti) == 2) {
+            if (_vrcv_wcall(S, _f2c_look_ti) == 1) {   # 6.7.16 (D24): the whole initialiser
+                var _f2c_look_noff = TOKVAL(S, _f2c_look_ti);
+                var _f2c_look_fi = FINDFN(S, _f2c_look_noff);
+                if (_f2c_look_fi >= 0) {
+                    if (GFRS(S, _f2c_look_fi) == pscale) {  # callee's ret sid matches the var's f64v2/f32v4 tag
+                        # Allocate 2-slot stack-local (filler + named, like
+                        # the v5.5.36 Phase 2 struct-local pattern).
+                        var _f2c_existing = FINDLOCAL(S, noff);
+                        if (_f2c_existing >= 0) {
+                            if (GLDEP(S, _f2c_existing) == GSDEP(S)) { ERRDUPVAR(S); }
+                        }
+                        # Filler slot (hi half = &x+8)
+                        var _f2c_fill = GFLC(S);
+                        S64(S + 0x5D9D000 + _f2c_fill * 8, 0 - 1);
+                        SLDEP(S, _f2c_fill, GSDEP(S));
+                        SLTYPE(S, _f2c_fill, 0);
+                        SFLC(S, _f2c_fill + 1);
+                        # Named slot (lo half = &x+0)
+                        var _f2c_named = GFLC(S);
+                        S64(S + 0x5D9D000 + _f2c_named * 8, noff);
+                        SLDEP(S, _f2c_named, GSDEP(S));
+                        SLAGG(S, _f2c_named, 2);   # 6.6.5: inline 2-slot vector receive
+                        SLTYPE(S, _f2c_named, pscale);  # tag the received local f64v2(-20) or f32v4(-2121)
+                        SFLC(S, _f2c_named + 1);
+                        STI(S, GTI(S) + 1);  # consume '='
+                        if (_TARGET_PE == 1) {
+                            # Win64 retptr-style call. Mirror of asv
+                            # path at line ~1063: push &named first,
+                            # then user args, ECALLPOPS pops into RCX
+                            # (retptr) + RDX/R8/R9 (user args).
+                            _f2c_look_fi = _pe_venter(S, _f2c_look_fi);   # v6.6.4: own-call path (6.7.14: routed)
+                            EFLADDR(S, _f2c_named);
+                            EPUSHR(S);
+                            # The user args (retptr is int arg 0): a value-form vector arg is
+                            # address-passed on Win64 (struct_mask), so `_owncall_args`' int arm
+                            # covers it. 6.6.6: it also runs the arity check this loop never had
+                            # (`var v: f64v2 = f(1)` on a 2-param `f` built clean). CHANGELOG [6.6.6]
+                            var _f2w_argc = _owncall_args(S, _f2c_look_fi, _f2c_look_noff, 1);
+                            var _f2w_target = L64(_fnt_offsets + _f2c_look_fi * 8);
+                            if (_f2w_target >= 0) { ECALLTO(S, _f2w_target); }
+                            else { ECALLFIX(S, _f2c_look_fi); }
+                            ECALLCLEAN(S, _f2w_argc);
+                            # No post-call store — callee wrote
+                            # directly to &named via retptr.
+                        } else {
+                            # SysV/aarch64/cx pair-register path.
+                            PCMPE(S);
+                            EFLSTORE_F64V2_PAIR(S, _f2c_named);
+                        }
+                        _expect_step(S, 5);   # consume ';'
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
+    # v5.10.37 — `var x: f64v4 = f();` caller-side path.
+    # Same shape as v5.10.28's f64v2 caller path above, but
+    # 4-slot stack-local (32 bytes) and the post-call store is
+    # an EFLSTORE_F64V4_PAIR (two MOVUPDs on x86 / two STR Q on
+    # aarch64). On Win64 PE, retptr-style with size 32.
+    # v6.4.8 (SIMD Phase 4) — generalized from exact -21 (f64v4) to _is_simd256 so
+    # f32v8 (-2153) shares the 32-byte / EFLSTORE_F64V4_PAIR receive. GFRS==pscale
+    # keeps it type-exact (var type == callee return); byte-identical for f64v4.
+    if ((_is_simd256(S, pscale) == 1) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
+        var _f4c_look_ti = GTI(S) + 1;
+        if (TOKTYP(S, _f4c_look_ti) == 2) {
+            if (_vrcv_wcall(S, _f4c_look_ti) == 1) {   # 6.7.16 (D24): the whole initialiser
+                var _f4c_look_noff = TOKVAL(S, _f4c_look_ti);
+                var _f4c_look_fi = FINDFN(S, _f4c_look_noff);
+                if (_f4c_look_fi >= 0) {
+                    if (GFRS(S, _f4c_look_fi) == pscale) {
+                        # Allocate 4-slot stack-local (3 filler + 1 named).
+                        var _f4c_existing = FINDLOCAL(S, noff);
+                        if (_f4c_existing >= 0) {
+                            if (GLDEP(S, _f4c_existing) == GSDEP(S)) { ERRDUPVAR(S); }
+                        }
+                        # 3 filler slots (top of struct, &x+8..31)
+                        var _f4c_fj = 0;
+                        while (_f4c_fj < 3) {
+                            var _f4c_fi = GFLC(S);
+                            S64(S + 0x5D9D000 + _f4c_fi * 8, 0 - 1);
+                            SLDEP(S, _f4c_fi, GSDEP(S));
+                            SLTYPE(S, _f4c_fi, 0);
+                            SFLC(S, _f4c_fi + 1);
+                            _f4c_fj = _f4c_fj + 1;
+                        }
+                        # Named slot (lo = &x+0, deepest disp)
+                        var _f4c_named = GFLC(S);
+                        S64(S + 0x5D9D000 + _f4c_named * 8, noff);
+                        SLDEP(S, _f4c_named, GSDEP(S));
+                        SLAGG(S, _f4c_named, 4);   # 6.6.5: inline 4-slot vector receive
+                        SLTYPE(S, _f4c_named, pscale);   # -21 f64v4 / -2153 f32v8
+                        SFLC(S, _f4c_named + 1);
+                        STI(S, GTI(S) + 1);  # consume '='
+                        if (_TARGET_PE == 1) {
+                            # Win64 retptr-style call (mirror f64v2 Win64 branch).
+                            _f4c_look_fi = _pe_venter(S, _f4c_look_fi);   # v6.6.4: own-call path (6.7.14: routed)
+                            EFLADDR(S, _f4c_named);
+                            EPUSHR(S);
+                            # 6.6.6: `_owncall_args`, as in the f64v2 branch above. CHANGELOG [6.6.6]
+                            var _f4w_argc = _owncall_args(S, _f4c_look_fi, _f4c_look_noff, 1);
+                            var _f4w_target = L64(_fnt_offsets + _f4c_look_fi * 8);
+                            if (_f4w_target >= 0) { ECALLTO(S, _f4w_target); }
+                            else { ECALLFIX(S, _f4c_look_fi); }
+                            ECALLCLEAN(S, _f4w_argc);
+                            # No post-call store — callee wrote via retptr.
+                        } else {
+                            # SysV/aarch64/cx pair-register path.
+                            PCMPE(S);
+                            EFLSTORE_F64V4_PAIR(S, _f4c_named);
+                        }
+                        _expect_step(S, 5);   # consume ';'
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
+    var asv_try = 0;
+    var asv_pair = 0;
+    var _rcv_fi = 0 - 1;   # 6.6.10: the fn the receive's call actually reaches (_gen_resolve_call)
+    _rcv_ptr_ann(S, pscale, ann_ti, noff);   # 6.7.13 (D14): `var x: *P2 = mkp();` refused by name
+    if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
+        var _look_pk = _rcv_peel(S, GTI(S) + 1, pscale);   # 6.7.11: `var x = (mk());`
+        var _look_ti = GTI(S) + 1 + _look_pk;
+        if (TOKTYP(S, _look_ti) == 2) {
+            # v6.3.37 (B1 half-B / B2): recognize a struct-returning call in BOTH the
+            # plain `IDENT (` and the monomorph generic `IDENT < ... > (` shapes. The
+            # RHS-consume path (parse/expr.cyr:375) already handles the generic call;
+            # only this LHS receive-type inference needed the `<`-token widening.
+            # 6.6.12: `_var_rhs_call` — and not a call followed by `.field` (`mkp(3).y`).
+            # 6.7.6: the WHOLE initialiser (6.7.11: or the whole inside of its wrap).
+            var _look_iscall = _rcv_iscall(S, _look_ti, _look_pk);
+            if (_look_iscall == 1) {
+                # ⛔ 6.6.10: the callee the call REACHES — a generic's instance for explicit
+                # type args or an inferred struct argument — not the base FINDFN names. The
+                # receive below sized itself from the base's return (`v: T` an 8-byte i64, so
+                # `var r: Box<Pt> = mk<Pt>(p); r.v.x` failed to parse) and then CALLED the base,
+                # T = i64. CHANGELOG [6.6.10]
+                var _look_fi = _gen_resolve_call(S, _look_ti);
+                _rcv_fi = _look_fi;
+                if (_look_fi >= 0) {
+                    var _look_sid = GFRS(S, _look_fi);
+                    # 6.7.11: an annotation naming no struct is refused; the variable keeps it (no receive).
+                    if (_rcv_scalar_ann(S, _look_ti, _look_sid, pscale, ann_ti, noff) == 1) { lbool = 0; _look_sid = 0; }
+                    # v6.3.39 (B-explicit): an EXPLICIT specialized-instance receiver of a
+                    # generic call — `var m: M<i32> = mk<i32>(...)` — annotated pscale as the
+                    # packed instance sid (M$i32), but the generic callee returns the BASE
+                    # layout (proven: the inferred `var x = mk<i32>(...)` path re-derives from
+                    # the base at line ~1670 and reads the right values). The instance-sized
+                    # receive then mis-routed the ABI (base 16B → asv_pair) AND hard-errored at
+                    # the base≠instance sid check (:1760/:1860). Reset pscale to 0 so the
+                    # inferred logic below re-derives the receive from the callee's BASE return,
+                    # unifying explicit with the (correct) inferred path. Gated on a GENERIC
+                    # callee (GFTP!=0) so non-generic struct-returning fns are untouched; the
+                    # i64 case re-derives to the same base sid (no behavior change). Default
+                    # (flag-off) byte-identical.
+                    if (_MONOMORPH_OK == 1) { if (pscale < 0) {
+                            if (_gen_decl_reset(S, pscale, _look_fi) == 1) { pscale = 0; }   # a struct returned by value only (6.7.15's D13)
+                        } }
+                    # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
+                    # from a struct-returning callee. Infer the local's struct type so
+                    # the asv_try (>16B retptr) / asv_pair (9-16B rax:rdx) allocation
+                    # below runs — the same aggregate-slot + &p-retptr codegen as the
+                    # explicit `var p: T = mk();` path. Only infer for the sizes that take
+                    # those paths; Str / <=8B returns keep the existing scalar/pointer-mode
+                    # inferred behavior (byte-identical). Without this the inferred local
+                    # got a scalar slot and the callee wrote its aggregate to a garbage
+                    # retptr → SIGSEGV.
+                    # Closes issues/archived/2026-06-28-inferred-struct-local-from-call-segfaults.md.
+                    if ((pscale + lbool == 0) && (_look_sid > 0)) {   # 6.7.3: never for a bool
+                        var _inf_sz = STRUCTSZ(S, _look_sid - 1);
+                        if (_inf_sz > 16) { pscale = 0 - _look_sid; }
+                        elif ((_inf_sz > 8) && (_look_sid != _STR_SID(S))) { pscale = 0 - _look_sid; }
+                    }
+                    # v5.10.2 paired with parse/fn.cyr's
+                    # rough-scan: ≤16-byte struct returns (Str,
+                    # any small struct) flow through scalar
+                    # rax/rdx — NOT retptr. asv path uses
+                    # retptr/multi-slot machinery; gate it on
+                    # STRUCTSZ > 16 so Str-returning fns fall
+                    # through to the v5.8.17 §9 pointer-mode
+                    # local path (single slot HOLDS the Str ptr
+                    # returned via rax).
+                    #
+                    # v5.10.45 Phase 1 — split the ≤16B handling:
+                    # 9-16B non-Str value-type structs (e.g.
+                    # `struct Point {x: i64; y: i64;}`) take the
+                    # NEW asv_pair path (multi-slot alloc on the
+                    # caller + EFLSTORE_STRUCT_INT_PAIR after call;
+                    # rax = lo, rdx = hi per x86 SysV int-class
+                    # composite return ABI). Str (its own 16B
+                    # struct, special-cased by sid) stays on the
+                    # scalar-rax single-slot pointer-mode path.
+                    # 6.7.3: a bool never receives a struct; 6.7.11: a wrapped call is `_scv_peel`'s.
+                    if (_look_sid > 0 && lbool == 0 && _look_pk == 0) {
+                        var _look_sz = STRUCTSZ(S, _look_sid - 1);
+                        if (_look_sz > 16) {
+                            asv_try = 1;
+                        } else {
+                            if (_look_sz > 8) {
+                                if (_look_sid != _STR_SID(S)) {
+                                    asv_pair = 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (GINFN(S) == 0) { if (pscale < 0) { if (PEEKT(S) == 4) { _refuse_toplevel_pair_init(S, pscale, GTI(S) + 1); } } }   # 6.6.6
+    if (asv_try == 1) {
+        var asv_sid = 0 - pscale;
+        var asv_sz = STRUCTSZ(S, asv_sid - 1);
+        if (asv_sz < 8) { asv_sz = 8; }
+        var asv_aligned = (asv_sz + 7) & (0 - 8);
+        var asv_nslots = asv_aligned / 8;
+        # Duplicate-name check
+        var asv_existing = FINDLOCAL(S, noff);
+        if (asv_existing >= 0) {
+            if (GLDEP(S, asv_existing) == GSDEP(S)) { ERRDUPVAR(S); }
+        }
+        # Reserve ceil(sz/8) fn-local slots; name the last (see Phase 2a for
+        # the anonymous-filler + named-last trick).
+        var asv_j = 0;
+        while (asv_j < asv_nslots - 1) {
+            var asv_li = GFLC(S);
+            S64(S + 0x5D9D000 + asv_li * 8, 0 - 1);
+            SLDEP(S, asv_li, GSDEP(S));
+            SLTYPE(S, asv_li, 0);
+            SFLC(S, asv_li + 1);
+            asv_j = asv_j + 1;
+        }
+        var asv_named = GFLC(S);
+        S64(S + 0x5D9D000 + asv_named * 8, noff);
+        SLDEP(S, asv_named, GSDEP(S));
+        SLAGG(S, asv_named, asv_nslots);   # 6.6.5: the retptr callee writes THROUGH these slots
+        SLTYPE(S, asv_named, 0 - asv_sid);
+        SFLC(S, asv_named + 1);
+        # Now `got` is allocated. Parse `= IDENT(args);`.
+        STI(S, GTI(S) + 1);                         # consume '='
+        if (PEEKT(S) != 2) {
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
+        }
+        var asv_fnoff = PEEKV(S);
+        STI(S, GTI(S) + 1);                         # consume fn-name IDENT
+        # v6.3.37 (B1 half-B): skip a monomorph `<typeargs>` list between the fn-name
+        # and `(` so `var p: Pair<i64> = mk<i64>(...)` reaches the retptr-receive path.
+        if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
+                STI(S, GTI(S) + 1);   # consume `<`
+                _ta_pending_gt = 0;
+                _parse_one_type_arg(S);
+                _ta_rest_n(S, asv_fnoff);   # 6.7.16 (D5)
+                _consume_gt(S);
+            } }
+        if (PEEKT(S) != 10) {
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
+        }
+        var asv_fi = FINDFN(S, asv_fnoff);
+        if (_rcv_fi >= 0) { asv_fi = _rcv_fi; }   # 6.6.10: the instance the lookahead resolved
+        if (asv_fi < 0) { asv_fi = REGFN(S, asv_fnoff); }
+        _gen_own_call_check(S, asv_fi, asv_fnoff);
+        _callee_site_checks_here(S, asv_fi, asv_fnoff, 0);   # v6.6.4: retptr struct receive emits its own call
+        var asv_callee_sid = GFRS(S, asv_fi);
+        if (asv_callee_sid == 0) {
+            ERR_MSG(S, "fn does not declare a struct return type", 40);
+        }
+        if (asv_callee_sid != asv_sid) {
+            ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
+        }
+        STI(S, GTI(S) + 1);                         # consume '('
+        # The hidden retptr is int arg 0 on x86/cx (SysV RDI, Win64 RCX — pushed before the user
+        # args so ECALLPOPS reverse-pops it into the first arg register) and X8 on aarch64 (the
+        # AAPCS64 indirect-result register, loaded after the user args are popped into X0..).
+        # 6.6.6: the whole call is `_struct_call_emit`, shared with every other call site that
+        # needs a destination for a struct result (PARSE_FNCALL's temp, struct-param args,
+        # assignment, `return f()`), which had none. CHANGELOG [6.6.6]
+        _struct_call_emit(S, asv_fi, asv_fnoff, asv_named);
+        _expect_step(S, 5);                         # consume ';'
+        return 0;
+    }
+    # v5.10.45 Phase 1 — asv_pair path for 9-16B int-class non-Str
+    # struct returns. Caller-side mirror of parse/fn.cyr's pair-
+    # return branch: allocate multi-slot for the receiver, call the
+    # fn normally (no retptr arg), receive rax+rdx into the slots
+    # via EFLSTORE_STRUCT_INT_PAIR. Same allocation shape as asv_try
+    # (multi-slot named-last + filler-above sentinel) so dot-syntax
+    # field access works.
+    if (asv_pair == 1) {
+        var asp_sid = 0 - pscale;
+        var asp_sz = STRUCTSZ(S, asp_sid - 1);
+        var asp_aligned = (asp_sz + 7) & (0 - 8);
+        var asp_nslots = asp_aligned / 8;
+        # Duplicate-name check
+        var asp_existing = FINDLOCAL(S, noff);
+        if (asp_existing >= 0) {
+            if (GLDEP(S, asp_existing) == GSDEP(S)) { ERRDUPVAR(S); }
+        }
+        # Reserve ceil(sz/8) fn-local slots; name the last (deepest).
+        var asp_j = 0;
+        while (asp_j < asp_nslots - 1) {
+            var asp_li = GFLC(S);
+            S64(S + 0x5D9D000 + asp_li * 8, 0 - 1);
+            SLDEP(S, asp_li, GSDEP(S));
+            SLTYPE(S, asp_li, 0);
+            SFLC(S, asp_li + 1);
+            asp_j = asp_j + 1;
+        }
+        var asp_named = GFLC(S);
+        S64(S + 0x5D9D000 + asp_named * 8, noff);
+        SLDEP(S, asp_named, GSDEP(S));
+        SLAGG(S, asp_named, asp_nslots);   # 6.6.5: rax/rdx land IN these slots
+        SLTYPE(S, asp_named, 0 - asp_sid);
+        SFLC(S, asp_named + 1);
+        # Parse `= IDENT(args);`
+        STI(S, GTI(S) + 1);                         # consume '='
+        if (PEEKT(S) != 2) {
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
+        }
+        var asp_fnoff = PEEKV(S);
+        STI(S, GTI(S) + 1);                         # consume fn-name IDENT
+        # v6.3.37 (B1 half-B): skip a monomorph `<typeargs>` list (see asv_try above).
+        if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
+                STI(S, GTI(S) + 1);   # consume `<`
+                _ta_pending_gt = 0;
+                _parse_one_type_arg(S);
+                _ta_rest_n(S, asp_fnoff);   # 6.7.16 (D5)
+                _consume_gt(S);
+            } }
+        if (PEEKT(S) != 10) {
+            ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
+        }
+        var asp_fi = FINDFN(S, asp_fnoff);
+        if (_rcv_fi >= 0) { asp_fi = _rcv_fi; }   # 6.6.10: see asv_try
+        if (asp_fi < 0) { asp_fi = REGFN(S, asp_fnoff); }
+        _gen_own_call_check(S, asp_fi, asp_fnoff);
+        _callee_site_checks_here(S, asp_fi, asp_fnoff, 0);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
+        var asp_callee_sid = GFRS(S, asp_fi);
+        if (asp_callee_sid == 0) {
+            ERR_MSG(S, "fn does not declare a struct return type", 40);
+        }
+        if (asp_callee_sid != asp_sid) {
+            ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
+        }
+        STI(S, GTI(S) + 1);                         # consume '('
+        # NO hidden retptr — pair-return uses rax/rdx, received into the 2-slot local.
+        # 6.6.6: `_struct_call_emit`, as in asv_try above. CHANGELOG [6.6.6]
+        _struct_call_emit(S, asp_fi, asp_fnoff, asp_named);
+        _expect_step(S, 5);                         # consume ';'
+        return 0;
+    }
+    # Check for array: var buf[N];  (v6.2.1: `var buf: T[N]` passes the
+    # element width via scalar_type so i64[N] reserves N slots, etc.;
+    # bare `var buf[N]` has scalar_type==0 → legacy byte sizing.)
+    if (PEEKT(S) == 28) {
+        var arr_eb = _arr_ebytes(S, scalar_type, lfloat, pscale, ann_ti);   # 6.6.13 (M2)
+        PARSE_ARRAY(S, noff, scalar_type, scalar_signed, arr_eb, ann_ti);
+        return 0;
+    }
+    # expect EQ
+    # v5.8.42: special-case the bare-decl `var X;` shape with a
+    # specific diagnostic. Pre-fix the generic ERR_EXPECT emitted
+    # "expected '=', got ';'" which doesn't tell the user what
+    # to do. Mabda C1 surfacing — devs ported from C/Go expected
+    # `var X;` to declare a zero-init slot and got the cryptic
+    # generic message. Now: a clear "uninitialized variable not
+    # allowed; use `var X = 0;` or initial value" pointing at
+    # the specific fix.
+    _var_eq_step(S);   # 6.7.16: a bare declaration is left on its `;`, its value a 0 (`_var_value`)
+    # Check for struct init: var p = StructName { expr, expr, ... };
+    # v5.9.33 (agnosys 1.1.12 follow-up): require the next-next token to be
+    # `{` before committing to the struct-init path. A bare ident reference
+    # like `var sig = status & 0x7F;` (where `status` is also defined as a
+    # struct name elsewhere in the file) must fall through to the scalar
+    # expression branch — NOT enter PARSE_STRUCT_INIT and error on the
+    # missing `{`. Surfaced on aarch64 because aarch64's larger syscalls
+    # file pushes WIFSIGNALED's name offset past the 64 KB DCE bitmap
+    # window so the fn body is parsed even when unreferenced; on x86 the
+    # same fn DCE's away and masks the bug.
+    if (_lit_head_tok(S) == 1) {
+        var sid = _lit_head_w(S);   # 6.6.12: `Name {` or `Name<args> {` (the instance); 6.7.14: a wrap too
+        if (sid > 0) {
+            if (TOKTYP(S, GTI(S) + 1) == 13) {
+                # 6.6.5 — an annotated `var p: T = U { .. }` must agree. Nothing checked this,
+                # so the annotation was silently ignored and `p` took U's layout under T's name.
+                # ⚠ DELIBERATELY NOT a `return` after ERR_MSG (which is not a terminator —
+                # v6.4.62 panic mode only records). The literal parser below is what CONSUMES
+                # `U { .. } ;`; returning here would leave the whole initialiser on the token
+                # stream and this declaration is also reached OUTSIDE `PARSE_STMT` (top-level
+                # pass 2), where nothing calls `_sync_skip` — so an early return trades one
+                # accurate error for a cascade of invented ones. `_had_error` already
+                # guarantees no binary is written, so parsing on with U's sid emits nothing.
+                _lit_ann_check(S, pscale, sid, lbool);
+                if (GINFN(S) == 1) { _STRUCT_LIT_LOCAL(S, noff, sid); }
+                else { PARSE_STRUCT_INIT(S, noff, sid); }
+                return 0;
+            }
+        }
+    }
+    # v5.10.4 — type inference at var-decl. Peek the RHS shape
+    # BEFORE PCMPE evaluates it: if the RHS is a fn call
+    # `IDENT(...)` and the fn has a known return-struct-id
+    # (via GFRS — set by the fn's `: ReturnType` annotation), we
+    # capture the inferred sid here and apply it as SLTYPE later.
+    # Closes the agnosys-shape `var out = str_builder_build(sb);
+    # println(out);` pattern: post-v5.10.4, `out` inherits Str
+    # type from str_builder_build's `: Str` annotation, then the
+    # v5.10.3 overload dispatch routes `println(out)` to
+    # `println_str` correctly. Only fires when no explicit type
+    # annotation is present (pscale == 0 && scalar_type == 0 —
+    # both are SET when `: Type` is parsed earlier in this fn).
+    var _ti_inferred_sid = 0;
+    if (pscale == 0) { if (scalar_type + lbool == 0) {   # 6.7.3: a bool is never a struct
+            if (PEEKT(S) == 2) {
+                # v6.3.37 (B2): infer the local's struct type from BOTH a plain `IDENT (`
+                # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
+                # types `b` as the struct (its GFRS return sid) and `b.x`/`b.w` parse.
+                # 6.6.12: `var s = mkp(3).y + 1;` typed `s` as Pt (and dispatched `+` to Pt_add).
+                # 6.7.11: a struct only from a call that ENDS the initialiser (`_var_rhs_csid`).
+                if (_var_rhs_call(S, GTI(S)) == 1) { _ti_inferred_sid = _var_rhs_csid(S, GTI(S)); }
+                else { _ti_inferred_sid = _var_rhs_msid(S, GTI(S)); }   # 6.7.0 (A5): `var u = s.m(..);`
+            } elif (PEEKT(S) == 10) { _ti_inferred_sid = _var_rhs_wsid(S, GTI(S)); }   # 6.7.13: `var x = (mk1());`
+        } }
+    # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
+    # closure now identifies itself at RUNTIME (bit 63 of its value; see the callptr
+    # lowering in parse/expr.cyr), so a `var` holding one needs no special type — and
+    # `var g = f;` needs no hand-written tag propagation, because there is nothing
+    # left to propagate. Two bugs die with it: every escape the stamp could not
+    # follow (param / return / global / memory / plain assignment) used to dispatch
+    # as a bare fn pointer and SIGSEGV, and the sentinel 0x40000003 itself leaked
+    # into SPSC as a POINTER SCALE, so `(f + 1) - f` on a closure local evaluated to
+    # 1073741827 instead of 1.
+    # parse expression (scalar) — use PCMPE for comparisons and &&/||
+    # 6.6.6 (bite 14 review): armed, so a method / operator returning a struct stores it in a temp
+    # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
+    var scv_start = GTI(S);
+    var scv_prev = _scv_arm(S, pscale, scalar_type + lfloat + slice_elt_w + lbool);   # 6.6.11; 6.7.11: + an untyped wrap
+    _var_value(S);   # PCMPE; 6.7.16: a bare declaration's 0
+    _scv_disarm(S, scv_prev);
+    _scv_rec_ann(S, pscale, scv_start);   # 6.7.13 (D13): a method / operator struct result into `: i64`
+    _bx_decl(S, lbool, noff, scv_start);   # 6.7.3 (B2): a bool takes a boolean value
+    # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
+    # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
+    # 6.7.6: and an f64 value into an `f32` declaration rounds to f32 (_f32_init_round).
+    _decl_float_init(S, lfloat, scv_start);
+    _ti_inferred_sid = _var_rhs_post(S, _ti_inferred_sid, pscale, scalar_type + lbool, scv_start, ann_ti);   # 6.7.9; 6.7.10
+    var ufv = 0;
+    if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
+                        ufv = _UFV_IS_FLOAT(S);
+                    } } } } }
+    var dfc = 0;   # 6.6.11: a pure copy of a declared f64 / f32 value types the var (_decl_float_copy)
+    if (ufv == 1) { dfc = _decl_float_copy(S, scv_start, GTI(S)); if (dfc != 0) { ufv = 0; } }
+    # Type check: warn if pointer/scalar mismatch
+    var expr_ps = GPSC(S);
+    if (pscale > 0) {
+        if (expr_ps == 0) { _tp_warn_decl(S, ann_ti, scv_start); }   # 6.7.11; 6.7.13: not the literal 0
+    }
+    # Check if inside function → local variable
+    if (GINFN(S) == 1) {
+        # Reject duplicate local var names
+        # Allow same name in different scope (shadowing)
+        var existing = FINDLOCAL(S, noff);
+        if (existing >= 0) {
+            if (GLDEP(S, existing) == GSDEP(S)) { ERRDUPVAR(S); }
+        }
+        # 6.6.6: `var p: S = b.mk(..)` / `var c: V3 = a + b` — the call's temp becomes `p`.
+        if (_sc_var_receive(S, noff, pscale, scalar_type + lfloat + slice_elt_w + lbool, scv_start) == 1) {
+            _expect_step(S, 5);
+            return 0;
+        }
+        var li = GFLC(S);
+        # v5.8.16 §8: 16-byte locals (slice, u128) layout-flip.
+        # The slice convention puts ptr@offset 0 and len@offset 8
+        # (slice_set / slice_ptr / slice_len all assume this).
+        # On the stack, slot N+1 sits at a LOWER address than slot
+        # N (locals grow down). Pre-fix we wrote the slice's ptr
+        # field to slot li (the higher address) and treated slot
+        # li+1 (the lower address) as the unused "high half" — but
+        # then `slice_set(&s, ...)` issued `store64(&s + 8, len)`,
+        # which lands at saved-rbp position rather than slot li+1.
+        # §7 indexing tests passed by luck — they wrote and read
+        # the corrupted location consistently and exited before
+        # the corrupted rbp surfaced. §8 dot-field access made the
+        # mismatch impossible to ignore (`s.len` reads from a
+        # location slice_set never wrote to).
+        #
+        # Fix: for scalar_type==16, allocate the HIGH-HALF slot
+        # FIRST (slot li, higher address) and the CANONICAL slot
+        # SECOND (slot li+1, lower address). The name + meta live
+        # on slot li+1 so FINDLOCAL returns it; EFLADDR(li+1)
+        # yields the lower address; EFLADDR(li+1) + 8 lands on
+        # slot li (higher address) = the second 8 bytes the
+        # convention expects. Now slice_set / slice_ptr /
+        # slice_len work correctly on fn-local slices, no rbp
+        # corruption, no consumer changes.
+        if (scalar_type == 16) {
+            # High-half slot (allocated first, higher address) —
+            # nameless, tracks no scope. This is where addr+8
+            # lands once we install the canonical slot below.
+            # 6.6.5: NAME -1, not 0. Name offset 0 is the FIRST LEXED WORD of the program,
+            # and FINDLOCAL matches any slot with `sn >= 0` — so this unnamed high half
+            # resolved for that identifier inside any fn that declared a slice or u128.
+            S64(S + 0x5D9D000 + li * 8, 0 - 1);
+            SLDEP(S, li, 0);
+            SLTYPE(S, li, 0);
+            SSLICE_W(S, li, 0);
+            # Canonical (lower-address) slot — this is what the
+            # name resolves to; EFLADDR returns its address.
+            var li_canon = li + 1;
+            S64(S + 0x5D9D000 + li_canon * 8, noff);
+            SLDEP(S, li_canon, GSDEP(S));
+            SLAGG(S, li_canon, 2);   # 6.6.5: a slice / u128 is a 2-slot INLINE pair
+            SLTYPE(S, li_canon, 0);
+            _sl_slice(S, li_canon, slice_elt_w, ann_ti);   # 6.7.8: width + slice bit 62 (C2-2a), element (C2-6a)
+            _w16_local_init(S, li_canon, ann_ti);   # the initial value: a slice's, or (6.7.6) a u128's whole
+            SFLC(S, li_canon + 1);
+        } else {
+            S64(S + 0x5D9D000 + li * 8, noff);
+            SLDEP(S, li, GSDEP(S));
+            if (lfloat != 0) {
+                # f64/f32 local: tag the slot's type so access SESTYPEs it; store
+                # the 8-byte value (f64 bits, or f32 bits in the low 32).
+                SLTYPE(S, li, lfloat);
+                EFLSTORE(S, li);
+            } elif (scalar_type > 0) {
+                if (scalar_type < 8) {
+                    SLTYPE(S, li, scalar_type);
+                    EFLSTORE_W(S, li, scalar_type);
+                } else {
+                    SLTYPE(S, li, 0);
+                    EFLSTORE(S, li);
+                }
+            } else {
+                # v5.10.4 — fold inferred sid (peeked pre-PCMPE) into
+                # the no-annotation branch so `var x = f();` picks
+                # up f's `: ReturnType` annotation as x's SLTYPE.
+                # NOTE: scalar return inference (negative GFRS, i.e.
+                # `var n = strlen(s);` where strlen is `: i64`) was
+                # tried at v5.10.5 with SLTYPE = positive width
+                # (8 for i64), but that encoding tripped the
+                # parse/expr.cyr:263 width-aware load path which
+                # SEXW(S, 8) marks expr_width = 8 and downstream
+                # arithmetic emit narrowed incorrectly (`hlen -
+                # nlen` returned -29 instead of 6 in the tcyr
+                # strstr regression). Reverted: scalar-return
+                # inference deferred to the future slot pinned at
+                # `CYRIUS_TYPE_CHECK` default-on flip — same root
+                # cause (need scalar-vs-pointer per-param distinction
+                # before tracking i64-as-i64 vs i64-as-pointer).
+                if (_ti_inferred_sid > 0) {
+                    SLTYPE(S, li, 0 - _ti_inferred_sid);
+                } elif (_ti_inferred_sid == 0 - 9) {
+                    # v6.5.21 — `var x = f();` where f is `: f64` now types x as
+                    # f64. Before this, the annotation bought the caller NOTHING:
+                    # the local came back untagged, so `x + x` emitted an INTEGER
+                    # add over the IEEE-754 bit pattern and returned garbage. That
+                    # is why the `: f64` RETURN annotation shipped at v6.4.55 and
+                    # then sat at TWO uses ecosystem-wide, both in our own tests —
+                    # it was unusable, not unpopular.
+                    # ⚠ This is deliberately NARROWER than the scalar-return
+                    # inference reverted at v5.10.5 (see the note above): that one
+                    # encoded `: i64` as a positive WIDTH (8), which tripped the
+                    # width-aware load path at parse/expr.cyr:263 and narrowed
+                    # downstream arithmetic. F64_TYID is 0x40000001, not a small
+                    # positive width, so it cannot reach that path.
+                    SLTYPE(S, li, F64_TYID);
+                } elif (dfc != 0) {
+                    SLTYPE(S, li, dfc);   # 6.6.11: `var t = p.y;` — see _decl_float_copy
+                } else {
+                    _sl_ptr_type(S, li, pscale, ann_ti);   # 6.6.16: 8 bytes; 6.6.17: `*Struct` dot syntax
+                }
+                EFLSTORE(S, li);
+            }
+            # v5.8.14 §6: per-local slice element width (0 = not a slice).
+            SSLICE_W(S, li, slice_elt_w);
+            # 6.6.5 — THE LAYOUT IS RECORDED HERE, AND THE ABSENCE OF THE MARK IS THE POINT.
+            # This branch produces BOTH shapes of struct-typed local and nothing visible at the use
+            # site tells them apart: one initialised from an address (`var p: P = alloc(16);`,
+            # `var s = str_from(x);`) leaves the slot holding an ADDRESS, while a struct VALUE of 8 B
+            # or less (`var q: S8 = mk8(1);`) is the slot. Leaving the bit clear for the handle is
+            # what stops `p.y` reading the frame instead of the heap. 6.7.10 (B7-1): the line is the
+            # initialiser at every size (the handle line), no longer the width — `_mark_small_init`.
+            _mark_small_init(S, li, scv_start);
+            # v6.3.35: mark a SIGNED sub-i64 scalar local with a NEGATIVE sentinel in the
+            # (otherwise-0-for-scalars) slice-width table — slice-logic only checks `>0`, so
+            # the sentinel is invisible to it. The load reads it to sign-extend (movsx).
+            # 6.6.16: and a local `*i8`/`*i16`/`*i32` with its pointer mark (_sl_marks).
+            _sl_marks(S, li, scalar_signed, scalar_type, slice_elt_w, pscale);
+            SFLC(S, li + 1);
+            SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
+            _sl_last_marks(S, li, lbool, scalar_type, ann_ti);   # 6.7.3: last — the high half is rewritten above; 6.7.6: + bit 59; 6.7.8: + a `*T`'s kind, a declared scalar's name
+        }
+    } else {
+        _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
+        if (ann_ti == 0) { pscale = _gu_late(S, pscale, scv_start, _ti_inferred_sid); }   # 6.7.14 (D29 / D30): `var x = mk1();`; 6.7.17 (D22): a `Str`
+        lfloat = _gzf_late(lfloat, pscale, scalar_type + slice_elt_w + dfc, _ti_inferred_sid);   # 6.7.16 (D98)
+        var vcnt = GVCNT(S);
+        S64(_varn_base + vcnt * 8, noff);
+        if (lfloat != 0) {
+            # f64/f32 local: 8-byte slot + float type marker → PEXPR/PARSE_TERM
+            # route operators to EMIT_F64_BINOP (f32 type-only, converted via f32_*).
+            S64(_vars_base + vcnt * 8, 8);
+            SVTYPE(S, vcnt, lfloat);
+            EVSTORE(S, vcnt);
+        } elif (scalar_type > 0) {
+            if (scalar_type < 8) {
+                S64(_vars_base + vcnt * 8, scalar_type);
+                SVTYPE(S, vcnt, scalar_type);
+                # A signed iN global sign-extends on load, as PARSE_GVAR_REG's (v6.4.23): one
+                # declared after the first top-level statement read zero-extended. CHANGELOG [6.7.16]
+                SVSGN(S, vcnt, scalar_signed);
+                EVSTORE_W(S, vcnt, scalar_type);
+            } else {
+                # 8 (i64 explicit) or 16 (u128) — allocate the full width.
+                # Pre-4.8.0-alpha3 this hardcoded 8, truncating u128 vars
+                # declared in the PARSE_PROG path (e.g. after a top-level
+                # expression statement like `alloc_init();` that stops
+                # pass 1 — see _tl_scan1's termination, parse/fn_def.cyr).
+                S64(_vars_base + vcnt * 8, scalar_type);
+                _w16_global_init(S, vcnt, scalar_type, ann_ti);   # 6.7.6 (D2): a u128 whole
+            }
+        } else {
+            _vecg_size(S, vcnt, pscale);   # 6.6.17 (a3): 8, or a vector's 16/32 bytes
+            if (pscale > 0) { _gv_ptr_type(S, vcnt, pscale, ann_ti); }   # 6.6.17: + T
+            if (dfc != 0) { SVTYPE(S, vcnt, dfc); }   # 6.6.11: see _decl_float_copy
+            # 6.6.5 — a STRUCT-annotated global declared on the PARSE_PROG path (any `var`
+            # after the first top-level statement) recorded no type at all, so `G.y` was
+            # refused with "no struct type in scope for 'G'" — a diagnostic blaming a missing
+            # include for a global the compiler had just parsed. The SIMD descriptor band
+            # (<= -2048) is excluded: it is not a struct sid. CHANGELOG [6.6.5]
+            if (pscale < 0 && pscale > 0 - 2048) {
+                _tup_svtype(S, vcnt, 0 - pscale, noff, ann_ti);   # 6.7.7: SVTYPE, never a pointer-mode tuple
+                SVPM(S, vcnt, _gz_late(S, 0 - pscale, scv_start));   # 6.7.10 (B7-1g): the handle line
+            }
+            EVSTORE(S, vcnt);
+        }
+        SLVAR(S, vcnt);
+        SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
+        _gv_last_marks(S, vcnt, lbool, scalar_type, ann_ti);   # 6.7.3 (B2); 6.7.6: + the integer and u128 marks
+        # 6.6.13 I11: an untyped `var g = f(..);` here records f for the Str -> cstring diagnostic,
+        # as PARSE_GVAR_REG does for a global above the first statement (_gv_diag_sid).
+        var gdc = 0;
+        if (pscale == 0 && scalar_type == 0 && lfloat == 0 && slice_elt_w == 0 && dfc == 0) { gdc = _gv_rhs_call_sid(S, scv_start); }
+        SVDSID(S, vcnt, gdc);
+        _GVAR_VIS(S, vcnt, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
+        SVCNT(S, vcnt + 1);
+    }
+    _expect_step(S, 5);
+    return 0;
+}

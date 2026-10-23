@@ -1,0 +1,2006 @@
+# PARSER — fn: the call path's argument checks — the type-check switch, the callee's source name, arity, and the
+# struct / vector / tuple / multi-value arguments.
+# ================================================================
+# Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
+
+# v5.10.1 — type-check infrastructure: lazy lookup for the
+# `Str` struct sid so PARSE_FNCALL can flag Str-typed args
+# being passed to cstring-typed (non-`: Str`) params. The
+# search shape mirrors `_STR_FROM_NOFF` in parse/expr.cyr —
+# scan tok_names for the cstring "Str\0" (4 bytes:
+# 0x0072_7453 little-endian), then resolve to a struct id via
+# FINDSTRUCT. Returns 0 if Str isn't defined in this program
+# (graceful — type checks just don't fire).
+var _str_sid_cache = 0 - 1;
+fn _STR_SID(S): i64 {
+    if (_str_sid_cache >= 0) { return _str_sid_cache; }
+    if (_str_sid_cache == 0 - 2) { return 0; }
+    var npos = GNPOS(S);
+    var i = 0;
+    while (i < npos) {
+        # "Str\0" first 4 bytes — bottom 32 bits = 0x00727453
+        if (load8(S + 0xEC00000 + i)     == 83) {
+            if (load8(S + 0xEC00000 + i + 1) == 116) {
+                if (load8(S + 0xEC00000 + i + 2) == 114) {
+                    if (load8(S + 0xEC00000 + i + 3) == 0) {
+                        var sid = FINDSTRUCT(S, i);
+                        if (sid > 0) {
+                            _str_sid_cache = sid;
+                            return sid;
+                        }
+                    }
+                }
+            }
+        }
+        # skip to next null terminator
+        while (i < npos) { if (load8(S + 0xEC00000 + i) == 0) { i = i + 1; break; } i = i + 1; }
+    }
+    _str_sid_cache = 0 - 2;
+    return 0;
+}
+
+# v5.10.1 — opt-in gate for the call-site type check.
+# `CYRIUS_TYPE_CHECK=1` enabled warnings; default was off.
+#
+# v5.10.26 — DEFAULT FLIPPED ON. The v5.10.5 false-positive
+# shape (Str → generic i64 param triggering false warning)
+# was closed by v5.10.24's polarity inversion: the warning
+# now fires only on params explicitly annotated `: cstring`
+# instead of params NOT annotated `: Str`. Empirical sweep
+# at v5.10.26 slot entry across 26 cyrius-application repos
+# (cyrius / agnosys / hisab / kavach / abaco / aegis /
+# agnostik / agnova / argonaut / ark / chakshu / cyim /
+# cyim-lsp / cyrius-doom / daimon / darshana / kybernet /
+# libro / majra / niyama / nous / owl / phylax / samvada /
+# sandhi / shakti / sit / vyakarana / yantra / yukti)
+# confirmed ZERO type-check warnings with TYPE_CHECK=1 —
+# the surface is clean and the flip is safe.
+#
+# Set `CYRIUS_TYPE_CHECK=0` to opt OUT. Any other value
+# (or env unset) keeps the check ON. The check is cheap
+# (~O(args) per call site), wire-compatible across the
+# v5.10.x line, and produces actionable warnings only on
+# Str → cstring shape mismatches with hint catalog.
+var _type_check_env_resolved = 0;
+var _type_check_enabled = 1;
+fn _TYPE_CHECK_ENABLED(): i64 {
+    if (_type_check_env_resolved == 1) { return _type_check_enabled; }
+    var v = _read_env("CYRIUS_TYPE_CHECK");
+    if (v != 0) {
+        if (load8(v) == 48) { _type_check_enabled = 0; }
+        if (load8(v) == 49) { _type_check_enabled = 1; }
+    }
+    _type_check_env_resolved = 1;
+    return _type_check_enabled;
+}
+
+# v5.10.25 — Phase 3 generalize retired the hardcoded
+# {_PRINTLN_NOFF, _PRINTLN_STR_NOFF, _PRINTLN_INT_NOFF,
+# _STRLEN_NOFF, _STR_LEN_NOFF} byte-by-byte name lookups.
+# Replaced by registry-based dispatch populated at REGFN time
+# from `_str` / `_int` / `_cstr` suffixes on sibling fns.
+# See `_OVERLOAD_SUFFIX` + REGFN's auto-register block.
+
+# ⛔ 6.7.14 — A CALL-SITE DIAGNOSTIC NAMES ITS CALLEE AS THE SOURCE SPELLS IT. The fn table holds a method as its
+# mangled `T_m` (`T_Tr_m` when two traits give T an `m`) and a generic call as its instance `g$i32`, and the call-site
+# messages printed that: "in a call to 'S_ri'", "'S_two' expects 2 arguments, got 3", "'g$i32' is deprecated",
+# "undefined function 'S_nope'". The spelling to print for fn `fi`, which the site names `noff`: a method `T.m` (its
+# record, GFMETH), a generic instance its base's spelling and `<..>` its type arguments (GFIC, the instance's own
+# record; a struct instance among them `Box<i64>`, `_sinst`), anything else `noff` itself — and `noff` whenever the
+# site names something other than fi's own name (an alias). Written at GNPOS uncommitted, as BUILD_METHOD_NAME's
+# lookup scratch is: the caller prints it before anything else is minted. CHANGELOG [6.7.14]
+fn _fn_src_name(S, fi, noff): i64 {
+    if (fi < 0) { return noff; }
+    var nm = L64(_fnt_names + fi * 8);
+    if (noff != nm) { if (STREQ(S, noff, nm) == 0) { return noff; } }
+    return _fsn_spell(S, nm, GFMETH(S, fi), GFIC(S, fi, 0), GFIC(S, fi, 1));
+}
+# The fn being parsed (`_cur_fn_ix`) as the source spells it — inside a generic instance's body, whose own records
+# (GFIC, GFMETH) are written only once its parse returns (`_gen_inst_record`), from the instance being parsed:
+# `mt<f64>`, `P.gm<f64>` (a refusal there printed `mt$f64`, `P_gm$f64`). CHANGELOG [6.7.16]
+fn _cur_fn_src(S): i64 {
+    var fi = _cur_fn_ix;
+    var nm = L64(_fnt_names + fi * 8);
+    if (_inst_base_fi >= 0) { if (_gen_inst_of(S, fi, _inst_base_fi) == 1) {
+            return _fsn_spell(S, nm, GFMETH(S, _inst_base_fi), _inst_conc0, _inst_conc1);
+        } }
+    return _fn_src_name(S, fi, nm);
+}
+# Type `c` (a scalar code, a vector sentinel, a 1-based struct id) as the source spells it — a struct instance
+# `Box<Pt>`, never the table's `Box$Pt` — at GNPOS uncommitted, as `_fn_src_name`'s. CHANGELOG [6.7.16]
+fn _fsn_one(S, c): i64 {
+    NPOS_GUARD(S, 1024);
+    var b = GNPOS(S);
+    var wp = _fsn_conc(S, b, c, b + 960, 0);
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
+# `_fn_src_name`'s spelling of the fn named `nm`: method record `mr` (0 none), type arguments `c0` / `c1` (0 none).
+fn _fsn_spell(S, nm, mr, c0, c1): i64 {
+    if (mr == 0) { if (c0 == 0) { return _fsn_dm(S, nm); } }   # 6.7.17: `B<i32>_add`
+    NPOS_GUARD(S, 1024);
+    var b = GNPOS(S);
+    var lim = b + 960;
+    var wp = b;
+    if (mr != 0) {
+        wp = _fsn_tn(S, wp, (mr >> 32) - 1, lim);   # 6.7.17: an instance as written
+        wp = _fsn_lit(S, wp, ".", lim);
+        wp = _fsn_put(S, wp, mr & 0xFFFFFFFF, lim, 1);
+    } else { wp = _fsn_put(S, wp, nm, lim, 1); }
+    if (c0 != 0) { wp = _fsn_targs(S, wp, c0, c1, lim, 0); }
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
+# The name at pool offset `noff` written at `wp` (up to its first `$` when `cut` is 1), bounded by `lim`.
+fn _fsn_put(S, wp, noff, lim, cut): i64 {
+    var i = 0;
+    var c = load8(S + 0xEC00000 + noff);
+    while (c != 0) {
+        if (cut == 1) { if (c == 36) { return wp; } }
+        if (wp >= lim) { return wp; }
+        store8(S + 0xEC00000 + wp, c);
+        wp = wp + 1;
+        i = i + 1;
+        c = load8(S + 0xEC00000 + noff + i);
+    }
+    return wp;
+}
+# A literal string written at `wp`, bounded by `lim`.
+fn _fsn_lit(S, wp, str, lim): i64 {
+    var i = 0;
+    while (load8(str + i) != 0) {
+        if (wp >= lim) { return wp; }
+        store8(S + 0xEC00000 + wp, load8(str + i));
+        wp = wp + 1;
+        i = i + 1;
+    }
+    return wp;
+}
+# `<c0>` or `<c0, c1>`: an instance's type arguments as written (`depth` bounds a nested struct instance).
+fn _fsn_targs(S, wp, c0, c1, lim, depth): i64 {
+    wp = _fsn_lit(S, wp, "<", lim);
+    wp = _fsn_conc(S, wp, c0, lim, depth);
+    if (c1 != 0) {
+        wp = _fsn_lit(S, wp, ", ", lim);
+        wp = _fsn_conc(S, wp, c1, lim, depth);
+    }
+    return _fsn_lit(S, wp, ">", lim);
+}
+# One type argument `c` (a scalar code, a vector sentinel, a 1-based struct id) as the source spells it.
+fn _fsn_conc(S, wp, c, lim, depth): i64 {
+    if (c > 0) {
+        var sn = L64(S + 0x1A6018 + (c - 1) * 8);
+        var g = _sinst_base(c);
+        if (g <= 0) { return _fsn_put(S, wp, sn, lim, 0); }
+        if (depth >= 4) { return _fsn_put(S, wp, sn, lim, 0); }
+        wp = _fsn_put(S, wp, sn, lim, 1);
+        return _fsn_targs(S, wp, _sinst_conc(S, c, g, 0), _sinst_conc(S, c, g, 1), lim, depth + 1);
+    }
+    if (c <= 0 - 2048) { return _fsn_vec(S, wp, (0 - c) - 2048, lim); }
+    return _fsn_lit(S, wp, _fsn_scalar(c), lim);
+}
+fn _fsn_scalar(c): i64 {
+    if (c == 0 - 8) { return "i64"; }
+    if (c == 0 - 9) { return "f64"; }
+    if (c == 0 - 4) { return "i32"; }
+    if (c == 0 - 2) { return "i16"; }
+    if (c == 0 - 1) { return "i8"; }
+    if (c == 0 - 16) { return "Result"; }
+    if (c == 0 - 17) { return "Option"; }
+    if (c == 0 - 18) { return "Tagged"; }
+    if (c == 0 - 19) { return "cstring"; }
+    return "?";
+}
+# A vector type from its descriptor (`_vec_desc`'s packing): f / i / u, the lane bits, `v`, the lane count.
+fn _fsn_vec(S, wp, desc, lim): i64 {
+    var k = "u";
+    if ((desc & 1) == 1) { k = "f"; }
+    elif ((desc & 2) == 2) { k = "i"; }
+    wp = _fsn_lit(S, wp, k, lim);
+    wp = _fsn_num(S, wp, 8 << ((desc >> 2) & 7), lim);
+    wp = _fsn_lit(S, wp, "v", lim);
+    return _fsn_num(S, wp, 1 << ((desc >> 5) & 7), lim);
+}
+# A number below 100 written in decimal.
+fn _fsn_num(S, wp, n, lim): i64 {
+    if (wp + 2 >= lim) { return wp; }
+    if (n >= 10) { store8(S + 0xEC00000 + wp, 48 + n / 10); wp = wp + 1; }
+    store8(S + 0xEC00000 + wp, 48 + n % 10);
+    return wp + 1;
+}
+# ⛔ 6.7.15 — AN ARGUMENT IS NAMED AS THE SOURCE SPELLS IT. A refused dereference argument was quoted as `*` and its
+# operand's LAST name — `ri(*gp(pb))` as '*pb', `ri(*&b)` '*b', `ri(*h.pv)` '*pv', `ri(**ppb)` '*ppb' (`_hl_lastnm`).
+# The tokens [a, e) — the operand `gp(pb)`, `&b`, `h.pv`, `*ppb`, `(pb)` — written from the source at GNPOS + 1024,
+# uncommitted, past `_fn_src_name`'s scratch so one message may print both: each token's own bytes, one space where
+# the source has any between two (a comment or a line break is one space too). `dflt` when the tokens have no source
+# spelling in order (a token the parser made). CHANGELOG [6.7.15]
+fn _src_span_nm(S, a, e, dflt): i64 {
+    if (e <= a) { return dflt; }
+    NPOS_GUARD(S, 2048);
+    var b = GNPOS(S) + 1024;
+    var lim = b + 960;
+    var wp = b;
+    var pend = 0;
+    var i = a;
+    while (i < e) {
+        var o = GTOFF(S, i);
+        var nx = GTOFF(S, i + 1);
+        if (o <= 0) { return dflt; }
+        if (nx <= o) { return dflt; }
+        if (nx > GBL(S)) { return dflt; }
+        var q = _ssn_tok_end(S, i, o, nx);
+        if (i > a) { if (o > pend) { wp = _fsn_lit(S, wp, " ", lim); } }
+        while (o < q) {
+            if (wp >= lim) { o = q; }
+            else {
+                store8(S + 0xEC00000 + wp, load8(S + 0x459D000 + o));
+                wp = wp + 1;
+                o = o + 1;
+            }
+        }
+        pend = q;
+        i = i + 1;
+    }
+    store8(S + 0xEC00000 + wp, 0);
+    return b;
+}
+# The end of token `i`'s text, which starts at source offset `o` (the next token at `nx`): the first space, line break
+# or `#` comment before `nx`; a string literal runs to its closing quote.
+fn _ssn_tok_end(S, i, o, nx): i64 {
+    var q = o;
+    if (TOKTYP(S, i) == 30) {
+        q = o + 1;
+        while (q < nx) {
+            var cs = load8(S + 0x459D000 + q);
+            if (cs == 34) { return q + 1; }
+            if (cs == 92) { q = q + 1; }
+            q = q + 1;
+        }
+        return nx;
+    }
+    while (q < nx) {
+        var c = load8(S + 0x459D000 + q);
+        if (c == 32 || c == 9 || c == 10 || c == 13 || c == 35) { return q; }
+        q = q + 1;
+    }
+    return q;
+}
+# The method record for fn `fi` just registered at a definition inside an impl (pass 1: `_impl_tnoff` is the
+# impl's type, token `nti` the method's own name), or at a call `x.m(..)` of type name `tn` (`_mcall_note`).
+fn _fn_meth_note(S, fi, tn, mn): i64 {
+    if (fi < 0) { return 0; }
+    SFMETH(S, fi, ((tn + 1) << 32) | mn);
+    return 0;
+}
+fn _prescan_meth_note(S, fi, nti): i64 {
+    if (_impl_tnoff == 0) { return 0; }
+    if (TOKTYP(S, nti) != 2) { return 0; }
+    return _fn_meth_note(S, fi, _impl_tnoff, TOKVAL(S, nti));
+}
+
+# 6.7.14 — 1 while a METHOD form's arity is judged (`o.m(..)`, a dyn call): `self` is no argument as written, so
+# the message counts without it — "'S.two' expects 1 argument, got 2" for `s.two(1, 2)` (it said "'S_two' expects 2
+# arguments, got 3"). The free spelling `S_two(&s, 1, 2)` counts its `&s`, as written; a method declaring no
+# parameter at all (`o.zero()` on `fn zero()`) keeps the receiver in the count, the one extra. CHANGELOG [6.7.14]
+var _ar_self = 0;
+fn _check_arity_p0(S, line, noff, fi, argc, need_off, p0): i64 {
+    _ar_self = p0;
+    _CHECK_ARITY(S, line, noff, fi, argc, need_off);
+    _ar_self = 0;
+    return 0;
+}
+
+# ⭐ THE CALL-SITE ARITY CHECK (v6.2.41; an error since v6.5.1), shared by every call path — the one
+# marshaller (PARSE_FNCALL, the method form, the struct-valued receives), the inline replay, the
+# tail arm and the operator dispatches — so the diagnostic is one. A count mismatch is never
+# intentional: there is no overloading by arity. The count must lie in min..max: max is the
+# parameter count, min the first defaulted parameter's index (6.7.7; a fn without defaults has
+# min = max, and the message is the v6.5.1 text, byte for byte).
+# ⛔ 6.7.7 (fork F2, user 2026-10-09) — EVERY CALL TO A FN PASS 1 RECORDED IS CHECKED, A FORWARD ONE
+# INCLUDED. The check used to skip any callee whose body was not yet emitted (offset -1: "pc not
+# yet known"), so `g(1, 2)` to a `fn g(a)` defined further down built and dropped the 2 — on every
+# path (plain, too few, a method, a tail call, a fn inside a top-level block). But pass 1 records
+# every definition's parameter count (v6.3.5) and stamps its GFDS (6.6.5) before pass 2 parses any
+# call; a name no definition registered (REGFN at the call, GFDS 0) keeps the skip and ends in the
+# undefined-function diagnostic. VARIADICS (GFVA) take any tail; `syscall` has its own path.
+# `need_off` names the path: 0 = the inline replay (its callee always has a body), 1 = a direct
+# call (the marshaller fills a short call's defaults after this check), 3 = the tail arm (it never
+# fills: `_tc_args_divert` sends such a call to PARSE_FNCALL), 4 = an operator dispatch (exactly two
+# operands; an operator fn takes no default, D19) — `_pd_arity_mode`.
+# CHANGELOG [6.2.41] [6.5.1] [6.7.7]
+fn _CHECK_ARITY(S, line, noff, fi, argc, need_off): i64 {
+    if (need_off != 0) { if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 0; } } }
+    if (GFVA(S, fi) != 0) { return 0; }
+    var pc = L64(_fnt_params + fi * 8);
+    if (_pd_row(fi) != 0) { if (_pd_arity_mode(S, line, noff, fi, argc, need_off) == 1) { return 0; } }
+    if (_ar_trail(S, fi) == 1) { return 0; }   # 6.7.17: `f(1,)` / `fn f(a,)` — refused at the `,)`, no count to judge
+    var mn = _pd_min(fi);
+    if (argc >= mn) { if (argc <= pc) { return 0; } }
+    # v6.5.1 — ERROR, not warning. A call with the wrong argument count cannot
+    # produce correct code: the surplus parameter is bound to whatever happens to
+    # be in the register or stack slot. This was a *warning* for its entire life and
+    # cyrius emitted a binary anyway, which is how `bayan_json_v_parse(someStr)`
+    # returned 0 for every input right across the ecosystem with no outward sign but
+    # one easily-missed line in build output. Verified safe to escalate: the whole
+    # repo — 253 .tcyr, all 7 main forks, programs/ — produces ZERO of these.
+    #
+    # Deliberately does NOT set `_panic`: an arity mismatch is not a token-stream
+    # desync, so the parse continues normally and ONE compile reports EVERY bad call
+    # site (the v6.4.62 multi-error contract). `_had_error` alone withholds the binary.
+    # 6.7.15: once per call and text (`_derr_seen`, at the call's `(`) — a generic body is parsed per instance.
+    if (_derr_seen(_ar_site(S), "_CHECK_ARITY", ((fi * 31 + noff) * 1024 + argc) * 2 + _ar_self, 0) == 1) { return 0; }
+    _ew("error:", 6);
+    FM_LOOKUP(S, line);
+    _ew(": '", 3);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));   # 6.7.14: `S.two`, `g<i32>`
+    _ew("' expects ", 10);
+    var sf = _ar_self;    # 6.7.14: a method form counts as written, without `self` —
+    if (pc == 0) { sf = 0; }   # unless the method takes no parameter: then the receiver is the extra one
+    mn = mn - sf;
+    if (mn < 0) { mn = 0; }
+    pc = pc - sf;
+    if (mn != pc) { PRNUM(mn); _ew(" to ", 4); }   # 6.7.7: "1 to 3 arguments"
+    PRNUM(pc);
+    _ew(" argument", 9);
+    if (pc != 1 || mn != pc) { _ew("s", 1); }
+    _ew(", got ", 6);
+    PRNUM(argc - sf);
+    _ew("\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
+# The token an arity report is keyed on: the `(` of the call that just closed — the cursor is past its `)` (a call,
+# an inline replay) or its `)` and `;` (the tail arm), so every path that checks one call agrees — else the cursor
+# (an operator's dispatch). CHANGELOG [6.7.15]
+fn _ar_site(S): i64 {
+    var t = GTI(S) - 1;
+    if (t < 1) { return GTI(S); }
+    if (TOKTYP(S, t) == 5) { t = t - 1; }
+    if (TOKTYP(S, t) != 11) { return GTI(S); }
+    var d = 0;
+    while (t >= 0) {
+        var k = TOKTYP(S, t);
+        if (k == 11) { d = d + 1; }
+        if (k == 10) {
+            d = d - 1;
+            if (d == 0) { return t; }
+        }
+        t = t - 1;
+    }
+    return GTI(S);
+}
+
+# ⛔ 6.7.3 — A STRUCT ARGUMENT WAS NEVER TYPE-CHECKED AGAINST ITS PARAMETER, except a struct-typed
+# FIELD into an address-passed one (`_fla_addr`, 6.6.12). `bq(p)` with `p: Pt` and `fn bq(b: Q)`
+# compiled clean and read past the 16-byte Pt (0, or 97 from a global, or SIGSEGV for an operator),
+# from a local, a global, a capture, a call, a method result, a tail call, a generic, a method's
+# `self` and an operator's operands alike — while `var q: Q = p;` has been refused since 6.6.6.
+# The argument's STATIC struct (`asid`, 0 = untyped / scalar / unknown: accepted as ever, which
+# keeps `&p`, a literal and an untyped value passing) against the parameter's recorded struct
+# (GFPSID — the instance's for a generic; a by-value struct of 8 B or less and a `Str` handle are
+# recorded too since 6.7.3, `_psid_plain`): when both are known and differ, refused by name, in
+# the field arm's words. The argument is still pushed, so the parse stays in step and the one
+# compile reports every bad site; `_had_error` withholds the binary. Returns 1 after reporting.
+# CHANGELOG [6.7.3]
+fn _sarg_type_err(S, fi, argc, asid, anoff): i64 { return _sarg_type_errf(S, fi, argc, asid, anoff, 0 - 1); }
+# ... `anoff` the result of a call to fn `afi` (a struct-call record's `_sc_fi`; -1: a name as written), which the
+# refusal names as the source spells it — a method `S2.dup`, not its fn name `S2_dup` (`_sarg_ident_err`).
+# CHANGELOG [6.7.14]
+fn _sarg_type_errf(S, fi, argc, asid, anoff, afi): i64 {
+    if (fi < 0) { return 0; }
+    if (asid <= 0) { return 0; }
+    if (asid >= 2048) { return 0; }    # a vector descriptor: not this rule
+    var ps = GFPSID(S, fi, argc);
+    if (ps <= 0) { return _sarg_svec_err(S, fi, argc, anoff, afi); }   # 6.7.13 (D33): a `*V` records no struct
+    if (ps == asid) { return 0; }
+    _sarg_ident_err(S, "cannot pass ", _ess_anm(S, anoff), afi, " to a parameter of a different struct type in a call to ", fi);
+    return 1;
+}
+# ⛔ 6.7.16 — A REFUSED DEREFERENCE ARGUMENT IS NAMED AS THE SOURCE SPELLS IT, FROM ITS `*`: `take8(*gu(pu))` is
+# '*gu(pu)', as 6.7.15's address-passed arm names it (`_dro_nm`); it was the operand's last name, 'pu'. `anoff` -2 is the
+# whole dereference `_ess_deref` typed last ([`_ess_da`, `_ess_de`)), rendered here, at the refusal — the span's scratch
+# (`_src_span_nm`) is uncommitted, so it is never rendered before another argument's parse; else `anoff` itself.
+# CHANGELOG [6.7.16]
+fn _ess_anm(S, anoff): i64 {
+    if (anoff != 0 - 2) { return anoff; }
+    return _src_span_nm(S, _ess_da, _ess_de, _ess_nm);
+}
+# ERR_IDENT for an argument refusal: the argument `anoff` — the result of a call to fn `afi`, or (-1) a name — and the
+# callee `fi`, each as the source spells it (`_fn_src_name`). The helper writes at one scratch, so the two names are
+# printed one after the other, not passed as ERR_IDENT's two offsets. CHANGELOG [6.7.14]
+fn _sarg_ident_err(S, msg, anoff, afi, tail, fi): i64 {
+    var cn = L64(_fnt_names + fi * 8);
+    if (afi < 0) { return ERR_IDENT(S, msg, anoff, tail, _fn_src_name(S, fi, cn)); }
+    if (_err_once(S, (((msg * 31 + anoff) * 31 + tail) * 31 + cn) * 8 + 3) == 0) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": ");
+    PRSTR(msg);
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, afi, anoff));
+    PRSTR("'");
+    PRSTR(tail);
+    PRSTR("'");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, cn));
+    PRSTR("'\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# ⛔ 6.7.13 (D33 A, the user's decision, 2026-10-15) — A STRUCT VALUE INTO A `*V` PARAMETER IS REFUSED BY NAME. `rd(s)`
+# with `p: *f64v2` and `s: Pt` — a local, a call result, `*ps`, a global, a closure's capture — passed the struct's
+# address and the callee read its bytes as the vector (42 on every target, silently): a `*V` records no struct
+# (GFPSID), so `_sarg_type_err` compared nothing. It is the mirror of 6.7.3 (another struct into `*S`), 6.7.11 A2
+# (another vector into `*V`) and D27 (a vector into another pointer kind); `rd(&s)` stays the explicit conversion
+# (a plain pointer converts freely). The struct argument `anoff` (every struct arm's `_sarg_type_err`) to parameter
+# `argc` of `fi` that records no struct: 1 = refused (the push follows, no binary), 0 = not a `*V`. CHANGELOG [6.7.13]
+# 6.7.14: `afi` as `_sarg_type_errf`'s — a method result is named `S2.dup`. CHANGELOG [6.7.14]
+fn _sarg_svec_err(S, fi, argc, anoff, afi): i64 {
+    if (_pvec_param(S, fi, argc) == 0) { return 0; }
+    _sarg_ident_err(S, "cannot pass ", _ess_anm(S, anoff), afi, " to a parameter that is a pointer to a vector type in a call to ", fi);
+    return 1;
+}
+# The struct a WHOLE free call `name(..)` / `name<..>(..)` at the cursor returns (the instance's,
+# for a generic), or 0. Moves nothing. Resolves the call (`_gen_resolve_call`), so it is called
+# only where `_arg_call_class` already resolves it, or after the argument's own parse (a dedup hit).
+fn _sarg_call_sid(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    return _sarg_call_rs(S, ti);
+}
+# ... the struct the call at `ti` returns, once it is known to be the whole argument.
+fn _sarg_call_rs(S, ti): i64 {
+    var cfi = _gen_resolve_call(S, ti);
+    if (cfi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }    # a failed instantiation refuses itself, once
+    var rs = GFRS(S, cfi);
+    if (rs <= 0) { return 0; }
+    if (rs >= 2048) { return 0; }
+    return rs;
+}
+# The static struct of the NAME at token `ti`: a struct-typed local (inline, pointer-mode or `*T`
+# — `_sl_ptr_type` records -sid for those too), a captured struct, or a recorded aggregate global,
+# looked up in the order the argument arms push them; 0 = untyped / scalar / vector / unknown.
+fn _sarg_name_sid(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var nm = TOKVAL(S, ti);
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, nm);
+        if (li >= 0) {
+            # A typed POINTER (`u: *Pt`, a local or a `p: *T` parameter — bit 56) converts freely, as
+            # `&p`, an untyped pointer and the receive path's `var q: *Q = u;` do (the user's
+            # decision, 2026-10-08): only a struct VALUE of another type is refused.
+            if (GLPTRP(S, li) == 1) { return 0; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            if (lt <= 0 - 2048) { return 0; }
+            return 0 - lt;
+        }
+        if (_CL_CAP_FIELD_IDX(S, nm) < 0 - 1) { return _cap_fld_sid; }
+    }
+    return _sarg_gv_sid(S, FINDVAR(S, nm));
+}
+# A global's struct: only a recorded aggregate (GVPM, `_var_ptrmode`) — GVTYPE's positive range is
+# shared with scalar widths, so nothing else is read as one (see `_push_struct_addr_global`).
+fn _sarg_gv_sid(S, gvi): i64 {
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) == 0) { return 0; }
+    var vt = GVTYPE(S, gvi);
+    if (vt <= 0) { return 0; }
+    if (vt >= 2048) { return 0; }
+    return vt;
+}
+
+# v6.3.36 (issue [5]) — if callee `fi` declares param `argc` as a plain struct >8 B
+# (bit set in its _fnt_structmask) AND the current arg is a bare struct-typed local
+# identifier (`foo(s)`, next token `,` or `)`), push the local's ADDRESS instead of
+# its first-8-bytes value: the callee derefs a >8-byte struct param as a pointer
+# (v6.3.16 lf_is_ptr), so a value would be dereffed-as-address → SIGSEGV. Returns 1
+# when handled (IDENT consumed); 0 leaves the cursor untouched for the normal PCMPE
+# value push. The CALLEE-mask gate is the reliable discriminator — cyrius tags both
+# inline structs and struct-handles (Str, str_new_a results) with SLTYPE=-sid and
+# reuses the -1 slot sentinel for freed block locals, so no arg-side heuristic works;
+# the callee's declared param type does. Str/Result/Option/Tagged/scalar params keep
+# their mask bit clear → value-passed (fixes the str_split/toml/vec_push_a regression).
+fn _try_push_struct_addr_arg(S, fi, argc, tail): i64 {
+    if (fi < 0) { return 0; }
+    if (_pm_struct(fi, argc) == 0) { return _sarg_vdo(S, fi, argc); }   # 6.6.17 (a10); 6.7.3 (6.7.14: `_sarg_vdo`)
+    var pvf = _sarg_pe_vform(S, fi, argc, tail);   # 6.7.14: Win64's value-form vector parameter, `_sar_src`'s sources
+    if (pvf >= 0) { return pvf; }
+    if (_dyn_sarg(S, fi, argc, tail) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
+    # 6.7.16: `gg<Str>(*p)` — an instance's `x: T` at T = Str is address-passed; `*p` passes p, the header.
+    if (_sarg_istr_dx(S, fi, argc) == 1) { return 1; }   # CHANGELOG [6.7.16]
+    if (PEEKT(S) == 10) { if (_vmc_phead(S, GTI(S)) < 0) { return _sarg_paren(S, fi, argc, tail); } }   # 6.7.6 (6.7.16: no `(*ps).mv()`)
+    if (_sarg_vec_call(S, fi, argc, tail) == 1) { return 1; }   # 6.7.12 (D27): `rd(mkv(..))` into `*V`
+    # 6.7.10 (decision 11): `take(*p + a)` — a dereference-led operator result over 8 B is a struct
+    # value with a temp, as `take(w.s + a)` is; it fell to the value push (its first word as the address).
+    # (ops-5) A whole dereference `take(*p)` passes its pointer (`_sarg_deref`).
+    if (PEEKT(S) == 8) { return _sarg_deref(S, fi, argc, tail); }
+    # 6.7.11: `take(fncall1(&mk3, 5))` — a known callee's struct result has a temp, as `take(mk3(5))`.
+    if (_icall_sid_at(S, GTI(S)) > 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
+    if (_icall_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc, tail); }   # 6.7.16
+    _tup_arg_lit(S, fi, argc);   # 6.7.14's D44 `take(5)`, 6.7.15's D36 `take(-5)`: refused, pushed as before
+    if (PEEKT(S) != 2) { return 0; }
+    var nx = TOKTYP(S, GTI(S) + 1);
+    # 6.7.3: a whole free call's struct, checked here — where `_arg_call_class` resolves it anyway.
+    if (nx == 10 || nx == 19) {
+        _sarg_type_err(S, fi, argc, _sarg_call_sid(S, GTI(S)), PEEKV(S));
+        if (_tup_arg_call(S, fi, argc) == 1) { return 0; }   # 6.7.7 (B4): `g(f())`, f multi-value
+        if (_mv_arg_call(S, fi, argc) == 1) { return 0; }    # 6.7.11: ... into a named struct
+    }
+    # ⛔ 6.6.6 — a by-value struct param given a struct-valued CALL (`h(mk(1, 2))`): the callee
+    # takes the struct's ADDRESS, so the result needs storage to point at. It used to be pushed
+    # as a value — the first word for a rax:rdx return (the callee then dereferenced a field),
+    # and for a retptr return a call with no retptr at all (SIGSEGV). Top level has no frame: a
+    # retptr callee falls through to PARSE_FNCALL, which refuses it by name; a rax:rdx one is
+    # refused here (as first committed it fell through too, and PARSE_FNCALL refuses only the
+    # retptr class, so `hy(p2(1, 2))` compiled clean and SIGSEGV'd). CHANGELOG [6.6.6]
+    if (nx == 10) { if (GINFN(S) != 1) { return _refuse_toplevel_struct_arg(S); } }
+    # 6.6.20: and `h(mkg<S1>(..))` at top level (it fell to the value push).
+    if (nx == 19) { if (GINFN(S) != 1) { if (_call_dotted(S, GTI(S)) == 0) {
+                if (_gcall_open(S, GTI(S)) >= 0) { return _refuse_toplevel_struct_arg(S); }
+            } } }
+    # 6.6.10 (bite 7 review): an explicit `idp<i32>(4)` too — it fell to the value push (SIGSEGV).
+    var o = 0 - 1;
+    if (GINFN(S) == 1) { o = _gcall_open(S, GTI(S)); }
+    if (o >= 0) {
+        # 6.6.12: `take(mk(p).v)` — the argument is a FIELD of the result, taken like `take(b.v)`.
+        if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc, tail); }
+        if (_arg_call_class(S) == 0) { return 0; }   # 6.6.10: the instance's class
+        # 6.7.6: a struct call that is only the LEFT operand (`sz(mk(1) + a)`) dispatches its
+        # operator fn, whose struct result takes the operator path's temp, as `sz(a + mk(1))`.
+        if (_call_is_whole_arg(S, o - 1) == 0) { return _push_struct_expr_arg(S, fi, argc, tail); }
+        _sarg_escapes(fi, argc, tail);   # 6.6.20: a temp in this frame
+        EFLADDR(S, _struct_call_into_temp(S));
+        EPUSHR(S);
+        return 1;
+    }
+    # 6.6.6 (bite 14 review): any other expression — a method call or an operator returning the
+    # struct takes its temp's address; everything else is pushed as its value. CHANGELOG [6.6.6]
+    if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S, fi, argc, tail); } }
+    var li = 0 - 1;
+    if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
+    if (li < 0) {
+        if (_sarg_vec_cap(S, fi, argc) == 1) { return 0; }   # 6.7.13 (D32): a captured vector, the local's rules
+        if (_push_struct_addr_cap(S, fi, argc) == 1) { return 1; }
+        return _push_struct_addr_global(S, fi, argc);
+    }
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }          # must be a struct-typed local (SLTYPE = -sid)
+    # v6.4.31: on SysV/aarch64 a SIMD local is register-passed (XMM/V) — never
+    # address-passed — so reject it here. On Win64 PE it IS address-passed (MS
+    # x64 by-pointer ABI), so let it flow through: push &local as the pointer.
+    # ⛔ 6.6.5 — POINTER-MODE vs INLINE. This pushed `&slot` unconditionally, which is right
+    # for an inline stack struct (the slot IS the struct) and WRONG for a pointer-mode local
+    # (the slot HOLDS the struct's address): the callee then deref'd a pointer-to-pointer and
+    # read the address itself as field 0. Measured on 6.6.4, silent and not a crash —
+    # `var b: HB = alloc(24); b.a = 10; ...; f(0, b)` printed 140545185808389 where 42 is
+    # right. Same discrimination `_resolve_field_base_addr` and the method-`self` push use:
+    # the -1 slot-marker predecessor plus the <=8 B single-slot rule.
+    # ⚠ NOT for SIMD. A value-form SIMD local is always inline, and on PE it is address-passed
+    # by the MS x64 by-pointer ABI; its SLTYPE lives in the descriptor band (<= -2048) where
+    # `STRUCTSZ` has no entry, so it must skip the test entirely rather than answer it wrong.
+    # CHANGELOG [6.6.5]
+    var _sa_ptr = 0;
+    if (_is_simd_any(S, lt) == 1) { if (_sarg_vec_ptr(S, fi, argc, lt) == 0) { return 0; } }   # 6.7.11
+    else {
+        if (GLPTRP(S, li) == 0) { _sarg_type_err(S, fi, argc, 0 - lt, PEEKV(S)); }   # 6.7.3 (a `*T` converts: _sarg_name_sid)
+        _sa_ptr = _local_struct_is_ptr(S, li, lt);
+    }
+    # 6.6.20: an inline aggregate (a by-value parameter's copy too, 6.6.16 C7) is pushed as an
+    # address in this frame, exactly as `&s` is — see `_sarg_escapes`.
+    if (_sa_ptr == 1) { EFLLOAD(S, li); } else { _sarg_escapes(fi, argc, tail); EFLADDR(S, li); }
+    EPUSHR(S);
+    STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# ⛔ 6.7.11 — A VECTOR PASSED TO A `*V` PARAMETER PASSES ITS ADDRESS, as a struct passed to a `*T`
+# parameter does (6.6.20); a vector of ANOTHER type is refused by name, as a struct of another type is
+# (6.7.3). The user's decision, 2026-10-13: (a). Vector local (SLTYPE `lt`, the cursor on its name)
+# as argument `argc` of `fi`: 1 = push its address (the caller's arm), 0 = the value push. A
+# value-form vector parameter is not this rule: SysV / aarch64 / cx never reach here (the SIMD
+# mask routes it), nor does Win64 (6.7.14: `_sarg_pe_vform` takes it first). (A `*V` local's SLTYPE is 0: its value.)
+fn _sarg_vec_ptr(S, fi, argc, lt): i64 {
+    var r = _svp_rule(S, fi, argc, lt);
+    if (r >= 0) { return r; }
+    return _TARGET_PE;
+}
+# The pointer rules a vector of type `lt` meets as argument `argc` of `fi` (the cursor on its name): a `*V` of its
+# type 1 (the address is passed), another vector type refused by name (A2) and 1; a pointer of another kind (D27) or
+# a by-value struct (D31) refused by name, 0; -1 = no pointer parameter (a value-form vector, a word).
+fn _svp_rule(S, fi, argc, lt): i64 {
+    var pv = _pvec_param(S, fi, argc);
+    if (pv == 0) {
+        if (_pptr_param(S, fi, argc) == 1) { return _vec_kind_err(S, PEEKV(S), fi); }   # 6.7.12 (D27)
+        if (_vk_param(S, fi, argc) == 2) { return _vec_val_err(S, 0, PEEKV(S), fi, 2); }   # 6.7.13 (D31): a by-value struct
+        return 0 - 1;
+    }
+    if (pv != 0 - lt) {
+        ERR_IDENT(S, "cannot pass ", PEEKV(S), " to a parameter of a different vector type in a call to ",
+          _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    }
+    return 1;
+}
+# ⛔ 6.7.13 (D32 A, the user's decision, 2026-10-15) — A CLOSURE'S CAPTURED VECTOR MEETS THE LOCAL'S ARGUMENT
+# RULES. Inside a closure `|k| ri(b)` / `|k| rp(b)` (`p: *i64` / `p: *Pt`) passed the capture's address and ran (42),
+# where `ri(b)` / `rp(b)` on the local are refused by name (D27): the capture never reached the vector arm
+# (`_CL_CAP_FIELD_IDX` takes a struct capture only), so the value push — a multi-word capture's value is its address —
+# went out unchecked. The name at the cursor, a captured vector (`_cl_cap_vec`), as argument `argc` of an
+# address-passed parameter of `fi`: `_svp_rule` (a `*V` of its type, another vector type, another pointer kind, a
+# by-value struct) — 1, and the caller's value push is the capture's address (`&env[woff]`, right for a `*V`; refused
+# otherwise, no binary). 0 = no captured vector. CHANGELOG [6.7.13]
+fn _sarg_vec_cap(S, fi, argc): i64 {
+    var lt = _cl_cap_vec(S, PEEKV(S));
+    if (lt == 0) { return 0; }
+    _svp_rule(S, fi, argc, lt);
+    return 1;
+}
+# The vector type (its SLTYPE, <= -2048) of the enclosing local `noff` names when a capturing closure's body has
+# captured it, else 0.
+fn _cl_cap_vec(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0; }
+    if (_cl_env_lidx < 0) { return 0; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0; }
+    if (_cl_cap_find(esl) < 0) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (_is_simd_any(S, t) == 0) { return 0; }
+    return t;
+}
+# ⛔ 6.7.14 — ON WIN64 A VALUE-FORM VECTOR PARAMETER TAKES WHAT SYSV'S `_sar_src` TAKES. Win64 passes it by address,
+# under the struct mask, so the SIMD mask's check never ran there and the struct arms took its argument: a vector local
+# of another type had its address pushed unchecked (an f64v4 into `v: f64v2` exited 2, an f64v2 into `v: f32v4` 0, an
+# f32v8 into `v: f64v2` 3; 6.7.13 checked the 32-byte parameters only), a struct local's two words were read as the
+# lanes (42), and an identifier-led expression (`lanes(q + 1)`) pushed its VALUE as the address (5), where x86_64 /
+# aarch64 / cx refuse each by name. Parameter `argc` of `fi` declared a value-form vector (`_pvf_param`), the cursor
+# on its argument, before every struct arm: inside any parentheses wrapping all of it, the sources SysV takes
+# (`_spv_one`: a local or a captured vector, checked by the class rule in SysV's words — `_simd_arg_typecheck`, which
+# refuses a non-vector local too — and its address pushed; a `*V` dereference, its pointer; a vector call,
+# `_sarg_vec_call`'s, whose refusal skips the argument as `_sar_vcall`'s does); anything else is refused by name
+# (`_sar_err`), skipped to its `,` / `)` and 0 pushed — one line, no binary; a call naming no fn (6.7.14) is left to
+# the value push (0), as `_sar_none` leaves it. 1 = pushed, -1 = no Win64 value-form parameter. It folds 6.7.13's
+# `_sarg_pe_v32` (the 32-byte check) and `_sarg_pe_vword` (D30's word refusal).
+# 6.7.14 (D33 A, the user's decision, 2026-10-16): an address-of `&w` is refused there too, with the other targets'
+# words — Win64 alone passed it (the by-address ABI copied the vector it pointed at: 42), x86_64 / aarch64 / cx refuse
+# it, and `var v: f64v2 = &w;` is refused on every target; `&` converts into a POINTER parameter (6.7.12's D27 B), not
+# into a value. Its own-call receives route `f(&a, ..)` to `f_ptr` as PARSE_FNCALL does (`_pe_venter`).
+# CHANGELOG [6.7.14]
+fn _sarg_pe_vform(S, fi, argc, tail): i64 {
+    if (_TARGET_PE != 1) { return 0 - 1; }
+    var vf = _pvf_param(S, fi, argc);
+    if (vf == 0) { return 0 - 1; }
+    var ti = GTI(S);
+    _sar_ti = ti;
+    var c = _pwrap_in(S, ti);   # 6.7.14: inside parentheses wrapping the whole argument, as `_sar_take` reads it
+    if (c < 0) { c = _vmc_phead(S, ti); }   # 6.7.16: a vector method on a parenthesised head, `(*ps).mv()`
+    if (c >= 0) {
+        STI(S, c);
+        if (_spv_one(S, fi, argc, tail, vf) == 1) {
+            _pw_close(S, c - ti);
+            return 1;
+        }
+        STI(S, ti);
+    }
+    if (_vrcv_nofnw(S, ti, _arg_next(S, ti)) == 1) { return 0; }   # 6.7.14: the value push, as `_sar_none`
+    _sar_err(S, ti, fi);
+    return _spv_skip(S, ti);
+}
+# The source at the cursor, unwrapped, as `_sar_one` takes it: a local — checked by the class rule in SysV's words
+# (`_simd_arg_typecheck`, reported at its end as the SysV record does) and its address pushed; (6.7.14, D31 A) a
+# closure's captured vector — checked the same way, the address of its env words pushed (the callee copies them in);
+# (D32 A) a whole dereference of a vector (`_sar_dsrc`) — checked the same way, its pointer pushed; a vector call —
+# `_sarg_vec_call`'s (its refusal skips the source); 1 = pushed, 0 = no such source (nothing moved).
+fn _spv_one(S, fi, argc, tail, vf): i64 {
+    var c = GTI(S);
+    var li = _spv_local(S, c);
+    if (li >= 0) {
+        STI(S, c + 1);
+        _simd_arg_typecheck(S, _vf_cls(S, 0 - vf), GLTYPE(S, li), vf);
+        _sarg_escapes(fi, argc, tail);
+        EFLADDR(S, li);
+        EPUSHR(S);
+        return 1;
+    }
+    var t = _spv_cap(S, c);
+    if (t != 0) {   # 6.7.14 (D31 A): a captured vector, checked as the local is; its env words' address
+        STI(S, c + 1);
+        _simd_arg_typecheck(S, _vf_cls(S, 0 - vf), t, vf);
+        _cap_vaddr(S, TOKVAL(S, c));
+        EPUSHR(S);
+        return 1;
+    }
+    var vd = _sar_dsrc(S, fi);   # 6.7.14 (D32 A): a whole `*E` — its pointer, the address the callee copies from
+    if (vd != 0 - 1) {
+        if (vd > 0) { _simd_arg_typecheck(S, _vf_cls(S, 0 - vf), 0 - vd, vf); }
+        else { EMOVI(S, 0); }
+        EPUSHR(S);
+        return 1;
+    }
+    if (_svc_rs(S, c) != 0) {
+        if (_sarg_vec_call(S, fi, argc, tail) == 1) { return 1; }
+        return _spv_skip(S, c);   # refused by `_sarg_vec_call`: another vector type, or at top level
+    }
+    return 0;
+}
+# The local a whole argument at token `ti` names (`,` or `)` after it), as `_sar_src` reads one; else -1.
+fn _spv_local(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    var nx = TOKTYP(S, ti + 1);
+    if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    return FINDLOCAL(S, TOKVAL(S, ti));
+}
+# A refused argument at token `ti`: skipped to its `,` / `)` and 0 pushed, so the parse stays in step and the value
+# parse adds no line of its own. 1.
+fn _spv_skip(S, ti): i64 {
+    STI(S, _arg_next(S, ti));
+    EMOVI(S, 0);
+    EPUSHR(S);
+    return 1;
+}
+# The vector type (its descriptor sid) parameter `k` of fn `fi` points at when it is declared `*V`,
+# read from the definition's tokens (a call above the definition has them too); 0 = not a `*V`.
+fn _pvec_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    var i = _dps_ts;
+    if (TOKTYP(S, i) != 8) { return 0; }
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    var tn = TOKVAL(S, i + 1);
+    return _ptc_vec_sid(_classify_param_type(S, tn));
+}
+# The vector type (its descriptor sid) of parameter `k` of fn `fi` when it is a VALUE-form vector (`v: f64v2`), read
+# from the definition's tokens as `_pvec_param` reads a `*V`; 0 = none. Win64 passes it by address, under the struct
+# mask, so no SIMD mask names it there. CHANGELOG [6.7.13]
+fn _pvf_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    var i = _dps_ts;
+    if (TOKTYP(S, i) != 2) { return 0; }
+    return _ptc_vec_sid(_classify_param_type(S, TOKVAL(S, i)));
+}
+# 1 = parameter `k` of fn `fi` is declared a pointer (`p: *T`, `**T`, `*fn(..)`), read as `_pvec_param` reads it.
+fn _pptr_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    if (TOKTYP(S, _dps_ts) != 8) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.12 — A VECTOR LOCAL INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME (D27, the user, 2026-10-15: B —
+# "another pointer kind refused by name"). `rp(b)` with `p: *Pt` and `ri(b)` with `p: *i64` pushed the
+# vector's lane 0 as the address (139 on x86_64 and aarch64, a cx guest fault, exit 5 on PE; PE's `rp(b)`
+# pushed `&b` by accident, 42): a vector is no `*Pt`, as a struct of another type is no `*S` (6.7.3). The
+# name `noff` as an argument of `fi`; 0 (the value push keeps the parse in step, no binary is written).
+fn _vec_kind_err(S, noff, fi): i64 {
+    return _agg_kind_err(S, noff, fi, "vector");
+}
+# ... `kind` "vector" or "struct" (6.7.13 D5 (a), `_sarg_struct_other`).
+fn _agg_kind_err(S, noff, fi, kind): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_agg_kind_err", (noff * 31 + fi) * 31 + kind, 0) == 1) { return 0; }   # 6.7.15: once
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass '");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("' to a parameter that is not a pointer to its ");
+    PRSTR(kind);
+    PRSTR(" type in a call to '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("' - pass &");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR(" for its address\n");
+    _err_excerpt(S);
+    _had_error = 1;   # no `_panic`: the parse is in step, so one compile reports every such argument
+    return 0;
+}
+# ⛔ 6.7.13 (D31 A, the user's decision, 2026-10-15) — EVERY VECTOR VALUE INTO A POINTER OF ANOTHER KIND, OR INTO A
+# BY-VALUE STRUCT PARAMETER, IS REFUSED BY NAME. D27 (6.7.12) refused a vector LOCAL into `*Pt` / `*i64`; a vector call
+# result (`rp(mkv(42, 7))`, `ri(mkv(42, 7))`) and a `*V` dereference (`rp(*pb)`, `ri(*pb)`) are the same vector values
+# D27 passes to a `*V`, and they still pushed lane 0 as the address (139 on x86_64 / aarch64, a cx guest fault, PE 5); a
+# vector local into a by-value struct parameter (`bv(b)`, `p: Pt`) took lane 0 the same way off Win64, and on Win64
+# passed `&b` by accident (42). Parameter `k` of fn `fi`, for a vector argument: 1 = a pointer of another kind (`*S`,
+# `*i64`, `**T`, any `*T` that is no `*V`), 2 = a by-value struct (GFPSID: a plain struct of any size, a tuple),
+# 0 = neither (a `*V`, a value-form vector, a word). CHANGELOG [6.7.13]
+fn _vk_param(S, fi, k): i64 {
+    if (_pptr_param(S, fi, k) == 1) {
+        if (_pvec_param(S, fi, k) != 0) { return 0; }
+        return 1;
+    }
+    var ps = GFPSID(S, fi, k);
+    if (ps <= 0) { return 0; }
+    if (ps >= 2048) { return 0; }
+    return 2;
+}
+# The refusal of a vector value — the call or name `noff`, a dereference (`star` 1: `*noff`) — as an argument of `fi`
+# whose parameter is of kind `kd` (`_vk_param`), at the cursor: D27's words for another pointer kind, "a vector is not
+# a struct" for a by-value struct. No `_panic` (the value push keeps the parse in step, one compile reports every such
+# argument). 0.
+fn _vec_val_err(S, star, noff, fi, kd): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_vec_val_err", ((noff * 31 + fi) * 31 + kd) * 2 + star, 0) == 1) { return 0; }   # 6.7.15
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass '");
+    if (star == 1) { PRSTR("*"); }
+    PRSTR(S + 0xEC00000 + noff);
+    if (kd == 2) { PRSTR("' to a by-value struct parameter in a call to '"); }
+    else { PRSTR("' to a parameter that is not a pointer to its vector type in a call to '"); }
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    if (kd == 2) { PRSTR("' - a vector is not a struct\n"); }
+    else { PRSTR("'\n"); }
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# The same for a whole vector argument to parameter `argc` of `fi` that is not address-passed — a `*i64`, `*u8`,
+# `**T` (D27, a LOCAL), or (6.7.13, D31) a by-value struct of 8 B or less — by its tokens: a vector local or (6.7.13,
+# D32) a closure's captured vector (inside any parentheses wrapping the whole argument), or a call declared to return
+# a vector (`_svc_rs`), inside any such parentheses too; a dereference is judged once parsed (6.7.14, `_sarg_vdo`).
+# The cursor on the argument (`_sarg_byval_small`); nothing is consumed. 1 = refused.
+fn _sarg_vec_other(S, fi, argc): i64 {
+    var kd = _vk_param(S, fi, argc);
+    if (kd == 0) { return 0; }
+    var ti = _sarg_wname(S);
+    if (ti >= 0) {
+        if (GINFN(S) != 1) { return 0; }
+        var li = FINDLOCAL(S, TOKVAL(S, ti));
+        var lt = 0;
+        if (li >= 0) { lt = GLTYPE(S, li); }
+        else { lt = _cl_cap_vec(S, TOKVAL(S, ti)); }   # 6.7.13 (D32): a closure's captured vector too
+        if (_is_simd_any(S, lt) == 0) { return 0; }
+        if (kd == 1) { return _svo_err(S, ti, 2, TOKVAL(S, ti), fi, kd); }
+        return _svo_err(S, ti, 0, TOKVAL(S, ti), fi, kd);
+    }
+    var c = _svo_inner(S);
+    if (_svc_rs(S, c) != 0) { return _svo_err(S, c, 0, _svc_nm, fi, kd); }
+    return 0;   # (6.7.14: a dereference is `_sarg_vdo`'s, once it is parsed)
+}
+# Report at token `ti`: `how` 2 = D27's local words (`_vec_kind_err`, with its `&` hint), 1 = a dereference, 0 = a name
+# or call (`_vec_val_err`). 1.
+fn _svo_err(S, ti, how, noff, fi, kd): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    if (how == 2) { _vec_kind_err(S, noff, fi); }
+    else { _vec_val_err(S, how, noff, fi, kd); }
+    STI(S, sv);
+    return 1;
+}
+# The first token inside parentheses wrapping the whole argument at the cursor (ending at `,` / `)`), else the cursor.
+fn _svo_inner(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) != 10) { return ti; }
+    var k = _pwrap_k(S, ti);
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return ti; } }
+    return ti + k;
+}
+# ⛔ 6.7.14 — EVERY `*V` DEREFERENCE INTO A POINTER OF ANOTHER KIND OR A SMALL BY-VALUE STRUCT IS REFUSED BY NAME
+# (6.7.13's D31 A: every vector value there is). `ri(**ppb)`, `ri(*gp(pb))`, `ri(*h.pv)`, `ri(*GPV)`, `ri(*(pb + 0))`,
+# `ri(*&b)` into `p: *i64` (`*u8`, `**T`, a by-value struct of 8 B or less) pushed lane 0 as the address — 139 on x86_64
+# / aarch64, a cx guest fault, PE 5, no diagnostic — where `rp(**ppb)` into `*Pt` and `ri(*pb)` were refused: this arm
+# judged a dereference by its tokens (`* NAME` of a `*V` local, the retired `_svo_vderef`), the address-passed one by
+# its operand's type once parsed (`_dlo_vec`). Parameter `argc` of `fi` not address-passed, of such a kind
+# (`_vk_param`), the whole argument (inside any parentheses, `_svo_inner`) starting with `*`: that `*` is watched
+# (`_dro_vo`) while `_sarg_byval_small` parses and pushes the argument as before; when its operand named a vector (the
+# step word or an `&x` of one, `_dop_vd`) and ended the argument (`_dro_vnote`), the argument is refused by name —
+# `cannot pass '**ppb' to a parameter that is not a pointer to its vector type in a call to 'ri'`, the argument as the
+# source spells it (6.7.15, `_src_span_nm`; it was the operand's last name, '*ppb') — once, without `_panic`. A
+# `*i64`'s `*ppi` and a `**Pt`'s `*pps` push their word as before. Returns as `_sarg_byval_small` does.
+# CHANGELOG [6.7.14]
+fn _sarg_vdo(S, fi, argc): i64 {
+    var c = _svo_inner(S);
+    if (TOKTYP(S, c) != 8) { return _sarg_byval_small(S, fi, argc); }
+    var kd = _vk_param(S, fi, argc);
+    if (kd == 0) { return _sarg_byval_small(S, fi, argc); }
+    var vo = _dro_vo;
+    var vd = _dro_vod;
+    var ve = _dro_vend;
+    _dro_vo = c;
+    _dro_vod = 0;
+    var r = _sarg_byval_small(S, fi, argc);
+    if (_dro_vod != 0) { _svo_err(S, c, 1, _svo_nm(S, c + 1, _dro_vend), fi, kd); }
+    _dro_vo = vo;
+    _dro_vod = vd;
+    _dro_vend = ve;
+    return r;
+}
+# The name token of a whole argument at the cursor that is one name, inside any parentheses that wrap all of
+# it, ending at `,` / `)`; -1 for any other shape.
+fn _sarg_wname(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) == 10) {
+        var k = _pwrap_k(S, ti);
+        var e = TOKTYP(S, _pw_end);
+        if (e != 31) { if (e != 11) { return 0 - 1; } }
+        ti = ti + k;
+        if (TOKTYP(S, ti + 1) != 11) { return 0 - 1; }
+    } else {
+        var nx = TOKTYP(S, ti + 1);
+        if (nx != 31) { if (nx != 11) { return 0 - 1; } }
+    }
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    return ti;
+}
+# ⛔ 6.7.13 — A STRUCT VALUE INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME (the user's decision D5 (a),
+# 2026-10-15). `ri(s)` with `p: *i64` (`*u8`, `*f64`, `**T`, any `*T` whose T is no struct) and `s` an inline
+# struct — a local, a by-value parameter, a value global, a closure's captured copy, any size — pushed s's
+# first word as the address (139 on x86_64 / aarch64, a cx guest fault, exit 5 on PE): a struct is no `*i64`,
+# as a vector is not (D27) and a struct of another type is no `*S` (6.7.3). The whole argument at the cursor
+# (`_sarg_wname`) to parameter `argc` of `fi`, a pointer (`_pptr_param`) that is not address-passed (the
+# caller, `_sarg_byval_small`) and records no struct (a `*Str` is the struct check's, 6.7.3). The name is an
+# inline struct as `&` reads one (`_hl_amp_sid`): a handle, a `*T` and a `Str` (their word is the address)
+# pass as before. 1 = refused: nothing consumed, the value push keeps the parse in step, no binary is
+# written. CHANGELOG [6.7.13]
+fn _sarg_struct_other(S, fi, argc): i64 {
+    var ti = _sarg_wname(S);
+    if (ti < 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_hl_amp_sid(S, noff) <= 0) { return 0; }
+    if (_pptr_param(S, fi, argc) == 0) { return 0; }
+    if (GFPSID(S, fi, argc) > 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _agg_kind_err(S, noff, fi, "struct");
+    STI(S, sv);
+    return 1;
+}
+# ⛔ 6.7.14 — EVERY STRUCT VALUE INTO A POINTER OF ANOTHER KIND IS REFUSED BY NAME, not only a name (6.7.13's D5 (a);
+# its vector twin D31 refuses "at every source"). A struct-typed field `ri(w.s)`, a by-value struct call `ri(mk())`, a
+# method or operator result `ri(o.m())`, a dereference `ri(*pp)` / `ri(**ppp)` of a `*S` — inside any parentheses that
+# wrap the whole argument — into `p: *i64` (`*u8`, `**T`, any `*T` recording no struct) pushed the value's first word
+# as the address (139 on x86_64 and aarch64, a cx guest fault, PE 5). The argument at the cursor, not a name (that is
+# `_sarg_struct_other`'s), to parameter `argc` of `fi`, a pointer that is not address-passed and records no struct: it
+# is parsed and pushed as the caller's fallback pushes it (PCMPE + EPUSHR, byte-identical), and refused when it is a
+# plain struct value by the records `_expr_struct_sid` / `_ess_deref` read — a `*T` field, a `: *T` call or method and an
+# address record none (their word is the address), and a `Str` / tuple / dyn is no plain struct. 1 = pushed.
+# CHANGELOG [6.7.14]
+fn _sarg_sval_ptr(S, fi, argc): i64 {
+    if (_sarg_wname(S) >= 0) { return 0; }
+    if (_pptr_param(S, fi, argc) == 0) { return 0; }
+    if (GFPSID(S, fi, argc) > 0) { return 0; }
+    var st = GTI(S);
+    var sid = _expr_struct_sid(S, st);
+    var star = 0;
+    if (sid == 0) {
+        sid = _ess_deref(S, st);
+        if (sid > 0) { star = _sval_stars(S, st); }
+    }
+    if (sid > 0) { if (sid < 2048) { if (_dx_plain(S, sid) == 1) { _sval_kind_err(S, st, star, _ess_nm, fi); } } }
+    EPUSHR(S);
+    return 1;
+}
+# The `*`s a whole dereference argument at `st` opens with, inside the parentheses that wrap it (`**pp` 2).
+fn _sval_stars(S, st): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var n = 0;
+    while (TOKTYP(S, a + n) == 8) { n = n + 1; }
+    return n;
+}
+# The refusal at token `ti` of a struct value — `noff` (a field, call or method name), behind `star` `*`s — passed to a
+# pointer of another kind of `fi`: D5 (a)'s words, without the `&` hint a name gets (D31's `_vec_val_err` is its vector
+# twin). No `_panic`: the parse is in step, so one compile reports every such argument. 0.
+# 6.7.16: a dereference (`star` > 0, `_ess_deref`'s) is named as the source spells it — its `*`s, then its operand's
+# tokens (`*gps(&s)`; it was `*` and the operand's last name, '*s') — rendered here, at the refusal; its once-key is the
+# span's start, not the scratch the span is written at. CHANGELOG [6.7.16]
+fn _sval_kind_err(S, ti, star, noff, fi): i64 {
+    if (_panic == 1) { return 0; }
+    var key = noff;
+    if (star > 0) { key = _ess_da; }
+    if (_derr_seen(ti, "_sval_kind_err", (key * 31 + fi) * 31 + star, 0) == 1) { return 0; }   # 6.7.15: once
+    var nm = _fn_src_name(S, FINDFN(S, noff), noff);   # a method by its source name: `Pt.dup`
+    if (star > 0) { nm = _src_span_nm(S, _ess_da + star, _ess_de, noff); }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot pass '");
+    while (star > 0) { PRSTR("*"); star = star - 1; }
+    PRSTR(S + 0xEC00000 + nm);
+    PRSTR("' to a parameter that is not a pointer to its struct type in a call to '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("' - a struct value is no address\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;
+    return 0;
+}
+# ⛔ 6.7.12 — A VECTOR CALL RESULT INTO A `*V` PARAMETER PASSES A TEMP'S ADDRESS (D27, the user, 2026-10-15: B).
+# `rd(mkv(42, 7))` with `p: *f64v2` pushed the call's value — lane 0 — as the address: 139 on x86_64 and
+# aarch64, a cx guest fault, exit 5 on PE (x86_64 refused it through 6.7.10 by the value-form path's text; the
+# 6.7.11 `*V` parameter made it compile). A vector is the guide's other value-form aggregate, and a struct
+# call result into `*S` is received into a frame temp whose address is passed (6.6.20): the same here. The
+# whole argument at the cursor (`_sarg_paren` peels a wrap) is a call declared to return a vector — by name, or
+# `fncallN(&f, ..)` / `callptr(&f, ..)` — and parameter `argc` of `fi` is a `*V`: the call is received into
+# anonymous slots as a vector local is (`_vrcv_emit`: the register pair stored, on PE the slots' address its
+# hidden result pointer), whose address is pushed (`_sarg_escapes`: a tail call diverts). A vector of another
+# type is refused with A2's words; at top level there is no frame (a value-form vector is a local): refused by
+# name, as a struct result is there. 1 = pushed; 0 = not this arm, or refused (the value push follows).
+var _svc_k = 0;    # `_svc_rs`'s source kind for `_vrcv_emit`: 1 by name (an explicit instance too), 2 through `&f`, 3 a method (`_vmc_fi`; 6.7.13)
+var _svc_nm = 0;   # ... and the callee's name
+# 6.7.13 (D30 A): and on Win64 a VALUE-form vector parameter, which is passed by address there: the temp is the call's
+# hidden result pointer and its address is what the callee copies in (`lanes(mkv(4, 2))` passed lane 0 as the
+# address: exit 5); the call's vector meets the rule a local of its type meets (`_sar_vok`), as on SysV / AAPCS64 / cx.
+fn _sarg_vec_call(S, fi, argc, tail): i64 {
+    var pv = _pvec_param(S, fi, argc);
+    var vf = 0;
+    if (pv == 0) { if (_TARGET_PE == 1) { vf = _pvf_param(S, fi, argc); } }
+    if (pv == 0) { if (vf == 0) { return _svc_kind(S, fi, argc); } }
+    var rs = _svc_rs(S, GTI(S));
+    if (rs == 0) { return 0; }
+    var ok = 0;
+    if (vf != 0) { ok = _sar_vok(S, _vf_cls(S, 0 - vf), rs, vf); }
+    elif (0 - rs == pv) { ok = 1; }
+    if (ok == 0) {
+        ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ",
+          _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+        return 0;
+    }
+    if (GINFN(S) != 1) { return _svc_toplevel_err(S); }
+    _vec_desc(S, rs);
+    var t = _agg_temp_t(S, GVEC_NSLOTS(S), rs);
+    _vrcv_k = 0;
+    _vrcv_emit(S, t, rs, _svc_k);
+    _sarg_escapes(fi, argc, tail);
+    EFLADDR(S, t);
+    EPUSHR(S);
+    return 1;
+}
+# The vector (its descriptor, negative) the WHOLE argument at token `ti` returns when it is a call declared
+# to return one — by name (`_vcall_fi`; 6.7.13: an explicit instance `g<T>(..)` too, read past its `<..>`),
+# `fncallN(&f, ..)` / `callptr(&f, ..)` (`_icall_rs_at`), or (6.7.13) a method `x.m(..)` (`_vmc_fi`): D27's `*V`
+# rule for every call declared to return the vector — `rd(s.mv(42, 7))` pushed lane 0 as the address (139 / cx
+# 253 / PE 5; issues/archived/2026-10-15-vector-value-into-other-pointer-or-byvalue-struct-and-unreceived-call-sources.md
+# row 6); else 0.
+fn _svc_rs(S, ti): i64 {
+    var rs = _icall_rs_at(S, ti);
+    var o = ti + 1;
+    if (rs <= 0 - 2048) {
+        _svc_k = 2;
+        _svc_nm = TOKVAL(S, _icall_fti(S, ti));
+    } else {
+        var vf = _vcall_fi(S, ti);
+        _svc_k = 1;
+        _svc_nm = TOKVAL(S, ti);
+        if (vf < 0) {   # 6.7.13: a method `x.m(..)` declared to return a vector (`_vmc_fi`; `_vrcv_emit` kind 3)
+            vf = _vmc_fi(S, ti);
+            if (vf < 0) { return 0; }
+            _svc_k = 3;
+            _svc_nm = TOKVAL(S, _vmc_mt);   # 6.7.15: a field chain's method too
+        }
+        rs = GFRS(S, vf);
+        o = _vcall_o;
+    }
+    var nx = TOKTYP(S, _call_close(S, o) + 1);   # the whole argument: `,` or `)` follows the call
+    if (nx != 31) { if (nx != 11) { return 0; } }
+    return rs;
+}
+# 6.7.13 (D31 A): a whole vector call into an address-passed parameter that is no vector's — a `*S` / `*T` of another
+# kind, a by-value struct over 8 B (`_vk_param`) — refused by name (`_vec_val_err`); 0 either way (the value push
+# follows, no binary is written).
+fn _svc_kind(S, fi, argc): i64 {
+    var kd = _vk_param(S, fi, argc);
+    if (kd == 0) { return 0; }
+    if (_svc_rs(S, GTI(S)) == 0) { return 0; }
+    _vec_val_err(S, 0, _svc_nm, fi, kd);
+    return 0;
+}
+fn _svc_toplevel_err(S): i64 {
+    if (_panic == 1) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + _svc_nm);
+    PRSTR("' returns a vector by value, and a vector result needs storage in a fn's frame - call it inside a fn\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+# ... at token `ti`, naming token `nt`'s name; the cursor kept. 1. 6.7.15 (D26): a top-level declaration's
+# (`_vtop_ref`).
+fn _svc_toplevel_at(S, ti, nt): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    _svc_nm = TOKVAL(S, nt);
+    _vop_done = ti;   # 6.7.16 (D100): the call's one refusal
+    _svc_toplevel_err(S);
+    STI(S, sv);
+    return 1;
+}
+
+# ⛔ 6.7.10 (ops-5) — A WHOLE DEREFERENCE AS AN ADDRESS-PASSED ARGUMENT PASSES ITS POINTER (the user's
+# decision 6: `*p` is a struct value at every size). `take(*p)`, `take((*p))`, `take(*gp())`, `take(*w.ps)` into
+# a by-value struct parameter over 8 B, or into a `*S` parameter of any size, pushed the word the dereference
+# READ as the struct's address — SIGSEGV on x86_64 and aarch64, an access violation on PE, a guest error on
+# cx — while `take(p)` passed the pointer. The `*` that starts the argument is parked (`_dro_want`: the
+# pointer in a hidden temp, `_dlo_park`); when the dereference is the whole argument, nothing emitted since
+# (`_dro_take`), the pointer is pushed — as `take(p)` pushes it, the callee copying a by-value parameter in
+# its prologue — and its struct is checked against the parameter's (a struct value of another type is
+# refused by name, as a variable is). Anything else is `_push_struct_expr_arg`'s, as before. CHANGELOG [6.7.10]
+fn _sarg_deref(S, fi, argc, tail): i64 {
+    var dw = _dro_want;
+    var dv = _dro_vt;
+    _dro_want = GTI(S);
+    _dro_vt = _dro_vt_for(S, fi, argc);   # 6.7.12 (D27): a `*V` parameter takes a vector's pointer
+    var r = _push_struct_expr_arg(S, fi, argc, tail);
+    _dro_want = dw;
+    _dro_vt = dv;
+    return r;
+}
+# ⛔ 6.7.12 — A VECTOR DEREFERENCE INTO A `*V` PARAMETER PASSES ITS POINTER (D27, the user, 2026-10-15: B). `rd(*pb)`
+# with `pb: *f64v2` and `p: *f64v2` pushed lane 0 — the word the dereference read — as the address (139 on
+# x86_64 and aarch64, a cx guest fault, exit 5 on PE), as `take(*p)` did for a struct before 6.7.10's decision
+# 6. The `*` that starts the argument is parked as a struct's is when parameter `argc` of `fi` is a `*V`
+# (`_dlo_vec`, parse/expr.cyr: the operand's step word names its vector, `_ps_vdesc`) and pb itself is
+# pushed (`_push_struct_expr_arg`); a `*` of another vector type is refused with A2's words (`_dro_check`).
+# The `*` token for `_dlo_vec`, -1 when the parameter is no `*V`.
+# 6.7.13 (D31 A): and for a pointer of another kind or a by-value struct (`_vk_param`), where `_dro_vcheck` refuses a
+# parked `*V` dereference by name (`rp(*pb)` pushed lane 0 as the address).
+fn _dro_vt_for(S, fi, argc): i64 {
+    if (_pvec_param(S, fi, argc) == 0) { if (_vk_param(S, fi, argc) == 0) { return 0 - 1; } }
+    return GTI(S);
+}
+# 1 = the dereference `_dlo_park` parked spans [b, cursor) — inside any parentheses wrapping the whole of
+# it — and nothing was emitted since its load: the pointer is in `_dlo_h`.
+fn _dro_take(S, b): i64 {
+    if (_dlo_cp != GCP(S)) { return 0; }
+    return _opd_span(S, _dlo_beg, _dlo_end, b);
+}
+# The taken dereference as parameter `k` of fn `fi`: its struct checked, the argument named as the source spells it
+# (6.7.15, `_src_span_nm`: `*gq(pq)`; it named the operand's last name, `pq`). The caller then reloads the pointer from
+# `_dlo_h` (`_HTLOAD`; the right operand's through `_opd_operand`).
+fn _dro_check(S, fi, k): i64 {
+    if (_dlo_sid >= 2048) { return _dro_vcheck(S, fi, k); }   # 6.7.12: a vector's (`_dlo_vec`)
+    return _sarg_type_err(S, fi, k, _dlo_sid, _dro_nm(S, _dlo_beg));
+}
+# The taken dereference's tokens from `a` (its `*`, or past it) to its end, as the source spells them; else (6.7.11) the
+# operand's last name: `*gu<U>()` names `gu`.
+fn _dro_nm(S, a): i64 { return _src_span_nm(S, a, _dlo_end, _hl_lastnm(S, _dlo_beg + 1, _dlo_end, 0)); }
+# The tokens [a, e) as the source spells them, else (6.7.14) their last name.
+fn _svo_nm(S, a, e): i64 { return _src_span_nm(S, a, e, _hl_lastnm(S, a, e, 0)); }
+fn _dro_vcheck(S, fi, k): i64 {
+    var pv = _pvec_param(S, fi, k);
+    if (pv == _dlo_sid) { return 0; }
+    var kd = _vk_param(S, fi, k);
+    if (pv == 0) { return _svo_err(S, _dlo_beg, 1, _dro_nm(S, _dlo_beg + 1), fi, kd); }   # 6.7.13 (D31)
+    ERR_IDENT(S, "cannot pass ", _dro_nm(S, _dlo_beg), " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4) — A MULTI-VALUE CALL AS A TUPLE ARGUMENT (`g(f())`, `f` declared `: (i64, i64)`, or
+# undeclared with every return `(a, b)` — `_mv_callee`, CHANGELOG [6.7.13]).
+# The parameter takes a tuple's ADDRESS, and the call leaves its values in the return registers —
+# nothing to point at — so the value push handed the callee the first value as an address (a
+# SIGSEGV, or a silent read through it). Refused by name: bind the values first. Cursor on the
+# callee's name; 1 = reported (the caller then pushes the argument as before, the parse in step,
+# `_had_error` withholding the binary). A whole call only: `g(f() + 1)` is an integer, which the
+# struct rule passes as an address as it does any untyped value. CHANGELOG [6.7.7]
+fn _tup_arg_call(S, fi, argc): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    var ti = GTI(S);
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    var cfi = _gen_resolve_call(S, ti);
+    if (_mv_callee_any(S, cfi) == 0) { return 0; }   # declared or counted (6.7.13); a counted `: i64` too (6.7.14)
+    return _tup_arg_mv_err(S, ti, ps, TOKVAL(S, ti), "(..)");
+}
+# ⛔ 6.7.14 — AN INTEGER LITERAL IS NO TUPLE (D44, the user's decision, 2026-10-16). `take(5)` pushed 5 as the
+# tuple's address and the callee read through it (139 / 139 / 1 / 5 on x86_64 / aarch64 / cx / PE), where the
+# tuple VARIABLE refuses it ("cannot initialize tuple 't' with a value that is not a tuple"). Refused by name at
+# the literal — a whole argument, inside any parentheses (`_sarg_paren` peels them) — in sync: the caller pushes
+# it as before and `_had_error` withholds the binary. Any other untyped word (`&t`, a name, a one-value call) is
+# still the address, as for a struct parameter: a tuple has no `*T` spelling. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AN ARGUMENT MADE ONLY OF LITERALS AND OPERATORS IS NO TUPLE EITHER (D36, the user's decision,
+# 2026-10-18): `take(-5)`, `take((-5))`, `take(true)` and `take(5 + 0)` compiled and the callee read through the
+# value (139 / 139 / 1 / 5), because only a lone integer literal reached the check. The whole argument is scanned
+# (`_tal_scan`): integer / char literals, `true` / `false`, operators and parentheses only — refused as "an
+# integer", or "a bool" when its every literal is `true` / `false`. A name (a const too), a call, `&` / `*` in front
+# of an operand or a string exempts it. `_tup_is` first: only a tuple parameter pays for the scan.
+# 6.7.16: a boolean value — a comparison, `!x`, `&&` / `||` — is "a bool" too (`_tal_kind`).
+# ⛔ 6.7.16 — A FLOAT LITERAL IS NO TUPLE (D23, the user's decision, 2026-10-19): `take(1.5)`, `take(-1.5)`,
+# `take((2.0))` and `take(1.5 + 1)` compiled and the callee read through the f64's bits (139 / 139 / 1 / 5 on x86_64
+# / aarch64 / cx / PE): `_tal_scan` took no float literal, so the argument was exempt. It takes one now, and an
+# argument whose value is an f64 is refused as "an f64"; a float comparison (`take(1.5 < 2.0)`) is "a bool".
+fn _tup_arg_lit(S, fi, argc): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    var lk = _tal_scan(S, GTI(S));
+    if (lk == 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o > 0) { if (TOKTYP(S, o - 1) != 2) { return 0; } }   # `fn g<T>(`: its tuple parameter is refused there (R4)
+    lk = _tal_kind(S, lk);
+    if (lk == 0) { return 0; }   # 6.7.16: no single expression — the parse's own error, alone
+    if (_dyn_ebeg(S, GTI(S)) == 0) { return 1; }
+    if (lk == 2) { PRSTR("cannot pass a bool to tuple parameter "); }
+    elif (lk == 3) { PRSTR("cannot pass an f64 to tuple parameter "); }
+    else { PRSTR("cannot pass an integer to tuple parameter "); }
+    var pn = _bx_pname(S, fi, argc);
+    if (pn >= 0) {
+        _dyn_pq(S, pn);
+        PRSTR(" ");
+    }
+    _dyn_ps(S, ps);
+    PRSTR(" of ");
+    _dyn_pq(S, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR(" - it takes a tuple");
+    _dyn_eend(S);
+    return 1;
+}
+# 6.7.15 (D36) — the argument from token k to its depth-0 `,` / `)`: 1 = made only of integer / char literals,
+# `true` / `false`, operators and parentheses, with an integer or char literal among them (6.7.16, D23: or a float
+# literal); 2 = the same with every literal a `true` / `false`; 0 = anything else. `-` / `~` / `!` stand in front of an operand; `*` and `&` only
+# between two (in front of one they read or take an address).
+fn _tal_scan(S, k): i64 {
+    var n = GTCNT(S);
+    var d = 0;
+    var ints = 0;
+    var bools = 0;
+    var opnd = 0;   # 1 = the token before ends an operand: a literal or a `)`
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 31 || t == 11) {
+            if (d == 0) { return _tal_end(ints, bools, opnd); }
+            if (t == 31) { return 0; }
+            d = d - 1;
+        } elif (opnd == 1) {
+            if (_tal_binop(t) == 0) { return 0; }
+            opnd = 0;
+        } elif (t == 1 || t == 61) {
+            ints = 1;
+            opnd = 1;
+        } elif (t == 169 || t == 170) {
+            bools = 1;
+            opnd = 1;
+        } elif (t == 10) { d = d + 1; }
+        elif (t != 7 && t != 37 && t != 171) { return 0; }
+        k = k + 1;
+    }
+    return 0;
+}
+fn _tal_end(ints, bools, opnd): i64 {
+    if (opnd == 0) { return 0; }
+    if (ints == 1) { return 1; }
+    if (bools == 1) { return 2; }
+    return 0;
+}
+# A binary operator `_tal_scan` takes: + - * / == != < > <= >= & % | ^ << >> && || >>> and the wrapping /
+# saturating / checked +% +| +? -% -| -? *% *| *?.
+fn _tal_binop(t): i64 {
+    if (t >= 6 && t <= 9) { return 1; }
+    if (t >= 17 && t <= 22) { return 1; }
+    if (t == 27 || t == 34 || t == 35 || t == 36 || t == 38 || t == 39) { return 1; }
+    if (t == 53 || t == 54 || t == 152) { return 1; }
+    if (t >= 113 && t <= 121) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.16 — A COMPARISON, `!x` OR `&&` / `||` ARGUMENT IS "A BOOL". D36's words said "a bool" only when every
+# literal was `true` / `false`, so `take(1 == 1)`, `take(!0)` and `take(1 < 2 && 3 > 2)` said "an integer" where
+# guide § bool counts a comparison, `!x`, `&&` / `||` — or any of these in parentheses — a boolean value. The words
+# follow the argument's value: 2 when every literal is `true` / `false` (D36) or the value is a boolean one; 3 an
+# f64 (D23); else 1. CHANGELOG [6.7.16]
+# ⛔ 6.7.16 — AND 0, NOT JUDGED, WHEN THE TOKENS ARE NO SINGLE EXPRESSION. `_tal_scan` checks the vocabulary, not the
+# grammar, so `take(1 < 2 < 3)` (one comparison per operand, _PLOGIC_ATOM), `take(1 == 1 == 1)` and
+# `take((1 +) - 2)` printed "cannot pass an integer to tuple parameter ..." in front of the parse's own error —
+# two errors for one mistake, the first naming the wrong one. The parse reports it alone. CHANGELOG [6.7.16]
+fn _tal_kind(S, lk): i64 {
+    var vk = _tty_arg(S, GTI(S));
+    if (vk == 0) { return 0; }
+    if (lk == 2) { return 2; }
+    return vk;
+}
+# `_tty_arg` reads a literal-only argument (`_tal_scan` has seen only literals, operators and parentheses) the way
+# PCMPE parses it — `||` / `&&` links, one comparison, PEXPR's `+ - & | ^ ..`, PARSE_TERM's `* / % << ..`, a
+# factor's `-` / `~` / `!` and a parenthesised expression — and answers its value's class: 2 a boolean value, 3 an
+# f64, 1 an integer; 0 when the tokens are no single expression or nest past 256 parentheses. An f64 is the value
+# the compiler types f64 (D23: "an f64 when the compiler sees one"): a float literal; `+ - * /` (`+% -% *%`) with
+# one on EITHER side — `1 + 1.5` is an integer add of 1.5's bits, but its result keeps the f64 type (guide § f64:
+# "Only `+ - * /` keep an f64 right operand's type"); `-` / `~` over one (_int_st keeps it). `& | ^ % << >> >>>` give
+# an integer (6.7.13's D12), and so do the saturating / checked `+| +? -| -? *| *?` (the user's D104, 2026-10-20:
+# EMIT_OVF_CALL clears the type; they kept an f64 right operand's), `!` a boolean value. CHANGELOG [6.7.16]
+var _tty_k = 0;     # the cursor
+var _tty_bad = 0;   # 1 = the reading failed
+fn _tty_arg(S, k): i64 {
+    _tty_k = k;
+    _tty_bad = 0;
+    var t = _tty_logic(S, 0);
+    if (_tty_bad == 1) { return 0; }
+    var e = TOKTYP(S, _tty_k);
+    if (e != 31) { if (e != 11) { return 0; } }
+    return t;
+}
+# `||` and `&&` (PCMPE, _PLOGIC_AND): a link of either is a boolean value.
+fn _tty_logic(S, dep): i64 {
+    var t = _tty_atom(S, dep);
+    while (_tty_op(S, 0) > 0) {
+        _tty_k = _tty_k + 1;
+        _tty_atom(S, dep);
+        t = 2;
+    }
+    return t;
+}
+# One comparison at most (_PLOGIC_ATOM): a boolean value.
+fn _tty_atom(S, dep): i64 {
+    var t = _tty_add(S, dep);
+    if (_tty_op(S, 3) == 0) { return t; }
+    _tty_k = _tty_k + 1;
+    _tty_add(S, dep);
+    return 2;
+}
+# PEXPR's level (`+ - & | ^`, `+% +| +? -% -| -?`), left to right.
+fn _tty_add(S, dep): i64 {
+    var t = _tty_mul(S, dep);
+    var c = _tty_op(S, 1);
+    var r = 0;
+    while (c > 0) {
+        _tty_k = _tty_k + 1;
+        r = _tty_mul(S, dep);
+        t = _tty_bin(t, c, r);
+        c = _tty_op(S, 1);
+    }
+    return t;
+}
+# PARSE_TERM's level (`* / % << >> >>>`, `*% *| *?`), left to right.
+fn _tty_mul(S, dep): i64 {
+    var t = _tty_un(S, dep);
+    var c = _tty_op(S, 2);
+    var r = 0;
+    while (c > 0) {
+        _tty_k = _tty_k + 1;
+        r = _tty_un(S, dep);
+        t = _tty_bin(t, c, r);
+        c = _tty_op(S, 2);
+    }
+    return t;
+}
+# A link's value from its operator's kind `c` and its operands' classes `t` / `r`: `+ - * /` (`+% -% *%`, kind 1) an
+# f64 when either operand is one; everything else an integer (a saturating / checked link too: 6.7.16's D104).
+fn _tty_bin(t, c, r): i64 {
+    if (c == 1) {
+        if (t == 3) { return 3; }
+        if (r == 3) { return 3; }
+    }
+    return 1;
+}
+# The cursor's operator at a level — 0 `||` / `&&`, 1 PEXPR's, 2 PARSE_TERM's, 3 a comparison: 0 when it is none
+# (or the reading has failed); at levels 1 / 2, 1 for one with an f64 form (`+ - +% -%`, `* / *%`), 2 for one whose
+# value is an integer (`& | ^ % << >> >>>`, the saturating / checked `+| +? -| -? *| *?`); else 1.
+fn _tty_op(S, lv): i64 {
+    if (_tty_bad == 1) { return 0; }
+    var t = TOKTYP(S, _tty_k);
+    if (lv == 0) { if (t == 53 || t == 54) { return 1; } return 0; }
+    if (lv == 3) { if (t >= 17 && t <= 22) { return 1; } return 0; }
+    if (lv == 1) {
+        if (t == 6 || t == 7 || t == 113 || t == 116) { return 1; }
+        if (t == 27 || t == 35 || t == 36) { return 2; }
+        if (t >= 113 && t <= 118) { return 2; }
+        return 0;
+    }
+    if (t == 8 || t == 9 || t == 119) { return 1; }
+    if (t == 34 || t == 38 || t == 39 || t == 152) { return 2; }
+    if (t == 120 || t == 121) { return 2; }
+    return 0;
+}
+# A factor: its prefixes, then its operand. The outermost prefix decides — `!` a boolean value; `-` / `~` an f64 over
+# an f64 with no `!` beneath it (_int_st keeps the type; `!` clears it), else an integer — and with none, the
+# operand's own class.
+fn _tty_un(S, dep): i64 {
+    if (_tty_bad == 1) { return 1; }
+    var t = TOKTYP(S, _tty_k);
+    var pre = t;
+    var bang = 0;   # a `!` among the prefixes
+    while (t == 7 || t == 37 || t == 171) {
+        if (t == 171) { bang = 1; }
+        _tty_k = _tty_k + 1;
+        t = TOKTYP(S, _tty_k);
+    }
+    var v = _tty_prim(S, dep, t);
+    if (pre == 171) { return 2; }
+    if (pre == 7 || pre == 37) {
+        if (bang == 0) { if (v == 3) { return 3; } }
+        return 1;
+    }
+    return v;
+}
+# An operand: an integer / char literal, a float literal, `true` / `false`, or a parenthesised expression (its own
+# class).
+fn _tty_prim(S, dep, t): i64 {
+    _tty_k = _tty_k + 1;
+    if (t == 1) { return 1; }
+    if (t == 61) { return 3; }
+    if (t == 169 || t == 170) { return 2; }
+    if (t != 10 || dep >= 256) {
+        _tty_bad = 1;
+        return 1;
+    }
+    var v = _tty_logic(S, dep + 1);
+    if (_tty_bad == 1) { return v; }
+    if (TOKTYP(S, _tty_k) != 11) {
+        _tty_bad = 1;
+        return v;
+    }
+    _tty_k = _tty_k + 1;
+    return v;
+}
+# ... and a whole METHOD or operator call (`g(x.f())`, `g(a + b)`), after its parse: `_sc_post_small`
+# stamps a multi-value result's span (`_mrc_note`, read by nothing else); one that is the whole
+# argument (from `st` to the cursor) is refused the same way.
+var _mrc_beg = 0 - 1;   # its first token
+var _mrc_end = 0 - 1;   # the token after it
+var _mrc_fn = 0;        # its name
+var _mrc_fi = 0 - 1;    # 6.7.11: its fn (declared multi-value, or undeclared with a counted return)
+fn _mrc_note(S, fi, noff, beg): i64 {
+    _mrc_beg = beg;
+    _mrc_end = GTI(S);
+    _mrc_fn = noff;
+    _mrc_fi = fi;
+    return 0;
+}
+fn _tup_arg_mrc(S, fi, argc, st): i64 {
+    if (_mrc_beg != st) { return 0; }
+    if (_mrc_end != GTI(S)) { return 0; }
+    if (_mv_callee_any(S, _mrc_fi) == 0) { return 0; }   # declared or counted (6.7.13); a counted `: i64` too (6.7.14)
+    var ps = GFPSID(S, fi, argc);
+    if (_tup_is(S, ps) == 0) { return 0; }
+    return _tup_arg_mv_err(S, st, ps, _mrc_fn, 0);
+}
+# The R17 report at token `ti`: tuple `ps`, the call named `noff`; `tail` != 0 spells the call in
+# the hint as `name<tail>` (a free call), 0 as `...`. 1 = refused (reported once).
+var _tamv_fld = 0;   # 6.7.7 (T5): 1 = the field form, `h.p = f();` (`_tup_fsc_call`)
+fn _tup_arg_mv_err(S, ti, ps, noff, tail): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": a multi-value call '");
+    PRSTR(S + 0xEC00000 + noff);
+    if (_tamv_fld == 1) { PRSTR("' is not stored into a tuple field - bind it first: `var t: "); }   # 6.7.7 (T5)
+    else { PRSTR("' is not a tuple argument - bind it first: `var t: "); }
+    _sn_pr(S, ps);
+    PRSTR(" = ");
+    if (tail != 0) {
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(tail);
+    } else { PRSTR("..."); }
+    if (_tamv_fld == 1) { PRSTR(";`, then store `t`\n"); }
+    else { PRSTR(";`, then pass `t`\n"); }
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+
+# ⛔ 6.7.11 — A MULTI-VALUE CALL WHERE A NAMED STRUCT IS EXPECTED (the user's decision, 2026-10-13:
+# refused by name, R17's wording, at every struct size). A call returning several values leaves them
+# in the return registers; a named struct is a VALUE — a by-value parameter, a local, a global, a field.
+# No destination recognised the call (each keyed on the callee's struct, and a multi-value one has
+# none), so its FIRST value became the struct: its address over 8 B — `take(mk(3))`, `take(b.mk(3))`,
+# `var p: P = mk(3);` SIGSEGV'd on x86 and aarch64, an access violation on PE, a guest error on cx — or
+# its first word (`h.p = mk(3);`, `p = mk(3);`: p.a = 3, p.b stale, silently). R17 (6.7.7) refuses
+# this call into a TUPLE parameter or field; a named struct is refused the same way: bind the values
+# first. A `*P` (parameter, variable) and a `Str` / `Result` / `Option` / `Tagged` handle take a word —
+# the call's first value, as `var x = mk(3);` does — and are not refused. CHANGELOG [6.7.11]
+#
+# 1 = fn `fi` returns several values: declared `: (T1, T2[, T3])`, or undeclared with a count pass 1
+# proved (`_fn_ret_arity`). Keyed on the DECLARED return: a `: P` fn's `return (x, y)` arms (the 6.7.7
+# crossing) return a P.
+fn _mv_callee(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs == MULTIRET_SID) { return 1; }
+    if (rs != 0) { return 0; }
+    if (_fn_ret_arity(S, fi) != 0) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.14 — ... and, for a TUPLE parameter (R17), a fn declared ONE scalar (`: i64`, `: f64`, `: bool`,
+# `: i32` ..) that pass 1 counted returning several values (6.7.13's D23 B keeps it): `take(g2(3))` with
+# `fn g2(a): i64 { return (a, a + 1); }` pushed the first value as the tuple's address (139 / 139 / 1 / 5).
+# Refused as the undeclared callee is (D44, the user's decision, 2026-10-16). `_mv_callee` itself stays
+# keyed on an undeclared return: a named struct's `: P` crossing reads it. CHANGELOG [6.7.14]
+fn _mv_callee_any(S, fi): i64 {
+    if (_mv_callee(S, fi) == 1) { return 1; }
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs > 0) { return 0; }        # a named struct
+    if (rs < 0 - 9) { return 0; }    # a handle (Result / Option / Tagged / cstring) or a vector
+    if (_fn_ret_arity(S, fi) != 0) { return 1; }
+    return 0;
+}
+# 1 = struct `sid` (1-based) is a named plain struct: no tuple (R17's), dyn, vector or stdlib handle — but `Str` (6.7.17,
+# the user's D99: a multi-value call into a `Str` slot is refused as into a struct slot). CHANGELOG [6.7.17]
+fn _mv_named(S, sid): i64 {
+    if (sid <= 0) { return 0; }
+    if (sid >= 2048) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    if (sid == _STR_SID(S)) { return 1; }   # 6.7.17 (D99): a `Str` slot refuses it as a struct slot does
+    if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
+    return 1;
+}
+# The report at token `ti`: struct `sid`, the call named `noff` (fn `fi`, its count in the hint); `kind`
+# 0 an argument, 1 a field, 2 a declaration, 3 an assignment, 4 a return (6.7.13); `free` spells the hint: 1 `noff(..)`, 2
+# `x.noff(..)` (a method on the name at `ti`), 0 `...`. Once per token (a generic body is parsed per instance); the parse goes on and
+# `_had_error` withholds the binary, as R17's. 1 = refused.
+fn _mv_struct_err(S, ti, sid, noff, fi, kind, free): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 1; }
+    if (_tn_once(S, ti) == 0) { return 1; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": a multi-value call '");
+    PRSTR(S + 0xEC00000 + noff);
+    if (kind == 1) { PRSTR("' is not stored into a struct '"); }
+    elif (kind == 2) { PRSTR("' does not initialize struct '"); }
+    elif (kind == 3) { PRSTR("' is not assigned to struct '"); }
+    elif (kind == 4) { PRSTR("' is not returned as struct '"); }
+    else { PRSTR("' is not a struct '"); }
+    _sn_pr(S, sid);
+    if (kind == 0) { PRSTR("' argument"); }
+    elif (kind == 1) { PRSTR("' field"); }
+    else { PRSTR("'"); }
+    PRSTR(" - bind it first: `var a, b");
+    if (_mv_count(S, fi) == 3) { PRSTR(", c"); }
+    PRSTR(" = ");
+    if (free == 0) { PRSTR("..."); }
+    else {
+        if (free == 2) {
+            _mc_recv_pr(S, ti);
+            PRSTR(".");
+        }
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR("(..)");
+    }
+    PRSTR(";`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 1;
+}
+fn _mv_count(S, fi): i64 {
+    if (GFRS(S, fi) == MULTIRET_SID) { return GFRN(S, fi); }
+    return _fn_ret_arity(S, fi);
+}
+# The source [a, b) just parsed, wrapping parentheses peeled: a whole method call (`_mrc_note`'s record)
+# or a whole free call `name(..)` / `name<..>(..)` to a multi-value fn — reported as `kind` into struct
+# `sid`. 1 = refused.
+fn _mv_span(S, a, b, sid, kind): i64 {
+    a = _ie_unparen(S, a, b);
+    b = _ie_pe;
+    if (_mrc_beg == a) { if (_mrc_end == b) { if (_mv_callee(S, _mrc_fi) == 1) {
+                if (_mcall_open(S, a, 0 - 1) >= 0) { return _mv_struct_err(S, a, sid, TOKVAL(S, _mco_mt), _mrc_fi, kind, 2); }
+                return _mv_struct_err(S, a, sid, _mrc_fn, _mrc_fi, kind, 0);   # a longer chain: the method's fn
+            } } }
+    var o = _gcall_open(S, a);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 != b) { return 0; }
+    var cfi = _gen_resolve_call(S, a);
+    if (_mv_callee(S, cfi) == 0) { return 0; }
+    return _mv_struct_err(S, a, sid, TOKVAL(S, a), cfi, kind, 1);
+}
+# The argument at the cursor into parameter `argc` of `fi`, a named struct passed BY VALUE: a whole free
+# call to a multi-value fn (cursor on its name, before its parse). An address-passed parameter the callee
+# does not copy in (`_pm_copies`) is a `*P`, which takes the first value as a pointer.
+fn _mv_arg_call(S, fi, argc): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_mv_named(S, ps) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { if (_mv_sarg(S, fi, argc) == 0) { return 0; } }   # 6.7.17 (D99): a `Str` too
+    var ti = GTI(S);
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }
+    if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
+    var cfi = _gen_resolve_call(S, ti);
+    if (_mv_callee(S, cfi) == 0) { return 0; }
+    return _mv_struct_err(S, ti, ps, TOKVAL(S, ti), cfi, 0, 1);
+}
+# ... a whole method (or wrapped) call, judged after the argument's parse from `st` (`_push_struct_expr_arg`).
+fn _mv_arg_mrc(S, fi, argc, st): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_mv_named(S, ps) == 0) { return 0; }
+    if (_pm_copies(fi, argc) == 0) { if (_mv_sarg(S, fi, argc) == 0) { return 0; } }   # 6.7.17 (D99): a `Str` too
+    return _mv_span(S, st, GTI(S), ps, 0);
+}
+# ... and a by-value parameter of 8 B or less (`_sarg_byval_small`: one word, never address-passed).
+fn _mv_small_arg(S, fi, argc, st): i64 {
+    var ps = GFPSID(S, fi, argc);
+    if (_mv_named(S, ps) == 0 || _mv_pstr(S, fi, argc) == 1) { return 0; }   # 6.7.17 (D99): a `*Str` takes a word
+    return _mv_span(S, st, GTI(S), ps, 0);
+}
+# A struct-typed declaration (`pscale` = `0 - sid`; a local or a global in either zone) whose initialiser
+# [start, cursor), just parsed, is a whole multi-value call (PARSE_VAR's `_var_rhs_post`, the zone's
+# `_gvi_expr`): the pointer-mode handle took the first value as the struct's address. A generic callee
+# keeps the declared struct for this (`_gen_decl_check`).
+fn _mv_decl_src(S, pscale, start): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (_mv_named(S, 0 - pscale) == 0) { return 0; }
+    return _mv_span(S, start, GTI(S), 0 - pscale, 2);
+}
+# The struct of an assignment's destination name `noff` when it is a named struct VALUE or handle — a
+# local, a by-value parameter, a global — and not a `*P` (a pointer rebinds to any word); else 0.
+# `*p = v` through a `*S` (`_dst_arms`: no name, the override's struct) copies what `G = v` copies (D4),
+# so a multi-value call into it is refused as into `G` (D26 A, the user's decision, 2026-10-15): it
+# stored the first value as the struct's word. CHANGELOG [6.7.13]
+fn _mv_dst_sid(S, noff): i64 {
+    if (_agc_ovr_is(noff) == 1) { return _mv_ovr_sid(S); }
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLPTRP(S, li) == 1) { return 0; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0; }
+            if (_mv_named(S, 0 - lt) == 0) { return 0; }
+            return 0 - lt;
+        }
+    }
+    var gvi = FINDVAR(S, noff);
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) == 0) { return 0; }
+    if (_gv_ptr_sid(S, gvi) > 0) { return 0; }
+    var gt = GVTYPE(S, gvi);
+    if (_mv_named(S, gt) == 0) { return 0; }
+    return gt;
+}
+fn _mv_ovr_sid(S): i64 {
+    if (_mv_named(S, 0 - _agc_ovr_t) == 1) { return 0 - _agc_ovr_t; }
+    return 0;
+}
+# `x = f(..);` / `x = b.m(..);`, the source [st, cursor) just parsed (`_pcmpe_struct_assign`, which the
+# statement and a classic-for step reach once `_try_struct_call_assign` has passed the call by — it takes
+# a struct-returning callee only): a refused source is typed as the destination's struct, so the
+# statement does not also warn "assigning non-pointer to typed pointer".
+fn _mv_asg_src(S, noff, st): i64 {
+    if (TOKTYP(S, GTI(S) - 1) != 11) { return 0; }   # a call (or a wrap) ends the source
+    var sid = _mv_dst_sid(S, noff);
+    if (sid == 0) { return 0; }
+    if (_mv_span(S, st, GTI(S), sid, 3) == 1) { _asg_ret_sid = sid; }
+    return 0;
+}
+# `h.p = f(..);` / `h.p = x.m(..);` into a field of named struct `ft`, cursor on the source (`_fsc_src`,
+# beside R17's `_tup_fsc_call`): a whole call ending at `term`, by its tokens. 1 = refused.
+fn _mv_fsc_call(S, ft, term): i64 {
+    if (_mv_named(S, ft) == 0) { return 0; }
+    var o = _dt_call_open(S);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
+    var fi = _dt_call_fn(S);
+    if (_mv_callee(S, fi) == 0) { return 0; }
+    if (_mcall_open(S, GTI(S), 0 - 1) >= 0) { return _mv_struct_err(S, GTI(S), ft, TOKVAL(S, _mco_mt), fi, 1, 2); }
+    return _mv_struct_err(S, GTI(S), ft, PEEKV(S), fi, 1, 1);
+}
+
+# ⛔ 6.7.6 — A PARENTHESISED ARGUMENT TO AN ADDRESS-PASSED PARAMETER WAS PUSHED AS ITS VALUE:
+# `rd3((a))` (`p: *P3`), `rd1((s))`, `rd1((mk1(4)))` SIGSEGV'd on x86 and aarch64 (an access
+# violation on PE, a guest error on cx), because every arm above keys on the argument's first token
+# being the name. Parentheses that wrap the WHOLE argument (`_pwrap_k`, any depth) are transparent:
+# the arms run on what they wrap — a name, a call, a field, a method or operator result — and the
+# `)`s are consumed after. Any other argument that opens with `(` (`(a) + b`) is an expression, as
+# one that does not is (`_push_struct_expr_arg`). Returns as the caller's arms do. CHANGELOG [6.7.6]
+fn _sarg_paren(S, fi, argc, tail): i64 {
+    var st = GTI(S);
+    if (_tup_sarg_lit(S, fi, argc, tail) == 1) { return 1; }   # 6.7.7 (B4): a tuple literal
+    var k = _pwrap_k(S, st);
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) {
+            _tup_arg_lit(S, fi, argc);   # 6.7.15 (D36): `take((1) + 2)`, a `(`-led literal expression
+            return _push_struct_expr_arg(S, fi, argc, tail);
+        } }
+    STI(S, st + k);
+    if (_try_push_struct_addr_arg(S, fi, argc, tail) == 0) {
+        STI(S, st);   # not a struct source: the caller pushes the whole argument's value
+        return 0;
+    }
+    _pw_close(S, k);
+    return 1;
+}
+
+# ⛔ 6.7.7 (B4) — a tuple LITERAL as an address-passed argument (`take((1, 2))`, any wrap; every
+# argument loop, the tail arm with `tail` 1): into a TUPLE parameter it is built in a frame temp and
+# the temp's address pushed — an address in this frame, so a tail call diverts (`_sarg_escapes`).
+# Into any other struct parameter it is refused by name, and at top level (no frame for the temp,
+# R10); the literal is then consumed and 0 pushed, the parse in step. 1 = handled; 0 = not a whole
+# literal argument. (An untyped parameter's literal is the stray refusal at its factor.)
+fn _tup_sarg_lit(S, fi, argc, tail): i64 {
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return 0; } }
+    var ps = GFPSID(S, fi, argc);
+    var ok = 1;
+    if (_tup_is(S, ps) == 0) {
+        _tup_err(S, lp, "a tuple literal is passed only to a tuple parameter - this parameter of ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " is not a tuple");
+        ok = 0;
+    } elif (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal argument at top level has no frame to be built in - call ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), " inside a fn");
+        ok = 0;
+    } elif (_tup_lit_shape(S, lp, ps) == 0) { ok = 0; }
+    if (ok == 0) {
+        _tup_lit_skip(S, st, 0);
+        EMOVI(S, 0);
+        EPUSHR(S);
+        return 1;
+    }
+    var t = _agg_temp(S, ps);
+    STI(S, lp);
+    _tup_elems(S, ps, 0, t, 0);
+    _pw_close(S, lp - st);
+    _sarg_escapes(fi, argc, tail);
+    EFLADDR(S, t);
+    EPUSHR(S);
+    return 1;
+}
+
+# ⛔ 6.7.3 — a parameter that records a struct but is NOT address-passed: a plain struct of 8 B or
+# less (BY VALUE, one word) or a `Str` handle. It has no struct-mask bit, so it never reached the
+# arms above and nothing compared its argument — `bs1(t)` with `t: T1` into `b: S1` compiled clean.
+# The argument is parsed and pushed exactly as the caller's own fallback pushes it (PCMPE +
+# EPUSHR: byte-identical), and its static struct is checked: a bare name; a whole free call,
+# resolved AFTER the parse (a dedup hit — resolving it first would move a generic's instantiation);
+# a whole method / operator result (`_sc_post`'s record); a whole struct-typed field (the passive
+# `_fpk` record, parse/decl/field.cyr). Returns 1 (consumed) only for such a parameter; 0 leaves every
+# other one to the caller. All three argument loops reach it. CHANGELOG [6.7.3]
+# 6.7.10 (B7-1): a HANDLE of 8 B or less (`take(a)`, `take((a))`) passes the struct it points at, as
+# one over 8 B does (`_hl_bare_val`) — the handle's address was the argument. (B7-1b) so does a typed
+# POINTER or `&s` (`_hl_byval_arg`, the user's decision 7). CHANGELOG [6.7.10]
+fn _sarg_byval_small(S, fi, argc): i64 {
+    if (_sarg_vec_other(S, fi, argc) == 0) {   # 6.7.12 (D27): a vector local into `*i64` / `*u8` / `**T`
+        if (_sarg_struct_other(S, fi, argc) == 0) {   # 6.7.13 (D5 (a)): ... and a struct value
+            if (_sarg_sval_ptr(S, fi, argc) == 1) { return 1; }   # 6.7.14: a field, call or dereference too
+        }
+    }
+    if (GFPSID(S, fi, argc) <= 0) { return 0; }
+    if (_sarg_istr_dx(S, fi, argc) == 1) { return 1; }   # 6.7.15: `str_len(*p)` passes the header p points at
+    var st = GTI(S);
+    var asid = _expr_struct_sid(S, st);
+    var ps = GPSC(S);
+    var an = _ess_nm;
+    var af = _ess_fi;
+    if (asid == 0) {
+        asid = _ess_deref(S, st);   # 6.7.11: `take8(*pu)`
+        an = 0 - 2;   # 6.7.16: named from its `*` (`_ess_anm`)
+        af = 0 - 1;
+    }
+    _mv_small_arg(S, fi, argc, st);   # 6.7.11: a multi-value call is no struct value
+    _sarg_type_errf(S, fi, argc, asid, an, af);
+    if (_hl_byval(S, fi, argc) == 1) { _hl_byval_arg(S, fi, argc, st, ps); }
+    else { _istr_arg(S, fi, argc, st); }   # 6.7.13 (D7 (1)): an inline `Str` into `s: Str` passes its header
+    EPUSHR(S);
+    return 1;
+}
+# ⛔ 6.7.15 — A `*Str` DEREFERENCE INTO A `Str` PARAMETER PASSES THE HEADER, NOT ITS FIRST WORD. A `Str` parameter
+# takes a header's address; `*p` of a `p: *Str` is the header (6.7.10's decision 6: through a pointer `*p` is the
+# struct), whose address is p — but the dereference parsed as a word read, so `str_len(*p)`, `f(**pp)`, `str_len(*w.p)`
+# and `h.eq(*p)` passed the string's data pointer as the header (`str_len` 0, or a wild length), silently, on every
+# target, where `var s: Str = *p;` copies the header. The whole argument at the cursor (to its `,` / `)`) is ONE
+# dereference `* E` inside any balanced parentheses, E typed `*Str` (`_hl_psid`: a name, field, call or method, `*pp`
+# of a `**Str`, `p + n`), to a `Str` parameter `argc` of `fi` (not a `p: *Str` one): only E is parsed — rax = the
+# header's address, as `str_len(p)` passes it — the wrap closed, pushed. 1 = pushed; 0 = not that shape, nothing
+# moved. CHANGELOG [6.7.15]
+# 6.7.16 (D73): and a `p: *Str` parameter — `fps(*p)` passed the data word as the header's address. 6.7.16 (D71): and
+# `*(&t)` of an inline `Str` t, whose operand `&t` is the header's address — into a generic's `x: T` at T = Str it
+# passed t's data word. CHANGELOG [6.7.16]
+fn _sarg_istr_dx(S, fi, argc): i64 {
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFPSID(S, fi, argc) != ss) { return 0; }
+    var st = GTI(S);
+    var a = _ie_unparen(S, st, _arg_next(S, st));
+    var pe = _ie_pe;
+    if (pe - a < 2) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    if (_hl_psid(S, a + 1, pe) != ss) { if (_istr_amp(S, a, pe) == 0) { return 0; } }   # 6.7.16 (D71): `*(&t)`, `&t`
+    STI(S, a + 1);   # past the wrap's `(`s and the `*`
+    PARSE_FACTOR(S);
+    _pw_close(S, a - st);
+    EPUSHR(S);
+    return 1;
+}
+# The expression at the cursor (token `st`) parsed with its static-struct records armed — a bare
+# name; a whole free call, resolved AFTER the parse; a whole method / operator result; a whole
+# struct-typed field; a whole `Str` field — returning that struct (0 = untyped / scalar / unknown),
+# `_ess_nm` the name a refusal names. Extracted from `_sarg_byval_small` (6.7.7) for the tuple
+# literal's elements (`_tup_elem_val`), which are refused when they are struct values.
+# ⛔ 6.7.11 — parentheses wrapping the WHOLE expression (`_pwrap_k`, any depth) are transparent here
+# too, as 6.7.6 made them for an address-passed parameter (`_sarg_paren`): `bs1((t))`, `bs1(((t)))`,
+# `bs1((mk(7)))` and `bs1((w.t))` into a by-value struct of 8 B or less read the name, call or field
+# they wrap — they compiled with another struct's word, where `bs1(t)` was refused by name (the user's
+# decision, 2026-10-13: refuse by name). The parse and its emission are unchanged. CHANGELOG [6.7.11]
+var _ess_nm = 0;
+var _ess_fi = 0 - 1;   # 6.7.14: ... the fn whose result it names (a method's record), else -1
+var _ess_da = 0 - 1;   # 6.7.16: the `*` of the dereference `_ess_deref` typed last
+var _ess_de = 0 - 1;   # ... and the token after its operand
+fn _expr_struct_sid(S, st): i64 {
+    var asid = 0;
+    var nm = 0;
+    var call = 0;
+    var ist = _ess_wrap(S, st);
+    var k = _ess_k;
+    if (TOKTYP(S, ist) == 2) {
+        nm = TOKVAL(S, ist);
+        var nx = TOKTYP(S, ist + 1);
+        if (k > 0) {
+            if (ist + 1 == _ess_ie) { asid = _sarg_name_sid(S, ist); }
+            elif (nx == 10 || nx == 19) { call = 1; }
+        }
+        elif (nx == 31 || nx == 11) { asid = _sarg_name_sid(S, st); }
+        elif (nx == 10 || nx == 19) { call = 1; }
+    }
+    var fk = _fpk_want;
+    _fpk_want = ist;
+    _fpk_ft = 0;
+    _sc_beg = 0 - 1;                   # only this argument's own record may match
+    PCMPE(S);
+    _fpk_want = fk;
+    _ess_fi = 0 - 1;
+    if (call == 1) { asid = _ess_call(S, ist, k); }
+    if (asid == 0) {
+        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; _ess_fi = _sc_fi; }
+        elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
+        elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }   # 6.7.6: a `Str` field
+    }
+    _ess_nm = nm;
+    return asid;
+}
+# The first token inside the parentheses that wrap the whole expression at `st` up to its `,` / `)`
+# (`_ess_k` of them, `_ess_ie` the innermost `)`), else `st` with `_ess_k` 0. Moves nothing.
+var _ess_k = 0;
+var _ess_ie = 0 - 1;
+fn _ess_wrap(S, st): i64 {
+    _ess_k = 0;
+    _ess_ie = 0 - 1;
+    if (TOKTYP(S, st) != 10) { return st; }
+    var k = _pwrap_k(S, st);
+    var e = TOKTYP(S, _pw_end);
+    if (e != 31) { if (e != 11) { return st; } }
+    _ess_k = k;
+    _ess_ie = _pw_end - k;
+    return st + k;
+}
+# ⛔ 6.7.11 — A WHOLE DEREFERENCE INTO A BY-VALUE STRUCT OF 8 B OR LESS IS CHECKED BY ITS STRUCT, as
+# over 8 B (`_dro_check`) and in a declaration (`_hl_dstar_x`): `*p` is a struct VALUE at every size (6.7.10,
+# decision 6), so `take8(*pu)` with `pu: *U8` into `s: S8` is refused by name, as `take8(u)` is — it
+# compiled and passed U8's bytes (the user's decision, 2026-10-13: refuse by name; `take8(pu)` keeps the
+# 2026-10-08 pointer rule). After the argument's parse, [st, cursor) is one `* E` inside any balanced
+# parentheses, nothing after it (`*pu + a` is an operator's operand), E typed `*U` by the compiler's own
+# typing (`_hl_dpsid`): U, `_ess_nm` the operand's last name (`*gp()` -> `gp`, `*w.pu` -> `pu`); else 0.
+# Reads tokens only: the emission is unchanged. CHANGELOG [6.7.11]
+fn _ess_deref(S, st): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var pe = _ie_pe;
+    if (pe - a < 2) { return 0; }
+    if (TOKTYP(S, a) != 8) { return 0; }
+    if (_gz_split(S, a, pe) != 0 - 1) { return 0; }
+    var u = _hl_dpsid(S, a + 1, pe);
+    if (u <= 0) { return 0; }
+    _ess_nm = _hl_lastnm(S, a + 1, pe, TOKVAL(S, a + 1));   # 6.7.11: `*gu<U>()` names `gu`
+    _ess_da = a;   # 6.7.16: a refusal names [a, pe) as written (`_ess_anm`, `_sval_kind_err`, `_ret_sid_refuse_d`)
+    _ess_de = pe;
+    return u;
+}
+# The struct a whole free call at `ti` returns (`_sarg_call_sid`), after the parse; inside `k`
+# wrapping parentheses it must end at the innermost `)` (`(mk(7) + a)`, `(mk(7), a)` are not it).
+fn _ess_call(S, ti, k): i64 {
+    if (k > 0) {
+        var o = _gcall_open(S, ti);
+        if (o < 0) { return 0; }
+        if (_call_close(S, o) + 1 + k != GTI(S)) { return 0; }
+    }
+    return _sarg_call_sid(S, ti);
+}
+
+# ⛔ 6.6.20 — the CLOSURE-CAPTURE arm. A captured struct of 8 B or less is one env word holding
+# the struct BY VALUE, and it was pushed as that value — harmless while only a struct over 8 B was
+# address-passed (its one word holds the struct's address), fatal once a `p: *S` parameter of any
+# size is: `|| rd1(s)` SIGSEGV'd where `|| rd3(a)` worked. `_CL_CAP_BASE_RA` is the address for
+# every shape (the env word's own address, or the address it holds). Returns 1 when handled.
+fn _push_struct_addr_cap(S, fi, argc): i64 {
+    var cx = _CL_CAP_FIELD_IDX(S, PEEKV(S));
+    if (cx >= 0 - 1) { return 0; }
+    _sarg_type_err(S, fi, argc, _cap_fld_sid, PEEKV(S));   # 6.7.3
+    _CL_CAP_BASE_RA(S, 0 - 1000000 - cx, _cap_fld_sid);
+    EPUSHR(S);
+    STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# 6.6.5 — the GLOBAL arm of the by-value struct argument. The callee's structmask says this
+# parameter is ADDRESS-passed, and there was no global branch at all: a global struct argument
+# was pushed BY VALUE (its first 8 bytes), so the callee deref'd a field as a pointer and
+# SIGSEGV'd — `take(G)` for a top-level `var G = P { 11, 22 };` crashed where the identical
+# local worked. `_var_ptrmode` is the recorded layout: 2 = inline (push its address), 1 = the
+# slot holds the address (push the slot). 0 means this global is not a recorded aggregate, so
+# leave it to the ordinary value push rather than guessing from GVTYPE, whose positive range is
+# shared with scalar widths. CHANGELOG [6.6.5]
+fn _push_struct_addr_global(S, fi, argc): i64 {
+    var gvi = FINDVAR(S, PEEKV(S));
+    if (gvi < 0) { return 0; }
+    var gpm = GVPM(S, gvi);
+    if (gpm == 0) { return 0; }
+    _sarg_type_err(S, fi, argc, _sarg_gv_sid(S, gvi), PEEKV(S));   # 6.7.3
+    if (gpm == 1) { EVLOAD(S, gvi); } else { EVADDR(S, gvi); }
+    EPUSHR(S);
+    STI(S, GTI(S) + 1);                 # consume IDENT
+    return 1;
+}
+
+# ⛔ 6.6.5 — is this struct-typed local POINTER-mode (its slot holds the struct's address) or
+# INLINE (the slot IS the struct)? ONE reader, and it READS THE RECORDED BIT.
+#
+# This fn shipped earlier in 6.6.5 carrying the historical GUESS, which is quoted below so the
+# next reader can recognise it rather than reinvent it:
+#
+#     if (li > 0) { if (L64(S + 0x5D9D000 + (li - 1) * 8) == 0 - 1) { is_ptr = 0; } }
+#     if (_TARGET_CX == 0) { if (sid > 0) { if (STRUCTSZ(S, sid - 1) <= 8) { is_ptr = 0; } } }
+#
+# "the slot below is named -1" is NOT a discriminator for inline-ness. SCOPE_POP writes -1 over
+# every local of a block that has closed (util.cyr), and callptr / bitset / SIMD-reserve /
+# closure-env temporaries are registered -1 by construction — so a POINTER-mode struct local
+# declared after any of those was read as inline and its fields came off the frame. Wrong since
+# 5.8.17, silent, and measured in a shipped consumer (stiva's fleet.cyr let an undersized node
+# pass its memory constraint). The `<= 8 B` half was the ABI policy stated at the wrong end: cx
+# was excluded from it, so on cx two single-field struct locals aliased each other.
+#
+# Registration now records the answer (SLAGG / GLAGG, util.cyr), so every consumer — field
+# load/store, method self, by-value argument passing, copy-init, copy-assign and the regalloc
+# picker's aggregate span — asks THIS fn and they cannot disagree. CHANGELOG [6.6.5]
+fn _local_struct_is_ptr(S, li, lt): i64 {
+    if (GLAGG(S, li) == 1) { return 0; }
+    return 1;
+}
+
+# ⛔ 6.6.6 — A BY-VALUE STRUCT PARAMETER OVER 8 BYTES IS ADDRESS-PASSED, so its slot holds a
+# POINTER to the caller's struct (`_param_wants_struct_ptr` sets the callee's structmask and the
+# caller pushes `&local`). Field access already went the extra indirection
+# (`_resolve_field_base_addr`); the COPY and RETURN paths did not, and every one of them was
+# silent or fatal. Measured at 6.6.5: `q = r` stored r's first word OVER the pointer and the next
+# `q.z` SIGSEGV'd; `r = q` copied the pointer into r's field 0; `return q;` from a 9-16 B fn
+# loaded the ADDRESS as the rax:rdx pair and from a >16 B fn byte-copied the pointer word.
+#
+# ⭐ `li < _cur_fn_pslots` IS the discriminator, and it has to be, because the OTHER pointer-mode
+# struct local — `var a = str_from(x)`, a heap handle — looks identical in every recorded field.
+# `a = b` between two of those must stay a POINTER REBIND (that is the Str convention the whole
+# stdlib is built on), while `q = r` on a parameter must copy through. Nothing but "is it a
+# parameter" separates them. CHANGELOG [6.6.6]
+fn _local_is_sptr_param(S, li): i64 {
+    if (li < 0) { return 0; }
+    if (li >= _cur_fn_pslots) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (GLAGG(S, li) != 0) { return 0; }
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }
+    if (lt <= 0 - 2048) { return 0; }
+    var sid = 0 - lt;
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    # ⛔ `Str` / `Result` / `Option` / `Tagged` are 16 B structs BY NAME whose slot holds a HEAP
+    # HANDLE — `_param_wants_struct_ptr` excludes them, so they are value-passed and `a = b`
+    # between two of them is a pointer rebind the whole stdlib depends on. Asked through the
+    # SAME classifier that built the callee's structmask, on the recorded sid's name, so the two
+    # cannot disagree about which parameters are address-passed.
+    if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.9 — 1 when `&q` of slot `li` is the slot's CONTENT: an address-passed by-value struct
+# parameter, whose slot holds the caller's struct's address (since 6.6.16 only a `#naked` fn's: the
+# rest are copied in, and an `async fn` refuses one). A `q: *P` parameter (an untyped impl `self`) has
+# the same `-sid` type and non-inline layout, so `_local_is_sptr_param` answers 1 for it, but its
+# slot holds a POINTER: `&q` is the slot's address, as for a `*P` local, a `*Q` of 8 B or less, a
+# `*i64` and in 6.6.5. It was the pointee (`load64(&q)` read q's first field). CHANGELOG [6.7.9]
+fn _addr_is_slot_content(S, li): i64 {
+    if (_is_ptr_param(S, li) == 1) { return 0; }
+    return _local_is_sptr_param(S, li);
+}

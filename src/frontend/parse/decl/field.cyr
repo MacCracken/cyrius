@@ -1,0 +1,2473 @@
+# PARSER — decl: fields and methods — BUILD_METHOD_NAME, closure-captured fields, field addresses, loads, stores and
+# copies, method chains, PARSE_FIELD_LOAD / PARSE_FIELD_STORE.
+# ================================================================
+# Split from parse/decl.cyr at 6.7.18, unchanged; parse.cyr includes parse/decl/ in source order. CHANGELOG [6.7.18]
+
+# Build mangled method name: StructName_method in tok_names scratch.
+# Returns noff of the combined name. Uses the region AFTER current
+# npos as scratch — writing past live identifiers so FINDFN's byte
+# compare sees a clean name. Does NOT advance npos (this is lookup-
+# only; the method fn was registered at struct-def time).
+# Pre-4.7.1 this wrote to a fixed offset 30000, which silently
+# corrupted real identifiers in any program with >30 KB of names.
+# Bote saw the downstream mis-parse as `lib/assert.cyr:3: expected
+# '=', got string` because a post-corruption token noff now pointed
+# at garbled bytes.
+fn BUILD_METHOD_NAME(S, si, mnoff): i64 {
+    var snoff = L64(S + 0x1A6018 + si * 8);
+    # v5.11.65 (the compiler heap guard-page gap): walk source lengths first so NPOS_GUARD
+    # bounds the actual write — replaces the pre-v5.11.65 magic-256
+    # pessimistic budget that the byte-copy loops below could exceed
+    # on a long struct/method identifier. See CHANGELOG [5.11.65].
+    var _snlen = 0; while (load8(S + 0xEC00000 + snoff + _snlen) != 0) { _snlen = _snlen + 1; }
+    var _mnlen = 0; while (load8(S + 0xEC00000 + mnoff + _mnlen) != 0) { _mnlen = _mnlen + 1; }
+    NPOS_GUARD(S, _snlen + 1 + _mnlen + 1);
+    var scratch = GNPOS(S);
+    var wp = scratch;
+    # Copy struct name
+    var ri = 0;
+    var rc = load8(S + 0xEC00000 + snoff + ri);
+    while (rc != 0) {
+        store8(S + 0xEC00000 + wp, rc);
+        wp = wp + 1;
+        ri = ri + 1;
+        rc = load8(S + 0xEC00000 + snoff + ri);
+    }
+    # Underscore separator
+    store8(S + 0xEC00000 + wp, 95);
+    wp = wp + 1;
+    # Copy method name
+    ri = 0;
+    rc = load8(S + 0xEC00000 + mnoff + ri);
+    while (rc != 0) {
+        store8(S + 0xEC00000 + wp, rc);
+        wp = wp + 1;
+        ri = ri + 1;
+        rc = load8(S + 0xEC00000 + mnoff + ri);
+    }
+    store8(S + 0xEC00000 + wp, 0);
+    return scratch;
+}
+
+# --- R1 (v6.4.15): field address + leaf-retype resolution, extracted from the
+# formerly-duplicated PARSE_FIELD_LOAD / PARSE_FIELD_STORE copies so a fix lands
+# once (the copies had repeatedly taken the same fixes: v5.8.17 sentinel, v6.3.16
+# <=8B-inline, v6.3.33 leaf-retype). Byte-identical extraction.
+
+# Emit rcx = base address of the struct whose field is being accessed.
+# idx < -1 is a local-encoded index (idx = 0 - 2 - lli); >= -1 is a global.
+# 6.6.5: pointer-to-struct (mov [slot]) vs inline-struct (lea &slot) is the RECORDED
+# layout — `_local_struct_is_ptr` for a local, `_var_ptrmode` for a global — not the
+# -1-predecessor guess this fn carried from v5.8.17 (see `_local_struct_is_ptr`).
+# 6.6.5 — resolve `name` as a CAPTURED enclosing struct inside a closure body, returning the
+# capture-encoded index `-1000000 - capi` (locals use `-2 - li`, globals `>= -1`, so the band
+# is free — local indices bottom out at -16386 with the 16384-slot cap). `_cap_fld_sid` is the
+# second return; read it immediately. Without this rung a closure reading a field of an
+# enclosing struct reported "undefined variable". CHANGELOG [6.6.5]
+var _cap_fld_sid = 0;
+fn _CL_CAP_FIELD_IDX(S, noff): i64 {
+    _cap_fld_sid = 0;
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    var _cfe = _cl_snap_find(S, noff);
+    if (_cfe < 0) { return 0 - 1; }
+    var _cfc = _cl_cap_find(_cfe);
+    if (_cfc < 0) { return 0 - 1; }
+    var _cft = _cl_snap_type(_cfe);
+    if (_cft >= 0) { return 0 - 1; }
+    if (_cft <= 0 - 2048) { return 0 - 1; }
+    _cap_fld_sid = 0 - _cft;
+    return 0 - 1000000 - _cfc;
+}
+# ⛔ 6.7.16 — PARSE_FIELD_LOAD / PARSE_FIELD_STORE's capture rung: a struct capture (`_CL_CAP_FIELD_IDX`), and every
+# other capture of the closure too — its capture-band index with sid 0, so `x.a`, `x.a = ..` and `x.m()` on an untyped
+# capture take the `sid == 0` arms an untyped local takes: "no struct type in scope for 'x'" in the field, store or
+# method wording, a refused annotation's stand-down (`_ann_refd_said`), a bounded scalar T's member call. The rung
+# returned -1 for them, so the name fell to the globals: "undefined variable 'x'". A captured vector reports "SIMD
+# vector has no named fields" first, as a local does. A GLOBAL of the same name is shadowed by the capture, as the
+# local shadows it outside the closure: the user's D96 (6.7.16, 2026-10-20) — the rung answered -1 for it, so `x.a`
+# read the global's field while `x` alone read the capture. CHANGELOG [6.7.16]
+fn _cl_cap_fld_any(S, noff): i64 {
+    var r = _CL_CAP_FIELD_IDX(S, noff);
+    if (r < 0 - 1) { return r; }
+    var e = _cl_cap_esl(S, noff);
+    if (e < 0) { return 0 - 1; }
+    if (_cl_snap_type(e) <= 0 - 2048) { ERR_MSG(S, "SIMD vector has no named fields", 31); }
+    _cap_fld_sid = 0;
+    return 0 - 1000000 - _cl_cap_find(e);
+}
+# ⛔ 6.7.11 — A CLOSURE READS ITS CAPTURED SLICE'S `.ptr` / `.len`. The slice arm of the field read
+# is a fn-local's (`_slice_lw`) and `_CL_CAP_FIELD_IDX` takes a struct capture only, so `s.len`
+# inside a closure that captured `s` was "undefined variable 's'", while `slice_len(&s)` read the
+# copy (6.7.9: a captured slice arrives in field order). The user's decision (a), 2026-10-13: the
+# fields read the captured copy, one load from the env words (`.ptr` at +0, `.len` at +8). A store
+# into them is refused by name (`_cl_cslice_store_err`): the decision covers reads. CHANGELOG [6.7.11]
+# The capture index of `noff` when it names a captured slice local of the enclosing fn, else -1.
+fn _cl_cslice_cap(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    if (_sub_cslice(S, noff) != 1) { return 0 - 1; }
+    return _cl_cap_find(_cl_snap_find(S, noff));
+}
+# The slice field `fnoff` names: 0 `.ptr`, 8 `.len`, -1 any other (refused by name).
+fn _slice_fld_off(S, fnoff): i64 {
+    var fname = L64(S + 0xEC00000 + fnoff) & 0xFFFFFFFF;
+    if (fname == 0x00727470) { return 0; }        # "ptr\0"
+    if (fname == 0x006E656C) { return 8; }        # "len\0"
+    ERR_MSG(S, "slice has only .ptr and .len fields", 35);
+    return 0 - 1;
+}
+# `s.ptr` / `s.len` on a captured slice (cursor past the field name): rax = the field; 1 when it
+# was one, 0 when `noff` is no captured slice.
+fn _cl_cslice_field(S, noff, fnoff): i64 {
+    var capi = _cl_cslice_cap(S, noff);
+    if (capi < 0) { return 0; }
+    var off = _slice_fld_off(S, fnoff);
+    if (off < 0) { return 1; }
+    _CL_CAP_WORDS_RA(S, capi);
+    if (off > 0) { EADDRA_IMM(S, off); }
+    ELOAD64(S);
+    return 1;
+}
+fn _cl_cslice_store_err(S, noff): i64 {
+    ERR_IDENT(S, "a closure cannot assign a field of the captured slice ", noff,
+      " - it reads .ptr / .len only (set the slice before the closure is built, or declare it in the closure)", 0 - 1);
+    return 0;
+}
+
+# rax = the base address of a captured aggregate. A capture wider than one word IS those
+# words, so its base is `&env[woff]`; a one-word capture of a struct over 8 B holds the
+# struct's ADDRESS, so the word is loaded.
+# 6.6.17 (a2): so does a captured `p: *T` PARAMETER whatever T's size — read from the PTRP bit the
+# snapshot carries (`_cl_snap_ptrp`). A `*B1` (8 B) capture read the pointer itself as `p.v`.
+# 6.7.10 (B7-1): and a captured HANDLE of 8 B or less (the handle line) — an enclosing slot with no
+# inline span holds the address, as over 8 B; an inline one (span 1) is the struct's word.
+fn _CL_CAP_BASE_RA(S, capi, sid): i64 {
+    _CL_CAP_WORDS_RA(S, capi);
+    if (L64(&_cl_cap_w + capi * 8) == 1) {
+        if (sid > 0) {
+            var esl = L64(&_cl_cap_slots + capi * 8);
+            if (STRUCTSZ(S, sid - 1) > 8) { ELOAD64(S); }
+            elif (_cl_snap_ptrp(esl) == 1) { ELOAD64(S); }
+            elif (_cl_snap_span(esl) == 0) { ELOAD64(S); }
+        }
+    }
+    return 0;
+}
+
+fn _resolve_field_base_addr(S, idx, sid): i64 {
+    if (idx <= 0 - 1000000) {
+        _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid);
+        EMOVCA(S);
+        return 0;
+    }
+    if (idx < 0 - 1) {
+        var rli = 0 - 2 - idx;
+        if (_local_struct_is_ptr(S, rli, 0 - sid) == 1) {
+            EFLLOAD(S, rli);
+            EMOVCA(S);
+        } else {
+            EFLADDR_X1(S, rli);
+        }
+    } else {
+        # A GLOBAL struct var is inline (a literal, or `var G: P;`) unless it was
+        # initialised from an expression yielding an address (`var G: P = mk();`),
+        # which the global path records in `_var_ptrmode`. Before 6.6.5 the global
+        # branch was unconditionally inline, so `G.y` read the wrong 8 bytes (0 for 22).
+        if (_gv_holds_addr(S, idx) == 1) {   # 6.6.17: a `*T` global too
+            EVLOAD(S, idx);
+            EMOVCA(S);
+        } else { EVADDR_X1(S, idx); }
+    }
+    return 0;
+}
+
+# ⛔ 6.7.5 (B8) — COMPOUND ASSIGNMENT ON A FIELD, `x.f OP= e` (BACKLOG-13): it was `expected '=',
+# got '+'` on every field lvalue. The field's ADDRESS is computed ONCE, BEFORE the right-hand side,
+# as `a[i] OP= v` does (`_arr_sub_assign`) — the user's decision (2026-10-08). A plain `x.f = e`
+# evaluates `e` first and stays so, so `GP.n += repoint()` writes the object GP named BEFORE the
+# call, where `GP.n = GP.n + repoint()` writes the one it names after it.
+# rax = the field's address: `_resolve_field_base_addr`'s ladder, the same base decisions (a
+# capture's env, a pointer-mode or address-passed local loaded, an inline one addressed, a global
+# loaded when it holds the address) — in rax, plus the offset, plus a `Str` hop (`hop >= 0`).
+# ⚠ It does NOT set `_fn_local_addr`: the address never leaves the statement (a method's receiver
+# does, `_load_inline_hop`). Setting it would divert every in-loop tail call of the fn.
+fn _fld_addr_ra(S, idx, sid, off, hop): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);   # the frame / capture base is raw bytes on x86 (as `_arr_sub_addr`)
+    if (idx <= 0 - 1000000) { _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid); }
+    elif (idx < 0 - 1) {
+        var li = 0 - 2 - idx;
+        if (_local_struct_is_ptr(S, li, 0 - sid) == 1) { EFLLOAD(S, li); } else { EFLADDR(S, li); }
+    } else {
+        if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
+    }
+    if (off > 0) { EADDRA_IMM(S, off); }
+    if (hop >= 0) {
+        ELOAD64(S);
+        if (hop > 0) { EADDRA_IMM(S, hop); }
+    }
+    return 0;
+}
+# ⛔ 6.7.10 (B7) — a field's LOAD WIDTH: its bytes, negative (sign-extend) for an i8 / i16 / i32
+# field. A u8 / u16 / u32 field shares the `0 - width` ftype with i8..i32 and is told apart by its
+# unsigned mark (GFUNS), an f32 (4 bytes) by its float kind (GFFK); both are read zero-extended.
+# A Vec<T> field's far-negative sentinel is an 8-byte handle (FIELDSZ 8), never negated — a
+# negated 8 is a 32-bit movsxd (v6.4.x Pin 2). The two field readers that negated a width by hand
+# (the load and `OP=`) both read it here. CHANGELOG [6.7.10]
+fn _fld_lw(S, si, fi): i64 {
+    var ft = GETFTYPE(S, si, fi);
+    var w = FIELDSZ(S, ft);
+    if (ft >= 0) { return w; }
+    if (IS_VEC_FIELD(S, ft) == 1) { return w; }
+    if (GFUNS(S, si, fi) != 0) { return w; }
+    if (GFFK(S, si, fi) != 0) { return w; }
+    return 0 - w;
+}
+# `x.f OP= e` past the pair, the leaf field in `_rlf_si` / `_rlf_fi` (read here: cybs caps a fn at
+# six parameters): the address once, the field loaded at its width (i8 / i16 / i32 signed, u8 /
+# u16 / u32 / f32 zero-extended — `_fld_lw` —, as a read of it), `_asg_compound_op` — its float
+# arm for an f64 / f32 field, its `*T` step for a pointer field — then the store at that width. A
+# `bool` field is refused as `b += 1` is (B2), and a struct-typed field as a struct variable is (a
+# struct value is not an integer); both still parse on, at word width. A `Str` / `Vec` / `*T` field
+# is a handle: integer arithmetic on the word.
+fn _fld_compound(S, idx, sid, off, hop, cop): i64 {
+    var si = _rlf_si;
+    var fi = _rlf_fi;
+    var ft = GETFTYPE(S, si, fi);
+    var w = _fld_lw(S, si, fi);
+    if (ft > 0) { if (IS_STR_FIELD(S, ft) == 0) {
+            _err_in_sync(S, "compound assignment to struct field ", GETFNAME(S, si, fi), " is refused - a struct value is not an integer or a float (write `a = a + b`)");
+            w = 8;
+        } }
+    if (GFBOOL(S, si, fi) == 1) { _bx_refuse(S, GTI(S), "compound assignment to bool field ", GETFNAME(S, si, fi), " is refused - its result is not a bool (write `b = b && c`, `b = !b`)", 0 - 1); }
+    var k = GFFK(S, si, fi);
+    var lt = 0;
+    if (k == 1) { lt = F64_TYID; }
+    if (k == 2) { lt = F32_TYID; }
+    var ps = _ps_step(_fld_ps_get(S, si, fi));   # 6.7.8: the step alone (the word carries T's kind)
+    _fld_addr_ra(S, idx, sid, off, hop);
+    EPUSHR(S);                  # the field's address
+    _arr_sub_load(S, w);        # rax = the field (clears the flags tracker)
+    _cop_dst = 1;               # 6.7.17 (D15): a field, for `_cop_sres`
+    _cop_fd = ((si + 1) << 16) | fi;
+    _asg_cstep = ps;            # last, right before the op that reads it
+    _asg_compound_op(S, cop, lt);
+    return _asg_store_w(S, w);
+}
+# The store of `_fld_compound` and `_arr_sub_assign` (`a[i] = v` / `a[i] OP= v`): rax = the value,
+# the address on the stack; `w` the load width (negative = signed). Warns on a narrowing store.
+fn _asg_store_w(S, w): i64 {
+    var aw = w;
+    if (aw < 0) { aw = 0 - aw; }
+    if (aw > 0) { if (GEXW(S) > aw) { WARN(S, "narrowing assignment (value may truncate)", 41); } }
+    EPOPC(S);                   # rcx = the address, rax = the value
+    if (aw == 1) { ESTORE8(S); }
+    elif (aw == 2) { ESTORE16(S); }
+    elif (aw == 4) { ESTORE32(S); }
+    else { ESTORE64(S); }
+    return 0;
+}
+
+# ⛔ 6.6.5 — COPYING AN INLINE AGGREGATE WHEN EITHER SIDE IS A GLOBAL. Two facts make this
+# ADDRESS-based rather than the slot-index loop the local/local path uses:
+#   * A GLOBAL SLOT INDEX IS NOT A WORD INDEX. `SVCNT` advances by ONE per variable while
+#     `_vars_base` holds its BYTE size, so `EVLOAD(gvi + 1)` reads the NEXT VARIABLE. Every
+#     other global-aggregate consumer already goes through `EVADDR + byte offset`.
+#   * A GLOBAL OCCUPIES EXACTLY ITS BYTE SIZE, and since 6.6.13 the next one starts at ITS
+#     natural alignment (`_GV_ALIGN`, util.cyr: 1/2/4 for a 1/2/4-byte global, 8 otherwise), so
+#     an i32 after a 12-byte struct global packs at +12. A word-granular copy of `ceil(sz/8)`
+#     words would clobber 4 bytes of that neighbour — the same overrun v5.9.36 fixed for the
+#     literal's own field stores. The tail is copied at 4/2/1.
+# Locals address identically (`EFLADDR_X1(named) + off`), which is also what makes this work
+# unchanged inside a coroutine, where `_ECORO_LEA` supplies the heap-frame base.
+# CHANGELOG [6.6.5]
+# ⭐ 6.6.6 — A THIRD ADDRESSING MODE, ENCODED IN THE SLOT INDEX: `0 - 1000 - li` means THE SLOT
+# HOLDS THE ADDRESS (an address-passed by-value struct parameter — see `_local_is_sptr_param`),
+# so the base is `[slot]`, not `&slot`. Those are the two instructions the field-access path
+# already emitted for one (`_resolve_field_base_addr`).
+# ⚠ Encoded in the index rather than passed as a flag because **cybs, the 29 KB bootstrap
+# compiler, caps a fn at SIX parameters** and `_agc_copy_bytes` already takes six — a seventh
+# is a bare `syntax error` from cybs alone, with `build/cycc` compiling it fine (the exact
+# silent-cybs class the Release Gate's seed-derive step exists to catch). The band is free: a
+# real slot is >= 0, "no local" is -1, and slots cap well below 1000. Same encode-in-the-index
+# convention `_resolve_field_base_addr` uses for captures. CHANGELOG [6.6.6]
+fn _AGC_DREF(li): i64 { return 0 - 1000 - li; }
+# 6.6.11 — `li == -2` is a FOURTH source: the struct-typed FIELD recorded by `_fla_take`, so a
+# variable destination (`q = b.v;`, `var p: Pt = b.v;`) takes this same byte-exact copy. `-2` is
+# free: a slot is >= 0, "none" is -1 and the dereferenced band starts at -1000. CHANGELOG [6.6.11]
+# 6.6.16 (C2) — `gv <= -1000` is a pointer-mode GLOBAL handle (`_agc_gvi`'s deref band, parse.cyr
+# `_agc_handle_global`): its slot holds the address, so the base is `[G]` — `_fsc_src_x1`'s
+# `_fsc_gdr` arm. Tested before the `li` arms, which a global operand leaves at -1. CHANGELOG [6.6.16]
+fn _agc_addr_x1(S, li, gv, boff): i64 {
+    if (gv >= 0) { EVADDR_X1(S, gv); }
+    elif (gv <= 0 - 1000) { EVLOAD(S, 0 - 1000 - gv); EMOVCA(S); }
+    elif (li == 0 - 2) { _fsc_src_x1(S, boff); return 0; }
+    elif (li <= 0 - 1000) { EFLLOAD(S, 0 - 1000 - li); EMOVCA(S); }
+    else { EFLADDR_X1(S, li); }
+    if (boff > 0) { EADDIMM_X1(S, boff); }
+    return 0;
+}
+fn _agc_copy_bytes(S, dli, dgv, sli, sgv, nb): i64 {
+    var off = 0;
+    while (off < nb) {
+        var w = 8;
+        var rem = nb - off;
+        if (rem < 8) { w = 4; }
+        if (rem < 4) { w = 2; }
+        if (rem < 2) { w = 1; }
+        _agc_addr_x1(S, sli, sgv, off);
+        EFIELD_LOAD_W(S, w);
+        EPUSHR(S);
+        _agc_addr_x1(S, dli, dgv, off);
+        EPOPR(S);
+        if (w == 1) { ESTORE8(S); }
+        elif (w == 2) { ESTORE16(S); }
+        elif (w == 4) { ESTORE32(S); }
+        else { ESTOC(S); }
+        off = off + w;
+    }
+    return 0;
+}
+
+# Chained-access leaf retype: for `s.inner.field`, walk one nesting level so the
+# load/store WIDTH comes from the leaf field (v6.3.33), not the intermediate
+# struct. Returns the leaf ftype; writes the updated byte-offset to _rlf_off
+# (the second return — read it immediately at the call site; non-reentrant).
+# 6.6.10: also publishes the LEAF's struct index and field index (`_rlf_si` / `_rlf_fi`), which
+# the load reads for the field's float kind (GFFK). CHANGELOG [6.6.10]
+var _rlf_off = 0;
+var _rlf_si = 0;
+var _rlf_fi = 0;
+# 6.6.17 — a `: Str` field is ONE 8-byte slot holding the Str's ADDRESS (FIELDSZ, IS_STR_FIELD),
+# not an inline struct. The walk added `.len`'s offset to the slot's as if the Str were inline, so
+# `h.name.len` read the NEXT field (`h.n`) and `h.name.data` read the handle itself — silently,
+# for loads and stores, on a local, a global, a parameter or a call result alike. A step INTO a
+# Str field now ends the inline offset at the slot (`_rlf_off`) and records the offset past the
+# pointer load (`_rlf_hop`, -1 = none); `_rlf_emit_hop` emits that load. Str's fields are scalars,
+# so a chain holds at most one hop. CHANGELOG [6.6.17]
+var _rlf_hop = 0 - 1;
+fn _rlf_emit_hop(S, hop): i64 {
+    if (hop < 0) { return 0; }
+    EFIELD_LOAD_W(S, 8);
+    EMOVCA(S);
+    if (hop > 0) { EADDIMM_X1(S, hop); }
+    return 0;
+}
+# 1 = the chain continues: the current field is a struct (`ft > 0`) and `.ident` follows, not a
+# `..` range and not a `.method(` call on the nested field. CHANGELOG [6.6.12]
+fn _rlf_more(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) == 10) { return 0; }
+    if (_mtargs_ng(S, ft, GTI(S) + 1) == 1) { return 0; }   # 6.7.14 (D7 (a)): `w.v.id<f64>(h)` (6.7.16: `w.v.m<i64>(h)`)
+    return 1;
+}
+fn _resolve_leaf_field(S, si, fi, off): i64 {
+    _rlf_si = si;
+    _rlf_fi = fi;
+    _rlf_hop = 0 - 1;
+    var ft = GETFTYPE(S, si, fi);
+    # 6.6.12: a `while`, not an `if` — every nested level (`n.v.v.x`), not only the first. The
+    # token guards leave a `..` range and a `.method(` on a nested field to their own paths.
+    while (_rlf_more(S, ft) == 1) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        var ifnoff = PEEKV(S);
+        STI(S, GTI(S) + 1);
+        var isi = ft - 1;
+        var ifi = FINDFIELD(S, isi, ifnoff);
+        # v6.5.19: a resolution failure, not a syntax one — see ERR_IDENT in
+        # src/common/util.cyr for why the message class is load-bearing.
+        if (ifi < 0) {
+            ERR_IDENT(S, "unknown field ", ifnoff, " on struct ", _ei_sid(isi + 1));
+            _rlf_off = off;
+            return ft;
+        }
+        if (IS_STR_FIELD(S, ft) == 1) { _rlf_hop = FIELDOFF(S, isi, ifi); }   # through the pointer
+        else { off = off + FIELDOFF(S, isi, ifi); }
+        ft = GETFTYPE(S, isi, ifi);
+        _rlf_si = isi;
+        _rlf_fi = ifi;
+    }
+    _rlf_off = off;
+    return ft;
+}
+# ⛔ 6.7.16 — A `.name` PAST A FIELD THAT IS NO STRUCT is refused once, at the name, in its own words: "field 'n' is not
+# a struct: it has no field 'b'". `w.n.b` (n an i64, an f64, a narrow integer, a bool) read "expected ';', got '.'"
+# (in a condition "expected ')'"), and `w.n.b = 1;` / `+= 1` added "undefined variable 'b'" to "expected '=', got '.'".
+# The leaf `_resolve_leaf_field` published, a `*T` field's hop and a call (`.m(`, `.m<`) already taken; the rest of
+# the chain is stepped and the panic latch keeps the statement to the one error. A field whose type its declaration
+# refused (`p: Later`, Later declared below: `_fld_rtype`) stands down — that declaration's error is the one. Silent
+# under --syntax-only (a sibling file's struct reads as no struct). 1 = refused (the caller stops). CHANGELOG [6.7.16]
+fn _fld_tail_bad(S): i64 {
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    var n2 = TOKTYP(S, GTI(S) + 2);
+    if (n2 == 10 || n2 == 19) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft > 0) { if (ft < 2048) { return 0; } }
+    if (_fld_ptr_sid(S, _rlf_si, _rlf_fi) > 0) { return 0; }
+    var nti = GTI(S) + 1;
+    var fnm = GETFNAME(S, _rlf_si, _rlf_fi);
+    if (_fld_rtype_at(S, _rlf_si, fnm) == 1) {
+        _panic = 1;
+        _err_n = _err_n + 1;   # counted, as a report the latch swallows is (6.7.16)
+    } else {
+        STI(S, nti);
+        ERR_IDENT(S, "field ", fnm, " is not a struct: it has no field ", TOKVAL(S, nti));
+    }
+    var i = nti + 1;
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { break; }
+        i = i + 2;
+    }
+    STI(S, i);
+    return 1;
+}
+# The fields whose declared type was refused (`_refuse_field_type`): (struct name, field name) pairs, so a `.name` past
+# one stands down (`_fld_tail_bad`). CHANGELOG [6.7.16]
+var _fld_rtype = 0;
+fn _fld_rtype_add(S, snoff, fnoff): i64 {
+    if (_fld_rtype == 0) { _fld_rtype = vec_new(); }
+    vec_push(_fld_rtype, snoff);
+    vec_push(_fld_rtype, fnoff);
+    return 0;
+}
+fn _fld_rtype_at(S, si, fnoff): i64 {
+    if (_fld_rtype == 0) { return 0; }
+    var snoff = L64(S + 0x1A6018 + si * 8);
+    var n = vec_len(_fld_rtype);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_fld_rtype, i) == snoff) { if (vec_get(_fld_rtype, i + 1) == fnoff) { return 1; } }
+        i = i + 2;
+    }
+    return 0;
+}
+
+# 6.7.0 (A5, BACKLOG-07) — `var u = s.clone();` where the method returns a struct of 8 B or less:
+# the struct it returns, so `u.len()` resolves (it was `no struct type in scope for 'u'`, while a
+# free call's 8-byte result and a method's 16 / 24-byte one were typed). The whole initialiser must
+# be the call (`... );`), as `_var_rhs_call` requires of a free call. Larger results keep their
+# temp-receive path (`_sc_var_receive`). 0 = not such a call.
+# 6.7.9: and a `: f64` method's result (-9) types it f64, as `var x = f();` is (v6.5.21): `var a =
+# p.area();` was an untyped word, so `a + 1.0` added integers — a generic method's at the instance
+# its arguments reach (`_mcall_gen`: `var w = p.id(h);`; 6.7.11 a struct's, `var w = p.pick(q);`, and a
+# lookahead never reports). CHANGELOG [6.7.9]
+# 6.7.16: this peek runs before the initialiser is parsed, so `_mcall_last` is reset here: the method a chain ends
+# with is then this initialiser's (`_var_rhs_mstr`). CHANGELOG [6.7.16]
+fn _var_rhs_msid(S, ti): i64 {
+    _mcall_last = 0 - 1;
+    var o = _mcall_open(S, ti, 0 - 1);   # 6.7.15: `x.m<..>(` too (`_pair_callee_at` resolves its instance)
+    if (o < 0) { return 0; }
+    var mt = _mco_mt;   # 6.7.16: a chain's last method too (`_mco_*`)
+    var rcv = _mco_rs;
+    if (_mco_ch == 0) { rcv = _recv_sid(S, TOKVAL(S, ti)); }
+    if (TOKTYP(S, _call_close(S, o) + 1) != 5) { return 0; }
+    var mf = _pair_callee_at(S, ti);
+    if (mf < 0) { return 0; }
+    if (o == mt + 1) { mf = _mcall_gen(S, mf, o, rcv, 0); }
+    var rs = GFRS(S, mf);
+    if (rs == 0 - 9) { return rs; }
+    if (rs <= 0) { return 0; }
+    if (rs > 2047) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
+    return rs;
+}
+# The untyped declaration's type, judged once its initialiser at `start` is parsed (`sid0` the type the
+# peek before the parse inferred; `pscale` / `sl` its annotation, none when both are 0): a whole struct
+# result of 8 B or less (`_sc_small_whole`, which wins over a leading call's type, as over 8 B), else
+# `sid0`, else a `: f64` method ending a longer chain, or (6.7.16) a `: Str` one ending any (`_var_rhs_mchain`). Out
+# of PARSE_VAR (a giant).
+fn _var_rhs_post(S, sid0, pscale, sl, start, ann): i64 {
+    if (pscale <= 0 - 2048) { _vrcv_decl_err(S, pscale, start); }   # 6.7.11
+    _istr_decl(S, pscale, start, ann);   # 6.7.13 (D7 (1)): `var h: Str = t;` binds t's header; 6.7.14: `*Str`
+    _spd_decl(S, pscale, start, ann);   # 6.7.17 (D17): `var p: *P = s;` takes s's address
+    _mv_decl_src(S, pscale, start);   # 6.7.11: a multi-value call into a struct declaration
+    if (pscale != 0) { return sid0; }
+    if (sl != 0) { return sid0; }
+    # 6.7.13: a leading `: f64` call's f64 only when the whole initialiser still is one (`_var_rhs_csid`).
+    if (sid0 == 0 - 9) { if (GESTYPE(S) != F64_TYID) { sid0 = 0; } }
+    var os = _sc_small_whole(S, start);
+    if (os > 0) { return os; }
+    if (_var_rhs_if64(S, start) == 1) { return 0 - 9; }   # 6.7.14 (D25 (a)): `var a = fncall0(&f);` (not fncall0's `: i64`)
+    if (sid0 != 0) { return sid0; }
+    return _var_rhs_mchain(S, start, GTI(S));
+}
+# 6.7.14 (D25 (a)) — the initialiser at `start` leads with a call through fncallN / callptr to a known `&f` whose `f`
+# is declared `: f64` — inside parentheses that wrap that call alone — and the whole initialiser is still an f64: the
+# f64 `var a = f();` / `var a = (f()) * 2.0;` take (`_var_rhs_csid` / `_var_rhs_wsid`'s -9). Judged after the parse,
+# as their -9 is: a comparison or D12's integer operators leave an integer. CHANGELOG [6.7.14]
+fn _var_rhs_if64(S, start): i64 {
+    if (GESTYPE(S) != F64_TYID) { return 0; }
+    var pe = _pw_end;
+    var k = _pwrap_k(S, start);
+    _pw_end = pe;
+    var c = start + k;
+    if (_icall_rs_at(S, c) != 0 - 9) { return 0; }
+    if (k == 0) { return 1; }
+    if (TOKTYP(S, _call_close(S, c + 1) + 1) != 11) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.10 — AN UNTYPED `var c = a + b;` WHOSE OPERATOR RETURNS A STRUCT TAKES ITS TYPE AT EVERY SIZE (the
+# user's decision 12, 2026-10-12), as over 8 B, where the result's temporary BECOMES `c` (`_sc_var_receive`).
+# Of 8 B or less the result is a value in rax with no temporary, so `c` was an untyped word: `c.g` was "no
+# struct type in scope for 'c'" and `c + c` added integers — and 6.7.10's packed fields moved `C4 { r: u8;
+# g: u8; b: u8; a: u8; }` from 32 to 4 bytes, so `var c = A + B; c.g = 1;` stopped compiling. CHANGELOG [6.7.10]
+# ⛔ 6.7.11 — AND ANY WHOLE STRUCT RESULT OF 8 B OR LESS, not only an operator's (the user's decision (a),
+# 2026-10-13: decision 12 extended): a method chain `var c = a.d().d();` and an if-expression of struct
+# branches `var c = if (k) { mk(7) } else { mk(9) };` bound an untyped word (`c.v` refused, `c + 1` added to
+# it), where a single method (6.7.0 A5) and the same chain over 8 B were typed
+# (issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). The struct of the whole
+# initialiser [start, cursor) when it is one recorded result of 8 B or less in rax (`_sc_whole` -3: an
+# operator dispatch, a method, an if-expression; inside any wrap), else 0. A global does not read it
+# (PARSE_VAR's global arm): an untyped global keeps the word at every size, as over 8 B.
+fn _sc_small_whole(S, start): i64 {
+    if (_sc_whole(S, start) != 0 - 3) { return 0; }
+    return _sc_sid;
+}
+# 6.7.9 (review): and a `: f64` method ending a LONGER chain — `w.v.area()`, `self.inner.area()`,
+# `p.me().area()`, `mk(1).area()`, `w.v.id(h)` at V = f64 — whose receiver no peek above resolves.
+# It is judged once parsed, from the type the method arm gave the result (`_mcall_ret`): the whole
+# initialiser `ti`..`end` must be one chain `name[<..>](..)?(.name((..))?)*` that ENDS in `.m(..)`,
+# with `;` at `end` — `a + p.area()` and a field read (`_decl_float_copy`'s) are not. -9 (an f64
+# binding) or 0. CHANGELOG [6.7.9]
+# ⛔ 6.7.16 — AND A `: Str` METHOD ENDING IT, ONE CALL OR A CHAIN (`_var_rhs_mstr`): the `Str` struct, a handle binding,
+# as a free `: Str` call's result is (v5.10.4, `var k = str_clone(h);`). `var k = h.clone();`, `var k = w.s.clone();`
+# and `var k = h.clone().clone();` left k an untyped word, so `k.len()` was refused "no struct type in scope for 'k'"
+# and `println(k)` took the cstring overload: a `Str` is 16 B, so the 8 B arm (`_var_rhs_msid`) declined it, and as a
+# handle in rax it has no temp to receive (`_sc_var_receive`). CHANGELOG [6.7.16]
+# ⛔ 6.7.17 — INSIDE ANY PARENTHESES WRAPPING THE WHOLE INITIALISER, as a free call's (`_var_rhs_wsid`) and an 8 B
+# struct method's (`_sc_small_whole`) are: `var k = (h.clone());` left k an untyped word — `k.len` refused, `println(k)`
+# the cstring overload — and `var a = (p.area());` an integer word, where the unwrapped lines are a `Str` / an f64 (the
+# wrap is transparent: 6.7.11's D42, 6.7.14's D12). A fn's line and, through `_ti_inferred_sid`, a top-level one (6.7.17's
+# D22). CHANGELOG [6.7.17]
+fn _var_rhs_mchain(S, ti, end): i64 {
+    if (TOKTYP(S, end) != 5) { return 0; }
+    var a = _ie_unparen(S, ti, end);
+    return _var_rhs_mch2(S, a, _ie_pe);
+}
+# ... the chain [ti, end), unwrapped.
+fn _var_rhs_mch2(S, ti, end): i64 {
+    var k = ti + 1;
+    var o = _gcall_open(S, ti);
+    if (o >= 0) { k = _call_close(S, o) + 1; }
+    elif (TOKTYP(S, ti) != 2) { return 0; }
+    var m = 0;
+    while (k < end) {
+        if (TOKTYP(S, k) != 41) { return 0; }
+        if (TOKTYP(S, k + 1) != 2) { return 0; }
+        m = 0;
+        k = k + 2;
+        k = _mchain_targs(S, k);   # 6.7.14 (D7 (a)): `.m<..>(`
+        if (TOKTYP(S, k) == 10) { m = 1; k = _call_close(S, k) + 1; }
+    }
+    if (k != end) { return 0; }
+    if (m == 0) { return 0; }
+    if (GESTYPE(S) == F64_TYID) { return 0 - 9; }
+    return _var_rhs_mstr(S);
+}
+# The `Str` struct when the method the chain just parsed ended with (`_mcall_last`, reset by `_var_rhs_msid` before
+# the parse) is declared `: Str`, else 0.
+fn _var_rhs_mstr(S): i64 {
+    if (_mcall_last < 0) { return 0; }
+    var ss = _STR_SID(S);
+    if (ss <= 0) { return 0; }
+    if (GFRS(S, _mcall_last) != ss) { return 0; }
+    return ss;
+}
+
+# 6.7.14 (D7 (a)): past a method name at token k, its explicit type-argument list when `(` follows (`p.id<f64>(h)`),
+# else k — a comparison `p.n < k` is no list (`_tok_targs_close` stops at its `;` / `(`).
+fn _mchain_targs(S, k): i64 {
+    if (TOKTYP(S, k) != 19) { return k; }
+    var e = _tok_targs_close(S, k + 1);
+    if (e < 0) { return k; }
+    if (TOKTYP(S, e + 1) != 10) { return k; }
+    return e + 1;
+}
+
+# ⛔ 6.6.10 — A STRUCT VALUE ASSIGNED INTO A STRUCT-TYPED FIELD COPIED ONE WORD. `b.v = p;` with
+# `struct Box { v: Pt; n; }` parsed `p` as an ordinary value (a struct's value is its FIRST word)
+# and stored it with the field's width capped at 8, so `b.v.y` kept whatever was there — and for
+# an address-passed struct PARAMETER the one word was the POINTER (`r.v.x` read a stack-address
+# byte). Silent on every backend. The v6.6.6 struct-copy arc covered a local, a parameter and a
+# global as the destination, never a field. Now the field store copies the whole struct from:
+#   a named struct (inline local, by-value parameter, pointer-mode local, inline or pointer-mode
+#   global), a call / method / overloaded operator returning the struct (through a temp), or
+#   another field of that struct type (`b.v = a.v`, `b.v = o.i.v`).
+# A struct of a DIFFERENT type is refused by name, as the variable form has been since 6.6.6. A
+# source that is not a struct (an integer, a pointer expression) keeps the one-word store.
+# ⚠ The source is described, not evaluated into a register: its address is re-emitted per chunk
+# (8/4/2/1 bytes, so an odd-sized struct is copied byte-exact), exactly as `_agc_copy_bytes`
+# does for the variable form. CHANGELOG [6.6.10]
+var _fsc_li = 0 - 1;    # source: a local's slot, or `_AGC_DREF(slot)` when the slot holds the address
+var _fsc_gv = 0 - 1;    # source: a global's slot
+var _fsc_gdr = 0;       # 1 = that global's slot HOLDS the struct's address (pointer-mode)
+var _fsc_fidx = 0;      # source: a struct FIELD — PARSE_FIELD_LOAD's base encoding (idx, sid) ...
+var _fsc_fsid = 0;
+var _fsc_foff = 0 - 1;  # ... and its byte offset; >= 0 selects the field form
+# PARSE_FIELD_LOAD's half: when the field access starting at `_fla_want` is the WHOLE right-hand
+# side and its leaf is a struct, it records the field here and emits nothing.
+var _fla_want = 0 - 1;
+var _fla_hit = 0;
+var _fla_ft = 0;
+var _fla_name = 0;
+var _fla_lit = 0 - 1;   # `_fla_want` when a struct literal armed it (6.6.12): `,` / `}` also end the source
+var _fla_arg = 0 - 1;   # `_fla_want` when a by-value struct ARGUMENT armed it (6.6.12): `,` / `)`
+var _fla_stp = 0 - 1;   # `_fla_want` when a classic-for STEP armed it (6.6.20): `)`
+var _fla_opd = 0 - 1;   # `_fla_want` when an operator's address-passed right OPERAND armed it (6.6.20, `_op_rhs`)
+var _fla_opdp = 0 - 1;  # ... and when that operand is parenthesised, `(h.p)`: it ends at its `)`
+
+fn _fsc_reset(): i64 {
+    _fsc_li = 0 - 1;
+    _fsc_gv = 0 - 1;
+    _fsc_gdr = 0;
+    _fsc_foff = 0 - 1;
+    return 0;
+}
+
+# x1 = the source struct's address + `boff`.
+fn _fsc_src_x1(S, boff): i64 {
+    if (_fsc_foff >= 0) {
+        _resolve_field_base_addr(S, _fsc_fidx, _fsc_fsid);
+        if (_fsc_foff + boff > 0) { EADDIMM_X1(S, _fsc_foff + boff); }
+        return 0;
+    }
+    if (_fsc_gdr == 1) {
+        EVLOAD(S, _fsc_gv);
+        EMOVCA(S);
+        if (boff > 0) { EADDIMM_X1(S, boff); }
+        return 0;
+    }
+    _agc_addr_x1(S, _fsc_li, _fsc_gv, boff);
+    return 0;
+}
+# 6.6.20 — 1 = the recorded FIELD source's base is an inline aggregate in this frame: the same
+# question `_resolve_field_base_addr` answers when it takes `&slot` rather than loading the slot.
+# A global's base, a closure capture's (the heap env) and a pointer-mode local's are not.
+fn _fsc_src_in_frame(S): i64 {
+    if (_fsc_fidx >= 0 - 1) { return 0; }
+    if (_fsc_fidx <= 0 - 1000000) { return 0; }
+    if (_local_struct_is_ptr(S, 0 - 2 - _fsc_fidx, 0 - _fsc_fsid) == 1) { return 0; }
+    return 1;
+}
+
+# Copy `nb` bytes from the recorded source into the field at `off` of the struct `idx`/`sid`
+# (PARSE_FIELD_STORE's encoding).
+fn _fsc_copy(S, idx, sid, off, nb): i64 {
+    var o = 0;
+    while (o < nb) {
+        var w = 8;
+        var rem = nb - o;
+        if (rem < 8) { w = 4; }
+        if (rem < 4) { w = 2; }
+        if (rem < 2) { w = 1; }
+        _fsc_src_x1(S, o);
+        EFIELD_LOAD_W(S, w);
+        EPUSHR(S);
+        _resolve_field_base_addr(S, idx, sid);
+        if (off + o > 0) { EADDIMM_X1(S, off + o); }
+        EPOPR(S);
+        if (w == 1) { ESTORE8(S); }
+        elif (w == 2) { ESTORE16(S); }
+        elif (w == 4) { ESTORE32(S); }
+        else { ESTOC(S); }
+        o = o + w;
+    }
+    return 0;
+}
+
+fn _fsc_type_err(S, snoff, fnoff): i64 { return _fsc_type_errf(S, snoff, 0 - 1, fnoff); }
+# ... `snoff` the result of a call to fn `sfi` (a struct-call record's `_sc_fi`; -1: a name), named as the source spells
+# it: a method `Pt.dup` (`_err_ident_fn`). CHANGELOG [6.7.15]
+fn _fsc_type_errf(S, snoff, sfi, fnoff): i64 {
+    _err_ident_fn(S, "cannot copy ", snoff, sfi, " into a struct field of a different struct type: ", fnoff);
+    return 0;
+}
+
+# A named source's struct type as `0 - sid` (the source recorded), or 0 when the name is not a
+# struct operand. A vector answers its own (band) type, so the caller reports the mismatch.
+fn _fsc_local_src(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }
+    if (lt <= 0 - 2048) { return lt; }
+    if (GLAGG(S, li) != 0) { _fsc_li = li; return lt; }   # inline: the slot IS the struct
+    _fsc_li = _AGC_DREF(li);                             # a parameter or pointer-mode local
+    return lt;
+}
+fn _fsc_global_src(S, gv): i64 {
+    var gt = GVTYPE(S, gv);
+    if (gt <= 0) { return 0; }
+    var pm = GVPM(S, gv);
+    if (pm == 0) { return 0; }   # GVTYPE's positive range is shared with scalar widths
+    _fsc_gv = gv;
+    if (pm == 1) { _fsc_gdr = 1; }
+    return 0 - gt;
+}
+# ⛔ 6.6.13 — A CAPTURED STRUCT COPIED INSIDE A CLOSURE STORED ITS ADDRESS. The three name-based
+# copy-source resolvers (this one, `_agc_src_operand` in parse.cyr, `_try_struct_copy_init`) went
+# local, then global, with no rung for a closure CAPTURE — an enclosing local is neither inside the
+# closure body — so each fell back to the capture's scalar VALUE. For an inline (multi-word)
+# capture that value is `&env[woff]`, and for a one-word capture of a struct over 8 B (a
+# pointer-mode local, an address-passed by-value parameter) it is the pointer: `b.v = p;` put the
+# env address in `b.v.x` (80 where 34 is right), `q = p;` likewise, and `var q: Pt = p;` bound q
+# INTO the env (its writes persisted across calls) or into the caller's by-value argument.
+# A capture is recorded here in the FIELD form, capture-encoded index, offset 0, so every byte-exact
+# copy loop addresses it through `_resolve_field_base_addr` -> `_CL_CAP_BASE_RA` — the base the
+# closure's own `p.x` reads use, so a copy cannot disagree with a field read. A vector (sid 0) is
+# always inline and is never loaded through. Returns the capture's type (`0 - sid`, or the vector
+# descriptor) or 0 when `noff` is not a captured aggregate. Sits between the local and the global
+# rung, in PARSE_FACTOR's order. CHANGELOG [6.6.13]
+fn _fsc_cap_src(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0; }
+    if (_cl_env_lidx < 0) { return 0; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0; }
+    var capi = _cl_cap_find(esl);
+    if (capi < 0) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0; }
+    _fsc_reset();
+    _fsc_fidx = 0 - 1000000 - capi;
+    _fsc_fsid = 0;
+    if (t > 0 - 2048) { _fsc_fsid = 0 - t; }
+    _fsc_foff = 0;
+    return t;
+}
+fn _fsc_name_src(S, noff): i64 {
+    _fsc_reset();
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return _fsc_local_src(S, li); }
+    }
+    var ct = _fsc_cap_src(S, noff);   # 6.6.13: a closure capture, before the global
+    if (ct != 0) { return ct; }
+    var gv = FINDVAR(S, noff);
+    if (gv < 0) { return 0; }
+    return _fsc_global_src(S, gv);
+}
+
+# `IDENT ;` — 1 when it named a struct of type `ft` (consumed), else 0 (cursor untouched).
+fn _fsc_name(S, ft, fnoff): i64 {
+    var noff = PEEKV(S);
+    var t = _fsc_name_src(S, noff);
+    if (t == 0) { return 0; }
+    if (t != 0 - ft) { _fsc_type_err(S, noff, fnoff); return 0; }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
+# `IDENT ( .. ) ;` — a free fn returning a struct: the call into a temp, the temp recorded (1).
+# 0 = not that shape (cursor untouched). A <= 8 B result (an odd-sized one: only those reach
+# here — see `_fsc_src`) comes back in rax and is left to the byte-exact store, `_fst_odd`, at
+# top level and in a fn alike.
+fn _fsc_call(S, ft, fnoff, term): i64 {
+    # 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES — `b.v = idp(p);` sized
+    # the copy from the base's i64 `T` return and stored one word.
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (_call_follow(S, o - 1) != term) { return 0; }
+    if (rs != ft) { _fsc_type_err(S, PEEKV(S), fnoff); return 0; }
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
+    if (GINFN(S) != 1) { _refuse_toplevel_struct_call(S, PEEKV(S)); return 0; }
+    _fsc_reset();
+    _fsc_li = _struct_call_into_temp(S);
+    return 1;
+}
+
+# ⛔ 6.7.11 — `o.s = *p;` (a struct-typed field from a dereference of a `*S`) COPIES THE STRUCT, as `o.s = l`
+# does and as the declaration `var l: S = *p;` copies it (6.7.10 decision 6: `*p` is a struct value). It was
+# an expression whose first word the field store kept — `o.s.b` stale, silently (issues/2026-10-13-assignment-
+# from-struct-dereference-copies-one-word.md). The source up to `term` is ONE dereference whose operand
+# `_hl_dstar_t` types `*S`: its pointer is parked in a hidden temp and recorded as the copy's source (1); a
+# `*U` of another struct is refused by name (0, as `_fsc_name` refuses a U); anything else is 0 (untouched).
+# 6.7.16: and `*pp` of a `**S` (`_hl_dstar_x`'s twin, mode 1) — the `*S` it reads, copied through as `o.s = p` is; it
+# stored the pointer word into the field's first word, the rest stale. CHANGELOG [6.7.16]
+fn _fsc_dstar(S, ft, fnoff, term): i64 {
+    var ps = _hl_dstar_x(S, GTI(S), term, 1);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_dname(S), fnoff); return 0; }   # 6.7.16: '*qq', as written
+    _fsc_hsrc(_hl_dx_src(S));
+    return 1;
+}
+# ⛔ 6.7.11 — `o.s = GP;`, `o.s = gp();`, `o.s = w.p;` (a struct-typed field from a `*S` global, a call or
+# method declared `: *S`, a `*S` field, or pointer arithmetic on a `*S`, wrapped or not) COPIES THE STRUCT,
+# as the name destination does since 6.7.10 (decision 6, `_hl_psrc_copy`). The field kept the POINTER's word
+# at every size, silently (issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
+# The source up to `term`, typed by `_hl_psrc` (a `*S` local, parameter or capture is `_fsc_name`'s), is
+# parsed, its pointer parked in a hidden temp and recorded as the copy's source (1); a `*U` of another struct
+# is refused by name (0); 2 = parsed but the parser's pointer step is not the struct's (the value store, as
+# `_hl_psrc_copy` falls back); anything else is 0 (untouched).
+fn _fsc_psrc(S, ft, fnoff, term): i64 {
+    var ti = GTI(S);
+    var e = _hl_dx_end(S, ti, term);
+    if (e < 0) { return 0; }
+    var a = _ie_unparen(S, ti, e);
+    var ps = _hl_psrc(S, a, _ie_pe);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != ft) { _fsc_type_err(S, _hl_pname(S), fnoff); return 0; }   # 6.7.16: 'gq(&q)', as written
+    PCMPE(S);
+    if (_ps_is_sz(_ps_step(GPSC(S)), STRUCTSZ(S, ft - 1)) == 0) { return 2; }   # 6.7.13: a zero-size T steps 8
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    _fsc_hsrc(h);
+    return 1;
+}
+# Record as the copy's source the struct whose ADDRESS hidden temp `h` (`_HTEMP`) holds: a frame slot
+# (the deref band), or at top level a hidden global (pointer-mode).
+fn _fsc_hsrc(h): i64 {
+    _fsc_reset();
+    if (h >= 0) {
+        _fsc_li = _AGC_DREF(h);
+        return 0;
+    }
+    _fsc_gv = 0 - 2 - h;
+    _fsc_gdr = 1;
+    return 0;
+}
+# 1 = struct `sid` is one a dereference copies as a struct value: not a `Str` (a heap handle), a tuple or
+# a dyn, which keep their own paths.
+fn _dx_plain(S, sid): i64 {
+    if (sid == _STR_SID(S)) { return 0; }
+    if (_tup_is(S, sid) == 1) { return 0; }
+    if (_dyn_is(S, sid) == 1) { return 0; }
+    return 1;
+}
+
+# Any other right-hand side: parse it with the two destination arms armed. A method / operator
+# call spanning it lands in a temp (1); a struct-typed field spanning it is recorded (1);
+# otherwise its value is in rax (2) for the ordinary store.
+fn _fsc_expr(S, ft, fnoff, term): i64 {
+    var st = GTI(S);
+    var sv = _fla_want;
+    _fla_want = st;
+    var fs = _fla_stp;
+    if (term == 11) { _fla_stp = st; }   # 6.7.5: a for step's field source ends at `)`
+    _fla_hit = 0;
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _sc_want = w;
+    _fla_want = sv;
+    _fla_stp = fs;
+    var t = _sc_whole(S, st);
+    if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
+    # 6.6.11: a <= 8 B struct result (rax, no temp) is type-checked too, then stored. See `_sc_post`.
+    if (t == 0 - 3) { if (_sc_sid != ft) { _fsc_type_errf(S, _sc_fn, _sc_fi, fnoff); } return 2; }
+    if (_fla_hit == 1) {
+        _fla_hit = 0;
+        if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
+        return 1;
+    }
+    if (_fls_whole(S, st) == 1) { if (_fls_sid != ft) { _fsc_type_err(S, _fls_name, fnoff); } }   # 6.7.6
+    return 2;
+}
+fn _fsc_from_call(S, t, ft, fnoff): i64 {
+    if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 2; }
+    if (_sc_sid != ft) { _fsc_type_errf(S, _sc_fn, _sc_fi, fnoff); return 2; }
+    _fsc_reset();
+    _fsc_li = t;
+    return 1;
+}
+
+# 6.7.7 (R12) — `h.p = 5;` into a TUPLE field: the source was no whole tuple (the copy arms above
+# took every one), so its value is in rax, and the store below would write one word of the tuple
+# (the struct first-word rule), silently. Refused by name, at the source (`ti`). CHANGELOG [6.7.7]
+fn _tup_fst_chk(S, ft, fnoff, ti): i64 {
+    if (_dyn_is(S, ft) == 1) { return _dyn_err(S, ti, "cannot store a value that is not a dyn into ", ft, fnoff, " (a field)"); }   # 6.7.8
+    if (_tup_is(S, ft) == 0) { return 0; }
+    _tup_err(S, ti, "cannot store a value that is not a tuple into tuple field ", fnoff, 0);
+    return 0;
+}
+
+# The dispatch, cursor on the right-hand side of `x.f = ` (the store ends at `term`, `;` or a for
+# step's `)`, 6.7.5): 0 = not a struct copy (nothing
+# parsed), 1 = the source is recorded for `_fsc_copy`, 2 = the RHS is parsed and its value is
+# in rax. Every source shape is taken at every width.
+# ⛔ 6.6.11 — an exact-register field (1/2/4/8 B) used to return 0 here, before the call and
+# expression arms, because its one-word store was already the right COPY. It was not the right
+# TYPE CHECK: `h.p = y.mq()` and `h.p = mkq8()` stored a Q8 into a P8 field with no diagnostic.
+# The arms below store through the same width ladder (2) when the value is in rax. CHANGELOG [6.6.11]
+fn _fsc_src(S, ft, fnoff, term): i64 {
+    if (ft <= 0) { return 0; }
+    if (_dyn_is(S, ft) == 1) {   # 6.7.8 (D5): a dyn formed in a temp
+        var dr = _dyn_fsc(S, ft, term);
+        if (dr != 0) { return dr; }
+    }
+    if (IS_STR_FIELD(S, ft) == 1) { return _istr_fsrc(S, fnoff, term); }   # 6.7.13 (D7 (1)): an inline `Str`; 6.7.17 (D18)
+    var pr = _fsc_psrc(S, ft, fnoff, term);   # 6.7.11: `o.s = GP` / `gp()` / `w.p` / `GP + n`
+    if (pr != 0) { return pr; }
+    if (PEEKT(S) != 2) { if (_pc_mchain(S, GTI(S)) == 1) {   # 6.7.16: a chain's method on a `(..)` / `callptr` head
+            _tup_fsc_call(S, ft, term);
+            _mv_fsc_call(S, ft, term);
+        } }
+    if (PEEKT(S) == 10) { return _fsc_paren(S, ft, fnoff, term); }   # 6.7.6
+    if (PEEKT(S) == 2) {
+        if (TOKTYP(S, GTI(S) + 1) == term) { return _fsc_name(S, ft, fnoff); }
+    }
+    if (PEEKT(S) == 8) { if (_fsc_dstar(S, ft, fnoff, term) == 1) { return 1; } }   # 6.7.11: `o.s = *p`
+    if (PEEKT(S) == 2) {
+        _tup_fsc_call(S, ft, term);   # 6.7.7 (B4, T5): R17, a multi-value call into a tuple field
+        _mv_fsc_call(S, ft, term);    # 6.7.11: ... into a named-struct field
+        var r = _fsc_call(S, ft, fnoff, term);
+        if (r != 0) { return r; }
+    }
+    return _fsc_expr(S, ft, fnoff, term);
+}
+# ⛔ 6.7.7 (B4, T5) — `h.p = f();` with `f` declared `: (i64, i64)` into a TUPLE field: the struct
+# path took the call as a value and stored its FIRST word (the R12 refusal named the store, not
+# the call). A capture lands in a tuple VARIABLE; a field is stored from one — refused by name, as a
+# multi-value call is as a tuple argument (`_tup_arg_call`): bind it first. The value parse goes on
+# (its "not a tuple" refusal at the same token stays quiet). Cursor on the source; 1 = refused.
+# `_tfc_rep` = 1 once it reported, so a wrap around the call (`h.p = (two(3));`) marks its own `(`
+# reported too (`_fsc_paren`): R12 points at the wrap, one token before R17. CHANGELOG [6.7.15]
+var _tfc_rep = 0;
+fn _tup_fsc_call(S, ft, term): i64 {
+    if (_tup_is(S, ft) == 0) { return 0; }
+    var o = _dt_call_open(S);
+    if (o < 0) { return 0; }
+    if (TOKTYP(S, _call_close(S, o) + 1) != term) { return 0; }
+    var fi = _dt_call_fn(S);
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    _tamv_fld = 1;
+    if (_mcall_open(S, GTI(S), 0 - 1) >= 0) { _tup_arg_mv_err(S, GTI(S), ft, _fn_src_name(S, fi, L64(_fnt_names + fi * 8)), 0); }
+    else { _tup_arg_mv_err(S, GTI(S), ft, PEEKV(S), "(..)"); }
+    _tamv_fld = 0;
+    _tfc_rep = 1;
+    return 1;
+}
+
+# ⛔ 6.7.6 — A PARENTHESISED SOURCE INTO A STRUCT-TYPED FIELD COPIED ONE WORD: `o.i = (z.k);` and
+# `o.i = (j);` gave 72 where 78 is right (a for step's field destination too), because every arm
+# above keys on the source's first token. Parentheses that wrap the whole source (`_pwrap_k`) are
+# transparent: the arms run on what they wrap, which ends at its `)`, and the wrap is closed after.
+# Any other `(`-led source is an expression, as before. Returns as `_fsc_src`. CHANGELOG [6.7.6]
+fn _fsc_paren(S, ft, fnoff, term): i64 {
+    var st = GTI(S);
+    var tl = _tup_fsc_lit(S, ft, fnoff, term);   # 6.7.7 (B4): a tuple literal
+    if (tl != 0) { return tl; }
+    var k = _pwrap_k(S, st);
+    if (TOKTYP(S, _pw_end) != term) { return _fsc_expr(S, ft, fnoff, term); }
+    STI(S, st + k);
+    _tfc_rep = 0;
+    var r = _fsc_src(S, ft, fnoff, 11);
+    if (_tfc_rep == 1) {   # 6.7.15: R17 named the wrapped call — its `(` is reported (one mistake, one error)
+        _tn_once(S, st);
+        _tfc_rep = 0;
+    }
+    if (r == 0) {
+        STI(S, st);   # not a struct source: the caller parses the whole value
+        return 0;
+    }
+    _pw_close(S, k);
+    return r;
+}
+
+# ⛔ 6.7.7 (B4) — `h.p = (a, b);` into a TUPLE field: built in a frame temp and recorded as the copy's
+# source (1) — `_tup_asg`'s rule, a field destination. A literal into a field of another struct type
+# is refused by name, and at top level (no frame for the temp, R10); the literal is then consumed
+# and 0 is the value (2), its `(` marked reported so the field's own value check stays quiet. 0 =
+# not a whole literal.
+fn _tup_fsc_lit(S, ft, fnoff, term): i64 {
+    var st = GTI(S);
+    var lp = _tup_lit_at(S, st);
+    if (lp < 0) { return 0; }
+    if (TOKTYP(S, _pw_end) != term) { return 0; }
+    var ok = 1;
+    if (_tup_is(S, ft) == 0) {
+        _tup_err(S, lp, "cannot store a tuple literal into field ", fnoff, " - it is not a tuple");
+        ok = 0;
+    } elif (GINFN(S) != 1) {
+        _tup_err(S, lp, "a tuple literal stored at top level has no frame to be built in - store it into ", fnoff, " inside a fn");
+        ok = 0;
+    } elif (_tup_lit_shape(S, lp, ft) == 0) { ok = 0; }
+    if (ok == 0) {
+        _tn_once(S, st);
+        _tup_lit_skip(S, st, 0);
+        EMOVI(S, 0);
+        return 2;
+    }
+    var t = _agg_temp(S, ft);
+    STI(S, lp);
+    _tup_elems(S, ft, 0, t, 0);
+    _pw_close(S, lp - st);
+    _fsc_reset();
+    _fsc_li = t;
+    return 1;
+}
+
+# ⛔ 6.6.10 (bite 5 review) — A VALUE IN rax STORED INTO A 3/5/6/7-BYTE FIELD (an odd-sized
+# struct: `struct Odd { a: i8; b: i16; }`) wrote EIGHT bytes — the width ladder's `else` is ESTOC
+# — and silently overwrote the fields after it. Every <= 8 B struct result arrives this way (a
+# method, an overloaded operator, a free call at top level), and so does a plain integer. Now
+# exactly `nb` bytes: 4/2/1-byte chunks, each shifted down into place. The value is kept on the
+# stack across the chunks (the field address is re-resolved per chunk and may use rax).
+# CHANGELOG [6.6.10]
+fn _fst_odd_sz(nb): i64 {
+    if (nb == 3 || nb == 5 || nb == 6 || nb == 7) { return 1; }
+    return 0;
+}
+fn _fst_chunk(S, idx, sid, off, o, w): i64 {
+    if (o > 0) { EMOVI(S, o * 8); EMOVCA(S); }
+    EPOPR(S);
+    EPUSHR(S);
+    if (o > 0) { ESHRCL(S); }
+    EPUSHR(S);
+    _resolve_field_base_addr(S, idx, sid);
+    if (off + o > 0) { EADDIMM_X1(S, off + o); }
+    EPOPR(S);
+    if (w == 1) { ESTORE8(S); }
+    elif (w == 2) { ESTORE16(S); }
+    else { ESTORE32(S); }
+    return 0;
+}
+fn _fst_odd(S, idx, sid, off, nb): i64 {
+    EPUSHR(S);
+    var o = 0;
+    while (o < nb) {
+        var w = 4;
+        if (nb - o < 4) { w = 2; }
+        if (nb - o < 2) { w = 1; }
+        _fst_chunk(S, idx, sid, off, o, w);
+        o = o + w;
+    }
+    EPOPR(S);
+    return 0;
+}
+
+# PARSE_FIELD_LOAD's side: the access began at `_fla_want`, its leaf is a (non-Str) struct and
+# `;` follows — record it for `_fsc_copy` and emit nothing. Returns 1 when taken.
+# 6.6.12: a struct literal's nested-field source (`B2 { a.v, 5 }`) ends at `,` or `}`, and a
+# by-value struct argument (`take(r.v, 5)`) at `,` or `)`.
+# 6.6.20: an operator's right operand (a TERM) ends at any token that does not continue the term;
+# a parenthesised one at its `)`, when the token after it does not continue the term either.
+fn _fla_lit_end(S): i64 {
+    if (_fla_arg == _fla_want) { if (PEEKT(S) == 31 || PEEKT(S) == 11) { return 1; } }
+    if (_fla_stp == _fla_want) { if (PEEKT(S) == 11) { return 1; } }
+    if (_fla_opd == _fla_want) { if (_op_term_cont(PEEKT(S)) == 0) { return 1; } }
+    if (_fla_opdp == _fla_want) { if (PEEKT(S) == 11) {
+            if (_op_term_cont(TOKTYP(S, GTI(S) + 1)) == 0) { return 1; }
+        } }
+    if (_fla_lit != _fla_want) { return 0; }
+    if (PEEKT(S) == 31) { return 1; }
+    if (PEEKT(S) == 14) { return 1; }
+    return 0;
+}
+# ⛔ 6.7.6 — A `Str` FIELD WAS NEVER TYPED AS A STRUCT SOURCE: `bq(h.name)` with `fn bq(b: Q)` and
+# `var q: Q = h.name;` compiled and read Q's fields out of the Str's 16-byte header and past it
+# (silent), as did `q = h.name`, `o.q = h.name` and `q + h.name`. A `: Str` field is one slot
+# holding a Str HANDLE, so the copy arms (`_fla_take`, `_fpk_note`) rightly never take it — its
+# load stays the handle. It is recorded here instead, for the destinations' type checks: into a
+# `Str` it is a handle as ever; into a struct VALUE of another type it is refused by name, as a
+# `Str` variable is (`var q: Q = s;` has been since 6.6.6); a handle destination rebinds at any
+# type (6.6.16 C2). `h.name.len` is a hop, not this. CHANGELOG [6.7.6]
+fn _fls_note(S, beg, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 0) { return 0; }
+    _fls_beg = beg;
+    _fls_end = GTI(S);
+    _fls_sid = ft;
+    _fls_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    return 0;
+}
+# 1 = the expression [st, cursor) is one whole `Str` field read, inside any parentheses wrapping it.
+fn _fls_whole(S, st): i64 {
+    if (_fls_beg < st) { return 0; }
+    var k = _fls_beg - st;
+    if (_fls_end + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, st + i) != 10) { return 0; }
+        if (TOKTYP(S, _fls_end + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# A `Str` field into a struct VALUE destination of type `dt` (`0 - sid`): refused by name when `dt`
+# is another struct. 1 = refused.
+fn _fls_type_err(S, dt, dnoff): i64 {
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    return _AGG_ASSIGN_TYPE_ERR(S, dt, 0 - _fls_sid, dnoff, _fls_name);
+}
+
+# 6.7.3 — a whole struct-typed field as the argument of a parameter that is not address-passed
+# (`_sarg_byval_small`, parse/fn/call_args.cyr): its struct, end token and name, recorded WITHOUT changing the
+# load — the by-value word is pushed exactly as before. The reader compares the end with the cursor.
+fn _fpk_note(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    _fpk_ft = ft;
+    _fpk_end = GTI(S);
+    _fpk_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    return 0;
+}
+# 6.7.6 — the field is the whole inside of the parentheses the destination stepped into
+# (`var q: K = (z.k);`, `_scv_peel`): `_fla_want` follows a `(` whose `)` is the cursor.
+fn _fla_inparen(S): i64 {
+    var w = _fla_want;
+    if (w < 1) { return 0; }
+    if (PEEKT(S) != 11) { return 0; }
+    if (TOKTYP(S, w - 1) != 10) { return 0; }
+    if (_call_close(S, w - 1) != GTI(S)) { return 0; }
+    return 1;
+}
+fn _fla_take(S, idx, sid, off, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (PEEKT(S) != 5) { if (_fla_lit_end(S) == 0) { if (_fla_inparen(S) == 0) { return 0; } } }
+    _fla_want = 0 - 1;
+    _fla_hit = 1;
+    _fla_ft = ft;
+    _fla_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    _fsc_reset();
+    _fsc_fidx = idx;
+    _fsc_fsid = sid;
+    _fsc_foff = off;
+    return 1;
+}
+
+# ⛔ 6.6.11 — A STRUCT VARIABLE ASSIGNED FROM A STRUCT-TYPED FIELD COPIED ONE WORD (`q = b.v;`,
+# a local, a global and an address-passed parameter alike), and the DECLARATION `var p: Pt = b.v;`
+# stored that word into a slot typed `Pt` that was not inline, so `p.x` dereferenced it: SIGSEGV
+# on x86 and aarch64, a page fault on PE. 6.6.10 taught the FIELD destination (`b.v = a.v`) to
+# record such a source instead of loading it (`_fla_take`); the variable destinations now arm the
+# same record and copy from it byte-exact (`_agc_copy_bytes` with the `-2` source). A field of a
+# DIFFERENT struct type is refused by name, as the variable-to-variable copy has been since 6.6.6.
+# Armed only when the destination IS a struct, so a scalar `x = b.v;` keeps its one-word load.
+# CHANGELOG [6.6.11]
+fn _fla_arm(st, dt): i64 {
+    _fla_hit = 0;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    _fla_want = st;
+    return 0;
+}
+
+# `q = b.v;` after the armed PCMPE recorded the field: 1 = copied (`term` consumed: `;`, or `)`
+# for a classic-for step).
+fn _fla_assign(S, noff, term): i64 {
+    _fla_hit = 0;
+    _agc_operand(S, noff);
+    if (_asg_type_err(S, _istr_hdt(S, noff, _agc_t), 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }   # 6.7.17: no warning; (D18) a `Str` handle
+    var dli = _agc_li;
+    if (_agc_pp != 0) { dli = _AGC_DREF(dli); }   # 6.6.16 (C2): a handle copies through it too
+    _agc_copy_bytes(S, dli, _agc_gvi, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+    if (_agc_gvi >= 0) { SLVAR(S, _agc_gvi); }   # never a deref-band handle: G is not written
+    _expect_step(S, term);   # consume the terminator
+    return 1;
+}
+
+# `var p: S = b.v;` in a fn: an inline `S` named `p`, filled from the recorded field. 1 = declared.
+fn _fla_var_receive(S, noff, pscale): i64 {
+    _fla_hit = 0;
+    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }
+    var t = _agg_temp(S, _fla_ft);
+    _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+    S64(S + 0x5D9D000 + t * 8, noff);
+    SSLICE_W(S, t, 0);
+    return 1;
+}
+
+# ⛔ 6.6.11 — rax = the receiver's VALUE, for a method whose `self: T` is a struct of 8 B or less.
+# Such a `self` is passed BY VALUE (`_param_wants_struct_ptr` leaves it out of the structmask), so
+# the free call `Odd_sum(x)` pushes x's value; the method arm below pushed `&x` for every `self`,
+# and the callee read its fields out of the address: `x.sum()` returned garbage on every backend.
+# Loaded through the same base-address resolution the field access uses, at the struct's width
+# (1, 2, 4, 8); the callee reads only the declared fields. CHANGELOG [6.6.11]
+# ⛔ 6.7.10 (B7 review) — a 3 / 5 / 6 / 7 B receiver was loaded rounded UP to a load (3 -> 4, 5..7 -> 8),
+# reading past the object: a `*S7` (or, since the handle line, a handle) onto the last 7 bytes of a
+# mapping SIGSEGV'd in `pp.sum()`. It is copied byte-exact through its address now, as every other
+# by-value consumer of an odd-sized struct is (`_hl_pval_ra`). CHANGELOG [6.7.10]
+fn _self_value_ra(S, idx, sid): i64 {
+    var sz = STRUCTSZ(S, sid - 1);
+    if (_hl_wpow(sz) == 0) {
+        _fld_addr_ra(S, idx, sid, 0, 0 - 1);
+        _hl_pval_ra(S, sid);
+        return 0;
+    }
+    _resolve_field_base_addr(S, idx, sid);
+    EFIELD_LOAD_W(S, sz);
+    return 0;
+}
+
+# ⛔ 6.7.7 (B4) — `t.m(..)` / `t.0(..)` on a tuple: a tuple has no methods (R13). And `x.0(..)` on ANY
+# receiver: since `t.N` lexes as a selector (T1), `p.0()` on a struct `P` resolved as the method `P_0`
+# and CALLED a user `fn P_0(self)` — a meaning the decision never gave (it was "expected identifier,
+# got number 0"). A digit-led name is an element selector, never a method. Refused by name at the
+# name before the `(`, the call's `( .. )` (and any chain on it) consumed so the parse stays in
+# sync. 1 = refused. CHANGELOG [6.7.7]
+fn _tup_meth_chk(S, sid, fnoff): i64 {
+    var c = load8(S + 0xEC00000 + fnoff);
+    if (_tup_is(S, sid) == 1) {
+        _tup_err(S, GTI(S) - 1, "a tuple has no methods - ", fnoff, " is not a method of a tuple");
+    } elif (c >= 48 && c <= 57) {
+        _tup_err(S, GTI(S) - 1, "a method name cannot start with a digit - ", fnoff, " is an element selector (`t.0` reads a tuple's element)");
+    } else { return 0; }
+    STI(S, _call_close(S, GTI(S)) + 1);
+    _mchain_skip(S);   # and a `.field` / `.m(..)` chain on the refused call's result
+    EMOVI(S, 0);
+    return 1;
+}
+# 6.7.7 (R11) — the leaf `ft` of the field access that began at token `beg` is a tuple and is about
+# to be loaded as a VALUE (no aggregate receiver took it: `_fla_take` copies, `_fpk_note` records a
+# by-value argument the call checks by type): `h.p == h.q`, `print(h.p)`. Under the struct rule that
+# loaded its first word, silently. Refused by name, at the field. CHANGELOG [6.7.7]
+fn _tup_fld_rchk(S, ft, beg): i64 {
+    if (_dyn_is(S, ft) == 1) {   # 6.7.8 (V3): a whole dyn field is not a value either
+        if (_fpk_want == beg) { return 0; }
+        _dyn_err(S, GTI(S) - 1, "", ft, TOKVAL(S, GTI(S) - 1), " (a field) used as a value - call one of its methods, or copy it whole into a dyn");
+        SESTYPE(S, 0);
+        return 0;
+    }
+    if (_tup_is(S, ft) == 0) { return 0; }
+    if (_fpk_want == beg) { return 0; }
+    _tup_err(S, GTI(S) - 1, "tuple field ", TOKVAL(S, GTI(S) - 1), " used as a value - take an element (`.0`) or copy it whole into a tuple");
+    return 0;
+}
+
+# Load a struct field: ident.field → emit load from var_addr + field_offset
+# Or call a method: ident.method(args) → call StructName_method(&ident, args)
+fn PARSE_FIELD_LOAD(S, noff): i64 {
+    var pfl_beg = _pfl_beg(S);   # the receiver IDENT — a method call's first token (6.6.6); 6.7.14: a wrap's `(`
+    STI(S, GTI(S) + 1);  # consume DOT
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+
+    # Find the variable and its struct type (check locals first)
+    var idx = 0 - 1;
+    var sid = 0;
+    if (GINFN(S) == 1) {
+        var lli = FINDLOCAL(S, noff);
+        if (lli >= 0) {
+            var lt = GLTYPE(S, lli);
+            # v6.4.4: SIMD vector sentinels live in the descriptor band <= -2048
+            # (f64v2 -2093, f64v4 -2125, f32v4 -2121, ...) and are NOT struct ids.
+            # Without this guard `0 - lt` yields e.g. 2121 -> si=2120, which blows
+            # past the 1024-entry struct tables (OOB read in BUILD_METHOD_NAME
+            # / FINDFIELD). Vectors expose lanes via fN_laneK(&v), not `.field`.
+            # v6.4.14: the old flat -20/-21 special-cases were removed — they
+            # collided with struct-ids 20/21, wrongly rejecting `.field` on the
+            # 20th/21st struct. The single band check is exact now.
+            if (lt <= 0 - 2048) {
+                ERR_MSG(S, "SIMD vector has no named fields", 31);
+            }
+            # 6.7.16: the vector band is no struct id — sid 0 (its arm stays quiet behind the latch); `0 - lt` read
+            # struct 2092's tables: `v.m()` went on to "undefined function 'enum.m'" and refused the binary for it.
+            if (lt < 0) { if (lt > 0 - 2048) { sid = 0 - lt; } }
+            idx = 0 - 2 - lli;
+            # v5.8.16 §8: slice dot-syntax field load (s.ptr / s.len).
+            # A slice fn-local has GLTYPE=0 and _slice_lw>0 (per-local
+            # element width set in §6). The slice occupies a 16-byte
+            # 2-slot block: slot lli (canonical, lower address) holds
+            # `.ptr` at offset 0; slot lli-1 (higher address allocated
+            # ahead of the canonical slot per the §8 layout-flip)
+            # holds `.len` at offset 8.
+            #
+            # Both fields lower to address-based loads (EFLADDR + add
+            # + ELODC) rather than direct EFLLOAD against the slot
+            # number. Reason: the regalloc post-body peephole pins
+            # hot user-locals to callee-saved registers via "time-
+            # sliced sharing" (parse/fn.cyr v5.6.20). The picker
+            # treats any slot accessed only through `mov rax,
+            # [rbp+disp]` / `mov [rbp+disp], rax` as eligible for
+            # register routing — it bars `&local` (lea) accesses,
+            # which is exactly the bar we want here.
+            #
+            # The slice's low slot (canonical) is naturally barred
+            # because slice_set / slice_ptr / etc. take its address
+            # via `&s`. The HIGH slot (lli-1) has no user-visible
+            # name, so no `&` is ever taken against it directly —
+            # but slice_set writes to it via the low-slot address
+            # plus 8 bytes (a memory write the regalloc picker
+            # cannot see). If §8 read the high slot via EFLLOAD
+            # directly, the picker would happily allocate rbx for
+            # it; the EFLLOAD would patch to `mov rax, rbx` and
+            # read the stale rbx value (caller's saved rbx, never
+            # updated by slice_set's memory write). Reading via
+            # &s + 8 keeps the access pattern equivalent to
+            # slice_len's helper-fn path and stays out of the
+            # regalloc patcher's way.
+            var sw = _slice_lw(S, lli);   # 6.7.8 (C2-2a): behind the slice bit
+            if (sw > 0) {
+                var fname = L64(S + 0xEC00000 + fnoff);
+                var fld_off = 0 - 1;
+                if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
+                elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
+                else { ERR_MSG(S, "slice has only .ptr and .len fields", 35); }
+                EFLADDR_X1(S, lli);
+                if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
+                ELODC(S);
+                return 0;
+            }
+        }
+    }
+    if (idx == 0 - 1) {
+        if (_cl_cslice_field(S, noff, fnoff) == 1) { return 0; }   # 6.7.11: a captured slice's .ptr / .len
+        var _cfx = _cl_cap_fld_any(S, noff);   # 6.7.16: an untyped capture too
+        if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
+    }
+    if (idx == 0 - 1) {
+        idx = FINDVAR(S, noff);
+        if (idx < 0) {
+            # v6.5.19: --syntax-only treats the unknown base as an opaque value; the
+            # `sid == 0` arm below then consumes the field access without emitting a
+            # diagnostic, keeping the stream in sync. See _syntax_only.
+            if (_syntax_only == 1 && _unp_names == 0) { sid = 0; }   # 6.7.17 (D110): a never-parsed body's read reports it
+            else {
+                if (_cst_fld_at(S, noff, _cst_fld_st(S), pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a local const
+                # 6.6.6: the `.field` base is a fourth/fifth undefined-variable site. 19a wired the
+                # block-scope note into three of the five and the CHANGELOG said "all three", so
+                # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
+                # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
+                _undef_var_report(S, _nm_ti(S, GTI(S) - 3, noff), noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF); 6.7.17: at the base
+                _refuse_in_sync(S);   # 6.7.17: the read parses on to its own end — the latch is this statement's (`_stmt_resync`)
+                _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
+                return 0;
+            }
+        }
+        else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T
+    }
+    _field_load_on(S, noff, fnoff, pfl_beg, idx, sid);
+    return 0;
+}
+
+# ⛔ 6.6.17 — A METHOD CALL'S RESULT TAKES `.field` AND `.method(..)` (`s.clone().cat(t)`,
+# `p.bump().bump().sum()`, as a value or a statement). The method arm returned straight after
+# the call, so the `.` was a syntax error in every position (`expected ';', got '.'`), while a
+# free call's result has taken both since 6.6.12 (`_call_field`). The result goes where
+# `_call_field` puts a call's: a > 16 B struct in the temp `_sc_pre` gave it, a 9-16 B one in a
+# temp `_sc_pre_m` asks for when a chain follows, a <= 8 B struct in an inline temp and a `Str`
+# handle in a pointer-mode one — and this body runs again on that temp, so a chain reaches any
+# depth. A result that is no struct (nor a `*T`: `_mchain_ptr`), and a struct chain at top level (no
+# frame), are refused by name.
+# The method a `.m(..)` expression ENDED with (-1 when it ended with a field or anything else) —
+# what `p.m(..);` as a statement discards, for #must_use (parse.cyr `_stmt_method_call`).
+var _mcall_last = 0 - 1;
+# 6.7.15 — the `.name` read past a base that resolved to nothing (PARSE_FIELD_LOAD's undefined arm, the cursor
+# after the name): 2 when `(` follows — a method call, which `_cst_fld_at` names "has no methods" on a const —
+# else 0, a field read. CHANGELOG [6.7.15]
+# 6.7.16 — and `.m<types>(` (`_mlist_end`): a method call too, its list stepped to the `(` — `L.m<i64>(1)` on a local
+# const said "has no fields" and `zq.m<i64>(1)` on an undefined name went on to read `<i64>` as a comparison ("undefined
+# variable 'i64'", printed under the latch). CHANGELOG [6.7.16]
+fn _cst_fld_st(S): i64 {
+    if (PEEKT(S) == 10) { return 2; }
+    if (_mlist_step(S) == 1) { return 2; }
+    return 0;
+}
+# 6.7.16 — the cursor past `.m` on a receiver of no struct (an undefined name, a local const, a name of an enum that
+# declares no m): a `<types>(` there (`_mlist_end` at sid 0) is a method call's list, stepped to its `(` so the call is
+# refused as `.m(..)` is, not read as comparisons of the type names. 1 = stepped. CHANGELOG [6.7.16]
+fn _mlist_step(S): i64 {
+    var e = _mlist_end(S, 0, GTI(S) - 1);
+    if (e < 0) { return 0; }
+    STI(S, e + 1);
+    return 1;
+}
+# 6.7.15 — the method arm's `sid == 0` refusal ("no struct type in scope for 'a'"), out of `_field_load_on`
+# (a cybs-ceiling fn): a const receiver is "const 'C' has no methods" (`_cst_fld_at`), and in the run-time body
+# of a const fn whose definition check refused (`_ce_fld_said`) it stands down — a method call is never in a
+# const fn, and the check named it ("a method call is not in a const fn") or stopped earlier. 1 = said.
+# CHANGELOG [6.7.15]
+fn _meth_sid0_said(S, noff, pfl_beg, idx): i64 {
+    if (_cst_fld_at(S, noff, 2, pfl_beg + 1) == 1) { return 1; }
+    return _fld_sid0_said(S, noff, idx, 2);
+}
+# The `sid == 0` arms' stand-downs (the method call, the `.field` read and store; out of their cybs-ceiling fns): a
+# refused const fn's run-time body (`_ce_fld_said`, 6.7.14), and 6.7.15 a variable `noff` (resolved to `idx`)
+# whose annotation named a type a refused declaration declared (`_ann_refd_said`, parse/fn/def.cyr). 1 = said.
+# 6.7.17: and a zone global the sweep judged refused, before the replay has said (`_gu_phold`, report `kind`).
+fn _fld_sid0_said(S, noff, idx, kind): i64 {
+    if (_ce_fld_said(S) == 1) { return 1; }
+    if (_ann_refd_said(S, noff, idx) == 1) { return 1; }
+    return _gu_phold(S, noff, idx, kind);
+}
+# The `sid == 0` arms' report at the cursor, `kind` 0 a `.field` read, 1 a `.field` store, 2 a method call (and the
+# held one's, `_gu_presolve`).
+fn _s0_err(S, noff, kind): i64 {
+    var t = "; a '.field' access needs its struct declaration (missing include?)";
+    if (kind == 1) { t = "; a '.field' assignment needs its struct declaration (missing include?)"; }
+    if (kind == 2) { t = "; a method call needs its struct declaration (missing include?)"; }
+    ERR_IDENT(S, "no struct type in scope for ", noff, t, 0 - 1);
+    return 0;
+}
+fn _mchain_at(S, k): i64 {
+    if (TOKTYP(S, k) != 41) { return 0; }
+    if (TOKTYP(S, k + 1) != 2) { return 0; }
+    return 1;
+}
+# `_sc_pre` for the method arm (cursor on the call's `(`): a 9-16 B result followed by a chain
+# needs its temp as much as one a destination asked for.
+fn _sc_pre_m(S, fi, noff, beg): i64 { return _sc_pre_c(S, fi, noff, beg, GTI(S)); }
+# ... with the call's `(` at token `o` (6.7.13: `_icall_sret`, whose cursor is past the callee).
+fn _sc_pre_c(S, fi, noff, beg, o): i64 {
+    if (_mchain_at(S, _call_close(S, o) + 1) == 0) { return _sc_pre(S, fi, noff, beg); }
+    var w = _sc_want;
+    _sc_want = beg;
+    var t = _sc_pre(S, fi, noff, beg);
+    _sc_want = w;
+    return t;
+}
+# After the method call `fi` (`t` = its temp, -1 for none; cursor past its `)`): 1 = a chain on
+# its result was parsed (rax = its value), 0 = none follows.
+fn _method_chain(S, fi, noff, beg, t): i64 {
+    if (_mchain_at(S, GTI(S)) == 0) { return 0; }
+    _mcall_last = 0 - 1;                # the chain's own last method, if it ends with one
+    var sid = 0;
+    if (fi >= 0) { sid = GFRS(S, fi); }
+    if (sid <= 0) {
+        if (_hl_fn_psid(fi) > 0) { return _mchain_ptr(S, noff, beg, _hl_fn_psid(fi)); }
+        if (_syntax_only == 0) { _call_fld_err(S, fi, noff, beg); }   # 6.7.7 (T5): + a multi-value one's hint
+        _mchain_skip(S);
+        return 1;
+    }
+    if (GINFN(S) != 1) {
+        # 6.7.14: a result over 16 B was refused by the call's own `_sc_pre` (every caller asks it first: the
+        # method arm, `_dyn_call_in`, `_icall_sret`) — a top-level `b.mk().b` said it twice. CHANGELOG [6.7.14]
+        if (_syntax_only == 0) { if (_ret_agg_class(S, fi) != 2) { _refuse_toplevel_struct_call(S, noff); } }
+        _mchain_skip(S);
+        # 6.7.15: and a `[..]` on its last field with the chain past it (`o.mk().p[0] = 5;` added a false "cannot
+        # subscript field 'p': it is not a *T field": the field was never typed). --syntax-only parses the index.
+        if (_syntax_only == 0) { STI(S, _pf_chain_end(S, GTI(S))); }
+        return 1;
+    }
+    if (t < 0) { t = _mchain_temp(S, sid); }
+    STI(S, GTI(S) + 1);                 # consume `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # consume the field / method name
+    _field_load_on(S, noff, fnoff, beg, 0 - 2 - t, sid);
+    _cfo = 0;
+    return 1;
+}
+# A method declared `: *T`, T a struct (`psid`): its result (rax) is parked as a pointer receiver and
+# the chain continues through it — a field, a method, a deeper chain — in a fn and at top level, as a
+# free call's `*T` result does (`_call_ptr_field`). It was refused with "it does not return a struct"
+# (issues/archived/2026-10-10-field-of-method-pointer-result-refused.md). CHANGELOG [6.7.11]
+fn _mchain_ptr(S, noff, beg, psid): i64 {
+    var h = _ptr_park(S, psid);
+    if (_cpf_try(S, noff, beg, h, psid) == 1) { _cfo = 0; return 1; }   # 6.7.13 (D8 (a)): `o.gp().n = v;`
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the field / method name
+    _field_load_on(S, noff, fnoff, beg, h, psid);
+    _cfo = 0;
+    return 1;
+}
+# rax = a struct result returned in rax (a <= 8 B struct's bytes, or a `Str` handle): stored in a
+# fresh temp laid out as `_struct_call_emit` lays out a class-0 result. Returns the temp's slot.
+fn _mchain_temp(S, sid): i64 {
+    var t = 0;
+    if (STRUCTSZ(S, sid - 1) > 8) { t = _ptr_temp(S, sid); }
+    else { t = _agg_temp(S, sid); }
+    EFLSTORE(S, t);
+    return t;
+}
+# The rest of a refused chain: every `.name`, `<..>` list (`_mchain_targs`) and `(..)`. 6.7.16: a method's explicit
+# list too — `var gx = GP.q().mm<f64>(2.5);` at top level read its `<` as less-than after the refusal ("undefined
+# variable 'f64'", "expected ';', got '>'"). CHANGELOG [6.7.16]
+fn _mchain_skip(S): i64 {
+    while (_mchain_at(S, GTI(S)) == 1) {
+        STI(S, _mchain_targs(S, GTI(S) + 2));
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+    }
+    return 0;
+}
+
+# ⛔ 6.6.17 — A FIELD CHAIN THROUGH A POINTER FIELD. `struct Node { val; next: *Node; }`:
+# `n.next.val` was `expected ';', got '.'` (a `*T` field is an untyped word to the chain resolver,
+# which walks only INLINE struct fields), while a `*Node` local or parameter takes `p.val` —
+# pointer-to-struct dot syntax. Now when the leaf of a chain is a `*T` field, T a struct, and
+# `.name` follows, the field's VALUE (the pointer) is loaded and parked as a pointer-mode
+# receiver (`_ptr_hop`), and the chain continues from it exactly as from a `*T` local: fields,
+# nested fields, further hops (`n.next.next.val`), a method (`n.next.m()`), reads and writes,
+# from a local, global, parameter, capture, call result or field chain, in a fn and at top level.
+# The pointee struct of the leaf field `_rlf_si` / `_rlf_fi` when `.name` follows it, else 0.
+fn _fld_hop_sid(S): i64 {
+    if (_mchain_at(S, GTI(S)) == 0) { return 0; }
+    return _fld_ptr_sid(S, _rlf_si, _rlf_fi);
+}
+# rax = the field at `off` of receiver (idx, sid) — the pointer — then park it: a frame slot in a
+# fn, a dead pointer-mode global at top level (`_HTEMP`). Returns the receiver's encoding.
+fn _ptr_hop(S, idx, sid, off, psid): i64 {
+    _resolve_field_base_addr(S, idx, sid);
+    if (off > 0) { EADDIMM_X1(S, off); }
+    EFIELD_LOAD_W(S, 8);
+    return _ptr_park(S, psid);
+}
+# rax = a pointer to struct `psid`: park it as a pointer-mode receiver (see `_ptr_hop`).
+fn _ptr_park(S, psid): i64 {
+    if (GINFN(S) == 1) {
+        var t = _ptr_temp(S, psid);
+        EFLSTORE(S, t);
+        return 0 - 2 - t;
+    }
+    var vi = 0 - 2 - _HTEMP(S);
+    SVTYPE(S, vi, psid);
+    SVPM(S, vi, 1);
+    EVSTORE(S, vi);
+    return vi;
+}
+# ⛔ 6.7.0 (A5) — A METHOD ON A NESTED INLINE FIELD: `b.v.sum()`, `p.v.sum()`, `mk(3).v.sum()`. The
+# leaf walk (`_resolve_leaf_field`) stops before a `.method(` on a struct-typed field, and nothing
+# took it from there: `expected ';', got '.'`. The field's ADDRESS (the base's, as a method's `self`
+# is computed, plus the field's offset) is parked as a pointer receiver of the field's struct and the
+# call continues from it, as `_ptr_hop` continues from a `*T` field's value. An address inside this
+# frame is handed to the callee, so the fn is marked as escaping one (`_fn_local_addr`, the v6.5.14
+# tail-call guard) whenever the base is an inline local. CHANGELOG [6.7.0]
+fn _fld_meth_inline(S, ft): i64 {
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) != 10) { return _mtargs_ng(S, ft, GTI(S) + 1); }   # 6.7.14 (D7 (a)): `.m<..>(`
+    if (ft <= 0) { return _fld_bs_site(S); }   # 6.7.14: a bounded call on a scalar T field
+    return 1;   # 6.7.15: a `Str` field too — `_load_inline_hop` passes its value (`_load_str_hop`)
+}
+# ⛔ 6.7.15 — A METHOD ON A `Str` FIELD: `w.s.len()`, `w.s.clone()`, `w.s.eq(x)`, `p.s.len()` through a `*W`,
+# `mk().s.len()`, `w.s.print();` as a statement (issues/archived/2026-10-17-method-call-on-str-field-does-not-parse.md). A
+# `Str` field is one pointer slot holding the header's address (6.6.17), so the walk stopped before the `.m(` and
+# nothing took it: "expected ';', got '.'". The receiver is the field's VALUE — the header, as `h.len()` passes a
+# handle's value and `str_len(w.s)` passes the field — loaded and parked as a `*Str` receiver (`_ptr_hop`), as a
+# `*T` field's method continues (`_load_hop`); never the field's address, which the inline arm passes. CHANGELOG
+# [6.7.15]
+fn _load_str_hop(S, noff, beg, idx, sid, off): i64 {
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    var h = _ptr_hop(S, idx, sid, off, ft);
+    STI(S, GTI(S) + 1);                 # `.`
+    var mnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the method name
+    return _field_load_on(S, noff, mnoff, beg, h, ft);
+}
+# 6.7.14: 1 = the `.m(` at the cursor is a bounded site recorded on a struct carrier's T field (`_bnd_fsite`,
+# parse/fn/traits.cyr) — `b.v.show()` with `b: Box<T>`, T bound here to a scalar.
+fn _fld_bs_site(S): i64 {
+    if (_bs_n == 0) { return 0; }
+    if (_bs_find(S, GTI(S) + 1) < 0) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.14 — A BOUNDED CALL ON A CARRIER'S T FIELD AT A SCALAR T: `b.v.show()` with `b: Box<T>`, T = i64. A
+# method on a scalar field leaf had no path at all ("expected ';', got '.'"); the bound's impl now takes the
+# field's VALUE as `self`, as `t.show()` on a scalar `t: T` takes t's (`_bs_scalar_self`): the field loaded at
+# its width (`_fld_leaf_load`), parked in an anonymous frame slot, and the method arm entered on that slot with
+# no struct. A struct T keeps `_load_inline_hop`'s address. CHANGELOG [6.7.14]
+fn _load_bs_field(S, noff, beg, idx, sid, off): i64 {
+    _resolve_field_base_addr(S, idx, sid);
+    if (off > 0) { EADDIMM_X1(S, off); }
+    _fld_leaf_load(S, beg, idx, sid);
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);
+    SLDEP(S, t, GSDEP(S));
+    SLTYPE(S, t, 0);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
+    EFLSTORE(S, t);
+    STI(S, GTI(S) + 1);                 # `.`
+    var mnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the method name
+    return _field_load_on(S, noff, mnoff, beg, 0 - 2 - t, 0);
+}
+# ⛔ 6.7.14 (the user's D7 (a), 2026-10-16) — EXPLICIT TYPE ARGUMENTS ON A METHOD CALL, as on its free spelling:
+# `p.id<f64>(h)`, `w.v.id<f64>(h)`, `var a = p.id<f64>(h);` call `P_id$f64`, as `P_id<f64>(&p, h)` does. The `<`
+# was read as less-than, so the call was refused "unknown field 'id'" + "undefined variable 'f64'". The shape
+# is `.m<..>(` where m names no field of the receiver's struct and a GENERIC method of it (`_mtargs_at`), so a
+# field of that name still wins (`p.n < k`). CHANGELOG [6.7.14]
+var _mx_fi = 0 - 1;   # the method arm's callee, set by `_meth_targs` for the arm it enters (-1: none)
+var _mx_ti = 0 - 1;   # ... and the method's name token
+var _mx_qt = 0;       # ... 1 = a type argument was refused: the arm consumes the arguments, judging none
+# 1 = token nt is a method name `m` followed by `<..>(`, with m no field of struct `sid` and a generic method of it.
+# 6.7.16: at a scalar receiver, a bounded site's (`_mtargs_bs`).
+fn _mtargs_at(S, sid, nt): i64 {
+    if (sid <= 0) { return _mtargs_bs(S, nt); }
+    if (sid >= 2048) { return 0; }
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (TOKTYP(S, nt) != 2) { return 0; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0; }
+    if (FINDFIELD(S, sid - 1, TOKVAL(S, nt)) >= 0) { return 0; }
+    var mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
+    if (mf < 0) { return 0; }
+    if (GFTP(S, mf) == 0) { return 0; }
+    var e = _tok_targs_close(S, nt + 2);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 10) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.16 (the user's D4, 2026-10-19) — A BOUND'S OWN GENERIC MEMBER, CALLED WITH ITS EXPLICIT LIST ON A SCALAR T:
+# `v.show<i64>(1)` / `b.v.show<i64>(1)` with `T: Show`, `trait Show { fn show<V>(self, k: V): i64; }` and T bound to
+# i64. A scalar receiver has no struct, so the member arm never read the list: the name form was "no struct type in
+# scope for 'v'" + "undefined variable 'i64'", the field form "expected ';', got '.'" (and both were the stub base
+# until the site scan took the spelling, `_bnd_mopen`), where `v.show(1)` calls `i64_show`. 1 = token nt is a bounded
+# site recorded with its list whose callee, T's impl method (`_bs_callee`), is generic: the arm reads the list and
+# calls that instance with the value as `self`, as the inferred spelling does. CHANGELOG [6.7.16]
+fn _mtargs_bs(S, nt): i64 {
+    if (_bs_n == 0) { return 0; }
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0; }
+    var b = _bs_find(S, nt);
+    if (b < 0) { return 0; }
+    var f = _bs_callee(S, b, 0);
+    if (f < 0) { return 0; }
+    if (GFTP(S, f) == 0) { return 0; }
+    return 1;
+}
+# The method arm's name token: `_meth_targs`'s, taken once, else the token before the cursor's `(`.
+fn _mx_take(S): i64 {
+    if (_mx_ti < 0) { return GTI(S) - 1; }
+    var t = _mx_ti;
+    _mx_ti = 0 - 1;
+    return t;
+}
+# The method arm's callee: the instance `_meth_targs` named, else the one the arguments bind (`_mcall_gen`).
+fn _mcall_gen_x(S, fi, open, rsid): i64 {
+    if (_mx_fi < 0) { return _mcall_gen(S, fi, open, rsid, 1); }
+    var f = _mx_fi;
+    _mx_fi = 0 - 1;
+    return f;
+}
+# `.m<..>(..)` at the cursor (on the `<`, the method's name just consumed; receiver (idx, sid)): the list read as
+# an explicit generic call reads it (`_explicit_generic_call`), the callee resolved, and the method arm entered
+# on the `(`. 0 = not that shape (the field miss reports). An all-i64 list, or a stub's scalar one, calls the base
+# — refused as `p.m(5)` is when the base is the stub or bad for its bound; a refused type argument mints nothing
+# and the arguments are consumed, not judged (`_mx_qt`).
+fn _meth_targs(S, noff, fnoff, beg, idx, sid): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    if (_mtargs_at(S, sid, nt) == 0) { return 0; }
+    var mf = _meth_fn_at(S, sid, fnoff, nt);
+    STI(S, GTI(S) + 1);                 # `<`
+    _ta_pending_gt = 0;
+    _ta_refd = 0;
+    var c0 = _parse_one_type_arg(S);
+    var c1 = _ta_rest_f(S, mf);   # 6.7.16 (D5)
+    _consume_gt(S);
+    _mx_fi = _meth_xsite(S, mf, c0, c1, nt);
+    _mx_ti = nt;
+    var p0 = _panic;
+    if (_mx_qt == 1) { _panic = 1; }
+    _field_load_on(S, noff, fnoff, beg, idx, sid);
+    if (_mx_qt == 1) { _panic = p0; _mx_qt = 0; }
+    _mx_fi = 0 - 1;
+    _mx_ti = 0 - 1;
+    return 1;
+}
+# ... at method-name token nt: at a site the bound's contract refused (`_bnd_site_refuse`) nothing is minted — the arm
+# consumes the call quietly, as the inferred spelling's (a mint could report the instance's own errors). CHANGELOG
+# [6.7.16]
+fn _meth_xsite(S, mf, c0, c1, nt): i64 {
+    if (_bs_n > 0) {
+        var b = _bs_find(S, nt);
+        if (b >= 0) { if (L64(_bs_tab + b * 32 + 8) < 0) { _mx_qt = 0; _ta_refd = 0; return mf; } }
+    }
+    return _meth_xinst(S, mf, c0, c1);
+}
+# ⛔ 6.7.16 — A TYPE-ARGUMENT LIST ON A CALLEE THAT TAKES NONE: `p.m<i64>(1)` with `fn m(self, k)`, `w.v.m<i64>(1)`, a
+# bounded T's non-generic member `v.show<i64>()` / `b.v.show<i64>()`, `nf<i64>(6)` / `nf<i64>(6);` with `fn nf(a)`. The
+# `<` was read as less-than: "unknown field 'm' on struct 'Pt'" + "undefined variable 'i64'", "no struct type in scope
+# for 'v'", "expected ';', got '.'", "undefined variable 'nf'" + "expected ';', got '>'" — two or three errors, none
+# naming the list. Refused once at the callee's name with D6 / D7's words for `Pt<i64>` — "'Pt.m' is not a generic
+# method: it takes no type arguments", "'nf' is not a generic fn: ..." — the list stepped and the call parsed as
+# `p.m(1)` / `nf(6)`, so nothing cascades. Only a list whose every name is a type (`_tylist_at`): `p.n < a, b > (c)`
+# keeps its comparison reading. CHANGELOG [6.7.16]
+# 1 = token nt is `.m<..>(`'s method on struct `sid` that takes type arguments (`_mtargs_at`), or any other `.m<types>(`
+# with m no field of sid (`_mlist_end`); at a scalar field (sid <= 0), a bounded site's — the field walks stop at it for
+# the member arm.
+fn _mtargs_ng(S, sid, nt): i64 {
+    if (_mtargs_at(S, sid, nt) == 1) { return 1; }
+    if (sid <= 0) {
+        if (_mngt_at(S, sid, nt) >= 0) { return 1; }
+        return 0;
+    }
+    if (_mlist_end(S, sid, nt) >= 0) { return 1; }
+    return 0;
+}
+# 6.7.16 — `_meth_ngt` for `_field_load_on`'s `sid == 0` arm, asked BEFORE its const and refused-annotation checks: a
+# const `C.m<i64>(1)` was "has no fields" and a refused annotation's `x.m<i64>(1)` stood down, each with the cursor on
+# the `<` — the list then read as comparisons ("undefined variable 'i64'"); stepped first, both are their `.m(1)`. Not
+# in a refused const fn's run-time body: its field stand-down (`_ce_fld_said`) steps `.m<..>(..)` whole, so a later
+# name of the statement's own is still reported. 1 = taken. CHANGELOG [6.7.16]
+fn _meth_ngt0(S, noff, fnoff, beg, idx, sid): i64 {
+    if (_ce_fn_refd != 0) { return 0; }
+    return _meth_ngt(S, noff, fnoff, beg, idx, sid);
+}
+# The `>` closing `.m<..>(`'s list at method-name token nt when it is a type list (`_tylist_at`) followed by `(` and m
+# no field of struct sid (sid <= 0: a receiver of no known struct); else -1.
+fn _mlist_end(S, sid, nt): i64 {
+    if (TOKTYP(S, nt) != 2) { return 0 - 1; }
+    if (TOKTYP(S, nt + 1) != 19) { return 0 - 1; }
+    if (sid >= 2048) { return 0 - 1; }
+    if (sid > 0) { if (FINDFIELD(S, sid - 1, TOKVAL(S, nt)) >= 0) { return 0 - 1; } }
+    var e = _tok_targs_close(S, nt + 2);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+    if (_tylist_at(S, nt + 2, e, 0 - 1) == 0) { return 0 - 1; }
+    return e;
+}
+# The method `.m<..>(` at token nt reaches when it is NOT generic, the list a type list; else -1. On struct sid: m no
+# field of it (a field keeps the comparison); at sid <= 0, a bounded site's callee (a scalar T's impl method).
+fn _mngt_at(S, sid, nt): i64 {
+    if (_mlist_end(S, sid, nt) < 0) { return 0 - 1; }
+    var mf = 0 - 1;
+    if (sid <= 0) {
+        if (_bs_n == 0) { return 0 - 1; }
+        var b = _bs_find(S, nt);
+        if (b < 0) { return 0 - 1; }
+        mf = _bs_callee(S, b, 0);
+    } else {
+        mf = _meth_fn_at(S, sid, TOKVAL(S, nt), nt);
+    }
+    if (mf < 0) { return 0 - 1; }
+    if (GFTP(S, mf) != 0) { return 0 - 1; }
+    return mf;
+}
+# The refusal of method `mf`'s list at name token `nt`: "'Pt.m' is not a generic method: ..."; 6.7.17 (D7): a generic
+# one under CYRIUS_MONOMORPH=0 (which records no list) is the free call's refusal at its `<` (`_eta_nm_say`) — it was
+# "'Pt.m' is not a generic method", false. CHANGELOG [6.7.17]
+fn _meth_ngt_say(S, nt, mf): i64 {
+    if (_MONOMORPH_OK != 1) { if (_fn_gen_tok(S, mf) == 1) { return _eta_nm_say(S, nt + 1); } }
+    var nm = _fn_src_name(S, mf, L64(_fnt_names + mf * 8));   # `Pt.m`, `i64.show`
+    _ngt_say_n(S, nt, nm, " is not a generic method: it takes no type arguments");
+    return 0;
+}
+# The member arm past a list it does not take (cursor on the `<` past the method's name; receiver (idx, sid)): a
+# method that is not generic refused (`_mngt_at`), and any `.m<types>(` (`_mlist_end`: no such method, a receiver of
+# no known struct) stepped too — the call parsed from its `(` as the plain spelling is, which reports what `p.m(1)`
+# reports. 1 = taken; 0 = not that shape.
+fn _meth_ngt(S, noff, fnoff, beg, idx, sid): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    var nt = GTI(S) - 1;
+    var e = _mlist_end(S, sid, nt);
+    if (e < 0) { return 0; }
+    var mf = _mngt_at(S, sid, nt);
+    if (mf >= 0) { _meth_ngt_say(S, nt, mf); }
+    STI(S, e + 1);
+    _mx_ti = nt;   # the arm's method name, not the list's `>`
+    _field_load_on(S, noff, fnoff, beg, idx, sid);
+    _mx_ti = 0 - 1;
+    return 1;
+}
+# The fn `p.m<c0, c1>(..)` reaches (generic method mf): its instance, else its base — refused where the free
+# spelling refuses it (`_explicit_generic_call` / `_gen_call_head`).
+fn _meth_xinst(S, mf, c0, c1): i64 {
+    _mx_qt = 0;
+    var mn = L64(_fnt_names + mf * 8);
+    if (_ta_refd == 1) { _ta_refd = 0; _mx_qt = 1; return mf; }
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    var base = 1;
+    if (c0 != 0 - 8) { base = 0; }
+    if (c1 != 0) { if (c1 != 0 - 8) { base = 0; } }
+    if (c0 < 0) { if (c1 <= 0) { if (_gen_stub(S, mf) != 0) { base = 1; } } }
+    _gen_msp = 1;   # 6.7.15: its refusals name the method `P.m`
+    if (base == 1) {
+        if (_bnd_base_bad(S, mf) == 1) { _refuse_bnd_base(S, mf, mn); }
+        elif (_gen_stub(S, mf) != 0) { _refuse_gen_stub(S, mf, mn); }
+        _gen_msp = 0;
+        return mf;
+    }
+    var spec = _instantiate_generic_fn(S, mf, c0, c1);
+    if (spec < 0) { if (spec != 0 - 4) { _refuse_gen_inst(S, mf, mn, spec); } }
+    _gen_msp = 0;
+    if (spec >= 0) { return spec; }
+    if (spec == 0 - 4) { _mx_qt = 1; }   # the bound's refusal, reported at the type it binds
+    return mf;
+}
+# 6.7.15: the fn the explicit `x.m<..>(` reaches, generic method mf with its list's `<` at token lt — for a
+# lookahead, quietly: its instance, else mf (`_gen_resolve_call`'s explicit arm; a list naming anything but a
+# declared struct / plain scalar / bound type parameter, or a base the call refuses, is the call's own to report).
+fn _mcall_xquiet(S, mf, lt): i64 {
+    if (mf < 0) { return mf; }
+    if (_MONOMORPH_OK == 0) { return mf; }
+    if (GFTP(S, mf) == 0) { return mf; }
+    if (_targs_resolvable(S, lt + 1) == 0) { return mf; }
+    var sv = GTI(S);
+    var sv_gt = _ta_pending_gt;
+    var sv_rf = _ta_refd;
+    _ta_pending_gt = 0;
+    _ta_refd = 0;
+    STI(S, lt + 1);
+    var sv_xq = _ta_xq;
+    _ta_xq = 1;   # 6.7.16 (D5): the method's own read (`_meth_targs`) reports the list
+    var c0 = _parse_one_type_arg(S);
+    var c1 = _ta_rest_f(S, mf);
+    _ta_xq = sv_xq;
+    var rf = _ta_refd;
+    _ta_pending_gt = sv_gt;
+    _ta_refd = sv_rf;
+    STI(S, sv);
+    if (rf == 1) { return mf; }   # a refused type argument mints nothing (the call reports it)
+    if (((GFTP(S, mf) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    if (c0 <= 0 && c1 <= 0) {
+        if (_gen_stub(S, mf) != 0) { return mf; }
+        if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return mf; }
+    }
+    _gen_msp = 1;   # 6.7.15: a bound refusal here (it may report first) names the method `P.m`
+    var spec = _instantiate_generic_fn(S, mf, c0, c1);
+    _gen_msp = 0;
+    if (spec >= 0) { return spec; }
+    return mf;
+}
+# ⚠ Six parameters at most: the leaf's type is read back from `_resolve_leaf_field` (`_rlf_si` /
+# `_rlf_fi`), because cybs — the bootstrap compiler seed-derive runs — rejects a 7-argument call
+# with a bare "syntax error" (found by seed-derive, 6.7.0).
+fn _load_inline_hop(S, noff, beg, idx, sid, off): i64 {
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft <= 0) { return _load_bs_field(S, noff, beg, idx, sid, off); }   # 6.7.14
+    if (IS_STR_FIELD(S, ft) == 1) { return _load_str_hop(S, noff, beg, idx, sid, off); }   # 6.7.15
+    if (idx <= 0 - 1000000) { _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid); }
+    elif (idx < 0 - 1) {
+        var li = 0 - idx - 2;
+        if (_local_struct_is_ptr(S, li, 0 - sid) == 1) { EFLLOAD(S, li); }
+        else { _fn_local_addr = 1; EFLADDR(S, li); }
+    } else {
+        if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
+    }
+    if (off > 0) { EADDRA_IMM(S, off); }
+    var h = _ptr_park(S, ft);
+    STI(S, GTI(S) + 1);                 # `.`
+    var mnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the method name
+    return _field_load_on(S, noff, mnoff, beg, h, ft);
+}
+fn _load_hop(S, noff, beg, idx, sid, off): i64 {
+    var ps = _fld_hop_sid(S);
+    var h = _ptr_hop(S, idx, sid, off, ps);
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the field / method name
+    return _field_load_on(S, noff, fnoff, beg, h, ps);
+}
+# 6.6.17 — `f().val`, `f().next.val`, `f().m(..)` for `fn f(): *T`, T a struct: the call's result
+# is a pointer, so it is parked as a pointer-mode receiver and the chain continues from it, as for
+# a `*T` local. (It was "cannot take a field of the result of 'f': it does not return a struct".)
+# Cursor just past the callee name at `ti`; 1 = consumed. 6.7.11: a generic callee too — `fi` is the
+# instance the call reaches (its `: *T` recorded under its binding, `_ret_ptr_record`), and an explicit
+# `g<S>(..).val` is parsed as the factor parses it (`gpg<S>().v` was refused: issues/2026-10-13-generic-
+# pointer-returning-call-as-struct-source.md).
+fn _call_ptr_field(S, ti, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (_fn_rpsid == 0) { return 0; }
+    var psid = L64(_fn_rpsid + fi * 8);
+    if (psid <= 0) { return 0; }
+    if (TOKTYP(S, ti + 1) == 19) {
+        STI(S, ti + 1);
+        _explicit_generic_call(S, TOKVAL(S, ti), FINDFN(S, TOKVAL(S, ti)));
+    } else {
+        if (TOKTYP(S, ti + 1) != 10) { return 0; }
+        STI(S, ti + 1);
+        PARSE_FNCALL(S, TOKVAL(S, ti));
+    }
+    var h = _ptr_park(S, psid);
+    if (_cpf_try(S, TOKVAL(S, ti), ti, h, psid) == 1) { _cfo = 0; return 1; }   # 6.7.13 (D8 (a)): `gp().n = v;`
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    _field_load_on(S, TOKVAL(S, ti), fnoff, ti, h, psid);
+    _cfo = 0;
+    return 1;
+}
+# ⛔ 6.7.13 — A FIELD OF A `: *T` CALL'S RESULT IS AN LVALUE (the user's decision D8 (a), 2026-10-15): `gp().n = 5;`,
+# `gp().m += 5;`, `gp().h.n = 5;`, `gpg<H>().n = 5;` and `o.gp().n = 5;` store through the returned pointer, as
+# `var p: *H = gp(); p.n = 5;` does — the result is storage that outlives the statement, and the store is the
+# read's twin (6.6.17 `gp().n`, 6.7.11 D43 `o.gp().n`). Each was refused "cannot assign to a field of a call
+# result: the result is a temporary", which stays the answer for a struct returned BY VALUE. The statement forms
+# (`_stmt_call_field`, `_stmt_method_call`) arm `_cpf_st` with the statement's first token; the `*T` arms that park
+# the result (`_call_ptr_field`, `_mchain_ptr`) hand a chain of `.field`s that ends in `=` / `OP=` to the field
+# store's body (`_fst_on`: the address computed once for `OP=`, 6.7.5 B8), which ends the statement. An untyped
+# `var p = gp();` is unchanged. CHANGELOG [6.7.13]
+var _cpf_st = 0 - 1;     # the armed statement's first token (-1: none)
+var _cpf_done = 0 - 1;   # the statement whose store `_cpf_try` made (and ended at its `;`)
+var _cpf_step = 0 - 1;   # 6.7.14: the armed classic-for step's first token: its store ends at the for's `)`
+# Receiver `h` (a parked `*T` of struct `psid`, the cursor on its `.`) of the chain beginning at token `beg`, named
+# `noff`: 1 = the armed statement's field store, consumed through its terminator; 0 = not one (nothing consumed).
+# 6.7.14: armed by a for step (`_step_call_field`), the terminator is the step's `)`. `_cpf_step` is left as it is:
+# a statement inside the step's call (`gp2(fncall0(|| { gp().m = 2; .. })).n += 1`) stores first, and the step,
+# still armed, then ends at its `)`. CHANGELOG [6.7.14]
+fn _cpf_try(S, noff, beg, h, psid): i64 {
+    if (beg != _cpf_st) { return 0; }
+    if (_cpf_asg_at(S, GTI(S)) == 0) { return 0; }
+    var st = _cpf_st;
+    var term = 5;
+    if (st == _cpf_step) { term = 11; }
+    _cpf_st = 0 - 1;   # the value parses as an expression, never as this statement
+    STI(S, GTI(S) + 1);                 # `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # the field name
+    _fst_on(S, noff, fnoff, h, psid, term);
+    _cpf_done = st;
+    return 1;
+}
+# 1 = from token `k`, one or more `.name` steps end in `=` or an `op =` pair (`_asg_pair_at`); a `.m(` stops the walk
+# on its `(`, which is neither.
+fn _cpf_asg_at(S, k): i64 {
+    if (_mchain_at(S, k) == 0) { return 0; }
+    while (_mchain_at(S, k) == 1) { k = k + 2; }
+    var t = TOKTYP(S, k);
+    if (t == 4) { return 1; }
+    if (_is_cop_tok(t) == 0) { return 0; }
+    if (TOKTYP(S, k + 1) == 4) { return 1; }
+    return 0;
+}
+# The store path's hop: the new receiver in `_hop_idx` / `_hop_sid`, and the leaf field resolved in
+# it (`_rlf_*`, its type returned). A method there (`n.next.m();` — a statement) is parsed as a
+# call and the statement finished: -1000.
+var _hop_idx = 0;
+var _hop_sid = 0;
+fn _store_hop(S, noff, idx, sid, off): i64 {
+    var ps = _fld_hop_sid(S);
+    var d = GTI(S);
+    _hop_idx = _ptr_hop(S, idx, sid, off, ps);
+    _hop_sid = ps;
+    STI(S, d + 1);
+    var fnoff = PEEKV(S);
+    STI(S, d + 2);
+    if (PEEKT(S) == 10) {
+        _field_load_on(S, noff, fnoff, d, _hop_idx, ps);
+        _expect_step(S, 5);
+        return 0 - 1000;
+    }
+    var fi = FINDFIELD(S, ps - 1, fnoff);
+    if (fi < 0) {
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", _ei_sid(ps));
+        return 0 - 1000;
+    }
+    return _resolve_leaf_field(S, ps - 1, fi, FIELDOFF(S, ps - 1, fi));
+}
+
+# PARSE_FIELD_LOAD past the base: the receiver resolved to (idx, sid) in PARSE_FIELD_LOAD's
+# encoding, the cursor just past `.name` (`fnoff`). A method call, or the field and any nested
+# chain loaded at the leaf's width and signedness. `noff` names the receiver in diagnostics and
+# `pfl_beg` is its first token. 6.6.12: a separate entry so a CALL RESULT's field (`mk(p).v.x`,
+# `_call_field`) takes the same body from its frame temp. CHANGELOG [6.6.12]
+fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
+    var si = 0;
+    if (sid > 0) { si = sid - 1; }
+
+    # Method call: ident.method(args)
+    if (PEEKT(S) == 10) {
+        if (_meth_pre(S, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.7 (R13) a tuple / `x.0(..)`; 6.7.8 a dyn
+        # ⛔ 6.7.1 (C3) — a call on a BOUNDED receiver (recorded in pass 1 by its method-name token,
+        # `_bnd_sites`) calls the bound's trait's method for T's impl, by its defined name — so a
+        # colliding `m` is the bound's, and a SCALAR T (`impl Show for i64`) has a callee at all.
+        var m_bs = 0 - 1;
+        var m_nt = _mx_take(S);   # 6.7.14 (D7 (a)): the method's name, before any `<..>`
+        if (_bs_n > 0) { m_bs = _bs_find(S, m_nt); }
+        var m_bfi = 0 - 1;
+        if (m_bs >= 0) {
+            if (L64(_bs_tab + m_bs * 32 + 8) < 0) {   # refused at the definition: skip the call, no cascade
+                var m_e = _tok_close_paren(S, GTI(S));
+                if (m_e > 0) { STI(S, m_e + 1); }
+                return 0;
+            }
+            m_bfi = _bs_callee(S, m_bs, sid);
+        }
+        # ...and `self.m()` in an impl for a SCALAR type (`impl Show for i64`, a trait default
+        # instantiated for it) calls that type's own `m`; it was "no struct type in scope for
+        # 'self'", so any trait with a self-calling default could not be implemented for a scalar.
+        if (sid == 0) { if (m_bfi < 0) { if (_impl_tnoff != 0) { if (_noff_is(S, noff, "self", 4) == 1) {
+                        m_bfi = _tr_findfn_join(S, _impl_tnoff, fnoff);
+                    } } } }
+        # v6.5.19: see ERR_IDENT (src/common/util.cyr). `e.render()` where `e`'s
+        # struct is declared in a sibling file is a resolution failure; reporting it
+        # as `unexpected '('` blamed the grammar for a missing include. Bail out
+        # rather than fall through with si = -1 into an out-of-bounds FINDFIELD.
+        if (sid == 0 && m_bfi < 0) {
+            # v6.5.19 --syntax-only: stay SILENT and do not set _panic (which would
+            # swallow the next genuine syntax error), but still CONSUME the argument
+            # list through PCMPE so a grammar error inside it is caught (6.7.16: `_synonly_args`, named arguments too),
+            # and the chain on its result: `a.m(1).g`, `a.m(1).k(2)` were "expected ';', got '.'". CHANGELOG [6.7.16]
+            if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }
+            if (_meth_sid0_said(S, noff, pfl_beg, idx) == 1) { return 0; }   # 6.7.15: a const; a refused const fn
+            _s0_err(S, noff, 2);
+            return 0;
+        }
+        var mname = 0;
+        if (m_bfi < 0) { mname = BUILD_METHOD_NAME(S, si, fnoff); }
+        # ⛔ 6.6.5 — RESOLVE THE CALLEE BEFORE THE ARGUMENTS (6.6.6: and before `self`, whose
+        # push must follow a struct result's retptr — see `_sc_pre` below). This path used to run the
+        # whole argument loop as bare PCMPE + EPUSHR and only then FINDFN the method, so it
+        # had no callee mask while it needed one: a `>8`-byte struct argument was pushed BY
+        # VALUE into a method that derefs the parameter as a pointer — `s.m(big)` SIGSEGV'd
+        # even in ordinary (backward) include order, while the identical `Type_m(&s, big)`
+        # worked. Resolving first also lets the name be committed before any nested mint.
+        var mfi = m_bfi;
+        if (mfi < 0) { mfi = FINDFN(S, mname); }
+        if (mfi < 0) {
+            # BUILD_METHOD_NAME writes at GNPOS without committing (it is a lookup helper).
+            # Registering that scratch offset left the entry pointing at bytes the NEXT
+            # mangled name overwrote, so diagnostics named a different, existing method
+            # (`Q7_seven` for a call to `q.nosuch()`). Commit it before REGFN.
+            if (mname == GNPOS(S)) { var _mnl = 0; while (load8(S + 0xEC00000 + mname + _mnl) != 0) { _mnl = _mnl + 1; } SNPOS(S, mname + _mnl + 1); }
+            mfi = REGFN(S, mname);
+            _fn_meth_note(S, mfi, L64(S + 0x1A6018 + si * 8), fnoff);   # 6.7.14: named `T.m` by its diagnostics
+        }
+        mfi = _mcall_gen_x(S, mfi, GTI(S), sid);   # 6.7.11: the instance its arguments bind (6.7.14: or `<..>` names)
+        mname = L64(_fnt_names + mfi * 8);   # the registered string, never the scratch copy
+        # ⛔ 6.6.6 (bite 14 review) — a method returning a struct BY VALUE needs a destination,
+        # which this path never supplied: `var r: P3 = b.mk(2)`, `b.mk(3);` and `r = b.mk(5)`
+        # SIGSEGV'd (the callee took `self` as its retptr). `_sc_pre` allocates the temp and, on
+        # x86/cx, pushes its address as int arg 0 BEFORE `self`. CHANGELOG [6.6.6]
+        var m_rt = _sc_pre_m(S, mfi, mname, pfl_beg);   # 6.6.17: and a temp when a chain follows
+        var m_n0 = _sc_n0;
+        # Push &var as first arg (self) — handle locals and globals.
+        # v6.6.4: mirror _resolve_field_base_addr. A local struct is either POINTER-mode
+        # (the slot holds the struct's heap address — load it) or INLINE (slot marker -1,
+        # or <=8 B on non-cx: the slot IS the struct — pass its address). This path
+        # loaded the slot unconditionally, so `p.m()` on an inline stack struct handed
+        # the method p's FIRST FIELD as `self` and `load64(self)` SIGSEGV'd (rc=139).
+        if (sid == 0) {
+            _bs_scalar_self(S, idx, m_bs, noff);           # 6.7.1 (C3): a bounded scalar T's value
+        } elif (_fn_self_byval(mfi) == 1) {
+            _self_value_ra(S, idx, sid);                   # 6.6.11: a <= 8 B `self: T` is by value
+        } elif (idx <= 0 - 1000000) {
+            _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid);   # 6.6.5: `self` from a closure capture
+        } elif (idx < 0 - 1) {
+            var mli = 0 - idx - 2;
+            # 6.6.5: the recorded layout, same reader as field access (see _local_struct_is_ptr).
+            # 6.6.20: an inline receiver's `self` is an address in this frame, as `&s` is: a method
+            # may hand it back — unless it copies a by-value `self: T` (`_sarg_escapes`).
+            if (_local_struct_is_ptr(S, mli, 0 - sid) == 1) { EFLLOAD(S, mli); } else { _sarg_escapes(mfi, 0, 0); EFLADDR(S, mli); }
+        } else {
+            if (_gv_holds_addr(S, idx) == 1) { EVLOAD(S, idx); } else { EVADDR(S, idx); }
+        }
+        # 6.7.3: `self` is ARGUMENT 0 — `impl Pt { fn weird(self: Q) }` with `p.weird()` read a Pt as
+        # a Q (see `_sarg_type_err`). An untyped `self` records the impl's own struct.
+        if (sid > 0) { _sarg_type_err(S, mfi, 0, sid, noff); }
+        EPUSHR(S);
+        _self_snap(S, mfi, sid);   # 6.7.7: a by-value `self` an argument may write is copied here
+        # The arguments: PARSE_FNCALL's own marshaller, `self` as parameter 0 (p0 = 1) and int
+        # arg `m_n0` (after the retptr `_sc_pre` pushed). ⛔ This path had its own loop with NONE of
+        # PARSE_FNCALL's callee-mask gates and no arity check until 6.6.5 — the history is at
+        # `_owncall_args_at`; it shares that loop since 6.7.7. The arity message names the `(`.
+        # CHANGELOG [6.6.5] [6.7.7]
+        var m_ti = GTI(S);           # the `(`; the method's NAME is the token before it
+        var m_line = GTLINE(S, m_ti);
+        STI(S, GTI(S) + 1);  # consume (
+        var m_int_argc = _owncall_args_at(S, mfi, mname, 1 + m_n0, 1, m_line);
+        _sc_x8(S, mfi, m_rt);        # 6.6.6: aarch64's retptr register
+        _callee_site_checks(S, mfi, mname, m_nt);   # v6.6.4: `s.method()` is its own call path
+        _pure_effect_warn(S, mfi, mname);               # 6.6.17: and #pure's #io / #alloc check
+        var mfoff = L64(_fnt_offsets + mfi * 8);
+        if (mfoff >= 0) { ECALLTO(S, mfoff); }
+        else { ECALLFIX(S, mfi); }
+        ECALLCLEAN(S, m_int_argc);
+        _sc_post(S, mfi, mname, pfl_beg, m_rt);   # 6.6.6: the pair store / value, and the record
+        _mcall_ret(S, mfi);                       # 6.7.9: typed as a free call's result (6.6.17: + a `*T` step)
+        _mcall_last = mfi;                             # 6.6.17: for a statement's #must_use
+        _method_chain(S, mfi, mname, pfl_beg, m_rt);   # 6.6.17: `.field` / `.m(..)` on the result
+        return 0;
+    }
+
+    # v6.5.19: `e.size` where `e`'s struct is declared in a sibling file — a
+    # resolution failure, reported as one. See ERR_IDENT (src/common/util.cyr).
+    if (sid == 0) {
+        # v6.5.19 --syntax-only: silent, no _panic — but walk any chained `.field`
+        # tail first (see _synonly_skip_chain) so nothing is left dangling.
+        if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain, `.m<..>(` too
+        if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16 (D4): a scalar T's `t.m<..>(`
+        if (_meth_ngt0(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `q.m<i64>(1)` / `C.m<i64>(1)`, as `.m(1)`
+        if (_cst_fld_at(S, noff, 0, pfl_beg + 1) == 1) { return 0; }   # 6.7.14: a top-level const
+        if (_fld_sid0_said(S, noff, idx, 0) == 1) { return 0; }        # 6.7.14 a refused const fn, 6.7.15 type
+        _s0_err(S, noff, 0);
+        return 0;
+    }
+    var fi = FINDFIELD(S, si, fnoff);
+    if (fi < 0) {
+        if (_meth_targs(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.14 (D7 (a)): `p.id<f64>(h)`
+        if (_meth_ngt(S, noff, fnoff, pfl_beg, idx, sid) == 1) { return 0; }   # 6.7.16: `p.m<i64>(1)`, as `p.m(1)`
+        # v6.5.19 --syntax-only: a wrong field NAME is not a grammar error, so stay
+        # silent and do not _panic (which would swallow the next real syntax error).
+        if (_syntax_only == 1) { _synonly_chain_call(S); return 0; }   # 6.7.16: a call in the chain
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", _ei_sid(si + 1));
+        return 0;
+    }
+    var off = FIELDOFF(S, si, fi);
+    # Check for chained access: s.inner.field — leaf retype (R1, v6.4.15).
+    var ft = _resolve_leaf_field(S, si, fi, off);
+    off = _rlf_off;
+    var hop = _rlf_hop;
+    if (_fld_hop_sid(S) > 0) { return _load_hop(S, noff, pfl_beg, idx, sid, off); }   # 6.6.17
+    if (hop < 0) { if (_fld_meth_inline(S, ft) == 1) { return _load_inline_hop(S, noff, pfl_beg, idx, sid, off); } }   # 6.7.0 (A5)
+    # 6.7.14: --syntax-only, a `.name` / `.m(..)` left past a `*T` field whose T this file does not declare.
+    if (_syntax_only == 1) { if (_mchain_at(S, GTI(S)) == 1) { return _synonly_chain_call(S); } }
+    if (_fld_tail_bad(S) == 1) { return 0; }   # 6.7.16: `w.n.b`, n no struct
+    if (hop < 0) { if (_fpk_want == pfl_beg) { _fpk_note(S, ft); } }   # 6.7.3: passive, emits nothing
+    if (hop < 0) { _fls_note(S, pfl_beg, ft); }   # 6.7.6: passive, emits nothing
+    if (hop < 0) { if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } } }   # 6.6.10
+    if (hop < 0) { _tup_fld_rchk(S, ft, pfl_beg); }   # 6.7.7 (R11): a whole tuple field is not a value
+    # Load variable address + field offset, then load value (width-correct).
+    # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx
+    # (lea rcx,[rbp-disp] via EFLADDR_X1 vs global EVADDR_X1), v5.8.17 -1-sentinel
+    # predecessor test, v6.3.16 <=8B-single-slot-inline rule (not on cx — it boxes).
+    _resolve_field_base_addr(S, idx, sid);
+    if (off > 0) { EADDIMM_X1(S, off); }
+    _rlf_emit_hop(S, hop);   # 6.6.17: `h.name.len` — through the Str field's pointer
+    return _fld_leaf_load(S, pfl_beg, idx, sid);   # 6.7.10: the leaf at its width and signedness, typed
+}
+
+# The leaf field `_resolve_leaf_field` published (`_rlf_si` / `_rlf_fi`), its address in x1: loaded
+# through the per-backend `EFIELD_LOAD_W` (v5.9.40) at its width — negative (movsx) for an i8 / i16 /
+# i32 field, zero-extended for u8 / u16 / u32 / f32 (`_fld_lw`; through 6.7.9 a negative ftype was
+# always signed) — then typed (`_field_load_type`). Out of `_field_load_on`, a giant at cybs's per-fn
+# reference ceiling. CHANGELOG [6.7.10]
+fn _fld_leaf_load(S, beg, idx, sid): i64 {
+    if (_fld_sval_ra(S, idx, sid) == 0) { EFIELD_LOAD_W(S, _fld_lw(S, _rlf_si, _rlf_fi)); }
+    _field_load_type(S, _rlf_si, _rlf_fi);
+    _flo_note(S, beg, idx, sid);   # 6.7.10: an operator's left operand, maybe
+    return 0;
+}
+# ⛔ 6.7.13 — A WHOLE STRUCT-TYPED FIELD OF 3, 5, 6 OR 7 BYTES AS A VALUE READS THE STRUCT, NO BYTE PAST IT
+# (issues/archived/2026-10-14-small-struct-field-value-reads-past-the-object.md), as a dereference does since 6.7.11.
+# Its leaf load read the 8-byte word at the field's address, so `take(w.s)`, `return w.s`, `w.s + a` and a
+# top-level `var G: S3 = GW.s` read up to 5 bytes past the object — SIGSEGV when it ended a mapping. The leaf
+# `_resolve_leaf_field` published, of base `idx` / `sid` at `_rlf_off`, no `Str` hop: a plain struct of 3 / 5
+# / 6 / 7 bytes — rax becomes it read through its address byte-exact, its padding 0 (`_hl_pval_ra`); a
+# zero-size one reads no byte (rax 0). 1 = rax holds it; 0 = the word load (1 / 2 / 4 / 8 B are one load).
+# The `x1` address `_field_load_on` computed goes unused here. CHANGELOG [6.7.13]
+fn _fld_sval_ra(S, idx, sid): i64 {
+    if (_rlf_hop >= 0) { return 0; }
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (_dx_plain(S, ft) == 0) { return 0; }
+    var sz = STRUCTSZ(S, ft - 1);
+    if (sz == 0) { EMOVI(S, 0); return 1; }
+    if (_fst_odd_sz(sz) == 0) { return 0; }
+    _fld_addr_ra(S, idx, sid, _rlf_off, 0 - 1);
+    _hl_pval_ra(S, ft);
+    return 1;
+}
+# ⛔ 6.7.10 — A STRUCT-TYPED FIELD AS AN OPERATOR'S LEFT OPERAND DISPATCHES (the user's decision 11,
+# 2026-10-12): `w.s + a`, `p.s + a` through a `*T`, `f().s + a`, `(w.s) + a`, `self.s * a`, at every size,
+# exactly as a struct variable does. Only a variable or a struct result typed the left operand, so the
+# field's first word was combined with the right operand's and no operator fn was called — silently, at
+# every size, since operators existed (issues/archived/2026-10-08-struct-field-left-operand-never-dispatches.md:
+# `h.p - s` gave 250, 3 - 9, where `P2_sub` gives 139). The whole field just loaded — chain start `beg`,
+# its base (`idx`, `sid`) and its offset (`_rlf_off`, the leaf `_resolve_leaf_field` published) — is
+# stamped with the code pointer after its load; `_op_lst` takes it when it is the whole left operand
+# and nothing was emitted since. A `Str` field is a handle, a tuple or dyn field is refused as a value,
+# and a `*T` field is a pointer: none is stamped. CHANGELOG [6.7.10]
+fn _flo_note(S, beg, idx, sid): i64 {
+    if (_rlf_hop >= 0) { return 0; }
+    var ft = GETFTYPE(S, _rlf_si, _rlf_fi);
+    if (ft <= 0) { return 0; }
+    if (ft >= 2048) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (_tup_is(S, ft) == 1) { return 0; }
+    if (_dyn_is(S, ft) == 1) { return 0; }
+    _flo_beg = beg;
+    _flo_end = GTI(S);
+    _flo_cp = GCP(S);
+    _flo_sid = ft;
+    _flo_idx = idx;
+    _flo_bsid = sid;
+    _flo_off = _rlf_off;
+    return 0;
+}
+# rax = the address of the field `_flo_note` stamped, as operand 0 of operator fn `fi` (`_fld_addr_ra`,
+# the `OP=` path's — its base is raw bytes to CYRIUS_IR=3): an inline aggregate's field in this frame is
+# an address in it, which the operator fn may keep (`_sarg_escapes`).
+fn _flo_addr_ra(S, fi): i64 {
+    if (_flo_idx < 0 - 1) { if (_flo_idx > 0 - 1000000) {
+            if (_local_struct_is_ptr(S, 0 - 2 - _flo_idx, 0 - _flo_bsid) == 0) { _sarg_escapes(fi, 0, 0); }
+        } }
+    _fld_addr_ra(S, _flo_idx, _flo_bsid, _flo_off, 0 - 1);
+    return 0;
+}
+
+# ⛔ 6.6.10 — AN f64 / f32 FIELD LOADED UNTYPED, so every operator on it took its INTEGER arm:
+# with `struct P { x: f64; y: f64; }`, `p.x + p.y` added two bit patterns (NaN for 1.5 + 2.0),
+# `p.x * p.y` and `p.x / p.y` gave 0, `-p.x` negated the integer, and `p.x < p.y` compared the
+# bits — wrong for negatives — all silent, through a local, a parameter, a global, a chain, a
+# union, a method's `self` and `Pair<f64>` alike. And correct code (`2.0 * p.x`, `t + p.y`)
+# drew a false kind-1 warning. The load now types the value from the field's recorded kind.
+# ⚠ `#derive(accessors)` getters stay UNTYPED on purpose (`P_x(&p)` is `load64`): 21 bit-exact
+# `==` / `!=` compares of such getters in svara/samay would become float compares (NaN, ±0).
+# So `p.x + p.y` is a float add and `P_x(&p) + P_y(&p)` an integer one; the guide says so.
+# CHANGELOG [6.6.10]
+var _flt_ti = 0 - 1;   # 6.7.8 (C2-4b): the cursor where the last field load ended (`_sub_word`)
+fn _field_load_type(S, si, fi): i64 {
+    _flt_ti = GTI(S);
+    var k = GFFK(S, si, fi);
+    if (k == 1) { SESTYPE(S, F64_TYID); }
+    if (k == 2) { SESTYPE(S, F32_TYID); }
+    var ps = _fld_ps_get(S, si, fi);   # 6.6.17: a `name: *T` field is a pointer (_add_ptr_field)
+    if (ps > 0) { SPSC(S, ps); }
+    else { SPSC(S, 0); }   # 6.7.9: no other field has a step (`mk(q).n` kept q's; _pexpr_bit_ps)
+    if (GFBOOL(S, si, fi) == 1) { _BX_MARK(S); }   # 6.7.3: a bool field's load is a boolean value
+    return 0;
+}
+
+# 6.7.3 (B2) — a field's kind for the store checks: the float kind (low bits, _IFS_CHECK's) + 16 for
+# a bool. `_ifs_bx` runs both checks on the value just parsed, `fnoff` the field named in a refusal.
+fn _fk_bx(S, si, fi): i64 { return GFFK(S, si, fi) + 16 * GFBOOL(S, si, fi); }
+fn _ifs_bx(S, k, ti, fnoff): i64 {
+    _IFS_CHECK(S, k & 15, ti);
+    if ((k & 15) == 2) { _f32_init_round(S, F32_TYID); }   # 6.7.6 (D2): an f64 into an f32 field rounds
+    if (k < 16) { return 0; }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot store a value that is not a bool into bool field ", fnoff, 0, 0 - 1);
+}
+# 6.7.8 (C2-4a): the same checks for a subscript's element (`p[i] = v`, `a[i] = v`; `nm` the base's
+# name, `k` = `_ek_fk`): an integer constant into an f64 / f32 element warns, an f64 into an f32
+# element rounds, and only a bool goes into a bool element.
+fn _ifs_bx_el(S, k, ti, nm): i64 {
+    if (k < 16) { return _ifs_bx(S, k, ti, nm); }
+    if (_BX_IS(S) == 1) { return 0; }
+    return _bx_refuse(S, ti, "cannot store a value that is not a bool into a bool element of ", nm, 0, 0 - 1);
+}
+
+# 6.7.8 (C2-4b) — `h.p[i] = v` / `h.p[i] OP= v` (the statement and the classic-for step): the leaf
+# field (`_rlf_si` / `_rlf_fi`) a `*T`, its VALUE loaded from the field's address (`_fld_addr_ra`),
+# then the element addressed and stored as a named `*T`'s (parse/expr.cyr `_psub_addr`,
+# `_esub_assign`). A field that is no `*T` is refused by name, the statement parsed on.
+fn _fld_sub_store(S, idx, sid, off, hop, term): i64 {
+    var fnm = GETFNAME(S, _rlf_si, _rlf_fi);
+    var ed = _psub_ed(S, _fld_ps_get(S, _rlf_si, _rlf_fi), 1, GTI(S) - 1);
+    if (ed != 0) {
+        _fld_addr_ra(S, idx, sid, off, hop);
+        ELOAD64(S);           # the field's value: the pointer
+    }
+    _psub_addr(S, ed);
+    EPUSHR(S);                # the element's address
+    _esub_assign(S, ed, fnm);
+    return _fst_end(S, term);
+}
+# The field store's end: its terminator — `;`, or a classic-for step's `)` — consumed. 6.7.5
+# 6.7.17 (D14): `w.pq = v` with pq a `*S` field (one `*`, S a plain struct) and v no provable non-struct (`_psv_not`)
+# nor another struct's whole call (`_psv_other`): the field's address in rax, then `_psl_store` (parse.cyr) — a struct
+# value of S copies into the S pq points at, a handle or a `*S` rebinds pq. The leaf field `_rlf_si` / `_rlf_fi` (read
+# before the value), the cursor past the `=`. 1 = done (`term` consumed). CHANGELOG [6.7.17]
+fn _fst_pslot(S, idx, sid, off, hop, term): i64 {
+    var ps = _fld_ptr_sid(S, _rlf_si, _rlf_fi);
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (_psv_not(S, GTI(S), term) == 1) { return 0; }
+    if (_psv_other(S, GTI(S), term, ps) == 1) { return 0; }
+    var nm = GETFNAME(S, _rlf_si, _rlf_fi);
+    _fld_addr_ra(S, idx, sid, off, hop);
+    return _psl_store(S, term, ps, nm);
+}
+fn _fst_end(S, term): i64 {
+    _expect_step(S, term);
+    return 0;
+}
+# v6.5.19 --syntax-only, a `.field` store whose struct or field this file cannot see: silent, no
+# _panic, and the tail parsed as the resolvable path parses it (`= e` or 6.7.5's `OP= e`), or the
+# leftover token is reported as a syntax error the file does not have. See `_synonly_skip_chain`.
+fn _synonly_fld_tail(S, term): i64 {
+    _synonly_skip_chain(S);
+    if (PEEKT(S) == 28) { _psub_addr(S, 0); }   # 6.7.8 (C2-4b): `e.p[i] = v`, the index parsed
+    if (_asg_compound_tok(S) == 0) {
+        if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5)
+        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+        STI(S, GTI(S) + 1);
+    }
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): as the resolvable store refuses it
+    PCMPE(S);
+    return _fst_end(S, term);
+}
+# v5.8.16 §8 — `s.ptr = e;` / `s.len = e;` on a slice local `lli`, through the slot's ADDRESS (see
+# PARSE_FIELD_STORE). 6.7.5 (B8): and `s.len OP= e`, the address first — a plain word, as
+# PARSE_FIELD_LOAD reads `.ptr` / `.len`.
+fn _slice_fld_store(S, lli, fnoff, term): i64 {
+    var fname = L64(S + 0xEC00000 + fnoff);
+    var fld_off = 0 - 1;
+    if (fname & 0xFFFFFFFF == 0x00727470) { fld_off = 0; }      # "ptr\0"
+    elif (fname & 0xFFFFFFFF == 0x006E656C) { fld_off = 8; }    # "len\0"
+    else { ERR_MSG(S, "slice has only .ptr and .len fields", 35); }
+    var cop = _asg_compound_tok(S);
+    if (cop != 0) {
+        _IR_REC0(S, IR_RAW_EMIT);
+        EFLADDR(S, lli);
+        if (fld_off > 0) { EADDRA_IMM(S, fld_off); }
+        EPUSHR(S);
+        _arr_sub_load(S, 8);
+        _cop_dst = 2;   # 6.7.17 (D15): a slice's field, for `_cop_sres`
+        _asg_compound_op(S, cop, 0);
+        _asg_store_w(S, 8);
+        return _fst_end(S, term);
+    }
+    if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5): `s.len, b = f();`
+    if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+    STI(S, GTI(S) + 1);
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): `s.len = f();` stored the tag
+    var ti = GTI(S);
+    PCMPE(S);
+    _dsr_slf(S, ti, ti - 1);   # 6.7.17 (D16): a struct result over 8 B into `.ptr` / `.len`
+    EPUSHR(S);
+    EFLADDR_X1(S, lli);
+    if (fld_off > 0) { EADDIMM_X1(S, fld_off); }
+    EPOPR(S);
+    ESTOC(S);
+    return _fst_end(S, term);
+}
+
+# Store to a struct field: ident.field = expr; or ident.inner.field = expr; — ending at `term`: `;`
+# for a statement, `)` for a classic-for step (6.7.5, `_for_step_replay`). The terminator reaches
+# the struct-copy sources (`_fsc_src`), or a struct-valued step copied ONE word (the 6.6.20 class).
+fn PARSE_FIELD_STORE(S, noff, term): i64 {
+    STI(S, GTI(S) + 1);  # consume DOT
+    if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    # Find the variable and its struct type (check locals first — mirror
+    # of PARSE_FIELD_LOAD's lookup so v5.5.36's stack-local structs route
+    # through EFLADDR_X1 instead of the global-var EVADDR_X1 + fixup).
+    var idx = 0 - 1;
+    var sid = 0;
+    if (GINFN(S) == 1) {
+        var lli = FINDLOCAL(S, noff);
+        if (lli >= 0) {
+            var lt = GLTYPE(S, lli);
+            # v6.4.4: SIMD vector sentinels (band <= -2048) are not struct ids —
+            # reject `.field` before `0 - lt` escapes the 1024-entry struct
+            # tables. See the mirror guard in PARSE_FIELD_LOAD. v6.4.14 dropped
+            # the flat -20/-21 cases (they collided with struct-ids 20/21).
+            if (lt <= 0 - 2048) {
+                ERR_MSG(S, "SIMD vector has no named fields", 31);
+            }
+            if (lt < 0) { if (lt > 0 - 2048) { sid = 0 - lt; } }   # 6.7.16: as the load's (no struct 2092)
+            idx = 0 - 2 - lli;
+            # v5.8.16 §8: slice dot-syntax field store (s.ptr = expr;
+            # s.len = expr;). Mirror of the slice-load path in
+            # PARSE_FIELD_LOAD — both fields use the address-based
+            # store (EFLADDR + add + ESTOC) rather than direct
+            # EFLSTORE against the slot number. See PARSE_FIELD_LOAD
+            # for the regalloc-picker explanation: routing the high
+            # slot through EFLSTORE would let the picker allocate a
+            # callee-saved register for it, and the s.len store would
+            # land in the register only — invisible to slice_set's
+            # subsequent memory reads. Address-based store keeps the
+            # memory write authoritative.
+            if (_slice_lw(S, lli) > 0) { return _slice_fld_store(S, lli, fnoff, term); }
+        }
+    }
+    if (idx == 0 - 1) {
+        if (_cl_cslice_cap(S, noff) >= 0) { return _cl_cslice_store_err(S, noff); }   # 6.7.11
+        var _cfx = _cl_cap_fld_any(S, noff);   # 6.7.16: an untyped capture too
+        if (_cfx < 0 - 1) { idx = _cfx; sid = _cap_fld_sid; }
+    }
+    if (idx == 0 - 1) {
+        idx = FINDVAR(S, noff);
+        if (idx < 0) {
+            if (_enum_qual_store_refused(S, noff, fnoff) == 1) { return 0; }   # 6.7.3: `E.A = ..`
+            # v6.5.19: --syntax-only treats the unknown base as an opaque value; the
+            # `sid == 0` arm below then consumes the field access without emitting a
+            # diagnostic, keeping the stream in sync. See _syntax_only.
+            if (_syntax_only == 1 && _unp_names == 0) { sid = 0; }   # 6.7.17 (D110): a never-parsed body's read reports it
+            else {
+                if (_cst_fld_at(S, noff, 1, GTI(S) - 2) == 1) { return 0; }   # 6.7.14: a local const
+                # 6.6.6: the `.field` base is a fourth/fifth undefined-variable site. 19a wired the
+                # block-scope note into three of the five and the CHANGELOG said "all three", so
+                # `tbv.a` after `if (g == 1) { var tbv = 5; }` got the bare error while the plain
+                # read and the assignment got the note. See _gv_note_blockscoped. CHANGELOG [6.6.6]
+                _undef_var_report(S, _nm_ti(S, GTI(S) - 3, noff), noff, "");   # 6.7.14: shared with the factor's (`_ce_name_said`), once per token (ERR_UNDEF); 6.7.17: at the base
+                _panic = 1;   # 6.7.14: the base is the error — its `sid == 0` arm said "no struct type in scope" too
+                return 0;
+            }
+        }
+        else { sid = _gv_recv_sid(S, idx); }   # 6.6.17: a `*T` global's T
+    }
+    # v6.5.19: the assignment side of the same class — `e.size = 1;` with the
+    # struct declared elsewhere. See ERR_IDENT (src/common/util.cyr).
+    if (sid == 0) {
+        # v6.5.19 --syntax-only: silent, no _panic — but the `= expr` tail has NOT been
+        # consumed at this point, so it must be parsed exactly as the resolvable path
+        # below does or the leftover `=` becomes an INVENTED syntax error.
+        if (_syntax_only == 1) { return _synonly_fld_tail(S, term); }
+        if (_cst_fld_at(S, noff, 1, GTI(S) - 2) == 1) { return 0; }   # 6.7.14: a top-level const
+        if (_fld_sid0_said(S, noff, idx, 1) == 1) { return 0; }       # 6.7.14 a refused const fn, 6.7.15 type
+        _s0_err(S, noff, 1);
+        return 0;
+    }
+    return _fst_on(S, noff, fnoff, idx, sid, term);
+}
+# PARSE_FIELD_STORE past the base: the receiver resolved to (idx, sid) in PARSE_FIELD_LOAD's encoding (a local,
+# a capture, a global, a parked pointer), the cursor just past `.name` (`fnoff`): a nested chain, a `*T` hop,
+# `[i]`, `= e` or `OP= e`, stored at the leaf's width, the statement ended at `term`. 6.7.13: a separate entry so
+# a `: *T` call's or method's parked result takes the same body (`_cpf_try`). CHANGELOG [6.7.13]
+fn _fst_on(S, noff, fnoff, idx, sid, term): i64 {
+    var si = sid - 1;
+    var fi = FINDFIELD(S, si, fnoff);
+    if (fi < 0) {
+        # v6.5.19 --syntax-only: silent, no _panic — and consume the `= expr` tail, or
+        # the leftover `=` is reported as a syntax error this file does not have.
+        if (_syntax_only == 1) { return _synonly_fld_tail(S, term); }
+        ERR_IDENT(S, "unknown field ", fnoff, " on struct ", _ei_sid(si + 1));
+        return 0;
+    }
+    var off = FIELDOFF(S, si, fi);
+    # Check for chained access: s.inner.field = expr — leaf retype (R1, v6.4.15).
+    var ft = _resolve_leaf_field(S, si, fi, off);
+    off = _rlf_off;
+    while (_fld_hop_sid(S) > 0) {           # 6.6.17: `.name` through a `*T` field (_store_hop)
+        ft = _store_hop(S, noff, idx, sid, off);
+        if (ft == 0 - 1000) { return 0; }
+        idx = _hop_idx;
+        sid = _hop_sid;
+        off = _rlf_off;
+    }
+    # 6.7.14: --syntax-only, a `.name` left past a `*T` field whose T this file does not declare.
+    if (_syntax_only == 1) { if (_mchain_at(S, GTI(S)) == 1) { return _synonly_fld_tail(S, term); } }
+    if (_fld_tail_bad(S) == 1) { return 0; }   # 6.7.16: `w.n.b = v`, n no struct
+    var hop = _rlf_hop;   # 6.6.17: saved before the RHS can re-resolve a field
+    if (PEEKT(S) == 28) { return _fld_sub_store(S, idx, sid, off, hop, term); }   # 6.7.8: `h.p[i] = v`
+    var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
+    var lfk = _fk_bx(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field (6.7.3: + bool)
+    var lps = _istr_pfs(S, _rlf_si, _rlf_fi);   # 6.7.16 (D19): a `*Str` field, read before the RHS too
+    var lfd = ((_rlf_si + 1) << 16) | _rlf_fi;   # 6.7.17 (D16): the field, for `_dsr_fld`
+    var fcop = _asg_compound_tok(S);   # 6.7.5 (B8): `x.f OP= e`, the address first (_fld_compound)
+    if (fcop != 0) { _fld_compound(S, idx, sid, off, hop, fcop); return _fst_end(S, term); }
+    if (_masg_not_plain(S, " - a field is not one") == 1) { return _fst_end(S, term); }   # 6.7.7 (T5): `h.x, b = f();`
+    if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+    STI(S, GTI(S) + 1);
+    _refuse_lossy_pair(S);   # 6.7.7 (T5b): `h.n = f();` stored the tag, into any field type
+    if (_fst_pslot(S, idx, sid, off, hop, term) == 1) { return 0; }   # 6.7.17 (D14): `w.pq = r` copies through pq
+    # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
+    var fsrc = GTI(S);   # 6.7.7: the source's first token (where a tuple field's refusal points)
+    var fsc = _fsc_src(S, ft, lfn, term);   # 6.7.5: `term` — a for step's source ends at `)`
+    if (fsc == 1) {
+        _fsc_copy(S, idx, sid, off, STRUCTSZ(S, ft - 1));
+        return _fst_end(S, term);
+    }
+    if (fsc == 0) {
+        var fst_ti = GTI(S);
+        if (_istr_pfdx(S, lps, term) == 0) {   # 6.7.16 (D73): `w.p = *p` into a `*Str` field is p
+            PCMPE(S);
+            _ifs_bx(S, lfk, fst_ti, lfn);   # 6.6.10: `p.x = 1` into an f64 / f32 field; 6.7.3 into a bool
+            _istr_pfld(S, lps, fst_ti);   # 6.7.16 (D19): an inline `Str` into a `*Str` field
+            _dsr_fld(S, fst_ti, fst_ti - 1, lfd);   # 6.7.17 (D16): a struct result over 8 B into a scalar field
+        }
+    }
+    _tup_fst_chk(S, ft, lfn, fsrc);   # 6.7.7 (R12): a value in rax is never a tuple
+    var fst_sz = FIELDSZ(S, ft);
+    if (fst_sz == 0) { return _fst_end(S, term); }   # 6.7.13: a zero-size struct field stores no byte
+    if (_fst_odd_sz(fst_sz) == 1) {
+        _fst_odd(S, idx, sid, off, fst_sz);
+        return _fst_end(S, term);
+    }
+    # Store value to struct field (width-correct). Route to local or
+    # global addr-emit based on idx encoding (same convention as
+    # PARSE_FIELD_LOAD; v5.5.36 Phase 2). v5.8.17 §9: same
+    # pointer-vs-inline disambiguation as PARSE_FIELD_LOAD —
+    # see that fn for the sentinel-based detection rationale.
+    EPUSHR(S);
+    _resolve_field_base_addr(S, idx, sid);
+    if (off > 0) { EADDIMM_X1(S, off); }
+    _rlf_emit_hop(S, hop);   # 6.6.17: `h.name.len = n;` — through the Str field's pointer
+    EPOPR(S);
+    if (fst_sz == 1) { ESTORE8(S); }
+    elif (fst_sz == 2) { ESTORE16(S); }
+    elif (fst_sz == 4) { ESTORE32(S); }
+    else { ESTOC(S); }
+    return _fst_end(S, term);
+}

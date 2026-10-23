@@ -2,7 +2,7 @@
 # tests/gates/frontend/method_call_runs_every_callee_gate.sh — 6.6.5
 #
 # ⛔ THE DEFECT CLASS. `s.m(x)` and `M_m(&s, x)` are ONE call syntax with TWO marshalling
-# paths in the compiler, and the method one (parse/decl.cyr's own argument loop) ran NONE of
+# paths in the compiler, and the method one (parse/decl/field.cyr's own argument loop) ran NONE of
 # PARSE_FNCALL's callee gates. Four separate silent failures lived in that one loop, and they
 # were found one at a time, each review round turning up the next:
 #
@@ -28,7 +28,7 @@
 # that the free-fn arm really did refuse — an "equal" pair of empty outputs is a failure.
 #
 # MUTATION LEDGER — every mutant BUILT as a full cycc from mutated source and RUN:
-#   N1 drop `_check_int_lit_cstring_arg` from the method loop (parse/decl.cyr)
+#   N1 drop `_check_int_lit_cstring_arg` from the method loop (parse/decl/field.cyr)
 #        -> row cstr_lit red: the method arm emits a binary where the identical free arm is
 #           refused (that binary then SIGSEGVs, rc 139 — measured directly). 6.6.4's behaviour.
 #   N2 drop `_CHECK_ARITY` from the method loop
@@ -265,26 +265,28 @@ var e = main(); syscall(60, e);" \
 # ── row derived floor — the method loop must consult as many callee tables as PARSE_FNCALL's
 # loop does. DERIVED from the source, so adding a fifth gate to one and not the other is a
 # FAILURE here rather than a silent divergence discovered by the next consumer. ──────────
-# ⚠ 6.6.6: the four per-argument gates moved into `_call_arg_one` (parse/fn.cyr), which the method
+# ⚠ 6.6.6: the four per-argument gates moved into `_call_arg_one` (parse/fn/call_kind.cyr), which the method
 # loop, both struct-valued `var` receives and the four PE own-calls now share. This check still
 # looked for them INLINE in the method loop, so 14a turned it RED while the method path itself was
 # fine (bite 14's review found it). It now follows the call: the loop must call `_call_arg_one`,
 # the vector second pass and the arity check, and `_call_arg_one` must call each gate.
-MASKS_FNCALL=$(grep -cE '_fnt_(str|struct|simd|cstr)mask' src/frontend/parse/fn.cyr)
+# 6.7.18: parse/fn.cyr is split by seam into parse/fn/ — the rows read the folder's files, in order, as the one file
+# they were (sed takes its file arguments as one stream; a glob that matches nothing leaves every extraction empty).
+MASKS_FNCALL=$(cat src/frontend/parse/fn/*.cyr | grep -cE '_fnt_(str|struct|simd|cstr)mask')
 # 6.7.7: the method loop and PARSE_FNCALL's loop are ONE marshaller, `_owncall_args_at` (p0 = 1 for
 # the dot form: `self` is parameter 0). The row follows the call again: the method arm and
 # PARSE_FNCALL must each marshal through it, and it must call `_call_arg_one`, the vector second
 # pass and the arity check. An extraction that finds nothing fails every grep below (never vacuous).
-MARM=$(sed -n '/^fn _field_load_on(/,/^}/p' src/frontend/parse/decl.cyr)
-FNCALL=$(sed -n '/^fn PARSE_FNCALL(/,/^}/p' src/frontend/parse/fn.cyr)
-MARSH=$(sed -n '/^fn _owncall_args_at(/,/^}/p' src/frontend/parse/fn.cyr)
-ARGONE=$(sed -n '/^fn _call_arg_one(/,/^}/p' src/frontend/parse/fn.cyr)
-[ -n "$ARGONE" ] || { echo "  FAIL: method_call_gates [helpers]: fn _call_arg_one not found in parse/fn.cyr"; fail=1; }
+MARM=$(sed -n '/^fn _field_load_on(/,/^}/p' src/frontend/parse/decl/*.cyr)
+FNCALL=$(sed -n '/^fn PARSE_FNCALL(/,/^}/p' src/frontend/parse/fn/*.cyr)
+MARSH=$(sed -n '/^fn _owncall_args_at(/,/^}/p' src/frontend/parse/fn/*.cyr)
+ARGONE=$(sed -n '/^fn _call_arg_one(/,/^}/p' src/frontend/parse/fn/*.cyr)
+[ -n "$ARGONE" ] || { echo "  FAIL: method_call_gates [helpers]: fn _call_arg_one not found in parse/fn/"; fail=1; }
 echo "$MARM" | grep -qE '_owncall_args_at\(S, mfi, mname, [^,]+, 1, m_line\)' || { echo "  FAIL: method_call_gates [helpers]: the method-call arm no longer marshals through _owncall_args_at with self as parameter 0"; fail=1; }
 echo "$FNCALL" | grep -q '_owncall_args_at(' || { echo "  FAIL: method_call_gates [helpers]: PARSE_FNCALL no longer marshals through _owncall_args_at (two call paths again)"; fail=1; }
 # 6.7.14: the arity check through `_check_arity_p0` (the method form's message counts without `self`), which
 # must itself call _CHECK_ARITY.
-CHKP0=$(sed -n '/^fn _check_arity_p0(/,/^}/p' src/frontend/parse/fn.cyr)
+CHKP0=$(sed -n '/^fn _check_arity_p0(/,/^}/p' src/frontend/parse/fn/*.cyr)
 echo "$CHKP0" | grep -q '_CHECK_ARITY(' || { echo "  FAIL: method_call_gates [helpers]: _check_arity_p0 no longer calls _CHECK_ARITY"; fail=1; }
 for h in _call_arg_one _simd_arg_second_pass _check_arity_p0; do
     echo "$MARSH" | grep -q "$h(" || { echo "  FAIL: method_call_gates [helpers]: the shared argument marshaller (_owncall_args_at) no longer calls $h"; fail=1; }
@@ -294,7 +296,7 @@ for h in _check_int_lit_cstring_arg _try_push_str_literal_arg _arg_push_snap _si
 done
 # 6.7.7 (call arguments): the struct-address push is `_arg_push_snap`'s (shared with the tail arm,
 # which copies a by-value argument a later one may write); the row follows the call into it.
-PUSHSNAP=$(sed -n '/^fn _arg_push_snap(/,/^}/p' src/frontend/parse/fn.cyr)
+PUSHSNAP=$(sed -n '/^fn _arg_push_snap(/,/^}/p' src/frontend/parse/fn/*.cyr)
 echo "$PUSHSNAP" | grep -q '_try_push_struct_addr_arg(' || { echo "  FAIL: method_call_gates [helpers]: _arg_push_snap (_call_arg_one's push) no longer calls _try_push_struct_addr_arg"; fail=1; }
 [ "$MASKS_FNCALL" -ge 4 ] || { echo "  FAIL: method_call_gates [helpers]: expected PARSE_FNCALL's file to reference all four callee masks, found $MASKS_FNCALL"; fail=1; }
 

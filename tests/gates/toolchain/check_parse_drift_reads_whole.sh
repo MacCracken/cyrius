@@ -1,5 +1,6 @@
 #!/bin/sh
-# Gate: the check driver's path-A drift row reads each src/frontend/parse/*.cyr WHOLE (6.6.17).
+# Gate: the check driver's path-A drift row reads each src/frontend/parse/ file WHOLE (6.6.17), and names
+# exactly the files the tree has (6.7.18).
 #
 # THE DEFECT. `_parse_emit_drift_gate` (programs/checks/lint_fmt.cyr) read every parse file into
 # one fixed 256 KB buffer, and file_read_all stops at the cap without a word. parse/decl.cyr
@@ -7,10 +8,13 @@
 # direct emit (`EB(S, 0x..`) in their tails was never seen and the row read PASS.
 #
 # ROWS — the driver built from this tree, its `--parse-drift-row` mode run over a staged root
-# holding copies of the eight parse files (6.7.10: parse/cov.cyr joined the six; 6.7.15: parse/fn_def.cyr,
-# split from parse/fn.cyr):
-#   tree     the real eight files                                -> PASS, "read whole"
-#   tail     a direct emit appended to parse/fn.cyr (past 256 KB) -> FAIL naming parse/fn.cyr
+# holding a copy of src/frontend/parse/ (6.7.10: parse/cov.cyr joined the six; 6.7.15: parse/fn/def.cyr,
+# split from parse/fn.cyr; 6.7.18: parse/fn.cyr and parse/decl.cyr split into parse/fn/ and parse/decl/):
+#   list     the row's files (programs/checks/lint_fmt.cyr) == `find src/frontend/parse -name '*.cyr'`
+#            -> a file the tree has and the row does not, or the reverse, FAILS by name (6.7.18: the
+#            row's list was held to `ls parse/*.cyr | wc -l` = 8, a top-level count a split defeats)
+#   tree     the real files                                    -> PASS, "read whole"
+#   tail     a direct emit appended to parse/expr.cyr (past 256 KB) -> FAIL naming parse/expr.cyr
 #   huge     parse/types.cyr replaced by a 17 MiB (sparse) file    -> FAIL, refused by name
 #   missing  parse/ctrl.cyr removed                               -> FAIL, "missing"
 #   window   the read-back window opens on a mid-line `fn `      -> PASS (6.6.17 review: offset 0
@@ -38,27 +42,34 @@ strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 ( cd "$ROOT" && "$CC" < programs/checks/main.cyr > "$T/drv" 2> "$T/drv.err" ) \
     || { echo "FAIL: $NAME — the check driver does not compile"; sed 's/^/    /' "$T/drv.err"; exit 1; }
 chmod +x "$T/drv"
-n=$(ls "$ROOT"/src/frontend/parse/*.cyr | wc -l)
-[ "$n" -eq 8 ] || { echo "FAIL: $NAME — expected the 8 parse files the row names, found $n under src/frontend/parse/"; exit 1; }
-big=$(wc -c < "$ROOT/src/frontend/parse/fn.cyr")
-[ "$big" -gt 262144 ] || { echo "FAIL: $NAME — parse/fn.cyr is $big bytes; the tail row needs a file past 256 KB"; exit 1; }
+# row list: the row names every parse file the tree has, and nothing else — recursive, sorted, compared
+# as sets (a top-level glob or a count would miss a folder's files).
+sed -n 's|^ *fail = fail + _parse_drift_scan(_root_path("\(src/frontend/parse/[a-z_/]*\.cyr\)"));.*|\1|p' \
+    programs/checks/lint_fmt.cyr | LC_ALL=C sort > "$T/row.list"
+find src/frontend/parse -name '*.cyr' | LC_ALL=C sort > "$T/tree.list"
+nrow=$(grep -c . "$T/row.list" || true); ntree=$(grep -c . "$T/tree.list" || true)
+[ "$ntree" -ge 8 ] || { echo "FAIL: $NAME — only $ntree .cyr under src/frontend/parse/ (corpus floor 8)"; exit 1; }
+echo "row list: the drift row names $nrow files, the tree has $ntree"
+check "the row's list equals the tree's parse files" "" "$(LC_ALL=C comm -3 "$T/row.list" "$T/tree.list" | tr -d '\t' | tr '\n' ' ')"
+big=$(wc -c < "$ROOT/src/frontend/parse/expr.cyr")
+[ "$big" -gt 262144 ] || { echo "FAIL: $NAME — parse/expr.cyr is $big bytes; the tail row needs a file past 256 KB"; exit 1; }
 
-# stage <dir>: a root holding copies of the eight parse files
-stage() { mkdir -p "$1/src/frontend/parse" && cp "$ROOT"/src/frontend/parse/*.cyr "$1/src/frontend/parse/"; }
+# stage <dir>: a root holding a copy of src/frontend/parse/, its folders included
+stage() { mkdir -p "$1/src/frontend" && cp -R "$ROOT/src/frontend/parse" "$1/src/frontend/"; }
 # row <dir> -> rc; output in <dir>.out (ANSI stripped)
 row() { rc=0; ( cd "$1" && timeout 120 "$T/drv" --parse-drift-row ) > "$1.raw" 2>&1 || rc=$?; strip_ansi < "$1.raw" > "$1.out"; echo "$rc"; }
 
-echo "row tree: the real eight files (copied — the row never runs in the tree)"
+echo "row tree: the real files (copied — the row never runs in the tree)"
 stage "$T/tree"
 check "the row passes" 0 "$(row "$T/tree")"
 check "  and says each file was read whole" yes "$(grep -q 'each read whole through its last fn' "$T/tree.out" && echo yes || echo no)"
 
-echo "row tail: a direct emit appended to parse/fn.cyr ($big B)"
+echo "row tail: a direct emit appended to parse/expr.cyr ($big B)"
 stage "$T/tail"
-printf '\nfn _pd_tail_probe(S): i64 {\n    EB(S, 0x90);\n    return 0;\n}\n' >> "$T/tail/src/frontend/parse/fn.cyr"
+printf '\nfn _pd_tail_probe(S): i64 {\n    EB(S, 0x90);\n    return 0;\n}\n' >> "$T/tail/src/frontend/parse/expr.cyr"
 check "the row fails" 1 "$(row "$T/tail")"
-check "  naming parse/fn.cyr's direct emit" yes \
-    "$(grep -q 'parse/fn.cyr — direct-emit site' "$T/tail.out" && echo yes || echo no)"
+check "  naming parse/expr.cyr's direct emit" yes \
+    "$(grep -q 'parse/expr.cyr — direct-emit site' "$T/tail.out" && echo yes || echo no)"
 
 echo "row huge: parse/types.cyr replaced by a 17 MiB file"
 stage "$T/huge"
@@ -90,5 +101,5 @@ if [ "$fails" -gt 0 ]; then
     for r in tree tail huge miss win; do [ -f "$T/$r.out" ] && { echo "  -- $r"; sed 's/^/     /' "$T/$r.out" | head -6; }; done
     exit 1
 fi
-echo "PASS: $NAME (the drift row reads each parse/*.cyr whole, through its last fn; a tail emit past 256 KB, an absurd size and a missing file each fail by name)"
+echo "PASS: $NAME (the drift row names every parse file the tree has and reads each whole, through its last fn; a tail emit past 256 KB, an absurd size and a missing file each fail by name)"
 exit 0

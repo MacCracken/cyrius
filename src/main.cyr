@@ -135,7 +135,7 @@
 #                                         from 0x198000[8192]=1024 into this reclaimed .27 output_buf
 #                                         gap, below TS@0x800000; the count gvar_cnt stays at 0x19A000).
 #                                         v6.6.9: holds only the FIRST 4096 — the 4097th moves the table
-#                                         to alloc'd storage, doubling (_gvt/_gv_defer, parse/decl.cyr);
+#                                         to alloc'd storage, doubling (_gvt/_gv_defer, parse/decl/gvar.cyr);
 #                                         the "too many initialized globals (max 4096)" cap is gone.
 #   (0x19A100/0x19A108/0x19D000/0x198000 now FREE — 0x198000 reclaimed by the v6.3.41 gvar_toks move,
 #    the rest by the v6.1.35 file_map move)
@@ -173,7 +173,7 @@
 # The INITIAL bases of the fn-table family: 17 tables in 64 KB slots, back to back from
 # 0x93A000 to 0xA4A000. Each starts with room for `_fnt_cap` = 2048 fns × 8 B (16 KB);
 # REGFN's `_fnt_grow` moves the whole family off-heap (doubling) and rehashes once the
-# count would pass the cap, up to the 131072-fn ceiling (parse/fn.cyr). Accessed through
+# count would pass the cap, up to the 131072-fn ceiling (parse/fn/table.cyr). Accessed through
 # the `_fnt_*` gvars, NOT these literal offsets — see util.cyr for the family + grow.
 # The two hash tables sit at 0x110000 / 0x114000 (below).
 #   0x93A000 fn_param_cstring_mask [65536]  _fnt_cstrmask   v5.10.24 param-type masks: bit N
@@ -206,7 +206,7 @@
 #                                        accumulator (sum of all
 #                                        `var foo[N]` aligned sizes
 #                                        registered inside this fn body).
-#                                        Set by parse/decl.cyr's array-
+#                                        Set by parse/decl/array.cyr's array-
 #                                        register path when `_cur_fn_ix >= 0`.
 #                                        Read by FIXUP's `large static data`
 #                                        warning to compute "M bytes inside
@@ -260,7 +260,7 @@
 #                                        Reset at fn start. Populated by EJCC/EJMP/EJMP0/ECALLTO.
 #                                        Read by compact_nops to remap intra-fn jump disps.
 #                                        The count saturates at 1024 and the `_jsn < 1024` gate
-#                                        (parse/fn.cyr) then skips that fn's NOP compaction —
+#                                        (parse/fn/def.cyr) then skips that fn's NOP compaction —
 #                                        correct, unoptimised. One fn in cycc itself saturates it
 #                                        (measured 6.6.20).
 #   0x1A2008  nop_run_cnt   [8]           v5.6.27: per-fn count of NOP runs
@@ -281,7 +281,7 @@
 #                                        by PARSE_SWITCH's x86 table path. Reset at fn start
 #                                        alongside jump_src_cnt / nop_run_cnt.
 #   0x1AC808  sw_tbl        [4096]        v6.5.20: 256 × 16B (table_cp, entry_count). Read by
-#                                        _sw_tbl_repair (parse/fn.cyr, compaction stage 3b) —
+#                                        _sw_tbl_repair (parse/fn/body_pass.cyr, compaction stage 3b) —
 #                                        the table holds `target_cp - table_cp` offsets, which
 #                                        the v5.6.27 NOP-harvest compaction moved BOTH ends of
 #                                        without repairing, so every case body past the first
@@ -339,7 +339,7 @@
 #                                        bit5 (32)  #alloc  /  directive onto the fn
 #                                        bit6 (64)  private (v6.5.0 visibility)
 #                                        bit7 (128) a same-name fn exists in another
-#                                                   file (scoped lookup, parse/fn.cyr)
+#                                                   file (scoped lookup, parse/fn/table.cyr)
 #                                        bit8 (256) returns a `: stack` pair (tag +
 #                                                   payload) — set on 1-field stack
 #                                                   variant ctors and propagated
@@ -715,7 +715,7 @@ include "lib/alloc.cyr"
 include "lib/vec.cyr"
 
 # v6.0.7 — return-patch vec storage. Declared BEFORE parse.cyr so the
-# converted call sites in parse.cyr / parse/expr.cyr / parse/fn.cyr can
+# converted call sites in parse.cyr / parse/expr.cyr / parse/fn/ can
 # resolve `rp_vec` at parse time. Initialized to 0; the real
 # `rp_vec = vec_new()` assignment happens at the alloc_init() block
 # below, after the brk extension. Top-level execution order guarantees
@@ -1333,7 +1333,7 @@ if (_efi_env != 0) {
 # cycc: opt-in IR recording via CYRIUS_IR=1|2
 
 # Pass 1: Pre-scan to register all global vars and structs (no fn bodies)
-_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn_def.cyr)
+_tl_pass1(S, 1);   # 6.6.17: the ONE pass-1 scan, shared by every fork (src/frontend/parse/fn/def.cyr)
 
 # v6.5.17 — the DCE pre-scan referenced-name bitmap that used to be built here
 # is GONE with the parse-time body skip it fed (see the `fn` dispatch in pass 2).
@@ -1400,14 +1400,14 @@ EPATCH(S, jmp_patch);
 # is only correct where rsp is exactly the entry rsp. It never is — the seed moved it, and
 # `syscall(60, x)` inside a fn body is a whole frame below. EEXIT therefore emits
 # `mov rsp, r13; ret`, correct at any depth. r13 is reserved from the register allocator on
-# this target (`_ra_cap` in src/frontend/parse/fn.cyr), which is what makes the park
+# this target (`_ra_cap` in src/frontend/parse/fn/def.cyr), which is what makes the park
 # survive an arbitrary call chain. See EPARK_EFI_RSP (src/backend/x86/emit.cyr) for why the
 # park is a 4-byte `lea` rather than the 3-byte `mov`. CHANGELOG [6.6.5]
 if (_TARGET_EFI_APPLICATION == 1) { EPARK_EFI_RSP(S); }   # lea r13, [rsp]  (4C 8D 2C 24)
 if (_TARGET_PE == 1) { ESUB_RSP_IMM8(S, 8); }
 
 # v6.1.30: x86-macho argv — park the init rsp in r15 (reserved from regalloc, see
-# parse/fn.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The entry
+# parse/fn/def.cyr cap on _TARGET_MACHO==1) as the FIRST landing instruction. The entry
 # jmp preserves rsp, so here rsp is still the init stack ([rsp]=argc, inline
 # argv/envp) — captured before EMIT_GVAR_INITS / EFNPRO below push anything. r15 is
 # never clobbered, so it survives into argc()/argv()/_read_env. cycc ignores it.
@@ -1439,7 +1439,7 @@ if (_TARGET_MACHO == 1) { EALIGN_RSP_16(S); }   # and rsp, -16   (48 83 E4 F0)
 # _agnos_capture_rsp` was emitted AFTER EMIT_GVAR_INITS (below), so for that
 # entry shape main() ran with _agnos_init_rsp still 0 → argc()==0 (attn11 issue
 # 2026-06-10-cyrius-agnos-capture-after-gvar-init-call). r15 is reserved from
-# regalloc (parse/fn.cyr cap on _TARGET_AGNOS==1); lib/args_agnos.cyr reads it.
+# regalloc (parse/fn/def.cyr cap on _TARGET_AGNOS==1); lib/args_agnos.cyr reads it.
 if (_TARGET_AGNOS == 1) { E3(S, 0xE78949); }   # mov r15, rsp   (49 89 E7)
 
 # v5.11.52: under CYRIUS_TARGET_EFI=1, save firmware-supplied entry
@@ -1520,14 +1520,14 @@ if (_init_km == 1) {
 }
 if (_prof_on == 1) { _prof_gvar_end = _prof_clock_ns(); }
 
-# 6.6.5 — ONE shared emitter (src/frontend/parse/fn.cyr). Three forks carried this loop
+# 6.6.5 — ONE shared emitter (src/frontend/parse/fn/def.cyr). Three forks carried this loop
 # inline and it needed a fix in all three: pass 1 now prescans relaxed-ordering fns, which
 # PARSE_PROG defines BELOW this point, so an un-guarded loop warns about every one of them.
 _warn_undefined_prepass(S);
 
 if (_init_km == 1) {
     # 6.6.16 (C6): this replay runs AFTER the program — a constant initializer is baked into the
-    # image (_gvk_pre / _spc_try), what is not is warned (parse/decl.cyr _gvk_arm). CHANGELOG [6.6.16]
+    # image (_gvk_pre / _spc_try), what is not is warned (parse/decl/gvar_init.cyr _gvk_arm). CHANGELOG [6.6.16]
     _gvk_arm(S);
     EMIT_GVAR_INITS(S);
 } else {
@@ -1895,7 +1895,7 @@ if (_stats_env != 0) {
 # _capacity_warnings (util.cyr) since v6.4.50; 64 MiB growable codebuf here.
 _capacity_warnings(S, 67108864, 1);
 EMITELF(S);
-_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn_def.cyr)
+_unp_run(S);   # 6.7.17: the bodies pass 2 never parsed, read for their syntax (parse/fn/def.cyr)
 if (_prof_on == 1) { _prof_emit_end = _prof_clock_ns(); }
 # Write ELF output (loop on partial writes)
 # v6.6.6 — the loop that used to sit here stopped on the first failing `write` and

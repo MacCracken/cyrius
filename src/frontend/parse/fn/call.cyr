@@ -1,0 +1,922 @@
+# PARSER — fn: the callee checks (SIMD argument types, #deprecated, private visibility, arity and overloads,
+# #pure) and PARSE_FNCALL.
+# ================================================================
+# Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
+
+# v6.4.4/v6.4.7 mask classes: 1 = any 16-byte/1-XMM vector (f64v2 or an integer vector, so
+# the test is the SIZE class), 3 = f32v4 exactly (distinguished so an f64v2 arg is rejected
+# rather than silently run through addps), 2 = a 32-byte vector: `want` (`_pv32_param`) says which.
+fn _simd_arg_typecheck(S, cls, lt, want): i64 {
+    if (cls == 1) {
+        if (_is_simd128(S, lt) == 0) {
+            ERR_MSG(S, "value-form SIMD arg must be a 16-byte vector", 44);
+        }
+        return 0;
+    }
+    if (cls == 3) {
+        if (lt != 0 - 2121) {
+            ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v4)", 56);
+        }
+        return 0;
+    }
+    return _simd256_typecheck(S, want, lt);
+}
+# ⛔ 6.7.13 — THE 32-BYTE VECTOR PARAMETER'S OWN TYPE. f32v8 and f64v4 share the value-form ABI (two XMM / V
+# registers, a 32-byte copy-in on Win64) and the 2-bit SIMD mask's code 2, which has no room for a fourth code, so
+# parameter `k` of fn `fi` is read from the definition's tokens, as `_pvec_param` reads a `*V`: 2153 = `v: f32v8`,
+# 2125 = `v: f64v4`, 0 = neither, or no definition to read. CHANGELOG [6.7.13]
+fn _pv32_param(S, fi, k): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_dps_param(S, o, k) == 0) { return 0; }
+    var i = _dps_ts;
+    if (TOKTYP(S, i) != 2) { return 0; }
+    var c = _classify_param_type(S, TOKVAL(S, i));
+    if (c == 10) { return 2153; }
+    if (c == 7) { return 2125; }
+    return 0;
+}
+# A vector local of SLTYPE `lt` into a value-form 32-byte parameter declared `want` (0: f64v4, the mask's reading
+# before 6.7.13): anything but that vector is refused by name, f64v4 into `v: f32v8` and f32v8 into `v: f64v4` too.
+fn _simd256_typecheck(S, want, lt): i64 {
+    if (want == 2153) {
+        if (lt != 0 - 2153) {
+            ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f32v8)", 56);
+        }
+        return 0;
+    }
+    if (lt != 0 - 2125) {
+        ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56);
+    }
+    return 0;
+}
+
+# The second half: emit the XMM/V loads AFTER ECALLPOPS, AT the call site, so the vector
+# registers hold the values entering the callee. See _simd_arg_record. CHANGELOG [6.6.5]
+fn _simd_arg_second_pass(S, tbl, cnt): i64 {
+    var i = 0;
+    while (i < cnt) {
+        var lli = load64(tbl + i * 24);
+        var apc = load64(tbl + i * 24 + 8);
+        var cl = load64(tbl + i * 24 + 16);
+        if (cl == 2) { ELOAD_F64V4_TO_XMM(S, apc, lli); }
+        else { ELOAD_F64V2_TO_XMM(S, apc, lli); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# v5.6.4 #deprecated call-site warning. It fires at EVERY call site (unlike #must_use,
+# which only fires on statement-level discard — deprecated fns should get the nudge no
+# matter how their result is used). Message body lives in fn_deprecated_msg as a
+# string-literal token value (offset<<32 | length).
+#
+# ⛔ 6.6.16 — reached ONLY through `_callee_site_checks` below. v6.6.4 called it from three
+# paths (PARSE_FNCALL, the tail call, `_struct_call_into`) while `_vis_check` had fourteen, so
+# `&old_f`, `o.m()`, the struct receives, operator dispatch and the PE vector receives were
+# silent; and a call parsed before the definition was silent on every path, because only
+# pass 2 set the bit (pass 1 now does — `_prescan_dep_take`). `ti` is the token the warning
+# names: `_err_head` read the CURSOR, which the tail path has already walked past `);`, so
+# `return old_f(x);` was reported on the NEXT token's line. CHANGELOG [6.6.16]
+fn _DEPRECATED_WARN(S, fi, noff, ti): i64 {
+    if (GFLG(S, fi) & 4 == 0) { return 0; }
+    if (_dep_seen(ti, fi) == 1) { return 0; }
+    _ew("warning:", 8);
+    _err_head_at(S, ti);
+    _ew(": '", 3);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+    _ew("' is deprecated", 15);
+    var _dep_msg = GFDM(S, fi);
+    if (_dep_msg != 0) {
+        var _dep_len = _dep_msg & 0xFFFFFFFF;
+        _ew(": ", 2);
+        _ew(_lit_ptr(S, _dep_msg), _dep_len);   # 6.6.17: a side-table message
+    }
+    _ew("\n", 1);
+    return 1;
+}
+
+# 6.6.16 — ONE warning per call site. The same tokens are parsed more than once: an `#inline`
+# fn's body at its definition and again at every expansion, a generic's body for its base and
+# again for each instance. A re-parse names the same token for the same callee, so that pair
+# is the site — `w(1); w(2);` on an `#inline fn w` calling a deprecated fn printed the
+# identical line three times. Every path names a token of its OWN call (an operator its
+# operator), so two calls never share a pair. Warnings are rare: a short list, not a bitmap.
+var _dep_warned = 0;
+fn _dep_seen(ti, fi): i64 {
+    if (_dep_warned == 0) { _dep_warned = vec_new(); }
+    var n = vec_len(_dep_warned);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_dep_warned, i) == ti) { if (vec_get(_dep_warned, i + 1) == fi) { return 1; } }
+        i = i + 2;
+    }
+    vec_push(_dep_warned, ti);
+    vec_push(_dep_warned, fi);
+    return 0;
+}
+
+# A generic INSTANCE (`old_g<i32>(..)`, minted as `old_g$i32`) is deprecated when its base is:
+# the instance is re-parsed from the base's tokens long after the attribute was consumed, so
+# it never received the bit, and only the i64 spellings (which ARE the base) warned.
+# 6.6.17 — what an instance must know of itself that the base's pass-1 record holds: its type
+# arguments (a3, `_bind_inl_generic`) and the base's "returns one value" bit 1024 (a5,
+# `_prescan_ret_single` — the instance's body IS the base's tokens); 6.7.11, its value count
+# (`_prescan_ret_arity`). 6.7.15: the base's `#io` / `#alloc` (bits 16 / 32) — `#pure`'s check reads the callee's
+# bits, and a call through an instance (`h<i32>(1)`) was silent (CHANGELOG [6.7.15]).
+fn _gen_inst_record(S, spec, base_fi, c0, c1): i64 {
+    if (spec < 0) { return 0; }
+    SFIC(S, spec, c0, c1);
+    if (GFMETH(S, base_fi) != 0) { SFMETH(S, spec, GFMETH(S, base_fi)); }   # 6.7.14: `P.id<f64>`
+    if ((GFLG(S, base_fi) & 1024) != 0) { SFLG(S, spec, GFLG(S, spec) | 1024); }
+    SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 196608));   # 6.7.11: its arity record
+    SFLG(S, spec, GFLG(S, spec) | (GFLG(S, base_fi) & 48));       # 6.7.15: `#io` / `#alloc`
+    return 0;
+}
+fn _gen_inherit_dep(S, spec, base_fi): i64 {
+    if (spec < 0) { return 0; }
+    if ((GFLG(S, base_fi) & 4) == 0) { return 0; }
+    SFLG(S, spec, GFLG(S, spec) | 4);
+    SFDM(S, spec, GFDM(S, base_fi));
+    return 0;
+}
+
+# 6.6.16 — THE per-callee check, for every path that resolves a name to an fn and emits its
+# own call or address: the `private` check and the `#deprecated` warning, together, so the two
+# lists cannot drift apart again (they had: 14 sites against 3). A new call path is ONE call
+# here; `grep -n '_callee_site_checks' src/frontend/` is the list of paths. `ti` is the token
+# the warning names. Returns 1 when the `private` check refused the call (reported), else 0 —
+# only the const evaluator reads it, to stop its evaluation (CHANGELOG [6.7.11]). CHANGELOG [6.6.16]
+fn _callee_site_checks(S, fi, noff, ti): i64 {
+    if (fi < 0) { return 0; }
+    var r = _vis_check(S, fi, noff, ti);
+    _DEPRECATED_WARN(S, fi, noff, ti);
+    return r;
+}
+
+# The same, naming a token relative to the cursor: `back` = 0 is the cursor itself (a path
+# whose cursor is still on the callee's name, its `(`, or the first token after that `(`), 1 is
+# the token just consumed (`&old_f`, whose name is behind the cursor — the token AFTER it can be
+# on the next line). ONE call with no nested one, so the hot parsers that use it (PARSE_VAR,
+# _PARSE_FACTOR_IMPL, PARSE_RETURN, PARSE_FNCALL) carry no more references than `_vis_check`
+# alone did — cybs's per-fn reference ceiling fails silently (CLAUDE.md, Release Gate 2).
+fn _callee_site_checks_here(S, fi, noff, back): i64 {
+    _callee_site_checks(S, fi, noff, GTI(S) - back);
+    return 0;
+}
+
+# Parse fn call args and emit call (as expression)
+# v6.5.0 Phase 2 — cross-file `private` call check. WARN-mode; Phase 3 flips it to a
+# hard error via the v6.3.2 undefined-fn playbook (measure the blast radius first,
+# then flip default-on rather than sprinkling opt-outs).
+#
+# ONE shared fn rather than a copy per call site. The plan named two sites; there are
+# at least thirteen paths that resolve a name to an fn index and emit their own call —
+# ordinary calls, tail calls, operator overloading, methods, `&fn` pointers, closures,
+# await, derive helpers. v6.4.81 shipped a bug of exactly that shape: the `_cfo` class
+# was declared fixed three times, each fix scoped to the tier its repro landed in, and
+# the fourth occurrence was in a resolution path nobody had enumerated. A single helper
+# means adding a site is one call, and the set of sites is greppable.
+#
+# ⛔ v6.6.4: this header named `&fn` pointers and methods as paths that need the call —
+# and v6.5.0 shipped THREE callers (PARSE_FNCALL, the tail call, EMIT_OP_DISPATCH).
+# hisab found `&_private` callable from any file; the sweep found eight paths that
+# resolve a user identifier through FINDFN and emit their own call/fixup with no check:
+# `&fn` (parse/expr.cyr), `s.method()`, the asv retptr / asp pair struct receives (also
+# the inferred `var q = f()` form), and four PE-only SIMD receive/return paths
+# (parse/decl/vector.cyr _try_vector_call_assign / _f2c / _f4c, parse/fn/ret.cyr _rc). All eleven
+# now call it — since 6.6.16 through `_callee_site_checks`, its only caller, which adds the
+# `#deprecated` warning; `grep -n '_callee_site_checks' src/frontend/` is the list.
+#
+# ⛔ 6.6.5 — "FAIL-OPEN ON UNKNOWNS … Phase 3 must revisit this" stood here for five
+# minors and WAS the hole. An unstamped callee (GFFI == 0) returned at the FIRST test
+# below, so every definition kind pass 1 did not register — impl methods, `mod` fns, fns
+# after the first top-level statement — was reachable from any file by a call that merely
+# came EARLIER in the concatenated stream. Pass 1 now stamps all of them (_prescan_impl /
+# _prescan_tail / the GMOD guard's removal), so "unknown" is no longer an ordinary state.
+#
+# This is the BACKSTOP under that, and it is fail-CLOSED-LATER rather than fail-open: a
+# reference to a name with no owner AND no body yet is DEFERRED — recorded with the
+# CALLER's file and its token — and re-judged by _vis_check_deferred once every definition
+# in the compiland has been stamped. Nothing is reported at the reference itself, so the
+# legitimately-unknown callees the old comment listed (enum constructors, DCE stubs, an fn
+# that is never defined) stay silent: they still have no private bit at the end.
+#
+# ⚠ A deferral entry is only as good as the stamp that arrives later. If a future
+# definition kind is added that pass 1 does not walk, this layer reports it instead of
+# letting it through — which is the property the v6.5.0 comment promised and did not have.
+# See tests/gates/frontend/private_forward_reference.sh (mutant M4+M5). CHANGELOG [6.6.5]
+var _visdef_vec = 0;
+# 6.6.5 round 3 — bumped once per PRIVATE stamp in PARSE_FN_DEF. `_vis_check_deferred` hangs
+# off PARSE_PROG, which IS the block parser AND the fn-body parser, so it runs once per
+# `if`/`else`/`while` body and once per fn definition; re-walking the whole deferral list each
+# time is an unbounded term, because an entry whose callee is NEVER stamped (an undefined fn,
+# an enum ctor, a DCE stub — exactly the cases that must stay silent) is never consumed and so
+# is re-visited forever. Draining "definitively judged" entries cannot fix it: mid-parse an
+# unstamped callee is indistinguishable from a not-yet-stamped one.
+#
+# ⭐ THE GUARD KEYS ON THE PRIVATE STAMP, NOT ON EVERY STAMP, and the difference is the whole
+# fix. `_vis_report_late` reports nothing for a public callee, so a sweep can only reach a new
+# verdict if a new PRIVATE bit landed since the last one. A compiland with no `private`
+# anywhere — nearly all of them — therefore sweeps exactly ONCE. Keying on `SFFI` instead
+# (the first attempt) left the quadratic in place, because every fn body ends with both a
+# stamp and a sweep: MEASURED at 2000 refs x 6000 blocks, base 64 ms, SFFI-keyed 91 ms,
+# private-keyed 62 ms. Sound by construction, and it is why the number below is measured
+# rather than reasoned about.
+var _vis_stamp_seq = 0;
+var _vis_swept_seq = 0 - 1;
+fn _vis_check(S, fi, noff, ti): i64 {
+    if (fi < 0) { return 0; }                    # unresolved name — nothing to judge
+    if (GFFI(S, fi) == 0) {
+        # Owner unknown. If it also has no body yet, this may be a forward reference to a
+        # definition that has not been stamped — re-judge it at the end of the parse.
+        if (L64(_fnt_offsets + fi * 8) < 0) { _vis_defer(S, fi, ti); }
+        return 0;
+    }
+    if ((GFLG(S, fi) & 64) == 0) { return 0; }   # callee not private — the common path
+    var callee = GFFI(S, fi);
+    if (callee == 0) { return 0; }               # callee origin unknown
+    # The CALLER's file comes from the call's own token, not from `_cur_fn_ix`: the
+    # inline-replay path re-parses a callee's body tokens while `_cur_fn_ix` still
+    # names the enclosing fn, so asking the fn table would answer for the wrong file.
+    # 6.6.17: `ti`, not the cursor — a tail call fires this past `);`, so the cursor named
+    # the NEXT token (`return pv(x);` was reported at the `}` below it). CHANGELOG [6.6.17]
+    var caller = FM_FILEID(S, GTLINE(S, ti)) + 1;
+    if (caller == 0) { return 0; }
+    if (caller == callee) { return 0; }          # same file — allowed
+    # v6.5.0 Phase 3 — HARD ERROR by default, via the v6.3.2 undefined-fn playbook:
+    # measure the blast radius in warn mode first, then flip default-on rather than
+    # sprinkling opt-outs. Measured on the tree with lib/regex.cyr adopted (41 private
+    # / 9 public): ZERO violations across tests/tcyr, programs, benches and fuzz.
+    #
+    # Routed through `_had_error` rather than SYS_EXIT so the compiler reports EVERY
+    # violation in one run and emits no binary — the v6.4.62 multi-error contract.
+    # A fail-fast exit here would make adopting `private` on a large file an
+    # N-compile-cycles-to-find-N-callers exercise.
+    if (_vis_seen(ti, fi) == 1) { _had_error = 1; return 1; }   # 6.7.14: once per site
+    _ew("error:", 6);
+    _err_head_at(S, ti);
+    _ew(": '", 3);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+    _ew("' is private to its file\n", 25);
+    _had_error = 1;
+    return 1;
+}
+
+# 6.7.14 — ONE `private` error per call site, `_dep_seen`'s rule for the same reason: the body of an
+# `#inline` fn is parsed at its definition and again at every expansion, a generic's for its base and
+# again per instance, and each re-parse names the same (token, callee) pair — `w() + w()` on an
+# `#inline fn w` calling another file's private fn printed the identical error three times. A repeat
+# keeps the verdict (`_had_error`, the refusal the const evaluator reads) and prints nothing. Both
+# report paths record here, so a site the deferred sweep reported is not reported again by a later
+# replay. Lazy: a compile with no violation allocates nothing. CHANGELOG [6.7.14]
+var _vis_reported = 0;
+fn _vis_seen(ti, fi): i64 {
+    if (_vis_reported == 0) { _vis_reported = vec_new(); }
+    var n = vec_len(_vis_reported);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(_vis_reported, i) == ti) { if (vec_get(_vis_reported, i + 1) == fi) { return 1; } }
+        i = i + 2;
+    }
+    vec_push(_vis_reported, ti);
+    vec_push(_vis_reported, fi);
+    return 0;
+}
+
+# 6.6.5 — record a reference whose callee had no owner yet: (fi, caller fid + 1, token).
+# Kept as its own fn so cybs sees a small body (the global/call fan-out rule). Lazy vec:
+# a compile with no unstamped reference allocates nothing.
+fn _vis_defer(S, fi, ti): i64 {
+    var dcaller = FM_FILEID(S, GTLINE(S, ti)) + 1;
+    if (dcaller == 0) { return 0; }
+    if (_visdef_vec == 0) { _visdef_vec = vec_new(); }
+    vec_push(_visdef_vec, fi);
+    vec_push(_visdef_vec, dcaller);
+    vec_push(_visdef_vec, ti);
+    return 0;
+}
+
+# 6.6.5 — re-judge every deferred reference against the stamps that exist NOW. Called from
+# the end of PARSE_PROG, so there is no per-fork edit to forget.
+#
+# ⚠ PARSE_PROG IS THE BLOCK PARSER, NOT AN END-OF-PROGRAM HOOK. It runs for every `if` /
+# `else` / `while` / `for` body as well as for the top-level statement list, so this is
+# entered many times per compile — which is why each entry is CONSUMED when it is reported
+# (its fi slot is set to -1) rather than left for the next block to report again. The last
+# invocation is the end of the fork's top-level PARSE_PROG call, by which point every
+# definition in the compiland has been parsed, so nothing can be missed by stopping early.
+# The common path costs one comparison: the vec is never allocated unless something
+# deferred. CHANGELOG [6.6.5]
+fn _vis_check_deferred(S): i64 {
+    if (_visdef_vec == 0) { return 0; }
+    if (_vis_swept_seq == _vis_stamp_seq) { return 0; }   # 6.6.5 r3: nothing new stamped
+    _vis_swept_seq = _vis_stamp_seq;
+    var n = vec_len(_visdef_vec);
+    var i = 0;
+    while (i < n) {
+        var fi = vec_get(_visdef_vec, i);
+        if (fi >= 0) {
+            if ((GFLG(S, fi) & 64) != 0) {
+                var caller = vec_get(_visdef_vec, i + 1);
+                var ti = vec_get(_visdef_vec, i + 2);
+                if (_vis_report_late(S, fi, caller, ti) == 1) { vec_set(_visdef_vec, i, 0 - 1); }
+            }
+        }
+        i = i + 3;
+    }
+    return 0;
+}
+
+# Returns 1 when it reported (so the caller can consume the entry), 0 when the reference is
+# still not judgeable or is legitimate.
+fn _vis_report_late(S, fi, caller, ti): i64 {
+    var callee = GFFI(S, fi);
+    if (callee == 0) { return 0; }
+    if (callee == caller) { return 0; }
+    if (_vis_seen(ti, fi) == 1) { _had_error = 1; return 1; }   # 6.7.14: once per site
+    _ew("error:", 6);
+    _err_head_at(S, ti);
+    _ew(": '", 3);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    _ew("' is private to its file\n", 25);
+    _had_error = 1;
+    return 1;
+}
+
+# v6.5.0 Phase 3 — one-shot notice that visibility enforcement is DEGRADED.
+#
+# `private` is keyed on the file map, which caps at 1024 entries. Past that cap
+# FM_FILEID cannot identify a file, the stamp records "unrecorded", and the private
+# bit is therefore never set — so enforcement silently becomes a no-op for every file
+# beyond the cap. Silently is the problem: a consumer who adopts `private` and grows
+# past 1024 files would believe they still had a boundary. Fail-open is the right
+# CODE behaviour (we cannot prove a violation we cannot attribute) but it must be
+# announced, which is what this does.
+var _vis_degraded_said = 0;
+fn _vis_degraded_note(): i64 {
+    if (_vis_degraded_said != 0) { return 0; }
+    _vis_degraded_said = 1;
+    _ew("warning: file map full -- `private` enforcement is DISABLED past the 1024-file cap\n", 83);
+    return 0;
+}
+
+# v6.5.1 — count the arguments of the call whose `(` was just consumed, WITHOUT
+# moving the cursor. Needed by the overload-suffix dispatch in PARSE_FNCALL: a
+# redirect `base(...)` → `base_str`/`base_int` is only correct when the TARGET's
+# parameter count matches what THIS call site actually supplies.
+#
+# Before this existed the dispatch decided on the type of argument 1 alone and
+# would happily rewrite a 1-argument call into a call to a 2-argument function,
+# leaving the extra parameter bound to garbage and reporting only a *warning*.
+# That is not theoretical: it silently broke `bayan_json_v_parse(someStr)` for
+# the whole ecosystem (bayan 1.3.0 renamed its own public API to escape it), and
+# it is the reason sakshi's unrelated `_sk_write_str` was a latent landmine.
+#
+# The arguments are stepped over by `_arg_next`, the one argument walker, so a nested call, an
+# index or a struct initializer cannot leak its commas into the top-level count — nor (6.7.7) a
+# closure's `|a, b|` bars, which counted one argument too many and kept `show(s, |a, b| a + b)`
+# from its `show_str` sibling. CHANGELOG [6.5.1] [6.7.7]
+fn _CALL_ARGC_PEEK(S): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) == 11) { return 0; }   # `f()` — empty argument list
+    var argc = 1;
+    var n = GTCNT(S);
+    while (ti < n) {
+        ti = _arg_next(S, ti);
+        if (TOKTYP(S, ti) != 31) { return argc; }   # the call's `)`, or EOF (best effort)
+        argc = argc + 1;
+        ti = ti + 1;
+    }
+    return argc;
+}
+
+# v6.5.1 — may `fi` be used as an overload-redirect target for a call supplying
+# `argc` arguments? Shared by the _str and _int dispatch arms so the two cannot
+# drift. The count is the target's min..max (6.7.7: a sibling that declares defaults fills the
+# rest), judged alike for a sibling defined above or BELOW the call: pass 1 records every
+# definition's count, variadic flag and defaults row (GFDS != 0) before pass 2 parses a call —
+# the facts `_CHECK_ARITY` judges a forward call by. A VARIADIC target is unconstrained by
+# construction.
+# 6.7.9: a forward sibling was let through unjudged, so `pr(s)` reached a 2-parameter `pr_str`
+# defined below it — garbage for the second parameter, refused naming `pr_str` since 6.7.7 —
+# where the same sibling above the call was judged and `pr` ran.
+# ⛔ 6.7.11 — a target with NO definition (offset < 0, GFDS 0: a name only called somewhere) never
+# takes the call (the user's decision (b), 2026-10-13). It was routed "into the undefined-function
+# diagnostic": `pr(s)`, written to the DEFINED `pr`, reached the undefined `pr_str` — under
+# --allow-undef a trap (rc 132), by default a refusal only because the route made the name
+# reachable. In an `object;` unit a sibling defined in another object is such a name too.
+# CHANGELOG [6.5.1] [6.7.9] [6.7.11]
+fn _OV_ARITY_OK(S, fi, argc): i64 {
+    if (L64(_fnt_offsets + fi * 8) < 0) { if (GFDS(S, fi) == 0) { return 0; } }
+    if (GFVA(S, fi) != 0) { return 1; }
+    if (argc > L64(_fnt_params + fi * 8)) { return 0; }
+    if (argc >= _pd_min(fi)) { return 1; }
+    return 0;
+}
+
+# v5.8.20: #pure caller cannot call #io / #alloc callees. Warning
+# (not error) for downstream incremental adoption — same shape as
+# #must_use / #deprecated diagnostics. The annotation ramp happens
+# gradually; cyrlint --strict will escalate to error in a follow-up.
+# 6.6.17: one fn, so the method arm (`p.m(..)`, `_field_load_on`) runs it too — an impl
+# method takes `#io` / `#alloc` since 6.6.17 (`_impl_attrs`).
+fn _pure_effect_warn(S, fi, noff): i64 {
+    if (_cur_fn_is_pure != 1) { return 0; }
+    if (fi < 0) { return 0; }
+    var fl = GFLG(S, fi);
+    if (fl & 16 != 0) {
+        _ew("warning:", 8);
+        _err_head(S);
+        _ew(": #pure fn calls #io fn '", 25);
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+        _ew("'\n", 2);
+    }
+    if (fl & 32 != 0) {
+        _ew("warning:", 8);
+        _err_head(S);
+        _ew(": #pure fn calls #alloc fn '", 28);
+        PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+        _ew("'\n", 2);
+    }
+    return 0;
+}
+
+# The first argument's scalar width for the `_int` overload route (cursor on its first token, an
+# IDENT): a call `f(..)` declared to return a scalar (its GFRS, negated — 8 for `: i64`), else 0.
+# ⛔ 6.7.6 (Break 1, lane D) — or 8 when the WHOLE argument is a name DECLARED an integer: a local or
+# parameter (bit 59, SLINTD) or a global (GVINTD) annotated i8..i64 / u8..u64. `var n: i64 = 42;
+# println(n);` handed n to println's `: cstring` overload, which dereferenced 42 — rc 139. An
+# untyped name is never routed (ADR-002: it may hold a pointer). CHANGELOG [6.7.6]
+fn _od_arg_kind(S): i64 {
+    var nt = TOKTYP(S, GTI(S) + 1);
+    if (nt == 10) {
+        var fi = FINDFN(S, PEEKV(S));
+        if (fi < 0) { return 0; }
+        var r = GFRS(S, fi);
+        if (r < 0) { return 0 - r; }
+        return 0;
+    }
+    if (nt != 11) { if (nt != 31) { return 0; } }
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, PEEKV(S));
+        if (li >= 0) { return GLINTD(S, li) * 8; }
+        if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {   # a closure's capture of one
+                var esl = _cl_snap_find(S, PEEKV(S));
+                if (esl >= 0) { return _cl_snap_intd(esl) * 8; }
+            } }
+    }
+    var vi = _findvar_core(S, PEEKV(S));
+    if (vi < 0) { return 0; }
+    return GVINTD(S, vi) * 8;
+}
+# PARSE_FNCALL's struct-result arm (cursor just past the call's `(`): a >16 B result into an
+# anonymous frame temp, whose first word is the expression's value (see the 6.6.6 note in
+# PARSE_FNCALL); at top level refused by name, and 0 (the call is emitted as ever). 1 = emitted.
+# 6.7.6: the call `_sc_fcw` names (a parenthesised declaration initialiser, `_scv_peel`) — and a
+# 9-16 B result there too — is recorded as a method call's temp is, for `_sc_var_receive`.
+fn _fnc_agg(S, fi, noff): i64 {
+    if (_pe_vret(S, fi) == 1) { return _fnc_pe_vec(S, fi, noff); }   # 6.7.12
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
+    var want = 0;
+    if (_sc_fcw >= 0) { if (_gcall_open(S, _sc_fcw) == GTI(S) - 1) { want = 1; } }
+    if (cls == 1) { if (want == 0) { return 0; } }
+    if (GINFN(S) == 0) {
+        if (cls == 2) { _refuse_toplevel_struct_call(S, noff); }
+        return 0;
+    }
+    var o = GTI(S) - 1;
+    var t = _agg_temp(S, GFRS(S, fi));
+    _struct_call_emit(S, fi, noff, t);
+    EFLLOAD(S, t);
+    SESTYPE(S, 0);
+    if (want == 1) {
+        _sc_beg = _sc_fcw;
+        _sc_end = GTI(S);
+        _sc_tmp = t;
+        _sc_sid = GFRS(S, fi);
+        _sc_fn = noff;
+        _sc_fi = fi;
+    }
+    _fnc_lo = o;   # 6.7.6: the temp, for a left operand (`_lsc_free`)
+    _fnc_lt = t;
+    _fnc_lcp = GCP(S);
+    return 1;
+}
+
+# 6.7.12 — PARSE_FNCALL's Win64 vector arm (cursor just past the call's `(`): the call with its storage's address
+# as int arg 0 (`_pe_vtemp`), the value its first word. 1 = emitted.
+fn _fnc_pe_vec(S, fi, noff): i64 {
+    var h = _pe_vtemp(S, fi);
+    var n = _owncall_args(S, fi, noff, 1);
+    var tgt = L64(_fnt_offsets + fi * 8);
+    if (tgt >= 0) { ECALLTO(S, tgt); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, n);
+    _pe_vload(S, h);
+    return 1;
+}
+
+# ⛔ 6.7.14 — A REPLAYED BODY'S `return` IS THE CALLEE'S, NEVER THE CALLER'S STRUCT RETURN. An inline
+# candidate (a small generic, `#inline`) is not called but re-parsed inside the CALLER's fn context, so
+# its `return` met the caller's struct-return class: `return GPA;` in `fn gpg<T>(): *T`, replayed in
+# `fn r(): P2`, was refused as "a fn returning the 9-16 byte struct `P2` ... got `GPA`" (a struct the
+# generic never names), and from a 24 B fn "struct-return: identifier is not a local"; a one-call body
+# (`return gsel(sizeof(T));`) the same. The replay runs with the caller's struct class masked — sid and
+# pair 0, the state an i64 caller already replays under — and restored after it. The caller's frame
+# layout (`_cur_fn_ret_stash`) is untouched. The body's own locals keep a nested replay safe. One call
+# in PARSE_FNCALL, as `_cov_body` was (cybs's per-fn reference ceiling). CHANGELOG [6.7.14]
+# A panic latch the caller set (a refused argument) survives the replay: the body's statement ends clear
+# it (`_stmt_resync`), so x86_64 / aarch64 / cx went on to print the next statement's refusal, which a real
+# call (Win64's vector arm, a non-inline fn) leaves latched and skipped. CHANGELOG [6.7.15]
+# ⛔ 6.7.16 — AND NEVER THE CALLER'S VECTOR RETURN: the replay carries a vector CALLEE's class (v6.5.59) and left a
+# vector CALLER's in place for any other callee, so the callee's `return x + 1;` met the 6.6.6 rule — `fn mk():
+# f64v2 { var w: f64v2; store64(&w, one(40)); ..; return w; }` with `#inline fn one(x): i64` was refused "a
+# vector-returning fn carries its result ... got `x`" at the callee's line, on every target. Masked to an untyped
+# caller's 0 too, restored after. CHANGELOG [6.7.16]
+fn _inl_replay_body(S, fi): i64 {
+    var sid = _cur_fn_ret_sid;
+    var pair = _cur_fn_ret_pair;
+    var rs = _cur_fn_ret_scalar;
+    var pn = _panic;
+    _cur_fn_ret_sid = 0;
+    _cur_fn_ret_pair = 0;
+    if (_is_simd_any(S, GFRS(S, fi)) == 0) { if (_is_simd_any(S, rs) == 1) { _cur_fn_ret_scalar = 0; } }
+    _cov_body(S, fi, 0 - 1);
+    _cur_fn_ret_sid = sid;
+    _cur_fn_ret_pair = pair;
+    _cur_fn_ret_scalar = rs;
+    if (pn == 1) { _panic = 1; }
+    return 0;
+}
+
+# PARSE_FNCALL's inline path, after the arguments: the local count goes back to just past the parameter slots,
+# and `_flc_hwm` keeps the higher of that and the count the arguments reached. An argument may take frame
+# temporaries at GFLC and above (a u128 operation's `_w128_tmp`, `_HTEMP`'s hidden temps) and give nothing to
+# `_flc_hwm`; the frame was sized from the parameter slots alone, so `id(a) + id(a + 1)` (a u128) put `a + 1`'s
+# temp past the frame, over the pushed left operand (84 for 83). As 6.7.13's INT-1 `_icall_slot` records its
+# slot. The v6.3.37 (A3) parameter-slot record is the second bump. A helper: PARSE_FNCALL sits at cybs's per-fn
+# reference ceiling. CHANGELOG [6.7.15]
+fn _inl_flc_release(S, top): i64 {
+    if (GFLC(S) > _flc_hwm) { _flc_hwm = GFLC(S); }
+    SFLC(S, top);
+    if (top > _flc_hwm) { _flc_hwm = top; }
+    return 0;
+}
+
+# PARSE_FNCALL's overload routing on the FIRST argument (cursor on it, just past `(`): the routed
+# callee, or -1 when the call is not routed (the caller then keeps its own `noff`, so a `use`
+# alias keeps its name). Out of PARSE_FNCALL's body, which sits at cybs's per-fn reference
+# ceiling. CHANGELOG [6.7.7]
+fn _fnc_route(S, fi, noff): i64 {
+    if (_pd_named_at(S, GTI(S) - 1) == 1) { return _pd_route_named(S, fi, noff); }   # 6.7.7 (B6): C10
+    var r = 0 - 1;
+    # v5.10.25 — registry-based overload dispatch on the FIRST argument: for a fn `<base>`
+    # with a `<base>_str` / `<base>_int` sibling (tables filled at REGFN time; user pairs work
+    # the same way), `base(arg, ..)` is routed to the sibling when the arg matches, behind the
+    # v6.5.1 arity gate (`_OV_ARITY_OK`):
+    #   _str — the WHOLE first argument is a Str, as `_str_arg_kind` (the I11 classifier) reads
+    #          it: a Str local / param / capture, a `: Str` or inferred-Str global, a one-step
+    #          `: Str` field (`h.name`, `gh.name`, `mkh().name`), or a call or method declared
+    #          `: Str` (`mk()`, `g<T>(..)`, `s.cat(t)`, `mkh().getname()`). `println(gs)` ->
+    #          `println_str`, `strlen(gs)` -> `strlen_str`. `x.data`, `x.len`, `s.len()`,
+    #          `x + 1` are NOT routed by their base's type.
+    #   _int — an `IDENT(..)` call returning i64 (GFRS -8), into an i64-returning base whose
+    #          param 0 is `: cstring` (v6.0.3 / v6.5.2, below). A plain i64 IDENT is never
+    #          routed here.
+    # 6.6.16: the Str arm typed the argument itself — `0 - sid` against a global's positive
+    # GVTYPE (so no Str global ever routed and `println(gs)` printed the header's pointer
+    # bytes), no fields, and nothing required the name to END the argument, so `show(s.data)`
+    # / `show(s.len)` on a Str local reached `show_str`, which read the VALUE as a header.
+    # CHANGELOG [6.6.16]
+    if (PEEKT(S) == 2) {
+        var _od_arg_scalar = _od_arg_kind(S);   # 6.7.6: + a name declared an integer
+        # The sibling first: the classifier scans a call argument's parens, and most bases
+        # have no `_str` sibling to route to.
+        var _od_str_target = L64(_fnt_ovstr + fi * 8);
+        if (_od_str_target > 0) {
+            var _od_str_sid = _STR_SID(S);
+            if (_od_str_sid > 0) {
+                if (_str_arg_kind(S, _od_str_sid) == 1) {
+                    # v6.5.1 — arity-gate the redirect (see _OV_ARITY_OK).
+                    var _od_st = _od_str_target - 1;
+                    if (_OV_ARITY_OK(S, _od_st, _CALL_ARGC_PEEK(S)) == 1) {
+                        fi = _od_st;
+                        r = fi;
+                    }
+                }
+            }
+        }
+        if (_od_arg_scalar == 8) {
+            # v6.0.3 — Option A: only auto-route `base(i64-call) → base_int`
+            # when the BASE is OUTPUT-style (declares an i64 return, e.g.
+            # `println: i64`). DATA-producing bases (non-i64 return, e.g.
+            # `str_from: Str`) must NOT auto-route. Reason: cyrius is
+            # i64-everywhere (ADR-002), so the dispatcher cannot tell an
+            # i64 that is a NUMBER from an i64 that is a POINTER. The arg
+            # here is a fn-call returning i64 (e.g. `vec_get(): i64`,
+            # which returns a cstr pointer). Routing `str_from(vec_get(..))`
+            # to `str_from_int` STRINGIFIES the pointer's value (decimal)
+            # instead of wrapping the cstr — silently corrupting data that
+            # flows on (nous 0001: a cstr map key became "<pointer-decimal>"
+            # → every lookup missed → cycle detection read acyclic). For an
+            # output base the worst case is cosmetically-wrong output; for a
+            # value-conversion base it is wrong DATA. `str_from` (Str return)
+            # is the only such base in the stdlib; this gate blocks exactly
+            # it while keeping `println`/`log_info`/… (i64 return) routing.
+            # See CHANGELOG [6.0.3].
+            if (GFRS(S, fi) == 0 - 8 && (L64(_fnt_cstrmask + fi * 8) & 1) != 0) {
+                var _od_int_target = L64(_fnt_ovint + fi * 8);
+                if (_od_int_target > 0) {
+                    # v6.5.1 — arity-gate the redirect (see _OV_ARITY_OK).
+                    var _od_it = _od_int_target - 1;
+                    if (_OV_ARITY_OK(S, _od_it, _CALL_ARGC_PEEK(S)) == 1) {
+                        fi = _od_it;
+                        r = fi;
+                    }
+                }
+            }
+        }
+    }
+    # v5.10.39 — pointer-vs-value overload dispatch extension.
+    # When the first arg is `&IDENT` (typ 27 = address-of), look up
+    # `<base_name>_ptr` sibling by name. If found, route to it.
+    # Enables consumers to call `f64v2_add(&x, &y)` and have the
+    # parser auto-route to `f64v2_add_ptr` (v5.10.33 pointer-form),
+    # while `f64v2_add(x, y)` (value-form, IDENT args) stays routed
+    # to the base name via v5.10.38's caller-side SIMD-arg dispatch.
+    #
+    # Uses stack-local scratch + _FINDFN_CSTR — no tok_names bloat
+    # (unlike the v5.10.25 forward/reverse registration which uses
+    # the per-fn overload tables). Compile-time cost: O(N) name
+    # compare over registered fns per pointer-form call site.
+    if (PEEKT(S) == 27) {
+        var _po_fi = _fnc_ptr_sib(S, noff);
+        if (_po_fi >= 0) { r = _po_fi; }
+    }
+    return r;
+}
+# The `<base>_ptr` sibling of the fn named `noff`, or -1 (v5.10.39, above). Out of `_fnc_route` so
+# C10 asks the same question (6.7.7).
+fn _fnc_ptr_sib(S, noff): i64 {
+    var _po_base_p = S + 0xEC00000 + noff;
+    var _po_base_len = 0;
+    while (load8(_po_base_p + _po_base_len) != 0) { _po_base_len = _po_base_len + 1; }
+    # 128-byte scratch — must hold base_len + len("_ptr") + null.
+    # The 120-char base-length guard below leaves headroom.
+    # Pre-bumped from 16 bytes — was overflow-prone for any base
+    # name >11 chars (e.g. `f64v2_add_ptr` direct call constructed
+    # `f64v2_add_ptr_ptr` = 18 bytes; the overflow corrupted
+    # adjacent stack data and returned wrong values from any fn
+    # call that hit this dispatch path).
+    if (_po_base_len >= 120) { return 0 - 1; }
+    var _po_scratch[128];
+    var _po_i = 0;
+    while (_po_i < _po_base_len) {
+        store8(&_po_scratch + _po_i, load8(_po_base_p + _po_i));
+        _po_i = _po_i + 1;
+    }
+    store8(&_po_scratch + _po_base_len + 0, 95);   # '_'
+    store8(&_po_scratch + _po_base_len + 1, 112);  # 'p'
+    store8(&_po_scratch + _po_base_len + 2, 116);  # 't'
+    store8(&_po_scratch + _po_base_len + 3, 114);  # 'r'
+    store8(&_po_scratch + _po_base_len + 4, 0);
+    return _FINDFN_CSTR(S, &_po_scratch, _po_base_len + 4);
+}
+
+# 1 when a call to `fi` must take the normal path even though the callee is inline-eligible.
+# v6.4.31: on Win64 PE a value-form SIMD param (address-passed, struct_mask set) or a SIMD return
+# (retptr-style) can't survive the inline replay, which homes args with an 8-byte EFLSTORE and
+# returns scalar-in-rax — it would truncate the 16/32-byte vector; such callees take the normal
+# struct-ptr / retptr path. 6.6.20: nor a REDEFINED fn (flag 2048, pass 1) on any target —
+# replaying the body in hand bound the call to whichever definition came first; a plain call
+# reaches the last one. 6.7.7: nor a call that names an argument — the replay binds by position
+# (the one marshaller places names). Out of PARSE_FNCALL's body (cybs ceiling).
+# CHANGELOG [6.6.20] [6.7.7]
+fn _fnc_no_inline(S, fi): i64 {
+    if (_TARGET_PE == 1) {
+        if (_smask_args(fi) != 0) { return 1; }
+        if (_is_simd_any(S, GFRS(S, fi)) == 1) { return 1; }
+    }
+    if ((GFLG(S, fi) & 2048) != 0) { return 1; }
+    if (_pd_named_at(S, GTI(S) - 1) == 1) { return 1; }
+    return 0;
+}
+
+fn PARSE_FNCALL(S, noff): i64 {
+    STI(S, GTI(S) + 1);  # consume (
+    # Check for inline candidate
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { fi = REGFN(S, noff); }
+    # 6.6.10: a generic callee — infer a struct type argument (-> its instance) or refuse a scalar
+    # call of a stub generic. See _gen_call_head.
+    var _gfi = _gen_call_head(S, fi, noff);
+    if (_gfi != fi) { fi = _gfi; noff = L64(_fnt_names + fi * 8); }
+    var _rfi = _fnc_route(S, fi, noff);   # 6.7.7: the routing, out of this body
+    if (_rfi >= 0) { fi = _rfi; noff = L64(_fnt_names + fi * 8); }
+    # v5.6.4: #deprecated call-site warning, with the `private` check (see
+    # _callee_site_checks). It names the first token after the `(` we just consumed,
+    # which is on the call-site's line.
+    _callee_site_checks_here(S, fi, noff, 0);
+    _pure_effect_warn(S, fi, noff);   # v5.8.20 (6.6.17: shared with the method arm)
+    # ⛔ 6.6.6 — A >16 B STRUCT-RETURNING CALLEE WRITES ITS RESULT THROUGH A HIDDEN RETPTR, and
+    # until 6.6.6 only `var p: S = f(..)` supplied one. Everywhere else — an expression
+    # statement, an argument, `return f(..)` in a non-struct fn — the user args were marshalled
+    # as if there were none: on x86 the callee took argument 1 as its destination (SIGSEGV
+    # writing to 0x1), on aarch64 it wrote through whatever X8 held. Now the result lands in an
+    # anonymous frame temp, and the expression's VALUE is its first word — exactly what a struct
+    # local yields as an rvalue (`var k = r;`, `h(r)` into an untyped param), so the two agree.
+    # At top level there is no frame to hold it: refused by name. CHANGELOG [6.6.6]
+    if (_fnc_agg(S, fi, noff) == 1) { return 0; }   # 6.7.6: out of this body (cybs ceiling)
+    var _pe_no_inline = _fnc_no_inline(S, fi);   # 6.7.7: out of this body
+    if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) { if (_pe_no_inline == 0) {
+                    # INLINE PATH: replay function body tokens at call site
+                    var pc = L64(_fnt_params + fi * 8);
+                    var saved_flc = GFLC(S);
+                    # Allocate fresh frame slots for callee params
+                    # v6.5.52 — slot widths come from the callee's recorded param types.
+                    var _ipt = GFIPT(S, fi);
+                    var _t0 = _ipt_sltype(_ipt, 0);
+                    var _t1 = _ipt_sltype(_ipt, 1);
+                    var _w0 = _ipt_slots(S, _t0);
+                    var _w1 = _ipt_slots(S, _t1);
+                    var _ptot = 0;
+                    if (pc >= 1) { _ptot = _w0; }
+                    if (pc >= 2) { _ptot = _w0 + _w1; }
+                    # NAMED slot = deepest of each param's group (anon fillers precede it).
+                    var p0_slot = saved_flc + _w0 - 1;
+                    var p1_slot = saved_flc + _w0 + _w1 - 1;
+                    # v6.3.38 (A-broad) — RESERVE the param slots BEFORE evaluating args, so a
+                    # nested inline call while evaluating arg1 uses frame slots ABOVE p0/p1
+                    # instead of reusing saved_flc and clobbering the already-stored arg0.
+                    # (v6.3.37 A3 only reserved frame SIZE via _flc_hwm; this reserves the slot
+                    # INDICES too by bumping GFLC up-front.) Idempotent with the old post-loop
+                    # SFLC(saved_flc+pc); the _flc_hwm high-water still feeds the frame patch.
+                    SFLC(S, saved_flc + _ptot);
+                    if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
+                    # v6.5.52 — INVALIDATE the reserved slots BEFORE evaluating args. The slots are
+                    # reserved here but not bound until after the arg loop, and arg evaluation does
+                    # name lookups that scan every slot below GFLC — so an unwritten slot is read as
+                    # a NAME OFFSET. Whatever the frame held previously is then handed to STREQ as a
+                    # string pointer. MEASURED: `rsi = 0xffffffff` at the fault, i.e. a stale `0 - 1`
+                    # anon marker dereferenced as a pointer.
+                    # ⚠ The pre-v6.5.52 code had the same ordering and survived only because it
+                    # reserved exactly `pc` slots and both were overwritten immediately; widening a
+                    # param to 2 or 4 slots exposed the latent hole.
+                    # v6.5.65 — a fresh replay owns a fresh set of param slots; drop any provenance
+                    # left by an enclosing inline so a stale slot index cannot be re-matched.
+                    _prov_reset();
+                    var _prov_win = GCP(S);
+                    var _pini = 0;
+                    while (_pini < _ptot) {
+                        S64(S + 0x5D9D000 + (saved_flc + _pini) * 8, 0 - 1);
+                        SLDEP(S, saved_flc + _pini, 0);
+                        SLTYPE(S, saved_flc + _pini, 0);
+                        _pini = _pini + 1;
+                    }
+                    # Evaluate args and store to param slots
+                    var iargc = 0;
+                    # 6.6.10: the head's inference (by the parameter that carries each type
+                    # parameter; a struct never gets here — it instantiated). Was a positional
+                    # re-inference in the loop below, so `g(2, p)` bound T from the `2`.
+                    var _ginf0 = _gh_inf0;
+                    var _ginf1 = _gh_inf1;
+                    # v6.2.41 — capture call-site line for the arity warning below.
+                    var _iar_line = GTLINE(S, GTI(S));
+                    if (PEEKT(S) != 11) {
+                        var iago = 1;
+                        while (iago == 1) {
+                            # v6.5.52 — a SIMD param takes the local-copy path; PCMPE cannot
+                            # materialise a value-form vector (see _inl_simd_arg).
+                            var _sd = 0;
+                            # 6.6.17 (a9): a vector's sentinel is negative; an f64 / f32 tag is positive.
+                            if (iargc == 0) { if (_t0 < 0) { _inl_simd_arg(S, p0_slot, _w0, _t0, fi); _sd = 1; } }
+                            if (iargc == 1) { if (_t1 < 0) { _inl_simd_arg(S, p1_slot, _w1, _t1, fi); _sd = 1; } }
+                            if (_sd == 0) {
+                                _bx_pcmpe_arg(S, fi, iargc, noff);   # PCMPE + 6.7.3's bool check
+                                if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
+                                if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
+                            }
+                            iargc = iargc + 1;
+                            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                            else { iago = 0; }
+                        }
+                    }
+                    # v6.2.41 — arity check on the INLINE-replay path. Inline
+                    # candidates are small fixed-arity fns (≤2 param slots), so a
+                    # 1-param helper called with extra args lands HERE, not on the
+                    # normal path — the normal-path check alone would miss it.
+                    # 6.7.14: an unclosed list leaves its `;` (`_expect_step`) and has no count.
+                    if (_expect_step(S, 11) == 1) { _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0); }
+                    # Set local count past the param slots, keeping the argument temps' peak (see the helper)
+                    _inl_flc_release(S, saved_flc + _ptot);
+                    # Register callee param names as temporary locals (packed in fn_inline)
+                    var inl_packed = GFINL(S, fi);
+                    var pn0 = inl_packed & 0xFFFFFFFF;
+                    var pn1 = (inl_packed >> 32) & 0xFFFFFFFF;
+                    if (pc >= 1) { _inl_bind_param(S, saved_flc, _w0, p0_slot, pn0, _t0); }
+                    if (pc >= 2) { _inl_bind_param(S, saved_flc + _w0, _w1, p1_slot, pn1, _t1); }
+                    _inl_param_marks(S, fi, p0_slot, p1_slot, pc);   # 6.7.6: + an integer's bit 59
+                    # Save state and replay body tokens
+                    var saved_ti = GTI(S);
+                    var saved_rpc = vec_len(rp_vec);
+                    # v6.3.9 (F-fns): bind T->concrete for the body replay (the bite-4
+                    # consults read it). Save the enclosing binding first so a generic
+                    # body that itself inline-calls restores correctly. _bind_generic_call
+                    # is a no-op for non-generic callees → default path is just the saves
+                    # (4 reads, restored verbatim) → byte-identical.
+                    var _gsv_n0 = _tp_n0; var _gsv_c0 = _tp_c0;
+                    var _gsv_n1 = _tp_n1; var _gsv_c1 = _tp_c1;
+                    _bind_inl_generic(S, fi, _ginf0, _ginf1);   # 6.6.17 (a3): an instance binds its own
+                    SIDEP(S, GIDEP(S) + 1);
+                    # v6.5.52 — the replayed body is a NESTED SCOPE, so bump the scope depth for it.
+                    # The duplicate-variable check is `GLDEP(existing) == GSDEP()`, i.e. same-scope,
+                    # and the replay previously bumped only the INLINE depth. A callee body that
+                    # declares `var r` therefore collided with a caller local of the same name —
+                    # which every value-form SIMD wrapper triggers, since they are all
+                    # `var r: <vec>; ...; return r;` and callers routinely name a result `r`.
+                    # Shadowing is the correct semantics here: FINDLOCAL searches backward so the
+                    # body's `r` wins inside the body, and the teardown clears it so the caller's
+                    # `r` is visible again afterwards.
+                    var _sdep_saved = GSDEP(S);
+                    SSDEP(S, _sdep_saved + 1);
+                    # v6.5.59 — carry the CALLEE's return class across the replay. The body is
+                    # re-parsed inside the CALLER's function context, so `_cur_fn_ret_*` still
+                    # described the caller and `return r;` emitted the caller's convention. A
+                    # 128-bit vector survived that by luck (one XMM, moved by the default path); a
+                    # 256-bit return is a PAIR and its second register was never moved — lanes 0-1
+                    # correct, lanes 2-3 STALE, exit 0, no diagnostic.
+                    # ⚠ Caught only because the probe asserted ALL FOUR LANES.
+                    var _rs_saved = _cur_fn_ret_scalar;
+                    var _cfrs = GFRS(S, fi);
+                    if (_is_simd_any(S, _cfrs) == 1) { _cur_fn_ret_scalar = _cfrs; }
+                    STI(S, GFBS(S, fi));
+                    _inl_replay_body(S, fi);   # 6.7.10 (P5-B) the coverage hit, then PARSE_PROG; 6.7.14 the caller's struct class masked
+                    _cur_fn_ret_scalar = _rs_saved;
+                    _inl_scope_end(S, _sdep_saved);   # 6.7.14: + the replay's local consts
+                    _bx_falloff_fi(S, fi);   # 6.7.3: an inlined bool callee off its end is `false` too
+                    _mret_falloff_fi(S, fi);   # 6.7.13 (D28 C): a declared multi-value one's values 0
+                    # Patch return jumps from inlined body to here
+                    var new_rpc = vec_len(rp_vec);
+                    var ri = saved_rpc;
+                    while (ri < new_rpc) {
+                        EPATCH(S, vec_get(rp_vec, ri));
+                        ri = ri + 1;
+                    }
+                    _ret_box_f64(S, _cfrs);   # 6.6.20: the replay's landing boxes for the CALLEE
+                    vec_truncate(rp_vec, saved_rpc);
+                    SIDEP(S, GIDEP(S) - 1);
+                    # v6.3.9 (F-fns): restore the enclosing generic binding.
+                    _tp_n0 = _gsv_n0; _tp_c0 = _gsv_c0;
+                    _tp_n1 = _gsv_n1; _tp_c1 = _gsv_c1;
+                    # v6.5.66 — the whole body has now been emitted, so "was this param slot ever read?"
+                    # is finally answerable. Any copy that was neither read nor written is dead: NOP it.
+                    # ⭐ This is also what makes the chain register-resident — the copy's load was the
+                    # xmm0 clobber between a link's result store and the next link's read of it, so
+                    # removing it lets SLASE collapse that pair too.
+                    _prov_harvest(_prov_win, GCP(S));
+                    # Restore token index
+                    STI(S, saved_ti);
+                    # Invalidate the temporary locals the replay created.
+                    # v6.5.52: this now covers the WHOLE replay window — the param slots (a wide
+                    # param owns (nslots-1) anon fillers below its named slot) AND any locals the
+                    # replayed BODY declared. Leaving the body's names registered makes a second
+                    # inline of the same callee redeclare them: every value-form SIMD wrapper is
+                    # `var r: <vec>; <op>(&r, &a, &b, n); return r;`, so `f32v4_add` used twice in
+                    # one fn reported "duplicate variable" at lib/simd.cyr. GFLC is restored too so
+                    # the slots are reusable; `_flc_hwm` keeps the peak for frame sizing.
+                    var _body_flc = GFLC(S);
+                    if (_body_flc > _flc_hwm) { _flc_hwm = _body_flc; }
+                    var _inv = saved_flc;
+                    while (_inv < _body_flc) {
+                        S64(S + 0x5D9D000 + _inv * 8, 0 - 1);
+                        SLTYPE(S, _inv, 0);
+                        _inv = _inv + 1;
+                    }
+                    # ⚠ GFLC is deliberately NOT restored. The inlined body's EMITTED CODE still
+                    # addresses these frame slots at runtime, so handing them to a later local is a
+                    # real aliasing bug — measured: restoring GFLC made simd_ints SIGSEGV at run
+                    # time while compiling clean. Only the NAME registrations are cleared, which is
+                    # what the duplicate-variable check reads; the slots stay spent.
+                    return 0;
+                } } } }
+    # NORMAL CALL PATH — the one marshaller (6.7.7; the gates and their history are at
+    # `_call_arg_one`). Args are pushed left to right; ECALLPOPS moves the last ones into the
+    # argument registers and leaves the rest on the stack in order. The arity message names the
+    # line of the first argument, captured before the loop advances (v6.2.41).
+    var _fc_int_argc = _owncall_args_at(S, fi, noff, 0, 0, GTLINE(S, GTI(S)));
+    var foff = L64(_fnt_offsets + fi * 8);
+    if (foff >= 0) {
+        ECALLTO(S, foff);
+    } else {
+        ECALLFIX(S, fi);
+    }
+    ECALLCLEAN(S, _fc_int_argc);
+    # v6.4.56 D3 — a call result's type is i64, not its LAST argument's expr-type
+    # (which the arg parse leaked). Normalize so an outer op on the call result
+    # doesn't mis-see it as f64. (Also the D1 seam: a scalar-f64-returning callee
+    # is re-tagged F64_TYID at the call site in parse_expr after this returns.)
+    SESTYPE(S, 0);
+    return 0;
+}

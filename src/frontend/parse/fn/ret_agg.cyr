@@ -1,0 +1,824 @@
+# PARSER — fn: aggregate returns — a struct, pointer, small-struct or tuple `return` — and the address-passed
+# struct parameters copied in.
+# ================================================================
+# Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
+
+# 6.6.6 — materialise an address-passed struct parameter as an INLINE frame aggregate, so the
+# `return` paths (which address a local's slots directly) read the struct and not the pointer.
+# Returns the temp's field-0 slot. CHANGELOG [6.6.6]
+# ⛔ 6.6.17 (a1) — the local a `return x;` from a by-value struct fn reads, made INLINE. Both
+# return arms address the local's SLOTS (the >16 B byte copy, the 9-16 B rax:rdx load), so a slot
+# that HOLDS the struct's address handed back the pointer: an address-passed parameter (above) and
+# a HANDLE — a pointer-mode local (`var p: Pt = alloc(16); .. return p;`), which 6.6.16 C2 made
+# copy on `=` but not on `return` (the caller's `q.x` read a heap address, on every backend).
+# Either is copied through its address into an inline temp. A struct of 8 B or less returns in rax
+# (`_ret_small_ptrp` copies a handle's, 6.7.10), and `Str` / `Result` / `Option` / `Tagged` slots are
+# handles by convention (`_agc_plain_big`): both untouched. CHANGELOG [6.6.17]
+fn _ret_local_inline(S, li): i64 {
+    if (_local_is_sptr_param(S, li) == 1) { return _sptr_param_temp(S, li, _cur_fn_ret_sid); }
+    if (GLAGG(S, li) != 0) { return li; }
+    if (_agc_plain_big(S, GLTYPE(S, li)) == 0) { return li; }
+    return _sptr_param_temp(S, li, _cur_fn_ret_sid);
+}
+# ⛔ 6.7.6 — `return (j);`, `return (mk3(v));`, `return (a + b);` in a fn returning a struct over 8 B
+# were refused ("return must be a bare local identifier, or a call ..." / "... got `(...)`"): the
+# struct return took its shape from the first token. Parentheses wrapping the WHOLE return value are
+# transparent, as for every other struct destination (`_pwrap_k`): `_ret_peel` steps inside them
+# and makes `)` the value's terminator (`_ret_term`), `_ret_end` closes them before the `;`, and a
+# call the rax:rdx class passes straight through is handed back to the scalar path wrap and all
+# (`_ret_unpeel`). The two class bodies moved out of PARSE_RETURN (cybs's per-fn reference
+# ceiling). CHANGELOG [6.7.6]
+var _ret_pk = 0;     # the parentheses `_ret_peel` stepped into
+var _ret_term = 5;   # the token that ends the return value: `;`, or the wrap's first `)`
+fn _ret_peel(S): i64 {
+    _ret_pk = 0;
+    _ret_term = 5;
+    if (PEEKT(S) != 10) { return 0; }
+    if (_tup_lit_at(S, GTI(S)) >= 0) { return 0; }   # 6.7.7: `return ((a, b));` — a literal, not a wrap
+    var k = _pwrap_k(S, GTI(S));
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    STI(S, GTI(S) + k);
+    _ret_pk = k;
+    _ret_term = 11;
+    return 0;
+}
+fn _ret_unpeel(S): i64 {
+    STI(S, GTI(S) - _ret_pk);
+    _ret_pk = 0;
+    _ret_term = 5;
+    return 0;
+}
+fn _ret_end(S): i64 {
+    _pw_close(S, _ret_pk);
+    _ret_pk = 0;
+    _ret_term = 5;
+    _expect_step(S, 5);
+    return 0;
+}
+# The retptr class (`_cur_fn_ret_stash` > 0): the value copied into our caller's buffer.
+fn _ret_struct_big(S): i64 {
+    _ret_peel(S);
+    # 6.6.6: `return f(..);` where `f` returns this same struct — emitted into a temp, then
+    # copied into our retptr like `return IDENT;`. It used to take the tail path and crash.
+    var srn_lli = _ret_ptr_src(S);   # 6.7.11: a `*S` (global, `: *S` call, field, ..) or `*E`
+    if (srn_lli < 0) { srn_lli = _return_struct_call(S); }
+    if (srn_lli < 0) { srn_lli = _return_struct_expr(S); }   # a method / operator (bite 14 review)
+    if (srn_lli < 0) { srn_lli = _slit_ret(S); }   # 6.7.14 (D12 (a)): `return P { .. };`, by name
+    if (srn_lli < 0) {
+        if (PEEKT(S) != 2) {
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+        }
+        var srn_noff = PEEKV(S);
+        if (TOKTYP(S, GTI(S) + 1) != _ret_term) {
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+        }
+        srn_lli = FINDLOCAL(S, srn_noff);
+        if (srn_lli < 0) {
+            ERR_MSG(S, "struct-return: identifier is not a local", 40);
+        }
+        var srn_lt = GLTYPE(S, srn_lli);
+        if (srn_lt >= 0) {
+            ERR_MSG(S, "struct-return: identifier is not struct-typed", 45);
+        }
+        if ((0 - srn_lt) != _cur_fn_ret_sid) {
+            ERR_MSG(S, "struct-return: identifier type != fn ret_sid", 44);
+        }
+        STI(S, GTI(S) + 1);            # consume IDENT
+    }
+    _ret_end(S);                   # 6.7.6: a wrap's `)`, then `;`
+    # 6.6.6 — `return q;` where `q` is a by-value struct PARAMETER: its slot holds the
+    # caller's ADDRESS, so the byte-copy below would copy the pointer word. Materialise the
+    # struct into an inline temp and return THAT. See `_local_is_sptr_param`.
+    # 6.6.17 (a1): and a HANDLE (a pointer-mode local). See `_ret_local_inline`.
+    srn_lli = _ret_local_inline(S, srn_lli);
+    # Byte-copy size (aligned up to 8 — the retptr slot is already
+    # 8-aligned so padded copies are safe)
+    var srn_sz = STRUCTSZ(S, _cur_fn_ret_sid - 1);
+    var srn_aligned = (srn_sz + 7) & (0 - 8);
+    # Source disp: &IDENT (bottom of struct) in the fn's frame
+    var srn_src_disp = 0 - ((srn_lli + 1) * 8);
+    if (_cur_fn_regalloc > 0) { srn_src_disp = srn_src_disp - _cur_fn_regalloc * 8; }
+    if (_cur_fn_ret_stash > 0) { srn_src_disp = srn_src_disp - _cur_fn_ret_stash; }
+    # Retptr stash disp: [rbp - regalloc*8 - 8]
+    var srn_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
+    # v5.9.26 Phase 2b-aarch64 (LDRB/STRB byte-copy loop):
+    # cx bytecode still has no struct-return opcode → ERR_MSG;
+    # aarch64 emits the LDRB/STRB analog of x86's `rep movsb`.
+    # Encoding plan (3-instr loop body + setup + tail):
+    #   movz/sub  x9, x29, #|src_disp|         ; via _EFP_ADDR_X9
+    #   ldur      x10, [x29, #stash_disp]      ; retptr
+    #   movz      x11, #aligned_byte_count
+    # loop:
+    #   ldrb      w12, [x9], #1                ; post-inc source
+    #   strb      w12, [x10], #1               ; post-inc dest
+    #   subs      x11, x11, #1
+    #   b.ne      loop                         ; -3 instructions back
+    #   ldur      x0, [x29, #stash_disp]       ; reload retptr
+    # Constraints:
+    #   - aligned size must fit MOVZ imm16 (< 65536). Cyrius
+    #     struct sizes are bounded well below this in practice;
+    #     guard error fires for the implausible large case.
+    #   - stash_disp = -(regalloc*8 + 8). With regalloc cap of
+    #     5, stash_disp in [-48,-8] always fits LDUR's signed
+    #     9-bit immediate (-256..+255). Defensive guard checks.
+    # v5.9.40 — struct-by-value return now goes through each
+    # backend's `ESTRUCT_BYVAL_COPY` helper. Closes Phase 2c #1
+    # (cx was the last remaining ERR_MSG path; aarch64 landed
+    # at v5.9.26, x86 has been there since v5.6.12). Each
+    # backend chooses its own copy strategy:
+    #   x86      — push rsi/rdi + lea/mov + `rep movsb` (3 B)
+    #   aarch64  — LDRB/STRB byte-loop with post-increment
+    #   cx       — load8/store8 byte-loop with explicit
+    #              add r9/r10/r11 + jnz back-jump (cxvm has
+    #              no rep/post-incr semantics).
+    # Constraints (apply to all backends in practice; named
+    # at this call site for clarity since they are real
+    # encoding limits, not invariants of the helper):
+    #   - aligned byte count must fit MOVZ imm16 (< 65536) on
+    #     aarch64. Cyrius struct sizes are bounded well below
+    #     this; guard fires for the implausible large case.
+    #   - stash_disp = -(regalloc*8 + 8) on aarch64 must fit
+    #     LDUR's signed 9-bit immediate (-256..+255). With
+    #     regalloc cap of 5, stash_disp is in [-48,-8] — safe.
+    if (_AARCH64_BACKEND == 1) {
+        if (srn_aligned > 65535) {
+            ERR_MSG(S, "struct return by value: struct >= 64 KB pending Phase 2c (movz/movk chain)", 74);
+        }
+        if (srn_stash_disp < 0 - 256) {
+            ERR_MSG(S, "struct return by value: stash_disp out of LDUR imm9 range — increase regalloc-aware fallback", 94);
+        }
+    }
+    ESTRUCT_BYVAL_COPY(S, srn_src_disp, srn_stash_disp, srn_aligned);
+    # jmp to epilogue (regular return-patch path)
+    var srn_rp = EJMP0(S);
+    vec_push(rp_vec, srn_rp);
+    return 0;
+}
+# The rax:rdx class (9-16 B): 1 = the return was emitted; 0 = a call returning this struct in the
+# same two registers (or a refused shape) left for the scalar path, the cursor at the value.
+fn _ret_struct_pair(S): i64 {
+    _ret_peel(S);
+    if (_dyn_ret(S) == 1) { return 1; }   # 6.7.8 (D5): a dyn formed in a temp
+    if (_ret_ptr_pair(S) == 1) { return 1; }   # 6.7.11: a `*S` (global, `: *S` call, field, ..) or `*E`
+    if (PEEKT(S) == 2) {
+        if (TOKTYP(S, GTI(S) + 1) == _ret_term) {
+            var _ip_noff = PEEKV(S);
+            var _ip_lli = FINDLOCAL(S, _ip_noff);
+            if (_ip_lli >= 0) {
+                var _ip_lt = GLTYPE(S, _ip_lli);
+                # Multi-slot typed local: lt < 0 AND -lt == ret_sid.
+                # Single-slot heap-handle pattern (e.g. `var s = alloc(...)`
+                # in a fn returning : Str) falls through to scalar PCMPE.
+                if (_ip_lt < 0) {
+                    if ((0 - _ip_lt) == _cur_fn_ret_sid) {
+                        STI(S, GTI(S) + 1);     # consume IDENT
+                        _ret_end(S);            # 6.7.6: a wrap's `)`, then `;`
+                        # 6.6.6 — an address-passed parameter holds the caller's pointer,
+                        # not the pair. Materialise it inline first.
+                        # 6.6.17 (a1): and a HANDLE. See `_ret_local_inline`.
+                        _ip_lli = _ret_local_inline(S, _ip_lli);
+                        EFLLOAD_STRUCT_INT_PAIR(S, _ip_lli);
+                        var _ip_rp = EJMP0(S);
+                        vec_push(rp_vec, _ip_rp);
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    # 6.6.6 — EVERYTHING ELSE. A method / overloaded operator returning this same struct is
+    # landed in a frame temp and loaded as the pair; a call returning it in the same two
+    # registers passes straight through PCMPE; anything else cannot be carried and is
+    # refused by name instead of silently handing back rax plus an unwritten rdx.
+    # See `_refuse_pair_return`.
+    if (_pair_ret_expr_shape(S) == 1) {
+        var _pe_t = _return_struct_expr(S);
+        EFLLOAD_STRUCT_INT_PAIR(S, _pe_t);
+        _ret_end(S);            # 6.7.6: a wrap's `)`, then `;`
+        var _pe_rp = EJMP0(S);
+        vec_push(rp_vec, _pe_rp);
+        return 1;
+    }
+    if (_pair_ret_call_ok(S) == 0) {   # 6.7.7: a tuple literal's own refusal is its factor's
+        if (_tup_lit_at(S, GTI(S)) < 0) { if (PEEKT(S) != 97) { _pair_ret_defer(S); } }   # 6.7.13: and ret2's
+    }
+    _ret_unpeel(S);   # 6.7.6: a call passes through the scalar path, wrap and all
+    _dyn_ret_arm(S);  # 6.7.8: and a dyn-returning call is this return's value, not a use of one
+    return 0;
+}
+# ⛔ 6.7.11 — `return E;` IN A FN RETURNING THE STRUCT S, WITH E A `*S` OR A DEREFERENCE OF ONE, IS THE STRUCT
+# E POINTS AT, AT EVERY SIZE (the user's decision, 2026-10-13, (a): decision 6's rule on the `return` side —
+# `l = GP`, `l = gp()`, `l = w.p` copy the pointee at every size, and a `*S` local returns it over 8 B since
+# 6.6.6). Over 8 B `return GP;`, `return gp();`, `return w.p;` and `return *GP;` were refused ("... got `GP`",
+# "identifier is not a local", "return must be a bare local identifier ..."); at 8 B or less the first three
+# returned the POINTER (`_ret_small_ptr` there) (issues/2026-10-13-small-struct-return-of-pointer-global-
+# or-call-decision.md). The value — `_ret_peel` stepped into its wrap — is ONE dereference `* E` of a `*X`
+# (`_hl_dstar_t`), or an expression the compiler's own typing (`_hl_psid`) types `*X`: a `*X` global, a call or
+# method declared `: *X`, a `*X` field, pointer arithmetic, a `*X` local or parameter (the bare name of one of
+# S stays on the local arms: `_ret_local_inline` copies it, 6.6.6 / 6.6.17). X another struct is refused by
+# name; else the value is parsed, its pointer parked (`_HTEMP`) and S's bytes copied through it into a frame
+# temp — returned, the cursor on `_ret_term`. -1 = not this shape (cursor kept). Never inside an inline
+# replay, as `_ret_small_cls`. CHANGELOG [6.7.11]
+# ⛔ 6.7.13 — `return &s;` IS `return s;` (the user's decision D4 (a), 2026-10-15): the value is typed by the
+# dereference operand typer (`_hl_dpsid`), so `& IDENT` of an inline struct — a local, a by-value parameter,
+# a value global, a captured copy — is the struct it points at, as `bs(&s)` into a by-value parameter is
+# (6.7.10 decision 7): over 8 B it was refused in other words ("... two registers ...", "return must be a
+# bare local identifier ..."), at 8 B or less (`_ret_small_ptr`) the ADDRESS of a dead frame was the
+# struct's word. `&u` of another struct is refused by name (kind 3). A handle's / `*T`'s `&h` is its slot,
+# untyped here. CHANGELOG [6.7.13]
+fn _ret_ptr_src(S): i64 {
+    if (GIDEP(S) != 0) { return 0 - 1; }
+    if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0 - 1; }   # a dyn / tuple / Str fn: its own arms
+    var st = GTI(S);
+    var ds = _hl_dstar_t(S, st, _ret_term);
+    if (ds > 0) {
+        if (_dx_plain(S, ds) == 0) { return 0 - 1; }
+        if (ds != _cur_fn_ret_sid) { _ret_sid_refuse_d(S, st, _hl_dna, _hl_dne, _hl_dnm, ds); }
+        return _ret_ptr_copy(S, _hl_dx_src(S));
+    }
+    var e = _hl_dx_end(S, st, _ret_term);
+    if (e < 0) { return 0 - 1; }
+    var a = _ie_unparen(S, st, e);
+    var pe = _ie_pe;
+    var af = _ret_addr_field(S, a);   # 6.7.13 (D3 (b)): `&w.s`, refused once
+    if (af >= 0) { return af; }
+    if (_ret_slot_amp(S, a, pe) == 1) { return _ret_park_copy(S); }   # 6.7.14 (D19 (a)): `&h`, a slot
+    var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
+    var kind = 1 + 2 * _hl_damp;
+    if (ps <= 0) { return 0 - 1; }
+    if (_dx_plain(S, ps) == 0) { return 0 - 1; }
+    if (ps == _cur_fn_ret_sid) { if (pe == a + 1) { if (FINDLOCAL(S, TOKVAL(S, a)) >= 0) { return 0 - 1; } } }
+    if (ps != _cur_fn_ret_sid) { _ret_ptr_refuse(S, st, a, pe, ps, kind); }
+    PCMPE(S);
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    return _ret_ptr_copy(S, h);
+}
+# `return &w.s;` (`a` the value's `&`, a `.` two tokens on): the address of a field, which D3 (b) refuses by
+# name — parsed here (`_addr_field_post`: once, the parse in step), so the pair class's "two registers" and the
+# retptr class's "bare local identifier" refusals never run beside it or in its place (8 B and less parse it in
+# PCMPE already). Handled as a pointer value; no binary follows the error. -1 = not this shape. CHANGELOG [6.7.13]
+fn _ret_addr_field(S, a): i64 {
+    if (TOKTYP(S, a) != 27) { return 0 - 1; }
+    if (TOKTYP(S, a + 2) != 41) { return 0 - 1; }
+    return _ret_park_copy(S);
+}
+# The value parsed as a pointer, parked (`_HTEMP`) and the fn's struct copied through it into a temp: the temp.
+fn _ret_park_copy(S): i64 {
+    PCMPE(S);
+    var h = _HTEMP(S);
+    _HTSTORE(S, h);
+    return _ret_ptr_copy(S, h);
+}
+# ⛔ 6.7.14 — `return &q;` IN A FN RETURNING THE STRUCT S, WITH q A HANDLE, A `*T` OR AN UNTYPED `self`, IS REFUSED
+# BY NAME AT EVERY SIZE (the user's D19 (a), 2026-10-16; issues/2026-10-15-return-address-of-handle-or-pointer-in-
+# struct-fn.md): `&q` is the address of q's own slot (the handle line, 6.7.10 decision 5), no pointer to a struct —
+# 6.7.13's D4 (a) reads `&s` as the struct only for an inline s (`_hl_amp_sid`). At 8 B or less the slot's address
+# was the struct's word (the caller read a dead frame's address as its field); over 8 B the class's own refusal ran,
+# naming nothing. The value [a, pe), inside any parentheses, exactly `& IDENT` with IDENT a struct-typed local,
+# parameter, capture or global whose `&` is its slot — a `*T` (an untyped `self` is one), or a handle of a plain
+# struct: refused at the `&`, once (`_ret_slot_refuse`), before the classes' refusals. 1 = refused. CHANGELOG [6.7.14]
+# ⛔ 6.7.15 — AND `&n` OF A NAME HOLDING NO STRUCT (the user's D18, 2026-10-18): an integer, a `*i64` / `*V`, a `**S`,
+# an array, a vector, a `Str` handle — a local, parameter, capture or global — is the address of n's slot too, so it is
+# refused by name at every size (8 B returned the slot's address as the struct's word, a different byte each run; over
+# 8 B the classes' refusals named nothing). An inline `Str` / tuple / dyn is the address of that aggregate: refused as
+# `&u` of another struct is (kind 3). A const, an enum constant and a fn are the factor's (`&f` is no slot).
+fn _ret_slot_amp(S, a, pe): i64 {
+    if (pe != a + 2) { return 0; }
+    if (TOKTYP(S, a) != 27) { return 0; }
+    if (TOKTYP(S, a + 1) != 2) { return 0; }
+    var noff = TOKVAL(S, a + 1);
+    var t = _hl_name_ty(S, noff);
+    if (t <= 0) { return _ret_amp_bare(S, a, noff); }
+    var cp = _hl_cp;
+    if (cp == 0) {
+        if (_hl_amp_in(S, noff, t) > 0) {
+            if (_dx_plain(S, t) == 1) { return 0; }   # an inline struct: D4 (a)'s struct (or its kind-3 refusal)
+            _ret_sid_refuse(S, a, noff, 0 - 1, t, 3);   # an inline `Str` / tuple / dyn: `&t` (a `*Str`)
+            return 1;
+        }
+    }
+    _ret_slot_refuse(S, a, noff, t, cp);
+    return 1;
+}
+# `& IDENT` of a name typed with no struct: refused as a slot when IDENT is a local, a parameter, a capture or a
+# global here (the `&` factor's ladder); 0 for anything else, left to the factor. 1 = refused. A generic's BASE body
+# (T bound to i64) leaves to its instances a name whose type can come from T: `var n: T = x; return &n;` is the
+# struct at `<S8>` (D4 (a)), so the i64 reading must not refuse the definition (its scalar calls are the stub's
+# refusal, 6.7.16's D1). CHANGELOG [6.7.15]
+# ⛔ 6.7.16 (the user's D2, 2026-10-19) — A NAME TYPED WITH NO TYPE PARAMETER IS JUDGED IN THE BASE TOO: `var n = 5;`,
+# `var n: i64`, `k: i32`, an untyped parameter, an untyped `var` reading nothing of T (`_gs_tdep` 0) holds no struct at
+# any T, so `return &n;` is refused at the definition with D18's words, called or not — the base exempted every local,
+# so a generic never called, or called only with an integer, compiled and `h(3)` returned the slot's address as the
+# struct. A stub's base is skipped, not parsed: `_ret_amp_stub` reads its `return &n;` from the tokens. CHANGELOG [6.7.16]
+fn _ret_amp_bare(S, a, noff): i64 {
+    if (_asg_lvalue_is(S, noff) == 1) { return 0; }   # a const / an enum constant: the factor's refusal
+    var k = 0;
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) >= 0) { k = 1; }
+        if (_hl_capn(S, noff) == 1) { k = 1; }
+    }
+    if (k == 1) { if (_ret_gen_base(S) == 1) { if (_ret_amp_tdep(S, a, noff) != 0) { return 0; } } }
+    if (_findvar_core(S, noff) >= 0) { k = 1; }
+    if (k == 0) { return 0; }
+    _ret_slot_refuse(S, a, noff, 0, 0);
+    return 1;
+}
+# `_gs_tdep` of the name the `&` at token a takes, in the generic whose base is being parsed (6.7.16's D2).
+fn _ret_amp_tdep(S, a, noff): i64 {
+    var fi = _cur_fn_ix;
+    return _gs_tdep(S, fi, _gen_def_open(S, fi), a + 1, noff, 0);
+}
+# ⛔ 6.7.16 (the user's D2) — THE BASE OF A STUB GENERIC IS SKIPPED, NOT PARSED (PARSE_FN_DEF's `_b3_skip`), so its
+# `return &n;` never reached `_ret_amp_bare`: it is read from the tokens at each `return` the skip walks (`_b3_skip_tok`),
+# outside a closure literal's body. A name typed with no type parameter (`_gs_tdep` 0) is refused with D18's words, a
+# global as the parsed body judges it (`_ret_slot_amp`); a name typed by T is the stub's (D1). CHANGELOG [6.7.16]
+fn _ret_amp_stub(S): i64 {
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    var fi = _cur_fn_ix;
+    if (fi < 0) { return 0; }
+    var i = GTI(S);
+    var j = _ret_amp_shape(S, i);
+    if (j < 0) { return 0; }
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    if (_tok_in_cl(S, o, i) == 1) { return 0; }
+    var noff = TOKVAL(S, j + 1);
+    var d = _gs_tdep(S, fi, o, j + 1, noff, 0);
+    if (d == 0) { _ret_slot_refuse(S, j, noff, 0, 0); return 0; }
+    if (d == 2) { _ret_slot_amp(S, j, j + 2); }
+    return 0;
+}
+# A token of a stub generic's skipped base body: a nested `fn` refused (6.6.16, `_refuse_nested_fn`), and (6.7.16's D2)
+# a `return &n;` judged from the tokens (`_ret_amp_stub`). 1 = a nested fn was consumed.
+fn _b3_skip_tok(S): i64 {
+    if (PEEKT(S) == 33) { _ret_amp_stub(S); }
+    return _refuse_nested_fn(S);
+}
+# 1 while a generic fn's base body is parsed (its type parameters bound to i64), not an instance's.
+fn _ret_gen_base(S): i64 {
+    if (_MONOMORPH_OK != 1) { return 0; }
+    if (_inst_conc0 != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (GFTP(S, _cur_fn_ix) == 0) { return 0; }
+    return 1;
+}
+# "`&q` is the address of q's slot, not a struct", then the advice by what q holds (`t`, `cp` 1 a `*T`): S, the fn's
+# own struct — "return q"; another struct — what q is, since `return q;` is refused too ("got `pu` (a `*U8`)"; the
+# user's D58, 2026-10-18: it said "return pu"); no struct (`t` 0) — nothing more (D18). CHANGELOG [6.7.15]
+fn _ret_slot_refuse(S, ti, noff, t, cp): i64 {
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }   # a generic base and its instances: once
+    _ew("error:", 6);
+    _err_head_at(S, ti);
+    PRSTR(": a fn returning the struct `");
+    _sn_pr(S, _cur_fn_ret_sid);
+    PRSTR("` takes a value of that struct, or a pointer to one — `&");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("` is the address of ");
+    PRSTR(S + 0xEC00000 + noff);
+    PRSTR("'s slot, not a struct");
+    if (t == _cur_fn_ret_sid) {
+        PRSTR(" — return ");
+        PRSTR(S + 0xEC00000 + noff);
+    }
+    elif (t > 0) {
+        PRSTR(", and ");
+        PRSTR(S + 0xEC00000 + noff);
+        PRSTR(" is a `");
+        if (cp != 0) { PRSTR("*"); }
+        _sn_pr(S, t);
+        PRSTR("`");
+    }
+    PRSTR("\n");
+    _err_excerpt_at(S, ti);   # 6.7.17: the source line and caret, as every error has
+    _had_error = 1;
+    return 0;
+}
+# The struct the pointer parked in frame slot `h` points at, copied byte-exact into a temp of the fn's
+# struct: the temp.
+fn _ret_ptr_copy(S, h): i64 {
+    var t = _agg_temp(S, _cur_fn_ret_sid);
+    _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(h), 0 - 1, STRUCTSZ(S, _cur_fn_ret_sid - 1));
+    return t;
+}
+# The rax:rdx class's arm of `_ret_ptr_src`: the temp loaded as the pair, the return landed. 1 = done.
+fn _ret_ptr_pair(S): i64 {
+    var t = _ret_ptr_src(S);
+    if (t < 0) { return 0; }
+    _ret_end(S);
+    EFLLOAD_STRUCT_INT_PAIR(S, t);
+    var rp = EJMP0(S);
+    vec_push(rp_vec, rp);
+    return 1;
+}
+# ⛔ 6.6.17 (a1 review) — `return p;` from a fn returning a struct of 8 B or less, where `p: *T` is
+# a pointer to it. That class returns the struct's VALUE in rax (the scalar path below), and a
+# `*T` slot holds an address, so the caller's `x.v` read the address (x86, qemu-aarch64, wine,
+# cx alike); the 9-16 B and retptr classes already went through `_ret_local_inline`. The pointee
+# is copied byte-exact into an inline temp (no read past a 3/5/6/7-byte struct) and its slot is
+# the value. Consumes `IDENT ;` and jumps to the epilogue; 0 leaves the cursor alone.
+# ⛔ 6.7.10 (B7-1) — and a HANDLE of 8 B or less (the handle line: `var p: B8 = alloc(8); .. return p;`),
+# which returns the struct it points at as a handle over 8 B does (`_ret_local_inline`); and either
+# inside parentheses (`return (p);`, transparent since 6.7.6), which handed back the address. A
+# handle or a `*U` of ANOTHER struct is left to the scalar tail, which refuses it by name
+# (`_ret_small_val`, 6.7.11).
+fn _ret_small_ptrp(S): i64 {
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (_cur_fn_ret_stash > 0) { return 0; }
+    if (_cur_fn_ret_pair == 1) { return 0; }
+    if (STRUCTSZ(S, _cur_fn_ret_sid - 1) > 8) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    var k = _hl_ret_k(S);
+    if (k < 0) { return 0; }
+    var li = FINDLOCAL(S, TOKVAL(S, GTI(S) + k));
+    if (li < 0) { return _ret_small_gh(S, k); }   # 6.7.10 (B7-1g): a handle global
+    var hl = _small_hdl(S, li);
+    if (_is_ptr_param(S, li) == 0) { if (hl == 0) { return 0; } }
+    if (GLTYPE(S, li) != 0 - _cur_fn_ret_sid) { return 0; }
+    STI(S, GTI(S) + 2 + 2 * k);           # IDENT ; and the wrap
+    var t = _sptr_param_temp(S, li, 0 - GLTYPE(S, li));
+    EFLLOAD(S, t);
+    var rp = EJMP0(S);
+    vec_push(rp_vec, rp);
+    return 1;
+}
+# 6.7.10 (B7-1) — `return IDENT;` inside `k` balanced parentheses (`return ((p));`): k, or -1 for any
+# other shape. Read in one linear pass, as `_ret_tuple_var` reads it (a `_pwrap_k` peel is quadratic).
+fn _hl_ret_k(S): i64 {
+    var st = GTI(S);
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    if (TOKTYP(S, st + k) != 2) { return 0 - 1; }
+    var j = 1;
+    while (j <= k) {
+        if (TOKTYP(S, st + k + j) != 11) { return 0 - 1; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, st + k + j) != 5) { return 0 - 1; }
+    return k;
+}
+# ⛔ 6.7.11 — THE VALUE A FN RETURNING A STRUCT OF 8 B OR LESS RETURNS IS CHECKED BY ITS STRUCT, as the
+# 9-16 B (`_refuse_pair_return`) and > 16 B ("identifier type != fn ret_sid") classes check theirs (6.7.10
+# decision 6: struct rules are size-independent). This class returns one word in rax, and its scalar
+# tail loaded whatever word the expression had: another struct's local, by-value parameter, global,
+# parenthesised name, call, field, method or operator result, a handle of another struct or a dereference
+# of a `*U` handed back U's bytes as S's (`return u;` exit 3, no diagnostic), and a `*S` LOCAL handed
+# back the ADDRESS (an address byte where 8 was right), while a `p: *S` parameter copied (6.6.17)
+# (issues/archived/2026-10-12-small-struct-return-takes-another-structs-value.md). The user's decision
+# (2026-10-13): every other-struct shape is refused by name. The expression at `st` is parsed with the
+# argument check's records armed (`_ret_expr_sid`, `_ess_deref`: the parse and its emission are
+# unchanged): a value of another struct is refused; an expression typed `*S` (`_ret_small_ptr`) is the
+# struct it points at, read byte-exact with its padding 0 (`_hl_pval_ra`); a `*U` is refused. An untyped
+# value stays the struct's word. CHANGELOG [6.7.11]
+# Not inside an inline replay (GIDEP): a replayed `return` is the CALLEE's (a generic straight-line body),
+# whose class is not the enclosing fn's (staged: the inline replay judges it by the caller's class).
+fn _ret_small_cls(S): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (_cur_fn_ret_stash > 0) { return 0; }
+    if (_cur_fn_ret_pair == 1) { return 0; }
+    if (STRUCTSZ(S, _cur_fn_ret_sid - 1) > 8) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    return _dx_plain(S, _cur_fn_ret_sid);
+}
+fn _ret_small_val(S, st): i64 {
+    var asid = _ret_expr_sid(S, st);
+    var kind = 0;
+    if (asid == 0) {
+        asid = _ess_deref(S, st);
+        kind = 2;
+    }
+    if (asid > 0) {
+        if (asid >= 2048) { return 0; }
+        if (_dyn_is(S, asid) == 1) { return 0; }   # refused at its own site (6.7.8 V4), once
+        if (asid != _cur_fn_ret_sid) {
+            if (kind == 2) { _ret_sid_refuse_d(S, st, _ess_da, _ess_de, _ess_nm, asid); }
+            else { _ret_sid_refuse(S, st, _ess_nm, _ess_fi, asid, kind); }
+        }
+        return 0;
+    }
+    return _ret_small_ptr(S, st);
+}
+# `_expr_struct_sid` for a value that ends at the return's `;` (an argument's ends at `,` / `)`): the
+# expression at `st` parsed (PCMPE) with the static-struct records armed — a bare name, a whole free
+# call (resolved after the parse), a whole method / operator result, a whole struct-typed or `Str`
+# field, inside any parentheses — its struct, `_ess_nm` the name a refusal names; 0 = untyped /
+# scalar / unknown.
+fn _ret_expr_sid(S, st): i64 {
+    var k = 0;
+    if (TOKTYP(S, st) == 10) {
+        k = _pwrap_k(S, st);
+        if (TOKTYP(S, _pw_end) != 5) { k = 0; }
+    }
+    var ist = st + k;
+    var fk = _fpk_want;
+    _fpk_want = ist;
+    _fpk_ft = 0;
+    _sc_beg = 0 - 1;                   # only this value's own record may match
+    PCMPE(S);
+    _fpk_want = fk;
+    var asid = 0;
+    var nm = 0;
+    _ess_fi = 0 - 1;
+    if (TOKTYP(S, ist) == 2) {
+        nm = TOKVAL(S, ist);
+        var ie = GTI(S) - k;
+        var o = _gcall_open(S, ist);
+        if (ie == ist + 1) { asid = _sarg_name_sid(S, ist); }
+        elif (o > ist) { if (_call_close(S, o) + 1 == ie) { asid = _sarg_call_rs(S, ist); } }
+    }
+    if (asid == 0) {
+        if (_sc_whole(S, st) != 0 - 2) { asid = _sc_sid; nm = _sc_fn; _ess_fi = _sc_fi; }   # 6.7.15: `Pt.dup`
+        elif (_fpk_ft > 0) { if (_fpk_end + k == GTI(S)) { asid = _fpk_ft; nm = _fpk_name; } }
+        elif (_fls_whole(S, st) == 1) { asid = _fls_sid; nm = _fls_name; }
+    }
+    _ess_nm = nm;
+    return asid;
+}
+# The pointer arm: [st, cursor), inside any parentheses, typed `*X` by the compiler's own typing
+# (`_hl_psid`) — a `*X` local or parameter, and (6.7.11, issues/2026-10-13-small-struct-return-of-pointer-
+# global-or-call-decision.md) a `*X` global, a call or method declared `: *X`, a `*X` field, pointer
+# arithmetic on one: rax (the pointer) becomes S read through it; X another struct is refused by name.
+# 6.7.13 (D4 (a)): and `& IDENT` of an inline struct (`_hl_dpsid`) — see `_ret_ptr_src`. CHANGELOG [6.7.13]
+fn _ret_small_ptr(S, st): i64 {
+    var a = _ie_unparen(S, st, GTI(S));
+    var pe = _ie_pe;
+    if (_ret_slot_amp(S, a, pe) == 1) { return 0; }   # 6.7.14 (D19 (a)): `&h` of a handle / `*T`, a slot
+    var ps = _hl_dpsid(S, a, pe);   # 6.7.13 (D4 (a)): `& IDENT` of an inline struct too
+    var kind = 1 + 2 * _hl_damp;
+    if (ps <= 0) { return 0; }
+    if (_dx_plain(S, ps) == 0) { return 0; }
+    if (ps != _cur_fn_ret_sid) { return _ret_ptr_refuse(S, st, a, pe, ps, kind); }
+    _hl_pval_ra(S, ps);
+    return 0;
+}
+# A struct return of another struct, by name: `kind` 0 a value (`u` (a `U8`)), 1 a pointer (`pu` (a
+# `*U8`)), 2 a dereference (`*gu(pu)` (a `U8`), `_ret_sid_refuse_d`), 3 an address-of (`&u` (a `*U8`), 6.7.13 D4 (a)). Reported at
+# token `ti`; the parse goes on (no cascade). `nm` the result of a call to fn `fi` is named as the source spells it
+# (`Pt.dup`, `_fn_src_name`; -1: a name as written). CHANGELOG [6.7.15]
+fn _ret_sid_refuse(S, ti, nm, fi, usid, kind): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_ret_sid_refuse", ((nm * 31 + usid) * 31 + kind) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
+    return _rsr_print(S, ti, _fn_src_name(S, fi, nm), usid, kind);
+}
+# ⛔ 6.7.16 — kind 2 (a dereference) named as the source spells it: `*` and the operand's tokens [a + 1, e) — `return
+# *gu(pu);` is `*gu(pu)`; it was `*` and the operand's last name, `*pu` — rendered here, at the refusal (`dflt` the last
+# name when the tokens have no source spelling); once at the token, keyed by the span's start. CHANGELOG [6.7.16]
+fn _ret_sid_refuse_d(S, ti, a, e, dflt, usid): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_ret_sid_refuse", ((a * 31 + usid) * 31 + 2) * 4096 + _cur_fn_ret_sid, 0) == 1) { return 0; }
+    return _rsr_print(S, ti, _src_span_nm(S, a + 1, e, dflt), usid, 2);
+}
+# The refusal's text at token `ti`, the value named `nm` (a pool offset, written as is).
+fn _rsr_print(S, ti, nm, usid, kind): i64 {
+    _ew("error:", 6);
+    _err_head_at(S, ti);
+    PRSTR(": a fn returning the struct `");
+    _sn_pr(S, _cur_fn_ret_sid);
+    PRSTR("` takes a value of that struct, or a pointer to one — got `");
+    if (kind == 2) { PRSTR("*"); }
+    if (kind == 3) { PRSTR("&"); }
+    PRSTR(S + 0xEC00000 + nm);
+    PRSTR("` (a `");
+    if (kind == 1 || kind == 3) { PRSTR("*"); }
+    _sn_pr(S, usid);
+    PRSTR("`)\n");
+    _err_excerpt_at(S, ti);   # 6.7.17: the source line and caret, as every error has
+    _had_error = 1;
+    return 0;
+}
+# `return IDENT;` forms after the struct classes, one call in PARSE_RETURN (cybs's per-fn ceiling).
+fn _ret_var_forms(S): i64 {
+    if (_ret_tuple_var(S) == 1) { return 1; }
+    return _ret_small_ptrp(S);
+}
+# ⛔ 6.7.7 (B4, T5) — `return t;` with `t` a TUPLE — a local, a by-value parameter (copied in, so
+# inline) or a global — from a fn DECLARED with its values, `: (T1, T2[, T3])`, element for element
+# by class (f64, bool, any other integer class): its slots are loaded into the multi-value return
+# registers as `return (t.0, t.1);` loads them (rax, rdx[, r3]; every load before the moves that
+# set rdx / r3), and it lands as that arm lands (EJMP0 + rp_vec), so the defer walker, EDEFER_SAVE
+# and the #inline replay treat it as that arm. Anything else is refused by name: an undeclared,
+# scalar, struct or vector fn, a closure, an `async fn`, an arity or class mismatch (a retptr struct
+# fn reports first, `_ret_struct_big`). Under the struct rule the scalar path refused it as a value
+# (`_tup_rchk`). Parentheses around `t` are transparent (6.7.6): `(`s, the name, as many `)`s, `;` —
+# read in one linear pass, since this runs for every `return` (a `_pwrap_k` peel is quadratic in the
+# depth: `return ((..((1))..));` 65536 deep took 99 s). 1 = done (`;` consumed); 0 = not a tuple
+# (cursor kept). CHANGELOG [6.7.7]
+var _rtv_sid = 0;
+fn _ret_tuple_var(S): i64 {
+    var st = GTI(S);
+    var k = 0;
+    while (TOKTYP(S, st + k) == 10) { k = k + 1; }
+    var ti = st + k;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var j = 1;
+    while (j <= k) {
+        if (TOKTYP(S, ti + j) != 11) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, ti + j) != 5) { return 0; }
+    var idx = _ret_tup_idx(S, TOKVAL(S, ti));
+    if (idx == 0 - 1) { return 0; }
+    var sid = _rtv_sid;
+    STI(S, ti + j + 1);   # past the `)`s and the `;`
+    # 6.7.16: a tuple LOCAL in a generic was refused at its type (R4), so its return is judged no further — an
+    # instance's `(V, i64)` at f64 no longer matches the refused type's i64 stand-in. CHANGELOG [6.7.16]
+    if (idx < 0 - 1) { if (_tok_in_gen_fn(S, ti) == 1) { return 1; } }
+    if (_ret_tup_ok(S, ti, sid) == 0) { return 1; }
+    var n = GETFCOUNT(S, sid - 1);
+    _fld_addr_ra(S, idx, sid, 0, 0 - 1);
+    ELOAD64(S);
+    EPUSHR(S);
+    if (n == 3) {
+        _fld_addr_ra(S, idx, sid, 8, 0 - 1);
+        ELOAD64(S);
+        EPUSHR(S);
+    }
+    _fld_addr_ra(S, idx, sid, (n - 1) * 8, 0 - 1);
+    ELOAD64(S);
+    if (n == 3) {
+        EMOVR3RAX(S);
+        EPOPR(S);
+    }
+    EMOVRDXRAX(S);
+    EPOPR(S);
+    var rp = EJMP0(S);
+    vec_push(rp_vec, rp);
+    return 1;
+}
+# The tuple `noff` names, resolved as a factor resolves it — a local, then (a closure's capture is
+# not one here: the value path refuses it) a global: its field-base index (`0 - 2 - li`, or the
+# global's), `_rtv_sid` its tuple; -1 = not a tuple.
+fn _ret_tup_idx(S, noff): i64 {
+    _rtv_sid = 0;
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            if (GLAGG(S, li) == 0) { return 0 - 1; }
+            var lt = GLTYPE(S, li);
+            if (lt >= 0) { return 0 - 1; }
+            if (_tup_is(S, 0 - lt) == 0) { return 0 - 1; }
+            _rtv_sid = 0 - lt;
+            return 0 - 2 - li;
+        }
+        if (_CL_CAP_FIELD_IDX(S, noff) < 0 - 1) { return 0 - 1; }
+    }
+    var gi = _findvar_core(S, noff);
+    if (gi < 0) { return 0 - 1; }
+    if (GVPM(S, gi) != 2) { return 0 - 1; }
+    if (_tup_is(S, GVTYPE(S, gi)) == 0) { return 0 - 1; }
+    _rtv_sid = GVTYPE(S, gi);
+    return FINDVAR(S, noff);   # the reference: its visibility checked
+}
+# 1 = the fn being parsed declares tuple `sid`'s values (`t` at token `ti`); else refused, 0. An
+# #inline replay parses the CALLEE's body in the caller's context: its definition checked itself.
+fn _ret_tup_ok(S, ti, sid): i64 {
+    if (GIDEP(S) != 0) { return 1; }
+    if (_cur_fn_ret_pair == 1) { return 0; }   # a 9-16 B struct fn: its class refused `t` (`_ret_struct_pair`)
+    var fi = _cur_fn_ix;
+    if (fi < 0) { return _ret_tup_err(S, ti, sid, 1); }
+    if (_cur_fn_coro == 1 || _fn_async_impl(S, fi) == 1) {
+        if (GFRS(S, fi) == MULTIRET_SID) { return 0; }   # 6.7.11: refused at its declaration, once
+        return _ret_tup_err(S, ti, sid, 2);
+    }
+    if (GFRS(S, fi) != MULTIRET_SID) { return _ret_tup_err(S, ti, sid, 1); }
+    var n = GETFCOUNT(S, sid - 1);
+    if (GFRN(S, fi) != n) { return _ret_tup_err(S, ti, sid, 3); }
+    var k = 0;
+    while (k < n) {
+        if (_tup_ek(S, sid, k) != _mret_ek(S, fi, k)) { return _ret_tup_err(S, ti, sid, 3); }
+        k = k + 1;
+    }
+    return 1;
+}
+# 1 = fn `fi` is an `async fn`'s body: the name `_mint_impl_name` gave it ends `$impl` (`$` is no
+# identifier byte, and `impl` is a keyword, so no generic instance ends so). Its Future carries one i64.
+fn _fn_async_impl(S, fi): i64 {
+    var nm = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    var n = 0;
+    while (load8(nm + n) != 0) { n = n + 1; }
+    if (n < 5) { return 0; }
+    if (load8(nm + n - 5) != 36) { return 0; }
+    if (load8(nm + n - 4) != 105) { return 0; }
+    if (load8(nm + n - 3) != 109) { return 0; }
+    if (load8(nm + n - 2) != 112) { return 0; }
+    if (load8(nm + n - 1) != 108) { return 0; }
+    return 1;
+}
+fn _ret_tup_err(S, ti, sid, kind): i64 {
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": cannot return tuple '");
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    PRSTR("' ");
+    _sn_pr(S, sid);
+    if (kind == 2) { PRSTR(" from an `async fn` - it returns one value"); }
+    elif (kind == 3) {
+        PRSTR(" from '");
+        # 6.7.16: named as the source spells it — `P.pair`, an instance `mt<f64>` (it printed `P_pair`, `mt$f64`)
+        PRSTR(S + 0xEC00000 + _cur_fn_src(S));
+        PRSTR("' - it returns ");
+        _mret_spell(S, _cur_fn_ix);
+    } elif (GETFCOUNT(S, sid - 1) > 3) {   # 6.7.7 (B4 review): no fn declares 4 values (the return registers)
+        PRSTR(" - a fn returns at most 3 values: return its elements, or pass the tuple to a parameter");
+    } else {
+        PRSTR(" - a tuple is returned by a fn declared with its values, `: ");
+        _sn_pr(S, sid);
+        PRSTR("`");
+    }
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+# The struct slot `li` points at (struct `sid`), copied byte-exact into an inline frame temp; its field-0
+# slot. Under 8 B the temp's word is what a by-value consumer loads (`return q` of a `*S` parameter, a
+# handle passed by value), so it is zeroed first: the padding is 0, never the frame's old bytes.
+# CHANGELOG [6.7.13]
+fn _sptr_param_temp(S, li, sid): i64 {
+    var t = _agg_temp(S, sid);
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz < 8) { EMOVI(S, 0); EFLSTORE(S, t); }
+    _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(li), 0 - 1, sz);
+    return t;
+}
+
+# ⛔ 6.6.16 (C7) — A PARAMETER ANNOTATED WITH A PLAIN STRUCT IS A VALUE, AT EVERY WIDTH. Over 8 B
+# the caller passes the struct's ADDRESS (the ABI above, unchanged), and nothing ever made the copy
+# "by value" promises: `fn bump(p: P3) { p.x = p.x + 1; }` wrote the CALLER's struct — a named
+# local, a global, a pointer-mode local's heap object, a forwarded parameter, a typed `self: T`
+# receiver, a generic instance, a call through `fncall1(&bump, &p)`, and at top level a field
+# (`take(BX.v)`). Only a field argument inside a fn was copied (6.6.12, caller-side, so not at top
+# level). The copy is made HERE, in the callee's prologue — one site for every caller, fn pointers
+# included, built from frontend emitters every backend has: after `_stkp_flush` has homed every
+# parameter slot (a Win64 5th+ / SysV 7th+ pointer arrives on the stack) and before the body. Each
+# such parameter's struct is copied into an inline frame aggregate (`_sptr_param_temp`), which
+# takes the parameter's NAME at the parameter's depth (so a body `var p` is a duplicate exactly
+# as before); the pointer slot is renamed -1. From there it is an ordinary inline local: field
+# access, `q = r`, `return q`, `&q`, operators and closure captures take their inline paths.
+# A `p: *T` parameter is a pointer and is never copied (`_is_ptr_param`); a `#naked` fn has no
+# frame; a coroutine impl is re-entered on every resume (and an `async fn` refuses such a
+# parameter, `_refuse_async_struct_param`). CHANGELOG [6.6.16]
+# 6.6.20: and record which parameters are copied in, exactly, for every call parsed after this
+# definition (`_pm_copies`; pass 1 predicted it for the calls before, and a generic INSTANCE, which
+# pass 1 never saw, gets it here).
+# ⚠ NOT for a REDEFINED fn (flag 2048, pass 1): every call to it reaches its LAST definition
+# (`_fn_redirect`), whose copies pass 1 recorded, so the definition in hand is not the callee of a
+# call parsed after it. Writing its record here raised a bit for `f(q: P3)` above `f(q: *P3)` (the
+# signature check lets the pair through: both address-pass the same struct), and a later tail call
+# kept its `jmp` while the `*P3` body held `&s` — a silent wrong value. CHANGELOG [6.6.20]
+# 6.7.9: `rf` is the fn the record is written for, -1 for a redefinition (SFBVCP and `_bvhi_*` write
+# nothing for it); its copies row past ordinal 61 is replaced whole, as the mask is.
+fn _sptr_params_localize(S): i64 {
+    var m = 0;
+    var rf = _cur_fn_ix;
+    if ((GFLG(S, rf) & 2048) != 0) { rf = 0 - 1; }
+    _bvhi_reset(rf);
+    if (_cur_fn_naked == 0) { if (_pending_coro == 0) { m = _sptr_params_copy(S, rf); } }
+    SFBVCP(rf, m);
+    return 0;
+}
+# Each parameter owns exactly ONE named slot (a vector's filler slots are -1), so a parameter's
+# ordinal is the number of named slots below it — counted before `_sptr_param_localize1` renames
+# the slot. Returns the copied ordinals below 62; one past 61 goes to `rf`'s copies row.
+fn _sptr_params_copy(S, rf): i64 {
+    var m = 0;
+    var ord = 0;
+    var li = 0;
+    while (li < _cur_fn_pslots) {
+        if (L64(S + 0x5D9D000 + li * 8) != 0 - 1) {
+            if (_sptr_param_in(S, li) == 1) { m = _bvcp_bit(rf, m, ord); }
+            ord = ord + 1;
+        }
+        li = li + 1;
+    }
+    return m;
+}
+# 1 = the parameter in slot `li` is a copy: a by-value struct over 8 B, copied in here, or a Win64
+# value-form vector, which the parameter loop's ESTOREPARM_SIMD_WIN64 already copied in.
+fn _sptr_param_in(S, li): i64 {
+    if (_local_is_sptr_param(S, li) == 1) {
+        if (_is_ptr_param(S, li) == 1) { return 0; }
+        _sptr_param_localize1(S, li);
+        return 1;
+    }
+    if (_TARGET_PE == 1) { if (GLTYPE(S, li) <= 0 - 2048) { return 1; } }
+    return 0;
+}
+fn _sptr_param_localize1(S, li): i64 {
+    var d = GSDEP(S);
+    SSDEP(S, 0);
+    var t = _sptr_param_temp(S, li, 0 - GLTYPE(S, li));
+    SSDEP(S, d);
+    S64(S + 0x5D9D000 + t * 8, L64(S + 0x5D9D000 + li * 8));
+    SSLICE_W(S, t, 0);
+    S64(S + 0x5D9D000 + li * 8, 0 - 1);
+    return 0;
+}

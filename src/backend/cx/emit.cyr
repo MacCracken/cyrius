@@ -15,7 +15,7 @@
 # Each instruction is 4 bytes: [opcode][ra][rb][rc] (little-endian in output)
 
 # v5.7.11: stubs matching backend/x86/emit.cyr — parse.cyr / parse/expr.cyr
-# / parse/decl.cyr / parse/fn.cyr reference these in shared codepaths
+# / parse/decl/ / parse/fn/ reference these in shared codepaths
 # (`if (_AARCH64_BACKEND == 1)`, `if (_TARGET_MACHO == ...)`, etc.).
 # cx backend is x86-shaped, never aarch64/mach-o/PE — all 0.
 # Drifted out of sync over multiple v5.6.x/v5.7.x minors because no
@@ -580,7 +580,7 @@ fn ECALLTO(S, target): i64 {
 # 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `jmp new_off` (opcode 80, 4-byte
 # instruction units like ECALLTO), so every reference already compiled against it reaches the
 # last definition. Writes the cx code buffer EB writes (_cx_code_base). Returns 1, writing
-# nothing, when the earlier body is too short. See `_fn_redirect` (parse/fn.cyr). CHANGELOG [6.6.20]
+# nothing, when the earlier body is too short. See `_fn_redirect` (parse/fn/def.cyr). CHANGELOG [6.6.20]
 fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
     if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
     var off = (new_off - old_off) / 4;
@@ -1266,7 +1266,7 @@ fn EFLSTORE_W(S, idx, width): i64 {
     return 0;
 }
 
-# v5.9.40 — sub-byte struct field load (parse/decl.cyr:252).
+# v5.9.40 — sub-byte struct field load (parse/decl/field.cyr).
 # Field-base ptr is in r1; emit width-correct load into r0.
 # Mirrors the aarch64 ldrb/ldrh/ldr w0 dispatch and the x86
 # movzx rax/movzx eax/mov eax dispatch, with cx using the new
@@ -1286,7 +1286,7 @@ fn EFIELD_LOAD_W(S, width): i64 {
     return 0;
 }
 
-# v5.9.40 — struct-by-value return (parse/fn.cyr:371).
+# v5.9.40 — struct-by-value return (the `return` path, parse/fn/ret.cyr / ret_agg.cyr).
 # Emits a byte-copy loop: src in r9 (= fp + src_disp), dst in
 # r10 (= load64 [fp + stash_disp]), counter in r11. Loop body
 # walks the aligned byte count copying byte-by-byte; tail
@@ -1373,7 +1373,7 @@ fn EADDIMM_X1(S, val): i64 {
 # return address, which the jmp left on the call stack — so a tail recursion runs in constant
 # call-stack and guest-stack space.
 #
-# By the time this is called the shared tail path (parse/fn.cyr PARSE_RETURN) has evaluated every
+# By the time this is called the shared tail path (parse/fn/ret.cyr PARSE_RETURN) has evaluated every
 # argument onto the data stack and ECALLPOPS has popped them into r3.. — the data stack is
 # balanced and nothing of this frame is read after the jmp, so a nested call among the arguments
 # needs no special handling. Until 6.6.12 this emitted a normal call + epilogue under a comment
@@ -1865,10 +1865,10 @@ fn EF64CEIL(S): i64 { CX_EMIT(S, 107, 0, 0, 0); return 0; }    # 0x6B fceil  r0,
 fn EF64ROUND(S): i64 { CX_EMIT(S, 108, 0, 0, 0); return 0; }   # 0x6C fround r0, r0
 fn EF64TRUNC(S): i64 { CX_EMIT(S, 110, 0, 0, 0); return 0; }   # 0x6E ftrunc r0, r0 (6.6.13)
 # v5.9.40 Phase 2c — real EFLADDR / EFLADDR_X1 for cx. Compute
-# &local-slot. Required by parse/decl.cyr's asv (assignment-
+# &local-slot. Required by parse/decl/var.cyr's asv (assignment-
 # from-struct-value) caller-side and by PARSE_FIELD_STORE/LOAD
 # when the local var is an inline struct (fs_is_ptr == 0 path,
-# parse/decl.cyr:344).
+# parse/decl/field.cyr).
 #   EFLADDR    → addr in r0 (pushed as fn-arg or paired with EPOPC)
 #   EFLADDR_X1 → addr in r1 (paired with EPOPR + storeN [r1], r0)
 # Sub-8-byte struct field stores route through EFLADDR_X1 when
@@ -1895,7 +1895,7 @@ fn EFLADDR_X1(S, lli): i64 {
 
 # v5.9.40 Phase 2c — real ESTOREREGPARM for cx. Stash the param
 # register r(3+pidx) into the local frame at fp+disp (disp is
-# negative). Used by parse/fn.cyr:930 in the struct-return
+# negative). Used by parse/fn/def.cyr in the struct-return
 # prologue: cx receives retptr as the FIRST arg in r3, then
 # stashes it for later reload by ESTRUCT_BYVAL_COPY's tail.
 # x86 + aarch64 backends have separate ESTOREREGPARM impls that
@@ -2041,7 +2041,7 @@ fn _SYSX_ACTUALLY(n): i64 { return 0; }
 fn _pe_pending_imp_add(S, name): i64 { return 0; }
 
 # v6.5.35 — stub. `RA_SCAN_LOOPS` really lives in src/backend/x86/decode.cyr, which this
-# fork does not include; `parse/fn.cyr` is shared by every fork and calls it. Returning -1
+# fork does not include; `parse/fn/def.cyr` is shared by every fork and calls it. Returning -1
 # means "no loop information", which the caller must already handle by falling back to the
 # conservative whole-function interval extent — so the picker behaves exactly as it did
 # before v6.5.35 here. (The x86 regalloc post-pass does not run on these targets anyway;

@@ -1,0 +1,912 @@
+# PARSER — fn: argument kinds — the diagnostic struct ids, Str / cstring and SIMD arguments — `_call_arg_one` and
+# the own-call argument loop.
+# ================================================================
+# Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
+
+# 1 when the name at offset `noff` is exactly the `n`-byte text `lit`. (cycc does not include
+# lib/string.cyr, so this is the compare.)
+fn _noff_is(S, noff, lit, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(S + 0xEC00000 + noff + i) != load8(lit + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(S + 0xEC00000 + noff + n) != 0) { return 0; }
+    return 1;
+}
+
+# `var g = f(..);` at registration: f's name offset + 1 for the DIAGNOSTIC table (GVDSID), when
+# the declaration is untyped and its initializer is exactly one call; else 0. Always written, so
+# a redeclaration folded onto the slot clears a stale record. f's return is resolved when the
+# check runs, so an f defined after g counts too.
+fn _gv_diag_sid(S, gvi, sti, typed): i64 {
+    var cn = 0;
+    if (typed == 0) { cn = _gv_init_call_sid(S, sti); }
+    SVDSID(S, gvi, cn);
+    return 0;
+}
+fn _gv_init_call_sid(S, sti): i64 {
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var cn = _gv_rhs_call_sid(S, sti + 3);
+    return cn;
+}
+# The same record from the initializer's first token `ri`: `f(..);` gives f's name offset + 1,
+# anything else 0. PARSE_VAR's global arm (a `var` after the first top-level statement, which
+# never reaches PARSE_GVAR_REG) writes it from here. Parentheses around the whole call are
+# transparent (guide § Parentheses): `(f(..));` / `((f(..)));` record f as `f(..);` does — the k
+# `(` before the name match the k `)` right after the call's close (`_pair_unwrap_k`), then the
+# `;`. A wrapped `: Str` call was an untyped word to the overload dispatcher, so `println(s)`
+# printed the header's bytes. CHANGELOG [6.7.15]
+fn _gv_rhs_call_sid(S, ri): i64 {
+    var k = 0;
+    while (TOKTYP(S, ri + k) == 10) { k = k + 1; }
+    var a = ri + k;
+    if (TOKTYP(S, a) != 2) { return 0; }
+    if (TOKTYP(S, a + 1) != 10) { return _gvm_rec(S, a, k); }
+    var e = _tok_close_paren(S, a + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) == 41) { return _gvm_rec(S, a, k); }   # 6.7.16: `f(..).m(..)`
+    if (_pair_unwrap_k(S, e + 1, k, a) < 0) { return 0; }
+    if (TOKTYP(S, e + k + 1) != 5) { return 0; }
+    return TOKVAL(S, a) + 1;
+}
+# ⛔ 6.7.16 — A WHOLE METHOD CALL ROUTES ITS GLOBAL AS A FREE CALL DOES. `var s = BB.mks();` (a `: Str` method) at top
+# level recorded nothing — the record wanted `IDENT (` — so `println(s)` took the cstring base and printed the Str
+# header's bytes, where `var s = mks2();` prints the string (issues/2026-10-18-top-level-untyped-str-method-global-
+# prints-header-bytes.md). Now a chain ending in a method call — `R.m(..)`, `W.b.m(..)`, `R.mk().m(..)`, `f(..).m(..)`,
+# `.m<..>(..)`, inside any wrap, up to the `;` — records its first token `a` tagged (`_gvd_mtag` + a; a free call's
+# record is a name offset + 1, far below it), resolved when asked (`_gvm_sid`: a method may be defined below the
+# global). CHANGELOG [6.7.16]
+var _gvd_mtag = 0x1000000000000;
+fn _gvm_rec(S, a, k): i64 {
+    var i = _gvm_end(S, a);
+    if (_gvm_m == 0) { return 0; }
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, i + j) != 11) { return 0; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, i + k) != 5) { return 0; }
+    return _gvd_mtag + a;
+}
+# Past the chain from the name at token `a` — a call `(..)` on it, then `.name` steps, each a field or a method call
+# (`.m(..)`, `.m<..>(..)`) — with `_gvm_m` 1 when its last step is a call.
+var _gvm_m = 0;
+fn _gvm_end(S, a): i64 {
+    _gvm_m = 0;
+    var i = a + 1;
+    if (TOKTYP(S, i) == 10) { i = _tok_close_paren(S, i) + 1; }
+    if (i <= a) { return a; }
+    while (TOKTYP(S, i) == 41) {
+        if (TOKTYP(S, i + 1) != 2) { _gvm_m = 0; return i; }
+        i = _mchain_targs(S, i + 2);
+        _gvm_m = 0;
+        if (TOKTYP(S, i) == 10) {
+            var c = _tok_close_paren(S, i);
+            if (c < 0) { return i; }
+            i = c + 1;
+            _gvm_m = 1;
+        }
+    }
+    return i;
+}
+# A tagged record's struct: what the chain from token `a` returns, typed from the tokens as the member arm types it —
+# a global receiver by its struct (`_glob_name_sid`, a record of its own included; a `*T` global by T) or a non-generic
+# call's return, each field by its struct (a `*T` field by T), each method by its fn (`_meth_fn_at`) — 0 for anything
+# else (a scalar, a generic call's head). Bounded: a receiver whose record leads back here stops at `_gvm_d`.
+var _gvm_d = 0;
+fn _gvm_sid(S, a): i64 {
+    if (_gvm_d >= 8) { return 0; }
+    _gvm_d = _gvm_d + 1;
+    var r = _gvm_walk(S, a);
+    _gvm_d = _gvm_d - 1;
+    if (r <= 0) { return 0; }
+    if (r >= 2048) { return 0; }
+    return r;
+}
+fn _gvm_walk(S, a): i64 {
+    var t = 0;
+    var i = a + 1;
+    if (TOKTYP(S, i) == 10) {
+        var fi = FINDFN(S, TOKVAL(S, a));
+        if (fi < 0) { return 0; }
+        if (GFTP(S, fi) != 0) { return 0; }
+        t = GFRS(S, fi);
+        i = _tok_close_paren(S, i) + 1;
+    } else { t = _gvm_recv(S, TOKVAL(S, a)); }
+    var m = 0;
+    while (TOKTYP(S, i) == 41) {
+        if (t <= 0) { return 0; }
+        if (t >= 2048) { return 0; }
+        var mo = _gz_mopen(S, t, i + 1);
+        if (mo > 0) {
+            var mf = _meth_fn_at(S, t, TOKVAL(S, i + 1), i + 1);
+            if (mf < 0) { return 0; }
+            t = GFRS(S, mf);
+            m = 1;
+            i = _call_close(S, mo) + 1;
+        } else {
+            t = _gvm_field(S, t, TOKVAL(S, i + 1));
+            m = 0;
+            i = i + 2;
+        }
+    }
+    if (m == 0) { return 0; }
+    return t;
+}
+# The struct a global receiver named `noff` is: its own (`_glob_name_sid`), else a `*T` global's T; else 0.
+fn _gvm_recv(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    var s = _glob_name_sid(S, noff);
+    if (s > 0) { return s; }
+    var ps = _gv_ptr_sid(S, vi);
+    if (ps > 0) { return ps; }
+    return 0;
+}
+# The struct field `fnoff` of struct `t` is (a `*T` field: T), else 0 (a scalar).
+fn _gvm_field(S, t, fnoff): i64 {
+    var fi = FINDFIELD(S, t - 1, fnoff);
+    if (fi < 0) { return 0; }
+    var fp = _fld_ptr_sid(S, t - 1, fi);
+    if (fp > 0) { return fp; }
+    var ft = GETFTYPE(S, t - 1, fi);
+    if (ft < 0) { return 0; }
+    return ft;
+}
+
+# The struct id a NAMED value carries, 0 when untyped. Shared by the I11 Str -> `: cstring`
+# warning, the overload dispatcher (both through `_str_arg_kind`) and `_recv_sid`. A local decides
+# by itself (`0 - GLTYPE`; an untyped local shadowing a `Str` global is 0, not the global's
+# type). A global: its positive GVTYPE, but only when GVPM marks it a struct — GVTYPE's positive
+# range is shared with scalar widths, so an `i32` global's 4 must not read as struct id 4. Else
+# an inferred global's initializer return (GVDSID: READ here, never written into GVTYPE, which
+# would change codegen). Comparing a global against the LOCAL encoding `0 - sid` — what the I11
+# check did before 6.6.13 and the dispatcher before 6.6.16 — matches no Str global at all.
+fn _diag_name_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (lt < 0) { if (lt > 0 - 2048) { return 0 - lt; } }
+            return 0;
+        }
+    }
+    var g = _glob_name_sid(S, noff);
+    return g;
+}
+# `_diag_name_sid`'s global half, alone: the pair scans (`_tok_name_sid`) type a global receiver
+# exactly as `_recv_sid` does, with no local table to consult. CHANGELOG [6.6.16]
+fn _glob_name_sid(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt > 0) { if (GVPM(S, vi) != 0) { return gt; } }
+    var cn = GVDSID(S, vi);
+    if (cn <= 0) { return 0; }
+    if (cn >= _gvd_mtag) { return _gvm_sid(S, cn - _gvd_mtag); }   # 6.7.16: a method chain's record
+    var cfi = FINDFN(S, cn - 1);
+    if (cfi < 0) { return 0; }
+    var r = GFRS(S, cfi);
+    if (r < 0) { r = 0; }
+    return r;
+}
+
+# The struct id of a single NAME read as a value, in PARSE_FACTOR's order: a local decides by
+# itself, then — inside a capturing closure — a captured enclosing local decides by the type its
+# snapshot recorded, then a global (`_diag_name_sid`). The overload dispatcher routes on this, so
+# a cstr local, param or CAPTURE named like a Str global must read 0 here: measured on the planning
+# prototype, `var s = "x"; var c = |k| show(s) ..;` beside a `var s: Str` global reached `show_str`,
+# which read the cstr's bytes as a {data, len} header. CHANGELOG [6.6.16]
+fn _arg_name_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        if (FINDLOCAL(S, noff) < 0) {
+            var esl = _cl_cap_esl(S, noff);
+            if (esl >= 0) {
+                var t = _cl_snap_type(esl);
+                if (t < 0) { if (t > 0 - 2048) { return 0 - t; } }
+                return 0;
+            }
+        }
+    }
+    var r = _diag_name_sid(S, noff);
+    return r;
+}
+# The enclosing slot a name reads inside a capturing closure body (PARSE_FACTOR's capture rung),
+# or -1 when the name is not a capture there.
+fn _cl_cap_esl(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0 - 1; }
+    if (_cl_env_lidx < 0) { return 0 - 1; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0 - 1; }
+    if (_cl_cap_find(esl) < 0) { return 0 - 1; }
+    return esl;
+}
+
+var _sca_shape = 0;   # how the argument's head is written: 0 `x`, 1 `f(..)`, 2 `g<..>(..)`
+var _sca_di = 0;      # the `.` of the LAST `.f` / `.m(..)` step after the head, 0 when none
+var _sca_d0 = 0;      # the `.` of the FIRST step (6.6.17: nested fields `a.b.name` are several)
+# What the hint wraps in str_cstr(..): 0 `..`, 1 the head as written (`x.data` -> x), 2 the
+# argument as written, 3 the IDENT inside `str_data(x)`.
+var _sca_op = 0;
+# What the argument at the cursor hands a `: cstring` param: 1 a Str, 2 a Str's data pointer
+# (`x.data`, `x.data()`, `str_data(..)`), 0 not known. Only a head (`x`, `f(..)`, `g<..>(..)`,
+# a generic `: T` by T's binding) followed by nested STRUCT fields and then at most one `.f` /
+# `.m(..)` step, together ENDING the argument, is typed (6.6.17: `a.b.name`): `x.m().n()`,
+# a step into a Str field, `s + 8` and `load64(p)` are 0.
+# A pure peek (it writes only `_sca_shape` / `_sca_di` / `_sca_d0` / `_sca_op`, which the warning recomputes),
+# and it does not depend on CYRIUS_TYPE_CHECK: PARSE_FNCALL's overload dispatcher routes
+# `base(x, ..)` to `base_str` exactly when this answers 1 for the FIRST argument, so a first
+# argument the warning would call "Str-typed" never reaches a base that has an arity-compatible
+# `_str` sibling — the call is routed instead. Each piece is typed the way codegen reads it: `x`
+# as PARSE_FACTOR does (`_arg_name_sid`), a call by its callee's declared return, the receiver of
+# `x.f` / `x.m(..)` as PARSE_FIELD_LOAD does (`_recv_sid`), a method by `<Struct>_<m>`'s return.
+# A call RESULT is typed by its declared return, never by its receiver or its head: the first
+# 6.6.16 cut dropped the method shape, so `println(s.cat(t))` — routed before by `s`'s type,
+# which is right only by luck (`s.len()` went to `_str` the same way) — printed pointer bytes.
+# CHANGELOG [6.6.16]
+fn _str_arg_kind(S, ssid): i64 {
+    var ti = GTI(S);
+    _sca_shape = 0;
+    _sca_di = 0;
+    _sca_d0 = 0;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (_tok_ends_arg(S, ti + 1) == 1) {
+        _sca_op = 2;
+        if (_arg_name_sid(S, TOKVAL(S, ti)) == ssid) { return 1; }
+        return 0;
+    }
+    var o = _gcall_open(S, ti);
+    if (o >= 0) {
+        var r = _str_call_kind(S, ti, o, ssid);
+        return r;
+    }
+    if (TOKTYP(S, ti + 1) != 41) { return 0; }
+    var bsid = _recv_sid(S, TOKVAL(S, ti));
+    var k = _str_step_kind(S, ti + 1, bsid, ssid);
+    return k;
+}
+# `f(..)` / `g<..>(..)` at token `ti`, its `(` at `o`: a Str when the callee is declared `: Str`
+# (for a generic, its template's declared return: a `: T` return is no struct id there, so
+# `id<Str>(s)` is not typed), a data pointer when it is `str_data`; followed by one `.f` /
+# `.m(..)`, that step on the struct the callee returns.
+fn _str_call_kind(S, ti, o, ssid): i64 {
+    _sca_shape = 1;
+    if (o != ti + 1) { _sca_shape = 2; }
+    _sca_op = 0;
+    var e = _tok_close_paren(S, o);
+    if (e < 0) { return 0; }
+    var cfi = FINDFN(S, TOKVAL(S, ti));
+    var rs = 0;
+    if (cfi >= 0) { rs = GFRS(S, cfi); }
+    if (rs <= 0) { if (cfi >= 0) { rs = _gen_ret_bound(S, cfi, ti, o); } }   # 6.6.17: `: T`
+    if (_tok_ends_arg(S, e + 1) == 0) {
+        if (TOKTYP(S, e + 1) != 41) { return 0; }
+        var k = _str_step_kind(S, e + 1, rs, ssid);
+        return k;
+    }
+    if (cfi < 0) { return 0; }
+    if (rs == ssid) {
+        _sca_op = 2;
+        return 1;
+    }
+    if (_sca_shape != 1) { return 0; }
+    if (_noff_is(S, TOKVAL(S, ti), "str_data", 8) == 0) { return 0; }
+    if (TOKTYP(S, ti + 2) == 2) { if (e == ti + 3) { _sca_op = 3; } }
+    return 2;
+}
+# The one step `.f` / `.m(..)` whose `.` is at token `di`, on a receiver of struct id `rsid`
+# (0 untyped), when the step ends the argument. A method is a Str when `<Struct>_<m>` (as
+# PARSE_FIELD_LOAD builds it) is declared `: Str` — `s.cat(t)` is, `s.len()` / `s.data()` are
+# not; a field when it is declared `: Str`; `.data` of a Str is its data pointer.
+fn _str_step_kind(S, di, rsid, ssid): i64 {
+    if (TOKTYP(S, di + 1) != 2) { return 0; }
+    if (rsid <= 0) { return 0; }
+    _sca_di = di;
+    if (_sca_d0 == 0) { _sca_d0 = di; }
+    if (TOKTYP(S, di + 2) == 10) {
+        _sca_op = 2;
+        var e = _tok_close_paren(S, di + 2);
+        if (e < 0) { return 0; }
+        if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
+        if (_str_data_call(S, di, e, rsid, ssid) == 1) { return 2; }   # 6.6.17: `x.data()`
+        var mf = _meth_fn_at(S, rsid, TOKVAL(S, di + 1), di + 1);
+        if (mf < 0) { return 0; }
+        if (GFRS(S, mf) == ssid) { return 1; }
+        return 0;
+    }
+    if (_tok_ends_arg(S, di + 2) == 0) {
+        var nk = _str_nested_step(S, di, rsid, ssid);   # 6.6.17: `a.b.name`
+        return nk;
+    }
+    if (rsid == ssid) {
+        _sca_op = 1;
+        if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 1) { return 2; }
+        return 0;
+    }
+    _sca_op = 2;
+    var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+    if (fx < 0) { return 0; }
+    if (GETFTYPE(S, rsid - 1, fx) == ssid) { return 1; }
+    return 0;
+}
+
+# 6.6.17 — `a.b.name`: a field that does not end the argument continues the chain when it is a
+# nested STRUCT and the next step is a field, as PARSE_FIELD_LOAD walks it (`_rlf_more`). A
+# `: Str` field is never stepped INTO (it is a pointer slot, not an inline struct), and a
+# `.m(..)` after a nested field is not parsed at all, so neither is typed.
+fn _str_nested_step(S, di, rsid, ssid): i64 {
+    if (TOKTYP(S, di + 2) != 41) { return 0; }
+    if (TOKTYP(S, di + 3) != 2) { return 0; }
+    if (TOKTYP(S, di + 4) == 10) { return 0; }
+    if (rsid == ssid) { return 0; }
+    var fx = FINDFIELD(S, rsid - 1, TOKVAL(S, di + 1));
+    if (fx < 0) { return 0; }
+    var ft = GETFTYPE(S, rsid - 1, fx);
+    if (ft <= 0) { return 0; }
+    if (ft == ssid) { return 0; }
+    var k = _str_step_kind(S, di + 2, ft, ssid);
+    return k;
+}
+# 6.6.17 — `x.data()` on a Str is its data pointer, the method spelling of `x.data` and
+# `str_data(x)` (I11 named those two and was silent on this one). 1 when the step at `di`, its
+# `)` at `e`, is exactly that.
+fn _str_data_call(S, di, e, rsid, ssid): i64 {
+    if (rsid != ssid) { return 0; }
+    if (e != di + 3) { return 0; }
+    if (_noff_is(S, TOKVAL(S, di + 1), "data", 4) == 0) { return 0; }
+    _sca_op = 1;
+    return 1;
+}
+# 6.6.17 — what a generic declared `: T` returns at THIS call: the struct T is bound to, by the
+# explicit type argument (`g<Str>(..)`) or by the argument the call infers it from (`g(s)`) — the
+# binding `_gen_resolve_call` instantiates on. A peek: no instance is minted here. 0 when T is not
+# bound to a struct (the call returns a scalar, as before).
+fn _gen_ret_bound(S, fi, ti, o): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    var w = _gen_ret_tparam(S, fi);
+    if (w < 0) { return 0; }
+    var c = 0;
+    if (o != ti + 1) { c = _gen_explicit_targ(S, ti, w); }
+    else { c = _gen_infer_tp(S, fi, o, w); }
+    if (c > 0) { return c; }
+    return 0;
+}
+# Which type parameter (0 / 1) generic `fi` names as its return type, read from its signature
+# (`fn g<T>(..): T`), else -1.
+fn _gen_ret_tparam(S, fi): i64 {
+    var tp = GFTP(S, fi);
+    if (tp == 0) { return 0 - 1; }
+    var ds = GFDS(S, fi);
+    if (ds <= 0) { return 0 - 1; }
+    var i = ds;                                  # the fn's name (GFDS = the `fn` token + 1)
+    var n = GTCNT(S);
+    while (i < n) { if (TOKTYP(S, i) == 10) { break; } i = i + 1; }
+    var e = _tok_close_paren(S, i);
+    if (e < 0) { return 0 - 1; }
+    if (TOKTYP(S, e + 1) != 49) { return 0 - 1; }
+    if (TOKTYP(S, e + 2) != 2) { return 0 - 1; }
+    var rn = TOKVAL(S, e + 2);
+    var t0 = tp & 0xFFFFFFFF;
+    var t1 = (tp >> 32) & 0xFFFFFFFF;
+    if (t0 != 0) { if (rn == t0 - 1) { return 0; } }
+    if (t1 != 0) { if (rn == t1 - 1) { return 1; } }
+    return 0 - 1;
+}
+# The struct named by explicit type argument `w` of the call at `ti` (`g<A>(` / `g<A, B>(`), when
+# it is a single name; 0 otherwise (a scalar or a nested generic is not a Str).
+fn _gen_explicit_targ(S, ti, w): i64 {
+    var a = ti + 2;
+    if (w == 1) {
+        if (TOKTYP(S, a + 1) != 31) { return 0; }
+        a = a + 2;
+    }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 20) { if (nt != 31) { return 0; } }
+    var sid = FINDSTRUCT(S, TOKVAL(S, a));
+    return sid;
+}
+
+# The argument as written: the head (`x`, `f(..)`, `g<..>(..)`), then its step (`.f`, `.m(..)`).
+fn _sca_print_arg(S): i64 {
+    _sca_print_head(S);
+    if (_sca_di > 0) {
+        var d = _sca_d0;
+        while (d < _sca_di) {                     # the nested fields before the last step
+            _ew(".", 1);
+            PRSTR(S + 0xEC00000 + TOKVAL(S, d + 1));
+            d = d + 2;
+        }
+        _ew(".", 1);
+        PRSTR(S + 0xEC00000 + TOKVAL(S, _sca_di + 1));
+        if (TOKTYP(S, _sca_di + 2) == 10) { _sca_print_call_args(S, _sca_di + 1); }
+    }
+    return 0;
+}
+fn _sca_print_head(S): i64 {
+    var ti = GTI(S);
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    if (_sca_shape == 1) { _sca_print_call_args(S, ti); }
+    if (_sca_shape == 2) { _ew("<..>(..)", 8); }
+    return 0;
+}
+# A call's argument list as the message shows it: `()`, `(x)` for one bare IDENT, else `(..)`.
+fn _sca_print_call_args(S, ti): i64 {
+    if (TOKTYP(S, ti + 2) == 11) {
+        _ew("()", 2);
+        return 0;
+    }
+    if (TOKTYP(S, ti + 2) == 2) { if (TOKTYP(S, ti + 3) == 11) {
+            _ew("(", 1);
+            PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2));
+            _ew(")", 1);
+            return 0;
+        } }
+    _ew("(..)", 4);
+    return 0;
+}
+fn _sca_print_op(S): i64 {
+    var ti = GTI(S);
+    if (_sca_op == 0) { _ew("..", 2); }
+    if (_sca_op == 1) { _sca_print_head(S); }
+    if (_sca_op == 2) { _sca_print_arg(S); }
+    if (_sca_op == 3) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2)); }
+    return 0;
+}
+
+# A Str-taking sibling of callee `fi` at param `argc`: its `<base>_str` overload, else
+# `<stem>_str` for a callee named `<stem>_cstr` (bayan's `_by_cstr` / `_by_str` pair) — counted
+# only when that sibling's param `argc` is annotated `: Str`. -1 when there is none.
+fn _sca_sibling(S, fi, argc): i64 {
+    var sib = L64(_fnt_ovstr + fi * 8) - 1;
+    if (sib < 0) { sib = _sca_cstr_sibling(S, fi); }
+    if (sib < 0) { return 0 - 1; }
+    if (_pm_str(sib, argc) == 0) { return 0 - 1; }   # 6.6.17 (a10)
+    return sib;
+}
+fn _sca_cstr_sibling(S, fi): i64 {
+    var noff = L64(_fnt_names + fi * 8);
+    var nm = S + 0xEC00000 + noff;
+    var n = 0;
+    while (load8(nm + n) != 0) { n = n + 1; }
+    if (n < 6) { return 0 - 1; }
+    if (n > 250) { return 0 - 1; }
+    if (_noff_is(S, noff + n - 5, "_cstr", 5) == 0) { return 0 - 1; }
+    var buf[256];
+    var j = 0;
+    while (j < n - 4) {
+        store8(&buf + j, load8(nm + j));
+        j = j + 1;
+    }
+    store8(&buf + n - 4, 115);
+    store8(&buf + n - 3, 116);
+    store8(&buf + n - 2, 114);
+    var r = _FINDFN_CSTR(S, &buf, n - 1);
+    return r;
+}
+
+# Warn when the argument at the cursor hands callee `fi`'s `: cstring` param `argc` a Str or a
+# Str's data pointer. Read-only: never moves the cursor, never emits code. The hint never says
+# `str_data` — that is the bug, not the fix.
+fn _check_str_cstring_arg(S, fi, argc, noff): i64 {
+    if (fi < 0) { return 0; }
+    if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
+    if (_pm_cstr(fi, argc) == 0) { return 0; }   # 6.6.17 (a10)
+    var ssid = _STR_SID(S);
+    if (ssid <= 0) { return 0; }
+    var k = _str_arg_kind(S, ssid);
+    if (k == 0) { return 0; }
+    if (_warn_seen(GTI(S), "_check_str_cstring_arg", ((fi * 31 + argc) * 31 + noff) * 4 + k) == 1) { return 0; }   # 6.7.15
+    _ew("warning:", 8);
+    _err_head(S);
+    if (k == 1) { _ew(": passing Str-typed '", 21); }
+    else { _ew(": passing a Str's data pointer '", 32); }
+    _sca_print_arg(S);
+    _ew("' to '", 6);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+    _ew("' which expects a cstring", 25);
+    if (k == 1) { _ew(" (a Str is a {data, len} header, not a char*)\n", 46); }
+    else { _ew(" (a Str's bytes are not NUL-terminated at its length)\n", 54); }
+    _sca_print_hint(S, fi, argc);
+    return 0;
+}
+fn _sca_print_hint(S, fi, argc): i64 {
+    _ew("  hint: ", 8);
+    var sib = _sca_sibling(S, fi, argc);
+    if (sib >= 0) {
+        _ew("call '", 6);
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + sib * 8));
+        _ew("', which takes a Str, or ", 25);
+    }
+    _ew("pass str_cstr(", 14);
+    _sca_print_op(S);
+    _ew(") for a NUL-terminated copy, or annotate the param `: Str`\n", 59);
+    return 0;
+}
+
+# ⭐ 6.6.5 — v6.5.3's integer-literal-into-`: cstring` HARD ERROR, extracted from
+# PARSE_FNCALL's argument loop so the method-call path runs it too. v6.5.3 escalated this
+# from a warning to an error precisely because the alternative is a runtime crash — the
+# callee derefs the number as a char*. The method path never had it: measured on 6.6.4 and
+# on the first two cuts of this bite, `w.pr(42)` into `fn pr(self, p: cstring)` compiled
+# clean and SIGSEGV'd (rc 139), while the identical `free_pr(0, 42)` was refused at compile
+# time. `0` stays EXEMPT — it is the idiomatic NULL for a cstring param. Does not move the
+# cursor; returns 0 always (the arg is still pushed by the caller's normal path, so ONE
+# compile reports EVERY bad site — the v6.4.62 multi-error contract). CHANGELOG [6.6.5]
+fn _check_int_lit_cstring_arg(S, fi, argc, noff): i64 {
+    if (fi < 0) { return 0; }
+    if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
+    if (PEEKT(S) != 1) { return 0; }
+    if (PEEKV(S) == 0) { return 0; }
+    if (_pm_cstr(fi, argc) == 0) { return 0; }   # 6.6.17 (a10)
+    if (_derr_seen(GTI(S), "_check_int_lit_cstring_arg", (fi * 31 + argc) * 31 + noff, 0) == 1) { return 0; }   # 6.7.15
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": passing integer literal ", 26);
+    PRNUM(PEEKV(S));
+    _ew(" to '", 5);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+    _ew("' which expects a cstring (a POINTER, not a number)\n", 52);
+    _ew("  hint: the value is a NUMBER — use the _int variant if one exists (e.g. println_int), or fmt_int_buf to render it\n", 117);
+    _had_error = 1;
+    return 0;
+}
+
+# ⭐ 6.6.5 — the v5.10.38 value-form SIMD argument RECORDING, extracted for the same reason.
+# A SIMD-class param is NOT pushed with the int args: it is recorded here and loaded into
+# XMM/V after ECALLPOPS (`_simd_arg_second_pass`), so int-arg evaluation cannot clobber the
+# vector registers. The method-call path had neither half and pushed the vector as an int
+# arg, which shifted every LATER argument by one register. Measured on 6.6.4 and on the
+# first cut of this bite: `h.vmix(2, v, 3)` returned 927 where the identical free fn
+# returned 923 — `j` received the vector's low half. `tbl` is the CALLER's scratch table
+# (a local, so a nested call cannot clobber it). Returns the number of XMM slots consumed
+# (1 for a 16-byte vector, 2 for 32-byte). CHANGELOG [6.6.5]
+var _sar_fi = 0 - 1;   # 6.7.13: the callee `_simd_arg_record`'s argument is passed to (cybs's 6-parameter cap)
+fn _simd_arg_record(S, cls, tbl, cnt, pc, want): i64 {
+    var lli = _sar_src(S, _sar_fi, cls, want);   # 6.7.13 (D30): a local, or a call's temp; -1 refused
+    store64(tbl + cnt * 24, lli);
+    store64(tbl + cnt * 24 + 8, pc);
+    store64(tbl + cnt * 24 + 16, cls);
+    if (cls == 2) { return 2; }
+    return 1;
+}
+
+# ⛔ 6.7.13 (D30 A, the user's decision, 2026-10-15) — A VECTOR CALL RESULT PASSED TO A VALUE-FORM VECTOR PARAMETER IS
+# PASSED. `lanes(mkv(4, 2))` and `f64v2_add(a, mkv(3, 4))` were refused on x86_64 / aarch64 / cx with the v5.10.38 scope
+# wording ("value-form SIMD arg: IDENT not found as a local") and a cascade ("expected ';', got number 4": the IDENT was
+# consumed, the `(` left); on Win64 the value push handed the callee lane 0 as the vector's address (exit 5). A value-form
+# parameter is the callee's vector local, which takes a call declared to return the vector (6.7.11's D32), and D27
+# (6.7.12) passes such a call to a `*V` parameter through a frame temp: the same here. The whole argument at the cursor
+# (`fi`'s parameter of class `cls`, `want` its 32-byte type), consumed: a local — its slot, checked by the class as ever;
+# a call declared to return a vector (`_svc_rs`: by name, `g<T>(..)`, `&f` through fncallN / callptr, a method) — received
+# into anonymous slots (`_vrcv_emit`; the second pass loads them after ECALLPOPS, and nothing names them, so no later
+# argument writes them), their slot; anything else — or a call of another vector type, or one at top level (no frame:
+# D40) — refused by name, once, and skipped to its `,` / `)`: -1. CHANGELOG [6.7.13]
+fn _sar_src(S, fi, cls, want): i64 {
+    var ti = GTI(S);
+    var r = _sar_take(S, fi, cls, want, 0 - 1);
+    if (r != 0 - 2) { return r; }
+    _sar_none(S, ti, fi);
+    return 0 - 1;
+}
+# The value-form vector argument at token `ti` (the cursor) that no source arm took: refused by name (`_sar_err`) — or
+# (6.7.14) a call naming no fn, inside any parentheses (`_vrcv_nofnw`), left to the value parse, so the call registers
+# and the undefined-function path names it (no binary: its error; under --allow-undef the call traps), where "got
+# `f64v2_splat`" was the only line — and skipped to its `,` / `)`. Shared with the inline replay. 0.
+fn _sar_none(S, ti, fi): i64 {
+    var e = _arg_next(S, ti);
+    if (_vrcv_nofnw(S, ti, e) == 1) { PCMPE(S); }
+    else { _sar_err(S, ti, fi); }
+    STI(S, e);
+    return 0;
+}
+# ⛔ 6.7.14 — PARENTHESES WRAPPING A WHOLE VALUE-FORM VECTOR ARGUMENT ARE TRANSPARENT, as for every other aggregate
+# destination (6.7.6, 6.7.11; 6.7.13's D17 / D19): `lanesn((v))` and `lanesn((mkv(4, 2)))` were refused on x86_64 /
+# aarch64 / cx ("got `(...)`") where Windows passed them (`_sarg_paren`). The whole argument at the cursor, inside any
+# parentheses wrapping all of it (`_pwrap_in`: `(v) + 1` and a tuple literal wrap nothing), into a value-form parameter
+# of class `cls` / `want` of `fi` (`_sar_one`), the wrap's `)`s consumed: its slot (`_sar_lcl` 1: a local's own,
+# nothing copied; else the slot `dst` it was received into, -1: anonymous slots of its type), or -1 (refused by its own
+# rule, skipped); -2 = no such source, nothing moved. Shared by the call's record (`_sar_src`) and the inline replay
+# (`_inl_simd_arg`); Win64's gate peels the same way (`_sarg_pe_vform`). CHANGELOG [6.7.14]
+var _sar_ti = 0;   # 6.7.14: the whole argument's first token (before any wrap) — what a refusal inside it names
+fn _sar_take(S, fi, cls, want, dst): i64 {
+    var ti = GTI(S);
+    _sar_ti = ti;
+    var c = _pwrap_in(S, ti);
+    if (c < 0) { c = _vmc_phead(S, ti); }   # 6.7.16: a vector method on a parenthesised head, `(*ps).mv()`
+    if (c < 0) { return 0 - 2; }
+    STI(S, c);
+    var r = _sar_one(S, fi, cls, want, dst);
+    if (r == 0 - 2) {
+        STI(S, ti);
+        return r;
+    }
+    _pw_close(S, c - ti);
+    return r;
+}
+# The source at the cursor, unwrapped: a local of the parameter's class (checked by it, as ever), (6.7.14) a closure's
+# captured vector (`_sar_cap`), a `*V` dereference (`_sar_deref`), else a call declared to return a vector
+# (`_sar_vcall`; `_sar_lcl` is set after them: a nested call's argument sets it too).
+fn _sar_one(S, fi, cls, want, dst): i64 {
+    var c = GTI(S);
+    var li = _spv_local(S, c);
+    if (li >= 0) {
+        STI(S, c + 1);
+        _simd_arg_typecheck(S, cls, GLTYPE(S, li), want);
+        _sar_lcl = 1;
+        return li;
+    }
+    var r = _sar_cap(S, cls, want, dst);   # 6.7.14 (D31 A): a closure's captured vector
+    if (r == 0 - 2) { r = _sar_deref(S, fi, cls, want, dst); }   # 6.7.14 (D32 A): `*p`
+    if (r == 0 - 2) { r = _sar_vcall(S, fi, cls, want, dst); }
+    _sar_lcl = 0;
+    return r;
+}
+# ⛔ 6.7.14 — A CLOSURE'S CAPTURED VECTOR INTO A VALUE-FORM PARAMETER IS PASSED, AS THE LOCAL IS (D31, the user's
+# decision, 2026-10-16: A). `|k| lanes(b)` with `b` a captured f64v2 and `fn lanes(x: f64v2)` was refused on every
+# target ("a value-form vector argument to 'lanes' is a local of its type .. - got `b`"), where `lanes(b)` on the local
+# passes: the record took a FINDLOCAL local, and a capture lives in the closure's env. 6.7.13's D32 gave a captured
+# vector the local's rules for a pointer parameter; this is the value-form half. The whole name at the cursor, a
+# captured vector (`_spv_cap`) — checked by the class rule a local of its type meets (`_simd_arg_typecheck`, its words)
+# — has its env words (`&env[woff]`) copied into slot `dst` (-1: anonymous slots of its type) here, before ECALLPOPS,
+# and that slot is what the vector second pass loads (the inline replay: the parameter's own slots). Another class is
+# refused (-1); not a captured vector: -2. Win64 pushes the capture's address (`_spv_one`). CHANGELOG [6.7.14]
+fn _sar_cap(S, cls, want, dst): i64 {
+    var c = GTI(S);
+    var t = _spv_cap(S, c);
+    if (t == 0) { return 0 - 2; }
+    STI(S, c + 1);
+    _simd_arg_typecheck(S, cls, t, want);
+    if (_sar_vok(S, cls, t, want) == 0) { return 0 - 1; }
+    return _cap_vcopy(S, TOKVAL(S, c), t, dst);
+}
+# ⛔ 6.7.14 — A `*V` DEREFERENCE INTO A VALUE-FORM PARAMETER COPIES THE VECTOR THROUGH THE POINTER (D32, the user's
+# decision, 2026-10-16: A). `lanes(*pb)` with `pb: *f64v2` and `fn lanes(x: f64v2)` was refused on x86_64 / aarch64 / cx
+# ("got `*pb`") and compiled to a page fault on Win64 (lane 0 taken as the vector's address: exit 5). 6.7.13's D34 made
+# `var v: f64v2 = *p;` copy through the pointer and D27 passes `*pv` to a `*V` parameter as pv: `*pv` has one meaning at
+# every destination, and a value-form parameter is the callee's vector local (D30). The whole dereference at the cursor
+# (`_sar_dsrc`) — its vector checked by the class rule a local of that type meets (`_simd_arg_typecheck`, its words) —
+# is copied through the pointer into slot `dst` (-1: anonymous slots of its type) here, before ECALLPOPS, the slot the
+# vector second pass loads (the inline replay: the parameter's own slots); Win64 pushes the pointer itself, the
+# address its callee copies from (`_spv_one`). A `*q` naming no vector is refused by name; another class: -1; no whole
+# dereference: -2. CHANGELOG [6.7.14]
+fn _sar_deref(S, fi, cls, want, dst): i64 {
+    var vd = _sar_dsrc(S, fi);
+    if (vd == 0 - 1) { return 0 - 2; }
+    if (vd == 0) { return 0 - 1; }
+    _simd_arg_typecheck(S, cls, 0 - vd, want);
+    if (_sar_vok(S, cls, 0 - vd, want) == 0) { return 0 - 1; }
+    _vec_desc(S, 0 - vd);
+    var n = GVEC_NSLOTS(S);
+    if (dst < 0) { dst = _agg_temp_t(S, n, 0 - vd); }
+    return _sar_copy_ra(S, dst, n);
+}
+# The whole dereference `* E` at the cursor (any wrap peeled; `,` / `)` after it, no operator splitting it, as the
+# vector local's `_vrcv_dsrc` reads one), in a fn (its copy needs the frame): E is parsed — rax = the pointer, left
+# there — and its vector read from its step word or an `&x` of a vector (`_dop_vd`: a `*V` local, parameter, capture,
+# field, global, `: *V` call, `**V`'s `*pp`, `&b`): that descriptor (>= 2048). 0 = E names no vector: refused by name at
+# the argument (`_sar_ti`), once — not after E's own parse reported — the cursor at the source's end. -1 = no whole
+# dereference here, nothing moved.
+fn _sar_dsrc(S, fi): i64 {
+    var a = GTI(S);
+    if (TOKTYP(S, a) != 8) { return 0 - 1; }
+    if (GINFN(S) != 1) { return 0 - 1; }
+    var e = _arg_next(S, a);
+    if (e - a < 2) { return 0 - 1; }
+    if (_gz_split(S, a, e) != 0 - 1) { return 0 - 1; }
+    var ti = _sar_ti;
+    var he = _had_error;
+    var en = _err_n;
+    STI(S, a + 1);
+    PARSE_FACTOR(S);
+    var vd = 0;
+    if (GTI(S) == e) { vd = _dop_vd(S, a + 1, e); }
+    if (vd != 0) { return vd; }
+    if (_own_err(en, he) == 1) { he = 2; }   # 6.7.17: after an earlier error too
+    if (he != 2) { _sar_err(S, ti, fi); }
+    STI(S, e);
+    return 0;
+}
+# The vector type (its SLTYPE) of the closure capture a whole argument at token `ti` names (`,` or `)` after it, no
+# local of that name: `_cl_cap_vec`), else 0.
+fn _spv_cap(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var nx = TOKTYP(S, ti + 1);
+    if (nx != 31) { if (nx != 11) { return 0; } }
+    if (FINDLOCAL(S, TOKVAL(S, ti)) >= 0) { return 0; }
+    return _cl_cap_vec(S, TOKVAL(S, ti));
+}
+# rax = the address of the captured vector `noff`'s words in the closure's env (`&env[woff]`).
+fn _cap_vaddr(S, noff): i64 {
+    return _CL_CAP_WORDS_RA(S, _cl_cap_find(_cl_snap_find(S, noff)));
+}
+# The captured vector `noff` (type `t`) copied into slot `dst` (-1: anonymous slots of its type, `_agg_temp_t`) — the
+# slot.
+fn _cap_vcopy(S, noff, t, dst): i64 {
+    _vec_desc(S, t);
+    var n = GVEC_NSLOTS(S);
+    if (dst < 0) { dst = _agg_temp_t(S, n, t); }
+    _cap_vaddr(S, noff);
+    return _sar_copy_ra(S, dst, n);
+}
+# rax = a vector's address: its `n` words copied into the slots of the vector at slot `dst`, the address kept on the
+# stack between words — no frame temp: an `#inline` replay's arguments run before it releases its window (`SFLC` back
+# to its parameters), so a temp taken there would lie past the frame. `_agc_copy_bytes`'s primitives. Returns `dst`.
+fn _sar_copy_ra(S, dst, n): i64 {
+    var i = 0;
+    while (i < n) {
+        EPUSHR(S);
+        EMOVCA(S);
+        if (i > 0) { EADDIMM_X1(S, i * 8); }
+        EFIELD_LOAD_W(S, 8);
+        EPUSHR(S);
+        _agc_addr_x1(S, dst, 0 - 1, i * 8);
+        EPOPR(S);
+        ESTOC(S);
+        EPOPR(S);
+        i = i + 1;
+    }
+    return dst;
+}
+# The whole argument at the cursor when it is a call declared to return a vector (`_svc_rs`), into a value-form
+# parameter of class `cls` / `want` of `fi`: received into slot `dst` (-1: anonymous slots of its type) — that slot; a
+# vector the local rule refuses (`_sar_vok`) or a call at top level: refused by name, the argument skipped (-1); not
+# such a call: -2, nothing moved.
+fn _sar_vcall(S, fi, cls, want, dst): i64 {
+    var rs = _svc_rs(S, GTI(S));
+    if (rs == 0) { return 0 - 2; }
+    var bad = 0;
+    if (_sar_vok(S, cls, rs, want) == 0) {
+        ERR_IDENT(S, "cannot pass ", _svc_nm, " to a parameter of a different vector type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+        bad = 1;
+    } elif (GINFN(S) != 1) {
+        _svc_toplevel_err(S);
+        bad = 1;
+    }
+    if (bad == 1) {
+        STI(S, _arg_next(S, GTI(S)));
+        return 0 - 1;
+    }
+    _vec_desc(S, rs);
+    if (dst < 0) { dst = _agg_temp_t(S, GVEC_NSLOTS(S), rs); }
+    _vrcv_k = 0;
+    _vrcv_emit(S, dst, rs, _svc_k);
+    return dst;
+}
+# 1 = a vector of local type `rs` passes a value-form parameter of class `cls` (`want` its 32-byte type), by the rule
+# a local of that type meets (`_simd_arg_typecheck`): any 16-byte vector, exactly f32v4, exactly the 32-byte one.
+fn _sar_vok(S, cls, rs, want): i64 {
+    if (cls == 1) { return _is_simd128(S, rs); }
+    var w = 0 - 2125;
+    if (cls == 3) { w = 0 - 2121; }
+    elif (want == 2153) { w = 0 - 2153; }
+    if (rs == w) { return 1; }
+    return 0;
+}
+# The class `_simd_arg_typecheck` reads for a value-form parameter of local type `t` (its SLTYPE): 3 = f32v4, 2 = a
+# 32-byte vector, 1 = any other (16-byte) one.
+fn _vf_cls(S, t): i64 {
+    if (t == 0 - 2121) { return 3; }
+    if (_is_simd256(S, t) == 1) { return 2; }
+    return 1;
+}
+# The refusal of a value-form vector argument at token `ti` to `fi` that is no local (6.7.14: or closure capture), no
+# call declared to return a vector and (6.7.14, D32) no dereference of a pointer to one: once, by name, without
+# `_panic` (the caller skips the argument, so the parse stays in step and one compile reports every such argument).
+# Returns 0.
+fn _sar_err(S, ti, fi): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(ti, "_sar_err", fi, 0) == 1) { return 0; }   # 6.7.15: once per site
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": a value-form vector argument to '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+    PRSTR("' is a local of its type, a call declared to return it (by name, a method, or fncallN / callptr with the callee written `&f`) or a dereference of a pointer to its type (`*p`) - got `");
+    _vrcv_offender(S, ti);
+    PRSTR("`\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    STI(S, sv);
+    return 0;
+}
+
+# ⭐ 6.6.6 — ONE ARGUMENT OF AN OWN-CALL LOOP, run through PARSE_FNCALL's callee-mask gates: a
+# value-form vector is RECORDED for the XMM/V second pass (never pushed); anything else is the
+# int-class push behind the `: cstring` literal error, the `: Str` literal wrap and the
+# struct-address push (which is also how a Win64 vector travels — by pointer, in its int slot).
+# `st` is the caller's 3-word state: [int args pushed, vectors recorded, next XMM/V ordinal].
+# The method-call loop grew these gates inline in 6.6.5; the two struct-valued `var` receives
+# (`var p: S = f(...)`, retptr and rax:rdx) had NONE and pushed a vector as an int, so every
+# later int shifted and the callee read a stale XMM0 (SysV/aarch64) or dereferenced the
+# vector's first word as its pointer (Win64 page fault). Every own-call argument loop shares
+# it — those three, and (via `_owncall_args`) the four PE-only vector-retptr loops, whose own
+# copy had the gates but not the arity check. CHANGELOG [6.6.6]
+# The gates, in order (each keyed by the PARAMETER index `uarg`, so any caller that knows the index
+# inherits all of them):
+#   * a SIMD-class parameter (v5.10.38) must be a local vector IDENT; it is recorded, never pushed,
+#     and loaded into XMM/V after ECALLPOPS, so int-arg evaluation cannot clobber the vector regs.
+#   * an integer LITERAL into a param annotated `: cstring` is a hard error (v6.5.3 — the callee
+#     derefs the number; `0`, the idiomatic NULL, is exempt); only an EXPLICIT annotation counts
+#     (v5.10.24). A Str or a Str's data pointer into one warns (6.6.13 I11).
+#   * a string literal into a `: Str` param is wrapped in `str_from` (else the callee reads a raw
+#     cstr as a header).
+#   * a bare inline struct into a struct-pointer param pushes its address (v6.3.36).
+#   * otherwise PCMPE (plus 6.7.3's bool check and 6.7.6's f32 rounding) and EPUSHR.
+# CHANGELOG [5.10.38] [6.5.3] [6.6.5] [6.6.13] [6.3.36]
+fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
+    var cls = _pm_simd(fi, uarg);   # 6.6.17 (a10)
+    if (cls > 0) {
+        var vs = _later_args_may_write(S);   # 6.7.7: its register is loaded after them (`_simd_arg_snap`)
+        var n = load64(st + 8);
+        var o = load64(st + 16);
+        var w = 0;
+        if (cls == 2) { w = _pv32_param(S, fi, uarg); }   # 6.7.13: f64v4 or f32v8
+        _sar_fi = fi;
+        store64(st + 16, o + _simd_arg_record(S, cls, tbl, n, o, w));
+        store64(st + 8, n + 1);
+        if (vs == 1) { _simd_arg_snap(S, tbl, n); }
+        return 0;
+    }
+    _check_int_lit_cstring_arg(S, fi, uarg, noff);
+    _check_str_cstring_arg(S, fi, uarg, noff);   # 6.6.13 I11
+    if (_try_push_str_literal_arg(S, fi, uarg) == 0) { _arg_push_snap(S, fi, uarg, noff, 0); }   # 6.7.7: + its copy
+    store64(st, load64(st) + 1);
+    return 0;
+}
+
+# ⭐ 6.7.7 — THE ONE ARGUMENT MARSHALLER of every direct call to a known callee (cursor just past
+# `(`): every argument through `_call_arg_one`, then `)`, the arity check, ECALLPOPS of the
+# int-class args and the vector loads. `int0` = int args the caller already pushed (x86's retptr;
+# the method form's retptr and `self`). `p0` = the first user parameter's index: 0, or 1 for
+# `o.m(..)`, whose `self` is parameter 0. `line` = the arity message's line (the caller's — the
+# method form names the `(`). Returns the int-class total, for ECALLCLEAN.
+# ⭐ "One call syntax" was never "one call path": PARSE_FNCALL, the method form and the
+# struct-valued receives each grew their own copy of this loop, and each copy missed a gate the
+# others had — the method form shipped with NONE of the four callee-mask gates and no arity check
+# (6.6.5: `h.slen("abcde")` read 0, `h.vmix(2, v, 3)` shifted `j` a register, `w.pr(42)` into a
+# `: cstring` SIGSEGV'd, `q.one(5, 99)` built), the receives had none (6.6.6), and the four
+# WIN64-ONLY vector-retptr calls (`_try_vector_call_assign`, the `_f2c`/`_f4c` receives, the PE
+# `return f(..)`) had no arity check, so `v = f(3)` on a 2-param `f` built clean on PE alone.
+# 6.7.7 folded PARSE_FNCALL's and the method form's loops onto this one, so a call-site obligation
+# is written once. CHANGELOG [6.6.5] [6.6.6] [6.7.7]
+fn _owncall_args_at(S, fi, noff, int0, p0, line): i64 {
+    var tbl: i64[24];   # 8 args x 3 words, a LOCAL — a nested call gets its own (v6.2.1: i64[24])
+    var st: i64[7];     # [0..16] below; [24..48] the named phase's (`_pd_named`)
+    store64(&st, int0);
+    store64(&st + 8, 0);
+    store64(&st + 16, 0);
+    var uarg = p0;
+    if (PEEKT(S) != 11) {
+        var go = 1;
+        while (go == 1) {
+            if (_pd_label_at(S, GTI(S)) == 1) { go = 0; }   # 6.7.7 (B6): a named argument
+            else {
+                _call_arg_one(S, fi, uarg, noff, &tbl, &st);
+                uarg = uarg + 1;
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                else { go = 0; }
+            }
+        }
+    }
+    if (_pd_label_at(S, GTI(S)) == 1) {
+        store64(&st + 24, p0);
+        store64(&st + 32, line);
+        _pd_named(S, fi, noff, uarg, &tbl, &st);   # 6.7.7 (B6): checked whole, then in parameter order
+    } else {
+        # 6.7.14: a missing `)` leaves a `;` / `}` / statement keyword in place, and an unclosed list
+        # has no argument count to judge (`g(1;` also said "'g' expects 2 arguments, got 1").
+        if (_expect_step(S, 11) == 1) { _check_arity_p0(S, line, noff, fi, uarg, 1, p0); }   # `uarg` counts `self`, as `_fnt_params` does (the message does not, 6.7.14)
+        _pd_fill(S, fi, uarg, &st);                 # 6.7.7 (B6): a short call's parameter defaults
+    }
+    var n = load64(&st);
+    ECALLPOPS(S, n);   # int-class args only: a vector was recorded, not pushed
+    _simd_arg_second_pass(S, &tbl, load64(&st + 8));   # after ECALLPOPS: int args cannot clobber XMM/V
+    return n;
+}
+# The plain form (p0 = 0), its line the first argument's (cursor just past `(`).
+fn _owncall_args(S, fi, noff, int0): i64 {
+    return _owncall_args_at(S, fi, noff, int0, 0, GTLINE(S, GTI(S)));
+}

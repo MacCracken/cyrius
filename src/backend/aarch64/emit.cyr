@@ -3009,7 +3009,7 @@ fn ECALLTO(S, target): i64 {
 # 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `b new_off`, so every reference
 # already compiled against it (ECALLTO bakes the entry it saw) reaches the last definition.
 # Returns 1, writing nothing, when the earlier body is too short to hold the branch. See
-# `_fn_redirect` (parse/fn.cyr). CHANGELOG [6.6.20]
+# `_fn_redirect` (parse/fn/def.cyr). CHANGELOG [6.6.20]
 fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
     if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
     var rel = (new_off - old_off) / 4;
@@ -3577,7 +3577,7 @@ fn ESTOREPARM_F64V4(S, simd_ord, named_idx): i64 {
 
 # v6.4.31 — Win64-only value-form SIMD param store (MS x64 by-pointer ABI).
 # Never reached off-PE (_TARGET_PE==0 on aarch64); stub so the shared
-# parse/fn.cyr reference resolves in the aarch64 forks. [[project_v6426]]
+# parse/fn/def.cyr reference resolves in the aarch64 forks. [[project_v6426]]
 # ETERMINATE_PE cross-fork-stub lesson.
 fn ESTOREPARM_SIMD_WIN64(S, pidx, named_idx, nbytes): i64 { return 0; }
 
@@ -3650,7 +3650,7 @@ fn EFLSTORE(S, idx): i64 {
 # local slot `lli` into x0 (EFLADDR) or x1 (EFLADDR_X1) for caller code
 # that needs an &local — struct-field LEA, hidden retbuf-arg push,
 # slice canonical-slot init via `slice_set` / `slice_ptr`. Pre-v5.8.54
-# these were defined in x86/emit.cyr only; parse/decl.cyr (lines 127,
+# these were defined in x86/emit.cyr only; parse/decl.cyr (now parse/decl/; lines 127,
 # 236, 301, 355, 931, 1019, 1060) and parse/expr.cyr:234 call them
 # unconditionally — the aarch64 cross-build emitted "undefined function"
 # warnings + "will crash at runtime" errors. sit v0.7.2 release flow
@@ -3810,12 +3810,12 @@ fn _ESTORE_ODD_X1(S, w): i64 {
     return 0;
 }
 
-# v5.9.40 — sub-byte struct field load (parse/decl.cyr:252).
+# v5.9.40 — sub-byte struct field load (parse/decl/field.cyr).
 # Field-base ptr is in x1 (already advanced to the field start
 # by callers). Emits ldrb/ldrh/ldr w0/ldr x0 by width. Pulled
 # out of an inline `if (_AARCH64_BACKEND == 1)` block into a
 # named helper so the cx backend can sit alongside as a peer
-# without parse/decl.cyr having to grow another arch arm.
+# without parse/decl/field.cyr having to grow another arch arm.
 fn EFIELD_LOAD_W(S, width): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     # v6.3.35: negative width = SIGNED field → sign-extending load from [x1].
@@ -3827,8 +3827,8 @@ fn EFIELD_LOAD_W(S, width): i64 {
 }
 
 # v5.9.40 — struct-by-value return aarch64 byte-copy loop
-# (parse/fn.cyr:339). Pulled out of an inline emit block in
-# parse/fn.cyr so the cx backend's `ESTRUCT_BYVAL_COPY` peer
+# (the `return` path, parse/fn/ret.cyr / ret_agg.cyr). Pulled out of an inline emit block in
+# parse/fn/ so the cx backend's `ESTRUCT_BYVAL_COPY` peer
 # fires from the same call site. Encoding plan (8 instructions):
 #   x9  = fp + src_disp                  (via _EFP_ADDR_X9)
 #   x10 = ldur [fp + stash_disp]         (retptr)
@@ -4671,7 +4671,7 @@ fn EMIT_F64V_AXPY(S, vbase): i64 {
 }
 
 # v6.5.35 — stub. `RA_SCAN_LOOPS` really lives in src/backend/x86/decode.cyr, which this
-# fork does not include; `parse/fn.cyr` is shared by every fork and calls it. Returning -1
+# fork does not include; `parse/fn/def.cyr` is shared by every fork and calls it. Returning -1
 # means "no loop information", which the caller must already handle by falling back to the
 # conservative whole-function interval extent — so the picker behaves exactly as it did
 # before v6.5.35 here. (The x86 regalloc post-pass does not run on these targets anyway;

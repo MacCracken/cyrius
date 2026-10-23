@@ -283,7 +283,7 @@ refused r15b "fn 'f' is defined twice and declares parameter defaults" "R15b: th
 exits r17 56 "R17: a fn inside a top-level block takes defaults (pass 1 records it): a call above the block" 'var r = g(5, 6);\nif (1 == 1) {\n    fn g(a, b = 1): i64 { return a * 10 + b; }\n}\nsyscall(60, r);\n'
 refused r18 "a closure's parameters take no defaults" "R18: a closure parameter default" "fn main(): i64 { var c = |a, b = 1| a + b; return 0; }\nsyscall(60, main());\n" "1:32"
 # R18t-R18z (6.7.14, issues/archived/2026-10-16-typed-closure-parameter-refusal-cascades.md): a TYPED closure parameter is
-# refused by the rule at its `:`, the type stepped over as D18 steps over a default (`_cl_typed_refuse`, parse/fn.cyr).
+# refused by the rule at its `:`, the type stepped over as D18 steps over a default (`_cl_typed_refuse`, parse/fn/call_named.cyr).
 # It was "expected unknown, got ':'" + "undefined variable 'i64'" (the type parsed as the body), five errors for a
 # block body, and nested beside an enclosing `m` the pre-scan captured `m` ("needs lib/alloc.cyr"). Mutations: the
 # loop without `_cl_param_tail`'s `:` arm -> RED R18t-R18z ("expected '|', got ':'" and the cascade); `_cl_lit_end`

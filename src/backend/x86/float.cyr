@@ -293,7 +293,7 @@ fn EMIT_F64V_LOOP(S, op, vbase): i64 {
 # on it: a hand-written replica that removes exactly this scaffolding and nothing else runs
 # 33.99 ms against the current 33.96 ms. What pays is removing FORWARDS. This emitter is the
 # enabler — it puts the result store and the `return r` reload ADJACENT, which is what lets the
-# v6.5.53 SLASE peephole (parse/fn.cyr) collapse them; that pair currently sits ~0x31 bytes apart
+# v6.5.53 SLASE peephole (parse/fn/def.cyr) collapse them; that pair currently sits ~0x31 bytes apart
 # and SLASE's own comment records it deleting nothing.
 #
 # ⛔ ENCODING CONSTRAINTS, each of which is a real hazard, not a style choice:

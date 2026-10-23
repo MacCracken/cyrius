@@ -65,7 +65,7 @@
 # fails — and the values are re-derived per leg by the same program built by that leg's compiler.
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree from `git archive HEAD` with the named
-# hunk of src/frontend/parse/fn.cyr reverted, rebuilt with build/cycc, run as CYCC=<mutant>):
+# hunk of src/frontend/parse/fn/ reverted, rebuilt with build/cycc, run as CYCC=<mutant>):
 #   m1 all three sites reverted             -> RED, all 14 refusal rows (host)
 #   m2 PARSE_RETURN refusal only reverted   -> RED, 11 rows: X1-X9 plus X13 and X14, which that
 #                                              one refusal is the only site for; X10-X12 (the
@@ -290,7 +290,7 @@
 #
 # 6.7.15 (issues/archived/2026-10-17-chained-receiver-vector-method-binds-a-word-annotated-refused.md) — a method declared `: V` on a
 # FIELD-CHAIN receiver (`w.s.mv()`, `pw.s.mv()`, `h.w.s.mv()`, `n.ps.mv()`) is the vector where a single name's is: one
-# recogniser (`_vmc_open` -> `_mch_open`, parse/decl.cyr) serves the receives, D37's untyped declaration, D38's scalar
+# recogniser (`_vmc_open` -> `_mch_open`, parse/decl/vector.cyr) serves the receives, D37's untyped declaration, D38's scalar
 # refusals, the value-form and `*V` arguments (`_svc_rs`) and D39's return. Before: the untyped declaration bound one word
 # (x86_64 104, IR=3 40, aarch64 144, cx 98, PE 195 — garbage, per build), the annotated declaration, the assignment, the
 # value-form argument and the return were refused "got `w`", `rd(w.s.mv())` into a `*f64v2` pushed lane 0 as the address
@@ -5504,18 +5504,18 @@ for row in $REFUSE_ROWS $ACCEPT_ROWS $V_ROWS $Y_ROWS $E_ROWS $Z_ROWS $C_ROWS $Q_
     if [ "$(r_src "$row"; a_src "$row"; v_src "$row"; y_src "$row"; e_src "$row"; z_src "$row"; c_src "$row"; q_src "$row"; p_src "$row"; k_src "$row"; h_src "$row"; t_src "$row"; u_src "$row"; d_src "$row"; dk_src "$row"; m_src "$row"; mk_src "$row"; cr_src "$row"; crk_src "$row"; nk_src "$row"; n_src "$row"; wr_src "$row"; wrk_src "$row"; ga_src "$row"; gc_src "$row"; tl_src "$row"; gt_src "$row"; op_src "$row"; opc_src "$row"; rv_src "$row"; rvc_src "$row"; sx_src "$row"; va_src "$row"; vac_src "$row"; vas_src "$row"; vo_src "$row"; vos_src "$row"; voc_src "$row"; ws_src "$row"; wf_src "$row"; fw_src "$row"; vn_src "$row"; vns_src "$row"; vg_src "$row"; vs_src "$row"; vsk_src "$row"; vco_src "$row"; vl_src "$row"; vls_src "$row"; vlc_src "$row"; ver_src "$row"; vtw_src "$row"; vd_src "$row"; vdk_src "$row"; vds_src "$row"; vy_src "$row"; vyc_src "$row"; vyd_src "$row"; vyds_src "$row"; ap_src "$row"; apc_src "$row")" = "" ]; then bad "row $row has no source in any table"; fi
 done
 # And the message this gate greps for must still be the one the compiler emits.
-n=$(grep -c "$MSG" src/frontend/parse/fn.cyr || true)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/fn.cyr no longer spells '$MSG' — reworded?"
-n=$(grep -c "$MSGV" src/frontend/parse/decl.cyr || true)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$MSGV' — reworded?"
-n=$(grep -c "$HINT" src/frontend/parse/decl.cyr || true)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$HINT' — reworded?"
-n=$(grep -c "$VAM" src/frontend/parse/decl.cyr || true)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$VAM' — reworded?"
-n=$(grep -c "$VLD - '" src/frontend/parse/decl.cyr || true)   # 6.7.17 (D24)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$VLD - ' — reworded?"
-n=$(grep -c "$VDT" src/frontend/parse/decl.cyr || true)   # 6.7.17 (D95)
-[ "$n" -ge 1 ] || bad "src/frontend/parse/decl.cyr no longer spells '$VDT' — reworded?"
+n=$(cat src/frontend/parse/fn/*.cyr | grep -c "$MSG" || true)   # 6.7.18: parse/fn.cyr, split into parse/fn/
+[ "$n" -ge 1 ] || bad "src/frontend/parse/fn/ no longer spells '$MSG' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$MSGV" || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$MSGV' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$HINT" || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$HINT' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$VAM" || true)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$VAM' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$VLD - '" || true)   # 6.7.17 (D24)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$VLD - ' — reworded?"
+n=$(cat src/frontend/parse/decl/*.cyr | grep -c "$VDT" || true)   # 6.7.17 (D95)
+[ "$n" -ge 1 ] || bad "src/frontend/parse/decl/ no longer spells '$VDT' — reworded?"
 
 echo "simd_return_shapes: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.

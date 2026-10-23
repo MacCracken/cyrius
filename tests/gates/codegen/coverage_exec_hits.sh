@@ -913,7 +913,7 @@ EOF
 printf '%s\n1 <source>:3 P_sum\n1 <source>:6 run\n' "$HDR" > "$T/f4.want"
 printf '#naked\nfn nk() { syscall(60, 77); }\nfn f(): i64 { return 1; }\nvar r = f();\n' > "$T/f6.cyr"
 printf '%s\n- <source>:2 nk\n1 <source>:3 f\n' "$HDR" > "$T/f6.want"
-# cx ignores `#naked` (parse/fn.cyr: the attribute is not taken on cx — it has no raw-asm body), so
+# cx ignores `#naked` (parse/fn/def.cyr: the attribute is not taken on cx — it has no raw-asm body), so
 # there `nk` is an ordinary fn, instrumented and never entered: no record at all
 printf '%s\n1 <source>:3 f\n' "$HDR" > "$T/f6cx.want"
 F6W="$T/f6.want"; F6N=""

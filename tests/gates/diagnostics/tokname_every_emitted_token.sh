@@ -7,7 +7,8 @@
 # per-fn string-literal ceiling; not TOKNAME_BUILTIN, whose table IS the reserved set).
 #
 #   axis 1  the derivation (issues/archived/2026-10-08-tokname-operator-tokens-unnamed.md): every number in an
-#           `ADDTOK(S, N` of src/frontend/{lex,parse}/*.cyr or a `return N` of LEXKW_EXT, minus 0 (LEXKW_EXT's
+#           `ADDTOK(S, N` of a .cyr under src/frontend/{lex,parse}/ (recursive since 6.7.18: parse/fn/, parse/decl/)
+#           or a `return N` of LEXKW_EXT, minus 0 (LEXKW_EXT's
 #           "not a keyword"), has an arm in TOKNAME, TOKNAME_OP or TOKNAME_BUILTIN. A floor on the
 #           emitted set keeps a regex that matches nothing from passing. 6.7.17: and every `return N * 16` of
 #           LEXATTRWORD (src/frontend/lex/attr.cyr) — the `#` attributes, emitted as `ADDTOK(S, atk >> 4, 0)`, which
@@ -32,7 +33,7 @@ fail=0; rows=0
 bad() { echo "  FAIL: tokname_every_emitted_token $1"; fail=$((fail + 1)); }
 
 # axis 1 — the derivation.
-{ grep -ohE "ADDTOK\(S, *[0-9]+" src/frontend/lex/*.cyr src/frontend/parse/*.cyr | grep -oE "[0-9]+$"
+{ grep -rohE --include='*.cyr' "ADDTOK\(S, *[0-9]+" src/frontend/lex src/frontend/parse | grep -oE "[0-9]+$"
   awk '/^fn LEXKW_EXT/,/^}/' src/frontend/lex/lex.cyr | grep -oE "return [0-9]+" | grep -oE "[0-9]+"
   awk '/^fn LEXATTRWORD/,/^}/' src/frontend/lex/attr.cyr | grep -oE "return [0-9]+ \* 16" | grep -oE "[0-9]+ " | tr -d ' '; } \
   | grep -vx 0 | sort -u > "$D/em"

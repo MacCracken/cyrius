@@ -1251,10 +1251,13 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_requires_summary.sh"
 # helper. With no HOME at all the libssl groups of tls_libssl_read_errors / _session_cache /
 # _worker_thread SKIPped on every check.sh run; the invoking HOME is still never reached.
 _chk_gate "$ROOT/tests/gates/toolchain/check_tcyr_home_has_helper.sh"
-# 6.6.17 (g4): the path-A drift row reads each src/frontend/parse/*.cyr WHOLE, sized by fstat,
+# 6.6.17 (g4): the path-A drift row reads each src/frontend/parse/ file WHOLE, sized by fstat,
 # through its last fn. It read a fixed 256 KB, and parse_decl / parse_expr / parse_fn had
 # outgrown that, so a direct emit in their tails was never scanned.
 _chk_gate "$ROOT/tests/gates/toolchain/check_parse_drift_reads_whole.sh"
+# 6.7.18: the CVE-05 NPOS_GUARD scan fails BY NAME on a file it names and cannot find — it skipped one in
+# silence, so a split or a rename under its list scanned nothing and read PASS.
+_chk_gate "$ROOT/tests/gates/toolchain/check_cve05_scan_names_missing.sh"
 # 6.6.12 B12 (T4): a .tcyr whose data file is missing fails WITH A COUNT, never a signal.
 # text/unicode_normconf.tcyr run outside the repo root printed its FAIL, then stored its
 # terminator at corpus + (-ENOENT) — 2 bytes before a fresh mapping — and died of SIGSEGV
@@ -1469,7 +1472,7 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_kernel_compaction_boots.sh"
 # #deprecated and cx #naked rows.
 _chk_gate "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
 
-# 6.6.17: the top-level scans (pass 1, pass 2, enum inits) live ONCE in src/frontend/parse/fn_def.cyr
+# 6.6.17: the top-level scans (pass 1, pass 2, enum inits) live ONCE in src/frontend/parse/fn/def.cyr
 # and every src/main*.cyr fork calls them; a fork that re-grows its own copy (reads PEEKT, calls
 # a scan arm) is refused. Static — the byte-identical proof of the DRY is in CHANGELOG [6.6.17].
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_scan_shared.sh"
@@ -2414,6 +2417,9 @@ _chk_gate "$ROOT/tests/gates/diagnostics/decl_after_statement_named.sh"
 # read of a never-parsed body relies on: no raw `syscall(SYS_WRITE, 2, ..)` in the files a parse reaches. Mutation in
 # the header.
 _chk_gate "$ROOT/tests/gates/diagnostics/diagnostic_writer_census.sh"
+# 6.7.18 — every compiler source file a compiled message of cycc names exists: the #derive field cap still said
+# "raise in lex_pp.cyr" after the frontend moves. The gate builds cycc from the tree. Measured RED on the parent.
+_chk_gate "$ROOT/tests/gates/diagnostics/compiled_messages_name_live_files.sh"
 # 6.7.16 — a refusal made in sync (a subscript or `*p` refusal whose statement parses on to its `;`) clears only its
 # latch: the NEXT statement is parsed and its own error reported (`y = pa[0]; y = zz9;` lost zz9's). x86_64,
 # aarch64, cx, PE and Mach-O. Mutation in the header.

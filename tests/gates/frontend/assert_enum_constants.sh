@@ -22,7 +22,7 @@
 # CHANGELOG [6.6.10]
 # ⭐ 6.7.2 (B1, C1): #assert and array sizes are CONST CONTEXTS (the user's decision, 2026-10-07):
 # any const expression — arithmetic, `&&` / `||`, consts, sizeof, const fn calls — evaluated by
-# the one evaluator (`_ce_*`, parse/fn.cyr), which replaced _EVAL_CONST_ATOM / _enum_atom_idx /
+# the one evaluator (`_ce_*`, parse/fn/const_eval.cyr), which replaced _EVAL_CONST_ATOM / _enum_atom_idx /
 # _assert_skip_atom. So `#assert E.EB * 2 == 8` PASSES and `== 9` FAILS as an assertion (both
 # were "no arithmetic inside #assert"); what may follow the expression is unchanged (junk is
 # refused), and the refusals name the name (`unknown name 'foo'`, `'p' is a variable`).

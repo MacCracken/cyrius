@@ -41,45 +41,80 @@ fn _verify_inline(buf, n, pattern, region): i64 {
     return 0;
 }
 
+# One file of the CVE-05 scan. ⛔ 6.7.18: a MISSING file is a failure, by name — it was skipped in silence, so a
+# split or a rename that left a stale path here scanned nothing and still read PASS. CHANGELOG [6.7.18]
+var _cve05_n = 0;
+fn _cve05_scan(path): i64 {
+    _cve05_n = _cve05_n + 1;
+    if (file_exists(path) != 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": the scan's file is missing (moved or renamed? name its new home here): ");
+        println(path);
+        return 1;
+    }
+    if (_file_contains_substr(path, "NPOS_GUARD(S, 256)") == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": magic-256 NPOS_GUARD reappeared in ");
+        println(path);
+        return 1;
+    }
+    return 0;
+}
+
 fn _cve05_guard_gate(): i64 {
     var label = "the compiler heap guard-page gap tok_names mangle-path: no magic-256 NPOS_GUARD in any source-identifier copy site (v5.11.65)";
-    var files[88];
-    store64(&files + 0,  _root_path("src/frontend/parse/decl.cyr"));
-    store64(&files + 8,  _root_path("src/frontend/parse/expr.cyr"));
-    store64(&files + 16, _root_path("src/frontend/parse/fn.cyr"));
-    store64(&files + 24, _root_path("src/frontend/parse/types.cyr"));
-    store64(&files + 32, _root_path("src/main.cyr"));
-    store64(&files + 40, _root_path("src/main_aarch64.cyr"));
-    store64(&files + 48, _root_path("src/main_aarch64_macho.cyr"));
-    store64(&files + 56, _root_path("src/main_aarch64_native.cyr"));
-    store64(&files + 64, _root_path("src/main_cx.cyr"));
-    store64(&files + 72, _root_path("src/main_win.cyr"));
-    store64(&files + 80, _root_path("src/frontend/parse/fn_def.cyr"));   # 6.7.15: split from parse/fn.cyr
-
     var fail = 0;
-    var fi = 0;
-    while (fi < 11) {
-        var path = load64(&files + fi * 8);
-        if (file_exists(path) == 1) {
-            if (_file_contains_substr(path, "NPOS_GUARD(S, 256)") == 1) {
-                _p("  ");
-                _p(ANSI_RED);
-                _p("FAIL");
-                _p(ANSI_RESET);
-                _p(": magic-256 NPOS_GUARD reappeared in ");
-                println(path);
-                fail = fail + 1;
-            }
-        }
-        fi = fi + 1;
-    }
+    _cve05_n = 0;
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/array.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/field.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/struct_lit.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/tuple_lit.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/static_init.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/gvar.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/gvar_init.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/struct_copy.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/vector.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/receive.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/var.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/decl/handle.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/expr.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/table.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/ret.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/call_args.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/ret_agg.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/call_named.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/call_kind.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/call_agg.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/call.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/traits.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/const_eval.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/impl.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/generic.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/body_pass.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/sig.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/types.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/main.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/main_aarch64.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/main_aarch64_macho.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/main_aarch64_native.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/main_cx.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/main_win.cyr"));
+    fail = fail + _cve05_scan(_root_path("src/frontend/parse/fn/def.cyr"));   # 6.7.15: split from parse/fn.cyr
 
     if (fail == 0) {
         _p("  ");
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": no `NPOS_GUARD(S, 256)` in any mangle-path source file (10 files scanned)");
+        _p(": no `NPOS_GUARD(S, 256)` in any mangle-path source file (");
+        print_num(_cve05_n);
+        println(" files scanned)");
     }
     _check(label, fail);
     return fail;

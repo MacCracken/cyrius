@@ -2090,7 +2090,7 @@ fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
         # Process struct (22 fields with `#derive(accessors)`) overflowed field_types →
         # wrong accessor offsets → CR3=0x2 page-fault on first kernel context switch.
         if (fc >= 256) {
-            var cm = "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n";
+            var cm = "error: #derive struct field cap exceeded (max 256 — raise in lex/pp.cyr / S+0x1FC000 region)\n";
             _ew(cm, 95);
             _die(1);
         }
@@ -3272,7 +3272,7 @@ fn PP_DERIVE_STRUCT(tn): i64 {
     if (load64(_pp_derive_codec + (r - 1) * 8) != 1) { return 0; }
     return 1;
 }
-# ⛔ 6.7.16 — WHAT A REGISTRATION WROTE, for a refused declaration's derive step (parse/fn_def.cyr `_dl_dname`): it steps
+# ⛔ 6.7.16 — WHAT A REGISTRATION WROTE, for a refused declaration's derive step (parse/fn/def.cyr `_dl_dname`): it steps
 # only the fns the derive wrote, so it asks which registration `r` (1-based, PP_DERIVE_LAST) emitted — the codecs
 # (`T_to_json` .., PP_DERIVE_CODEC) and, as bits of PP_DERIVE_FAM, the accessors (1: `T_<field>`, `T_set_<field>`) and
 # the shared helpers each is emitted with once per compilation (2 `_cy_enum_name_eq`, 4 `_cy_vecdec_int`, 8

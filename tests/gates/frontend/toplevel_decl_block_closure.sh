@@ -16,7 +16,7 @@
 # was dropped and the exit status was the last global's value. The same `var` AFTER a top-level
 # statement is parsed as a statement and was always correct — which is what the CONTROLS use.
 #
-# THE FIX: one shared skip, `_skip_gvar_decl` (src/frontend/parse/decl.cyr), that ends at the
+# THE FIX: one shared skip, `_skip_gvar_decl` (src/frontend/parse/decl/gvar.cyr), that ends at the
 # first `;` outside every `{ }`, used by PARSE_GVAR_REG (both its plain and destructure arms) and
 # by the pass-2 `var` arm of all SEVEN forks. Only brace depth counts: a `;` inside parens alone
 # is never valid, and row M pins that a malformed `var x = f(1;` does not swallow the file.
@@ -34,7 +34,7 @@
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree whose src/ carries the mutation, built
 # by build/cycc and run as CYCC=<mutant>, so the cx / aarch64 / PE legs are built from it too):
-#   m1 whole fix reverted (6.6.5 parse/decl.cyr + all 7 forks) -> RED rows A-G, cx A-G, a64 A-G, wine A E F, S
+#   m1 whole fix reverted (6.6.5 parse/decl/gvar.cyr + all 7 forks) -> RED rows A-G, cx A-G, a64 A-G, wine A E F, S
 #   m2 _skip_gvar_decl ignores braces (stops at the first `;`)   -> RED rows A-G, cx A-G, a64 A-G, wine A E F
 #   m3 only main.cyr's pass-2 arm reverted (pass 1 fixed)        -> RED rows A-G, S (cx/a64/wine GREEN: other forks)
 #   m4 only main_win.cyr's pass-2 arm reverted                   -> RED wine A E F, S only
@@ -143,7 +143,7 @@ elif ! grep -q "nosuchname_m" "$WORK/m.err"; then
 fi
 
 # S — static 7-fork parity: every fork runs the ONE shared pass-2 scan (6.6.17: _tl_pass2,
-#     src/frontend/parse/fn.cyr), whose `var` arm calls the shared skip, and none still carries
+#     src/frontend/parse/fn/def.cyr), whose `var` arm calls the shared skip, and none still carries
 #     the old first-`;` loop. The fork list is derived, not listed.
 NROWS=$((NROWS + 1))
 NFORK=0
@@ -154,7 +154,7 @@ for fk in "$ROOT"/src/main*.cyr; do
     if grep -q 'while (vsk == 1)' "$fk"; then bad "row S: $(basename "$fk") still carries the first-';' pass-2 skip"; fi
 done
 [ "$NFORK" -ge 7 ] || bad "row S: found $NFORK src/main*.cyr forks, want at least 7"
-n=$(awk 'index($0, "fn _tl_scan2_def(") == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse/fn_def.cyr" | grep -c '_skip_gvar_decl(S, GTI(S));' || true)   # 6.7.17 (FB1): the skip takes its start token
+n=$(awk 'index($0, "fn _tl_scan2_def(") == 1 {on=1} on {print} on && /^}/ {exit}' "$ROOT/src/frontend/parse/fn/def.cyr" | grep -c '_skip_gvar_decl(S, GTI(S));' || true)   # 6.7.17 (FB1): the skip takes its start token
 [ "$n" = "1" ] || bad "row S: the shared pass-2 scan calls _skip_gvar_decl $n times, want 1"
 
 # ---- cx leg: the tree's own cx compiler + cxvm ----

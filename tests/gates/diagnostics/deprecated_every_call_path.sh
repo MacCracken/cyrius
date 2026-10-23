@@ -14,7 +14,7 @@
 #     re-parses of the same tokens (an `#inline` body per expansion, a generic body per instance,
 #     a vector fn's `return` on aarch64/cx) printed the identical line again.
 #
-# ⭐ THE FIX (src/frontend/parse/fn.cyr): one per-callee check, `_callee_site_checks(S, fi, noff,
+# ⭐ THE FIX (src/frontend/parse/fn/call.cyr): one per-callee check, `_callee_site_checks(S, fi, noff,
 # ti)` (`private` + `#deprecated`), replaces every `_vis_check` site and names a token of the
 # call; pass 1 records the attribute (`_tl_deprecated(S, 0)` -> `_prescan_dep_take`, one call in
 # `_prescan_fn_sig`); an instance inherits its base's bit (`_gen_inherit_dep`); `_dep_seen`

@@ -13,7 +13,7 @@
 # (`_CL_CAP_FIELD_IDX`) takes a struct capture only, so `s.len` fell through to "undefined
 # variable 's'" (+ "no struct type in scope for 's'"), naming a name that IS defined and captured.
 #
-# THE FIX (src/frontend/parse/decl.cyr `_cl_cslice_field`), the user's decision (a), 2026-10-13:
+# THE FIX (src/frontend/parse/decl/field.cyr `_cl_cslice_field`), the user's decision (a), 2026-10-13:
 # `.ptr` / `.len` of a captured slice read the captured copy, one load from the env words (`.ptr`
 # at +0, `.len` at +8). Any other field is "slice has only .ptr and .len fields", as on a local. A
 # STORE (`s.len = v`, `s.ptr = p`, `s.len += 1`) into the captured copy is refused by name
@@ -45,7 +45,7 @@
 # is a typed copy, as `var q: P = p;` is. Through 6.7.11 q took p's FIRST WORD, so `q.y` was "no
 # struct type in scope for 'q'" in a fn and "undefined variable 'q'" in a closure that captured q (the
 # filed repro 2, verbatim below: exit 45), and `take(q)` passed the word as the struct's address.
-# THE FIX (src/frontend/parse/decl.cyr `_uci_ps`, called by PARSE_VAR with no annotation): a name or
+# THE FIX (src/frontend/parse/decl/struct_copy.cyr `_uci_ps`, called by PARSE_VAR with no annotation): a name or
 # a wrap `(name)` up to the `;` naming an inline struct local, a by-value struct parameter or a
 # closure's captured copy of one gives the declaration the source's `0 - sid`, and it goes on as the
 # annotated form. Q rows were refused before; QK rows are controls that held before and after (a

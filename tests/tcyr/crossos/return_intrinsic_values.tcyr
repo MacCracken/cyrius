@@ -16,7 +16,7 @@
 # Every expected value is a hand-derived constant, and each return form also has a CONTROL
 # spelled through a local, the lowering that was already correct.
 #
-# Mutation: drop the `_is_ident_intrinsic` line from `_tc_callee_divert` (parse/fn.cyr) -> this
+# Mutation: drop the `_is_ident_intrinsic` line from `_tc_callee_divert` (parse/fn/ret.cyr) -> this
 # file no longer compiles (undefined fns mulh64/sizeof); put back the 6-byte prefix test for
 # mulh64 in PARSE_FACTOR -> the mulh64x rows read 0 (want 7 and 2).
 include "lib/assert.cyr"

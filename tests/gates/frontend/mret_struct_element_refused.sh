@@ -52,7 +52,7 @@
 # ⛔ 6.7.17 (D25 A, the user's decision, 2026-10-22: "Refuse it at the element") — A VECTOR VALUE IS NO ELEMENT EITHER.
 # `fn two(): (f64v2, i64) { var v = mk2(41, 7); return (v, 3); }` handed back v's lane 0 — the filed repro exited 44 (a
 # = 41) on x86_64, aarch64, cx and PE — and a parameter, a capture and `*pv` the same. Now one line at the element in
-# D90's shape (`_mret_vval`, parse/expr.cyr; the vector value read by `_vval_at`, parse/decl.cyr): "'two' returns vector
+# D90's shape (`_mret_vval`, parse/expr.cyr; the vector value read by `_vval_at`, parse/decl/vector.cyr): "'two' returns vector
 # 'f64v2' (16 bytes) as a multi-value element - return its pointer, or its lanes as elements". Rows V1 (the filed repro
 # verbatim) - V6, V7 the control (a vector CALL as the element keeps 6.7.16's D100 words), V9 a `*V` global's
 # dereference in a program with no vector local (the scan's mark, `_gv_pvd_set`), V8 --syntax-only, K5 the

@@ -27,7 +27,7 @@
 #      variable's `&x` is (6.5.29): `var c: *fn(i64): i64 = &dbl;`, `cb = &inc;` into a `cb: *fn( .. )` parameter, a
 #      zone / late / assigned global, a for step, `|x| x + 1`, `|| 4`, wrapped `((&f))` / `((|x| x))`, `&f` into a `*i64`,
 #      `&P_m` — each warned "assigning non-pointer to typed pointer" through 6.7.16 (`_tp_fna_exempt`,
-#      src/frontend/parse/decl.cyr); WC1-WC3 the controls that still warn (an untyped variable, `&f + 0`, `(|x| x) + 1`)
+#      src/frontend/parse/decl/gvar_init.cyr); WC1-WC3 the controls that still warn (an untyped variable, `&f + 0`, `(|x| x) + 1`)
 #   Y  (met landing D8) the statement resync (`_sync_kw`, src/common/util.cyr) stopped at a fn-pointer type's `fn` as at a
 #      statement keyword, so junk `h(1 *fn(i64): i64;` added "a fn is defined inside fn 'f'" (and, once D8 made
 #      `_skip_nested_body` take a `*fn` as no unit, "unexpected '('"): Y1 one error, Y2 the next statement's error kept,
