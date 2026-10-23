@@ -332,6 +332,61 @@ fn _status(msg): i64 {
 }
 
 # ================================================================
+# The sibling temp a build writes its output through
+# ================================================================
+# compile(), `_emit_js`, `_emit_cx`, `_cx_jit_build` and pulsar's raw compile write `<out>.tmp.<n>`
+# and rename it over `<out>`. ⛔ CYRIUS-2026-0046: the name was `<out>.tmp.<pid>`, unlinked with
+# the result unchecked and reopened O_CREAT|O_TRUNC — in a sticky or unwritable directory a link
+# another user planted there survived the unlink and the open wrote the build output through it.
+# Now `<n>` is 62 bits of the OS CSPRNG (the pid and a counter only when there is none), and the
+# parent creates the name O_EXCL|O_NOFOLLOW and hands that fd to the child: a name that exists —
+# a file, a link dangling or not — is never opened, followed or truncated; another is drawn, up
+# to 64. `<n>` stays all digits, the `<name>.tmp.<digits>` shape check.sh's reaper reads.
+# CHANGELOG [6.7.18]
+var _cbt_name_ctr = 0;
+
+fn _cbt_name_nonce(): i64 {
+    var b[8];
+    store64(&b, 0);
+    # Never flags 0 on Linux (a blocking draw before the CRNG seeds): GRND_INSECURE, then
+    # GRND_NONBLOCK on a pre-5.6 kernel's -EINVAL (lib/hashseed.cyr's draw).
+    #ifdef CYRIUS_TARGET_LINUX
+    var nr = sys_getrandom(&b, 8, 4);
+    if (nr == 0 - 22) { nr = sys_getrandom(&b, 8, 1); }
+    #else
+    var nr = sys_getrandom(&b, 8, 0);
+    #endif
+    if (nr == 8) { return load64(&b) & 0x3FFFFFFFFFFFFFFF; }
+    _cbt_name_ctr = _cbt_name_ctr + 1;
+    return sys_getpid() * 1000 + _cbt_name_ctr;
+}
+
+# A fresh `<out>.tmp.<n>` name — for a PE arm, where cmd.exe's redirect is the open.
+fn _cbt_out_tmp_name(out): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, out);
+    str_builder_add_cstr(sb, ".tmp.");
+    str_builder_add_int(sb, _cbt_name_nonce());
+    return str_data(str_builder_build(sb));
+}
+
+# Create `<out>.tmp.<n>` exclusively with `mode`; the name, its fd at `fdp` (moved above 2, so a
+# CLI started with a std fd closed never writes its own messages into it), or 0 with a negative
+# errno at `fdp`: -17 when every name drawn was taken, else the open's own error.
+fn _cbt_out_tmp_open(out, mode, fdp): i64 {
+    var tries = 0;
+    while (tries < 64) {
+        var tmp = _cbt_out_tmp_name(out);
+        var fd = sys_open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
+        if (fd >= 0) { store64(fdp, _cbt_lift_fd(fd)); return tmp; }
+        if (_io_tmp_taken(tmp, fd) == 0) { store64(fdp, fd); return 0; }
+        tries = tries + 1;
+    }
+    store64(fdp, 0 - 17);
+    return 0;
+}
+
+# ================================================================
 # Crash-safe streamed replace of a file the user or the tree owns
 # ================================================================
 # `_aw_open(path)` opens a unique sibling temp (lib/io.cyr's `_io_tmp_name`); `_aw_write`
@@ -714,8 +769,8 @@ fn _cbt_redirect(fd, target): i64 {
     return 0;
 }
 
-# In a CHILD, before its first redirect onto 0 / 1 / 2: move `fd` — one the PARENT opened for
-# this child — above 2 when it is one of them, and answer its number now. A parent started with
+# In a CHILD, before its first redirect onto 0 / 1 / 2 (or in the parent, as it opens the fd it
+# will hand a child): move `fd` above 2 when it is one of them, and answer its number now. A parent started with
 # fd 0 closed opens its capture AT 0, and the child's stdin redirect (/dev/null) overwrote it
 # before the capture redirect read it. F_DUPFD answers the lowest free fd >= 3; if even that is
 # refused, the child carries on with `fd` as it is. lib/regression.cyr's `_regression_lift_fd`
