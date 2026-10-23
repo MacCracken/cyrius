@@ -51,5 +51,52 @@ assert_eq(ws_server_handshake(0 - 1, r3, strlen(r3)), 0, "missing key rejected")
 var r4 = "GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: short\r\n\r\n";
 assert_eq(ws_server_handshake(0 - 1, r4, strlen(r4)), 0, "bad key length rejected");
 
+# 6.7.18 (D1): the key's 24 bytes are read through a slice and must be 22 base64 characters and
+# the "==" of a 16-byte value — a key of the right length but not that shape was accepted and an
+# Accept derived from it. A real loopback socket takes the 101, so the valid key's handshake
+# completes and the rows tell the key check from a failed send. CHANGELOG [6.7.18]
+#ifndef CYRIUS_TARGET_AGNOS
+fn _hk_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# The handshake of `key` over a fresh loopback connection: 1 upgraded, 0 refused, -1 no socket.
+fn _hk_try(lfd, key): i64 {
+    var ct, cfd = tcp_socket();
+    if (is_err_result(ct) == 1) { return 0 - 1; }
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), _hk_port(lfd));
+    if (is_err_result(kt) == 1) { return 0 - 1; }
+    var at, afd = sock_accept(lfd);
+    if (is_err_result(at) == 1) { return 0 - 1; }
+    var req = alloc(256);
+    var pre = "GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ";
+    var pl = strlen(pre);
+    memcpy(req, pre, pl);
+    memcpy(req + pl, key, strlen(key));
+    memcpy(req + pl + strlen(key), "\r\n\r\n", 5);
+    var ws = ws_server_handshake(afd, req, strlen(req));
+    sock_close(afd);
+    sock_close(cfd);
+    if (ws == 0) { return 0; }
+    return 1;
+}
+
+test_group("the key is 22 base64 characters and '==' (6.7.18)");
+var lt, lfd = tcp_socket();
+var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+var st, sv = sock_listen(lfd, 8);
+assert_eq(is_err_result(st), 0, "a loopback listener");
+assert_eq(_hk_try(lfd, "dGhlIHNhbXBsZSBub25jZQ=="), 1, "the RFC 6455 sample key upgrades");
+assert_eq(_hk_try(lfd, "dGhlIHNhbXBsZSBub25jZ!=="), 0, "a '!' in the key: refused");
+assert_eq(_hk_try(lfd, "dGhlIHNhbXBsZSBub25jZQAA"), 0, "24 characters with no '==' padding: refused");
+assert_eq(_hk_try(lfd, "dGhlIHNhbXBsZSBub25jZ =="), 0, "a space in the key: refused");
+assert_eq(_hk_try(lfd, "+/+/+/+/+/+/+/+/+/+/+w=="), 1, "'+' and '/' are base64: upgrades");
+sock_close(lfd);
+#endif
+
 var _exit_code = assert_summary();
 syscall(60, _exit_code);

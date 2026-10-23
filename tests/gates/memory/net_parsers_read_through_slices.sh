@@ -19,8 +19,8 @@
 #      exit 134 and `slice bounds violation` on stderr. The same probe on the real lib/ is the
 #      control: the graceful answer, exit 0.
 # Families: the async DNS answer parser (lib/async.cyr), the HTTP/1 response parser (lib/http.cyr),
-# the WebSocket client's frame reader (lib/ws.cyr), the WebSocket server's frame reader
-# (lib/ws_server.cyr).
+# the WebSocket client's frame reader (lib/ws.cyr), the WebSocket server's frame reader and its
+# upgrade handshake's key (lib/ws_server.cyr).
 #
 # RED before 6.7.18: the static rows name every raw load, and with the same check removed the
 # parent's raw loads read on past the message (the probe exits 0 with whatever the heap held).
@@ -213,8 +213,32 @@ syscall(60, r);
 EOF
 caught "ws server unmask" lib/ws_server.cyr 'while (pi < len) {' 'while (pi <= len) {' wss.cyr 'abc'
 
+# ── the WebSocket server's upgrade handshake (lib/ws_server.cyr) ──
+echo "the WebSocket server's upgrade handshake:"
+no_raw lib/ws_server.cyr ws_server_handshake _wss_b64_char
+cat > "$T/wsh.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws_server.cyr"
+# an upgrade whose key is 5 bytes ("short"); fd -1: nothing is sent
+fn main(): i64 {
+    alloc_init();
+    var q = "GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: short\r\n\r\n";
+    fmt_int(ws_server_handshake(0 - 1, q, strlen(q)));
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+caught "ws handshake key" lib/ws_server.cyr 'if (klen != 24) { return 0; }' '# (removed)' wsh.cyr '0'
+
 # Floor: every family's rows ran.
-if [ "$ROWS" -lt 23 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 23) — the gate is reading nothing"; fi
+if [ "$ROWS" -lt 27 ] && [ "$FAILS" = 0 ]; then _fail "only $ROWS rows ran (floor 27) — the gate is reading nothing"; fi
 if [ "$FAILS" = 0 ]; then echo "PASS: $NAME ($ROWS rows: the parsers read through slices, and a bound they get wrong stops there)"; exit 0; fi
 echo "FAIL: $NAME ($FAILS)"
 exit 1

@@ -22,8 +22,8 @@ include "lib/str.cyr"
 include "lib/net.cyr"
 include "lib/ws.cyr"
 include "lib/sha1.cyr"
-# 6.7.18 (D1): the frame header and the payload are read through fn-local [u8] slices, checked in
-# every build. CHANGELOG [6.7.18]
+# 6.7.18 (D1): the frame header, the payload and the handshake key are read through fn-local [u8]
+# slices, checked in every build. CHANGELOG [6.7.18]
 include "lib/slice.cyr"
 include "lib/bayan.cyr"
 include "lib/sandhi.cyr"
@@ -77,6 +77,15 @@ fn ws_server_state(ws): i64 { return load64(ws + 8); }
 # Handshake
 # ================================================================
 
+# 1 when `c` is in the base64 alphabet (A-Z a-z 0-9 + /).
+fn _wss_b64_char(c): i64 {
+    if (c >= 65 && c <= 90) { return 1; }
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c == 43 || c == 47) { return 1; }
+    return 0;
+}
+
 # Parse req_buf as a WebSocket upgrade. On success: send 101 Switching
 # Protocols + Sec-WebSocket-Accept, return upgraded ws handle. On failure
 # (not a valid WS upgrade): return 0 — caller should respond 400. Also 0 when
@@ -102,6 +111,17 @@ fn ws_server_handshake(cfd, req_buf, req_len): i64 {
     # See CHANGELOG [5.11.16].
     var klen = strlen(key);
     if (klen != 24) { return 0; }
+    # 6.7.18 (D1): the key's 24 bytes are read through a slice — 22 of the base64 alphabet and the
+    # two '=' of a 16-byte value's padding; any other key is refused like a wrong length (its
+    # Accept would be derived from bytes no client sent as a key). CHANGELOG [6.7.18]
+    var ks: [u8] = 0;
+    slice_set(&ks, key, klen);
+    var ki = 0;
+    while (ki < 22) {
+        if (_wss_b64_char(ks[ki]) == 0) { return 0; }
+        ki = ki + 1;
+    }
+    if (ks[22] != 61 || ks[23] != 61) { return 0; }
     var magic = _wss_magic();
     var mlen = strlen(magic);
     var concat_len = klen + mlen;
