@@ -110,7 +110,7 @@ rm -f "$W/a7/cyrius.cyml"
 capped() { grep -nE 'file_read_all\((("cyrius\.(cyml|toml)")|mf|_manifest|_ad_manifest|_pkg_manifest|_tm)[ ]*,' "$@"; }
 printf '    var buf = alloc(32768);\n    var n = file_read_all("cyrius.cyml", buf, 32767);\n    var n2 = file_read_all(_ad_manifest, buf, 65535);\n' > "$W/old.cyr"
 [ "$(capped "$W/old.cyr" | wc -l | tr -d ' ')" = 2 ] || fail "axis 8 self-test: the detector does not see the two pre-6.6.17 reads"
-left=$(capped cbt/*.cyr || true)
+left=$(capped $(find cbt -name '*.cyr' | LC_ALL=C sort) || true)
 [ -z "$left" ] && echo "  ok axis 8: no fixed-cap read of a manifest path in cbt/ (detector self-tested)" \
     || fail "axis 8: a manifest is still read through a fixed cap: $left"
 

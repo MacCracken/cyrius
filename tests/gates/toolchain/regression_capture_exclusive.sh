@@ -47,7 +47,7 @@
 #      already refuses): load_environ read "/proc/self/environ" on PE to EOF through unchecked
 #      doubling allocations (2.3 GB faulted cyrius.exe), and find_tools fell back to the home
 #      "/root" with USERPROFILE and CYRIUS_HOME unset, then looked for \root\.cyrius\bin\cycc.exe.
-#      (a) STATIC over cbt/*.cyr: a "/proc/…", "/etc/…", "/sys/…", "/dev/…", "/root", "/tmp",
+#      (a) STATIC over cbt/**/*.cyr: a "/proc/…", "/etc/…", "/sys/…", "/dev/…", "/root", "/tmp",
 #      "/usr/…", "/var/…" or "/home/…" literal in code the PE build compiles — outside an
 #      `#ifndef CYRIUS_TARGET_WIN` / `#ifdef CYRIUS_TARGET_{LINUX,MACOS,AGNOS,CX}` region (or the
 #      `#else` of `#ifdef CYRIUS_TARGET_WIN`) — sits in an allowlisted file|fn|literal with its
@@ -358,7 +358,7 @@ cbt/deps.cyr|_git_run|/dev/null|a POSIX fork child: the PE arm spawns before the
 cbt/deps.cyr|_git_run|/usr/bin/env|the execve target of that POSIX fork child (sys_execve is a -1 stub on PE)
 cbt/deps.cyr|_process_named_deps|/usr/bin/env|the execve target of a POSIX fork child (sys_execve is a -1 stub on PE)'
 : > "$W/pesites"; npe=0
-for f in "$ROOT"/cbt/*.cyr; do
+for f in $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort); do
     [ -f "$f" ] || continue
     npe=$((npe + 1))
     awk -f "$W/pe.awk" "$f" | tr '\t' '|' | sed "s|^|${f#"$ROOT"/}\||" >> "$W/pesites"

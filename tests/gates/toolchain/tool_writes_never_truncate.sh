@@ -24,7 +24,7 @@
 #   3. Under a 150-block limit (76,800 or 153,600 bytes — above the first table, below the
 #      third) it fails PART-WAY: every table is either complete or exactly as seeded, never a
 #      prefix, and at least one is left as seeded.
-#   4. STATIC over programs/*.cyr + cbt/*.cyr: every `file_write_all(P, …)` and every O_TRUNC
+#   4. STATIC over programs/*.cyr + cbt/**/*.cyr: every `file_write_all(P, …)` and every O_TRUNC
 #      open (spelled O_TRUNC, 0x241 or 577) is keyed "<file>|<P>" and must be on an allowlist of
 #      temps / child-output captures / the linker's checked output, each with its reason; an
 #      entry matching no live site fails too. Self-tested on 4 shapes. The same sweep found the
@@ -238,7 +238,7 @@ st=0
 [ "$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')" = 'programs/x.cyr|conf programs/x.cyr|ARK_LOG_PATH ' ] || { fail "axis 4 self-test: an unchecked append (file_append_locked / O_APPEND open) not seen: '$(_trunc_sites "$D/fx/e.cyr" programs/x.cyr | tr '\n' ' ')'"; st=1; }
 echo "$ALLOW" | cut -d'|' -f1,2 | LC_ALL=C sort -u > "$D/allow.keys"
 nfile=0; : > "$D/sites"
-for f in $(ls programs/*.cyr cbt/*.cyr | LC_ALL=C sort); do
+for f in $({ ls programs/*.cyr; find cbt -name '*.cyr'; } | LC_ALL=C sort); do
     nfile=$((nfile + 1))
     _trunc_sites "$f" "$f" >> "$D/sites"
 done

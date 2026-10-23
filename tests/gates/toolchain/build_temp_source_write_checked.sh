@@ -259,7 +259,7 @@ st=0
 [ -z "$(_unchecked "$D/fx/d.cyr" x)" ] || { fail "axis 4 self-test: a comment or a checked call was flagged: '$(_unchecked "$D/fx/d.cyr" x)'"; st=1; }
 a4=$st
 nfile=0; : > "$D/sites"
-for f in $(ls cbt/*.cyr | LC_ALL=C sort); do
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do
     nfile=$((nfile + 1))
     _unchecked "$f" "$f" >> "$D/sites"
 done

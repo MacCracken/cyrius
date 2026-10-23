@@ -25,7 +25,7 @@
 #
 # WHAT THIS GATE DOES. It enumerates every verb `main()` dispatches, computes which
 # functions transitively reach `compile()` / `_materialize_source()` across all of
-# `cbt/*.cyr`, and FAILS if any dispatched verb that reaches them is absent from the
+# `cbt/**/*.cyr`, and FAILS if any dispatched verb that reaches them is absent from the
 # list between the AUTO_DEPS_VERBS markers. Exemptions are allow-listed below, one
 # reason each, and a stale exemption fails too (axis 3) so the allow-list cannot rot
 # into the same silence it exists to prevent.
@@ -78,7 +78,7 @@ EXEMPT_lint='the syntax pre-pass runs under _skip_deps = 1 on purpose — `cyriu
 EXEMPT_lsp='programs/cyrius-lsp.cyr self-declares all 11 of its includes and only exists inside this repo (cmd_lsp hard-codes the path), so it never had the missing-prepend bug — and like pulsar it INSTALLS what it builds into CYRIUS_HOME/bin. Gating it unioned the whole [deps].stdlib into a binary that already had everything it needed: 119,584 B -> 507,144 B, 4.24x, 516 unreachable fns (measured at 6.5.19; re-measure the numbers, not the conclusion). Axis 5 pins the size so this cannot silently regress again.'
 EXEMPT_LIST="pulsar lint lsp"
 
-# ── The analysis. One awk pass over cbt/*.cyr:
+# ── The analysis. One awk pass over cbt/**/*.cyr:
 #   * strip `#` comments outside double-quoted strings (cbt/deps.cyr:1737 mentions
 #     compile() in prose and is a false positive without this),
 #   * build caller→callee edges keyed on the enclosing `^fn NAME(`,
@@ -217,7 +217,7 @@ END {
     print "STAT markers " ((mb > 0 && me > mb) ? 1 : 0);
     print "STAT mainspan " (main_end - main_start);
 }
-' cbt/*.cyr)
+' $(find cbt -name '*.cyr' | LC_ALL=C sort))
 
 get()      { printf '%s\n' "$ANALYSIS" | awk -v k="$1" '$1==k {print $2}' | sort; }
 stat()     { printf '%s\n' "$ANALYSIS" | awk -v k="$1" '$1=="STAT" && $2==k {print $3}'; }

@@ -25,7 +25,7 @@
 #   git deps                   -> "git clone failed for dep 'X' from <url>" — a statement
 #                                 about git that git never made.
 #
-# WHY A DERIVED GATE AND NOT A LIST. The site list is read out of `cbt/*.cyr` on every
+# WHY A DERIVED GATE AND NOT A LIST. The site list is read out of `cbt/**/*.cyr` on every
 # run, so a NEW fork site cannot be added without an arm: it appears in axis 1 the moment
 # it is written. Same shape as `directive_fork_parity.sh` for the seven compiler forks.
 #
@@ -274,7 +274,7 @@ check "  …and counts nothing in the prose-only fn" 0 "$(grep -c 'fn=only_prose
 
 # ── AXIS 1 — every real site in cbt/ is PE-unreachable, with a derived floor.
 echo "axis 1 — every sys_fork() site in cbt/ is unreachable on PE:"
-scan cbt/*.cyr > "$T/sites"
+scan $(find cbt -name '*.cyr' | LC_ALL=C sort) > "$T/sites"
 NSITE=$(grep -c 'fn=' "$T/sites" || true)
 NFILE=$(cut -d: -f1 "$T/sites" | sort -u | wc -l)
 # Floors, not equalities: a new site is welcome, it just has to be armed. 16 sites across
@@ -377,7 +377,7 @@ else
         # helper go dead (measured: mutation M3 was invisible until this half existed).
         # Every `fn _win_*` DEFINED in cbt/ has exactly one reason to exist — a PE arm
         # calls it — so an unreachable one is an arm that no longer does.
-        grep -h '^fn _win_' cbt/*.cyr | sed 's/^fn \([A-Za-z0-9_]*\).*/\1/' | sort -u > "$T/defined.u"
+        grep -h '^fn _win_' $(find cbt -name '*.cyr' | LC_ALL=C sort) | sed 's/^fn \([A-Za-z0-9_]*\).*/\1/' | sort -u > "$T/defined.u"
         ND=$(wc -l < "$T/defined.u" | tr -d ' ')
         check "  cbt/ defines PE helpers (floor 6, found $ND)" yes "$([ "$ND" -ge 6 ] && echo yes || echo no)"
         cat "$T/defined.u" >> "$T/handlers.u"
@@ -647,7 +647,7 @@ function flush() {
 /^}/ { flush() }
 END { flush() }
 AWK
-awk -f "$T/bld.awk" cbt/*.cyr lib/process_win.cyr > "$T/builders"
+awk -f "$T/bld.awk" $(find cbt -name '*.cyr' | LC_ALL=C sort) lib/process_win.cyr > "$T/builders"
 NB=$(grep -c ':' "$T/builders" || true)
 check "the scan found the command-line builders (floor 8, found $NB)" yes \
     "$([ "$NB" -ge 8 ] && echo yes || echo no)"
@@ -829,7 +829,7 @@ check "  ⭐ …flags an exec-in-place site after ANOTHER block's fork (a fork e
 check "  …and still not that fork's own child exec" 1 "$(grep -c 'fn=x_fork_sibling' "$T/self/eout" || true)"
 check "  …clears a site in an #ifndef that holds a nested #ifdef" 1 "$(grep -c 'fn=x_nested_ifndef pe=ok' "$T/self/eout" || true)"
 check "  …and does not admit a silent return-0 arm" no "$(admitted "$(grep 'fn=x_silent' "$T/self/eout" | sed 's/.*arm=//')")"
-escan cbt/*.cyr > "$T/xsites"
+escan $(find cbt -name '*.cyr' | LC_ALL=C sort) > "$T/xsites"
 NX=$(grep -c 'fn=' "$T/xsites" || true)
 # A floor, not an equality: the pin redirect (cyrius.cyr `_try_redirect_to_pinned`) and sign-efi
 # (`main`) at 6.7.16. A new exec-in-place site is welcome; it has to be armed.

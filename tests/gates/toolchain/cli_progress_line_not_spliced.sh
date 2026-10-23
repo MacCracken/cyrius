@@ -256,7 +256,7 @@ check_unspliced_pad axis7 "$D/a7.out" "probe\.smcyr" || fail=1
 # fourth walker written tomorrow is covered the day it is written. Two floors keep it
 # from going quietly vacuous: the total, and how many of those headers compile.
 pad_total=0; pad_with_compile=0; pad_bad=""
-for f in cbt/*.cyr; do
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do
   for ln in $(grep -n 'while ([a-z_]*pad > 0) { sys_write(STDOUT_FD, " ", 1)' "$f" | cut -d: -f1); do
     pad_total=$((pad_total + 1))
     # COMMENTS STRIPPED FIRST, both ways round: a comment that happens to mention

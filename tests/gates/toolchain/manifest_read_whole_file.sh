@@ -216,7 +216,7 @@ cbt/commands.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capture in th
 cbt/deps.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
 x=0
 found=""
-for f in programs/*.cyr programs/checks/*.cyr cbt/*.cyr; do
+for f in programs/*.cyr programs/checks/*.cyr $(find cbt -name '*.cyr' | LC_ALL=C sort); do
     r=$(_rmw "$f")
     [ -n "$r" ] && found="$found$r
 "

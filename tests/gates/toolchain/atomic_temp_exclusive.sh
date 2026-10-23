@@ -180,7 +180,7 @@ st=0
 [ "$(_callers "$W/fx/a.cyr" lib/x.cyr)" = 'lib/x.cyr|good' ] || { fail "axis 5 self-test: the detector saw '$(_callers "$W/fx/a.cyr" lib/x.cyr | tr '\n' ' ')' (want lib/x.cyr|good)"; st=1; }
 : > "$W/sites"
 nfile=0
-for f in "$ROOT"/lib/*.cyr "$ROOT"/cbt/*.cyr "$ROOT"/programs/*.cyr "$ROOT"/src/*.cyr "$ROOT"/src/*/*.cyr; do
+for f in "$ROOT"/lib/*.cyr $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort) "$ROOT"/programs/*.cyr "$ROOT"/src/*.cyr "$ROOT"/src/*/*.cyr; do
     [ -f "$f" ] || continue
     nfile=$((nfile + 1))
     _callers "$f" "${f#"$ROOT"/}" >> "$W/sites"
@@ -268,7 +268,7 @@ a8=0
 [ "$(awk -v FILE=cbt/t.cyr -f "$W/tmplit.awk" "$W/fx/t.cyr" | tr '\n' ' ')" = 'cbt/t.cyr|_a|.tmp. cbt/t.cyr|_b|.pulsar.new ' ] \
   || { fail "axis 8 self-test: the detector saw '$(awk -v FILE=cbt/t.cyr -f "$W/tmplit.awk" "$W/fx/t.cyr" | tr '\n' ' ')'"; a8=1; }
 : > "$W/tsites"; ncb=0
-for f in "$ROOT"/cbt/*.cyr; do
+for f in $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort); do
     [ -f "$f" ] || continue
     ncb=$((ncb + 1))
     awk -v FILE="${f#"$ROOT"/}" -f "$W/tmplit.awk" "$f" >> "$W/tsites"

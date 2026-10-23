@@ -336,7 +336,7 @@ cat > "$T/exits.awk" <<'AWK'
     if (child >= 0 && depth <= child) { child = -1 }
 }
 AWK
-awk -f "$T/exits.awk" cbt/*.cyr > "$T/exits"
+awk -f "$T/exits.awk" $(find cbt -name '*.cyr' | LC_ALL=C sort) > "$T/exits"
 NEX=$(grep -c 'fn=' "$T/exits" || true)
 NCH=$(grep -c ' child$' "$T/exits" || true)
 check "the scan found cbt/'s sys_exit sites (floor 30, found $NEX)" yes \

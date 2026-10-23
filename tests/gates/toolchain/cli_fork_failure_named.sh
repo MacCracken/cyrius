@@ -119,7 +119,7 @@ grep -q 'fn=prose_only' "$W/self.out" && fail "axis 0: prose / a string literal 
 [ "$FAIL" = "$x" ] && echo "  ok axis 0: the detector flags an unchecked fork and a discarded wait, and clears the three checked shapes"
 
 x=$FAIL
-awk -f "$W/sites.awk" cbt/*.cyr programs/cyrius-lsp.cyr > "$W/sites"
+awk -f "$W/sites.awk" $(find cbt -name '*.cyr' | LC_ALL=C sort) programs/cyrius-lsp.cyr > "$W/sites"
 NS=$(grep -c ' pid=' "$W/sites" || true)
 # A floor, not an equality: a new site is welcome, it just has to be checked. 17 at 6.6.20
 # (build.cyr 9, deps.cyr 3, commands.cyr 2, pulsar.cyr 1, cyrius-lsp.cyr 2) — 18 until

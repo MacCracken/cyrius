@@ -47,7 +47,7 @@ fail=0
 
 # ── axis 0: no raw stat syscall in the CLI ──────────────────────────────────────────────
 # Comment lines are skipped (the fix's own comment names the old call).
-RAW=$(grep -nE '^[^#]*syscall\(4 *,' "$ROOT"/cbt/*.cyr || true)
+RAW=$(grep -nE '^[^#]*syscall\(4 *,' $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort) || true)
 if [ -n "$RAW" ]; then
     echo "  FAIL axis 0: raw syscall(4, …) (stat — no PE reroute, -38 on cyrius.exe) in cbt/:"
     echo "$RAW" | sed 's/^/    /'

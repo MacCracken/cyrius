@@ -72,9 +72,9 @@ if [ "$N_LIN" != "$N_MAC" ]; then
   echo "FAIL axis1: the two peers disagree on SYS_RENAME ($N_LIN vs $N_MAC) — re-derive this axis"
   fail=1
 fi
-nfiles=$(ls cbt/*.cyr 2>/dev/null | wc -l | tr -d ' ')
+nfiles=$(find cbt -name '*.cyr' | wc -l | tr -d ' ')
 if [ "${nfiles:-0}" -lt 8 ]; then
-  echo "FAIL axis1: scanned only ${nfiles:-0} cbt/*.cyr files (want >= 8) — the scan matched nothing"
+  echo "FAIL axis1: scanned only ${nfiles:-0} .cyr files under cbt/ (want >= 8) — the scan matched nothing"
   fail=1
 fi
 # Comments are dropped before matching — this gate's own fix carries the old spelling in
@@ -84,7 +84,7 @@ fi
 scan=$(awk -v n="$N_LIN" '{ c=$0; sub(/#.*$/, "", c)
   if (index(c, "syscall(") > 0) { any++ }
   if (index(c, "syscall(" n ",") > 0) { printf "    %s:%d:%s\n", FILENAME, FNR, $0 } }
-  END { printf "ANY=%d\n", any }' cbt/*.cyr)
+  END { printf "ANY=%d\n", any }' $(find cbt -name '*.cyr' | LC_ALL=C sort))
 nraw=$(printf '%s\n' "$scan" | sed -n 's/^ANY=\([0-9]*\)$/\1/p')
 raw=$(printf '%s\n' "$scan" | grep -v '^ANY=' || true)
 if [ "${nraw:-0}" -lt 10 ]; then
@@ -100,7 +100,7 @@ fi
 # ── axis 2 — every file_rename() call in cbt/ CONSUMES its result ────────────────────
 # A call whose line neither tests it (`if (file_rename`) nor binds it (`= file_rename`)
 # is the exact half-fix M2: portable, still silently ignored.
-sites=$(grep -n 'file_rename(' cbt/*.cyr | grep -v '^\s*#' | grep -v ':[0-9]*:[ \t]*#' || true)
+sites=$(grep -n 'file_rename(' $(find cbt -name '*.cyr' | LC_ALL=C sort) | grep -v '^\s*#' | grep -v ':[0-9]*:[ \t]*#' || true)
 nsites=$(printf '%s\n' "$sites" | grep -c . || true); [ -n "$nsites" ] || nsites=0
 if [ "$nsites" -lt 6 ]; then
   echo "FAIL axis2: found only $nsites file_rename() sites in cbt/ (want >= 6) — extraction is vacuous"

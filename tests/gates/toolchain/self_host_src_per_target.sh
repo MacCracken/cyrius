@@ -317,7 +317,7 @@ function flush() {
 END { flush() }
 AWK
 : > "$D/loops"
-for f in cbt/*.cyr programs/checks/*.cyr; do
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort) programs/checks/*.cyr; do
   [ -f "$f" ] || continue
   awk -f "$D/loops.awk" "$f" >> "$D/loops" || true
 done

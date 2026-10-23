@@ -2,7 +2,7 @@
 # Gate: every stdlib module the cyrius CLI includes is one it USES (6.6.20, CLN-13).
 #
 # THE FINDING. cbt/cyrius.cyr carried `include "lib/tagged.cyr"`, which pulls in lib/tagged.cyr,
-# lib/result.cyr and lib/boxed.cyr. No fn of tagged.cyr was called by any cbt/*.cyr or by any
+# lib/result.cyr and lib/boxed.cyr. No fn of tagged.cyr was called by any cbt/**/*.cyr or by any
 # other module the CLI includes (the one textual hit was a comment in cbt/commands.cyr) — it only
 # added 18 dead fns (1,418 dead bytes) to every build of the CLI on every target. Removed.
 #
@@ -10,7 +10,7 @@
 # block whose module is NOT also reached through the CLI's other includes (so dropping the line
 # really drops it): some fn that the line alone brings in — defined in X, or in the part of X's
 # include closure nothing else reaches — must be referenced (called `name(` or taken `&name`) in
-# cbt/*.cyr or in a module reached through the other includes. Comments are stripped and
+# cbt/**/*.cyr or in a module reached through the other includes. Comments are stripped and
 # definition lines never count as uses. A redundant-but-harmless direct include (lib/syscalls.cyr,
 # reached through lib/process.cyr too) is not judged.
 #
@@ -50,7 +50,7 @@ census() {
     # the main block: everything after the agnos guard's `#ifndef`
     awk '/^#ifndef CYRIUS_TARGET_AGNOS/ {on=1} on' "$_cli" > "$W/main.cyr"
     incs_of "$W/main.cyr" | sort -u > "$W/direct"
-    for f in cbt/*.cyr; do [ "$f" = cbt/cyrius.cyr ] || incs_of "$f"; done | sort -u > "$W/cbt_incs"
+    for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do [ "$f" = cbt/cyrius.cyr ] || incs_of "$f"; done | sort -u > "$W/cbt_incs"
     wc -l < "$W/direct" | tr -d ' ' > "$W/n"
     : > "$W/judged"
     while IFS= read -r X; do
@@ -65,8 +65,8 @@ census() {
         done | sort -u > "$W/fns"
         [ -s "$W/fns" ] || continue          # brings in no fn: nothing to judge by
         echo "$X" >> "$W/judged"
-        # the corpus: cbt/*.cyr + the other modules, comments and definition lines removed
-        for f in cbt/*.cyr $(cat "$W/others"); do [ -f "$f" ] && cat "$f"; done \
+        # the corpus: cbt/**/*.cyr + the other modules, comments and definition lines removed
+        for f in $(find cbt -name '*.cyr' | LC_ALL=C sort) $(cat "$W/others"); do [ -f "$f" ] && cat "$f"; done \
             | sed 's/#.*$//' | grep -v '^[[:space:]]*\(pub[[:space:]]*\|public[[:space:]]*\|private[[:space:]]*\)\{0,1\}fn[[:space:]]' > "$W/corpus"
         alt=$(paste -sd'|' "$W/fns")
         if ! grep -Eq "(^|[^A-Za-z0-9_])(${alt})[[:space:]]*\(|&(${alt})([^A-Za-z0-9_]|\$)" "$W/corpus"; then

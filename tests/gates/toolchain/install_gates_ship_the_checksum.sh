@@ -223,7 +223,7 @@ BAD=0
 # ratchet (axis 3b) only because the two install pillars lived in another lane this
 # release; bite 26a fixed them, the ratchet went red the way it was built to, and the
 # two halves are one claim again. CHANGELOG [6.6.6]
-for f in scripts/*.sh cbt/*.cyr; do
+for f in scripts/*.sh $(find cbt -name '*.cyr' | LC_ALL=C sort); do
     # Join backslash continuations so a multi-line scp is one record.
     sed -e 's/^[[:space:]]*#.*$//' -e :a -e '/\\$/N; s/\\\n//; ta' "$f" | grep -E '(^|[;&|"[:space:]])scp ' | while IFS= read -r line; do
         case "$line" in

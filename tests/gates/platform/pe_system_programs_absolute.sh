@@ -60,7 +60,7 @@ NAME=pe_system_programs_absolute
 # ── axis 0: no bare System32 program at the head of a command line ────────────────────────
 # Comment lines are skipped (the fix's own comments name the old command lines).
 BARE=$(grep -nE '^[^#]*"(cmd|certutil|powershell|pwsh|cscript|wscript|reg|icacls|findstr|tasklist|taskkill|robocopy|xcopy|attrib|whoami|where)([ ."/]|")' \
-        "$ROOT"/lib/*.cyr "$ROOT"/cbt/*.cyr | grep -vE '_win_sys_exe\("[a-z]+\.exe"\)' || true)
+        "$ROOT"/lib/*.cyr $(find "$ROOT/cbt" -name '*.cyr' | LC_ALL=C sort) | grep -vE '_win_sys_exe\("[a-z]+\.exe"\)' || true)
 if [ -n "$BARE" ]; then
     echo "  FAIL axis 0: a System32 program started by a BARE name (CreateProcessW searches the current directory first):"
     echo "$BARE" | sed 's/^/    /'

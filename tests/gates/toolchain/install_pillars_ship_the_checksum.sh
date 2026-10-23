@@ -21,12 +21,12 @@
 # refuse to start without it.
 #
 # AXES
-#   1. STATIC over cbt/*.cyr: every `scp` that names a release tarball names the matching
+#   1. STATIC over cbt/**/*.cyr: every `scp` that names a release tarball names the matching
 #      `.sha256` in the SAME scp (sidecars counted separately from tarballs, so a sidecar
 #      cannot be mistaken for the artifact). Floor: at least 2 such scp sites. The detector
 #      is self-tested on both shapes.
 #   2. STATIC: every pillar that runs install.sh with `CYRIUS_INSTALL_TARBALL=` first tests
-#      that the sidecar is THERE — the two in `cbt/*.cyr` (same-line, inside the remote
+#      that the sidecar is THERE — the two in `cbt/**/*.cyr` (same-line, inside the remote
 #      command string) and the two `run: |` blocks in `.github/workflows/ci.yml` (the test a
 #      line of its own above it). Floor: 4 sites, scan self-tested on 4 shapes.
 #   3. BEHAVIOURAL, and the axis that makes axis 1 more than a string check: the REAL
@@ -129,7 +129,7 @@ a1=0
 [ "$(_scp_sites "$D/fx/good.cyr" x)" = 'x|1|1' ] || { fail "axis 1 self-test: an scp WITH a sidecar is miscounted: '$(_scp_sites "$D/fx/good.cyr" x)'"; a1=1; }
 [ -z "$(_scp_sites "$D/fx/cmt.cyr" x)" ]         || { fail "axis 1 self-test: a commented-out scp was counted"; a1=1; }
 : > "$D/sites"
-for f in $(ls cbt/*.cyr | LC_ALL=C sort); do _scp_sites "$f" "$f" >> "$D/sites"; done
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort); do _scp_sites "$f" "$f" >> "$D/sites"; done
 nsite=$(wc -l < "$D/sites" | tr -d ' ')
 [ "$nsite" -ge 2 ] || { fail "axis 1: found $nsite scp-a-release-tarball site(s) in cbt/ (floor 2 — the ecb and ach install pillars) — the scan read nothing, or a pillar was deleted"; a1=1; }
 while IFS='|' read -r f ntar nsc; do
@@ -141,7 +141,7 @@ done < "$D/sites"
 # ── axis 2: the far side REQUIRES the sidecar before it installs ─────────────
 # FOUR pillars, two shapes, one rule (bite 26 review widened this from cbt/ alone — the two
 # CI ones were absent from the sweep AND from the "not covered" note, which is what a future
-# reader would have trusted). In cbt/*.cyr a pillar is ONE remote command string, so the test
+# reader would have trusted). In cbt/**/*.cyr a pillar is ONE remote command string, so the test
 # sits on the same line. In .github/workflows/ci.yml it is a `run: |` block — the macos-14
 # funcgate and the self-hosted Intel-Mac (ach) funcgate, each installing a tarball downloaded
 # from the artifact store onto another machine — so the test is a line of its own above it,
@@ -169,7 +169,7 @@ _pillar_scan() {   # <file> -> "<file>:<line>:<0|1 guarded>" per live pillar
     ' "$1"
 }
 : > "$D/pillars"
-for f in $(ls cbt/*.cyr | LC_ALL=C sort) .github/workflows/ci.yml; do
+for f in $(find cbt -name '*.cyr' | LC_ALL=C sort) .github/workflows/ci.yml; do
     [ -f "$f" ] || { fail "axis 2: $f is missing — an install pillar's file is gone"; a2=1; continue; }
     _pillar_scan "$f" >> "$D/pillars"
 done

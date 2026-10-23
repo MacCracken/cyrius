@@ -64,7 +64,7 @@ PATS = [
 ]
 
 files = sorted(set(sum([glob.glob(p, recursive=True)
-                        for p in ('src/**/*.cyr', 'programs/**/*.cyr', 'cbt/*.cyr')], [])))
+                        for p in ('src/**/*.cyr', 'programs/**/*.cyr', 'cbt/**/*.cyr')], [])))
 bad, total = [], 0
 for f in files:
     try:
