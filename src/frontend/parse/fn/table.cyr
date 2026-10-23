@@ -559,13 +559,33 @@ fn FINDFN(S, noff): i64 {
 #   aarch64: src/backend/aarch64/emit.cyr
 
 # Find fn local variable by name
+# 6.7.18: the same backward walk, cheaper per slot — it called STREQ on every live slot. The name's
+# first word is read once, masked to its first L + 1 bytes (its NUL included) when it is shorter than
+# 8: a slot holding the very offset asked for is the name (the lexer interns identifiers, so it
+# usually does); a slot whose masked first word differs is not; one that matches IS the name when
+# L < 8 (the NUL was compared), and pays STREQ only past that. Names are little-endian words in the
+# name pool, which runs on far past its last NUL. 2,000 locals in one fn: 1,999,011 STREQ calls -> 9
+# (tests/gates/frontend/hot_path_call_counts.sh row L). Still a walk per lookup: an index needs every
+# write of a slot's name (25 sites, two inside `_PARSE_FN_DEF_IMPL`) to go through one setter.
+# CHANGELOG [6.7.18]
 fn FINDLOCAL(S, noff): i64 {
-    var lc = GFLC(S);
-    var i = lc - 1;
+    var nb = S + 0xEC00000;
+    var nl = 0;
+    while (load8(nb + noff + nl) != 0) { nl = nl + 1; }
+    var m = 0 - 1;
+    if (nl < 7) { m = (1 << ((nl + 1) * 8)) - 1; }
+    var w = load64(nb + noff) & m;
+    var i = load64(S + 0x18DA10) - 1;   # GFLC
     # Search backward so inner scope shadows outer
     while (i >= 0) {
-        var sn = L64(S + 0x5D9D000 + i * 8);
-        if (sn >= 0) { if (STREQ(S, sn, noff) == 1) { return i; } }
+        var sn = load64(S + 0x5D9D000 + i * 8);
+        if (sn >= 0) {
+            if (sn == noff) { return i; }
+            if ((load64(nb + sn) & m) == w) {
+                if (nl < 8) { return i; }
+                if (STREQ(S, sn, noff) == 1) { return i; }
+            }
+        }
         i = i - 1;
     }
     return 0 - 1;

@@ -26,6 +26,13 @@
 #      3x the STREQ calls of 450 (the tree: 17,753 -> 38,117, 2.14x); the 900-struct program exits 42. A count
 #      ratio, not a timing one: under the 1,024-struct cap the quadratic part hides under the linear work in wall
 #      time (44 -> 119 ms, 2.7x).
+#   L  FINDLOCAL's backward walk over a fn's local slots compares a masked first word, not a STREQ call per slot:
+#      a slot holding the offset asked for is the name (identifiers are interned), a differing masked word is not,
+#      and a matching one is the name when it is under 8 bytes (its NUL was compared). 2,000 locals in one fn
+#      (each `var` asks whether its name is taken): the parent 1,999,011 STREQ calls, the tree 9. Bound: under 10
+#      STREQ calls per local. ⚠ The walk itself is still O(locals) per lookup — this row bounds its constant, not
+#      its order; an index needs every write of a slot's name (25 sites, two inside `_PARSE_FN_DEF_IMPL`) to go
+#      through one setter. src/frontend/parse/fn/table.cyr.
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -33,6 +40,8 @@
 # byte again -> RED (the same count); PP_NEUT_FMARK's skip removed -> RED on the PP_LEXST bound (192,886 calls for
 # 180,670 bytes, bound 45,167; the tree reads 4,031 and 20,181).
 # S: the parent of its fix -> RED (398%); FINDSTRUCT scanning the table before its chain (same answer) -> RED (397%).
+# L: the parent of its fix -> RED (1,999,011 STREQ calls); FINDLOCAL's word test skipped (every non-identical slot
+# to STREQ, same answer) -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -107,6 +116,18 @@ if run "$D/s1.cyr"; then
             echo "FAIL: $G [S]: STREQ calls $S1 (450 structs) -> $S2 (900): $((S2 * 100 / (S1 + 1)))% (bound 300%)"; FAIL=1
         else echo "  ok [S] STREQ calls $S1 (450 structs) -> $S2 (900), $((S2 * 100 / S1))% (bound 300%)"; fi
     fi
+fi
+
+# ── L: FINDLOCAL's walk ──────────────────────────────────────────────────────────────────────────────────────
+awk 'BEGIN { print "fn main(): i64 {"; for (i = 0; i < 2000; i++) printf "    var v%d = %d;\n", i, i
+             print "    return v1999 & 255;"; print "}"; print "syscall(60, main());" }' > "$D/l.cyr"
+if run "$D/l.cyr"; then
+    chmod +x "$D/prog"; lrc=0; "$D/prog" || lrc=$?
+    Q=$(count STREQ); F=$(count FINDLOCAL)
+    if [ "$lrc" -ne $((1999 & 255)) ]; then echo "FAIL: $G [L]: the 2,000-local program exits $lrc, not $((1999 & 255))"; FAIL=1
+    elif [ "$F" -lt 2000 ]; then echo "FAIL: $G [L]: only $F FINDLOCAL calls — the fixture no longer exercises the walk"; FAIL=1
+    elif [ "$Q" -ge 20000 ]; then echo "FAIL: $G [L]: $Q STREQ calls for 2,000 locals (bound 20,000; 6.7.17 read 1,999,011)"; FAIL=1
+    else echo "  ok [L] $Q STREQ calls for 2,000 locals ($F FINDLOCAL calls; bound 20,000)"; fi
 fi
 
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
