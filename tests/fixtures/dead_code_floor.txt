@@ -37,6 +37,7 @@ _IR_REC1 a64 a64m a64n cx
 _asm_is_param_load cx
 _codebuf_grow cx
 _dce_drift_check a64 a64m a64n
+_eb_fault a64m win x86m
 _fnhash_health a64 a64m a64n cx x86m
 _gvk_arm a64 a64m a64n cx win x86m
 _ir_arena_init a64 a64m a64n cx x86m
