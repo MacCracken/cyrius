@@ -606,9 +606,7 @@ fn _targs_name(S, j, own): i64 {
         if (t == 12 || t == 5 || t == 13) { return 0; }
         if (t == 2) { if (STREQ(S, TOKVAL(S, j), own) == 1) { return 1; } }
         if (t == 19) { d = d + 1; }
-        if (t == 20) { d = d - 1; }
-        if (t == 39) { d = d - 2; }
-        if (t == 152) { d = d - 3; }
+        d = d - _targ_gt_n(t);
         if (d <= 0) { return 0; }
         j = j + 1;
     }

@@ -421,9 +421,8 @@ fn _dt_ann_end(S, k): i64 {
         var t = TOKTYP(S, i);
         if (t == 5 || t == 12 || t == 13 || t == 14) { return i; }
         if (t == 10 || t == 28 || t == 19) { d = d + 1; }
-        elif (t == 11 || t == 29 || t == 20) { d = d - 1; }
-        elif (t == 39) { d = d - 2; }
-        elif (t == 152) { d = d - 3; }
+        elif (t == 11 || t == 29) { d = d - 1; }
+        else { d = d - _targ_gt_n(t); }
         if (d < 0) { d = 0; }
         if (d == 0) { if (t == 31 || t == 4) { return i; } }
         i = i + 1;

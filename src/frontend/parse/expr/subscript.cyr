@@ -309,9 +309,7 @@ fn _sub_callee(S): i64 {
         var d = 0;
         while (c > 0) {
             t = TOKTYP(S, c);
-            if (t == 20) { d = d + 1; }
-            if (t == 39) { d = d + 2; }
-            if (t == 152) { d = d + 3; }
+            d = d + _targ_gt_n(t);
             if (t == 19) { d = d - 1; if (d <= 0) { break; } }
             c = c - 1;
         }

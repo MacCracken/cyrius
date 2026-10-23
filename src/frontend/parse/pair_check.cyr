@@ -152,9 +152,7 @@ fn _tok_targs_open(S, e): i64 {
     var d = 0;
     while (e > 0) {
         var t = TOKTYP(S, e);
-        if (t == 20) { d = d + 1; }
-        elif (t == 39) { d = d + 2; }
-        elif (t == 152) { d = d + 3; }
+        if (_targ_gt_n(t) > 0) { d = d + _targ_gt_n(t); }
         elif (t == 19) { d = d - 1; if (d <= 0) { return e; } }
         elif (t == 5 || t == 10 || t == 11 || t == 13 || t == 14) { return 0 - 1; }
         e = e - 1;

@@ -331,9 +331,8 @@ fn _dyn_opener(S, ti): i64 {
     while (k >= 0) {
         var t = TOKTYP(S, k);
         if (t == 5 || t == 13 || t == 14) { return 0; }
-        if (t == 11 || t == 20 || t == 29) { d = d + 1; }
-        elif (t == 39) { d = d + 2; }
-        elif (t == 152) { d = d + 3; }
+        if (t == 11 || t == 29) { d = d + 1; }
+        elif (_targ_gt_n(t) > 0) { d = d + _targ_gt_n(t); }
         elif (t == 10 || t == 19 || t == 28) {
             if (d == 0) {
                 _dyn_open_ti = k;

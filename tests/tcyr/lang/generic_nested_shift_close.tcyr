@@ -7,6 +7,12 @@
 # `fn f(a: Box<Box<Pt>>, b: i64)` was refused "unknown type 'b' as a type argument". When the inner
 # instance was minted at that read, its re-parse also dropped the owed close. Every target.
 # Gate: tests/gates/frontend/generic_nested_shift_close.sh (every leg, the mutants).
+#
+# 6.7.18 — a NAMED argument after a parameter whose type closes with `>>>`: `nb3(x, b: 8)` was refused "'nb3' has no
+# parameter named 'b' - its parameters are: a," — the reader of a definition's parameter names (`_bx_pname`) took `>>`
+# as two closes but `>>>` as none, so it never left `a`'s type. It reads every closer through `_targ_gt_n` now, as do
+# the trait method arity (`_tr_arity`), a method's `<..>` skip (`_tr_paren`) and the bounded sites' parameter walk
+# (`_bnd_sites`), which had the same gap.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -24,6 +30,10 @@ fn bb(a: Box<Box<Pt>>, b: i64): i64 { return a.v.v.y + b; }
 fn call_bb(): i64 { var x: Box<Box<Pt>>; x.v.v.y = 40; return bb(x, 5); }
 fn pb(a: *Box<P<R>>, b: i64): i64 { return b; }
 fn vb(w: Vec<Box<Box<Pt>>>, b: i64): i64 { return b; }
+fn nb3(a: Box<Box<Box<Pt>>>, b: i64): i64 { return b; }
+fn call_nb3(): i64 { var x: Box<Box<Box<Pt>>>; return nb3(x, b: 8); }
+fn nb2(a: Box<Box<Pt>>, b: i64): i64 { return b; }
+fn call_nb2(): i64 { var x: Box<Box<Pt>>; return nb2(x, b: 9); }
 fn lay(): i64 {
     var t: Two<P<P<R>>, i16>;
     t.b = 65539;
@@ -49,6 +59,8 @@ assert_eq(sizeof(Two<i16, Two<P<P<R>>, i16>>), 20, "Two<i16, Two<P<P<R>>, i16>>:
 assert_eq(call_bb(), 45, "fn bb(a: Box<Box<Pt>>, b: i64): b is a parameter");
 assert_eq(pb(0, 6), 6, "fn pb(a: *Box<P<R>>, b: i64): b is a parameter");
 assert_eq(vb(0, 7), 7, "fn vb(w: Vec<Box<Box<Pt>>>, b: i64): b is a parameter");
+assert_eq(call_nb3(), 8, "nb3(x, b: 8): a named argument after a `>>>`-closed parameter type (6.7.18)");
+assert_eq(call_nb2(), 9, "control: nb2(x, b: 9) after a `>>`-closed one");
 assert_eq(recv(), 183, "var t: Two<P<P<R>>, i16> = mk<P<P<R>>, i16>(3): 18 * 10 + 3");
 assert_eq(meth(), 1602, "o.m<P<P<R>>, i16>(0): B is i16");
 assert_eq(g2<P<P<R> >, i16>(0, 0), 1602, "control: the closes spaced apart");

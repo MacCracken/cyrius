@@ -1,0 +1,55 @@
+# inline_asm_frame_any_return_type.tcyr — 6.7.18: a fn holding inline asm keeps the standard frame, whatever its
+# return type is spelled as.
+#
+# Inline asm reads its locals at hardcoded offsets (`[rbp - 8]` is the first slot), so a fn with an `asm` block is
+# never given the register picker's callee-saved save area, which would move every local down by its size
+# (`_fn_has_inline_asm`, src/frontend/parse/fn/def.cyr). The look-ahead that answers it stepped over the parameter
+# list and then a return type of ONE name (`: i64`) before it expected the body's `{`, so at `: *i64`, `: (i64, i64)`
+# or `: Box<i64>` it found no body, the fn got the save area on x86, and its asm read and wrote the save area instead
+# of its locals: each such fn returned 0, not its argument (the 6.7.17 cycc: 5 of the 6 checks below failed). The
+# body is found now as the definition's own readers find it (`_tok_close_paren`, `_tok_body_open`, `_body_has_tok`).
+# x86 only: the picker and its save area are x86's, and the asm is x86 bytes; elsewhere the fns are not compiled.
+include "lib/assert.cyr"
+
+#ifdef CYRIUS_ARCH_X86
+struct Box<T> { v: T; }
+# x is the first slot ([rbp - 8]) and r the second ([rbp - 16]): `mov rax, [rbp - 8]; mov [rbp - 16], rax`.
+fn f_name(x): i64 {
+    var r = 0;
+    asm { 0x48; 0x8B; 0x45; 0xF8; 0x48; 0x89; 0x45; 0xF0; }
+    return r;
+}
+fn f_ptr(x): *i64 {
+    var r = 0;
+    asm { 0x48; 0x8B; 0x45; 0xF8; 0x48; 0x89; 0x45; 0xF0; }
+    return r;
+}
+fn f_pptr(x): **u8 {
+    var r = 0;
+    asm { 0x48; 0x8B; 0x45; 0xF8; 0x48; 0x89; 0x45; 0xF0; }
+    return r;
+}
+fn f_box(x): Box<i64> {
+    var b: Box<i64>;
+    b.v = 0;
+    var r = 0;
+    asm { 0x48; 0x8B; 0x45; 0xF8; 0x48; 0x89; 0x45; 0xE8; }   # b takes [rbp - 16]; r is [rbp - 24]
+    b.v = r;
+    return b;
+}
+fn f_two(x): (i64, i64) {
+    var r = 0;
+    asm { 0x48; 0x8B; 0x45; 0xF8; 0x48; 0x89; 0x45; 0xF0; }
+    return (r, r + 1);
+}
+assert_eq(f_name(42), 42, "asm in a fn returning `: i64` reads its first slot");
+assert_eq(f_ptr(43), 43, "asm in a fn returning `: *i64` reads its first slot (it read a saved register)");
+assert_eq(f_pptr(44), 44, "asm in a fn returning `: **u8` reads its first slot");
+var bx = f_box(45);
+assert_eq(bx.v, 45, "asm in a fn returning `: Box<i64>` reads its first slot");
+var a, b = f_two(46);
+assert_eq(a, 46, "asm in a fn returning `: (i64, i64)` reads its first slot");
+assert_eq(b, 47, "and its second value is the first plus one");
+#endif
+var rc = assert_summary();
+syscall(60, rc);
