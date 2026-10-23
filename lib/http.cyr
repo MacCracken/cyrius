@@ -305,8 +305,16 @@ fn _http_parse_into(result, buf, len): i64 {
         if (r[i] != pre[i]) { same = 0; }
         i = i + 1;
     }
+    # The status is three DIGITS: anything else is no status (0), as a response that is not
+    # HTTP/1.x is. 6.7.18: the three bytes were taken as digits unchecked, so "HTTP/1.1 2x0"
+    # reported 920 and "HTTP/1.1 !!!" -1665 — a negative status no caller tests for. CHANGELOG [6.7.18]
     var code = 0;
-    if (same == 1) { code = (r[9] - 48) * 100 + (r[10] - 48) * 10 + (r[11] - 48); }
+    if (same == 1) {
+        var d0 = r[9] - 48;
+        var d1 = r[10] - 48;
+        var d2 = r[11] - 48;
+        if (d0 >= 0 && d0 <= 9 && d1 >= 0 && d1 <= 9 && d2 >= 0 && d2 <= 9) { code = d0 * 100 + d1 * 10 + d2; }
+    }
     store64(result, code);
     # Find body (after \r\n\r\n)
     var pi = 0;
