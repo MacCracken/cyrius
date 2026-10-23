@@ -125,7 +125,7 @@ fn _tn_resolve(S, noff): i64 {
 
 # ⛔ 6.7.14 — A PROGRAM'S OWN `struct f32v4 { .. }` IS ITS STRUCT AS A PARAMETER TYPE TOO (the user's decision D41 A,
 # 2026-10-16), as it was already as a local, a field, a return type and behind a `*`: `_classify_param_type`
-# (parse/fn.cyr) read the vector names before any struct, so `fn g(v: f32v4)` took the SIMD vector and `v.a` was
+# (parse/fn/sig.cyr) read the vector names before any struct, so `fn g(v: f32v4)` took the SIMD vector and `v.a` was
 # refused "SIMD vector has no named fields" (and since 6.7.13 `struct f32v8` too, which compiled through 6.7.12). A
 # vector name `c` is the vector only while the program declares no struct or union of that name (`_cpt_vdecl`) — read
 # from the TOKENS, not the struct table, so pass 1's prescan of a fn above the declaration and pass 2's definition
@@ -3025,7 +3025,7 @@ fn _tup_svtype(S, vi, sid, noff, ti): i64 {
 }
 # 6.7.6 (Break 1, lane D) — the LAST marks of a scalar local's / global's registration: `bool`
 # (6.7.3) and declared INTEGER (`st` = the annotation's integer width, 1..8; 16 is u128 / a slice),
-# which routes `println(n)` to its `_int` overload (_od_arg_kind, parse/fn.cyr). A global's marks are
+# which routes `println(n)` to its `_int` overload (_od_arg_kind, parse/fn/call.cyr). A global's marks are
 # the last declaration's (0 clears a redeclaration's). 6.7.8 (C2-3a): and a `*T`'s element kind
 # (`ann` the annotation's first token) — a global's beside GVTYPE, so it is no new shape; 6.7.8 (D5):
 # and a declared scalar's annotation name, the type a dyn formed from it names.
@@ -4294,9 +4294,9 @@ fn _ptr_notype(S, vnoff): i64 {
 # (`_pty_end`), each refusal inside its list once with the declaration's words (`what`, `vnoff`) when `quiet` is 0, and
 # stepped; its step is a pointer's 8 (`_ptr_step_peek`), so `fncall1(c, 5)` / `callptr(c, 5)` read the word as they
 # read a `cb: *fn( .. )` parameter. The token after the type. CHANGELOG [6.7.17]
-# The parameter reader's (`_pty_*`, parse/fn.cyr) words for such a declaration (" for variable "; 0 = a parameter's)
-# and its name, and the token its list's missing `)` was expected at (-1 none; `_pty_rpn` 1 = nothing in that type
-# reported before it, so it is reported).
+# The parameter reader's (`_pty_*`, parse/fn/impl.cyr) words for such a declaration (" for variable "; 0 = a
+# parameter's) and its name, and the token its list's missing `)` was expected at (-1 none; `_pty_rpn` 1 = nothing in
+# that type reported before it, so it is reported).
 var _pty_dk = 0;
 var _pty_dn = 0;
 var _pty_rpx = 0 - 1;
@@ -6373,7 +6373,7 @@ fn _vec_el_args(S, ti, vnoff): i64 {
     return 0;
 }
 # The generic element `es` (its name at token `ti`, `<` next): its list read by `_targ_chk` with the bounds judged
-# (`_ta_vbnd`, parse/fn.cyr's D10 note) — each nested struct's while it is read, the element's own after.
+# (`_ta_vbnd`, parse/fn/generic.cyr's D10 note) — each nested struct's while it is read, the element's own after.
 # CHANGELOG [6.7.15]
 fn _vec_el_targs(S, es, ti): i64 {
     var sv_vb = _ta_vbnd;
@@ -7122,7 +7122,7 @@ fn _vis_check_var(S, vi, noff): i64 {
 # = 0`, or net `var SYS_SOCKET = 41` vs syscalls `enum { SYS_SOCKET = 198 }`),
 # whichever loses gets the other's value substituted into its code with no
 # warning — the owl/patra `TK_IDENT`-aliases-`TK_EOF` corruption. This mirrors
-# the duplicate-`fn` warning (parse/fn.cyr) for data symbols: called at the
+# the duplicate-`fn` warning (parse/fn_def.cyr) for data symbols: called at the
 # enum-member + literal-`var` registration sites with the NEW name+value BEFORE
 # the new entry is written, so the lookup sees only PRIOR definitions. (6.6.6: the
 # lookup is `_findvar_core`, not FINDVAR — see the note on the call below.) The prior's

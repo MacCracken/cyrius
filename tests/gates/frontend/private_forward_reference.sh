@@ -117,7 +117,7 @@ forks=$(ls "$ROOT"/src/main*.cyr 2>/dev/null | grep -v version_str)
 nf=$(printf '%s\n' "$forks" | grep -c .)
 [ "$nf" -ge 7 ] || { echo "  FAIL: private_forward_reference axis1 — expected >= 7 src/main*.cyr forks, found $nf"; fail=1; }
 # 6.6.17: the two calls live in the ONE shared pass-1 scan every fork runs (_tl_pass1,
-# src/frontend/parse/fn.cyr); toplevel_scan_shared.sh refuses a fork that re-grows its own.
+# src/frontend/parse/fn_def.cyr); toplevel_scan_shared.sh refuses a fork that re-grows its own.
 for f in $forks; do
   b=$(basename "$f")
   cp1=$(grep -c '^_tl_pass1(S, [01]);' "$f" || true)

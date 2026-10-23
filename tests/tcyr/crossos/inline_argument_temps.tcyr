@@ -6,7 +6,7 @@
 # that parks a `*S` dereference before a struct operator) that record nothing in the frame's high-water, so the frame
 # could end below them, where the pushed left operand of `id(..) + id(..)` lives: the temp overwrote it. The filed
 # repro `id(a) + id(a + 1) + 2` (a u128) read 84 for 83 on x86_64, aarch64 and Windows, and its closure twin 43 on
-# x86_64 and Windows, 84 on aarch64 (`_inl_flc_release`, src/frontend/parse/fn.cyr). Whether a caller shows it depends
+# x86_64 and Windows, 84 on aarch64 (`_inl_flc_release`, src/frontend/parse/fn/call.cyr). Whether a caller shows it depends
 # on its frame's padding, so each row is its own fn with no local beyond the ones it needs; the `z` twins add one local
 # to flip that padding. cx was right throughout (a control). In this directory so the release gate runs it on ecb /
 # ach / cass / pi.

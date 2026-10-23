@@ -64,7 +64,7 @@
 # (exit 139 before), D18 a `**Pt` into `*Q` refused by name. Mutation (scratch tree, measured 2026-10-16):
 #   `_dlo_ppsid` answers 0                             -> RED D17 (exit 139) D18 (compiled)
 #
-# 6.7.8 — T IS INFERRED THROUGH A GENERIC STRUCT PARAMETER (`_gs_carrier`, parse/fn.cyr):
+# 6.7.8 — T IS INFERRED THROUGH A GENERIC STRUCT PARAMETER (`_gs_carrier`, parse/fn/generic.cyr):
 # R18b `gx(b)` flips from a refusal to an acceptance (exit 8, control `gx<Pt>(b)`). What stays: an
 # `x: T` parameter binds T before the struct carrier does (R18c — the literal's i64, so the
 # Box<Pt> is still refused against the base) and a nested `Box<Pair<T>>` binds nothing (R18d). The
@@ -171,7 +171,7 @@
 # issues/archived/2026-10-15-struct-local-into-word-pointer-parameter-pushes-first-word.md): `ri(s)` with `p: *i64` / `*u8` /
 # `**i64` / `*f64`, s an inline local (8 / 16 B), a by-value parameter, an inline global (a fn, top level), a capture,
 # wrapped, a `*T` with T = i64, a method's parameter — "cannot pass 's' to a parameter that is not a pointer to its
-# struct type in a call to 'ri' - pass &s for its address" (`_sarg_struct_other`, parse/fn.cyr); P1 the filed repro
+# struct type in a call to 'ri' - pass &s for its address" (`_sarg_struct_other`, parse/fn/call_args.cyr); P1 the filed repro
 # verbatim, P2-P16, P17 a `*Str` keeps 6.7.3's refusal; PK1 a handle, `&s`, a `*Pt`, `*Pt <- s`, an untyped parameter and `rg(s)` pass; PK2 a `Str` compiles.
 # Mutations (each a scratch copy of the tree with the one change, this gate run with its compiler; 2026-10-15):
 #   the tree before it (8abca341)                      -> RED 16: P1-P16 (each compiled)
@@ -185,7 +185,7 @@
 # pointer-parameter-pushes-first-word.md; D5 (a) and 6.7.13's D31 already state the rule): a struct-typed field, a by-value
 # struct call, a method / operator result, a `*S` / `**S` dereference — wrapped, 8 B, at top level, into a method's,
 # a generic's, a `*u8` / `**i64` parameter, in a closure — "cannot pass 's' to a parameter that is not a pointer to its
-# struct type in a call to 'ri' - a struct value is no address", once (`_sarg_sval_ptr`, parse/fn.cyr); V1 the filed
+# struct type in a call to 'ri' - a struct value is no address", once (`_sarg_sval_ptr`, parse/fn/call_args.cyr); V1 the filed
 # repro verbatim (one error in each fn), V2-V17; VK1 / VK2 an address, a `*Pt`, a `*Pt` field, a `: *Pt` call and
 # method, a `*i64` dereference pass; VK3 a `Str` field compiles.
 # Mutations (2026-10-17, the gate run with each compiler):
@@ -1342,7 +1342,7 @@ fn go(): i64 { var l: P3; l = GPQ; return l.x; } syscall(60, go());"
 
 echo "=== 6.7.16 (D97): a pointer to another struct into a \`*S\` / \`**S\` parameter (x86_64, aarch64, cx, PE) ==="
 # issues/archived/2026-10-20-pointer-to-other-struct-argument-unchecked.md — refused at the argument in 6.7.3's words (`_pa_chk`,
-# parse/fn.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
+# parse/types.cyr); PD1-PD3 the filed repros verbatim. accept4: no error on each compiler, and the x86_64 binary's exit.
 accept4() {  # $1 label  $2 source  $3 expected x86_64 exit
     printf '%s' "$2" > "$D/k4.cyr"
     naccept=$((naccept+1))

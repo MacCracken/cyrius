@@ -1,0 +1,1082 @@
+# PARSER — fn: the return / tail path — the tail call's divert list, multi-value returns, PARSE_RETURN.
+# ================================================================
+# Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
+
+# ================================================================
+# PARSER — STATEMENT DISPATCH + FUNCTION SUPPORT
+# ================================================================
+
+# ⭐ 6.6.7 — THE TAIL ARM'S DIVERT LIST, IN ONE PLACE. `return IDENT(args);` is lowered to
+# epilogue + `jmp` (ETAILJMP; the same shape on cx since 6.6.12), which reaches NOTHING the normal
+# return does: not the return landing, not the defer walker, not PARSE_FNCALL. Every obligation
+# PARSE_FNCALL or the epilogue carries therefore had to be re-discovered here, one silent wrong
+# value at a time, and bolted on as its own `tc_has_addr = 1` line — fifteen diverts by 6.6.7
+# (plus checks copied into the emission itself: arity, #pure, #deprecated and the Win64 argument
+# ceiling — a fifth, SIMD_TC, was unreachable behind `_tc_callee_divert`'s SIMD lines and went in
+# 6.6.20), spread over two hundred lines, while the standing note and a code comment each counted
+# four. The diverts live in these four predicates now; a new obligation is
+# a new line HERE. 1 = take the normal
+# call path. ⚠ Every test is read-only (FINDFN, masks, token peeks) — order is free.
+# ⚠ Over-diverting is NOT free: it costs the tail call, and a self-recursive tail call that
+# loses it grows the stack (6.6.5 measured a correct program turned into rc 139). Each test is
+# the exact question of the thing it protects, never an approximation. CHANGELOG [6.6.7]
+fn _tc_must_divert(S, cfi, ti_after): i64 {
+    if (_tc_frame_divert(S, cfi) == 1) { return 1; }
+    if (_tc_callee_divert(S, cfi) == 1) { return 1; }
+    if (_tc_args_divert(S, cfi, ti_after) == 1) { return 1; }
+    if (_tc_generic_divert(S, cfi, ti_after) == 1) { return 1; }   # 6.6.10
+    return 0;
+}
+# What THIS fn must still do after the callee returns, or what its frame must outlive.
+fn _tc_frame_divert(S, cfi): i64 {
+    # 6.6.7 — a fn with a `defer` or `secret var` ANYWHERE in its body: the jmp skipped the walker,
+    # so the block never ran and a secret was never zeroised (the tail-call secret-var wipe gap). The WHOLE body,
+    # prescanned
+    # at its `{` (`_body_has_defer`) — a registered-so-far count misses a loop whose tail return
+    # lexically precedes the defer. Such a fn never tail-calls; a deep self-recursion needs a loop.
+    if (_cur_fn_has_defer == 1) { return 1; }
+    # 6.6.7 — a tail call pushes nothing onto rp_vec, which is how _PARSE_DEFER refuses a
+    # `return` inside a defer body. (Subsumed by the line above; kept as the defer arm's own rule.)
+    if (_in_defer == 1) { return 1; }
+    # 6.6.8 — a coroutine's completion (`_coro_mark_done`: state DONE + the stored result) lives
+    # in the epilogue a `jmp` skips, so a tail-shaped `return f(x);` left it resumable and every
+    # later force re-ran the tail. CHANGELOG [6.6.8]
+    if (_cur_fn_coro == 1) { return 1; }
+    # v6.5.14 — a pointer to a local laundered through a variable (`var p = &buf; return f(p);`):
+    # the epilogue frees the frame the callee reads. Set wherever this fn materialises `&local`,
+    # and since 6.6.20 wherever such an address escapes implicitly (`_sarg_escapes`; rule 1
+    # above `_tc_after_args_divert`). Set SO FAR: inside a loop, a 0 here is not yet the answer
+    # — the call waits for the end of its outermost loop (`_tcp_site`). CHANGELOG [6.7.3]
+    if (_fn_local_addr == 1) { return 1; }
+    # 6.6.6 — a struct-returning CALLER copies into its own retptr, which a `jmp` cannot do.
+    if (_cur_fn_ret_sid > 0) { if (_cur_fn_ret_stash > 0) { return 1; } }
+    # 6.6.6 — the rax:rdx PAIR and the VECTOR classes: a `jmp` hands the callee's return
+    # convention straight to OUR caller, right only when the callee returns this same type the
+    # same way (`return s2b(1);` from a `: P2` fn left rdx unwritten). The normal path is where
+    # `_refuse_pair_return` / `_refuse_simd_return` see the shape.
+    if (_cur_fn_ret_pair == 1) { if (_pair_ret_call_ok(S) == 0) { return 1; } }
+    if (_cur_fn_returns_vector(S) == 1) { if (_simd_ret_call_ok(S) == 0) { return 1; } }
+    if (_tc_small_sret_divert(S, cfi) == 1) { return 1; }   # 6.7.11: the struct class of 8 B or less
+    if (_tc_f64_ret_divert(S, cfi) == 1) { return 1; }   # 6.6.20: the scalar f64 class
+    # v6.4.31 — a SIMD-returning fn on Win64 returns through a hidden retptr in RCX, which the tail
+    # path's argument marshalling overwrites (`return f32v4_make(...)` SIGSEGV'd).
+    if (_TARGET_PE == 1) {
+        if (_cur_fn_ret_stash > 0) {
+            if (_cur_fn_returns_vector(S) == 1) { return 1; }
+        }
+    }
+    return 0;
+}
+# 6.7.11 — the struct class of 8 B or less, the same rule as the pair line above: a `jmp` hands our
+# caller the callee's rax as this fn's struct, right only when the callee returns this same struct
+# (or an untyped word). `return mk();` with `fn mk(): U8` from a `: S8` fn returned U8's bytes as an
+# S8, unchecked — the normal path is where `_ret_small_val` refuses it by name; and `return gp();` with
+# `fn gp(): *S8` handed back the POINTER as the struct — the normal path copies the struct it points at
+# (`_ret_small_ptr`). CHANGELOG [6.7.11]
+fn _tc_small_sret_divert(S, cfi): i64 {
+    if (cfi < 0) { return 0; }
+    if (_istr_tcd(S, cfi) == 1) { return 1; }   # 6.7.17 (D18): another struct from a fn returning `Str`
+    if (_ret_small_cls(S) == 0) { return 0; }
+    var rs = GFRS(S, cfi);
+    if (_hl_fn_psid(cfi) > 0) { return 1; }   # a `: *X` callee: its struct is copied (or refused)
+    if (rs <= 0) { return 0; }
+    if (rs >= 2048) { return 0; }
+    if (rs != _cur_fn_ret_sid) { return 1; }
+    return 0;
+}
+# 6.6.20 — the SCALAR f64 class, the same rule as the pair / vector lines above. On the x86
+# family a `: f64` fn hands its result back in xmm0 (`_ret_box_f64` at the return landing) and
+# every call site reads xmm0 (`_call_ret_marks`), so a `jmp` is right only into a callee that
+# boxes too: `return f64_max(a, b);` from a `: f64` fn returned the operand the last compare
+# left in xmm0 — the SMALLER one — exit 0. A `: f64` callee keeps its tail call, so self- and
+# mutual f64 recursion stay TCO (the prescan records GFRS for a fn declared below). aarch64 and
+# cx return an f64 in x0 / r0, the integer register, so there is nothing to divert for.
+fn _tc_f64_ret_divert(S, cfi): i64 {
+    if (_cur_fn_ret_scalar != 0 - 9) { return 0; }
+    if (_AARCH64_BACKEND != 0) { return 0; }
+    if (_TARGET_CX != 0) { return 0; }
+    if (cfi < 0) { return 1; }
+    if (GFRS(S, cfi) != 0 - 9) { return 1; }
+    return 0;
+}
+# What the CALLEE needs from PARSE_FNCALL that the tail path's plain argument loop never does.
+fn _tc_callee_divert(S, cfi): i64 {
+    # v6.5.17 — fncall0..8 are INDIRECT calls; `jmp fncallN` skipped the closure dispatch.
+    if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) { return 1; }
+    # 6.6.11 — `sizeof` / `mulh64` are lowered inline by PARSE_FACTOR; there is no fn to jump to.
+    if (_is_ident_intrinsic(S, PEEKV(S)) == 1) { return 1; }
+    # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
+    if (_ret_agg_class(S, cfi) == 2) { return 1; }
+    if (cfi < 0) { return 0; }
+    # 6.7.8 — a dyn-returning callee from a fn that does not return that dyn: the `jmp` handed our
+    # caller the dyn's DATA word as this fn's value (`return mk();` in an i64, untyped, `*T` or
+    # closure body) — the normal path is where V4 refuses it.
+    if (_dyn_is(S, GFRS(S, cfi)) == 1) { if (_cur_fn_ret_sid != GFRS(S, cfi)) { return 1; } }
+    # (v6.3.36's "any address-passed param diverts" is replaced since 6.6.20 by the rules above
+    # `_tc_after_args_divert`.)
+    # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
+    # integer ones (`return f32v4_add(v, v)` returned v). These two lines also make PARSE_FNCALL's
+    # SIMD argument class check the only one a tail-shaped call needs (6.6.20).
+    if (L64(_fnt_simdmask + cfi * 8) != 0) { return 1; }
+    if (_pm_row_any(cfi, 0xC0) != 0) { return 1; }   # 6.6.17 (a10)
+    # v6.5.1 — an overload-suffix sibling: the `_str`/`_int` dispatch lives only in PARSE_FNCALL
+    # (`return println(myStr);` silently called the cstr base).
+    if (L64(_fnt_ovstr + cfi * 8) != 0) { return 1; }
+    if (L64(_fnt_ovint + cfi * 8) != 0) { return 1; }
+    return 0;
+}
+# What the ARGUMENT LIST needs. The scan runs to the call's matching `)`.
+fn _tc_args_divert(S, cfi, ti_after): i64 {
+    # 6.7.7 (B6) — a call that fills a parameter default or names an argument is PARSE_FNCALL's: the
+    # one marshaller is the only site that fills (the tail arm's `_CHECK_ARITY` mode 3 makes a miss
+    # here loud). A full-arity positional call to a defaulted fn keeps its `jmp`. CHANGELOG [6.7.7]
+    if (_pd_call_fills(S, cfi, ti_after) == 1) { return 1; }
+    var has_lit = 0;
+    var depth = 1;
+    var i = ti_after + 1;
+    while (i < GTCNT(S)) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { depth = depth + 1; }
+        if (t == 11) { depth = depth - 1; if (depth == 0) { break; } }
+        # v5.8.16 — `&local` spelled in the arg list: the callee reads the frame the jmp frees.
+        if (t == 27) { return 1; }
+        if (t == 1) { has_lit = 1; }
+        i = i + 1;
+    }
+    if (cfi < 0) { return 0; }
+    # v6.5.2 — an integer literal into a `: cstring` param is refused by PARSE_FNCALL only.
+    if (has_lit == 1) { if (L64(_fnt_cstrmask + cfi * 8) != 0) { return 1; } }
+    if (has_lit == 1) { if (_pm_row_any(cfi, 4) != 0) { return 1; } }   # 6.6.17 (a10)
+    # 6.6.5 — a string literal into a `: Str` param is `str_from`-wrapped by PARSE_FNCALL only.
+    # `_tc_str_literal_arg` asks PARSE_FNCALL's exact question (the literal is that argument's
+    # FIRST token AND that argument's mask bit is set): looser forms were measured to cost a
+    # self-recursive tail call its TCO.
+    if (_tc_str_literal_arg(S, ti_after, cfi) == 1) { return 1; }
+    return 0;
+}
+# ⛔ 6.6.20 — AN ADDRESS-PASSED PARAMETER NO LONGER COSTS EVERY TAIL CALL. Any address-passed
+# parameter (a struct over 8 B as `p: T` or `p: *T`, a Win64 value-form vector) used to divert EVERY
+# tail call to its fn, so a `p: *Node` list walk, `return walk(p.next, acc + p.v);`, recursed with
+# `call` and a 2,000,000-node list overflowed the stack — a pointer argument carries no frame
+# address. The tail arm now pushes each argument exactly as PARSE_FNCALL does
+# (`_try_push_struct_addr_arg`), so the one hazard left is the one a `jmp` adds: an address IN THIS
+# FRAME reaching the callee, directly or laundered through a value (`var x = idp(s); return dP(x, k);`
+# — the pointer `idp` hands back is `&s`). Three rules close it, none a guess at an argument's shape:
+#   1. `_fn_local_addr` (`_tc_frame_divert`) is set wherever an address in this fn's own frame
+#      escapes: `&local`, and every implicit push of one (`_sarg_escapes`) — an inline aggregate
+#      argument (a by-value parameter's copy included), a struct call's or method's temp, a field of
+#      a frame aggregate, a method's `self`, an operator's operand — UNLESS it is pushed to an
+#      ordinary call whose callee copies that parameter in its prologue (`_pm_copies`: a `p: T`
+#      over 8 B, a Win64 vector), which holds nothing once the call returns. So passing an inline
+#      struct to a `*T` or untyped parameter, a `*T` / untyped `self`, an untyped operator or a
+#      `#naked` fn before a tail call costs that tail call (the callee may keep the pointer);
+#      passing it by value does not.
+#   2. That flag is set-SO-FAR, which is the whole question only where nothing after the return can
+#      run before it: outside every loop (the only backward jumps; a `defer` body and a coroutine
+#      already divert). Inside a loop a later `x = &s;` runs before the next iteration's return, so
+#      there the call waits for the flag at the end of its OUTERMOST loop (`_tcp_site`). 6.6.20
+#      diverted an address-passed callee there always and every other callee never — a wrong
+#      value for the second, a lost `jmp` for the first. CHANGELOG [6.7.3]
+#   3. The call's OWN arguments can create such an address after this decision (`dQ(G, s.me())`,
+#      `dP(idu(idp(s)), k)`): the arm emits an ordinary call when they did (`_tc_after_args_divert`).
+#      An address pushed AS one of its arguments always counts, by-value callee or not
+#      (`return dV(s, k);`): the `jmp` frees the frame before the callee's copy runs.
+# CHANGELOG [6.6.20]
+# Once the tail arm has evaluated its arguments into their registers: 1 = emit an ordinary call
+# instead of the `jmp`. Over the register ceiling the epilogue would free the stack arguments
+# ECALLPOPS wrote (6.6.5); and when evaluating an argument took an address in this frame
+# (`_fn_local_addr`, 0 when the arm began — `_tc_frame_divert`), it would free what that address
+# points at. CHANGELOG [6.6.20]
+# 6.7.7 — 1 when THIS tail arm copied a by-value argument into its frame (`_sarg_snap`): the call
+# is an ordinary one, but only this one. The copy is read by the callee's prologue during that
+# call and by nothing after it, so it is not `_fn_local_addr`, which costs every later tail call
+# in the fn (and every pending one in an enclosing loop) its `jmp`. Cleared where the arm starts
+# its arguments and restored after its verdict: a closure literal or a generic instance among
+# those arguments runs its own arms. CHANGELOG [6.7.7]
+var _tc_snap_div = 0;
+fn _tc_after_args_divert(argc): i64 {
+    if (argc > _ARG_REG_COUNT()) { return 1; }
+    if (_fn_local_addr == 1) { return 1; }
+    if (_tc_snap_div == 1) { return 1; }
+    return 0;
+}
+# The ordinary call the tail arm takes instead of the `jmp`, its arguments already in their
+# registers: call, clean up, and jump to the return landing like any other `return`.
+fn _tc_emit_call(S, fi, argc): i64 {
+    var foff = L64(_fnt_offsets + fi * 8);
+    if (foff >= 0) { ECALLTO(S, foff); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, argc);
+    vec_push(rp_vec, EJMP0(S));
+    return 0;
+}
+# ⛔ 6.7.3 — A TAIL CALL INSIDE A LOOP WAITS FOR ITS VERDICT. `_fn_local_addr` is set SO FAR, so
+# a `return f(..);` that comes EARLIER in a loop body than the statement taking a frame address
+# (`while (..) { if (i == 1) { return rd(x, k); } x = &s; .. }`) found it 0, kept its `jmp`, and
+# on the next iteration handed `rd` a pointer into the frame the `jmp` had just freed: a silent
+# wrong value on every backend since 6.5.14, through `&s` and through each implicit address
+# 6.6.20 flags (a method's `self`, an operator's operand, a field of an inline aggregate, ..).
+# A prescan cannot answer it — since 6.6.20 most of what sets the flag depends on types and on
+# the callee's signature — and bodies are parsed once. So the site is emitted with a SELECTOR
+# `jmp` in front of the tail sequence, and decided once the flag is final for it: when its
+# OUTERMOST enclosing loop ends (`_tcp_loop_end`, after the whole loop statement, a C-style
+# `for`'s step included). Nothing after that loop can run before the call again (cyrius has no
+# goto; its only back-edges are loops), and an address taken BEFORE the loop already diverted
+# the call (`_tc_frame_divert`), so the flag then is exactly "an address was taken in this
+# loop". A fn that takes an address only AFTER the loop keeps its `jmp`. Every nested body (a
+# closure, a generic instance) has its own range of sites (`_tcp_base`, in the `_fnst_save`
+# snapshot) and its own flag. Record (64 B): +0 the selector, +8 the tail sequence's start,
+# +16 the callee, +24 argc, +32/+40/+48 `_xdepth` / `_xcall_pad` / `_xcall_d` (ETAILJMP consumes
+# what ECALLCLEAN needs), +56 the verdict: 0 = open, 1 = keep, 2 = divert. CHANGELOG [6.7.3]
+fn _tcp_len(): i64 {
+    if (_tcp_vec == 0) { return 0; }
+    return vec_len(_tcp_vec);
+}
+fn _tcp_site(S, fi, argc): i64 {
+    if (_tcp_vec == 0) { _tcp_vec = vec_new(); }
+    var r = alloc(64);
+    store64(r, EJMP0(S));
+    store64(r + 8, GCP(S));
+    store64(r + 16, fi);
+    store64(r + 24, argc);
+    store64(r + 32, _xdepth);
+    store64(r + 40, _xcall_pad);
+    store64(r + 48, _xcall_d);
+    store64(r + 56, 0);
+    vec_push(_tcp_vec, r);
+    ETAILJMP(S, fi);
+    return 0;
+}
+# Called after every loop statement: when it was an outermost one, every site still open in
+# this fn was inside it, and the flag now covers that whole loop. Not inside a `defer` body,
+# which runs at the fn end (its loop depth restarts at 0 while the loop it sits in is still
+# open); a fn with a `defer` never tail-calls anyway (`_cur_fn_has_defer`).
+fn _tcp_loop_end(): i64 {
+    if (_loop_depth != 0) { return 0; }
+    if (_in_defer != 0) { return 0; }
+    var n = _tcp_len();
+    var i = _tcp_base;
+    while (i < n) {
+        var r = vec_get(_tcp_vec, i);
+        if (load64(r + 56) == 0) { store64(r + 56, 1 + _fn_local_addr); }
+        i = i + 1;
+    }
+    return 0;
+}
+# A diverted site's ordinary call, emitted out of line at the fn end with the call state its
+# arguments were marshalled under.
+fn _tcp_stub(S, r): i64 {
+    var xd = _xdepth;
+    var xc = _xcall_d;
+    _xdepth = load64(r + 32);
+    _xcall_pad = load64(r + 40);
+    _xcall_d = load64(r + 48);
+    _tc_emit_call(S, load64(r + 16), load64(r + 24));
+    _xdepth = xd;
+    _xcall_pad = 0;
+    _xcall_d = xc;
+    return 0;
+}
+# At the body's end (PARSE_FN_DEF and the closure path, before the return landing): a kept
+# site's selector becomes a jump to the next instruction (the SCP trick `_defer_emit_init`
+# plays on the fn-entry jmp); a diverted one's jumps to its stub. The body's fall-through is
+# routed round the stubs. An open site is impossible (its loop ended inside this body); it
+# would take the whole fn's flag, which is sound.
+fn _tcp_resolve(S): i64 {
+    var n = _tcp_len();
+    var i = _tcp_base;
+    var routed = 0;
+    while (i < n) {
+        var r = vec_get(_tcp_vec, i);
+        var v = load64(r + 56);
+        if (v == 0) { v = 1 + _fn_local_addr; }
+        if (v == 2) {
+            if (routed == 0) { vec_push(rp_vec, EJMP0(S)); routed = 1; }
+            EPATCH(S, load64(r));
+            _tcp_stub(S, r);
+        } else {
+            var cp = GCP(S);
+            SCP(S, load64(r + 8));
+            EPATCH(S, load64(r));
+            SCP(S, cp);
+        }
+        i = i + 1;
+    }
+    if (n > _tcp_base) { vec_truncate(_tcp_vec, _tcp_base); }
+    return 0;
+}
+# Leaving or entering a body with sites still pending means a body emitter skipped
+# `_tcp_resolve`: the selector would stay a `jmp +0` (the old wrong value, x86) or a branch to
+# itself (aarch64, cx). Loud, unless an error already stopped the compile.
+fn _tcp_drop(S): i64 {
+    var n = _tcp_len();
+    if (n <= _tcp_base) { return 0; }
+    if (_had_error == 0) { ERR_MSG(S, "internal: an in-loop tail call was never resolved", 49); }
+    vec_truncate(_tcp_vec, _tcp_base);
+    return 0;
+}
+
+# ⛔ 6.7.7 — THE LANDING OF A MULTI-VALUE RETURN: `return (a, b[, c]);` and `ret2(a, b)`, values in
+# the multi-value registers (rax, rdx[, r3]), then the jump to the epilogue. No struct fn's value
+# lands here: the tuple literal is refused there (6.7.11, `_refuse_struct_tuple_return`) and `ret2`
+# too (6.7.13, `_ret2_in_struct`), so the aarch64 sync of the pair's x1 from the multi-value x2 that
+# stood here (ESTRUCT_PAIR_HI_SYNC, 6.7.7) lost its last producer and went; an #inline replay's
+# landing inside a struct fn is that call's value, read from x0 / x2. The other direction — a
+# `return p;` read by `var a, b = f();` / `rethi()` — is EFLLOAD_STRUCT_INT_PAIR writing x2 too.
+# CHANGELOG [6.7.7], [6.7.13]
+fn _mret_land(S): i64 {
+    if (_dyn_is(S, _cur_fn_ret_sid) == 1) {   # 6.7.8 (V7): a dyn is returned whole, never built from values
+        _dyn_err(S, GTI(S) - 1, "a fn returning ", _cur_fn_ret_sid, 0 - 1, " returns a whole dyn - `return (a, b)` / `ret2` would write its words");
+    }
+    var rp = EJMP0(S);
+    vec_push(rp_vec, rp);
+    return 0;
+}
+# ⛔ 6.7.13 — OFF THE END OF A FN DECLARED `: (T1, T2[, T3])` EVERY VALUE IS 0 (D28 C, the user's
+# decision, 2026-10-15), the multi-value twin of a bool fn's `false` (6.7.3, `_bx_falloff`): rax, rdx[,
+# r3] = 0 on the fall-through path only — every `return` jumps past it to the landing. A body that
+# reached its `}` handed the caller's `var a, b = f(0);` whatever an earlier call left in the second
+# (and third) register. The #inline replay of such a callee lands the same way (`_mret_falloff_fi`, the
+# CALLEE's fi); a #naked body is its own exit. CHANGELOG [6.7.13]
+fn _mret_falloff(S): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (_cur_fn_naked == 1) { return 0; }
+    return _mret_zero(S, _cur_fn_ix);
+}
+fn _mret_falloff_fi(S, fi): i64 {
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    return _mret_zero(S, fi);
+}
+fn _mret_zero(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    EMOVI(S, 0);
+    if (GFRN(S, fi) == 3) { EMOVR3RAX(S); }
+    EMOVRDXRAX(S);
+    return 0;
+}
+
+# ⛔ 6.7.13 — `ret2(a, b)` LANDS AS `return (a, b);` DOES, so it is judged where that is. Outside every
+# fn body — at top level or in a top-level block (GINFN 0) — it is refused by name, as a top-level
+# `return` is (6.7.11, `_ret_toplevel`; D20 A, the user's decision, 2026-10-15): the top level has no
+# epilogue, so the jump `_mret_land` records was never patched — x86_64 / PE fell through into the next
+# statement, aarch64 / cx branched to itself (a hang). Reported once (`_tn_once`: a global initializer
+# is parsed in two zones) and in sync: the arguments are parsed on and the panic latch is left as it
+# was, so the next statement reports its own errors. 1 = refused: no landing. CHANGELOG [6.7.13]
+# In a fn declared `: (T1, T2, T3)` it writes two of the three values — the caller's third read what
+# an earlier call left in r3 — so it is refused as a two-value `return (a, b);` is there (6.7.11, D17;
+# D21 A, the user's decision, 2026-10-15): "'f' returns 3 values - return (a, b, c)", at the ret2,
+# once (a generic's body is parsed per instance), in sync. The landing is kept (no binary is written).
+# In a fn declared to return a named struct it is refused in every class, as the tuple literal is (D39,
+# `_refuse_struct_tuple_return`; D22 A, the user's decision, 2026-10-15): over 16 B the result pointer
+# was never written, at 8 B or less the second value was dropped, at 9-16 B the words came back by ABI
+# coincidence only. `_ret2_in_struct`, once and in sync; a dyn keeps `_mret_land`'s V7 text.
+# ⛔ 6.7.16 — AFTER ITS ARGUMENTS: each refusal was printed at the `ret2` before `(a, b)` was parsed, so `ret2(zz, 1);`
+# in a struct fn or a vector fn (and `return ret2(zz, 1);` in a struct fn), outside a fn or in a 3-value fn was the
+# refusal AND "undefined variable 'zz'" — the arguments' own error comes alone now, as a `return`'s value's does
+# (`_pair_ret_late`). `_ret2_ctx` answers the landing (1 = none: outside a fn), `_ret2_late` refuses once the arguments
+# are parsed, unless they reported an error (`_err_n` since `en`). CHANGELOG [6.7.16]
+fn _ret2_ctx(S, ti): i64 {
+    if (GINFN(S) == 1) { return 0; }
+    return 1;
+}
+fn _ret2_late(S, ti, en): i64 {
+    if (_err_n != en) { return 0; }
+    if (GINFN(S) == 1) {
+        _ret2_in_struct(S, ti);
+        _ret2_in_vector(S, ti);   # 6.7.14 (D43)
+        return _ret2_in3(S, ti);
+    }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var p0 = _panic;
+    var sv = GTI(S);
+    STI(S, ti);
+    ERR_MSG(S, "ret2 outside a fn body", 22);
+    STI(S, sv);
+    if (p0 == 0) { _panic = 0; }
+    return 0;
+}
+fn _ret2_in3(S, ti): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }   # an #inline replay: its definition judged itself
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (GFRN(S, _cur_fn_ix) != 3) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var p0 = _panic;
+    _mret_ret_err(S, ti);
+    if (p0 == 0) { _panic = 0; }
+    return 0;
+}
+# ... in a fn declared `: S` (not `Str`, a tuple or a dyn: `_dx_plain`, D39's own test): the
+# struct is the value it returns, never two words. CHANGELOG [6.7.13]
+fn _ret2_in_struct(S, ti): i64 {
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }   # an #inline replay: the ret2 is the callee's, not this fn's
+    if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": a fn returning the struct `");
+    _sn_pr(S, _cur_fn_ret_sid);
+    PRSTR("` returns that struct — `ret2` writes two values\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync
+    return 0;
+}
+
+# ... in a fn declared to return a vector (`: f64v2`, `f32v4`, `f64v4`, `i32v4`, ..): its result is the vector
+# registers (on Win64 the result pointer), never rax:rdx, so it is refused by the 6.6.6 vector rule's text, as
+# `return (a, b);` and `return ret2(..);` there are (D43, the user's decision, 2026-10-16) — the caller read the
+# vector registers' leftovers (0; 41 on cx). Named `ret2` (`_refuse_simd_return` names the cursor's token), at
+# the ret2, once, in sync. `return ret2(..);` is that return's own refusal; a closure's ret2 is the closure's,
+# an #inline replay's its callee's. CHANGELOG [6.7.14]
+fn _ret2_in_vector(S, ti): i64 {
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (TOKTYP(S, ti - 1) == 33) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `ret2`\n");
+    _err_excerpt(S);
+    STI(S, sv);
+    _had_error = 1;   # the latch is left as it was: the arguments parse on, in sync
+    return 0;
+}
+
+# ⛔ 6.7.11 — A FN DECLARED `: (T1, T2[, T3])` RETURNS ITS VALUES (the user's decision, 2026-10-13).
+# Three spellings write every return register: `return (a, b[, c]);` of the declared arity, `return
+# t;` of a tuple (its arm judges the arity and classes, `_ret_tup_ok`), and a whole call — parentheses
+# around it transparent — whose callee returns as many values (declared, or recorded in pass 1,
+# `_fn_ret_arity`) or cannot be judged (a fn pointer, a callee that may forward a pair). Anything else
+# set rax alone and the caller's `b` / `c` read whatever an earlier call left in rdx / r3, silently:
+# `return 5;`, `return p;` of a struct local (its first word), a bare `return;`, a literal of another
+# arity, a call to a provably one-value, struct, vector or dyn callee or to one of another arity.
+# Refused by name at the expression (token `st`), on every target, the tail-call arm included. Judged
+# before the arms parse it and reported after them (PARSE_RETURN), so a refusal of their own — `return
+# h.p;`'s tuple field, an undefined name — speaks first; in a file that has already failed it is
+# reported up front, where the panic latch keeps the statement to one error. An #inline replay parses
+# the callee's body in the caller's context: its definition checked itself. Under --syntax-only a
+# sibling file's tuple or callee is unknown: silent. 1 = refused, to report after the arms.
+# CHANGELOG [6.7.11]
+# ⛔ 6.7.16 — A GENERIC'S WRONG-COUNT `return` IS ONE REPORT, NAMED AFTER THE GENERIC. Its body is parsed for the base
+# and again per instance, and each parse named its own fn — `'gr' returns 2 values` then `'gr$P' ...`, `'gr$Q' ...` —
+# so the once-per-token latch (keyed on the name) saw different reports; and an instance, parsed in a file the base had
+# failed, took the up-front arm, so `return 1, 2;` was the base's `expected ';'` plus one count line per instance. An
+# instance now names its base (`_mret_fn`: the latch sees one report) and takes the base's arm — judged before the
+# arms, reported after them unless they refused (or repeated) something of their own in THIS statement (`_err_n`,
+# counted before and after them, PARSE_RETURN). A non-instance in a failed file keeps the up-front arm. CHANGELOG [6.7.16]
+fn _mret_ret_check(S, st): i64 {
+    if (_cur_fn_ret_scalar != MULTIRET_SID) { return 0; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    var sv = GTI(S);
+    STI(S, st);
+    var ok = _mret_ret_ok(S, GFRN(S, _cur_fn_ix));
+    STI(S, sv);
+    if (ok == 1) { return 0; }
+    if (_had_error == 0) { return 1; }
+    if (_mret_fn(S) != _cur_fn_ix) { return 1; }   # 6.7.16: an instance takes the base's arm
+    _mret_ret_err(S, st);
+    return 0;
+}
+# The fn a multi-value return's refusal names: the base generic inside one of its instances (`gr`, never `gr$P`), else
+# the fn being parsed. CHANGELOG [6.7.16]
+fn _mret_fn(S): i64 {
+    if (_inst_base_fi < 0) { return _cur_fn_ix; }
+    if (_gen_inst_of(S, _cur_fn_ix, _inst_base_fi) == 0) { return _cur_fn_ix; }   # a closure in the instance's body
+    return _inst_base_fi;
+}
+# 1 iff fn fi's name is fn b's name followed by `$` (an instance minted from b).
+fn _gen_inst_of(S, fi, b): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    var q = S + 0xEC00000 + L64(_fnt_names + b * 8);
+    var i = 0;
+    while (load8(q + i) != 0) {
+        if (load8(p + i) != load8(q + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(p + i) == 36) { return 1; }
+    return 0;
+}
+# "'f' returns 2 values - return (a, b)" at token `st`, the cursor kept.
+fn _mret_ret_err(S, st): i64 {
+    var tail = " returns 2 values - return (a, b)";
+    if (GFRN(S, _cur_fn_ix) == 3) { tail = " returns 3 values - return (a, b, c)"; }
+    var sv = GTI(S);
+    STI(S, st);
+    _mret_err_ident(S, _mret_fn(S), tail);
+    STI(S, sv);
+    return 0;
+}
+# ERR_IDENT's "'f'<tail>" naming fn fi as the source spells it — a method `P.mv`, never the fn table's `P_mv`
+# (`_fn_src_name`, written after the head, which may use its scratch); its identity ERR_IDENT's on the table name.
+# CHANGELOG [6.7.16]
+fn _mret_err_ident(S, fi, tail): i64 {
+    var msg = "";
+    var noff = L64(_fnt_names + fi * 8);
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + (0 - 1)) * 8 + 3) == 0) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": '");
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, fi, noff));
+    PRSTR("'");
+    PRSTR(tail);
+    PRSTR("\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    _panic = 1;
+    return 0;
+}
+# ... after the arms: reported unless one of them refused something of its own — a report or a repeat counted in
+# `_err_n` since `en`, or (`he` 0: the file had not failed) any error at all. The statement is whole, so the panic
+# latch is cleared (nothing to resync — the next statement is reported too).
+fn _mret_ret_late(S, st, he, en): i64 {
+    if (_err_n != en) { return 0; }
+    if (he == 0) { if (_had_error != 0) { return 0; } }
+    _mret_ret_err(S, st);
+    _panic = 0;
+    return 0;
+}
+# 1 = the return expression at the cursor writes `want` values (or, a tuple, its own arm judges it).
+fn _mret_ret_ok(S, want): i64 {
+    var st = GTI(S);
+    if (TOKTYP(S, st) == 10) {
+        var c = _tup_commas(S, st);
+        if (c > 0) {   # the multi-value arm's literal
+            if (c + 1 == want) { return 1; }
+            return 0;
+        }
+    }
+    var h = _hl_ret_k(S);
+    if (h >= 0) {
+        if (_ret_tup_idx(S, TOKVAL(S, st + h)) != 0 - 1) { return 1; }
+    }
+    var k = _pw_lead(S, st);   # 6.7.16: up to a parenthesised chain head
+    return _mret_call_ok(S, st, k, want);
+}
+# ... a whole call `g(..)`, `g<..>(..)`, `x.m(..)` or `callptr(..)` (its callee unknown) inside the
+# `k` parentheses at `st`, then `;`: 1 = its callee returns `want` values or cannot be judged; 0 = no
+# such call, or another count.
+fn _mret_call_ok(S, st, k, want): i64 {
+    var fi = _ret_whole_call(S, st, k);
+    if (fi == 0 - 2) { return 0; }
+    return _mret_fwd_ok(S, fi, want);
+}
+# ... that whole call's fn (-1: unresolved, `callptr(..)` included); -2 = no such call. The cursor is
+# kept. Shared with `_ret_mv_fwd` (6.7.13). A generic callee is instantiated here, as the arms would.
+fn _ret_whole_call(S, st, k): i64 {
+    var sv = GTI(S);
+    STI(S, st + k);
+    var fi = 0 - 1;
+    var o = _dt_call_open(S);   # 6.7.16: first, for a chain on a `callptr(..)` head's result
+    if (o >= 0) { fi = _dt_call_fn(S); }
+    elif (PEEKT(S) == 137) {
+        if (TOKTYP(S, st + k + 1) == 10) { o = st + k + 1; }
+    }
+    STI(S, sv);
+    if (o < 0) { return 0 - 2; }
+    var e = _call_close(S, o) + 1;
+    var j = 0;
+    while (j < k) {
+        if (TOKTYP(S, e + j) != 11) { return 0 - 2; }
+        j = j + 1;
+    }
+    if (TOKTYP(S, e + k) != 5) { return 0 - 2; }
+    return fi;
+}
+# A forwarded callee `fi` (-1: unresolved): 1 = it returns `want` values, or its count is unknown.
+fn _mret_fwd_ok(S, fi, want): i64 {
+    if (fi < 0) { return 1; }
+    var rs = GFRS(S, fi);
+    if (_dyn_is(S, rs) == 1) { return 0; }
+    if (rs == MULTIRET_SID) {
+        if (GFRN(S, fi) == want) { return 1; }
+        return 0;
+    }
+    if (rs > 0) { return 0; }
+    if (rs <= 0 - 2048) { return 0; }
+    var ar = _fn_ret_arity(S, fi);
+    if (ar != 0) {
+        if (ar == want) { return 1; }
+        return 0;
+    }
+    if (_tup_cap_single(S, fi) == 1) { return 0; }
+    return 1;
+}
+
+# Parse return expr ;  (uses PCMPE so return a == b; works)
+# 6.7.11: a fn declared `: (T1, T2[, T3])` returns its values — judged before the arms
+# (`_mret_ret_check`), reported after them.
+fn PARSE_RETURN(S): i64 {
+    if (_ret_toplevel(S) == 1) { return 0; }   # 6.7.11: outside a fn body, refused
+    var st = GTI(S) + 1;
+    _async_mv_ret(S, st);   # 6.7.11: `return (a, b);` in an async fn
+    _ret_mv_fwd(S, st);     # 6.7.13: `return h(..);` of a multi-value call there, or in a <= 8 B struct fn
+    var bad = _mret_ret_check(S, st);
+    var he = _had_error;
+    var en = _err_n;   # 6.7.16: what the arms refuse, in this statement
+    var pt = _prr_ti;   # 6.7.16: a return inside the value (a closure's, a replay's) keeps this one's pending refusal
+    var pn = _prr_en;
+    var pk = _prr_k;
+    _prr_ti = 0 - 1;
+    _vsc_ret(S, st);   # 6.7.16 (D101): a whole vector call returned by a fn that returns none
+    _ssc_ret(S, st);   # 6.7.17 (D111): a struct value or call over 8 B from a scalar fn
+    _PARSE_RETURN_ARMS(S);
+    _pair_ret_late(S);   # 6.7.16: the pair / vector class's refusal, after the value's own parse
+    _prr_ti = pt;
+    _prr_en = pn;
+    _prr_k = pk;
+    if (bad == 1) { _mret_ret_late(S, st, he, en); }
+    return 0;
+}
+# The return's arms, each a spelling it emits and leaves by (the 6.6.6 note below).
+# Tail call optimization: return fn(args); → epilogue + jmp fn
+fn _PARSE_RETURN_ARMS(S): i64 {
+    # v6.2.27 (review P2): a #naked fn emits no epilogue, so a `return` would jump
+    # to a non-existent epilogue and fall through into the next fn. A naked ISR
+    # must self-terminate in asm (iretq/eret) — reject `return` in its body.
+    if (_cur_fn_naked == 1) {
+        ERR_MSG(S, "return is not allowed in a #naked fn (body must end in asm: iretq/eret)", 71);
+    }
+    STI(S, GTI(S) + 1);
+    # v6.5.67 — PROPAGATE PAIR-RETURNING-NESS. `fn mk(x) { return SOk(x); }` forwards a `: stack`
+    # enum's (tag, payload) pair, so `mk` is itself pair-returning and binding ITS result to one
+    # variable loses the payload just as surely. Marking the enclosing fn here is what makes the
+    # diagnostic reach the idiomatic wrapper shape rather than only the bare constructor.
+    # ⚠ Order-dependent by construction: a caller parsed BEFORE the callee's body will not see the
+    # flag and degrades to the pre-v6.5.67 behaviour. That is the safe direction for a diagnostic —
+    # a missed warning, never a false one.
+    # 6.7.13: not inside an inline replay (GIDEP > 0) — `_cur_fn_ix` is still the CALLER there, and the
+    # replayed `return` is the call's value, not the caller's (its jump lands at the replay's end); the
+    # replayed fn's own entry carries its flag. The two `?` arms are guarded the same way. CHANGELOG [6.7.13]
+    if (_cur_fn_ix >= 0) { if (GIDEP(S) == 0) {
+            if (_callee_returns_pair(S) == 1) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+        } }
+    # Check for tail call: return IDENT(args);
+    # Pattern: next token is IDENT, followed by LPAREN
+    # Disabled inside inline replay (would emit caller's epilogue)
+    if (GINFN(S) == 1) { if (GIDEP(S) == 0) {
+            if (PEEKT(S) == 2) {
+                var ti_after = GTI(S) + 1;
+                if (ti_after < GTCNT(S)) {
+                    if (TOKTYP(S, ti_after) == 10) {
+                        # Verify it's actually a tail call: find matching ) and check for ;
+                        var tc_scan = ti_after + 1;
+                        var tc_depth = 1;
+                        var tc_is_tail = 0;
+                        while (tc_scan < GTCNT(S)) {
+                            if (TOKTYP(S, tc_scan) == 10) { tc_depth = tc_depth + 1; }
+                            if (TOKTYP(S, tc_scan) == 11) { tc_depth = tc_depth - 1; if (tc_depth == 0) { break; } }
+                            tc_scan = tc_scan + 1;
+                        }
+                        if (tc_scan + 1 < GTCNT(S)) {
+                            if (TOKTYP(S, tc_scan + 1) == 5) { tc_is_tail = 1; }
+                        }
+                        # Every reason to take the normal call path instead is in ONE predicate (above
+                        # PARSE_RETURN). CHANGELOG [6.6.7]
+                        if (tc_is_tail == 1) {
+                            if (_tc_must_divert(S, FINDFN(S, PEEKV(S)), ti_after) == 1) { tc_is_tail = 0; }
+                        }
+                        if (tc_is_tail == 1) {
+                            # Tail call: return fn(args); → evaluate args, epilogue, jmp fn
+                            var tcnoff = PEEKV(S);
+                            # v6.2.41 — capture call-site line for the arity check.
+                            var _tc_line = GTLINE(S, GTI(S));
+                            STI(S, GTI(S) + 1);
+                            # Parse args (same as PARSE_FNCALL arg handling)
+                            STI(S, GTI(S) + 1);  # consume (
+                            # 6.6.16 — the token the call's warnings name (PARSE_FNCALL's
+                            # convention: the first token after `(`). By the time they fire the
+                            # cursor is past `);`, on the NEXT statement. CHANGELOG [6.6.16]
+                            var _tc_wti = GTI(S);
+                            var tcargc = 0;
+                            # The callee's param masks, read up-front (FINDFN is read-only — the
+                            # FINDFN/REGFN registration below is unchanged). A callee with a
+                            # value-form SIMD param never gets here: `_tc_callee_divert` sends it to
+                            # PARSE_FNCALL, whose class check is the only one (the v6.4.15 SIMD_TC
+                            # copy that stood here was unreachable; removed 6.6.20).
+                            var _tc_prefi = FINDFN(S, tcnoff);
+                            var _tc_sd0 = _tc_snap_div;   # 6.7.7: this arm's own copy flag
+                            _tc_snap_div = 0;
+                            if (PEEKT(S) != 11) {
+                                var tcgo = 1;
+                                while (tcgo == 1) {
+                                    _check_str_cstring_arg(S, _tc_prefi, tcargc, tcnoff);   # 6.6.13 I11
+                                    # 6.6.20: an address-passed argument is pushed as PARSE_FNCALL
+                                    # pushes it; one that takes an address in this frame sets
+                                    # `_fn_local_addr`, read by `_tc_after_args_divert` below.
+                                    # 6.7.7: and a by-value argument a later one may write is copied
+                                    # where it stands (`_arg_push_snap`) — a frame address: no `jmp`.
+                                    _arg_push_snap(S, _tc_prefi, tcargc, tcnoff, 1);   # PCMPE + 6.7.3's bool check
+                                    tcargc = tcargc + 1;
+                                    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                                    else { tcgo = 0; }
+                                }
+                            }
+                            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+                            STI(S, GTI(S) + 1);  # consume )
+                            # Pop args into registers
+                            ECALLPOPS(S, tcargc);
+                            _expect_step(S, 5);
+                            # Look up function
+                            var tcfi = FINDFN(S, tcnoff);
+                            if (tcfi < 0) { tcfi = REGFN(S, tcnoff); }
+                            _callee_site_checks(S, tcfi, tcnoff, _tc_wti);   # v6.6.4: tail calls warned nothing
+                            _bx_tc_ret(S, tcfi, _tc_wti - 2, tcnoff);        # 6.7.3: a bool fn tail-calls a bool fn
+                            # v5.8.20: #pure enforcement on the tail-call path —
+                            # `return helper(args);` bypasses PARSE_FNCALL but
+                            # still needs the #io / #alloc check.
+                            if (_cur_fn_is_pure == 1) {
+                                var _tcf = GFLG(S, tcfi);
+                                if (_tcf & 16 != 0) {
+                                    _ew("warning:", 8);
+                                    _err_head_at(S, _tc_wti);
+                                    _ew(": #pure fn calls #io fn '", 25);
+                                    PRSTR(S + 0xEC00000 + _fn_src_name(S, tcfi, tcnoff));
+                                    _ew("'\n", 2);
+                                }
+                                if (_tcf & 32 != 0) {
+                                    _ew("warning:", 8);
+                                    _err_head_at(S, _tc_wti);
+                                    _ew(": #pure fn calls #alloc fn '", 28);
+                                    PRSTR(S + 0xEC00000 + _fn_src_name(S, tcfi, tcnoff));
+                                    _ew("'\n", 2);
+                                }
+                            }
+                            # v6.2.41 — arity check on the tail-call path
+                            # (`return f(args);`). Mutually exclusive with
+                            # PARSE_FNCALL (no double-fire); the most common call
+                            # form, so covering it closes the bulk of the hole.
+                            _CHECK_ARITY(S, _tc_line, tcnoff, tcfi, tcargc, 3);
+                            # ⛔ 6.6.5 — this said `tcargc > 6`, the SysV register ceiling, on
+                            # every target. On Win64 the ceiling is 4, so `return f5(...)` and
+                            # `return f6(...)` took the TAIL-CALL branch: ETAILJMP's `mov rsp,rbp`
+                            # tore down the frame ECALLPOPS had just written the stack arguments
+                            # into, and the callee read whatever was above the old frame. Silent
+                            # wrong values on real Windows (measured: 0 where 3 was right), and
+                            # the reason frontend/expr_in_fn_args and stdlib/flags failed as PE.
+                            # `_ARG_REG_COUNT()` is the same function the closure ABI uses, so
+                            # the two cannot drift. CHANGELOG [6.6.5]
+                            # A normal call: over the register ceiling (the tail-call epilogue
+                            # would clobber the stack args), or an argument took an address in
+                            # this frame (6.6.20). Inside a loop the `jmp` waits for the loop's
+                            # end (`_tcp_site`, 6.7.3); elsewhere it is the epilogue + `jmp`.
+                            if (_tc_after_args_divert(tcargc) == 1) { _tc_emit_call(S, tcfi, tcargc); }
+                            elif (_loop_depth > 0) { _tcp_site(S, tcfi, tcargc); }
+                            else { ETAILJMP(S, tcfi); }
+                            _tc_snap_div = _tc_sd0;
+                            return 0;
+                        } }
+                }
+            }
+        } }
+    # Check for multi-return: return (a, b) → ret2(a, b)
+    if (PEEKT(S) == 10) {
+        # The group's own commas tell (a, b) from (a + b) — v6.5.21: COUNTED, so `return (a, b, c);`
+        # is arity 3. 6.7.7 (B4): the tuple literal's detector, which steps a closure's `|a, b|` and a
+        # generic call's `<A, B>` (`return (|a, b| a + b);` was taken for a multi-value return).
+        var mr_commas = _tup_commas(S, GTI(S));
+        var mr_is_tuple = 0;
+        if (mr_commas > 0) { mr_is_tuple = 1; }
+        # ⛔ 6.6.6 — A TUPLE RETURN IS A THIRD SPELLING THE VECTOR REFUSAL BELOW NEVER SEES.
+        # Both arms below hand the values back in the ret2/ret3 INT register convention
+        # (rax:rdx[:r3]) and `return 0` out of PARSE_RETURN, so they run in front of the
+        # `_cur_fn_returns_vector` refusal ~330 lines down exactly the way the tail-call path
+        # does. A vector return is a different convention on every target (XMM0/XMM1, V0/V1,
+        # four cx R-regs, a PE retptr), so `fn bad(): f64v2 { return (41, 7); }` built clean
+        # and the caller read 0 — measured on f64v2, f32v4, i64v2 and the arity-3 form into
+        # f64v4. The PAIR class is untouched: rax:rdx IS its ABI. Refuse here and let the arms
+        # below parse the tuple anyway, so the token stream stays in sync for the rest of the
+        # body. See `_refuse_simd_return`. CHANGELOG [6.6.6]
+        if (mr_is_tuple == 1) { _ret_tup_defer(S); }   # 6.7.16: printed after the literal's parse
+        if (mr_is_tuple == 1) { if (mr_commas > 1) {
+                # --- arity 3 ---------------------------------------------------
+                # Push each value but the last, leave the last in rax, then unwind
+                # into the return registers back-to-front. Generalises the arity-2
+                # sequence below; nothing here is arity-2-specific.
+                if (mr_commas > 2) { _ret_tup_arity(S); }
+                STI(S, GTI(S) + 1);  # consume (
+                _bx_pcmpe_mret(S, 0);   # PCMPE + 6.7.3's bool element check, each element
+                EPUSHR(S);                                                          # push a
+                if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+                _bx_pcmpe_mret(S, 1);
+                EPUSHR(S);                                                          # push b
+                if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+                _bx_pcmpe_mret(S, 2);                                               # rax = c
+                EMOVR3RAX(S);                                                       # ret3 = c
+                EPOPR(S);                                                           # rax = b
+                EMOVRDXRAX(S);                                                      # rdx = b
+                EPOPR(S);                                                           # rax = a
+                if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
+                _expect_step(S, 5);    # consume ;
+                _mret_land(S);
+                return 0;
+            } }
+        if (mr_is_tuple == 1) {
+            # Multi-return: return (a, b) → same codegen as ret2(a, b)
+            STI(S, GTI(S) + 1);  # consume (
+            _bx_pcmpe_mret(S, 0);   # PCMPE + 6.7.3's bool element check
+            EPUSHR(S);
+            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);  # consume ,
+            _bx_pcmpe_mret(S, 1);
+            # rax = b, stack = a → mov rdx, rax; pop rax
+            EMOVRDXRAX(S);
+            EPOPR(S);
+            # A `: f64` fn's first value is boxed into xmm0 at the return landing
+            # (`_ret_box_f64`), not here; rdx carries the second. CHANGELOG [6.5.21], [6.6.20]
+            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
+            _expect_step(S, 5);  # consume ;
+            _mret_land(S);
+            return 0;
+        }
+    }
+    # v5.5.36 Phase 2b — struct return by value. When the current fn
+    # has `: StructName` on its signature, `return IDENT;` (where IDENT
+    # is a struct-typed local matching the fn's ret_sid) is emitted as
+    # a byte copy from &IDENT into the hidden retptr stashed at fn
+    # entry. rax is set to the retptr (standard Win64/SysV convention
+    # — caller may read rax to chain the value, though usually ignored
+    # in favor of the caller-allocated destination).
+    #
+    # Only the simple `return IDENT;` form is supported; nested
+    # expressions that produce structs (`return make_other();` etc.)
+    # land in Phase 2c once call-site rewriting exists.
+    # v5.10.2: only the BIG-struct path (stash > 0) uses the
+    # byte-copy machinery. ≤16-byte struct returns (Str etc.) get
+    # stash = 0 from the rough-scan up-front check; fall through
+    # to the scalar return path which treats the local as a
+    # pointer value and returns it via rax (matching the existing
+    # stdlib convention: `Str` values are 16-byte heap structs
+    # passed around as pointers, not by-value).
+    if (_cur_fn_ret_sid > 0 && _cur_fn_ret_stash > 0) { return _ret_struct_big(S); }   # 6.7.6: out of this body
+    # v5.10.45 Phase 1 — int-class 16B struct pair-return.
+    # Fires when the current fn is annotated `: StructName` with
+    # STRUCTSZ in [9,16] AND the struct sid != Str's sid AND the
+    # return form is `return IDENT;` where IDENT is a 2-slot typed
+    # local matching the declared return type. Emits the int-class
+    # pair load `mov rax, [&v+0]; mov rdx, [&v+8]` via
+    # `EFLLOAD_STRUCT_INT_PAIR` then jumps to the epilogue.
+    # Falls through to scalar PCMPE for non-IDENT shapes (those
+    # land on a follow-up slot — same staging as f64v2's v5.10.28
+    # Phase 1 left non-IDENT to a follow-up).
+    if (_cur_fn_ret_pair == 1) { if (_ret_struct_pair(S) == 1) { return 0; } }   # 6.7.6: out of this body
+    if (_ret_var_forms(S) == 1) { return 0; }   # 6.7.7 (T5): `return t;`, a tuple; 6.6.17 (a1 review): `return p;`, p: *T, T <= 8 B
+    # v5.10.28 — f64v2 multi-register pair return ABI.
+    # When the current fn is annotated `: f64v2` (encoding -2093 in
+    # _cur_fn_ret_scalar; v6.4.14 moved it off the flat -20) AND the
+    # return form is `return IDENT;`
+    # where IDENT is a 2-slot stack-local f64v2 var, emit the pair
+    # load: rax = lo (named slot, &v+0), rdx = hi (filler slot,
+    # &v+8). This is x86 SysV's 16-byte int-class struct return
+    # ABI. Falls through to the scalar PCMPE path for non-IDENT
+    # f64v2 returns (e.g. fn-call returning f64v2) — those land
+    # on a follow-up slot.
+    #
+    # v5.10.31 — Win64 PE branch (`_cur_fn_ret_stash > 0` for
+    # f64v2 set by the rough-scan when _TARGET_PE == 1): emit
+    # byte-copy from &v into the retptr stash (size 16, aligned).
+    # Win64 PCS for ≤16B composite returns uses retptr-style
+    # (caller passes hidden buffer ptr in RCX), NOT pair register.
+    # Mirror of the existing big-struct retptr return at line ~447.
+    if (_is_simd128(S, _cur_fn_ret_scalar) == 1) {  # any 16B/1-XMM vector (f64v2/f32v4/i32v4/i16v8/i8v16/i64v2)
+        if (PEEKT(S) == 2) {
+            if (TOKTYP(S, GTI(S) + 1) == 5) {
+                var _f2_noff = PEEKV(S);
+                var _f2_lli = FINDLOCAL(S, _f2_noff);
+                if (_f2_lli >= 0) {
+                    var _f2_lt = GLTYPE(S, _f2_lli);
+                    if (_is_simd128(S, _f2_lt) == 1) {
+                        STI(S, GTI(S) + 1);  # consume IDENT
+                        STI(S, GTI(S) + 1);  # consume ';'
+                        if (_cur_fn_ret_stash > 0) {
+                            # Win64 PE retptr-style return — byte-copy
+                            # from &v (size 16) into the retptr stash
+                            # at [rbp - regalloc*8 - 8]. ESTRUCT_BYVAL_COPY
+                            # handles the rep movsb on x86 / LDRB/STRB
+                            # loop on aarch64. Aarch64 stash isn't used
+                            # by Win64 (Win64 is x86-only), but the
+                            # helper is arch-agnostic and works through
+                            # the same ABI helper either way.
+                            var _f2w_src_disp = 0 - ((_f2_lli + 1) * 8);
+                            if (_cur_fn_regalloc > 0) { _f2w_src_disp = _f2w_src_disp - _cur_fn_regalloc * 8; }
+                            if (_cur_fn_ret_stash > 0) { _f2w_src_disp = _f2w_src_disp - _cur_fn_ret_stash; }
+                            var _f2w_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
+                            ESTRUCT_BYVAL_COPY(S, _f2w_src_disp, _f2w_stash_disp, 16);
+                        } else {
+                            # SysV/aarch64/cx pair-register return.
+                            EFLLOAD_F64V2_PAIR(S, _f2_lli);
+                        }
+                        var _f2_rp = EJMP0(S);
+                        vec_push(rp_vec, _f2_rp);
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
+    # v5.10.37 — f64v4 pair-quad return ABI. Mirror of v5.10.28's
+    # f64v2 pair-return path, but 32-byte composite + 4-slot stack-
+    # local. SysV/aarch64/cx: pair-quad register return (two
+    # MOVUPDs on x86 / two LDR Q on aarch64 / four R-regs on cx
+    # via EFLLOAD_F64V4_PAIR). Win64 PE: retptr-style with size 32.
+    # v6.4.8 (SIMD Phase 4) — generalized from the exact -21 (f64v4) check to
+    # _is_simd256 so f32v8 (-2153) shares the identical 32-byte / 2×128-XMM return
+    # ABI. Byte-identical for f64v4 (_is_simd256(-21)==1); f32v8 is new. The return
+    # value's byte layout is the same 32 bytes regardless of float lane width.
+    if (_is_simd256(S, _cur_fn_ret_scalar) == 1) {
+        if (PEEKT(S) == 2) {
+            if (TOKTYP(S, GTI(S) + 1) == 5) {
+                var _f4_noff = PEEKV(S);
+                var _f4_lli = FINDLOCAL(S, _f4_noff);
+                if (_f4_lli >= 0) {
+                    var _f4_lt = GLTYPE(S, _f4_lli);
+                    if (_is_simd256(S, _f4_lt) == 1) {
+                        STI(S, GTI(S) + 1);  # consume IDENT
+                        STI(S, GTI(S) + 1);  # consume ';'
+                        if (_cur_fn_ret_stash > 0) {
+                            # Win64 PE retptr-style — byte-copy size 32.
+                            var _f4w_src_disp = 0 - ((_f4_lli + 1) * 8);
+                            if (_cur_fn_regalloc > 0) { _f4w_src_disp = _f4w_src_disp - _cur_fn_regalloc * 8; }
+                            if (_cur_fn_ret_stash > 0) { _f4w_src_disp = _f4w_src_disp - _cur_fn_ret_stash; }
+                            var _f4w_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
+                            ESTRUCT_BYVAL_COPY(S, _f4w_src_disp, _f4w_stash_disp, 32);
+                        } else {
+                            EFLLOAD_F64V4_PAIR(S, _f4_lli);
+                        }
+                        var _f4_rp = EJMP0(S);
+                        vec_push(rp_vec, _f4_rp);
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
+    # 6.6.6 — EVERYTHING THAT REACHES HERE. The two branches above take `return IDENT;` for a
+    # local of the matching vector class and return outright; the only other shape the vector
+    # return ABI can carry is a call to a fn declared to return the SAME vector type (a register
+    # passthrough on SysV/aarch64/cx, the retptr marshalling arm below on PE). Anything else
+    # used to fall through to the scalar PCMPE path and hand back a half-written register pair,
+    # silently.
+    # ⛔ THIS SITE IS ONE OF THREE, AND THE OTHER TWO ARE ABOVE IT — this comment read
+    # "EVERYTHING ELSE" when first written and that was FALSE, which is how `return (a, b);`
+    # shipped unrefused. PARSE_RETURN is a SEQUENCE OF ARMS, each of which recognises a return
+    # spelling, emits it, and `return 0`s out of this function; a check placed here is a check
+    # only for the spellings that fall through every arm above to reach it. The two that do not:
+    # the TAIL-CALL arm (~line 613, diverted by `_cur_fn_returns_vector` + `_simd_ret_call_ok`)
+    # and the MULTI-RETURN arm (~line 909, `_refuse_vector_tuple_return`). Before adding a
+    # fourth check here, enumerate the early returns above it again — they are the paths this
+    # one cannot see. See `_refuse_simd_return`. CHANGELOG [6.6.6]
+    _ret_vec_rule(S);
+    if (_ret_vec_take(S) == 1) { return 0; }   # 6.7.13 (D29): `return callptr(&f, ..);` on Win64; 6.7.14 (D35): `*p`
+    # v6.4.31: `return <simd_call>(args);` on Win64 PE — a SIMD-returning fn
+    # whose return expression is itself a SIMD-returning call (e.g.
+    # `f32v4_splat` → `return f32v4_make(x,x,x,x);`). The callee writes its
+    # 16/32-byte result via a retptr; the generic PCMPE path can't set that up.
+    # Marshal the inner call into an anon temp local (retptr = &temp, args via
+    # the same struct-ptr path parse_decl uses), then byte-copy the temp into
+    # THIS fn's retptr stash — the exact shape of the `return IDENT;` handler
+    # above, just with a fresh call-result temp. SysV/aarch64 keep the generic
+    # register-return path (ret_stash == 0). See [[project_v6431_win64_valueform_simd]].
+    if (_TARGET_PE == 1) {
+        if (_cur_fn_ret_stash > 0) {
+            var _rc_is128 = _is_simd128(S, _cur_fn_ret_scalar);
+            var _rc_is256 = _is_simd256(S, _cur_fn_ret_scalar);
+            if (_rc_is128 == 1 || _rc_is256 == 1) {
+                if (PEEKT(S) == 2) {
+                    if (_ret_vwcall(S) == 1) {   # IDENT '(' → a call (6.7.13: or `g<T>(`; 6.7.16: the whole value)
+                        var _rc_noff = PEEKV(S);
+                        var _rc_fi = _vcall_fi(S, GTI(S));
+                        if (_rc_fi >= 0) {
+                            if (GFRS(S, _rc_fi) == _cur_fn_ret_scalar) {
+                                # Allocate anon temp (filler(s) + named lo slot).
+                                var _rc_slots = 2;
+                                if (_rc_is256 == 1) { _rc_slots = 4; }
+                                var _rc_j = 0;
+                                while (_rc_j < _rc_slots - 1) {
+                                    var _rc_fill = GFLC(S);
+                                    S64(S + 0x5D9D000 + _rc_fill * 8, 0 - 1);
+                                    SLDEP(S, _rc_fill, GSDEP(S));
+                                    SLTYPE(S, _rc_fill, 0);
+                                    SFLC(S, _rc_fill + 1);
+                                    _rc_j = _rc_j + 1;
+                                }
+                                var _rc_named = GFLC(S);
+                                S64(S + 0x5D9D000 + _rc_named * 8, 0 - 1);
+                                SLDEP(S, _rc_named, GSDEP(S));
+                                SLTYPE(S, _rc_named, _cur_fn_ret_scalar);
+                                # 6.6.5: the retptr callee writes THROUGH these slots, so the
+                                # span has to be recorded like every other multi-slot receive —
+                                # this was the ONE negative-SLTYPE registration in the tree
+                                # without a SLAGG mark, and the picker's aggregate pass (now
+                                # keyed on GLAGG rather than the vector descriptor) would have
+                                # spanned it as 1 slot and left the fillers out of ra_unsafe.
+                                SLAGG(S, _rc_named, _rc_slots);
+                                SFLC(S, _rc_named + 1);
+                                if (_rc_named + 1 > _flc_hwm) { _flc_hwm = _rc_named + 1; }
+                                # Marshal the inner call: retptr = &temp, then args.
+                                _rc_fi = _pe_venter(S, _rc_fi);   # v6.6.4: PE SIMD-return call emits its own call (6.7.13: past `<..>`; 6.7.14: routed)
+                                EFLADDR(S, _rc_named);
+                                EPUSHR(S);
+                                # 6.6.6: `_owncall_args` — the gates plus the arity check this
+                                # PE-only loop never had (`return f(a);` on a 2-param vector `f`
+                                # built clean). CHANGELOG [6.6.6]
+                                var _rc_argc = _owncall_args(S, _rc_fi, _rc_noff, 1);
+                                _expect_step(S, 5);   # consume ';'
+                                var _rc_target = L64(_fnt_offsets + _rc_fi * 8);
+                                if (_rc_target >= 0) { ECALLTO(S, _rc_target); }
+                                else { ECALLFIX(S, _rc_fi); }
+                                ECALLCLEAN(S, _rc_argc);
+                                # Byte-copy temp → our retptr stash (mirror return-IDENT).
+                                var _rc_src_disp = 0 - ((_rc_named + 1) * 8);
+                                if (_cur_fn_regalloc > 0) { _rc_src_disp = _rc_src_disp - _cur_fn_regalloc * 8; }
+                                _rc_src_disp = _rc_src_disp - _cur_fn_ret_stash;
+                                var _rc_stash_disp = 0 - (_cur_fn_regalloc * 8 + 8);
+                                var _rc_bytes = 16;
+                                if (_rc_is256 == 1) { _rc_bytes = 32; }
+                                ESTRUCT_BYVAL_COPY(S, _rc_src_disp, _rc_stash_disp, _rc_bytes);
+                                var _rc_rp = EJMP0(S);
+                                vec_push(rp_vec, _rc_rp);
+                                return 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    # v5.10.48: bare `return;` synthesizes `return 0;` per cyrius's
+    # int-only return convention. Closes
+    # `docs/development/issues/2026-05-03-parser-cosmetic-limits-...`
+    # `bare_return_in_if_block_rejected`. Pre-fix `if (...) { return;
+    # }` errored with "unexpected ';'" because PCMPE was called
+    # unconditionally and rejected an empty expression. Now: peek for
+    # `;` BEFORE calling PCMPE; if present, emit `mov rax, 0` + jump
+    # to epilogue (matches `return 0;` codegen byte-for-byte at this
+    # position — in a `: f64` fn too, since 6.6.20 boxes rax into xmm0
+    # once at the landing for every arm, `_ret_box_f64`).
+    if (PEEKT(S) == 5) {
+        _bx_bare_ret(S);   # 6.7.3: refused in a bool fn
+        EMOVI(S, 0);
+        STI(S, GTI(S) + 1);                             # consume ';'
+        var br_rp = EJMP0(S);
+        vec_push(rp_vec, br_rp);
+        return 0;
+    }
+    _bx_pcmpe_ret(S);   # PCMPE, then (6.7.3) a bool fn's value is checked
+    # v6.4.55: scalar f64 return (sentinel -9) — the rax→xmm0 move SysV/Win64 want is emitted
+    # once at the return landing since 6.6.20 (`_ret_box_f64`), so it covers every arm.
+    _expect_step(S, 5);
+    # Emit jmp to epilogue (record as return patch)
+    var rp = EJMP0(S);
+    vec_push(rp_vec, rp);
+    return 0;
+}

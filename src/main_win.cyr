@@ -462,7 +462,7 @@ _tl_enum_inits(S);
 EMIT_GVAR_INITS(S);
 STI(S, gvar_save_ti);
 
-# 6.6.5 — ONE shared emitter (src/frontend/parse/fn.cyr). Three forks carried this loop
+# 6.6.5 — ONE shared emitter (src/frontend/parse/fn_def.cyr). Three forks carried this loop
 # inline and it needed a fix in all three: pass 1 now prescans relaxed-ordering fns, which
 # PARSE_PROG defines BELOW this point, so an un-guarded loop warns about every one of them.
 _warn_undefined_prepass(S);

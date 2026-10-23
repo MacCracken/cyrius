@@ -15,7 +15,7 @@
 #      (`_sl_el_over`).
 #   Z  (D94) a sizeof operand — `sizeof(*i64)` was "expected identifier, got '*'" (`sizeof(*fn(i64): i64)` a cascade),
 #      in an expression, a const context and `#assert` alike. `_sizeof_type` hands a `*` to `_sizeof_ptr`
-#      (src/frontend/parse/types.cyr), and the const evaluator's `_ce_sizeof` (src/frontend/parse/fn.cyr) passes it on:
+#      (src/frontend/parse/types.cyr), and the const evaluator's `_ce_sizeof` (src/frontend/parse/fn/const_eval.cyr) passes it on:
 #      the `*`s and T stepped, T read as its own position reads it, the value 8.
 # Measured on the 6.7.17 wave-1 integration (l6717-integ 45c7ff467), x86_64; the parse is every target's.
 #

@@ -1397,7 +1397,7 @@ fn _hdr_only_ellipsis(b, s, e): i64 {
 # ================================================================
 # 6.7.11 — THE RETURN TYPE. cmd_header never read past the parameter list's `)`, so every
 # prototype said `cyr_val f(..)` whatever the fn returned. cycc returns a value five ways
-# (`_ret_agg_class`, src/frontend/parse/fn.cyr; the multi-value landing, `_mret_land`):
+# (`_ret_agg_class`, src/frontend/parse/fn/call_agg.cyr; the multi-value landing, `_mret_land`, fn/ret.cyr):
 #   8 bytes or less; a 9-16 B `Str`        rax / x0: a word (a Str is a handle), `cyr_val`
 #   9-16 bytes, and a `dyn Tr`             rax:rdx / x0:x1: `cyr_val2`, the two-int64-word struct
 #                                          SysV and AAPCS64 C return in the same registers; Win64 C

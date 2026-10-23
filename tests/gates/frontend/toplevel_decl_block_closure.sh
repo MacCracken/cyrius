@@ -143,7 +143,7 @@ elif ! grep -q "nosuchname_m" "$WORK/m.err"; then
 fi
 
 # S — static 7-fork parity: every fork runs the ONE shared pass-2 scan (6.6.17: _tl_pass2,
-#     src/frontend/parse/fn.cyr), whose `var` arm calls the shared skip, and none still carries
+#     src/frontend/parse/fn_def.cyr), whose `var` arm calls the shared skip, and none still carries
 #     the old first-`;` loop. The fork list is derived, not listed.
 NROWS=$((NROWS + 1))
 NFORK=0

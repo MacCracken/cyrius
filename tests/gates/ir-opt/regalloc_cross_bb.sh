@@ -23,7 +23,7 @@
 #      knob's own comment already documented `-1 = uncapped`; the code did not implement it.
 #
 # THE FIX. `RA_SCAN_LOOPS` (src/backend/x86/decode.cyr) finds the backward edges in a
-# function's emitted range; `_ra_loop_extend` (parse/fn.cyr) extends an interval overlapping
+# function's emitted range; `_ra_loop_extend` (parse/fn/body_pass.cyr) extends an interval overlapping
 # a loop body to that loop's branch, to a fixpoint for nesting; and the lifetime cap now
 # applies only when the bisection knob asks for it. Simultaneity is enforced where it
 # belongs — by `free_r == -1` falling through to the spill heuristic.

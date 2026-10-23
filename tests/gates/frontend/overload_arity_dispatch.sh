@@ -70,7 +70,7 @@ MKSTR='var s: Str = str_new("x", 1);'
 # ---------------------------------------------------------------------------
 # AXIS 1 — SAME ARITY must redirect, in all three call positions.
 # Mutation: revert the PARSE_RETURN divert (the _fnt_ovstr/_fnt_ovint block in
-# parse/fn.cyr) and the `return/tail` line drops to 11 — that WAS v6.5.0.
+# parse/fn/ret.cyr) and the `return/tail` line drops to 11 — that WAS v6.5.0.
 # ---------------------------------------------------------------------------
 SAME='fn f(a): i64 { return 11; }
 fn f_str(a): i64 { return 22; }
@@ -136,7 +136,7 @@ check "2-arg cstr+len call stays on base"  11 \
 # argument 1 was a bare fn call — so a plain user pair silently ran the wrong body
 # (`take(make())` executed `take_int`), while `take(v)` and `take(42)` did not. The
 # same value, routed differently depending on whether it passed through a variable.
-# Mutation: drop the `& 1` cstrmask test from the _int arm in parse/fn.cyr → 22.
+# Mutation: drop the `& 1` cstrmask test from the _int arm in parse/fn/call.cyr → 22.
 echo "axis 5 — the _int route requires an explicit ': cstring' param 0:"
 UNANN='fn take(a): i64 { return 11; }
 fn take_int(a): i64 { return 22; }

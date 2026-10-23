@@ -233,7 +233,7 @@
 # (refused, but as an "unknown type"). (6.6.8's third mutation, "let _call_forwarded_base inline
 # -> D RED", went GREEN at 6.6.10 and that fn was retired: outer's base is now a transitive stub
 # whose body is skipped, so no replay of the inlinable inner<T> is left for it to suppress.)
-# 6.6.10 (src/frontend/parse/fn.cyr; each run on a scratch tree, never the repo):
+# 6.6.10 (src/frontend/parse/fn/; each run on a scratch tree, never the repo):
 #   `_gen_call_head` never calls _refuse_gen_stub     -> H, I RED (rc 0, the stub's 0)
 #   drop `_tc_generic_divert` from _tc_must_divert     -> H's `return g(5)` RED (rc 0)
 #   _tc_generic_divert returns 1 for EVERY generic      -> M's tail recursion RED (rc 139)

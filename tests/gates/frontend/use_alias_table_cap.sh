@@ -4,7 +4,7 @@
 # any other shape refused by name (6.7.17, the user's D30: the UL rows below).
 #
 # THE DEFECT (measured at 6.6.19, x86_64 Linux, no diagnostic): `_tl_use_alias`
-# (src/frontend/parse/fn.cyr) stored alias #uc at use_from[uc] / use_to[uc] with no cap. The two
+# (src/frontend/parse/fn_def.cyr) stored alias #uc at use_from[uc] / use_to[uc] with no cap. The two
 # tables are 64 entries each and ABUT in the heap map (use_from @0x18FFD0, use_to @0x1901D0, the
 # count @0x1903D0), so the 65th `use` wrote its source name into use_to[0] — alias #1 then
 # resolved to whatever fn carried that bare name, and the program called it silently — and every

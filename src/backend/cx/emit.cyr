@@ -15,7 +15,7 @@
 # Each instruction is 4 bytes: [opcode][ra][rb][rc] (little-endian in output)
 
 # v5.7.11: stubs matching backend/x86/emit.cyr — parse.cyr / parse/expr.cyr
-# / parse/decl.cyr / parse/fn.cyr reference these in shared codepaths
+# / parse/decl.cyr / parse/fn/ reference these in shared codepaths
 # (`if (_AARCH64_BACKEND == 1)`, `if (_TARGET_MACHO == ...)`, etc.).
 # cx backend is x86-shaped, never aarch64/mach-o/PE — all 0.
 # Drifted out of sync over multiple v5.6.x/v5.7.x minors because no
@@ -580,7 +580,7 @@ fn ECALLTO(S, target): i64 {
 # 6.6.20 — a REDEFINED fn: turn the earlier body's entry into `jmp new_off` (opcode 80, 4-byte
 # instruction units like ECALLTO), so every reference already compiled against it reaches the
 # last definition. Writes the cx code buffer EB writes (_cx_code_base). Returns 1, writing
-# nothing, when the earlier body is too short. See `_fn_redirect` (parse/fn.cyr). CHANGELOG [6.6.20]
+# nothing, when the earlier body is too short. See `_fn_redirect` (parse/fn_def.cyr). CHANGELOG [6.6.20]
 fn EFNREDIRECT(S, old_off, old_end, new_off): i64 {
     if (old_end > old_off) { if (old_end - old_off < 4) { return 1; } }
     var off = (new_off - old_off) / 4;
@@ -1286,7 +1286,7 @@ fn EFIELD_LOAD_W(S, width): i64 {
     return 0;
 }
 
-# v5.9.40 — struct-by-value return (parse/fn.cyr:371).
+# v5.9.40 — struct-by-value return (the `return` path, parse/fn/ret.cyr / ret_agg.cyr).
 # Emits a byte-copy loop: src in r9 (= fp + src_disp), dst in
 # r10 (= load64 [fp + stash_disp]), counter in r11. Loop body
 # walks the aligned byte count copying byte-by-byte; tail
@@ -1373,7 +1373,7 @@ fn EADDIMM_X1(S, val): i64 {
 # return address, which the jmp left on the call stack — so a tail recursion runs in constant
 # call-stack and guest-stack space.
 #
-# By the time this is called the shared tail path (parse/fn.cyr PARSE_RETURN) has evaluated every
+# By the time this is called the shared tail path (parse/fn/ret.cyr PARSE_RETURN) has evaluated every
 # argument onto the data stack and ECALLPOPS has popped them into r3.. — the data stack is
 # balanced and nothing of this frame is read after the jmp, so a nested call among the arguments
 # needs no special handling. Until 6.6.12 this emitted a normal call + epilogue under a comment
@@ -1895,7 +1895,7 @@ fn EFLADDR_X1(S, lli): i64 {
 
 # v5.9.40 Phase 2c — real ESTOREREGPARM for cx. Stash the param
 # register r(3+pidx) into the local frame at fp+disp (disp is
-# negative). Used by parse/fn.cyr:930 in the struct-return
+# negative). Used by parse/fn_def.cyr in the struct-return
 # prologue: cx receives retptr as the FIRST arg in r3, then
 # stashes it for later reload by ESTRUCT_BYVAL_COPY's tail.
 # x86 + aarch64 backends have separate ESTOREREGPARM impls that

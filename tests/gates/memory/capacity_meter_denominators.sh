@@ -29,7 +29,7 @@ fail() { echo "FAIL: capacity_meter_denominators: $1"; exit 1; }
 num() { grep -oE "$2" "$ROOT/$1" | grep -oE '[0-9]+' | tail -1; }
 
 # ── the caps as ENFORCED, each read from the site that raises the hard error ────────
-CAP_FN=$(num      src/frontend/parse/fn.cyr  'if \(nc > [0-9]+\)')
+CAP_FN=$(num      src/frontend/parse/fn/table.cyr  'if \(nc > [0-9]+\)')
 GUARD_ID=$(num    src/frontend/lex/lex.cyr       'if \(npos >= [0-9]+\)')
 CAP_VAR=$(num     src/common/util.cyr        'if \(_var_cap \* 2 > [0-9]+\)')
 CAP_FIX=$(num     src/frontend/parse/expr.cyr 'fixup table full \([0-9]+\)')

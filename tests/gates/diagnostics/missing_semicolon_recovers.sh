@@ -29,7 +29,7 @@
 #   P   a statement's `;` (src/frontend/parse/parse.cyr): P1 an assignment before the fn's `}`, P2 / P3 break / continue
 #       before the loop's `}`, P4 a method call and P5 an explicit generic call before a `return`
 #   S1  the filing's s1 verbatim (`return 1 }`): one error, the next fn not "inside" it
-#   R   a `return`'s `;` (src/frontend/parse/fn.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
+#   R   a `return`'s `;` (src/frontend/parse/fn/ret.cyr): R1 `return 1 }` in a nested block, R2 `return a` before a `var`,
 #       R3 a call's return before the fn's `}`
 #   F   a C-style `for` header missing one of its two `;`: F1 the condition's, F2 the init's, F3 an assignment
 #       init's, F4 both, F5 a header ending at the condition, F6 a compound step — the one `;` error, then the body's;
@@ -72,7 +72,7 @@
 # is defined inside fn 'f'"); K green. On bc51aa5c6 (before `_resync_close`) RED: B1 B2 (the stray `{`'s `}` closed the
 # fn: "unexpected ';'" / "unexpected number 4", "return outside a fn body"). `_resync_close` without its own-`;`
 # exemption -> RED K3 ("expected '}', got end of file"). On 99355d191 (before parse.cyr's sites) RED: P1-P5.
-# On 11bbb4141 (before parse/fn.cyr's sites) RED: S1 R1-R3. On b91579399 (before `_for_semis`) RED: F1-F6 (the
+# On 11bbb4141 (before parse/fn/ret.cyr's sites) RED: S1 R1-R3. On b91579399 (before `_for_semis`) RED: F1-F6 (the
 # init's resync ran into the condition, the step replayed from the token after the missing `;`, the step skip ran
 # to a later `)`: "expected '=', got '+'", "unexpected end of input", "undefined variable 'fn'"). On 0b606cc77 (before
 # parse/types.cyr's sites and `_dyn_ext`'s keyword stop) RED: D1 D2.
@@ -236,7 +236,7 @@ syscall(60, f());
 ' "error:<source>:4:5: expected ';', got return
 error:<source>:4:12: $UZ"
 
-# ---- R: a `return`'s `;` (PARSE_RETURN's arms, src/frontend/parse/fn.cyr)
+# ---- R: a `return`'s `;` (PARSE_RETURN's arms, src/frontend/parse/fn/ret.cyr)
 row S1 "the filing's s1 verbatim: return 1 } — one error" 'fn h(): i64 { return 1 }
 fn main(): i64 { return 2; }
 syscall(60, main());

@@ -19,7 +19,7 @@
 #     caller's struct: writes through `y` changed the caller, `return y;` returned garbage.
 #     Mutation: restore `return 0` for a non-inline source in `_try_struct_copy_init`.
 #   * a method whose `self: T` is a struct of 8 B or less was handed `&x` where the free call
-#     passes x's value. Mutation: make `_fn_self_byval` (src/frontend/parse/fn.cyr) return 0.
+#     passes x's value. Mutation: make `_fn_self_byval` (src/frontend/parse/fn/sig.cyr) return 0.
 #   * a struct VARIABLE copied FROM a struct-typed field (`q = b.v;` into a local, a global and an
 #     address-passed parameter; `var p: Pt = b.v;`) copied one word, and the declaration SIGSEGV'd
 #     reading `p.x` through that word. Mutation: make `_fla_arm` (src/frontend/parse/decl.cyr)
@@ -48,7 +48,7 @@
 #     fault on PE, 0 on cx — from a local, a global, a by-value parameter and a pointer-mode base,
 #     and through a generic instance. In a fn the callee now gets a copy (a write through its
 #     parameter does not reach the caller's field); at top level, the field's address.
-#     Mutation: in `_push_struct_expr_arg` (src/frontend/parse/fn.cyr) drop the `_fla_want = st;`
+#     Mutation: in `_push_struct_expr_arg` (src/frontend/parse/fn/call_agg.cyr) drop the `_fla_want = st;`
 #     arming — the "field as a by-value argument" group goes red (x86: SIGSEGV).
 #   * a TOP-LEVEL copy-init `var B: Pt = A;` / `var G: Pt = BX.v;` gave B one 8-byte pointer-mode
 #     slot holding the source's first word, so `B.x` dereferenced it (SIGSEGV) — in the leading

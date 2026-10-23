@@ -7,7 +7,7 @@
 # src/backend/cx/emit.cyr. Every CYRIUS_* knob reachable from the cx driver was dead — ten call
 # sites: CYRIUS_ASYNC, CYRIUS_STACK_ARRAYS (parse.cyr), CYRIUS_DCE, CYRIUS_STATS (util.cyr),
 # CYRIUS_POISON, CYRIUS_MONOMORPH (main_cx.cyr), CYRIUS_ALLOW_PARENT_INCLUDES,
-# CYRIUS_ALLOW_ABSOLUTE_INCLUDES (lex.cyr), CYRIUS_TYPE_CHECK, CYRIUS_FILEID_DUMP (parse/fn.cyr).
+# CYRIUS_ALLOW_ABSOLUTE_INCLUDES (lex.cyr), CYRIUS_TYPE_CHECK, CYRIUS_FILEID_DUMP (parse/fn_def.cyr).
 # Derive the list, do not trust this one:
 #   grep -ho '_read_env("[A-Z_]*")' <every file main_cx.cyr includes> | sort -u
 # And the refusals that NAME a knob were unactionable: `CYRIUS_ASYNC=1 cycc_cx` still said
@@ -82,7 +82,7 @@ run CYRIUS_ASYNC=1 "$ROOT" "$T/as.cyr"
 if [ "$rc" -ne 0 ]; then _bad "async, CYRIUS_ASYNC=1: rc $rc — cycc_cx cannot see the knob its own refusal names"; grep '^error' "$T/e" | head -2 | sed 's/^/      /'
 else vm; if [ "$vrc" -ne 35 ]; then _bad "async: the .cyx exits $vrc under cxvm, expected 35 (await five() + 30)"; else pass=$((pass + 1)); fi; fi
 
-# With the gate open, the cx coroutine refusal (parse/fn.cyr) is reachable for the first time:
+# With the gate open, the cx coroutine refusal (parse/fn_def.cyr) is reachable for the first time:
 # a mid-body suspend must be refused BY NAME on cx, not compiled.
 cat > "$T/co.cyr" <<'EOF'
 include "lib/alloc.cyr"

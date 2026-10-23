@@ -225,7 +225,7 @@ fn _cl_snap_intd(esl): i64 {
 # 6.6.13 — 1 when enclosing slot `esl` is an ADDRESS-PASSED by-value struct parameter of the
 # enclosing fn: its one captured word is the caller's struct's address, which a copy-init must
 # copy THROUGH, where a pointer-mode local's word (`var a: Pt = mk();`, a Str handle) is rebound.
-# The same discriminator as `_local_is_sptr_param` (parse/fn.cyr) — "slot below the enclosing
+# The same discriminator as `_local_is_sptr_param` (parse/fn/call_args.cyr) — "slot below the enclosing
 # fn's parameter span" — asked of the snapshot, whose trailer word carries that span.
 # CHANGELOG [6.6.13]
 fn _cl_snap_is_sptr(S, esl): i64 {
@@ -1920,7 +1920,7 @@ fn _await_paren_wraps(S, ti, te): i64 {
 # the await was reached — `b` in `b + await f()`, `1000` in `add(1000, await f())`, the address
 # in `store64(m + 8, await f())` — was gone at the landing, and the parser's pending pop took
 # whatever sat at the new rsp: `b + await five()` gave 5, and the store64 form SIGSEGV'd.
-# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse/fn.cyr
+# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse/fn_def.cyr
 # refuses aarch64 and cx), so those `_xdepth` words are popped into coroutine-frame words
 # before the suspend and pushed back, in order, at the landing. CHANGELOG [6.6.10]
 fn _await_coro_suspend(S, sk, fut): i64 {
@@ -2404,7 +2404,7 @@ fn _bx_param(S, fi, pc, li, b): i64 {
     SLBOOL(S, li, b);
     return 0;
 }
-# 6.7.6 — the #inline replay's parameters (_inl_bind_param, parse/fn.cyr) at slots `s0` / `s1`: the
+# 6.7.6 — the #inline replay's parameters (_inl_bind_param, parse/fn/table.cyr) at slots `s0` / `s1`: the
 # declared-integer mark of callee `fi`'s parameters 0 / 1, which re-registration by name dropped
 # (an inlined `println(n)` with `n: i64` took the cstring overload the out-of-line body did not).
 fn _inl_param_marks(S, fi, s0, s1, pc): i64 {
@@ -2736,7 +2736,7 @@ fn _W128_IS(S): i64 {
 }
 # rax (rcx 0) or rcx (rcx 1) = the address of the u128 `(k, v)`: a local's canonical slot (k 1), a
 # global (k 2), a temporary (k 3: a frame slot, or `-2 - vi` for a dead global at top level). A
-# frame slot is reached by `lea`, which keeps it out of the register picker (parse/fn.cyr).
+# frame slot is reached by `lea`, which keeps it out of the register picker (parse/fn_def.cyr).
 fn _w128_addr(S, k, v, rcx): i64 {
     var fr = 0;
     if (k == 1) { fr = 1; }
@@ -4889,7 +4889,7 @@ fn _step_asg_at(S): i64 {
 # per-fn reference ceiling: each is one call there, so C2's subscript, `*p` and step-word work
 # grows these and not the giant. Each emits exactly what its inline arm emitted; moving them out
 # also took the giant under the per-fn NOP compactor's 1024-entry caps (`_nrn` / `_jsn`,
-# parse/fn.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
+# parse/fn_def.cyr), so its last 499 NOPs are harvested (cycc .text -1,680 B). CHANGELOG [6.7.8]
 
 # v5.8.15 §7: the slice subscript `s[i]` as a value, for the slice-typed local `li`. _slice_lw
 # returns the element byte-width captured at PARSE_VAR time (v5.8.14 §6); 0 means not a slice.
@@ -5536,9 +5536,10 @@ fn _dlo_park(S, d): i64 {
     _HTSTORE(S, _dlo_h);
     return 1;
 }
-# 6.7.14 (D36) — the dereference at `d` that an untyped declaration watches (`_dvi_want`, `_dvi_arm` in parse/fn.cyr),
-# its operand naming a value-form vector `vd` (`_dop_vd`) and ending the initialiser (`;`, or the `)` of the wrap the
-# declaration stepped into): the pointer parked as `_dlo_vec` parks an argument's, for `_dvi_take`. 1 = parked.
+# 6.7.14 (D36) — the dereference at `d` that an untyped declaration watches (`_dvi_want`, `_dvi_arm` in
+# parse/fn/call_agg.cyr), its operand naming a value-form vector `vd` (`_dop_vd`) and ending the initialiser (`;`, or
+# the `)` of the wrap the declaration stepped into): the pointer parked as `_dlo_vec` parks an argument's, for
+# `_dvi_take`. 1 = parked.
 fn _dvi_park(S, d, vd): i64 {
     if (d != _dvi_want) { return 0; }
     if (vd == 0) { return 0; }
@@ -5551,10 +5552,10 @@ fn _dvi_park(S, d, vd): i64 {
     _HTSTORE(S, _dlo_h);
     return 1;
 }
-# 6.7.12 (D27) — the dereference at `d` that starts an argument to a `*V` parameter (`_sarg_deref`, parse/fn.cyr),
-# its operand typed `*V` (the step word's vector, `_ps_vdesc`) and ending the argument (`,` or `)` next — no
-# operator: a parked vector is no left operand `_opd_lst` may dispatch): the pointer parked as a struct's is,
-# `_dlo_sid` the vector's descriptor (>= 2048, so `_dro_check` compares vector types). 1 = parked.
+# 6.7.12 (D27) — the dereference at `d` that starts an argument to a `*V` parameter (`_sarg_deref`,
+# parse/fn/call_args.cyr), its operand typed `*V` (the step word's vector, `_ps_vdesc`) and ending the argument (`,` or
+# `)` next — no operator: a parked vector is no left operand `_opd_lst` may dispatch): the pointer parked as a struct's
+# is, `_dlo_sid` the vector's descriptor (>= 2048, so `_dro_check` compares vector types). 1 = parked.
 fn _dlo_vec(S, d): i64 {
     var t = TOKTYP(S, GTI(S));
     if (t != 31) { if (t != 11) { return 0; } }
@@ -8004,7 +8005,7 @@ fn PF64CMP(S, tok): i64 {
 # handler took `var vbase = GFLC(S);` and did not raise GFLC until AFTER all arguments had been
 # parsed. So while argument N was being parsed, GFLC still pointed AT the destination stash slot.
 # Any argument expression that allocates a frame local therefore binds it to the intrinsic's own
-# operand slot: the inline replay's `var saved_flc = GFLC(S);` (parse/fn.cyr:1717) returned
+# operand slot: the inline replay's `var saved_flc = GFLC(S);` (parse/fn/call.cyr) returned
 # `vbase` itself, laid its parameter locals over the stash, and raised GFLC past them — and then
 # the handler's trailing `SFLC(S, vbase + N)` LOWERED GFLC BACK DOWN over live slots. The loop
 # then read its destination pointer from a slot no instruction ever wrote:
@@ -9743,7 +9744,7 @@ fn _op_fn_peek(S, stype, op_str, op_len): i64 {
 # ⛔ 6.6.6 (bite 14 review) — EMIT_OP_DISPATCH for an operator fn returning a struct BY VALUE
 # (`fn V3_add(a, b): V3`). `var c: V3 = a + b` SIGSEGV'd on every target: the dispatch passed no
 # retptr, so the callee wrote its result through the lhs address. The same dispatch, bracketed by
-# `_sc_pre` / `_sc_x8` / `_sc_post` (parse/fn.cyr) — the temp, the retptr (int arg 0 on x86/cx,
+# `_sc_pre` / `_sc_x8` / `_sc_post` (parse/fn/call_agg.cyr) — the temp, the retptr (int arg 0 on x86/cx,
 # X8 on aarch64) and the record a destination takes. One wrinkle: a <= 8 B lhs is passed BY
 # VALUE (there is no struct var to re-address), it is already in rax when the operator is seen,
 # and on x86/cx the retptr must go BELOW it — so it is parked in a frame word first.

@@ -22,7 +22,7 @@
 #   a fn returning the struct `S8` takes a value of that struct, or a pointer to one — got `u` (a `U8`)
 # A `*S8` LOCAL of the fn's own struct is the struct it points at, as a `*S8` parameter is (decision 6:
 # struct copies are size-independent). An untyped value stays the struct's word (out of scope).
-# `_ret_small_val` / `_ret_expr_sid` / `_ret_small_ptr` / `_tc_small_sret_divert` (src/frontend/parse/fn.cyr),
+# `_ret_small_val` / `_ret_expr_sid` / `_ret_small_ptr` / `_tc_small_sret_divert` (src/frontend/parse/fn/ret_agg.cyr, the divert in fn/ret.cyr),
 # `_ret_small_gh` (parse/decl.cyr). The runtime half is tests/tcyr/crossos/struct_ptrmode_return_copy.tcyr
 # (the `*T` local rows, every leg: tests/gates/codegen/small_struct_handle_line.sh R13).
 #
@@ -70,7 +70,7 @@
 #                                                          values file does not build)
 #   real tree                                           -> GREEN (27 refusal rows, 26 acceptance rows — floor 26 —
 #                                                          and 12 builds)
-# 6.7.14 (D19 (a), measured 2026-10-17; R24-R39, A14; CYCC=the mutant, a one-edit copy of parse/fn.cyr built by the
+# 6.7.14 (D19 (a), measured 2026-10-17; R24-R39, A14; CYCC=the mutant, a one-edit copy of parse/fn/ built by the
 # fixed compiler — the aarch64 / cx legs build from the tree's src and stay fixed):
 #   the lane before it (0d225f0c)                       -> RED 25: R24-R32 x86_64 / PE (8 B: compiled, the slot's
 #                                                          address the struct's word; 16 / 24 B: the classes' own
@@ -123,7 +123,7 @@
 #   real tree                                           -> GREEN (108 refusal rows — floor 108 — and 28 acceptance rows)
 #
 # 6.7.16 (the user's D1, 2026-10-19; RG1-RG9, RG1n, RG4n, AG1-AG5; R55 now the stub's words): `return &n;` with n typed by T
-# makes the generic a stub (`_gs_ret_amp`, src/frontend/parse/fn.cyr), its note naming the line (`_gen_stub_note`).
+# makes the generic a stub (`_gs_ret_amp`, src/frontend/parse/fn/generic.cyr), its note naming the line (`_gen_stub_note`).
 # (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
 #   MRG1 the tree before (1135ae069)                    -> RED 16: R55 R55b (the slot's words), RG1 on the four compilers (compiled, no
 #                                                          diagnostic), RG1n, RG2 (the slot's words), RG3-RG9, RG4n
@@ -604,7 +604,7 @@ accept "AG5 a closure's own return &n is no stub (hc(5))" "$GH"'fn main(): i64 {
     "$GH"'fn main(): i64 { return 5; }'"$GHE"
 echo "=== return &n; (n typed with no type parameter) in a generic (6.7.16, the user's D2, 2026-10-19): refused at the definition ==="
 # `fn h<T>(x: T): S8 { var n = 5; return &n; }` — n can hold no struct at any T, so the line is refused as in a non-generic
-# fn, with D18's words at the `&n`, called or not (`_ret_amp_bare` / `_ret_amp_stub`, src/frontend/parse/fn.cyr). Through
+# fn, with D18's words at the `&n`, called or not (`_ret_amp_bare` / `_ret_amp_stub`, src/frontend/parse/fn/ret_agg.cyr). Through
 # 6.7.15 the base exempted it: a generic never called, or called only with an integer, compiled, and `h(3)` returned the
 # slot's address as c.v; a struct call was refused at the instance. A name typed by T is D1's (RG*).
 DH='include "lib/syscalls.cyr"

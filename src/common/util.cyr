@@ -344,7 +344,7 @@ var _fnt_is_async = 0;
 # byte-identical (async/await tokens never appear in cycc src; the gated lowering
 # is unreachable). Lazily set to 1 by _ensure_async_gate when CYRIUS_ASYNC=1, the
 # first time an `async`/`await` token reaches pass 2 (PARSE_FN_DEF / PEXPR). Same
-# opt-in shape as _MONOMORPH_OK, but lazy (no per-fork driver edit) — see parse/fn.cyr.
+# opt-in shape as _MONOMORPH_OK, but lazy (no per-fork driver edit) — see parse/fn_def.cyr.
 var _ASYNC_OK = 0;
 # --- v6.5.69: coroutine frames (mid-body suspend) ------------------------------------
 # ⛔ WHY THIS EXISTS. `async`/`await` shipped at v6.3.11 as deferred-then-forced Futures:
@@ -365,7 +365,7 @@ var _ASYNC_OK = 0;
 #   [0] impl fn ptr   [8] argc word (1 | FUT_CORO 512)   [16] SELF   [24] state
 #   [32 + i*8] local slot i   [32 + flc*8] completion value. The argc word was the declared
 #   parameter count until 6.6.10, so a 0-parameter coroutine was forced with fncall0 (SIGSEGV).
-#   (parse/fn.cyr `_async_argc_word`; CHANGELOG [6.6.10])
+#   (parse/fn_def.cyr `_async_argc_word`; CHANGELOG [6.6.10])
 var _cur_fn_coro = 0;       # 1 while emitting a coroutine body
 var _coro_base = 0;         # stack slot holding the heap frame base (always 0)
 var _coro_lo = 0;           # locals with idx >= this live in the heap frame
@@ -611,7 +611,7 @@ fn _fnt_copy_table(old, oc, nc): i64 {
 # is up; `_codebuf_cap==0` guards any pre-init call. Byte-identical under the old cap.
 var _codebuf_base = 0;
 # --- v6.5.68: whole-program compaction registries ---------------------------------
-# The per-fn NOP compactor (parse/fn.cyr) repairs positions from three tables that are
+# The per-fn NOP compactor (parse/fn_def.cyr) repairs positions from three tables that are
 # ZEROED AT EVERY FUNCTION START — jump_src_tbl, sw_tbl, nop_run_tbl. That is fine for a
 # pass that runs inside `_PARSE_FN_DEF_IMPL`, and useless for one that runs after all
 # parsing: the IR fixpoint writes its NOPs into a table that has already been consumed
@@ -930,13 +930,13 @@ fn _capacity_warnings(S, codebuf_cap, codebuf_growable): i64 {
     return 0;
 }
 
-# v5.11.37: relocated from parse/fn.cyr to util.cyr so that
+# v5.11.37: relocated from parse/fn/ to util.cyr so that
 # backend emit.cyr files (included before parse/*.cyr in
 # main_*.cyr) can resolve C-string-named functions — e.g.
 # aarch64 emit.cyr's polyfill-dispatch named ops (EF64_EXP,
 # EF64_LN, EF64_LOG2) need to look up `_f64_*_polyfill` fn
 # indices at parse time. The implementation is unchanged from
-# parse/fn.cyr's version.
+# parse/fn/'s version.
 fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
     var fc = GFNC(S);
     var fi = 0;
@@ -1096,7 +1096,7 @@ fn GFIPT(S, fi): i64 { if (_fnt_inlpt == 0) { return 0; } return L64(_fnt_inlpt 
 fn SFIPT(S, fi, v): i64 { if (_fnt_inlpt == 0) { _fnt_inlpt = alloc(131072 * 8); } S64(_fnt_inlpt + fi * 8, v); return 0; }
 
 # Unpack param `which` (0|1) from a GFIPT word -> SLTYPE sentinel, or 0 if not a vector.
-# 6.6.17: `0x8001` / `0x8002` is an f64 / f32 scalar param (`_param_float`, parse/fn.cyr) -> its
+# 6.6.17: `0x8001` / `0x8002` is an f64 / f32 scalar param (`_param_float`, parse/fn/impl.cyr) -> its
 # positive float tag; a vector's descriptor field never exceeds 256.
 fn _ipt_sltype(packed, which): i64 {
     var f = packed & 0xFFFF;
@@ -1226,7 +1226,7 @@ fn GFIC(S, fi, k): i64 { if (_fnt_instconc == 0) { return 0; } if (fi < 0) { ret
 var _fnt_iself = 0;
 fn GFISELF(S, fi): i64 { if (_fnt_iself == 0) { return 0; } if (fi < 0) { return 0; } return L64(_fnt_iself + fi * 8); }
 fn SFISELF(S, fi, v): i64 { if (_fnt_iself == 0) { _fnt_iself = alloc(131072 * 8); } S64(_fnt_iself + fi * 8, v); return 0; }
-# 6.7.14 — a METHOD's source spelling, for the call-site diagnostics (`_fn_src_name`, parse/fn.cyr):
+# 6.7.14 — a METHOD's source spelling, for the call-site diagnostics (`_fn_src_name`, parse/fn/call_args.cyr):
 # ((its type's name + 1) << 32) | its own name, 0 = no method. Pass 1 records an impl's definitions, the
 # method arm a name a call registered (`s.nope()`), a generic instance its base's. Lazy at the max fn cap
 # like _fnt_iself; nothing but a diagnostic reads it. CHANGELOG [6.7.14]
@@ -1287,7 +1287,7 @@ fn _pbool_reset(fi): i64 {
     return 0;
 }
 # 6.6.17 (a10) — the per-fn OVERFLOW ROW of parameter kinds for ordinals past the per-fn masks
-# (parse/fn.cyr `_pmw`): per fn 0, or a row [capacity][one kind byte per ordinal], allocated on the
+# (parse/fn/sig.cyr `_pmw`): per fn 0, or a row [capacity][one kind byte per ordinal], allocated on the
 # first such parameter and grown on demand, so no parameter count is refused. The table is
 # lazy-alloc'd at the max fn cap like _fnt_tparams, so the brk layout does not move.
 var _fnt_pmhi = 0;
@@ -1362,7 +1362,7 @@ fn _pm_row_any(fi, k): i64 {
 }
 # 6.6.20 — per fn, bit k = parameter k (k < 62) is a struct the fn COPIES into its own frame in its
 # prologue, so an address its caller passes for it is not held once the call returns. Written by
-# pass 1 (parse/fn.cyr `_bvcp_note`), read by `_pm_copies`. Lazy-alloc'd at the max fn cap like
+# pass 1 (parse/fn/sig.cyr `_bvcp_note`), read by `_pm_copies`. Lazy-alloc'd at the max fn cap like
 # _fnt_pmhi, so the brk layout does not move.
 # 6.7.9 — and an ordinal past 61 in the fn's COPIES ROW (`_fnt_bvhi`, the `_prow_*` shape: 1 =
 # copied), its own table because the kind row's byte is full and is rebuilt by every definition
@@ -1573,7 +1573,7 @@ var _grc_fi = 0 - 1;
 # 6.6.10: a parameter declared `name: *T` is a pointer: it never binds a type argument to the
 # pointee struct, and (6.6.16, C7) it is never copied in. 6.6.16: this is no longer the record —
 # it is the PENDING mark (the slot index + 1, 0 = none) between the `*` and the parameter's
-# registration, where `_param_record` (parse/fn.cyr) moves it to the slot's own bit (SLPTRP), so
+# registration, where `_param_record` (parse/fn/impl.cyr) moves it to the slot's own bit (SLPTRP), so
 # no slot index is out of range. Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
 var _cur_fn_ptrp = 0;
 # 6.7.0 (A4) — the struct an impl method's UNTYPED `self` points at (its sid; 0 = this fn has
@@ -1584,7 +1584,7 @@ var _cur_fn_ptrp = 0;
 var _cur_iself_sid = 0;
 var _impl_tnoff = 0;
 var _impl_trait = 0;   # 6.7.0 (A3): the impl's trait name, 0 for an inherent `impl T { … }`
-# 6.7.1 (C3) — trait bounds on type parameters: the tables (src/frontend/parse/fn.cyr, the bounds module).
+# 6.7.1 (C3) — trait bounds on type parameters: the tables (src/frontend/parse/fn/traits.cyr, the bounds module).
 var _ctp_buf = 0;      # `_capture_tparams`' bounds: per slot (0|1), 8 x (name, token)
 var _ctp_n0 = 0;       # bounds captured on type parameter 0 / 1
 var _ctp_n1 = 0;
@@ -1596,7 +1596,7 @@ var _bs_tab = 0;       # bounded call sites (4 words): method-name token, trait,
 var _bs_n = 0;
 var _bnr_tab = 0;      # `_bnd_sites`' receivers (3 words): name, type-parameter slot, `*T`
 var _bnr_n = 0;
-var _bnr_cap = 0;      # 6.7.14: its capacity, doubled when full (`_tab_grow`, parse/fn.cyr)
+var _bnr_cap = 0;      # 6.7.14: its capacity, doubled when full (`_tab_grow`, parse/fn/generic.cyr)
 var _bnd_memo = 0;     # refusals reported (3 words): generic (fn, or -1 - struct), conc0, conc1
 var _bnd_memo_n = 0;
 var _bbs_why = 0;   # the bounded struct `_bnd_base_bad` found (sid), 0 = the fn's own bound
@@ -1605,7 +1605,7 @@ var _bnd_quiet_hit = 0; # the bounded struct a quiet check failed (sid)
 var _st_bb = 0;        # per struct: a bounded struct its base definition instantiates with its T and i64 fails (sid)
 var _sdef_bb = 0;      # PARSE_STRUCT_DEF's: that struct, for the definition being parsed
 var _ctp_closed = 0;   # `_ctp_bounds` met a `>>` that closed the parameter list too
-# 6.7.2 (B1, C1) — compile-time constants and `const fn` (src/frontend/parse/fn.cyr, the const module).
+# 6.7.2 (B1, C1) — compile-time constants and `const fn` (src/frontend/parse/fn/const_eval.cyr, the const module).
 var _cst_tab = 0;      # top-level consts (8 words): name, init token, decl token, var slot, state, kind, value, float index
 var _cst_n = 0;
 var _cst_kk = 0;       # `_cst_value`'s second result: the const's kind (0 i64, 1 f64, 2 string, 3 bool)
@@ -1864,7 +1864,7 @@ fn SSDEP(S, v): i64 { S64(S + 0x18FCC0, v); return 0; }
 # non-negative counters, so the low 32 bits are the whole live range) — no new table, no
 # heap-map change, and it CLEARS ITSELF on slot reuse because every named-slot
 # registration writes SLDEP before it writes anything else. GLDEP masks it off.
-# Registration sets it; `_local_struct_is_ptr` (parse/fn.cyr) is the one reader that
+# Registration sets it; `_local_struct_is_ptr` (parse/fn/call_args.cyr) is the one reader that
 # answers the question for field access, method self, argument passing, copy-init,
 # copy-assign and the regalloc picker. CHANGELOG [6.6.5]
 fn GLDEP(S, li): i64 { return L64(S + 0x5DBD000 + li * 8) & 0xFFFFFFFF; }
@@ -1895,7 +1895,7 @@ fn GLAEW(S, li): i64 {
 # could not record a slot >= 64 — reached by 64 int parameters, or on Win64 by 16 `f64v4` ones
 # (4 slots each) — so such a pointer read as a by-value struct and was copied. Per slot: no width
 # limit; it clears itself on slot reuse like the span, and rides the closure snapshot with
-# the rest of the word. Written LAST at registration (`_param_record`, parse/fn.cyr), after
+# the rest of the word. Written LAST at registration (`_param_record`, parse/fn/impl.cyr), after
 # MARK_SMALL_STRUCT's SLAGG, which rewrites the high half. CHANGELOG [6.6.16]
 fn SLPTRP(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 56)); return 0; }
 fn GLPTRP(S, li): i64 {
@@ -1915,7 +1915,7 @@ fn GLBOOL(S, li): i64 {
 }
 # 6.7.6 (Break 1, lane D) — bit 59 of the same word: the slot is DECLARED an integer (a local or a
 # parameter annotated i8..i64 / u8..u64, not behind `*`), so it is a number, never a pointer — what
-# the `_int` overload route reads (`println(n)`, _od_arg_kind, parse/fn.cyr). An untyped slot stays
+# the `_int` overload route reads (`println(n)`, _od_arg_kind, parse/fn/call.cyr). An untyped slot stays
 # unmarked (ADR-002: it may hold either). Written last at registration, like bit 58.
 fn SLINTD(S, li): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | (1 << 59)); return 0; }
 fn GLINTD(S, li): i64 {
@@ -3103,7 +3103,7 @@ fn _rd_inst_exit(d): i64 {
 # argument, every left operand of a binary/comparison operator, every spilled temporary
 # goes on the machine stack with `push rax` (8 bytes) and comes back with a pop. The ONLY
 # alignment invariant the compiler had was the frame rounding `fsz = (flc*8+15) & -16`
-# (parse/fn.cyr), which makes rsp 16-aligned BETWEEN statements. Nothing padded for values
+# (parse/fn_def.cyr), which makes rsp 16-aligned BETWEEN statements. Nothing padded for values
 # still pushed when a CALL was emitted, so a call made with an odd number of them pending
 # entered its callee 8 bytes off — and both x86 ABIs require rsp ≡ 0 (mod 16) at the call
 # instruction. `f(0, c())` was misaligned; `var t = c(); f(0, t);` was not. The shift is
@@ -3139,7 +3139,7 @@ var _xcall_pad = 0;
 var _xcall_d = 0;
 var _xd_bad = 0;
 # 6.7.3 — the in-loop tail calls still waiting for their verdict (one record per site, see
-# `_tcp_site`, parse/fn.cyr) and the first index that belongs to the fn being emitted. Beside
+# `_tcp_site`, parse/fn/ret.cyr) and the first index that belongs to the fn being emitted. Beside
 # the call-state globals above because every record captures them. CHANGELOG [6.7.3]
 var _tcp_vec = 0;
 var _tcp_base = 0;
@@ -4011,7 +4011,7 @@ var _err_quiet = 0;  # 1: the last emitter printed nothing (the panic latch, or 
 # 6.7.16 — every error report AND every repeat of one (not one the panic latch swallows): `_err_once`, ERR_UNDEF,
 # `_derr_seen`. A generic instance re-parses its base's statements in a file that has already failed, so "did this
 # statement refuse something" is this count before and after it, never the file-wide `_had_error` (PARSE_RETURN's
-# count check, parse/fn.cyr). CHANGELOG [6.7.16]
+# count check, parse/fn/ret.cyr). CHANGELOG [6.7.16]
 var _err_n = 0;
 # 6.7.16 — `_err_n` where the statement being parsed began (PARSE_STMT; each declaration-zone replay entry): a float-type
 # warning stands down once the statement has reported an error (`_FLT_TYPE_WARN`). CHANGELOG [6.7.16]
@@ -4139,7 +4139,7 @@ fn _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff): i64 {
     return 1;
 }
 # 6.7.3 — the passive whole-field record for the argument type check of a parameter that is not
-# address-passed (`_fpk_note`, parse/decl.cyr; read by `_sarg_byval_small`, parse/fn.cyr): the
+# address-passed (`_fpk_note`, parse/decl.cyr; read by `_sarg_byval_small`, parse/fn/call_args.cyr): the
 # token the argument begins at, and the field's struct, end token and name. Emits nothing.
 var _fpk_want = 0 - 1;
 var _fpk_ft = 0;

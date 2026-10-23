@@ -1,0 +1,1586 @@
+# PARSER — fn: struct- and vector-valued calls (their result temps and receives, operator arguments), aggregate
+# return expressions and the async refusals.
+# ================================================================
+# Split from parse/fn.cyr at 6.7.18, unchanged; parse.cyr includes parse/fn/'s files in source order. CHANGELOG [6.7.18]
+
+# ⭐ 6.6.6 — A STRUCT-VALUED CALL NEEDS SOMEWHERE TO PUT ITS RESULT, WHEREVER IT IS WRITTEN.
+# How fn `fi` returns: 2 = a >16 B struct through a hidden retptr (x86/cx: int arg 0; aarch64:
+# X8), 1 = a 9-16 B non-Str struct in rax:rdx, 0 = anything else. The same predicate as the
+# callee's rough-scan (`_cur_fn_ret_stash` / `_cur_fn_ret_pair`) and PARSE_VAR's asv_try /
+# asv_pair, so caller and callee cannot disagree. CHANGELOG [6.6.6]
+fn _ret_agg_class(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz > 16) { return 2; }
+    if (sz > 8) { if (sid != _STR_SID(S)) { return 1; } }
+    return 0;
+}
+
+# ⛔ 6.7.12 — ON WIN64 A VECTOR RESULT ALWAYS HAS SOMEWHERE TO GO. A value-form vector comes back through a hidden
+# result pointer the CALLER passes as int arg 0 (the MS x64 ABI for a 16 / 32-byte value), and only the receives
+# passed one (PARSE_VAR's, `_try_vector_call_assign`, `_vrcv_emit`). A vector-returning call anywhere else — a
+# statement `mkv(41, 7);`, `callptr(&mkv, 41, 7);`, `var x = callptr(&mkv, ..)`, an argument, a method call, an
+# operator fn returning a vector, at top level too — passed none, so the callee took its first user argument as
+# the pointer and wrote the vector through it: a page fault (exit 5), or a silent overwrite of `self` for a
+# method. SysV / AAPCS64 / cx return the vector in registers and are unchanged. Now every such call gets storage
+# — a frame temporary in a fn, a hidden global at top level (no frame there) — whose address is int arg 0, and the
+# expression's value is its first word, as a struct result's is (`_fnc_agg`, `_sc_pre` / `_sc_post`, `_icall_sret`).
+# Issue 2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer. CHANGELOG [6.7.12]
+# 1 = on PE, fn `fi` returns a value-form vector (through a hidden result pointer).
+fn _pe_vret(S, fi): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) > 0 - 2048) { return 0; }
+    return 1;
+}
+# The storage fn `fi`'s vector result is written to, its address pushed (int arg 0): its handle (`_HTLOAD`'s —
+# a frame slot, or `0 - 2 - gv` for the hidden global at top level).
+fn _pe_vtemp(S, fi): i64 {
+    var rs = GFRS(S, fi);
+    _vec_desc(S, rs);
+    var n = GVEC_NSLOTS(S);
+    var h = 0;
+    if (GINFN(S) == 1) {
+        h = _agg_temp_t(S, n, rs);
+        EFLADDR(S, h);
+    } else {
+        h = _HTEMP(S);
+        S64(_vars_base + (0 - 2 - h) * 8, n * 8);
+        EVADDR(S, 0 - 2 - h);
+    }
+    EPUSHR(S);
+    return h;
+}
+# After the call: the value is the storage's first word (-1: a receive passed its own destination, nothing).
+fn _pe_vload(S, h): i64 {
+    if (h != 0 - 1) { _HTLOAD(S, h); }
+    SESTYPE(S, 0);
+    return 0;
+}
+
+# An anonymous in-frame destination for struct `sid`: (n-1) fillers, then the slot that
+# addresses it (field 0), laid out exactly like a `var p: S` receive. Returns that slot.
+fn _agg_temp(S, sid): i64 {
+    var sz = STRUCTSZ(S, sid - 1);
+    return _agg_temp_t(S, ((sz + 7) & (0 - 8)) / 8, 0 - sid);
+}
+# ... `n` slots of local type `ty` (a struct's -sid, or a vector's type, laid out like a vector local).
+fn _agg_temp_t(S, n, ty): i64 {
+    var j = 0;
+    while (j < n - 1) {
+        var f = GFLC(S);
+        S64(S + 0x5D9D000 + f * 8, 0 - 1);
+        SLDEP(S, f, GSDEP(S));
+        SLTYPE(S, f, 0);
+        SFLC(S, f + 1);
+        j = j + 1;
+    }
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);
+    SLDEP(S, t, GSDEP(S));
+    SLAGG(S, t, n);
+    SLTYPE(S, t, ty);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
+    return t;
+}
+
+# The call itself, cursor just past `(`: the retptr (x86/cx: pushed as int arg 0, before the user
+# args; aarch64: X8, after them), every user arg through the callee gates, the call, and for a
+# rax:rdx return the pair store. The result lands in the aggregate whose field-0 slot is `dst`.
+# Shared by PARSE_VAR's two receives and every call site below that used to have no destination.
+fn _struct_call_emit(S, fi, noff, dst): i64 {
+    var cls = _ret_agg_class(S, fi);
+    var n0 = 0;
+    if (cls == 2) { if (_AARCH64_BACKEND == 0) {
+            EFLADDR(S, dst);
+            EPUSHR(S);
+            n0 = 1;
+        } }
+    var n = _owncall_args(S, fi, noff, n0);
+    if (cls == 2) { if (_AARCH64_BACKEND == 1) { EFLADDR_X8(S, dst); } }
+    var tgt = L64(_fnt_offsets + fi * 8);
+    if (tgt >= 0) { ECALLTO(S, tgt); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, n);
+    SESTYPE(S, 0);   # 6.7.9: PARSE_FNCALL's D3 reset — `mk(1.5).a * 2` kept the f64 argument's type
+    if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, dst); }
+    # 6.6.12: a struct result in rax — a <= 8 B struct's bytes (`dst` inline), or a `Str` handle
+    # (`dst` pointer-mode, see `_struct_call_into`). Only `_call_field` asks for this class.
+    if (cls == 0) { if (GFRS(S, fi) > 0) { EFLSTORE(S, dst); } }
+    return 0;
+}
+
+# `IDENT ( args )` at the cursor, for a callee `_ret_agg_class` accepts: allocate a temp, emit
+# the call into it, return the temp's field-0 slot. CHANGELOG [6.6.6]
+fn _struct_call_into_temp(S): i64 {
+    _struct_call_into(S, 0);
+    return _sci_t;
+}
+# 6.6.12: `handle` = 1 for a struct returned as a HEAP HANDLE in rax (`Str` — the one class-0
+# struct over 8 B): the temp is one POINTER-mode slot that holds it, as `var s = str_from(..)`
+# does, not an inline aggregate the handle would be stored into. The slot is left in `_sci_t`.
+var _sci_t = 0;
+fn _struct_call_into(S, handle): i64 {
+    var noff = PEEKV(S);
+    var o = _gcall_open(S, GTI(S));          # 6.6.10: also `name<..>(`
+    if (o < 0) { o = GTI(S) + 1; }
+    var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
+    if (fi < 0) { fi = REGFN(S, noff); }
+    _gen_own_call_check(S, fi, noff);
+    _callee_site_checks_here(S, fi, noff, 0);   # the cursor is on the callee's name
+    var t = 0;
+    if (handle == 1) { t = _ptr_temp(S, GFRS(S, fi)); }
+    else { t = _agg_temp(S, GFRS(S, fi)); }
+    STI(S, o + 1);   # consume IDENT [<..>] `(`
+    _struct_call_emit(S, fi, noff, t);
+    _sci_t = t;
+    return 0;
+}
+
+# An anonymous POINTER-mode struct slot (the slot holds the struct's address). CHANGELOG [6.6.12]
+fn _ptr_temp(S, sid): i64 {
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);
+    SLDEP(S, t, GSDEP(S));
+    SLTYPE(S, t, 0 - sid);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
+    return t;
+}
+
+# The token after the `)` that closes the call `IDENT (` at `ti` — what follows the call.
+fn _call_follow(S, ti): i64 {
+    var k = ti + 2;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; if (d == 0) { break; } }
+        k = k + 1;
+    }
+    return TOKTYP(S, k + 1);
+}
+
+# The `)` closing the call whose `(` is token `o`. CHANGELOG [6.6.12]
+fn _call_close(S, o): i64 {
+    var k = o + 1;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; if (d == 0) { return k; } }
+        k = k + 1;
+    }
+    return k;
+}
+
+# 1 = the call `name(..)` / `name<..>(..)` at token `ti` is followed by `.field` — its result is
+# not the value (a `..` range is not a field). The receives that size a destination from the
+# callee's return skip such a call. CHANGELOG [6.6.12]
+fn _call_dotted(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    var c = _call_close(S, o);
+    if (TOKTYP(S, c + 1) != 41) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    return 1;
+}
+
+# ⛔ 6.7.6 — 1 = the call `name(..)` / `name<..>(..)` at token `ti` is followed by token type `term`
+# (`;`): it is the whole initialiser or return value. A receive that sized itself from the callee's
+# return took the call alone when it was only an operator's LEFT operand, so `var r = mk3(4) - s;`
+# and `return mk(1) + a;` were `expected ';', got '-'` on valid code. A call this cannot open (an
+# unresolvable `<..>`) answers 1, as before. CHANGELOG [6.7.6]
+# 6.7.17: a `;` missing after it (`_dt_rhs_end`: a `}`, EOF or a statement keyword follows) is the `;`'s error alone —
+# `var r = mk()` then `return r.pick(1);` left r untyped: "no struct type in scope for 'r'" after "expected ';'".
+# CHANGELOG [6.7.17]
+fn _call_ends_at(S, ti, term): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 1; }
+    var e = _call_close(S, o) + 1;
+    if (TOKTYP(S, e) == term) { return 1; }
+    if (term == 5) { return _dt_rhs_end(S, e); }
+    return 0;
+}
+
+# Is the call at `ti` the WHOLE argument (followed by `,` or `)`)? A call inside a larger
+# expression (`f(a) + 1`) is left to the ordinary value path.
+fn _call_is_whole_arg(S, ti): i64 {
+    var nx = _call_follow(S, ti);
+    if (nx == 31) { return 1; }
+    if (nx == 11) { return 1; }
+    return 0;
+}
+
+# `return f(..);` in a struct-returning fn, where `f` returns that same struct: the call into a
+# temp (returned), or -1 when the return expression is not that shape. CHANGELOG [6.6.6]
+fn _return_struct_call(S): i64 {
+    if (_gcall_open(S, GTI(S)) < 0) { return 0 - 1; }   # 6.6.10: `name(` or `name<..>(`
+    if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }   # 6.6.12: a field of the result
+    if (_call_ends_at(S, GTI(S), _ret_term) == 0) { return 0 - 1; }   # 6.7.6: a left operand (`_ret_expr_head`)
+    var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
+    if (fi < 0) { return 0 - 1; }
+    if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0 - 1; }
+    if (_ret_agg_class(S, fi) != 2) { return 0 - 1; }
+    return _struct_call_into_temp(S);
+}
+
+# `var G: S = f(..)` at top level, `f` returning `S` in rax:rdx: the global is not an inline
+# aggregate there (no receive path exists outside a fn), so `G.x` dereferenced the returned
+# first word — SIGSEGV. Refused by name, like the retptr form PARSE_FNCALL refuses. CHANGELOG [6.6.6]
+# `ti` is the callee's name token. ⛔ 6.6.11: resolved as the call REACHES it (`_gcall_open` +
+# `_gen_resolve_call`) — FINDFN read the generic BASE, whose 8 B `W1<T>` is class 0, so
+# `var G: W1<Pt> = mkw(gp)` was never refused (rc 139) — and also run by the declaration-zone
+# replay (`_gvi_expr`), which never reached it at all: a `var G: Pt = mkp(2);` before the first
+# top-level statement compiled clean and SIGSEGV'd on `G.x`. CHANGELOG [6.6.11]
+fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
+    if (pscale >= 0) { return 0; }
+    if (_gcall_open(S, ti) < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }   # 6.6.12: `_call_field` refuses a field of it
+    if (_call_ends_at(S, ti, 5) == 0) { return 0; }   # 6.7.6: a left operand refuses itself
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
+    if (_ret_agg_class(S, fi) != 1) { return 0; }
+    if (GFRS(S, fi) != 0 - pscale) { return 0; }
+    _refuse_toplevel_struct_call(S, TOKVAL(S, ti));
+    return 0;
+}
+
+# `h(p2(..))` at top level, `h` taking the struct by address and `p2` returning it in rax:rdx —
+# or (6.6.20) a struct of 8 B or less in rax: there is no frame to put the result in, so refuse
+# it by name. Always returns 0 — the argument is then pushed by the ordinary path, and
+# `_had_error` keeps the binary from being written.
+fn _refuse_toplevel_struct_arg(S): i64 {
+    var c = _arg_call_class(S);   # 6.6.10: the instance's class
+    if (c != 1) { if (c != 3) { return 0; } }
+    if (_call_is_whole_arg(S, _gcall_open(S, GTI(S)) - 1) == 0) { return 0; }
+    _refuse_toplevel_struct_call(S, PEEKV(S));
+    return 0;
+}
+
+# ⛔ 6.6.20 — the class of the struct the call at the cursor (`name(` / `name<..>(`) returns, for
+# an address-passed parameter: `_ret_agg_class`'s 2 / 1, or 3 for a struct of 8 B or less, which
+# comes back in rax. That class was 0 here and its value was pushed: harmless while only a struct
+# over 8 B was address-passed (a smaller result cannot be one), fatal once a `p: *S` parameter of
+# any size is — `rd1(mk())` with `p: *S1` SIGSEGV'd where `rd3(mk3())` took its temp's address.
+fn _arg_call_class(S): i64 {
+    var fi = _gen_resolve_call(S, GTI(S));
+    var c = _ret_agg_class(S, fi);
+    if (c != 0) { return c; }
+    if (_ret_small_struct(S, fi) == 1) { return 3; }
+    return 0;
+}
+# 1 = fn `fi` returns a struct of 8 B or less (by value, in rax).
+fn _ret_small_struct(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    return 1;
+}
+
+# ⭐ 6.6.6 (bite 14 review) — A METHOD CALL OR AN OVERLOADED OPERATOR RETURNING A STRUCT BY
+# VALUE. 14c gave every FREE-fn call a destination and missed the two paths that emit their own
+# call: `var r: P3 = b.mk(2)`, `b.mk(3);`, `r = b.mk(5)` and `var c: V3 = a + b` SIGSEGV'd on
+# x86, aarch64 and Win64 (the callee took `self` / the lhs address as its retptr), and
+# `q = b.mp(3)` (rax:rdx) kept rax only. The emitter brackets its call with three hooks:
+#   _sc_pre   before its first push: a temp — always for a >16 B result in a fn, for a 9-16 B one
+#             only when a destination asked (`beg == _sc_want`) — and on x86/cx the temp's
+#             address as int arg 0 (`_sc_n0` = 1), before `self` / the lhs
+#   _sc_x8    after ECALLPOPS: the temp's address in aarch64's X8
+#   _sc_post  after the call: the rax:rdx store / the first word as the value, and the record
+#             (`_sc_*` in parse.cyr) a destination matches with `_sc_whole`
+# At top level there is no frame: a >16 B call is refused here; a 9-16 B one is recorded without
+# a temp, and a destination that needs storage refuses it. CHANGELOG [6.6.6]
+fn _sc_pre(S, fi, noff, beg): i64 {
+    _sc_n0 = 0;
+    if (_pe_vret(S, fi) == 1) {   # 6.7.12: a Win64 vector result's hidden pointer
+        _sc_n0 = 1;
+        if (beg == _sc_vbeg) { return _sc_vret(S); }   # 6.7.13 (D29): a vector receive's own destination
+        return _pe_vtemp(S, fi);
+    }
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0 - 1; }
+    if (GINFN(S) != 1) {
+        if (cls == 2) { _refuse_toplevel_struct_call(S, noff); }
+        return 0 - 1;
+    }
+    if (cls == 1) { if (beg != _sc_want) { return 0 - 1; } }
+    var t = _agg_temp(S, GFRS(S, fi));
+    if (cls == 2) { if (_AARCH64_BACKEND == 0) {
+            EFLADDR(S, t);
+            EPUSHR(S);
+            _sc_n0 = 1;
+        } }
+    return t;
+}
+
+# 6.7.13 (D29) — a value-form vector receive of a METHOD call `x.m(..)` (`_vrcv_emit`, parse/decl.cyr) on PE: the
+# method whose receiver is token `_sc_vbeg` (one-shot) takes the destination's address, slot `_sc_vdst`, as its
+# hidden result pointer (int arg 0, before `self`) — `_icall_vret`'s shape. -1 (no temp: `_sc_post` reads nothing).
+fn _sc_vret(S): i64 {
+    _sc_vbeg = 0 - 1;
+    EFLADDR(S, _sc_vdst);
+    EPUSHR(S);
+    return 0 - 1;
+}
+fn _sc_x8(S, fi, t): i64 {
+    if (t < 0) { return 0; }
+    if (_AARCH64_BACKEND != 1) { return 0; }
+    if (_ret_agg_class(S, fi) == 2) { EFLADDR_X8(S, t); }
+    return 0;
+}
+
+fn _sc_post(S, fi, noff, beg, t): i64 {
+    if (_pe_vret(S, fi) == 1) { return _pe_vload(S, t); }   # 6.7.12
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return _sc_post_small(S, fi, noff, beg); }
+    if (t >= 0) {
+        if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, t); }
+        else { EFLLOAD(S, t); SESTYPE(S, 0); }
+    } else {
+        # A 9-16 B result nobody asked to store: rax:rdx as ever. 6.7.3: recorded with
+        # `_sc_tmp` -4 ("in rax:rdx, no temp") for the argument type checks (`_sarg_byval_small`,
+        # `_op_arg_check`). Every other `_sc_whole` consumer arms `_sc_want` at its own start, so
+        # its whole expression has a temp and it never sees -4 — and `_op_is_sval` reads only -3.
+        # CHANGELOG [6.7.3]
+        if (GINFN(S) == 1) { t = 0 - 4; }
+        elif (cls == 2) {                  # top level: `_sc_pre` already refused it
+            _sc_rbeg = beg;
+            _sc_rend = GTI(S);
+            _sc_rsid = GFRS(S, fi);
+            return 0;
+        }
+    }
+    _sc_beg = beg;
+    _sc_end = GTI(S);
+    _sc_tmp = t;
+    _sc_sid = GFRS(S, fi);
+    _sc_fn = noff;
+    _sc_fi = fi;
+    _lsc_note(S, fi, beg, t);   # 6.7.6: for a left operand
+    return 0;
+}
+
+# ⛔ 6.6.11 — A STRUCT RESULT OF 8 B OR LESS WAS NEVER RECORDED, so no destination could compare its
+# type: `h.o = y.same()`, `z = y.same()`, `var z: Odd = y + y` stored an Od2 into an Odd silently
+# (only the free-call FIELD form was refused). Recorded now with `_sc_tmp = -3`: "the value is in
+# rax, there is no temp". Every `_sc_whole` consumer either type-checks it (`_fsc_expr`,
+# `_pcmpe_struct_assign`, both var receives) or keeps ignoring it (-3 is neither -1 nor a slot).
+# Str (16 B, a handle in rax) is not a <= 8 B struct and stays unrecorded. The scalar operator
+# dispatch (parse/expr.cyr) calls this directly. CHANGELOG [6.6.11]
+fn _sc_post_small(S, fi, noff, beg): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (_mv_callee_any(S, fi) == 1) { return _mrc_note(S, fi, noff, beg); }   # 6.7.7 (B4); 6.7.11: + a counted undeclared one; 6.7.14: a counted `: i64`
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    _sc_beg = beg;
+    _sc_end = GTI(S);
+    _sc_tmp = 0 - 3;
+    _sc_sid = sid;
+    _sc_fn = noff;
+    _sc_fi = fi;
+    _lsc_note(S, fi, beg, 0 - 1);   # 6.7.6: for a left operand
+    return 0;
+}
+
+# A struct-typed declaration (`pscale` = `0 - sid`) initialised from a recorded struct call of a
+# different struct: refused (1). CHANGELOG [6.6.11]
+fn _sc_decl_mismatch(S, pscale, sid): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (pscale == 0 - sid) { return 0; }
+    ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
+    return 1;
+}
+
+# ⛔ 6.6.11 — PARSE_VAR's initialiser arming, for a struct-typed declaration: the struct-typed
+# FIELD source (`var p: Pt = b.v`, see `_fla_arm`) in a fn, and the type check of a whole free
+# call returning a struct of 8 B or less (`var z: Odd = mkod2()`), which comes back in rax and so
+# never reached the retptr / rax:rdx receives, the only ones that compared the sid. Returns the
+# previous `_sc_want`, for `_scv_disarm`. CHANGELOG [6.6.11]
+var _scv_pk = 0;     # 6.7.6: the parentheses `_scv_peel` stepped into, closed by `_scv_disarm`
+var _scv_term = 5;   # ... and the token that ends the initialiser inside them (`)`), else `;`
+# ⛔ 6.7.6 (FE) — declarations NEST: a closure body inside an initialiser or an operator operand
+# (`var q: K = (mkk(fncall1(|x| { var y = x; return y; }, 2)));`, `s - mkv(fncall1(|x| { var y = x;
+# return y; }, 4))`) runs PARSE_VAR inside the outer one. The inner arm zeroed `_scv_pk` / `_scv_term`
+# and its disarm set `_sc_fcw` / `_fla_want` to -1, so the outer wrap never closed ("expected ';',
+# got ')'") and the outer call recorded no temp (`_fnc_agg`): its first word was passed as its
+# address, SIGSEGV. Each arm now saves the four on `_scv_vec` and its disarm restores them, as
+# `_op_big_arm` / `_op_big_disarm` do; the returned word packs the previous `_sc_want` (low 32
+# bits, + 1) and the save's depth (high), so a disarm reads its own save even after an unbalanced
+# inner one. CHANGELOG [6.7.6]
+var _scv_vec = 0;
+# 6.7.9 — 1 = the initialiser the last `_scv_disarm` closed reported an error of its own (`_had_error`
+# 0 at its arm, 1 at its disarm): its whole-result refusal (`_sc_global_pair`) would be a second
+# report of a line already refused — `var G: Pt = mk2(3) + H;` (the left operand). 6.7.17: a report
+# made inside it (`_own_err`: `_err_n` at its arm too), so a file with an earlier error tells as well.
+var _scv_err = 0;
+fn _scv_save(): i64 {
+    if (_scv_vec == 0) { _scv_vec = vec_new(); }
+    var d = vec_len(_scv_vec);
+    vec_push(_scv_vec, _scv_pk);
+    vec_push(_scv_vec, _scv_term);
+    vec_push(_scv_vec, _sc_fcw);
+    vec_push(_scv_vec, _fla_want);
+    vec_push(_scv_vec, _had_error);
+    vec_push(_scv_vec, _scv_un);
+    vec_push(_scv_vec, _dvi_want);   # 6.7.14 (D36)
+    vec_push(_scv_vec, _vop_vd);     # 6.7.16 (D100)
+    vec_push(_scv_vec, _err_n);      # 6.7.17
+    return d;
+}
+fn _scv_restore(d): i64 {
+    _scv_pk = vec_get(_scv_vec, d);
+    _scv_term = vec_get(_scv_vec, d + 1);
+    _sc_fcw = vec_get(_scv_vec, d + 2);
+    _fla_want = vec_get(_scv_vec, d + 3);
+    _scv_un = vec_get(_scv_vec, d + 5);
+    _dvi_want = vec_get(_scv_vec, d + 6);
+    _vop_vd = vec_get(_scv_vec, d + 7);
+    vec_truncate(_scv_vec, d);
+    return 0;
+}
+# `ext` != 0: a scalar / float / slice / bool annotation (`_sc_var_receive`'s), which takes the first word.
+# ⛔ 6.7.11 — an UNTYPED declaration in a fn steps inside a whole wrap too, so `var c = (a + b);` and `var e =
+# (a.m());` with a 9-16 B result take the temp as the unwrapped form does: `_sc_pre` makes one only for the
+# destination's own start (`_sc_want`), and the wrap's `(` is not it, so c held the first word (`c.w`
+# refused, `take(c)` passed the word as the struct's address) — the user's decision (a), 2026-10-13
+# (issues/archived/2026-10-13-untyped-struct-binding-beyond-operators-decision.md). CHANGELOG [6.7.11]
+fn _scv_arm(S, pscale, ext): i64 {
+    var d = _scv_save();
+    _scv_top_ann(S, pscale);   # 6.7.12 (D28): `var n: i64 = fncall1(&mk3, 5);`; 6.7.13: + top level
+    _vop_vd = _vrcv_vec(S, pscale);   # 6.7.16 (D100): a vector declaration's source is its own refusal's
+    _scv_pk = 0;
+    _scv_term = 5;
+    if (pscale < 0) { if (pscale > 0 - 2048) {
+            if (GINFN(S) == 1) { _scv_peel(S); }   # 6.7.6
+            _scv_call_check(S, pscale);
+            if (GINFN(S) == 1) { _fla_arm(GTI(S), pscale); }
+        } }
+    _scv_un = 0 - 1;
+    _dvi_want = 0 - 1;
+    if (pscale == 0) { if (ext == 0) { if (GINFN(S) == 1) {
+                _scv_un_peel(S);
+                _dvi_arm(S);   # 6.7.14 (D36): `var v = *p;`
+            } } }
+    var w = _sc_arm(S);
+    return (w + 1) | (d << 32);
+}
+# The untyped peel. A whole DYN result inside it keeps its refusal (6.7.8 V4d: `var x = (pass(o));`,
+# `(o.me())`): `_scv_un` (parse.cyr), the token it stepped to, is not a destination for V4's exemption
+# (`_dyn_want`).
+fn _scv_un_peel(S): i64 {
+    _scv_peel(S);
+    if (_scv_pk > 0) { _scv_un = GTI(S); }
+    return 0;
+}
+fn _scv_disarm(S, w): i64 {
+    _sc_want = (w & 0xFFFFFFFF) - 1;
+    if (_scv_pk > 0) { _pw_close(S, _scv_pk); }   # 6.7.6: the wrap `_scv_peel` stepped into
+    _scv_err = _own_err(vec_get(_scv_vec, (w >> 32) + 8), vec_get(_scv_vec, (w >> 32) + 4));   # 6.7.9; 6.7.17
+    _scv_restore(w >> 32);
+    return 0;
+}
+# ⛔ 6.7.6 — `var q: K = (z.k);`, `= (j.dup())`, `= (a + b)`, `= (mk(4))` in a fn: the initialiser
+# wrapped in parentheses (`_pwrap_k`) was an expression whose value is the struct's first word, so q
+# was a POINTER-mode K holding it and `q.a` dereferenced a value: SIGSEGV. The declaration steps
+# inside the wrap before it arms, so the field source, the method / operator temp and (through
+# `_sc_fcw`, read by PARSE_FNCALL's `_fnc_agg`) a free call's temp are taken exactly as for the
+# unwrapped initialiser; `_scv_disarm` closes the wrap, and `_sc_whole` sees through it. A name
+# (`= (j)`) is `_try_struct_copy_init`'s. CHANGELOG [6.7.6]
+fn _scv_peel(S): i64 {
+    if (PEEKT(S) != 10) { return 0; }
+    if (_tup_lit_at(S, GTI(S)) >= 0) { return 0; }   # 6.7.7: a tuple literal is not a wrap
+    var k = _pwrap_k(S, GTI(S));
+    if (TOKTYP(S, _pw_end) != 5) { return 0; }
+    STI(S, GTI(S) + k);
+    _scv_pk = k;
+    _scv_term = 11;
+    _sc_fcw = GTI(S);
+    return 0;
+}
+fn _scv_call_check(S, pscale): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    if (_call_follow(S, o - 1) != _scv_term) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) {
+        # In a fn the retptr / rax:rdx receives compare the sid; at top level there are none, so
+        # a 9-16 B result is checked here (a >16 B one refuses itself: no frame). CHANGELOG [6.6.11]
+        if (GINFN(S) == 1) { return 0; }
+        if (_ret_agg_class(S, fi) != 1) { return 0; }
+    }
+    _sc_decl_mismatch(S, pscale, rs);
+    return 0;
+}
+
+# The destination half. Arm before parsing the expression at the cursor; the previous want is
+# returned for the caller to restore right after the parse, since a nested destination re-arms.
+fn _sc_arm(S): i64 {
+    var w = _sc_want;
+    _sc_want = GTI(S);
+    _sc_beg = 0 - 1;
+    return w;
+}
+
+# After parsing from `start`: the temp holding the WHOLE expression's struct result; -1 when the
+# whole expression is such a call at top level (no temp); -2 when it is not one — a struct call
+# inside a larger expression (`b.mk(1).x`, `k + a * b`) does not span it, so it never matches.
+fn _sc_whole(S, start): i64 {
+    if (_sc_beg != start) {
+        if (_sc_pwrap(S, start) == 1) { return _sc_tmp; }   # 6.7.6
+        return 0 - 2;
+    }
+    if (_sc_end != GTI(S)) { return 0 - 2; }
+    return _sc_tmp;
+}
+# 6.7.6 — the record spans the expression inside parentheses that wrap the whole of it: `start`
+# opens `k` `(` that end where the record begins, and `k` `)` follow the record up to the cursor
+# (`x = (p.dup())`, `var q: P = (a + b)`). The parser consumed them as nested parenthesised
+# factors, so they are balanced. CHANGELOG [6.7.6]
+fn _sc_pwrap(S, start): i64 {
+    if (_sc_beg <= start) { return 0; }
+    var k = _sc_beg - start;
+    if (_sc_end + k != GTI(S)) { return 0; }
+    var i = 0;
+    while (i < k) {
+        if (TOKTYP(S, start + i) != 10) { return 0; }
+        if (TOKTYP(S, _sc_end + i) != 11) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# `var p: S = <expr>` / `var p = <expr>` in a fn, <expr> one whole method/operator call returning
+# S: the temp BECOMES `p` — named in place, the same inline aggregate `var p: S = f(..)` makes (and,
+# untyped, the same inference). `ext` != 0 = a scalar/float/slice annotation: the first word, as
+# ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
+fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
+    if (_scv_refd == start) { return 0; }   # 6.7.13 (D13): refused by `_scv_rec_ann`; the annotation stands
+    if (_dvi_take(S, noff, pscale, ext, start) == 1) { return 1; }   # 6.7.14 (D36): `var v = *p;`, p a `*V`
+    if (_scv_dyn_chk(S, pscale, ext, start) == 1) { return 0; }   # 6.7.8
+    if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
+    if (_fls_whole(S, start) == 1) { _fls_type_err(S, pscale, noff); return 0; }   # 6.7.6: a `Str` field
+    var t = _sc_whole(S, start);
+    if (t == 0 - 3) { _sc_decl_mismatch(S, pscale, _sc_sid); return 0; }   # 6.6.11: <= 8 B, in rax
+    if (t < 0) { return 0; }
+    if (pscale == 0) {
+        if (ext != 0) { return 0; }
+    } elif (_sc_decl_mismatch(S, pscale, _sc_sid) == 1) {
+        return 0;
+    } elif (pscale != 0 - _sc_sid) {
+        return 0;
+    }
+    S64(S + 0x5D9D000 + t * 8, noff);
+    SSLICE_W(S, t, 0);
+    return 1;
+}
+
+# ⛔ 6.7.14 (D36 A, the user's decision, 2026-10-16) — AN UNTYPED `var v = *p;` WITH `p: *V` DECLARES A `V` LOCAL COPIED
+# THROUGH p, as `var v = mkv(..)` binds the vector (v6.5.61), `var v = callptr(&f, ..)` too (6.7.13's D29), and `var v:
+# V = *p;` copies (6.7.13's D34). It bound ONE word, lane 0 (the filed repro: x86_64 114, IR=3 226, aarch64 26, cx 98,
+# PE 146 where 161 is right), silently. E's type is known only once it is parsed, so the declaration's scalar path runs
+# as ever: when the whole initialiser, inside any parentheses (`_scv_un_peel` stepped in), is one dereference `* E`
+# (`_vrcv_dsrc`), its `*` is watched (`_dvi_arm`); E naming a value-form vector, `_deref_read` parks the pointer
+# (`_dvi_park`, parse/expr.cyr) and the declaration takes it here (`_dvi_take`): the local is that vector, its 16 / 32
+# bytes copied through the pointer. A `*p` of no vector binds the word as before — nothing parks, its code unchanged.
+# CHANGELOG [6.7.14]
+fn _dvi_arm(S): i64 {
+    if (PEEKT(S) != 8) { return 0; }
+    if (_vrcv_dsrc(S, GTI(S), _scv_term) != 4) { return 0; }
+    if (_vrcv_k != 0) { return 0; }
+    _dvi_want = GTI(S);
+    return 0;
+}
+# After the untyped initialiser [start, cursor): 1 = it was the watched `*E` whose pointer `_dvi_park` parked, nothing
+# emitted since (`_dlo_cp`) — `noff` declared that vector, copied through it.
+fn _dvi_take(S, noff, pscale, ext, start): i64 {
+    if (pscale != 0) { return 0; }
+    if (ext != 0) { return 0; }
+    var d = _dvi_got;
+    if (d < start) { return 0; }
+    if (_dlo_beg != d) { return 0; }
+    if (_dlo_cp != GCP(S)) { return 0; }
+    if (_dlo_end + d - start != GTI(S)) { return 0; }
+    _dvi_got = 0 - 1;
+    var ty = 0 - _dlo_sid;
+    _vec_desc(S, ty);
+    var n = GVEC_NSLOTS(S);
+    var named = _sci_slots(S, noff, ty, n);
+    _agc_copy_bytes(S, named, 0 - 1, _AGC_DREF(_dlo_h), 0 - 1, n * 8);
+    return 1;
+}
+# 6.7.8 (review) — a declaration's whole dyn initialiser (`_dyn_dst_chk`, parse/expr.cyr): in a fn an
+# untyped one infers the dyn (a copy) and a struct annotation is `_sc_decl_mismatch`'s; any other
+# annotation (`: i64`, `: *Sq`, `: f64`, a vector — `ext` a scalar / float / slice / bool one) is
+# refused. 1 = refused.
+fn _scv_dyn_chk(S, pscale, ext, start): i64 {
+    if (pscale == 0) { if (ext == 0) { return 0; } }
+    if (pscale < 0) { if (pscale > 0 - 2048) { return 0; } }
+    return _dyn_dst_chk(S, start, 0);
+}
+
+# `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
+# (a >16 B one already was, in `_sc_pre`). An untyped `var g = ..` is judged by PARSE_VAR's `_gu_late` (6.7.15's
+# D34 / D35: it binds the struct, a 9-16 B one refused as here) — 6.7.8: never a dyn's, which is refused whatever the
+# annotation (a dyn global's own is `_dyn_var`'s).
+fn _sc_global_receive(S, pscale, start): i64 {
+    if (pscale >= 0 || pscale <= 0 - 2048) { if (_dyn_dst_chk(S, start, 0) == 1) { return 0; } }
+    if (pscale <= 0 - 2048) { return _vecg_rhs_ok(S, start); }   # 6.6.17 (a3): a vector global
+    return _sc_global_pair(S, pscale, start);
+}
+# ⛔ 6.7.9 — the struct half, shared with the declaration zone's replay (`_gvi_expr`), which ran only
+# `_sc_global_mismatch`: `var G2: Q = Q0.mk();` before the first statement (a 9-16 B method, a generic
+# method, `(Q0.mk())`, an operator `Q0 + Q1`) stored rax — the struct's first WORD — as the address of
+# the inline G2, and the first `G2.a` SIGSEGV'd. Now refused by name there too — once in either place:
+# a line refused inside its initialiser (`_scv_err`: an operand, an argument) is not refused again
+# for its result. CHANGELOG [6.7.9]
+fn _sc_global_pair(S, pscale, start): i64 {
+    if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
+    if (_scv_err == 1) { return 0; }   # refused inside its initialiser: that refusal alone (6.7.9)
+    if (_sc_whole(S, start) != 0 - 1) { return 0; }
+    if (pscale != 0 - _sc_sid) { return 0; }
+    _refuse_toplevel_struct_call(S, _sc_fn);
+    return 0;
+}
+
+# 6.6.17 (a3): a vector global declared after the first statement takes only `= 0;` (see
+# `_vecg_size`, parse/decl.cyr). `start` is the initializer's first token, after
+# `var NAME : VEC =` (a vector type is one token, so the name is 4 back).
+fn _vecg_rhs_ok(S, start): i64 {
+    var v = _CF_TRY(S, start, 5);
+    var has = 0;
+    if (_cf_ok == 1) { has = 1; }
+    _vecg_init_ok(S, has, v, TOKVAL(S, start - 4), start);
+    return 0;
+}
+
+# 6.7.6 — `var G: Q = H.name;` (a `: Str` field) into a struct global of another type: refused by
+# name, as in a fn (`_fls_type_err`). The declared name is not at hand here, so it is not named.
+fn _fls_global_err(S, pscale): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (pscale == 0 - _fls_sid) { return 0; }
+    ERR_IDENT(S, "cannot copy ", _fls_name, " (a Str field) into a global of a different struct type", 0 - 1);
+    return 1;
+}
+# A top-level struct-typed destination given a whole method/operator result of another struct —
+# <= 8 B (-3, in rax) or 9-16 B (-1, no frame) — refused by name (1). CHANGELOG [6.6.11]
+fn _sc_global_mismatch(S, pscale, start): i64 {
+    if (_fls_whole(S, start) == 1) { return _fls_global_err(S, pscale); }   # 6.7.6: a `Str` field
+    var t = _sc_whole(S, start);
+    if (t != 0 - 3) { if (t != 0 - 1) { return 0; } }
+    if (pscale >= 0) { return 0; }
+    if (pscale == 0 - _sc_sid) { return 0; }
+    return _sc_decl_mismatch(S, pscale, _sc_sid);
+}
+
+# A by-value struct parameter given an expression that is neither a bare name nor a free-fn call
+# (those have their own arms in `_try_push_struct_addr_arg`): when it is one whole method/operator
+# call returning a struct, the callee gets the temp's ADDRESS — the result's storage — where it
+# used to get the first word. Anything else pushes the value, which is exactly what the caller's
+# own PCMPE + EPUSHR would push. Returns 1: the argument is consumed. CHANGELOG [6.6.6]
+# ⛔ 6.6.12 — A STRUCT-TYPED FIELD AS THE WHOLE ARGUMENT (`take(r.v)`) PUSHED ITS FIRST WORD, and
+# the callee dereferenced that word as the struct's address: SIGSEGV on x86 and aarch64, a page
+# fault on PE, 0 on cx — from a local, global, by-value parameter or pointer-mode base alike, and
+# through a generic instance. The whole-field record (`_fla_want` / `_fla_take`) is armed here
+# too, ending at `,` or `)`; see `_fla_push_arg`. CHANGELOG [6.6.12]
+fn _push_struct_expr_arg(S, fi, argc, tail): i64 {
+    var st = GTI(S);
+    var w = _sc_arm(S);
+    var fw = _fla_want;
+    var fa = _fla_arg;
+    _fla_want = st;
+    _fla_arg = st;
+    _fla_hit = 0;
+    PCMPE(S);
+    _sc_want = w;
+    _fla_want = fw;
+    _fla_arg = fa;
+    if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc, tail); }
+    if (_dro_want == st) { if (_dro_take(S, st) == 1) {   # ops-5: a whole dereference (`_sarg_deref`)
+            _dro_check(S, fi, argc);
+            _HTLOAD(S, _dlo_h);
+            EPUSHR(S);
+            return 1;
+        } }
+    _tup_arg_mrc(S, fi, argc, st);   # 6.7.7 (B4): `g(x.f())`, f multi-value
+    _mv_arg_mrc(S, fi, argc, st);    # 6.7.11: ... into a named struct
+    var t = _sc_whole(S, st);
+    if (t >= 0 || t == 0 - 3) { _sarg_type_errf(S, fi, argc, _sc_sid, _sc_fn, _sc_fi); }   # 6.7.3; 6.7.14: `S2.dup`
+    if (t == 0 - 2) { if (_fls_whole(S, st) == 1) { _sarg_type_err(S, fi, argc, _fls_sid, _fls_name); } }   # 6.7.6
+    if (t == 0 - 3) { t = _sc_small_temp(S); }   # 6.6.20
+    if (t >= 0) { _sarg_escapes(fi, argc, tail); EFLADDR(S, t); }   # 6.6.20: a temp in this frame
+    if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
+    EPUSHR(S);
+    return 1;
+}
+
+# ⛔ 6.6.20 — a whole method / operator result of 8 B or less (`_sc_whole` -3: the value is in rax,
+# no temp) given to an address-passed parameter: stored into a frame temp, whose slot is returned
+# for the caller to push the ADDRESS of. Its value was pushed, which only a `p: *S` parameter of
+# 8 B or less can receive — `rd1(s.dup())` SIGSEGV'd where `rd3(a.dup())` worked. At top level
+# there is no frame: refused by name (-2, the value is pushed and no binary is written).
+fn _sc_small_temp(S): i64 {
+    if (GINFN(S) != 1) {
+        _refuse_toplevel_struct_call(S, _sc_fn);
+        return 0 - 2;
+    }
+    var t = _agg_temp(S, _sc_sid);
+    EFLSTORE(S, t);
+    return t;
+}
+
+# The recorded field source as by-value argument `argc` of `fn`: checked against the parameter's
+# struct (SFPSID — the instance's for a generic) and refused by name when it differs. The field's
+# own ADDRESS is passed, in a fn and at top level alike, as a named argument's is: the callee
+# copies it in its prologue (`_sptr_params_localize`), so a write through its parameter cannot
+# reach the caller's field — the by-value contract. 6.6.12 copied it into a caller frame temp
+# here instead, which had no frame to use at top level (there the callee got the field itself);
+# with the callee's copy that temp was a second copy. Returns 1. CHANGELOG [6.6.12] [6.6.16]
+fn _fla_push_arg(S, fi, argc, tail): i64 {
+    _fla_addr(S, fi, argc, tail);
+    EPUSHR(S);           # on a refusal it keeps the argument count; no binary is written
+    return 1;
+}
+# rax = the recorded field's address, as by-value / `*S` argument `argc` of `fi` (refused by name
+# when the parameter's struct differs). Shared with an operator's right operand (`_op_rhs`, `tail`
+# 0). A field of an inline aggregate in this frame is an address in it (`_sarg_escapes`).
+# ⛔ 6.7.14 (D34 A, the user's decision, 2026-10-16) — a struct-typed FIELD into a `*V` parameter is refused by name, as
+# 6.7.13's D33 refuses the struct from a local, a call, `*ps`, a global or a capture: `rd(w.s)` (`s: Pt`, `p: *f64v2`)
+# passed the field's address and the callee read its bytes as the vector (42 on every target). A `*V` records no struct
+# (GFPSID), so the check above compared nothing; `_sarg_svec_err` answers 0 for any other parameter. CHANGELOG [6.7.14]
+fn _fla_addr(S, fi, argc, tail): i64 {
+    _fla_hit = 0;
+    var ps = GFPSID(S, fi, argc);
+    if (ps > 0) { if (ps != _fla_ft) {
+            ERR_IDENT(S, "cannot pass ", _fla_name, " to a parameter of a different struct type in a call to ", _fn_src_name(S, fi, L64(_fnt_names + fi * 8)));
+            return 0;
+        } }
+    elif (_sarg_svec_err(S, fi, argc, _fla_name, 0 - 1) == 1) { return 0; }
+    if (_fsc_src_in_frame(S) == 1) { _sarg_escapes(fi, argc, tail); }   # 6.6.20
+    _fsc_src_x1(S, 0);
+    EMOVI(S, 0);
+    EADDR(S);            # rax = x1
+    return 0;
+}
+
+# ⛔ 6.7.6 — A STRUCT RESULT OVER 8 B AS THE RIGHT OPERAND OF AN ADDRESS-PASSED PARAMETER: `s - mk3(4)`
+# (`fn P3_sub(a: *P3, b: *P3)`, a retptr result), `p + p.dup()` (`fn Pt_add(a: Pt, b: Pt)`, a rax:rdx
+# method result), by-value or `*S`, bare or in parentheses, SIGSEGV'd: the operand's VALUE — its
+# first word — was pushed where the operator fn takes its address, because a free call's temp was
+# never recorded and a 9-16 B method / operator result got no temp at all unless a destination
+# asked. The operand now asks, as a destination does: `_sc_want` (the method / operator temp) and
+# `_sc_fcw` (a free call's, `_fnc_agg`) name its first token inside any wrap, and a record that
+# spans the whole operand passes the temp's address. At top level there is no frame: refused by
+# name. The previous want / fcw are returned packed for `_op_big_disarm` (operands nest).
+# CHANGELOG [6.7.6]
+var _obt_enc = 0 - 1;   # `_op_big_take`'s operand encoding, for `_OP_OPERAND_ADDR`
+fn _op_big_arm(S, rb): i64 {
+    var saved = (_sc_want + 1) | ((_sc_fcw + 1) << 32);
+    var b = rb + _pwrap_k(S, rb);
+    _sc_want = b;
+    _sc_fcw = b;
+    _sc_beg = 0 - 1;   # only this operand's own record may match
+    return saved;
+}
+fn _op_big_disarm(saved): i64 {
+    _sc_want = (saved & 0xFFFFFFFF) - 1;
+    _sc_fcw = ((saved >> 32) & 0xFFFFFFFF) - 1;
+    return 0;
+}
+# After the operand [rb, cursor) of operator fn `fi` is parsed: 1 = it is one whole struct result
+# (`_obt_enc` = its temp, or -1 after a top-level refusal); 0 = anything else, classified as before.
+fn _op_big_take(S, fi, rb): i64 {
+    var t = _sc_whole(S, rb);
+    if (t >= 0) {
+        _op_arg_check(S, fi, rb);
+        _obt_enc = 0 - 2 - t;   # a frame temp: `_op_operand_local` passes `&t` (and notes the escape)
+        return 1;
+    }
+    if (t == 0 - 1) {
+        _op_arg_check(S, fi, rb);
+        _obt_enc = _refuse_toplevel_op_operand(S, fi, 1);
+        return 1;
+    }
+    if (GINFN(S) == 1) { return 0; }
+    if (_op_rhs_pair_call(S, rb) == 0) { return 0; }
+    _obt_enc = _refuse_toplevel_op_operand(S, fi, 1);
+    return 1;
+}
+# 1 = the operand [rb, cursor) is one whole free call (inside any wrap) returning a 9-16 B struct in
+# rax:rdx — at top level it has no temp to pass the address of. A retptr one refuses itself.
+fn _op_rhs_pair_call(S, rb): i64 {
+    var k = _pwrap_k(S, rb);
+    var c = rb + k;
+    var o = _gcall_open(S, c);
+    if (o < 0) { return 0; }
+    if (_call_close(S, o) + 1 + k != GTI(S)) { return 0; }
+    if (_ret_agg_class(S, _gen_resolve_call(S, c)) != 1) { return 0; }
+    return 1;
+}
+
+# ⛔ 6.6.20 — THE RIGHT OPERAND OF AN OVERLOADED OPERATOR, parsed (PARSE_TERM) and classified for
+# operand 1 of fn `fi`, the way `_try_push_struct_addr_arg` classifies a call argument. Returns its
+# encoding for `_OP_OPERAND_ADDR` (-1 = the value in rax, pushed as it is). For an ADDRESS-passed
+# operand (a `*S` at any size, a by-value struct over 8 B):
+#   - a whole struct-typed FIELD (`b - h.p`, `w2 - h.w`, `(h.p)`) passes the field's own address,
+#     as `take(h.p)` does — its first word was pushed and dereferenced: SIGSEGV for `*P3` and
+#     by-value `P3` (6.6.16 through 6.6.19), and for `*W` a copy that lost a write through it;
+#   - for a `*S` of 8 B or less, a whole free call returning such a struct (`s - mk1(4)`, class 3)
+#     is a struct VALUE (`_op_call_end`, decided before the parse as the call path decides it), as
+#     is a method / operator result (`_sc_beg` is cleared so only this operand's record matches);
+#   - (ops-5) a whole dereference of a `*S` (`a + *p`, `(*p)`, `*gp()`) passes its pointer, as `a + p`
+#     does — it passed the word the dereference read (`_dro_want`, `_dro_take`; see `_sarg_deref`);
+#     `_op_operand_sv` decides the rest.
+fn _op_rhs(S, fi): i64 {
+    var rb = GTI(S);
+    var arm = 0;
+    if (fi >= 0) { arm = _pm_struct(fi, 1); }
+    var fw = _fla_want;
+    var fo = _fla_opd;
+    var fp = _fla_opdp;
+    var dw = _dro_want;
+    var ce = 0 - 1;
+    var big = 0 - 1;
+    if (arm == 1) {
+        _fla_want = rb;
+        _fla_opd = rb;
+        if (TOKTYP(S, rb) == 10) { _fla_want = rb + 1; _fla_opdp = rb + 1; }
+        _fla_hit = 0;
+        _dro_want = rb + _pwrap_k(S, rb);   # ops-5: a dereference there is parked
+        if (_op_small_ptr(S, fi, 1) == 1) { _sc_beg = 0 - 1; ce = _op_call_end_p(S, rb); }
+        else { big = _op_big_arm(S, rb); }   # 6.7.6: a struct over 8 B
+    }
+    PARSE_TERM(S);
+    _dro_want = dw;
+    var rps = GPSC(S);   # 6.7.10 (B7-1b): the operand's pointer step, for `_hl_byval_arg`
+    if (big >= 0) { _op_big_disarm(big); }
+    _bx_op_rhs(S, fi, rb);   # 6.7.3: an operator fn's bool parameter 1
+    if (arm == 1) {
+        _fla_want = fw;
+        _fla_opd = fo;
+        _fla_opdp = fp;
+        if (_fla_hit == 1) { _fla_addr(S, fi, 1, 0); return 0 - 1; }
+        if (_dro_take(S, rb) == 1) {   # ops-5: a whole dereference — its pointer (`_opd_operand`)
+            _dro_check(S, fi, 1);
+            _opd_k = 2;
+            return _OPD_SV;
+        }
+    }
+    if (big >= 0) { if (_op_big_take(S, fi, rb) == 1) { return _obt_enc; } }   # 6.7.6
+    var sv = 1;
+    if (GTI(S) != ce) { sv = _op_is_sval(S, rb, GTI(S)); }
+    _op_arg_check(S, fi, rb);   # 6.7.3
+    _pa_chk(S, fi, 1, rb, GTI(S));   # 6.7.16 (D97): a pointer to another struct
+    # 6.7.10 (B7-1): a HANDLE of 8 B or less into a by-value parameter passes its struct (`b + a`);
+    # (B7-1b) a typed pointer or `&s` passes the struct it points at (`b + sp`, `b + &s`).
+    if (_hl_byval(S, fi, 1) == 1) { if (_hl_byval_arg(S, fi, 1, rb, rps) == 1) { return 0 - 1; } }
+    return _op_operand_sv(S, fi, 1, GESVAR(S), _op_bare(S, rb, GTI(S)), sv);
+}
+# ⛔ 6.7.3 — the right operand [rb, cursor) of operator fn `fi`, already parsed, is ARGUMENT 1 of
+# that fn: its static struct against parameter 1's (`_sarg_type_err`) — a bare name (`p`, `(p)`),
+# a whole method / operator result, or a whole free call (resolved after the parse: a dedup hit).
+# `q + p` with `fn Q_add(a: Q, b: Q)` read past p (1) and `q + mkp()` SIGSEGV'd. A whole field is
+# `_fla_addr`'s (address-passed operand, 6.6.20). Emits nothing. CHANGELOG [6.7.3]
+fn _op_arg_check(S, fi, rb): i64 {
+    if (fi < 0) { return 0; }
+    if (GFPSID(S, fi, 1) <= 0) { return 0; }
+    var e = GTI(S);
+    var asid = 0;
+    var nm = 0;
+    var afi = 0 - 1;
+    if (_op_bare(S, rb, e) == 1) {
+        var nt = rb;
+        if (e == rb + 3) { nt = rb + 1; }
+        asid = _sarg_name_sid(S, nt);
+        nm = TOKVAL(S, nt);
+    } elif (_sc_whole(S, rb) != 0 - 2) {
+        asid = _sc_sid;
+        nm = _sc_fn;
+        afi = _sc_fi;   # 6.7.14: named `S2.dup`
+    } elif (_fls_whole(S, rb) == 1) {   # 6.7.6: a `Str` field
+        asid = _fls_sid;
+        nm = _fls_name;
+    } elif (TOKTYP(S, rb) == 2) {
+        var o = _gcall_open(S, rb);
+        if (o >= 0) { if (_call_close(S, o) + 1 == e) {
+                asid = _sarg_call_rs(S, rb);
+                nm = TOKVAL(S, rb);
+            } }
+    }
+    return _sarg_type_errf(S, fi, 1, asid, nm, afi);
+}
+# The token after a whole free call `name(..)` / `name<..>(..)` at the cursor that returns a struct
+# of 8 B or less (`_arg_call_class` 3), or -1.
+fn _op_call_end(S): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0 - 1; }
+    if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }
+    if (_arg_call_class(S) != 3) { return 0 - 1; }
+    return _call_close(S, o) + 1;
+}
+# ... or the token after `(name(..))`, the same call alone in one pair of parentheses, as `(s)`,
+# `(t.dup())` and `(h.p)` are taken: `s - (mk1(4))` handed the struct's WORD to a `*S1` operand
+# (SIGSEGV) and compiled clean at top level. The `)` after the call closes the `(` at `rb`.
+fn _op_call_end_p(S, rb): i64 {
+    var ce = _op_call_end(S);
+    if (ce >= 0) { return ce; }
+    if (TOKTYP(S, rb) != 10) { return 0 - 1; }
+    STI(S, rb + 1);
+    ce = _op_call_end(S);
+    STI(S, rb);
+    if (ce < 0) { return 0 - 1; }
+    if (TOKTYP(S, ce) != 11) { return 0 - 1; }
+    return ce + 1;
+}
+# 1 = token type `t` continues a TERM after a factor (PARSE_TERM's loop and its postfix `?`), or
+# continues the factor itself (`.`, `[`, `(`) — so a field just loaded is not the whole operand.
+fn _op_term_cont(t): i64 {
+    if (t == 8 || t == 119 || t == 9 || t == 34) { return 1; }
+    if (t == 38 || t == 39 || t == 152 || t == 120 || t == 121) { return 1; }
+    if (t == 124 || t == 41 || t == 28 || t == 10) { return 1; }
+    return 0;
+}
+
+# `return s.m(..);` / `return a + b;` in a >16 B struct-returning fn, the call returning this same
+# struct: its temp, which PARSE_RETURN copies into our retptr like `return IDENT;`. -1 when the
+# expression is neither a method call nor an operator expression (cursor untouched). When it is
+# one but not that shape: the struct-return diagnostic, and a junk slot 0 (cursor at `;`, the
+# binary is never written). CHANGELOG [6.6.6]
+# 6.7.16: not when the value's parse reported an error of its own (the statement's `_err_n`) — `return zz + 1;` from a
+# 9-16 or > 16 B struct fn was "undefined variable 'zz'" AND this refusal; that error alone now, as at 8 B. CHANGELOG [6.7.16]
+fn _return_struct_expr(S): i64 {
+    if (_ret_expr_head(S) == 0) { return 0 - 1; }
+    var st = GTI(S);
+    var en = _err_n;
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _sc_want = w;
+    var t = _sc_whole(S, st);
+    if (t >= 0) { if (_sc_sid == _cur_fn_ret_sid) { return t; } }
+    if (_err_n != en) { return 0; }
+    ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+    return 0;
+}
+
+# ⛔ 6.6.6 (bite 14 review) — A 9-16 BYTE STRUCT RETURN (rax:rdx) ACCEPTED ANY EXPRESSION. The
+# pair branch in PARSE_RETURN handled `return IDENT;` for a matching local and FELL THROUGH to
+# the scalar PCMPE path for everything else — so `fn pr(): P2 { return s2(1,2); }` (s2 returns a
+# 24 B P3 through a retptr) and `fn p5(): P2 { return 5; }` both compiled clean and handed back
+# garbage: rax held whatever the expression left there and rdx was never written at all. The
+# retptr sibling has always error'd on a shape it cannot carry; this class never did.
+# These three say what the pair ABI CAN carry. `_pair_ret_call_ok` is a call to a fn returning
+# the same struct in the same two registers (a pure rax:rdx passthrough — no copy needed);
+# `_pair_ret_expr_shape` is the method / overloaded-operator token shape, which `_sc_pre` /
+# `_sc_post` land in a frame temp for the pair load. Anything else is refused BY NAME.
+# CHANGELOG [6.6.6]
+fn _pair_ret_call_ok(S): i64 {
+    if (_gcall_open(S, GTI(S)) < 0) { return 0; }   # 6.6.10: `name(` or `name<..>(`
+    if (_call_dotted(S, GTI(S)) == 1) { return 0; }   # 6.6.12: a field of the result
+    # 6.7.11: the call must END the value: `return mk2(1) == p;` (any operator that does not dispatch,
+    # `_ret_expr_head`'s) left rax the comparison and rdx mk2's stale word. CHANGELOG [6.7.11]
+    if (_call_ends_at(S, GTI(S), _ret_term) == 0) { return 0; }
+    # 6.6.10 (bite 7 review): the fn the call REACHES — `return mkw(p);` from a `: W1<Pt>` fn was
+    # compared against the base's 8 B `W1` and refused (6.6.9 compiled it).
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0; }
+    if (_ret_agg_class(S, fi) != 1) { return 0; }
+    return 1;
+}
+fn _pair_ret_expr_shape(S): i64 {
+    return _ret_expr_head(S);
+}
+# The method / overloaded-operator shape at the cursor: `x.m(`, `x OP`, and (6.7.6) a call or a
+# parenthesised operand that is an operator's LEFT operand, `f(..) OP`, `(x) OP` — a call's result
+# now dispatches (`_op_lst`); a wrap around the WHOLE value was peeled first (`_ret_peel`).
+# ⛔ 6.7.16 — AND A METHOD ENDING A CHAIN ON ANY RECEIVER (`_pc_mchain`): `return w.p.q16();`, `return w.gp().q16();`,
+# `return mk().p.q16();`, `return (*pw).p.q16();`, `return callptr(&gw, w).p.q16();` from a fn returning that struct over
+# 8 B were refused ("returned in two registers ... got `w`" / "return must be a bare local identifier, or a call ..."),
+# where `return p.q16();` on a single name is landed in a temp and returned. CHANGELOG [6.7.16]
+fn _ret_expr_head(S): i64 {
+    if (_icall_ret(S) == 1) { return 1; }   # 6.7.11
+    if (_pc_mchain(S, GTI(S)) == 1) { return 1; }   # 6.7.16
+    if (PEEKT(S) == 10) {
+        _pwrap_k(S, GTI(S));
+        return _is_op_dispatch_tok(TOKTYP(S, _pw_end));
+    }
+    if (PEEKT(S) == 8) { return _ret_lopd(S, GTI(S)); }   # 6.7.10: `*p OP`
+    if (PEEKT(S) != 2) { return 0; }
+    var nx = TOKTYP(S, GTI(S) + 1);
+    if (nx == 41) {
+        if (TOKTYP(S, GTI(S) + 3) == 10) { return 1; }
+        if (_mchain_targs(S, GTI(S) + 3) != GTI(S) + 3) { return 1; }   # 6.7.14 (D7 (a)): `x.m<..>(`
+        return _ret_lopd(S, GTI(S));   # 6.7.10: `w.s OP`
+    }
+    if (_is_op_dispatch_tok(nx) == 1) { return 1; }
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    return _is_op_dispatch_tok(TOKTYP(S, _call_close(S, o) + 1));
+}
+# 6.7.11 — 1 = the return value is one whole call through fncallN / callptr whose callee `&f` returns
+# this fn's struct (`_icall_sid_at`): the struct-call hooks give it a temp, as a method call's.
+fn _icall_ret(S): i64 {
+    var sid = _icall_sid_at(S, GTI(S));
+    if (sid <= 0) { return 0; }
+    if (sid != _cur_fn_ret_sid) { return 0; }
+    if (TOKTYP(S, _call_close(S, GTI(S) + 1) + 1) != _ret_term) { return 0; }
+    return 1;
+}
+# ⛔ 6.7.10 — `return w.s + a;` / `return *p - a;` in a struct-returning fn: a struct-typed field or a
+# `*T` dereference as the left operand dispatches (decision 11), as `return s + a;` with a struct
+# variable does, so its result takes the operator receive. 1 = the operand at token `b` — a name or
+# call, then `.field` / `.method(..)` steps, ending in a struct-typed field (`_hl_pchain`: a value, no
+# `*T`); or `*` and a `*T`-typed name, chain or parenthesised operand (`_hl_dpsid`; `*&p` too) — is
+# followed by an operator that dispatches. Anything else keeps its own return path (and its own refusal).
+fn _ret_lopd(S, b): i64 {
+    var i = b;
+    if (TOKTYP(S, b) == 8) { i = b + 1; }
+    if (TOKTYP(S, i) == 10) { i = _call_close(S, i) + 1; }
+    elif (TOKTYP(S, i) == 27) { i = i + 2; }   # 6.7.13: `*&p + a` (`_hl_dpsid` types `&p`)
+    elif (TOKTYP(S, i) == 2) {
+        var o = _gcall_open(S, i);
+        if (o >= 0) { i = _call_close(S, o) + 1; } else { i = i + 1; }
+        while (TOKTYP(S, i) == 41) {
+            if (TOKTYP(S, i + 1) != 2) { return 0; }
+            if (TOKTYP(S, i + 2) == 10) { i = _call_close(S, i + 2) + 1; } else { i = i + 2; }
+        }
+    } else { return 0; }
+    if (_is_op_dispatch_tok(TOKTYP(S, i)) == 0) { return 0; }
+    if (TOKTYP(S, b) == 8) {
+        if (_hl_dpsid(S, b + 1, i) > 0) { return 1; }
+        return 0;
+    }
+    if (_hl_pchain(S, b, i) <= 0) { return 0; }
+    if (_hl_cp != 0) { return 0; }
+    return 1;
+}
+# Name what is actually there, so the diagnostic points at the construct and not just the fn.
+fn _pair_ret_offender(S): i64 {
+    if (PEEKT(S) == 2) { PRSTR(S + 0xEC00000 + PEEKV(S)); return 0; }
+    if (PEEKT(S) == 1) { PRNUM(PEEKV(S)); return 0; }
+    # 6.6.6 — a parenthesised return is either a tuple or a grouped expression; both read as
+    # `(...)` and both are refusable shapes for a vector return. CHANGELOG [6.6.6]
+    if (PEEKT(S) == 10) { _ew("(...)", 5); return 0; }
+    _ew("this expression", 15);
+    return 0;
+}
+# ⛔ 6.6.6 — A SIMD-RETURNING FN ACCEPTED ANY RETURN EXPRESSION. The same shape as the pair
+# class above, one type class over. PARSE_RETURN's `_is_simd128` / `_is_simd256` branches handle
+# exactly `return IDENT;` for a local of the matching class; everything else fell through to the
+# scalar PCMPE path, so on 6.6.5 `fn bad(): f64v2 { return 5; }` compiled clean and handed back
+# a half-written register pair (measured 0), and so did `return s;` for a scalar local, a bare
+# `return;`, `return x + y;` (which returned Y UNCHANGED — there is no vector `+`),
+# `return load64(&v);`, `return sc();` for a scalar-returning `sc`, and `return mk4();` from a
+# `: f64v2` fn for a 32-byte `mk4`. The v6.4.31 `_TARGET_PE` arm below covers only
+# `return <simd_call>(..)`.
+# ⚠ THE CALL FORM IS TESTED ON THE EXACT DECLARED TYPE, not on the class, while `return IDENT;`
+# above accepts any local of the same class. That asymmetry is deliberate and load-bearing: the
+# `return IDENT;` branches byte-COPY 16/32 bytes, which is right whatever the lane type, but the
+# PE arm keys on `GFRS(callee) == _cur_fn_ret_scalar` — so a same-class call of a DIFFERENT
+# declared type would miss that arm and land on the generic path on Windows, which is the shape
+# this bite removes. Refusing is the conservative answer, never a miscompile.
+# 6.7.13: an explicit instance `g<T>(..)` too, as the fn it reaches (`_vcall_fi`; the tail arm takes only `IDENT (`).
+# ⛔ 6.7.13 (D29 A, the user's decision, 2026-10-15): and the whole `return callptr(&f, ..);` / `fncallN(&f, ..)`
+# with `f` declared to return this vector (`_ret_vicall`) — refused "got `this expression`" though its callee is
+# known; through a variable it stays refused (no declared type: X13).
+# 6.7.14 (D35 A): and a whole dereference `* E` (`_vrcv_dsrc`, by its tokens) — E's vector is known once it is parsed,
+# which `_ret_vderef` does (another vector, or none, refused there in this rule's words). CHANGELOG [6.7.14]
+# ⛔ 6.7.16 — THE BY-NAME CALL ONLY WHEN IT IS THE WHOLE VALUE: `return mk2(41, 7) + 1;` from a `: f64v2` fn passed this
+# rule on its first token, so x86_64 / aarch64 returned the call's vector (161, the `+ 1` dropped), cx added the 1 to a
+# lane (165) and Windows' own-call arm stopped at the `+` ("expected ';', got '+'") — there is no vector `+` (X4), and
+# `return s.m2() + 1;` was refused. Refused "got `mk2`" on every target (D24's reading, 6.7.16, at the return).
+# CHANGELOG [6.7.16]
+fn _simd_ret_call_ok(S): i64 {
+    if (_ret_vicall(S) == 1) { return 1; }
+    if (_ret_vmc(S) == 1) { return 1; }   # 6.7.14 (D39): `return s.mv();`
+    if (_vrcv_dsrc(S, GTI(S), 5) == 4) { return 1; }
+    var fi = _vcall_fi(S, GTI(S));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
+    if (_vcall_more(S, _call_close(S, _vcall_o) + 1, 5) == 1) { return 0; }   # 6.7.16: the whole value
+    return 1;
+}
+# 6.7.16: 1 = the return value at the cursor is one whole call `f(..)` / `g<T>(..)` (no operator after its `)`,
+# `_vcall_more`) — PARSE_RETURN's Win64 own-call arm took any call that started it, emitting it and stopping at the rest.
+fn _ret_vwcall(S): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    if (_vcall_more(S, _call_close(S, o) + 1, 5) == 1) { return 0; }
+    return 1;
+}
+# 1 = the return value at the cursor is one whole `fncallN(&f, ..)` / `callptr(&f, ..)` (no operator after it,
+# `_vcall_more`), `f` declared to return this fn's vector (`_icall_rs_at`).
+fn _ret_vicall(S): i64 {
+    if (_icall_rs_at(S, GTI(S)) != _cur_fn_ret_scalar) { return 0; }
+    if (_cur_fn_ret_scalar > 0 - 2048) { return 0; }
+    if (_vcall_more(S, _call_close(S, GTI(S) + 1) + 1, 5) == 1) { return 0; }
+    return 1;
+}
+# On Win64 that call returns through a hidden pointer (int arg 0), as `f(..)` does: into an anonymous temp
+# (`_icall_vbeg` / `_icall_vdst`, parse/expr.cyr), copied into this fn's own result pointer — the by-name arm's
+# shape below. SysV / AAPCS64 / cx return it in the vector registers, which the scalar path leaves as they are.
+# 1 = emitted (the `;` consumed). CHANGELOG [6.7.13]
+fn _ret_vicall_pe(S): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    if (_cur_fn_ret_stash <= 0) { return 0; }
+    if (_ret_vicall(S) == 0) { return 0; }
+    _vec_desc(S, _cur_fn_ret_scalar);
+    var n = GVEC_NSLOTS(S);
+    var t = _agg_temp_t(S, n, _cur_fn_ret_scalar);
+    _icall_vbeg = GTI(S);
+    _icall_vdst = t;
+    PCMPE(S);
+    return _ret_vt_done(S, t, n);
+}
+# The vector a return left in frame temporary `t` (`n` slots), the cursor on the `;`: consumed; Win64 copies it into
+# this fn's own result pointer (its stash, `return IDENT;`'s copy), SysV / AAPCS64 / cx load the vector return registers
+# from it (`return IDENT;`'s pair load); then the jump to the epilogue. 1. CHANGELOG [6.7.14]
+fn _ret_vt_done(S, t, n): i64 {
+    _expect_step(S, 5);   # consume ';'
+    if (_cur_fn_ret_stash > 0) {
+        var src = 0 - ((t + 1) * 8);
+        if (_cur_fn_regalloc > 0) { src = src - _cur_fn_regalloc * 8; }
+        src = src - _cur_fn_ret_stash;
+        ESTRUCT_BYVAL_COPY(S, src, 0 - (_cur_fn_regalloc * 8 + 8), n * 8);
+    } elif (n == 4) { EFLLOAD_F64V4_PAIR(S, t); }
+    else { EFLLOAD_F64V2_PAIR(S, t); }
+    vec_push(rp_vec, EJMP0(S));
+    return 1;
+}
+# PARSE_RETURN's vector sources that emit their own return (one call there: cybs's per-fn ceiling): `callptr(&f, ..)` on
+# Win64 (6.7.13's D29) and (6.7.14) a method on Win64 (D39), a dereference `*p` (D35). 1 = emitted. CHANGELOG [6.7.14]
+fn _ret_vec_take(S): i64 {
+    if (_ret_vicall_pe(S) == 1) { return 1; }
+    if (_ret_vmc_pe(S) == 1) { return 1; }   # 6.7.14 (D39): `return s.mv();` on Win64
+    return _ret_vderef(S);
+}
+# ⛔ 6.7.14 (D39 A, the user's decision, 2026-10-16) — `return s.mv();` FROM A FN DECLARED TO RETURN THE VECTOR THE
+# METHOD IS DECLARED TO RETURN IS ACCEPTED, as `return mkv(..);` by name always was and `return callptr(&mkv, ..);` is
+# since 6.7.13's D29 — it was refused "got `s`" on every target. 1 = the return value at the cursor is one whole method
+# call `x.m(..)` (`;` after it) declared to return this fn's vector (`_vmc_whole`); a method of another vector keeps the
+# 6.6.6 rule's refusal. SysV / AAPCS64 / cx take the call's vector registers as the by-name call's (the scalar path);
+# Win64 passes a temporary as its hidden result pointer, copied into this fn's own (`_ret_vmc_pe`). CHANGELOG [6.7.14]
+fn _ret_vmc(S): i64 {
+    if (_cur_fn_ret_scalar > 0 - 2048) { return 0; }
+    if (_vmc_whole(S, GTI(S), 5) != _cur_fn_ret_scalar) { return 0; }
+    return 1;
+}
+# ... on Win64: the method arm's hook (`_sc_vbeg` / `_sc_vdst`, one-shot, `_sc_vret`) passes the temporary's address
+# before `self`, as the vector receive's does. 1 = emitted (the `;` consumed).
+fn _ret_vmc_pe(S): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    if (_cur_fn_ret_stash <= 0) { return 0; }
+    if (_ret_vmc(S) == 0) { return 0; }
+    _vec_desc(S, _cur_fn_ret_scalar);
+    var n = GVEC_NSLOTS(S);
+    var t = _agg_temp_t(S, n, _cur_fn_ret_scalar);
+    _sc_vbeg = GTI(S);
+    _sc_vdst = t;
+    PCMPE(S);
+    _sc_vbeg = 0 - 1;
+    return _ret_vt_done(S, t, n);
+}
+# ⛔ 6.7.14 (D35 A, the user's decision, 2026-10-16) — `return *p;` FROM A FN DECLARED TO RETURN THE VECTOR `p` POINTS AT
+# COPIES IT THROUGH THE POINTER, as `var v: V = *p;` does (6.7.13's D34: `*pv` is the vector at every destination) and
+# as a struct fn's `return *p;` copies (6.7.10 decision 6). It was refused "got `this expression`" on every target. The
+# whole return value at the cursor, inside any parentheses, is one dereference `* E` (`_vrcv_dsrc`, by its tokens; the
+# 6.6.6 rule let it past, `_simd_ret_call_ok`): E is parsed and its vector read (`_vrcv_dparse`) — this fn's: its 16 /
+# 32 bytes copied into a frame temporary the return takes (`_ret_vt_done`); another vector, or none (`*pi` of a `*i64`):
+# refused in the 6.6.6 rule's words at the value's first token, as before. 1 = taken. CHANGELOG [6.7.14]
+fn _ret_vderef(S): i64 {
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    var ti = GTI(S);
+    if (_vrcv_dsrc(S, ti, 5) != 4) { return 0; }
+    var ty = _cur_fn_ret_scalar;
+    _vec_desc(S, ty);
+    var n = GVEC_NSLOTS(S);
+    var t = _agg_temp_t(S, n, ty);
+    var vd = _vrcv_dparse(S);
+    if (0 - vd == ty) { _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(_vrcv_dh), 0 - 1, n * 8); }
+    else { _ret_vrefuse(S, ti); }
+    return _ret_vt_done(S, t, n);
+}
+# The 6.6.6 rule's refusal at token `ti` (the value's first), the cursor kept. 0.
+fn _ret_vrefuse(S, ti): i64 {
+    var sv = GTI(S);
+    STI(S, ti);
+    _refuse_simd_return(S);
+    STI(S, sv);
+    return 0;
+}
+fn _cur_fn_returns_vector(S): i64 {
+    if (_is_simd128(S, _cur_fn_ret_scalar) == 1) { return 1; }
+    if (_is_simd256(S, _cur_fn_ret_scalar) == 1) { return 1; }
+    return 0;
+}
+# The 6.6.6 rule at the return value of a vector-returning fn (cursor on it), PARSE_RETURN's site: refused unless a call
+# declared to return this vector — and (6.7.14) unless it starts with a call naming no fn, inside any parentheses
+# (`_vrcv_nofnw`): the undefined-function path names that one, as the vector local's receive leaves it since 6.7.13
+# ("got `f64v2_splat`" came first). The tail arm diverts such a call here (`_tc_frame_divert`). CHANGELOG [6.7.14]
+# 6.7.16: the refusal is pending until the value is parsed (`_pair_ret_late`): a value's own error comes alone.
+fn _ret_vec_rule(S): i64 {
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    if (_simd_ret_call_ok(S) == 1) { return 0; }
+    var ti = GTI(S);
+    if (_vrcv_nofnw(S, ti, _gz_end(S, ti)) == 1) { return 0; }
+    _pair_ret_defer(S);   # 6.7.16: printed after the value's own parse (`_pair_ret_late`)
+    _prr_k = 2;
+    return 0;
+}
+fn _refuse_simd_return(S): i64 {
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_refuse_simd_return", 0, 0) == 1) { return 0; }   # 6.7.15: once per site
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `", 174);
+    _pair_ret_offender(S);   # names the construct; not pair-specific despite the name
+    _ew("`\n", 2);
+    _had_error = 1;
+    return 0;
+}
+
+# 6.6.6 — the TUPLE spelling of the shape `_refuse_simd_return` names, called from
+# PARSE_RETURN's multi-return arm. Its own fn for the same reason the other refusals are:
+# cybs, the bootstrap compiler the seed assembles, fails SILENTLY when one fn accumulates too
+# many global/call references, and PARSE_RETURN is already the largest fn in the frontend.
+fn _refuse_vector_tuple_return(S): i64 {
+    _refuse_struct_tuple_return(S);
+    if (_cur_fn_returns_vector(S) == 0) { return 0; }
+    _refuse_simd_return(S);
+    return 0;
+}
+# ⛔ 6.7.16 — THE LITERAL'S OWN ERROR FIRST, as `_ret_vec_rule`'s and the 9-16 B class's: the multi-value arm printed
+# the refusal above before the literal was parsed, so `return (zz, 1);` from a vector fn or a fn returning a struct (8,
+# 16, 24 B) was the refusal AND "undefined variable 'zz'", and `return (1, 5 + );` the refusal and "unexpected ')'". It
+# is pending (`_pair_ret_late`, kind 3) until the arm has parsed the literal. CHANGELOG [6.7.16]
+fn _ret_tup_defer(S): i64 {
+    _pair_ret_defer(S);
+    _prr_k = 3;
+    return 0;
+}
+# ... and a literal of more than three values (cursor on its `(`): "multi-value return needs 2 or 3 types", whose
+# panic latch keeps the arm's three-value parse quiet — in a fn whose class refuses every tuple (`_ret_tup_cls`), the
+# class's refusal instead, now and latched the same way: it names the mistake (both were printed).
+fn _ret_tup_arity(S): i64 {
+    if (_ret_tup_cls(S) == 0) {
+        ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
+        return 0;
+    }
+    _prr_ti = 0 - 1;
+    _refuse_vector_tuple_return(S);
+    _panic = 1;
+    return 0;
+}
+# 1 = this fn's return class refuses a tuple literal (`_refuse_vector_tuple_return` prints): a vector fn, or a plain
+# struct's outside an inline replay (`_refuse_struct_tuple_return`'s own test).
+fn _ret_tup_cls(S): i64 {
+    if (_cur_fn_returns_vector(S) == 1) { return 1; }
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    return _dx_plain(S, _cur_fn_ret_sid);
+}
+# ⛔ 6.7.11 — A TUPLE LITERAL IS NOT THE STRUCT A FN DECLARED `: S` RETURNS (the user's decision,
+# 2026-10-13: refused by name in every class). The multi-value arms load rax:rdx[:r3], which is the
+# 9-16 B pair's ABI by coincidence only: a fn returning a struct over 16 B never wrote its result
+# pointer (the caller read 0, 0, 0) and one of 8 B or less dropped the second value. A tuple is an
+# anonymous struct, another type (guide § Tuples); `var t = (a, b); return t;` was already refused.
+# Cursor on the literal's `(`. Not a tuple, `Str` (a handle) or dyn (`_mret_land` refuses that one),
+# and not in an inline replay, whose `return` is the callee's (`_ret_small_cls`). CHANGELOG [6.7.11]
+fn _refuse_struct_tuple_return(S): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ret_sid <= 0) { return 0; }
+    if (_dx_plain(S, _cur_fn_ret_sid) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_derr_seen(GTI(S), "_refuse_struct_tuple_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": a fn returning the struct `");
+    _sn_pr(S, _cur_fn_ret_sid);
+    PRSTR("` returns that struct — `");
+    if (_tup_commas(S, GTI(S)) > 1) { PRSTR("(a, b, c)"); } else { PRSTR("(a, b)"); }
+    PRSTR("` is a tuple, another type\n");
+    _err_excerpt(S);   # 6.7.17: the source line and caret, as every error has
+    _had_error = 1;
+    return 0;
+}
+
+fn _refuse_pair_return(S): i64 {
+    if (_panic == 1) { return 0; }
+    if (_slit_at(S, GTI(S)) == 1) { return 0; }   # 6.7.14 (D12 (a)): the factor refuses the literal, once
+    if (_derr_seen(GTI(S), "_refuse_pair_return", _cur_fn_ret_sid, 0) == 1) { return 0; }   # 6.7.15: once per site
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": a fn returning the 9-16 byte struct `", 39);
+    _sn_pr(S, _cur_fn_ret_sid);
+    _ew("` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `", 105);
+    _pair_ret_offender(S);
+    _ew("`\n", 2);
+    _err_excerpt(S);   # 6.7.17: the source line and caret, as every error has
+    _had_error = 1;
+    return 0;
+}
+# ⛔ 6.7.16 — THE VALUE'S OWN ERROR FIRST. The refusal above was printed BEFORE the value was parsed, so a value with an
+# error of its own was two reports: `return zz;` the refusal and "undefined variable 'zz'", `return &(q);` the refusal
+# and "expected identifier", `return 5 + ;` the refusal and "unexpected ';'" — where the 8 B class reports the value's
+# alone (issues/archived/2026-10-18-pair-class-return-refusal-beside-the-values-own-error.md). `_ret_struct_pair` records the
+# value's first token and the statement's error count; PARSE_RETURN asks `_pair_ret_late` once its arms have parsed the
+# value: the refusal is printed at that token unless the statement reported an error since (a report or a repeat,
+# `_err_n` — never the file-wide `_had_error`, so an earlier statement's error forces nothing). CHANGELOG [6.7.16]
+# ⛔ 6.7.16 (the receives review) — AND THE VECTOR CLASS'S: `_ret_vec_rule` printed the 6.6.6 refusal before the value
+# was parsed, so a vector fn's `return zz;`, `return &(q);`, `return 5 + ;`, `return zz + 1;`, `return (zz);` and
+# `return q.zz;` were the refusal AND the value's own error. It records its pending refusal here too (`_prr_k` 2).
+var _prr_ti = 0 - 1;   # the refused value's first token, -1 = none pending
+var _prr_en = 0;       # `_err_n` when it was recorded
+var _prr_k = 1;        # the refusal: 1 the pair class's, 2 the vector class's, 3 a tuple literal's (`_ret_tup_defer`)
+fn _pair_ret_defer(S): i64 {
+    _prr_ti = GTI(S);
+    _prr_en = _err_n;
+    _prr_k = 1;
+    return 0;
+}
+fn _pair_ret_late(S): i64 {
+    var ti = _prr_ti;
+    if (ti < 0) { return 0; }
+    _prr_ti = 0 - 1;
+    if (_err_n != _prr_en) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);   # `_err_head` and `_pair_ret_offender` read the cursor's token
+    if (_prr_k == 2) { _refuse_simd_return(S); }
+    elif (_prr_k == 3) { _refuse_vector_tuple_return(S); }
+    else { _refuse_pair_return(S); }
+    STI(S, sv);
+    return 0;
+}
+
+# The binary operators EMIT_OP_DISPATCH serves: + - * / and the wrapping +% -% *%.
+fn _is_op_dispatch_tok(t): i64 {
+    if (t >= 6) { if (t <= 9) { return 1; } }
+    if (t == 113) { return 1; }
+    if (t == 116) { return 1; }
+    if (t == 119) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.6.6 — an `async fn` captures each parameter as ONE 8-byte int: its constructor homes
+# register i into frame slot i and copies it to `obj[16 + i*8]` (or coroutine frame slot i), and
+# `future_force` hands them back to the body as int arguments. A value-form vector travels in
+# XMM/V (SysV/aarch64) or by pointer (Win64) and owns 2-4 slots, so it was never captured: a plain
+# async fn computed with whatever XMM0 held at force time, a coroutine with the neighbouring ints
+# shifted into the vector's lanes — exit 0, no diagnostic, while a vector LOCAL in the same fn
+# was refused. Refused by name until the capture exists. CHANGELOG [6.6.6]
+fn _refuse_async_simd_param(S, pnoff): i64 {
+    if (_panic == 1) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": async fn parameter '", 22);
+    PRSTR(S + 0xEC00000 + pnoff);
+    _ew("' is a value-form vector, which an `async fn` does not capture yet — pass a pointer to it\n", 92);
+    _had_error = 1;
+    return 0;
+}
+# ⛔ 6.6.16 (C7) — the same capture, for a plain struct over 8 B passed by value. Such a parameter
+# arrives as its struct's ADDRESS, and a by-value one is copied in the callee's prologue
+# (`_sptr_params_localize`) — but an `async fn` runs its body at force time, so the copy would
+# read the caller's struct late (measured: `bump(p)`, then `p.x = 10`, then `await` printed 11),
+# and a coroutine impl re-runs its prologue on every resume. Refused by name until the Future
+# carries the struct; `p: *T` (one i64) and a struct of 8 B or less still compile. `li` is the
+# parameter's slot, typed and not yet marked (`_param_record`). CHANGELOG [6.6.16]
+fn _refuse_async_struct_param(S, li, pnoff): i64 {
+    if (_cur_fn_ptrp == li + 1) { return 0; }
+    var lt = GLTYPE(S, li);
+    if (_agc_plain_big(S, lt) == 0) { return 0; }
+    if (_dyn_is(S, 0 - lt) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
+    if (_panic == 1) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": async fn parameter '", 22);
+    PRSTR(S + 0xEC00000 + pnoff);
+    if (_tup_is(S, 0 - lt) == 1) {   # 6.7.7 (B4): a tuple has no pointer form (`*( .. )` is refused)
+        PRSTR("' is a tuple ");
+        _sn_pr(S, (0 - lt));
+        PRSTR(", which an `async fn` does not capture yet - pass its elements as separate parameters\n");
+        _had_error = 1;
+        return 0;
+    }
+    _ew("' is a struct passed by value, which an `async fn` does not capture yet — pass a pointer to it (`", 99);
+    PRSTR(S + 0xEC00000 + pnoff);
+    _ew(": *", 3);
+    _sn_pr(S, (0 - lt));
+    _ew("`)\n", 3);
+    _had_error = 1;
+    return 0;
+}
+
+# ⛔ 6.6.6 — an `async fn` hands its result back through ONE i64: `future_force` returns what the
+# body left in rax. A struct returned BY VALUE does not travel that way. Over 16 B the ABI is a
+# hidden retptr that nothing supplies — the coroutine CONSTRUCTOR is itself classified as a retptr
+# callee, so the caller's buffer address is consumed building the Future and the body writes its
+# result through whatever the first argument register held. 9-16 B is rax:rdx and the Future has
+# no second word, so the high half is dropped. Both were SILENT: measured at 6.6.5,
+# `async fn a2(a,b): P3` (24 B) made `print_num(future_force(a2(4,5)))` print 0 and exit 0, and the
+# 16 B `P2` came back with `.x` only. A struct of 8 B or less IS one i64, and `Str` is a heap
+# handle, so those keep working — `_ret_agg_class` is exactly that distinction. Refused by name
+# until a Future can carry a struct. CHANGELOG [6.6.6]
+fn _refuse_async_struct_return(S, fnoff, fi): i64 {
+    if (_ret_agg_class(S, fi) == 0) { return 0; }
+    if (_dyn_is(S, GFRS(S, fi)) == 1) { return 0; }   # 6.7.8: refused at its type (T11), once
+    if (_panic == 1) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": `async fn ", 12);
+    PRSTR(S + 0xEC00000 + fnoff);
+    _ew("` returns a struct by value, and a Future carries one i64 — return a pointer to it\n", 85);
+    _had_error = 1;
+    return 0;
+}
+
+# ⛔ 6.6.6 (bite 16 review) — THE SAME "A FUTURE CARRIES ONE i64" LIMIT, ONE TYPE CLASS OVER.
+# `_refuse_async_struct_return` above keys on `_ret_agg_class`, which answers only for STRUCTS
+# (`GFRS` positive) — so a VALUE-FORM VECTOR return slipped straight through the hole the struct
+# refusal had just closed. A vector travels in XMM/V (SysV/aarch64) or by pointer (Win64), never
+# in rax, and the Future has nowhere to put it: measured on the compiler that shipped 16a,
+# `async fn av(a,b): f64v2 { ... return v; }` + `future_force(av(7,9))` compiled with ZERO
+# diagnostics and yielded 0 where the byte-identical SYNC fn yields 7. This is the exact shape
+# `_refuse_async_simd_param` (20 lines up) already refuses on the PARAMETER side — the return
+# half was simply never wired to it. Refused by name until a Future can carry a vector.
+# CHANGELOG [6.6.6]
+fn _refuse_async_vec_return(S, fnoff, fi): i64 {
+    if (_is_simd_any(S, GFRS(S, fi)) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": `async fn ", 12);
+    PRSTR(S + 0xEC00000 + fnoff);
+    _ew("` returns a value-form vector, which an `async fn` does not capture yet — return a pointer to it\n", 99);
+    _had_error = 1;
+    return 0;
+}
+
+# ⛔ 6.7.11 — THE SAME LIMIT FOR SEVERAL VALUES. A multi-value return travels in rax:rdx[:r3] and a
+# Future memoises ONE word (`future_force` returns rax): `async fn g(): (i64, i64) { return (1, 2); }`
+# compiled clean, `await g()` yielded 1, and the documented `rethi()` read got 2 only on the force
+# that ran the body — a memoised `await f` or a reactor-driven one read whatever the last call left
+# in rdx (19 where 12 is right, on every target). Neither refusal above saw it: `GFRS` holds
+# MULTIRET_SID, no struct and no vector. Refused by name (the user's decision, 2026-10-13): at the
+# declaration (`: (T1, T2[, T3])`), and in an undeclared body at `return (a, b[, c]);` (PARSE_RETURN)
+# and `ret2(a, b)` (PARSE_SIMD_EXT) — a declared fn's body was reported at its declaration.
+# CHANGELOG [6.7.11]
+fn _refuse_async_multi_return(S, fnoff, fi): i64 {
+    if (GFRS(S, fi) != MULTIRET_SID) { return 0; }
+    if (_panic == 1) { return 0; }
+    _async_mv_say(S, fnoff, 0, GFRN(S, fi));
+    return 0;
+}
+# ... in the body: the multi-value spelling at token `ti` writes `n` values. The body of an async fn,
+# a coroutine's included, is its `$impl`; a closure in it is its own fn. An #inline replay parses its
+# callee's body here (its own definition was judged).
+fn _refuse_async_mv_body(S, ti, n): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    var fi = _cur_fn_ix;
+    if (fi < 0) { return 0; }
+    if (_fn_async_impl(S, fi) == 0) { return 0; }
+    if (GFRS(S, fi) == MULTIRET_SID) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    if (_panic == 1) { return 0; }
+    if (_tn_once(S, ti) == 0) { return 0; }
+    var sv = GTI(S);
+    STI(S, ti);
+    _async_mv_say(S, L64(_fnt_names + fi * 8), 5, n);
+    STI(S, sv);
+    return 0;
+}
+# `return (a, b[, c]);` at token `st` (PARSE_RETURN, before its arms): the multi-value arm's literal.
+fn _async_mv_ret(S, st): i64 {
+    if (TOKTYP(S, st) != 10) { return 0; }
+    var c = _tup_commas(S, st);
+    if (c <= 0) { return 0; }
+    return _refuse_async_mv_body(S, st, c + 1);
+}
+# ⛔ 6.7.13 — ... AND `return h(..);` FORWARDING A MULTI-VALUE CALL: the callee declared `: (T1, T2[,
+# T3])`, counted by pass 1 or a method (`_mv_callee`), parentheses around the whole call transparent
+# (`_ret_whole_call`). The forward left the values in the return registers and the Future memoised the
+# first — the third spelling of the loss above (the repro exited 19 where 12 is right, on every target).
+# Refused with the same text at the forwarded call (D24 A, the user's decision, 2026-10-15); a callee
+# held in a variable (`callptr(fp, ..)`) is unknown and not judged. Token `st` = the value's first;
+# called once from PARSE_RETURN, before the arms (the tail-call arm takes `return h(..);`).
+# In a fn returning a struct of 8 B or less (`_ret_small_cls`) the same forward returned the call's
+# FIRST value as the struct's word (the repro exited 3) — the fifth named-struct destination of "a
+# multi-value call is not a struct value" (6.7.11, D20 / D21), where the 9-16 B and over-16 B classes
+# already refuse it by their own texts: "a multi-value call 'mk' is not returned as struct 'P1' - bind
+# it first" (`_mv_struct_err` kind 4; D25 A, the user's decision, 2026-10-15). CHANGELOG [6.7.13]
+fn _ret_mv_fwd(S, st): i64 {
+    if (GIDEP(S) != 0) { return 0; }
+    if (_cur_fn_ix < 0) { return 0; }
+    if (_syntax_only == 1) { return 0; }
+    var asy = _fn_async_impl(S, _cur_fn_ix);
+    if (asy == 0) { if (_ret_small_cls(S) == 0) { return 0; } }
+    var k = _pw_lead(S, st);   # 6.7.16: up to a parenthesised chain head
+    var fi = _ret_whole_call(S, st, k);
+    if (_mv_callee(S, fi) == 0) { return 0; }
+    if (asy == 1) { return _refuse_async_mv_body(S, st + k, _mv_count(S, fi)); }
+    return _ret_mv_small(S, st + k, fi);
+}
+# ... the small-struct report at the call `ct` (a method's hint `x.mk(..)`; 6.7.16 a chain's `w.p.mk(..)`).
+fn _ret_mv_small(S, ct, fi): i64 {
+    if (_mcall_open(S, ct, 0 - 1) >= 0) { return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, _mco_mt), fi, 4, 2); }
+    return _mv_struct_err(S, ct, _cur_fn_ret_sid, TOKVAL(S, ct), fi, 4, 1);
+}
+# "`async fn g` returns 2 values, and a Future carries one i64 - return a pointer to a struct holding
+# them", at the cursor; `cut` bytes of the name's tail dropped (the body's `$impl`).
+fn _async_mv_say(S, noff, cut, n): i64 {
+    _ew("error:", 6);
+    _err_head(S);
+    PRSTR(": `async fn ");
+    var nm = S + 0xEC00000 + noff;
+    var len = 0;
+    while (load8(nm + len) != 0) { len = len + 1; }
+    _ew(nm, len - cut);
+    PRSTR("` returns ");
+    PRNUM(n);
+    PRSTR(" values, and a Future carries one i64 - return a pointer to a struct holding them\n");
+    _err_excerpt(S);
+    _had_error = 1;
+    return 0;
+}
+
+# A struct-valued call used where there is no frame to hold its result. Refused by name: before
+# 6.6.6 every such site compiled clean and SIGSEGV'd (the callee wrote through whatever the first
+# argument register held). CHANGELOG [6.6.6]
+# `_tsc_n` counts the refusals written: a statement form that sees it move while it parsed its call knows the
+# call refused itself, and steps over the rest without a second error (`mk().n = 5;` at top level was also
+# "the result is a temporary"). The panic latch is left as it was. CHANGELOG [6.7.14]
+# 6.7.15: an undefined callee with a `.field` chain (`_call_undef`, parse/expr.cyr) moves it too. CHANGELOG [6.7.15]
+# 6.7.15: the callee `noff` named as the source spells it — a method `Pt.dup`, not its fn `Pt_dup` (`_fn_src_name`).
+var _tsc_n = 0;
+fn _refuse_toplevel_struct_call(S, noff): i64 {
+    if (_panic == 1) { return 0; }
+    _ew("error:", 6);
+    _err_head(S);
+    _ew(": '", 3);
+    PRSTR(S + 0xEC00000 + _fn_src_name(S, FINDFN(S, noff), noff));   # 6.7.15: a method `Pt.dup`, not `Pt_dup`
+    _ew("' returns a struct by value, and a struct result needs storage in a fn's frame — call it inside a fn\n", 103);
+    _had_error = 1;
+    _tsc_n = _tsc_n + 1;
+    return 0;
+}
+# ERR_IDENT whose first name `noff` is the result of a call to fn `fi` (a struct-call record's `_sc_fi`; -1: a name as
+# written), printed as the source spells it (`_fn_src_name`: `Pt.dup`). Reported once per token and record — keyed on
+# `noff`, the record's own name, not the scratch the spelling is written at. CHANGELOG [6.7.15]
+fn _err_ident_fn(S, msg, noff, fi, tail, noff2): i64 {
+    var nm = _fn_src_name(S, fi, noff);
+    if (nm == noff) { return ERR_IDENT(S, msg, noff, tail, noff2); }   # a free fn: its own name, keyed so
+    if (_err_once(S, (((msg * 31 + noff) * 31 + tail) * 31 + noff2) * 8 + 3) == 0) { return 0; }
+    return ERR_IDENT(S, msg, nm, tail, noff2);
+}

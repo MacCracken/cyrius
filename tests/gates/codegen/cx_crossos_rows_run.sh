@@ -156,7 +156,7 @@
 #      longer compile: "expected '}', got number 4") and R6 native RED. With the two-level rows
 #      dropped the one-level rows still reach runtime and exit 3 (bits 1|2, the HO literal overran
 #      its canaries) natively AND on cxvm, 0 on the real tree.
-#   c. B03 V3: `_fla_want = st;` deleted from _push_struct_expr_arg (parse/fn.cyr) -> R3 RED (native
+#   c. B03 V3: `_fla_want = st;` deleted from _push_struct_expr_arg (parse/fn/call_agg.cyr) -> R3 RED (native
 #      SIGSEGV; cxvm traps "guest address out of range: 3"), R5 RED on both legs, R6 native RED
 #   d. B03 V4: `_gci_src` returns 0 first (parse/decl.cyr) -> R3 RED (native SIGSEGV; cxvm traps
 #      "guest address out of range: 3"), R6 native RED

@@ -38,7 +38,7 @@
 #     fn and the total (the shape the bite actually repaired: a real NAME, registered in a fn).
 #   * write axis 1's shape without spaces, `S64(_varn_base + zz*8, 0);`  -> axis 1 names it.
 #     ⛔ Before review round 2 this spelling PASSED — the regex spelled its spaces literally,
-#     and the un-spaced style already exists in parse/fn.cyr / util.cyr / parse.cyr with
+#     and the un-spaced style already exists in parse/fn/ / util.cyr / parse.cyr with
 #     nothing enforcing cyrfmt over src/. A gate defeated by whitespace is not a gate.
 #   * write axis 2's name as `0 - 0` instead of `0`                      -> axis 2 names it.
 #     (Same round, same cause.)
@@ -115,10 +115,10 @@ fi
 # 6.7.6 (D2): _w128_tmp — a u128 `+` / `-` result at TOP LEVEL is a dead global resized to 16 bytes
 # (inside a fn it takes two frame slots instead; parse/expr.cyr).
 # 6.7.7 (B6): _pd_nreorder — an out-of-order named call (`g(c: 3, a: 1)`) holds each argument,
-# evaluated as written, until every parameter is pushed in parameter order (parse/fn.cyr).
+# evaluated as written, until every parameter is pushed in parameter order (parse/fn/call_named.cyr).
 # 6.7.7 (call arguments): _sarg_snap — a by-value argument a later argument may write is copied
 # where it stands: one word holds its address; at top level the copy itself is a dead global
-# resized to the struct (inside a fn it is a frame block, `_agg_temp_t`; parse/fn.cyr).
+# resized to the struct (inside a fn it is a frame block, `_agg_temp_t`; parse/fn/call_agg.cyr).
 # 6.7.10 (B7-1g): _hl_gtemp — a struct of 8 B or less taken through a handle GLOBAL at TOP LEVEL (an
 # argument, an operand, a copy into the object) passes through a dead 8-byte global (inside a fn it is
 # a frame temp, `_agg_temp`; parse/decl.cyr).
@@ -138,7 +138,7 @@ fi
 # pointer while the struct is copied through it into the field (a frame slot in a fn, a dead global at top
 # level; parse/decl.cyr — issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md).
 # 6.7.11: _ret_ptr_src — `return GP;` / `return gp();` / `return w.p;` from a fn returning a struct over 8 B parks the
-# `*S` value's pointer while the struct is copied through it into a frame temp (parse/fn.cyr —
+# `*S` value's pointer while the struct is copied through it into a frame temp (parse/fn/ret_agg.cyr —
 # issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md).
 # 6.7.11: _dst_struct — `*p = v` through a `*S` parks p while the assignment arms copy the struct into what it points
 # at (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-11-deref-store-through-struct-
@@ -149,12 +149,12 @@ fi
 # 6.7.12: _pe_vtemp — on Win64 a vector-returning call with no receive is given storage its hidden result pointer
 # addresses: a frame temp in a fn (`_agg_temp_t`), at top level a dead global resized to the vector; _op_park_top —
 # an operator fn returning a vector at top level parks its by-value left operand while that pointer is pushed
-# (parse/fn.cyr / parse/expr.cyr — issues/archived/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md).
+# (parse/fn/call_agg.cyr / parse/expr.cyr — issues/archived/2026-10-13-pe-discarded-vector-call-result-no-hidden-pointer.md).
 # 6.7.13: _ret_addr_field — `return &w.s;` from a fn returning a struct over 8 B is parsed as a pointer value (D3 (b)
 # refuses it, once) and parked as `_ret_ptr_src` parks one, so neither return class's own refusal runs beside it; no
-# binary follows the error (parse/fn.cyr — issues/archived/2026-10-14-return-address-of-struct-local-decision.md).
+# binary follows the error (parse/fn/ret_agg.cyr — issues/archived/2026-10-14-return-address-of-struct-local-decision.md).
 # 6.7.14: that park is `_ret_park_copy`, shared with `return &h;` of a handle / `*T` / untyped `self` (D19 (a) refuses
-# it, once, `_ret_slot_amp`) — the same one slot (parse/fn.cyr — issues/2026-10-15-return-address-of-handle-or-
+# it, once, `_ret_slot_amp`) — the same one slot (parse/fn/ret_agg.cyr — issues/2026-10-15-return-address-of-handle-or-
 # pointer-in-struct-fn.md).
 # 6.7.13 (D34 A): _vrcv_demit — `var v: f64v2 = *p;` / `v = *p;` with `p: *V` parks the operand's pointer while the
 # vector's 16 / 32 bytes are copied through it into the local (a frame slot: a vector local lives in a fn;
@@ -163,7 +163,7 @@ fi
 # a `Str` field) parks the handle while its 16-byte header is copied through it into t (a frame slot in a fn, a dead
 # global at top level; parse/decl.cyr — issues/archived/2026-10-15-str-handle-into-inline-str-stores-one-word.md).
 # 6.7.14 (D35 A): `_vrcv_demit`'s park is `_vrcv_dparse`, shared with `return *p;` from a fn returning the vector
-# (`_ret_vderef`, parse/fn.cyr) — the same one slot per dereference; (D36 A) _dvi_park — an untyped `var v = *p;` with
+# (`_ret_vderef`, parse/fn/call_agg.cyr) — the same one slot per dereference; (D36 A) _dvi_park — an untyped `var v = *p;` with
 # `p: *V` parks p as `_dlo_vec` parks an argument's, and the declaration copies the vector through it (a frame slot: an
 # untyped vector local lives in a fn; parse/expr.cyr — issues/2026-10-16-vector-dereference-return-and-untyped-
 # destinations.md).
@@ -228,7 +228,7 @@ fi
 # `tests/gates/codegen/fn_local_storage_class.sh` axes 2/3/4/9 assert behaviourally, which is
 # the other, non-textual half of this axis.
 #
-# 6.7.2: `_cst_record` (parse/fn.cyr) registers a top-level `const`'s SIZE-0 slot from the pass-1
+# 6.7.2: `_cst_record` (parse/fn/const_eval.cyr) registers a top-level `const`'s SIZE-0 slot from the pass-1
 # pre-scan (`_cst_prepass`), which walks brace depth 0 only — top level, never inside a fn (a
 # const inside a fn is a local const, in its own table, with no slot).
 #

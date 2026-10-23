@@ -6,7 +6,7 @@
 # parse/expr.cyr took `var vbase = GFLC(S);` and did not raise GFLC until AFTER every argument
 # had been parsed. So while an argument was being parsed, GFLC still pointed AT the intrinsic's
 # own destination slot. Any argument that allocates a frame local therefore bound it there — the
-# inline replay's `var saved_flc = GFLC(S);` (parse/fn.cyr) returned `vbase` itself and laid its
+# inline replay's `var saved_flc = GFLC(S);` (parse/fn/call.cyr) returned `vbase` itself and laid its
 # parameter copy over the destination pointer. Measured on the filed repro:
 #
 #     mov  -0x30(%rbp),%rax ; mov %rax,-0x50(%rbp)   <- dst stashed at vbase
@@ -28,7 +28,7 @@
 # scan waved through and the patch pass never touched. So an operand slot with two rax
 # references was promoted, its stash became `mov r13,rax`, and the kernel read a slot nothing
 # wrote. The second rax reference comes from LEGITIMATE slot reuse: a nested inline replay
-# (`sz(t, gz(t) + 1)`) takes a param slot, parse/fn.cyr lowers GFLC back after the arguments,
+# (`sz(t, gz(t) + 1)`) takes a param slot, parse/fn/call.cyr lowers GFLC back after the arguments,
 # and the next intrinsic's `_SIMD_RESERVE` reuses that slot. No #derive, setter, getter or shared
 # object is needed; a `var` declared between the two statements hides it. Filed repro (column 3
 # of M lost): stock printed `1 4 3`, exit 1 — SILENT; a stdlib-free copy and hisab's tree
@@ -90,7 +90,7 @@
 #   M2 exemption reads the reg field on STORES only  -> identical to M1 (a load-side hole is the bug)
 #   M3 `_ra_plain_slot_mov` accepts any reg field     -> 1, 2a, 3a, 4, A x22, B, C x69 red (the patch
 #                                                      pass rewrites the kernel's rdx read into rax)
-#   M4 the replay slot is never released (parse/fn.cyr `SFLC(S, saved_flc + _ptot)` made
+#   M4 the replay slot is never released (parse/fn/call.cyr `SFLC(S, saved_flc + _ptot)` made
 #      raise-only)                                   -> ONLY D red (x69); A, B, C all green — the
 #                                                      reason D exists
 #   M5 `_EMIT_LOAD_RDX_FROM_LOCAL` emits disp8 when the disp fits

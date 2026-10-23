@@ -7,7 +7,7 @@
 #       with its destination: `h.o = y.same()`, `h.o = y + y`, `var z: Odd = y.same()`,
 #       `var z: Odd = y + y`, `h.p = y.mq()`, `var z: P8 = y.mq()` stored an Od2 / Q8 into an
 #       Odd / P8 silently, and `z = y.same()` drew only "assigning non-pointer to typed pointer".
-#       Root cause: `_sc_post` (src/frontend/parse/fn.cyr) returned before recording a result of
+#       Root cause: `_sc_post` (src/frontend/parse/fn/call_agg.cyr) returned before recording a result of
 #       class 0, so no destination had a sid to compare (and the scalar operator dispatch never
 #       called it). Fixed by recording it with `_sc_tmp = -3` (`_sc_post_small`). An exact-
 #       register (1/2/4/8 B) struct FIELD skipped every check, the free call `h.p = mkq8()` too:
@@ -58,7 +58,7 @@
 # diagnostic) on 6.7.0-6.7.8 and SIGSEGV'd at the first `G2.a`: the replay (`_gvi_expr`) ran only
 # the type half of PARSE_VAR's top-level check and stored rax, the struct's first WORD, as the
 # address of the inline G2. The free call and the same line after a statement were refused by
-# name; now the zone is too (`_sc_global_pair`, src/frontend/parse/fn.cyr — the struct half of
+# name; now the zone is too (`_sc_global_pair`, src/frontend/parse/fn/call_agg.cyr — the struct half of
 # `_sc_global_receive`, shared; 6.7.8's dyn-only `_gvi_dyn_mcall` is subsumed and removed). Each
 # refusal is exactly ONE error line: a line refused INSIDE its initialiser (an operand, an argument)
 # is not refused again for its result (`_scv_err`, set by `_scv_disarm`). Filed: docs/development/issues/
@@ -98,7 +98,7 @@
 #   real tree                                          -> GREEN (64 refusals, 17 acceptances; 6.7.14: 63 / 18, RP16 accepted)
 #
 # 6.7.16 (the user's D1, 2026-10-19; TG0-TG12, TG0n, TA1-TA6d, TGX on aarch64 / cx / PE): a struct result over 8 B stored
-# in a name typed by T makes the generic a stub (`_gs_var_sres`, `_gs_asg_sres`, src/frontend/parse/fn.cyr).
+# in a name typed by T makes the generic a stub (`_gs_var_sres`, `_gs_asg_sres`, src/frontend/parse/fn/generic.cyr).
 # (a scratch copy of the tree with the one change, its 2-stage cycc, this gate run from it with CYCC=:)
 #   MTG1 the tree before (1135ae069)                    -> RED 19: TG0 TG0n TG1 TG2 TG4-TG12 (compiled, no diagnostic), TG3 (D24's
 #                                                         words), TGX on aarch64 / cx / PE
@@ -1151,7 +1151,7 @@ refuse "AUK4 t = mkp() on a capture  (its own refusal)" "'t' is captured by valu
 # word; the slot's type word (GLTYPE) and slice word are kept per slot INDEX across fns, so a parameter in the slot an
 # earlier fn's typed local or parameter used (here `fn h(w: *Q)`, slot 0) was read as that type: `x.b`, `x.m()` and
 # `x.b = 5` compiled through *Q and faulted (rc 0, exit 139), and `x = mkp()` copied the struct through x (exit 139)
-# where D33 refuses it. Now each parameter (and the hidden env slot) is declared by `_cl_param_slot` (parse/fn.cyr),
+# where D33 refuses it. Now each parameter (and the hidden env slot) is declared by `_cl_param_slot` (parse/fn/call_named.cyr),
 # which resets the type words as PARSE_FN_DEF's untyped parameter does: each is refused as an untyped name's. CP6 /
 # CP7: a plain use is unchanged (exit 42), and an earlier `fn h(w: f64)` no longer makes `x + 1` "f64 arithmetic with
 # a non-f64 right operand". CPX (the end): CP0 / CP1 from the aarch64, cx and PE compilers.

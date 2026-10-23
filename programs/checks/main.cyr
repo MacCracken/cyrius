@@ -964,7 +964,7 @@ fn _run_regression_gates(): i64 {
     _cyrfmt_comment_braces_gate();
     println("");
 
-    _section("path-A drift gate (parse/*.cyr direct emits)");
+    _section("path-A drift gate (src/frontend/parse/ direct emits)");
     _parse_emit_drift_gate();
     println("");
 
@@ -1482,7 +1482,7 @@ fn main(): i64 {
             return G_FAIL;
         }
         # `--parse-drift-row`: the path-A drift row alone, over the root — how a gate proves the
-        # scan reads each parse/*.cyr whole. CHANGELOG [6.6.17]
+        # scan reads each parse file whole. CHANGELOG [6.6.17]
         if (streq(argv(sel_idx), "--parse-drift-row") == 1) {
             _parse_emit_drift_gate();
             _run_tmp_cleanup();

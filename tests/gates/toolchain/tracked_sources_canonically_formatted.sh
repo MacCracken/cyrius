@@ -199,7 +199,8 @@ fi
 # read from both tools, which must agree. lib/ is outside the row: its large files are the
 # vendored folds (sigil, mabda, sankoch are already past the cap — the `lib/` ratchet above), and a
 # fold's layout is its source repo's.
-# MUTATION (6.7.15): the limit set to the cap minus 300 KB -> RED, naming parse/fn.cyr.
+# MUTATION (6.7.15): the limit set to the cap minus 300 KB -> RED, naming parse/fn.cyr. Re-measured at 6.7.18, once
+# parse/fn.cyr was split into parse/fn/: the same limit -> RED, naming parse/decl.cyr (894,107 B).
 capf=$(sed -n 's/^var _MAX_FILE: i64 = \([0-9]*\);.*/\1/p' programs/cyrfmt.cyr | head -1)
 capl=$(sed -n 's/^var _MAX_FILE = \([0-9]*\);.*/\1/p' programs/cyrlint.cyr | head -1)
 if [ -z "$capf" ] || [ "$capf" != "$capl" ]; then
