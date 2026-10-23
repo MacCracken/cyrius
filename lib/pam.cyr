@@ -174,7 +174,7 @@ fn pam_unix_authenticate(user, password): i64 {
         var wn = sys_write(wfd, &pbuf + off, tlen - off);
         if (wn == 0 - 4) { continue; }       # EINTR
         if (wn <= 0) { wbad = 1; break; }
-        off = off + wn;
+        off += wn;
     }
     memset(&pbuf, 0, _PAM_MAX_PASSWORD + 8);
     sys_close(rfd);
@@ -206,8 +206,7 @@ fn pam_unix_authenticate(user, password): i64 {
 # 0 otherwise. Consumers should gate on this before advertising
 # that they support password auth.
 fn pam_unix_available(): i64 {
-    if (_pam_find_chkpwd() == 0) { return 0; }
-    return 1;
+    return _pam_find_chkpwd() != 0;
 }
 
 # v5.8.31 — PamError variants. Maps the int-return contract of
