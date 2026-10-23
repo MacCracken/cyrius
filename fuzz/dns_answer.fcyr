@@ -11,11 +11,15 @@
 # killed it (a SIGSEGV, a `slice bounds violation` exit 134, a poison trap exit 86). To replay one,
 # set _fz_replay to that seed. The child prints one digest of every answer, so `cyrius fuzz
 # --poison=ab` sees an over-read as two different digests.
+# Each mutated message is also handed to the blocking resolver's parser, lib/net.cyr
+# _net_dns_answer, as the reply to its own query for the seed's question (6.7.18, the lib review:
+# that parser reads through slices too).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/async.cyr"
+include "lib/net.cyr"
 
 var _fz_name = "fuzz_dns_answer";
 var _fz_iters = 3000;
@@ -24,6 +28,8 @@ var _fz_first = 0x5EED0D25;  # the first iteration's seed
 var _fz_replay = 0;          # a seed the parent printed: run that one iteration alone
 
 var _fz_bad = 0;             # set by an iteration whose result breaks the parser's contract
+var _fz_q = 0;               # net.cyr's query for the seed's question (_fz_setup)
+var _fz_ql = 0;
 var _fz_s = 0;
 fn _fz_rnd(): i64 {
     _fz_s = _fz_s * 6364136223846793005 + 1442695040888963407;
@@ -97,9 +103,11 @@ fn _fz_one(seed): i64 {
     memcpy(b, work, n);
     var r = _async_dns_parse_a(b, n, 0x4342);
     var o = _async_dns_skip_name(b, n, _fz_rnd() % (n + 2));
+    var a = _net_dns_answer(b, n, _fz_q, _fz_ql);
     if (r != 0 - 1 && (r < 0 || r > 0xFFFFFFFF)) { _fz_bad = 1; return 0; }   # not an IPv4 int: a bug
     if (o != 0 - 1 && (o < 1 || o > n)) { _fz_bad = 2; return 0; }            # past the message: a bug
-    return r * 7 + o;
+    if (a < 0 - 2 || a > 0xFFFFFFFF) { _fz_bad = 3; return 0; }              # not an address, -1 or -2
+    return r * 7 + o + a * 13;
 }
 
 # ANCOUNT, QDCOUNT, the two RRs' TYPE and RDLENGTH, the question's first label, the two
@@ -108,6 +116,8 @@ fn _fz_setup(): i64 {
     var fo = "\x06\x04\x23\x2B\x35\x3D\x0C\x21\x33\x2D\x31\x02";
     var f = 0;
     while (f < 12) { store64(&_fz_fields + f * 8, load8(fo + f)); f = f + 1; }
+    _fz_q = alloc(512);
+    _fz_ql = _net_dns_build(_fz_q, 0x4342, "www.example.com");
     return 0;
 }
 
