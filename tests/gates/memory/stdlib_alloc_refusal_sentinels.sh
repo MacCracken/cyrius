@@ -295,6 +295,15 @@ fn _recv_served(ws, n): i64 {
     return 1;
 }
 
+# A socketpair with a 101 and the frame FIN|TEXT "hi" queued on its server end. Returns the
+# client end (sv[0]); the server end is sv[4]. Allocates nothing.
+fn _hs_pair(sv): i64 {
+    syscall(53, 1, 1, 0, sv);                    # socketpair(AF_UNIX, SOCK_STREAM)
+    var r = "HTTP/1.1 101 Switching Protocols\r\n\r\n\x81\x02hi";
+    syscall(1, load32(sv + 4), r, 40);
+    return load32(sv);
+}
+
 # ws_connect's state, or -1 when it returned no handle.
 fn _connect_state(r): i64 {
     if (r == 0) { return 0 - 1; }
@@ -317,6 +326,18 @@ fn main(): i64 {
     # the refusal must come before any I/O)
     _fi_arm(1); _refused("ws_connect ws_new", 1, ws_connect(0 - 1, "/p", "h"), 0);
     _fi_arm(3); _refused("ws_connect request buf", 3, _connect_state(ws_connect(0 - 1, "/p", "h")), WS_CLOSED);
+
+    # 6.7.18 (audit finding 19): bytes the server sent past the 101's header block are kept in a
+    # buffer of their own (k=4, after ws_new, the key and the request) — a refused one is a CLOSED
+    # handle, never a copy into address 0. A socketpair: the 101 and a frame are queued first.
+    var sp[8];
+    _fi_arm(4); _refused("ws_connect pending bytes", 4, _connect_state(ws_connect(_hs_pair(&sp), "/p", "h")), WS_CLOSED);
+    var wc = 0;
+    _fi_arm(5); wc = ws_connect(_hs_pair(&sp), "/p", "h");
+    _served("ws_connect pending bytes", 5, _connect_state(wc) == WS_OPEN);
+    _fi_arm(2);
+    var hi = ws_recv(wc);
+    _served("ws_recv of the kept frame", 2, hi != 0 && streq(hi, "hi") == 1);
 
     # the sender allocates NOTHING (6.6.20): its masked copy was an alloc(len) taken after the
     # header was sent — refused for len > 0 it left a header with no payload, and alloc(0) made
@@ -529,7 +550,7 @@ _run_probe() {
 _run_probe probe; n=$_n
 [ "$n" -ge 67 ] || fail "only $n rows ran in probe (floor 67) — the probe is not exercising the sites it names"
 _run_probe ws_probe; nw=$_n
-[ "$nw" -ge 12 ] || fail "only $nw rows ran in ws_probe (floor 12)"
+[ "$nw" -ge 15 ] || fail "only $nw rows ran in ws_probe (floor 15; 12 until 6.7.18 added the three pending-bytes rows)"
 _run_probe wss_probe; ns=$_n
 [ "$ns" -ge 15 ] || fail "only $ns rows ran in wss_probe (floor 15; 11 until 6.6.19 added the four header-lookup rows)"
 _run_probe http_probe; nh=$_n

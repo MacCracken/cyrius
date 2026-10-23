@@ -1,0 +1,168 @@
+# ws_client_handshake_leftover.tcyr — 6.7.18 (audit finding 19): lib/ws.cyr's ws_connect keeps every
+# byte the server sent after the 101's header block, on every host target.
+#
+# ⛔ WHY. ws_connect did ONE read of at most 511 bytes, checked the "101" and dropped the rest: a
+# server that pushed its first frame in the same segment as the 101 lost that frame (the next
+# ws_recv returned the SECOND frame), and a header block over 511 bytes left its tail to be parsed
+# as frames (the stream desynchronised). Now the header block is read whole (up to 8 KiB) and what
+# follows it is kept in the handle, which the frame reader drains before the socket.
+# CHANGELOG [6.7.18]
+#
+# The peer is a plain loopback socket in this process: everything it sends is queued in the
+# kernel before the client reads, so the 101 and the frames arrive together.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _wl_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A connected loopback pair off listener `lfd`: slot[0] the client fd, slot[8] the server's. 1 on
+# success.
+fn _wl_pair(lfd, slot): i64 {
+    var ct, cfd = tcp_socket();
+    if (is_err_result(ct) == 1) { return 0; }
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), _wl_port(lfd));
+    if (is_err_result(kt) == 1) { return 0; }
+    var at, afd = sock_accept(lfd);
+    if (is_err_result(at) == 1) { return 0; }
+    sock_set_recv_timeout(cfd, 5, 0);
+    sock_set_recv_timeout(afd, 5, 0);
+    store64(slot, cfd);
+    store64(slot + 8, afd);
+    return 1;
+}
+
+# An unmasked server frame FIN|TEXT carrying the `n` < 126 bytes of `s`, at out. Returns its size.
+fn _wl_text(out, s, n): i64 {
+    store8(out, 0x81);
+    store8(out + 1, n);
+    memcpy(out + 2, s, n);
+    return 2 + n;
+}
+
+# The text payload of the next frame, or 0.
+fn _wl_next(ws): i64 {
+    if (ws_state(ws) != WS_OPEN) { return 0; }
+    return ws_recv(ws);
+}
+
+fn _wl_group(): i64 {
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "listener tcp_socket");
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "bind 127.0.0.1:0");
+    var st, sv = sock_listen(lfd, 8);
+    assert_eq(is_err_result(st), 0, "listen");
+    var r101 = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: x\r\n\r\n";
+    var rl = strlen(r101);
+    var w = alloc(16384);
+    var pr[16];
+
+    test_group("finding 19 — a frame in the 101's segment is the first ws_recv");
+    assert_eq(_wl_pair(lfd, &pr), 1, "connection 1");
+    var cfd = load64(&pr);
+    var afd = load64(&pr + 8);
+    memcpy(w, r101, rl);
+    var n = rl + _wl_text(w + rl, "hi", 2);
+    assert_eq(sock_send_all(afd, w, n), n, "the peer queues its 101 and frame 'hi' together");
+    var ws = ws_connect(cfd, "/", "localhost");
+    assert(ws != 0, "ws_connect returns a handle");
+    assert_eq(ws_state(ws), WS_OPEN, "… OPEN");
+    n = _wl_text(w, "yo", 2);
+    assert_eq(sock_send_all(afd, w, n), n, "the peer then sends 'yo'");
+    var m = _wl_next(ws);
+    assert(m != 0, "first ws_recv returns a frame");
+    if (m != 0) { assert_eq(streq(m, "hi"), 1, "… 'hi', the frame the 101 carried"); }
+    m = _wl_next(ws);
+    assert(m != 0, "second ws_recv returns a frame");
+    if (m != 0) { assert_eq(streq(m, "yo"), 1, "… 'yo'"); }
+    sock_close(afd);
+    sock_close(cfd);
+
+    test_group("finding 19 — a header block over 511 bytes, two frames and half a third");
+    assert_eq(_wl_pair(lfd, &pr), 1, "connection 2");
+    cfd = load64(&pr);
+    afd = load64(&pr + 8);
+    var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nX-Pad: ";
+    var hl = strlen(head);
+    memcpy(w, head, hl);
+    memset(w + hl, 0x7A, 600);
+    memcpy(w + hl + 600, "\r\n\r\n", 4);
+    n = hl + 604;
+    n = n + _wl_text(w + n, "one", 3);
+    n = n + _wl_text(w + n, "two", 3);
+    store8(w + n, 0x81);                          # the third frame's first byte only
+    n = n + 1;
+    assert_eq(sock_send_all(afd, w, n), n, "the peer queues a 690-byte 101, two frames and one byte of a third");
+    ws = ws_connect(cfd, "/", "localhost");
+    assert_eq(ws_state(ws), WS_OPEN, "… OPEN");
+    store8(w, 5);
+    memcpy(w + 1, "three", 5);
+    assert_eq(sock_send_all(afd, w, 6), 6, "the rest of the third frame follows");
+    m = _wl_next(ws);
+    if (m != 0) { assert_eq(streq(m, "one"), 1, "frame 1: 'one' (it was the X-Pad tail)"); } else { assert(0, "frame 1"); }
+    m = _wl_next(ws);
+    if (m != 0) { assert_eq(streq(m, "two"), 1, "frame 2: 'two'"); } else { assert(0, "frame 2"); }
+    m = _wl_next(ws);
+    if (m != 0) { assert_eq(streq(m, "three"), 1, "frame 3: 'three', split across the kept bytes and the socket"); } else { assert(0, "frame 3"); }
+    sock_close(afd);
+    sock_close(cfd);
+
+    test_group("a header block over 8 KiB fails the handshake");
+    assert_eq(_wl_pair(lfd, &pr), 1, "connection 3");
+    cfd = load64(&pr);
+    afd = load64(&pr + 8);
+    memcpy(w, head, hl);
+    memset(w + hl, 0x7A, 9000);
+    memcpy(w + hl + 9000, "\r\n\r\n", 4);
+    n = hl + 9004;
+    assert_eq(sock_send_all(afd, w, n), n, "the peer queues a 9 KiB header block");
+    ws = ws_connect(cfd, "/", "localhost");
+    assert(ws != 0, "ws_connect returns a handle");
+    assert_eq(ws_state(ws), WS_CLOSED, "… CLOSED");
+    sock_close(afd);
+    sock_close(cfd);
+
+    test_group("a 101 alone still opens, and the stream reads from the socket");
+    assert_eq(_wl_pair(lfd, &pr), 1, "connection 4");
+    cfd = load64(&pr);
+    afd = load64(&pr + 8);
+    assert_eq(sock_send_all(afd, r101, rl), rl, "the peer queues its 101");
+    ws = ws_connect(cfd, "/", "localhost");
+    assert_eq(ws_state(ws), WS_OPEN, "… OPEN");
+    n = _wl_text(w, "solo", 4);
+    assert_eq(sock_send_all(afd, w, n), n, "the peer sends 'solo'");
+    m = _wl_next(ws);
+    if (m != 0) { assert_eq(streq(m, "solo"), 1, "… 'solo'"); } else { assert(0, "the frame"); }
+    sock_close(afd);
+    sock_close(cfd);
+    sock_close(lfd);
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    _wl_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

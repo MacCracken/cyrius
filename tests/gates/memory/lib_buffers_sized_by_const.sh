@@ -139,12 +139,14 @@ need lib/async_macos.cyr 1 'alloc_via\(load64\(rt \+ 32\), _AKM_SIZE\)' "the kqu
 # 6.7.18
 need lib/ws_server.cyr 1 'var cbuf\[_WSS_CBUF\];' "ws_server_recv's control-frame buffer (CYRIUS-2026-0043)"
 need lib/ws_server.cyr 1 'if \(part > _WSS_CBUF\) \{ part = _WSS_CBUF; \}' "the reserved-opcode drain reads the chunk it sized"
+need lib/ws.cyr 1 'var resp\[_WS_HS_MAX\];' "ws_connect's header-block buffer (audit finding 19)"
+need lib/ws.cyr 1 '_net_os_recv\(sock, &resp \+ got, _WS_HS_MAX - got\)' "the handshake read fills no more than it sized"
 
 echo "axis 2 — each private bound is a const:"
 for row in "lib/log.cyr:_LOG_LINE_MAX" "lib/math.cyr:_F64P_DEC_CAP" "lib/process.cyr:_PROC_KILL_STATE" \
            "lib/thread_win.cyr:_chan_wp_cap" "lib/process_win.cyr:_WIN_JOB_SLOTS" "lib/async_macos.cyr:_KEV_BATCH" \
            "lib/tls_native_hs12.cyr:_TLS12_SEED_LEN" "lib/regex.cyr:_RE_MAX_SPLITS" "lib/freelist.cyr:_FL_NCLASSES" \
-           "lib/dynlib.cyr:_DYNLIB_MAX" "lib/ws_server.cyr:_WSS_CBUF"; do
+           "lib/dynlib.cyr:_DYNLIB_MAX" "lib/ws_server.cyr:_WSS_CBUF" "lib/ws.cyr:_WS_HS_MAX"; do
     f=${row%%:*}; c=${row#*:}
     if grep -qE "^const $c *= " "$f" && ! grep -qE "^var $c\b" "$f"; then _ok "$f: $c is a const"
     else _fail "$f: $c is not a top-level const (or a var of its name is back) — a var cannot size a buffer, so the buffer and its bound split into two copies again"; fi
