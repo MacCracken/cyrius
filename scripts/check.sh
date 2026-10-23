@@ -1575,6 +1575,10 @@ _chk_gate "$ROOT/tests/gates/codegen/dead_code_floor.sh"
 # binary search. Serial ratio rows (8x the fns under 10x) on x86 and aarch64, and an exactness row:
 # a call after a generic instance nested in a dead fn is still inside it.
 _chk_gate "$ROOT/tests/gates/codegen/dce_seed_pass_linear.sh"
+# 6.7.18 (optimize) — the DCE propagation reaches every fn a live fn calls: it was a fixpoint capped at 512 rounds, and
+# a call chain defined callee-first needs a round per link, so a 700-deep chain's tail was noted unreachable and
+# CYRIUS_DCE=1 NOP-filled it (exit 132, not 188). A worklist now, each live body scanned once (x86 and aarch64).
+_chk_gate "$ROOT/tests/gates/codegen/dce_propagation_closure.sh"
 
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.

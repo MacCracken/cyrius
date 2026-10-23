@@ -74,6 +74,50 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 # backends together: the defect is in the shared shape, not in one target's emitter.
 var _wx_dbase_frozen = 0;
 
+# THE PROPAGATION, the x86 backend's `_dce_x86_prop` for BL / B: every live fn's body is scanned once,
+# and a fn its scan marks live joins the worklist. It was a fixpoint over every live body per round
+# (capped at 512 rounds); the live set is the same. `lv` is FIXUP's live bitmap. CHANGELOG [6.7.18]
+fn _dce_a64_prop(S, lv, b_base, fnc, acp): i64 {
+    var wl = alloc(fnc * 8 + 8);
+    var wn = 0;
+    var fi = 0;
+    while (fi < fnc) {
+        if ((load8(lv + (fi >> 3)) & (1 << (fi & 7))) != 0) { store64(wl + wn * 8, fi); wn = wn + 1; }
+        fi = fi + 1;
+    }
+    var wk = 0;
+    while (wk < wn) {
+        fi = load64(wl + wk * 8);
+        wk = wk + 1;
+        var pfs = L64(_fnt_offsets + fi * 8);
+        var pfe = GFNE(S, fi);
+        if (pfs >= 0 && pfe > pfs) {
+            var pscn = pfs;
+            while (pscn + 4 <= pfe) {
+                var pinsn = load32(b_base + pscn);
+                var p_op_hi = (pinsn >> 24) & 0xFF;
+                if ((p_op_hi & 0xFC) == 0x94 || (p_op_hi & 0xFC) == 0x14) {
+                    var pimm26 = pinsn & 0x3FFFFFF;
+                    if (pimm26 >= 0x2000000) { pimm26 = pimm26 - 0x4000000; }
+                    var ptgt = pscn + pimm26 * 4;
+                    if (ptgt >= 0 && ptgt < acp) {
+                        # v6.1.5: fn_start -> fi by hash (_dce_hash_lookup).
+                        var phit = _dce_hash_lookup(S, ptgt);
+                        if (phit >= 0) {
+                            if ((load8(lv + (phit >> 3)) & (1 << (phit & 7))) == 0) {
+                                store8(lv + (phit >> 3), load8(lv + (phit >> 3)) | (1 << (phit & 7)));
+                                if (phit < fnc) { store64(wl + wn * 8, phit); wn = wn + 1; }
+                            }
+                        }
+                    }
+                }
+                pscn = pscn + 4;
+            }
+        }
+    }
+    return wk;
+}
+
 fn FIXUP(S): i64 {
     _esx_stubs_drained();   # 6.6.18: a `bl .` placeholder left unpatched would loop for ever
     # Check for Mach-O ARM64 output mode
@@ -421,60 +465,11 @@ fn FIXUP(S): i64 {
         scn = scn + 4;
     }
     if (dce_dbg == 1) { syscall(SYS_WRITE, 2, "[dce] aarch64 seed done\n", 24); }
-    # Propagate: for each live fn, scan its body for BL/B and mark
-    # targets live. Fixpoint loop.
-    var changed = 1;
-    var iters = 0;
-    while (changed == 1 && iters < 512) {
-        changed = 0;
-        iters = iters + 1;
-        if (dce_dbg == 1) {
-            syscall(SYS_WRITE, 2, "[dce] aarch64 prop iter=", 24);
-            PRNUM(iters);
-            syscall(SYS_WRITE, 2, "\n", 1);
-        }
-        var pfi = 0;
-        while (pfi < fnc) {
-            var phl = load8(&live + (pfi >> 3)) & (1 << (pfi & 7));
-            if (phl != 0) {
-                var pfs = L64(_fnt_offsets + pfi * 8);
-                var pfe = GFNE(S, pfi);
-                if (pfs >= 0 && pfe > pfs) {
-                    var pscn = pfs;
-                    while (pscn + 4 <= pfe) {
-                        var pinsn = load32(b_base + pscn);
-                        var p_op_hi = (pinsn >> 24) & 0xFF;
-                        var p_is_bl = 0;
-                        var p_is_b = 0;
-                        if ((p_op_hi & 0xFC) == 0x94) { p_is_bl = 1; }
-                        if ((p_op_hi & 0xFC) == 0x14) { p_is_b = 1; }
-                        if (p_is_bl == 1 || p_is_b == 1) {
-                            var pimm26 = pinsn & 0x3FFFFFF;
-                            if (pimm26 >= 0x2000000) { pimm26 = pimm26 - 0x4000000; }
-                            var ptgt = pscn + pimm26 * 4;
-                            if (ptgt >= 0 && ptgt < acp) {
-                                # v6.1.5: probe hoisted to common/runtime.cyr
-                                # (_dce_hash_lookup) — byte-identical.
-                                var phit = _dce_hash_lookup(S, ptgt);
-                                if (phit >= 0) {
-                                    var prev_live = load8(&live + (phit >> 3)) & (1 << (phit & 7));
-                                    if (prev_live == 0) {
-                                        store8(&live + (phit >> 3), load8(&live + (phit >> 3)) | (1 << (phit & 7)));
-                                        changed = 1;
-                                    }
-                                }
-                            }
-                        }
-                        pscn = pscn + 4;
-                    }
-                }
-            }
-            pfi = pfi + 1;
-        }
-    }
+    # Propagate: each live fn's body is scanned for its calls once (`_dce_a64_prop`). CHANGELOG [6.7.18]
+    var scanned = _dce_a64_prop(S, &live, b_base, fnc, acp);
     if (dce_dbg == 1) {
-        syscall(SYS_WRITE, 2, "[dce] aarch64 prop done iters=", 30);
-        PRNUM(iters);
+        syscall(SYS_WRITE, 2, "[dce] aarch64 prop done scanned=", 32);
+        PRNUM(scanned);
         syscall(SYS_WRITE, 2, "\n", 1);
     }
     # Sweep: count dead fns + optionally NOP-fill bodies.

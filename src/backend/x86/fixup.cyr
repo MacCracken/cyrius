@@ -152,6 +152,52 @@ var _dce_cm_n = 0;
 var _dce_sp = 0;      # spans, 16 B each: start offset, state (0 not walked, 1 walked, 2 byte scan)
 var _dce_sp_n = 0;
 var _dce_code_end = 0;   # GCP at FIXUP's entry, before it rounds the code up to 8
+# THE PROPAGATION. Every live fn's body is scanned for E8 / E9 calls ONCE, and a fn its scan marks
+# live joins the worklist. Until 6.7.18 this was a fixpoint over EVERY live body per round, until a
+# round marked nothing (10 rounds and ~28 M bytes walked in a self-compile, capped at 512 rounds);
+# reachability has one closure, so the live set is the same. `lv` is FIXUP's live bitmap; returns
+# the number of bodies scanned. CHANGELOG [6.7.18]
+fn _dce_x86_prop(S, lv, b_base, fnc, acp): i64 {
+    var wl = alloc(fnc * 8 + 8);
+    var wn = 0;
+    var fi = 0;
+    while (fi < fnc) {
+        if ((load8(lv + (fi >> 3)) & (1 << (fi & 7))) != 0) { store64(wl + wn * 8, fi); wn = wn + 1; }
+        fi = fi + 1;
+    }
+    var wk = 0;
+    while (wk < wn) {
+        fi = load64(wl + wk * 8);
+        wk = wk + 1;
+        var pfs = L64(_fnt_offsets + fi * 8);
+        var pfe = GFNE(S, fi);
+        if (pfs >= 0 && pfe > pfs) {
+            var pscn = pfs;
+            while (pscn < pfe) {
+                var pop = load8(b_base + pscn);
+                if (pop == 0xE8 || pop == 0xE9) {
+                    if (pscn + 5 <= pfe) {
+                        var prel = load32(b_base + pscn + 1);
+                        if (prel >= 0x80000000) { prel = prel - 0x100000000; }
+                        var ptgt = pscn + 5 + prel;
+                        if (ptgt >= 0 && ptgt < acp) {
+                            # v5.10.41 / v6.1.5: fn_start -> fi by hash (_dce_hash_lookup).
+                            var phit = _dce_hash_lookup(S, ptgt);
+                            # 6.7.14: only from an instruction start (_dce_mark).
+                            if (phit >= 0) {
+                                if (_dce_mark(lv, phit, pscn) == 1) {
+                                    if (phit < fnc) { store64(wl + wn * 8, phit); wn = wn + 1; }
+                                }
+                            }
+                        }
+                    }
+                }
+                pscn = pscn + 1;
+            }
+        }
+    }
+    return wk;
+}
 # Marks fn fi live from the call at code offset p unless it already is or p is no instruction
 # start; 1 when it marked it.
 fn _dce_mark(live, fi, p): i64 {
@@ -743,55 +789,11 @@ fn FIXUP(S): i64 {
         scn = scn + 1;
     }
     if (dce_dbg == 1) { syscall(SYS_WRITE, 2, "[dce] x86 seed done\n", 20); }
-    # Propagate: for each live fn, find E8 calls inside its body and mark
-    # their targets live. Fixpoint loop.
-    var changed = 1;
-    var iters = 0;
-    while (changed == 1 && iters < 512) {
-        changed = 0;
-        iters = iters + 1;
-        if (dce_dbg == 1) {
-            syscall(SYS_WRITE, 2, "[dce] x86 prop iter=", 20);
-            PRNUM(iters);
-            syscall(SYS_WRITE, 2, "\n", 1);
-        }
-        var pfi = 0;
-        while (pfi < fnc) {
-            var phl = load8(&live + (pfi >> 3)) & (1 << (pfi & 7));
-            if (phl != 0) {
-                var pfs = L64(_fnt_offsets + pfi * 8);
-                var pfe = GFNE(S, pfi);
-                if (pfs >= 0 && pfe > pfs) {
-                    var pscn = pfs;
-                    while (pscn < pfe) {
-                        var pop = load8(b_base + pscn);
-                        if (pop == 0xE8 || pop == 0xE9) {
-                            if (pscn + 5 <= pfe) {
-                                var prel = load32(b_base + pscn + 1);
-                                if (prel >= 0x80000000) { prel = prel - 0x100000000; }
-                                var ptgt = pscn + 5 + prel;
-                                if (ptgt >= 0 && ptgt < acp) {
-                                    # v5.10.41: hash lookup fn_start → fi via 0x114000.
-                                    # v6.1.5: probe hoisted to common/runtime.cyr
-                                    # (_dce_hash_lookup) — byte-identical.
-                                    var phit = _dce_hash_lookup(S, ptgt);
-                                    # 6.7.14: only from an instruction start (_dce_mark).
-                                    if (phit >= 0) {
-                                        if (_dce_mark(&live, phit, pscn) == 1) { changed = 1; }
-                                    }
-                                }
-                            }
-                        }
-                        pscn = pscn + 1;
-                    }
-                }
-            }
-            pfi = pfi + 1;
-        }
-    }
+    # Propagate: each live fn's body is scanned for its calls once (`_dce_x86_prop`). CHANGELOG [6.7.18]
+    var scanned = _dce_x86_prop(S, &live, b_base, fnc, acp);
     if (dce_dbg == 1) {
-        syscall(SYS_WRITE, 2, "[dce] x86 prop done iters=", 26);
-        PRNUM(iters);
+        syscall(SYS_WRITE, 2, "[dce] x86 prop done scanned=", 28);
+        PRNUM(scanned);
         syscall(SYS_WRITE, 2, "\n", 1);
     }
     # Sweep: count + (optionally) NOP-fill dead fns.
