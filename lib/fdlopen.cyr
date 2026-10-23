@@ -719,6 +719,10 @@ fn _fdlopen_hex64(v, out): i64 {
 #                     auxv pairs, AT_NULL
 # RSP must be 16-byte aligned at ld.so entry.
 # ---------------------------------------------------------------
+# Its words: argc, argv[0..3), argv's NULL and the empty envp's NULL (6), then the 16 auxv pairs
+# written below and AT_NULL (34).
+const _FDL_STACK_WORDS = 6 + 2 * 17;
+
 fn _fdlopen_build_stack(region, region_size, helper_info, ldso_info,
   auxv_buf, auxv_len, state_addr, cb_addr) {
     var region_top = region + region_size;
@@ -761,11 +765,11 @@ fn _fdlopen_build_stack(region, region_size, helper_info, ldso_info,
     # Align string-table bottom to 16 bytes (downward)
     sptr = sptr / 16 * 16;
 
-    # Space budget:
-    #   argc(1) + argv[0..2](3) + argv_null(1) + envp_null(1) = 6 u64
-    #   auxv pairs: 15 tag/value pairs + AT_NULL = 32 u64
-    #   Total 38 u64 = 304 bytes. Align down to 16.
-    var rsp = sptr - 304;
+    # Space budget (_FDL_STACK_WORDS): argc(1) + argv[0..2](3) + argv_null(1) + envp_null(1) = 6
+    # u64, then 16 auxv tag/value pairs + AT_NULL = 34 u64: 40 u64 = 320 bytes. Align down to 16.
+    # 6.7.18: the budget said 15 pairs (304 bytes), so AT_NULL landed on the first bytes of the
+    # helper path above it, and argv[0] / AT_EXECFN named "". CHANGELOG [6.7.18]
+    var rsp = sptr - _FDL_STACK_WORDS * 8;
     rsp = rsp / 16 * 16;
 
     # Fill forward from rsp
