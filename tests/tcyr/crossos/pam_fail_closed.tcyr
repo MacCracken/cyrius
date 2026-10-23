@@ -84,16 +84,7 @@ fn _pam_answer(status): i64 {   # the child's pam answer, or -100 - the signal t
 }
 fn _pam_sigpipe_rows(): i64 {
     test_group("pam: a long password or an early-exiting helper is an answer, never SIGPIPE");
-    var dn = alloc(64);
-    var dl = 0;
-    memcpy(dn, "/tmp/cyr_pam.", 13);
-    dl = 13;
-    var v = sys_getpid();
-    var dg[24];
-    var nd = 0;
-    while (nd == 0 || v > 0) { var q = v / 10; store8(&dg + nd, 48 + v - q * 10); nd = nd + 1; v = q; }
-    while (nd > 0) { nd = nd - 1; store8(dn + dl, load8(&dg + nd)); dl = dl + 1; }
-    store8(dn + dl, 0);
+    var dn = test_scratch("cyr_pam");   # "cyr_pam.<pid>" in the run's own cwd (gates_never_write_tree axis 6)
     _pam_dir = dn;
     # The name is predictable: only a directory THIS run created is private. One already there (a
     # directory or link another user planted in /tmp) is never written into or run from — the

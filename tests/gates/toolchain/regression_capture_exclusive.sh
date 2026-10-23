@@ -381,18 +381,17 @@ if command -v wine > /dev/null 2>&1 && command -v winepath > /dev/null 2>&1; the
         rm -rf "$_ws" || true
     }
     trap '_wine_down; rm -rf "$W"' EXIT
-    _wine() { ( cd "$W/wrun" && env WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' "$@" ); }
     a5b=0
     if ( cd "$ROOT" && "$CC" < src/main_win.cyr > "$W/cc_win" 2> /dev/null ) && chmod +x "$W/cc_win" \
        && ( cd "$ROOT" && "$W/cc_win" < cbt/cyrius.cyr > "$W/cyrius.exe" 2> "$W/pe.err" ) && [ -s "$W/cyrius.exe" ]; then
-        rc=0; _wine env WINEDEBUG=+file timeout 300 wine "$W/cyrius.exe" --version > "$W/w5v.out" 2> "$W/w5v.trace" || rc=$?
+        rc=0; ( cd "$W/wrun" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' WINEDEBUG=+file timeout 300 wine "$W/cyrius.exe" --version ) > "$W/w5v.out" 2> "$W/w5v.trace" || rc=$?
         grep -q '^cyrius ' "$W/w5v.out" || { fail "axis 5b: cyrius.exe --version did not run under wine (rc=$rc): $(head -c 200 "$W/w5v.out" | tr -d '\r')"; a5b=1; }
         if grep -q 'proc.self.environ' "$W/w5v.trace"; then
             fail "axis 5b: cyrius.exe opened the drive-relative /proc/self/environ: $(grep -m1 'proc.self.environ' "$W/w5v.trace" | cut -c1-160)"; a5b=1
         fi
-        WEXE=$(_wine winepath -w "$W/cyrius.exe" 2> /dev/null | tr -d '\r')
+        WEXE=$( cd "$W/wrun" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' winepath -w "$W/cyrius.exe" 2> /dev/null | tr -d '\r')
         printf '@echo off\r\nset USERPROFILE=\r\nset CYRIUS_HOME=\r\n%s --version\r\necho rc=%%errorlevel%%\r\n' "$WEXE" > "$W/wrun/nohome.bat"
-        _wine env WINEDEBUG=+file timeout 300 wine cmd /c nohome.bat > "$W/w5h.out" 2> "$W/w5h.trace" || true
+        ( cd "$W/wrun" && WINEPREFIX="$WP" HOME="$WHM" XDG_CACHE_HOME="$WHM/.cache" WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' WINEDEBUG=+file timeout 300 wine cmd /c nohome.bat ) > "$W/w5h.out" 2> "$W/w5h.trace" || true
         if ! grep -q 'rc=1' "$W/w5h.out" || ! grep -q 'neither CYRIUS_HOME nor USERPROFILE is set' "$W/w5h.out" "$W/w5h.trace"; then
             fail "axis 5b: with USERPROFILE and CYRIUS_HOME unset cyrius.exe did not refuse by name: $(tr -d '\r' < "$W/w5h.out" | tail -2 | tr '\n' ' ')"; a5b=1
         fi
