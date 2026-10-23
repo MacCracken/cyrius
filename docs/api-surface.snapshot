@@ -201,6 +201,7 @@ bayan::base64url_decode/2
 bayan::base64url_encode/2
 bayan::bayan_base64_decode/2
 bayan::bayan_base64_encode/2
+bayan::bayan_base64_last_error/0
 bayan::bayan_base64url_decode/2
 bayan::bayan_base64url_encode/2
 bayan::bayan_csv_escape/1
@@ -3528,6 +3529,8 @@ sigil::crl_version/1
 sigil::crypto_bank_set/1
 sigil::crypto_banks_claimed/0
 sigil::crypto_banks_exhausted/0
+sigil::crypto_lane_enter/0
+sigil::crypto_lane_leave/0
 sigil::crypto_tls_main_init/0
 sigil::der_algid_null/2
 sigil::der_ctx/2
@@ -3944,9 +3947,12 @@ sigil::policy_verify_on_boot/1
 sigil::policy_verify_on_execute/1
 sigil::policy_verify_on_install/1
 sigil::poly1305_finalize/1
+sigil::poly1305_finalize_into/2
 sigil::poly1305_init/1
+sigil::poly1305_init_into/2
 sigil::poly1305_mac/4
 sigil::poly1305_update/2
+sigil::poly1305_update_into/3
 sigil::poly1305_verify/4
 sigil::pt384_add/3
 sigil::pt384_alloc/0
@@ -4332,6 +4338,7 @@ sigil::x509_cert_alloc/0
 sigil::x509_cert_alloc_into/1
 sigil::x509_cert_curve/1
 sigil::x509_cert_eku/1
+sigil::x509_cert_has_name_constraints/1
 sigil::x509_cert_is_ca/1
 sigil::x509_cert_key_usage/1
 sigil::x509_cert_not_after/1
@@ -4341,6 +4348,10 @@ sigil::x509_cert_pubkey/1
 sigil::x509_cert_pubkey_len/1
 sigil::x509_cert_rsa_pubkey/1
 sigil::x509_cert_sig_algo/1
+sigil::x509_name_constraints_check/2
+sigil::x509_name_constraints_check_ca/2
+sigil::x509_nc_subtree/3
+sigil::x509_nc_subtree_count/1
 sigil::x509_parse/3
 sigil::x509_parse_into/4
 sigil::x509_verify_chain/5

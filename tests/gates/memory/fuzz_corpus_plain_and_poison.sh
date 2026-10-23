@@ -27,7 +27,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 NAME=fuzz_corpus_plain_and_poison
-FLOOR=11
+FLOOR=16   # 6.7.18: + the folds' parser harnesses (sigil_x509, bayan_json, sandhi_hpack / _headers / _dns)
 HSECS=${FUZZ_HARNESS_SECS:-120}
 RSECS=${FUZZ_RUN_SECS:-900}
 CC=${CYCC:-"$ROOT/build/cycc"}

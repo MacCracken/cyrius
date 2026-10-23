@@ -1,0 +1,285 @@
+# Fuzz: the HPACK decoders (RFC 7541) over attacker-controlled h2 header
+# blocks — sandhi_hpack_decode_field_a (and through it _hpack_int_decode,
+# _hpack_string_decode_a, sandhi_hpack_huffman_decode_a), each case with a
+# fresh decode table and arena. Prime attack surface: illegal index 0,
+# multi-byte integers past 2^32 (2^31 / 2^63 lengths, size updates), Huffman
+# literals with huge claimed lengths, truncations, size updates past the
+# advertised 4096, no-progress streams. A graceful error return passes; a
+# fault, an over-read (exit 134) or a broken invariant (the table past its
+# advertised 4096, a decode that succeeds without consuming input) fails, and
+# fuzz/fz_driver.cyr names the case and its seed.
+# 6.7.18: sandhi 1.13.7's fuzz/hpack.fcyr (release commit 6e649a3), run against the vendored
+# lib/sandhi.cyr; only its includes differ (sandhi's own reads its src/ modules after a
+# manifest-prepended stdlib).
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/mmap.cyr"
+include "lib/fnptr.cyr"
+include "lib/sandhi.cyr"
+include "fuzz/fz_driver.cyr"
+
+const _HP_CAP = 24000;
+var _hp_buf = 0;     # the case's block
+var _hp_txt = 0;     # scratch: a Huffman literal's plain text
+var _hp_seeds = 0;   # the valid seed blocks (RFC 7541 Appendix C), as {ptr, len} pairs
+var _hp_nseeds = 0;
+
+fn _hp_hexval(c) {
+    if (c >= 48 && c <= 57) { return c - 48; }
+    return c - 87;
+}
+
+# Store the lowercase-hex block `h` as a seed.
+fn _hp_seed(h) {
+    var n = strlen(h) / 2;
+    var b = alloc(n + 1);
+    var i = 0;
+    while (i < n) {
+        store8(b + i, _hp_hexval(load8(h + 2 * i)) * 16 + _hp_hexval(load8(h + 2 * i + 1)));
+        i = i + 1;
+    }
+    store64(_hp_seeds + _hp_nseeds * 16, b);
+    store64(_hp_seeds + _hp_nseeds * 16 + 8, n);
+    _hp_nseeds = _hp_nseeds + 1;
+    return 0;
+}
+
+# A seed whose hex is split across two literals (for line length).
+fn _hp_seed2(h1, h2) {
+    var n1 = strlen(h1);
+    var n2 = strlen(h2);
+    var h = alloc(n1 + n2 + 1);
+    memcpy(h, h1, n1);
+    memcpy(h + n1, h2, n2);
+    store8(h + n1 + n2, 0);
+    return _hp_seed(h);
+}
+
+# A declared length for a string of `n` octets: usually `n`; else 0, past
+# it, 2^31 - 1, 2^31 or 2^63 - 1.
+fn _hp_len(n) {
+    var r = fz_below(16);
+    if (r < 10) { return n; }
+    if (r == 10) { return 0; }
+    if (r == 11) { return n + 1 + fz_below(64); }
+    if (r == 12) { return 0x7fffffff; }
+    if (r == 13) { return 0x80000000; }
+    if (r == 14) { return 0x7fffffffffffffff; }
+    return n + 1;
+}
+
+# Append one string literal, raw or Huffman-coded.
+fn _hp_string(b, p) {
+    var n = fz_below(40);
+    if (fz_one_in(20) == 1) { n = fz_below(3000); }
+    if (p + n * 2 + 32 > _HP_CAP) { n = 0; }
+    if (fz_one_in(3) == 1) {
+        var i = 0;
+        while (i < n) { store8(_hp_txt + i, 32 + fz_below(95)); i = i + 1; }
+        store8(_hp_txt + n, 0);
+        var hl = sandhi_hpack_huffman_encoded_len(_hp_txt);
+        p = _hpack_int_encode(b, p, 0x80, 7, _hp_len(hl));
+        return sandhi_hpack_huffman_encode(b, p, _hp_txt);
+    }
+    p = _hpack_int_encode(b, p, 0, 7, _hp_len(n));
+    var j = 0;
+    while (j < n) { store8(b + p + j, fz_below(256)); j = j + 1; }
+    return p + n;
+}
+
+# An index: static, dynamic, 0, or past 2^31 / 2^63.
+fn _hp_index() {
+    var r = fz_below(12);
+    if (r < 6) { return 1 + fz_below(61); }
+    if (r < 9) { return 62 + fz_below(8); }
+    if (r == 9) { return 0; }
+    if (r == 10) { return 0x80000000; }
+    return 0x7fffffffffffffff;
+}
+
+# Append one header field representation (RFC 7541 §6).
+fn _hp_field(b, p) {
+    var kind = fz_below(10);
+    if (kind < 3) { return _hpack_int_encode(b, p, 0x80, 7, _hp_index()); }
+    if (kind == 9) {
+        var r = fz_below(7);
+        var v = fz_below(8192);
+        if (r == 0) { v = 0; } elif (r == 1) { v = 4096; } elif (r == 2) { v = 4097; }
+        elif (r == 3) { v = 0x10000000; } elif (r == 4) { v = 0x7fffffffffffffff; }
+        return _hpack_int_encode(b, p, 0x20, 5, v);
+    }
+    var hi = 0x40;
+    var bits = 6;
+    if (kind >= 6) { hi = 0x00; bits = 4; }
+    if (kind == 8) { hi = 0x10; }
+    var name_idx = 0;
+    if (fz_one_in(2) == 1) { name_idx = _hp_index(); }
+    p = _hpack_int_encode(b, p, hi, bits, name_idx);
+    if (name_idx == 0) { p = _hp_string(b, p); }
+    return _hp_string(b, p);
+}
+
+# Build case k's block into _hp_buf; its length.
+fn _hp_build(k) {
+    var b = _hp_buf;
+    var shape = k % 8;
+    if (shape == 0 && _hp_nseeds > 0) {
+        var si = fz_below(_hp_nseeds);
+        var sn = load64(_hp_seeds + si * 16 + 8);
+        memcpy(b, load64(_hp_seeds + si * 16), sn);
+        return fz_mutate(b, sn, _HP_CAP);
+    }
+    if (shape == 1) {
+        var rn = fz_below(512);
+        if (fz_one_in(8) == 1) { rn = fz_below(16385); }
+        var i = 0;
+        while (i < rn) { store8(b + i, fz_below(256)); i = i + 1; }
+        return rn;
+    }
+    var p = 0;
+    var nf = 1 + fz_below(24);
+    var f = 0;
+    while (f < nf && p < _HP_CAP - 6200) {
+        p = _hp_field(b, p);
+        f = f + 1;
+    }
+    if (fz_one_in(3) == 1) { p = fz_mutate(b, p, _HP_CAP); }
+    return p;
+}
+
+# Decode the block with a fresh table, folding every answer into the digest.
+fn _hp_decode(src, blen) {
+    var a = fz_arena();
+    var buf = fz_exact(a, src, blen);
+    var t = sandhi_hpack_table_new_a(a, 4096);
+    var off = alloc_via(a, 8);
+    var no = alloc_via(a, 8);
+    var vo = alloc_via(a, 8);
+    if (buf == 0 || t == 0 || off == 0 || no == 0 || vo == 0) { fz_mix(0 - 9); return 0; }
+    store64(off, 0);
+    var fields = 0;
+    while (load64(off) < blen) {
+        var prev = load64(off);
+        var r = sandhi_hpack_decode_field_a(a, t, buf, blen, off, no, vo);
+        fz_mix(r);
+        if (r < 0) { break; }
+        if (r == 0) {
+            fz_mix_cstr(load64(no));
+            fz_mix_cstr(load64(vo));
+        } else {
+            fz_mix(load64(vo));
+        }
+        if (load64(off) <= prev) { syscall(60, 4); }      # success without consuming input
+        fields = fields + 1;
+    }
+    fz_mix(fields);
+    fz_mix(sandhi_hpack_table_count(t));
+    fz_mix(sandhi_hpack_table_size(t));
+    if (sandhi_hpack_table_max_size(t) > 4096) { syscall(60, 3); }   # past the advertised size
+    if (sandhi_hpack_table_size(t) > sandhi_hpack_table_max_size(t)) { syscall(60, 3); }
+    sandhi_hpack_table_set_max_size(t, 0);                # frees the entries
+    # The Huffman decoder alone, over a random window of the block.
+    if (blen > 0) {
+        var st = fz_below(blen);
+        var hs = sandhi_hpack_huffman_decode_a(a, buf, st, fz_below(blen - st + 1));
+        fz_mix_cstr(hs);
+    }
+    return 0;
+}
+
+fn _hp_case(k) {
+    var n = _hp_build(k);
+    fz_mix(n);
+    _hp_decode(_hp_buf, n);
+    return 0;
+}
+
+fn _hp_decode_stream(buf, blen) {
+    var t = sandhi_hpack_table_new(4096);
+    var off = alloc(8); store64(off, 0);
+    var no = alloc(8); var vo = alloc(8);
+    var guard = 0;
+    while (load64(off) < blen && guard < 20000) {
+        var prev = load64(off);
+        if (sandhi_hpack_decode_field(t, buf, blen, off, no, vo) < 0) { return 0; }
+        if (load64(off) <= prev) { return 0; }
+        guard = guard + 1;
+    }
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _hp_buf = alloc(_HP_CAP + 64);
+    _hp_txt = alloc(3100);
+    _hp_seeds = alloc(16 * 8);
+    _hp_seed("828684410f7777772e6578616d706c652e636f6d");               # C.3.1
+    _hp_seed("828684be58086e6f2d6361636865");                           # C.3.2
+    _hp_seed("828785bf400a637573746f6d2d6b65790c637573746f6d2d76616c7565");  # C.3.3
+    _hp_seed("828684418cf1e3c2e5f23a6ba0ab90f4ff");                     # C.4.1
+    _hp_seed("828684be5886a8eb10649cbf");                               # C.4.2
+    _hp_seed2("488264025885aec3771a4b6196d07abe941054d444a8200595040b8166e082a62d1bff",
+      "6e919d29ad171863c78f0b97c8e9ae82ae43d3");                       # C.6.1
+    _hp_seed("3fe11f82");                                               # a size update to 4096, :method GET
+
+    # --- baseline: 0x82 = indexed static[2] (:method GET) must decode ---
+    var b0[2]; store8(&b0, 0x82); store8(&b0 + 1, 0);
+    var t0 = sandhi_hpack_table_new(0);
+    var off0 = alloc(8); store64(off0, 0);
+    var n0 = alloc(8); var v0 = alloc(8);
+    if (sandhi_hpack_decode_field(t0, &b0, 1, off0, n0, v0) != 0) { syscall(60, 10); }
+    # --- and every seed decodes whole (C.3.2 / C.4.2 name C.3.1's / C.4.1's
+    #     entry: each runs on the table its predecessor filled) ---
+    var ts = sandhi_hpack_table_new(4096);
+    var si = 0;
+    while (si < _hp_nseeds) {
+        if (si == 3 || si == 5) { ts = sandhi_hpack_table_new(4096); }
+        var sb = load64(_hp_seeds + si * 16);
+        var sn = load64(_hp_seeds + si * 16 + 8);
+        var so = alloc(8); store64(so, 0);
+        while (load64(so) < sn) {
+            if (sandhi_hpack_decode_field(ts, sb, sn, so, n0, v0) < 0) { syscall(60, 11 + si); }
+        }
+        si = si + 1;
+    }
+
+    # --- adversarial first-byte patterns, each padded with 0xff…0x7f to force a
+    #     multi-byte integer continuation (varint bomb probe) ---
+    var pats[64];
+    store64(&pats + 0,  0x80);   # indexed, index 0 (illegal)
+    store64(&pats + 8,  0xff);   # indexed, 7-bit prefix all-ones → continuation
+    store64(&pats + 16, 0x40);   # literal w/ incremental indexing, new name
+    store64(&pats + 24, 0x7f);   # literal incremental, 6-bit prefix all-ones
+    store64(&pats + 32, 0x0f);   # literal without indexing, 4-bit prefix all-ones
+    store64(&pats + 40, 0x1f);   # literal never-indexed, prefix all-ones
+    store64(&pats + 48, 0x20);   # dynamic table size update
+    store64(&pats + 56, 0x3f);   # dyn size update, 5-bit prefix all-ones
+    var pi = 0;
+    while (pi < 8) {
+        var pb = alloc(11);
+        store8(pb, load64(&pats + pi * 8));
+        var q = 1;
+        while (q < 10) { store8(pb + q, 0xff); q = q + 1; }
+        store8(pb + 10, 0x7f);
+        _hp_decode_stream(pb, 9);
+        _hp_decode_stream(pb, 11);
+        pi = pi + 1;
+    }
+
+    # --- truncated literal: says len=10 but only 2 bytes follow ---
+    var tr = alloc(4);
+    store8(tr, 0x00);       # literal without indexing, new name
+    store8(tr + 1, 0x0a);   # name length = 10
+    store8(tr + 2, 65); store8(tr + 3, 66);   # only 2 bytes
+    _hp_decode_stream(tr, 4);
+
+    # --- the seeded mutation corpus ---
+    return fz_run("hpack fuzz", 20000, &_hp_case);
+}
+
+var _ec = main();
+syscall(60, _ec);

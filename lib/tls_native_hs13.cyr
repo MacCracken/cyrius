@@ -1604,8 +1604,8 @@ fn _tn_load_cert(ctx): i64 {
     var cert_len = load64(ctx + TLS_CTX_OFF_CERT_LEN);
     if (cert == 0) { return TLS_ERR_INVALID_PARAM; }
     if (cert_len <= 0) { return TLS_ERR_INVALID_PARAM; }
-    # v6.2.25: parse the leaf into the per-connection arena (272 B/handshake leak
-    # otherwise). _tn_arena(ctx)==0 → global bump (byte-identical to a==0).
+    # v6.2.25: parse the leaf into the per-connection arena (otherwise X509_CERT_SIZE — 304 B —
+    # leaked per handshake). _tn_arena(ctx)==0 → global bump (byte-identical to a==0).
     var leaf = x509_cert_alloc_into(_tn_arena(ctx));
     if (leaf == 0) { return TLS_ERR_OOM; }
     if (x509_parse_into(cert, cert_len, leaf, _tn_arena(ctx)) != 1) { return TLS_ERR_CERT_INVALID; }
