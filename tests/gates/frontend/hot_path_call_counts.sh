@@ -42,6 +42,9 @@
 #      every name that is not a fn) each walked all N impls, testing a prefix (`_tr_pfx`) per impl — the parent:
 #      160,800 `_tr_pfx` calls at 200 impls, 641,600 at 400 (3.99x). Bound: 400 impls under 3x the `_tr_pfx` calls
 #      of 200 (the tree: 2,000 -> 4,096, 2.05x); the 400-impl program exits 72.
+#   T2 the same programs: pass 1's re-read of a signature named a struct declared after it by scanning every struct
+#      slot from its own (`_psig_late_name`, parse/fn/def.cyr); FINDSTRUCT's index answers it. The parent: 87,211
+#      STREQ calls at 200 impls, 334,603 at 400 (3.84x; the gate reads 383%). Bound: under 3x (the tree: 8,208 -> 16,624, 2.03x).
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -54,6 +57,7 @@
 # G: the parent of its fix -> RED (1,918,276 calls); `_cl_wcopy` through L64 / S64 again -> RED.
 # T: the parent of its fix -> RED (399%); `_tix_cands` handing back every impl below `_ti_n` (the walk's list, the
 # same answers) -> RED.
+# T2: the parent of its fix -> RED (383%); `_tr_providers` walking every impl again (same answer) -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -168,14 +172,19 @@ tgen() {  # tgen n > file: one trait, n structs each with its impl, a fn calling
 }
 tgen 200 > "$D/t1.cyr"; tgen 400 > "$D/t2.cyr"
 if run "$D/t1.cyr"; then
-    P1=$(count _tr_pfx)
+    P1=$(count _tr_pfx); Q1=$(count STREQ)
     if run "$D/t2.cyr"; then
-        P2=$(count _tr_pfx)
+        P2=$(count _tr_pfx); Q2=$(count STREQ)
         chmod +x "$D/prog"; trc=0; "$D/prog" || trc=$?
         if [ "$trc" -ne 72 ]; then echo "FAIL: $G [T]: the 400-impl program exits $trc, not 72"; FAIL=1
         elif [ "$P1" -lt 1 ] || [ "$P2" -ge $((P1 * 3)) ]; then
             echo "FAIL: $G [T]: _tr_pfx calls $P1 (200 impls) -> $P2 (400): $((P2 * 100 / (P1 + 1)))% (bound 300%)"; FAIL=1
         else echo "  ok [T] _tr_pfx calls $P1 (200 impls) -> $P2 (400), $((P2 * 100 / P1))% (bound 300%)"; fi
+        if [ "$trc" -eq 72 ]; then
+            if [ "$Q1" -lt 1 ] || [ "$Q2" -ge $((Q1 * 3)) ]; then
+                echo "FAIL: $G [T2]: STREQ calls $Q1 (200 impls) -> $Q2 (400): $((Q2 * 100 / (Q1 + 1)))% (bound 300%)"; FAIL=1
+            else echo "  ok [T2] STREQ calls $Q1 (200 impls) -> $Q2 (400), $((Q2 * 100 / Q1))% (bound 300%)"; fi
+        fi
     fi
 fi
 
