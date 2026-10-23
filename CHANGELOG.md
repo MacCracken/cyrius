@@ -25,11 +25,22 @@ cleanup lane (the reviews' notes, fixed) and the refold lane (reviewed once): th
 the user's tags — sigil 3.13.15, sandhi 1.13.7, bayan 1.11.1 — and CYRIUS-2026-0042's native-TLS side. The merged
 tree's check.sh reds were fixed on the integration branch.**
 
-⟪GATE⟫
+**Release gate GREEN** (`release-gate.sh` on `fa81222a4`, 2026-10-23): fixpoint 2,929,832 B; ARM lockstep 3,155,368 B;
+seed-derive OK; check.sh 128 / 128 driver rows, 600 / 600 shell gates (0 SKIPs); ecb, ach, cass and pi `SELFHOST_OK` +
+`LIBTEST_OK` on the full `tests/tcyr` corpus. (The first run, on `b9b11e19a`, was RED on ecb: two new rows compiled into
+nothing on targets they do not cover — 0 assertions; each now runs its rows or a SKIP by name, `fa81222a4`.)
 
-⟪SIZE⟫
+**Size:** cycc **2,929,832 B** (`.text` **2,762,608**), +6,296 B over 6.7.17's 2,923,536 (`.text` 2,760,176; +2,432) —
+the audit's fixes and the frontend's 6.7.18 growth nearly cancelled by the giant-fn extraction and the optimize lane.
+`build/cycc-native-aarch64` **3,155,368 B** (+2,192 B; 1.077× the x86 compiler). Dead-code floor 51 fns / 10,376 B (x86;
+6.7.17: 51 / 10,376).
 
-⟪BENCH⟫
+**Bench:** self_compile **978 ms** (the gate's run; `bench-history.sh` 987 ms). Same-box A/B (min of 6, load ~0.4): 6.7.17
+compiling its own sources 1,566 ms → 6.7.18 compiling its own 984 ms (**−37.2 %**). On the SAME input (6.7.17's sources)
+the compiler is **−33.3 %** (1,566 → 1,045 ms); the input itself got cheaper (6.7.17's compiler takes 1,428 ms on 6.7.18's
+sources, −8.8 % — the splits, the giant-fn extraction and the deduped walkers). The optimize lane's work: token accessors
+read memory directly, a DCE worklist, struct / trait / fn-name indexes, a masked-word FINDLOCAL, a character-class table,
+`_ti_by_ti` by binary search, `_tok_name_decl`'s walk reused; `hot_path_call_counts.sh` pins each by call count.
 
 **Security:** the 2026-10-22 audit's 13 vulnerabilities, each with its attacker and boundary (the audit report has the
 repros and the verifiers' runs); the next ledger id is `CYRIUS-2026-0051`.
