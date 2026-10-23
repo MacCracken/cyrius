@@ -1255,6 +1255,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_tcyr_home_has_helper.sh"
 # through its last fn. It read a fixed 256 KB, and parse_decl / parse_expr / parse_fn had
 # outgrown that, so a direct emit in their tails was never scanned.
 _chk_gate "$ROOT/tests/gates/toolchain/check_parse_drift_reads_whole.sh"
+# 6.7.18: the CVE-05 NPOS_GUARD scan fails BY NAME on a file it names and cannot find — it skipped one in
+# silence, so a split or a rename under its list scanned nothing and read PASS.
+_chk_gate "$ROOT/tests/gates/toolchain/check_cve05_scan_names_missing.sh"
 # 6.6.12 B12 (T4): a .tcyr whose data file is missing fails WITH A COUNT, never a signal.
 # text/unicode_normconf.tcyr run outside the repo root printed its FAIL, then stored its
 # terminator at corpus + (-ENOENT) — 2 bytes before a fresh mapping — and died of SIGSEGV
