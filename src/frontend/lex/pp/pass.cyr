@@ -293,6 +293,15 @@ fn _xm_end(): i64 {
     return 0;
 }
 
+# Copy `n` bytes from `src` to `dst` (regions that do not overlap), a word at a time. PP_IFDEF_PASS copies the whole
+# expanded unit twice per include round — 15 M byte stores in a self-compile. CHANGELOG [6.7.18]
+fn _pp_copy(dst, src, n): i64 {
+    var i = 0;
+    while (i + 8 <= n) { store64(dst + i, load64(src + i)); i = i + 8; }
+    while (i < n) { store8(dst + i, load8(src + i)); i = i + 1; }
+    return 0;
+}
+
 fn PP_PASS(S): i64 {
     _xm_reset();   # 6.7.17: the expansion map starts here (`_xm`, util.cyr)
     var bl = GBL(S);
@@ -866,8 +875,7 @@ fn PP_IFDEF_PASS(S): i64 {
         had_new_include = 0;
         var bl = GBL(S);
         # Copy the preprocessed source to the temp buffer
-        var ci = 0;
-        while (ci < bl) { store8(tmp + ci, load8(S + 0x459D000 + ci)); ci = ci + 1; }
+        _pp_copy(tmp, S + 0x459D000, bl);
         # Redirect S-based reads to the temp buffer by copying back to S + _SRCB
         # for helpers (PP_DEFINE, PP_DEFINED, PP_EVAL_IF, PP_DERIVE_*,
         # PP_SKIPLINE) that take `S` as a base pointer and touch other
@@ -883,8 +891,7 @@ fn PP_IFDEF_PASS(S): i64 {
         # sees the full buffer regardless of where directives land.
         var cap = bl;
         if (cap > 1048576) { cap = 1048576; }
-        ci = 0;
-        while (ci < cap) { store8(S + _SRCB + ci, load8(tmp + ci)); ci = ci + 1; }
+        _pp_copy(S + _SRCB, tmp, cap);
         var out = S + 0x459D000;
         var op = 0;
         var ip = 0;
@@ -914,9 +921,13 @@ fn PP_IFDEF_PASS(S): i64 {
             # `dip` lets `#`-prefixed directives tolerate leading
             # whitespace — see PP_PASS for the rationale. v5.8.40 —
             # also gated on `in_string == 0`.
-            var dip = PP_SKIP_WS(tmp, ip, bl);
+            # 6.7.18: `dip` is read only on a line start outside a string (the block below, and `open0`, which
+            # moves only when that block opens a level) — skipping blanks from every byte was 7.6 M calls in a
+            # self-compile. CHANGELOG [6.7.18]
+            var dip = ip;
             var d0 = pp_depth;
             if (bol == 1 && in_string == 0) {
+                dip = PP_SKIP_WS(tmp, ip, bl);
                 # v6.5.0 Phase 1 — remember which file we are copying FROM, so a nested
                 # include below can emit a correct RESUME marker. This only OBSERVES the
                 # marker; it is still copied through verbatim by the default path, so the
@@ -1102,8 +1113,13 @@ fn PP_IFDEF_PASS(S): i64 {
                 # v5.8.40 — string-literal state machine; mirrors PP_PASS.
                 # v6.6.6 — both copies are now PP_LEXST, and the string state is
                 # no longer reset at every newline. CHANGELOG [6.6.6]
-                if (load8(tmp + ip) == 35) { lst = PP_LEXST_AT(tmp, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(tmp + ip)); }
-                in_string = PP_LEXST_INSTR(lst);
+                # 6.7.18: a byte that cannot move the machine skips it (directive.cyr, above PP_LEXST_INSTR).
+                var adv = 1;
+                if (lst == 0) { if (c != 34) { if (c != 35) { if (c != 39) { adv = 0; } } } } elif (lst == 3) { if (c != 10) { adv = 0; } }
+                if (adv == 1) {
+                    if (load8(tmp + ip) == 35) { lst = PP_LEXST_AT(tmp, ip, bl, lst); } else { lst = PP_LEXST(lst, load8(tmp + ip)); }
+                    in_string = PP_LEXST_INSTR(lst);
+                }
                 ip = ip + 1;
                 if (c == 10) { bol = 1; } else { bol = 0; }
             }
