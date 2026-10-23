@@ -126,6 +126,15 @@ fn _tr_prepass(S): i64 {
         if (tn != 0) { S64(_ti_tab + i * 64 + 48, _tr_find(S, tn)); }
         i = i + 1;
     }
+    # 6.7.18: `_ti_by_ti` bisects the `impl` tokens when they ascend — they do: the walk above is the only
+    # caller of `_tr_scan_impl` and moves only forward. Checked here rather than assumed. CHANGELOG [6.7.18]
+    _ti_asc = 1;
+    i = 1;
+    while (i < _ti_n) {
+        if (load64(_ti_tab + i * 64 + 32) <= load64(_ti_tab + (i - 1) * 64 + 32)) { _ti_asc = 0; }
+        i = i + 1;
+    }
+    _ti_asc_n = _ti_n;
     return 0;
 }
 fn _tr_find(S, noff): i64 {
@@ -197,6 +206,7 @@ fn _tr_scan_impl(S, ti): i64 {
     var end = _tr_brace_end(S, ob);
     if (_ti_n >= 4096) { _tr_cap(S, ti, "too many impl blocks (max 4096)", 31); return end; }
     var ii = _ti_n;
+    if (ii < _tix_n) { _tix_reset(); }   # 6.7.18: a slot the type-name index filed is written again
     S64(_ti_tab + ii * 64, trn);
     S64(_ti_tab + ii * 64 + 8, tn);
     S64(_ti_tab + ii * 64 + 16, _tim_n);
@@ -229,7 +239,23 @@ fn _tr_scan_im(S, p): i64 {
 
 # ── queries ─────────────────────────────────────────────────────────────────────────────────
 # The impl whose `impl` token is `ti`, -1 when none (no trait / impl tables, or not recorded).
+# 6.7.18: by bisection while the recorded tokens ascend (`_tr_prepass` checks it): each impl asks twice (its
+# prescan, its parse), so the scan below cost O(impls^2) (800 impls: 640,000 reads). Ascending tokens are unique, so
+# the bisection's hit is the scan's first; anything else takes the scan. CHANGELOG [6.7.18]
+var _ti_asc = 0;     # 1 when impls [0, _ti_asc_n) have strictly ascending `impl` tokens
+var _ti_asc_n = 0 - 1;
 fn _ti_by_ti(S, ti): i64 {
+    if (_ti_asc == 1 && _ti_asc_n == _ti_n) {
+        var lo = 0;
+        var hi = _ti_n;
+        while (lo < hi) {
+            var mid = (lo + hi) >> 1;
+            var v = load64(_ti_tab + mid * 64 + 32);
+            if (v == ti) { return mid; }
+            if (v < ti) { lo = mid + 1; } else { hi = mid; }
+        }
+        return 0 - 1;
+    }
     var i = 0;
     while (i < _ti_n) {
         if (L64(_ti_tab + i * 64 + 32) == ti) { return i; }
@@ -266,21 +292,101 @@ fn _ti_provides(S, ii, m): i64 {
     if (L64(_trm_tab + k * 32 + 16) != 0) { return 1; }
     return 0;
 }
+# ⚡ THE IMPLS BY TYPE NAME (6.7.18). `_tr_providers` (every impl method's prefix) and FINDFN's miss path
+# (`_tr_fb_qual`, `_tr_fb_ambig`: every name that is not a fn) walked EVERY impl, so a program of N impls
+# paid O(N^2): 800 impls 148 ms, 400 53 ms. FNV-1a of an impl's type name picks one of 1024 chains of impl
+# indices (index + 1; 0 ends a chain). `_tr_scan_impl` is the only writer of a type name and writes slot
+# `_ti_n` before counting it, so a counted slot's name never changes: the chains file the slots counted
+# since the last query, and `_tr_scan_impl` empties them if it ever writes a slot already filed. A query
+# reads only slots under `_ti_n` (`_fnw_findfn` zeroes it for a while). Every answer is the walk's: the
+# provider count does not depend on order, and the miss path takes its candidates (the impls whose type
+# name is a prefix of the name, up to a `_`) in ascending order, as the walk met them.
+# tests/gates/frontend/hot_path_call_counts.sh row T. CHANGELOG [6.7.18]
+var _tix_head = 0;   # 1024 chain heads
+var _tix_next = 0;   # per impl slot (4096): the next slot + 1 on its chain
+var _tix_n = 0;      # slots filed
+var _tix_cb = 0;     # `_tix_cands`' result: impl indices, ascending
+fn _tix_reset(): i64 {
+    if (_tix_head != 0) {
+        var h = 0;
+        while (h < 1024) { store64(_tix_head + h * 8, 0); h = h + 1; }
+    }
+    _tix_n = 0;
+    return 0;
+}
+fn _tix_sync(S): i64 {
+    if (_tix_head == 0) {
+        _tix_head = alloc(1024 * 8);
+        _tix_next = alloc(4096 * 8);
+        _tix_cb = alloc(4096 * 8);
+        _tix_reset();
+    }
+    while (_tix_n < _ti_n) {
+        var h = FNV1A_NOFF(S, load64(_ti_tab + _tix_n * 64 + 8)) & 1023;
+        store64(_tix_next + _tix_n * 8, load64(_tix_head + h * 8));
+        store64(_tix_head + h * 8, _tix_n + 1);
+        _tix_n = _tix_n + 1;
+    }
+    return 0;
+}
+# The impls (below `_ti_n`) whose type name `tn` starts the name at `noff` followed by `_` — exactly those
+# `_tr_pfx(S, noff, 0, tn)` accepts — into `_tix_cb`, ascending; returns their count. One pass over the name:
+# at each `_`, the FNV-1a of the bytes before it is the hash of a type name that ends there.
+fn _tix_cands(S, noff): i64 {
+    _tix_sync(S);
+    var nb = S + 0xEC00000 + noff;
+    var h = 0xcbf29ce484222325;
+    var k = 0;
+    var n = 0;
+    var c = load8(nb);
+    while (c != 0) {
+        if (c == 95) {
+            if (k > 0) {
+                var e = load64(_tix_head + (h & 1023) * 8);
+                while (e != 0) {
+                    var i = e - 1;
+                    if (i < _ti_n) {
+                        if (_tr_pfx(S, noff, 0, load64(_ti_tab + i * 64 + 8)) == k + 1) {
+                            # insert in order (a type name ends at one `_` only, so no index repeats)
+                            var j = n;
+                            while (j > 0 && load64(_tix_cb + (j - 1) * 8) > i) {
+                                store64(_tix_cb + j * 8, load64(_tix_cb + (j - 1) * 8));
+                                j = j - 1;
+                            }
+                            store64(_tix_cb + j * 8, i);
+                            n = n + 1;
+                        }
+                    }
+                    e = load64(_tix_next + i * 8);
+                }
+            }
+        }
+        h = h ^ c;
+        h = h * 0x100000001b3;
+        k = k + 1;
+        c = load8(nb + k);
+    }
+    return n;
+}
 # For type name `tn` and method `m`: how many TRAIT impls provide it; `_tr_inh` = 1 when an inherent
-# impl does too.
+# impl does too. 6.7.18: the impls named `tn` are one chain (above).
 var _tr_inh = 0;
 fn _tr_providers(S, tn, m): i64 {
     _tr_inh = 0;
     var n = 0;
-    var i = 0;
-    while (i < _ti_n) {
-        if (STREQ(S, L64(_ti_tab + i * 64 + 8), tn) == 1) {
-            if (_ti_provides(S, i, m) == 1) {
-                if (L64(_ti_tab + i * 64) == 0) { _tr_inh = 1; }
-                else { n = n + 1; }
+    _tix_sync(S);
+    var e = load64(_tix_head + (FNV1A_NOFF(S, tn) & 1023) * 8);
+    while (e != 0) {
+        var i = e - 1;
+        if (i < _ti_n) {
+            if (STREQ(S, L64(_ti_tab + i * 64 + 8), tn) == 1) {
+                if (_ti_provides(S, i, m) == 1) {
+                    if (L64(_ti_tab + i * 64) == 0) { _tr_inh = 1; }
+                    else { n = n + 1; }
+                }
             }
         }
-        i = i + 1;
+        e = load64(_tix_next + i * 8);
     }
     return n;
 }
@@ -367,8 +473,10 @@ fn _tr_fallback(S, noff): i64 {
 }
 # `T_Trait_m` for a method that did not collide (so it is defined as `T_m`).
 fn _tr_fb_qual(S, noff): i64 {
-    var i = 0;
-    while (i < _ti_n) {
+    var nc = _tix_cands(S, noff);   # 6.7.18: the impls the walk would not skip, in its order
+    var j = 0;
+    while (j < nc) {
+        var i = load64(_tix_cb + j * 8);
         var trn = L64(_ti_tab + i * 64);
         if (trn != 0) {
             var tn = L64(_ti_tab + i * 64 + 8);
@@ -379,14 +487,16 @@ fn _tr_fb_qual(S, noff): i64 {
                 if (_ti_provides(S, i, m) == 1) { if (_tr_collides(S, i, m) == 0) { return _tr_findfn_join(S, tn, m); } }
             }
         }
-        i = i + 1;
+        j = j + 1;
     }
     return 0 - 1;
 }
 # `T_m` where two traits give T an `m` and no inherent impl does.
 fn _tr_fb_ambig(S, noff): i64 {
-    var i = 0;
-    while (i < _ti_n) {
+    var nc = _tix_cands(S, noff);   # 6.7.18: the impls the walk would not skip, in its order
+    var j = 0;
+    while (j < nc) {
+        var i = load64(_tix_cb + j * 8);
         if (L64(_ti_tab + i * 64) != 0) {
             var tn = L64(_ti_tab + i * 64 + 8);
             var k = _tr_pfx(S, noff, 0, tn);
@@ -397,7 +507,7 @@ fn _tr_fb_ambig(S, noff): i64 {
                 }
             }
         }
-        i = i + 1;
+        j = j + 1;
     }
     return 0 - 1;
 }

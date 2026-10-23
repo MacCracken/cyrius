@@ -8,8 +8,8 @@
 # Region offsets (0x8C00000 / 0xAC00000) come from the v5.8.46 +
 # v5.11.68 heap-map layout — shared by all three backends.
 
-fn TOKTYP(S, i): i64 { return L64(S + 0x8C00000 + i * 8); }
-fn TOKVAL(S, i): i64 { return L64(S + 0xAC00000 + i * 8); }
+fn TOKTYP(S, i): i64 { return load64(S + 0x8C00000 + i * 8); }
+fn TOKVAL(S, i): i64 { return load64(S + 0xAC00000 + i * 8); }
 # v6.4.62: anti-hang watchdog (inert until the first error).
 # v6.4.78: past-end EOF clamp, placed INSIDE the existing `_had_error == 1` guard so
 # it costs NOTHING on the hot path — PEEKT is the most-called fn in the parser, and
@@ -55,15 +55,19 @@ fn TOKVAL(S, i): i64 { return L64(S + 0xAC00000 + i * 8); }
 # table into a SIGSEGV at ~1027 iterations, long before the 500000 stall bound.
 # Defence in depth: the clamp makes existing EOF guards work, the loops below have
 # their own guards, and the watchdog bounds anything still missed.
+# The cells are read directly (GTI = S + 0x18C120, GTCNT = S + 0x18C118, TOKTYP / TOKVAL above):
+# PEEKT is the most-called fn in the parser, and through the accessors each call made eight.
+# `_wd_tick` never moves the cursor (it reads it, or exits). CHANGELOG [6.7.18]
 fn PEEKT(S): i64 {
-    if (GTI(S) >= GTCNT(S)) {
+    var ti = load64(S + 0x18C120);
+    if (ti >= load64(S + 0x18C118)) {
         _wd_eof_tick(S);
         return 12;
     }
     if (_had_error == 1) { _wd_tick(S); }
-    return TOKTYP(S, GTI(S));
+    return load64(S + 0x8C00000 + ti * 8);
 }
-fn PEEKV(S): i64 { return TOKVAL(S, GTI(S)); }
+fn PEEKV(S): i64 { return load64(S + 0xAC00000 + load64(S + 0x18C120) * 8); }
 
 # 6.7.14 — an asm-block refusal (D16, 2026-10-16: a mnemonic the assembler does not have, or an
 # operand its instruction cannot take, stops the compile) names the token at fault, token `ti`, at

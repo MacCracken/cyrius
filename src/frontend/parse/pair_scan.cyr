@@ -297,24 +297,58 @@ fn _tok_name_sid(S, a, k, noff): i64 {
 }
 # The token of the declaration that name reaches at token k (the walk above), or -1 (a global, or
 # none). 6.7.8: split out of `_tok_name_sid` for the struct carrier's annotation (`_tok_sc_name`).
+# 6.7.18: THE LAST WALK IS REUSED. The scans call this for each use of a name in turn (`_gs_sval_big` once per
+# T-typed store), and each walk went back over the unit, so a body of N uses of one name cost O(N^2): a generic fn
+# of 2,000 `var vK: T = x;` 489 ms, 4,000 1,866 ms. A walk from k that reaches the last walk's start (its use
+# token, `_tnd_k`) with no block left open (cd 0) and no declaration found is in the state that walk began in —
+# the same unit, name and header end, tokens unchanged — so it ends where that one did. Only the tokens since
+# that use are read. (tests/gates/frontend/hot_path_call_counts.sh row D.) CHANGELOG [6.7.18]
+var _tnd_a = 0 - 1;   # the last walk: its unit start, name, header end, use token, answer, token count
+var _tnd_noff = 0;
+var _tnd_b = 0;
+var _tnd_k = 0;
+var _tnd_d = 0;
+var _tnd_tc = 0 - 1;
 fn _tok_name_decl(S, a, k, noff): i64 {
     var b = _tok_hdr_end(S, a, k);
+    var stop = a;   # the walk's floor (exclusive), or the last walk's start when it can be reused
+    var reuse = 0;
+    if (a == _tnd_a && noff == _tnd_noff && b == _tnd_b && k >= _tnd_k && GTCNT(S) == _tnd_tc) {
+        if (_tnd_k - 1 > a) { stop = _tnd_k - 1; reuse = 1; }
+    }
     var cd = 0;
     var i = k - 1;
-    while (i > a) {
-        var t = TOKTYP(S, i);
-        if (t == 14) { cd = cd + 1; }
-        elif (t == 13) { if (cd > 0) { cd = cd - 1; } }
-        elif (cd == 0) {
-            if (t == 2) {
-                if (STREQ(S, TOKVAL(S, i), noff) == 1) {
-                    if (_tok_is_decl(S, i, b) == 1) { return i; }
+    var r = 0 - 1;
+    var done = 0;
+    while (done == 0) {
+        if (i <= stop) {
+            if (reuse == 1) {
+                if (cd == 0) { r = _tnd_d; done = 1; }
+                else { stop = a; reuse = 0; }   # a block left open here: the rest is walked as before
+            }
+            if (i <= a) { done = 1; }
+        }
+        if (done == 0) {
+            var t = TOKTYP(S, i);
+            if (t == 14) { cd = cd + 1; }
+            elif (t == 13) { if (cd > 0) { cd = cd - 1; } }
+            elif (cd == 0) {
+                if (t == 2) {
+                    if (STREQ(S, TOKVAL(S, i), noff) == 1) {
+                        if (_tok_is_decl(S, i, b) == 1) { r = i; done = 1; }
+                    }
                 }
             }
+            i = i - 1;
         }
-        i = i - 1;
     }
-    return 0 - 1;
+    _tnd_a = a;
+    _tnd_noff = noff;
+    _tnd_b = b;
+    _tnd_k = k;
+    _tnd_d = r;
+    _tnd_tc = GTCNT(S);
+    return r;
 }
 # The unit's body `{` (its params lie before it), or k when none precedes k.
 fn _tok_hdr_end(S, a, k): i64 {

@@ -36,16 +36,14 @@ fn _dsc_snap(n): i64 {
     var m = n;
     if (m > 16384) { m = 16384; }
     var b = alloc(m * 8);
-    var i = 0;
-    while (i < m) { S64(b + i * 8, L64(_dsc_tn + i * 8)); i = i + 1; }
+    _cl_wcopy(b, _dsc_tn, m);   # 6.7.18: a word loop (expr/closure.cyr)
     return b;
 }
 fn _dsc_unsnap(b, n): i64 {
     if (b == 0) { return 0; }
     var m = n;
     if (m > 16384) { m = 16384; }
-    var i = 0;
-    while (i < m) { S64(_dsc_tn + i * 8, L64(b + i * 8)); i = i + 1; }
+    _cl_wcopy(_dsc_tn, b, m);   # 6.7.18: a word loop (expr/closure.cyr)
     return 0;
 }
 # A parameter's type token `ti` (`_tn_param_check`): pending until `_param_record` stamps its slot.
