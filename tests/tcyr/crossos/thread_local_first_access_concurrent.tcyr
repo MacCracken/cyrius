@@ -1,0 +1,108 @@
+# thread_local_first_access_concurrent.tcyr — 6.7.18: threads whose FIRST thread-local access
+# overlaps each keep the values they write.
+#
+# THE DEFECT (Windows). The Windows slots hang off one process-wide TlsAlloc index, allocated
+# lazily on the first slot access: `if (idx == -1) idx = TlsAlloc();`. Two threads making the
+# process's first access at once each allocated an index and stored it, last store winning. A
+# thread that had already written its slot under the losing index then looked its block up under
+# the winning one, found none, got a fresh zeroed block, and read back 0: its write was gone. The
+# source called that "at worst leak one TLS index and re-block; it self-heals". The contract
+# (call thread_local_init on main before spawning) was the only guard, and Linux never needed it:
+# there each worker gets its block at clone. Since 6.7.18 one thread allocates the index and any
+# racer waits for it.
+#
+# THE ROW. FA_ROUNDS rounds of FA_K workers. The main thread touches no slot first. The workers are
+# released together by a barrier, then each writes its own value, waits FA_SETTLE_MS, and reads it
+# back. On Windows each round first resets the index to "not allocated", white-box, so every round
+# is a process-first access. On 6.7.17 under wine: 271 of 320 writes lost, in 39 of 40 rounds
+# (pe=1 on 3 of 3 runs). Elsewhere the file asserts the same contract over clone blocks, the macOS
+# registry and the serial peer, where nothing can race.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/syscalls.cyr"
+include "lib/atomic.cyr"
+include "lib/chrono.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+
+enum FirstAccess {
+    FA_ROUNDS = 40;
+    FA_K = 8;
+    FA_SLOT = 20;          # a library-range slot (16..); never touched by the main thread here
+    FA_SETTLE_MS = 2;      # between a worker's write and its read-back: a racing index store lands
+    FA_SPIN = 400000000;   # barrier bound: a FAIL, never a hang
+}
+
+var _fa_arrived = 0;
+var _fa_go = 0;
+var _fa_lost = 0;
+var _fa_late = 0;
+
+fn _fa_body(k): i64 {
+    if (THREADS_CONCURRENT == 1) {
+        atomic_fetch_add(&_fa_arrived, 1);
+        var i = 0;
+        while (atomic_load(&_fa_go) == 0) {
+            i = i + 1;
+            if (i > FA_SPIN) { atomic_fetch_add(&_fa_late, 1); break; }
+        }
+    }
+    thread_local_set(FA_SLOT, 0x7000 + k);
+    sleep_ms(FA_SETTLE_MS);
+    if (thread_local_get(FA_SLOT) != 0x7000 + k) { atomic_fetch_add(&_fa_lost, 1); }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("concurrent first thread-local accesses keep every thread's writes");
+    var hs = alloc(FA_K * 8);
+    var bad_rounds = 0;
+    var made = 0;
+    var r = 0;
+    while (r < FA_ROUNDS) {
+        #ifdef CYRIUS_TARGET_WIN
+        _tlocal_win_idx = 0 - 1;    # white-box: this round's accesses are the process's first
+        #endif
+        var lost0 = atomic_load(&_fa_lost);
+        atomic_store(&_fa_arrived, 0);
+        atomic_store(&_fa_go, 0);
+        var k = 0;
+        var n = 0;
+        while (k < FA_K) {
+            var h = thread_create(&_fa_body, r * FA_K + k);
+            store64(hs + k * 8, h);
+            if (h != 0) { n = n + 1; }
+            k = k + 1;
+        }
+        made = made + n;
+        if (THREADS_CONCURRENT == 1) {
+            var i = 0;
+            while (atomic_load(&_fa_arrived) < n) {
+                i = i + 1;
+                if (i > FA_SPIN) { break; }
+            }
+            atomic_store(&_fa_go, 1);
+        }
+        k = 0;
+        while (k < FA_K) {
+            var h = load64(hs + k * 8);
+            if (h != 0) { thread_join(h); }
+            k = k + 1;
+        }
+        if (atomic_load(&_fa_lost) != lost0) { bad_rounds = bad_rounds + 1; }
+        r = r + 1;
+    }
+    if (bad_rounds != 0) {
+        print_num(atomic_load(&_fa_lost)); println(" writes lost");
+        print_num(bad_rounds); println(" rounds lost a write");
+    }
+    assert_eq(made, FA_ROUNDS * FA_K, "every thread_create returned a handle");
+    assert_eq(atomic_load(&_fa_lost), 0, "every worker read back the value it wrote, with first accesses overlapping");
+    assert_eq(atomic_load(&_fa_late), 0, "no worker's barrier wait hit its bound");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
