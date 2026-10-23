@@ -76,10 +76,12 @@ build/cycc < /tmp/bnd.cyr > /tmp/bnd && chmod +x /tmp/bnd && /tmp/bnd; echo "exi
    error return passes, a fault fails, the failing seed printed so it reproduces.
 2. **Each harness passes plain, under `cyrius fuzz --poison`, under `--poison=ab`, and in the bounds-checked form
    item 3 settles.**
-3. **Bounds-checked builds of the network libs — decided at 6.7.18's open, one question:** (a) the parsers read
-   through forms the mode checks (a slice / a typed pointer with its extent) — a lib change, the folds' parts in their
-   source repos; or (b) the mode extends to a raw `load*` / `store*` on a buffer whose extent the compiler knows — a
-   language change, the user's call; or both. Either way a row shows an over-read in each family caught.
+3. **Bounds-checked builds of the network libs — DECIDED at 6.7.18's open (the user, 2026-10-22: "Slices in the
+   parsers"; 6.7.18 D1):** each parser wraps its `(buf, len)` in a fn-local `[u8]` slice (`slice_set`) and reads
+   through `s[i]`, which is checked in EVERY build (out of range: `slice bounds violation`, exit 134), multi-byte
+   big-endian fields through one checked helper; a lib change only, the folds' parts (sigil, bayan, sandhi) in their
+   source repos, re-vendored. Not chosen: extending `#bounds` to raw `load*` (it would see only static extents, and
+   these parsers take heap buffers by pointer). A row per family shows an over-read caught.
 4. **The gates run them** — a registered gate (or `release-gate.sh` step) runs every `fuzz/*.fcyr` plain and under
    `--poison`, with a floor on the harness count, so a crash is seen before a tag, not after a push.
 5. **Allocation on peer-chosen lengths** (PHP2Shell's out-of-memory half): every allocation a parser sizes from a

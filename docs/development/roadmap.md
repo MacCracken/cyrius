@@ -89,6 +89,11 @@ Sized from every open issue and the three remaining features (the 6.7.x release-
 
 ### 6.7.18 — the full security audit + the refactor / optimization review (user, 2026-10-09; renumbered from 6.7.14 at the 6.7.12 open, from 6.7.15 at the 6.7.13 integration, and from 6.7.16 at the 6.7.15 wave-1 integration, 2026-10-18; and from 6.7.17 at the 6.7.17 open, 2026-10-22 — D91: the cleanup first)
 
+**Opened 2026-10-22** (the user: "lets continue with 6.7.18 work"). Decided at the open, in one round: **D1** — the
+network parsers read through fn-local slices (checked in every build), not an extended `#bounds`; **D2** — the
+layout direction below is settled as written: folders with direct names, the moves first as their own byte-identical
+bites, then the splits.
+
 Its own release, after the queue is at 0 bugs — **not** the closeout (the closeout stays the checklist). Scope is
 set at its open, in one round; the output of both reviews is FIXES (CLAUDE.md *Execution integrity*), with only what
 cannot pack filed.
@@ -110,7 +115,7 @@ cannot pack filed.
   the walkers and scanners the 6.7.x features each grew. Logic-preserving: byte-identical self-host + the whole-corpus
   differential, seed-derive on every bite. Optimization: the self_compile growth tax (1,175 ms at 6.7.6) and cycc size,
   measured same-box before / after.
-  - **The layout direction (user, 2026-10-09 — "just thoughts", settled at 6.7.18's open):** folders with direct
+  - **The layout direction (user, 2026-10-09 — "just thoughts"; SETTLED at 6.7.18's open, D2, 2026-10-22):** folders with direct
     names instead of prefixed files, as `backend/` already does — `src/frontend/parse/expr.cyr` for `parse_expr.cyr`,
     `parse/types/type.cyr` (beside `struct.cyr`, `tuple.cyr`, …) for `parse_types.cyr`, `parse/fn/` for the pieces of
     `parse_fn.cyr` (definitions, the call path, the return / tail path, traits, generics, the const-fn evaluator),
