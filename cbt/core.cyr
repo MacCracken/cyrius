@@ -647,13 +647,24 @@ fn read_file_str(path): i64 {
 # EMPTY vector — children ran with no PATH, HOME, TMPDIR or CYRIUS_*. Now Linux reads to EOF
 # into a growing buffer, and macOS takes the kernel's own entry-stack envp (`_macho_envp`),
 # NULL-terminated and live for the whole process, with no copy and no cap. CHANGELOG [6.6.11]
+# ⛔ CYRIUS-2026-0048: Windows has no /proc, and there "/proc/self/environ" is DRIVE-RELATIVE —
+# <current drive>:\proc\self\environ, which any local user can create — and it was read to EOF
+# through unchecked doubling allocations (a 2.3 GB plant faulted the PE CLI in the memcpy into a
+# failed alloc). A Windows spawn inherits the process environment and never uses `_envp`, so PE
+# gets an empty vector and opens nothing; elsewhere a refused allocation fails closed to the empty
+# vector too. CHANGELOG [6.7.18]
 fn load_environ(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return _envp_set_empty();
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     #ifdef CYRIUS_TARGET_MACOS
     _envp = _macho_envp();
     if (_envp != 0) { return 0; }
     #endif
     var cap = 16384;
     var buf = alloc(cap);
+    if (buf == 0) { return _envp_set_empty(); }
     var n = 0;
     var fd = file_open("/proc/self/environ", 0, 0);
     if (fd >= 0) {
@@ -661,6 +672,7 @@ fn load_environ(): i64 {
         while (more == 1) {
             if (n == cap - 1) {
                 var nb = alloc(cap * 2);
+                if (nb == 0) { file_close(fd); return _envp_set_empty(); }
                 memcpy(nb, buf, n);
                 buf = nb;
                 cap = cap * 2;
@@ -670,11 +682,7 @@ fn load_environ(): i64 {
         }
         file_close(fd);
     }
-    if (n <= 0) {
-        _envp = alloc(8);
-        store64(_envp, 0);
-        return 0;
-    }
+    if (n <= 0) { return _envp_set_empty(); }
     store8(buf + n, 0);
     var count = 0;
     var i = 0;
@@ -697,6 +705,15 @@ fn load_environ(): i64 {
         }
     }
     store64(_envp + ei * 8, 0);
+    return 0;
+    #endif
+}
+
+# `_envp` = an empty NULL-terminated vector (a static slot, so it needs no allocation); 0.
+var _envp_empty_slot = 0;
+fn _envp_set_empty(): i64 {
+    _envp_empty_slot = 0;
+    _envp = &_envp_empty_slot;
     return 0;
 }
 
@@ -1059,9 +1076,18 @@ fn _cbt_environ(lenp): i64 {
     store64(lenp, mn);
     return mb;
     #endif
+    # Windows: no /proc — and a rooted "/proc/…" is drive-relative there, a file any local user
+    # can plant (CYRIUS-2026-0048). Its callers read the environment through `_win_getenv_*`; an
+    # empty block is the answer, and a refused allocation is one elsewhere too. CHANGELOG [6.7.18]
+    #ifdef CYRIUS_TARGET_WIN
+    store64(lenp, 0);
+    return "";
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_MACOS
     var cap = 65536;
     var buf = alloc(cap);
+    if (buf == 0) { store64(lenp, 0); return ""; }
     var n = 0;
     var fd = file_open("/proc/self/environ", 0, 0);
     if (fd >= 0) {
@@ -1069,6 +1095,7 @@ fn _cbt_environ(lenp): i64 {
         while (r > 0) {
             if (n + 1 >= cap) {
                 var nb = alloc(cap * 2);
+                if (nb == 0) { file_close(fd); store64(lenp, 0); return ""; }
                 memcpy(nb, buf, n);
                 buf = nb;
                 cap = cap * 2;
@@ -1081,6 +1108,7 @@ fn _cbt_environ(lenp): i64 {
     store8(buf + n, 0);
     store64(lenp, n);
     return buf;
+    #endif
     #endif
 }
 
@@ -1116,8 +1144,17 @@ fn find_tools(): i64 {
     # was set, and it reads nothing on PE — so `CYRIUS_RESOLVED=1`, the documented escape
     # from a pin, was ignored by cyrius.exe. CHANGELOG [6.6.11]
     if (_cbt_env_is_1("CYRIUS_RESOLVED") == 1) { _cyrius_resolved = 1; }
+    # ⛔ CYRIUS-2026-0048's class: the POSIX default home "/root" is DRIVE-RELATIVE on Windows
+    # (<current drive>:\root\.cyrius, which any local user can create, its bin\cycc.exe then run).
+    # With neither variable set there is no home to trust: refuse by name. CHANGELOG [6.7.18]
+    if (proc_home == 0 && cyrius_home == 0) {
+        _err("neither CYRIUS_HOME nor USERPROFILE is set, so there is no toolchain home (the POSIX default /root is drive-relative here) — set CYRIUS_HOME");
+        sys_exit(1);
+    }
     #endif
+    #ifndef CYRIUS_TARGET_WIN
     if (proc_home == 0) { proc_home = "/root"; }
+    #endif
     # CYRIUS_HOME overrides default ~/.cyrius
     if (cyrius_home != 0) {
         _home = cyrius_home;
