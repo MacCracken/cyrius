@@ -1,0 +1,244 @@
+# fuzz/fz_driver.cyr — the case driver sandhi's network-parser harnesses share (sandhi_hpack.fcyr,
+# sandhi_headers.fcyr, sandhi_dns.fcyr). Taken from sandhi 1.13.7's fuzz/fz_driver.cyr (release
+# commit 6e649a3) with only this header changed (6.7.18). Not a harness itself: `cyrius fuzz` runs
+# `*.fcyr` only.
+#
+# A harness's case fn `case(k)` builds case k's input from the LCG seeded
+# with `fz_seed(k)` (deterministic: the same k is the same bytes on every
+# run), parses it with a fresh parser state (`fz_arena()`), and folds what
+# the parser answered into the run's digest (`fz_mix`, `fz_mix_bytes`,
+# `fz_mix_cstr`). `fz_run(name, n, &case)`:
+#   - runs the n cases in ONE forked child, which records the case it is on
+#     in a shared page before running it;
+#   - when the child dies (a fault, a `slice bounds violation` exit 134, a
+#     poison trap exit 86) prints `<name>: FAIL case <k> seed <s> (exit <e>)`
+#     and answers 1. `FZ_CASE=<k>` runs that one case in-process, so the
+#     fault reproduces in front of a debugger;
+#   - otherwise prints `<name>: <n> cases, digest <d>` and answers 0. The
+#     digest is what `cyrius fuzz --poison=ab` compares: an over-read that
+#     changes an answer makes the two legs print different digests;
+#   - without fork (Windows) runs the cases in-process.
+
+var _fz_rng = 1;
+var _fz_dig = 0;
+var _fz_ar = 0;
+var _fz_shared = 0;
+
+# Case k's seed.
+fn fz_seed(k) {
+    return (k * 2654435761 + 40503) & 0x7fffffff;
+}
+
+fn fz_srand(seed) {
+    _fz_rng = seed;
+    return 0;
+}
+
+# One 15-bit draw from the LCG's high bits (its low bits are short-period).
+fn fz_rand() {
+    _fz_rng = (_fz_rng * 1103515245 + 12345) & 0x7fffffff;
+    return (_fz_rng >> 16) & 0x7fff;
+}
+
+# A draw in [0, n); 0 when n <= 0.
+fn fz_below(n) {
+    if (n <= 0) { return 0; }
+    return ((fz_rand() << 15) | fz_rand()) % n;
+}
+
+# 1 one time in `n`.
+fn fz_one_in(n) {
+    if (fz_below(n) == 0) { return 1; }
+    return 0;
+}
+
+# FNV-1a over a 64-bit value's eight bytes.
+fn fz_mix(v) {
+    var i = 0;
+    while (i < 8) {
+        _fz_dig = (_fz_dig ^ ((v >> (i * 8)) & 0xff)) * 1099511628211;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn fz_mix_bytes(p, n) {
+    var i = 0;
+    while (i < n) {
+        _fz_dig = (_fz_dig ^ load8(p + i)) * 1099511628211;
+        i = i + 1;
+    }
+    fz_mix(n);
+    return 0;
+}
+
+fn fz_mix_cstr(s) {
+    if (s == 0) { fz_mix(0 - 1); return 0; }
+    fz_mix_bytes(s, strlen(s));
+    return 0;
+}
+
+# The case's parser arena: one arena, reset per case (under `--poison` a
+# reset arena never re-issues an address, so nothing carries over).
+fn fz_arena() {
+    if (_fz_ar == 0) { _fz_ar = arena_allocator(4194304); }
+    reset_via(_fz_ar);
+    return _fz_ar;
+}
+
+# The case's input copied into an allocation of exactly its size from `a`, so
+# under `--poison` the byte past its end is a redzone (a read there answers
+# the fill, which `--poison=ab` sees) rather than more of a larger buffer.
+fn fz_exact(a, buf, n) {
+    var sz = n;
+    if (sz < 1) { sz = 1; }
+    var e = alloc_via(a, sz);
+    if (e == 0) { return 0; }
+    memcpy(e, buf, n);
+    return e;
+}
+
+# Copy `n` bytes from `src` to `dst`, overlapping ranges included.
+fn _fz_move(dst, src, n) {
+    if (dst > src) {
+        var i = n - 1;
+        while (i >= 0) { store8(dst + i, load8(src + i)); i = i - 1; }
+        return 0;
+    }
+    var j = 0;
+    while (j < n) { store8(dst + j, load8(src + j)); j = j + 1; }
+    return 0;
+}
+
+# 1-3 byte-level mutations of the `len` bytes at `b` (room for `cap`): a
+# truncation, flipped bits, a byte set to 0x00 / 0x7f / 0x80 / 0xff, a
+# segment repeated, two segments swapped, random bytes inserted. The new
+# length.
+fn fz_mutate(b, len, cap) {
+    var rounds = 1 + fz_below(3);
+    var r = 0;
+    while (r < rounds) {
+        var op = fz_below(7);
+        if (op == 0 && len > 0) {
+            len = fz_below(len);
+        } elif (op == 1 && len > 0) {
+            var i = fz_below(len);
+            store8(b + i, load8(b + i) ^ (1 << fz_below(8)));
+        } elif (op == 2 && len > 0) {
+            var j = fz_below(len);
+            var sp = fz_below(4);
+            var v = 0;
+            if (sp == 1) { v = 0x7f; } elif (sp == 2) { v = 0x80; } elif (sp == 3) { v = 0xff; }
+            store8(b + j, v);
+        } elif (op == 3 && len > 0) {
+            var s0 = fz_below(len);
+            var n0 = 1 + fz_below(len - s0);
+            if (len + n0 <= cap) {
+                _fz_move(b + s0 + n0, b + s0, len - s0);
+                len = len + n0;
+            }
+        } elif (op == 4 && len > 3) {
+            var h = len / 2;
+            var a0 = fz_below(h);
+            var b0 = h + fz_below(len - h);
+            var w = 1 + fz_below(len - b0);
+            if (a0 + w > h) { w = h - a0; }
+            var k = 0;
+            while (k < w) {
+                var t = load8(b + a0 + k);
+                store8(b + a0 + k, load8(b + b0 + k));
+                store8(b + b0 + k, t);
+                k = k + 1;
+            }
+        } elif (op == 5) {
+            var at = fz_below(len + 1);
+            var m = 1 + fz_below(8);
+            if (len + m <= cap) {
+                _fz_move(b + at + m, b + at, len - at);
+                var q = 0;
+                while (q < m) { store8(b + at + q, fz_below(256)); q = q + 1; }
+                len = len + m;
+            }
+        }
+        r = r + 1;
+    }
+    return len;
+}
+
+fn _fz_all(n, fp) {
+    var k = 0;
+    while (k < n) {
+        store64(_fz_shared, k);
+        fz_srand(fz_seed(k));
+        fncall1(fp, k);
+        k = k + 1;
+    }
+    store64(_fz_shared + 8, _fz_dig);
+    return 0;
+}
+
+fn _fz_say(name, what) {
+    print(name, strlen(name));
+    print(what, strlen(what));
+    return 0;
+}
+
+fn fz_run(name, n, fp) {
+    var only = getenv("FZ_CASE");
+    if (only != 0) {
+        var k1 = atoi(only);
+        _fz_say(name, ": case ");
+        fmt_int(k1);
+        print(" seed ", 6);
+        fmt_int(fz_seed(k1));
+        print("\n", 1);
+        fz_srand(fz_seed(k1));
+        fncall1(fp, k1);
+        _fz_say(name, ": the case returned, digest ");
+        fmt_int(_fz_dig);
+        print("\n", 1);
+        return 0;
+    }
+    _fz_shared = cyr_mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0 - 1, 0);
+    if (_fz_shared <= 0) { _fz_shared = alloc(16); }
+    store64(_fz_shared, 0 - 1);
+    store64(_fz_shared + 8, 0);
+    var pid = sys_fork();
+    if (pid == 0) {
+        _fz_all(n, fp);
+        sys_exit(0);
+    }
+    if (pid < 0) {
+        _fz_all(n, fp);
+    } else {
+        var st[8];
+        store64(&st, 0);
+        sys_waitpid(pid, &st, 0);
+        var status = load64(&st) & 0xFFFFFFFF;
+        if (status != 0) {
+            var k = load64(_fz_shared);
+            _fz_say(name, ": FAIL case ");
+            fmt_int(k);
+            print(" seed ", 6);
+            fmt_int(fz_seed(k));
+            if ((status & 127) != 0) {
+                print(" (signal ", 9);
+                fmt_int(status & 127);
+            } else {
+                print(" (exit ", 7);
+                fmt_int((status >> 8) & 255);
+            }
+            print("); rerun it alone with FZ_CASE=", 31);
+            fmt_int(k);
+            print("\n", 1);
+            return 1;
+        }
+    }
+    _fz_dig = load64(_fz_shared + 8);
+    _fz_say(name, ": ");
+    fmt_int(n);
+    print(" cases, digest ", 15);
+    fmt_int(_fz_dig);
+    print("\n", 1);
+    return 0;
+}

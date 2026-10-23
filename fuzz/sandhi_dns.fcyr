@@ -1,0 +1,290 @@
+# Fuzz: _sandhi_resolve_parse_response_a / _aaaa_a — the native DNS answer
+# parsers (untrusted UDP payload, RFC 1035), each case with a fresh arena.
+# Prime attack surface: name-compression pointer loops / forward / OOB
+# pointers, pointer chains past the 32-hop budget, CNAME chains past the
+# 8-hop budget, truncated records, ANCOUNT at 0 / past the records / 65535,
+# RDLENGTH at 0 / the packet's end / past it / 65535, label lengths 63 / 64 /
+# past the end. A graceful refusal passes; a fault, an over-read (exit 134) or
+# a loop fails, and fuzz/fz_driver.cyr names the case and its seed.
+# 6.7.18: sandhi 1.13.7's fuzz/dns.fcyr (release commit 6e649a3), run against the vendored
+# lib/sandhi.cyr; only its includes differ (sandhi's own reads its src/ modules after a
+# manifest-prepended stdlib).
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/mmap.cyr"
+include "lib/fnptr.cyr"
+include "lib/sandhi.cyr"
+include "fuzz/fz_driver.cyr"
+
+const _DN_CAP = 4096;
+const _DN_ID = 0x1234;
+var _dn_buf = 0;
+var _dn_rdl: i64[64];   # offsets of the case's RDLENGTH fields
+var _dn_nrdl = 0;
+var _dn_lab: i64[64];   # offsets of its label-length bytes
+var _dn_nlab = 0;
+var _dn_ptr: i64[64];   # offsets of its compression pointers
+var _dn_nptr = 0;
+var _dn_hops = 0;       # the last build's CNAME hops
+var _dn_chain = 0;      # 1 when its owner sits behind the 40-pointer chain
+
+fn _dn_u16(b, p, v) {
+    store8(b + p, (v >> 8) & 0xff);
+    store8(b + p + 1, v & 0xff);
+    return p + 2;
+}
+
+# Append a name of 1-4 labels, ending at the root or (sometimes) in a
+# pointer to `tail` (or -1 for none).
+fn _dn_name(b, p, tail) {
+    var nl = 1 + fz_below(4);
+    var l = 0;
+    while (l < nl) {
+        var ln = 1 + fz_below(12);
+        if (_dn_nlab < 64) { _dn_lab[_dn_nlab] = p; _dn_nlab = _dn_nlab + 1; }
+        store8(b + p, ln);
+        var i = 0;
+        while (i < ln) { store8(b + p + 1 + i, 97 + fz_below(26)); i = i + 1; }
+        p = p + 1 + ln;
+        l = l + 1;
+    }
+    if (tail >= 0 && fz_one_in(2) == 1) {
+        if (_dn_nptr < 64) { _dn_ptr[_dn_nptr] = p; _dn_nptr = _dn_nptr + 1; }
+        return _dn_u16(b, p, 0xC000 | tail);
+    }
+    store8(b + p, 0);
+    return p + 1;
+}
+
+# Append a pointer to `target`.
+fn _dn_ptr_to(b, p, target) {
+    if (_dn_nptr < 64) { _dn_ptr[_dn_nptr] = p; _dn_nptr = _dn_nptr + 1; }
+    return _dn_u16(b, p, 0xC000 | target);
+}
+
+# Append a record's fixed part (TYPE, CLASS IN, TTL 60, RDLENGTH).
+fn _dn_rr(b, p, rtype, rdlen) {
+    p = _dn_u16(b, p, rtype);
+    p = _dn_u16(b, p, 1);
+    p = _dn_u16(b, p, 0);
+    p = _dn_u16(b, p, 60);
+    if (_dn_nrdl < 64) { _dn_rdl[_dn_nrdl] = p; _dn_nrdl = _dn_nrdl + 1; }
+    return _dn_u16(b, p, rdlen);
+}
+
+# Build a response to an A (`aaaa` 0) or AAAA question: the question, a CNAME
+# chain of 0-10 hops (past the parser's 8), the address record, unrelated
+# records, and sometimes an owner reached through a 40-pointer chain. Then,
+# with `mut` 1, the structured length / count / pointer mutations and
+# byte-level ones. Its length.
+fn _dn_build(aaaa, mut) {
+    var b = _dn_buf;
+    _dn_nrdl = 0;
+    _dn_nlab = 0;
+    _dn_nptr = 0;
+    var p = _dn_u16(b, 0, _DN_ID);
+    store8(b + 2, 0x81); store8(b + 3, 0x80);
+    p = 4;
+    p = _dn_u16(b, p, 1);                 # QDCOUNT
+    p = _dn_u16(b, p, 0);                 # ANCOUNT, set below
+    p = _dn_u16(b, p, 0);
+    p = _dn_u16(b, p, 0);
+    p = _dn_name(b, p, 0 - 1);            # QNAME at 12
+    var qt = 1;
+    if (aaaa == 1) { qt = 28; }
+    p = _dn_u16(b, p, qt);
+    p = _dn_u16(b, p, 1);
+    var an = 0;
+    var owner = 12;                       # the name being followed
+    var hops = fz_below(11);
+    _dn_hops = 0;
+    _dn_chain = 0;
+    var h = 0;
+    while (h < hops && p < _DN_CAP - 400) {
+        if (fz_one_in(4) == 1) {          # an unrelated record first
+            p = _dn_name(b, p, 12);
+            p = _dn_rr(b, p, 16, 3);
+            store8(b + p, 2); store8(b + p + 1, 104); store8(b + p + 2, 105);
+            p = p + 3;
+            an = an + 1;
+        }
+        p = _dn_ptr_to(b, p, owner);
+        var rdl_at = p + 8;
+        p = _dn_rr(b, p, 5, 0);
+        var tgt = p;
+        p = _dn_name(b, p, 12);
+        _dn_u16(b, rdl_at, p - tgt);
+        owner = tgt;
+        an = an + 1;
+        h = h + 1;
+    }
+    _dn_hops = h;
+    if (fz_one_in(6) == 1 && p < _DN_CAP - 200) {
+        # A 40-pointer chain ending at the owner, carried as an opaque record's
+        # RDATA; the address record below is owned by its last pointer.
+        p = _dn_ptr_to(b, p, 12);
+        var rdl2 = p + 8;
+        p = _dn_rr(b, p, 99, 0);
+        var c0 = p;
+        p = _dn_ptr_to(b, p, owner);
+        var c = 1;
+        while (c < 40) { p = _dn_ptr_to(b, p, p - 2); c = c + 1; }
+        _dn_u16(b, rdl2, p - c0);
+        owner = p - 2;
+        an = an + 1;
+        _dn_chain = 1;
+    }
+    p = _dn_ptr_to(b, p, owner);
+    if (aaaa == 1) {
+        p = _dn_rr(b, p, 28, 16);
+        var i = 0;
+        while (i < 16) { store8(b + p + i, fz_below(256)); i = i + 1; }
+        p = p + 16;
+    } else {
+        p = _dn_rr(b, p, 1, 4);
+        store8(b + p, 10); store8(b + p + 1, fz_below(256));
+        store8(b + p + 2, fz_below(256)); store8(b + p + 3, fz_below(256));
+        p = p + 4;
+    }
+    an = an + 1;
+    _dn_u16(b, 6, an);
+
+    if (mut == 0) { return p; }
+    # Structured mutations: counts, lengths and pointers at their edges.
+    var nm = fz_below(4);
+    var m = 0;
+    while (m < nm) {
+        var op = fz_below(8);
+        if (op == 0) {
+            var av = 0;
+            var r = fz_below(3);
+            if (r == 1) { av = an + 1 + fz_below(4); } elif (r == 2) { av = 0xFFFF; }
+            _dn_u16(b, 6, av);
+        } elif (op == 1 && _dn_nrdl > 0) {
+            var ro = _dn_rdl[fz_below(_dn_nrdl)];
+            var rv = 0;
+            var r2 = fz_below(4);
+            if (r2 == 1) { rv = p - (ro + 2); } elif (r2 == 2) { rv = p - (ro + 2) + 1 + fz_below(8); }
+            elif (r2 == 3) { rv = 0xFFFF; }
+            if (rv < 0) { rv = 0; }
+            _dn_u16(b, ro, rv & 0xFFFF);
+        } elif (op == 2 && _dn_nlab > 0) {
+            var lo = _dn_lab[fz_below(_dn_nlab)];
+            var lv = 63;
+            var r3 = fz_below(4);
+            if (r3 == 1) { lv = 64; } elif (r3 == 2) { lv = 0xFF; } elif (r3 == 3) { lv = p - lo; }
+            if (lv > 255) { lv = 255; }
+            store8(b + lo, lv);
+        } elif (op == 3 && _dn_nptr > 0) {
+            var po = _dn_ptr[fz_below(_dn_nptr)];
+            var pv = po;                          # itself
+            var r4 = fz_below(4);
+            if (r4 == 1) { pv = po + 2 + fz_below(64); }   # forward
+            elif (r4 == 2) { pv = p + fz_below(4000); }   # past the end
+            elif (r4 == 3) { pv = fz_below(po + 1); }     # anywhere before
+            _dn_u16(b, po, 0xC000 | (pv & 0x3FFF));
+        } elif (op == 4) {
+            _dn_u16(b, 4, fz_below(3));           # QDCOUNT 0 / 1 / 2
+        } elif (op == 5) {
+            store8(b + 3, 0x80 | fz_below(16));   # RCODE
+        } elif (op == 6) {
+            p = fz_below(p + 1);                  # truncated
+        }
+        m = m + 1;
+    }
+    if (fz_one_in(3) == 1) { p = fz_mutate(b, p, _DN_CAP); }
+    return p;
+}
+
+fn _dn_case(k) {
+    var shape = k % 4;
+    var aaaa = shape % 2;
+    var n = 0;
+    if (shape == 3 && fz_one_in(2) == 1) {
+        n = fz_below(600);                        # random bytes behind a plausible header
+        var i = 0;
+        while (i < n) { store8(_dn_buf + i, fz_below(256)); i = i + 1; }
+        if (n >= 12) {
+            _dn_u16(_dn_buf, 0, _DN_ID);
+            store8(_dn_buf + 3, 0x80);
+            _dn_u16(_dn_buf, 4, 1);
+        }
+    } else {
+        n = _dn_build(aaaa, 1);
+    }
+    fz_mix(n);
+    var a = fz_arena();
+    var buf = fz_exact(a, _dn_buf, n);
+    if (buf == 0) { fz_mix(0 - 9); return 0; }
+    fz_mix(_sandhi_resolve_parse_response_a(a, buf, n, _DN_ID));
+    var v6 = _sandhi_resolve_parse_response_aaaa_a(a, buf, n, _DN_ID);
+    if (v6 == 0) { fz_mix(0); } else { fz_mix_bytes(v6, 16); }
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _dn_buf = alloc(_DN_CAP + 64);
+
+    # --- baseline: unmutated builds parse — A and AAAA, every seed shape
+    #     (CNAME chains of up to 8 hops resolve; 9 and 10 are refused; a
+    #     40-pointer owner is refused) ---
+    var bs = 0;
+    var b2 = 0;
+    var n = 0;
+    while (bs < 64) {
+        fz_srand(fz_seed(bs));
+        n = _dn_build(bs % 2, 0);
+        var ok = 0;
+        if (bs % 2 == 0) {
+            if (_sandhi_resolve_parse_response(_dn_buf, n, _DN_ID) >= 0) { ok = 1; }
+        } else {
+            if (_sandhi_resolve_parse_response_aaaa(_dn_buf, n, _DN_ID) != 0) { ok = 1; }
+        }
+        var want = 1;
+        if (_dn_hops > 8 || _dn_chain == 1) { want = 0; }
+        if (ok != want) { syscall(60, 10); }
+        bs = bs + 1;
+    }
+    fz_srand(3);
+    n = _dn_build(0, 0);
+    b2 = alloc(n + 1);
+    memcpy(b2, _dn_buf, n);
+
+    # --- short headers (0..12 bytes) and a TXID mismatch ---
+    var si = 0;
+    while (si <= 12) { _sandhi_resolve_parse_response(b2, si, _DN_ID); si = si + 1; }
+    if (_sandhi_resolve_parse_response(b2, n, 0x9999) != 0 - 1) { syscall(60, 12); }
+
+    # --- compression-pointer self-loop (0xC0 0x0C at offset 12 → 12) ---
+    var loopb = alloc(64);
+    memset(loopb, 0, 64);
+    _dn_u16(loopb, 0, _DN_ID);
+    store8(loopb + 2, 0x81); store8(loopb + 3, 0x80);
+    store8(loopb + 5, 1); store8(loopb + 7, 1);
+    store8(loopb + 12, 0xc0); store8(loopb + 13, 12);
+    store8(loopb + 15, 1); store8(loopb + 17, 1);
+    _sandhi_resolve_parse_response(loopb, 40, _DN_ID);
+    _sandhi_resolve_parse_response_aaaa(loopb, 40, _DN_ID);
+
+    # --- two-pointer ping-pong (12→14, 14→12) ---
+    var ping = alloc(40);
+    memset(ping, 0, 40);
+    _dn_u16(ping, 0, _DN_ID);
+    store8(ping + 2, 0x81); store8(ping + 3, 0x80);
+    store8(ping + 5, 1); store8(ping + 7, 1);
+    store8(ping + 12, 0xc0); store8(ping + 13, 14);
+    store8(ping + 14, 0xc0); store8(ping + 15, 12);
+    _sandhi_resolve_parse_response(ping, 40, _DN_ID);
+    _sandhi_resolve_parse_response_aaaa(ping, 40, _DN_ID);
+
+    # --- the seeded mutation corpus ---
+    return fz_run("dns fuzz", 20000, &_dn_case);
+}
+
+var _ec = main();
+syscall(60, _ec);

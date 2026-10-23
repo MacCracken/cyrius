@@ -1,0 +1,187 @@
+# Fuzz: sandhi_headers_parse_a — the wire-format HTTP header-block parser
+# (untrusted response headers), each case with a fresh arena. Must not crash
+# on missing colons / no CRLF / lone CR|LF / huge counts / oversized values /
+# embedded NUL / obs-fold / repeated and smuggling-shaped fields. A graceful
+# parse passes; a fault, an over-read (exit 134) or a broken invariant (a
+# field name that is empty or holds ':' / CR / LF, a value holding CR / LF)
+# fails, and fuzz/fz_driver.cyr names the case and its seed.
+# 6.7.18: sandhi 1.13.7's fuzz/headers.fcyr (release commit 6e649a3), run against the vendored
+# lib/sandhi.cyr; only its includes differ (sandhi's own reads its src/ modules after a
+# manifest-prepended stdlib).
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/mmap.cyr"
+include "lib/fnptr.cyr"
+include "lib/sandhi.cyr"
+include "fuzz/fz_driver.cyr"
+
+const _HD_CAP = 40000;
+var _hd_buf = 0;
+
+var _hd_names = 0;
+const _HD_NNAMES = 10;
+
+fn _hd_name(i) {
+    return load64(_hd_names + i * 8);
+}
+
+# Append `n` bytes of `s`.
+fn _hd_put(b, p, s, n) {
+    memcpy(b + p, s, n);
+    return p + n;
+}
+
+# Append a value of `n` random printable bytes (sometimes any byte).
+fn _hd_value(b, p, n) {
+    var any = fz_one_in(6);
+    var i = 0;
+    while (i < n) {
+        var c = 32 + fz_below(95);
+        if (any == 1) { c = fz_below(256); }
+        store8(b + p + i, c);
+        i = i + 1;
+    }
+    return p + n;
+}
+
+# Append one header line in one of its shapes; `prev` is the previous line's
+# start (or -1), for a repeat.
+fn _hd_line(b, p, prev, prev_len) {
+    var shape = fz_below(16);
+    if (shape == 0 && prev >= 0 && p + prev_len < _HD_CAP - 64) {
+        memcpy(b + p, b + prev, prev_len);              # the same field again
+        return p + prev_len;
+    }
+    var nm = _hd_name(fz_below(_HD_NNAMES));
+    if (shape == 1) { p = _hd_put(b, p, " ", 1); }      # obs-fold continuation
+    p = _hd_put(b, p, nm, strlen(nm));
+    if (shape == 2) {
+        p = _hd_value(b, p, fz_below(20));              # no colon
+    } else {
+        if (shape == 3) { p = _hd_put(b, p, " \t", 2); }   # whitespace before the colon
+        p = _hd_put(b, p, ":", 1);
+        if (fz_one_in(2) == 1) { p = _hd_put(b, p, " ", 1); }
+        var vn = fz_below(40);
+        if (shape == 4) { vn = fz_below(9000); }        # oversized value
+        if (p + vn + 8 > _HD_CAP) { vn = 0; }
+        p = _hd_value(b, p, vn);
+        if (shape == 5) { p = _hd_put(b, p, "\t ", 2); }
+        if (shape == 6) { store8(b + p, 0); p = p + 1; }   # embedded NUL
+    }
+    if (shape == 7) { return _hd_put(b, p, "\r", 1); }  # bare CR
+    if (shape == 8) { return _hd_put(b, p, "\n", 1); }  # bare LF
+    return _hd_put(b, p, "\r\n", 2);
+}
+
+# Build case k's block into _hd_buf; its length.
+fn _hd_build(k) {
+    var b = _hd_buf;
+    var shape = k % 6;
+    if (shape == 2) {
+        var rn = fz_below(600);
+        if (fz_one_in(10) == 1) { rn = fz_below(16385); }
+        var i = 0;
+        while (i < rn) { store8(b + i, fz_below(256)); i = i + 1; }
+        return rn;
+    }
+    var p = 0;
+    var nl = fz_below(24);
+    if (shape == 3) { nl = 200 + fz_below(1000); }     # count pressure
+    var prev = 0 - 1;
+    var prev_len = 0;
+    var l = 0;
+    while (l < nl && p < _HD_CAP - 9100) {
+        var st = p;
+        p = _hd_line(b, p, prev, prev_len);
+        prev = st;
+        prev_len = p - st;
+        if (fz_one_in(40) == 1) { p = _hd_put(b, p, "\r\n", 2); }   # an empty line mid-block
+        l = l + 1;
+    }
+    if (fz_one_in(4) != 0) { p = _hd_put(b, p, "\r\n", 2); }        # the end-of-headers line
+    if (fz_one_in(3) == 1) { p = _hd_value(b, p, fz_below(64)); }   # a body after it
+    if (shape == 1 || shape == 5) { p = fz_mutate(b, p, _HD_CAP); }
+    return p;
+}
+
+# 1 when the cstr `s` holds byte `c`.
+fn _hd_has(s, c) {
+    var i = 0;
+    while (load8(s + i) != 0) {
+        if (load8(s + i) == c) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _hd_case(k) {
+    var n = _hd_build(k);
+    fz_mix(n);
+    var a = fz_arena();
+    var buf = fz_exact(a, _hd_buf, n);
+    if (buf == 0) { fz_mix(0 - 9); return 0; }
+    var h = sandhi_headers_parse_a(a, buf, n);
+    if (h == 0) { fz_mix(0 - 1); return 0; }
+    var cnt = sandhi_headers_count(h);
+    fz_mix(cnt);
+    var i = 0;
+    while (i < cnt) {
+        var nm = sandhi_headers_name_at(h, i);
+        var v = sandhi_headers_value_at(h, i);
+        fz_mix_cstr(nm);
+        fz_mix_cstr(v);
+        if (nm == 0 || v == 0) { syscall(60, 5); }
+        if (load8(nm) == 0 || _hd_has(nm, 58) == 1 || _hd_has(nm, 10) == 1 || _hd_has(nm, 13) == 1) {
+            syscall(60, 3);
+        }
+        if (_hd_has(v, 10) == 1 || _hd_has(v, 13) == 1) { syscall(60, 4); }
+        i = i + 1;
+    }
+    fz_mix(sandhi_headers_smuggle_dup(h));
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    _hd_buf = alloc(_HD_CAP + 64);
+    _hd_names = alloc(_HD_NNAMES * 8);
+    store64(_hd_names + 0, "Host");
+    store64(_hd_names + 8, "Content-Length");
+    store64(_hd_names + 16, "Transfer-Encoding");
+    store64(_hd_names + 24, "content-length");
+    store64(_hd_names + 32, "Set-Cookie");
+    store64(_hd_names + 40, "X-A");
+    store64(_hd_names + 48, "Connection");
+    store64(_hd_names + 56, "Location");
+    store64(_hd_names + 64, "x");
+    store64(_hd_names + 72, "Content-Type");
+
+    # --- baseline: a valid header block must still parse ---
+    var ok = "Host: example.com\r\nContent-Length: 5\r\nX-A: b\r\n\r\n";
+    var hv = sandhi_headers_parse(ok, strlen(ok));
+    if (hv == 0 || sandhi_headers_count(hv) != 3) { syscall(60, 10); }
+
+    # --- degenerate / boundary (must not crash; may return 0) ---
+    sandhi_headers_parse("", 0);
+    sandhi_headers_parse("\r\n", 2);
+    sandhi_headers_parse("\r\n\r\n", 4);
+    sandhi_headers_parse("nocolon\r\n\r\n", 11);
+    sandhi_headers_parse(":noname\r\n\r\n", 10);
+    sandhi_headers_parse("X:\r\n\r\n", 6);              # empty value
+    sandhi_headers_parse("X: \r\n\r\n", 7);
+    sandhi_headers_parse("A: b", 4);                    # no terminating CRLF
+    sandhi_headers_parse("A: b\r", 5);                  # lone CR at end
+    sandhi_headers_parse("A: b\n", 5);                  # lone LF
+    sandhi_headers_parse("A:b\rC:d\r\n\r\n", 12);       # bare CR mid-block
+    sandhi_headers_parse("Content-Length: 5\r\nContent-Length: 6\r\n\r\n", 40);  # dup
+
+    # --- the seeded mutation corpus ---
+    return fz_run("headers fuzz", 10000, &_hd_case);
+}
+
+var _ec = main();
+syscall(60, _ec);
