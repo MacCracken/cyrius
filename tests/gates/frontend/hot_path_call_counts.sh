@@ -37,6 +37,11 @@
 #      them back after (`_cl_save_locals` / `_cl_restore_locals`, parse/expr/closure.cyr) with word loops, not an
 #      L64 and an S64 call per word: 100 struct instances of `id<T>` in a fn of 1,000 locals made 1,918,276 L64 +
 #      S64 calls (the tree 156,376). Bound: under 600,000; the program exits 86.
+#   T  a trait impl is found by its type name through an index (FNV-1a chains, parse/fn/traits.cyr), not a walk of
+#      every impl: `_tr_providers` (each impl method's prefix) and FINDFN's miss path (`_tr_fb_qual` / `_tr_fb_ambig`,
+#      every name that is not a fn) each walked all N impls, testing a prefix (`_tr_pfx`) per impl — the parent:
+#      160,800 `_tr_pfx` calls at 200 impls, 641,600 at 400 (3.99x). Bound: 400 impls under 3x the `_tr_pfx` calls
+#      of 200 (the tree: 2,000 -> 4,096, 2.05x); the 400-impl program exits 72.
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -47,6 +52,8 @@
 # L: the parent of its fix -> RED (1,999,011 STREQ calls); FINDLOCAL's word test skipped (every non-identical slot
 # to STREQ, same answer) -> RED.
 # G: the parent of its fix -> RED (1,918,276 calls); `_cl_wcopy` through L64 / S64 again -> RED.
+# T: the parent of its fix -> RED (399%); `_tix_cands` handing back every impl below `_ti_n` (the walk's list, the
+# same answers) -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -148,6 +155,28 @@ if run "$D/g.cyr"; then
     elif [ "$GN" -lt 100 ]; then echo "FAIL: $G [G]: only $GN snapshots (_cl_save_locals) — the fixture no longer takes the path"; FAIL=1
     elif [ $((GL + GS)) -ge 600000 ]; then echo "FAIL: $G [G]: $((GL + GS)) L64 + S64 calls for $GN snapshots of 1,000+ slots (bound 600,000)"; FAIL=1
     else echo "  ok [G] $((GL + GS)) L64 + S64 calls for $GN snapshots of 1,000+ slots (bound 600,000)"; fi
+fi
+
+# ── T: trait impls by type name ──────────────────────────────────────────────────────────────────────────────
+tgen() {  # tgen n > file: one trait, n structs each with its impl, a fn calling every method
+    awk -v n="$1" 'BEGIN { print "trait Sh { fn area(self): i64; }"
+                           for (i = 0; i < n; i++) { printf "struct Q%d { a: i64; }\n", i
+                                                     printf "impl Sh for Q%d { fn area(self): i64 { return self.a + %d; } }\n", i, i }
+                           print "fn main(): i64 { var s = 0;"
+                           for (i = 0; i < n; i++) printf "    var q%d: Q%d; q%d.a = 1; s = s + q%d.area();\n", i, i, i, i
+                           print "    return s & 255; }"; print "syscall(60, main());" }'
+}
+tgen 200 > "$D/t1.cyr"; tgen 400 > "$D/t2.cyr"
+if run "$D/t1.cyr"; then
+    P1=$(count _tr_pfx)
+    if run "$D/t2.cyr"; then
+        P2=$(count _tr_pfx)
+        chmod +x "$D/prog"; trc=0; "$D/prog" || trc=$?
+        if [ "$trc" -ne 72 ]; then echo "FAIL: $G [T]: the 400-impl program exits $trc, not 72"; FAIL=1
+        elif [ "$P1" -lt 1 ] || [ "$P2" -ge $((P1 * 3)) ]; then
+            echo "FAIL: $G [T]: _tr_pfx calls $P1 (200 impls) -> $P2 (400): $((P2 * 100 / (P1 + 1)))% (bound 300%)"; FAIL=1
+        else echo "  ok [T] _tr_pfx calls $P1 (200 impls) -> $P2 (400), $((P2 * 100 / P1))% (bound 300%)"; fi
+    fi
 fi
 
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
