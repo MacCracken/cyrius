@@ -277,6 +277,10 @@ fn ws_server_send_frame(ws, opcode, data, len): i64 {
 # High-level API — handles control frames internally
 # ================================================================
 
+# The stack buffer ws_server_recv reads a control frame into (RFC 6455 §5.5: 125 bytes at most)
+# and drains a dropped frame through.
+const _WSS_CBUF = 128;
+
 # Block until a TEXT or BINARY data frame arrives. Handles ping/pong/close
 # transparently. Returns the payload as an alloc'd cstr (NUL-terminated for
 # text safety) on success, or 0 if the peer closed the connection, a frame broke a bound, or the
@@ -294,7 +298,7 @@ fn ws_server_send_frame(ws, opcode, data, len): i64 {
 fn ws_server_recv(ws): i64 {
     var fd = ws_server_fd(ws);
     var h: i64[4];
-    var cbuf[128];
+    var cbuf[_WSS_CBUF];
     while (1 == 1) {
         if (_wss_recv_header(fd, WS_MAX_PAYLOAD, &h) != 0) { return 0; }
         var op = load64(&h);
@@ -325,7 +329,7 @@ fn ws_server_recv(ws): i64 {
             var left = n;
             while (left > 0) {
                 var part = left;
-                if (part > 128) { part = 128; }
+                if (part > _WSS_CBUF) { part = _WSS_CBUF; }
                 if (_wss_recv_exact(fd, &cbuf, part) != 0) { return 0; }
                 left = left - part;
             }
