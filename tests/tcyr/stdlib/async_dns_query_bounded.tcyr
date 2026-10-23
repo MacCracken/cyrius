@@ -1,0 +1,112 @@
+# async_dns_query_bounded.tcyr — CYRIUS-2026-0038 (6.7.18): lib/async.cyr's DNS query encoder
+# refuses a name DNS cannot carry BEFORE it writes a byte.
+#
+# ⛔ WHY. _async_dns_encode_labels wrote every host byte as it went and checked the total only after
+# the loop, so a long host (or 300 one-byte labels, each passing the 63-byte rule) wrote host length
+# + 12 bytes past the resolver task's 288-byte stack query buffer — over its return address (the
+# audit's e2e repro: SIGSEGV with RIP on a `ret`). The length is now taken first; every store goes
+# through a slice of exactly the encoded length. CHANGELOG [6.7.18]
+#
+# The encoder is the Linux reactor's (macOS / Windows / agnos resolve without it); the rows run
+# where it exists.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+include "lib/async.cyr"
+
+#ifdef CYRIUS_TARGET_LINUX
+# Bytes of blk[from, to) that are not zero.
+fn _dq_dirty(blk, from, to): i64 {
+    var g = 0;
+    var i = from;
+    while (i < to) { if (load8(blk + i) != 0) { g = g + 1; } i = i + 1; }
+    return g;
+}
+
+# A NUL-terminated host of `n` copies of `c`.
+fn _dq_host(n, c): i64 {
+    var h = alloc(n + 1);
+    memset(h, c, n);
+    store8(h + n, 0);
+    return h;
+}
+
+fn _dq_group(): i64 {
+    test_group("the encoder refuses an over-long name before writing");
+    var blk = alloc(288 + 2048);
+    memset(blk, 0, 288 + 2048);
+    assert_eq(_async_dns_encode_labels(_dq_host(254, 65), blk), 0 - 1, "254-byte host: -1");
+    assert_eq(_dq_dirty(blk, 0, 288 + 2048), 0, "254-byte host: not one byte written");
+    assert_eq(_async_dns_encode_labels(_dq_host(1500, 66), blk), 0 - 1, "1500-byte host: -1");
+    assert_eq(_dq_dirty(blk, 0, 288 + 2048), 0, "1500-byte host: not one byte written");
+    # 300 one-byte labels "a.a. … .a" (599 bytes): every label passes the 63-byte rule.
+    var dots = alloc(601);
+    var i = 0;
+    while (i < 300) { store8(dots + i * 2, 97); store8(dots + i * 2 + 1, 46); i = i + 1; }
+    store8(dots + 599, 0);
+    assert_eq(_async_dns_encode_labels(dots, blk), 0 - 1, "300 one-byte labels: -1");
+    assert_eq(_dq_dirty(blk, 0, 288 + 2048), 0, "300 one-byte labels: not one byte written");
+    # The audit's repro 1 verbatim: a 1000-byte all-'A' host into _async_dns_build_query over a
+    # zeroed 288 + 1024 block — nothing past offset 288.
+    var q = _async_dns_build_query(0x4342, _dq_host(1000, 65), blk);
+    assert_eq(q, 0 - 1, "build_query, 1000-byte host: -1");
+    assert_eq(_dq_dirty(blk, 288, 288 + 2048), 0, "build_query, 1000-byte host: no byte past 288");
+    # 60 labels of 'CCCCCCCC' (539 bytes) — the verifier's end-to-end shape.
+    memset(blk, 0, 288 + 2048);
+    var c60 = alloc(540);
+    i = 0;
+    while (i < 60) { memset(c60 + i * 9, 67, 8); store8(c60 + i * 9 + 8, 46); i = i + 1; }
+    store8(c60 + 539, 0);
+    assert_eq(_async_dns_build_query(0x4342, c60, blk), 0 - 1, "build_query, 60 dotted labels: -1");
+    assert_eq(_dq_dirty(blk, 12, 288 + 2048), 0, "build_query, 60 dotted labels: no name byte written");
+
+    test_group("names DNS carries still encode");
+    memset(blk, 0, 288 + 2048);
+    assert_eq(_async_dns_encode_labels(_dq_host(253, 120), blk), 0 - 1, "a 253-byte single label (over 63): -1");
+    var lab = alloc(254);
+    i = 0;
+    while (i < 253) { store8(lab + i, 120); if (i % 64 == 63) { store8(lab + i, 46); } i = i + 1; }
+    store8(lab + 253, 0);
+    assert_eq(_async_dns_encode_labels(lab, blk), 255, "a 253-byte name of 63-byte labels: 255 bytes");
+    assert_eq(_dq_dirty(blk, 255, 288 + 2048), 0, "... and nothing past them");
+    assert_eq(load8(blk), 63, "... first label length 63");
+    assert_eq(load8(blk + 254), 0, "... root terminator at 254");
+    memset(blk, 0, 288 + 2048);
+    var n = _async_dns_build_query(0x4342, "x.example", blk);
+    assert_eq(n, 12 + 11 + 4, "x.example: 27-byte query");
+    assert_eq(load8(blk + 12), 1, "label 'x' length");
+    assert_eq(load8(blk + 13), 120, "label 'x'");
+    assert_eq(load8(blk + 14), 7, "label 'example' length");
+    assert_eq(load8(blk + 22), 0, "root terminator");
+    assert_eq(load8(blk + 24), 1, "QTYPE A");
+    assert_eq(_async_dns_encode_labels("", blk), 0 - 1, "empty host: -1");
+    assert_eq(_async_dns_encode_labels("a..b", blk), 0 - 1, "empty label: -1");
+    assert_eq(_async_dns_encode_labels("a.", blk), 0 - 1, "trailing dot: -1");
+    assert_eq(_async_dns_encode_labels(".a", blk), 0 - 1, "leading dot: -1");
+
+    test_group("end to end: async_resolve of a 600-byte host fails, it does not smash the stack");
+    var rt = async_new();
+    assert_neq(rt, 0, "async_new");
+    var h = async_resolve(rt, 0x0100007F, 53, _dq_host(600, 65));
+    assert_neq(h, 0, "async_resolve: a task");
+    assert_eq(task_join(rt, h), 0 - 1, "task_join: -1 (refused before any send)");
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_LINUX
+    _dq_group();
+    #endif
+    #ifndef CYRIUS_TARGET_LINUX
+    test_group("no reactor DNS encoder on this target");
+    assert_eq(1, 1, "nothing to check");
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var r = main();
+syscall(SYS_EXIT, r);
