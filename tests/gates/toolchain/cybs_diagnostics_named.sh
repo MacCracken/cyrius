@@ -56,6 +56,10 @@
 #      skipped: 42) is refused, and so is a 256-character path; a 255-character one compiles with its
 #      re-include skipped (41 + 1), and so does one that is the 256th distinct include (pp_mark's qword
 #      stores ran 7 bytes past the last entry, zeroing that include's own name: skipped, 41)
+#   F  cybs's per-fn tables refuse what does not fit, naming the cap, rc 1, nothing written (6.7.18): the loop stack
+#      (16 open loops in one fn) and the break list (320 pending `break`s). Neither was checked: the 17th loop wrote
+#      the outermost loop's break base, whose break then fell through (the row's program exited 141), and a 321st
+#      break's patch was overwritten by the next nested `for` (SIGSEGV). 16 loops and 320 breaks compile and run (42).
 #   V  ANTI-VACUOUS: a valid program using every neighbour of the refused shapes (`0 - a`, `>>`,
 #      `while`, an if statement, a top-level var, a forward call) compiles and runs (exit 42)
 #
@@ -92,6 +96,11 @@
 #   refuses right after, so no row can see it dropped)
 #   parse_fn_def's fn_local_count reset dropped (the 6.7.14 cybs)                          -> X RED (ztl: the class
 #                                                                                         message, not zz)
+# 6.7.18:
+#   loop_push's 16-loop check dropped (the 6.7.17 cybs)                                    -> F RED (17 loops compile:
+#                                                                                         rc 0)
+#   emit_break's 320-break check dropped (the 6.7.17 cybs)                                 -> F RED (321 breaks
+#                                                                                         compile: rc 0)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || { echo "FAIL: cybs_diagnostics_named: cannot cd to $ROOT"; exit 1; }
@@ -278,6 +287,38 @@ runs P7 l255last.cyr 'a 255-character path as the 256th distinct include (the li
 rm -rf "$D/$d" "$D"/f*.cyr "$D"/*.out
 unset LC_ALL
 
+# F — cybs's per-fn tables (6.7.18). The loop stack holds 16 open loops (cont_tgt, ending at brk_base) and the break
+# list 320 pending `break`s (brk_patches, ending at a for loop's three scratch words), and neither was checked: a 17th
+# loop's frame wrote the outermost loop's break base, so its break was never patched and fell through (the program
+# below exited 141), and a 321st break's patch was overwritten by the next nested `for`, which then wrote its own
+# rel32 into the code (SIGSEGV). src/ uses at most 3 and 4 (measured 6.7.18). Each edge compiles and runs (42);
+# one more is refused by name.
+fnest() { # <loops> — <loops> nested whiles, each left by a break; the outermost's break is the last one patched
+  awk -v n="$1" 'function ind(k,  s, j) { s = ""; for (j = 0; j < k; j++) s = s "    "; return s }
+    BEGIN { print "fn main() {"; print "    var x = 0;"
+      for (i = 1; i <= n; i++) print ind(i) "while (x < 100) {"
+      print ind(n + 1) "x = x + 1;"; print ind(n + 1) "break;"
+      for (i = n; i >= 2; i--) { print ind(i) "}"; print ind(i) "break;" }
+      print "    }"; print "    return x + 41;"; print "}"; print "var r = main();"; print "syscall(60, r);" }'
+}
+fbrk() { # <breaks> — <breaks> pending breaks in one loop, then a nested for
+  awk -v n="$1" 'BEGIN { print "fn main() {"; print "    var x = 0;"; print "    var y = 0;"; print "    while (x < 5) {"
+      print "        x = x + 1;"
+      for (i = 0; i < n; i++) print "        if (x == 99) { break; }"
+      print "        for (var i = 0; i < 2; i = i + 1) { y = y + 1; }"
+      print "    }"; print "    return x * 10 + y - 18;"; print "}"; print "var r = main();"; print "syscall(60, r);" }'
+}
+runs() { # <row> <file> <what>: cybs compiles it and the program exits 42
+  rc=0; "$D/cybs" < "$D/$2" > "$D/$2.bin" 2> "$D/$2.err" || rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -s "$D/$2.bin" ]; then bad "$1: $3 was refused (rc $rc): $(head -1 "$D/$2.err")"; return 0; fi
+  chmod +x "$D/$2.bin"; got=0; "$D/$2.bin" || got=$?
+  if [ "$got" -eq 42 ]; then echo "  ok   $1: $3 compiles and runs (exit 42)"; else bad "$1: $3 exited $got, want 42"; fi
+}
+fnest 16 > "$D/n16.cyr"; runs F n16.cyr '16 nested loops'
+fnest 17 > "$D/n17.cyr"; says F n17.cyr '17 nested loops' 'cybs: loops nest more than 16 deep in one fn, the depth of the loop stack'
+fbrk 320 > "$D/b320.cyr"; runs F b320.cyr '320 pending breaks, then a nested for'
+fbrk 321 > "$D/b321.cyr"; says F b321.cyr '321 pending breaks' 'cybs: more than 320 `break`s wait in the open loops of one fn, the size of the break list'
+
 # V — anti-vacuous
 cat > "$D/ok.cyr" <<'EOF'
 var g = 40;
@@ -304,4 +345,4 @@ else
 fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: cybs_diagnostics_named — $fail row(s) red"; exit 1; fi
-echo "PASS: cybs_diagnostics_named — every refusal in the filing's table names what cybs lacks and prints its own line of the expanded stream; an undefined name is named (a subscript's too); an input ending at fn / var is refused, not a crash; the preprocessor refuses what does not fit its buffers (the include-once list's count and width too), naming the cap; a valid program still compiles (closure intact)"
+echo "PASS: cybs_diagnostics_named — every refusal in the filing's table names what cybs lacks and prints its own line of the expanded stream; an undefined name is named (a subscript's too); an input ending at fn / var is refused, not a crash; the preprocessor refuses what does not fit its buffers (the include-once list's count and width too), naming the cap, and so do its per-fn loop stack and break list; a valid program still compiles (closure intact)"

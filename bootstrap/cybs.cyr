@@ -3231,6 +3231,15 @@ loop_push:
     mov rsi, r15
     add rsi, 0x1100000
     mov rcx, [rsi]       # sp
+# 16 loops open in one fn fill cont_tgt (r15 + 0x1100008, 16 entries, ending at brk_base): a 17th wrote
+# the outermost loop's break base, so its breaks were left unpatched (they fell through). CHANGELOG [6.7.18]
+    push rdi
+    mov rsi, err_cap
+    add rsi, 479
+    mov rdi, 74
+    cmp rcx, 16
+    jge pp_cap_err
+    pop rdi
     mov rdx, rcx
     shl rdx, 3
     mov rsi, r15
@@ -3316,6 +3325,15 @@ emit_break:
     mov rsi, r15
     add rsi, 0x1100108
     mov rcx, [rsi]       # cnt
+# brk_patches (r15 + 0x1100110) holds 320 pending breaks, ending at a for loop's three scratch words: a 321st
+# was overwritten by the next nested for, and its patch written into the code at that loop's condition. CHANGELOG [6.7.18]
+    push rdi
+    mov rsi, err_cap
+    add rsi, 553
+    mov rdi, 90
+    cmp rcx, 320
+    jge pp_cap_err
+    pop rdi
     mov rdx, rcx
     shl rdx, 3
     mov rsi, r15
@@ -5708,7 +5726,7 @@ err_bang:
 err_char:
     db "cybs: the bootstrap compiler cannot lex this byte outside a string or comment: "
 err_cap:
-    db "cybs: an included file is over 2 MB, the size of the preprocessor's include slot\ncybs: includes nest more than 8 deep, the preprocessor's 8 include slots\ncybs: the input is over 15 MB, the size of the input buffer\ncybs: the input with its includes spliced in is over 16 MB, the size of the expansion buffer\ncybs: more than 256 distinct includes, the size of the preprocessor's include-once list\ncybs: an include path of 256 or more characters, the width of an include-once entry\n"
+    db "cybs: an included file is over 2 MB, the size of the preprocessor's include slot\ncybs: includes nest more than 8 deep, the preprocessor's 8 include slots\ncybs: the input is over 15 MB, the size of the input buffer\ncybs: the input with its includes spliced in is over 16 MB, the size of the expansion buffer\ncybs: more than 256 distinct includes, the size of the preprocessor's include-once list\ncybs: an include path of 256 or more characters, the width of an include-once entry\ncybs: loops nest more than 16 deep in one fn, the depth of the loop stack\ncybs: more than 320 `break`s wait in the open loops of one fn, the size of the break list\n"
 pp_pat_include:
     db "include "
 pp_pat_ifdef:
