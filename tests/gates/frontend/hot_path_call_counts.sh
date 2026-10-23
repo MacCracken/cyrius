@@ -58,6 +58,13 @@
 #      prescan, its parse), and that was a scan of every impl reading each token through L64 — O(N^2). It bisects
 #      the tokens, which `_tr_prepass` records ascending (checked there). The parent: 1,290,255 L64 calls against
 #      1,041,571 TOKTYP calls (1.24x); the tree 649,455 (0.62x). Bound: L64 under 0.9x TOKTYP.
+#   D  a generic fn's T-typed stores are each checked for a big struct value (`_gs_sval_big`, 6.7.17's D106): it
+#      found the stored name's declaration by walking back over the unit (`_tok_name_decl`) and then walked forward
+#      for a rebinding (`_gs_rebound`), so a body of N such stores cost O(N^2) token reads. `_tok_name_decl` reuses
+#      its last walk (parse/pair_scan.cyr) and the rebinding walk runs only for a name the fn rebinds (`_rbn_has`).
+#      `fn g<T>(x: T): T { var vK: T = x; .. }`: the parent read 4,417,792 tokens at 500 stores, 17,334,792 at
+#      1,000 (3.92x; 1,866 ms at 4,000); the tree 162,813 -> 324,813 (1.99x). Bound: 1,000 stores under 3x the
+#      TOKTYP calls of 500; the program exits 7.
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -74,6 +81,8 @@
 # F: the parent of its fix -> RED (80 per token); `_FINDFN_CSTR` taking its walk again (the hash skipped) -> RED.
 # C: the parent of its fix -> RED (69,133 calls); LEX asking CCLASS per byte again (LEXID by table) -> RED.
 # T3: the parent of its fix -> RED (1.24x); `_tr_prepass` leaving `_ti_asc` 0 (the scan always) -> RED.
+# D: the parent of its fix -> RED (392%); `_tok_name_decl` never reusing its walk -> RED; `_gs_sval_big` without
+# the `_rbn_has` filter -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -214,6 +223,24 @@ if run "$D/t3.cyr"; then
     if [ "$T3T" -lt 1 ] || [ $((T3L * 10)) -ge $((T3T * 9)) ]; then
         echo "FAIL: $G [T3]: $T3L L64 calls against $T3T TOKTYP calls at 800 impls (bound 0.9x)"; FAIL=1
     else echo "  ok [T3] $T3L L64 calls against $T3T TOKTYP calls at 800 impls ($((T3L * 100 / T3T))%, bound 90%)"; fi
+fi
+
+# ── D: a generic body's T-typed stores ───────────────────────────────────────────────────────────────────────
+dgen() {  # dgen n > file: a generic fn of n `var vK: T = x;`, called at i64
+    awk -v n="$1" 'BEGIN { print "fn g<T>(x: T): T {"; for (i = 0; i < n; i++) printf "    var v%d: T = x;\n", i
+                           print "    return x;"; print "}"; print "syscall(60, g<i64>(7) & 255);" }'
+}
+dgen 500 > "$D/d1.cyr"; dgen 1000 > "$D/d2.cyr"
+if run "$D/d1.cyr"; then
+    D1=$(count TOKTYP)
+    if run "$D/d2.cyr"; then
+        D2=$(count TOKTYP)
+        chmod +x "$D/prog"; drc=0; "$D/prog" || drc=$?
+        if [ "$drc" -ne 7 ]; then echo "FAIL: $G [D]: the generic program exits $drc, not 7"; FAIL=1
+        elif [ "$D1" -lt 1 ] || [ "$D2" -ge $((D1 * 3)) ]; then
+            echo "FAIL: $G [D]: TOKTYP calls $D1 (500 stores) -> $D2 (1,000): $((D2 * 100 / (D1 + 1)))% (bound 300%)"; FAIL=1
+        else echo "  ok [D] TOKTYP calls $D1 (500 stores) -> $D2 (1,000), $((D2 * 100 / D1))% (bound 300%)"; fi
+    fi
 fi
 
 # ── F: a fn by C-string name ───────────────────────────────────────────────────────────────────────────────
