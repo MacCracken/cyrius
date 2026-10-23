@@ -233,7 +233,7 @@ cascade_legs Z12 3 'fn h(): i64 { return 1; }\nvar a = 1;\nvar c, b = h();\nsysc
 KENV=CYRIUS_ELF64_KERNEL=1
 cascade Z13 3 'kernel;\n'"$ZG"'var p = g(1 2);\nsyscall(60 0);\nsyscall(60 1);\n' "3:13: expected ')', got number 2" "4:12: expected ')', got number 0" "5:12: expected ')', got number 1"
 KENV=
-# ZO1-ZO13 (6.7.17, issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md) — THE PARSE'S DIAGNOSTICS PRINT
+# ZO1-ZO13 (6.7.17, issues/archived/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md) — THE PARSE'S DIAGNOSTICS PRINT
 #     IN SOURCE ORDER. The parse is several walks — pass 1 refuses a declaration as it registers it, pass 2 parses the fn
 #     bodies, the declaration zone's initializers are parsed by the replay after both (a `kernel;` build's after the
 #     program) — and each printed as it went: `var p = g(1 2);` then `const X;` printed 3:8 before 2:13. The parse now
@@ -421,7 +421,7 @@ else chmod +x "$O"; rc=0; "$O" || rc=$?; [ "$rc" -eq 33 ] || { echo "FAIL: F13: 
 printf 'struct W { p: Other; n; }\nfn f(): i64 { var w: W; return w.p.a.b + w.p.c; }\nvar r = f();\n' > "$T"
 rc=0; "$CC" --syntax-only < "$T" > "$O" 2>"$E" || rc=$?
 grep -q "is not a struct: it has no field" "$E" && { echo "FAIL: F14: --syntax-only refused a sibling struct's field chain:"; cat "$E"; kfail=$((kfail + 1)); }
-# RI1-RI16 (6.7.17, issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B3) — A REFUSED INITIALIZER THAT
+# RI1-RI16 (6.7.17, issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B3) — A REFUSED INITIALIZER THAT
 #     DECIDED ITS VARIABLE'S TYPE MARKS THE VARIABLE (`_ini_refd`, by its slot): its `.field` read, store and method call
 #     stand down, the initializer's one error standing for them. `var y = QQ; return y.a;` added "no struct type in scope
 #     for 'y'", and the zone's `var y = mkw().p;` (refused "needs storage in a fn's frame") the same at `y.a`. RI1 / RI2

@@ -1018,7 +1018,7 @@ the decisions are the user's (2026-10-19: D1 – D67 at the open; 2026-10-20: D6
 D94 / D95 at the p16 / t16 integration, D96 – D105 at the wave-3 integration). D36 – D67 keep the 32 changes 6.7.15
 shipped beyond its decisions' text, so nothing 6.7.15 changed is restored. The changes that went beyond a decision's
 text are filed for confirmation
-(`docs/development/issues/2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md`). Decision ids are 6.7.16's
+(`docs/development/issues/archived/2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md`). Decision ids are 6.7.16's
 unless a block names another release ("6.7.15's D18"). Wave 0's gate work and the ProtectedRoots measurement change
 nothing a consumer sees; its fold wave does: patra 1.16.6 refuses a negative BYTES / TEXT length at the write
 (`patra_insert_row` / `_or_ignore` / `patra_bind_text` answer PATRA_ERR_PARAM, D34) and reads a stored one as length -1
