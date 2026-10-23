@@ -50,6 +50,10 @@
 #      walk of the whole fn table: 2,000 fns each called once as `fK(&p)` cost O(N^2) — the walk read each fn's name
 #      through L64, so the parent made 5,305,335 L64 calls (80 per lexed token), the tree 1,301,335 (19). Bound:
 #      under 40 L64 calls per token; the program exits 8. util.cyr.
+#   C  the lexer classifies a byte by table (`_cc_tab`, filled once from CCLASS), not a CCLASS call per byte
+#      stepped over and an ISALNUM -> CCLASS pair per identifier byte: row A's program (52,965 bytes) made 57,093
+#      CCLASS + 12,040 ISALNUM calls; the tree 258 (the table's fill and the odd caller). Bound: under one call
+#      per 10 source bytes. src/frontend/lex/lex.cyr.
 #
 # MUTATION PROOF (6.7.18, on a scratch copy of src/ with CYCC= its cycc): TOKTYP and PEEKT through L64 / GTI again
 # -> RED on A (64 per token); the compiler before the fix (6.7.17's accessors) -> RED on A (141 per token).
@@ -64,6 +68,7 @@
 # same answers) -> RED.
 # T2: the parent of its fix -> RED (383%); `_tr_providers` walking every impl again (same answer) -> RED.
 # F: the parent of its fix -> RED (80 per token); `_FINDFN_CSTR` taking its walk again (the hash skipped) -> RED.
+# C: the parent of its fix -> RED (69,133 calls); LEX asking CCLASS per byte again (LEXID by table) -> RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 G=hot_path_call_counts
@@ -100,6 +105,9 @@ if run "$D/a.cyr"; then
     if [ "$T" -lt 15000 ]; then echo "FAIL: $G [A]: only $T tokens counted (ADDTOK) — the fixture or the count broke"; FAIL=1
     elif [ "$L" -ge $((T * 24)) ]; then echo "FAIL: $G [A]: $L L64 calls for $T tokens ($((L / T)) per token; bound 24, 6.7.17 read 141)"; FAIL=1
     else echo "  ok [A] $L L64 calls for $T tokens ($((L / T)) per token, bound 24)"; fi
+    K=$(( $(count CCLASS) + $(count ISALNUM) )); AB=$(wc -c < "$D/a.cyr" | tr -d ' ')
+    if [ "$K" -ge $((AB / 10)) ]; then echo "FAIL: $G [C]: $K CCLASS + ISALNUM calls for $AB source bytes (bound $((AB / 10)))"; FAIL=1
+    else echo "  ok [C] $K CCLASS + ISALNUM calls for $AB source bytes (bound $((AB / 10)))"; fi
 fi
 
 # ── P: the preprocessor's per-byte walks ─────────────────────────────────────────────────────────────────────
