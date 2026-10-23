@@ -570,17 +570,25 @@ fn FINDFN(S, noff): i64 {
 # CHANGELOG [6.7.18]
 fn FINDLOCAL(S, noff): i64 {
     var nb = S + 0xEC00000;
-    var nl = 0;
-    while (load8(nb + noff + nl) != 0) { nl = nl + 1; }
+    var nl = 0 - 1;   # the name's length and first word, read only once a live slot is compared (below)
     var m = 0 - 1;
-    if (nl < 7) { m = (1 << ((nl + 1) * 8)) - 1; }
-    var w = load64(nb + noff) & m;
+    var w = 0;
     var i = load64(S + 0x18DA10) - 1;   # GFLC
     # Search backward so inner scope shadows outer
     while (i >= 0) {
         var sn = load64(S + 0x5D9D000 + i * 8);
         if (sn >= 0) {
             if (sn == noff) { return i; }
+            # 6.7.18: the name is read here, not on entry — a caller can hand in a value that is no
+            # name-pool offset (a NUMBER token where a declared name belongs, `var 140737488355327 = 1;`),
+            # which the walk read at entry and faulted on (rc 139; intrinsic_names_reserved.sh), where the
+            # STREQ walk before 4ee8da87d read nothing until a live slot. CHANGELOG [6.7.18]
+            if (nl < 0) {
+                nl = 0;
+                while (load8(nb + noff + nl) != 0) { nl = nl + 1; }
+                if (nl < 7) { m = (1 << ((nl + 1) * 8)) - 1; }
+                w = load64(nb + noff) & m;
+            }
             if ((load64(nb + sn) & m) == w) {
                 if (nl < 8) { return i; }
                 if (STREQ(S, sn, noff) == 1) { return i; }
