@@ -1,4 +1,6 @@
 #!/bin/sh
+# check: serial — it runs other gates in its own bounded pool, among them a timing gate (test_runner_bounded)
+# that check.sh only runs alone; the parallel check.sh runs this one alone, after its pool (6.7.18)
 # tests/gates/toolchain/gates_verdict_under_pipefail.sh — 6.7.15. The gates filed for stopping
 # WITHOUT A VERDICT under `bash -eo pipefail` reach their verdict there.
 #
@@ -73,6 +75,9 @@
 #     verbs that refuse by design: `-e` ended the gate at the first (rc 1). `vrc=0; ( … ) || vrc=$?`.
 #   * stdlib_key_scan_quoted.sh (6.7.18) — `raw=$(grep -c '"stdlib", 6' <files> | awk …)`: no raw scan
 #     left (the PASSING case) is grep's exit 1, which pipefail made the assignment's (rc 1).
+#   * test_runner_bounded.sh (6.7.18; `# check: serial`, so axis 2 runs it after the pool, alone) —
+#     `orphan_pids` piped `ps` through a grep that finds nothing on a clean box (rc 1 at axis 1b); a
+#     pid gone between ps and /proc, and a kill of an exited child, ended it the same way.
 # (issues/archived/2026-10-16-two-gates-stop-without-a-verdict-under-pipefail.md,
 #  issues/archived/2026-10-17-stdlib-modules-self-sufficient-gate-stops-under-pipefail.md,
 #  issues/archived/2026-10-18-redefinition-layout-gate-stops-under-pipefail.md,
@@ -140,7 +145,8 @@ tests/gates/toolchain/deps_lock_new_leaf_locked.sh
 tests/gates/toolchain/distlib_bundle_selfcheck.sh
 tests/gates/toolchain/install_gates_ship_the_checksum.sh
 tests/gates/toolchain/scaffold_verb_discovery.sh
-tests/gates/toolchain/stdlib_key_scan_quoted.sh"
+tests/gates/toolchain/stdlib_key_scan_quoted.sh
+tests/gates/toolchain/test_runner_bounded.sh"
 
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
