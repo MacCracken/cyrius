@@ -1823,7 +1823,7 @@ zaft GZO9
 for zw in zone after; do runs "GZO9$zw" 33 "the $zw: a valid nested bounded list \`mkg1<GB<Pt>>(..)\` still binds its instance"; done
 printf '%s\nvar x = mkg1<Pt<i32>>(33);\nfn f(): i64 { return x.v; }\nsyscall(60, x.v + f());\n' "$GZOH" > "$T/GZO10.cyr"
 refused GZO10 "'Pt' is not a generic struct: it takes no type arguments" "the zone: a refused nested list's global read in a fn body and an operator: the one refusal"
-# ---- 6.7.17 (issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B1): A REFUSED EXPLICIT LIST IS ONE
+# ---- 6.7.17 (issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md, B1): A REFUSED EXPLICIT LIST IS ONE
 # ERROR. The lookaheads read `stb<*Pt>(33)` as a call of the base (only a list's names were checked) and `mkg1<Pt<i32>>(33)`
 # as D6's `G1<Pt>` instance, while the call's own parse refuses the list and calls the base: the judges said what the
 # call is not — "generic 'stb' has no i64 (or other scalar) instance", "cannot pass 'stb' to a parameter of a different

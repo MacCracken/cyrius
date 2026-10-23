@@ -94,7 +94,7 @@ elif ! grep -q "undefined function 'g0'" "$D/c.err"; then
 fi
 
 # ── UL: A `use` IS ONE LINE (6.7.17) ─────────────────────────────────────────────────────────────────────────────────
-# issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (row 4) and the user's D30 (2026-10-22,
+# issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md (row 4) and the user's D30 (2026-10-22,
 # "Refuse it by name"). Pass 1 read `use IDENT . IDENT [;]` and pass 2 stepped to the next `;`, so `use m.f` with no `;`
 # dropped the next line (exit 0, not 3), and `use 5;`, `use m.;`, `use m;`, `use m.f g;` compiled binding nothing. Now
 # one reader (`_use_step`, src/frontend/parse_fn_def.cyr) in every position: the form, then its `;` or its line's end;

@@ -997,7 +997,7 @@ error:<source>:1:66: $ZZ"
 #   the lane before it (f33107668)                   -> RED DV7 DV7b DV7c DV7d DV7e, 25
 #   `_dl_dname` without its PP_DERIVE_FAM tests      -> RED DV7c DV7e, 10 (`Q_y` and `_cy_json_skipval` stepped)
 # DV5 / DV7-DV7e pin a column past a `#derive` expansion on the same line: since 6.7.17 the SOURCE line's column (the
-# expansion map, issues/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md, row 1), which no
+# expansion map, issues/archived/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md, row 1), which no
 # change to the generated fns moves; through 6.7.16 they were the expanded line's (`fn 'h'` at 9:651, `zz` at 10:2101).
 #   `_dl_derived_fn` without `_dl_dv_once`           -> RED DV7d, 5 (the user's duplicate stepped)
 row5 DV7 "review: a user's fn Q_h on a derived refused struct's line" "$(printf 'var a = 1;\na = 2;\n#derive(accessors)\nstruct Q { y; } fn Q_h(): i64 { return zz; }\nsyscall(60, Q_h(4));\n')
@@ -1221,7 +1221,7 @@ error:<source>:4:1: unmatched '}' at module scope"
 row5 UZ9 "--syntax-only: UZ1's shape" "$(printf 'var arr: i64[E.B];\nvar a = 1;\na = 2;\nenum E { A, B }\nsyscall(60, 0);\n')
 " "error:<source>:4:1: an \`enum\` declaration must come before the first top-level statement (line 3)" --syntax-only
 
-# DI — 6.7.17 (issues/2026-10-21-inner-declaration-in-a-body-pass-two-never-parses-never-refused.md): AN INNER
+# DI — 6.7.17 (issues/archived/2026-10-21-inner-declaration-in-a-body-pass-two-never-parses-never-refused.md): AN INNER
 # DECLARATION IS REFUSED WHEREVER IT SITS (the user's decision D33, 2026-10-22). Pass 2 refuses one where it parses the
 # body; a trait default no impl inherits, a bounded generic's base (a fn or a method, a stub until instantiated) and a
 # stepped body (a refused nested fn's, a refused impl's method) are never parsed, so a declaration there compiled (6.7.16:

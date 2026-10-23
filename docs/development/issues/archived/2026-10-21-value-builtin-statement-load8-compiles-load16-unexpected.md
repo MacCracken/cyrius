@@ -1,6 +1,8 @@
-# A value builtin as a bare statement: `load8(p);` compiles while `load16(p);` / `load32(p);` / `load64(p);` / `f32_from(x);` / `f32_to(x);` are "unexpected load16" — OPEN
+# A value builtin as a bare statement: `load8(p);` compiles while `load16(p);` / `load32(p);` / `load64(p);` / `f32_from(x);` / `f32_to(x);` are "unexpected load16" — RESOLVED
 
-**Status:** 🟡 **OPEN** — whether a value builtin may stand as a statement, and in which words it is refused, is beyond
+> ✅ **RESOLVED in v6.7.17** (fea lane, unit FA2, `6620050a1` (D32), met `df752e24d`, `dce149274`, `7f4215d72`, `b955d8589`; D32, "Refuse every one in D11's words"): a value builtin as a whole statement (`load8(p);`, `f64_sqrt(x);`, `rethi();`, the dot products — 40 builtins) is refused in D11's words; a builtin's malformed call is one error and its block still closes; a value builtin, an identifier intrinsic or a bare name used as a statement with no `(` / `=` (`load16;`, `mulh64;`, `p;`) is one error and the statement ends in sync. Rows: intrinsic_names_reserved.sh, tests/tcyr f64_le_ge_trunc_builtins.tcyr and token_renumber_79_111.tcyr. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — whether a value builtin may stand as a statement, and in which words it is refused, is beyond
 6.7.16's D11 (which decided `mulh64(..);` / `sizeof(..);`); the f16 lane stopped on it.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (fea lane, wave 1, unit FA2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D32 — Refuse every one in D11's words.

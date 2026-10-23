@@ -1,6 +1,8 @@
-# The developer and release helpers moved into `scripts/` (Python and shell) are converted to cyrius — sovereignty, long term — OPEN
+# The developer and release helpers moved into `scripts/` (Python and shell) are converted to cyrius — sovereignty, long term — RESOLVED
 
-**Status:** 🟡 **OPEN** — filed 2026-10-19 with the move of the agent's helper scripts out of its private cache
+> ✅ **RESOLVED in v6.7.17** (tool lane, unit TO1, `a6c9ca553`, `4a7c4164b`, `a12de9a3f`, `382131a4a`, `749df4676`, `8fc7cf74a`, `9f6b25e5f`, `08164d25b`, `764ed937e`, `c0f4d20d4` + review fixes `ccd7df337`, `ce4e575a7`, `1809b99d6`, `2a50925b2`, `08d163d67`; D38, "Keep them in scripts/release/"): every helper is a cyrius program with the script's output on the same input — scripts/dev's six become programs/dev/{regen_issue_index,keepboth,probe,xb,envprobe,ab}.cyr, build-cycc-verify.sh's --fixpoint / --install programs/dev/fixpoint.cyr, scripts/folds' three programs/folds/{sibci,run_ci,cymlcheck}.cyr, and scripts/release's Python steps programs/release/{place,briefs,archive,assemble,roadmap_state}.cyr; the scripts are removed and scripts/ holds no Python. The Workflow scripts (`lanes.js`, `triage.js`, `docs.js`) stay in scripts/release/ (D38). Rows: dev_helpers_match_golden.sh (a golden per helper), gates_read_only_the_tree.sh. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — filed 2026-10-19 with the move of the agent's helper scripts out of its private cache
 (`~/.cache/c6`, `~/.cache/cyrius-tools`) into `scripts/`. The user, 2026-10-19: "scripts worth keeping should live in our
 scripts folder" / "scripts worth keeping will need to be converted at some point... to not go against the rule long
 term" (CLAUDE.md § *Ecosystem & stdlib*: "Sovereignty: no Python / bash / C as a shipped deliverable").

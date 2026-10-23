@@ -1,6 +1,8 @@
-# A generic's T-typed parameter name rebound by a closure parameter, a `for x in` variable or a destructure is still read as T: a bounded `x.show()` on it calls the bound's impl on the word (SIGSEGV at T = Pt), and `x.b` makes the generic a stub — OPEN
+# A generic's T-typed parameter name rebound by a closure parameter, a `for x in` variable or a destructure is still read as T: a bounded `x.show()` on it calls the bound's impl on the word (SIGSEGV at T = Pt), and `x.b` makes the generic a stub — RESOLVED
 
-**Status:** 🟡 **OPEN** — the consistent fix stops two programs that compile today, beyond D102 (the f16b lane's fix step
+> ✅ **RESOLVED in v6.7.17** (genr lane, unit GA2, `3e8756f2a` + review fixes `109ecbbf1`, `3f130d22a`; D1, "Yes: the new name is its own, untyped"): a name that a closure parameter, a for-in variable or a destructure's later name rebinds inside a generic is its own untyped word — the bounded-site scan's and the stub scan's name tables no longer read it as T, so the filed SIGSEGV and its refusals are gone; a generic whose i64 base is skipped (a bound with no i64 impl, or a stub) has its rebound uses judged too. Rows: trait_bounds_checked.sh, struct_result_type_refused.sh, tests/tcyr generic_struct_only_lines.tcyr. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — the consistent fix stops two programs that compile today, beyond D102 (the f16b lane's fix step
 taught D102's untyped-local readers the same three rebindings, f6792b43a, and stopped here).
 **Placement:** 6.7.17 — the cleanup of the remaining issues (genr lane, wave 1, unit GA2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D1 — Yes: the new name is its own, untyped.

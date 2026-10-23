@@ -1,5 +1,6 @@
-# struct_value_pointer_slot.tcyr — 6.7.17 (issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md,
-# rows B5 and B2): an inline struct VALUE meeting a `*S` slot.
+# struct_value_pointer_slot.tcyr — 6.7.17
+# (issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md, rows B5 and B2): an inline struct
+# VALUE meeting a `*S` slot.
 #
 # D17 (the user's decision, 2026-10-22: "s's address") — `var p: *P = s;` with s an inline P takes s's address, as
 # passing s to a `p: *P` parameter does (6.6.20) and `var p: *Str = t;` does for an inline `Str` (6.7.14's D18 (c)).

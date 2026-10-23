@@ -1,6 +1,8 @@
-# The 6.7.16 changes beyond the decisions' text — keep or restore each — OPEN
+# The 6.7.16 changes beyond the decisions' text — keep or restore each — RESOLVED
 
-**Status:** 🟡 **OPEN** — filed 2026-10-21 at the 6.7.16 close from the release-docs pass: one drafter per lane (16 lanes)
+> ✅ **RESOLVED in v6.7.17** (closed by decision at the 6.7.17 open, the user, 2026-10-22 — D39–D90, "go with Recommended": Keep each): all 50 items stand as 6.7.16 shipped them, each as its line in CHANGELOG [6.7.16] describes it — the keep-everything bite of wave 0, on main: no restore work and no code change. The "Recorded, not behaviour changes" notes needed no answer. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — filed 2026-10-21 at the 6.7.16 close from the release-docs pass: one drafter per lane (16 lanes)
 read each lane's handoff, commits and issues against the decisions — 6.7.16's D1 – D67 (the user, 2026-10-19, at the
 open), D68 – D95 (2026-10-20, at the wave-1 / wave-2 / p16-t16 integrations) and D96 – D105 (2026-10-20, at the wave-3
 integration), every one answered as recommended — and marked ⚠ each change that goes past its decision's text or that

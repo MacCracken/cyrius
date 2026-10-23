@@ -85,7 +85,7 @@
 #   N18 `_mv_dst_sid` answering 0 under the override again -> RED DP1-DP9 DPu (BUILT), every leg
 #
 # 6.7.17 — AXIS ST: A MULTI-VALUE CALL INTO A `Str` SLOT IS REFUSED AS INTO A STRUCT SLOT (the user's D99, 2026-10-22, the
-# finish pass; issues/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md): `var h: Str = mk(3);`, `h = mk(3);` (it warned
+# finish pass; issues/archived/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md): `var h: Str = mk(3);`, `h = mk(3);` (it warned
 # "assigning non-pointer to typed pointer"), `w.s = mk(3);`, `W { mk(3), 1 }`, `return mk(3);` from a fn returning `Str`,
 # a `Str` argument (C6), `*ps = mk(3);` through a `*Str`, a nested literal's `Str` leaf — each stored or passed the
 # call's FIRST value as the header's address — now take this gate's words with the struct `Str`: a method, wrapped, a

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gate: an `include` line ends at its file name — source after the name on the line is refused by name (6.7.17, the
-# user's D29, 2026-10-22; issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md, row 3).
+# user's D29, 2026-10-22; issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md, row 3).
 #
 # THE DEFECT (measured at 6.7.16, x86_64 and PE, no diagnostic): the preprocessor replaces the WHOLE include line with
 # the file's text, so whatever followed the closing quote was dropped unread —

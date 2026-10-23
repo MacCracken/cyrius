@@ -1581,7 +1581,7 @@ glrow "GC19 control: a *U call into a *U declaration aliases (the zone)" 9 "${GV
 glrow "GC19 control: pointer arithmetic into a *U aliases (a fn)" 9 "${GV1}fn f(): i64 { var t: *U = GH.pu + 0; GSU.b = 9; return t.b; }\nsyscall(60, f());\n"
 
 echo "GC20-GC21. a pointer of another depth (a **S) into a struct S declaration: refused by name (6.7.17's D12; x86_64, aarch64, cx, PE)"
-# The filed repro, verbatim (issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row A3): exit 1
+# The filed repro, verbatim (issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md row A3): exit 1
 # through 6.7.16 (24 bytes copied through pp's `*P3` slot: g.x was s's address).
 glrow "GC20 the filed repro A3 verbatim: var g: P3 = pp;" "err:cannot copy 'pp' $GUM'g'" \
   'struct P3 { x; y; z; }\nfn main(): i64 { var s: P3; s.x = 7; s.y = 8; s.z = 9; var ps: *P3 = &s; var pp: **P3 = &ps; var g: P3 = pp; if (g.x == &s) { return 1; } if (g.x == 7) { return 7; } return 2; }\nsyscall(60, main());\n'

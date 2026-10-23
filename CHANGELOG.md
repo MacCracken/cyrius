@@ -1469,7 +1469,7 @@ shares on groups at the end of a 4,025-group list costs the server ~24 ms of CPU
 measurement, x86_64): a denial of service by CPU amplification, bounded per hello by the record size. Found by the p16
 lane in passing and judged against the ledger rule at the close; the ledger (docs/audit/2026-10-08-security-ledger.md,
 next id `CYRIUS-2026-0038`), the detail (docs/audit/2026-09-03-security-audit.md § CYRIUS-2026-0037) and
-[the issue](docs/development/issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md).
+[the issue](docs/development/issues/archived/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md).
 
 ⚠ **Behaviour changes** — each decided by the user at the open (2026-10-19, asked once: D1 – D67, all as recommended,
 D27 asked on its own) or at a wave integration (2026-10-20: D68 – D93 on what waves 1 and 2 found, D94 / D95 asked on
@@ -1477,7 +1477,7 @@ their own at the p16 / t16 integration, D96 – D105 at the wave-3 integration, 
 source says; an unqualified Dn is 6.7.16's. The migration is
 [ecosystem-migration.md § 6.7.16](docs/development/ecosystem-migration.md). The changes that went beyond a decision's
 text are filed for confirmation:
-[the 6.7.16 changes beyond the decisions' text](docs/development/issues/2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md).
+[the 6.7.16 changes beyond the decisions' text](docs/development/issues/archived/2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md).
 - **The frontend** — `mulh64(a, b);` / `sizeof(x);` as a statement is one error, "the value of 'mulh64(..)' is
   discarded" (D11; it built a binary that died of SIGILL); enum members need their `;` / `,` — `enum E { A B }`,
   `{ A = 1 B = 5 }`, one member per line with neither — refused at the second member, a trailing separator still valid
@@ -4608,7 +4608,7 @@ one of D1 – D105. Every other bite is fixed to what the source says (no decisi
 - **Bench:** none in the lane.
 - **One line for the user** (unit T3): other top-level `var x[N]` buffers in src/ are 8× smaller in gen1 (cybs sizes N
   bytes) than in cycc (N × 8); TL-9's reader avoids the class with a mapping, and it is already recorded (src/frontend/
-  lex.cyr's note, issues/2026-10-13-self-compile-prints-large-static-advisory.md), so no new filing.
+  lex.cyr's note, issues/archived/2026-10-13-self-compile-prints-large-static-advisory.md), so no new filing.
 - **Filed from the lane** (five issues, each placed in 6.7.16 at the wave-1 integration — the user, 2026-10-20, asked
   where what 6.7.16 files goes: "INTO .16"; two more were staged and fixed inside the lane, TL-15r2 and TL-11r):
   - [the yukti fold does not compile alone](docs/development/issues/archived/2026-10-19-yukti-fold-does-not-compile-alone.md)
@@ -5777,7 +5777,7 @@ integration (`41ca7d41c`; the user, 2026-10-20: "INTO .16"): one in the t16 lane
   - The review, low: `var p = g(1 2); const X;` prints 3:8 before 2:13; on `b73e8d5fe` the 2:13 was swallowed. It is
     the class of the sweep-order filing at ZN-5, with another reporter. The s16 handoff records it as NOT DONE (blocked:
     a complete fix buffers every stderr write from pass 1 to the replay's end):
-    [2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md](docs/development/issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md).
+    [2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md](docs/development/issues/archived/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md).
 - Closes [docs/development/issues/archived/2026-10-18-zone-replay-reports-only-first-latched-error.md](docs/development/issues/archived/2026-10-18-zone-replay-reports-only-first-latched-error.md).
 
 #### ZN-9 — an untyped top-level if-expression of struct branches binds the struct (lane zone, commit b2f75e9fd)
@@ -12244,7 +12244,7 @@ the new crossos rows on ecb / ach / cass / pi.
   - Floor 367. Mutations: MTV8 (`d458f47dc`) → RED 9; MTV9 (no `for`-in / destructure arms) → RED 4.
   - tests/tcyr/crossos/generic_struct_only_lines.tcyr V19 – V21: 33 / 33 on x86_64, qemu-aarch64, cxvm and wine.
 - **Staged for the user's decision, not fixed:** the review's file-as-issue item. The integration files it as
-  docs/development/issues/2026-10-21-generic-tparam-name-rebound-by-closure-param-forin-destructure-read-as-t-sigsegv.md.
+  docs/development/issues/archived/2026-10-21-generic-tparam-name-rebound-by-closure-param-forin-destructure-read-as-t-sigsegv.md.
   It is High, a SIGSEGV, and was the same at `4ae0873f3`, so the lane did not cause it.
   - A generic's T-typed parameter name rebound by a closure parameter, a `for x in` variable or a destructure is still
     read as `T` by the name-keyed tables (`_gsn`, the bounded-site record). `fn g<T: Show>(x: T): i64 { var f = |x| {
@@ -15070,55 +15070,55 @@ day-plus redesign) and the 6.7.16 changes beyond the decisions' text (50 items, 
 the user places them (2026-10-21: no new decision round). [issues/README.md](docs/development/issues/README.md)
 § *Open queue* lists them.
 
-- [Struct and pointer shapes beyond D97 / D99 take a word or another struct's bytes in silence](docs/development/issues/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md)
+- [Struct and pointer shapes beyond D97 / D99 take a word or another struct's bytes in silence](docs/development/issues/archived/2026-10-21-struct-and-pointer-shapes-beyond-d97-d99-take-a-word.md)
   — a pointer of another struct into a by-value parameter, a pointer of another depth at a call or a declaration, and a
   struct value through an untyped pointer, into a `*Q` slot, a scalar field or element, a compound assignment or a `*P`
   declaration; one table, eight rows (rc 0 on every target; two crash).
-- [Top-level directive lines read less than their line](docs/development/issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md)
+- [Top-level directive lines read less than their line](docs/development/issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md)
   — `#assert`'s tail eats an impl's method and drops the rest of the program, `include "f"; var x = 42; ..` drops the
   statements, `use 5;` compiles, a late `private` swallows the next error.
-- [A generic's T-typed parameter name rebound by a closure parameter, a `for x in` variable or a destructure is still read as T](docs/development/issues/2026-10-21-generic-tparam-name-rebound-by-closure-param-forin-destructure-read-as-t-sigsegv.md)
+- [A generic's T-typed parameter name rebound by a closure parameter, a `for x in` variable or a destructure is still read as T](docs/development/issues/archived/2026-10-21-generic-tparam-name-rebound-by-closure-param-forin-destructure-read-as-t-sigsegv.md)
   — a bounded `x.show()` on the new `x` calls `Pt_show` on the word (a crash on every target); the fix stops `g(7)`.
-- [`Str` shapes beyond D19 / D20 / D71 / D73](docs/development/issues/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md)
+- [`Str` shapes beyond D19 / D20 / D71 / D73](docs/development/issues/archived/2026-10-21-str-shapes-beyond-d19-d20-d71-d73.md)
   — `h = mkq();` into a `Str` handle (SIGSEGV), a nested literal's `*p` leaf, a captured `*(&t) = v`, a `Str` field's
   named init, a top-level untyped `str_from`.
-- [A vector value in a word position beyond D100 / D101](docs/development/issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md)
+- [A vector value in a word position beyond D100 / D101](docs/development/issues/archived/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md)
   — `*pv = u` copies lane 0 (and `*pv = mk2(..)` differs by target), a vector local read as a word is lane 0, a
   multi-value fn's vector element is one word.
-- [A generic call's struct-typed field or struct-returning method argument binds `T = i64`](docs/development/issues/2026-10-21-generic-struct-field-or-method-argument-binds-t-i64.md)
+- [A generic call's struct-typed field or struct-returning method argument binds `T = i64`](docs/development/issues/archived/2026-10-21-generic-struct-field-or-method-argument-binds-t-i64.md)
   — `sz(w.p)` and `sz(b.mp2())` give `sizeof(T)` 8 for a 16-byte struct; `sz(q)` gives 16.
-- [A suspending `async fn`'s narrow parameter holds the caller's word](docs/development/issues/2026-10-21-suspending-async-fn-narrow-parameter-holds-caller-word.md)
+- [A suspending `async fn`'s narrow parameter holds the caller's word](docs/development/issues/archived/2026-10-21-suspending-async-fn-narrow-parameter-holds-caller-word.md)
   — 98304 where D72 gives -32768; narrowing it refuses the fn or makes a narrow coroutine-frame slot compile.
-- [A `: stack`-pair fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` is no pair](docs/development/issues/2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md)
+- [A `: stack`-pair fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` is no pair](docs/development/issues/archived/2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md)
   — `callptr(&f, 4)?` crashes on every target, `var v = callptr(&f, 4);` keeps the tag; the fix refuses that bind.
-- [Windows answers beyond D79 / D94 / D95](docs/development/issues/2026-10-21-pe-rename-onto-other-kind-and-xflock-answers-beyond-d79-d94-d95.md)
+- [Windows answers beyond D79 / D94 / D95](docs/development/issues/archived/2026-10-21-pe-rename-onto-other-kind-and-xflock-answers-beyond-d79-d94-d95.md)
   — a directory renamed onto a file replaces it (Linux -20), a file renamed onto a directory answers -13 (Linux -21),
   `xflock` of a closed or negative fd answers -1 (Linux -9).
-- [Generic parameter and type-argument lists are judged by position](docs/development/issues/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md)
+- [Generic parameter and type-argument lists are judged by position](docs/development/issues/archived/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md)
   — `struct P<5>` compiles, a trait member's unknown bound compiles, `union U<T>` is refused by pass 2 only, `U<..>` on a
   type parameter is unread, `g<i32>(3)` is "undefined function" under `CYRIUS_MONOMORPH=0`.
-- [A `*fn( .. )` type outside a parameter](docs/development/issues/2026-10-21-fn-pointer-type-outside-a-parameter.md)
+- [A `*fn( .. )` type outside a parameter](docs/development/issues/archived/2026-10-21-fn-pointer-type-outside-a-parameter.md)
   — a local / global / field is refused as a reserved-keyword identifier with a cascade; a trait member's multi-value
   element compiles where a fn's is refused.
-- [A struct, enum or trait declared inside a body pass 2 never parses is never refused](docs/development/issues/2026-10-21-inner-declaration-in-a-body-pass-two-never-parses-never-refused.md)
+- [A struct, enum or trait declared inside a body pass 2 never parses is never refused](docs/development/issues/archived/2026-10-21-inner-declaration-in-a-body-pass-two-never-parses-never-refused.md)
   — a trait default no impl inherits, an uninstantiated bounded generic: rc 0.
-- [A value builtin as a bare statement](docs/development/issues/2026-10-21-value-builtin-statement-load8-compiles-load16-unexpected.md)
+- [A value builtin as a bare statement](docs/development/issues/archived/2026-10-21-value-builtin-statement-load8-compiles-load16-unexpected.md)
   — `load8(p);` compiles, `load16(p);` / `load32(p);` / `load64(p);` / `f32_from(x);` / `f32_to(x);` are "unexpected".
-- [A statement missing its `;` before a `}` or a statement keyword loses what follows](docs/development/issues/2026-10-21-statement-missing-semicolon-loses-what-follows.md)
+- [A statement missing its `;` before a `}` or a statement keyword loses what follows](docs/development/issues/archived/2026-10-21-statement-missing-semicolon-loses-what-follows.md)
   — the next fn is "defined inside" the last, later errors are never reported; 43 sites, a first fix tried and reverted.
-- [Diagnostics print the compiler's internal position or name](docs/development/issues/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md)
+- [Diagnostics print the compiler's internal position or name](docs/development/issues/archived/2026-10-21-diagnostics-print-internal-columns-carets-and-mangled-names.md)
   — columns past a `#derive` / macro expansion, the undefined-name caret one token late (the guide's own convention), a
   generic instance's mangled `B$i32` in 33 diagnostics.
-- [One mistake, more errors or the wrong one](docs/development/issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md)
+- [One mistake, more errors or the wrong one](docs/development/issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md)
   — a refused explicit type-argument list cascades, a refused initializer leaves its name untyped, an untypable chain's
   destructure says "needs a call".
-- [A declaration-zone initializer's error is printed after a LATER line's pass-1 refusal](docs/development/issues/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md)
+- [A declaration-zone initializer's error is printed after a LATER line's pass-1 refusal](docs/development/issues/archived/2026-10-20-zone-replay-error-printed-after-later-pass-one-refusal.md)
   — `var p = g(1 2);` then `const X;` prints 3:8 before 2:13; not fixed in 6.7.16 (the s16 lane's SZ1: buffering every
   diagnostic to source order is a day-plus redesign).
-- [The 6.7.16 changes beyond the decisions' text](docs/development/issues/2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md)
+- [The 6.7.16 changes beyond the decisions' text](docs/development/issues/archived/2026-10-21-6716-behaviour-changes-beyond-the-decisions-text.md)
   — 50 changes that went past their decision's text or that no decision covered, each with its shape, before / after
   and commit; keep or restore each.
-- [The native TLS 1.3 server's key_share scan is quadratic in peer-chosen counts — CYRIUS-2026-0037, P3](docs/development/issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md): one 16 KB ClientHello costs ~24 ms of server CPU; found by p16 in passing, recorded at the close, not yet fixed.
+- [The native TLS 1.3 server's key_share scan is quadratic in peer-chosen counts — CYRIUS-2026-0037, P3](docs/development/issues/archived/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md): one 16 KB ClientHello costs ~24 ms of server CPU; found by p16 in passing, recorded at the close, not yet fixed.
 
 ## [6.7.15] — 2026-10-19
 
@@ -44529,7 +44529,7 @@ line, struct copies and the execution-coverage mode.
 - [An ASSIGNMENT from a struct dereference (`l = *p`, `G = *p`, `o.s = *p`, `q = *p` into a `*S`) stores one word at every size, with a false "assigning non-pointer to typed pointer" warning](docs/development/issues/archived/2026-10-13-assignment-from-struct-dereference-copies-one-word.md) — 6.7.11
 - [`take8(*pu)` with `pu: *U8` (a pointer to ANOTHER struct) into a by-value `S8` parameter compiles and passes U8's bytes; `take8(u)` with `u: U8` and the 16 B `take(*pu)` are refused by name](docs/development/issues/archived/2026-10-13-dereference-of-other-struct-into-small-byvalue-param-decision.md) — 6.7.11
 - [A generic call declared `: *T` (`fn gpg<T>(): *T`) is no struct source: `l = gpg<S>()` stores the pointer's word, `*gpg<S>()` as a value SIGSEGVs (a declaration, an argument, either operand), `gpg<S>().v` is refused](docs/development/issues/archived/2026-10-13-generic-pointer-returning-call-as-struct-source.md) — 6.7.11
-- [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](docs/development/issues/2026-10-13-self-compile-prints-large-static-advisory.md) — 6.7.14
+- [The compiler's own self-compile prints the large-static-data advisory (cycc's globals are over the 131,072 B line)](docs/development/issues/archived/2026-10-13-self-compile-prints-large-static-advisory.md) — 6.7.14
 - [`return GP;` (a `*S` global) and `return gp();` (a `: *S` call) from a fn returning a struct of 8 B or less return the POINTER's word; over 8 B both are refused by name](docs/development/issues/archived/2026-10-13-small-struct-return-of-pointer-global-or-call-decision.md) — 6.7.11
 - [A struct-typed FIELD destination from a `*S` global, a `: *S` call or a `*S` field (`o.s = GP`, `o.s = gp()`, `o.s = w.p`) stores the pointer's word at every size](docs/development/issues/archived/2026-10-13-struct-field-destination-from-pointer-global-call-or-field.md) — 6.7.11
 - [`GP = l` with `GP` a `*S` GLOBAL stores `l`'s first word into `GP` (a garbage pointer), where a `*S` local or parameter destination copies `l` into its pointee](docs/development/issues/archived/2026-10-13-struct-value-into-pointer-global-destination-decision.md) — 6.7.11

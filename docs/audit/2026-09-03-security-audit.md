@@ -2487,7 +2487,7 @@ capture open's flags), mutation-proven.
 *Appended 2026-10-21 (cyrius 6.7.16). Found by: the 6.7.16 p16 lane (unit PP3), in passing, while making the 1.3
 servers' extension walk linear; reported in one line in its handoff and judged against the ledger rule at the 6.7.16
 close (the release-docs pass found it neither fixed nor filed). Filed as
-[issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md](../development/issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md).*
+[issues/archived/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md](../development/issues/archived/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md).*
 
 | | |
 |---|---|

@@ -49,7 +49,7 @@
 #       swallowed behind that line); TPK controls — `U`, `*U`, `[U]`, sizeof(U), `Box<U>`, `Vec<U>` in a generic,
 #       unchanged (exit 36; 43 under the flag, every T its i64 base). A
 #       type argument's own (`h<T<u8>>`) is 6.7.14's, unchanged. Issue row 4:
-#       issues/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md. Mutant (2026-10-22): the
+#       issues/archived/2026-10-21-generic-parameter-and-type-argument-lists-judged-by-position.md. Mutant (2026-10-22): the
 #       compiler before (4de25d178) -> RED 63: TP1-TP3 and TP4 on both legs (built, or the parse errors and their
 #       cascades), TPX on tp3 / tp_sf (lint's own parse errors there) and A [pe] (both) / [macho] TP1. TP5: the D6 commit
 #       without `_ty_rd_shape`'s arm (3e9a46cff) -> RED TP5a (the impl's line beside the member's), TP5b (the impl's line

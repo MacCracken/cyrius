@@ -1,6 +1,8 @@
-# A `: stack`-pair fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` with a known `&f` is no pair: `?` takes the boxed lowering (SIGSEGV) and a one-wide bind keeps the tag in silence — OPEN
+# A `: stack`-pair fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` with a known `&f` is no pair: `?` takes the boxed lowering (SIGSEGV) and a one-wide bind keeps the tag in silence — RESOLVED
 
-**Status:** 🟡 **OPEN** — making the pair askers read a known `&f` through `callptr` / `fncallN` newly refuses `var v =
+> ✅ **RESOLVED in v6.7.17** (valc lane, unit VC2, `b935e44b0` + review fixes `0f8760de0`, `905e77e44`, `3578b12fa`, `95c97f92a`; D26, "Yes, as f(4)"): a `: stack` pair fn called through `callptr(&f, ..)` / `fncallN(&f, ..)` is the direct call's pair — `callptr(&f, 4)?` / `fncall1(&f, 4)?` take the pair's `?` (they dereferenced the tag: 139, a cx fault, PE exit 5), every one-wide bind or store is refused "bind both", a forwarder `return callptr(&f, x);` is a pair, a destructure binds both as before, and a callee held in a variable stays one word (src/frontend/parse.cyr only, no backend change). Met: `return f(x)?;` is one value to the every-path warning; three names over a `: stack` pair are refused as over a multi-value fn's two values. Rows: stack_enum_lossy_context.sh axis IC (IC1 / IC3 the filed repros verbatim) on x86_64, aarch64, cx and PE; tests/tcyr/crossos/pair_through_known_callee.tcyr. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — making the pair askers read a known `&f` through `callptr` / `fncallN` newly refuses `var v =
 callptr(&f, 4);` ("bind both"), a change to what compiles beyond the decided answers; the s16b lane stopped on it.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (valc lane, wave 1, unit VC2; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D26 — Yes, as f(4).

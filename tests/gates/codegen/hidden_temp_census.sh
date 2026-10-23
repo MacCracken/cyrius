@@ -172,7 +172,7 @@ fi
 # slots (a frame slot each in a fn, a dead global each at top level; parse.cyr — issues/2026-10-21-struct-and-pointer-
 # shapes-beyond-d97-d99-take-a-word.md).
 # 6.7.17 (D20): _istr_amp_cap — `*(&t) = v` with t a closure's captured inline `Str` parks `&t` (the environment copy)
-# while the statement's arms copy v's header through it (a frame slot of the closure; parse_decl.cyr — issues/2026-10-21-
+# while the statement's arms copy v's header through it (a frame slot of the closure; parse_decl.cyr — issues/archived/2026-10-21-
 # str-shapes-beyond-d19-d20-d71-d73.md row 3).
 # 6.7.17 (D23 A): _dst_vec — `*pv = v` through a `*V` parks the pointer while `_dvec_rcv` copies the whole vector through
 # it (a frame slot in a fn, a dead global at top level; parse.cyr — issues/2026-10-21-vector-value-in-a-word-position-

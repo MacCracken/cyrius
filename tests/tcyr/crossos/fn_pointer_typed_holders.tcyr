@@ -1,6 +1,6 @@
 # fn_pointer_typed_holders.tcyr — 6.7.17 (the user's D8, 2026-10-22). A `*fn( .. )` TYPE DECLARES A LOCAL, A GLOBAL (the
 # declaration zone and after the first statement), A STRUCT / UNION FIELD AND A SLICE ELEMENT AS THE ONE POINTER WORD A
-# `cb: *fn( .. )` PARAMETER IS (issues/2026-10-21-fn-pointer-type-outside-a-parameter.md).
+# `cb: *fn( .. )` PARAMETER IS (issues/archived/2026-10-21-fn-pointer-type-outside-a-parameter.md).
 #
 # ⛔ THE DEFECT, every release through 6.7.16. The declaration readers took the token after the `*` as a type name and
 # met the keyword: `var c: *fn(i64): i64 = 0;` was "expected identifier, got reserved keyword 'fn'" with a cascade (a

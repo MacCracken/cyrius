@@ -1,6 +1,8 @@
-# Top-level directive lines read less than their line: `#assert`'s and `include`'s tails are skipped unread (silently dropping code), `use` takes no module path, and a `private` line after the first statement swallows the next error — OPEN
+# Top-level directive lines read less than their line: `#assert`'s and `include`'s tails are skipped unread (silently dropping code), `use` takes no module path, and a `private` line after the first statement swallows the next error — RESOLVED
 
-**Status:** 🟡 **OPEN** — each fix newly refuses source that compiles today, or changes what it computes, beyond the
+> ✅ **RESOLVED in v6.7.17** (fea lane, unit FA1, `d2cb2964b` (D30), `d4c936a4e` (D28), `8b3dccef6` (D29), `c8c7fc074` (D31), met `f828c6c15`, `ca619e95f`; the finish pass's D92 `da96a710b`, D100 `6d1388cdb`, review fixes `e3f4c767d`, `d3b365f3f`, and FC1's `b7427731f`): only `;` or the line's end may follow an `#assert`'s message (D28); an include line (D29) and a `#ref` line (D92) end at their file name; a `use` is one line and any other shape is refused by name (D30); a file-level `private` line after the first statement compiles and makes the file private (D31); a `#ref` in an included file is expanded (D100); an unclosed include / `#ref` name and a refused `mod` are one error. Rows: tests/tcyr/crossos/directive_line_ends.tcyr, use_alias_table_cap.sh, include_line_tail.sh, cyaudit_include_directives axis 2. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — each fix newly refuses source that compiles today, or changes what it computes, beyond the
 decided answers; the 6.7.16 lanes stopped on each (the user, 2026-10-21: no new decision round).
 **Placement:** 6.7.17 — the cleanup of the remaining issues (fea lane, wave 1, unit FA1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D28 — Refuse it by name.

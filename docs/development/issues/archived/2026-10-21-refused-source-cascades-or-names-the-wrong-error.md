@@ -1,6 +1,8 @@
-# One mistake, more errors or the wrong one: an explicit generic call whose type-argument list is refused cascades into the receive / argument checks, a declaration whose initializer is refused leaves its name untyped, and an untypable chain's destructure says "needs a call" — OPEN
+# One mistake, more errors or the wrong one: an explicit generic call whose type-argument list is refused cascades into the receive / argument checks, a declaration whose initializer is refused leaves its name untyped, and an untypable chain's destructure says "needs a call" — RESOLVED
 
-**Status:** 🟡 **OPEN** — two repairs of a day or more (rows 1, 2) and a diagnostics policy each needs first (row 2's
+> ✅ **RESOLVED in v6.7.17** (fec lane, unit FC1, `3784038f4` (B3), `9b976e9df` (B1), `56bcdde21` (the chain destructure), met `b7427731f`; no decision needed — diagnostics only): a refused explicit type-argument list is a state of its own, so the call's refusal is its one error (no missing instance, by-value argument, struct-copy, `Pt_add` or "refusing to emit binary" after it) in a fn, the declaration zone and after the first statement; a refused initializer that decided its variable's type marks the variable, so its `.field` / store / method uses stand down while `QQ + 1` keeps its error; `var a, b = q.one().m2();` reports the chain's own error; what a refused `#assert` tail declares raises nothing at its uses. Rows: struct_receive_inference_checked.sh GZR1-GZR13 / GZRC1-GZRC2, tuple_checked.sh CT10, struct_result_type_refused.sh TV10s, call_result_field.sh N4 / N5. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — two repairs of a day or more (rows 1, 2) and a diagnostics policy each needs first (row 2's
 `var y = QQ;`, row 3's choice of error); the s16 and s16b lanes stopped on them.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (fec lane, wave 2, unit FC1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Discovered:** the s16 lane, unit SZ2 (its blocked B1 and B3); the s16b lane's fix step (row 3: "not fixed, still in

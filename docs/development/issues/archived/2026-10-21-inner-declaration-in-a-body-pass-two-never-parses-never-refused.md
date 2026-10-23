@@ -1,6 +1,8 @@
-# A struct, enum or trait declared inside a body pass 2 never parses — a trait default no impl inherits, an uninstantiated bounded generic — is never refused — OPEN
+# A struct, enum or trait declared inside a body pass 2 never parses — a trait default no impl inherits, an uninstantiated bounded generic — is never refused — RESOLVED
 
-**Status:** 🟡 **OPEN** — refusing it newly refuses source that compiles today; the f16 lane's fix step stopped on it.
+> ✅ **RESOLVED in v6.7.17** (feg lane, unit FA3, `0a93fa8b9` (D33), met `65ba39ab6`; review fixes `fff8bd611`, `438cb56f5`, `4d8087154`, `39a724f88`, `3bb4df3fd`, `56392daa0`; finish pass 2 `b79c1849b` + `2b7122447` (every diagnostic write through `_ew`), `596e1e1ce`, D110 `8ac7dca0c` (agent default) + `5a6ee2db2`; D33, "Refuse it wherever it sits"): an inner declaration is refused wherever it sits — a trait default no impl inherits, an uninstantiated bounded generic fn or method, a refused nested fn's or late impl's body; a body pass 2 never parses is now read muted for its syntax, and a name undefined in every instance of an uninstantiated generic is refused at the definition (D110); a malformed impl header is one error. Rows: decl_after_statement_named.sh DI rows (DI1 / DI2 the filed repros verbatim), IH11-IH17, dead_fn_body_syntax_checked.sh NP1-NP11 / NU1-NU8, diagnostic_writer_census.sh. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — refusing it newly refuses source that compiles today; the f16 lane's fix step stopped on it.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (feg lane, wave 1, unit FA3; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Decision (user, 2026-10-22, at the 6.7.17 open — "go with Recommended"):** D33 — Refuse it wherever it sits.
 **Discovered:** the f16 lane's fix step (beside must_fix 1, b2ae86cc5) and its review's file_as_issue; not staged by the

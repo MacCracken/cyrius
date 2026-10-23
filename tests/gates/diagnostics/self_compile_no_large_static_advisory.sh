@@ -9,7 +9,7 @@
 # One warning on every bootstrap, fixpoint, release gate and lane rebuild trains readers to skip
 # the stderr real warnings land on. The stack is alloc()'d on first TS use now
 # (src/frontend/ts/parse.cyr _ts_cst_buf); _warn_large_static is unchanged, no special case.
-# CHANGELOG [6.7.17] (issues/2026-10-13-self-compile-prints-large-static-advisory.md)
+# CHANGELOG [6.7.17] (issues/archived/2026-10-13-self-compile-prints-large-static-advisory.md)
 #
 # Rows (each: rc 0, non-empty output, no `large static data` line on stderr):
 #   host     the x86_64 stage compiler compiles every fork source (main, main_win,

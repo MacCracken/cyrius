@@ -1,5 +1,5 @@
 # directive_line_ends.tcyr — a directive line reads its whole line, and the line after it runs (6.7.17,
-# issues/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md).
+# issues/archived/2026-10-21-directive-line-tails-unread-use-without-path-late-private.md).
 #   U  a `use` with no `;` ends at its line: pass 2 stepped to the NEXT `;`, so `use dle.seven` dropped the statement on
 #      the line after it (`dle_u = seven();` never ran: 0, not 7)
 #   A  an #assert's line ends at its `;` or the line's end (the user's D28 refuses anything else there): a statement

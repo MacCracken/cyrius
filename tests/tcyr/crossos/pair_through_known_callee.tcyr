@@ -1,7 +1,7 @@
 # pair_through_known_callee.tcyr — 6.7.17 (D26, the user's decision, 2026-10-22: "Yes, as f(4)"). A `: stack` pair fn
 # called through `callptr(&f, ..)` / `fncallN(&f, ..)` with the callee written `&f` is the direct call's pair: `?`
 # propagates it, the destructure binds both, a forwarder `return callptr(&f, x);` returns it
-# (issues/2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md).
+# (issues/archived/2026-10-21-stack-pair-fn-through-callptr-or-fncall-is-no-pair.md).
 #
 # ⛔ THE DEFECT. No pair asker read the known `&f`, so `callptr(&f, 4)?` and `fncall1(&f, 4)?` took the BOXED `?` and
 # dereferenced the tag: SIGSEGV on x86_64 and aarch64, "guest address out of range: 0" on cx, an access violation (exit

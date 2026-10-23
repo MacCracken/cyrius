@@ -54,7 +54,7 @@
 #          socketpair is refused.
 # On the lib before D83: E1-E4 and W4 are answered with a ServerHello; E5 is refused by D81.
 #
-# issues/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md (CYRIUS-2026-0037). The
+# issues/archived/2026-10-21-tls13-server-key-share-scan-quadratic-in-peer-count.md (CYRIUS-2026-0037). The
 # key_share loop checked each share against supported_groups with _tn_sg_has — a re-validation and
 # a walk of the whole list per share, ~21 ms of CPU for a 16 KB hello (x86_64). Now the list is
 # validated once and a list of more than 32 groups answers membership from a one-pass bitmap

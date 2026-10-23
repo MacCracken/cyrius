@@ -1,6 +1,8 @@
-# A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back — OPEN
+# A tail call that copies a by-value struct argument is an ordinary call — a per-fn "writes no memory" analysis would win its `jmp` back — RESOLVED
 
-**Status:** 🟡 **OPEN** — the accepted cost of the 6.7.7 by-value argument fix (user, 2026-10-09: "accept the TCO
+> ✅ **RESOLVED in v6.7.17** (gena lane, unit GA1, `cecca0cde` + review fixes `91c7d2d36`, `80f539e76`, `24a22cd81`, `24f525818`, `cdcc48e63`, `f1431c06e`, `dc8337941`, `fa7a63260`; no decision needed): a call writes memory only through a callee that may — a per-fn "writes no memory" summary (an allow-list, the in-progress bit read as a write, mirroring FINDFN's and the method resolver's real routes) lets `return f(s, .., g(x))` with a by-value struct over 8 B keep its `jmp` when `g` writes nothing, while a writing helper still takes the copy. The summary judges an if-expression operand's `-` / `*`, treats the read-only builtins (`load8` .. `load64`, `f64_add` .. `f64_neg`) as no write, and is bounded at 4096 nested summaries (a 60,000-deep helper chain no longer crashes cycc). Met in the same function: the struct-operator rule follows typed pointers (`*pw + 1`, `pw.x + 1`, `o.p.x + 1`; `a2c4e400f`). Rows: by_value_arg_copy.sh C/K rows + TD and its mutation ledger; tests/tcyr/crossos/by_value_arg_evaluation_order.tcyr. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — the accepted cost of the 6.7.7 by-value argument fix (user, 2026-10-09: "accept the TCO
 loss"). Measured 2026-10-09 on the 6.7.7 call-arguments lane (8d13c88f + the ruling's gate row): the repro below
 exits 139 (SIGSEGV, the stack exhausted); the merged 6.7.7 compiler before the fix (l677-int @ 03455af0) exits 193.
 `by_value_arg_copy.sh` row TU1 pins the current shape (the copying call is a `call`, a later self tail call keeps

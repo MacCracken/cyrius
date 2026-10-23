@@ -5,7 +5,7 @@
 # and inside a generic (the token scans type `var r = idt(w.p);` as the parser binds it). Through 6.7.16 each ran the
 # i64 base: `sz(w.p)` and `sz(b.mp2())` were 8 for a 16-byte P2, and `rdb(w.p)` (`v.b`) was refused "has no i64 (or
 # other scalar) instance". A scalar field still binds i64, and through `x: T` no pointer binds (6.7.14's D8).
-# Filed: docs/development/issues/2026-10-21-generic-struct-field-or-method-argument-binds-t-i64.md
+# Filed: docs/development/issues/archived/2026-10-21-generic-struct-field-or-method-argument-binds-t-i64.md
 # The G rows (6.7.17, met beside D2): a struct CARRIER `b: Box<T>` / `b: *Box<T>` given an inline `Box<P2>` field or a
 # method returning `Box<P2>` / `*Box<P2>`, on any head, binds T = P2 as a Box<P2> local or a free call does — each was
 # refused "a different struct type" against the i64 base (`_gsc_arg`; the token scans' `_tok_sc_arg` likewise).

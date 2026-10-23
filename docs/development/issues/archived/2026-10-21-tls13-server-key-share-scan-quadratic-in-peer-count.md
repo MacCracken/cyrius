@@ -1,6 +1,8 @@
-# The native TLS 1.3 server checks each key_share against supported_groups by a linear scan — one 16 KB ClientHello costs ~24 ms of server CPU, quadratic in peer-chosen counts (CYRIUS-2026-0037) — OPEN
+# The native TLS 1.3 server checks each key_share against supported_groups by a linear scan — one 16 KB ClientHello costs ~24 ms of server CPU, quadratic in peer-chosen counts (CYRIUS-2026-0037) — RESOLVED
 
-**Status:** 🟡 **OPEN** — recorded at the 6.7.16 close as CYRIUS-2026-0037 (P3, tracked); not fixed.
+> ✅ **RESOLVED in v6.7.17** (plat lane, unit PL1, `3a25acbdc`; CYRIUS-2026-0037, P3 — fixed, no decision needed): the native TLS 1.3 server's key_share loop looks each share up in a one-pass set over the validated supported_groups, O(shares) instead of O(shares × groups), so a peer's ClientHello can no longer make the server scan quadratically. Met: check_gate_census's `$CYCC` ratchet reads every hard-coded build/cycc spelling (`f1b6f335d`, `db6e31d35`), and lib/tls_native_hs13.cyr's credential-loading banner says what the code does (`c8525910a`). Rows: tests/tcyr tls13_ch_conformance.tcyr. CHANGELOG [6.7.17])
+
+**Status:** ✅ **RESOLVED in v6.7.17** (see the banner). Was: 🟡 **OPEN** — recorded at the 6.7.16 close as CYRIUS-2026-0037 (P3, tracked); not fixed.
 **Placement:** 6.7.17 — the cleanup of the remaining issues (plat lane, wave 1, unit PL1; placed at the 6.7.17 open, 2026-10-22 — the user: "cleanup the remaining issues") — never 7.x.
 **Discovered:** 2026-10-20, by the 6.7.16 p16 lane (unit PP3, fixing
 issues/archived/2026-10-19-tls-native-servers-clienthello-null-compression-repeated-ext-block-tail.md), reported in one line in

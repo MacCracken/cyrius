@@ -32,7 +32,7 @@ export const meta = {
 //          the return value [{ lane, files_written, bites, banners, behaviour_changes,
 //          discrepancies, notes }].
 //
-// converted to cyrius later: docs/development/issues/2026-10-19-dev-helper-scripts-converted-to-cyrius.md
+// converted to cyrius later: docs/development/issues/archived/2026-10-19-dev-helper-scripts-converted-to-cyrius.md
 // (a Workflow script has no cyrius form; that issue records the choice for it.)
 const need = (v, what) => { if (v === undefined || v === null || v === '') throw new Error(`docs.js: args.${what} is required`); return v }
 const C6 = need(args.c6, 'c6')

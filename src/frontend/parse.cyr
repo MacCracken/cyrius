@@ -5471,11 +5471,12 @@ fn _psv_other(S, st, term, sid): i64 {
 # as `w = u` does and as a store through a `*S` copies the struct (6.7.11); 6.7.13's D34 made `*pv` the vector when read.
 # The store wrote one word: from a local its lane 0 (`*pv = u;` 42 on x86_64 / aarch64 / cx / PE where 47 is right), from
 # a call the word its result register held (`*pv = mk2(4, 7);` x86_64 / aarch64 2, cx / PE 42), and `*(&w) = ..` the
-# same (issues/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 1). The cursor past the operand of the
-# `*` at `d`, rax = the pointer: when the operand points at a vector (`_dop_vd`: its step word — a `*V` local,
-# parameter, capture, field, global, `: *V` call, `pv + n`, `*ppv` of a `**V` — or `&w` of a vector, `*(&w)` being w),
-# `*pv OP= v` is refused as `w OP= v` is (the statement parses on: 0), and for `=` the pointer is parked in a hidden
-# temp and the value received as `w = <src>` receives it (`_dvec_rcv`). 1 = done (`term` consumed). CHANGELOG [6.7.17]
+# same (issues/archived/2026-10-21-vector-value-in-a-word-position-beyond-d100-d101.md row 1). The cursor past the
+# operand of the `*` at `d`, rax = the pointer: when the operand points at a vector (`_dop_vd`: its step word — a `*V`
+# local, parameter, capture, field, global, `: *V` call, `pv + n`, `*ppv` of a `**V` — or `&w` of a vector, `*(&w)`
+# being w), `*pv OP= v` is refused as `w OP= v` is (the statement parses on: 0), and for `=` the pointer is parked in a
+# hidden temp and the value received as `w = <src>` receives it (`_dvec_rcv`). 1 = done (`term` consumed). CHANGELOG
+# [6.7.17]
 fn _dst_vec(S, term, d): i64 {
     var vd = _dop_vd(S, d + 1, GTI(S));
     if (vd == 0) { return 0; }

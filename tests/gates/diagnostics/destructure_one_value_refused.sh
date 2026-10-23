@@ -538,7 +538,7 @@ runs7 da_ctl "${TWO8}struct Box<T> { v: T; n; }\nfn t(): i64 { var a: i64 = 5; v
 
 
 echo "axis 10 - a method chain the lookahead cannot type reports its own error, not the destructure's (6.7.17):"
-# issues/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md row 3: `var a, b = q.one().m2();` (`one` an i64)
+# issues/archived/2026-10-21-refused-source-cascades-or-names-the-wrong-error.md row 3: `var a, b = q.one().m2();` (`one` an i64)
 # was "multi-value destructure needs a call on the right-hand side" while `var a = q.one().m2();` names the mistake; the
 # refusal is deferred (`_dt_dfr_push`) and said only when the chain's parse says nothing (`_dt_dfr_say`), and the inner
 # call's arity is not the destructure's (it was "'P.one' returns 1 value" once deferred). dc_repro the filed repro
