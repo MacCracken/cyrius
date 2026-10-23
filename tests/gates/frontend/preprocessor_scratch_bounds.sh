@@ -25,7 +25,7 @@ MAIN="$ROOT/src/main.cyr"
 fail() { echo "FAIL preprocessor_scratch_bounds: $1" >&2; exit 1; }
 # 6.7.18: lex/pp.cyr is split by seam into lex/pp/ — the axes read its pieces, in lex.cyr's include order, as the one
 # file they were (a floor of 8 pieces: a list that reads nothing cannot pass). CHANGELOG [6.7.18]
-PPD=$(mktemp -d) && [ -d "$PPD" ] || fail "mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"
+PPD=$(mktemp -d) && [ -d "$PPD" ] || { echo "FAIL preprocessor_scratch_bounds: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})" >&2; exit 1; }
 trap 'rm -rf "$PPD"' EXIT
 PPF=$(sed -n 's|^include "\(src/frontend/lex/pp/[a-z_]*\.cyr\)"$|\1|p' "$ROOT/src/frontend/lex/lex.cyr")
 [ "$(printf '%s\n' "$PPF" | grep -c . || true)" -ge 8 ] || fail "lex.cyr includes fewer than 8 files of src/frontend/lex/pp/"
