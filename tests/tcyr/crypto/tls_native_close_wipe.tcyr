@@ -1,0 +1,218 @@
+# tls_native_close zeroises the secrets a native TLS ctx holds — the 2026-10-22 security audit's
+# Finding 28. Through 6.7.17 close sent close_notify, set CLOSED and wiped nothing: the
+# application-traffic secrets (kept for KeyUpdate), keys and IVs of both directions, the handshake
+# keys, the key schedule's secrets, the TLS 1.2 master secret and the parsed private key all
+# outlived the connection in the no-free heap or its arena, and a seal after close still sealed
+# under the live key. 6.7.18: close zeroises each at the size it was allocated with and clears its
+# slot, so a later seal is TLS_ERR_PROTOCOL.
+#
+# Hermetic: a client and a server handshake in memory (as tls_native_scaffold's .28 group does),
+# and the client's close_notify goes to an in-memory transport — no socket. CHANGELOG [6.7.18]
+
+include "lib/assert.cyr"
+include "lib/str.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/tls_native.cyr"
+
+var _cw_wbuf = 0;
+var _cw_wpos = 0;
+fn _cw_write(handle, buf, n): i64 {
+    if (_cw_wpos + n > 4096) { return 0 - 1; }
+    memcpy(_cw_wbuf + _cw_wpos, buf, n);
+    _cw_wpos = _cw_wpos + n;
+    return n;
+}
+fn _cw_read(handle, buf, n): i64 { return 0 - 1; }
+fn _cw_now(): i64 { return 1893456000; }
+
+# A P-256 self-signed localhost certificate and its key (tls_native_scaffold's cert23 / key23).
+var _cw_cert = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+var _cw_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275", 276);
+
+# 1 when the `n` bytes at `p` are all zero.
+fn _cw_zero(p, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if ((load8(p + i) & 0xFF) != 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# The buffers one ctx holds, saved before the close: [slot offset, pointer, length] rows.
+var _cw_rows: i64[96];
+var _cw_n = 0;
+fn _cw_save(ctx, off, len): i64 {
+    _cw_rows[_cw_n * 3] = off;
+    _cw_rows[_cw_n * 3 + 1] = load64(ctx + off);
+    _cw_rows[_cw_n * 3 + 2] = len;
+    _cw_n = _cw_n + 1;
+    return 0;
+}
+
+# Save every secret-bearing slot of `ctx` (lengths as allocated) and its key schedule's secrets.
+fn _cw_save_all(ctx): i64 {
+    _cw_n = 0;
+    var cipher = load64(ctx + TLS_CTX_OFF_CIPHER);
+    var kl = tls_native_cipher_key_len(cipher);
+    var ivl = tls_native_cipher_iv_len(cipher);
+    if (load64(ctx + TLS_CTX_OFF_VERSION) == TLS_VERSION_1_2) { ivl = tls_native_cipher_iv_len_12(cipher); }
+    _cw_save(ctx, TLS_CTX_OFF_SRV_APP_SECRET, _TLS_MAX_DIGEST_LEN);
+    _cw_save(ctx, TLS_CTX_OFF_CLI_APP_SECRET, _TLS_MAX_DIGEST_LEN);
+    _cw_save(ctx, TLS_CTX_OFF_SRV_APP_KEY, kl);
+    _cw_save(ctx, TLS_CTX_OFF_CLI_APP_KEY, kl);
+    _cw_save(ctx, TLS_CTX_OFF_SRV_APP_IV, ivl);
+    _cw_save(ctx, TLS_CTX_OFF_CLI_APP_IV, ivl);
+    _cw_save(ctx, TLS_CTX_OFF_SRV_HS_KEY, kl);
+    _cw_save(ctx, TLS_CTX_OFF_CLI_HS_KEY, kl);
+    _cw_save(ctx, TLS_CTX_OFF_SRV_HS_IV, 12);
+    _cw_save(ctx, TLS_CTX_OFF_CLI_HS_IV, 12);
+    _cw_save(ctx, TLS_CTX_OFF_MASTER12, TLS12_MASTER_SECRET_LEN);
+    _cw_save(ctx, TLS_CTX_OFF_KEY_MAT, 48);
+    _cw_save(ctx, TLS_CTX_OFF_STEK, 32);
+    _cw_save(ctx, TLS_CTX_OFF_EPH_PRIV, _TN_EPH_MAX);
+    _cw_save(ctx, TLS_CTX_OFF_SHARED, _TN_EPH_MAX);
+    var ks = load64(ctx + TLS_CTX_OFF_KEYSCHED);
+    if (ks != 0) {
+        var off = 24;
+        while (off <= 88) {
+            _cw_save(ks, off, load64(ks + 8));
+            off = off + 8;
+        }
+    }
+    return 0;
+}
+
+# How many saved buffers were live (non-zero pointer), and how many of those read zero / have a
+# cleared slot after the close. A key schedule slot's ctx is the schedule; the check reads it back
+# through the saved pointer either way.
+var _cw_live = 0;
+var _cw_wiped = 0;
+fn _cw_check(ctx): i64 {
+    _cw_live = 0;
+    _cw_wiped = 0;
+    var i = 0;
+    while (i < _cw_n) {
+        var p = _cw_rows[i * 3 + 1];
+        if (p != 0) {
+            _cw_live = _cw_live + 1;
+            if (_cw_zero(p, _cw_rows[i * 3 + 2]) == 1) { _cw_wiped = _cw_wiped + 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# A fresh in-memory TLS 1.3 handshake; both sides' application keys installed.
+var _cw_srv = 0;
+var _cw_cl = 0;
+fn _cw_pair(): i64 {
+    var srv = tls_native_new_server(_cw_cert, 385, _cw_key, 138);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 1; }
+    var cl = tls_native_new_client("localhost", 9);
+    var ch[512];
+    var chn = tls_native_client_build_hello(cl, &ch, 512);
+    var sh[256];
+    var shn = tls_native_server_respond_hello(srv, &ch, chn, &sh, 256);
+    if (tls_native_client_parse_server_hello(cl, &sh, shn) != TLS_OK) { return 2; }
+    tls_native_server_derive_handshake(srv);
+    tls_native_server_install_handshake_keys(srv);
+    var flight[4096];
+    var fl = tls_native_server_build_flight(srv, &flight, 4096);
+    tls_native_server_derive_master(srv);
+    var flrec[4096];
+    var flrecn = tls_native_server_seal_handshake(srv, &flight, fl, &flrec, 4096);
+    if (tls_native_client_recv_flight(cl, &flrec, flrecn) != TLS_OK) { return 3; }
+    var cfin[256];
+    if (tls_native_client_finish(cl, &cfin, 256) < 0) { return 4; }
+    if (tls_native_install_app_keys(srv) != TLS_OK) { return 5; }
+    if (tls_native_install_app_keys(cl) != TLS_OK) { return 6; }
+    _cw_srv = srv;
+    _cw_cl = cl;
+    return 0;
+}
+
+_cw_wbuf = alloc(4096);
+assert_eq(tls_native_set_transport(&_cw_read, &_cw_write, &_cw_now), TLS_OK, "the in-memory transport installs");
+
+# ================================================================
+test_group("TLS 1.3: close zeroises every secret both ctxs hold");
+# ================================================================
+assert_eq(_cw_pair(), 0, "1.3: the in-memory handshake completes, both sides with application keys");
+var srv = _cw_srv;
+var cl = _cw_cl;
+var rec[128];
+assert_gt(tls_native_seal_app(cl, "live", 4, &rec, 128), 0, "1.3: the client seals before the close");
+
+_cw_save_all(cl);
+assert_eq(tls_native_close(cl), TLS_OK, "1.3: the client closes");
+assert_gt(_cw_wpos, 0, "1.3: its close_notify went out (sealed before the wipe)");
+_cw_check(cl);
+assert_gt(_cw_live, 15, "1.3: the client held its secrets, keys, IVs and schedule (more than 15 buffers)");
+assert_eq(_cw_wiped, _cw_live, "1.3: every one reads zero after the client's close");
+assert_eq(load64(cl + TLS_CTX_OFF_CLI_APP_KEY), 0, "1.3: the client's write-key slot is cleared");
+assert_eq(load64(cl + TLS_CTX_OFF_SRV_APP_SECRET), 0, "1.3: the client's read-secret slot is cleared");
+assert_eq(tls_native_seal_app(cl, "late", 4, &rec, 128), TLS_ERR_PROTOCOL,
+  "1.3: a seal after the close is refused, never sealed under a zero key");
+var ksb[48];
+assert_eq(tls_native_keysched_get_secret(load64(cl + TLS_CTX_OFF_KEYSCHED), TLS_KS_MASTER, &ksb), TLS_ERR_PROTOCOL,
+  "1.3: the key schedule answers no master secret after the close");
+
+_cw_save_all(srv);
+assert_eq(tls_native_close(srv), TLS_OK, "1.3: the server closes");
+_cw_check(srv);
+assert_gt(_cw_live, 15, "1.3: the server held its secrets, keys, IVs, schedule and private key");
+assert_eq(_cw_wiped, _cw_live, "1.3: every one reads zero after the server's close");
+assert_eq(load64(srv + TLS_CTX_OFF_KEY_MAT), 0, "1.3: the server's private-key slot is cleared");
+assert_eq(tls_native_close(srv), TLS_OK, "1.3: a second close is a no-op");
+
+# ================================================================
+test_group("TLS 1.2: close zeroises the master secret and the 4-byte GCM IVs");
+# ================================================================
+var c12 = tls_native_new_client("localhost", 9);
+var cr12[32];
+var sr12[32];
+var pm12[32];
+var i12 = 0;
+while (i12 < 32) {
+    store8(&cr12 + i12, i12 + 1);
+    store8(&sr12 + i12, i12 + 65);
+    store8(&pm12 + i12, 200 - i12);
+    i12 = i12 + 1;
+}
+store64(c12 + TLS_CTX_OFF_CIPHER, TLS_AES_128_GCM_SHA256);
+store64(c12 + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
+store64(c12 + TLS_CTX_OFF_CLIENT_RANDOM, &cr12);
+store64(c12 + TLS_CTX_OFF_SERVER_RANDOM, &sr12);
+assert_eq(tls_native_12_derive_keys(c12, &pm12, 32), TLS_OK, "1.2: derive_keys");
+store64(c12 + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
+assert_gt(tls_native_seal_app(c12, "live", 4, &rec, 128), 0, "1.2: the client seals before the close");
+_cw_save_all(c12);
+assert_eq(tls_native_close(c12), TLS_OK, "1.2: the client closes");
+_cw_check(c12);
+assert_eq(_cw_live, 5, "1.2: the client held a master secret and two keys and IVs");
+assert_eq(_cw_wiped, 5, "1.2: every one reads zero after the close");
+assert_eq(load64(c12 + TLS_CTX_OFF_MASTER12), 0, "1.2: the master-secret slot is cleared");
+assert_eq(tls_native_seal_app(c12, "late", 4, &rec, 128), TLS_ERR_PROTOCOL, "1.2: a seal after the close is refused");
+
+# ================================================================
+test_group("a failed ctx is wiped by its close too");
+# ================================================================
+var f12 = tls_native_new_client("localhost", 9);
+store64(f12 + TLS_CTX_OFF_CIPHER, TLS_CHACHA20_POLY1305_SHA256);
+store64(f12 + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
+store64(f12 + TLS_CTX_OFF_CLIENT_RANDOM, &cr12);
+store64(f12 + TLS_CTX_OFF_SERVER_RANDOM, &sr12);
+assert_eq(tls_native_12_derive_keys(f12, &pm12, 32), TLS_OK, "failed: derive_keys");
+_tn_ctx_fail(f12, TLS_ERR_DECRYPT);
+_cw_save_all(f12);
+var fw0 = _cw_wpos;
+assert_eq(tls_native_close(f12), TLS_OK, "failed: close");
+assert_eq(_cw_wpos, fw0, "failed: a failed ctx sends no close_notify");
+_cw_check(f12);
+assert_eq(_cw_live, 5, "failed: it held a master secret and two keys and IVs");
+assert_eq(_cw_wiped, 5, "failed: every one reads zero after the close");
+
+tls_native_set_transport(0, 0, 0);
+var rc = assert_summary();

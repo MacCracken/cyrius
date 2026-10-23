@@ -389,6 +389,22 @@ fn tls_native_keysched_phase(ks): i64 {
     return load64(ks + 16);
 }
 
+# Zeroise the schedule's nine secrets (early through resumption master, +24..+88, each hash_len
+# bytes) and clear their slots, so none can be read back (get_secret answers TLS_ERR_PROTOCOL).
+# tls_native_close runs it through _tn_wipe_secrets. Idempotent. CHANGELOG [6.7.18]
+fn _tn_ks_wipe(ks): i64 {
+    if (ks == 0) { return 0; }
+    var hash_len = load64(ks + 8);
+    var off = 24;
+    while (off <= 88) {
+        var p = load64(ks + off);
+        if (p != 0) { memset(p, 0, hash_len); }
+        store64(ks + off, 0);
+        off = off + 8;
+    }
+    return 0;
+}
+
 # ----------------------------------------------------------------
 # Per-sec key + IV derivation (RFC 8446 §7.3)
 # ----------------------------------------------------------------
