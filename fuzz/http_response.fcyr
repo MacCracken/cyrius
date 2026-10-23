@@ -1,6 +1,6 @@
 # Fuzz: the HTTP/1 response parser — lib/http.cyr _http_parse_response / _http_parse_response_a
 # (both over _http_parse_into), which reads whatever the server an http_get reached sent back
-# (6.7.18; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+# (6.7.18; issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
 #
 # A VALID response (status line, two headers, a blank line, a body) is the seed; each iteration
 # mutates a fresh copy from its own seed — a truncation (inside the status line, inside the

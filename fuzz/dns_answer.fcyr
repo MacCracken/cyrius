@@ -1,6 +1,6 @@
 # Fuzz: the async DNS answer parser — lib/async.cyr _async_dns_parse_a / _async_dns_skip_name, the
 # Linux reactor's resolver, which parses a datagram any host that can reach the socket may send
-# (6.7.18; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+# (6.7.18; issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
 #
 # A VALID answer (a CNAME then an A record, both names compressed) is the seed; each iteration
 # mutates a fresh copy of it from its own seed — a truncation, a count or length field set to 0 /

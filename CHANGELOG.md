@@ -232,10 +232,10 @@ effective uid or gid mismatch, or an auxv the process may not read.
   every build (not an extended `#bounds`); D2, the folder layout as the roadmap wrote it, moves first. state.md
   In-flight; the release's record lives on `l6718-integ` until its close (26ce77662).
 - **7e6478b44** — filed and placed in the audit:
-  [the network parsers' fuzz harnesses and bounds-checked builds](docs/development/issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
+  [the network parsers' fuzz harnesses and bounds-checked builds](docs/development/issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md)
   (HTTP, WebSocket, DNS, X.509 / DER, JSON) — the bounds-checked form its one question, answered by D1. Resolved in
   this release: D1's slices in every network parser, net's five harnesses and the refold's five fold-parser harnesses
-  in fuzz/ (floor 16); the file archives at the close.
+  in fuzz/ (floor 16); archived with its banner.
 
 ### Wave 0 — the moves (D2) and the audit, on `l6718-integ`
 

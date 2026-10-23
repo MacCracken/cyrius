@@ -1,7 +1,7 @@
 #!/bin/sh
 # Gate: cyrius's own network parsers read the peer's bytes through fn-local [u8] slices, so a
 # bounds check they get wrong is `slice bounds violation` (exit 134), never a read past the buffer
-# (6.7.18 — the user's D1; issues/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
+# (6.7.18 — the user's D1; issues/archived/2026-10-22-network-parsers-unfuzzed-and-bounds-mode-blind-to-raw-loads.md).
 #
 # ⛔ WHY. Bounds mode (#bounds / --bounds) checks subscripts; these parsers read through raw
 # load8/16/32(base + off), which no build checks — measured over twelve parser entry fns at the
