@@ -95,16 +95,19 @@ fn _pd_last_fn(buf, n, bol0): i64 {
 }
 
 # The file's last `fn ` offset, read back from its END (a window that doubles until it holds one
-# or covers the file) — a read path that shares nothing with the scan's buffer. -1 if none.
+# or covers the file) — a read path that shares nothing with the scan's buffer. -1 if the file holds
+# none, -2 if the read-back itself failed: a file with no fn (parse.cyr once its own body is split
+# into pieces: the pending flags and the includes) is whole when the scan saw none either, and was
+# refused as "truncated" when the two answers were one. CHANGELOG [6.7.18]
 fn _pd_tail_last_fn(path, size): i64 {
     var k = 65536;
     while (1 == 1) {
         if (k > size) { k = size; }
         var fd = file_open(path, 0, 0);
-        if (fd < 0) { return 0 - 1; }
+        if (fd < 0) { return 0 - 2; }
         var t = alloc(k + 1);
-        if (t == 0) { file_close(fd); return 0 - 1; }
-        if (sys_lseek(fd, size - k, 0) != size - k) { file_close(fd); return 0 - 1; }
+        if (t == 0) { file_close(fd); return 0 - 2; }
+        if (sys_lseek(fd, size - k, 0) != size - k) { file_close(fd); return 0 - 2; }
         var got = 0;
         var go = 1;
         while (go == 1) {
@@ -176,7 +179,7 @@ fn _parse_drift_load(path, len_out): i64 {
     store8(buf + total, 0);
     var seen = _pd_last_fn(buf, total, 1);
     var real = _pd_tail_last_fn(path, size);
-    if (real < 0 || seen != real) {
+    if (real < 0 - 1 || seen != real) {
         _pd_fail(path, "the scan did not reach the file's last fn (read from its end): a truncated file");
         return 0;
     }

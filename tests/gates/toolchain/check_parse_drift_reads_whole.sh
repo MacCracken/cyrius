@@ -21,6 +21,9 @@
 #   missing  parse/ctrl.cyr removed                               -> FAIL, "missing"
 #   window   the read-back window opens on a mid-line `fn `      -> PASS (6.6.17 review: offset 0
 #            of the window used to count as a line start, a spurious "truncated" FAIL)
+#   nofn     a parse file holding no `fn ` at all (parse.cyr once its body is split: the pending flags
+#            and the includes) -> PASS, read whole. It was "truncated": the read-back found no fn and
+#            took that for a failed read (6.7.18; now a failed read-back is told apart from none)
 # MUTATION (measured by hand, not run here): the read capped back at 262144 bytes fails rows
 # tree (the scan read 262144 bytes, fstat says ...) and tail.
 #
@@ -98,10 +101,16 @@ stage "$T/win"
                for (j = 0; j < 61; j++) printf "a" }'; } > "$T/win/src/frontend/parse/ctrl.cyr"
 check "the row passes (a mid-line \`fn \` at the window's edge is not the last fn)" 0 "$(row "$T/win")"
 
+echo "row nofn: a parse file that holds no \`fn \` (an entry of flags and includes) is read whole and passes"
+stage "$T/nofn"
+printf '# an entry: flags and includes, no fn\nvar _pd_nofn = 0;\n' > "$T/nofn/src/frontend/parse/cov.cyr"
+check "the row passes (a file with no fn is not a truncated file)" 0 "$(row "$T/nofn")"
+check "  and says each file was read whole" yes "$(grep -q 'each read whole through its last fn' "$T/nofn.out" && echo yes || echo no)"
+
 if [ "$fails" -gt 0 ]; then
     echo "FAIL: $NAME: $fails problem(s)"
-    for r in tree tail huge miss win; do [ -f "$T/$r.out" ] && { echo "  -- $r"; sed 's/^/     /' "$T/$r.out" | head -6; }; done
+    for r in tree tail huge miss win nofn; do [ -f "$T/$r.out" ] && { echo "  -- $r"; sed 's/^/     /' "$T/$r.out" | head -6; }; done
     exit 1
 fi
-echo "PASS: $NAME (the drift row names every parse file the tree has and reads each whole, through its last fn; a tail emit past 256 KB, an absurd size and a missing file each fail by name)"
+echo "PASS: $NAME (the drift row names every parse file the tree has and reads each whole, through its last fn; a file with no fn passes; a tail emit past 256 KB, an absurd size and a missing file each fail by name)"
 exit 0
