@@ -104,9 +104,9 @@ else
     if ! sh scripts/build-windows-tarball.sh "$D/out" > "$D/build.log" 2>&1; then
         _fail "build-windows-tarball.sh failed:"; sed 's/^/    /' "$D/build.log"
     else
-        NTB=$(ls "$D/out"/*.tar.gz 2>/dev/null | wc -l)
+        NTB=$(ls "$D/out"/*.tar.gz 2>/dev/null | wc -l || true)
         [ "$NTB" = "1" ] || _fail "expected exactly 1 tarball in the builder out dir, found $NTB"
-        TBP=$(ls "$D/out"/*.tar.gz 2>/dev/null | head -1)
+        TBP=$(ls "$D/out"/*.tar.gz 2>/dev/null | head -1 || true)
         TBSZ=$(wc -c < "$TBP" 2>/dev/null || echo 0)
         [ "$TBSZ" -gt 100000 ] || _fail "tarball is $TBSZ bytes — too small to be a real release artifact"
         if [ ! -f "$TBP$SUF" ]; then
@@ -186,7 +186,7 @@ if [ -z "$TBBASE" ]; then
     _fail "no -Tarball argument was ever passed to install.ps1 (calls.log: $(cat "$D/calls.log"))"
 else
     WANT="$TBBASE$SUF"
-    SCPLINE=$(grep '^scp ' "$D/calls.log" | head -1)
+    SCPLINE=$(grep -m1 '^scp ' "$D/calls.log" || true)
     GOT=""
     for a in $SCPLINE; do
         case "$a" in
@@ -224,8 +224,10 @@ BAD=0
 # release; bite 26a fixed them, the ratchet went red the way it was built to, and the
 # two halves are one claim again. CHANGELOG [6.6.6]
 for f in scripts/*.sh $(find cbt -name '*.cyr' | LC_ALL=C sort); do
-    # Join backslash continuations so a multi-line scp is one record.
-    sed -e 's/^[[:space:]]*#.*$//' -e :a -e '/\\$/N; s/\\\n//; ta' "$f" | grep -E '(^|[;&|"[:space:]])scp ' | while IFS= read -r line; do
+    # Join backslash continuations so a multi-line scp is one record. `{ grep … || true; }`: most
+    # files hold no scp at all, and under `bash -eo pipefail` grep's exit 1 failed the pipeline and
+    # ended the gate at the first such file (rc 1, no verdict). CHANGELOG [6.7.18]
+    sed -e 's/^[[:space:]]*#.*$//' -e :a -e '/\\$/N; s/\\\n//; ta' "$f" | { grep -E '(^|[;&|"[:space:]])scp ' || true; } | while IFS= read -r line; do
         case "$line" in
             *.tar.gz*|*'${TB}'*|*'$TB'*) ;;
             *) continue ;;
