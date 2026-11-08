@@ -1,0 +1,50 @@
+# Repro for 2026-10-28-file-read-whole-keeps-outgrown-buffers.md
+#
+# Reads argv[1] and prints "<bytes read> <heap the read took>". With no second argument it
+# calls file_read_whole_max: each doubling allocates a new buffer and the default (bump)
+# allocator keeps the old one, so the read takes 2-4x the file's size. With `hint` it takes
+# a starting size from stat and pre-sizes file_read_whole_into's { ptr, cap } with one slack
+# byte, so the first read fills it and the next sees EOF: one buffer, the file's size + 2.
+#
+#   head -c 16777216 /dev/zero > /tmp/f
+#   ./build/readwhole /tmp/f        # cyrius 6.7.18, x86_64: 16777216 67104880  (4.00x)
+#   ./build/readwhole /tmp/f hint   #                        16777216 16777224  (1.00x)
+#
+# The stat offsets (st_mode 24, st_size 48) are x86_64 Linux's struct stat.
+# Manifest stdlib: ["string", "fmt", "alloc", "io", "args", "syscalls"].
+fn main(): i64 {
+    args_init();
+    if (argc() < 2) { sys_write(2, "usage: readwhole FILE [hint]\n", 29); return 2; }
+    var max = 268435456;
+    var n = 0;
+    var before = alloc_used();
+    var buf = 0;
+    if (argc() > 2) {
+        var st[144];
+        var rb[16];
+        store64(&rb, 0);
+        store64(&rb + 8, 0);
+        if (sys_fstatat(0 - 100, argv(1), &st, 0) == 0) {
+            var mode = load32(&st + 24);
+            var size = load64(&st + 48);
+            # A regular file's size is only a starting capacity: the read still runs to EOF.
+            if ((mode & 0xF000) == 0x8000 && size > 0 && size <= max) {
+                var b0 = alloc(size + 2);
+                if (b0 != 0) { store64(&rb, b0); store64(&rb + 8, size + 1); }
+            }
+        }
+        n = file_read_whole_into(&rb, argv(1), max);
+        if (n >= 0) { buf = load64(&rb); }
+    } else {
+        buf = file_read_whole_max(argv(1), max, &n);
+    }
+    if (buf == 0) { sys_write(2, "read failed\n", 12); return 1; }
+    fmt_int(n);
+    sys_write(1, " ", 1);
+    fmt_int(alloc_used() - before);
+    sys_write(1, "\n", 1);
+    return 0;
+}
+
+var _rc = main();
+sys_exit_group(_rc);

@@ -1,0 +1,85 @@
+# Repro: #derive(Serialize)'s generated <Name>_from_json_str loops forever on a
+# Vec<struct> field whose array holds a '}' where an element should start.
+#
+# The element loop sends anything that is not '{', ']' or NUL to _cy_json_skipval,
+# and _cy_json_skipval returns at once, consuming nothing, on a depth-0 '}'. The loop
+# then sees the same '}' again. Nothing is allocated per turn, so it spins with no
+# abort.
+#
+# Each row decodes in a forked child under alarm(2), so a hang is a row, not a hung
+# repro. Self-proving: the exit code is the number of wrong rows. 0 when fixed, 3 on
+# cyrius 6.7.18. The two control rows pass either way.
+#
+# Filed with docs/development/issues/2026-11-07-derive-serialize-vec-struct-element-loop-hangs-on-stray-brace.md.
+#
+# Build and run from the cyrius repo root:
+#   cyrius build docs/development/issues/repros/2026-11-07-derive-serialize-vec-struct-element-loop-hangs-on-stray-brace.cyr /tmp/derive-vec-hang
+#   /tmp/derive-vec-hang; echo "exit=$?"    # -> 3 on 6.7.18
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/bayan.cyr"
+
+#derive(accessors)
+#derive(Serialize)
+struct Pt { time: f64; value: f64; }
+
+#derive(accessors)
+#derive(Serialize)
+struct Curve { points: Vec<Pt>; scale: f64; }
+
+fn say(s) { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
+fn num(n) {
+    var b[24];
+    var l = fmt_int_buf(n, &b);
+    syscall(SYS_WRITE, 1, &b, l);
+    return 0;
+}
+
+# Decode `doc` in a child killed by SIGALRM after 2 s. The child exits 0 once
+# the decoder returns. Returns the wait status.
+fn decode_in_child(doc) {
+    var pid = syscall(57);
+    if (pid == 0) {
+        syscall(37, 2);
+        var c = Curve_from_json_str(doc);
+        syscall(SYS_EXIT, 0);
+    }
+    var st = 0;
+    syscall(61, pid, &st, 0, 0);
+    return st;
+}
+
+# A row is right when the decoder comes back, with a struct or with 0.
+fn row(name, doc) {
+    var st = decode_in_child(doc);
+    var sig = st & 127;
+    if (sig == 0) {
+        say("  ok    "); say(name); say("  returned\n");
+        return 0;
+    }
+    say("  WRONG "); say(name);
+    if (sig == 14) { say("  still running after 2 s (killed by SIGALRM)\n"); }
+    else { say("  killed by signal "); num(sig); say("\n"); }
+    return 1;
+}
+
+fn main() {
+    alloc_init();
+    var bad = 0;
+    # Controls: a well-formed document, and an empty list.
+    bad = bad + row("valid, 2 points            ", "{\"points\":[{\"time\":0.0,\"value\":0.85},{\"time\":1.0,\"value\":1.25}],\"scale\":1.0}");
+    bad = bad + row("valid, empty list          ", "{\"points\":[],\"scale\":1.0}");
+    # The defect: a '}' where an element should start.
+    bad = bad + row("[}]                        ", "{\"points\":[}],\"scale\":1.0}");
+    bad = bad + row("[1}]  (a scalar, then '}') ", "{\"points\":[1}],\"scale\":1.0}");
+    # The shape a fuzzer found: the first element lost its '{'.
+    bad = bad + row("[\"time\":0.0,\"value\":0.85}]", "{\"points\":[\"time\":0.0,\"value\":0.85},{\"time\":1.0,\"value\":1.25}],\"scale\":1.0}");
+    say("wrong rows: "); num(bad); say("\n");
+    return bad;
+}
+var r = main();
+syscall(SYS_EXIT, r);

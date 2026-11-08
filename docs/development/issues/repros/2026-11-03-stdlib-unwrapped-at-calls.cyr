@@ -1,0 +1,21 @@
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+var buf[256];
+sys_chdir("/tmp");
+fmt_int(syscall(79, &buf, 256)); println("  getcwd via the x86 literal 79");
+fmt_int(syscall(SYS_GETCWD, &buf, 256)); println("  getcwd via SYS_GETCWD");
+sys_unlink("/tmp/kriya-wrap-l");
+#ifdef CYRIUS_ARCH_AARCH64
+fmt_int(syscall(SYS_SYMLINKAT, "t", AT_FDCWD, "/tmp/kriya-wrap-l")); println("  symlinkat via SYS_SYMLINKAT (aarch64 table)");
+fmt_int(syscall(SYS_READLINKAT, AT_FDCWD, "/tmp/kriya-wrap-l", &buf, 256)); println("  readlinkat via SYS_READLINKAT");
+#endif
+#ifndef CYRIUS_ARCH_AARCH64
+fmt_int(syscall(266, "t", AT_FDCWD, "/tmp/kriya-wrap-l")); println("  symlinkat via the literal 266");
+fmt_int(syscall(267, AT_FDCWD, "/tmp/kriya-wrap-l", &buf, 256)); println("  readlinkat via the literal 267");
+#endif
+fmt_int(syscall(452, AT_FDCWD, "/tmp/kriya-wrap-l", 420, 256)); println("  fchmodat2 via the literal 452 (AT_SYMLINK_NOFOLLOW on a link)");
+sys_unlink("/tmp/kriya-wrap-l");
+syscall(SYS_EXIT, 0);

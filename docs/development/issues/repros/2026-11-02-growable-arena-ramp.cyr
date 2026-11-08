@@ -1,0 +1,38 @@
+# A growable arena keeps a chunk for every request a little larger than the last.
+# Build: cyrius build docs/development/issues/repros/2026-11-02-growable-arena-ramp.cyr build/ramp && ./build/ramp
+# 6.7.18 prints 24121984 for the ramp and 0 for one size.
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+
+fn main() {
+    var a = arena_allocator_growable(65536);
+    reset_via(a); alloc_via(a, 60000); alloc_via(a, 70000);
+    var base = alloc_used();
+    var i = 0;
+    while (i < 200) {
+        reset_via(a);
+        alloc_via(a, 60000);
+        alloc_via(a, 70000 + i * 512);
+        i = i + 1;
+    }
+    println("kept by 200 rounds, each a little larger: ");
+    fmt_int(alloc_used() - base);
+    println("");
+    base = alloc_used();
+    i = 0;
+    while (i < 200) {
+        reset_via(a);
+        alloc_via(a, 60000);
+        alloc_via(a, 70000);
+        i = i + 1;
+    }
+    println("kept by 200 rounds of one size: ");
+    fmt_int(alloc_used() - base);
+    println("");
+    return 0;
+}
+var rc = main();
+sys_exit(rc);

@@ -1,0 +1,37 @@
+# A GROW arena keeps a chunk for each slightly larger allocation.
+#
+#   cyrius build arena-grow-rising-needs.cyr /tmp/r && /tmp/r
+#
+# The same need in a loop settles at once. A need that rises by 16 B each time adds a chunk per
+# cycle, so a request loop does not converge on its high-water mark.
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+
+fn main() {
+    alloc_init();
+    var same = arena_new_growable(65536);
+    var k = 0;
+    while (k < 200) {
+        arena_reset(same);
+        arena_alloc(same, 900000);
+        k = k + 1;
+    }
+    println("same need, 200 cycles, bytes held:");
+    fmt_int(arena_capacity_total(same));
+    println("");
+
+    var rising = arena_new_growable(65536);
+    k = 0;
+    while (k < 200) {
+        arena_reset(rising);
+        arena_alloc(rising, 900000 + k * 16);
+        k = k + 1;
+    }
+    println("rising need, 200 cycles, bytes held:");
+    fmt_int(arena_capacity_total(rising));
+    println("");
+    return 0;
+}
+
+var _x = main();
+sys_exit_group(_x);

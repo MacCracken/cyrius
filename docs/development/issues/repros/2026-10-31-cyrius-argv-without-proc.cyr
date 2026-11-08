@@ -1,0 +1,13 @@
+# Repro: on Linux a program's arguments come only from /proc/self/cmdline.
+# With /proc absent (chroot, minimal container) or no free fd, args_init()
+# fails and argc() is 0 — the program cannot see its own command line,
+# although argv is on its initial stack.
+fn main() {
+    var rc = args_init();
+    print("args_init=", 10); fmt_int(rc);
+    print(" argc=", 6); fmt_int(argc());
+    print("\n", 1);
+    return 0;
+}
+var _rc = main();
+syscall(SYS_EXIT, _rc);

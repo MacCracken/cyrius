@@ -1,0 +1,79 @@
+# Repro for 2026-11-02-memcpy-memset-byte-loops-dominate-frame-copies.md
+#
+# Measured 2026-11-02 on cyrius 6.7.18, x86_64 (AMD Ryzen 7 5800H, powersave, not quiesced):
+#   memcpy 13.2 ms, copy8 2.04 ms, memset 11.5 ms, fill8 1.67 ms (8,294,400 bytes each).
+#
+# lib/string.cyr's memcpy and memset move one byte per iteration. This times them on
+# one 1080p RGBA frame (8,294,400 bytes) against the same work in 8-byte chunks with a
+# byte tail, and checks that both produce identical bytes.
+#
+#   cyrius bench 2026-11-02-memcpy-memset-byte-loops.bcyr
+#
+# Manifest stdlib: ["syscalls", "alloc", "string", "fmt", "bench"].
+
+var N = 8294400;
+var SRC = 0;
+var DST = 0;
+
+fn copy8(dst, src, n): i64 {
+    var i = 0;
+    while (i + 8 <= n) { store64(dst + i, load64(src + i)); i = i + 8; }
+    while (i < n) { store8(dst + i, load8(src + i)); i = i + 1; }
+    return dst;
+}
+
+fn fill8(dst, val, n): i64 {
+    var b = val & 255;
+    var w = b * 0x0101010101010101;
+    var i = 0;
+    while (i + 8 <= n) { store64(dst + i, w); i = i + 8; }
+    while (i < n) { store8(dst + i, b); i = i + 1; }
+    return dst;
+}
+
+fn same(a, b, n): i64 {
+    var i = 0;
+    while (i < n) { if (load8(a + i) != load8(b + i)) { return 0; } i = i + 1; }
+    return 1;
+}
+
+fn timed(name, which, iters): i64 {
+    var bn = bench_new(name);
+    bench_batch_start(bn);
+    var k = 0;
+    while (k < iters) {
+        if (which == 0) { memcpy(DST, SRC, N); }
+        if (which == 1) { copy8(DST, SRC, N); }
+        if (which == 2) { memset(DST, 0, N); }
+        if (which == 3) { fill8(DST, 0, N); }
+        k = k + 1;
+    }
+    bench_batch_stop(bn, iters);
+    bench_report(bn);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    SRC = alloc(N + 3);
+    DST = alloc(N + 3);
+    var ref = alloc(N + 3);
+    var i = 0;
+    while (i < N) { store8(SRC + i, (i * 7) & 255); i = i + 1; }
+    # Correctness: an odd length and an odd offset, so the tail and unaligned chunks run.
+    memcpy(ref, SRC + 1, N - 3);
+    copy8(DST, SRC + 1, N - 3);
+    if (same(ref, DST, N - 3) == 0) { println("copy8 differs from memcpy"); return 1; }
+    memset(ref, 0xA5, N - 3);
+    fill8(DST, 0xA5, N - 3);
+    if (same(ref, DST, N - 3) == 0) { println("fill8 differs from memset"); return 1; }
+    println("  copy8 and fill8 match memcpy and memset byte for byte");
+    timed("memcpy_8294400B", 0, 10);
+    timed("copy8_8294400B", 1, 10);
+    timed("memset_8294400B", 2, 10);
+    timed("fill8_8294400B", 3, 10);
+    return 0;
+}
+
+var r = main();
+sys_exit_group(r);

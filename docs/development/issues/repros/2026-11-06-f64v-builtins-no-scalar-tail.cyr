@@ -1,0 +1,107 @@
+# Repro: the f64v_* and f64v256_* builtins round a length up to their lane count, with no
+# scalar tail, so any other length writes past the end of the destination and reads past
+# the end of the sources. Nothing rejects it or says so at the call.
+#
+# Each row runs a builtin over `n` elements of a buffer whose slots from `n` on hold a guard.
+# The exit code is the number of calls that wrote past `n`. It should be 0.
+#
+# Filed with docs/development/issues/2026-11-06-f64v-builtins-no-scalar-tail.md.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+include "lib/simd.cyr"
+
+var GUARD = 0x7FF8DEADBEEF0000;
+var _wrote_past = 0;
+
+fn say(s) { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
+
+fn say_num(v) {
+    var b[24];
+    var i = 23;
+    var x = v;
+    if (x == 0) { store8(&b + i, 48); i = i - 1; }
+    while (x > 0) {
+        store8(&b + i, 48 + (x % 10));
+        x = x / 10;
+        i = i - 1;
+    }
+    syscall(SYS_WRITE, 1, &b + i + 1, 23 - i);
+    return 0;
+}
+
+fn reset(out) {
+    var i = 0;
+    while (i < 16) {
+        store64(out + i * 8, GUARD);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Elements written past `n`.
+fn past(out, n) {
+    var count = 0;
+    var i = n;
+    while (i < 16) {
+        if (load64(out + i * 8) != GUARD) { count = count + 1; }
+        i = i + 1;
+    }
+    return count;
+}
+
+fn row(name, n, out) {
+    var over = past(out, n);
+    say(name);
+    say(" n=");
+    say_num(n);
+    say("  wrote past n: ");
+    say_num(over);
+    say("\n");
+    if (over > 0) { _wrote_past = _wrote_past + 1; }
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    var a = alloc(128);
+    var b = alloc(128);
+    var out = alloc(128);
+    var i = 0;
+    while (i < 16) {
+        store64(a + i * 8, f64_from(i + 1));
+        store64(b + i * 8, f64_from(10 * (i + 1)));
+        i = i + 1;
+    }
+    var n = 1;
+    while (n <= 3) {
+        reset(out);
+        f64v_add(out, a, b, n);
+        row("f64v_add  ", n, out);
+        n = n + 2;
+    }
+    reset(out);
+    f64v_scale(out, a, F64_TWO, 1);
+    row("f64v_scale", 1, out);
+    reset(out);
+    f64v_mul(out, a, b, 3);
+    row("f64v_mul  ", 3, out);
+    reset(out);
+    f64v_sub(out, a, b, 5);
+    row("f64v_sub  ", 5, out);
+    if (simd_has_avx2() == 1) {
+        n = 1;
+        while (n <= 7) {
+            reset(out);
+            f64v256_add(out, a, b, n);
+            row("f64v256_add", n, out);
+            n = n + 2;
+        }
+    }
+    return _wrote_past;
+}
+
+var __r = main();
+syscall(SYS_EXIT, __r);

@@ -1,0 +1,60 @@
+# Repro: #derive(Serialize)'s generated <Name>_from_json_str scans a key with
+#     while (load8(json + _p) != 34) { _p = _p + 1; }
+# which never stops at the NUL, so an unterminated key reads past the end of the
+# string: into the next allocation, or into whatever page follows.
+#
+# Case 1 parses fields out of a NEIGHBOURING buffer and returns them as success.
+# Case 2 puts the same string against an unmapped page, so the overread faults.
+# Exit 0 when fixed. Exit 1 if case 1 reads the neighbour; SIGSEGV (139) in case 2.
+#
+# Filed with docs/development/issues/2026-11-07-derive-serialize-key-scan-reads-past-nul.md.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/bayan.cyr"
+
+#derive(accessors)
+#derive(Serialize)
+struct Ev {
+    kind: i64;
+    arg0: i64;
+}
+
+fn say(s) { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
+
+fn main() {
+    alloc_init();
+    var bad = 0;
+
+    # Case 1: `{"k` with its NUL, then the next allocation.
+    var h = alloc(32);
+    memcpy(h, "{\"k", 3);
+    store8(h + 3, 0);
+    var g = alloc(64);
+    memcpy(g, "\":0,\"kind\":3,\"arg0\":77}", 23);
+    store8(g + 23, 0);
+    var e = Ev_from_json_str(h);
+    if (e != 0) {
+        if (Ev_kind(e) == 3) {
+            say("case 1: parsed kind=3 out of the next allocation (want: 0, a failed parse)\n");
+            bad = 1;
+        }
+    }
+
+    # Case 2: the same string ending at the last byte of a mapped page.
+    var page = syscall(9, 0, 8192, 3, 0x22, 0 - 1, 0);
+    syscall(10, page + 4096, 4096, 0);
+    var p = page + 4096 - 4;
+    memcpy(p, "{\"k", 3);
+    store8(p + 3, 0);
+    say("case 2: parsing an unterminated key at a page end (SIGSEGV here = overread)\n");
+    var e2 = Ev_from_json_str(p);
+    if (e2 != 0) { say("case 2: returned a struct from an unterminated key\n"); bad = 1; }
+    if (bad == 0) { say("ok: both refused\n"); }
+    return bad;
+}
+var r = main();
+syscall(SYS_EXIT, r);

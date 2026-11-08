@@ -1,0 +1,23 @@
+# strlen on the same 13-byte string, starting at each offset 0..7 from an 8-byte boundary.
+fn main() {
+    alloc_init();
+    var lit = "prompt-hash-1";
+    var n = strlen(lit);
+    var base = alloc(64);
+    var k = 0;
+    while (k < 8) {
+        var p = base + k;
+        memcpy(p, lit, n + 1);
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "strlen_13B_offset_");
+        str_builder_add_int(sb, k);
+        var b = bench_new(str_data(str_builder_build(sb)));
+        bench_batch_start(b);
+        var i = 0;
+        while (i < 1000000) { strlen(p); i = i + 1; }
+        bench_batch_stop(b, 1000000);
+        bench_report(b);
+        k = k + 1;
+    }
+    return 0;
+}
