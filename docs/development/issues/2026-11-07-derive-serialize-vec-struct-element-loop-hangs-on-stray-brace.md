@@ -98,5 +98,15 @@ decoder, so the restore entry svara documents for untrusted JSON never runs.
 
 ## Consumer-side workaround
 
-None shipped. A caller decoding JSON it did not write can bound the decode with a timeout, or check the document
-itself before decoding.
+svara 3.6.3 checks the text before any decode, with `svara_validate_json` in its `src/error.cyr`. It accepts only
+what svara's writer produces: one object of objects, arrays, numbers and `null`, `true` or `false`; keys of letters,
+digits and `_`; no string value, no escape, no whitespace inside the object; brackets that close their own kind;
+nesting to 16 levels; numbers to 32 bytes; nothing after the object. Two decoder behaviours set the escape and
+whitespace rules. The key scan ends at the first `"` whether or not it is escaped, and only spaces are skipped
+between a key and its value. On a document that passes, the decoder's view matches the real structure, so neither
+this loop nor the unterminated-key overread can be reached.
+
+Measured in a scratch probe on 6.7.18: 70,000 byte-damaged documents of svara's seven `Vec<struct>` types, each
+decoded in a forked child under a 300 ms timer. 63,821 were refused, and the 6,179 accepted all decoded, with 0 hangs
+and 0 faults. Without the check, 303 of 7,000 hung. A consumer whose types have no text field can copy the approach.
+One with string fields needs the decoder fixed.

@@ -1,0 +1,38 @@
+# Repro: 2026-11-09-an-attribute-before-a-var-attaches-to-the-next-fn.md
+#
+# `#deprecated` written before a `var` does not mark the var, and is not refused: the pending
+# attribute rides on to the next fn, here `helper`, which nothing marked. `#must_use` does the same.
+#
+#   cd docs/development/issues/repros
+#   cyrius build 2026-11-09-an-attribute-before-a-var-attaches-to-the-next-fn.cyr /tmp/aav
+#
+# While the issue is open the build prints
+#   warning: ... 'helper' is deprecated: use NEW_V
+#   warning: ... #must_use result of 'f' is discarded
+# and says OK; `cyrius lint` on this file reports 0 warnings. Once fixed, the build refuses at
+# each attribute (or, under proposals/2026-11-09-deprecated-constants.md, warns at the read of
+# OLD_V and nowhere else).
+#
+# Filed with docs/development/issues/2026-11-09-an-attribute-before-a-var-attaches-to-the-next-fn.md.
+# Found by taar 0.9.1, deprecating its renamed constants (taar ADR 0002).
+
+#deprecated("use NEW_V")
+var OLD_V = 7;
+var NEW_V = 7;
+
+# An unrelated helper. Nothing marks it.
+fn helper(): i64 { return 7; }
+
+#must_use
+var X = 1;
+
+# Another unrelated fn. Nothing marks it either.
+fn f(): i64 { return 1; }
+
+fn main(): i64 {
+    f();
+    return OLD_V - helper() + X - 1 + NEW_V - 7;
+}
+
+var r = main();
+syscall(60, r);

@@ -73,3 +73,21 @@ any stashed conn / byte as ready itself (as `async_await_readable_ms` already mu
 agnos's `scripts/smoke/epoll-smoke.sh` drives the raw ABI (its `tests/epoll/epw.cyr` uses `syscall(21, …)` directly).
 For the peer: a `--agnos` test that `sys_epoll_wait(ep, buf, 4, 200)` on an instance with nothing ready returns 0
 after ≥ 200 ms on agnos 1.57.17, and a tagged accepted socket SET for `EPOLLIN` wakes it when the host sends a byte.
+
+## Also waiting: taar (added 2026-11-09)
+
+taar's AGNOS `taar_tcp_recv` reports a reset connection as a clean close (0),
+because `sock_recv#49` answers -1 for both. Linux returns -ECONNRESET. The
+kernel already tells them apart through this issue's ABI: on `EP_TCP | conn`,
+`EPOLLIN | EPOLLERR | EPOLLHUP` means a dead connection and `EPOLLRDHUP` a FIN.
+
+taar would issue `sys_epoll_set(ep, EP_TCP | conn, EPOLLIN | EPOLLRDHUP)` and
+then a 0-ms `sys_epoll_wait` when `#49` says -1, so it needs this issue's
+`EP_TCP`, `EPOLL_CTL_SET`, the `EPOLL*` bits and the timed wait.
+
+agnos never frees an epoll instance's watch list. So until agnos issue
+`2026-11-09-an-epoll-instance-is-never-freed-so-short-lived-ones-run-the-heap-dry`
+lands, taar would keep one instance per process rather than one per check. That
+issue also asks agnos for a distinct `#49` answer, which would make this
+unnecessary for taar. The gap is taar's open target difference "Reset vs clean
+close" (taar ADR 0001).

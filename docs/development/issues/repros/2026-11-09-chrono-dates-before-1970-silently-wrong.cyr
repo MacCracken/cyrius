@@ -1,0 +1,55 @@
+# lib/chrono.cyr's calendar counts forward from 1970-01-01 only. A date before the Unix epoch
+# parses to a wrong epoch (iso8601_parse returns a valid-looking value, not -1), and a
+# negative epoch decodes to a wrong date (1970-01 with a zero or negative day), all without an
+# error.
+#
+# Self-proving: each line prints what chrono returns and what the right answer is. Expected
+# once fixed: every "got" equals its "want" (or the call reports -1 / an error), and the exit is
+# 0. Today on 6.7.18 five of the six lines differ and the exit is 5.
+#
+# Filed with docs/development/issues/2026-11-09-chrono-dates-before-1970-silently-wrong.md.
+# Found by tanmatra's chrono bridge, whose epoch is 1958-01-01 (TAI).
+#
+#   cyrius build docs/development/issues/repros/2026-11-09-chrono-dates-before-1970-silently-wrong.cyr /tmp/cpre
+#   /tmp/cpre; echo "exit=$?"      # -> five mismatches, exit=5 on 6.7.18
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/alloc.cyr"
+include "lib/chrono.cyr"
+
+var bad = 0;
+
+fn line(label, got, want) {
+    print(label, strlen(label));
+    print(": got ", 6);
+    fmt_int(got);
+    print(", want ", 7);
+    fmt_int(want);
+    if (got != want) {
+        print("   <-- WRONG", 12);
+        bad = bad + 1;
+    }
+    print("\n", 1);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    # 1958-01-01 is 4,383 days (12 x 365 + the leap days of 1960, 1964, 1968) before 1970-01-01.
+    line("iso8601_parse(1958-01-01T00:00:00Z)", iso8601_parse("1958-01-01T00:00:00Z"), 0 - 378691200);
+    line("iso8601_parse(1969-12-31T23:59:59Z)", iso8601_parse("1969-12-31T23:59:59Z"), 0 - 1);
+    # Epoch -1 is 1969-12-31T23:59:59.
+    var d = dt_from_epoch_secs(0 - 1);
+    line("dt_year(epoch -1)", dt_year(d), 1969);
+    line("dt_day(epoch -1)", dt_day(d), 31);
+    line("dt_hour(epoch -1)", dt_hour(d), 23);
+    # A control from after the epoch, which is right today.
+    line("iso8601_parse(1972-01-01T00:00:00Z)", iso8601_parse("1972-01-01T00:00:00Z"), 63072000);
+    return bad;
+}
+
+var rc = main();
+sys_exit_group(rc);

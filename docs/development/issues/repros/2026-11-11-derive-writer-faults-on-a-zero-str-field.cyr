@@ -1,0 +1,31 @@
+# cyrius 6.7.18: a #derive(Serialize) struct read from a document that lacks a `Str` field has that field 0, and the
+# derived writer then faults: T_to_json calls str_builder_add_json_str on it, which reads str_data(0). A `cstring`
+# field writes `null` for 0. (ushma 2.0.0 port, M0 probe 11.) Exits 139 (SIGSEGV) while the defect is present; prints
+# the document and exits 0 once a 0 Str writes `null` (or the decoder refuses the document).
+#
+#   cyrius build docs/development/issues/repros/2026-11-11-derive-writer-faults-on-a-zero-str-field.cyr /tmp/r && /tmp/r; echo "exit=$?"
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/bayan.cyr"
+
+#derive(Serialize)
+struct Mat { name: Str; conductivity: f64; }
+
+fn main(): i64 {
+    alloc_init();
+    var m = Mat_from_json_str("{\"conductivity\":401.0}");
+    if (m == 0) { println("refused"); return 0; }
+    var sb = str_builder_new();
+    Mat_to_json(m, sb);
+    println_str(str_builder_build(sb));
+    return 0;
+}
+
+var r = main();
+sys_exit_group(r);

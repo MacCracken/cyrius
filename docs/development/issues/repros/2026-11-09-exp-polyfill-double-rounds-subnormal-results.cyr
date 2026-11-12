@@ -1,0 +1,67 @@
+# lib/math.cyr's exp / exp2 polyfills (fdlibm e_exp.c, the f64_exp / f64_exp2 builtins on aarch64) round a
+# subnormal result twice: _f64_exp_kernel rounds y to 53 bits, then `y·2^(k+1000) × 2^-1000` rounds it again
+# onto the subnormal grid. The second rounding alone is wrong on about 0.9 % of subnormal results. The kernel is
+# also not correctly rounded on normal results (about 10 % of them, within the documented 1 ulp).
+#
+# Self-proving: each line prints what the polyfill returns and the correctly rounded value (MPFR 4.2.2,
+# 53 bits, subnormalized; glibc 2.44's exp / exp2 return the same bits on all six). It calls the polyfills
+# directly, so it gives the same answer on every target; the last column shows the f64_exp / f64_exp2
+# builtin on the target it runs on (x87 on x86_64, the polyfill on aarch64). Expected once fixed: every "got"
+# equals its "want" and the exit is 0. Today on 6.7.18 all six differ and the exit is 6.
+#
+# Filed with docs/development/issues/2026-11-09-exp-polyfill-double-rounds-subnormal-results.md, from kimiya
+# (its M3 kinetics port: Arrhenius A·exp(−Ea/RT) at low T, aarch64 up to 39 ulp from the Rust oracle).
+#
+#   cyrius build docs/development/issues/repros/2026-11-09-exp-polyfill-double-rounds-subnormal-results.cyr /tmp/expdr
+#   /tmp/expdr; echo "exit=$?"                       # -> six mismatches, exit=6 on 6.7.18
+#   cyrius build --aarch64 docs/development/issues/repros/2026-11-09-exp-polyfill-double-rounds-subnormal-results.cyr /tmp/expdr_a64
+#   qemu-aarch64 /tmp/expdr_a64; echo "exit=$?"      # -> the same six, and the builtin column equals "got"
+
+include "lib/math.cyr"
+include "lib/fmt.cyr"
+
+var bad = 0;
+
+fn line(label, which, xbits, want) {
+    var x: f64 = 0.0;
+    store64(&x, xbits);
+    var got = 0;
+    var b: f64 = 0.0;
+    if (which == 0) {
+        got = _f64_exp_polyfill(xbits);
+        b = f64_exp(x);
+    } else {
+        got = _f64_exp2_polyfill(xbits);
+        b = f64_exp2(x);
+    }
+    syscall(1, 1, label, strlen(label));
+    syscall(1, 1, ": got ", 6);
+    fmt_hex(got);
+    syscall(1, 1, ", want ", 7);
+    fmt_hex(want);
+    syscall(1, 1, ", builtin ", 10);
+    fmt_hex(load64(&b));
+    if (got != want) {
+        syscall(1, 1, "   <-- WRONG", 12);
+        bad = bad + 1;
+    }
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn main(): i64 {
+    # Subnormal results where the polyfill's answer is exactly the correctly rounded 53-bit value rounded
+    # a second time: no kernel can fix these, only rounding once.
+    line("exp(-708.625718966676)   subnormal, double rounding", 0, 0xC086250178F212E2, 0x000CB8AFE6233A75);
+    line("exp(-714.8919412220861)  subnormal, double rounding", 0, 0xC0865722B2145683, 0x0000062F8B5F8669);
+    line("exp2(-1023.7612887429359) subnormal, double rounding", 1, 0xC08FFE171E8D6DC8, 0x0004B841B5DCC4EB);
+    # Subnormal result, the kernel's own error.
+    line("exp(-710.7792632481745)  subnormal, kernel", 0, 0xC086363BEE5EAF13, 0x00017A02A330FA89);
+    # Normal results, the kernel's own error (within the documented 1 ulp).
+    line("exp(-335.8298715066705)  normal, kernel", 0, 0xC074FD4727585083, 0x21A6A041AF09F58F);
+    line("exp2(118.55785380705424) normal, kernel", 1, 0x405DA3B3E0744FD0, 0x47578DA1546EC2BD);
+    return bad;
+}
+
+var rc = main();
+syscall(60, rc);

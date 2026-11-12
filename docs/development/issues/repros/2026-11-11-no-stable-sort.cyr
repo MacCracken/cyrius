@@ -1,0 +1,43 @@
+# Repro for 2026-11-11-no-stable-sort.md (pravash's ledger L9).
+#
+# vec_sort_by is introsort: elements with equal keys can come out in any order. 256 elements with 8 distinct keys,
+# each element tagged with its input index; sorted by key alone; then checked that equal keys kept their input order.
+#
+#   cyrius build docs/development/issues/repros/2026-11-11-no-stable-sort.cyr /tmp/stable
+#   /tmp/stable; echo "exit=$?"
+#
+# Exit 1 while equal keys are reordered; exit 0 once a stable sort exists and this repro is switched to it.
+
+# Compares two elements by key only (the high 32 bits); the low 32 bits are the input index.
+fn by_key(a, b): i64 {
+    var ka = a >> 32;
+    var kb = b >> 32;
+    if (ka < kb) { return 0 - 1; }
+    if (ka > kb) { return 1; }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var v = vec_new();
+    for (var i = 0; i < 256; i = i + 1) {
+        var key = (i * 37) % 8;
+        vec_push(v, (key << 32) | i);
+    }
+    vec_sort_by(v, &by_key);
+    var moved = 0;
+    for (var i = 1; i < 256; i = i + 1) {
+        var a = vec_get(v, i - 1);
+        var b = vec_get(v, i);
+        if ((a >> 32) == (b >> 32) && (a & 0xFFFFFFFF) > (b & 0xFFFFFFFF)) { moved = moved + 1; }
+    }
+    var msg = "adjacent equal-key pairs out of input order: ";
+    print(msg, strlen(msg));
+    fmt_int(moved);
+    println("");
+    if (moved > 0) { return 1; }
+    return 0;
+}
+
+var rc = main();
+sys_exit_group(rc);

@@ -1,0 +1,53 @@
+# Repro for 2026-11-11-vec-keeps-outgrown-buffer-and-aborts.md (pravash's ledger L13).
+#
+# 1. vec_push_a grows through the Allocator it is given but never calls its free: an Allocator over the freelist that
+#    counts its calls sees one alloc per growth step and no free, so every outgrown buffer stays allocated.
+# 2. vec_get on an index past the end exits the process (status 1), so library code that indexes a vec can abort.
+#
+#   cyrius build docs/development/issues/repros/2026-11-11-vec-keeps-outgrown-buffer-and-aborts.cyr /tmp/vecgrow
+#   /tmp/vecgrow; echo "exit=$?"
+#
+# Prints the counts, then calls vec_get out of range: "exit=1" (and no "returned" line) while both hold.
+include "lib/freelist.cyr"
+
+var g_allocs = 0;
+var g_frees = 0;
+
+fn fl_va_alloc(state, size): i64 {
+    g_allocs = g_allocs + 1;
+    return fl_alloc(size);
+}
+
+fn fl_va_realloc(state, old_ptr, old_size, new_size): i64 {
+    var p = fl_alloc(new_size);
+    if (p != 0 && old_ptr != 0) { memcpy(p, old_ptr, old_size); fl_free(old_ptr); }
+    return p;
+}
+
+fn fl_va_free(state, ptr): i64 {
+    g_frees = g_frees + 1;
+    return fl_free(ptr);
+}
+
+fn fl_va_reset(state): i64 {
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var a = allocator_new(&fl_va_alloc, &fl_va_realloc, &fl_va_free, &fl_va_reset, 0);
+    var v = vec_new_a(a);
+    for (var i = 0; i < 4096; i = i + 1) { vec_push_a(a, v, i); }
+    print("allocs through the Allocator: ", 30);
+    fmt_int(g_allocs);
+    print(" (header, first buffer, then one per growth step); frees: ", 58);
+    fmt_int(g_frees);
+    println("");
+    println("now vec_get(v, 4096), one past the end:");
+    var x = vec_get(v, 4096);
+    println("returned");
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

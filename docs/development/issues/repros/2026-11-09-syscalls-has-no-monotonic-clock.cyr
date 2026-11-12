@@ -1,0 +1,32 @@
+# Repro: 2026-11-09-syscalls-has-no-monotonic-clock.md
+#
+# A program that includes only the `syscalls` leaf has no monotonic clock to read: the leaf
+# defines CLOCK_MONOTONIC on every Linux and macOS peer but no wrapper that reads it. The only
+# portable read is chrono's clock_now_ns, which brings the whole date-and-time module.
+#
+#   cyrius build docs/development/issues/repros/2026-11-09-syscalls-has-no-monotonic-clock.cyr /tmp/smc
+#   /tmp/smc; echo "exit=$?"
+#
+# While the issue is open the build is refused: `sys_clock_monotonic_ns` is undefined. Once it
+# lands, the program reads the clock twice around a 10 ms sleep and exits 0 when the second
+# read is at least 10 ms later than the first (1 otherwise).
+#
+# Filed with docs/development/issues/2026-11-09-syscalls-has-no-monotonic-clock.md. Found by
+# taar 0.9.1 (a per-resolve deadline), with yo's hand-rolled clock_gettime literal as the
+# second case.
+
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    var t0 = sys_clock_monotonic_ns();
+    var ts[16];
+    store64(&ts, 0);
+    store64(&ts + 8, 10000000);                  # 10 ms
+    sys_nanosleep(&ts, 0);
+    var t1 = sys_clock_monotonic_ns();
+    if (t1 - t0 >= 10000000) { return 0; }
+    return 1;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

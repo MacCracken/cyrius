@@ -1,0 +1,177 @@
+# Repro: 2026-11-09-field-store-of-struct-call-copies-a-field-argument.md
+#
+# `s.f = g(.., t.e, ..)` — a struct-returning fn call stored into a struct field, with a struct-typed field among
+# its arguments (at any depth) — stores that field argument's value instead of the call's result. Every struct
+# size is affected (16, 24, 72 bytes here); a local destination, a local argument, an f64-field argument, a
+# method call on a field and the operator form are all correct.
+#
+#   cyrius build docs/development/issues/repros/2026-11-09-field-store-of-struct-call-copies-a-field-argument.cyr /tmp/fsc
+#   /tmp/fsc; echo "exit=$?"     # exit 1 while the issue is open
+#
+# Filed with docs/development/issues/2026-11-09-field-store-of-struct-call-copies-a-field-argument.md. Found by
+# impetus's Cyrius port (M4: a body's inverse inertia `b.inv_inertia = ImMat3_inverse(b.inertia)` came back equal
+# to the inertia).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+
+struct W { x: f64; y: f64; }
+struct V { x: f64; y: f64; z: f64; }
+struct M { a: V; b: V; c: V; }
+struct L { v: V; u: V; w: W; t: W; m: M; n: M; }
+
+fn V_half(q: V): V {
+    var r: V;
+    r.x = q.x * 0.5;
+    r.y = q.y;
+    r.z = q.z;
+    return r;
+}
+
+fn V_add(a: V, b: V): V {
+    var r: V;
+    r.x = a.x + b.x;
+    r.y = a.y + b.y;
+    r.z = a.z + b.z;
+    return r;
+}
+
+fn V_mk(x: f64): V {
+    var r: V;
+    r.x = x * 0.5;
+    r.y = 0.0;
+    r.z = 0.0;
+    return r;
+}
+
+fn W_half(q: W): W {
+    var r: W;
+    r.x = q.x * 0.5;
+    r.y = q.y;
+    return r;
+}
+
+fn M_half(q: M): M {
+    var r: M;
+    r = q;
+    r.a.x = q.a.x * 0.5;
+    return r;
+}
+
+impl V {
+    fn halved(self): V { return V_half(self); }
+}
+
+var failures = 0;
+
+fn check(name, got: f64, want: f64) {
+    print(name, strlen(name));
+    if (got == want) {
+        println(": ok");
+        return 0;
+    }
+    print(": WRONG (got x*1000 = ", 22);
+    fmt_int(f64_to(got * 1000.0));
+    print(", want ", 7);
+    fmt_int(f64_to(want * 1000.0));
+    println(")");
+    failures = failures + 1;
+    return 0;
+}
+
+fn reset(l: *L) {
+    l.v.x = 4.0;
+    l.v.y = 0.0;
+    l.v.z = 0.0;
+    l.u.x = 100.0;
+    l.u.y = 0.0;
+    l.u.z = 0.0;
+    l.w.x = 4.0;
+    l.w.y = 0.0;
+    l.t.x = 100.0;
+    l.t.y = 0.0;
+    l.m.a = l.v;
+    l.m.b = l.v;
+    l.m.c = l.v;
+    l.n = l.m;
+    l.n.a.x = 100.0;
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    var l: L;
+    var o: L;
+    var p: *L = &l;
+    reset(&o);
+    var w: V = o.v;
+    w.x = 1.0;
+    var x: f64 = 0.0;
+
+    println("-- wrong today: a field destination and a struct-field argument --");
+    reset(&l);
+    l.u = V_half(l.v);
+    x = l.u.x;
+    check("l.u = V_half(l.v)            (24 B)", x, 2.0);
+    reset(&l);
+    l.t = W_half(l.w);
+    x = l.t.x;
+    check("l.t = W_half(l.w)            (16 B)", x, 2.0);
+    reset(&l);
+    l.n = M_half(l.m);
+    x = l.n.a.x;
+    check("l.n = M_half(l.m)            (72 B)", x, 2.0);
+    reset(&l);
+    p.u = V_half(p.v);
+    x = p.u.x;
+    check("p.u = V_half(p.v)            (through a *L)", x, 2.0);
+    reset(&l);
+    l.u = V_half(o.v);
+    x = l.u.x;
+    check("l.u = V_half(o.v)            (another struct's field)", x, 2.0);
+    reset(&l);
+    l.u = V_add(w, l.v);
+    x = l.u.x;
+    check("l.u = V_add(w, l.v)          (the field second)", x, 5.0);
+    reset(&l);
+    l.u = V_half(V_half(l.v));
+    x = l.u.x;
+    check("l.u = V_half(V_half(l.v))    (nested)", x, 1.0);
+
+    println("-- correct today --");
+    reset(&l);
+    var t: V = V_half(l.v);
+    l.u = t;
+    x = l.u.x;
+    check("var t = V_half(l.v); l.u = t", x, 2.0);
+    reset(&l);
+    l.u = V_half(w);
+    x = l.u.x;
+    check("l.u = V_half(w)              (a local argument)", x, 0.5);
+    reset(&l);
+    l.u = V_mk(l.v.x);
+    x = l.u.x;
+    check("l.u = V_mk(l.v.x)            (an f64-field argument)", x, 2.0);
+    reset(&l);
+    l.u = l.v.halved();
+    x = l.u.x;
+    check("l.u = l.v.halved()           (a method on a field)", x, 2.0);
+    reset(&l);
+    l.u = l.u + V_half(l.v);
+    x = l.u.x;
+    check("l.u = l.u + V_half(l.v)      (the operator form)", x, 102.0);
+
+    if (failures > 0) {
+        fmt_int(failures);
+        println(" stores wrong");
+        return 1;
+    }
+    println("every store correct");
+    return 0;
+}
+
+var r = main();
+sys_exit_group(r);

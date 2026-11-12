@@ -1,0 +1,41 @@
+# Repro for 2026-11-11-f64-min-max-drop-nan-only-as-first-operand.md (pravash's ledger L2).
+#
+# f64_min / f64_max ignore a NaN only when it is the FIRST operand: f64_min(NaN, 1) is 1, but f64_min(1, NaN) is
+# NaN. IEEE 754-2008 minNum / maxNum (and Rust's f64::min / f64::max, C's fmin / fmax) return the other operand
+# either way.
+#
+#   cyrius build docs/development/issues/repros/2026-11-11-f64-min-max-drop-nan-only-as-first-operand.cyr /tmp/minnan
+#   /tmp/minnan; echo "exit=$?"
+#
+# Exit 1 while either function returns NaN for one NaN operand; exit 0 once both orders return the number.
+include "lib/math.cyr"
+
+var wrong = 0;
+
+fn check(label: cstring, got, want) {
+    print(label, strlen(label));
+    print(" = ", 3);
+    fmt_hex0x(got);
+    if (got != want) { print("   WRONG, want ", 15); fmt_hex0x(want); wrong = wrong + 1; }
+    println("");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var nan: f64 = 0x7FF8000000000000;
+    var one: f64 = 1.0;
+    var r: f64 = f64_min(nan, one);
+    check("f64_min(NaN, 1.0)", r, 0x3FF0000000000000);
+    r = f64_min(one, nan);
+    check("f64_min(1.0, NaN)", r, 0x3FF0000000000000);
+    r = f64_max(nan, one);
+    check("f64_max(NaN, 1.0)", r, 0x3FF0000000000000);
+    r = f64_max(one, nan);
+    check("f64_max(1.0, NaN)", r, 0x3FF0000000000000);
+    if (wrong > 0) { return 1; }
+    return 0;
+}
+
+var rc = main();
+sys_exit_group(rc);

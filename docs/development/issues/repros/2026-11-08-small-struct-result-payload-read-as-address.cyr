@@ -1,0 +1,52 @@
+# A struct of 8 bytes or less put in a value-form Result travels as its BYTES (Ok(n) puts
+# (a << 32) | z in the payload word), but binding that word back to a struct-typed local, with
+# or without `?`, reads it as the struct's ADDRESS. It compiles with no diagnostic and
+# segfaults at the first field read.
+#
+# Self-proving: prints the payload word, then reads a field through each binding. Expected once
+# fixed: either a compile error at the binding, or both reads print 56 and the exit is 0. Today
+# the first field read is SIGSEGV (exit 139).
+#
+# Filed with docs/development/issues/2026-11-08-small-struct-result-payload-read-as-address.md.
+# Found by tanmatra's Cyrius port (M1, probing `Nucleus { z: u32; a: u32 }` for M2).
+#
+#   cyrius build docs/development/issues/repros/2026-11-08-small-struct-result-payload-read-as-address.cyr /tmp/srp
+#   /tmp/srp; echo "exit=$?"      # -> payload 380000001a, then exit 139 on 6.7.18
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/alloc.cyr"
+include "lib/result.cyr"
+
+struct Nuc { z: u32; a: u32; }
+
+fn nuc_new(z, a): Result {
+    var n: Nuc;
+    n.z = z;
+    n.a = a;
+    return Ok(n);
+}
+
+fn via_question(z, a): Result {
+    var n: Nuc = nuc_new(z, a)?;      # crashes inside, at n.a
+    return Ok(n.a);
+}
+
+fn main() {
+    var t, v = nuc_new(26, 56);
+    print("payload word ", 13);
+    fmt_hex(v);
+    println("");
+    var n: Nuc = v;                   # compiles silently: v is read as an address
+    fmt_int(n.a);                     # SIGSEGV here on 6.7.18
+    println(" (a, bound from the payload word)");
+    var t2, v2 = via_question(26, 56);
+    fmt_int(v2);
+    println(" (a, through ?)");
+    return 0;
+}
+
+var r = main();
+sys_exit_group(r);

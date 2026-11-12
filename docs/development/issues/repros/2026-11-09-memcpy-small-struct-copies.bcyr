@@ -1,0 +1,82 @@
+# Repro for 2026-11-02-memcpy-memset-byte-loops-dominate-frame-copies.md: the small-copy regime
+# (impetus's addendum, 2026-11-09).
+#
+# Measured 2026-11-09 on cyrius 6.7.18, x86_64 Linux ELF (not quiesced), two runs, 200,000 copies
+# per size (20,000 at 4,096 B):
+#   24 B: memcpy 42-44 ns, copy8 11 ns      184 B: memcpy 287-296 ns, copy8 43-45 ns
+#   224 B: memcpy 341-361 ns, copy8 51-54 ns  4,096 B: memcpy 6.08-6.45 us, copy8 0.86-0.91 us
+#
+# ranga's repro times one 8 MB frame. This one times the sizes a struct copy has: impetus's
+# 24-byte broadphase record, its 184-byte ColliderShape and 224-byte rigid body, and a 4 KiB
+# page. The byte loop's cost is per byte at every size, so a struct copy pays it too.
+#
+# It first checks that copy8 (ranga's 8-byte chunks with a byte tail) matches memcpy byte for
+# byte at every size minus one byte, from an odd source offset, so the tail and the unaligned
+# chunks run.
+#
+#   cyrius bench 2026-11-09-memcpy-small-struct-copies.bcyr
+#
+# Manifest stdlib: ["syscalls", "alloc", "string", "fmt", "bench"]. Exits 1 if copy8 differs.
+
+var SRC = 0;
+var DST = 0;
+var REF = 0;
+var SINK = 0;
+
+fn copy8(dst, src, n): i64 {
+    var i = 0;
+    while (i + 8 <= n) { store64(dst + i, load64(src + i)); i = i + 8; }
+    while (i < n) { store8(dst + i, load8(src + i)); i = i + 1; }
+    return dst;
+}
+
+fn same(a, b, n): i64 {
+    var i = 0;
+    while (i < n) { if (load8(a + i) != load8(b + i)) { return 0; } i = i + 1; }
+    return 1;
+}
+
+fn timed(name, which, n, iters): i64 {
+    var bn = bench_new(name);
+    bench_batch_start(bn);
+    var k = 0;
+    while (k < iters) {
+        if (which == 0) { memcpy(DST, SRC, n); }
+        if (which == 1) { copy8(DST, SRC, n); }
+        SINK = SINK + load8(DST);
+        k = k + 1;
+    }
+    bench_batch_stop(bn, iters);
+    bench_report(bn);
+    return 0;
+}
+
+# Checks copy8 at n - 1 bytes from an odd offset, then times both at n bytes.
+fn size(n, iters, mname, cname): i64 {
+    memset(REF, 0, n);
+    memset(DST, 0, n);
+    memcpy(REF, SRC + 1, n - 1);
+    copy8(DST, SRC + 1, n - 1);
+    if (same(REF, DST, n - 1) == 0) { println("copy8 differs from memcpy"); return 1; }
+    timed(mname, 0, n, iters);
+    timed(cname, 1, n, iters);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    SRC = alloc(4100);
+    DST = alloc(4100);
+    REF = alloc(4100);
+    var i = 0;
+    while (i < 4100) { store8(SRC + i, (i * 7) & 255); i = i + 1; }
+    if (size(24, 200000, "memcpy_24B", "copy8_24B") != 0) { return 1; }
+    if (size(184, 200000, "memcpy_184B", "copy8_184B") != 0) { return 1; }
+    if (size(224, 200000, "memcpy_224B", "copy8_224B") != 0) { return 1; }
+    if (size(4096, 20000, "memcpy_4096B", "copy8_4096B") != 0) { return 1; }
+    println("  copy8 matches memcpy byte for byte at 23, 183, 223 and 4,095 bytes, odd offset");
+    return 0;
+}
+
+var r = main();
+sys_exit_group(r);

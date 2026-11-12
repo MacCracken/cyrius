@@ -1,0 +1,69 @@
+# Repro: 2026-11-09-no-scoped-allocator-for-alloc.md
+#
+# A library function that returns a fresh value per call allocates from the global `alloc`, as
+# hisab's `hvec3_add` does (24 bytes). A consumer that calls it once per simulation step can't
+# contain that memory:
+#   - the arena it owns can't receive the library's allocations (alloc has no redirection);
+#   - alloc_reset() reclaims them, but also every block the consumer itself still holds.
+#
+#   cyrius build docs/development/issues/repros/2026-11-09-no-scoped-allocator-for-alloc.cyr /tmp/nsa
+#   /tmp/nsa; echo "exit=$?"     # exit 1 while the issue is open
+#
+# Filed with docs/development/issues/2026-11-09-no-scoped-allocator-for-alloc.md. Found by impetus's
+# Cyrius port (M0 step 9, probing hisab on a physics step).
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+
+# The library: a 3-vector sum returned as a new 24-byte block, as hisab does.
+fn lib_vec_add(a, b): i64 {
+    var r = alloc(24);
+    if (r == 0) { return 0; }
+    store64(r, load64(a) + load64(b));
+    store64(r + 8, load64(a + 8) + load64(b + 8));
+    store64(r + 16, load64(a + 16) + load64(b + 16));
+    return r;
+}
+
+fn main(): i64 {
+    alloc_init();
+    # The consumer's own long-lived state, allocated first.
+    var world = alloc(64);
+    store64(world, 42);
+    var a = alloc(24);
+    var b = alloc(24);
+    # The consumer's step arena: where it wants the library's per-step allocations to go.
+    var step_arena = arena_new_growable(65536);
+
+    var before = alloc_used();
+    for (var step = 0; step < 1000; step = step + 1) {
+        arena_reset(step_arena);
+        for (var k = 0; k < 100; k = k + 1) { var v = lib_vec_add(a, b); }
+    }
+    var leaked = alloc_used() - before;
+    print("1000 steps x 100 library calls: global heap grew ", 49);
+    fmt_int(leaked);
+    print(" bytes; the step arena received ", 32);
+    fmt_int(arena_used(step_arena));
+    println(" bytes");
+
+    # The only reclaim is alloc_reset(), which also frees the consumer's `world`.
+    alloc_reset();
+    var reused = alloc(64);
+    store64(reused, 7);
+    print("after alloc_reset, a new 64-byte block is at the consumer's live `world`: ", 74);
+    if (reused == world) { println("yes"); } else { println("no"); }
+    print("world[0] was 42, now ", 21);
+    fmt_int(load64(world));
+    println("");
+
+    # Open while the per-step allocations can't be routed to the step arena.
+    if (leaked > 0) { return 1; }
+    return 0;
+}
+
+var r = main();
+sys_exit_group(r);

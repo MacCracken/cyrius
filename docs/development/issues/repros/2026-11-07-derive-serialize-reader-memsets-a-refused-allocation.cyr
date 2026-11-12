@@ -1,0 +1,88 @@
+# cyrius 6.7.18: allocation failure in #derive(Serialize) and lib/str.cyr.
+#
+# Replaces the stdlib `alloc` (the compiler keeps the last definition) with a
+# bump allocator that refuses the Nth allocation made after fi_arm(N). Every
+# other request is served from a private zeroed mmap, as the stdlib does.
+#
+# usage: repro CASE N
+#   1 Probe_from_json_str("{\"rate\":1.5,\"kind\":2}")       (derive reader)
+#   2 Probe_to_json(p, sb) into a 64-byte builder, 70 bytes   (derive writer)
+#   3 str_builder_putc on a full builder                       (no fallible form)
+#   4 str_join(["a","b"], ",")                                 (unchecked str_builder_new)
+#   5 Probe_from_json(pairs)                                   (derive reader, pairs form)
+# Prints the return value if the call returns; a segfault is 139.
+
+#derive(Serialize)
+struct Probe {
+    rate: f64;
+    kind: i64;
+    label: Str;
+}
+
+var FI_ARMED = 0;
+var FI_COUNT = 0;
+var FI_N = 0;
+var FI_BASE = 0;
+var FI_PTR = 0;
+var FI_END = 0;
+
+fn alloc(size): i64 {
+    if (size <= 0) { return 0; }
+    if (FI_ARMED == 1) {
+        FI_COUNT = FI_COUNT + 1;
+        if (FI_COUNT == FI_N) { return 0; }
+    }
+    if (FI_BASE == 0) {
+        FI_BASE = syscall(9, 0, 0x4000000, 3, 0x22, 0 - 1, 0);   # 64 MiB, RW, private anon
+        FI_PTR = FI_BASE;
+        FI_END = FI_BASE + 0x4000000;
+    }
+    size = (size + 7) & (0 - 8);
+    if (FI_PTR + size > FI_END) { return 0; }
+    var p = FI_PTR;
+    FI_PTR = p + size;
+    return p;
+}
+
+fn fi_arm(n) { FI_COUNT = 0; FI_N = n; FI_ARMED = 1; return 0; }
+fn fi_disarm() { FI_ARMED = 0; return FI_COUNT; }
+
+fn main() {
+    args_init();
+    var which = atoi(argv(1));
+    var n = atoi(argv(2));
+    var r = 0;
+    # Everything the cases need is built before arming.
+    var p = alloc(sizeof(Probe));
+    store64(p, f64_div(f64_from(3), f64_from(2)));
+    store64(p + 8, 2);
+    store64(p + 16, str_from("a label long enough to overflow the inline buffer"));
+    var sb = str_builder_new();
+    var full = str_builder_new();
+    var i = 0;
+    while (i < 64) { str_builder_putc(full, 120); i = i + 1; }
+    var parts = vec_new();
+    vec_push(parts, str_from("a"));
+    vec_push(parts, str_from("b"));
+    var sep = str_from(",");
+    var pairs = bayan_json_parse(str_from("{\"rate\":1.5,\"kind\":2,\"label\":\"x\"}"));
+
+    fi_arm(n);
+    if (which == 1) { r = Probe_from_json_str("{\"rate\":1.5,\"kind\":2,\"label\":\"x\"}"); }
+    if (which == 2) { r = Probe_to_json(p, sb); }
+    if (which == 3) { r = str_builder_putc(full, 121); }
+    if (which == 4) { r = str_join(parts, sep); }
+    if (which == 5) { r = Probe_from_json(pairs); }
+    fi_disarm();
+    fmt_int(r);
+    syscall(1, 1, " returned", 9);
+    if ((which == 1 || which == 5) && r != 0) {
+        syscall(1, 1, ", kind = ", 9);
+        fmt_int(load64(r + 8));
+        syscall(1, 1, ", label = ", 10);
+        if (load64(r + 16) == 0) { syscall(1, 1, "(null)", 6); }
+        else { syscall(1, 1, str_data(load64(r + 16)), str_len(load64(r + 16))); }
+    }
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
