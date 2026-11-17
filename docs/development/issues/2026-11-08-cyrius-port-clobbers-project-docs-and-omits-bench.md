@@ -89,3 +89,19 @@ ushma's port (a Rust library with CLAUDE.md, roadmap.md, state.md and `VERSION` 
 It also hit pravash's `Cargo.lock` point: the library's `.gitignore` still ignored `Cargo.lock` after the move, so
 `rust-old/Cargo.lock`, which the parity oracle must rebuild against, was untracked until the `.gitignore` was
 rewritten. Nothing new beyond pravash's list; one more reproduction.
+
+## Also hit: soorat (2026-11-15)
+
+soorat's M0 step 2 (Rust 1.2.0 → Cyrius 2.0) reproduced items 1–5 on cyrius 6.7.18. A trial run on a scratch
+copy showed exactly what would change. Items 1–5 behaved as described:
+- CLAUDE.md, the roadmap and both workflows were overwritten;
+- `version = "0.1.0"` was written, though `VERSION` says 1.2.0;
+- `[test] stdlib = ["assert"]` broke `cyrius bench` and `cyrius audit`;
+- the stubs were undocumented;
+- `--dry-run` listed none of the overwrites and didn't mention `target/` moving.
+
+The repairs match tanmatra's (`soorat/docs/development/state.md`, *Step 2's repairs*). One more consequence the
+issue didn't mention: the Rust project's `release.yml` publishes to crates.io on **every** tag (`tags: ["*"]`).
+Replacing it with the port template's Cyrius workflow (which matches `N.N.N` only) is what stopped a future
+Cyrius tag from republishing the frozen Rust crate. A port that restores its old workflows to undo item 1
+would bring that back, so the fix for item 1 should keep the release workflow distinct.

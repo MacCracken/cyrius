@@ -21,3 +21,11 @@ need, whichever is more, so rising needs make O(log n) chunks. Or walk the chain
 
 **agnostic meanwhile** keeps its chunk size at least its body cap, so no body causes an oversized need
 (ADR 0021). That does not cover responses, which have no cap.
+
+## pravash's numbers (2026-11-13)
+
+pravash 2.0.1's hardening review met this in its JSON decoder. Each read parses into one module arena,
+`arena_allocator_growable(4096)`, which it resets before the next read. A parsed tree takes about 20× its document's
+size: a 2 MB document took 41 MB. Across 10 documents of 0.2 to 2 MB, the arena kept 11 MB, the sum of their chunks,
+not the largest. So one hostile 100 MB document pins about 2 GB for the life of the process. pravash documents the
+cost in `src/json.cyr` meanwhile, and asks for the geometric chunk sizing above.

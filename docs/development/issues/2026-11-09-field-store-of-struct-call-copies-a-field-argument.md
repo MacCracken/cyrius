@@ -80,3 +80,11 @@ on the right of a field store, so it could warn there.
 Bind the call to a local, then store the local: `var t: ImMat3 = ImMat3_inverse(b.inertia); b.inv_inertia = t;`.
 impetus does this at every such site (`src/b3_types.cyr`) and its surface-parity gate scans `src/` and `tests/` for
 the pattern, so a new site fails the gate.
+
+### pravash (M4 part c, 2026-11-12)
+
+pravash's Rust → Cyrius port hit it in `merge_particles`: `p.position = _pv_mass_weighted(a.position, ma,
+b.position, mb, inv)` (a 24-byte `PvVec3` from two `*PvFluidParticle` field arguments) stored `b.position`, and the
+velocity likewise. Golden rows caught it: **30 of 30 merge rows wrong**, every scalar field right. Binding each call to
+a local fixed all 30. pravash's surface-parity gate carries the same scan as impetus's (`scripts/surface_parity.py`
+`field_store_scan`), so a new site fails CI.

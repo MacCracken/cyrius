@@ -1,0 +1,26 @@
+# Repro for 2026-11-15-lint-refuses-a-capturing-closure-the-build-accepts.md (pramana's probe P3).
+#
+# `cyrius build` resolves the stdlib from cyrius.cyml, so this file builds and runs. `cyrius lint` compiles the file
+# without the manifest's stdlib first, so its capturing closure is a hard error there ("a capturing closure needs
+# include "lib/alloc.cyr""), while every missing stdlib function is only a warning. A library file that builds a
+# capturing closure must include lib/alloc.cyr itself to pass lint.
+#
+#   cyrius build docs/development/issues/repros/2026-11-15-lint-refuses-a-capturing-closure-the-build-accepts.cyr /tmp/lintcap
+#   /tmp/lintcap; echo "exit=$?"        # exit=0: the closure works
+#   cyrius lint docs/development/issues/repros/2026-11-15-lint-refuses-a-capturing-closure-the-build-accepts.cyr
+#                                       # error: a capturing closure needs include "lib/alloc.cyr"
+
+fn apply(f, x) {
+    return fncall1(f, x);
+}
+
+fn main(): i64 {
+    alloc_init();
+    var k = 3;
+    var g = |x| { return k * x; };
+    if (apply(g, 5) != 15) { return 1; }
+    return 0;
+}
+
+var rc = main();
+sys_exit_group(rc);

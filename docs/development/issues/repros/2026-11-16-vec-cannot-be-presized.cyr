@@ -1,0 +1,72 @@
+# Repro for the 2026-11-16 svara section of 2026-11-11-vec-keeps-outgrown-buffer-and-aborts.md.
+#
+# On the bump allocator a vec can't be sized up front. vec_new_a starts at 16 slots and vec_push_a doubles and
+# copies, so a vec pushed to n words keeps every outgrown buffer, about twice its final capacity, and the bump
+# allocator can't take any of it back. Freeing on growth (the issue's first ask) does nothing there. Only a vec
+# sized before the first push avoids it.
+#
+#   cyrius build docs/development/issues/repros/2026-11-16-vec-cannot-be-presized.cyr /tmp/vecroom
+#   /tmp/vecroom
+#
+# Prints the arena bytes each way of making a 4,410-word vec (0.1 s of 44.1 kHz audio) keeps. While vec has no
+# way to reserve, the first line reads about 131 KB for 35 KB of words.
+
+var g_buf = 0;
+var g_bytes = 0;
+
+# An Allocator that answers a request with the caller's own buffer when it fits, as svara 3.8.3 does
+# (svara_vec_adopt, src/error.cyr). Small requests (the vec header) and ones too big go to alloc.
+fn room_alloc(state, size): i64 {
+    if (size >= 64 && size <= g_bytes) { return g_buf; }
+    return alloc(size);
+}
+
+fn room_realloc(state, old_ptr, old_size, new_size): i64 {
+    if (old_ptr == g_buf && new_size <= g_bytes) { return old_ptr; }
+    var p = alloc(new_size);
+    if (p != 0) { memcpy(p, old_ptr, old_size); }
+    return p;
+}
+
+fn room_free(state, ptr): i64 { return 0; }
+
+fn room_reset(state): i64 { return 0; }
+
+fn pr(label, v): i64 {
+    syscall(1, 1, label, strlen(label));
+    var b[32];
+    var n = fmt_int_buf(v, &b);
+    syscall(1, 1, &b, n);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var n = 4410;
+    pr("words: ", n);
+    pr("their bytes: ", n * 8);
+
+    var a0 = alloc_used();
+    var v = vec_new();
+    for (var i = 0; i < n; i = i + 1) { vec_push(v, i); }
+    pr("vec_new + vec_push keeps: ", alloc_used() - a0);
+
+    # The workaround: render into a buffer of the capacity the vec will end at (16 doubled until it holds n),
+    # then push through an Allocator that hands the vec that same buffer.
+    var cap = 16;
+    while (cap < n) { cap = cap * 2; }
+    var a1 = alloc_used();
+    g_buf = alloc(cap * 8);
+    g_bytes = cap * 8;
+    for (var j = 0; j < n; j = j + 1) { store64(g_buf + j * 8, j); }
+    var ra = allocator_new(&room_alloc, &room_realloc, &room_free, &room_reset, 0);
+    var w = vec_new_a(ra);
+    for (var k = 0; k < n; k = k + 1) { vec_push_a(ra, w, load64(g_buf + k * 8)); }
+    pr("rendered buffer + adopting Allocator keeps: ", alloc_used() - a1);
+    pr("  the vec's data is the rendered buffer: ", load64(w) == g_buf);
+    return 0;
+}
+
+var rc = main();
+syscall(60, rc);

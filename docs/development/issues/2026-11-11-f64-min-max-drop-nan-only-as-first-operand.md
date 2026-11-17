@@ -62,3 +62,33 @@ ushma 1.4.0's library code (tests excluded) calls this surface at:
 
 Its stand-in is kimiya's `_km_min`, `_km_max`, `_km_is_finite`, `_km_is_nan` and `_km_powi`, vendored into ushma's
 `src/mathx.cyr` as `_us_*`. That is a fourth private copy, after impetus's, kimiya's and pravash's.
+
+## Also needed: pramana (2026-11-15, cyrius 6.7.18)
+
+pramana's semantics probe (its M0 step 4, `pramana/docs/development/port-parity.md` §1) checked every f64 operation
+pramana 1.3.0 uses against a release-built Rust twin. `f64_min` and `f64_max` differ from Rust on all 69 of its golden
+rows with a NaN second operand, as above. pramana calls `min` / `max` at 30 sites and `clamp` at 10, and needs Rust's
+saturating `as usize` at 3: `percentile`'s rank, an iteration budget and a histogram bin.
+
+Two more pieces of the surface that are not asked above:
+- **A trunc-based fract.** `f64_fract` is x − floor(x), so `f64_fract(−2.75)` is 0.25, where Rust's `fract` (and C's
+  `modf`) give −0.75. pramana's golden corpus has 871 `fract` rows. Ask: a trunc-based form, say `f64_fract_trunc`,
+  with the current one documented as floor-based.
+- **An unsigned u64 → f64.** `f64_from` reads its word as signed: 2⁶³ becomes −9.2e18 and u64::MAX becomes −1, where
+  Rust's `n as f64` rounds the unsigned value to nearest. pramana's golden corpus has 536 rows of the conversion
+  (Binomial's `n` is a u64). Ask: `f64_from_u64`, rounding to nearest.
+
+[`repros/2026-11-15-f64-fract-floor-and-f64-from-signed.cyr`](repros/2026-11-15-f64-fract-floor-and-f64-from-signed.cyr):
+
+```sh
+cyrius build docs/development/issues/repros/2026-11-15-f64-fract-floor-and-f64-from-signed.cyr /tmp/fractu64
+/tmp/fractu64; echo "exit=$?"
+# f64_fract(-2.75) = 0x3fd0000000000000   WRONG, want 0xbfe8000000000000
+# f64_from(2^63 as u64) = 0xc3e0000000000000   WRONG, want 0x43e0000000000000
+# f64_from(u64::MAX) = 0xbff0000000000000   WRONG, want 0x43f0000000000000
+# exit=1
+```
+
+pramana's stand-ins go in its `src/mathx.cyr` (ledger L2), marked `UPSTREAM(L2)`: `_pmn_min` / `_pmn_max` with Rust's
+rule, `x − f64_trunc(x)` for `fract`, `_pmn_u64_to_f64` (halve with a sticky bit, convert, double; exact on 2⁶³,
+2⁶³ + 2¹¹ + 1 and u64::MAX) and `_pmn_sat_usize`. That is a fifth private copy of this surface.

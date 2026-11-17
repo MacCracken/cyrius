@@ -54,3 +54,89 @@ exit=1
 
 Until then pravash uses a 70-line freelist column of its own (`src/column.cyr`: push with doubling that frees the
 old buffer, `drop`, and NaN / 0 on a bad index), marked `UPSTREAM(L13)`. It converts when `vec` can do this.
+
+## Also needed: pramana (2026-11-15, cyrius 6.7.18)
+
+`vec_select_nth` aborts the same way: "vec: select_nth k < 0" and "vec: select_nth out of bounds"
+(`lib/vec.cyr:377–378`). pramana's library rule is pravash's and impetus's (no aborts: every error is a returned
+code), so it can call none of `vec_get`, `vec_set` or `vec_select_nth` unchecked. Its data are raw f64 buffers in any
+case, so its sort and selection stand-in (`src/sort.cyr`, ledger L3) works on `(ptr, n)`. The stable form it needs
+is in `2026-11-11-no-stable-sort.md`.
+
+## Also needed: pramana, the capacity abort reached through bayan (2026-11-15, cyrius 6.7.18)
+
+`vec_push_a` has a third abort, and a JSON document reaches it. One element past `VEC_CAP_MAX` (2^28 by default), it
+ends the process with "vec: capacity overflow" (`lib/vec.cyr:129`), although it returns −1 when the allocator
+refuses. bayan's parser pushes every array element through `vec_push_a`, so `bayan_json_v_parse_buf_a` on a document
+with an array of 2^28 + 1 elements ends the caller's process. That document is 512 MiB of text, but it is a peer's
+text: pramana reads JSON written by anyone.
+
+`VEC_CAP_MAX` is a `var`, so the abort shows at any size. Lowered to 64, a 131-byte document of 65 elements:
+
+```text
+document: 131 bytes, 65 elements; VEC_CAP_MAX = 64
+bayan_json_v_parse_buf on the same document:
+vec: capacity overflow
+exit=1
+```
+
+**Ask:** past `VEC_CAP_MAX`, `vec_push_a` returns −1, as it does on an allocator refusal; bayan then reports "out of
+memory in array" like any other exhausted arena.
+
+**Meanwhile** pramana's JSON reader (`src/json.cyr`, M1 part d3a) refuses, unread, any document longer than
+2·`VEC_CAP_MAX` − 1 bytes, which can't hold an array that long. It reads the variable at run time, so a lowered cap
+tightens it (its test lowers the cap to 64 and opens 63- and 65-element documents). The guard is marked
+`UPSTREAM(L13)` and goes when `vec_push_a` stops aborting.
+
+## Also needed: svara, a vec sized before its first push (2026-11-16, cyrius 6.7.18)
+
+On the bump allocator, ask 1 changes nothing: its free is a no-op, so every buffer `vec_push_a` outgrows stays in
+the arena whatever `vec` does with it. Only a vec sized before its first push avoids that, and `lib/vec.cyr` has no
+way to size one. `vec_new_a` starts at 16 slots and `vec_push_a` doubles from there.
+
+svara renders each phoneme into a raw f64 buffer and returns it as a `vec`. Up to svara 3.8.2 it pushed the samples
+into a vec from empty, so every render kept its samples about four times over:
+
+| svara 3.8.2, bump allocator | kept | its samples |
+|---|---:|---:|
+| one 0.1 s phoneme, 4,410 samples | 169 KB | 35 KB |
+| `svara_sequence_render`, per output sample | 81 B | 8 B |
+| `svara_sequence_render_planned`, per output sample | 27 B | 8 B |
+
+A server that renders all day (hoosh) never gets any of it back.
+
+`docs/development/issues/repros/2026-11-16-vec-cannot-be-presized.cyr` pushes 4,410 words both ways:
+
+```sh
+cyrius build docs/development/issues/repros/2026-11-16-vec-cannot-be-presized.cyr /tmp/vecroom
+/tmp/vecroom
+```
+
+```text
+words: 4410
+their bytes: 35280
+vec_new + vec_push keeps: 130968
+rendered buffer + adopting Allocator keeps: 65600
+  the vec's data is the rendered buffer: 1
+```
+
+**Ask:** `vec_with_capacity_a(a, n)` and `vec_with_capacity(n)`, a vec whose first buffer holds n words, or
+`vec_reserve_a(a, v, n)`. Better still for a renderer, a vec that takes an existing buffer as its data
+(`vec_from_buf(buf, len, cap)`), so samples rendered in place need no copy at all. Any capacity should do, not just
+a power of two: `vec_push_a` doubles from whatever capacity it finds.
+
+**Meanwhile** svara 3.8.3 (`svara_vec_adopt`, `src/error.cyr`) builds the vec through `vec_new_a` and `vec_push_a`
+with an Allocator of its own. That Allocator answers every data-sized request that fits with the buffer the samples
+were rendered into. So the vec "grows" into that buffer, its copy writes each word over itself, and it ends up holding
+the buffer. It relies on `lib/alloc.cyr`'s Allocator contract and not on the vec layout. The table above becomes
+68 KB, 24 B and 10 B. What it can't remove:
+
+- the buffer has to be the power-of-two capacity the vec would grow to, up to twice the samples;
+- each vec carries a 40-byte Allocator and 16 bytes of state.
+
+With `vec_with_capacity` or `vec_from_buf`, svara drops the Allocator, and each buffer shrinks to its samples.
+
+**For ask 1:** an Allocator may hand back the same pointer for the larger buffer, as svara's does. Today's
+word-by-word forward copy tolerates that. If `vec_push_a` starts freeing the old buffer, it should skip the free when
+the new buffer is the old one. Otherwise an Allocator with a real free would release the live buffer. svara's free is
+a no-op, so svara itself is safe either way.

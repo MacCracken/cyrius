@@ -1,0 +1,48 @@
+# Repro for 2026-11-12-no-f32-decimal-parse.md (pravash's ledger L15).
+#
+# The stdlib parses a decimal to f64 only. The f32 a reader then takes, f32_from(f64_parse_n(s, n)), rounds twice, and
+# differs from the f32 nearest the decimal wherever the f64 lands exactly on an f32 midpoint. Three such inputs, each
+# with the f32 serde_json (`float_roundtrip`), C's strtof and Python's numpy.float32 give:
+#   1.0000000596046448     its f64 is 1 + 2^-24, the midpoint above 1; the decimal is above it  -> 0x3F800001
+#   3.4028235677973366e38  its f64 is 2^128 - 2^103, the overflow midpoint; the decimal is below  -> 0x7F7FFFFF (MAX)
+#   1152921573326323713    an integer: its f64 is 2^60 + 2^36, a midpoint; the integer is above    -> 0x5D800001
+#
+#   cyrius build docs/development/issues/repros/2026-11-12-no-f32-decimal-parse.cyr /tmp/f32p
+#   /tmp/f32p; echo "exit=$?"
+#
+# Exit 1 while the double rounding is the only route; exit 0 once an f32 parse exists and this repro calls it.
+
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+# Prints `label: f32_from(f64_parse) 0x…, nearest f32 0x…` and returns 1 when they differ.
+fn show(label, got, want): i64 {
+    syscall(1, 1, label, strlen(label));
+    syscall(1, 1, ": f32_from(f64_parse) ", 22);
+    fmt_hex0x(got);
+    syscall(1, 1, ", nearest f32 ", 14);
+    fmt_hex0x(want);
+    syscall(1, 1, "\n", 1);
+    if (got != want) { return 1; }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var bad = 0;
+    var a = "1.0000000596046448";
+    var x: f64 = f64_parse_n(a, strlen(a));
+    bad = bad + show(a, f32_from(x), 0x3F800001);
+    var b = "3.4028235677973366e38";
+    var y: f64 = f64_parse_n(b, strlen(b));
+    bad = bad + show(b, f32_from(y), 0x7F7FFFFF);
+    var z: f64 = f64_from(1152921573326323713);
+    bad = bad + show("1152921573326323713 (i64)", f32_from(z), 0x5D800001);
+    if (bad > 0) { return 1; }
+    return 0;
+}
+
+var r = main();
+sys_exit_group(r);

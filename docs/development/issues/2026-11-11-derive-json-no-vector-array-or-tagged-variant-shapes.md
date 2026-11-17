@@ -56,3 +56,22 @@ a port needs, besides the vector-array and tagged-variant ones above.
     that faults.
 
 ushma hand-writes its codecs on bayan's tree for now (its ADR 0005), as impetus and pravash do.
+
+## Also needed: pramana (2026-11-15, cyrius 6.7.18)
+
+pramana serializes 38 types (its decision D5) and validates 20 on deserialize, through serde's `try_from`, which runs
+the type's validating constructor: a `Normal` with σ ≤ 0 is refused, not built. Its probe P7 decoded 1,495 documents
+serde_json 1.0.154 wrote (`pramana/docs/development/port-parity.md` §6.3). Beyond the shapes above, the derive would
+need three things before pramana could use it:
+1. **A validation hook:** the decoder hands the decoded fields to a named constructor and returns its refusal code,
+   e.g. `#derive(Deserialize, validate = PmnNormal_new)`. Without it, every validated type needs a hand codec
+   anyway.
+2. **Matrices:** 15 `Vec<Vec<f64>>` fields (covariance, transition and emission matrices), which serde writes as
+   `[[…],[…]]` and pramana stores flat, row-major, with their dimensions. A matrix form over `(ptr, rows, cols)`
+   would cover them.
+3. **u64 fields:** the RNG's state, Binomial's `n` and the histogram's counts. 13 of P7's 35 saved RNG states are above
+   2⁶³, which bayan's tree refuses today (`bayan:docs/development/issues/2026-11-09-json-integer-above-i64-max-refuses-the-document.md`).
+
+pramana writes serde_json's float text byte for byte, through impetus's `fmtf.cyr` (its D5 as amended), not bayan's
+Grisu2, which differs on 9,714 of 280,562 doubles. Until the derive covers these, pramana hand-writes its 38 codecs
+over bayan's tree in `src/json.cyr` (ledger L7, `UPSTREAM(L7)`), as impetus, pravash and ushma do.

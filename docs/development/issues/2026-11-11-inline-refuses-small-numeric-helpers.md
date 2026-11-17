@@ -70,3 +70,45 @@ refused**. Run on cyrius 6.7.18, x86_64, 2026-11-12: exit 1, both warnings above
 **Ask (4):** let `#inline` take a body with `if` / `else`, early `return`s and local `var`s, inside the size limit:
 each `return` a jump to the end of the inlined block, each local a slot in the caller's frame. With pravash's 1–3,
 ushma's checks and span gates would inline as they are written.
+
+### pravash M6 part a (2026-11-12)
+
+The rigid-body coupling's distance loops call a signed-distance helper per particle:
+- **The first form:** seven arguments (a shape pointer, the point, the body centre). `#inline` declines it: "fn takes
+  more than 2 parameters".
+- **The two-argument form:** a per-body context and the point. It is declined too: "body exceeds 32 tokens"
+  (a sphere and a box branch, 25 lines).
+
+Pinned to one core, on `drag_from_particles` over 625 particles:
+
+| Form | Time | Rust 1.3.0 |
+|---|---|---|
+| the seven-argument call | 18.2–18.7 µs | 1.52 µs |
+| the two-argument call (shipped) | 11.9–12.1 µs | |
+| the distance written into the loop by hand | 9.7–9.9 µs | |
+
+A two-argument call, declined, still costs 1.13× the hand-inlined loop. pravash ships it rather than a third copy of
+the formula.
+
+### pramana M2 part a1 (2026-11-15)
+
+pramana's port of fdlibm's erf and erfc evaluates five polynomials of 6–9 terms, each in Rust's nested Horner order.
+The natural helper for a step is three scalars, `c + s * acc`:
+
+```text
+warning:src/special.cyr:30:1: #inline ignored: fn takes more than 2 parameters
+```
+
+Pinned to one core, 1,024,000 calls a row, against 1.3.0's own fdlibm (glibc's exp) on the same arguments:
+
+| Row | the step as a 3-argument call | the steps written out (shipped) | Rust 1.3.0 |
+|---|---|---|---|
+| erf, \|x\| < 0.84375 (10 steps, one division) | 65–66 ns | 47–48 ns | 3.6–3.7 ns |
+| erf, 0.84375 ≤ x < 1.25 (12 steps) | 85–87 ns | 55–56 ns | 5.2–5.3 ns |
+| erfc, 1.25 ≤ x < 2.857 (16 steps, two exps) | 194–196 ns | 157 ns | 21.0 ns |
+
+Writing the 40 steps out took 18–38 ns off every row, and the bits are the same (28,290 golden rows at 0 ulp either
+way). pramana ships the written-out form, which keeps Rust's order visibly, so it doesn't wait on this. Ask (1) would
+have given the same result without the rewrite. The rest of the gap is the f64 code itself: the rational kernel alone
+is about 40 ns against Rust's 2.5 (the bench loop alone is 4–8 ns against 1.0–1.2), which is not an inlining
+question.

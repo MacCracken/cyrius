@@ -135,3 +135,19 @@ Struct assignment already copies word-wise and is 21× faster than `memcpy`. So 
 assignment (`ParticleArena::compact`, the record resets), needs no copy of its own, and closed L12. `memcpy` stays
 only where a buffer grows (a column's doubling), off the hot path. The 21× gap is one more data point for the
 chunked `memcpy`: a caller that copies raw bytes, without a struct type to assign, pays it in full.
+
+## Also measured: soorat (2026-11-15)
+
+soorat's probe P7 (`soorat/scripts/probes/gpu/tests/p7_upload.bcyr`; `soorat/docs/development/port-parity.md` §1.5;
+soorat ledger L13), on AMD Cezanne, on a renderer's per-frame vertex buffer (1,000 sprites, 128 KB):
+
+| Copy of 131,072 B | Time |
+|---|---|
+| `memcpy` (byte loop) | **201–216 µs** |
+| an 8-byte word loop | 26.0–27.7 µs (7.6× faster) |
+| `memset` | 185–193 µs |
+
+soorat's workaround is to generate vertices straight into the upload buffer, so no copy is on the upload path.
+Readback has no such way out: mabda's `gpu_buffer_read` ends in `memcpy`, and reading back 128 KB took
+**2.7 ms**. That path serves screenshots and soorat's GPU parity tests, so soorat joins as a consumer of the
+chunked `memcpy`.

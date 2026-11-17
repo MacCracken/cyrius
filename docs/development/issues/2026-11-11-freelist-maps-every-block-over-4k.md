@@ -40,3 +40,41 @@ Some reuse for large blocks. Any of these would do:
 
 The measurements here are the before numbers to beat. Nothing in pravash waits on this: no stand-in, no ledger row
 (an allocator of its own would be the wrong fix).
+
+## Notes from the consumer (pravash M7 part a, 2026-11-12)
+
+`PackedParticles::from_soa` of 1,000 particles takes 52.6 µs, against Rust's 10.2 µs (pinned, interleaved). It
+allocates three f32 buffers of 16 KB, 16 KB and 8 KB per call, as Rust's does, and those three `fl_alloc` / `fl_free`
+cycles alone take **37 µs** on the same core, before a page is touched. Since the packing is a per-upload step for a
+GPU backend, this is the first pravash call on a repeated path that the large-block cycle dominates. A size-class
+cache to 64 KB, or `fl_reserve`, would take most of it.
+
+## Notes from the consumer (selah M6, 2026-11-14)
+
+selah runs each request of its MCP server and HTTP clients in a scratch arena on the freelist (`selah/src/scratch.cyr`):
+64 KB chunks, freed when the request ends. Every chunk was a fresh mapping, so each request paid the large-block
+cycle. x86_64, 5,000 iterations each, at a load average of 3–5 on 16 cores:
+
+| Body | Per iteration |
+|---|---|
+| arena created, one 100-byte block, freed (one 64 KB chunk: `fl_alloc` + `fl_free`) | 6.2 µs |
+| arena created, 16 blocks of 1,000 bytes (four pages touched), freed | 13.8 µs |
+
+selah now keeps one spare chunk between arenas, taken and given back with `atomic_cas` (ledger row L24), and the
+same bodies take 0.18 µs and 2.9 µs. The MCP server's `selah_annotate` call went from 280 to 257 µs, and
+`selah_history` from 112 to 103 µs. The spare leaves when the freelist reuses large blocks: a size-class cache up to
+64 KB, as asked above, would cover it.
+
+## Notes from the consumer (pramana M0 probe P4, 2026-11-15)
+
+pramana's owned objects keep their buffers in one freelist block, freed by `_drop` (its decision D11). Its probe P4
+(`pramana/docs/development/port-parity.md` §6.2) measured the large-block cycle, pinned, at a load average of 5–7:
+
+| Soak | Block | Per iteration |
+|---|---|---|
+| 10⁴ × `MultivariateNormal` new + `_drop`, d = 4 | 160 bytes, a size class | 380 ns |
+| 10³ × `MultivariateNormal` new + `_drop`, d = 32 | 8,448 bytes, so mmap + munmap | 36 µs |
+| 100 Metropolis–Hastings runs of 10⁴ samples, d = 2, + `_drop` | a 160 KB result per run | once per run |
+
+The heap stays flat in every soak, so the cycle costs time, not memory. An MVN's block is 8(d² + d) bytes, so a
+size-class cache to 16 KB would cover one up to d = 44; the MH result is a once-per-run cost.

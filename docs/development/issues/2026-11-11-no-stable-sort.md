@@ -49,3 +49,23 @@ pravash's stand-in is a bottom-up merge sort over index words, `_pv_msort(idx, n
 - A stable sort in the stdlib would serve pravash with the same contract (`cmp(ctx, a, b)` negative, 0 or positive)
   and a caller buffer of n words. pravash's parity rows for both users are class A, so a conversion must keep the
   order on (key, input index) exactly.
+
+## Also needed: pramana (2026-11-15, cyrius 6.7.18)
+
+pramana needs a stable sort for its order statistics. Its probe P6 (`pramana/docs/development/port-parity.md` §6.1)
+found that Rust's `select_nth_unstable_by` leaks the sign of a zero. On 20,000 zero-heavy inputs, `median` and eight
+percentiles differ from a selection on a stable sort in 9,393 of 180,000 results, every one only in the sign of a
+zero. Reproducing it would mean transcribing about 300 lines of rustc 1.100's core library. So pramana's `median`,
+`percentile`, `quartiles` and `iqr` take the k-th element, and its successor, of a stable sort (its ADR 007 row 14).
+
+Its arrays are not `vec`s. They are raw f64 buffers, a caller's `(ptr, n)` or pool scratch, with NaN refused before
+the sort, so the key is total. Its flat-heap probe P4 sorted 10⁶ elements for a median in 22 ms (a NaN-checked copy
+and a stable merge sort in two 8 MB claims; 10 medians in 222 ms).
+
+So, besides `vec_sort_stable_by`:
+- **a slice form over a raw word array with a caller buffer**, e.g. `sort_stable_words(ptr, n, tmp, cmp, ctx)`;
+- **an f64 form on the total-order key** (`f64_sort_stable(ptr, n, tmp)`). That sort needs no comparator call, which
+  pravash measured as most of its sort's cost.
+
+pramana's stand-in is `src/sort.cyr` (ledger L3), marked `UPSTREAM(L3)`; its parity rows for the order statistics
+are class A on the stable rule.

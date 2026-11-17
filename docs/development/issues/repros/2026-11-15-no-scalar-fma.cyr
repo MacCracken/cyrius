@@ -1,0 +1,36 @@
+# Repro for 2026-11-15-no-scalar-fma.md (pramana's ledger L12).
+#
+# There is no scalar fused multiply-add in the stdlib or ganita: nothing computes RN(a·b + c) with one rounding, and
+# `a * b + c` rounds twice. With a = 1 + 2^-30, b = 1 − 2^-30 and c = −1, a·b = 1 − 2^-60 exactly, RN(a·b) = 1, and
+# a * b + c gives 0, where fma(a, b, c) is −2^-60.
+#
+#   cyrius build docs/development/issues/repros/2026-11-15-no-scalar-fma.cyr /tmp/fma
+#   /tmp/fma; echo "exit=$?"
+#
+# Today the build refuses: f64_fma is undefined. Once it exists, exit 0 when it rounds once, 1 if not.
+include "lib/math.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var a: f64 = 0x3FF0000000400000;            # 1 + 2^-30
+    var b: f64 = 0x3FEFFFFFFF800000;            # 1 − 2^-30
+    var c: f64 = -1.0;
+    var p: f64 = a * b;
+    var twice: f64 = p + c;
+    print("a * b + c, two roundings: ", 26);
+    fmt_hex0x(twice);
+    println("");
+    var once: f64 = f64_fma(a, b, c);
+    print("f64_fma(a, b, c):         ", 26);
+    fmt_hex0x(once);
+    var bits = load64(&once);
+    if (bits != 0xBC30000000000000) {
+        println("   WRONG, want 0xbc30000000000000 (-2^-60)");
+        return 1;
+    }
+    println("");
+    return 0;
+}
+
+var rc = main();
+sys_exit_group(rc);

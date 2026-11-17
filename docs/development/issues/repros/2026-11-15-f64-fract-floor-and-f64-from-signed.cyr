@@ -1,0 +1,43 @@
+# Repro for pramana's addition to 2026-11-11-f64-min-max-drop-nan-only-as-first-operand.md (pramana's ledger L2).
+#
+# Two more of the Rust f64 surface that a port can't take from the stdlib as it is:
+# - f64_fract is floor-based (x − floor(x)), where Rust's fract and C's modf are trunc-based (x − trunc(x)):
+#   f64_fract(−2.75) is 0.25, where Rust gives −0.75;
+# - f64_from reads its word as a SIGNED integer, so a u64 at or above 2^63 converts to a negative number:
+#   f64_from(2^63) is −9.2e18, where Rust's `n as f64` gives 9.2e18.
+#
+#   cyrius build docs/development/issues/repros/2026-11-15-f64-fract-floor-and-f64-from-signed.cyr /tmp/fractu64
+#   /tmp/fractu64; echo "exit=$?"
+#
+# Exit 1 while either differs from Rust; exit 0 once both match (or once trunc-based and unsigned forms exist and
+# this file calls them).
+include "lib/math.cyr"
+
+var wrong = 0;
+
+fn check(label: cstring, got, want) {
+    print(label, strlen(label));
+    print(" = ", 3);
+    fmt_hex0x(got);
+    if (got != want) { print("   WRONG, want ", 15); fmt_hex0x(want); wrong = wrong + 1; }
+    println("");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var x: f64 = -2.75;
+    var fr: f64 = f64_fract(x);
+    check("f64_fract(-2.75)", fr, 0xBFE8000000000000);          # Rust: -0.75
+    var top = 0x8000000000000000;                                # 2^63 as a u64
+    var a: f64 = f64_from(top);
+    check("f64_from(2^63 as u64)", a, 0x43E0000000000000);      # Rust: 9223372036854775808.0
+    var all = 0xFFFFFFFFFFFFFFFF;                                # u64::MAX
+    var b: f64 = f64_from(all);
+    check("f64_from(u64::MAX)", b, 0x43F0000000000000);         # Rust: 18446744073709551616.0
+    if (wrong > 0) { return 1; }
+    return 0;
+}
+
+var rc = main();
+sys_exit_group(rc);

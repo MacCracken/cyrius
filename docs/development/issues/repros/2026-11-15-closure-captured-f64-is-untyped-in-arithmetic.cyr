@@ -1,0 +1,49 @@
+# Repro for 2026-11-15-closure-captured-f64-is-untyped-in-arithmetic.md (pramana's probe P3).
+#
+# A closure that captures an f64 local sees it as an untyped word in arithmetic: `k * x` with `k: f64` captured is an
+# INTEGER multiply of the two bit patterns (warning: integer arithmetic with an f64 right operand), and `x * k` is
+# right but warns (f64 arithmetic with a non-f64 right operand). A captured f64 passed as a generic argument binds
+# T = f64 (the guide, 6.7.16 D3), so arithmetic is the odd case out.
+#
+#   cyrius build docs/development/issues/repros/2026-11-15-closure-captured-f64-is-untyped-in-arithmetic.cyr /tmp/capf
+#   /tmp/capf; echo "exit=$?"
+#
+# Exit 1 while `k * x` multiplies the bits; exit 0 once a captured f64 is an f64 in arithmetic.
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+
+var wrong = 0;
+
+fn check(label: cstring, got, want) {
+    print(label, strlen(label));
+    print(" = ", 3);
+    fmt_hex0x(got);
+    if (got != want) { print("   WRONG, want ", 15); fmt_hex0x(want); wrong = wrong + 1; }
+    println("");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var k: f64 = 3.0;
+    var left = |x| {
+        var xf: f64 = x;
+        var r: f64 = k * xf;
+        return r;
+    };
+    var right = |x| {
+        var xf: f64 = x;
+        var r: f64 = xf * k;
+        return r;
+    };
+    var q: f64 = 0.25;
+    var a: f64 = callptr(left, q);
+    check("(|x| k * x)(0.25), k = 3.0", a, 0x3FE8000000000000);   # 0.75
+    var b: f64 = callptr(right, q);
+    check("(|x| x * k)(0.25), k = 3.0", b, 0x3FE8000000000000);
+    if (wrong > 0) { return 1; }
+    return 0;
+}
+
+var rc = main();
+sys_exit_group(rc);
