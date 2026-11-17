@@ -151,3 +151,16 @@ soorat's workaround is to generate vertices straight into the upload buffer, so 
 Readback has no such way out: mabda's `gpu_buffer_read` ends in `memcpy`, and reading back 128 KB took
 **2.7 ms**. That path serves screenshots and soorat's GPU parity tests, so soorat joins as a consumer of the
 chunked `memcpy`.
+
+## Also measured: pramana (2026-11-16)
+
+pramana's Rust → Cyrius port (M4 part a1, `pramana/tests/descriptive.bcyr`; pramana ledger L15), pinned to one core
+on x86_64 Linux, 6.7.18. The median of 10,001 doubles copies them to scratch (80,008 B) before a selection:
+
+| Copy of 80,008 B | Time |
+|---|---|
+| `memcpy` (byte loop) | **134 µs** |
+| a `load64` / `store64` word loop | 17 µs (7.7× faster) |
+
+The copy was two thirds of the median's time. pramana copies every f64 array it owns or sorts through a word loop of
+its own (`_pmn_copy_words`, `src/pool.cyr`), and converts it back to `memcpy` once `memcpy` moves words.

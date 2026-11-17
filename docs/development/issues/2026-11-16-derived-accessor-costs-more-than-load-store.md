@@ -70,3 +70,9 @@ The gate would be the repro exiting 0: each accessor loop retiring what its `loa
 Where a loop runs per sample, write the record as `const` offsets and `load64` / `store64`, with no derived
 struct. One statement of the layout keeps the offsets and the accesses from disagreeing. svara 3.8.4 does this for
 its formant bank (`src/formant.cyr`, `SV_FSLOT_*`), and keeps derived accessors everywhere else.
+
+For a struct that keeps its derived accessors, because they are API or the struct is serialized, svara 3.8.5 declares
+`const` offsets beside it for the fields its per-sample code touches. A test writes every field through its derived
+setter and checks that each offset reads its own field, so the two statements of the layout cannot drift apart
+silently. Over 84 accessor uses, glottal source to DC blocker, that took svara's synthesis chain to 0.952x its
+retired instructions. A fix here would make those offsets unnecessary.
